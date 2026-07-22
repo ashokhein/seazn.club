@@ -14,12 +14,14 @@ import {
   ResumeSubscriptionButton,
   RetryPaymentButton,
 } from "@/components/billing-manage";
-import { getBillingOverview } from "@/server/usecases/billing-manage";
+import { BillingPassPurchases } from "@/components/billing-pass-purchases";
+import { BillingPassOffer, type PassCandidate } from "@/components/billing-pass-offer";
+import { getBillingOverview, getPassPurchases } from "@/server/usecases/billing-manage";
 import { type Subscription } from "@/lib/types";
-import { getLimit } from "@/lib/entitlements";
+import { getLimit, isPaidPlan, orgPlanKey } from "@/lib/entitlements";
 import { TrackOnMount } from "@/components/analytics-track-mount";
 import { EVENTS } from "@/lib/analytics-events";
-import { asCurrency, formatMinor, proPrice, proPlusPrice } from "@/lib/currency";
+import { asCurrency, formatMinor, passPrice, proPrice, proPlusPrice } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
 import { planLabel } from "@/lib/plan-label";
 import { BackLink } from "@/components/back-link";
@@ -74,7 +76,14 @@ export default async function BillingPage({
   // Live Stripe read for the manage sections (owner only). Runs BEFORE the
   // subscription select because it also performs the lazy renewal re-sync
   // (missed webhook / past_due self-heal) that may rewrite the row.
-  const overview = isOwner ? await getBillingOverview(orgId) : null;
+  //
+  // Event Pass purchases ride ALONGSIDE it, not inside it: getBillingOverview
+  // returns null for an org with no Stripe customer or an unreachable Stripe,
+  // and passes are local rows — an org that holds one must see it either way.
+  const [overview, passes] = await Promise.all([
+    isOwner ? getBillingOverview(orgId) : null,
+    isOwner ? getPassPurchases(orgId) : [],
+  ]);
 
   const [sub] = await sql<Subscription[]>`
     select * from subscriptions where org_id = ${orgId}`;
@@ -97,12 +106,20 @@ export default async function BillingPage({
 
   // v2 usage vs plan quotas (doc 10 §1) — v1 seasons/tournaments died at the
   // PROMPT-15 cutover; overrides are honoured via getLimit.
+  //
+  // The active-competition count MUST exclude Event-Passed competitions, exactly
+  // as the write-side quota does (server/usecases/competitions.ts assertActiveQuota,
+  // v3/07 §3: a pass buys its competition out of the quota). Without the same
+  // `not exists` clause this meter read 6/5 — over quota, in red — for an org
+  // that enforcement was still happily letting create another competition.
   const [counts] = await sql<
     { competitions_active: number; dashboards_public: number; members: number }[]
   >`
     select
-      (select count(*)::int from competitions
-        where org_id = ${orgId} and status in ('draft','published','live'))
+      (select count(*)::int from competitions c
+        where c.org_id = ${orgId} and c.status in ('draft','published','live')
+          and not exists (
+            select 1 from competition_passes cp where cp.competition_id = c.id))
         as competitions_active,
       (select count(*)::int from competitions
         where org_id = ${orgId} and visibility = 'public') as dashboards_public,
@@ -116,6 +133,33 @@ export default async function BillingPage({
 
   const trialDays = daysUntil(sub?.trial_end ?? null);
   const currency = await preferredCurrency(orgId);
+
+  // Event Pass offer (task 19, entry point 2 of 4) — see <BillingPassOffer>.
+  //
+  // The plan test here is the RESOLVER's, not the `isPaid` above it. They
+  // disagree, in the direction that matters: a past_due subscription 14 days
+  // into dunning, and a staff comp past its end date, both still carry
+  // `plan_key = 'pro'` on the row (so `isPaid` is true) while `orgPlanKey`
+  // degrades them to community — and for those orgs the $29 pass genuinely
+  // lifts entitlements and must still be offered. `isPaidPlan(orgPlanKey())` is
+  // the one definition of "already paid for more than this"; nothing here
+  // re-invents it.
+  const passOfferable = isOwner && !isPaidPlan(await orgPlanKey(orgId));
+  // Competitions the pass would actually do something for: active, and not
+  // already passed. `not exists` is presence-only — a staff-granted pass has a
+  // null `stripe_payment_intent` and is fully active, so filtering on payment
+  // would re-offer a pass the org already holds.
+  const passCandidates = passOfferable
+    ? await sql<PassCandidate[]>`
+        select c.id, c.name, c.slug
+        from competitions c
+        where c.org_id = ${orgId}
+          and c.status in ('draft','published','live')
+          and not exists (
+            select 1 from competition_passes cp where cp.competition_id = c.id)
+        order by c.created_at desc
+        limit 5`
+    : [];
 
   return (
     <>
@@ -293,6 +337,17 @@ export default async function BillingPage({
           </section>
         )}
 
+        {/* Event Pass purchases — which competition each one-time charge was
+            for. Not gated on `overview`: these are local rows (renders itself
+            away when the org holds no pass). */}
+        <BillingPassPurchases
+          rows={passes}
+          orgSlug={orgSlug}
+          locale={locale}
+          dict={dict}
+          invoicesListed={!!overview && overview.invoices.length > 0}
+        />
+
         {/* Invoices — Stripe-hosted view/PDF links; we never render documents. */}
         {isOwner && overview && overview.invoices.length > 0 && (
           <section className="card mb-6 p-5">
@@ -380,6 +435,15 @@ export default async function BillingPage({
             />
           </div>
         </section>
+
+        {/* Event Pass — directly under the meter it moves: a passed
+            competition stops counting against competitions.max_active. */}
+        <BillingPassOffer
+          rows={passCandidates}
+          orgSlug={orgSlug}
+          price={formatMinor(passPrice(currency), currency)}
+          dict={dict}
+        />
 
         {/* Upgrade / plan comparison */}
         {!isPaid && isOwner && (

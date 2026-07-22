@@ -135,10 +135,13 @@ npm ci
 
 ### Environment
 
-Copy the example env and fill in values:
+One env file, and it lives at the repo root. `apps/web/.env.local` is a **symlink** to it,
+so the dev server, the `db:*` scripts and vitest all read the same values. Both paths are
+gitignored, so recreate the symlink in every fresh clone or worktree:
 
 ```bash
-cp apps/web/.env.example apps/web/.env.local
+cp apps/web/.env.example .env.local
+ln -sf ../../.env.local apps/web/.env.local
 ```
 
 Required for local dev:
@@ -202,8 +205,17 @@ CI (`.github/workflows/ci.yml`) runs on every push and PR:
 3. **Smoke** — Postgres container → `db:apply` → RLS check → integration tests → dev
    server → HTTP smoke test
 
-Integration tests under `apps/web/src/server/` require `DATABASE_URL` and are skipped
-locally when it is unset.
+Integration tests under `apps/web/src/server/` and `apps/web/src/lib/__tests__/` require
+`DATABASE_URL`. `apps/web/vitest.config.ts` loads the root `.env.local`, so a bare
+`npx vitest run` picks it up; without a `.env.local` (CI) the vars must come from the
+environment, or ~700 tests skip and the run still reports green. The **Smoke** job runs
+both directories against a real Postgres.
+
+The smoke test needs `DATABASE_URL` (DB-backed suites skip silently without it). Stripe
+Connect destination charges additionally need `STRIPE_CONNECT_TEST_ACCOUNT` — a *real*
+test-mode connected account id with charges enabled, since smoke's fabricated
+`acct_smoke_*` id is rejected by Stripe. Without it that one assertion is skipped, not
+failed, and the check count is unchanged. See [`apps/web/.env.example`](apps/web/.env.example).
 
 ---
 

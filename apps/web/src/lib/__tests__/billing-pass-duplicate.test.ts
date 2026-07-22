@@ -194,6 +194,24 @@ function passCheckoutReq(competitionId: string): Request {
 }
 
 describe.skipIf(!HAS_DB)("pass-checkout idempotency key is scoped per user (P0-3b)", () => {
+  // `plans` is a GLOBAL table — one row per plan, not one per org — so the write
+  // inside this test is the only thing in the file that cannot be scoped to rows
+  // it seeded. It used to be left behind, and `DATABASE_URL` points at the SHARED
+  // dev database: every full `npx vitest run` therefore broke Event Pass checkout
+  // in dev afterwards. The route hands this column straight to Stripe, and
+  // 'price_test_pass' is not a real price, so every purchase 503'd with
+  // "No such price" until someone re-ran `npm run stripe:sync`.
+  //
+  // Same lesson as commit 3227bd3c: a test may not leave global state changed.
+  let priorOnetime: string | null = null;
+  let captured = false;
+
+  afterAll(async () => {
+    if (!HAS_DB || !captured) return;
+    await sql`update plans set stripe_price_id_onetime = ${priorOnetime}
+              where key = 'event_pass'`;
+  });
+
   it("keys checkout.sessions.create with pass-checkout-<org>-<comp>-<user>", async () => {
     const { orgId, compId } = await seedOrgWithComp();
     // A community sub carrying a currency short-circuits preferredCurrency BEFORE
@@ -203,8 +221,13 @@ describe.skipIf(!HAS_DB)("pass-checkout idempotency key is scoped per user (P0-3
               values (${orgId}, 'community', 'active', 'usd')
               on conflict (org_id) do update set plan_key = 'community', currency = 'usd'`;
     // event_pass is a dark plan; its one-time price is written by stripe:sync in
-    // real deploys, so the migrated test DB has it NULL — set it so the route
-    // can mint a session instead of 503-ing.
+    // real deploys. Capture whatever is there BEFORE overwriting it — on a shared
+    // dev DB that is the real, live price id, and afterAll must put it back.
+    const [prior] = await sql<{ id: string | null }[]>`
+      select stripe_price_id_onetime as id from plans where key = 'event_pass'`;
+    priorOnetime = prior?.id ?? null;
+    captured = true;
+    // Now set a stub so the route can mint a session instead of 503-ing.
     await sql`update plans set stripe_price_id_onetime = 'price_test_pass'
               where key = 'event_pass'`;
     authState.orgId = orgId;

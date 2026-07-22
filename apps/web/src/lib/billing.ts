@@ -24,12 +24,37 @@ export const CHECKOUT_BRANDING = {
 } as const satisfies Stripe.Checkout.SessionCreateParams.BrandingSettings;
 
 /**
+ * Sent with EVERY checkout that reuses an EXISTING Stripe customer, because
+ * both builders turn on `automatic_tax` and `tax_id_collection` and a customer
+ * we minted at checkout has neither an address nor a business name on file.
+ *
+ * Probed against LIVE Stripe test mode 2026-07-21 (see
+ * billing-automatic-tax.live.test.ts for the verbatim errors) — three distinct
+ * 400s, in this order:
+ *  - nothing:            `customer_tax_location_invalid` — "Automatic tax
+ *                        calculation in Checkout requires a valid address on
+ *                        the Customer."
+ *  - `address` only:     "Tax ID collection requires updating business name on
+ *                        the customer." So BOTH keys are needed, not just one.
+ *  - with no `customer`: "`customer_update` can only be used with `customer`"
+ *                        — which is why this is spread into the customerId
+ *                        branch ONLY and never sent on a first purchase.
+ *
+ * Rare before linkStripeCustomer ran on the Event Pass path; the COMMON path
+ * afterwards, for every org that buys a pass and later upgrades.
+ */
+const CUSTOMER_UPDATE_FOR_TAX = {
+  customer_update: { address: "auto", name: "auto" },
+} as const satisfies Pick<Stripe.Checkout.SessionCreateParams, "customer_update">;
+
+/**
  * Params for an EMBEDDED subscription checkout (rendered in-page via Stripe's
  * Embedded Checkout, not a redirect). Pure — no Stripe/DB — so it's unit-tested.
  * `trialDays` 14 = the no-card trial (`payment_method_collection:
- * "if_required"` + cancel when no card is added by trial end); 0 = no trial
- * block at all, so Stripe charges at checkout and always collects a card —
- * one trial per org, decided by the caller via checkoutTrialDays().
+ * "if_required"` + cancel when no card is added by trial end) UNLESS
+ * `requireCard` overrides it; 0 = no trial block at all, so Stripe charges at
+ * checkout and always collects a card — one trial per org, decided by the
+ * caller via checkoutTrialDays().
  * `ui_mode: "embedded"` requires a `return_url` (not success/cancel urls);
  * Stripe redirects there on completion, where the billing page reconciles
  * from the session id.
@@ -44,12 +69,22 @@ export function buildEmbeddedCheckoutParams(args: {
   /** ISO currency picking one of the price's currency_options (v3/07 §4);
    *  defaults to usd, and is ALWAYS sent — see the note on the field below. */
   currency?: string;
+  /**
+   * Collect a card even when a trial is running (v3/07, D13). Set by the
+   * checkout route for an org that holds an Event Pass: that org has already
+   * paid us once and is being credited for it, so the "no-card trial" default
+   * would let a credited subscription start with nothing to charge at trial end.
+   * `trialDays: 0` already forces card collection, so this only bites on a trial.
+   */
+  requireCard?: boolean;
 }): Stripe.Checkout.SessionCreateParams {
   return {
     // stripe-node v22 names the embedded UI mode "embedded_page".
     ui_mode: "embedded_page",
     mode: "subscription",
-    ...(args.customerId ? { customer: args.customerId } : { customer_email: args.customerEmail }),
+    ...(args.customerId
+      ? { customer: args.customerId, ...CUSTOMER_UPDATE_FOR_TAX }
+      : { customer_email: args.customerEmail }),
     // Always sent, usd included, so the session states the currency WE chose
     // via preferredCurrency (subscription → cookie → Accept-Language) instead
     // of leaving it implicit. Safe for every value isSupportedCurrency accepts:
@@ -66,7 +101,9 @@ export function buildEmbeddedCheckoutParams(args: {
     // flag does. We quote in one currency; we must charge in that currency.
     adaptive_pricing: { enabled: false },
     metadata: { org_id: args.orgId },
-    ...(args.trialDays > 0 ? { payment_method_collection: "if_required" as const } : {}),
+    ...(args.trialDays > 0 && !args.requireCard
+      ? { payment_method_collection: "if_required" as const }
+      : {}),
     subscription_data: {
       ...(args.trialDays > 0
         ? {
@@ -138,6 +175,9 @@ export function buildPassCheckoutParams(args: {
   priceId: string;
   orgId: string;
   competitionId: string;
+  /** Names the invoice line. Required, not optional: an org that buys three
+   *  passes would otherwise get three identical rows on its billing page. */
+  competitionName: string;
   returnUrl: string;
   customerId?: string;
   customerEmail?: string;
@@ -146,7 +186,17 @@ export function buildPassCheckoutParams(args: {
   return {
     ui_mode: "embedded_page",
     mode: "payment",
-    ...(args.customerId ? { customer: args.customerId } : { customer_email: args.customerEmail }),
+    ...(args.customerId
+      ? { customer: args.customerId, ...CUSTOMER_UPDATE_FOR_TAX }
+      : { customer_email: args.customerEmail }),
+    // mode:"payment" produces a PaymentIntent and a Charge but NO Invoice, so a
+    // $29 pass used to leave the buyer with no invoice number, no PDF and no
+    // hosted URL — and the billing page lists invoices.list({ customer }), so it
+    // showed them nothing at all about money they had spent.
+    invoice_creation: {
+      enabled: true,
+      invoice_data: { description: `Event Pass — ${args.competitionName}` },
+    },
     // Both for the same reason as the subscription flow above: state our own
     // currency, and stop Adaptive Pricing re-quoting the pass at render time in
     // whatever currency the buyer's IP suggests.
@@ -340,6 +390,33 @@ export async function linkStripeCustomer(orgId: string, customerId: string): Pro
         stripe_customer_id = ${customerId}
     where org_id = ${orgId}`;
   if (before.stripe_customer_id !== customerId) await syncPaymentMethodFlag(orgId);
+}
+
+/**
+ * Fix the org's billing currency at its FIRST purchase of ANY kind.
+ *
+ * Only syncSubscription used to write this, so a pass-only org kept NULL and
+ * preferredCurrency (lib/currency-server.ts) fell through to the switcher
+ * cookie and then Accept-Language — someone who paid £25 for an Event Pass
+ * could be quoted USD for Pro months later. Never-overwrite by precedence:
+ * `coalesce(currency, ${new})` keeps the EXISTING value and only fills a null,
+ * so once set, only Stripe's own subscription object may restate it (via
+ * syncSubscription, whose `coalesce(excluded.currency, …)` prefers the incoming
+ * Stripe value — the opposite precedence, and deliberately so).
+ *
+ * A no-op when the caller has no currency to offer, and (like
+ * linkStripeCustomer) when the org has no subscriptions row at all.
+ */
+export async function pinBillingCurrency(
+  orgId: string,
+  currency: string | null | undefined,
+): Promise<void> {
+  if (!currency) return;
+  await sql`
+    update subscriptions
+    set currency   = coalesce(currency, ${currency}),
+        updated_at = case when currency is null then now() else updated_at end
+    where org_id = ${orgId}`;
 }
 
 /** Persist the flag. Private on purpose — go through syncPaymentMethodFlag so
@@ -562,7 +639,24 @@ export async function reconcilePassCheckout(
     // Reconcile-on-return can land a second owner's payment; refund it (the
     // pass is already active from the first). The helper swallows its own
     // errors, so a refund hiccup never flips this reconcile to a failure.
-    if (res.duplicateIntent) await refundDuplicatePassPayment(res.duplicateIntent);
+    if (res.duplicateIntent) {
+      await refundDuplicatePassPayment(res.duplicateIntent);
+      return true;
+    }
+    // The money trace, mirroring reconcileCheckout — and deliberately NOT run
+    // for the refunded duplicate above, whose payer is not this org's customer
+    // and whose currency is not the one we kept.
+    //
+    // A REPLAY (same intent, the webhook got here first) still runs both: they
+    // are idempotent — linkStripeCustomer touches nothing on a same-customer
+    // link, and the currency pin never overwrites — and re-running is what
+    // heals a first attempt that died between the insert and these writes.
+    if (session.customer) {
+      // Not a bare UPDATE: a re-buy lands on a NEW customer and the
+      // has_payment_method mirror describes the OLD one. See linkStripeCustomer.
+      await linkStripeCustomer(orgId, session.customer as string);
+    }
+    await pinBillingCurrency(orgId, session.currency);
     return true;
   } catch {
     return false;

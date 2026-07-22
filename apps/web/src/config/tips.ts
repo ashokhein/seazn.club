@@ -36,6 +36,11 @@ export const TIPS = {
     body: "Same person listed twice? Merge moves their team memberships, lineups and profiles onto the player you keep, then removes the duplicate. Results are untouched — but a merge can't be undone.",
     helpSlug: "entrants/duplicate-players",
   },
+  "persons.public-cards": {
+    title: "What makes a profile public",
+    body: "Two separate locks, and a public player card needs both. The player's own consent — no plan overrides it, and switching it off takes the card down again — and your plan: public cards need Pro, Pro Plus, or an Event Pass on that competition. Name and photo are consented separately.",
+    helpSlug: "players/player-stats-and-photo",
+  },
   "persons.actions": {
     title: "Player actions",
     body: "Invite to claim emails the player a link to run their own profile — matches, RSVPs, consent. Unlink disconnects a claimed account; rosters and results stay. Merge… folds a duplicate into the player you keep.",
@@ -48,13 +53,18 @@ export const TIPS = {
   },
   "billing.downgrade-freeze": {
     title: "What downgrading freezes",
-    body: "Nothing is deleted. Anything over the Community limits becomes read-only until you upgrade again or archive something.",
+    body: "Nothing is deleted. Anything over the Community limits becomes read-only until you upgrade again or archive something. Your logo and your card entry fees keep working — only the platform fee goes back to 8% — while Pro extras like your brand colour, branded exports and API keys switch off.",
     helpSlug: "billing/downgrade",
   },
   "billing.event-pass": {
     title: "What an Event Pass covers",
-    body: "A pass upgrades one competition for its lifetime — every division inside it gets Pro features. It doesn't carry to next season's edition.",
+    body: "For this competition only: 64 entrants per division, 10 divisions, branded exports, public player cards, sponsor packages, the realtime scoreboard and a 5% platform fee instead of 8%. It is not Pro — your brand colour, player stats, officials, discipline, embeds and API access all stay Pro. A passed competition stops counting against your active-competition limit; the pass doesn't carry to next season's edition.",
     helpSlug: "billing/event-pass",
+  },
+  "registration.platform-fee": {
+    title: "The platform fee",
+    body: "Charging entry fees is free on every plan, Community included. What your plan sets is the fee we keep on card payments: 8% on Community, 5% on a competition with an Event Pass, 2% on Pro, 1% on Pro Plus. Stripe's own processing fee is separate.",
+    helpSlug: "registration/card-payments",
   },
   "registration.ref-number": {
     title: "Reference numbers",
@@ -70,6 +80,11 @@ export const TIPS = {
     title: "Undo and save points",
     body: "Every schedule change is undoable, and a save point marks a known-good timetable you can restore. Match results are never touched by either.",
     helpSlug: "scheduling/undo",
+  },
+  "settings.brand-colour": {
+    title: "Logo free, colour Pro",
+    body: "Your organisation logo is free on every plan and sits on your public pages, exports and share images. The brand colour that themes those pages is a Pro feature — and an Event Pass doesn't include it, so a passed competition still carries your logo, not your palette.",
+    helpSlug: "billing/plans",
   },
   "api.key-scopes": {
     title: "Key scopes",

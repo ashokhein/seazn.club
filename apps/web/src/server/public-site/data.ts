@@ -9,6 +9,7 @@ import "server-only";
 // `revalidateTag('division:{id}')` for instant refresh (see usecases/scoring.ts).
 import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
+import { hasFeature } from "@/lib/entitlements";
 import { isoDateTime } from "@/lib/public-site";
 import { resolveModule } from "@/server/engine-db";
 import { labelPlayerStats } from "@/server/player-stats";
@@ -34,7 +35,7 @@ export interface PublicOrg {
   id: string;
   name: string;
   slug: string;
-  branded: boolean; // Pro branding entitlement — removable platform footer
+  branded: boolean; // dashboard.branding (paid) — removable seazn footer + OG badge
   /** Org brand color blob — emptied in-query without dashboard.branding. */
   branding: unknown;
   /** Resolved logo URL — null without the branding entitlement or a logo. */
@@ -170,12 +171,19 @@ async function loadOrg(orgSlug: string): Promise<PublicOrg | null> {
   // Branding reads are entitlement-gated in the query, same rule as the
   // public_*_v views: theme color needs dashboard.branding, logo needs
   // branding (the key that also unlocks the upload).
+  //
+  // `branded` is NOT the logo/name gate — it is the "may remove the seazn
+  // attribution" perk (the Powered-by footer and the OG-card badge; see
+  // PublicOrg.branded and og/post-card.tsx). That is a PAID differentiator, so
+  // it keys off dashboard.branding, NOT `branding`. V310 freed `branding` to
+  // every plan, which silently switched the footer off for community orgs and
+  // killed the free-tier growth lever until this was re-gated.
   const [row] = await sql<
     (Omit<PublicOrg, "logo"> & { logo_url: string | null; logo_storage_path: string | null })[]
   >`
     select o.id, o.name, o.slug, o.about, o.default_locale,
            o.stripe_charges_enabled as card_payments,
-           org_has_feature(o.id, 'branding') as branded,
+           org_has_feature(o.id, 'dashboard.branding') as branded,
            case when org_has_feature(o.id, 'dashboard.branding')
                 then o.branding else '{}'::jsonb end as branding,
            case when org_has_feature(o.id, 'branding') then o.logo_url end as logo_url,
@@ -369,8 +377,15 @@ export async function getPublicFixture(
       const names = await sql<{ id: string; display_name: string }[]>`
         select id, display_name from public_entrants_v
         where division_id = ${division.id}`;
+      // Competition-scoped: an Event Pass grants realtime for the competition it
+      // was bought for, so the org-wide 2-arg overload denies a paid-for fixture.
+      // This is the SPECTATOR side of the grant — the organiser's own noticeboard
+      // was already comp-scoped, so an org-wide read here meant a buyer saw live
+      // scoring work for themselves and for none of their audience, which is the
+      // whole point of the feature.
       const [rt] = await sql<{ realtime: boolean }[]>`
-        select org_has_feature(${shell.org.id}, 'realtime') as realtime`;
+        select org_has_feature(${shell.org.id}, 'realtime', ${shell.competition.id})
+               as realtime`;
       return {
         fixture,
         entrantNames: Object.fromEntries(names.map((n) => [n.id, n.display_name])),
@@ -395,7 +410,15 @@ export interface PublicPlayerStats {
   metrics: { key: string; label: string; value: number }[];
 }
 
-/** Player card (consent-gated: the view only contains consented persons). */
+/**
+ * Player card. Two gates, in two places, deliberately:
+ *  - consent lives in public_players_v (the view only contains persons who
+ *    granted `public_name`);
+ *  - the `dashboard.player_profiles` ENTITLEMENT lives here (V307). The view
+ *    cannot hold it: its filter sits over `from persons p` and a person plays
+ *    in many competitions, so there is no competition in scope to make the
+ *    check pass-aware — and an org-wide check would ignore an Event Pass.
+ */
 export async function getPublicPlayer(
   orgSlug: string,
   compSlug: string,
@@ -410,6 +433,18 @@ export async function getPublicPlayer(
   if (!/^[0-9a-f-]{36}$/i.test(personId)) return null;
   const shell = await getPublicCompetition(orgSlug, compSlug);
   if (!shell) return null;
+
+  // OUTSIDE the cache on purpose. The closure below is keyed on
+  // `competition:{id}`, and no entitlement write busts that tag — a gate placed
+  // inside it would be frozen at whatever the org held when the page was first
+  // cached, so a lapsed org would keep serving player cards for a full
+  // REVALIDATE_SLOW window. Evaluated per request, `hasFeature`'s own 5-minute
+  // cache is the only staleness, which is the bound we accept everywhere else.
+  // The competition id is what makes an Event Pass count for the competition it
+  // paid for, and only that one.
+  if (!(await hasFeature(shell.org.id, "dashboard.player_profiles", shell.competition.id))) {
+    return null;
+  }
 
   const detail = await unstable_cache(
     async () => {
@@ -472,13 +507,18 @@ export async function getPublicPlayer(
 }
 
 /**
- * Realtime entitlement for a public fixture's org (token route, doc 09 §4).
+ * Realtime entitlement for a public fixture's COMPETITION (token route, doc 09 §4).
  * Uncached-tagless: short TTL via unstable_cache keyed on fixture id.
+ *
+ * Scoped to the competition, not the org: an Event Pass buys realtime for one
+ * competition, and the org-wide overload 403s the token route for a fixture the
+ * organiser has paid for. The join already carries the competition id — only the
+ * argument was missing.
  */
 export async function fixtureRealtimeEligible(fixtureId: string): Promise<boolean> {
   if (!/^[0-9a-f-]{36}$/i.test(fixtureId)) return false;
   const [row] = await sql<{ realtime: boolean }[]>`
-    select org_has_feature(c.org_id, 'realtime') as realtime
+    select org_has_feature(c.org_id, 'realtime', c.id) as realtime
     from public_fixtures_v f
     join public_divisions_v d on d.id = f.division_id
     join public_competitions_v c on c.id = d.competition_id

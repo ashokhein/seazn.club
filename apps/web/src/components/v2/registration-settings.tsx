@@ -7,6 +7,7 @@
 // LINK to Settings → Connect (never duplicated here).
 import { useState } from "react";
 import { PlanBadge } from "@/components/plan-badge";
+import { Tip } from "@/components/ui/tip";
 import type { Pulse } from "@/lib/registration-derive";
 import type { FormField, Settings } from "./registrations-panel";
 import { useMsg } from "@/components/i18n/dict-provider";
@@ -225,8 +226,14 @@ export function RegistrationSettings({
             />
           </label>
         </div>
+        {/* The 8/5/2/1 platform-fee ladder is the commercial fact an organiser
+            meets the moment they price an entry — it lives in the tip, not
+            inline, so all four locales stay in one registry. */}
         {paidConfigured && (
-          <p className="text-[11px] text-slate-400">{msg("reg.settings.feeNote")}</p>
+          <p className="flex items-start gap-1 text-[11px] text-slate-400">
+            {msg("reg.settings.feeNote")}
+            <Tip id="registration.platform-fee" small className="mt-px shrink-0" />
+          </p>
         )}
 
         {paidConfigured && (

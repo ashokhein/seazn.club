@@ -201,10 +201,22 @@ describe.skipIf(!HAS_DB)("entitlement split (doc 09 §4, doc 10)", () => {
     }
     // Names still follow consent alone (initials never need a plan).
     expect(entrant.members.map((m) => m["name"]).sort()).toEqual(["Alice Wonder", "B.B."]);
-    // Player cards 404: the view has no rows for this org.
+
+    // public_players_v itself is NO LONGER entitlement-gated (V307). Its filter
+    // sat over `from persons p`, with no competition in scope, so it could not
+    // become pass-aware without re-reading as "*some* competition this person
+    // appears in is entitled" — one Event Pass leaking the person org-wide. The
+    // gate moved to the view's only consumer, getPublicPlayer, which knows the
+    // competition; the deny is asserted there
+    // (server/__tests__/public-players-gate.test.ts), two-sided.
+    //
+    // What the view still promises, and is asserted here: consent, and nothing
+    // but consent, for a non-entitled org.
     const players = await sql<{ id: string }[]>`
       select id from public_players_v where org_id = ${scene.orgId}`;
-    expect(players).toHaveLength(0);
+    const ids = players.map((p) => p.id);
+    expect(ids).toContain(scene.alice); // consented — the entitlement is not the view's job
+    expect(ids).not.toContain(scene.bob); // unconsented — still invisible, plan or no plan
   });
 
   it("community orgs hold at most one public competition (dashboard.public.max)", async () => {

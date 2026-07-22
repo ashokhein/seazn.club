@@ -735,6 +735,81 @@ body {
   color: var(--mk-lime);
 }
 
+/* ── Event Pass ticket (spec D10, the competition upgrade page) ─────────────
+   The pass is one payment for one event, so it is drawn as the thing it is:
+   a ticket with a tear-off stub. The stub is the floodlit half and carries
+   the STATE — a price while the ticket is unsold, the "active" signal once it
+   is held — which is where a real ticket carries whether it has been used.
+
+   The perforation is a dashed rule with a punched bite at each end. The bites
+   are the page canvas showing through, so the ticket must NOT carry a border:
+   a hairline would draw a chord across each bite and the hole would read as a
+   printed circle. Its edge is a shadow instead. */
+.ticket-stub {
+  background: linear-gradient(160deg, var(--mk-night-2), var(--mk-night));
+  color: var(--mk-cream);
+}
+/* Purple-600 sits at ~2.1:1 on #150b36 and fails AA — the same flip the
+   marketing funnel's night sections use: lime plate, night ink. */
+.ticket-stub .btn-primary {
+  background: var(--mk-lime);
+  color: var(--mk-night);
+}
+.ticket-stub .btn-primary:hover:not(:disabled) {
+  background: #b7ef4f;
+}
+.ticket-stub .app-eyebrow {
+  color: var(--mk-cream);
+}
+.ticket-stub :where(a, button):focus-visible {
+  outline-color: var(--mk-lime);
+}
+
+.ticket-seam {
+  position: relative;
+  flex: none;
+  height: 0;
+  border-top: 2px dashed rgb(124 58 237 / 0.45);
+}
+.ticket-seam::before,
+.ticket-seam::after {
+  content: "";
+  position: absolute;
+  top: -13px;
+  width: 26px;
+  height: 26px;
+  border-radius: 9999px;
+  /* The page's own canvas — .pass-ticket clips the outer half, leaving a bite. */
+  background: var(--background);
+}
+.ticket-seam::before {
+  left: -13px;
+}
+.ticket-seam::after {
+  right: -13px;
+}
+@media (min-width: 640px) {
+  .ticket-seam {
+    height: auto;
+    width: 0;
+    align-self: stretch;
+    border-top: 0;
+    border-left: 2px dashed rgb(124 58 237 / 0.45);
+  }
+  .ticket-seam::before,
+  .ticket-seam::after {
+    left: -12px;
+    right: auto;
+  }
+  .ticket-seam::before {
+    top: -13px;
+  }
+  .ticket-seam::after {
+    top: auto;
+    bottom: -13px;
+  }
+}
+
 /* ── Timezone labels (spec 2026-07-14 user-timezone-design) ─────────────────
    The venue lane shows the viewer's local equivalent in a distinct teal so it
    never reads as a second venue time. Colour + position carry "whose time" —

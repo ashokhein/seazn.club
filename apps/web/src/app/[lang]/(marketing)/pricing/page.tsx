@@ -16,6 +16,10 @@ import {
 } from "@/lib/pricing-cards";
 import { formatMinor, passPrice, proPrice, proPlusPrice, type Currency } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
+import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
+import { pickActiveOrg } from "@/lib/active-org";
+import { isPaidPlan, orgPlanKey } from "@/lib/entitlements";
+import { passCtaVariant } from "@/lib/pass-cta";
 import { CurrencySwitcher } from "@/components/currency-switcher";
 import { ProPriceCard } from "@/components/pro-price-card";
 import { getDictionary, t } from "@/lib/i18n";
@@ -57,6 +61,23 @@ export async function generateMetadata({
   };
 }
 
+/**
+ * Resolve the viewer's Event Pass call-to-action.
+ *
+ * The plan comes from `orgPlanKey` + `isPaidPlan` — the entitlement resolver's
+ * own derivation — so "what we sell here" cannot drift from "what we grant".
+ * A user with no org yet reads as community: they are one signup step from one.
+ */
+async function passColumnCta(): Promise<ReturnType<typeof passCtaVariant>> {
+  const user = await getCurrentUser();
+  if (!user) return passCtaVariant({ signedIn: false, paidPlan: false });
+  const orgs = await getUserOrgs(user.id);
+  // No path segment to read on a marketing page — the cookie is all there is.
+  const active = pickActiveOrg(orgs, { cookieOrgId: await getActiveOrgId() });
+  const paidPlan = active ? isPaidPlan(await orgPlanKey(active.id)) : false;
+  return passCtaVariant({ signedIn: true, paidPlan });
+}
+
 async function loadMatrix(): Promise<MatrixData> {
   const rows = await sql<
     { plan_key: string; feature_key: string; bool_value: boolean | null; int_value: number | null }[]
@@ -91,6 +112,13 @@ export default async function PricingPage({
   const sections = buildPricingSections(await loadMatrix().catch(() => ({})));
 
   const passLabel = formatMinor(passPrice(currency), currency);
+  // Who is reading the Event Pass column? An anonymous visitor still gets the
+  // signup path; a signed-in organiser gets handed to their competition list,
+  // which is the only place a pass can actually be bought. The nav on this very
+  // page already resolves the viewer this way (MarketingNav → /dashboard).
+  // Fail soft to the anonymous column — a marketing page must render even if
+  // the session or the plan read is unavailable.
+  const passCta = await passColumnCta().catch(() => "signup" as const);
   const proMonthly = formatMinor(proPrice("monthly", currency), currency);
   const plusMonthly = formatMinor(proPlusPrice("monthly", currency), currency);
 
@@ -160,12 +188,28 @@ export default async function PricingPage({
                     </li>
                   ))}
                 </ul>
-                <Link
-                  href="/login?tab=signup"
-                  className="btn btn-ghost w-full justify-center border-amber-300 py-3 hover:bg-amber-100"
-                >
-                  {t(d, "pricing.pass.cta")}
-                </Link>
+                {/* Three readers, three honest endings (task 19, spec D3).
+                    `included` is not a disabled button: a paying customer is
+                    not being refused, the offer simply does not apply to
+                    them — Pro already exceeds every key the pass lifts. */}
+                {passCta === "included" ? (
+                  <p
+                    data-pass-column-cta="included"
+                    className="rounded-xl bg-white/70 px-4 py-3 text-center text-sm font-medium text-[#4d7c0f]"
+                  >
+                    {t(d, "pricing.pass.included")}
+                  </p>
+                ) : (
+                  <Link
+                    href={passCta === "console" ? "/dashboard" : "/login?tab=signup"}
+                    data-pass-column-cta={passCta}
+                    className="btn btn-ghost w-full justify-center border-amber-300 py-3 hover:bg-amber-100"
+                  >
+                    {passCta === "console"
+                      ? t(d, "pricing.pass.ctaSignedIn")
+                      : t(d, "pricing.pass.cta")}
+                  </Link>
+                )}
               </div>
 
               {/* Pro — annual toggle default-on */}

@@ -28,4 +28,6 @@ Some organisers pin up a **check-in QR** on match day. Scan it, tap once, and yo
 
 Claiming puts your consent switches in your hands: **show my name publicly** and **show my photo publicly**, per club. Flip one and your public player card updates immediately — including disappearing entirely when you turn your name off.
 
+**Consent and the club's plan are two different locks, and both have to be open.** Your consent is yours: nothing the club pays for publishes you, and with *show my name publicly* off there is no card at any price. The plan decides whether public cards exist for that club at all — they need **Pro or Pro Plus**, or an [Event Pass](/help/billing/event-pass) on the competition. On a Community club there are no public player cards, so your switches simply have nothing public to govern until the club upgrades. Claiming, your player home, RSVPs, check-in, uploading a photo and the switches themselves work on every plan.
+
 **Under 16?** An organiser manages these settings until your 16th birthday (they'll usually have a guardian's consent on file). Everything else on your player home works the same.

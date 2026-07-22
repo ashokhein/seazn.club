@@ -6,6 +6,7 @@ import { sql } from "@/lib/db";
 import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import type { Organization, OrgMembership, OrgRole, User } from "@/lib/types";
 import { AuthError, PaymentRequiredError } from "@/lib/errors";
+import { getLimit } from "@/lib/entitlements";
 import { isReservedSlug } from "@/lib/public-site";
 import { routes } from "@/lib/routes";
 import { slugify, uniqueSlug } from "@/server/usecases/slugs";
@@ -193,28 +194,41 @@ export async function generateOrgSlug(name: string, excludeOrgId?: string): Prom
  * `orgs.max_owned` (doc 13 §5, billing decision (a)): subscriptions stay
  * per-org; the quota only caps CREATION, judged against the creating user's
  * best owned-org plan. A user who owns nothing may always create their first.
+ *
+ * @internal — exported for tests; the only production caller is createOrgForUser.
  */
-async function assertMayOwnAnotherOrg(userId: string): Promise<void> {
-  const owned = await sql<{ plan_key: string }[]>`
-    select coalesce(s.plan_key, 'community') as plan_key
-    from org_members m
-    left join subscriptions s on s.org_id = m.org_id
+export async function assertMayOwnAnotherOrg(userId: string): Promise<void> {
+  const owned = await sql<{ org_id: string }[]>`
+    select m.org_id from org_members m
     where m.user_id = ${userId} and m.role = 'owner'`;
   if (owned.length === 0) return;
-  // Overrides on any owned org lift the user too (v3 grandfathering: the pro
-  // cap dropped 5 → 3, existing owners keep their headroom via override).
-  const limits = await sql<{ int_value: number | null }[]>`
-    select int_value from plan_entitlements
-    where feature_key = 'orgs.max_owned'
-      and plan_key in ${sql([...new Set(owned.map((o) => o.plan_key))])}
-    union all
-    select o.int_value from org_entitlement_overrides o
-    join org_members m on m.org_id = o.org_id and m.user_id = ${userId} and m.role = 'owner'
-    where o.feature_key = 'orgs.max_owned'
-      and (o.expires_at is null or o.expires_at > now())`;
-  // Best plan wins; a NULL int_value = unlimited; no rows = community default 1.
-  if (limits.some((l) => l.int_value === null) && limits.length > 0) return;
-  const limit = limits.length > 0 ? Math.max(...limits.map((l) => l.int_value as number)) : 1;
+
+  // ONE resolver per owned org. This replaces a raw plan_key + override union
+  // that honoured expires_at but NOT comped_until or the past_due grace, so a
+  // lapsed comp kept the Pro cap. getLimit applies the plan degradations and
+  // the (unexpired) override per org, so resolving each owned org and taking
+  // the best preserves the old cross-org override lift by construction —
+  // v3 grandfathering, where the pro cap dropped 5 → 3 and existing owners keep
+  // their headroom via an override on any org they own.
+  //
+  // Behaviour change worth naming: the old raw union took max() over
+  // plan_entitlements ∪ overrides, so a LOWERING override was silently
+  // discarded — an int_value = 0 on orgs.max_owned lost to the plan's number
+  // and never bit. getLimit lets the override win outright, so a restrictive
+  // override now applies. That is the correct semantics and what the resolver
+  // does everywhere else; it is safe here because production has only ever
+  // written raising overrides (V270__pricing_v3_matrix.sql:70 writes
+  // int_value = 5). Note it before writing a lowering override by hand.
+  const limits = await Promise.all(
+    owned.map((o) => getLimit(o.org_id, "orgs.max_owned")),
+  );
+  // A null limit is UNLIMITED and wins outright — the same rule the raw union
+  // applied, and what lets a staff "unlimited" grant survive.
+  if (limits.some((l) => l === null)) return;
+  // getLimit yields 0 for a plan with no orgs.max_owned row at all, where the
+  // old code defaulted to the community 1. Both refuse here: owned.length is
+  // already >= 1, so owned.length + 1 exceeds 0 and 1 alike.
+  const limit = Math.max(...(limits as number[]));
   if (owned.length + 1 > limit) throw new PaymentRequiredError("orgs.max_owned");
 }
 

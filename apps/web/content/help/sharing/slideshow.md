@@ -12,10 +12,12 @@ Copy the slideshow URL from the division's sharing panel and open it on any brow
 
 It cycles standings, upcoming matchups and live scores on its own, refreshes itself, and never needs a login (visibility rules still apply — a private competition's slideshow is for signed-in members).
 
+**The realtime board needs a plan.** Scores pushing onto the screen the moment a scorer taps them — the realtime scoreboard — needs **Pro or Pro Plus**, or an [Event Pass](/help/billing/event-pass) on that competition. A Community org doesn't get the live push; the board still cycles and still refreshes on its own timer, so a venue screen is never blank, it just isn't instant.
+
 ## Making it look right
 
 - It's designed dark, broadcast-style, readable from across a hall.
-- Pro branding (logo, colour) carries onto the board.
+- Your **logo** carries onto the board on every plan; your **brand colour** needs Pro.
 - Sponsors you add in org settings get their own rotation slide — venue advertising your sponsors paid for.
 
 ## Common questions

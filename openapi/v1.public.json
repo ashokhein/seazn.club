@@ -21963,7 +21963,7 @@
     },
     "/api/v1/divisions/{id}/registrations/export": {
       "get": {
-        "summary": "CSV export of registrations (Pro `exports`)",
+        "summary": "CSV export of registrations; all plans (`exports`)",
         "tags": [
           "registration"
         ],
@@ -32442,7 +32442,7 @@
     },
     "/api/v1/participants/export": {
       "get": {
-        "summary": "Participants CSV/XLSX: club + division columns, empty-spot rows intact (Pro `exports`)",
+        "summary": "Participants CSV/XLSX: club + division columns, empty-spot rows intact; all plans (`exports`)",
         "tags": [
           "clubs"
         ],
@@ -39776,7 +39776,7 @@
     },
     "/api/v1/divisions/{id}/schedule/ai-plan": {
       "post": {
-        "summary": "AI Schedule Architect: propose times+courts (generate/refine/repair), engine-verified; propose-only (Pro Plus `scheduling.ai`)",
+        "summary": "AI Schedule Architect: propose times+courts (generate/refine/repair), engine-verified; propose-only; all plans (`scheduling.ai`), capped per division by `scheduling.ai.runs_per_division.max` (5 free / 10 Event Pass / 20 Pro / 50 Pro Plus)",
         "tags": [
           "scheduling"
         ],
@@ -41366,7 +41366,7 @@
     },
     "/api/v1/divisions/{id}/exports/{kind}": {
       "get": {
-        "summary": "Templated export (timetable|standings|roster|participants|scoresheet|officials_rota) as PDF/XLSX; page-break + landscape knobs free, branding Pro `exports.branded` (Pro `exports`)",
+        "summary": "Templated export (timetable|standings|roster|participants|scoresheet|officials_rota) as PDF/XLSX; export itself is on every plan (`exports`); page-break + landscape knobs free, branding needs `exports.branded` (Event Pass or Pro)",
         "tags": [
           "exports"
         ],
@@ -41659,7 +41659,7 @@
     },
     "/api/v1/competitions/{id}/exports/timetable": {
       "get": {
-        "summary": "Competition-wide pretty timetable PDF, one division per page (Pro `exports`)",
+        "summary": "Competition-wide pretty timetable PDF, one division per page; all plans (`exports`)",
         "tags": [
           "exports"
         ],
@@ -41906,7 +41906,7 @@
     },
     "/api/v1/competitions/{id}/exports/tickets": {
       "get": {
-        "summary": "2-up admit tickets (PDF only) for every confirmed registration, name-masked, QR carries the /r/{ref} URL (Pro `exports`)",
+        "summary": "2-up admit tickets (PDF only) for every confirmed registration, name-masked, QR carries the /r/{ref} URL; all plans (`exports`)",
         "tags": [
           "exports"
         ],

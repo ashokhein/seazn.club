@@ -4,6 +4,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
+import { getLimit } from "@/lib/entitlements";
 import {
   consumeFunnelDraft,
   createFromDraft,
@@ -96,8 +97,25 @@ describe.skipIf(!HAS_DB)("funnel drafts (v3/07 §6)", () => {
       name: "Autumn Open",
     });
     const draft2 = (await consumeFunnelDraft(second.token))!;
-    // The free plan allows 1 active competition — the second create must 402
-    // rather than silently piling on (the claim route surfaces this).
+    // Fill the org to the free plan's active-competition cap first. V311 (D22)
+    // raised that cap 1 → 5, so the funnel's first competition no longer
+    // exhausts it on its own; the padding is derived from the live limit rather
+    // than a literal so the next matrix move doesn't quietly turn this
+    // over-quota assertion into a no-op.
+    const [{ org_id: orgId }] = await sql<{ org_id: string }[]>`
+      select id as org_id from organizations where created_by = ${userId}`;
+    const limit = (await getLimit(orgId, "competitions.max_active"))!;
+    const [{ active }] = await sql<{ active: number }[]>`
+      select count(*)::int as active from competitions
+      where org_id = ${orgId} and status in ('draft', 'published', 'live')`;
+    const pad = randomUUID().slice(0, 8);
+    for (let i = active; i < limit; i++) {
+      await sql`
+        insert into competitions (org_id, name, slug, status)
+        values (${orgId}, ${`Filler ${i} ${pad}`}, ${`filler-${i}-${pad}`}, 'published')`;
+    }
+    // At the cap now — the second create must 402 rather than silently piling
+    // on (the claim route surfaces this).
     await expect(createFromDraft(userId, draft2)).rejects.toMatchObject({
       status: 402,
       featureKey: "competitions.max_active",

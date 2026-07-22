@@ -1,12 +1,15 @@
 import { sql } from "@/lib/db";
 import { requireOrgRole } from "@/lib/auth";
+import { getLimit, hasFeature } from "@/lib/entitlements";
 import { handler } from "@/lib/http";
 import { ORG_ROLES } from "@/lib/types";
 
-interface EntitlementRow {
+/** Key list only — the plan row says WHICH keys the panel shows and whether a
+ *  key is a boolean feature or a numeric quota. The VALUES come from the
+ *  resolver, never from this row. */
+interface EntitlementKeyRow {
   feature_key: string;
-  bool_value: boolean | null;
-  int_value: number | null;
+  is_boolean: boolean;
 }
 
 /** Resolved entitlements + current usage for an org (any member may read). */
@@ -30,17 +33,17 @@ export async function GET(
     const planKey = sub?.plan_key ?? "community";
     const status = sub?.status ?? "active";
 
-    // org overrides take priority over plan entitlements
-    const rows = await sql<EntitlementRow[]>`
-      select
-        pe.feature_key,
-        coalesce(ov.bool_value, pe.bool_value) as bool_value,
-        coalesce(ov.int_value,  pe.int_value)  as int_value
-      from plan_entitlements pe
-      left join org_entitlement_overrides ov
-        on ov.org_id = ${orgId} and ov.feature_key = pe.feature_key
-      where pe.plan_key = ${planKey}
-      order by pe.feature_key`;
+    // The panel must promise exactly what enforcement delivers, so this route
+    // no longer resolves anything itself. It used to union overrides in raw SQL
+    // with no expires_at filter, no comped_until degradation and no past_due
+    // grace — and it coalesced int_value, which silently demoted every staff
+    // "unlimited" grant to the plan's number. plan_entitlements is now read for
+    // the KEY LIST only; every value comes from lib/entitlements.
+    const rows = await sql<EntitlementKeyRow[]>`
+      select feature_key, bool_value is not null as is_boolean
+      from plan_entitlements
+      where plan_key = ${planKey}
+      order by feature_key`;
 
     // v2 usage (PROMPT-13): what the UI compares against the v2 quota keys.
     // Statuses counted mirror competitions.max_active enforcement.
@@ -54,11 +57,29 @@ export async function GET(
           as dashboards_public_count
       from competitions where org_id = ${orgId}`;
 
+    // Org-level questions, so no competition id: an Event Pass lifts a single
+    // competition, not the org, and the 2-arg call is what asks that question.
+    //
+    // Cost, stated plainly. hasFeature/getLimit are cache-aside (5-min TTL), so
+    // a WARM cache is N cache reads and nothing else. A COLD cache is not: each
+    // key falls through to resolveFromDb, which issues three queries (the
+    // org-plan CASE, plan_entitlements, org_entitlement_overrides), so ~40 keys
+    // is ~120 queries against a pool of max: 5 (lib/db.ts:48) — and the org-plan
+    // query is byte-identical across all N keys, re-run N times. The known
+    // optimisation is a `resolveMany` batch API on lib/entitlements (resolve the
+    // org plan once, then fetch all keys in one plan_entitlements + one
+    // overrides query); it is a deliberate follow-up, not an oversight. Until
+    // then this route stays on the single resolver on purpose: for a
+    // low-traffic panel read, matching enforcement exactly beats being fast,
+    // and a second resolution path here is precisely the drift this route was
+    // just cured of.
     const entitlements = Object.fromEntries(
-      rows.map((r) =>
-        r.bool_value !== null
-          ? [r.feature_key, { enabled: r.bool_value }]
-          : [r.feature_key, { limit: r.int_value }],
+      await Promise.all(
+        rows.map(async (r) =>
+          r.is_boolean
+            ? ([r.feature_key, { enabled: await hasFeature(orgId, r.feature_key) }] as const)
+            : ([r.feature_key, { limit: await getLimit(orgId, r.feature_key) }] as const),
+        ),
       ),
     );
 

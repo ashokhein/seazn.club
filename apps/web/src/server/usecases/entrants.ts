@@ -236,7 +236,7 @@ export async function createEntrants(
       }
     }
 
-    // Doc 10 §1: `entrants.per_division.max` (16/64/256) — the whole batch
+    // Doc 10 §1: `entrants.per_division.max` (V311: 32/64/256/∞) — the whole batch
     // must fit; count in the same tx as the inserts (doc 10 §2 rule 1).
     const [{ n }] = await tx<{ n: number }[]>`
       select count(*)::int as n from entrants where division_id = ${divisionId}`;

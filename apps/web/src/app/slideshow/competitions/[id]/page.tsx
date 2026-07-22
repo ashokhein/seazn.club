@@ -36,8 +36,12 @@ export default async function CompetitionSlideshowPage({
   for (const d of ordered) {
     slides.push(...(await buildDivisionSlides(auth, d.id, d.name)));
   }
+  // Scoped to THIS competition: `id` is the competition id, and `realtime` is
+  // one of the keys an Event Pass lifts out of the community matrix. Resolved
+  // org-wide it never saw the pass, so the board a community org paid to make
+  // live stayed static (Phase 2 pass-scoping sweep).
   const [realtime, chrome] = await Promise.all([
-    hasFeature(auth.orgId, "realtime"),
+    hasFeature(auth.orgId, "realtime", id),
     orgBoardChrome(auth),
   ]);
 

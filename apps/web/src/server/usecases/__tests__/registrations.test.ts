@@ -42,6 +42,7 @@ vi.mock("@/lib/email", async (importOriginal) => ({
 }));
 
 import { sql } from "@/lib/db";
+import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition } from "../competitions";
@@ -594,7 +595,7 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     expect(settings.capacity).toBe(8);
   });
 
-  it("Community org: offline entry fee is allowed; only online (Stripe) fees need Pro", async () => {
+  it("Community org: offline AND card entry fees are both allowed (V310)", async () => {
     const { orgId, orgSlug, ownerId } = await seedOrg("community");
     const owner = asOwner(orgId, ownerId);
     const { competition, division } = await rig(owner);
@@ -616,9 +617,8 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     }, "http://t.local");
     expect(res.registration.status).toBe("pending");
 
-    // Since spec 2026-07-12 the Pro gate rides the chosen METHOD, not the
-    // Connect flag: an offline fee stays allowed even with charges enabled
-    // (the org may take cards elsewhere but run this division in cash)…
+    // An offline fee stays allowed even with charges enabled (the org may take
+    // cards elsewhere but run this division in cash)…
     await sql`update organizations set stripe_charges_enabled = true where id = ${orgId}`;
     const offlineStill = await putRegistrationSettings(owner, division.id, {
       enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "usd",
@@ -626,18 +626,23 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     });
     expect(offlineStill.fee_cents).toBe(500);
 
-    // …while explicitly choosing the card method still needs Pro.
-    await expect(
-      putRegistrationSettings(owner, division.id, {
-        enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "usd",
-        form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
-        payment_method: "stripe",
-      }),
-    ).rejects.toThrow(PaymentRequiredError);
+    // …and since V310 (D19) the card method needs only live Connect, not a
+    // plan. Community pays for it in the rate instead — 8% vs Pro's 2%
+    // (registration.fee_percent, see entitlements-v2.test.ts).
+    const card = await putRegistrationSettings(owner, division.id, {
+      enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "usd",
+      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+      payment_method: "stripe",
+    });
+    expect(card.payment_method).toBe("stripe");
   });
 
   it("capacity above the plan's entrant quota is rejected at save", async () => {
-    const { orgId, ownerId } = await seedOrg("community"); // entrants.per_division.max = 16
+    // community entrants.per_division.max = 32 (V311, was 16); the capacity
+    // below is 64 — over the community cap, and deliberately equal to the
+    // EVENT PASS value so a pass leaking into an unpassed org would show up
+    // here as a missing rejection rather than a silently larger allowance.
+    const { orgId, ownerId } = await seedOrg("community");
     const owner = asOwner(orgId, ownerId);
     const { division } = await rig(owner);
     await expect(
@@ -792,11 +797,23 @@ describe.skipIf(!HAS_DB)("payment method settings (spec §3)", () => {
     expect(ok.charges_enabled).toBe(true);
   });
 
-  it("community org cannot pick the card method (registration.paid gate)", async () => {
+  // V310 (D19) inverted this: a community org CAN pick the card method. The
+  // registration.paid gate itself is unchanged and still fires — the only thing
+  // that can deny the key now is a staff override, which is the second half.
+  it("community org can pick the card method, but a registration.paid deny still blocks it", async () => {
     const { orgId, ownerId } = await seedOrg("community");
     const owner = asOwner(orgId, ownerId);
     const { division } = await rig(owner);
     await sql`update organizations set stripe_charges_enabled = true where id = ${orgId}`;
+    const ok = await putRegistrationSettings(owner, division.id, {
+      ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 500,
+    });
+    expect(ok.payment_method).toBe("stripe");
+
+    await sql`insert into org_entitlement_overrides (org_id, feature_key, bool_value)
+              values (${orgId}, 'registration.paid', false)
+              on conflict (org_id, feature_key) do update set bool_value = false`;
+    await invalidateOrgEntitlements(orgId);
     await expect(
       putRegistrationSettings(owner, division.id, {
         ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 500,
@@ -1042,6 +1059,18 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
     expect(bRow.expires_at).not.toBeNull();
   });
 
+  // sweepRegistrations() is the hourly PLATFORM cron (POST /api/cron/registrations,
+  // authenticated by the global CRON_SECRET — there is no org in scope at that call
+  // site). It is global by design, so its returned {reminded, expired, promoted}
+  // tallies also count rows this test never created: every other org living in the
+  // shared dev database, including registrations left by earlier runs that have
+  // since aged into the T-24h reminder window. Asserting on those tallies made this
+  // test fail with shapes like "expected 36 to be 1".
+  //
+  // The fix is identity, not arithmetic: every assertion below is pinned to THIS
+  // run's own registration ids (`a`/`b`, fresh UUIDs), so the sweep's behaviour is
+  // checked exactly — reminded once and only once, expired once, promoted once —
+  // regardless of what else the sweep legitimately picks up.
   it("sweep reminds once inside the last 24h, then expires and promotes", async () => {
     const { orgSlug, competition, division } = await stripeRig({ capacity: 1 });
     const a = await submitRegistration(orgSlug, competition.slug, {
@@ -1052,34 +1081,73 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
     }, "http://test.local");
     expect(b.registration.status).toBe("waitlisted");
 
-    // Inside the last 24h → one reminder, exactly once.
+    // Checkout sessions minted for OUR registration only — the sweep mints one per
+    // due row platform-wide, and each carries metadata.registration_id.
+    const checkoutsFor = (id: string) =>
+      stripeMock.checkoutCreate.mock.calls.filter(
+        ([args]) => (args as { metadata?: { registration_id?: string } })
+          ?.metadata?.registration_id === id,
+      ).length;
+    const regRow = async (id: string) => {
+      const [row] = await sql<RegistrationRow[]>`
+        select * from registrations where id = ${id}`;
+      return row;
+    };
+    const auditCount = async (type: string, id: string) => {
+      const [row] = await sql<{ n: string }[]>`
+        select count(*)::text as n from competition_events
+        where type = ${type} and payload->>'registration_id' = ${id}`;
+      return Number(row.n);
+    };
+
+    // Inside the last 24h → one reminder for A, exactly once.
     await sql`update registrations set expires_at = now() + interval '10 hours'
               where id = ${a.registration.id}`;
+    expect((await regRow(a.registration.id)).reminded_at).toBeNull();
     stripeMock.checkoutCreate.mockClear();
     const first = await sweepRegistrations("http://test.local");
-    expect(first.reminded).toBe(1);
-    expect(stripeMock.checkoutCreate).toHaveBeenCalledTimes(1); // fresh session for the email
-    const second = await sweepRegistrations("http://test.local");
-    expect(second.reminded).toBe(0); // reminded_at guard
+    expect(first.reminded).toBeGreaterThanOrEqual(1); // A is among the reminded
+    const remindedAt = (await regRow(a.registration.id)).reminded_at;
+    expect(remindedAt).not.toBeNull();
+    expect(checkoutsFor(a.registration.id)).toBe(1); // fresh session for the email
 
-    // Past the deadline → expired + waitlist promoted with a fresh window.
+    // reminded_at guard: a second sweep must not re-remind A.
+    await sweepRegistrations("http://test.local");
+    expect((await regRow(a.registration.id)).reminded_at).toEqual(remindedAt);
+    expect(checkoutsFor(a.registration.id)).toBe(1); // still exactly one, no re-send
+
+    // Past the deadline → A expired + B promoted with a fresh window.
     await sql`update registrations set expires_at = now() - interval '1 hour'
               where id = ${a.registration.id}`;
     const res = await sweepRegistrations("http://test.local");
-    expect(res.expired).toBe(1);
-    expect(res.promoted).toBe(1);
-    const [aRow] = await sql<RegistrationRow[]>`
-      select * from registrations where id = ${a.registration.id}`;
+    expect(res.expired).toBeGreaterThanOrEqual(1);
+    expect(res.promoted).toBeGreaterThanOrEqual(1);
+    const aRow = await regRow(a.registration.id);
     expect(aRow.status).toBe("expired");
-    const [bRow] = await sql<RegistrationRow[]>`
-      select * from registrations where id = ${b.registration.id}`;
+    const bRow = await regRow(b.registration.id);
     expect(bRow.status).toBe("pending");
     expect(bRow.amount_cents).toBe(500);
     expect(bRow.expires_at).not.toBeNull();
+    // Expired once, and the expiry audit names B as the row it promoted.
+    expect(await auditCount("registration.expired", a.registration.id)).toBe(1);
+    expect(await auditCount("registration.promoted", b.registration.id)).toBe(1);
+    const [expiredEvent] = await sql<{ promoted_registration_id: string }[]>`
+      select payload->>'promoted_registration_id' as promoted_registration_id
+      from competition_events
+      where type = 'registration.expired'
+        and payload->>'registration_id' = ${a.registration.id}`;
+    expect(expiredEvent.promoted_registration_id).toBe(b.registration.id);
+    expect(checkoutsFor(b.registration.id)).toBe(1); // promotion mints B's pay link
 
-    // A sweep with nothing due is a no-op.
-    const idle = await sweepRegistrations("http://test.local");
-    expect(idle).toEqual({ reminded: 0, expired: 0, promoted: 0 });
+    // A further sweep is a no-op for OUR rows: nothing re-expires, nothing
+    // re-promotes, and B (a fresh 48h window) is not yet reminder-due.
+    await sweepRegistrations("http://test.local");
+    expect(await regRow(a.registration.id)).toEqual(aRow);
+    expect(await regRow(b.registration.id)).toEqual(bRow);
+    expect(await auditCount("registration.expired", a.registration.id)).toBe(1);
+    expect(await auditCount("registration.promoted", b.registration.id)).toBe(1);
+    expect(checkoutsFor(a.registration.id)).toBe(1); // A stays reminded exactly once
+    expect(checkoutsFor(b.registration.id)).toBe(1); // B not re-linked
   });
 
   it("reconciles by session from /r/[ref] (token-free return)", async () => {

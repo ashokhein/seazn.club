@@ -1,12 +1,45 @@
 "use client";
 
 import { useState } from "react";
-import { loadStripe } from "@stripe/stripe-js";
 import { EmbeddedCheckoutProvider, EmbeddedCheckout } from "@stripe/react-stripe-js";
 import { track, EVENTS } from "@/lib/analytics";
 import { fetchPassCheckoutClientSecret } from "@/lib/billing-checkout-client";
+import { stripePromise } from "@/lib/stripe-browser";
+import { Modal } from "@/components/modal";
 
-const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "");
+/**
+ * The Event Pass checkout sheet (spec D11) — the same chrome the Pro checkout
+ * uses on the billing page (billing-actions.tsx): `<Modal size="lg">`, so the
+ * two purchases differ only in what is being sold.
+ *
+ * Deliberately NOT titled "Complete your upgrade" like Pro's. Pro's title
+ * describes a plan change; this is one $29 payment for one competition and
+ * leaves the org on community. D12/D13 exist precisely because buyers conflate
+ * the pass with a subscription, so the chrome must not add to that. Parity here
+ * is of presentation, not of wording.
+ *
+ * Split out from PassUpgradeButton because it holds no state of its own: the
+ * button owns the client_secret, this owns how it is shown.
+ */
+export function PassCheckoutSheet({
+  clientSecret,
+  onClose,
+}: {
+  clientSecret: string;
+  onClose: () => void;
+}) {
+  return (
+    <Modal title="Complete your purchase" size="lg" onClose={onClose}>
+      {/* Stripe's iframe measures and resizes itself, so this container must not
+          impose a height — Modal already caps the sheet at 85vh and scrolls. The
+          provider is mounted only once we hold a secret; remounting it would
+          restart the checkout session. */}
+      <EmbeddedCheckoutProvider stripe={stripePromise} options={{ clientSecret }}>
+        <EmbeddedCheckout />
+      </EmbeddedCheckoutProvider>
+    </Modal>
+  );
+}
 
 /** In-page Event Pass purchase via Stripe Embedded Checkout — same up-front
  *  client_secret contract as the Pro UpgradeButton (billing-actions.tsx). */
@@ -32,24 +65,7 @@ export function PassUpgradeButton({
   }
 
   if (clientSecret) {
-    return (
-      <div className="mt-2">
-        {/* Full-bleed at phone widths (v3/02 §3.2) — same escape as the Pro
-            embedded checkout so the Stripe iframe gets the full viewport. */}
-        <div className="-mx-9 w-auto sm:mx-0">
-          <EmbeddedCheckoutProvider stripe={stripePromise} options={{ clientSecret }}>
-            <EmbeddedCheckout />
-          </EmbeddedCheckoutProvider>
-        </div>
-        <button
-          type="button"
-          onClick={() => setClientSecret(null)}
-          className="mt-3 text-xs text-slate-500 hover:underline"
-        >
-          Cancel
-        </button>
-      </div>
-    );
+    return <PassCheckoutSheet clientSecret={clientSecret} onClose={() => setClientSecret(null)} />;
   }
 
   return (

@@ -2,22 +2,35 @@ import { formatMinor, passPrice, proPrice, type Currency } from "@/lib/currency"
 
 // Single source for plan-card bullets — shared by /pricing and the home
 // ticket stubs so the two can never drift (design/v3/12 §4.8).
+// V311 (D22): these numbers are pinned against the live matrix by
+// lib/__tests__/pricing-cards.test.ts. Moving a cap means moving the copy here
+// AND in billing.community.* / billing.pro.* across all four dictionaries.
 export const FREE_FEATURES = [
-  "1 active competition, 2 divisions",
-  "16 entrants per division",
+  "5 active competitions, 2 divisions",
+  "32 entrants per division",
   "League, groups + knockout & swiss formats",
-  "Free-event online registration",
+  // V310: charging entry fees is free on every plan — only the platform cut
+  // differs (8 / 5 / 2 / 1%). "Free-event" undersold Community and made the
+  // pass look like it unlocked payment rather than a cheaper rate.
+  "Online registration & entry fees (8% fee)",
   "Live standings & public dashboard",
   "Listed on the seazn.club showcase",
 ];
 
+// Every bullet here must be something the event_pass column actually LIFTS off
+// community. "Custom branding & PDF/XLSX exports" was neither: `branding` and
+// `exports` are true for Community (V310) and `dashboard.branding` — the org
+// theme colour — stays denied to the pass. The real grant is `exports.branded`.
+// The first four are also the home-page stub (ticketTiers slices them).
 export const PASS_FEATURES = [
   "Upgrades ONE competition, forever",
-  "10 divisions, 32 entrants each",
+  "10 divisions, 64 entrants each",
   "Advanced formats — double elim, ladders",
-  "Entry fees via Stripe (5% platform fee)",
-  "Custom branding & PDF/XLSX exports",
+  "5% platform fee on entry fees, not 8%",
+  "Branded exports & public player cards",
+  "Sponsor tiers & paid sponsorship packages",
   "Realtime scoreboard & slideshow",
+  "10 AI schedule runs per division",
 ];
 
 export const PRO_FEATURES = [
