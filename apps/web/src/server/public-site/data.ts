@@ -35,7 +35,7 @@ export interface PublicOrg {
   id: string;
   name: string;
   slug: string;
-  branded: boolean; // Pro branding entitlement — removable platform footer
+  branded: boolean; // dashboard.branding (paid) — removable seazn footer + OG badge
   /** Org brand color blob — emptied in-query without dashboard.branding. */
   branding: unknown;
   /** Resolved logo URL — null without the branding entitlement or a logo. */
@@ -171,12 +171,19 @@ async function loadOrg(orgSlug: string): Promise<PublicOrg | null> {
   // Branding reads are entitlement-gated in the query, same rule as the
   // public_*_v views: theme color needs dashboard.branding, logo needs
   // branding (the key that also unlocks the upload).
+  //
+  // `branded` is NOT the logo/name gate — it is the "may remove the seazn
+  // attribution" perk (the Powered-by footer and the OG-card badge; see
+  // PublicOrg.branded and og/post-card.tsx). That is a PAID differentiator, so
+  // it keys off dashboard.branding, NOT `branding`. V310 freed `branding` to
+  // every plan, which silently switched the footer off for community orgs and
+  // killed the free-tier growth lever until this was re-gated.
   const [row] = await sql<
     (Omit<PublicOrg, "logo"> & { logo_url: string | null; logo_storage_path: string | null })[]
   >`
     select o.id, o.name, o.slug, o.about, o.default_locale,
            o.stripe_charges_enabled as card_payments,
-           org_has_feature(o.id, 'branding') as branded,
+           org_has_feature(o.id, 'dashboard.branding') as branded,
            case when org_has_feature(o.id, 'dashboard.branding')
                 then o.branding else '{}'::jsonb end as branding,
            case when org_has_feature(o.id, 'branding') then o.logo_url end as logo_url,

@@ -556,17 +556,22 @@ async function p72Suite(): Promise<void> {
   const sessionDelete = await v1(owner, `/api/v1/competitions/${cleanComp.id}`, "DELETE");
   check("p72: the owner session still deletes a money-free comp", sessionDelete.status === 200 || sessionDelete.status === 204);
 
-  // === COMMUNITY PATH: card division closed as payments_unavailable, but an
-  // Event-Pass comp with the same settings stays open (P2-10 entitlement). ===
+  // === COMMUNITY PATH: since V310 freed registration.paid to every plan, a
+  // card division's availability turns on CONNECT, not on plan. Both sides are
+  // proved below. registration.paid is no longer a pass differentiator, so the
+  // old "an Event Pass reopens a community card division" scenario is obsolete —
+  // the pass's real grants (entrants 64, 5% fee, branded exports, realtime, …)
+  // are covered by the pass-scope suites and the entrants/fee checks above. ===
   const comm = newSession();
   const commWho = await signIn(comm, `p72comm_${tag}@example.com`);
   const commOrgId = commWho.org_id;
   const commOrgs = (await call(comm, "/api/orgs")) as { id: string; slug: string }[];
   const commSlug = commOrgs.find((o) => o.id === commOrgId)!.slug;
-  await setConnect(commOrgId, true); // Connect LIVE → isolate the entitlement dimension
 
-  // Unlisted (still served by the public register panel) sidesteps the
-  // community dashboard.public.max = 1 quota so both probe comps can coexist.
+  // Connect NOT enabled → a Stripe-fee division cannot take money and closes
+  // with an honest reason. Unlisted sidesteps the community dashboard.public.max
+  // quota; the active-competition cap is 5 (V311) so both probe comps coexist.
+  await setConnect(commOrgId, false);
   const brokeComp = v1data<{ id: string; slug: string }>(
     await v1(comm, "/api/v1/competitions", "POST", { name: `P72 Card Cup ${tag}`, visibility: "unlisted" }),
   );
@@ -583,39 +588,37 @@ async function p72Suite(): Promise<void> {
   );
   const brokeDivs = v1data<{ divisions: { open: boolean; closed_reason: string | null }[] }>(brokeInfo).divisions;
   check(
-    "p72: community card division reads payments_unavailable (P2-10)",
+    "p72: a community card division with Connect OFF reads payments_unavailable",
     brokeInfo.status === 200 &&
       brokeDivs.length === 1 &&
       brokeDivs[0]!.open === false &&
       brokeDivs[0]!.closed_reason === "payments_unavailable",
   );
 
-  // Free the community org's single active-competition slot (its read is done)
-  // so the pass comp can be created — then the pass grants THAT comp's paid
-  // entitlement independently.
-  await v1(comm, `/api/v1/competitions/${brokeComp.id}`, "PATCH", { status: "archived" });
-  const passInfoComp = v1data<{ id: string; slug: string }>(
-    await v1(comm, "/api/v1/competitions", "POST", { name: `P72 Pass Card Cup ${tag}`, visibility: "unlisted" }),
+  // Connect LIVE → the same free-plan org's card division is OPEN: paid intake
+  // is free-tier now (V310), monetised through the community fee, not gated.
+  await setConnect(commOrgId, true);
+  const okComp = v1data<{ id: string; slug: string }>(
+    await v1(comm, "/api/v1/competitions", "POST", { name: `P72 Open Card Cup ${tag}`, visibility: "unlisted" }),
   );
-  const passInfoDiv = v1data<{ id: string }>(
-    await v1(comm, `/api/v1/competitions/${passInfoComp.id}/divisions`, "POST", {
+  const okDiv = v1data<{ id: string }>(
+    await v1(comm, `/api/v1/competitions/${okComp.id}/divisions`, "POST", {
       name: "Card", sport_key: "generic", variant_key: "score",
       config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
     }),
   );
-  await seedStripeFeeDivision(passInfoDiv.id);
-  await grantPass(commOrgId, passInfoComp.id); // the pass grants registration.paid for THIS comp
-  const passInfo = await v1(
+  await seedStripeFeeDivision(okDiv.id);
+  const okInfo = await v1(
     newSession(),
-    `/api/v1/public/orgs/${commSlug}/competitions/${passInfoComp.slug}/registration`,
+    `/api/v1/public/orgs/${commSlug}/competitions/${okComp.slug}/registration`,
   );
-  const passDivs = v1data<{ divisions: { open: boolean; closed_reason: string | null }[] }>(passInfo).divisions;
+  const okDivs = v1data<{ divisions: { open: boolean; closed_reason: string | null }[] }>(okInfo).divisions;
   check(
-    "p72: an Event-Pass comp keeps its card division open (P2-10 scoped)",
-    passInfo.status === 200 &&
-      passDivs.length === 1 &&
-      passDivs[0]!.open === true &&
-      passDivs[0]!.closed_reason === null,
+    "p72: with Connect live a community card division is OPEN (registration.paid is free-tier)",
+    okInfo.status === 200 &&
+      okDivs.length === 1 &&
+      okDivs[0]!.open === true &&
+      okDivs[0]!.closed_reason === null,
   );
 
   // === CRON: the hourly stuck-webhook sweep (Task 12/P1-7). ===
@@ -3544,14 +3547,16 @@ async function pricingV3Suite(): Promise<void> {
   const who = await signIn(buyer, `pass_${tag}@example.com`);
   const orgId = who.org_id;
 
-  // Free caps (v3 matrix): 1 active competition, 2 divisions inside it.
+  // Free caps (v3.1 matrix, V311): community now runs up to 5 active
+  // competitions (was 1), still 2 divisions inside each. The pass lifts the
+  // per-competition DIVISION cap — that is the boundary this test drives below.
   const compA = v1data<{ id: string; slug: string }>(
     await v1(buyer, "/api/v1/competitions", "POST", { name: `Pass Cup ${tag}` }),
   );
-  const blockedComp = await v1(buyer, "/api/v1/competitions", "POST", {
+  const secondComp = await v1(buyer, "/api/v1/competitions", "POST", {
     name: `Second Cup ${tag}`,
   });
-  check("p36: 2nd active competition blocked on free (402)", blockedComp.status === 402);
+  check("p36: 2nd active competition allowed on free (V311 raised the cap to 5)", secondComp.status === 201);
   for (const name of ["Div 1", "Div 2"]) {
     const d = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
       name,
@@ -3565,7 +3570,8 @@ async function pricingV3Suite(): Promise<void> {
   });
   check("p36: 3rd division blocked on free (402)", div3Blocked.status === 402);
 
-  // Event Pass on comp A lifts ITS caps and frees the active-comp slot…
+  // Event Pass on comp A lifts ITS per-competition caps — the 3rd division it
+  // just refused now lands.
   await grantPass(orgId, compA.id);
   const div3 = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
     name: "Div 3",
@@ -3575,9 +3581,10 @@ async function pricingV3Suite(): Promise<void> {
   const compB = v1data<{ id: string }>(
     await v1(buyer, "/api/v1/competitions", "POST", { name: `Sibling Cup ${tag}` }),
   );
-  check("p36: passed comp leaves the active-comp quota", !!compB.id);
+  check("p36: a sibling competition is created (community runs several)", !!compB.id);
 
-  // …while the sibling competition stays on community limits.
+  // …while the sibling competition — no pass — stays on the community DIVISION
+  // cap, proving the pass is scoped to comp A and not the org.
   for (const name of ["S1", "S2"]) {
     await v1(buyer, `/api/v1/competitions/${compB.id}/divisions`, "POST", {
       name,
@@ -4358,8 +4365,11 @@ async function schedRegV3Suite(
   const fFixtures = await html(free, `/o/${freeOrg.slug}/c/${fComp.slug}/d/${fDiv.slug}?tab=fixtures`);
   check("division fixtures page renders (free)", fFixtures.status === 200);
 
-  // Dual payments on community (spec 2026-07-12): offline fees stay plan-free;
-  // the card method is the paid layer even with Connect flipped on.
+  // Dual payments on community: offline fees were always plan-free, and since
+  // V310 (registration.paid on every plan) the CARD method is free too — the
+  // platform monetises it through the higher community fee (8% vs pro's 2%),
+  // not by gating it. It still requires Connect, so it is refused UNTIL Connect
+  // is live, then allowed.
   const fOffline = await v1(free, `/api/v1/divisions/${fDiv.id}/registration-settings`, "PUT", {
     enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "gbp",
     form_fields: [], payment_method: "offline",
@@ -4370,7 +4380,7 @@ async function schedRegV3Suite(
     enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "gbp",
     form_fields: [], payment_method: "stripe",
   });
-  check("pay card method is Pro-gated on community (402)", fCard.status === 402);
+  check("pay card method allowed on community once Connect is live (V310)", fCard.status === 200);
   await setConnect(freeVer.org_id, false);
 }
 
