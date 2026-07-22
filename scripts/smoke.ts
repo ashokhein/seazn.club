@@ -846,12 +846,17 @@ async function p72Suite(): Promise<void> {
   const brokeDivs = v1data<{
     divisions: { open: boolean; closed_reason: string | null }[];
   }>(brokeInfo).divisions;
+  // V309 (community_branding_and_paid_registration) tore down the paywall:
+  // charging an entry fee is free for everyone, monetised by an 8% fee instead.
+  // Connect is LIVE here, so with the entitlement wall gone the card division is
+  // now OPEN — where before V309 it read payments_unavailable purely because the
+  // org was community.
   check(
-    "p72: community card division reads payments_unavailable (P2-10)",
+    "p72: community card division is OPEN since V309 (Connect live, paid registration free)",
     brokeInfo.status === 200 &&
       brokeDivs.length === 1 &&
-      brokeDivs[0]!.open === false &&
-      brokeDivs[0]!.closed_reason === "payments_unavailable",
+      brokeDivs[0]!.open === true &&
+      brokeDivs[0]!.closed_reason === null,
   );
 
   // Free the community org's single active-competition slot (its read is done)
@@ -5030,7 +5035,10 @@ async function schedRegV3Suite(
     form_fields: [],
     payment_method: "stripe",
   });
-  check("pay card method is Pro-gated on community (402)", fCard.status === 402);
+  // V309 made charging an entry fee free for everyone (monetised by an 8% fee),
+  // so a community org with Connect set up can now select card — where before it
+  // was Pro-gated with a 402. The offline path above has always been allowed.
+  check("pay card method allowed on community since V309 (200)", fCard.status === 200);
   await setConnect(freeVer.org_id, false);
 }
 
