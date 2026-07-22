@@ -10,6 +10,8 @@ Bring committee members, scorers and spectators into your organisation from **Se
 
 Type an address, pick a role and press **Send invite**. The person gets an email with a personal join link that's valid for **7 days**, works exactly once, and **only for the address it was sent to** — another account opening it is turned away. Pending email invites stay listed in the Team panel until they're accepted, expire or you revoke them — you can also copy the personal link from there and share it yourself.
 
+Someone new to Seazn Club doesn't need to set anything up first: opening the link and pressing **Accept** creates their account, signs them in and joins them in one step — the email itself is the proof of identity, so there's no password and no second sign-in email. Anyone who **already** has a Seazn Club account signs in as usual before accepting, so a forwarded link can never get into an existing account.
+
 ## Invite by link
 
 Create a shareable link and drop it in the group chat. Anyone who opens it joins as the role you picked. Links last **24 hours**, work for any number of people, and stay listed in the Team panel until they expire or you revoke them — closing the tab doesn't lose the link.

@@ -142,3 +142,72 @@ export async function acceptInvite(invite: InviteRow, userId: string): Promise<A
   });
   return "scope_added";
 }
+
+/**
+ * Post-accept landing (doc 13 §4): scorers — and a member who just gained a
+ * scorer assignment — go to My matches; everyone else to the dashboard. Shared
+ * by the logged-in accept route and the one-click claim route.
+ */
+export function inviteLanding(role: OrgRole, outcome: AcceptOutcome): string {
+  return role === "scorer" || outcome === "scope_added" ? "/my-matches" : "/dashboard";
+}
+
+export type ClaimResult =
+  | { needs_signin: true }
+  | {
+      needs_signin: false;
+      user_id: string;
+      org_id: string;
+      org_name: string;
+      role: OrgRole;
+      outcome: AcceptOutcome;
+    };
+
+/**
+ * DB core of the one-click email-invite accept (POST /api/invites/[token]/claim).
+ * For an invitee whose account is NEW or UNVERIFIED it resolves/creates the
+ * account, joins the org, and marks the address verified — the caller then mints
+ * the session cookie. A VERIFIED account is refused (`needs_signin`) so a
+ * forwarded invite can never take over a real account; the caller falls back to
+ * normal sign-in. Shareable links (no bound email) are likewise not claimable
+ * this way. Throws (HttpError) for a missing/expired/revoked/used invite — no
+ * account is created in that case.
+ */
+export async function claimEmailInvite(token: string): Promise<ClaimResult> {
+  const invite = await loadInvite(token);
+  if (!invite) throw new HttpError(404, "Invite not found");
+  const problem = inviteProblem(invite);
+  if (problem) throw new HttpError(400, problem);
+  // Shareable links carry no bound email — possession proves no inbox, so they
+  // can never auto-login; the recipient signs in, then accepts.
+  if (!invite.email) return { needs_signin: true };
+
+  const [account] = await sql<{ id: string; email_verified: boolean }[]>`
+    select id, email_verified from users
+    where email = ${invite.email} and deleted_at is null limit 1`;
+  // A verified account has protectable data: never hand a forwarded invite a
+  // session to it. Sign-in-first is the only way in.
+  if (account?.email_verified) return { needs_signin: true };
+
+  const { resolveOrCreateUser } = await import("@/lib/users");
+  const userId = account?.id ?? (await resolveOrCreateUser(invite.email));
+  if (!userId) throw new HttpError(500, "Could not resolve the invited account");
+
+  // Join first (grantInvite burns the single use); only then confirm the
+  // address. If the join throws (e.g. a seat quota) no session is minted and the
+  // account stays inert. acceptInvite's email-match check trivially holds — the
+  // account was resolved BY the invited address.
+  const outcome = await acceptInvite(invite, userId);
+  await sql`update users set email_verified = true where id = ${userId}`;
+
+  const { getOrgRole } = await import("@/lib/auth");
+  const role = (await getOrgRole(invite.org_id, userId)) ?? invite.role;
+  return {
+    needs_signin: false,
+    user_id: userId,
+    org_id: invite.org_id,
+    org_name: invite.org_name,
+    role,
+    outcome,
+  };
+}

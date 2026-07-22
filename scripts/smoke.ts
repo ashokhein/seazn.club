@@ -216,6 +216,39 @@ async function main() {
     call(admin, `/api/invites/${emailInvite.token}/accept`, "POST", {}),
   );
 
+  // One-click claim (auto-login + join) for a brand-new email invitee: the
+  // emailed link proves the inbox, so no separate sign-in round-trip is needed.
+  // A fresh session that has never authenticated posts the claim and comes back
+  // both signed in and a member.
+  const claimer = newSession();
+  const claimed = (await call(
+    claimer,
+    `/api/invites/${emailInvite.token}/claim`,
+    "POST",
+  )) as { needs_signin?: boolean; role?: string };
+  check("email invite claim signs the new invitee in", !!claimer.cookies["seazn_session"]);
+  check("email invite claim joins with the invite role", claimed.role === "viewer");
+  check("email invite claim sets the active org", claimer.cookies["seazn_org"] === org.id);
+  // Single-use: the now-spent invite refuses a second claim.
+  await expectFail("email invite claim is single-use", () =>
+    call(newSession(), `/api/invites/${emailInvite.token}/claim`, "POST"),
+  );
+  // The claim just joined the invitee as a real member of `org`, consuming a
+  // member seat the rest of this suite budgets for: free-plan members.max is 3
+  // (owner + the viewer above + the admin invited below), so leaving the invitee
+  // in would 402 that admin's accept on members.max and abort the whole run. The
+  // auto-join is already asserted — release the seat so the downstream member
+  // arithmetic (and "org has 3 members") is exactly as it was before this block.
+  const seatDb = smokeDb();
+  try {
+    await seatDb`
+      delete from org_members
+      where org_id = ${org.id}
+        and user_id in (select id from users where email = ${emailInvitee})`;
+  } finally {
+    await seatDb.end();
+  }
+
   // Invite-by-link (team settings): multi-use with a 24-hour expiry — it must
   // outlive the tab that created it and stay listed for later copying.
   const linkInvite = (await call(admin, `/api/orgs/${org.id}/invites`, "POST", {
@@ -7123,6 +7156,10 @@ async function cleanup(tag: string): Promise<void> {
     `trial_dep_${tag}@example.com`,
     `pm_staff_${tag}@example.com`,
     `pm_owner_${tag}@example.com`,
+    // The one-click email-invite claimee (auto-login + join). Its org_members
+    // row is dropped inline after the claim assertions to free the seat; this
+    // clears the leftover user row at teardown.
+    `emailinvitee_${tag}@example.com`,
   ];
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {
