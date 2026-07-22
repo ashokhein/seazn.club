@@ -9,9 +9,17 @@ test("add a team to a club and manage its squad", async ({ page }) => {
   const teamName = `Squad ${TAG}`;
   const playerName = `Squaddie ${TAG}`;
 
-  const club = (await apiJson<{ id: string }>(page.request, "/api/v1/clubs", "POST", {
+  const clubRes = await apiJson<{ id: string }>(page.request, "/api/v1/clubs", "POST", {
     name: clubName,
-  })).data!;
+  });
+  // Surface the real status: a bare `.data!.id` crashes with an opaque
+  // "undefined (reading 'id')" that hides WHY the create failed (402 clubs.max
+  // on the shared pro org, 409 on a retry's duplicate name, …).
+  expect(
+    clubRes.status,
+    `POST /clubs failed (${clubRes.status}): ${JSON.stringify(clubRes.error)}`,
+  ).toBe(201);
+  const club = clubRes.data!;
   await apiJson(page.request, "/api/v1/persons", "POST", {
     full_name: playerName,
     consent: {},

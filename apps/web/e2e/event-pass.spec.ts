@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type APIRequestContext } from "@playwright/test";
 import Stripe from "stripe";
 import { randomBytes } from "node:crypto";
 import { TAG, apiJson, mintLoginPathBySql } from "./helpers";
@@ -209,6 +209,35 @@ async function signIn(page: Page, email: string): Promise<void> {
 const upgradeUrl = (rig: Rig, query = "") => `/o/${rig.orgSlug}/c/${rig.compSlug}/upgrade${query}`;
 
 /**
+ * Probe whether the SERVER's Stripe key can actually mint a pass checkout, so
+ * this money path skips cleanly on CI (dummy `sk_test_ci_e2e_dummy`) while a
+ * real key still RUNS it — the same probe-and-skip billing.spec.ts uses.
+ *
+ * CI's dummy key 5xxes: `getStripe().checkout.sessions.create` throws (or the
+ * event_pass price isn't synced → 503). A real key returns 200 with a
+ * client_secret. The `beforeAll` still HARD-FAILS a genuinely missing/garbage
+ * key (a developer who forgot `set -a; . ./.env.local` must see a failure, not a
+ * quiet green) — this only skips a *functional* probe that reports Stripe
+ * unusable. The pass-checkout idempotency key is org+comp+user scoped, so the
+ * session this mints is the SAME one `[data-pass-buy]` later reuses: no double
+ * session, no interference with U1's "exactly one pass, one intent" assertion.
+ *
+ * `request` must carry the signed-in owner's session (a `page.request`): the
+ * endpoint reads the active-org cookie (getActiveOrgId), so set it first.
+ */
+async function passCheckoutProbeStatus(
+  request: APIRequestContext,
+  orgId: string,
+  competitionId: string,
+): Promise<number> {
+  await apiJson(request, "/api/orgs/active", "POST", { org_id: orgId });
+  const probe = await apiJson(request, "/api/billing/pass-checkout", "POST", {
+    competition_id: competitionId,
+  });
+  return probe.status;
+}
+
+/**
  * The real purchase. Fills Stripe's embedded checkout with the 4242 test card
  * and waits for the app's own return URL.
  *
@@ -332,6 +361,9 @@ for (const vp of VIEWPORTS) {
     let rig: Rig;
     let divisionIds: string[] = [];
     let passIntent = "";
+    // Set true by U1's probe only when the server's Stripe is usable; the rest
+    // of the serial money path gates on it so CI (dummy key) skips cleanly.
+    let stripeUsable = false;
 
     test(`U1 · buys the pass from the gate that bit, and the gate lifts (${vp.name})`, async ({
       page,
@@ -340,6 +372,16 @@ for (const vp of VIEWPORTS) {
       rig = await seedRig(vp.label);
       divisionIds = [];
       await signIn(page, rig.ownerEmail);
+
+      // Gate the whole money path on the server's Stripe being usable (see
+      // passCheckoutProbeStatus): CI's dummy key 5xxes and the suite skips; a
+      // real key returns 200 and everything below RUNS for real.
+      const probeStatus = await passCheckoutProbeStatus(page.request, rig.orgId, rig.compId);
+      stripeUsable = probeStatus === 200;
+      test.skip(probeStatus >= 500, "Stripe not usable (dummy key) — skipping the pass money path");
+      // Pin the non-skip path to a real 200 so this can never silently become an
+      // unconditional skip (billing.spec.ts:255-257 learned this the hard way).
+      expect(probeStatus).toBe(200);
 
       // Community's `divisions.per_competition.max` is 2 — fill it, then bite.
       for (const name of ["One", "Two"]) {
@@ -432,6 +474,7 @@ for (const vp of VIEWPORTS) {
     test(`U6 · division 11 hits a Pro-only ceiling and the pass is never re-sold (${vp.name})`, async ({
       page,
     }) => {
+      test.skip(!stripeUsable, "Stripe not usable — U1 skipped the pass money path");
       test.setTimeout(180_000);
       await signIn(page, rig.ownerEmail);
 
@@ -488,6 +531,7 @@ for (const vp of VIEWPORTS) {
     test(`U7 · public registration passes 32 on the passed competition only (${vp.name})`, async ({
       page,
     }) => {
+      test.skip(!stripeUsable, "Stripe not usable — U1 skipped the pass money path");
       test.setTimeout(180_000);
       await signIn(page, rig.ownerEmail);
 
@@ -562,6 +606,7 @@ for (const vp of VIEWPORTS) {
     test(`U12 · the billing page names the purchase and links its invoice (${vp.name})`, async ({
       page,
     }) => {
+      test.skip(!stripeUsable, "Stripe not usable — U1 skipped the pass money path");
       await signIn(page, rig.ownerEmail);
       await page.goto(`/o/${rig.orgSlug}/settings/billing`);
 
@@ -582,6 +627,7 @@ for (const vp of VIEWPORTS) {
     test(`U14 · upgrading to Pro credits the pass and leaves it dormant (${vp.name})`, async ({
       page,
     }) => {
+      test.skip(!stripeUsable, "Stripe not usable — U1 skipped the pass money path");
       test.setTimeout(120_000);
       await signIn(page, rig.ownerEmail);
 
@@ -624,6 +670,7 @@ for (const vp of VIEWPORTS) {
     test(`U15 · a Pro org that downgrades keeps the pass on its competition (${vp.name})`, async ({
       page,
     }) => {
+      test.skip(!stripeUsable, "Stripe not usable — U1 skipped the pass money path");
       test.setTimeout(120_000);
       await signIn(page, rig.ownerEmail);
 
@@ -665,6 +712,7 @@ for (const vp of VIEWPORTS) {
     test(`U16 · a full refund revokes the pass and the offer comes back (${vp.name})`, async ({
       page,
     }) => {
+      test.skip(!stripeUsable, "Stripe not usable — U1 skipped the pass money path");
       test.setTimeout(180_000);
       await signIn(page, rig.ownerEmail);
 
@@ -748,6 +796,12 @@ test.describe("checkout sheet vs the cookie banner", () => {
       try {
         const page = await ctx.newPage();
         await signIn(page, rig.ownerEmail);
+        // Same money-path gate as the serial block: this test opens the REAL
+        // Stripe iframe, which never mounts under CI's dummy key. Skip cleanly
+        // there; a real key returns 200 and the hit-test RUNS.
+        const probeStatus = await passCheckoutProbeStatus(page.request, rig.orgId, rig.compId);
+        test.skip(probeStatus >= 500, "Stripe not usable (dummy key) — skipping");
+        expect(probeStatus).toBe(200);
         await page.goto(upgradeUrl(rig));
         // The banner must actually be up, or this proves nothing.
         await expect(page.getByRole("button", { name: "Reject" })).toBeVisible({ timeout: 20_000 });
