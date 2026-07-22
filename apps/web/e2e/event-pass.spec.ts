@@ -122,9 +122,12 @@ async function seedRig(label: string): Promise<Rig> {
       values (${"EP Org " + tag}, ${orgSlug}, 'active', ${userId}) returning id`;
     await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${userId}, 'owner')`;
     // A raw org insert leaves NO subscriptions row; the resolver's pass arm only
-    // fires while the resolved plan is 'community', so pin it explicitly.
-    await sql`insert into subscriptions (org_id, plan_key, status)
-              values (${orgId}, 'community', 'active')`;
+    // fires while the resolved plan is 'community', so pin it explicitly. V314:
+    // the subscription IS the group and the org points at it.
+    const [{ id: subId }] = await sql<{ id: string }[]>`
+      insert into subscriptions (owner_user_id, plan_key, status)
+      values (${userId}, 'community', 'active') returning id`;
+    await sql`update organizations set subscription_id = ${subId} where id = ${orgId}`;
     await sql`
       insert into sports (key, name, module_version, position_catalog)
       values ('generic', 'Generic', '1.0.0', ${sql.json({ groups: [], lineup: { size: 1, benchMax: 0 } })})
@@ -182,7 +185,9 @@ async function passRows(orgId: string): Promise<{ competition_id: string; stripe
 async function stripeCustomerId(orgId: string): Promise<string | null> {
   return withDb(async (sql) => {
     const [row] = await sql<{ stripe_customer_id: string | null }[]>`
-      select stripe_customer_id from subscriptions where org_id = ${orgId}`;
+      select s.stripe_customer_id from subscriptions s
+      join organizations o on o.subscription_id = s.id
+      where o.id = ${orgId}`;
     return row?.stripe_customer_id ?? null;
   });
 }
@@ -191,7 +196,8 @@ async function stripeCustomerId(orgId: string): Promise<string | null> {
  *  keyed on an org THIS spec created, never a shared account. */
 async function setPlan(orgId: string, planKey: string): Promise<void> {
   await withDb((sql) => sql`
-    update subscriptions set plan_key = ${planKey}, status = 'active' where org_id = ${orgId}`);
+    update subscriptions set plan_key = ${planKey}, status = 'active'
+     where id = (select subscription_id from organizations where id = ${orgId})`);
 }
 
 /** Sign in as a seeded owner. Mints the login token in the DB rather than
