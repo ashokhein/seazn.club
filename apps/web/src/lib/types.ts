@@ -108,6 +108,9 @@ export const signupSchema = loginSchema;
 // The slug is generated automatically; only a display name is collected.
 export const createOrgSchema = z.object({
   name: z.string().min(1).max(60),
+  /** Opt in to sharing a bill at creation (#212): attach the new org onto this
+   *  billing group the actor pays for. Absent = its own bill (the default). */
+  attachToGroupId: z.string().uuid().optional(),
 }).strict();
 
 export const renameOrgSchema = z.object({
