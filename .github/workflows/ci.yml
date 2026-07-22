@@ -153,7 +153,7 @@ jobs:
       NEXT_PUBLIC_SUPABASE_URL: ""
       NEXT_TELEMETRY_DISABLED: "1"
       # v4 AI smoke (scripts/smoke.ts v4AiSuite): point the server's
-      # anthropicClient() at the smoke-started model fixture on 4319 with a
+      # Anthropic provider at the smoke-started model fixture on 4319 with a
       # non-empty dummy key, so the fixture-gated AI checks actually run in CI
       # instead of silently skipping. Mirrors e2e.yml. No real Anthropic call.
       SCHEDULING_AI_BASE_URL: "http://127.0.0.1:4319"

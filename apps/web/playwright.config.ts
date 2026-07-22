@@ -89,7 +89,7 @@ export default defineConfig({
     reuseExistingServer: true,
     // v4 Task 17: point the AI Schedule Architect at the e2e model fixture
     // server (ai-fixture-server.ts, started by the spec on AI_FIXTURE_PORT) and
-    // give the client a key so anthropicClient() never 503s. Only affects a
+    // give the client a key so the resolved AI provider never 503s. Only affects a
     // server Playwright itself starts; a reused server must be booted with these
     // vars (the spec's local-run recipe does so). Harmless to every other spec.
     env: {

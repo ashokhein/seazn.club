@@ -17,27 +17,171 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { runAiPlan, schedulingAiModel } from "../schedule-ai";
-import type { PackFixture, PackPerson, SchedulePack } from "../schedule-ai";
+import { runAiPlan, schedulingAiModel, zonedIso } from "../schedule-ai";
+import type { PackAssignment, PackFixture, PackPerson, SchedulePack } from "../schedule-ai";
+import { toSlotConfig } from "../schedule";
+import { slotFixtures, type SchedulableFixture } from "@seazn/engine/scheduling";
+import { applyPolicy } from "../../ai/openrouter-policy";
 
-// vitest does not read .env.local; load just the key we need if absent.
-if (!process.env.ANTHROPIC_API_KEY) {
+// vitest does not read .env.local; load just the keys we need if absent.
+// OPENROUTER_API_KEY only lives in the worktree ROOT .env.local (not
+// apps/web/.env.local), unlike ANTHROPIC_API_KEY which is in both — so each
+// key independently tries both paths rather than assuming one holds both.
+function loadEnvKeyIfAbsent(name: string) {
+  if (process.env[name]) return;
   for (const rel of ["../../../../.env.local", "../../../../../../.env.local"]) {
     const p = path.resolve(__dirname, rel);
     if (!fs.existsSync(p)) continue;
-    const m = fs.readFileSync(p, "utf8").match(/^ANTHROPIC_API_KEY=(.+)$/m);
+    const m = fs.readFileSync(p, "utf8").match(new RegExp(`^${name}=(.*)$`, "m"));
     if (m) {
-      process.env.ANTHROPIC_API_KEY = m[1].trim().replace(/^["']|["']$/g, "");
+      const raw = m[1].trim();
+      let value: string;
+      if (raw[0] === '"' || raw[0] === "'") {
+        // Quoted: take up to the matching closing quote, discarding any
+        // trailing inline comment (e.g. `"sk-..."   # required for X`).
+        const quote = raw[0];
+        const end = raw.indexOf(quote, 1);
+        value = end === -1 ? raw.slice(1) : raw.slice(1, end);
+      } else {
+        // Unquoted: take up to the first whitespace-then-`#`.
+        const hashIdx = raw.search(/\s#/);
+        value = (hashIdx === -1 ? raw : raw.slice(0, hashIdx)).trim();
+      }
+      process.env[name] = value;
       break;
     }
   }
 }
+loadEnvKeyIfAbsent("ANTHROPIC_API_KEY");
+loadEnvKeyIfAbsent("OPENROUTER_API_KEY");
 
 const LIVE = process.env.AI_AB_LIVE === "1";
+
+// --- OpenRouter served-provider probe ---------------------------------------
+// `AiChatResponse` (server/ai/provider.ts) deliberately exposes only
+// `servedModel` and a boolean `refused` — neither says which VENDOR actually
+// served a candidate call (task-11-brief's endpoint/quantisation column) nor
+// preserves the raw finish_reason/native_finish_reason/message.refusal shape
+// (open question 2). A first attempt at this wrapped `globalThis.fetch` to
+// peek at the real bench call's response via a clone; that MISS-FIRED badly —
+// every Anthropic-direct arm (including the pre-existing, previously-working
+// low/no-think and haiku cells, untouched by this task) started failing
+// instantly with zero tokens the moment the wrap was installed, for reasons
+// not worth chasing down against a $25 cap. This does a SEPARATE, minimal,
+// cheap request instead (a few tokens, ~$0.00005 observed 2026-07-21) —
+// same model, same policy, own isolated fetch call — right after the real
+// bench call. It cannot regress runAiPlan's own transport because it never
+// touches global fetch, and it answers the same question (which vendor and,
+// where knowable, which quantisation serves this model under the allowlist)
+// without staking the whole bench on an interception trick.
+type ServedProviderProbe = {
+  provider?: string;
+  finishReason?: string;
+  nativeFinishReason?: string;
+  refusal?: string | null;
+  error?: string;
+};
+
+async function probeServedProvider(model: string): Promise<ServedProviderProbe> {
+  const base = process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
+  try {
+    const res = await fetch(`${base}/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(
+        applyPolicy({
+          model,
+          max_tokens: 8,
+          messages: [{ role: "user", content: "Say OK." }],
+        }),
+      ),
+    });
+    const body = await res.json();
+    if (!res.ok) return { error: `HTTP ${res.status}: ${JSON.stringify(body).slice(0, 300)}` };
+    const choice = body?.choices?.[0];
+    return {
+      provider: typeof body?.provider === "string" ? body.provider : undefined,
+      finishReason: choice?.finish_reason,
+      nativeFinishReason: choice?.native_finish_reason,
+      refusal: choice?.message?.refusal ?? null,
+    };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
 
 // --- deterministic ids -----------------------------------------------------
 const uuid = (tag: string, n: number) =>
   `00000000-0000-4000-8000-${`${tag}${n}`.padStart(12, "0").slice(-12)}`;
+
+// --- realistic draft --------------------------------------------------------
+// PRODUCTION never asks the model to cold-build. buildSchedulePack's `generate`
+// path (schedule-ai.ts) runs the SAME greedy solver used here — slotFixtures —
+// and ships its output as the pack's `draft`: a legal-but-naive starting
+// schedule the model only has to improve ("The draft is legal but naive:
+// improve it, don't worship it" — SYSTEM_PROMPT). Building these packs with an
+// empty draft measured a HARDER task than the product ever runs (cold-build vs
+// refine), which is why bracket-16 — where a legal starting point matters most —
+// failed candidates that production would never have handed a blank slate.
+//
+// This mirrors the production draft step exactly: same solver, same SlotConfig
+// (via toSlotConfig), feed order respected via roundNo, the pinned card fed in
+// as `locked`, and only the fixtures the solver actually placed appear (an
+// unplaceable fixture is left for the model, exactly as in production). No DB,
+// no obstacles/siblings (synthetic packs have none), so `existing: []`.
+function withGreedyDraft(pack: SchedulePack): SchedulePack {
+  const tz = pack.division.tz;
+  const personIdsByEntrant = new Map<string, string[]>();
+  for (const p of pack.people) {
+    for (const eid of p.entrant_ids) {
+      const list = personIdsByEntrant.get(eid) ?? personIdsByEntrant.set(eid, []).get(eid)!;
+      list.push(p.person_id);
+    }
+  }
+  const schedulable: SchedulableFixture[] = pack.fixtures.movable.map((f) => ({
+    id: f.id,
+    roundNo: f.round,
+    ...(f.pool !== null ? { poolId: f.pool } : {}),
+    divisionId: pack.division.id,
+    ...(f.home !== null ? { home: f.home } : {}),
+    ...(f.away !== null ? { away: f.away } : {}),
+    people: [
+      ...(f.home !== null ? personIdsByEntrant.get(f.home) ?? [] : []),
+      ...(f.away !== null ? personIdsByEntrant.get(f.away) ?? [] : []),
+    ],
+    ...(f.pinned && f.current.at !== null && f.current.court !== null
+      ? { locked: { court: f.current.court, startAt: new Date(f.current.at).getTime() } }
+      : {}),
+  }));
+  // `now` seeds the solver's scan lower bound AND its 365-day horizon when the
+  // config carries no explicit startAt (these synthetic packs don't). Production
+  // divisions set startAt to the event start, so the horizon covers the session
+  // windows; passing 0 here would put the horizon at 1971 and the 2026 windows
+  // beyond it, so the solver would place NOTHING (an empty draft — the very bug
+  // this change removes). Seed it from the earliest session window instead.
+  const now = Math.min(...pack.settings.sessionWindows.map((w) => new Date(w.from).getTime()));
+  const config = toSlotConfig(
+    {
+      division_id: pack.division.id,
+      config: pack.settings,
+      tz,
+      updated_at: "",
+    } as unknown as Parameters<typeof toSlotConfig>[0],
+    now,
+  );
+  const result = slotFixtures({ fixtures: schedulable, config, existing: [] });
+  const draft: PackAssignment[] = result.assignments
+    .map((a) => ({
+      fixture_id: a.fixtureId,
+      scheduled_at: zonedIso(a.startAt, tz),
+      court_label: a.court,
+    }))
+    .sort((x, y) => (x.scheduled_at < y.scheduled_at ? -1 : x.scheduled_at > y.scheduled_at ? 1 : 0));
+  return { ...pack, draft };
+}
 
 // --- Pack A: 15 teams, 3 pools of 5, round robin within pool = 30 fixtures --
 function teamsPack(): { pack: SchedulePack; movable: Set<string> } {
@@ -107,7 +251,7 @@ function teamsPack(): { pack: SchedulePack; movable: Set<string> } {
     prior: null,
     officials: [],
   };
-  return { pack, movable: new Set(movable.map((f) => f.id)) };
+  return { pack: withGreedyDraft(pack), movable: new Set(movable.map((f) => f.id)) };
 }
 
 // --- Pack B: 50 individual entrants, R1 knockout = 25 fixtures -------------
@@ -173,7 +317,131 @@ function individualsPack(): { pack: SchedulePack; movable: Set<string> } {
     prior: null,
     officials: [],
   };
-  return { pack, movable: new Set(movable.map((f) => f.id)) };
+  return { pack: withGreedyDraft(pack), movable: new Set(movable.map((f) => f.id)) };
+}
+
+// --- Pack C: 16-entrant single-elim bracket, two independent halves each
+//     going QF(4) -> SF(2) -> Final(1) = 8 QF + 4 SF + 2 Finals = 14 fixtures.
+//     Unlike teams-15 (round robin, no ordering) and individuals-50 (flat R1,
+//     no ordering), this pack's SF/Final rows carry real `feeds.winner_to` /
+//     `feeds.after` chains — a fixture cannot legally start before every
+//     fixture it depends on has finished (H6). Four people are entered under
+//     two entrants each, spanning BOTH halves of the bracket, so a naive
+//     schedule can double-book a shared player across otherwise-unrelated
+//     matches (H4). Capacity is deliberately tighter than teams-15: 2 courts
+//     (not 3) over a 5.5h window (not 12h) with one blackout, so the solver
+//     cannot just spread everything out — 14 fixtures x 40min (30 match +
+//     10 gap) = 560 court-minutes against 660 available minus a 45min
+//     blackout = 615, ~9% slack even before the dependency chain forces idle
+//     gaps. One fixture is pinned to test that a locked slot survives.
+function bracketPack(): { pack: SchedulePack; movable: Set<string> } {
+  const entrants = [
+    ...Array.from({ length: 8 }, (_, i) => ({ id: uuid("e", i), name: `A${i + 1}`, pool: "A", seed: i + 1 })),
+    ...Array.from({ length: 8 }, (_, i) => ({ id: uuid("e", i + 8), name: `B${i + 1}`, pool: "B", seed: i + 1 })),
+  ];
+
+  const e = (i: number) => uuid("e", i);
+  const f = (i: number) => uuid("f", i);
+
+  // Round 1 (quarter-finals): 8 fixtures, both halves known up front.
+  const qf = [
+    [0, 1], [2, 3], [4, 5], [6, 7], // half A
+    [8, 9], [10, 11], [12, 13], [14, 15], // half B
+  ].map(([h, a], i) => ({
+    id: f(i),
+    ext_key: `qf-${i}`,
+    round: 1,
+    seq: i,
+    pool: i < 4 ? "A" : "B",
+    home: e(h),
+    away: e(a),
+    // f8/f9 = half A's semis, f10/f11 = half B's semis (assigned below).
+    feeds: { winner_to: f(8 + Math.floor(i / 2)), after: [] as string[] },
+    current: { at: null as string | null, court: null as string | null },
+    pinned: false,
+  }));
+
+  // Round 2 (semi-finals): 4 fixtures, entrants unknown until their QFs land.
+  const sf = [0, 1, 2, 3].map((i) => ({
+    id: f(8 + i),
+    ext_key: `sf-${i}`,
+    round: 2,
+    seq: i,
+    pool: i < 2 ? "A" : "B",
+    home: null as string | null,
+    away: null as string | null,
+    feeds: { winner_to: f(12 + Math.floor(i / 2)), after: [f(2 * i), f(2 * i + 1)] },
+    current: { at: null as string | null, court: null as string | null },
+    pinned: false,
+  }));
+
+  // Round 3 (finals): one per half.
+  const final = [0, 1].map((i) => ({
+    id: f(12 + i),
+    ext_key: `final-${i}`,
+    round: 3,
+    seq: i,
+    pool: i === 0 ? "A" : "B",
+    home: null as string | null,
+    away: null as string | null,
+    feeds: { winner_to: null as string | null, after: [f(8 + 2 * i), f(8 + 2 * i + 1)] },
+    current: { at: null as string | null, court: null as string | null },
+    pinned: false,
+  }));
+
+  const movable: PackFixture[] = [...qf, ...sf, ...final];
+
+  // Pin the very first quarter-final to its opening slot — a locked card the
+  // plan must echo back unchanged (structuralCheck rejects any drift).
+  const pinnedFixture = movable[0];
+  pinnedFixture.pinned = true;
+  pinnedFixture.current = { at: "2026-08-01T09:00:00+01:00", court: "Court 1" };
+
+  // Four shared players, each entered under two entrants that sit in
+  // DIFFERENT quarter-finals, two of them crossing from half A into half B —
+  // there is no bracket-structural reason these fixtures avoid each other,
+  // so only crossPersonClash keeps them apart.
+  const people: PackPerson[] = [
+    { person_id: uuid("p", 0), entrant_ids: [e(0), e(9)] }, // A-QF1 <-> B-QF1
+    { person_id: uuid("p", 1), entrant_ids: [e(3), e(12)] }, // A-QF2 <-> B-QF3
+    { person_id: uuid("p", 2), entrant_ids: [e(6), e(15)] }, // A-QF4 <-> B-QF4
+    { person_id: uuid("p", 3), entrant_ids: [e(2), e(10)] }, // A-QF2 <-> B-QF2
+  ];
+
+  const pack: SchedulePack = {
+    mode: "generate",
+    division: {
+      id: "ab-bracket",
+      name: "Knockout Cup",
+      sport: "generic",
+      tz: "Europe/London",
+    },
+    settings: {
+      matchMinutes: 30,
+      gapMinutes: 10,
+      perEntrantMinRest: 0,
+      courts: ["Court 1", "Court 2"],
+      sessionWindows: [{ from: "2026-08-01T09:00:00+01:00", to: "2026-08-01T14:30:00+01:00" }],
+      blackouts: [{ court: "Court 2", from: "2026-08-01T11:00:00+01:00", to: "2026-08-01T11:45:00+01:00" }],
+      constraints: {
+        restMin: 45,
+        noBackToBack: true,
+        startWindows: [],
+        fieldFairness: "balance",
+        parallelism: "mixed",
+        crossPersonClash: "hard",
+      },
+    },
+    entrants,
+    people,
+    fixtures: { movable, obstacles: [] },
+    draft: [],
+    instruction:
+      "Schedule the full knockout: two independent halves (A and B) of quarter-finals, semi-finals then a final, across two courts in a tight morning window. A semi-final cannot start until both quarter-finals that feed it have finished, and a final cannot start until both its semi-finals have finished. Four players are entered twice under different entrants and must never be double-booked, including across the two halves. Court 2 is unavailable 11:00-11:45. The first quarter-final (A1 v A2) is locked to Court 1 at 09:00 and must not move.",
+    prior: null,
+    officials: [],
+  };
+  return { pack: withGreedyDraft(pack), movable: new Set(movable.map((fx) => fx.id)) };
 }
 
 // --- cost -------------------------------------------------------------------
@@ -196,6 +464,23 @@ type Row = {
   unschedulable: number;
   placed: number;
   error: string;
+  /** Transport this arm ran on. */
+  provider: string;
+  /** Vendor name from the raw OpenRouter response body's `provider` field
+   *  (task-11-brief: "capture the serving provider ... record it, with the
+   *  known quantisation"). "anthropic (direct)" for the Anthropic transport,
+   *  where there is no OpenRouter routing to report. */
+  servedProvider: string;
+  /** Real provider-reported cost (AiPlanResult.usage.cost_usd) — OpenRouter's
+   *  `usage.cost` is the actual billed dollar figure per request, not a
+   *  flat-rate estimate, which matters because listUsd/introUsd below assume
+   *  Anthropic's own $3/$15 rate and are WRONG for non-Anthropic candidates.
+   *  Prefer this field for every arm; listUsd/introUsd are kept only for the
+   *  pre-existing Anthropic-only arms' historical comparison. */
+  realUsd: number | null;
+  /** Raw refusal diagnostics (open question 2), JSON-stringified, only when
+   *  the arm ran on OpenRouter and a peek was captured. */
+  rawPeek: string;
 };
 
 const rows: Row[] = [];
@@ -210,6 +495,14 @@ type Arm = {
   /** Cell label — arms must not aggregate together just because they share an
    *  effort value. */
   label: string;
+  /** Transport for this arm. Defaults to "anthropic" — an unset arm behaves
+   *  exactly as before this field existed. Sets AI_PROVIDER, which
+   *  selectProvider() reads once per run. */
+  provider?: "anthropic" | "openrouter";
+  /** Overrides SCHEDULING_AI_MAX_TOKENS for this arm. Unset arms fall back to
+   *  schedule-ai.ts's own default (32_000) — nothing about the shipped path
+   *  changes unless an arm sets this explicitly. */
+  maxTokens?: number;
 };
 
 async function bench(
@@ -217,13 +510,16 @@ async function bench(
   build: () => { pack: SchedulePack; movable: Set<string> },
   arm: Arm,
 ) {
-  const { effort, thinking = "adaptive", model, budget, label: cellEffort } = arm;
+  const { effort, thinking = "adaptive", model, budget, label: cellEffort, provider = "anthropic", maxTokens } = arm;
   process.env.SCHEDULING_AI_EFFORT = effort;
   process.env.SCHEDULING_AI_THINKING = thinking;
+  process.env.AI_PROVIDER = provider;
   if (model) process.env.SCHEDULING_AI_MODEL = model;
   else delete process.env.SCHEDULING_AI_MODEL;
   if (budget) process.env.SCHEDULING_AI_THINKING_BUDGET = String(budget);
   else delete process.env.SCHEDULING_AI_THINKING_BUDGET;
+  if (maxTokens) process.env.SCHEDULING_AI_MAX_TOKENS = String(maxTokens);
+  else delete process.env.SCHEDULING_AI_MAX_TOKENS;
   const { pack, movable } = build();
   const t0 = Date.now();
   const row: Row = {
@@ -240,6 +536,10 @@ async function bench(
     unschedulable: -1,
     placed: -1,
     error: "",
+    provider,
+    servedProvider: provider === "anthropic" ? "anthropic (direct)" : "",
+    realUsd: null,
+    rawPeek: "",
   };
   try {
     const res = await runAiPlan(pack, movable);
@@ -250,27 +550,90 @@ async function bench(
     row.warnings = res.warnings.length;
     row.unschedulable = res.unschedulable.length;
     row.placed = res.proposal.length;
+    row.realUsd = res.usage.cost_usd;
   } catch (err) {
     row.error = err instanceof Error ? `${(err as { code?: string }).code ?? ""} ${err.message}`.trim() : String(err);
+    // runAiPlan rides accumulated usage on AI_PLAN_FAILED/AI_PLAN_TIMEOUT
+    // (HttpError.extra.usage — schedule-ai.ts's usageNow()) specifically so a
+    // failed-but-expensive run can still be metered. The pre-existing catch
+    // above never read it, so a real-money round that failed after
+    // generating (e.g. a corrective retry that still didn't parse) silently
+    // reported in=0/out=0/real=$null — looked free, wasn't.
+    const usage = (err as { extra?: { usage?: { input_tokens?: number; output_tokens?: number; cost_usd?: number | null } } })
+      ?.extra?.usage;
+    if (usage) {
+      row.in = usage.input_tokens ?? 0;
+      row.out = usage.output_tokens ?? 0;
+      row.realUsd = usage.cost_usd ?? null;
+    }
   }
   row.secs = Math.round((Date.now() - t0) / 100) / 10;
+  if (provider === "openrouter" && model) {
+    const probe = await probeServedProvider(model);
+    row.servedProvider = probe.provider ?? probe.error ?? "(unknown)";
+    row.rawPeek = JSON.stringify(probe);
+  }
   // Rates per the arm's model. Reconciliation against the real account balance
   // on 2026-07-20 ($15 -> $9 over ~$5.6 of list-rate runs) says this account is
   // billed at LIST, not the introductory sonnet rate — so `listUsd` is the
-  // column to trust and `introUsd` is kept only for comparison.
+  // column to trust and `introUsd` is kept only for comparison. Both assume
+  // Anthropic's own rate table, so they are WRONG for non-Anthropic
+  // candidates — `row.realUsd` (provider-reported) is the authoritative
+  // figure for every arm; these two are kept only for the pre-existing
+  // Anthropic-only cells' historical comparison.
   const [inRate, outRate] = model === "claude-haiku-4-5" ? [1, 5] : [3, 15];
   row.listUsd = usd(row.in, row.out, inRate, outRate);
   row.introUsd = usd(row.in, row.out, model === "claude-haiku-4-5" ? 1 : 2, model === "claude-haiku-4-5" ? 5 : 10);
   rows.push(row);
   process.stdout.write(
     `\n[${name} / effort=${cellEffort}] ${row.secs}s  rounds=${row.rounds}  in=${row.in} out=${row.out}  ` +
-      `list=$${row.listUsd} intro=$${row.introUsd}  blocking=${row.blocking} warnings=${row.warnings} ` +
-      `unsched=${row.unschedulable} placed=${row.placed}${row.error ? `  ERROR: ${row.error}` : ""}\n`,
+      `real=$${row.realUsd ?? "null"} list=$${row.listUsd} intro=$${row.introUsd}  blocking=${row.blocking} ` +
+      `warnings=${row.warnings} unsched=${row.unschedulable} placed=${row.placed} ` +
+      `served=${row.servedProvider}${row.rawPeek ? ` peek=${row.rawPeek}` : ""}` +
+      `${row.error ? `  ERROR: ${row.error}` : ""}\n`,
   );
   // A swallowed error is worse than a red test: it looks like a cheap run.
   expect(row.error, `${name}/${cellEffort} failed`).toBe("");
   return row;
 }
+
+// Free (no AI, no billing) guard on the draft fix: every pack must ship a
+// non-empty, court-legal greedy draft — never the cold-start empty draft that
+// made bracket-16 an unfair proxy for production. Runs on a normal `vitest run`
+// (it is NOT under skipIf(!LIVE)), so a regression that empties or corrupts the
+// draft fails fast without a billed run. Logs coverage (placed/movable) so a
+// partial draft — legal, but with fixtures the solver left for the model — is
+// visible rather than silent.
+describe("greedy draft (free sanity)", () => {
+  const packs: [string, () => { pack: SchedulePack; movable: Set<string> }][] = [
+    ["teams-15", teamsPack],
+    ["individuals-50", individualsPack],
+    ["bracket-16", bracketPack],
+  ];
+  for (const [name, build] of packs) {
+    it(`${name} ships a non-empty, court-legal draft`, () => {
+      const { pack, movable } = build();
+      expect(pack.draft.length, `${name}: draft is empty (cold-start regression)`).toBeGreaterThan(0);
+      expect(pack.draft.length).toBeLessThanOrEqual(movable.size);
+      // No two placements share a court+start (the one clash the solver must
+      // never emit — physically impossible, blocks in the referee).
+      const slots = new Set<string>();
+      for (const a of pack.draft) {
+        const key = `${a.court_label}@${a.scheduled_at}`;
+        expect(slots.has(key), `${name}: draft double-books ${key}`).toBe(false);
+        slots.add(key);
+      }
+      // The pinned bracket card must survive into the draft unchanged.
+      if (name === "bracket-16") {
+        const pinned = pack.fixtures.movable.find((f) => f.pinned)!;
+        const placed = pack.draft.find((a) => a.fixture_id === pinned.id);
+        expect(placed?.scheduled_at).toBe(pinned.current.at);
+        expect(placed?.court_label).toBe(pinned.current.court);
+      }
+      process.stdout.write(`[draft] ${name}: placed ${pack.draft.length}/${movable.size}\n`);
+    });
+  }
+});
 
 // Adaptive thinking is noisy: a repeated cell varied 2.1x run-to-run on
 // 2026-07-20 (individuals-50 @ high, 7,911 vs 16,923 output tokens for a
@@ -291,6 +654,17 @@ function agg(cell: Row[], pick: (r: Row) => number) {
 describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
   // Worst observed cell is ~1095s; leave room for REPEATS of it plus repairs.
   const T = Math.max(3_300_000, REPEATS * 1_400_000);
+
+  // Sanity-check the env parser above rather than the key's contents — never
+  // print the key itself. A prior bug here let a trailing inline `# comment`
+  // on a quoted .env.local line leak into the parsed value (167 chars,
+  // containing a U+2192), which the SDK silently rejected before any network
+  // call. The real key is 108 chars, pure ASCII (<= U+007E).
+  it("loaded ANTHROPIC_API_KEY has no trailing comment / non-ASCII bleed", () => {
+    const key = process.env.ANTHROPIC_API_KEY ?? "";
+    expect(key.length).toBe(108);
+    expect(/^[\x00-\x7E]*$/.test(key)).toBe(true);
+  });
 
   const cell = (name: string, build: () => { pack: SchedulePack; movable: Set<string> }, arm: Arm) =>
     it(`${name} @ ${arm.label} x${REPEATS}`, async () => {
@@ -315,18 +689,168 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
   // fewer thinking tokens per round against possibly MORE rounds, and each
   // repair re-sends the prior round's output as input.
 
-  // 1. Same model, no reasoning. The control: isolates thinking from model.
-  cell("teams-15", teamsPack, { effort: "low", thinking: "disabled", label: "low/no-think" });
-  cell("individuals-50", individualsPack, { effort: "low", thinking: "disabled", label: "low/no-think" });
+  // These four are settled (2026-07-20) and default-on so a plain
+  // `AI_AB_LIVE=1` run reproduces them — but they are BILLED, so a targeted
+  // rerun (e.g. STAGE5 bracket-16 only) sets AI_AB_OPEN_Q=0 to skip them and
+  // spend nothing outside its own arms.
+  if (process.env.AI_AB_OPEN_Q !== "0") {
+    // 1. Same model, no reasoning. The control: isolates thinking from model.
+    cell("teams-15", teamsPack, { effort: "low", thinking: "disabled", label: "low/no-think" });
+    cell("individuals-50", individualsPack, { effort: "low", thinking: "disabled", label: "low/no-think" });
 
-  // 2. Cheaper model, token-capped reasoning. haiku-4-5 is $1/$5 against
-  //    sonnet-5's $3/$15 and needs no port — same SDK, same zodOutputFormat,
-  //    same parsed_output (verified live 2026-07-20). It rejects adaptive and
-  //    effort, so it runs on a legacy budget_tokens ceiling instead, which is
-  //    the token-precise knob effort never gave us.
-  const HAIKU = { model: "claude-haiku-4-5", budget: 8_000, effort: "low" as const };
-  cell("teams-15", teamsPack, { ...HAIKU, label: "haiku/budget8k" });
-  cell("individuals-50", individualsPack, { ...HAIKU, label: "haiku/budget8k" });
+    // 2. Cheaper model, token-capped reasoning. haiku-4-5 is $1/$5 against
+    //    sonnet-5's $3/$15 and needs no port — same SDK, same zodOutputFormat,
+    //    same parsed_output (verified live 2026-07-20). It rejects adaptive and
+    //    effort, so it runs on a legacy budget_tokens ceiling instead, which is
+    //    the token-precise knob effort never gave us.
+    const HAIKU = { model: "claude-haiku-4-5", budget: 8_000, effort: "low" as const };
+    cell("teams-15", teamsPack, { ...HAIKU, label: "haiku/budget8k" });
+    cell("individuals-50", individualsPack, { ...HAIKU, label: "haiku/budget8k" });
+  }
+
+  // --- Task 11: the OpenRouter shootout -----------------------------------
+  // design/v4/06-openrouter-shootout.md is written from this section's
+  // output.
+  //
+  // 2026-07-21 user decision: do NOT run `anthropic/claude-sonnet-5` via
+  // OpenRouter, at all — the fidelity and no-think control arms that used to
+  // live here (same model, different transport) are removed and must not be
+  // re-run. Consequence, recorded here so it isn't silently lost: without a
+  // same-model-both-transports control, a poor candidate number cannot be
+  // cleanly attributed between the model and our OpenRouter adapter. The
+  // adapter's standing evidence is instead the e2e suite (ai-architect.spec.ts,
+  // 7/7 on both dialects against the fixture) and its unit tests, plus the two
+  // real wire bugs already found and fixed against them — weaker than a live
+  // same-model control. Every candidate number below should be read with that
+  // caveat, not as a clean apples-to-apples result.
+  const CONTROL_DIRECT: Arm = {
+    model: "claude-sonnet-5",
+    effort: "high",
+    provider: "anthropic",
+    label: "sonnet-5 direct",
+  };
+  // Candidates from design/v4/05-openrouter-candidates.md's policy-routable
+  // named entrants. Quantisation per openrouter-policy.ts: z-ai/glm-5.2 and
+  // moonshotai/kimi-k2.6 each have exactly one first-party endpoint
+  // (z-ai/fp8, moonshotai/int4); x-ai/grok-4.5's is not independently pinned
+  // to a single endpoint, only to the xai vendor slug — recorded per-row from
+  // the live response's `provider` field either way (see `servedProvider`).
+  //
+  // task-11b brief (2026-07-21): run everything at the shipped 32,000-token
+  // default — do NOT raise SCHEDULING_AI_MAX_TOKENS for any arm here. The
+  // earlier exploratory grok-4.5 run (§10) doubled the ceiling to 64,000 to
+  // isolate "can Grok produce a plan at all"; this run instead tests the
+  // production contract as shipped. If a candidate exhausts 32k on reasoning
+  // and returns no content, that IS the recorded result for that arm.
+  const CANDIDATES: Arm[] = [
+    { model: "x-ai/grok-4.5", effort: "high", provider: "openrouter", label: "grok-4.5" },
+    { model: "z-ai/glm-5.2", effort: "high", provider: "openrouter", label: "glm-5.2" },
+    { model: "moonshotai/kimi-k2.6", effort: "high", provider: "openrouter", label: "kimi-k2.6" },
+  ];
+  const stage1Arms: Arm[] = [CONTROL_DIRECT, ...CANDIDATES];
+
+  // Stage 1 — screen. n=1 (set AI_AB_REPEATS=1), teams-15 (dense pack) only.
+  // Enable with AI_AB_SHOOTOUT_STAGE1=1.
+  if (process.env.AI_AB_SHOOTOUT_STAGE1 === "1") {
+    for (const arm of stage1Arms) cell("teams-15", teamsPack, arm);
+  }
+
+  // Stage 2 — full. n=3 (set AI_AB_REPEATS=3), both packs, all four arms
+  // (task-11b brief: control + 3 candidates, n=3, both packs, effort high,
+  // 32k default). Enable with AI_AB_SHOOTOUT_STAGE2=1.
+  const stage2Arms: Arm[] = [CONTROL_DIRECT, ...CANDIDATES];
+  if (process.env.AI_AB_SHOOTOUT_STAGE2 === "1") {
+    for (const arm of stage2Arms) {
+      cell("teams-15", teamsPack, arm);
+      cell("individuals-50", individualsPack, arm);
+    }
+  }
+
+  // --- Task 12 prep: widened-allowlist candidates (2026-07-21) -----------
+  // openrouter-policy.ts's ALLOWED_PROVIDERS widened to six vendors this
+  // session (added google-vertex, openai). These two arms run under
+  // IDENTICAL conditions to the stage1 screen above (teams-15 only, n=1,
+  // effort high, 32k default, provider.only left at the widened allowlist —
+  // not overridden per-arm) so the numbers are directly comparable to
+  // CONTROL_DIRECT/CANDIDATES without re-running those already-recorded arms.
+  const WIDENED_CANDIDATES: Arm[] = [
+    { model: "google/gemini-3.5-flash-lite", effort: "high", provider: "openrouter", label: "gemini-3.5-flash-lite" },
+    { model: "openai/gpt-5.6-luna-pro", effort: "high", provider: "openrouter", label: "gpt-5.6-luna-pro" },
+  ];
+  // Enable with AI_AB_SHOOTOUT_STAGE1B=1.
+  if (process.env.AI_AB_SHOOTOUT_STAGE1B === "1") {
+    for (const arm of WIDENED_CANDIDATES) cell("teams-15", teamsPack, arm);
+  }
+
+  // --- Seventh arm (2026-07-21): google/gemini-3.6-flash, full Flash (not
+  // flash-lite, already run above) -----------------------------------------
+  // Same conditions as WIDENED_CANDIDATES: teams-15 only, n=1, effort high,
+  // 32k default, provider.only left at the six-vendor allowlist (google-vertex
+  // already present, no policy change needed). Own flag so re-running this
+  // file doesn't re-bill the two arms above. Enable with AI_AB_SHOOTOUT_STAGE1C=1.
+  const FLASH_CANDIDATE: Arm = {
+    model: "google/gemini-3.6-flash",
+    effort: "high",
+    provider: "openrouter",
+    label: "gemini-3.6-flash",
+  };
+  if (process.env.AI_AB_SHOOTOUT_STAGE1C === "1") {
+    cell("teams-15", teamsPack, FLASH_CANDIDATE);
+  }
+
+  // --- Task 12: 2x2x3 matrix on the narrowed allowlist (2026-07-21) --------
+  // ALLOWED_PROVIDERS narrowed to ["xai", "google-vertex"] this session; only
+  // grok-4.5 and gemini-3.6-flash are pursued from here. n=2 (set
+  // AI_AB_REPEATS=2), all three packs including the new bracket-16 pack,
+  // effort high, 32k default (maxTokens left unset — do NOT raise it).
+  // Own flag so re-running this file doesn't re-bill stages 1/1B/1C/2.
+  // Enable with AI_AB_SHOOTOUT_STAGE3=1.
+  const FINAL_ARMS: Arm[] = [
+    { model: "x-ai/grok-4.5", effort: "high", provider: "openrouter", label: "grok-4.5" },
+    { model: "google/gemini-3.6-flash", effort: "high", provider: "openrouter", label: "gemini-3.6-flash" },
+  ];
+  const FINAL_PACKS: [string, () => { pack: SchedulePack; movable: Set<string> }][] = [
+    ["teams-15", teamsPack],
+    ["individuals-50", individualsPack],
+    ["bracket-16", bracketPack],
+  ];
+  if (process.env.AI_AB_SHOOTOUT_STAGE3 === "1") {
+    for (const arm of FINAL_ARMS) {
+      for (const [name, build] of FINAL_PACKS) cell(name, build, arm);
+    }
+  }
+
+  // --- Bonus: 40k rescue-test on bracket-16 (2026-07-21, user request mid-run)
+  // The 32k-default STAGE3 result above is the delivered, spec-compliant
+  // matrix and is left untouched. This is a SEPARATE, explicitly-labeled
+  // exploratory rerun, scoped only to bracket-16 (the pack that failed for
+  // grok-4.5 and ran tight/over-cap for gemini-3.6-flash at 32k) — not a
+  // change to schedule-ai.ts's shipped SCHEDULING_AI_MAX_TOKENS default.
+  // Enable with AI_AB_SHOOTOUT_STAGE4=1.
+  const RESCUE_40K_ARMS: Arm[] = FINAL_ARMS.map((a) => ({ ...a, maxTokens: 40_000, label: `${a.label}/40k` }));
+  if (process.env.AI_AB_SHOOTOUT_STAGE4 === "1") {
+    for (const arm of RESCUE_40K_ARMS) cell("bracket-16", bracketPack, arm);
+  }
+
+  // --- Stage 5 (2026-07-22): bracket-16 rerun with a REALISTIC draft --------
+  // Stages 3/4 ran bracket-16 with a cold-start empty draft (draft: []). That
+  // was NOT the production usecase: buildSchedulePack always ships a legal
+  // greedy draft the model only refines. withGreedyDraft now fills every pack's
+  // draft from the same solver (verified 14/14 placed on bracket-16), so this
+  // rerun tests the same contract production runs: refine a legal bracket, not
+  // build one from nothing. Both FINAL_ARMS, bracket-16 only, effort high, 32k
+  // DEFAULT (maxTokens unset — the shipped ceiling, NOT the stage-4 40k rescue).
+  // n via AI_AB_REPEATS. Own flag so it doesn't re-bill stages 1/1B/1C/2/3/4.
+  // AI_AB_ONLY_ARM="<label>" narrows to one arm — used to re-run just grok-4.5
+  // (to characterise its intermittent OpenRouter transport parse flake) without
+  // re-billing gemini-3.6-flash, which already passed 2/2. Enable with
+  // AI_AB_SHOOTOUT_STAGE5=1.
+  const stage5Arms = process.env.AI_AB_ONLY_ARM
+    ? FINAL_ARMS.filter((a) => a.label === process.env.AI_AB_ONLY_ARM)
+    : FINAL_ARMS;
+  if (process.env.AI_AB_SHOOTOUT_STAGE5 === "1") {
+    for (const arm of stage5Arms) cell("bracket-16", bracketPack, arm);
+  }
 
   it("summary", () => {
     const roundMs = Number(process.env.SCHEDULING_AI_ROUND_TIMEOUT_MS) || 300_000;
@@ -344,19 +868,34 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
       const c = rows.filter((r) => `${r.pack}|${r.effort}` === k);
       const secs = agg(c, (r) => r.secs);
       const out = agg(c, (r) => r.out);
-      const cost = agg(c, (r) => r.introUsd);
+      // realUsd (provider-reported) is authoritative for every arm — see the
+      // Row type comment. introUsd assumes an Anthropic rate table and is
+      // wrong for non-Anthropic candidates, so it's only a fallback here for
+      // the rare case a round produced no reported cost at all.
+      const cost = agg(c, (r) => r.realUsd ?? r.introUsd);
       const spread = out.min > 0 ? round2(out.max / out.min) : 0;
       const clean = c.filter((r) => r.blocking === 0 && r.warnings === 0 && r.unschedulable === 0).length;
+      const served = [...new Set(c.map((r) => r.servedProvider))].join(", ");
       process.stdout.write(
         `${pack} @ ${effort}: secs mean=${secs.mean} [${secs.min}-${secs.max}] | ` +
           `out mean=${out.mean} [${out.min}-${out.max}] spread=${spread}x | ` +
-          `$intro mean=${cost.mean} [${cost.min}-${cost.max}] | clean ${clean}/${c.length}\n`,
+          `$ mean=${cost.mean} [${cost.min}-${cost.max}] | clean ${clean}/${c.length} | served=${served}\n`,
       );
     }
 
-    const total = rows.reduce((s, r) => s + r.introUsd, 0);
-    process.stdout.write(`\ntotal spend this bench (intro rates): $${Math.round(total * 10000) / 10000}\n`);
-    const expected = (process.env.AI_AB_BASELINE === "1" ? 8 : 4) * REPEATS;
+    const total = rows.reduce((s, r) => s + (r.realUsd ?? r.introUsd), 0);
+    process.stdout.write(`\ntotal spend this bench (real, provider-reported): $${Math.round(total * 10000) / 10000}\n`);
+    let expectedCells = 0;
+    if (process.env.AI_AB_OPEN_Q !== "0") expectedCells += 4; // default-on open-question + haiku cells
+    if (process.env.AI_AB_BASELINE === "1") expectedCells += 4;
+    if (process.env.AI_AB_SHOOTOUT_STAGE1 === "1") expectedCells += stage1Arms.length;
+    if (process.env.AI_AB_SHOOTOUT_STAGE2 === "1") expectedCells += stage2Arms.length * 2;
+    if (process.env.AI_AB_SHOOTOUT_STAGE1B === "1") expectedCells += WIDENED_CANDIDATES.length;
+    if (process.env.AI_AB_SHOOTOUT_STAGE1C === "1") expectedCells += 1;
+    if (process.env.AI_AB_SHOOTOUT_STAGE3 === "1") expectedCells += FINAL_ARMS.length * FINAL_PACKS.length;
+    if (process.env.AI_AB_SHOOTOUT_STAGE4 === "1") expectedCells += RESCUE_40K_ARMS.length;
+    if (process.env.AI_AB_SHOOTOUT_STAGE5 === "1") expectedCells += stage5Arms.length;
+    const expected = expectedCells * REPEATS;
     expect(rows.length).toBe(expected);
     expect(rows.every((r) => r.error === "")).toBe(true);
   });

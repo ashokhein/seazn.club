@@ -14,10 +14,16 @@ const SUB_PROCESSORS = [
     url: "https://supabase.com/privacy",
   },
   {
-    name: "Vercel",
-    purpose: "Serverless hosting and edge runtime",
-    location: "EU / global CDN",
-    url: "https://vercel.com/legal/privacy-policy",
+    name: "Fly.io",
+    purpose: "Application hosting (containers)",
+    location: "UK (London)",
+    url: "https://fly.io/legal/privacy-policy",
+  },
+  {
+    name: "Upstash",
+    purpose: "Redis — rate limiting, caching, ephemeral state",
+    location: "EU",
+    url: "https://upstash.com/trust/privacy",
   },
   {
     name: "Stripe",
@@ -31,6 +37,30 @@ const SUB_PROCESSORS = [
     location: "US / EU",
     url: "https://resend.com/privacy",
   },
+  {
+    name: "Anthropic",
+    purpose: "AI scheduling — generates schedule and officials proposals (Claude)",
+    location: "US",
+    url: "https://www.anthropic.com/legal/privacy",
+  },
+  {
+    name: "OpenRouter",
+    purpose: "AI model routing gateway for AI scheduling (zero-data-retention routing)",
+    location: "US",
+    url: "https://openrouter.ai/privacy",
+  },
+  {
+    name: "Google Cloud (Vertex AI)",
+    purpose: "AI model serving for AI scheduling (Gemini, via OpenRouter)",
+    location: "US / global",
+    url: "https://cloud.google.com/terms/cloud-privacy-notice",
+  },
+  {
+    name: "xAI",
+    purpose: "AI model serving for AI scheduling (Grok, via OpenRouter)",
+    location: "US",
+    url: "https://x.ai/legal/privacy-policy",
+  },
 ];
 
 export default function SubProcessorsPage() {
@@ -39,11 +69,18 @@ export default function SubProcessorsPage() {
       <MarketingNav />
       <main className="mx-auto max-w-3xl px-4 py-16">
         <h1 className="mb-2 text-3xl font-bold text-purple-900">Sub-processors</h1>
-        <p className="mb-8 text-sm text-slate-400">Last updated: 30 June 2026</p>
+        <p className="mb-8 text-sm text-slate-400">Last updated: 22 July 2026</p>
         <p className="mb-8 text-sm text-slate-600">
           Seazn Club uses the following sub-processors to provide the
           service. All sub-processors are bound by data processing agreements
           and operate under equivalent data protection standards.
+        </p>
+        <p className="mb-8 text-sm text-slate-600">
+          The AI sub-processors below process a division&rsquo;s scheduling
+          brief only when you use the optional AI scheduling features, and only
+          to produce a proposal. They do not use your data to train their
+          models; requests routed through OpenRouter additionally carry
+          zero-data-retention terms.
         </p>
 
         <div className="scroll-x scroll-x-fade rounded-2xl border border-purple-100 bg-white">

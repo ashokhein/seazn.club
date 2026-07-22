@@ -23,7 +23,7 @@ Give it an instruction ("keep the same referee across a team's group games") to 
 
 Unlike schedule generations, **officials AI runs are not metered** — restaff as often as you like. The empty-instruction default spread is produced without a model call at all, so it's effectively free.
 
-Instruction runs carry the same data guarantee as the [schedule pass](/help/scheduling/ai-scheduling): only this division's officials brief is sent to our AI provider, and it is **not used to train AI models**.
+Instruction runs carry the same data guarantee as the [schedule pass](/help/scheduling/ai-scheduling): only this division's officials brief is sent to one of our AI providers, and it is **not used to train AI models**. See our [sub-processors list](/legal/sub-processors) for the full set.
 
 ## Applying
 

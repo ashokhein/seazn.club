@@ -11,15 +11,49 @@ describe("schedule-ai prompt contract", () => {
     expect(SYSTEM_PROMPT).toMatchSnapshot();
   });
 
-  it("carries the amended Coverage (d) + Stability (e) soft goals", () => {
+  it("carries the amended Coverage (S4) + Stability (S5) soft goals", () => {
     expect(SYSTEM_PROMPT).toContain(
-      "d. Coverage: prefer slots where each required officiating role has an eligible, free",
+      "S4. Coverage: prefer slots where each required officiating role has an eligible, free",
     );
     expect(SYSTEM_PROMPT).toContain(
-      "e. Stability: in refine and repair modes move as few fixtures as possible",
+      "S5. Stability: in refine and repair modes move as few fixtures as possible",
     );
-    // The old lettering must be gone.
+    // The pre-relabel lettering must be gone.
     expect(SYSTEM_PROMPT).not.toContain("d. Stability:");
+    expect(SYSTEM_PROMPT).not.toContain("d. Coverage:");
+  });
+
+  it("labels hard rules H1-H7 and soft goals S1-S5", () => {
+    for (const id of ["H1.", "H2.", "H3.", "H4.", "H5.", "H6.", "H7."]) {
+      expect(SYSTEM_PROMPT).toContain(id);
+    }
+    for (const id of ["S1.", "S2.", "S3.", "S4.", "S5."]) {
+      expect(SYSTEM_PROMPT).toContain(id);
+    }
+    // The old bare numbering and lettering must be gone.
+    expect(SYSTEM_PROMPT).not.toContain("\n1. court_label must be");
+    expect(SYSTEM_PROMPT).not.toContain("\na. The organiser's instruction.");
+  });
+
+  it("requires unschedulable reasons to cite the blocking rule id", () => {
+    expect(SYSTEM_PROMPT).toContain("citing the hard rule id");
+    expect(SYSTEM_PROMPT).toContain("(H1-H7)");
+  });
+
+  it("plan schema accepts an assumptions array and rejects a non-string entry", () => {
+    const base = {
+      assignments: [],
+      unschedulable: [],
+      explanations: [],
+      summary: "x",
+    };
+    expect(
+      AiSchedulePlan.safeParse({ ...base, assumptions: ["read 'evenings' as after 18:00"] })
+        .success,
+    ).toBe(true);
+    // Omitted is still valid — the field is optional.
+    expect(AiSchedulePlan.safeParse(base).success).toBe(true);
+    expect(AiSchedulePlan.safeParse({ ...base, assumptions: [42] }).success).toBe(false);
   });
 
   it("plan schema rejects an assignment missing a court", () => {
