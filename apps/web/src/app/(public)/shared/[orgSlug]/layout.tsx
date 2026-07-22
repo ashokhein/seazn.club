@@ -11,7 +11,7 @@ import { notFound, permanentRedirect } from "next/navigation";
 import Image from "next/image";
 import { Barlow_Condensed } from "next/font/google";
 import { AttributionLink } from "@/components/attribution-link";
-import { StripeBadge } from "@/components/stripe-badge";
+import { PoweredByStripe } from "@/components/powered-by-stripe";
 import { isReservedSlug } from "@/lib/public-site";
 import { publicThemeStyle } from "@/lib/public-theme";
 import { getPublicOrg } from "@/server/public-site/data";
@@ -115,10 +115,12 @@ export default async function PublicOrgLayout({
           </p>
         )}
         {/* Trust line only where it's true: the org actually takes card entry
-            fees through Stripe. All tiers — payment trust, not platform chrome. */}
+            fees through Stripe. All tiers — payment trust, not platform chrome.
+            The official "Powered by Stripe" lockup, linked to stripe.com per
+            Stripe's brand policy. */}
         {org.card_payments ? (
-          <p>
-            <StripeBadge label="Payments secured by" className="hover:text-ink" />
+          <p className="flex justify-center pt-1">
+            <PoweredByStripe variant="blurple" width={110} className="inline-block opacity-80 transition hover:opacity-100" />
           </p>
         ) : null}
       </footer>

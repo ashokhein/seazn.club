@@ -25,6 +25,7 @@ import { asCurrency, formatMinor, passPrice, proPrice, proPlusPrice } from "@/li
 import { preferredCurrency } from "@/lib/currency-server";
 import { planLabel } from "@/lib/plan-label";
 import { BackLink } from "@/components/back-link";
+import { PoweredByStripe } from "@/components/powered-by-stripe";
 import { Tip } from "@/components/ui/tip";
 import { BillingGroupPanel } from "@/components/billing-group-panel";
 import { routes } from "@/lib/routes";
@@ -377,6 +378,11 @@ export default async function BillingPage({
               methods={overview.paymentMethods}
               autoOpen={status === "trialing" && overview.paymentMethods.length === 0}
             />
+            {/* Official "Powered by Stripe" lockup on the card-entry surface —
+                Stripe's brand policy, linked to stripe.com. */}
+            <div className="mt-4 border-t border-slate-100 pt-3">
+              <PoweredByStripe variant="blurple" width={110} className="inline-block opacity-70 transition hover:opacity-100" />
+            </div>
           </section>
         )}
 

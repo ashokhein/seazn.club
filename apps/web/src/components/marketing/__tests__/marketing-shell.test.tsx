@@ -26,13 +26,14 @@ describe("marketing shell pieces", () => {
     expect(html).toContain('href="/legal/privacy"');
     expect(html).toContain("ANY SPORT · LIVE IN MINUTES");
   });
-  it("footer carries the Stripe trust line (badge links stripe.com)", async () => {
+  it("footer carries the official Powered by Stripe badge (links stripe.com)", async () => {
     const html = renderToStaticMarkup(await MarketingFooter({ lang: "en" }));
-    expect(html).toContain("Payments secured by");
     expect(html).toContain('href="https://stripe.com"');
-    // Localized lead-in survives the dictionary round-trip (spot-check fr).
+    expect(html).toContain("Powered by Stripe");
+    expect(html).toContain("/stripe/powered-by-stripe-white.svg");
+    // Official lockup is a language-neutral image — same badge in every locale.
     const fr = renderToStaticMarkup(await MarketingFooter({ lang: "fr" }));
-    expect(fr).toContain("Paiements sécurisés par");
+    expect(fr).toContain("Powered by Stripe");
   });
   it("funnel night variant adds the dark classes", () => {
     const cls = funnelFormClasses(false, "night");

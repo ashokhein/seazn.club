@@ -2816,8 +2816,12 @@ async function plgGrowthSuite(admin: Session, proOrgId: string, proOrgSlug: stri
       proShared.body.includes("Copy link"),
   );
   check(
-    "plg pro page has no 'Powered by' attribution footer",
-    !proShared.body.includes("Powered by"),
+    // Key off the attribution CTA's own text, not a bare "Powered by" — the
+    // official "Powered by Stripe" trust badge also carries that phrase and
+    // shows on any card-payment org (this Pro one included), so the substring
+    // no longer isolates the Seazn attribution footer that org.branded drops.
+    "plg pro page drops the Seazn attribution footer",
+    !proShared.body.includes("Run your own free"),
   );
 
   // --- Free path: a fresh community owner's public page carries both the
@@ -2837,10 +2841,8 @@ async function plgGrowthSuite(admin: Session, proOrgId: string, proOrgSlug: stri
   );
   const freeShared = await html(newSession(), `/shared/${freeOrg.slug}/${freeComp.slug}`);
   check(
-    "plg free page carries the 'Powered by' attribution CTA",
-    freeShared.status === 200 &&
-      freeShared.body.includes("Powered by") &&
-      freeShared.body.includes("Run your own free"),
+    "plg free page carries the Seazn attribution CTA",
+    freeShared.status === 200 && freeShared.body.includes("Run your own free"),
   );
   check(
     "plg free page also renders the fan ShareBar",
