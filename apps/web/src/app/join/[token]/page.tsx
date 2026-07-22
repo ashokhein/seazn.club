@@ -3,6 +3,7 @@ import { inviteProblemCode, loadInvite, type InviteRow } from "@/lib/invites";
 import { maskEmail } from "@/lib/mask-email";
 import type { OrgRole } from "@/lib/types";
 import { AuthForm } from "@/components/auth-form";
+import { ClaimInvite } from "@/components/claim-invite";
 import { JoinInvite } from "@/components/join-invite";
 import { NightStage } from "@/components/night-stage";
 import { resolveLocale } from "@/lib/resolve-locale";
@@ -110,6 +111,11 @@ export default async function JoinPage({
                 </>
               )}
             </div>
+          ) : invite.email ? (
+            // Email invite: the link itself proves this inbox, so a new or
+            // unverified invitee accepts + signs in with one tap (ClaimInvite
+            // falls back to sign-in for an existing account).
+            <ClaimInvite token={token} />
           ) : (
             <>
               <p className="mb-4 text-center text-sm text-cream/70">

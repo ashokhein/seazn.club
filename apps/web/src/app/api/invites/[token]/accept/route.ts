@@ -1,6 +1,6 @@
 import { getOrgRole, requireUser, setActiveOrgId } from "@/lib/auth";
 import { handler } from "@/lib/http";
-import { acceptInvite, inviteProblem, loadInvite } from "@/lib/invites";
+import { acceptInvite, inviteLanding, inviteProblem, loadInvite } from "@/lib/invites";
 
 /**
  * Join the inviting org with the embedded role (must be logged in).
@@ -29,8 +29,7 @@ export async function POST(
     // Scorer post-login landing (doc 13 §4): straight to My matches — and a
     // member who just gained an umpire assignment lands there too, on the
     // matches the invite was about.
-    const landing =
-      role === "scorer" || outcome === "scope_added" ? "/my-matches" : "/dashboard";
+    const landing = inviteLanding(role, outcome);
     return {
       org_id: invite.org_id,
       org_name: invite.org_name,

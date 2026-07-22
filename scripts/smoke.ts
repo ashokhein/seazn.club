@@ -216,6 +216,24 @@ async function main() {
     call(admin, `/api/invites/${emailInvite.token}/accept`, "POST", {}),
   );
 
+  // One-click claim (auto-login + join) for a brand-new email invitee: the
+  // emailed link proves the inbox, so no separate sign-in round-trip is needed.
+  // A fresh session that has never authenticated posts the claim and comes back
+  // both signed in and a member.
+  const claimer = newSession();
+  const claimed = (await call(
+    claimer,
+    `/api/invites/${emailInvite.token}/claim`,
+    "POST",
+  )) as { needs_signin?: boolean; role?: string };
+  check("email invite claim signs the new invitee in", !!claimer.cookies["seazn_session"]);
+  check("email invite claim joins with the invite role", claimed.role === "viewer");
+  check("email invite claim sets the active org", claimer.cookies["seazn_org"] === org.id);
+  // Single-use: the now-spent invite refuses a second claim.
+  await expectFail("email invite claim is single-use", () =>
+    call(newSession(), `/api/invites/${emailInvite.token}/claim`, "POST"),
+  );
+
   // Invite-by-link (team settings): multi-use with a 24-hour expiry — it must
   // outlive the tab that created it and stay listed for later copying.
   const linkInvite = (await call(admin, `/api/orgs/${org.id}/invites`, "POST", {
