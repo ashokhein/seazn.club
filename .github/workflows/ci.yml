@@ -199,23 +199,17 @@ jobs:
       - name: Engine-db + service-layer + lib integration tests (real Postgres)
         run: npm test --workspace apps/web -- run src/server src/lib
 
-      # The DB-gated suites OUTSIDE src/server. They are `describe.skipIf(!HAS_DB)`,
-      # and the other unit job has no DATABASE_URL — so before this step existed
-      # they skipped in both jobs and CI went green having run none of them: 18
-      # files in src/lib/__tests__ and 4 under src/app. That silently un-enforced
-      # entitlements-sql-parity.test.ts, which is the ONLY tie between
-      # lib/entitlements.ts and the org_has_feature SQL mirror, and the whole
-      # billing-groups suite.
+      # The DB-gated suites under src/app. src/lib is NOT repeated here: the
+      # Engine-db step above already runs it, and running it in both steps shares
+      # one migrated schema across two passes — a suite that writes a fixed
+      # stripe_customer_id (billing-pass-financial-trace) then collides with its
+      # own first pass under V314's partial unique index. src/app is the only
+      # DB-gated tree that step does not cover.
       #
-      # pass-scoping-guard.test.ts is excluded, not fixed. It is deliberately red
-      # (read its header): its failure list IS the work queue for the Event Pass
-      # scoping sweep, and the six sites it names belong to that feature, not to
-      # this job. Delete this exclude the moment the sweep lands — do NOT weaken
-      # the test itself to get a green run.
+      # pass-scoping-guard.test.ts is no longer excluded: the Event Pass scoping
+      # sweep it tracked has landed, so it passes and runs with the rest.
       - name: Service-layer integration tests outside src/server (real Postgres)
-        run: >-
-          npm test --workspace apps/web -- run src/lib src/app
-          --exclude 'src/lib/__tests__/pass-scoping-guard.test.ts'
+        run: npm test --workspace apps/web -- run src/app
 
       # REDIS_URL is scoped to this step only. Setting it job-wide would switch
       # the entitlement cache (lib/entitlements.ts) on for the src/server suite,
