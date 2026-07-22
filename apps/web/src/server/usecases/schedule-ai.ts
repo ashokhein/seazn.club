@@ -10,7 +10,7 @@ import "server-only";
 // by (display_name, id), and every timestamp is an ISO-8601 string carrying the division
 // timezone offset. DB reads reuse the schedule.ts / officials.ts loaders — no SQL is
 // re-derived here.
-import { selectProvider } from "@/server/ai/select-provider";
+import { resolveProvider, selectProvider, type ProviderName } from "@/server/ai/select-provider";
 import {
   AiProviderError,
   type AiChatResponse,
@@ -667,7 +667,7 @@ export function schedulingAiModel(): string {
  *
  *  Effort escalation is NOT viable for the same reason: medium never produced a
  *  degraded plan, so the referee has nothing to escalate on. Cheap-MODEL
- *  escalation is a different matter — see runAiPlanEscalating.
+ *  escalation is a different matter — see runLadder / runAiPlanLadder.
  *
  *  Phase B (officials-ai.ts) is deliberately still "high": it was not measured.
  *  Full write-up: design/v4/04-architect-benchmarks.md. */
@@ -990,11 +990,15 @@ export async function runAiPlan(
   pack: SchedulePack,
   movableIds: Set<string>,
   modelOverride?: string,
+  providerName?: ProviderName,
 ): Promise<AiPlanResult> {
   // One provider per run: reasoning blocks are provider-specific and replayed
   // verbatim on repair, so a run that resolved a provider per round could send
   // one service's reasoning to another. 503 before any network if unconfigured.
-  const provider = selectProvider();
+  // A ladder rung pins its provider explicitly (never via AI_PROVIDER — that is
+  // process-global and unsafe under concurrency); an unset name falls back to
+  // the env-selected provider, exactly as before this parameter existed.
+  const provider = providerName ? resolveProvider(providerName) : selectProvider();
   if (!provider.isConfigured()) {
     throw new HttpError(503, "AI scheduling is not configured on this server");
   }
@@ -1234,76 +1238,154 @@ function planIsAcceptable(result: AiPlanResult, movableCount: number): boolean {
   return result.warnings.length / movableCount <= escalationWarningRatio();
 }
 
-/**
- * Run the architect, optionally trying a cheaper model first.
- *
- * This deliberately ESCALATES on evidence rather than PREDICTING from the pack.
- * Choosing a model up front needs a "density" metric, and the 2026-07-20 bench
- * could not supply one: its two packs differ on structure, court ratio, rest,
- * no-back-to-back, blackouts and cross-person links simultaneously, so which
- * factor degrades a cheap model is unknown. The referee already measures the
- * thing that actually matters — plan quality — so let it decide.
- *
- * Failure mode is bounded: a wasted cheap attempt costs ~11% on top of the
- * primary run (measured: $0.05 + $0.465 vs $0.465), and can never ship a worse
- * plan than the primary model would have. A mispredicting router, by contrast,
- * hands the organiser a degraded schedule with no signal at all.
- *
- * Usage from BOTH attempts is summed — an escalated run costs what it costs,
- * and the ledger must not report only the half that happened to win.
+/** One candidate in the fallback ladder: a model and the provider that serves
+ *  it. Provider is pinned per rung so a cross-provider ladder (OpenRouter
+ *  gemini → Anthropic sonnet → OpenRouter grok) never mutates AI_PROVIDER. */
+export type LadderRung = { provider: ProviderName; model: string };
+
+/** Parse SCHEDULING_AI_LADDER into ordered rungs, or null when unset/empty (the
+ *  caller then uses the legacy cheap→primary path). Comma-separated model ids;
+ *  the provider is inferred from the id — an OpenRouter id carries a vendor
+ *  prefix ("google/…", "x-ai/…"), an Anthropic id does not ("claude-sonnet-5").
+ *  Example (the recommended production ladder):
+ *    SCHEDULING_AI_LADDER="google/gemini-3.6-flash,claude-sonnet-5,x-ai/grok-4.5"
  */
-async function runAiPlanEscalating(
+export function schedulingAiLadder(): LadderRung[] | null {
+  const raw = process.env.SCHEDULING_AI_LADDER?.trim();
+  if (!raw) return null;
+  const rungs = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .map((model): LadderRung => ({ provider: model.includes("/") ? "openrouter" : "anthropic", model }));
+  return rungs.length > 0 ? rungs : null;
+}
+
+/** The ordered candidate list for one architect run. An explicit
+ *  SCHEDULING_AI_LADDER wins; otherwise the legacy behaviour is reproduced
+ *  exactly — cheap→primary escalation (both on the env-selected provider) when
+ *  a cheap model is set, else a single primary rung. So with neither env var
+ *  set, this is the shipped Anthropic/sonnet single-model path, unchanged. */
+export function planRungs(): LadderRung[] {
+  const ladder = schedulingAiLadder();
+  if (ladder) return ladder;
+  const provider: ProviderName = process.env.AI_PROVIDER === "openrouter" ? "openrouter" : "anthropic";
+  const primary = schedulingAiModel();
+  const cheap = schedulingAiCheapModel();
+  return cheap && cheap !== primary
+    ? [{ provider, model: cheap }, { provider, model: primary }]
+    : [{ provider, model: primary }];
+}
+
+type Usage = AiPlanResult["usage"];
+
+/** Sum a run's usage into the accumulator. `cost_usd` is null-preserving: a real
+ *  `null` (cost unknown — the model has no PRICING entry) must NOT collapse to 0
+ *  (which asserts "free" and undercounts the total); only a genuinely-absent
+ *  `undefined` defaults to 0. */
+function addUsage(acc: Usage, next: Partial<Usage>): Usage {
+  const nextCost = next.cost_usd === undefined ? 0 : next.cost_usd;
+  return {
+    input_tokens: acc.input_tokens + (next.input_tokens ?? 0),
+    output_tokens: acc.output_tokens + (next.output_tokens ?? 0),
+    repair_rounds: acc.repair_rounds + (next.repair_rounds ?? 0),
+    cost_usd: acc.cost_usd === null || nextCost === null ? null : acc.cost_usd + nextCost,
+  };
+}
+
+/** Does this error justify trying the next rung? A plan the model could not
+ *  produce (AI_PLAN_FAILED / AI_PLAN_TIMEOUT) or a transport/API failure
+ *  (AiProviderError — unparsable body, 5xx, refusal) is recoverable by a
+ *  different model/provider. A deterministic user error (empty scope, too
+ *  large, 400/404) is NOT — it would fail identically on every rung. */
+function isRecoverable(err: unknown): boolean {
+  if (err instanceof AiProviderError) return true;
+  return err instanceof HttpError && (err.code === "AI_PLAN_FAILED" || err.code === "AI_PLAN_TIMEOUT");
+}
+
+/**
+ * Run an ordered ladder of model candidates, returning the first acceptable
+ * plan and falling back on evidence (a thrown recoverable failure, or a
+ * usable-but-degraded plan that fails `acceptable`). Deterministic user errors
+ * stop the ladder immediately — retrying them only burns money.
+ *
+ * ESCALATE on evidence, don't PREDICT from the pack: choosing a model up front
+ * needs a "density" metric the bench could not supply, and the referee already
+ * measures the thing that matters — plan quality — so let it decide. Failure
+ * mode is bounded: a wasted earlier rung is at most the cost of that rung, and
+ * the ladder can never ship a worse plan than a later rung would have.
+ *
+ * COST TRUTH (aligns spend with what actually ran): usage from EVERY attempted
+ * rung is summed (null-preserving), and the winning rung's model is returned as
+ * `served_model` so the ledger/analytics record the model that produced the
+ * plan — not a static default. When all rungs fail, the thrown error carries the
+ * accumulated usage and the last rung's model so a failed run is still metered
+ * against the truth.
+ *
+ * Pure over `attempt`/`acceptable` so it is unit-tested without a network.
+ */
+export async function runLadder(
+  rungs: LadderRung[],
+  attempt: (rung: LadderRung) => Promise<AiPlanResult>,
+  acceptable: (result: AiPlanResult) => boolean,
+): Promise<AiPlanResult & { served_model: string; escalated_from?: string; rungs_tried: string[] }> {
+  let acc: Usage = { input_tokens: 0, output_tokens: 0, repair_rounds: 0, cost_usd: 0 };
+  const tried: string[] = [];
+  for (let i = 0; i < rungs.length; i++) {
+    const rung = rungs[i]!;
+    const last = i === rungs.length - 1;
+    tried.push(rung.model);
+    try {
+      const result = await attempt(rung);
+      // The last rung ships its plan even if degraded — a best-effort schedule
+      // beats a hard failure, and the referee's blocking/warnings ride along.
+      if (acceptable(result) || last) {
+        return {
+          ...result,
+          usage: addUsage(acc, result.usage),
+          served_model: rung.model,
+          rungs_tried: tried,
+          ...(tried.length > 1 ? { escalated_from: tried[0] } : {}),
+        };
+      }
+      acc = addUsage(acc, result.usage); // usable but not good enough — pay it, advance
+    } catch (err) {
+      if (!isRecoverable(err)) throw err;
+      const u = (err as { extra?: { usage?: Partial<Usage> } }).extra?.usage ?? {};
+      acc = addUsage(acc, u);
+      if (last) {
+        // All rungs exhausted: surface the full accumulated spend and the model
+        // that failed, so the caller's failure metering records the true total
+        // and the true (last) model. HttpError.extra is read-only, so rebuild
+        // it (preserving status/code/message); provider errors take loose fields.
+        if (err instanceof HttpError) {
+          throw new HttpError(err.status, err.message, err.code, {
+            ...(err.extra ?? {}),
+            usage: acc,
+            model: rung.model,
+          });
+        }
+        (err as { usage?: Usage; model?: string }).usage = acc;
+        (err as { model?: string }).model = rung.model;
+        throw err;
+      }
+    }
+  }
+  // Unreachable: a non-empty ladder's final rung always returns or throws.
+  throw new HttpError(500, "model ladder exhausted without a result", "AI_PLAN_FAILED");
+}
+
+/** Wire the ladder to the real architect: each rung runs on its own provider,
+ *  and a degraded plan escalates via the existing quality gate. */
+async function runAiPlanLadder(
   pack: SchedulePack,
   movableIds: Set<string>,
-): Promise<AiPlanResult & { escalated_from?: string }> {
-  const cheap = schedulingAiCheapModel();
-  const primary = schedulingAiModel();
-  if (!cheap || cheap === primary) return runAiPlan(pack, movableIds);
-
-  // A cheap model can fail two ways: return a poor-but-usable plan, or give up
-  // entirely (AI_PLAN_FAILED / AI_PLAN_TIMEOUT). Both must escalate — letting a
-  // thrown cheap failure surface as a 422 would make an opt-in cost optimisation
-  // *reduce* success rate, which is never an acceptable trade. Provider outages
-  // (503 / APIError) still propagate: retrying a different model against a
-  // broken provider only burns another call.
-  let first: AiPlanResult | null = null;
-  let spent: AiPlanResult["usage"] = { input_tokens: 0, output_tokens: 0, repair_rounds: 0, cost_usd: 0 };
-  try {
-    first = await runAiPlan(pack, movableIds, cheap);
-    spent = first.usage;
-    if (planIsAcceptable(first, movableIds.size)) return first;
-  } catch (err) {
-    const recoverable =
-      err instanceof HttpError && (err.code === "AI_PLAN_FAILED" || err.code === "AI_PLAN_TIMEOUT");
-    if (!recoverable) throw err;
-    // Tokens the failed attempt already spent ride on the error's extra.
-    const u = (err.extra?.usage ?? {}) as Partial<AiPlanResult["usage"]>;
-    spent = {
-      input_tokens: u.input_tokens ?? 0,
-      output_tokens: u.output_tokens ?? 0,
-      repair_rounds: u.repair_rounds ?? 0,
-      // `??` would collapse a real `null` (cost unknown — model has no
-      // PRICING entry) down to `0` (asserts free), silently undercounting
-      // the escalated total below. Only a genuinely-absent `undefined`
-      // defaults to 0; `null` must survive to stay "unknown".
-      cost_usd: u.cost_usd === undefined ? 0 : u.cost_usd,
-    };
-  }
-
-  const second = await runAiPlan(pack, movableIds, primary);
-  return {
-    ...second,
-    escalated_from: cheap,
-    usage: {
-      input_tokens: spent.input_tokens + second.usage.input_tokens,
-      output_tokens: spent.output_tokens + second.usage.output_tokens,
-      repair_rounds: spent.repair_rounds + second.usage.repair_rounds,
-      cost_usd:
-        spent.cost_usd === null || second.usage.cost_usd === null
-          ? null
-          : spent.cost_usd + second.usage.cost_usd,
-    },
-  };
+): Promise<AiPlanResult & { served_model: string; escalated_from?: string; rungs_tried: string[] }> {
+  return runLadder(
+    planRungs(),
+    (rung) => runAiPlan(pack, movableIds, rung.model, rung.provider),
+    (result) => planIsAcceptable(result, movableIds.size),
+  );
 }
 
 /**
@@ -1384,10 +1466,9 @@ export async function aiPlanForDivision(
 
   const { pack, movableIds } = await buildSchedulePack(auth, divisionId, input);
 
-  const model = schedulingAiModel();
-  let result: AiPlanResult & { escalated_from?: string };
+  let result: AiPlanResult & { served_model: string; escalated_from?: string; rungs_tried: string[] };
   try {
-    result = await runAiPlanEscalating(pack, movableIds);
+    result = await runAiPlanLadder(pack, movableIds);
   } catch (err) {
     // Meter a refused / un-correctable / timed-out run's token spend too —
     // usage rides on the 422 extra so a failed architect call is not invisible
@@ -1412,12 +1493,22 @@ export async function aiPlanForDivision(
       err instanceof HttpError && (err.code === "AI_PLAN_FAILED" || err.code === "AI_PLAN_TIMEOUT") ? err : null;
 
     if (planErr || providerErr) {
-      const usage = (planErr?.extra?.usage ?? {}) as {
+      // The ladder annotates the thrown error with the accumulated usage across
+      // every rung it tried and the last rung's model, so a failed run is
+      // metered against the true total spend and the true (last) model — not a
+      // static default. Provider errors carry the annotation as loose fields.
+      const usage = (planErr?.extra?.usage ??
+        (err as { usage?: Record<string, unknown> }).usage ??
+        {}) as {
         input_tokens?: number;
         output_tokens?: number;
         repair_rounds?: number;
         cost_usd?: number | null;
       };
+      const model =
+        (planErr?.extra?.model as string | undefined) ??
+        (err as { model?: string }).model ??
+        schedulingAiModel();
       const outcome = providerErr ? "provider_error" : planErr!.code === "AI_PLAN_TIMEOUT" ? "timeout" : "failed";
       const cost_usd = usage.cost_usd ?? aiRunCostUsd(model, usage.input_tokens ?? 0, usage.output_tokens ?? 0);
       await withTenant(auth.orgId, async (tx) => {
@@ -1470,6 +1561,10 @@ export async function aiPlanForDivision(
 
   // Record this generation against the per-division cap counted above (owner
   // 2026-07-18). Append-only audit; org_id is set explicitly by the insert below.
+  // Stamp the model the ladder ACTUALLY served (winning rung), not a static
+  // default — so the audit and cost (result.usage sums every rung tried) reflect
+  // what really ran and what it really cost.
+  const model = result.served_model;
   const cost_usd = result.usage.cost_usd ?? aiRunCostUsd(model, result.usage.input_tokens, result.usage.output_tokens);
   await withTenant(auth.orgId, async (tx) => {
     await tx`
@@ -1481,13 +1576,16 @@ export async function aiPlanForDivision(
                 model,
                 usage: result.usage,
                 cost_usd,
-                // Escalation telemetry: which cheap model was tried and
-                // rejected, and the warning ratio that rejected it. The
-                // threshold is uncalibrated (see escalationWarningRatio), so
-                // the ledger has to carry what it would take to tune it.
+                // Ladder telemetry: which model was tried first and rejected,
+                // the full ordered chain of rungs attempted (so a 3-rung fall
+                // gemini→sonnet→grok is auditable — `model` above is only the
+                // winner), and the warning ratio that rejected it. The threshold
+                // is uncalibrated (see escalationWarningRatio), so the ledger has
+                // to carry what it would take to tune it.
                 ...(result.escalated_from
                   ? {
                       escalated_from: result.escalated_from,
+                      rungs_tried: result.rungs_tried,
                       warnings: result.warnings.length,
                       movable: movableIds.size,
                     }

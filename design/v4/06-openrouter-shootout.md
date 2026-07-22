@@ -752,3 +752,46 @@ narrowed reading:
   outright hard-pack failure that was really a test artifact), and it re-locates grok's
   problem: not "can't schedule" but "slow and flaky on this transport." On this pack,
   `gemini-3.6-flash` is the only candidate that is both correct and reliable.
+
+## 15. Decision: the fallback ladder (2026-07-22)
+
+The product call from §14e was made: **run a fallback ladder, not a single model.** Ordered
+`google/gemini-3.6-flash → claude-sonnet-5 (Anthropic direct) → x-ai/grok-4.5`.
+
+**Why this order.** gemini is the cheap/fast primary (2/2 clean, ~80s, ~$0.18 on `bracket-16`).
+sonnet-direct is the proven backstop — the shipped default's known-good behaviour, reached only
+when gemini fails. grok is **last** deliberately: §14d-bis put it at 1 clean / 3, ~500–600s,
+riding the round-timeout wall — placing it ahead of sonnet would make a gemini miss wait through
+grok's ~10-min timeout risk before reaching the model that works every time. As the last rung it
+is a rare last-ditch, never on the hot path.
+
+**Trigger (owner-chosen).** Advance to the next rung on any *infra or plan* failure —
+`AI_PLAN_FAILED` (incl. refusal / un-correctable plan), `AI_PLAN_TIMEOUT`, or `AiProviderError`
+(unparsable body, 5xx) — **and** on a legal-but-warning-flooded plan (the existing
+`planIsAcceptable` gate). Never advance on a deterministic user error (empty scope, too large,
+400/404): it fails identically on every rung, so retrying only burns money.
+
+**Mechanism (`schedule-ai.ts`).** The pre-existing 2-model escalation (`runAiPlanEscalating`,
+cheap→primary) is generalised into an N-rung `runLadder` (pure, unit-tested over injected
+attempt/acceptable — `schedule-ai-ladder.test.ts`). Each rung pins its own provider via
+`resolveProvider(name)` — **never** by mutating `AI_PROVIDER`, which is process-global and unsafe
+under concurrent requests. Opt-in via `SCHEDULING_AI_LADDER` (comma list; provider inferred from
+the id — a `/` means OpenRouter, else Anthropic). **Unset → today's behaviour exactly** (single
+sonnet-direct rung, or the legacy cheap→primary escalation), so local/CI and existing tests are
+untouched; production flips gemini-first by setting the env, the same deploy-gated pattern as
+`AI_PROVIDER` / `ANTHROPIC_API_KEY`. Phase B (officials) is a follow-up, same pattern.
+
+**Cost alignment (owner ask).** Per round, cost already uses the **provider-reported** figure
+first (OpenRouter's real `usage.cost`), estimate only as a fallback, and `null` ("unknown") never
+collapses to `0`. The ladder extends this across rungs: usage/cost from **every** rung tried is
+summed (null-preserving), and the ledger + analytics stamp the **model the ladder actually served**
+(winning rung) — plus `rungs_tried` for the full chain — instead of a static default. A failed run
+carries the accumulated spend and the last rung's model on the thrown error, so even a total
+failure is metered against the truth. Net: a fallback that bills gemini + sonnet records both, at
+their real OpenRouter/Anthropic cost, against the model that produced the plan.
+
+**Not changed:** the public `AiPlanResponse.usage` stays the three fields (`input_tokens`,
+`output_tokens`, `repair_rounds`); cost remains server-side (ledger/analytics only). The
+`data_collection:"deny"` + allowlist (`xai`, `google-vertex`) + `zdr` policy is unchanged —
+gemini and grok are already allowlisted; sonnet rides the Anthropic transport, outside OpenRouter
+routing entirely.
