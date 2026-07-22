@@ -26,7 +26,7 @@ import {
 import { activeOrgCount, assertWithinGroupCap, groupOrgLimit } from "@/lib/billing-group";
 import { hasLiveSubscription } from "@/lib/subscription-status";
 import { intervalForPrice } from "@/lib/billing-manage";
-import { sendTransferOfferEmail } from "@/lib/email";
+import { sendTransferOfferEmail, sendTransferCompleteEmail } from "@/lib/email";
 
 interface GroupRow {
   id: string;
@@ -976,6 +976,7 @@ export async function offerGroupTransfer(args: {
     await notifyTransferOfferRecipient({
       subscriptionId,
       actorUserId,
+      recipientId: recipient.id,
       recipientEmail: recipient.email,
     }).catch((err) => {
       console.error("[billing-groups] transfer-offer email failed (best-effort):", err);
@@ -997,6 +998,20 @@ export async function offerGroupTransfer(args: {
   await assertRecipientOwnsAnOrgInGroup(subscriptionId, recipient.id);
   const moved = await handOverGroup(group, recipient, null);
   await finishHandover(moved, recipient, null);
+
+  // BEST-EFFORT notification. The recipient accepted nothing — the group is now
+  // simply on their account and they pay for it — so this is a DIFFERENT,
+  // informational message from the offer email. The transfer is already
+  // committed above; a send failure must never surface as a failed transfer.
+  await notifyTransferCompleteRecipient({
+    subscriptionId,
+    actorUserId,
+    recipientId: recipient.id,
+    recipientEmail: recipient.email,
+  }).catch((err) => {
+    console.error("[billing-groups] transfer-complete email failed (best-effort):", err);
+  });
+
   return { status: "transferred", subscription_id: subscriptionId, owner_user_id: recipient.id };
 }
 
@@ -1401,35 +1416,83 @@ async function finishHandover(
   await syncPaymentMethodFlagForSubscription(group.id);
 }
 
-/** Fire the transfer-offer email to the recipient. Best-effort: the caller
- *  wraps this so nothing here can fail the offer. Builds the accept link from an
- *  org the recipient can reach in the group (the group's primary org, oldest
- *  live one first — same choice billing-events makes for its notifications), and
- *  uses that org's name as the human label for the group. */
-async function notifyTransferOfferRecipient(args: {
-  subscriptionId: string;
-  actorUserId: string;
-  recipientEmail: string;
-}): Promise<void> {
-  const { subscriptionId, actorUserId, recipientEmail } = args;
-  const [org] = await sql<{ slug: string; name: string }[]>`
+/**
+ * An org IN THE GROUP the recipient can actually open, for the notification link.
+ *
+ * Prefers an org the RECIPIENT is a member of — the group's oldest org (the old
+ * "primary") may be one they cannot reach, sending them to a billing page that
+ * 403s. Falls back to the oldest live org only when they are a member of none
+ * (defensive: the link still lands somewhere valid, and the offer surfaces on any
+ * billing page they load). Returns the slug for the link and the name for the
+ * human group label; null when the group has no live org at all.
+ */
+async function recipientReachableOrg(
+  subscriptionId: string,
+  recipientId: string,
+): Promise<{ slug: string; name: string } | null> {
+  const [mine] = await sql<{ slug: string; name: string }[]>`
+    select o.slug, o.name from organizations o
+      join org_members m on m.org_id = o.id
+     where o.subscription_id = ${subscriptionId} and o.deleted_at is null
+       and m.user_id = ${recipientId}
+     order by o.created_at limit 1`;
+  if (mine) return mine;
+  const [primary] = await sql<{ slug: string; name: string }[]>`
     select slug, name from organizations
      where subscription_id = ${subscriptionId} and deleted_at is null
      order by created_at limit 1`;
-  if (!org) return; // no reachable org → no meaningful link to send.
+  return primary ?? null;
+}
 
+/** Human name for the outgoing payer, with a neutral fallback. */
+async function payerDisplayName(actorUserId: string): Promise<string> {
   const [payer] = await sql<{ display_name: string }[]>`
     select display_name from users where id = ${actorUserId}`;
-  const payerName = payer?.display_name || "The current payer";
+  return payer?.display_name || "The current payer";
+}
 
+/** The billing settings URL for an org the recipient can reach. */
+function billingSettingsLink(slug: string): string {
   const base = (
     process.env.OAUTH_BASE_URL ||
     process.env.NEXT_PUBLIC_BASE_URL ||
     "http://localhost:3000"
   ).replace(/\/$/, "");
-  const link = `${base}/o/${org.slug}/settings/billing`;
+  return `${base}/o/${slug}/settings/billing`;
+}
 
-  await sendTransferOfferEmail(recipientEmail, payerName, org.name, link);
+/** Fire the transfer-OFFER email to the recipient (live-sub path, two-phase).
+ *  Best-effort: the caller wraps this so nothing here can fail the offer. Links
+ *  to an org the recipient can reach in the group (see recipientReachableOrg),
+ *  and uses that org's name as the human label for the group. */
+async function notifyTransferOfferRecipient(args: {
+  subscriptionId: string;
+  actorUserId: string;
+  recipientId: string;
+  recipientEmail: string;
+}): Promise<void> {
+  const { subscriptionId, actorUserId, recipientId, recipientEmail } = args;
+  const org = await recipientReachableOrg(subscriptionId, recipientId);
+  if (!org) return; // no reachable org → no meaningful link to send.
+  const payerName = await payerDisplayName(actorUserId);
+  await sendTransferOfferEmail(recipientEmail, payerName, org.name, billingSettingsLink(org.slug));
+}
+
+/** Fire the transfer-COMPLETE email to the recipient (community / immediate
+ *  handover). Informational, not an offer: they accepted nothing and now simply
+ *  pay for the group. Best-effort — the caller wraps this so nothing here can
+ *  fail the already-committed transfer. Same recipient-reachable-org link. */
+async function notifyTransferCompleteRecipient(args: {
+  subscriptionId: string;
+  actorUserId: string;
+  recipientId: string;
+  recipientEmail: string;
+}): Promise<void> {
+  const { subscriptionId, actorUserId, recipientId, recipientEmail } = args;
+  const org = await recipientReachableOrg(subscriptionId, recipientId);
+  if (!org) return;
+  const payerName = await payerDisplayName(actorUserId);
+  await sendTransferCompleteEmail(recipientEmail, payerName, org.name, billingSettingsLink(org.slug));
 }
 
 async function transferRecipient(

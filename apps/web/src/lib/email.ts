@@ -11,6 +11,7 @@ import {
   accountDeletionTemplate,
   inviteTemplate,
   transferOfferTemplate,
+  transferCompleteTemplate,
   registrationTemplate,
   type RegistrationEmailArgs,
   paymentReminderTemplate,
@@ -363,6 +364,21 @@ export async function sendTransferOfferEmail(
 ): Promise<boolean> {
   const dict = await getDictionary(locale, "emails");
   return send({ to, ...transferOfferTemplate(payerName, groupName, link, dict) });
+}
+
+/** A payer handed a whole billing group to this recipient on the IMMEDIATE
+ *  (community / no-live-subscription) path — the recipient accepted nothing and
+ *  now simply pays for it. Informational; the link goes to the billing settings
+ *  of an org they can reach in the group. Distinct from sendTransferOfferEmail. */
+export async function sendTransferCompleteEmail(
+  to: string,
+  payerName: string,
+  groupName: string,
+  link: string,
+  locale: Locale = "en",
+): Promise<boolean> {
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, ...transferCompleteTemplate(payerName, groupName, link, dict) });
 }
 
 export interface RegistrationEmail extends RegistrationEmailArgs {
