@@ -632,3 +632,97 @@ Spend, this rescue test: $0 (timeout) + $0.189513 + $0.1789605 = **$0.3684735**.
 Combined total spend across §12 and §13: $2.1383 + $0.3684735 ≈ **$2.5068**, still well under
 the $6 stop-and-report threshold and a small fraction of the ≈$21.19 remaining against the
 $25 cap noted at the start of this task.
+
+## 14. Correction: `bracket-16` was tested cold-start; production never is (2026-07-22)
+
+> **This section supersedes §12/§13's `bracket-16` reading.** The user identified §12's
+> bracket pack as "not the real usecase" and asked for the fix. They were right, and the
+> fix changes the result.
+
+### 14a. The defect in the earlier bracket runs
+
+Every synthetic pack in §§10–13 shipped `draft: []` — an **empty** draft, asking the model
+to **cold-build** a legal schedule from nothing. Production never does this. The `generate`
+path in `buildSchedulePack` (`apps/web/src/server/usecases/schedule-ai.ts`) runs the greedy
+solver `slotFixtures()` and ships its output as the pack's `draft`: a **legal-but-naive
+starting schedule the model only has to improve** ("The draft is legal but naive: improve it,
+don't worship it" — `SYSTEM_PROMPT`). So §12/§13 measured a strictly harder task than the
+product runs — and the gap bites hardest exactly on `bracket-16`, where a legal starting
+point (feed order + shared-player separation already solved) is worth the most.
+
+**Fix (`schedule-ai-effort-ab.live.test.ts`):** a `withGreedyDraft(pack)` post-processor runs
+the same `slotFixtures` + `toSlotConfig` the production path uses — feed order respected via
+`roundNo`, the pinned card fed in as `locked`, only actually-placed fixtures emitted (an
+unplaceable one is left for the model, as in production), `existing: []` (synthetic packs
+have no obstacles/siblings). Applied to all three packs. One trap fixed along the way: the
+synthetic packs carry no `startAt`, so seeding the solver with `0` (as production does, since
+real divisions *do* set `startAt`) would put the 365-day horizon at 1971 and leave the 2026
+session windows beyond it — placing **nothing**, i.e. re-creating the empty draft. `now` is
+seeded from the earliest session window instead.
+
+A free, always-on sanity test (`describe("greedy draft (free sanity)")`, not gated behind
+`AI_AB_LIVE`) now asserts every pack ships a non-empty, court-legal draft and logs coverage.
+Verified: **`teams-15` 30/30, `individuals-50` 25/25, `bracket-16` 14/14** — the greedy solver
+places the entire bracket legally, so production would have handed both candidates a complete
+legal bracket to refine, never the blank slate §12 gave them.
+
+### 14b. `bracket-16` re-run with the realistic draft (32k default, n=2, `AI_AB_SHOOTOUT_STAGE5=1`)
+
+Same conditions as §12 except the draft is now production-shaped. The four settled
+open-question/haiku cells were skipped (`AI_AB_OPEN_Q=0`) so this run billed only its own two
+arms.
+
+| pack | model | rep | secs | in | out | out % of 32k | blocking | warnings | unsched | placed | $ (reported) | served | clean? |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| bracket-16 | grok-4.5 | 1 | 519.8 | 6,206 | 33,998 | 106.2% | 0 | 0 | 0 | 14/14 | $0.2161824 | xAI | **yes** |
+| bracket-16 | grok-4.5 | 2 | 494.8 | 0 | 0 | — | — | — | — | — | $0 (null) | xAI | **FAIL — transport: "OpenRouter returned an unparsable response body"** |
+| bracket-16 | gemini-3.6-flash | 1 | 58.8 | 7,988 | 16,405 | 51.3% | 0 | 0 | 0 | 14/14 | $0.1350195 | Google | **yes** |
+| bracket-16 | gemini-3.6-flash | 2 | 101.5 | 7,988 | 28,098 | 87.8% | 0 | 0 | 0 | 14/14 | $0.2172860 | Google | **yes** |
+
+Total spend, this run: **$0.5685** (matches the harness's printed total).
+
+### 14c. Before → after (same pack, only the draft changed)
+
+| model | cold-start (§12/§13) | realistic draft (§14b) |
+|---|---|---|
+| grok-4.5 | **0/2** — `AI_PLAN_FAILED` at 32k (§12), `AI_PLAN_TIMEOUT` at 40k (§13) | **1/2 clean** — placed 14/14, 0/0/0; the other rep failed on *transport*, not scheduling |
+| gemini-3.6-flash | 2/2 nominal but fragile — rep 2 at 145.9% cumulative, suspected truncate-retry (§12a) | **2/2 clean**, both under the single-call ceiling (51.3%, 87.8%), no over-cap |
+
+The draft flipped `grok-4.5` from *unable to produce a plan at all* to *producing a correct
+14/14 plan*, and moved `gemini-3.6-flash` from a thin, ceiling-adjacent margin to comfortable
+headroom. This is direct evidence the earlier failures were an artifact of the cold-start
+pack, not the models — exactly what the user suspected.
+
+### 14d. Two caveats, stated plainly
+
+1. **`grok-4.5` rep 2 = a transport failure, not a scheduling failure.** "OpenRouter returned
+   an unparsable response body" (in=0/out=0) is our OpenRouter adapter unable to parse what
+   xAI returned; rep 1 with the byte-identical pack placed 14/14 cleanly. grok-via-OpenRouter
+   has now shown this intermittent parse flake more than once. It is a **reliability** signal
+   against grok *on this transport*, independent of plan quality. A grok-only disambiguation
+   re-run (`AI_AB_ONLY_ARM="grok-4.5"`) follows to size whether 1/2 was bad luck or a real
+   ~50% flake; its numbers will be appended here.
+2. **`grok-4.5` rep 1 emitted 33,998 output tokens — above the 32,000 `max_tokens`** — yet
+   finished `stop`/`completed` and parsed cleanly. So `max_tokens` does not hard-bound grok's
+   total output on OpenRouter the way it does the Anthropic transport (§3). It passed; the
+   note is that grok's cost is not ceiling-capped.
+
+### 14e. How this changes §12d
+
+§12d's "**neither model has a clean pass on `bracket-16` at n≥2**" and "**the default should
+not change on this evidence**" were both conclusions drawn from the contaminated cold-start
+pack. With the production-shaped draft, `gemini-3.6-flash` has a genuine 2/2 clean pass under
+ceiling, and `grok-4.5` produces a correct plan when the transport doesn't drop it. The
+narrowed reading:
+
+- **`bracket-16` is not an impossible or unfair pack** — a legal schedule provably fits
+  (capacity, critical path) and the greedy solver places 14/14. The earlier failures were the
+  cold-start handicap, now removed.
+- **`gemini-3.6-flash` is the clean, cheap, fast candidate on this pack** — 2/2 clean, ~$0.18
+  mean, ~80s mean, comfortably under ceiling.
+- **`grok-4.5` can solve it but is slower (~500s) and flaked once on transport.** Whether it
+  is production-viable on OpenRouter turns on that parse-reliability question, not on
+  scheduling capability.
+- **The default-model decision is still a product call, not made here.** But the evidence base
+  is now sound: the correction removes the single biggest reason §12 gave for caution (an
+  outright hard-pack failure that was really a test artifact).

@@ -17,8 +17,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { runAiPlan, schedulingAiModel } from "../schedule-ai";
-import type { PackFixture, PackPerson, SchedulePack } from "../schedule-ai";
+import { runAiPlan, schedulingAiModel, zonedIso } from "../schedule-ai";
+import type { PackAssignment, PackFixture, PackPerson, SchedulePack } from "../schedule-ai";
+import { toSlotConfig } from "../schedule";
+import { slotFixtures, type SchedulableFixture } from "@seazn/engine/scheduling";
 import { applyPolicy } from "../../ai/openrouter-policy";
 
 // vitest does not read .env.local; load just the keys we need if absent.
@@ -115,6 +117,72 @@ async function probeServedProvider(model: string): Promise<ServedProviderProbe> 
 const uuid = (tag: string, n: number) =>
   `00000000-0000-4000-8000-${`${tag}${n}`.padStart(12, "0").slice(-12)}`;
 
+// --- realistic draft --------------------------------------------------------
+// PRODUCTION never asks the model to cold-build. buildSchedulePack's `generate`
+// path (schedule-ai.ts) runs the SAME greedy solver used here — slotFixtures —
+// and ships its output as the pack's `draft`: a legal-but-naive starting
+// schedule the model only has to improve ("The draft is legal but naive:
+// improve it, don't worship it" — SYSTEM_PROMPT). Building these packs with an
+// empty draft measured a HARDER task than the product ever runs (cold-build vs
+// refine), which is why bracket-16 — where a legal starting point matters most —
+// failed candidates that production would never have handed a blank slate.
+//
+// This mirrors the production draft step exactly: same solver, same SlotConfig
+// (via toSlotConfig), feed order respected via roundNo, the pinned card fed in
+// as `locked`, and only the fixtures the solver actually placed appear (an
+// unplaceable fixture is left for the model, exactly as in production). No DB,
+// no obstacles/siblings (synthetic packs have none), so `existing: []`.
+function withGreedyDraft(pack: SchedulePack): SchedulePack {
+  const tz = pack.division.tz;
+  const personIdsByEntrant = new Map<string, string[]>();
+  for (const p of pack.people) {
+    for (const eid of p.entrant_ids) {
+      const list = personIdsByEntrant.get(eid) ?? personIdsByEntrant.set(eid, []).get(eid)!;
+      list.push(p.person_id);
+    }
+  }
+  const schedulable: SchedulableFixture[] = pack.fixtures.movable.map((f) => ({
+    id: f.id,
+    roundNo: f.round,
+    ...(f.pool !== null ? { poolId: f.pool } : {}),
+    divisionId: pack.division.id,
+    ...(f.home !== null ? { home: f.home } : {}),
+    ...(f.away !== null ? { away: f.away } : {}),
+    people: [
+      ...(f.home !== null ? personIdsByEntrant.get(f.home) ?? [] : []),
+      ...(f.away !== null ? personIdsByEntrant.get(f.away) ?? [] : []),
+    ],
+    ...(f.pinned && f.current.at !== null && f.current.court !== null
+      ? { locked: { court: f.current.court, startAt: new Date(f.current.at).getTime() } }
+      : {}),
+  }));
+  // `now` seeds the solver's scan lower bound AND its 365-day horizon when the
+  // config carries no explicit startAt (these synthetic packs don't). Production
+  // divisions set startAt to the event start, so the horizon covers the session
+  // windows; passing 0 here would put the horizon at 1971 and the 2026 windows
+  // beyond it, so the solver would place NOTHING (an empty draft — the very bug
+  // this change removes). Seed it from the earliest session window instead.
+  const now = Math.min(...pack.settings.sessionWindows.map((w) => new Date(w.from).getTime()));
+  const config = toSlotConfig(
+    {
+      division_id: pack.division.id,
+      config: pack.settings,
+      tz,
+      updated_at: "",
+    } as unknown as Parameters<typeof toSlotConfig>[0],
+    now,
+  );
+  const result = slotFixtures({ fixtures: schedulable, config, existing: [] });
+  const draft: PackAssignment[] = result.assignments
+    .map((a) => ({
+      fixture_id: a.fixtureId,
+      scheduled_at: zonedIso(a.startAt, tz),
+      court_label: a.court,
+    }))
+    .sort((x, y) => (x.scheduled_at < y.scheduled_at ? -1 : x.scheduled_at > y.scheduled_at ? 1 : 0));
+  return { ...pack, draft };
+}
+
 // --- Pack A: 15 teams, 3 pools of 5, round robin within pool = 30 fixtures --
 function teamsPack(): { pack: SchedulePack; movable: Set<string> } {
   const pools = ["Pool A", "Pool B", "Pool C"];
@@ -183,7 +251,7 @@ function teamsPack(): { pack: SchedulePack; movable: Set<string> } {
     prior: null,
     officials: [],
   };
-  return { pack, movable: new Set(movable.map((f) => f.id)) };
+  return { pack: withGreedyDraft(pack), movable: new Set(movable.map((f) => f.id)) };
 }
 
 // --- Pack B: 50 individual entrants, R1 knockout = 25 fixtures -------------
@@ -249,7 +317,7 @@ function individualsPack(): { pack: SchedulePack; movable: Set<string> } {
     prior: null,
     officials: [],
   };
-  return { pack, movable: new Set(movable.map((f) => f.id)) };
+  return { pack: withGreedyDraft(pack), movable: new Set(movable.map((f) => f.id)) };
 }
 
 // --- Pack C: 16-entrant single-elim bracket, two independent halves each
@@ -373,7 +441,7 @@ function bracketPack(): { pack: SchedulePack; movable: Set<string> } {
     prior: null,
     officials: [],
   };
-  return { pack, movable: new Set(movable.map((fx) => fx.id)) };
+  return { pack: withGreedyDraft(pack), movable: new Set(movable.map((fx) => fx.id)) };
 }
 
 // --- cost -------------------------------------------------------------------
@@ -529,6 +597,44 @@ async function bench(
   return row;
 }
 
+// Free (no AI, no billing) guard on the draft fix: every pack must ship a
+// non-empty, court-legal greedy draft — never the cold-start empty draft that
+// made bracket-16 an unfair proxy for production. Runs on a normal `vitest run`
+// (it is NOT under skipIf(!LIVE)), so a regression that empties or corrupts the
+// draft fails fast without a billed run. Logs coverage (placed/movable) so a
+// partial draft — legal, but with fixtures the solver left for the model — is
+// visible rather than silent.
+describe("greedy draft (free sanity)", () => {
+  const packs: [string, () => { pack: SchedulePack; movable: Set<string> }][] = [
+    ["teams-15", teamsPack],
+    ["individuals-50", individualsPack],
+    ["bracket-16", bracketPack],
+  ];
+  for (const [name, build] of packs) {
+    it(`${name} ships a non-empty, court-legal draft`, () => {
+      const { pack, movable } = build();
+      expect(pack.draft.length, `${name}: draft is empty (cold-start regression)`).toBeGreaterThan(0);
+      expect(pack.draft.length).toBeLessThanOrEqual(movable.size);
+      // No two placements share a court+start (the one clash the solver must
+      // never emit — physically impossible, blocks in the referee).
+      const slots = new Set<string>();
+      for (const a of pack.draft) {
+        const key = `${a.court_label}@${a.scheduled_at}`;
+        expect(slots.has(key), `${name}: draft double-books ${key}`).toBe(false);
+        slots.add(key);
+      }
+      // The pinned bracket card must survive into the draft unchanged.
+      if (name === "bracket-16") {
+        const pinned = pack.fixtures.movable.find((f) => f.pinned)!;
+        const placed = pack.draft.find((a) => a.fixture_id === pinned.id);
+        expect(placed?.scheduled_at).toBe(pinned.current.at);
+        expect(placed?.court_label).toBe(pinned.current.court);
+      }
+      process.stdout.write(`[draft] ${name}: placed ${pack.draft.length}/${movable.size}\n`);
+    });
+  }
+});
+
 // Adaptive thinking is noisy: a repeated cell varied 2.1x run-to-run on
 // 2026-07-20 (individuals-50 @ high, 7,911 vs 16,923 output tokens for a
 // byte-identical pack). One sample per cell can order the arms but cannot size
@@ -583,18 +689,24 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
   // fewer thinking tokens per round against possibly MORE rounds, and each
   // repair re-sends the prior round's output as input.
 
-  // 1. Same model, no reasoning. The control: isolates thinking from model.
-  cell("teams-15", teamsPack, { effort: "low", thinking: "disabled", label: "low/no-think" });
-  cell("individuals-50", individualsPack, { effort: "low", thinking: "disabled", label: "low/no-think" });
+  // These four are settled (2026-07-20) and default-on so a plain
+  // `AI_AB_LIVE=1` run reproduces them — but they are BILLED, so a targeted
+  // rerun (e.g. STAGE5 bracket-16 only) sets AI_AB_OPEN_Q=0 to skip them and
+  // spend nothing outside its own arms.
+  if (process.env.AI_AB_OPEN_Q !== "0") {
+    // 1. Same model, no reasoning. The control: isolates thinking from model.
+    cell("teams-15", teamsPack, { effort: "low", thinking: "disabled", label: "low/no-think" });
+    cell("individuals-50", individualsPack, { effort: "low", thinking: "disabled", label: "low/no-think" });
 
-  // 2. Cheaper model, token-capped reasoning. haiku-4-5 is $1/$5 against
-  //    sonnet-5's $3/$15 and needs no port — same SDK, same zodOutputFormat,
-  //    same parsed_output (verified live 2026-07-20). It rejects adaptive and
-  //    effort, so it runs on a legacy budget_tokens ceiling instead, which is
-  //    the token-precise knob effort never gave us.
-  const HAIKU = { model: "claude-haiku-4-5", budget: 8_000, effort: "low" as const };
-  cell("teams-15", teamsPack, { ...HAIKU, label: "haiku/budget8k" });
-  cell("individuals-50", individualsPack, { ...HAIKU, label: "haiku/budget8k" });
+    // 2. Cheaper model, token-capped reasoning. haiku-4-5 is $1/$5 against
+    //    sonnet-5's $3/$15 and needs no port — same SDK, same zodOutputFormat,
+    //    same parsed_output (verified live 2026-07-20). It rejects adaptive and
+    //    effort, so it runs on a legacy budget_tokens ceiling instead, which is
+    //    the token-precise knob effort never gave us.
+    const HAIKU = { model: "claude-haiku-4-5", budget: 8_000, effort: "low" as const };
+    cell("teams-15", teamsPack, { ...HAIKU, label: "haiku/budget8k" });
+    cell("individuals-50", individualsPack, { ...HAIKU, label: "haiku/budget8k" });
+  }
 
   // --- Task 11: the OpenRouter shootout -----------------------------------
   // design/v4/06-openrouter-shootout.md is written from this section's
@@ -720,6 +832,26 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
     for (const arm of RESCUE_40K_ARMS) cell("bracket-16", bracketPack, arm);
   }
 
+  // --- Stage 5 (2026-07-22): bracket-16 rerun with a REALISTIC draft --------
+  // Stages 3/4 ran bracket-16 with a cold-start empty draft (draft: []). That
+  // was NOT the production usecase: buildSchedulePack always ships a legal
+  // greedy draft the model only refines. withGreedyDraft now fills every pack's
+  // draft from the same solver (verified 14/14 placed on bracket-16), so this
+  // rerun tests the same contract production runs: refine a legal bracket, not
+  // build one from nothing. Both FINAL_ARMS, bracket-16 only, effort high, 32k
+  // DEFAULT (maxTokens unset — the shipped ceiling, NOT the stage-4 40k rescue).
+  // n via AI_AB_REPEATS. Own flag so it doesn't re-bill stages 1/1B/1C/2/3/4.
+  // AI_AB_ONLY_ARM="<label>" narrows to one arm — used to re-run just grok-4.5
+  // (to characterise its intermittent OpenRouter transport parse flake) without
+  // re-billing gemini-3.6-flash, which already passed 2/2. Enable with
+  // AI_AB_SHOOTOUT_STAGE5=1.
+  const stage5Arms = process.env.AI_AB_ONLY_ARM
+    ? FINAL_ARMS.filter((a) => a.label === process.env.AI_AB_ONLY_ARM)
+    : FINAL_ARMS;
+  if (process.env.AI_AB_SHOOTOUT_STAGE5 === "1") {
+    for (const arm of stage5Arms) cell("bracket-16", bracketPack, arm);
+  }
+
   it("summary", () => {
     const roundMs = Number(process.env.SCHEDULING_AI_ROUND_TIMEOUT_MS) || 300_000;
     process.stdout.write(
@@ -753,13 +885,16 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
 
     const total = rows.reduce((s, r) => s + (r.realUsd ?? r.introUsd), 0);
     process.stdout.write(`\ntotal spend this bench (real, provider-reported): $${Math.round(total * 10000) / 10000}\n`);
-    let expectedCells = process.env.AI_AB_BASELINE === "1" ? 8 : 4;
+    let expectedCells = 0;
+    if (process.env.AI_AB_OPEN_Q !== "0") expectedCells += 4; // default-on open-question + haiku cells
+    if (process.env.AI_AB_BASELINE === "1") expectedCells += 4;
     if (process.env.AI_AB_SHOOTOUT_STAGE1 === "1") expectedCells += stage1Arms.length;
     if (process.env.AI_AB_SHOOTOUT_STAGE2 === "1") expectedCells += stage2Arms.length * 2;
     if (process.env.AI_AB_SHOOTOUT_STAGE1B === "1") expectedCells += WIDENED_CANDIDATES.length;
     if (process.env.AI_AB_SHOOTOUT_STAGE1C === "1") expectedCells += 1;
     if (process.env.AI_AB_SHOOTOUT_STAGE3 === "1") expectedCells += FINAL_ARMS.length * FINAL_PACKS.length;
     if (process.env.AI_AB_SHOOTOUT_STAGE4 === "1") expectedCells += RESCUE_40K_ARMS.length;
+    if (process.env.AI_AB_SHOOTOUT_STAGE5 === "1") expectedCells += stage5Arms.length;
     const expected = expectedCells * REPEATS;
     expect(rows.length).toBe(expected);
     expect(rows.every((r) => r.error === "")).toBe(true);
