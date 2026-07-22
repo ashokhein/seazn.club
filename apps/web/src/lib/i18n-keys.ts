@@ -171,6 +171,8 @@ export type DictionaryKey =
   | "billing.group.transfer.summary.intervalMonthly"
   | "billing.group.transfer.summary.noChargeToday"
   | "billing.group.transfer.summary.noRenewal"
+  | "billing.group.transfer.summary.orgOne"
+  | "billing.group.transfer.summary.orgOther"
   | "billing.group.transfer.summary.renewal"
   | "billing.group.transfer.summary.renewalFallback"
   | "billing.group.transfer.summary.takingOver"
