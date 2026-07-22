@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { CookieSettingsButton } from "@/components/cookie-settings-button";
 import { LocaleSwitcher } from "@/components/i18n/locale-switcher";
-import { StripeBadge } from "@/components/stripe-badge";
+import { PoweredByStripe } from "@/components/powered-by-stripe";
 import { getDictionary, t } from "@/lib/i18n";
 import { toLocale } from "@/lib/i18n-constants";
 
@@ -83,10 +83,13 @@ export async function MarketingFooter({ lang = "en" }: { lang?: string }) {
         </div>
         {/* Trust line: entry fees run on Stripe (Checkout + Connect) — say so
             where the whole site signs off. Quiet by design, dead-centered. */}
-        <div className="mt-4 flex w-full justify-center text-xs text-[#8d7fc0]">
-          <StripeBadge
-            label={t(d, "footer.securePayments")}
-            className="hover:text-[var(--mk-lime)]"
+        <div className="mt-4 flex w-full justify-center">
+          {/* Official "Powered by Stripe" lockup, white variant for the night
+              slab. A language-neutral image, so no localized lead-in here. */}
+          <PoweredByStripe
+            variant="white"
+            width={112}
+            className="inline-block opacity-80 transition hover:opacity-100"
           />
         </div>
       </div>

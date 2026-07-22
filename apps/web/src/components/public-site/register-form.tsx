@@ -12,6 +12,7 @@ import Image from "next/image";
 import { apiV1 } from "@/lib/client-v1";
 import { useMsg } from "@/components/i18n/dict-provider";
 import { Tip } from "@/components/ui/tip";
+import { PoweredByStripe } from "@/components/powered-by-stripe";
 
 export interface RegisterCompetition {
   name: string;
@@ -617,6 +618,18 @@ export function RegisterForm({
         </div>
       )}
       {division?.open && <div className="bottom-bar-spacer" aria-hidden />}
+      {/* Official "Powered by Stripe" lockup, centered below the pay button —
+          only for card-paid divisions, where Stripe actually takes the fee.
+          Light page (bg-canvas) → blurple variant. */}
+      {division?.open && division.payment_method === "stripe" && (
+        <p className="flex justify-center pt-1">
+          <PoweredByStripe
+            variant="blurple"
+            width={110}
+            className="inline-block opacity-70 transition hover:opacity-100"
+          />
+        </p>
+      )}
     </form>
   );
 }

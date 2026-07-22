@@ -3,7 +3,7 @@ import Image from "next/image";
 // The OFFICIAL "Powered by Stripe" badge — Stripe's own brand SVG, unmodified.
 // Stripe's brand policy lets a business that processes on Stripe display it and
 // asks that it link to stripe.com, which this does. Distinct from the older
-// text-only <StripeBadge> trust line; this is the full lockup for payment
+// text-only trust badge it replaced; this is the full lockup for payment
 // surfaces (billing, registration checkout) and the public footer.
 //
 // Two fixed-fill variants ship in the brand kit: `blurple` for light
