@@ -28,6 +28,7 @@ import { BackLink } from "@/components/back-link";
 import { PoweredByStripe } from "@/components/powered-by-stripe";
 import { Tip } from "@/components/ui/tip";
 import { BillingGroupPanel } from "@/components/billing-group-panel";
+import { IncomingTransferOffers } from "@/components/incoming-transfer-offers";
 import { routes } from "@/lib/routes";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, plural, type Locale } from "@/lib/i18n";
@@ -218,6 +219,13 @@ export default async function BillingPage({
             {status === "trialing" ? t(dict, "billing.trialSuffix") : ""}.
           </div>
         )}
+
+        {/* A bill someone wants to hand to YOU. Mounted UNCONDITIONALLY — not
+            behind `isPayer` — because the recipient of an offer is precisely a
+            non-payer of this group (BillingGroupPanel below is payer-only, so it
+            never reaches them). Renders itself away when there is no incoming
+            offer, and sits high so a recipient meets it first. */}
+        <IncomingTransferOffers currentUserId={user.id} />
 
         {/* Current plan */}
         <section data-tour="billing-plan" className="card mb-6 p-5">
