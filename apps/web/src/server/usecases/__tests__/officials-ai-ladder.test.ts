@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { officialsPlanRungs } from "../officials-ai";
+import { DEFAULT_LADDER } from "../schedule-ai";
 
 describe("officialsPlanRungs", () => {
   const keys = ["OFFICIALS_AI_LADDER", "SCHEDULING_AI_LADDER", "SCHEDULING_AI_MODEL", "AI_PROVIDER"] as const;
@@ -22,8 +23,8 @@ describe("officialsPlanRungs", () => {
     }
   });
 
-  it("with nothing set, a single sonnet-direct rung (shipped default, unchanged)", () => {
-    expect(officialsPlanRungs()).toEqual([{ provider: "anthropic", model: "claude-sonnet-5" }]);
+  it("with nothing set, the DEFAULT_LADDER (unconfigured rungs skip → sonnet-direct until OpenRouter is keyed)", () => {
+    expect(officialsPlanRungs()).toEqual([...DEFAULT_LADDER]);
   });
 
   it("parses OFFICIALS_AI_LADDER, inferring provider from the model id", () => {
@@ -34,15 +35,16 @@ describe("officialsPlanRungs", () => {
     ]);
   });
 
-  it("does NOT inherit SCHEDULING_AI_LADDER — officials stays single-model until benched", () => {
-    process.env.SCHEDULING_AI_LADDER = "google/gemini-3.6-flash,claude-sonnet-5,x-ai/grok-4.5";
-    // OFFICIALS_AI_LADDER unset: flipping the schedule architect to gemini must
-    // not silently route officials (unbenched) through it too.
-    expect(officialsPlanRungs()).toEqual([{ provider: "anthropic", model: "claude-sonnet-5" }]);
+  it("does NOT inherit SCHEDULING_AI_LADDER — that env is invisible to officials", () => {
+    process.env.SCHEDULING_AI_LADDER = "claude-haiku-4-5,claude-sonnet-5";
+    // OFFICIALS_AI_LADDER unset: officials reads ONLY its own env, so a custom
+    // schedule ladder does not leak in — officials falls to its own default.
+    expect(officialsPlanRungs()).toEqual([...DEFAULT_LADDER]);
   });
 
-  it("AI_PROVIDER=openrouter carries into the default rung's provider", () => {
+  it("SCHEDULING_AI_MODEL pins a single officials rung on the AI_PROVIDER transport", () => {
     process.env.AI_PROVIDER = "openrouter";
-    expect(officialsPlanRungs()).toEqual([{ provider: "openrouter", model: "claude-sonnet-5" }]);
+    process.env.SCHEDULING_AI_MODEL = "x-ai/grok-4.5";
+    expect(officialsPlanRungs()).toEqual([{ provider: "openrouter", model: "x-ai/grok-4.5" }]);
   });
 });

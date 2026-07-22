@@ -775,19 +775,28 @@ is a rare last-ditch, never on the hot path.
 cheap→primary) is generalised into an N-rung `runLadder` (pure, unit-tested over injected
 attempt/acceptable — `schedule-ai-ladder.test.ts`). Each rung pins its own provider via
 `resolveProvider(name)` — **never** by mutating `AI_PROVIDER`, which is process-global and unsafe
-under concurrent requests. Opt-in via `SCHEDULING_AI_LADDER` (comma list; provider inferred from
-the id — a `/` means OpenRouter, else Anthropic). **Unset → today's behaviour exactly** (single
-sonnet-direct rung, or the legacy cheap→primary escalation), so local/CI and existing tests are
-untouched; production flips gemini-first by setting the env, the same deploy-gated pattern as
-`AI_PROVIDER` / `ANTHROPIC_API_KEY`.
+under concurrent requests.
+
+**The ladder is the code DEFAULT** (`DEFAULT_LADDER` = gemini→sonnet→grok), not an opt-in env
+(2026-07-22 decision) — but a rung whose provider has no API key is **skipped** at run time
+(`isConfigured` → the rung throws `AI_PROVIDER_NOT_CONFIGURED`, which `isRecoverable` treats as
+"advance"). So a deployment with only `ANTHROPIC_API_KEY` transparently resolves to sonnet-direct
+— nothing changes for local, CI, or production-today — and **the gemini/grok rungs activate only
+once `OPENROUTER_API_KEY` is present. Setting that key IS the production flip** (still a
+deliberate deploy action, gated on the sub-processor legal sign-off). Overrides:
+`SCHEDULING_AI_LADDER` (comma list; provider inferred per id — `/` = OpenRouter, else Anthropic)
+replaces the default ladder; `SCHEDULING_AI_MODEL` pins exactly one model on the `AI_PROVIDER`
+transport (no fallback); `SCHEDULING_AI_CHEAP_MODEL` keeps the legacy cheap→primary escalation.
+`AI_PROVIDER` is now vestigial for the main path — the ladder pins each rung's provider itself.
 
 **Phase B (officials)** is wired to the same `runLadder` (generalised to be generic over the
-result type), but reads its **own** env `OFFICIALS_AI_LADDER` — deliberately independent of
-`SCHEDULING_AI_LADDER`. The officials task is not benched against the cheaper candidates, so
-flipping the schedule architect to gemini must not silently route officials (unbenched) through
-it too; unset → today's single sonnet-direct rung. Officials has no tuned warning-ratio gate, so
-it advances only on a thrown recoverable failure, never on plan quality. Benching officials, then
-flipping `OFFICIALS_AI_LADDER`, is the remaining follow-up.
+result type) and shares the same `DEFAULT_LADDER`, but reads its **own** override env
+`OFFICIALS_AI_LADDER` — independent of `SCHEDULING_AI_LADDER`, so a custom schedule ladder never
+leaks into officials. Because unconfigured rungs skip, officials is also sonnet-direct until
+`OPENROUTER_API_KEY` is set. Officials is **not** independently benched against gemini/grok, so
+once OpenRouter is keyed, pin officials back to sonnet (`OFFICIALS_AI_LADDER=claude-sonnet-5`)
+until it is benched — that benching is the remaining follow-up. Officials has no tuned
+warning-ratio gate, so it advances only on a thrown recoverable failure, never on plan quality.
 
 **Cost alignment (owner ask).** Per round, cost already uses the **provider-reported** figure
 first (OpenRouter's real `usage.cost`), estimate only as a fallback, and `null` ("unknown") never

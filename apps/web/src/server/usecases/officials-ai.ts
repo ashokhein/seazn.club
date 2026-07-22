@@ -42,6 +42,7 @@ import type { AuthCtx } from "@/server/api-v1/auth";
 import type { AiOfficialsPlanRequest, AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
 import { AiOfficialsPlan, OFFICIALS_SYSTEM_PROMPT } from "./officials-ai-prompt";
 import {
+  DEFAULT_LADDER,
   parseAiEffort,
   parseLadderSpec,
   runLadder,
@@ -857,7 +858,7 @@ export async function runOfficialsAiPlan(
   // 503 before any network if unconfigured.
   const provider = providerName ? resolveProvider(providerName) : selectProvider();
   if (!provider.isConfigured()) {
-    throw new HttpError(503, "AI scheduling is not configured on this server");
+    throw new HttpError(503, "AI scheduling is not configured on this server", "AI_PROVIDER_NOT_CONFIGURED");
   }
   const model = modelOverride ?? schedulingAiModel();
 
@@ -964,17 +965,21 @@ export async function runOfficialsAiPlan(
   }
 }
 
-/** The ordered candidate ladder for a Phase B (officials) run. Opt-in via its
- *  OWN env, OFFICIALS_AI_LADDER — deliberately separate from
- *  SCHEDULING_AI_LADDER: the officials task is NOT benched against the cheaper
- *  candidates, so flipping the schedule architect to gemini must not silently
- *  flip officials too. Unset → today's single-model path (env provider + the
- *  shared default model), unchanged. */
+/** The ordered candidate ladder for a Phase B (officials) run. Precedence:
+ *    1. OFFICIALS_AI_LADDER   — explicit officials ladder, read from its OWN env
+ *       (independent of SCHEDULING_AI_LADDER: flipping the schedule architect
+ *       must not silently override officials's explicit choice).
+ *    2. SCHEDULING_AI_MODEL    — explicit single-model pin.
+ *    3. DEFAULT_LADDER         — the shipped default (gemini→sonnet→grok).
+ *  Unconfigured rungs skip, so (3) resolves to sonnet-direct until
+ *  OPENROUTER_API_KEY is set. NOTE: officials is not independently benched
+ *  against gemini/grok — watch its output before trusting the flipped path. */
 export function officialsPlanRungs(): LadderRung[] {
   const ladder = parseLadderSpec(process.env.OFFICIALS_AI_LADDER);
   if (ladder) return ladder;
   const provider: ProviderName = process.env.AI_PROVIDER === "openrouter" ? "openrouter" : "anthropic";
-  return [{ provider, model: schedulingAiModel() }];
+  if (process.env.SCHEDULING_AI_MODEL) return [{ provider, model: process.env.SCHEDULING_AI_MODEL }];
+  return [...DEFAULT_LADDER];
 }
 
 /** Run the officials architect through the fallback ladder. Officials has no

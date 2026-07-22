@@ -1002,7 +1002,7 @@ export async function runAiPlan(
   // the env-selected provider, exactly as before this parameter existed.
   const provider = providerName ? resolveProvider(providerName) : selectProvider();
   if (!provider.isConfigured()) {
-    throw new HttpError(503, "AI scheduling is not configured on this server");
+    throw new HttpError(503, "AI scheduling is not configured on this server", "AI_PROVIDER_NOT_CONFIGURED");
   }
   const model = modelOverride ?? schedulingAiModel();
 
@@ -1271,20 +1271,39 @@ export function schedulingAiLadder(): LadderRung[] | null {
   return parseLadderSpec(process.env.SCHEDULING_AI_LADDER);
 }
 
-/** The ordered candidate list for one architect run. An explicit
- *  SCHEDULING_AI_LADDER wins; otherwise the legacy behaviour is reproduced
- *  exactly — cheap→primary escalation (both on the env-selected provider) when
- *  a cheap model is set, else a single primary rung. So with neither env var
- *  set, this is the shipped Anthropic/sonnet single-model path, unchanged. */
+/** The shipped default fallback ladder: cheap/fast primary → proven backstop →
+ *  last-ditch. Rungs whose provider has no API key are SKIPPED at run time (see
+ *  isConfigured / isRecoverable), so a deployment with only ANTHROPIC_API_KEY
+ *  transparently resolves to sonnet-direct; the gemini/grok rungs activate only
+ *  once OPENROUTER_API_KEY is present. That key is the deliberate production
+ *  flip — no separate SCHEDULING_AI_LADDER needed. */
+export const DEFAULT_LADDER: readonly LadderRung[] = [
+  { provider: "openrouter", model: "google/gemini-3.6-flash" },
+  { provider: "anthropic", model: "claude-sonnet-5" },
+  { provider: "openrouter", model: "x-ai/grok-4.5" },
+];
+
+/** The ordered candidate list for one architect run. Precedence:
+ *    1. SCHEDULING_AI_LADDER       — explicit ladder, used verbatim.
+ *    2. SCHEDULING_AI_MODEL         — explicit single-model pin (no fallback),
+ *       on the AI_PROVIDER transport; the "force exactly this model" escape
+ *       hatch (also what the bench pins, though the bench calls runAiPlan
+ *       directly and never reaches here).
+ *    3. SCHEDULING_AI_CHEAP_MODEL   — legacy cheap→primary escalation.
+ *    4. DEFAULT_LADDER              — the shipped default (gemini→sonnet→grok).
+ *  Because unconfigured rungs are skipped, (4) resolves to sonnet-direct until
+ *  OPENROUTER_API_KEY is set, so nothing about a no-OpenRouter deployment
+ *  changes. */
 export function planRungs(): LadderRung[] {
   const ladder = schedulingAiLadder();
   if (ladder) return ladder;
   const provider: ProviderName = process.env.AI_PROVIDER === "openrouter" ? "openrouter" : "anthropic";
-  const primary = schedulingAiModel();
+  if (process.env.SCHEDULING_AI_MODEL) return [{ provider, model: process.env.SCHEDULING_AI_MODEL }];
   const cheap = schedulingAiCheapModel();
-  return cheap && cheap !== primary
-    ? [{ provider, model: cheap }, { provider, model: primary }]
-    : [{ provider, model: primary }];
+  if (cheap && cheap !== schedulingAiModel()) {
+    return [{ provider, model: cheap }, { provider, model: schedulingAiModel() }];
+  }
+  return [...DEFAULT_LADDER];
 }
 
 type Usage = AiPlanResult["usage"];
@@ -1304,13 +1323,24 @@ function addUsage(acc: Usage, next: Partial<Usage>): Usage {
 }
 
 /** Does this error justify trying the next rung? A plan the model could not
- *  produce (AI_PLAN_FAILED / AI_PLAN_TIMEOUT) or a transport/API failure
- *  (AiProviderError — unparsable body, 5xx, refusal) is recoverable by a
- *  different model/provider. A deterministic user error (empty scope, too
- *  large, 400/404) is NOT — it would fail identically on every rung. */
+ *  produce (AI_PLAN_FAILED / AI_PLAN_TIMEOUT), a transport/API failure
+ *  (AiProviderError — unparsable body, 5xx, refusal), or a rung whose provider
+ *  simply has no API key here (AI_PROVIDER_NOT_CONFIGURED — skip it) is
+ *  recoverable by a different model/provider. A deterministic user error (empty
+ *  scope, too large, 400/404) is NOT — it would fail identically on every rung.
+ *
+ *  Skipping unconfigured rungs is what lets DEFAULT_LADDER ship safely: a
+ *  deployment with only ANTHROPIC_API_KEY skips the gemini/grok rungs and lands
+ *  on sonnet-direct; if EVERY rung is unconfigured, the last one's 503
+ *  propagates unchanged. */
 function isRecoverable(err: unknown): boolean {
   if (err instanceof AiProviderError) return true;
-  return err instanceof HttpError && (err.code === "AI_PLAN_FAILED" || err.code === "AI_PLAN_TIMEOUT");
+  return (
+    err instanceof HttpError &&
+    (err.code === "AI_PLAN_FAILED" ||
+      err.code === "AI_PLAN_TIMEOUT" ||
+      err.code === "AI_PROVIDER_NOT_CONFIGURED")
+  );
 }
 
 /**

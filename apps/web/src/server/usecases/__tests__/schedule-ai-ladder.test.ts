@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/lib/errors";
 import { AiProviderError } from "@/server/ai/provider";
 import {
+  DEFAULT_LADDER,
   planRungs,
   runLadder,
   schedulingAiLadder,
@@ -103,8 +104,18 @@ describe("planRungs", () => {
     ]);
   });
 
-  it("with neither ladder nor cheap set, a single sonnet rung on anthropic (shipped default, unchanged)", () => {
-    expect(planRungs()).toEqual([{ provider: "anthropic", model: "claude-sonnet-5" }]);
+  it("with nothing set, the DEFAULT_LADDER (gemini→sonnet→grok) is the shipped default", () => {
+    // Unconfigured rungs skip at run time, so on a no-OPENROUTER_API_KEY box this
+    // still resolves to sonnet-direct — but the code default IS the ladder.
+    expect(planRungs()).toEqual([...DEFAULT_LADDER]);
+  });
+
+  it("SCHEDULING_AI_MODEL pins a single rung (no fallback) on the AI_PROVIDER transport", () => {
+    process.env.SCHEDULING_AI_MODEL = "claude-haiku-4-5";
+    expect(planRungs()).toEqual([{ provider: "anthropic", model: "claude-haiku-4-5" }]);
+    process.env.AI_PROVIDER = "openrouter";
+    process.env.SCHEDULING_AI_MODEL = "x-ai/grok-4.5";
+    expect(planRungs()).toEqual([{ provider: "openrouter", model: "x-ai/grok-4.5" }]);
   });
 
   it("reproduces the legacy cheap→primary escalation when SCHEDULING_AI_CHEAP_MODEL is set", () => {
@@ -113,17 +124,6 @@ describe("planRungs", () => {
       { provider: "anthropic", model: "claude-haiku-4-5" },
       { provider: "anthropic", model: "claude-sonnet-5" },
     ]);
-  });
-
-  it("AI_PROVIDER=openrouter carries into the legacy rungs' provider", () => {
-    process.env.AI_PROVIDER = "openrouter";
-    expect(planRungs()).toEqual([{ provider: "openrouter", model: "claude-sonnet-5" }]);
-  });
-
-  it("a cheap model equal to primary collapses to a single rung", () => {
-    process.env.SCHEDULING_AI_MODEL = "claude-sonnet-5";
-    process.env.SCHEDULING_AI_CHEAP_MODEL = "claude-sonnet-5";
-    expect(planRungs()).toEqual([{ provider: "anthropic", model: "claude-sonnet-5" }]);
   });
 });
 
@@ -156,6 +156,18 @@ describe("runLadder", () => {
     expect(out.rungs_tried).toEqual(["google/gemini-3.6-flash", "claude-sonnet-5"]);
     // gemini's failed spend + sonnet's winning spend.
     expect(out.usage).toMatchObject({ input_tokens: 500, output_tokens: 250, cost_usd: 0.07 });
+  });
+
+  it("skips a rung whose provider is unconfigured (AI_PROVIDER_NOT_CONFIGURED) and lands on the next", async () => {
+    // This is what lets DEFAULT_LADDER ship: no OPENROUTER_API_KEY → the gemini
+    // rung throws 503/AI_PROVIDER_NOT_CONFIGURED → skip → sonnet serves.
+    const attempt = vi
+      .fn()
+      .mockRejectedValueOnce(new HttpError(503, "not configured", "AI_PROVIDER_NOT_CONFIGURED"))
+      .mockResolvedValueOnce(fakeResult());
+    const out = await runLadder<AiPlanResult>(R, attempt, alwaysOk);
+    expect(attempt).toHaveBeenCalledTimes(2);
+    expect(out.served_model).toBe("claude-sonnet-5");
   });
 
   it("advances past a usable-but-unacceptable plan (warning flood) and pays for it", async () => {
