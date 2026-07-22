@@ -99,6 +99,10 @@ export function BillingGroupPanel({
       // transferConfirmKey, which is where that choice is tested.
       body: msg(transferConfirmKey(hasLive), { person: to.name ?? "" }),
       confirmLabel: msg("billing.group.transfer.confirmAction"),
+      // Type-to-confirm on every org-level billing act: handing a bill to
+      // someone else is irreversible from the payer's side, so a click is too
+      // cheap for it.
+      typedName: "CONFIRM",
     });
     if (!ok) return;
     setBusy(true);
@@ -142,6 +146,8 @@ export function BillingGroupPanel({
         </>
       ),
       confirmLabel: msg("billing.group.attach.confirmAction"),
+      // Attaching charges money and moves an org's plan; type to confirm.
+      typedName: "CONFIRM",
     });
     if (!ok) return;
     setBusy(true);
@@ -175,6 +181,9 @@ export function BillingGroupPanel({
       ),
       confirmLabel: msg("billing.group.detach.confirmAction"),
       tone: "danger",
+      // Removing an org drops it to Community at period end with no refund; the
+      // slowest, most deliberate of the three, so type to confirm here too.
+      typedName: "CONFIRM",
     });
     if (!ok) return;
     setBusy(true);

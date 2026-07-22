@@ -93,9 +93,16 @@ test.describe.serial("billing groups — visual workflow", () => {
     return panel;
   }
 
-  /** Confirm the open dialog and wait for the panel to reload behind it. */
+  /** Confirm the open dialog and wait for the panel to reload behind it. Every
+   *  org-level billing act is type-to-confirm, so the action button stays
+   *  disabled until "CONFIRM" is typed. */
   async function confirmDialog(page: Page, action: string): Promise<void> {
-    await dialogOf(page).getByRole("button", { name: action }).click();
+    const dialog = dialogOf(page);
+    const button = dialog.getByRole("button", { name: action });
+    await expect(button).toBeDisabled();
+    await dialog.getByRole("textbox").fill("CONFIRM");
+    await expect(button).toBeEnabled();
+    await button.click();
     await expect(dialogOf(page)).toHaveCount(0);
     // Every mutation is followed by `load()`, so the panel is briefly stale.
     await page.waitForLoadState("networkidle");
