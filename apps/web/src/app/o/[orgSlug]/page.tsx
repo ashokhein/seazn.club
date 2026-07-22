@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 // Org home — competitions as match-day cards (v3/03 §2). Nav comes from the
 // /o layout; auth comes from the URL (PROMPT-30).
 import Link from "@/components/ui/console-link";
-import { Trophy } from "lucide-react";
+import { Ticket, Trophy } from "lucide-react";
 import { BillingBanner } from "@/components/billing-banner";
 import { requireOrgPage } from "@/server/page-auth";
 import { listCompetitions } from "@/server/usecases/competitions";
@@ -13,6 +13,10 @@ import { sportTint } from "@/lib/sport-tints";
 import { CardMenu } from "@/components/ui/card-menu";
 import { ViewToggleContainer } from "@/components/ui/view-toggle";
 import { StatusChip, competitionChipState, CHIP_SORT } from "@/components/ui/status-chip";
+import { sql } from "@/lib/db";
+import { isPaidPlan, orgPlanKey } from "@/lib/entitlements";
+import { formatMinor, passPrice } from "@/lib/currency";
+import { preferredCurrency } from "@/lib/currency-server";
 import { routes } from "@/lib/routes";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, plural } from "@/lib/i18n";
@@ -38,6 +42,27 @@ export default async function OrgHomePage({
 
   const { items: competitions } = await listCompetitions(auth, { cursor: null, limit: 100 });
   const stats = await listCompetitionCardStats(auth);
+
+  // Event Pass state for the list (task 19, entry point 4 of 4).
+  //
+  // Under a paid plan neither half applies and neither read happens: the pass
+  // must not be OFFERED (Pro's matrix is a strict superset — the $29 would buy
+  // strictly less), and a pass row that survives a later upgrade must not be
+  // ADVERTISED either, because the resolver stops consulting it the moment the
+  // plan is paid. That is exactly what `usePassGateState()` collapses to
+  // "paid_plan"; the same precedence, from the same predicate, on the server.
+  const paidPlan = isPaidPlan(await orgPlanKey(org.id));
+  const [passRows, currency] = await Promise.all([
+    paidPlan
+      ? []
+      : // Presence, never payment: a staff-granted pass has a null
+        // `stripe_payment_intent` and is fully active.
+        sql<{ competition_id: string }[]>`
+          select competition_id from competition_passes where org_id = ${org.id}`,
+    preferredCurrency(org.id),
+  ]);
+  const passed = new Set(passRows.map((r) => r.competition_id));
+  const passLabel = formatMinor(passPrice(currency), currency);
 
   // Live first, then Registration open, Draft, Completed (v3/03 §2);
   // secondary = the query's recency order, kept by stable sort.
@@ -99,6 +124,7 @@ export default async function OrgHomePage({
           <ViewToggleContainer storageKey="seazn.view.competitions" toggle={competitions.length > 20}>
             {sorted.map(({ c, chip }) => {
               const s = stats.get(c.id);
+              const held = passed.has(c.id);
               return (
                 <EntityCard
                   key={c.id}
@@ -110,7 +136,28 @@ export default async function OrgHomePage({
                     tint: sportTint(s?.top_sport),
                   }}
                   locale={locale}
-                  chip={<StatusChip state={c.frozen ? "frozen" : chip} locale={locale} />}
+                  chip={
+                    <span className="flex shrink-0 items-center gap-1.5">
+                      <StatusChip state={c.frozen ? "frozen" : chip} locale={locale} />
+                      {/* A seal, not a second word. The card's one wide slot is
+                          the competition's NAME, and a text badge here took
+                          enough of it to truncate "Spring Social" to
+                          "Spring S…". The status chip already owns the card's
+                          word; this says the pass is on and gets out of the
+                          way, carrying its label on the element itself. */}
+                      {held && (
+                        <span
+                          data-pass-held
+                          role="img"
+                          aria-label={t(dict, "pass.entry.active")}
+                          title={t(dict, "pass.entry.active")}
+                          className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-lime-100 text-lime-800 ring-1 ring-inset ring-lime-300"
+                        >
+                          <Ticket className="h-3 w-3" strokeWidth={2.25} aria-hidden />
+                        </span>
+                      )}
+                    </span>
+                  }
                   meta={
                     s
                       ? `${plural(dict, "org.home.meta.divisions", s.divisions, locale)} · ${plural(dict, "org.home.meta.entrants", s.entrants, locale)}`
@@ -125,6 +172,19 @@ export default async function OrgHomePage({
                         { label: t(dict, "org.home.menu.schedule"), href: routes.competitionSchedule(orgSlug, c.slug) },
                         { label: t(dict, "org.home.menu.settings"), href: routes.competitionSettings(orgSlug, c.slug) },
                         { label: t(dict, "org.home.menu.slideshow"), href: routes.slideshowCompetition(c.id), external: true },
+                        // The pass, where every other per-competition action
+                        // lives. Absent once held (the chip says so) and absent
+                        // on a paid plan (`passed` is empty and `paidPlan`
+                        // suppresses the offer) — never re-sold, never a
+                        // downgrade. Editors only: the buy itself is owner-only.
+                        ...(!paidPlan && !held && canEdit
+                          ? [
+                              {
+                                label: t(dict, "pass.menu.buy", { price: passLabel }),
+                                href: routes.competitionUpgrade(orgSlug, c.slug),
+                              },
+                            ]
+                          : []),
                       ]}
                     />
                   }

@@ -850,8 +850,13 @@ export async function submitRegistration(
                where division_id = ${input.division_id} for update`;
       const taken = await activeCount(tx, input.division_id);
       // The plan's entrant quota also bounds intake (doc 10 §1) — never
-      // accept money for a spot the plan can't materialise.
-      const planLimit = await getLimit(ctx.org_id, "entrants.per_division.max");
+      // accept money for a spot the plan can't materialise. Competition-scoped
+      // (same `ctx.competition_id` the paid-intake gate uses a dozen lines up):
+      // the Event Pass raises this quota 32 → 64, and resolving it org-wide
+      // meant a passed competition still waitlisted entry 33 (Phase 2 sweep).
+      const planLimit = await getLimit(
+        ctx.org_id, "entrants.per_division.max", ctx.competition_id,
+      );
       const hardCap = Math.min(
         settings.capacity ?? Number.POSITIVE_INFINITY,
         planLimit ?? Number.POSITIVE_INFINITY,

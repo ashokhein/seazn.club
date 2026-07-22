@@ -26,11 +26,34 @@ test.describe("pricing page v3", () => {
         await expect(matrix.locator("thead")).toContainText(col);
       }
       await expect(matrix.locator("tbody")).toContainText("Entrants per division");
-      // The v3 numbers, straight from the seed: 16 / 32 / 256.
+      // Straight from plan_entitlements: 32 / 64 / 256. V311 raised Community
+      // 16 → 32 and the Event Pass 32 → 64, so the old 16 appears nowhere in
+      // this row — asserting it fails against the live matrix.
       const entrantsRow = matrix.locator("tr", { hasText: "Entrants per division" });
-      await expect(entrantsRow).toContainText("16");
       await expect(entrantsRow).toContainText("32");
+      await expect(entrantsRow).toContainText("64");
       await expect(entrantsRow).toContainText("256");
+
+      // The rest of what V310/V311 repackaged, on the page that sells it.
+      // These are the rows this branch MOVED, so a matrix drift shows up here
+      // before a buyer finds it (task 22).
+      // Cell 0 of every row is the feature LABEL (a <td>, not a <th>), so the
+      // plan columns start at 1: community, event pass, pro, pro plus.
+      const cell = (label: string, plan: 0 | 1 | 2 | 3) =>
+        matrix.locator("tr", { hasText: label }).locator("td").nth(plan + 1);
+      // Divisions per competition: community 2, pass 10 (the pass's own ceiling).
+      await expect(cell("Divisions per competition", 0)).toHaveText("2");
+      await expect(cell("Divisions per competition", 1)).toHaveText("10");
+      // The fee ladder — the pass's only recurring saving.
+      await expect(cell("Platform fee on entry fees", 0)).toContainText("8%");
+      await expect(cell("Platform fee on entry fees", 1)).toContainText("5%");
+      await expect(cell("Platform fee on entry fees", 2)).toContainText("2%");
+      // V308 added player profiles to the pass column…
+      await expect(cell("Public player profiles", 0)).toHaveText("—");
+      await expect(cell("Public player profiles", 1)).toHaveText("✓");
+      // …and V310 made `branding` free on EVERY plan, so the community cell
+      // must NOT be a dash. Re-gating it would be a silent takeaway.
+      await expect(cell("Custom branding", 0)).toHaveText("✓");
 
       // The dark Business plan never surfaces on marketing pages (v3/03 §6).
       expect(await page.locator("body").innerText()).not.toContain("Business");
@@ -111,7 +134,10 @@ test.describe.serial("event pass gate (community org)", () => {
     await expect(gate).toBeVisible({ timeout: 20_000 });
     await expect(gate.locator("[data-pass-cta]")).toContainText("$29");
     const passHref = await gate.locator("[data-pass-cta]").getAttribute("href");
-    expect(passHref).toMatch(new RegExp(`/c/${comp.data!.slug}/upgrade$`));
+    // The gate appends `?feature=<key>` so the upgrade page can render its
+    // ceiling state; anchor on the path, not the whole string.
+    expect(passHref).toMatch(new RegExp(`/c/${comp.data!.slug}/upgrade(\\?|$)`));
+    expect(passHref).toContain("feature=divisions.per_competition.max");
 
     // Purchase (SQL analogue — test-infra convention), then the gate lifts…
     // The 402 above cached this org's resolved limit server-side, so the
@@ -127,6 +153,20 @@ test.describe.serial("event pass gate (community org)", () => {
     // for a sibling that stays community-capped.
     await page.goto(passHref!);
     await expect(page.locator("[data-pass-active]")).toBeVisible({ timeout: 20_000 });
+
+    // …and from here on, no gate under this competition offers the pass a
+    // second time (spec D1). The competition-wide schedule board is Pro-only
+    // and the pass never lifted it, so the paywall still renders — but as the
+    // pass-owned card: one Pro path, no $29 button.
+    // Strip the query as well as the segment — `/upgrade$` alone stopped
+    // matching once the gate started appending `?feature=`, and a no-op replace
+    // would have quietly re-loaded the upgrade page and asserted against it.
+    await page.goto(passHref!.replace(/\/upgrade(\?.*)?$/, "/schedule"));
+    const owned = page.locator("[data-pass-owned]").first();
+    await expect(owned).toBeVisible({ timeout: 20_000 });
+    await expect(owned).toContainText("Event Pass active");
+    await expect(owned).not.toContainText("$29");
+    await expect(page.locator("[data-pass-cta]")).toHaveCount(0);
 
     const sibling = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
       name: `Pass Gate Sibling ${TAG}`,

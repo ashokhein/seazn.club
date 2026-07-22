@@ -4,6 +4,7 @@ import {
   apiJson,
   activeOrg,
   addEntrantsViaApi,
+  communityLimit,
   createCompetitionViaUi,
   createStageAndGenerate,
   scoreRemainingFixtures,
@@ -119,9 +120,13 @@ test.describe.serial("community lifecycle", () => {
     expect(pub.status).toBe(200);
   });
 
-  test("17th entrant is blocked: 402 + contextual upgrade gate", async ({ page, request }) => {
-    // The v3 free plan allows 1 active competition — retire the Village Cup
-    // before this test's own competition, or the create itself 402s.
+  test("the entrant over the community cap is blocked: 402 + contextual upgrade gate", async ({
+    page,
+    request,
+  }) => {
+    // Retire the Village Cup so its public row does not occupy the community
+    // dashboard.public.max = 1 slot (this test's Limits comp is private, so the
+    // active-competition cap has room either way).
     if (competitionId) {
       await apiJson(request, `/api/v1/competitions/${competitionId}`, "PATCH", {
         status: "archived",
@@ -146,15 +151,21 @@ test.describe.serial("community lifecycle", () => {
     );
     crowdedDivisionId = div.data!.id;
 
-    // 16 fit exactly…
-    const sixteen = await addEntrantsViaApi(
+    // The community entrant cap, read from the matrix rather than hard-coded —
+    // V311 moved it 16 → 32 and this test went green-then-red with it (the
+    // over-cap entry started coming back 201). Deriving it keeps the assertion
+    // from drifting with the packaging again.
+    const entrantCap = await communityLimit("entrants.per_division.max");
+
+    // exactly `entrantCap` fit…
+    const filled = await addEntrantsViaApi(
       request,
       crowdedDivisionId,
-      Array.from({ length: 16 }, (_, i) => `P${i + 1}`),
+      Array.from({ length: entrantCap }, (_, i) => `P${i + 1}`),
     );
-    expect(sixteen.status).toBeLessThan(300);
+    expect(filled.status).toBeLessThan(300);
 
-    // …the 17th 402s with the feature key…
+    // …the one over the cap 402s with the feature key…
     const overflow = await apiJson(
       request,
       `/api/v1/divisions/${crowdedDivisionId}/entrants`,
@@ -198,21 +209,46 @@ test.describe.serial("community lifecycle", () => {
     expect(third.error?.code).toBe("PAYMENT_REQUIRED");
   });
 
-  test("2nd active competition hits the ceiling in the wizard", async ({ page, request }) => {
-    // The limits competition holds the single free slot (v3). The API says 402…
-    const third = await apiJson(request, "/api/v1/competitions", "POST", {
-      name: `Ceiling ${TAG}`,
-      visibility: "private",
-    });
-    expect(third.status).toBe(402);
+  test("the active-competition ceiling bites in the wizard", async ({ page, request }) => {
+    // Community runs up to `competitions.max_active` competitions — read from
+    // the matrix, since V311 moved it (2 → 5) and a hard-coded "2nd competition
+    // 402s" quietly came back 201. The Limits comp already holds a slot; create
+    // up to the cap, then the next 402s. Loop rather than count: sibling specs
+    // sharing this community org may already occupy slots.
+    const maxActive = await communityLimit("competitions.max_active");
+    const fillIds: string[] = [];
+    let ceiling: Awaited<ReturnType<typeof apiJson>> | null = null;
+    for (let i = 0; i <= maxActive; i++) {
+      const r = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+        name: `Ceiling ${i} ${TAG}`,
+        visibility: "private",
+      });
+      if (r.status === 402) {
+        ceiling = r;
+        break;
+      }
+      expect(r.status).toBe(201);
+      fillIds.push(r.data!.id);
+    }
+    expect(ceiling?.status).toBe(402);
 
-    // …and the wizard shows the paywall instead of a dead error.
+    // …and the wizard shows the paywall instead of a dead error (the org is at
+    // the ceiling now).
     await page.goto("/competitions/new");
     await page.getByPlaceholder("Summer Championship 2026").fill(`Ceiling UI ${TAG}`);
     await page.getByRole("button", { name: /create/i }).click();
     await expect(page.locator('[data-feature="competitions.max_active"]')).toBeVisible({
       timeout: 20_000,
     });
+
+    // Free the slots this test consumed so sibling specs on the shared community
+    // org keep their quota.
+    for (const id of fillIds) {
+      await apiJson(request, `/api/v1/competitions/${id}`, "PATCH", {
+        status: "archived",
+        visibility: "private",
+      });
+    }
   });
 
   test("plain exports are free since V285 (branded chrome stays Pro)", async ({ request }) => {

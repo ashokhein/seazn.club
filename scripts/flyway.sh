@@ -13,8 +13,28 @@ FLYWAY_VERSION="${FLYWAY_VERSION:-10.22.0}"
 CACHE_DIR="${FLYWAY_CACHE_DIR:-$HOME/.cache/seazn-flyway}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# --- Fall back to the canonical .env.local -----------------------------------
+# `npm run db:apply` used to demand DATABASE_URL already exported in the shell.
+# The repo-root .env.local is canonical (apps/web/.env.local is a symlink to
+# it), so read it here when the shell says nothing. An exported DATABASE_URL
+# always wins wholesale — that's how you point db:* at staging/remote. CI ships
+# no .env.local and supplies these through the job environment.
+#
+# The obvious `node --env-file-if-exists=… <script>` can't wrap a bash script,
+# and `node --run` does NOT propagate a loaded env file to the spawned child
+# (verified). So borrow node purely as the parser: `source`-ing the file would
+# execute a malformed line, node's parser just ignores it.
+if [[ -z "${DATABASE_URL:-}" && -f "$REPO_ROOT/.env.local" ]]; then
+  eval "$(node --env-file-if-exists="$REPO_ROOT/.env.local" -e '
+    const q = (s) => "'\''" + s.replace(/'\''/g, "'\''\\'\'''\''") + "'\''";
+    for (const k of ["DATABASE_URL", "DATABASE_SSL", "DB_SCHEMA"]) {
+      if (process.env[k]) console.log(`export ${k}=` + q(process.env[k]));
+    }
+  ')"
+fi
+
 if [[ -z "${DATABASE_URL:-}" ]]; then
-  echo "DATABASE_URL is not set." >&2
+  echo "DATABASE_URL is not set (no shell export, and no DATABASE_URL in $REPO_ROOT/.env.local)." >&2
   exit 1
 fi
 

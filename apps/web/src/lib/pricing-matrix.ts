@@ -75,6 +75,9 @@ const INT_FEATURES = new Set([
   "import.bulk",
   "schedule.checkpoints.max",
   "officials.per_fixture.max",
+  // Graded quota on every tier (V302: 5 / 10 / 20 / 50) — a bool tick would
+  // render "—" on all four columns and hide the only thing that varies.
+  "scheduling.ai.runs_per_division.max",
 ]);
 
 function cellFormatter(feature: string): (cell: MatrixCell | undefined) => string {

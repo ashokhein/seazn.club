@@ -13,6 +13,7 @@ import {
 import { billedQuantity } from "@/lib/billing-group";
 import { requireBillingOwner } from "@/server/usecases/billing-manage";
 import { preferredCurrency } from "@/lib/currency-server";
+import { creditPassTowardSubscription, orgHoldsAnyPass } from "@/server/usecases/pass-credit";
 import { routes } from "@/lib/routes";
 
 /** POST /api/billing/checkout — start an EMBEDDED Stripe Checkout session and
@@ -64,6 +65,18 @@ export async function POST(req: Request) {
     // assertPriceBillsQuantity, which refuses rather than overcharge.
     const billingScheme =
       quantity > 1 ? (await getStripe().prices.retrieve(plan.price_id)).billing_scheme : null;
+    // Pass-to-Pro (v3/07, D12/D13). Both reads run BEFORE the session so the
+    // credit is on the customer when the first invoice is drawn.
+    //
+    // requireCard covers every pass holder, including a staff-granted one, so
+    // the trial cannot start with no way to charge it. The credit is far
+    // narrower — most recent pass only, paid, ≤30 days, matching currency, not
+    // refunded, not already credited — and never throws: a checkout must not
+    // 500 because a credit could not be worked out.
+    const [requireCard] = await Promise.all([
+      orgHoldsAnyPass(orgId),
+      creditPassTowardSubscription(orgId),
+    ]);
 
     const session = await getStripe().checkout.sessions.create(
       buildEmbeddedCheckoutParams({
@@ -80,6 +93,7 @@ export async function POST(req: Request) {
         customerEmail: user.email,
         quantity,
         billingScheme,
+        requireCard,
       }),
     );
 

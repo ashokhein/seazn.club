@@ -80,6 +80,12 @@ test("console routes: no horizontal scroll", async ({ page }) => {
     "/settings?tab=api",
     "/settings?tab=account",
     "/settings/billing",
+    // The Event Pass page (task 22). Its comparison table is three plans wide
+    // and must scroll inside its own container, never the page body — the one
+    // v3/02 §4 rule this surface is most likely to break. This account is Pro,
+    // so it renders the paid-plan state; the offer / owned / ceiling states are
+    // driven at 390×844 by e2e/event-pass.spec.ts.
+    `/o/${orgSlug}/c/${compSlug}/upgrade`,
     "/directory",
     "/import",
     "/my-matches",
@@ -151,6 +157,7 @@ test("axe: no serious/critical violations on key surfaces (v3/11 gap 11)", async
     `/divisions/${divisionId}?tab=standings`,
     "/settings?tab=organization",
     "/settings/billing",
+    `/o/${orgSlug}/c/${compSlug}/upgrade`,
     `/shared/${orgSlug}/${compSlug}`,
   ];
   for (const path of routes) {

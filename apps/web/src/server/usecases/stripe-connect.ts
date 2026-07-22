@@ -82,7 +82,8 @@ export async function connectStatus(
 
 /**
  * Create (once) the Express account and mint an onboarding link. Gated on
- * `registration.paid` — Community orgs run free registration without Connect.
+ * `registration.paid`, which V310 (D19) made free on every plan — so the gate
+ * now only stops an org a staff override has denied (abuse, chargeback risk).
  */
 export async function createConnectOnboardingLink(
   auth: AuthCtx,
@@ -92,11 +93,18 @@ export async function createConnectOnboardingLink(
   tosAgreed = false,
 ): Promise<{ url: string }> {
   requireOwnerSession(auth, orgId);
-  // Connect is org-wide plumbing: any Event Pass in the org unlocks it too,
-  // since the pass's competition is entitled to charge fees (v3/07 §3).
-  const [anyPass] = await sql<{ ok: number }[]>`
-    select 1 as ok from competition_passes where org_id = ${orgId} limit 1`;
-  if (!anyPass) await requireFeature(orgId, "registration.paid");
+  // Org-wide on purpose: Connect is org-level plumbing, one account for every
+  // competition, so there is no competition to scope this to.
+  //
+  // This used to carry an "any Event Pass in the org unlocks it" escape hatch.
+  // That is dead code twice over now. `registration.paid` is true on the
+  // community matrix, so the plan row already satisfies the gate and the escape
+  // never fires; and the only thing that can still deny it — an
+  // org_entitlement_overrides row — BEATS a pass anyway (lib/entitlements.ts
+  // folds the override over the pass with `ov.bool_value ?? base`, so a
+  // non-null false short-circuits). Keeping it would have meant a staff deny
+  // could be walked around by buying a $29 pass.
+  await requireFeature(orgId, "registration.paid");
 
   let { stripe_account_id: accountId } = await orgConnect(orgId);
   // ToS gate (PROMPT-55): the org accepts the entry-fee chargeback clause

@@ -92,6 +92,7 @@ describe("buildEmbeddedCheckoutParams", () => {
         priceId: "price_pass",
         orgId: "org-abc",
         competitionId: "comp-1",
+        competitionName: "Riverside Cup",
         returnUrl: base.returnUrl,
         customerEmail: "a@b.com",
       }).adaptive_pricing,
@@ -167,6 +168,7 @@ describe("buildPassCheckoutParams (v3/07 §3)", () => {
     priceId: "price_pass",
     orgId: "org-abc",
     competitionId: "comp-1",
+    competitionName: "Riverside Cup",
     returnUrl: "https://app.test/o/x/c/y/upgrade?checkout=success&session_id={CHECKOUT_SESSION_ID}",
   };
 
@@ -193,6 +195,59 @@ describe("buildPassCheckoutParams (v3/07 §3)", () => {
     expect(buildPassCheckoutParams({ ...pass, currency: "usd" }).currency).toBe("usd");
     expect(buildPassCheckoutParams(pass).currency).toBe("usd");
   });
+
+  // mode:"payment" produces a PaymentIntent and a Charge but NO Invoice, so a
+  // pass buyer had no invoice number, no PDF and no hosted URL — and the
+  // billing page, which lists invoices.list({ customer }), showed them nothing
+  // at all about $29 they spent. invoice_creation is what puts it there.
+  it("creates an invoice named after the competition", () => {
+    const p = buildPassCheckoutParams({ ...pass, customerEmail: "a@b.com" });
+    expect(p.invoice_creation?.enabled).toBe(true);
+    // Per-competition, not a constant: three passes must not be three
+    // identical rows on the billing page.
+    expect(p.invoice_creation?.invoice_data?.description).toBe("Event Pass — Riverside Cup");
+    const other = buildPassCheckoutParams({ ...pass, competitionName: "Autumn Open" });
+    expect(other.invoice_creation?.invoice_data?.description).toBe("Event Pass — Autumn Open");
+  });
+});
+
+// Verified against LIVE Stripe test mode 2026-07-21 — see
+// billing-automatic-tax.live.test.ts for the verbatim errors. An existing
+// customer with no address + automatic_tax is a 400
+// (`customer_tax_location_invalid`); adding only `address: "auto"` is a SECOND
+// 400 because tax_id_collection also needs `name`. And `customer_update`
+// without `customer` is a third 400 — so it must be conditional.
+describe("customer_update on an existing customer (automatic_tax)", () => {
+  const pass = {
+    priceId: "price_pass",
+    orgId: "org-abc",
+    competitionId: "comp-1",
+    competitionName: "Riverside Cup",
+    returnUrl: base.returnUrl,
+  };
+
+  it("sends address AND name auto whenever an existing customer is reused", () => {
+    for (const p of [
+      buildEmbeddedCheckoutParams({ ...base, customerId: "cus_9" }),
+      buildPassCheckoutParams({ ...pass, customerId: "cus_9" }),
+    ]) {
+      expect(p.automatic_tax).toEqual({ enabled: true });
+      expect(p.tax_id_collection).toEqual({ enabled: true });
+      // Both keys: address alone is still a 400 while tax_id_collection is on.
+      expect(p.customer_update).toEqual({ address: "auto", name: "auto" });
+    }
+  });
+
+  it("omits customer_update entirely on a first purchase (customer_email)", () => {
+    for (const p of [
+      buildEmbeddedCheckoutParams({ ...base, customerEmail: "a@b.com" }),
+      buildPassCheckoutParams({ ...pass, customerEmail: "a@b.com" }),
+    ]) {
+      // "`customer_update` can only be used with `customer`" — sending it
+      // unconditionally would 400 every brand-new buyer.
+      expect("customer_update" in p).toBe(false);
+    }
+  });
 });
 
 describe("checkout branding", () => {
@@ -209,6 +264,7 @@ describe("checkout branding", () => {
   it("brands the Event Pass checkout identically", () => {
     const p = buildPassCheckoutParams({
       priceId: "price_pass", orgId: "org-abc", competitionId: "comp-1",
+      competitionName: "Riverside Cup",
       returnUrl: base.returnUrl, customerEmail: "a@b.com",
     });
     expect(p.branding_settings).toEqual(
@@ -229,6 +285,50 @@ describe("checkout branding", () => {
     const noTrial = buildEmbeddedCheckoutParams({ ...base, trialDays: 0, customerEmail: "a@b.com" });
     expect("payment_method_collection" in noTrial).toBe(false);
     expect(noTrial.subscription_data?.trial_period_days).toBeUndefined();
+  });
+});
+
+// D13: a pass holder converting to Pro is asked for a card even during the
+// trial. Without this the credited subscription can start with nothing to
+// charge, and Stripe cancels it at trial end (missing_payment_method: "cancel")
+// after the credit has already been handed over.
+describe("requireCard on a trial checkout (v3/07 D13)", () => {
+  it("drops payment_method_collection so the trial still collects a card", () => {
+    const p = buildEmbeddedCheckoutParams({ ...base, requireCard: true, customerEmail: "a@b.com" });
+    // The trial itself is untouched — 14 free days, but a card on file.
+    expect("payment_method_collection" in p).toBe(false);
+    expect(p.subscription_data?.trial_period_days).toBe(14);
+    expect(p.subscription_data?.trial_settings).toEqual({
+      end_behavior: { missing_payment_method: "cancel" },
+    });
+  });
+
+  it("changes nothing for a trial checkout that does not require a card", () => {
+    const p = buildEmbeddedCheckoutParams({ ...base, requireCard: false, customerEmail: "a@b.com" });
+    expect(p.payment_method_collection).toBe("if_required");
+    expect(p).toEqual(buildEmbeddedCheckoutParams({ ...base, customerEmail: "a@b.com" }));
+  });
+
+  it("is a no-op without a trial — trialDays 0 already always collects a card", () => {
+    const withFlag = buildEmbeddedCheckoutParams({
+      ...base,
+      trialDays: 0,
+      requireCard: true,
+      customerEmail: "a@b.com",
+    });
+    expect("payment_method_collection" in withFlag).toBe(false);
+    expect(withFlag).toEqual(
+      buildEmbeddedCheckoutParams({ ...base, trialDays: 0, customerEmail: "a@b.com" }),
+    );
+  });
+
+  // Credit is delivered as a customer balance transaction precisely BECAUSE
+  // this stays on: Checkout rejects `discounts` together with
+  // allow_promotion_codes, so a coupon was never available.
+  it("leaves allow_promotion_codes on, which is why credit is not a coupon", () => {
+    const p = buildEmbeddedCheckoutParams({ ...base, requireCard: true, customerEmail: "a@b.com" });
+    expect(p.allow_promotion_codes).toBe(true);
+    expect("discounts" in p).toBe(false);
   });
 });
 

@@ -80,7 +80,19 @@ export type ReorderSponsorsInput = z.infer<typeof ReorderSponsorsInput>;
 
 /** Tiers above `partner` and per-competition scoping are Pro
  *  (`sponsors.tiers`). Passing the competition lets an Event Pass lift the
- *  gate for its own competition, mirroring entry fees. */
+ *  gate for its own competition, mirroring entry fees.
+ *
+ *  NOTE the asymmetry, which is intended and newly reachable: a non-partner
+ *  tier with a NULL `competition_id` resolves ORG-WIDE. There is no competition
+ *  to hand the resolver, so a pass holder gets the community answer and a 402 —
+ *  the pass buys a tier ON ITS OWN COMPETITION, not org-wide sponsor tiers, and
+ *  granting it here would be the leak the pass-scoping guard exists to stop.
+ *
+ *  This used to be unreachable: the settings tab hid the control from pass
+ *  holders entirely. It now offers it (page.tsx asks `hasFeatureOnAnyPass`, an
+ *  affordance question), so a pass holder CAN save an unscoped tiered sponsor
+ *  and be refused. That surfaces as an error toast, not a silent no-op, so the
+ *  failure is legible — pick the competition and it saves. */
 async function assertTierAllowed(
   orgId: string,
   tier: SponsorTier | undefined,
@@ -89,6 +101,17 @@ async function assertTierAllowed(
   if ((tier && tier !== "partner") || competitionId != null) {
     await requireFeature(orgId, "sponsors.tiers", competitionId ?? undefined);
   }
+}
+
+/** The competition an existing sponsor already sits on, so a patch that only
+ *  moves the TIER is still judged against a competition. Tenant-scoped: a
+ *  sponsor id from another org resolves to null, never to that org's scope. */
+async function sponsorCompetitionId(orgId: string, id: string): Promise<string | null> {
+  return withTenant(orgId, async (tx) => {
+    const [row] = await tx<{ competition_id: string | null }[]>`
+      select competition_id from sponsors where id = ${id}`;
+    return row?.competition_id ?? null;
+  });
 }
 
 /** Sponsor edits must show on the public tree promptly — same cache bust the
@@ -162,7 +185,26 @@ export async function patchSponsor(
   // Gate only what the patch introduces: promoting to a paid tier or scoping
   // to a competition needs sponsors.tiers. Editing name/url/logo on an
   // existing tiered sponsor stays allowed after a downgrade.
-  await assertTierAllowed(auth.orgId, patch.tier, patch.competition_id);
+  //
+  // The scope is the competition the sponsor ENDS UP on — the patch's own
+  // `competition_id` when the patch sets one, otherwise the row's existing one.
+  // Reading only the patch resolved a plain `{ tier: "title" }` promotion
+  // ORG-WIDE, and lib/entitlements.ts consults `competition_passes` only when a
+  // competition is in scope, so an Event Pass holder was refused the promotion
+  // on the very competition they had paid to tier. The pass-scoping guard could
+  // not see it: the argument was present, just carrying `undefined`.
+  //
+  // The extra read costs one query, and only on a promotion that does not
+  // already name a competition — `{ name }` / `{ status }` patches are
+  // untouched. Unscoping (`competition_id: null`) still resolves org-wide and
+  // is still refused; that asymmetry is deliberate, see assertTierAllowed.
+  const scope =
+    "competition_id" in patch
+      ? patch.competition_id
+      : patch.tier && patch.tier !== "partner"
+        ? await sponsorCompetitionId(auth.orgId, id)
+        : undefined;
+  await assertTierAllowed(auth.orgId, patch.tier, scope);
   return withTenant(auth.orgId, async (tx) => {
     // A placement parked by an open dispute stays down until the dispute
     // closes — reactivating it by hand would put a charged-back sponsor

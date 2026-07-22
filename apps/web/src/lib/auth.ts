@@ -196,7 +196,7 @@ export async function generateOrgSlug(name: string, excludeOrgId?: string): Prom
  * judged against the creating user's best owned-org plan. A user who owns
  * nothing may always create their first.
  *
- * Unchanged by billing groups (V309), deliberately. `getLimit` now resolves an
+ * Unchanged by billing groups, deliberately. `getLimit` now resolves an
  * org's plan through `organizations.subscription_id`, so this reads the group's
  * plan for free. And the PER-USER shape stays load-bearing even though the cap
  * is also enforced per group below: a user holding two community groups of one

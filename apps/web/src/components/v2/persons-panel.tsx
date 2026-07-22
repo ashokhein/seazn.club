@@ -232,7 +232,18 @@ export function PersonsPanel({
 
         const columns: ResponsiveColumn<Person>[] = [
           { key: "player", header: msg("persons.col.player"), render: identity },
-          { key: "public", header: msg("persons.col.public"), render: consentPills },
+          {
+            // Consent is only half the gate — the org's plan is the other
+            // half, and neither alone publishes a card.
+            key: "public",
+            header: (
+              <>
+                {msg("persons.col.public")}
+                <Tip id="persons.public-cards" small className="ml-1 align-middle" />
+              </>
+            ),
+            render: consentPills,
+          },
           { key: "account", header: msg("persons.col.account"), render: accountChip },
           ...(canEdit
             ? [

@@ -11,7 +11,7 @@ import { getUserOrgs } from "@/lib/auth";
 import { requireOrgPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";
 import { sql } from "@/lib/db";
-import { hasFeature } from "@/lib/entitlements";
+import { hasFeature, hasFeatureOnAnyPass } from "@/lib/entitlements";
 import { type OrgMember } from "@/lib/types";
 import { OrgTeam } from "@/components/org-team";
 import { OrgSwitcher } from "@/components/org-switcher";
@@ -38,6 +38,8 @@ import { ApiKeysPanel } from "@/components/api-keys";
 import { TimezonePreference } from "@/components/timezone-preference";
 import { LocalePreference } from "@/components/locale-preference";
 import { CookieSettingsButton } from "@/components/cookie-settings-button";
+import { Tip } from "@/components/ui/tip";
+import type { TipId } from "@/config/tips";
 import { TourReplayButton } from "@/components/tour-replay";
 import { PlanBadge } from "@/components/plan-badge";
 
@@ -57,11 +59,21 @@ function SectionHeader({ icon: Icon, children, action }: {
   );
 }
 
-function SubSection({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
+function SubSection({
+  icon: Icon,
+  label,
+  tip,
+}: {
+  icon: LucideIcon;
+  label: string;
+  /** Optional contextual chip beside the heading (config/tips.ts). */
+  tip?: TipId;
+}) {
   return (
     <div className="mb-2 flex items-center gap-1.5">
       <Icon className="h-3.5 w-3.5 text-slate-500" strokeWidth={1.75} />
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      {tip && <Tip id={tip} small className="ml-0.5" />}
     </div>
   );
 }
@@ -112,9 +124,27 @@ export default async function SettingsPage({
   const { tab: rawTab, email_change } = await searchParams;
   const tab: Tab = (NAV_ITEMS.some((n) => n.tab === rawTab) ? rawTab : "organization") as Tab;
 
-  // Per-tab lazy data loading
-  const canBrand =
-    tab === "organization" ? await hasFeature(active.id, "branding") : false;
+  // Per-tab lazy data loading.
+  //
+  // TWO KEYS, NOT ONE (D23). They are different products and the resolver has
+  // always treated them that way:
+  //
+  //   branding            org LOGO upload + display  → free on every plan (V310)
+  //   dashboard.branding  org THEME COLOUR           → Pro / Pro Plus only
+  //
+  // One `canBrand` flag drove both gates. That was harmless while `branding`
+  // was Pro-only, and became a real bug the moment V310 made it free: a
+  // Community org was handed a working colour picker whose value is stripped on
+  // the way out — server/public-site/data.ts wraps o.branding in
+  // `case when org_has_feature(o.id, 'dashboard.branding') then … else '{}' end`.
+  // Save a colour, see nothing change, anywhere, ever.
+  const [canBrandLogo, canBrandColor] =
+    tab === "organization"
+      ? await Promise.all([
+          hasFeature(active.id, "branding"),
+          hasFeature(active.id, "dashboard.branding"),
+        ])
+      : [false, false];
   let orgAbout: string | null = null;
   if (tab === "organization") {
     const [row] = await sql<{ about: string | null }[]>`
@@ -124,14 +154,23 @@ export default async function SettingsPage({
 
   // Sponsors tab (v10 PROMPT-56): table rows, not the branding blob. The
   // basic partner strip is free; tiers/per-competition scoping are Pro.
+  //
+  // ORG-LEVEL, so `hasFeatureOnAnyPass` and not `hasFeature` (Phase 2 sweep).
+  // `sponsorCompetitions` below is the composer's PICKER, not this tab's scope
+  // — there is no one competition to thread. Resolving org-wide made an Event
+  // Pass invisible and left a paying org staring at the upsell for something it
+  // owned; picking an arbitrary id off the list would have been a fabrication.
+  // These two flags are AFFORDANCES only: usecases/sponsors.ts still resolves
+  // the competition actually being written, so a pass on one competition opens
+  // the UI without opening the org.
   let sponsorRows: Awaited<ReturnType<typeof listSponsorRows>> = [];
   let hasSponsorTiers = false;
   let hasSponsorMonetize = false;
   let sponsorCompetitions: { id: string; name: string }[] = [];
   if (tab === "sponsors") {
     sponsorRows = await listSponsorRows(active.id);
-    hasSponsorTiers = await hasFeature(active.id, "sponsors.tiers");
-    hasSponsorMonetize = await hasFeature(active.id, "sponsors.monetize");
+    hasSponsorTiers = await hasFeatureOnAnyPass(active.id, "sponsors.tiers");
+    hasSponsorMonetize = await hasFeatureOnAnyPass(active.id, "sponsors.monetize");
     sponsorCompetitions = await sql<{ id: string; name: string }[]>`
       select id, name from competitions
       where org_id = ${active.id}
@@ -277,7 +316,7 @@ export default async function SettingsPage({
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">
                     <SubSection icon={ImageIcon} label={t(dict, "settings.org.logo")} />
-                    {canBrand ? (
+                    {canBrandLogo ? (
                       <OrgLogo
                         orgId={active.id}
                         initialLogoUrl={
@@ -300,12 +339,19 @@ export default async function SettingsPage({
 
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">
-                    <SubSection icon={Palette} label={t(dict, "settings.org.brandColor")} />
-                    {canBrand ? (
+                    {/* D23: the logo above is free, this control is Pro. The
+                        chip explains the split so the neighbouring upsell
+                        doesn't read as arbitrary. */}
+                    <SubSection
+                      icon={Palette}
+                      label={t(dict, "settings.org.brandColor")}
+                      tip="settings.brand-colour"
+                    />
+                    {canBrandColor ? (
                       <OrgBrandColor orgId={active.id} initialBranding={active.branding} />
                     ) : (
                       <p className="flex items-center gap-2 text-sm text-slate-500">
-                        <PlanBadge feature="branding" />
+                        <PlanBadge feature="dashboard.branding" />
                         {t(dict, "settings.upgrade.brandColor")}{" "}
                         <Link href={routes.billing(orgSlug)} className="text-purple-600 underline">
                           {t(dict, "settings.upgrade.link")}

@@ -10,7 +10,7 @@ Everything you run on seazn.club lives inside an **organisation** — your club,
 
 1. Sign in and open **Settings → Organisation**.
 2. **Rename** it to what players will recognise — the name appears on every public page.
-3. Add a **logo** — that's on every plan, Community included — so dashboards and share images carry your identity. Your **brand colour** on public pages is a Pro feature.
+3. Add a **logo** — free on every plan — so dashboards and share images carry your identity. A **brand colour** on top of it is a Pro feature.
 4. Invite teammates under **Settings → Team** — owners and admins can edit everything, scorers only score their assigned matches, viewers can look but not touch. Invites never change an existing member's role: a viewer who accepts an umpire invite keeps viewer access and just gains those matches to score ([how scorer invites work](/help/scoring/scorer-role)).
 
 ## Get set up to get paid
@@ -18,7 +18,7 @@ Everything you run on seazn.club lives inside an **organisation** — your club,
 The welcome tour walks you through this next, right after naming your organisation:
 
 1. **Connect Stripe** under **Settings → Connect** so you can take **card entry fees** — registrants pay at sign-up and the money settles straight into your own Stripe account. It's a one-time, secure onboarding; [here's the whole money journey](/help/registration/card-payments).
-2. Check **Settings → Plan & Billing** — you start on the free **Community** plan. Card entry fees work there too; what **Pro** buys is a smaller cut of them — 2% instead of Community's 8% — along with unlimited competitions and the rest of the toolkit. You can [compare plans and upgrade](/help/billing/plans) whenever you're ready. Running a free event? Community is plenty.
+2. Check **Settings → Plan & Billing** — you start on the free **Community** plan, and it can already take card entry fees. Upgrading doesn't switch payments on; it lowers the **platform fee** (8% on Community, 5% with an Event Pass, 2% on Pro, 1% on Pro Plus) and raises your limits. [Compare plans](/help/billing/plans) whenever you're ready. Running a free event? Community is plenty.
 
 ## Common questions
 

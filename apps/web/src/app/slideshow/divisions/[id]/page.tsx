@@ -21,9 +21,13 @@ export default async function DivisionSlideshowPage({
   const { auth, org } = await requireResourcePageAuth("division", id);
   const division = await getDivision(auth, id);
   const competition = await getCompetition(auth, division.competition_id);
+  // Scoped to the owning competition — already in hand for the title above.
+  // `realtime` is an Event Pass key, and resolving it org-wide made the pass
+  // invisible: the board stayed static on the very competition it was bought
+  // for (Phase 2 pass-scoping sweep).
   const [slides, realtime, chrome] = await Promise.all([
     buildDivisionSlides(auth, id, division.name),
-    hasFeature(auth.orgId, "realtime"),
+    hasFeature(auth.orgId, "realtime", division.competition_id),
     orgBoardChrome(auth),
   ]);
 

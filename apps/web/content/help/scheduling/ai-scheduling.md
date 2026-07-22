@@ -39,11 +39,11 @@ Every proposal is checked by the same engine that powers the drag-and-drop board
 
 ## Run quotas
 
-Each **schedule generation** counts against a per-division quota:
+AI Schedule needs no upgrade — it runs on **every plan, Community included**. What your plan sets is how many times you can run it: each **schedule generation** counts against a per-division quota.
 
 | Plan | AI schedule generations per division |
 | --- | --- |
-| Free | 5 |
+| Community | 5 |
 | Event Pass | 10 |
 | Pro | 20 |
 | Pro Plus | 50 |

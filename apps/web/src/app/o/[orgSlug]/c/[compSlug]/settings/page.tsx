@@ -6,6 +6,9 @@ import { getCompetition } from "@/server/usecases/competitions";
 import { listDivisions } from "@/server/usecases/divisions";
 import { CompetitionSettings } from "@/components/v2/competition-settings";
 import { ArchivedDivisions } from "@/components/v2/archived-divisions";
+import { CompetitionPassEntry } from "@/components/competition-pass-entry";
+import { formatMinor, passPrice } from "@/lib/currency";
+import { preferredCurrency } from "@/lib/currency-server";
 import { hasFeature } from "@/lib/entitlements";
 import { withTenant } from "@/lib/db";
 import { resolveLocale } from "@/lib/resolve-locale";
@@ -34,12 +37,14 @@ export default async function CompetitionSettingsPage({
   const id = page.competition.id;
   const locale = await resolveLocale();
   const dict = await getDictionary(locale, "ui");
-  const [competition, discoveryBranding, themeBranding, allDivisions] = await Promise.all([
-    getCompetition(auth, id),
-    hasFeature(auth.orgId, "discovery.branding"),
-    hasFeature(auth.orgId, "dashboard.branding"),
-    listDivisions(auth, id, { includeArchived: true }),
-  ]);
+  const [competition, discoveryBranding, themeBranding, allDivisions, currency] =
+    await Promise.all([
+      getCompetition(auth, id),
+      hasFeature(auth.orgId, "discovery.branding"),
+      hasFeature(auth.orgId, "dashboard.branding"),
+      listDivisions(auth, id, { includeArchived: true }),
+      preferredCurrency(org.id),
+    ]);
   const archivedDivisions = allDivisions.filter((d) => d.archived_at !== null);
 
   // Youth flag (v3/11 gap 8): any live division with a U-age eligibility rule
@@ -73,6 +78,17 @@ export default async function CompetitionSettingsPage({
     <>
       <main className="mx-auto max-w-2xl px-4 py-8">
         <div className="mb-6">
+          {/* Same entry point as the competition header — settings is where an
+              organiser goes when a limit is on their mind, and the pass is the
+              cheapest answer to most of them. */}
+          <CompetitionPassEntry
+            href={routes.competitionUpgrade(orgSlug, compSlug)}
+            buyLabel={t(dict, "pass.entry.buy", {
+              price: formatMinor(passPrice(currency), currency),
+            })}
+            activeLabel={t(dict, "pass.entry.active")}
+            canBuy={canEdit}
+          />
           <h1 className="mt-1 text-xl font-semibold tracking-tight text-slate-900">
             {t(dict, "comp.settings.title", { name: competition.name })}
           </h1>

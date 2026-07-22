@@ -25,17 +25,13 @@ import { assertMayOwnAnotherOrg } from "@/lib/auth";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import { GET as entitlementsGET } from "@/app/api/orgs/[id]/entitlements/route";
 
-import { setOrgPlan } from "./_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
 
 /** A user owning exactly one org, with an explicit subscriptions row.
  *  Returns both ids. Same local-helper convention as
  *  entitlements-comp-liveness.test.ts:26-45 — there is no factories module. */
-async function seedOwnerWithOneOrg(): Promise<{
-  userId: string;
-  orgId: string;
-}> {
+async function seedOwnerWithOneOrg(): Promise<{ userId: string; orgId: string }> {
   const s = uniq();
   const [{ id: userId }] = await sql<{ id: string }[]>`
     insert into users (email, display_name, email_verified)
@@ -44,7 +40,13 @@ async function seedOwnerWithOneOrg(): Promise<{
     insert into organizations (name, slug, created_by)
     values (${"Dup " + s}, ${"dup-" + s}, ${userId}) returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${userId}, 'owner')`;
-  await setOrgPlan(orgId, "community");
+  await sql`
+    with _seed_sub as (
+      insert into subscriptions (owner_user_id, plan_key, status)
+      select created_by, 'community', 'active' from organizations where id = ${orgId}
+      returning id
+    )
+    update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
   return { userId, orgId };
 }
 
@@ -157,9 +159,8 @@ describe.skipIf(!HAS_DB)("the org plan panel shows what enforcement will do", ()
     });
     // Boolean keys still report { enabled }, numeric keys still { limit }.
     expect(data.entitlements["exports"]).toEqual({ enabled: true });
-    expect(data.entitlements["competitions.max_active"]).toEqual({
-      limit: 1,
-    });
+    // V311 (D22): community's active-competition cap is 5, was 1.
+    expect(data.entitlements["competitions.max_active"]).toEqual({ limit: 5 });
   });
 
   it("degrades a lapsed comp instead of promising the Pro matrix", async () => {
@@ -171,11 +172,9 @@ describe.skipIf(!HAS_DB)("the org plan panel shows what enforcement will do", ()
       where id = (select subscription_id from organizations where id = ${orgId})`;
     const data = await readPanel(orgId);
     // The raw plan_key is still reported (contract), but every VALUE resolves
-    // as community: pro is unlimited here, community caps at 1.
+    // as community: pro is unlimited here, community caps at 5 (V311).
     expect(data.plan_key).toBe("pro");
-    expect(data.entitlements["competitions.max_active"]).toEqual({
-      limit: 1,
-    });
+    expect(data.entitlements["competitions.max_active"]).toEqual({ limit: 5 });
     expect(data.entitlements["api.access"]).toEqual({ enabled: false });
   });
 
@@ -190,14 +189,12 @@ describe.skipIf(!HAS_DB)("the org plan panel shows what enforcement will do", ()
 
   it("does not demote an unlimited override to the plan's number", async () => {
     const { orgId } = await seedOwnerWithOneOrg();
-    // community competitions.max_active = 1; a null int_value is UNLIMITED,
+    // community competitions.max_active = 5 (V311); a null int_value is UNLIMITED,
     // and coalescing it against the plan row silently took the grant away.
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, int_value)
       values (${orgId}, 'competitions.max_active', null)`;
     const data = await readPanel(orgId);
-    expect(data.entitlements["competitions.max_active"]).toEqual({
-      limit: null,
-    });
+    expect(data.entitlements["competitions.max_active"]).toEqual({ limit: null });
   });
 });

@@ -164,6 +164,34 @@ async function requireGroupId(sql: import("postgres").Sql, orgId: string): Promi
 }
 
 /**
+ * An integer limit straight from the live `plan_entitlements` matrix.
+ *
+ * For specs whose SETUP depends on where a ceiling currently sits — how many
+ * competitions to create before one is over quota, how many entrants fill a
+ * division. The packaging has moved twice inside one branch (V310/V311 took
+ * `competitions.max_active` 2 → 5 and `entrants.per_division.max` 16 → 32), and
+ * a hardcoded rig silently stops testing the thing it names: billing.spec's
+ * freeze test created "one over the community ceiling of 2", which after the
+ * repackaging was three competitions against a ceiling of five — so nothing
+ * froze and its 402 came back 201. Read the number, derive the rig from it.
+ *
+ * Assertions about the VALUE still belong on the value (pricing-v3.spec.ts pins
+ * 32 / 64 / 256 literally). Reading the matrix on both sides of one of those
+ * would assert nothing at all.
+ */
+export async function communityLimit(featureKey: string): Promise<number> {
+  return withDb(async (sql) => {
+    const [row] = await sql<{ int_value: number | null }[]>`
+      select int_value from plan_entitlements
+      where plan_key = 'community' and feature_key = ${featureKey}`;
+    if (row?.int_value == null) {
+      throw new Error(`communityLimit: no int_value for community/${featureKey}`);
+    }
+    return row.int_value;
+  });
+}
+
+/**
  * Set an org's plan directly in the DB (same trick auth.setup.ts uses for the
  * Pro account). Targets by org id or by owner email.
  *

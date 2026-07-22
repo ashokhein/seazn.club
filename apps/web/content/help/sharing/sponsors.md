@@ -4,17 +4,17 @@ description: Tiered sponsor logos on your public pages — and selling sponsorsh
 order: 6
 ---
 
-Sponsor logos appear on your public competition pages, the registration page and the venue slideshow. Every plan can run a sponsor strip; **tiers, per-competition placement and paid packages are Pro**.
+Sponsor logos appear on your public competition pages, the registration page and the venue slideshow. Every plan can run a sponsor strip; **tiers, per-competition placement and paid packages need Pro — or an [Event Pass](/help/billing/event-pass) on the competition you're selling around**.
 
 ## Add sponsors
 
 Open **Settings → Organization → Sponsors**. Add a name, an optional link and a logo (PNG/JPG/WebP up to 2 MB). Use the arrows to set the display order — that order is what the public sees.
 
-## Tiers (Pro)
+## Tiers (Pro or Event Pass)
 
-Pro orgs group sponsors into **Title, Gold, Silver and Partner** tiers. On public pages the title sponsor renders largest, then each tier in descending prominence. On the free plan every sponsor sits in one flat strip.
+Pro orgs — and any competition holding an Event Pass — group sponsors into **Title, Gold, Silver and Partner** tiers. On public pages the title sponsor renders largest, then each tier in descending prominence. On the free plan every sponsor sits in one flat strip.
 
-## Per-competition sponsors (Pro)
+## Per-competition sponsors (Pro or Event Pass)
 
 By default a sponsor is org-wide — it shows on every competition. Pick a competition in the manager to scope a sponsor to that event only; competition-scoped sponsors lead the strip on their event's pages.
 
@@ -22,13 +22,13 @@ By default a sponsor is org-wide — it shows on every competition. Pick a compe
 
 Public sponsor logos link through a tracked redirect, so the click count in the manager shows each sponsor the traffic you sent them. Use it as proof of delivery when you renew a deal.
 
-## Selling packages (Pro)
+## Selling packages (Pro or Event Pass)
 
 A **sponsorship package** is a priced offer (name, tier, price). Selling one works like entry fees:
 
 1. You need **Get paid (Stripe Connect)** set up — the same onboarding used for card entry fees.
 2. Create a package, then start an order with the sponsor's name and email.
-3. The sponsor gets an invoice email with a **pay-now** card link. Funds settle to your connected account; the platform keeps the same fee as entry fees.
+3. The sponsor gets an invoice email with a **pay-now** card link. Funds settle to your connected account; the platform keeps the same fee as entry fees ([the rate for your plan](/help/billing/plans#the-platform-fee-on-entry-fees)).
 4. When payment completes, the sponsor's placement activates automatically at the package tier and they receive a receipt.
 
 ## Common questions

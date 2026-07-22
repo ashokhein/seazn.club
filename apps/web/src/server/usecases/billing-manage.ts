@@ -224,6 +224,108 @@ export async function getBillingOverview(orgId: string): Promise<BillingOverview
 }
 
 // ---------------------------------------------------------------------------
+// Event Pass purchases (v3/07 §3, Task 14)
+// ---------------------------------------------------------------------------
+
+export interface PassPurchaseRow {
+  competitionId: string;
+  competitionName: string;
+  /** Slug, so the row can link at the competition the pass covers. */
+  competitionSlug: string;
+  purchasedIso: string;
+  /**
+   * Minor units off the Stripe invoice Task 13's `invoice_creation` mints, or
+   * null when there is nothing to read — a staff-granted / legacy pass with no
+   * payment intent, or a Stripe read that failed. Never a reason to drop the
+   * row: the org holds the pass either way.
+   */
+  amountMinor: number | null;
+  currency: string | null;
+  hostedInvoiceUrl: string | null;
+}
+
+interface PassInvoice {
+  amountMinor: number;
+  currency: string;
+  hostedInvoiceUrl: string | null;
+}
+
+/**
+ * The Stripe invoice behind one pass payment.
+ *
+ * `competition_passes` stores no amount and no invoice id (V271 is five
+ * columns), so `stripe_payment_intent` is the ONLY correlation key, and
+ * invoicePayments.list is Stripe's own intent → invoice index — matching by
+ * invoice description would be guessing. Swallows its own failure: an
+ * unreachable Stripe costs a row its money columns, never its existence.
+ */
+async function passInvoiceFor(intent: string): Promise<PassInvoice | null> {
+  try {
+    const payments = await getStripe().invoicePayments.list({
+      payment: { type: "payment_intent", payment_intent: intent },
+      limit: 1,
+      expand: ["data.invoice"],
+    });
+    const invoice = payments.data[0]?.invoice;
+    if (!invoice || typeof invoice === "string" || invoice.deleted) return null;
+    return {
+      amountMinor: invoice.total,
+      currency: invoice.currency,
+      hostedInvoiceUrl: invoice.hosted_invoice_url ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Event Pass purchases for the billing page: one row per pass the org holds,
+ * named after the competition it covers.
+ *
+ * Deliberately NOT part of `BillingOverview`. That shape is a live Stripe read
+ * that returns null for an org with no Stripe customer or an unreachable
+ * Stripe, and the page hides every section hanging off it. Passes are LOCAL
+ * rows — a staff-granted pass, or a pass bought by an org whose Stripe read
+ * fails right now, must still be listed, or the page hides a competition the
+ * org genuinely holds a pass for. So the rows are resolved from the database
+ * first and only ENRICHED from Stripe.
+ *
+ * One Stripe call per pass carrying an intent — bounded by the org's pass
+ * count (one pass per competition, and a passed competition can't be deleted),
+ * issued in parallel, and each one independently failable.
+ */
+export async function getPassPurchases(orgId: string): Promise<PassPurchaseRow[]> {
+  const rows = await sql<
+    {
+      competition_id: string;
+      name: string;
+      slug: string;
+      purchased_at: Date | string;
+      stripe_payment_intent: string | null;
+    }[]
+  >`
+    select cp.competition_id, c.name, c.slug, cp.purchased_at, cp.stripe_payment_intent
+    from competition_passes cp
+    join competitions c on c.id = cp.competition_id
+    where cp.org_id = ${orgId}
+    order by cp.purchased_at desc, c.name`;
+
+  const invoices = await Promise.all(
+    rows.map((r) => (r.stripe_payment_intent ? passInvoiceFor(r.stripe_payment_intent) : null)),
+  );
+
+  return rows.map((r, i) => ({
+    competitionId: r.competition_id,
+    competitionName: r.name,
+    competitionSlug: r.slug,
+    purchasedIso: new Date(r.purchased_at).toISOString(),
+    amountMinor: invoices[i]?.amountMinor ?? null,
+    currency: invoices[i]?.currency ?? null,
+    hostedInvoiceUrl: invoices[i]?.hostedInvoiceUrl ?? null,
+  }));
+}
+
+// ---------------------------------------------------------------------------
 // Payment methods
 // ---------------------------------------------------------------------------
 

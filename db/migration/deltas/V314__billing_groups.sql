@@ -195,6 +195,13 @@ create or replace function org_has_feature(
         when s.status = 'past_due'
              and coalesce(s.status_changed_at, s.updated_at) <= now() - interval '14 days'
              then 'community'
+        -- A CANCELLED subscription does not convey its plan (V313). The
+        -- comped_at guard keeps an INDEFINITE staff comp alive (compOrg leaves a
+        -- dead row's cancelled status in place); a lapsed comp is already
+        -- community via the comped_until arm above. Mirrors entitlements.ts
+        -- orgPlanKey, and comped_at exists because V313 ran before this.
+        when s.status = 'canceled' and s.comped_at is null
+             then 'community'
         else coalesce(s.plan_key, 'community')
       end as plan_key
       from organizations o

@@ -18,11 +18,17 @@ export const ENTITLEMENT_DOMAINS: { slug: string; features: string[] }[] = [
   ]},
   { slug: "scheduling", features: [
     "scheduling.board", "scheduling.constraints", "scheduling.multi_division",
-    "scheduling.ai", "schedule.checkpoints.max", "schedule.versioning",
+    "scheduling.ai", "scheduling.ai.runs_per_division.max",
+    "schedule.checkpoints.max", "schedule.versioning",
   ]},
   { slug: "scoring", features: [
     "scoring.ball_by_ball", "scoring.rally_by_rally", "scoring.match_timeline",
     "scoring.device_links", "cricket.dls", "stats.player",
+    // The public player card that carries those stats. Grouped with the player
+    // data rather than with `brand` so a reader comparing plans finds both
+    // player rows together; the `dashboard.` prefix is not a domain signal
+    // (dashboard.public.max sits under scale, dashboard.branding under brand).
+    "dashboard.player_profiles",
   ]},
   { slug: "officials", features: [
     "officials.per_fixture.max", "officials.roles_multi", "officials.auto", "officials.marks",

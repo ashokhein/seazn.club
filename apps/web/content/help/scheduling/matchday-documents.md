@@ -28,7 +28,7 @@ Order of play and match sheets are tabular, so both export as **PDF** (for print
 
 ## Branded vs plain
 
-On **Pro**, every export carries your organisation's masthead — logo, name and a tier-grouped sponsor line — so anything you hand out or print looks like it came from your event. On the free plan the same documents export as clean, unbranded tables: same data, same layout, no masthead or sponsor line.
+On **Pro** — or for a competition holding an [Event Pass](/help/billing/event-pass) — every export carries your organisation's masthead: logo, name and a tier-grouped sponsor line, so anything you hand out or print looks like it came from your event. On the free plan the same documents export as clean, unbranded tables: same data, same layout, no masthead or sponsor line.
 
 ## The personal rota on `/me`
 

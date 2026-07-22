@@ -188,8 +188,16 @@ jobs:
       - name: Sync sport catalog from the engine registry
         run: npm run sync:sports
 
-      - name: Engine-db + service-layer integration tests (real Postgres)
-        run: npm test --workspace apps/web -- run src/server
+      # src/lib is in scope alongside src/server. It used to be excluded, which
+      # meant the two suites guarding the Event Pass invariant —
+      # entitlements-sql-parity (SQL resolver == TS resolver) and
+      # pass-scoping-guard (no enforcement site drops the competition id) —
+      # plus every billing-*/entitlements-* DB suite ran in NO job at all: the
+      # unit job has no DATABASE_URL, so they skipped there and read as green.
+      # rate-limit.redis.test.ts is Redis-gated, so it still self-skips here and
+      # executes in the step below, which owns REDIS_URL.
+      - name: Engine-db + service-layer + lib integration tests (real Postgres)
+        run: npm test --workspace apps/web -- run src/server src/lib
 
       # The DB-gated suites OUTSIDE src/server. They are `describe.skipIf(!HAS_DB)`,
       # and the other unit job has no DATABASE_URL — so before this step existed

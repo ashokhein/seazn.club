@@ -14,7 +14,6 @@ import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import { hasFeature, invalidateOrgEntitlements } from "@/lib/entitlements";
 
-import { setOrgPlan } from "./_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
 
@@ -29,7 +28,13 @@ async function seedOrg(): Promise<string> {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug, created_by)
     values (${"Parity " + s}, ${"parity-" + s}, ${ownerId}) returning id`;
-  await setOrgPlan(orgId, "community");
+  await sql`
+    with _seed_sub as (
+      insert into subscriptions (owner_user_id, plan_key, status)
+      select created_by, 'community', 'active' from organizations where id = ${orgId}
+      returning id
+    )
+    update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
   return orgId;
 }
 
@@ -59,7 +64,7 @@ afterAll(async () => {
   await client?.end();
 });
 
-// The probe key is `realtime`, not `branding`: V309 made branding free for
+// The probe key is `realtime`, not `branding`: V310 made branding free for
 // community, so it can no longer show a DEGRADE (community and pro both answer
 // true) or a pass LIFT. `realtime` keeps the shape this suite needs —
 // community false, pro true, event_pass true.
@@ -100,6 +105,34 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
     await invalidateOrgEntitlements(orgId);
     expect(await hasFeature(orgId, "realtime")).toBe(false);
     expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
+  });
+
+  // V313's arm. It had to be added in BOTH resolvers: the public surfaces
+  // (public_competitions_v's branding, the realtime reads in public-site/data.ts)
+  // go through the SQL function and never touch lib/entitlements.ts, so a
+  // TypeScript-only fix would have left half the app conveying Pro to departed
+  // orgs.
+  it("degrades a cancelled subscription that was never comped", async () => {
+    await sql`
+      update subscriptions
+      set plan_key = 'pro', status = 'canceled', stripe_subscription_id = 'sub_gone'
+      where id = (select subscription_id from organizations where id = ${orgId})`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime")).toBe(false);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
+  });
+
+  // And the guard, in both: an indefinite staff comp writes comped_until = null,
+  // so only comped_at separates it from the row above.
+  it("keeps an indefinite comp alive on a cancelled subscription", async () => {
+    await sql`
+      update subscriptions
+      set plan_key = 'pro', status = 'canceled', stripe_subscription_id = 'sub_gone',
+          comped_until = null, comped_at = now()
+      where id = (select subscription_id from organizations where id = ${orgId})`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime")).toBe(true);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(true);
   });
 
   it("honours an Event Pass for the competition in scope, and only that one", async () => {

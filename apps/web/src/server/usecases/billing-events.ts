@@ -9,6 +9,8 @@ import type Stripe from "stripe";
 import { sql } from "@/lib/db";
 import {
   linkStripeCustomerForGroup,
+  linkStripeCustomer,
+  pinBillingCurrency,
   recordPassPurchase,
   refundDuplicatePassPayment,
   revokePassForRefundedCharge,
@@ -103,7 +105,21 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       // Second owner / second tab paid for an already-passed comp — send it
       // straight back. The refund is outside any tx and swallows its own
       // failure, so the webhook still ACKs (P0-3b).
-      if (res.duplicateIntent) await refundDuplicatePassPayment(res.duplicateIntent);
+      if (res.duplicateIntent) {
+        await refundDuplicatePassPayment(res.duplicateIntent);
+      } else {
+        // The money trace. This branch RETURNS before the shared
+        // linkStripeCustomer below, so a pass-only org's stripe_customer_id
+        // stayed NULL — and the billing page lists invoices.list({ customer }),
+        // so it showed nothing at all for a $29 purchase. Skipped for the
+        // refunded duplicate above: that payer is not this org's customer, and
+        // their currency is not the one we kept. Both writes are idempotent, so
+        // the reconcile/webhook replay is free.
+        if (session.customer) await linkStripeCustomer(orgId, session.customer as string);
+        // First purchase of ANY kind fixes the org's billing currency, so a
+        // pass buyer is never re-quoted in another currency for Pro later.
+        await pinBillingCurrency(orgId, session.currency);
+      }
     }
     return;
   }

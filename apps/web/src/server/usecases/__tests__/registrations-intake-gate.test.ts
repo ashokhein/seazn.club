@@ -6,7 +6,7 @@
 // NOT fire; money would keep landing on an entitlement the org no longer holds.
 // The intake read + submit therefore also gate on the entitlement itself.
 //
-// V309 (D19) narrowed WHEN that happens without changing the gate. Charging an
+// V310 (D19) narrowed WHEN that happens without changing the gate. Charging an
 // entry fee is now free on every plan, so a downgrade to community no longer
 // revokes it — asserted directly below, because that is the behaviour change.
 // The surviving revocation path is a staff `org_entitlement_overrides` deny
@@ -22,17 +22,16 @@ vi.mock("@/lib/stripe", () => ({
   getStripe: () => ({
     checkout: {
       sessions: {
-        create: vi.fn().mockResolvedValue({
-          id: "cs_test_intake",
-          url: "https://checkout.stripe.test/s",
-        }),
+        create: vi
+          .fn()
+          .mockResolvedValue({ id: "cs_test_intake", url: "https://checkout.stripe.test/s" }),
       },
     },
   }),
 }));
 
 import { sql } from "@/lib/db";
-import { invalidateOrgEntitlements } from "@/lib/entitlements";
+import { getLimit, invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
@@ -42,7 +41,6 @@ import {
   submitRegistration,
 } from "../registrations";
 
-import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 async function makeUser(name: string): Promise<string> {
@@ -54,11 +52,7 @@ async function makeUser(name: string): Promise<string> {
 }
 
 /** A Pro org (so the Stripe division can be saved) with Connect live. */
-async function seedProOrg(): Promise<{
-  orgId: string;
-  orgSlug: string;
-  ownerId: string;
-}> {
+async function seedProOrg(): Promise<{ orgId: string; orgSlug: string; ownerId: string }> {
   const suffix = randomUUID().slice(0, 8);
   const ownerId = await makeUser("owner");
   const orgSlug = "intake-org-" + suffix;
@@ -66,7 +60,12 @@ async function seedProOrg(): Promise<{
     insert into organizations (name, slug, created_by)
     values (${"Intake Org " + suffix}, ${orgSlug}, ${ownerId}) returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${ownerId}, 'owner')`;
-  await setOrgPlan(orgId);
+  await sql`with _seed_sub as (
+      insert into subscriptions (owner_user_id, plan_key, status)
+      select created_by, 'pro', 'active' from organizations where id = ${orgId}
+      returning id
+    )
+    update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
   await sql`update organizations
             set stripe_charges_enabled = true, stripe_account_id = ${"acct_" + suffix}
             where id = ${orgId}`;
@@ -135,13 +134,18 @@ const SUBMIT_BASE = {
 /** Pro org → save a Stripe-fee division → lose `registration.paid`. Connect
  *  stays live; only the entitlement goes.
  *
- *  V309 CHANGED WHAT CAN TAKE IT AWAY. `registration.paid` is now true on every
+ *  V310 CHANGED WHAT CAN TAKE IT AWAY. `registration.paid` is now true on every
  *  plan including community, so a plan downgrade no longer revokes it (that is
  *  asserted directly below). The surviving revocation path is a staff/admin
  *  `org_entitlement_overrides` deny — abuse, chargeback risk, an unresolved
  *  dispute — and that is what this rig now uses. The enforcement code in
- *  usecases/registrations.ts is unchanged and still the thing under test. */
-async function revokedStripeRig() {
+ *  usecases/registrations.ts is unchanged and still the thing under test.
+ *
+ *  `withPass` buys an Event Pass on the competition BEFORE the deny lands, so
+ *  the resolver's pass arm actually fires (lib/entitlements.ts:106 — the pass
+ *  is only consulted while plan_key is 'community', which the downgrade above
+ *  guarantees). It is off by default so the plain deny keeps its own coverage. */
+async function revokedStripeRig(opts: { withPass?: boolean } = {}) {
   const { orgId, orgSlug, ownerId } = await seedProOrg();
   const owner = asOwner(orgId, ownerId);
   const { competition, division } = await rig(owner);
@@ -154,6 +158,11 @@ async function revokedStripeRig() {
   // the Connect flag alone is not the gate.
   await sql`update subscriptions set plan_key = 'community', status = 'canceled', updated_at = now()
             where id = (select subscription_id from organizations where id = ${orgId})`;
+  if (opts.withPass) {
+    await sql`insert into competition_passes (competition_id, org_id)
+              values (${competition.id}, ${orgId})
+              on conflict (competition_id) do nothing`;
+  }
   await sql`insert into org_entitlement_overrides (org_id, feature_key, bool_value)
             values (${orgId}, 'registration.paid', false)
             on conflict (org_id, feature_key) do update set bool_value = false`;
@@ -161,7 +170,7 @@ async function revokedStripeRig() {
   return { orgId, orgSlug, ownerId, owner, competition, division };
 }
 
-/** Same shape, but ONLY the plan drops — no override. V309's new normal:
+/** Same shape, but ONLY the plan drops — no override. V310's new normal:
  *  paid entry is no longer a plan perk, so nothing here should close. */
 async function downgradedStripeRig() {
   const { orgId, orgSlug, ownerId } = await seedProOrg();
@@ -196,12 +205,41 @@ describe.skipIf(!HAS_DB)("revoked card intake gate (P2-10)", () => {
     expect(d.closed_reason).toBe("payments_unavailable");
   });
 
-  // V309 (D19): charging entry fees is free for everyone, so the plan downgrade
+  // PRECEDENCE: an org_entitlement_overrides deny beats an Event Pass. Nothing
+  // else in the repo pins this. The resolver builds `base` from the pass row
+  // when the org is on community with a passed competition
+  // (lib/entitlements.ts:106-114), then folds the override over it with
+  // `ov.bool_value ?? base?.bool_value` (:145) — a non-null `false` override
+  // short-circuits the ??, so the pass's `true` never survives. Without that
+  // ordering a suspended org could buy a $29 pass and re-open the card intake
+  // that staff just shut off.
+  it("closes the division even with an Event Pass on the comp — a staff deny outranks the pass", async () => {
+    const { orgId, orgSlug, competition, division } = await revokedStripeRig({ withPass: true });
+    // Guard the guard, twice. The row must exist…
+    const [pass] = await sql<{ pass_key: string }[]>`
+      select pass_key from competition_passes where competition_id = ${competition.id}`;
+    expect(pass?.pass_key).toBe("event_pass");
+    // …and the resolver must actually be READING it for this org+comp, else the
+    // assertion below would hold for the boring reason (community's own
+    // registration.paid = true, denied) and pin nothing about the pass.
+    // fee_percent is the pass-lifted key that proves the arm fires: community 8,
+    // event_pass 5, and no override touches it.
+    expect(await getLimit(orgId, "registration.fee_percent", competition.id)).toBe(5);
+    expect(await getLimit(orgId, "registration.fee_percent")).toBe(8);
+
+    const info = await publicRegistrationInfo(orgSlug, competition.slug);
+    const d = info.divisions.find((x) => x.division_id === division.id)!;
+    expect(d.payment_method).toBe("stripe");
+    expect(d.open).toBe(false);
+    expect(d.closed_reason).toBe("payments_unavailable");
+  });
+
+  // V310 (D19): charging entry fees is free for everyone, so the plan downgrade
   // that used to close this division no longer does. The Event Pass case this
   // replaced is gone with it — the pass cannot "overlay" a key that community
   // already holds; what it buys now is the cheaper cut (8% → 5%), not the
   // ability. See pricing-matrix.test.ts for the ladder.
-  it("keeps a downgraded org's Stripe-fee division OPEN — paid entry is free (V309)", async () => {
+  it("keeps a downgraded org's Stripe-fee division OPEN — paid entry is free (V310)", async () => {
     const { orgSlug, competition, division } = await downgradedStripeRig();
     const info = await publicRegistrationInfo(orgSlug, competition.slug);
     const d = info.divisions.find((x) => x.division_id === division.id)!;

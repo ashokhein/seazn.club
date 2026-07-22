@@ -13,6 +13,9 @@ import { ViewToggleContainer } from "@/components/ui/view-toggle";
 import { StatusChip, divisionChipState, CHIP_SORT } from "@/components/ui/status-chip";
 import { divisionAccent, monogram } from "@/lib/division-hue";
 import { resolveLogoUrl } from "@/server/public-site/data";
+import { CompetitionPassEntry } from "@/components/competition-pass-entry";
+import { formatMinor, passPrice } from "@/lib/currency";
+import { preferredCurrency } from "@/lib/currency-server";
 import { routes } from "@/lib/routes";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, plural } from "@/lib/i18n";
@@ -28,10 +31,13 @@ export default async function CompetitionPage({
   const id = page.competition.id;
   const locale = await resolveLocale();
   const dict = await getDictionary(locale, "ui");
-  const [competition, divisions, stats] = await Promise.all([
+  const [competition, divisions, stats, currency] = await Promise.all([
     getCompetition(auth, id),
     listDivisions(auth, id),
     listDivisionCardStats(auth, id),
+    // The pass price is currency-switcher-dependent, and the entry point is a
+    // client island — so it is formatted here and crosses as a finished string.
+    preferredCurrency(page.org.id),
   ]);
   const publicPath =
     competition.visibility !== "private" ? routes.shared(orgSlug, competition.slug) : null;
@@ -41,6 +47,17 @@ export default async function CompetitionPage({
       <main className="mx-auto max-w-6xl px-4 py-8">
         <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
+            {/* Entry point 1 of 4 (task 19): the pass, offered in the
+                competition's own header instead of only at a paywall. Renders
+                itself away for a paid org — Pro already exceeds it. */}
+            <CompetitionPassEntry
+              href={routes.competitionUpgrade(orgSlug, compSlug)}
+              buyLabel={t(dict, "pass.entry.buy", {
+                price: formatMinor(passPrice(currency), currency),
+              })}
+              activeLabel={t(dict, "pass.entry.active")}
+              canBuy={canEdit}
+            />
             <h1 className="page-title mt-1 truncate">
               {competition.name}
             </h1>

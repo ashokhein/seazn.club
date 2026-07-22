@@ -22,18 +22,16 @@ Sign-up opens Stripe checkout. On payment the entry is **confirmed automatically
 
 Each payment settles to your connected Stripe account, minus Stripe's processing fee and the platform fee for your plan. Stripe pays out to your bank on its own schedule (typically every few days) — payout timing and bank details live in your Stripe dashboard, not on Seazn Club.
 
-**The platform fee is a ladder.** Every plan can charge entry fees, including Community — what a plan buys is a smaller cut:
+**The platform fee.** Taking card fees needs no upgrade — every plan can do it, Community included. What your plan sets is the rate:
 
 | Plan | Platform fee |
 | --- | --- |
 | Community | 8% |
-| A competition with an [Event Pass](/help/billing/event-pass) | 5% |
+| Event Pass | 5% |
 | Pro | 2% |
 | Pro Plus | 1% |
 
-**The rate follows whoever pays for your organisation.** If your organisation sits in a [billing group](/help/billing/groups), the fee comes from the *group's* plan, not from anything your organisation holds on its own — so joining a Pro Plus group takes you from 8% to 1% the moment you join, and leaving one returns you to Community's 8% once the period the group paid for runs out.
-
-One thing to watch when the rate changes mid-registration: the cut is worked out per payment, at the moment that payment is taken. Entrants who paid before a plan change paid the old rate, and entrants who pay afterwards pay the new one, even in the same competition. If you're about to change plans or join a group, doing it before a division opens keeps everyone on the same rate.
+The rate that applies is the best one the competition can claim, so a Community org can put its big annual event on an [Event Pass](/help/billing/event-pass) and pay 5% on that event while the rest of the org stays at 8%. Stripe's processing fee is separate, set by Stripe, and taken whichever plan you're on.
 
 ## 4. Refunds
 
@@ -63,7 +61,7 @@ While an order is disputed you can't refund it — the card networks freeze a ch
 
 An **Event Pass** is paid to Seazn Club, not into your Connect account — there is no transfer to reverse. A refunded or lost-dispute pass instead **revokes the pass**, and the competition drops back to your plan's normal limits (nothing you've built is deleted). See [the Event Pass](/help/billing/event-pass).
 
-The same holds for a chargeback on a **Pro or Pro Plus subscription** payment: it's a platform charge, so there's nothing to reclaim from your Connect account. The subscription is flagged, and if the dispute is lost it drops to **Community** limits — every organisation that subscription pays for, if it covers more than one — nothing is deleted, exactly like a [downgrade](/help/billing/downgrade). Subscribing again clears the flag and restores Pro.
+The same holds for a chargeback on a **Pro or Pro Plus subscription** payment: it's a platform charge, so there's nothing to reclaim from your Connect account. The subscription is flagged, and if the dispute is lost your org drops to **Community** limits — nothing is deleted, exactly like a [downgrade](/help/billing/downgrade). Subscribing again clears the flag and restores Pro.
 
 ## Common questions
 

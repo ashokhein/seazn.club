@@ -146,7 +146,7 @@ export function EntityCard({
   return (
     <article
       className={`ecard group relative rounded-xl border border-slate-200 bg-white shadow-sm transition hover:border-purple-300 hover:shadow ${
-        banner ? "overflow-hidden" : "p-4"
+        banner ? "" : "p-4"
       }`}
       style={accent ? { borderLeft: `3px solid ${accent}` } : undefined}
     >
@@ -154,7 +154,11 @@ export function EntityCard({
         <div
           aria-hidden
           data-testid="card-banner"
-          className="flex h-12 items-center px-4 sm:h-16"
+          // The rounding clip lives HERE, not on the article. `overflow-hidden`
+          // up there also clipped the ⋯ menu, which opens downward and out of
+          // the card — only the first two of its items were ever reachable on a
+          // competition card. Nothing else needs the article to clip.
+          className="flex h-12 items-center overflow-hidden rounded-t-xl px-4 sm:h-16"
           style={{
             background: `linear-gradient(135deg, ${banner.tint}33 0%, ${banner.tint}0a 70%, transparent)`,
           }}

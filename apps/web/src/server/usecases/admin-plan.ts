@@ -173,6 +173,11 @@ export async function compToPro(
       -- would 400. So a cancelled status stands. Same shape as extendTrial.
       status = case when stripe_subscription_id is null then 'active' else status end,
       comped_until = ${until ? until.toISOString() : null},
+      -- Provenance, not a deadline: this row's paid plan came from staff rather
+      -- than from Stripe. The resolver's cancelled arm keys off THIS, because a
+      -- forever-comp writes comped_until = null and would otherwise be
+      -- indistinguishable from an org that simply left (V313).
+      comped_at = now(),
       -- A comp IS the free ride: the org has had Pro without paying, so a
       -- later self-serve upgrade bills from day one. coalesce keeps the first
       -- comp's date across re-comps. Reversible via Restore trial.
@@ -238,11 +243,16 @@ export async function adminDowngrade(
   const before = await planPanel(orgId);
   const preview = await downgradeFreezePreview(orgId);
   await downgradeToCommunity(orgId); // throws 400 for Stripe-billed orgs
-  await sql`update subscriptions set comped_until = null where id = ${subscriptionId}`;
-  // downgradeToCommunity already invalidated the group, but comped_until is
-  // cleared AFTER it returns and the resolver reads that column too — so the
-  // group is dropped again here rather than leaving a 300s window in which the
-  // comp still appears to be live.
+  // comped_at goes with comped_until (main V313): leaving it set would keep the
+  // resolver's cancelled arm exempting a departed org whose comp staff have just
+  // withdrawn. Keyed by the GROUP (subscriptions are group-keyed since V314),
+  // not org_id.
+  await sql`update subscriptions set comped_until = null, comped_at = null
+            where id = ${subscriptionId}`;
+  // downgradeToCommunity already invalidated the group, but these columns are
+  // cleared AFTER it returns and the resolver reads them too — so the group is
+  // dropped again here rather than leaving a 300s window in which the comp still
+  // appears live.
   await invalidateGroupEntitlements(subscriptionId);
   await logStaffAction(actorId, "admin_downgrade", "org", orgId, {
     reason,
@@ -347,6 +357,10 @@ export async function extendTrial(
         plan_key = case when plan_key = 'community' then 'pro' else plan_key end,
         status = case when stripe_subscription_id is null then 'trialing' else status end,
         trial_end = ${iso}, comped_until = ${iso},
+        -- An extended trial on a departed org is a staff grant like any other,
+        -- and its cancelled status stands (see above). coalesce keeps the first
+        -- grant's stamp across repeat extensions (V313).
+        comped_at = coalesce(comped_at, now()),
         trial_used_at = coalesce(trial_used_at, now()),
         status_changed_at = case when stripe_subscription_id is null
                                       and status is distinct from 'trialing'

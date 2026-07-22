@@ -8,6 +8,7 @@ import { baseUrl } from "@/lib/oauth";
 import { buildPassCheckoutParams } from "@/lib/billing";
 import { preferredCurrency } from "@/lib/currency-server";
 import { routes } from "@/lib/routes";
+import { isPaidPlan, orgPlanKey } from "@/lib/entitlements";
 
 const schema = z.object({ competition_id: z.string().uuid() }).strict();
 
@@ -23,22 +24,29 @@ export async function POST(req: Request) {
     const { user } = await requireOrgRole(orgId, ["owner"]);
     const { competition_id } = schema.parse(await req.json());
 
-    const [comp] = await sql<{ slug: string; org_id: string }[]>`
-      select slug, org_id from competitions where id = ${competition_id}`;
+    // `name` is the Stripe invoice line description — without it an org that
+    // buys three passes sees three identical rows on its billing page.
+    const [comp] = await sql<{ slug: string; name: string; org_id: string }[]>`
+      select slug, name, org_id from competitions where id = ${competition_id}`;
     if (!comp || comp.org_id !== orgId) throw new HttpError(404, "competition not found");
 
-    // A Pro org has nothing to gain from a pass (v3/07 §3 interplay). The plan
-    // resolves through the billing GROUP, so this reads the group's row.
+    // A Pro org has nothing to gain from a pass (v3/07 §3 interplay).
+    //
+    // Judged through the RESOLVER (main), not the raw `plan_key` column: the row
+    // keeps saying 'pro' after a comp lapses or a subscription is cancelled,
+    // while `orgPlanKey` applies the read-time degradations and resolves such an
+    // org back to community — otherwise a lapsed org is wrongly told its plan
+    // already covers the pass. The row is read through the billing GROUP
+    // (org→subscription join) so the payer gate below still has owner_user_id.
     const [sub] = await sql<
       {
-        plan_key: string | null;
         stripe_customer_id: string | null;
         owner_user_id: string | null;
       }[]
-    >`select s.plan_key, s.stripe_customer_id, s.owner_user_id from subscriptions s
+    >`select s.stripe_customer_id, s.owner_user_id from subscriptions s
        join organizations o on o.subscription_id = s.id
        where o.id = ${orgId}`;
-    if (sub?.plan_key && sub.plan_key !== "community") {
+    if (isPaidPlan(await orgPlanKey(orgId))) {
       throw new HttpError(400, "Your plan already covers everything an Event Pass adds.");
     }
 
@@ -77,6 +85,7 @@ export async function POST(req: Request) {
         priceId: price.price_id,
         orgId,
         competitionId: competition_id,
+        competitionName: comp.name,
         returnUrl,
         currency: await preferredCurrency(orgId, req),
         customerId: (isPayer ? sub?.stripe_customer_id : null) ?? undefined,

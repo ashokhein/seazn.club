@@ -18,6 +18,6 @@ Every competition starts **Private** (only your team sees it). Switch to **Link 
 
 ## Common questions
 
-**Free plan limits?** Community orgs can run 2 active competitions at a time. Finished ones can be marked completed or archived to free a slot.
+**Free plan limits?** Community orgs can run 5 active competitions at a time. Finished ones can be marked completed or archived to free a slot — and a competition covered by an [Event Pass](/help/billing/event-pass) doesn't use a slot at all.
 
 Next: [Add a division](/help/getting-started/add-a-division).
