@@ -72,6 +72,12 @@ function groupLabel(g: CreateOrgGroup): string {
   return names.length > 0 ? names.join(", ") : g.plan_key;
 }
 
+/** Plan name for a bill's subline in the picker (e.g. "Pro Plus", "Pro"). */
+function planLabel(plan: string): string {
+  if (plan === "pro_plus") return "Pro Plus";
+  return plan.charAt(0).toUpperCase() + plan.slice(1);
+}
+
 /** Create an organization; the creator becomes its owner. Slug is automatic. */
 export function CreateOrgForm() {
   const msg = useMsg();
@@ -219,103 +225,119 @@ export function CreateOrgForm() {
       </label>
 
       {showBilling && (
-        <fieldset className="space-y-2">
+        <fieldset className="space-y-3">
           <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-purple-600">
             {msg("orgNew.bill.legend")}
           </legend>
 
-          {/* Option A — its own bill (default). */}
-          <label
-            className={`flex cursor-pointer gap-3 rounded-2xl border p-4 transition ${
-              choice === "separate"
-                ? "border-purple-300 bg-purple-50/70 ring-1 ring-purple-200"
-                : "border-slate-200 hover:border-slate-300"
-            }`}
-          >
-            <input
-              type="radio"
-              name="billing"
-              className="mt-1 h-4 w-4 accent-purple-600"
-              checked={choice === "separate"}
-              onChange={chooseSeparate}
-            />
-            <span className="min-w-0">
-              <span className="block text-sm font-medium text-slate-900">
-                {msg("orgNew.bill.separate")}
-              </span>
-              <span className="block text-xs text-slate-500">
-                {msg("orgNew.bill.separateHint")}
-              </span>
-            </span>
-          </label>
-
-          {/* Option B — join a bill the creator already owns. */}
-          <label
-            className={`flex cursor-pointer gap-3 rounded-2xl border p-4 transition ${
-              choice === "add"
-                ? "border-purple-300 bg-purple-50/70 ring-1 ring-purple-200"
-                : "border-slate-200 hover:border-slate-300"
-            }`}
-          >
-            <input
-              type="radio"
-              name="billing"
-              className="mt-1 h-4 w-4 accent-purple-600"
-              checked={choice === "add"}
-              onChange={chooseAdd}
+          {/* Segmented choice: its own bill (default) vs join one the creator
+              already pays for. The "add" side is disabled when no bill of the
+              creator's can take another organisation. */}
+          <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
+            <button
+              type="button"
+              onClick={chooseSeparate}
+              aria-pressed={choice === "separate"}
+              className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
+                choice === "separate"
+                  ? "bg-white text-purple-700 shadow-sm"
+                  : "text-slate-600 hover:text-slate-800"
+              }`}
+            >
+              {msg("orgNew.bill.separate")}
+            </button>
+            <button
+              type="button"
+              onClick={chooseAdd}
               disabled={eligibleGroups.length === 0}
-            />
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-medium text-slate-900">
-                {msg("orgNew.bill.addToExisting")}
-              </span>
-              <span className="block text-xs text-emerald-700">
+              aria-pressed={choice === "add"}
+              className={`rounded-lg px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                choice === "add"
+                  ? "bg-white text-purple-700 shadow-sm"
+                  : "text-slate-600 hover:text-slate-800"
+              }`}
+            >
+              {msg("orgNew.bill.addToExisting")}
+            </button>
+          </div>
+
+          {choice === "separate" && (
+            <p className="px-1 text-xs text-slate-500">
+              {msg("orgNew.bill.separateHint")}
+            </p>
+          )}
+
+          {eligibleGroups.length === 0 && (
+            <p className="px-1 text-xs text-slate-400">
+              {msg("orgNew.bill.noneEligible")}
+            </p>
+          )}
+
+          {choice === "add" && (
+            <div className="space-y-2">
+              <p className="px-1 text-xs text-emerald-700">
                 {msg("orgNew.bill.addToExistingHint")}
-              </span>
-              {eligibleGroups.length === 0 && (
-                <span className="mt-1 block text-xs text-slate-400">
-                  {msg("orgNew.bill.noneEligible")}
-                </span>
-              )}
-
-              {choice === "add" && (
-                <span className="mt-3 block space-y-2">
-                  <span className="block">
-                    <span className="label">{msg("orgNew.bill.pickLabel")}</span>
-                    <select
-                      value={selectedId}
-                      onChange={(e) => pickGroup(e.target.value)}
-                      className="input"
-                    >
-                      {(groups ?? []).map((g) => {
-                        const { eligible, reason } = eligibility(g, msg);
-                        return (
-                          <option key={g.id} value={g.id} disabled={!eligible}>
+              </p>
+              <ul className="space-y-2">
+                {(groups ?? []).map((g) => {
+                  const { eligible, reason } = eligibility(g, msg);
+                  const on = eligible && selectedId === g.id;
+                  return (
+                    <li key={g.id}>
+                      <button
+                        type="button"
+                        onClick={() => pickGroup(g.id)}
+                        disabled={!eligible}
+                        aria-pressed={on}
+                        className={`flex w-full items-center gap-3 rounded-2xl border p-3.5 text-left transition disabled:cursor-not-allowed ${
+                          on
+                            ? "border-purple-300 bg-purple-50/70 ring-1 ring-purple-200"
+                            : eligible
+                              ? "border-slate-200 hover:border-purple-200"
+                              : "border-slate-200 opacity-60"
+                        }`}
+                      >
+                        <span
+                          className={`grid h-4 w-4 flex-none place-items-center rounded-full border ${
+                            on ? "border-purple-600" : "border-slate-300"
+                          }`}
+                        >
+                          {on && <span className="h-2 w-2 rounded-full bg-purple-600" />}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-slate-900">
                             {groupLabel(g)}
-                            {!eligible ? ` — ${reason}` : ""}
-                          </option>
-                        );
-                      })}
-                    </select>
-                  </span>
+                          </span>
+                          <span className="block text-xs text-slate-500">
+                            {planLabel(g.plan_key)} · {g.orgs.length}/{g.max_orgs ?? "∞"}
+                          </span>
+                        </span>
+                        {!eligible && (
+                          <span className="flex-none rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">
+                            {reason}
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
 
-                  {attaching && preview && (
-                    <span className="block text-sm font-medium text-emerald-700">
-                      {msg("orgNew.bill.chargeNow", {
-                        amount: formatMinor(
-                          preview.amount_minor,
-                          asCurrency(preview.currency),
-                        ),
-                      })}
-                      <span className="ml-1 font-normal text-slate-500">
-                        · {msg("orgNew.bill.thenPerExtra")}
-                      </span>
-                    </span>
-                  )}
-                </span>
+              {attaching && preview && (
+                <p className="px-1 text-sm font-medium text-emerald-700">
+                  {msg("orgNew.bill.chargeNow", {
+                    amount: formatMinor(
+                      preview.amount_minor,
+                      asCurrency(preview.currency),
+                    ),
+                  })}
+                  <span className="ml-1 font-normal text-slate-500">
+                    · {msg("orgNew.bill.thenPerExtra")}
+                  </span>
+                </p>
               )}
-            </span>
-          </label>
+            </div>
+          )}
         </fieldset>
       )}
 
