@@ -170,6 +170,23 @@ describe("runLadder", () => {
     expect(out.served_model).toBe("claude-sonnet-5");
   });
 
+  it("returns a degraded best-effort plan when later rungs are unconfigured (no plan is discarded)", async () => {
+    // gemini unconfigured (skip) → sonnet returns a usable-but-unacceptable plan
+    // → grok unconfigured (skip, last). The sonnet plan must be RETURNED (best
+    // effort), never dropped for grok's 'not configured' — the CI quota
+    // regression: aiPlanForDivision must still get a plan, not a 503.
+    const degraded = fakeResult({ blocking: 1, usage: usage(1000, 500, 0.0105) });
+    const attempt = vi
+      .fn()
+      .mockRejectedValueOnce(new HttpError(503, "not configured", "AI_PROVIDER_NOT_CONFIGURED"))
+      .mockResolvedValueOnce(degraded)
+      .mockRejectedValueOnce(new HttpError(503, "not configured", "AI_PROVIDER_NOT_CONFIGURED"));
+    const out = await runLadder<AiPlanResult>(R, attempt, () => false);
+    expect(out.served_model).toBe("claude-sonnet-5");
+    expect(out.blocking).toHaveLength(1);
+    expect(out.usage).toMatchObject({ input_tokens: 1000, output_tokens: 500 });
+  });
+
   it("a real failure on a configured rung is NOT masked by a trailing unconfigured skip", async () => {
     // gemini unconfigured (skip) → sonnet throws a genuine provider error →
     // grok unconfigured (skip, last). The thrown error must be sonnet's real

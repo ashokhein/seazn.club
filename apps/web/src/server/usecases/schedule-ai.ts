@@ -1373,44 +1373,46 @@ export async function runLadder<T extends { usage: Usage }>(
 ): Promise<T & { served_model: string; escalated_from?: string; rungs_tried: string[] }> {
   let acc: Usage = { input_tokens: 0, output_tokens: 0, repair_rounds: 0, cost_usd: 0 };
   const tried: string[] = [];
-  // The most recent MEANINGFUL failure (anything but a skipped-because-
-  // unconfigured rung) and the model that raised it. On exhaustion this is
-  // thrown in preference to a trailing "not configured" skip, so a real outage
-  // or a genuine AI_PLAN_FAILED on a configured rung is never masked by a later
-  // key-less rung — it surfaces with its true code (AI_PROVIDER_UNAVAILABLE /
-  // AI_PLAN_FAILED), not a spurious 503-not-configured.
+  // Best-so-far USABLE plan (a rung returned it, but it failed `acceptable`).
+  // A degraded-but-real plan beats any failure, so if every later rung throws or
+  // is skipped (unconfigured), this is returned rather than surfacing an error —
+  // exactly what the old single-rung path did when sonnet was the terminal rung.
+  let bestEffort: { result: T; model: string } | null = null;
+  // Most recent MEANINGFUL failure (anything but a skipped-because-unconfigured
+  // rung) + the model that raised it. Thrown on exhaustion ONLY when no usable
+  // plan exists, in preference to a trailing "not configured" skip — so a real
+  // outage / AI_PLAN_FAILED on a configured rung surfaces with its true code, not
+  // a spurious 503-not-configured.
   let meaningful: { err: unknown; model: string } | null = null;
+  const finalize = (result: T, model: string) => ({
+    ...result,
+    usage: acc,
+    served_model: model,
+    rungs_tried: tried,
+    ...(tried.length > 1 ? { escalated_from: tried[0] } : {}),
+  });
   for (let i = 0; i < rungs.length; i++) {
     const rung = rungs[i]!;
     const last = i === rungs.length - 1;
     tried.push(rung.model);
     try {
       const result = await attempt(rung);
-      // The last rung ships its plan even if degraded — a best-effort schedule
-      // beats a hard failure, and the referee's blocking/warnings ride along.
-      if (acceptable(result) || last) {
-        return {
-          ...result,
-          usage: addUsage(acc, result.usage),
-          served_model: rung.model,
-          rungs_tried: tried,
-          ...(tried.length > 1 ? { escalated_from: tried[0] } : {}),
-        };
-      }
-      acc = addUsage(acc, result.usage); // usable but not good enough — pay it, advance
+      acc = addUsage(acc, result.usage);
+      if (acceptable(result)) return finalize(result, rung.model); // clean win — stop
+      bestEffort = { result, model: rung.model }; // usable but degraded — remember
+      if (last) return finalize(result, rung.model); // nothing better left to try
     } catch (err) {
       if (!isRecoverable(err)) throw err;
-      const u = (err as { extra?: { usage?: Partial<Usage> } }).extra?.usage ?? {};
-      acc = addUsage(acc, u);
+      acc = addUsage(acc, (err as { extra?: { usage?: Partial<Usage> } }).extra?.usage ?? {});
       const unconfigured = err instanceof HttpError && err.code === "AI_PROVIDER_NOT_CONFIGURED";
       if (!unconfigured) meaningful = { err, model: rung.model };
       if (last) {
-        // All rungs exhausted: throw the last MEANINGFUL failure (preferring it
-        // over a trailing unconfigured skip), carrying the full accumulated spend
-        // and the model that raised it, so the caller's failure metering records
-        // the true total and the true code. HttpError.extra is read-only, so
-        // rebuild it (preserving status/code/message); provider errors take
-        // loose fields.
+        // Exhausted. A usable (if degraded) plan beats any failure — ship it.
+        if (bestEffort) return finalize(bestEffort.result, bestEffort.model);
+        // No plan at all: throw the last MEANINGFUL failure over a trailing
+        // unconfigured skip, carrying the accumulated spend + the model that
+        // raised it. HttpError.extra is read-only → rebuild it; provider errors
+        // take loose fields.
         const chosen = meaningful ?? { err, model: rung.model };
         if (chosen.err instanceof HttpError) {
           throw new HttpError(chosen.err.status, chosen.err.message, chosen.err.code, {
