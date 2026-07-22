@@ -23,6 +23,14 @@ The offer is valid: `billing_group_transfers` row `status=pending, from=b002, to
 - Call it best-effort from `offerGroupTransfer` after the offer row is committed (never throw — the offer must succeed even if email fails), for BOTH the live-sub (2-step) and community (single-step) paths.
 - `link` = the recipient's billing settings for an org they can reach in the group (use `primaryOrgForGroup(subscriptionId)` → its slug → `${BASE}/o/{slug}/settings/billing`), base from `OAUTH_BASE_URL || NEXT_PUBLIC_BASE_URL`. `transferRecipient` already returns `email` + `display_name`.
 
+### C. Cost summary before the card step (recipient sees what they're taking on)
+Today `listGroupTransferOffers` returns only `setup_intent_id`/`client_secret`/`expires_at` — the recipient enters a card with no idea what they're committing to. Add an **offer-scoped billing summary**, gated to the offer's recipient (they are NOT the payer, so payer-gated overviews don't apply):
+- New `GET /api/billing/group/transfer/summary?subscription_id=` (or fold into the offers payload): returns `{ plan_key, interval, org_count, currency, charge_now_minor: 0, renewal_amount_minor, renewal_date }`. Gate: caller has a `pending` offer `to_user_id = caller` for that subscription.
+- `renewal_amount_minor`: for a live-sub group, the next-invoice total (Stripe upcoming invoice, or computed base + (qty−1)·half from plan pricing); a community/no-live group has nothing to bill → summary says "no ongoing charge".
+- `IncomingTransferOffers` renders the summary ABOVE the Accept button: "Taking over {payer}'s bill — {N} organisation(s) on {Plan} ({interval}). **No charge today.** Your card is billed {renewal_amount} on {renewal_date}, then each {interval}." A community group shows "No ongoing charge — this group has no paid subscription."
+- **Accept charges nothing now** (confirmed: `handOverGroup` only sets the incoming card as default; the current period is already paid) — the summary must state that plainly so the recipient isn't surprised into expecting an immediate charge.
+- Test: the summary endpoint refuses a non-recipient (403/404) and returns the right shape for the recipient; component shows the amount + "no charge today".
+
 ## Out of scope (follow-up)
 - Dashboard-wide banner / notification-centre entry.
 - Emails on withdraw / accept / expiry.
