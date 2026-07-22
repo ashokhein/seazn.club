@@ -2817,9 +2817,8 @@ async function plgGrowthSuite(admin: Session, proOrgId: string, proOrgSlug: stri
   );
   check(
     // Key off the attribution CTA's own text, not a bare "Powered by" — the
-    // official "Powered by Stripe" trust badge also carries that phrase and
-    // shows on any card-payment org (this Pro one included), so the substring
-    // no longer isolates the Seazn attribution footer that org.branded drops.
+    // community attribution line itself reads "Powered by Seazn Club", so that
+    // substring never isolated the footer that org.branded drops.
     "plg pro page drops the Seazn attribution footer",
     !proShared.body.includes("Run your own free"),
   );
