@@ -46,6 +46,23 @@ Adding is done by someone who owns **both** the organisation being added and the
 
 If the extra charge fails, the organisation stays in the group — it doesn't get thrown back out. The group enters the normal 14-day [dunning](/help/billing/downgrade) window instead, and if it runs out, every organisation in the group drops to Community limits together.
 
+### What an added organisation costs
+
+The added organisation becomes an extra **seat on the bill you already have** — never a new, separate subscription. So it inherits your bill's shape:
+
+- **On a monthly bill** it's the half rate per month (Pro **+$9/mo**, Pro Plus **+$19/mo**), prorated for the rest of the current month and charged now.
+- **On an annual bill** it's the half rate per **year** (Pro **+$79/yr**, Pro Plus **+$163/yr**), prorated for the rest of the current year and charged now — it renews on your existing annual date, not a new one. Mid-year, "now" is only the slice of the year that's left; the full half-rate lands at your next renewal.
+
+You never guess the figure: the "Add to an existing bill" step shows the **exact amount you'll be charged now**, taken live from Stripe, before you confirm.
+
+**With a discount on the bill**, what the added organisation gets depends on the coupon's *type*:
+
+- A **percentage** discount that's still running (a *forever* code, or a *repeating* one inside its window) comes off the added organisation too — both the amount charged now and its share of every future renewal. A 60%-off Pro bill adds an extra org at 60% off.
+- A **one-time** code (applies *once*, already spent on your first invoice) does **not** discount a mid-cycle add — that charge is separate from the invoice the code was used on.
+- A **fixed-amount** code (e.g. £20 off) comes off the *invoice total*, not each seat, so on a mid-cycle add it may cover little or none of the extra. Percentage, longer-duration codes are the ones that follow the whole group — which is why they're usually the right choice for a group that will grow.
+
+Whatever the code, the amount shown before you confirm is the real, post-discount figure.
+
 ## Leaving a group
 
 Either side can end it. The payer can push an organisation out; the organisation's owner can pull it out. Nobody needs the payer's permission to leave, and no payer is stuck funding an organisation that won't cooperate.
