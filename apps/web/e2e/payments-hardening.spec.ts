@@ -35,6 +35,14 @@ const GENERIC_CONFIG = {
   progressScore: false,
 };
 
+/** Community's `entrants.per_division.max` (V311). An Event Pass lifts it to 64
+ *  for its own competition, so entry 33 is the boundary that separates a passed
+ *  comp (accepted, holds a real spot) from a community one (waitlisted). This is
+ *  the grant the pass STILL uniquely provides after V310 made registration.paid
+ *  true on every plan — card intake no longer closes on pass/plan loss, so the
+ *  old "card payments temporarily unavailable" proof is dead. */
+const COMMUNITY_ENTRANT_CAP = 32;
+
 // ---------------------------------------------------------------------------
 // Signed-webhook harness (Step 1)
 // ---------------------------------------------------------------------------
@@ -178,9 +186,13 @@ async function seedComp(
   });
 }
 
-/** A Stripe-fee registration division on a comp (enabled, £5 card intake). */
+/** A Stripe-fee registration division on a comp (enabled, £5 card intake).
+ *  `capacity` null leaves the PLAN quota (entrants.per_division.max) as the only
+ *  ceiling — the entrant-cap tests seed to the community cap and let the pass
+ *  overlay decide whether entry 33 holds a spot or waitlists. */
 async function seedStripeDivision(
   compId: string,
+  capacity: number | null = 20,
 ): Promise<{ divisionId: string; divisionSlug: string }> {
   const tag = randomBytes(5).toString("hex");
   return withDb(async (sql) => {
@@ -198,10 +210,53 @@ async function seedStripeDivision(
         (division_id, enabled, entrant_kind, opens_at, closes_at, capacity,
          fee_cents, currency, refund_lock_at, form_fields, payment_method,
          payment_instructions, updated_at)
-      values (${divisionId}, true, 'individual', null, null, 20,
+      values (${divisionId}, true, 'individual', null, null, ${capacity},
               500, 'gbp', null, ${sql.json([])}, 'stripe', null, now())`;
     return { divisionId, divisionSlug: divSlug };
   });
+}
+
+/** Fill a division to `taken` spot-holding entries (status 'pending'), inserted
+ *  directly — 32 round-trips through the public endpoint would trip its per-IP
+ *  rate limit long before they finished. Mirrors event-pass.spec.ts::fillDivision. */
+async function fillDivision(divisionId: string, orgId: string, taken: number): Promise<void> {
+  const tag = randomBytes(5).toString("hex");
+  await withDb(async (sql) => {
+    await sql`
+      insert into registrations
+        (division_id, org_id, status, display_name, contact_email, ref_code,
+         access_token_hash, payment_method)
+      select ${divisionId}, ${orgId}, 'pending',
+             'Seed ' || g, 'seed-' || g || '-' || ${tag} || '@test.local',
+             ${"SZ-" + tag.toUpperCase() + "-"} || lpad(g::text, 4, '0'),
+             ${tag + "-"} || g, 'offline'
+      from generate_series(1, ${taken}) g`;
+  });
+}
+
+/** One public registration POST. Returns the HTTP status and the created row's
+ *  registration status ('pending' = holds a spot, 'waitlisted' = over the cap).
+ *  The card division's checkout mint fails on the seeded fake Connect account and
+ *  is swallowed (createRegistrationCheckout try/catch), so a pending entry still
+ *  ACKs 201 without any real Stripe call — this stays CI-runnable. */
+async function submitPublicRegistration(
+  request: APIRequestContext,
+  orgSlug: string,
+  compSlug: string,
+  divisionId: string,
+  who: string,
+): Promise<{ status: number; data?: { status: string } }> {
+  return apiJson<{ status: string }>(
+    request,
+    `/api/v1/public/orgs/${orgSlug}/competitions/${compSlug}/register`,
+    "POST",
+    {
+      division_id: divisionId,
+      display_name: who,
+      contact_email: `${who.toLowerCase().replace(/\W+/g, "-")}-${randomBytes(3).toString("hex")}@example.com`,
+      privacy_consent: true,
+    },
+  );
 }
 
 async function grantPass(compId: string, orgId: string, intent?: string): Promise<void> {
@@ -386,20 +441,25 @@ test.describe("T2 · API keys cannot delete a competition", () => {
 // ===========================================================================
 
 test.describe("T3 · Event Pass refund revokes the pass", () => {
-  test("charge.refunded closes the pass-covered card division and re-gates it", async ({
-    page,
+  test("charge.refunded revokes the pass — the entrant cap drops 64 → 32", async ({
     request,
   }) => {
     const intent = uid("pi");
     const org = await seedOrg({ plan: "community", chargesEnabled: true, connected: true });
     const { compId, compSlug } = await seedComp(org.orgId);
-    await seedStripeDivision(compId);
+    // Uncapped by the organiser, so the PLAN quota is the only ceiling; sit the
+    // division ON the community cap so entry 33 separates a passed comp from a
+    // community one. (V310 killed the card-intake-closes proof — see the
+    // COMMUNITY_ENTRANT_CAP note; the entrant cap is what the pass still grants.)
+    const { divisionId } = await seedStripeDivision(compId, null);
     await grantPass(compId, org.orgId, intent);
+    await fillDivision(divisionId, org.orgId, COMMUNITY_ENTRANT_CAP);
 
-    // The pass overlays registration.paid → the card division is OPEN.
-    await page.goto(`/shared/${org.orgSlug}/${compSlug}/register`);
-    await expect(page.getByRole("radio").first()).toBeEnabled();
-    await expect(page.getByText("card payments temporarily unavailable")).toHaveCount(0);
+    // While the pass is held the cap is 64: entry 33 takes a real spot. A
+    // passless community org would waitlist this, so the assertion is NOT vacuous.
+    const held = await submitPublicRegistration(request, org.orgSlug, compSlug, divisionId, "Held 33");
+    expect(held.status).toBe(201);
+    expect(held.data!.status).toBe("pending");
 
     // A fully-refunded pass charge revokes the pass.
     const res = await postSignedEvent(
@@ -413,31 +473,20 @@ test.describe("T3 · Event Pass refund revokes the pass", () => {
     );
     expect(res.status()).toBe(200);
 
-    // Pass row gone (DB) …
+    // Pass row gone (DB) — the core revocation proof, unchanged.
     const passGone = await withDb((sql) =>
       sql`select 1 from competition_passes where stripe_payment_intent = ${intent}`,
     );
     expect(passGone.length).toBe(0);
 
-    // … the card division now closes with the honest reason (browser) …
-    await page.reload();
-    await expect(page.getByText("card payments temporarily unavailable")).toBeVisible();
-
-    // … and the gated submit 402s again.
-    const submit = await apiJson(
-      request,
-      `/api/v1/public/orgs/${org.orgSlug}/competitions/${compSlug}/register`,
-      "POST",
-      {
-        division_id: (await withDb((sql) =>
-          sql<{ id: string }[]>`select id from divisions where competition_id = ${compId} limit 1`,
-        ))[0]!.id,
-        display_name: "After Refund",
-        contact_email: `ar-${TAG}@x.test`,
-        privacy_consent: true,
-      },
+    // … and the cap has dropped back to 32: the next entry (the 34th spot-holder)
+    // is over the community ceiling and waitlists. Reverting the revocation leaves
+    // the cap at 64 and this comes back 'pending' — so the assertion can still fail.
+    const afterRevoke = await submitPublicRegistration(
+      request, org.orgSlug, compSlug, divisionId, "After Refund 34",
     );
-    expect(submit.status).toBe(402);
+    expect(afterRevoke.status).toBe(201);
+    expect(afterRevoke.data!.status).toBe("waitlisted");
   });
 });
 
@@ -675,18 +724,21 @@ test.describe("T7 · platform disputes truth-up entitlements", () => {
     ).toBeVisible({ timeout: 20_000 });
   });
 
-  test("Event Pass: a lost dispute revokes the pass (card division re-closes)", async ({
-    page,
+  test("Event Pass: a lost dispute revokes the pass — the entrant cap drops 64 → 32", async ({
     request,
   }) => {
     const intent = uid("pi");
     const org = await seedOrg({ plan: "community", chargesEnabled: true, connected: true });
     const { compId, compSlug } = await seedComp(org.orgId);
-    await seedStripeDivision(compId);
+    // Same entrant-cap proof as T3 (card intake no longer closes on pass loss).
+    const { divisionId } = await seedStripeDivision(compId, null);
     await grantPass(compId, org.orgId, intent);
+    await fillDivision(divisionId, org.orgId, COMMUNITY_ENTRANT_CAP);
 
-    await page.goto(`/shared/${org.orgSlug}/${compSlug}/register`);
-    await expect(page.getByRole("radio").first()).toBeEnabled();
+    // Pass held → cap 64 → entry 33 holds a spot (a passless community waitlists).
+    const held = await submitPublicRegistration(request, org.orgSlug, compSlug, divisionId, "Held 33");
+    expect(held.status).toBe(201);
+    expect(held.data!.status).toBe("pending");
 
     const lost = await postSignedEvent(
       request,
@@ -701,13 +753,19 @@ test.describe("T7 · platform disputes truth-up entitlements", () => {
     );
     expect(lost.status()).toBe(200);
 
+    // Pass row gone (DB) — the core revocation proof, unchanged.
     const passGone = await withDb((sql) =>
       sql`select 1 from competition_passes where stripe_payment_intent = ${intent}`,
     );
     expect(passGone.length).toBe(0);
 
-    await page.reload();
-    await expect(page.getByText("card payments temporarily unavailable")).toBeVisible();
+    // Cap back to 32 → the 34th spot-holder waitlists. Reverting the dispute
+    // revocation leaves it 64 and this reads 'pending', so it can still fail.
+    const afterRevoke = await submitPublicRegistration(
+      request, org.orgSlug, compSlug, divisionId, "After Dispute 34",
+    );
+    expect(afterRevoke.status).toBe(201);
+    expect(afterRevoke.data!.status).toBe("waitlisted");
   });
 });
 
@@ -847,27 +905,48 @@ test.describe("T9 · past-due grace degrades to community after 14 days", () => 
 // T10 — a downgraded org closes card intake; a pass keeps that comp open (P2-10)
 // ===========================================================================
 
-test.describe("T10 · downgraded card intake closes, a pass keeps its comp open", () => {
-  test("Community org: no-pass comp is closed, passed comp is open", async ({ page }) => {
-    // Connect stays LIVE; only the paid entitlement lapsed (community plan).
+test.describe("T10 · a pass lifts the entrant cap on its own comp only", () => {
+  test("Community org: entry 33 waitlists on the no-pass comp, holds a spot on the passed comp", async ({
+    page,
+  }) => {
+    // Connect stays LIVE; only the paid entitlement lapsed (community plan). V310
+    // made registration.paid true on every plan, so card intake no longer closes
+    // on plan loss — the entrant cap (community 32, pass 64) is the grant the pass
+    // still uniquely provides, and it is competition-scoped.
     const org = await seedOrg({ plan: "community", chargesEnabled: true, connected: true });
 
-    const closed = await seedComp(org.orgId);
-    await seedStripeDivision(closed.compId);
+    const plain = await seedComp(org.orgId);
+    const plainDiv = await seedStripeDivision(plain.compId, null);
 
-    const open = await seedComp(org.orgId);
-    await seedStripeDivision(open.compId);
-    await grantPass(open.compId, org.orgId);
+    const passed = await seedComp(org.orgId);
+    const passedDiv = await seedStripeDivision(passed.compId, null);
+    await grantPass(passed.compId, org.orgId);
 
-    // No pass → card intake is closed with the honest reason.
-    await page.goto(`/shared/${org.orgSlug}/${closed.compSlug}/register`);
-    await expect(page.getByText("card payments temporarily unavailable")).toBeVisible();
-    await expect(page.getByRole("radio").first()).toBeDisabled();
+    // Both sit exactly ON the community cap; entry 33 is the question.
+    await fillDivision(plainDiv.divisionId, org.orgId, COMMUNITY_ENTRANT_CAP);
+    await fillDivision(passedDiv.divisionId, org.orgId, COMMUNITY_ENTRANT_CAP);
 
-    // Pass overlays registration.paid → the same-org card intake stays open.
-    await page.goto(`/shared/${org.orgSlug}/${open.compSlug}/register`);
+    // Both card divisions render OPEN now (registration.paid holds on community),
+    // so the register page alone proves nothing — the cap is what separates them.
+    await page.goto(`/shared/${org.orgSlug}/${passed.compSlug}/register`);
     await expect(page.getByRole("radio").first()).toBeEnabled();
-    await expect(page.getByText("card payments temporarily unavailable")).toHaveCount(0);
+
+    const onPlain = await submitPublicRegistration(
+      page.request, org.orgSlug, plain.compSlug, plainDiv.divisionId, "Plain 33",
+    );
+    const onPassed = await submitPublicRegistration(
+      page.request, org.orgSlug, passed.compSlug, passedDiv.divisionId, "Passed 33",
+    );
+
+    // The pass lifts entrants.per_division.max 32 → 64 for ITS comp: entry 33 holds.
+    expect(onPassed.status).toBe(201);
+    expect(onPassed.data!.status).toBe("pending");
+    // …and only its comp — the sibling still waitlists at 32. This is also the
+    // org-wide-leak guard: a raised cap must not spill to the no-pass comp.
+    // (Drop the pass and BOTH waitlist; leak it org-wide and BOTH pass — either
+    // way an arm flips, so neither assertion is vacuous.)
+    expect(onPlain.status).toBe(201);
+    expect(onPlain.data!.status).toBe("waitlisted");
   });
 });
 
