@@ -7,7 +7,6 @@ import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import type { Organization, OrgMembership, OrgRole, User } from "@/lib/types";
 import { AuthError, PaymentRequiredError } from "@/lib/errors";
 import { getLimit } from "@/lib/entitlements";
-import { assertWithinGroupCap, groupIdsOwnedBy, groupOrgLimit } from "@/lib/billing-group";
 import { isReservedSlug } from "@/lib/public-site";
 import { routes } from "@/lib/routes";
 import { slugify, uniqueSlug } from "@/server/usecases/slugs";
@@ -245,38 +244,18 @@ export async function assertMayOwnAnotherOrg(userId: string): Promise<void> {
 /**
  * Create an organization owned by the user, with an auto-generated slug.
  *
- * Billing groups (V309): the new org joins the creator's EXISTING group rather
- * than minting a fresh one. That is what makes the community cap bite — if every
- * new org got its own group of one, a per-group cap would never be exceeded and
- * a free user could create orgs for ever. Joining also means the second org on a
- * paid plan costs the $9 tier immediately, which is the whole point of the
- * change.
- *
- * A user who owns no group yet gets one. A user who owns SEVERAL (only possible
- * after a detach) gets a new community group rather than an arbitrary pick;
- * `assertMayOwnAnotherOrg` still bounds their total, and they can attach the org
- * explicitly afterwards.
- *
- * The Stripe quantity IS adjusted, but best-effort: this function runs inside
- * signup and invite paths that must not fail because Stripe is unreachable, so
- * the sync is attempted, logged on failure, and never allowed to throw. Without
- * it a new org joining an existing PAID group is a seat nobody is billed for —
- * the old comment here said callers reconcile afterwards, and none ever did.
- * `reconcileGroupQuantities` (cron) is the backstop for the failures.
+ * Individual by default (#212): every new org mints its OWN community group.
+ * The old auto-join (V309) dropped a user's second org onto their first group;
+ * that is now opt-in — either the create-org form's billing choice (which routes
+ * through `attachOrgToGroup`) or the billing panel's attach. The per-user cap
+ * (`assertMayOwnAnotherOrg`) is what stops a free user minting orgs for ever;
+ * the per-GROUP cap is enforced on the explicit attach path, not here.
  */
 export async function createOrgForUser(
   userId: string,
   name: string,
 ): Promise<Organization> {
   await assertMayOwnAnotherOrg(userId);
-  const ownedGroups = await groupIdsOwnedBy(userId);
-  const targetGroupId = ownedGroups.length === 1 ? ownedGroups[0] : null;
-  // Resolved OUTSIDE the transaction below, and applied INSIDE it. getLimit
-  // queries through this module's pool connection, so calling it while the
-  // transaction holds a row lock would acquire a second connection and can
-  // deadlock the pool (DB_POOL_MAX defaults to 5, and postgres.js queues
-  // acquisitions with no timeout).
-  const capLimit = targetGroupId ? await groupOrgLimit(targetGroupId) : null;
   // Readable slugs can collide when two same-named orgs sign up concurrently
   // (check-then-insert race) — retry past the unique index, then salt.
   let org: Organization | undefined;
@@ -285,30 +264,13 @@ export async function createOrgForUser(
     const slug = attempt < 2 ? base : `${base}-${Math.random().toString(36).slice(2, 6)}`;
     try {
       org = await sql.begin(async (tx) => {
-        // The group must exist before the org, since the org points at it.
-        let groupId = targetGroupId;
-        if (groupId) {
-          // Same lock-then-count as attachOrgToGroup, and for the same reason.
-          // Checking the cap before the transaction and inserting without the
-          // lock let two concurrent creations both pass and land a Pro group
-          // with six orgs — walking straight around the design that exists to
-          // stop exactly that on the attach path.
-          await tx`select id from subscriptions where id = ${groupId} for update`;
-          const [held] = await tx<{ n: string }[]>`
-            select count(*)::text as n from organizations
-             where subscription_id = ${groupId} and deleted_at is null`;
-          assertWithinGroupCap(Number(held?.n ?? 0), capLimit);
-        }
-        if (!groupId) {
-          const [s] = await tx<{ id: string }[]>`
-            insert into subscriptions (owner_user_id, plan_key, status, quantity_paid)
-            values (${userId}, 'community', 'active', 1)
-            returning id`;
-          groupId = s.id;
-        }
+        const [s] = await tx<{ id: string }[]>`
+          insert into subscriptions (owner_user_id, plan_key, status, quantity_paid)
+          values (${userId}, 'community', 'active', 1)
+          returning id`;
         const [o] = await tx<Organization[]>`
           insert into organizations (name, slug, created_by, subscription_id)
-          values (${name}, ${slug}, ${userId}, ${groupId})
+          values (${name}, ${slug}, ${userId}, ${s.id})
           returning id, name, slug, created_by, created_at, logo_url, logo_storage_path, payment_instructions, default_payment_method, branding, timezone`;
         await tx`
           insert into org_members (org_id, user_id, role)
@@ -323,21 +285,6 @@ export async function createOrgForUser(
     }
   }
   await invalidateUserOrgs(userId);
-  // Only when the org joined an EXISTING group — a freshly minted one has no
-  // Stripe subscription, so there is nothing to sync and no reason to pay for
-  // the import. Dynamic, to keep the Stripe SDK out of the auth module's static
-  // graph (this file is imported by nearly every request path).
-  if (targetGroupId) {
-    try {
-      const { syncGroupQuantity } = await import("@/server/usecases/billing-groups");
-      await syncGroupQuantity(targetGroupId);
-    } catch (err) {
-      console.error(
-        `[billing] createOrgForUser: org ${org.id} joined group ${targetGroupId} but the quantity sync failed`,
-        err,
-      );
-    }
-  }
   return org;
 }
 
