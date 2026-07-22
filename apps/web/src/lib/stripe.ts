@@ -10,7 +10,22 @@ export function getStripe(): Stripe {
       "STRIPE_SECRET_KEY is not set. Add it to .env.local (use a test key for local dev).",
     );
   }
+  // e2e ONLY: point the client at a local Stripe fixture server so the charge
+  // paths (subscription-item quantity, proration preview) execute end to end
+  // without touching the real Stripe API — the same trick e2e/ai-fixture-server
+  // uses for the model endpoint. Never set in production; api.stripe.com is the
+  // default the moment STRIPE_MOCK_HOST is absent.
+  const mockHost = process.env.STRIPE_MOCK_HOST;
+  const mockOverride = mockHost
+    ? {
+        host: mockHost,
+        port: Number(process.env.STRIPE_MOCK_PORT ?? 12111),
+        protocol: "http" as const,
+      }
+    : {};
+
   _stripe = new Stripe(key, {
+    ...mockOverride,
     // PINNED. An unpinned client follows whatever version the account is set to
     // and silently changes shape under us on a Stripe-side upgrade — this
     // codebase already carries several "in v22 X moved to Y" comments
