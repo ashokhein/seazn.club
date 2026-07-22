@@ -779,7 +779,15 @@ under concurrent requests. Opt-in via `SCHEDULING_AI_LADDER` (comma list; provid
 the id — a `/` means OpenRouter, else Anthropic). **Unset → today's behaviour exactly** (single
 sonnet-direct rung, or the legacy cheap→primary escalation), so local/CI and existing tests are
 untouched; production flips gemini-first by setting the env, the same deploy-gated pattern as
-`AI_PROVIDER` / `ANTHROPIC_API_KEY`. Phase B (officials) is a follow-up, same pattern.
+`AI_PROVIDER` / `ANTHROPIC_API_KEY`.
+
+**Phase B (officials)** is wired to the same `runLadder` (generalised to be generic over the
+result type), but reads its **own** env `OFFICIALS_AI_LADDER` — deliberately independent of
+`SCHEDULING_AI_LADDER`. The officials task is not benched against the cheaper candidates, so
+flipping the schedule architect to gemini must not silently route officials (unbenched) through
+it too; unset → today's single sonnet-direct rung. Officials has no tuned warning-ratio gate, so
+it advances only on a thrown recoverable failure, never on plan quality. Benching officials, then
+flipping `OFFICIALS_AI_LADDER`, is the remaining follow-up.
 
 **Cost alignment (owner ask).** Per round, cost already uses the **provider-reported** figure
 first (OpenRouter's real `usage.cost`), estimate only as a fallback, and `null` ("unknown") never

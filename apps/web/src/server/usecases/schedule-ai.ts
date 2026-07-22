@@ -1250,15 +1250,23 @@ export type LadderRung = { provider: ProviderName; model: string };
  *  Example (the recommended production ladder):
  *    SCHEDULING_AI_LADDER="google/gemini-3.6-flash,claude-sonnet-5,x-ai/grok-4.5"
  */
-export function schedulingAiLadder(): LadderRung[] | null {
-  const raw = process.env.SCHEDULING_AI_LADDER?.trim();
-  if (!raw) return null;
-  const rungs = raw
+/** Parse a comma-separated ladder spec into rungs, or null when empty/unset.
+ *  Shared by the schedule and officials ladders (each reads its own env var).
+ *  Provider is inferred from the id — a "/" means an OpenRouter vendor prefix,
+ *  else Anthropic direct. */
+export function parseLadderSpec(raw: string | null | undefined): LadderRung[] | null {
+  const trimmed = raw?.trim();
+  if (!trimmed) return null;
+  const rungs = trimmed
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0)
     .map((model): LadderRung => ({ provider: model.includes("/") ? "openrouter" : "anthropic", model }));
   return rungs.length > 0 ? rungs : null;
+}
+
+export function schedulingAiLadder(): LadderRung[] | null {
+  return parseLadderSpec(process.env.SCHEDULING_AI_LADDER);
 }
 
 /** The ordered candidate list for one architect run. An explicit
@@ -1323,12 +1331,14 @@ function isRecoverable(err: unknown): boolean {
  * against the truth.
  *
  * Pure over `attempt`/`acceptable` so it is unit-tested without a network.
+ * Generic over the result so both phases reuse it — schedule (AiPlanResult) and
+ * officials (OfficialsPlanResult) both carry a `usage` with the same shape.
  */
-export async function runLadder(
+export async function runLadder<T extends { usage: Usage }>(
   rungs: LadderRung[],
-  attempt: (rung: LadderRung) => Promise<AiPlanResult>,
-  acceptable: (result: AiPlanResult) => boolean,
-): Promise<AiPlanResult & { served_model: string; escalated_from?: string; rungs_tried: string[] }> {
+  attempt: (rung: LadderRung) => Promise<T>,
+  acceptable: (result: T) => boolean,
+): Promise<T & { served_model: string; escalated_from?: string; rungs_tried: string[] }> {
   let acc: Usage = { input_tokens: 0, output_tokens: 0, repair_rounds: 0, cost_usd: 0 };
   const tried: string[] = [];
   for (let i = 0; i < rungs.length; i++) {

@@ -137,7 +137,7 @@ describe("runLadder", () => {
 
   it("returns the first acceptable rung without trying the rest", async () => {
     const attempt = vi.fn().mockResolvedValue(fakeResult());
-    const out = await runLadder(R, attempt, alwaysOk);
+    const out = await runLadder<AiPlanResult>(R, attempt, alwaysOk);
     expect(attempt).toHaveBeenCalledTimes(1);
     expect(out.served_model).toBe("google/gemini-3.6-flash");
     expect(out.escalated_from).toBeUndefined();
@@ -149,7 +149,7 @@ describe("runLadder", () => {
       .fn()
       .mockRejectedValueOnce(planFailed(usage(200, 100, 0.02)))
       .mockResolvedValueOnce(fakeResult({ usage: usage(300, 150, 0.05) }));
-    const out = await runLadder(R, attempt, alwaysOk);
+    const out = await runLadder<AiPlanResult>(R, attempt, alwaysOk);
     expect(attempt).toHaveBeenCalledTimes(2);
     expect(out.served_model).toBe("claude-sonnet-5");
     expect(out.escalated_from).toBe("google/gemini-3.6-flash");
@@ -164,7 +164,7 @@ describe("runLadder", () => {
       .mockResolvedValueOnce(fakeResult({ warnings: 9, usage: usage(200, 100, 0.02) }))
       .mockResolvedValueOnce(fakeResult({ usage: usage(300, 150, 0.05) }));
     const acceptable = (r: AiPlanResult) => r.warnings.length === 0;
-    const out = await runLadder(R, attempt, acceptable);
+    const out = await runLadder<AiPlanResult>(R, attempt, acceptable);
     expect(attempt).toHaveBeenCalledTimes(2);
     expect(out.served_model).toBe("claude-sonnet-5");
     expect(out.usage).toMatchObject({ input_tokens: 500, output_tokens: 250, cost_usd: 0.07 });
@@ -173,7 +173,7 @@ describe("runLadder", () => {
   it("does NOT fall back on a deterministic user error — it rethrows immediately", async () => {
     const userErr = new HttpError(422, "AI_PLAN_EMPTY_SCOPE", "AI_PLAN_EMPTY_SCOPE");
     const attempt = vi.fn().mockRejectedValue(userErr);
-    await expect(runLadder(R, attempt, alwaysOk)).rejects.toBe(userErr);
+    await expect(runLadder<AiPlanResult>(R, attempt, alwaysOk)).rejects.toBe(userErr);
     expect(attempt).toHaveBeenCalledTimes(1);
   });
 
@@ -182,14 +182,14 @@ describe("runLadder", () => {
       .fn()
       .mockRejectedValueOnce(new AiProviderError("OpenRouter returned an unparsable response body"))
       .mockResolvedValueOnce(fakeResult());
-    const out = await runLadder(R, attempt, alwaysOk);
+    const out = await runLadder<AiPlanResult>(R, attempt, alwaysOk);
     expect(attempt).toHaveBeenCalledTimes(2);
     expect(out.served_model).toBe("claude-sonnet-5");
   });
 
   it("ships the last rung's plan even when it is not acceptable (best effort beats a hard fail)", async () => {
     const attempt = vi.fn().mockResolvedValue(fakeResult({ blocking: 1 }));
-    const out = await runLadder(R, attempt, () => false);
+    const out = await runLadder<AiPlanResult>(R, attempt, () => false);
     expect(attempt).toHaveBeenCalledTimes(3);
     expect(out.served_model).toBe("x-ai/grok-4.5");
     expect(out.blocking).toHaveLength(1);
@@ -201,7 +201,7 @@ describe("runLadder", () => {
       .mockRejectedValueOnce(planFailed(usage(100, 50, 0.01)))
       .mockRejectedValueOnce(planFailed(usage(200, 100, 0.02)))
       .mockRejectedValueOnce(planFailed(usage(300, 150, 0.03)));
-    const err = await runLadder(R, attempt, alwaysOk).then(
+    const err = await runLadder<AiPlanResult>(R, attempt, alwaysOk).then(
       () => null,
       (e: HttpError) => e,
     );
@@ -216,7 +216,7 @@ describe("runLadder", () => {
       .fn()
       .mockRejectedValueOnce(planFailed(usage(100, 50, 0.01)))
       .mockRejectedValueOnce(new AiProviderError("provider down"));
-    const err = await runLadder([R[0]!, R[1]!], attempt, alwaysOk).then(
+    const err = await runLadder<AiPlanResult>([R[0]!, R[1]!], attempt, alwaysOk).then(
       () => null,
       (e: AiProviderError & { usage?: Usage; model?: string }) => e,
     );
@@ -231,7 +231,7 @@ describe("runLadder", () => {
       .fn()
       .mockResolvedValueOnce(fakeResult({ warnings: 9, usage: usage(200, 100, null) }))
       .mockResolvedValueOnce(fakeResult({ usage: usage(300, 150, 0.05) }));
-    const out = await runLadder(R, attempt, (r) => r.warnings.length === 0);
+    const out = await runLadder<AiPlanResult>(R, attempt, (r) => r.warnings.length === 0);
     expect(out.usage.cost_usd).toBeNull();
   });
 });

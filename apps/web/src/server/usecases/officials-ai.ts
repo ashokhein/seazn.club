@@ -18,7 +18,7 @@ import "server-only";
 // offset, and the solver draft is produced through domain-ranked stand-in ids so
 // the engine's per-(official, fixture) UUID tiebreak can never leak into it. DB
 // reads reuse the officials.ts / schedule.ts loaders — no SQL is re-derived here.
-import { selectProvider } from "@/server/ai/select-provider";
+import { resolveProvider, selectProvider, type ProviderName } from "@/server/ai/select-provider";
 import {
   AiProviderError,
   type AiChatResponse,
@@ -41,7 +41,15 @@ import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { AiOfficialsPlanRequest, AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
 import { AiOfficialsPlan, OFFICIALS_SYSTEM_PROMPT } from "./officials-ai-prompt";
-import { parseAiEffort, schedulingAiModel, zonedIso, type AiEffort } from "./schedule-ai";
+import {
+  parseAiEffort,
+  parseLadderSpec,
+  runLadder,
+  schedulingAiModel,
+  zonedIso,
+  type AiEffort,
+  type LadderRung,
+} from "./schedule-ai";
 import { aiRunCostUsd } from "@/lib/ai-pricing";
 import { divisionFixtures, loadSettings } from "./schedule";
 import {
@@ -827,7 +835,11 @@ async function callOfficialsModel(
  * @throws HttpError 503 (provider unconfigured), 422 AI_PLAN_FAILED (model refusal
  *   or an un-correctable structural violation), 422 AI_PLAN_TIMEOUT.
  */
-export async function runOfficialsAiPlan(pack: OfficialsPack): Promise<OfficialsPlanResult> {
+export async function runOfficialsAiPlan(
+  pack: OfficialsPack,
+  modelOverride?: string,
+  providerName?: ProviderName,
+): Promise<OfficialsPlanResult> {
   if (pack.instruction.trim() === "") {
     return finalizeOfficials(pack, draftAsPlan(pack), {
       input_tokens: 0,
@@ -839,12 +851,15 @@ export async function runOfficialsAiPlan(pack: OfficialsPack): Promise<Officials
 
   // One provider per run: reasoning blocks are provider-specific and replayed
   // verbatim on repair, so a run that resolved a provider per round could send
-  // one service's reasoning to another. 503 before any network if unconfigured.
-  const provider = selectProvider();
+  // one service's reasoning to another. A ladder rung pins its provider
+  // explicitly (never via AI_PROVIDER — process-global, unsafe under
+  // concurrency); an unset name falls back to the env provider, as before.
+  // 503 before any network if unconfigured.
+  const provider = providerName ? resolveProvider(providerName) : selectProvider();
   if (!provider.isConfigured()) {
     throw new HttpError(503, "AI scheduling is not configured on this server");
   }
-  const model = schedulingAiModel();
+  const model = modelOverride ?? schedulingAiModel();
 
   const conversation: AiTurn[] = [{ role: "user", content: JSON.stringify(pack) }];
   let inputTokens = 0;
@@ -949,6 +964,35 @@ export async function runOfficialsAiPlan(pack: OfficialsPack): Promise<Officials
   }
 }
 
+/** The ordered candidate ladder for a Phase B (officials) run. Opt-in via its
+ *  OWN env, OFFICIALS_AI_LADDER — deliberately separate from
+ *  SCHEDULING_AI_LADDER: the officials task is NOT benched against the cheaper
+ *  candidates, so flipping the schedule architect to gemini must not silently
+ *  flip officials too. Unset → today's single-model path (env provider + the
+ *  shared default model), unchanged. */
+export function officialsPlanRungs(): LadderRung[] {
+  const ladder = parseLadderSpec(process.env.OFFICIALS_AI_LADDER);
+  if (ladder) return ladder;
+  const provider: ProviderName = process.env.AI_PROVIDER === "openrouter" ? "openrouter" : "anthropic";
+  return [{ provider, model: schedulingAiModel() }];
+}
+
+/** Run the officials architect through the fallback ladder. Officials has no
+ *  tuned warning-ratio gate (unlike Phase A's planIsAcceptable), so it advances
+ *  ONLY on a thrown recoverable failure (AI_PLAN_FAILED / AI_PLAN_TIMEOUT /
+ *  AiProviderError) — a legal officials plan is accepted as its first rung
+ *  produces it, never second-guessed. Cost/served-model truth is carried by
+ *  runLadder exactly as in Phase A. */
+async function runOfficialsAiPlanLadder(
+  pack: OfficialsPack,
+): Promise<OfficialsPlanResult & { served_model: string; escalated_from?: string; rungs_tried: string[] }> {
+  return runLadder(
+    officialsPlanRungs(),
+    (rung) => runOfficialsAiPlan(pack, rung.model, rung.provider),
+    () => true,
+  );
+}
+
 // ===========================================================================
 // Phase B endpoint orchestrator (design/v4/03 §2). Gates → pack → run →
 // telemetry. NO run cap (the V291 scheduling.ai.runs_per_division.max cap is
@@ -991,10 +1035,9 @@ export async function officialsAiPlanForDivision(
       : {}),
   });
 
-  const model = schedulingAiModel();
-  let result: OfficialsPlanResult;
+  let result: OfficialsPlanResult & { served_model: string; escalated_from?: string; rungs_tried: string[] };
   try {
-    result = await runOfficialsAiPlan(pack);
+    result = await runOfficialsAiPlanLadder(pack);
   } catch (err) {
     // Meter a refused / un-correctable / timed-out run's token spend too —
     // usage rides on the 422 extra so a failed architect call is not invisible
@@ -1007,6 +1050,10 @@ export async function officialsAiPlanForDivision(
         repair_rounds?: number;
         cost_usd?: number | null;
       };
+      // The ladder annotates the thrown error with the accumulated spend across
+      // every rung tried and the last rung's model — meter against that truth,
+      // not a static default.
+      const model = (err.extra?.model as string | undefined) ?? schedulingAiModel();
       const outcome = err.code === "AI_PLAN_TIMEOUT" ? "timeout" : "failed";
       const cost_usd = usage.cost_usd ?? aiRunCostUsd(model, usage.input_tokens ?? 0, usage.output_tokens ?? 0);
       await recordOfficialsRun(auth, divisionId, "schedule.ai_failed", {
@@ -1041,8 +1088,11 @@ export async function officialsAiPlanForDivision(
     throw err;
   }
 
-  // Zero-token result = the deterministic solver draft (empty instruction) —
-  // stamp it as such so the run ledger never misattributes it to the LLM.
+  // Stamp the model the ladder ACTUALLY served (winning rung), not a static
+  // default — so the audit + cost reflect what really ran. Zero-token result =
+  // the deterministic solver draft (empty instruction) — stamp it as such so the
+  // run ledger never misattributes it to the LLM.
+  const model = result.served_model;
   const usedModel =
     result.usage.input_tokens === 0 && result.usage.output_tokens === 0 ? "solver-draft" : model;
   const cost_usd =
@@ -1054,6 +1104,11 @@ export async function officialsAiPlanForDivision(
     model: usedModel,
     usage: result.usage,
     cost_usd,
+    // Ladder telemetry: the first rung tried and the full ordered chain, when a
+    // fallback happened (model above is only the winner).
+    ...(result.escalated_from
+      ? { escalated_from: result.escalated_from, rungs_tried: result.rungs_tried }
+      : {}),
   });
 
   await captureServer({
