@@ -161,6 +161,10 @@ export function CreateOrgForm() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    // The org is created on the FIRST submit; once created (busy or done), a
+    // resubmit — including Enter in the name field while the button is hidden —
+    // must not POST again and create a duplicate.
+    if (busy || done) return;
     setError(null);
     setNotice(null);
     setBusy(true);
