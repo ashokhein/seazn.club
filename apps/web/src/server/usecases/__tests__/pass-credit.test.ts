@@ -80,11 +80,16 @@ async function seedOrg(opts: {
     values (${"Credit Org " + suffix}, ${"credit-org-" + suffix}) returning id`;
   orgIds.push(id);
   await sql`
-    with _seed_sub as (
+    with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
       insert into subscriptions (owner_user_id, plan_key, status, stripe_customer_id, currency)
-      select created_by, ${opts.planKey ?? "community"}, 'active',
+      select coalesce(o.created_by, (select id from _owner)), ${opts.planKey ?? "community"}, 'active',
             ${opts.customerId === undefined ? "cus_" + suffix : opts.customerId},
-            ${opts.currency === undefined ? "gbp" : opts.currency} from organizations where id = ${id}
+            ${opts.currency === undefined ? "gbp" : opts.currency} from organizations o where o.id = ${id}
       returning id
     )
     update organizations set subscription_id = (select id from _seed_sub) where id = ${id}`;
@@ -158,8 +163,14 @@ afterAll(async () => {
   if (orgIds.length) {
     await sql`delete from competition_passes where org_id = any(${orgIds})`;
     await sql`delete from competitions where org_id = any(${orgIds})`;
-    await sql`delete from subscriptions where org_id = any(${orgIds})`;
-    await sql`delete from organizations where id = any(${orgIds})`;
+    // Orgs point AT subscriptions (V314), so capture the group ids, drop the
+    // orgs to clear the FK, then the subscriptions they billed through.
+    const groups = await sql<{ subscription_id: string }[]>`
+      select subscription_id from organizations
+      where id = any(${orgIds}) and subscription_id is not null`;
+    await sql`delete from organizations o where o.id = any(${orgIds})`;
+    if (groups.length)
+      await sql`delete from subscriptions where id = any(${groups.map((g) => g.subscription_id)})`;
   }
   const globalForDb = globalThis as { _sql?: { end(): Promise<void> } };
   const client = globalForDb._sql;

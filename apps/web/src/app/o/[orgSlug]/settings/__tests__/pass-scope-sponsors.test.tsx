@@ -75,9 +75,14 @@ async function seedOrg(opts: { withPass: boolean }): Promise<Rig> {
   const orgSlug = "spon-org-" + s;
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"Spon Org " + s}, ${orgSlug}) returning id`;
-  await sql`with _seed_sub as (
+  await sql`with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
       insert into subscriptions (owner_user_id, plan_key, status)
-      select created_by, 'community', 'active' from organizations where id = ${orgId}
+      select coalesce(o.created_by, (select id from _owner)), 'community', 'active' from organizations o where o.id = ${orgId}
       returning id
     )
     update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;

@@ -90,9 +90,14 @@ describe.skipIf(!HAS_DB)("pass-checkout eligibility uses the resolver, not raw p
     await givePrice();
     // The row still reads 'pro'. `comped_until` is in the past, so the resolver
     // degrades the org to community — and a community org may buy a pass.
-    await sql`with _seed_sub as (
+    await sql`with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
       insert into subscriptions (owner_user_id, plan_key, status, currency, comped_until)
-      select created_by, 'pro', 'active', 'usd', now() - interval '1 day' from organizations where id = ${orgId}
+      select coalesce(o.created_by, (select id from _owner)), 'pro', 'active', 'usd', now() - interval '1 day' from organizations o where o.id = ${orgId}
       returning id
     )
     update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
@@ -106,9 +111,14 @@ describe.skipIf(!HAS_DB)("pass-checkout eligibility uses the resolver, not raw p
   it("still refuses an org on a genuinely live paid plan", async () => {
     const { orgId, compId } = await seedOrgWithComp();
     await givePrice();
-    await sql`with _seed_sub as (
+    await sql`with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
       insert into subscriptions (owner_user_id, plan_key, status, currency)
-      select created_by, 'pro', 'active', 'usd' from organizations where id = ${orgId}
+      select coalesce(o.created_by, (select id from _owner)), 'pro', 'active', 'usd' from organizations o where o.id = ${orgId}
       returning id
     )
     update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
@@ -122,9 +132,14 @@ describe.skipIf(!HAS_DB)("pass-checkout eligibility uses the resolver, not raw p
   it("still lets a plain community org buy", async () => {
     const { orgId, compId } = await seedOrgWithComp();
     await givePrice();
-    await sql`with _seed_sub as (
+    await sql`with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
       insert into subscriptions (owner_user_id, plan_key, status, currency)
-      select created_by, 'community', 'active', 'usd' from organizations where id = ${orgId}
+      select coalesce(o.created_by, (select id from _owner)), 'community', 'active', 'usd' from organizations o where o.id = ${orgId}
       returning id
     )
     update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;

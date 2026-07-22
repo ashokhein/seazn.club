@@ -61,9 +61,14 @@ async function seedPassBuyer(over?: { currency?: string | null }): Promise<{
     insert into competitions (org_id, name, slug)
     values (${orgId}, ${"Trace Cup " + suffix}, ${"trace-cup-" + suffix}) returning id`;
   await sql`
-    with _seed_sub as (
+    with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
       insert into subscriptions (owner_user_id, plan_key, status, currency)
-      select created_by, 'community', 'active', ${over?.currency ?? null} from organizations where id = ${orgId}
+      select coalesce(o.created_by, (select id from _owner)), 'community', 'active', ${over?.currency ?? null} from organizations o where o.id = ${orgId}
       returning id
     )
     update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
@@ -91,7 +96,9 @@ const passEvent = (session: Stripe.Checkout.Session) =>
 
 const readSub = (orgId: string) =>
   sql<{ stripe_customer_id: string | null; currency: string | null }[]>`
-    select stripe_customer_id, currency from subscriptions where org_id = ${orgId}`;
+    select s.stripe_customer_id, s.currency from subscriptions s
+    join organizations o on o.subscription_id = s.id
+    where o.id = ${orgId}`;
 
 beforeEach(() => {
   stripeMock.retrieve.mockReset();

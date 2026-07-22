@@ -53,9 +53,14 @@ async function seed(): Promise<Rig> {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"Pass Layout Org " + s}, ${orgSlug})
     returning id`;
-  await sql`with _seed_sub as (
+  await sql`with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
       insert into subscriptions (owner_user_id, plan_key, status)
-      select created_by, 'community', 'active' from organizations where id = ${orgId}
+      select coalesce(o.created_by, (select id from _owner)), 'community', 'active' from organizations o where o.id = ${orgId}
       returning id
     )
     update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
@@ -130,7 +135,7 @@ describe.skipIf(!HAS_DB)("competition layout provides Event Pass state", () => {
     // runs per division vs Pro's 20; 64 entrants vs 256).
     const rig = await seed();
     await sql`update subscriptions set plan_key = 'pro', status = 'active'
-              where org_id = ${rig.orgId}`;
+              where id = (select subscription_id from organizations where id = ${rig.orgId})`;
     const html = await renderLayout(rig.orgSlug, rig.compSlug);
     expect(html).toContain("pass:false");
     expect(html).toContain("state:paid_plan");
@@ -140,7 +145,7 @@ describe.skipIf(!HAS_DB)("competition layout provides Event Pass state", () => {
     // 'trialing' is in LIVE_SUBSCRIPTION_STATUSES and carries the Pro matrix.
     const rig = await seed();
     await sql`update subscriptions set plan_key = 'pro', status = 'trialing'
-              where org_id = ${rig.orgId}`;
+              where id = (select subscription_id from organizations where id = ${rig.orgId})`;
     expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:paid_plan");
   });
 
@@ -152,7 +157,7 @@ describe.skipIf(!HAS_DB)("competition layout provides Event Pass state", () => {
     await sql`update subscriptions
               set plan_key = 'pro', status = 'active', stripe_subscription_id = null,
                   comped_until = now() + interval '30 days'
-              where org_id = ${rig.orgId}`;
+              where id = (select subscription_id from organizations where id = ${rig.orgId})`;
     expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:paid_plan");
   });
 
@@ -160,7 +165,7 @@ describe.skipIf(!HAS_DB)("competition layout provides Event Pass state", () => {
     const rig = await seed();
     await sql`update subscriptions
               set plan_key = 'pro', status = 'past_due', status_changed_at = now()
-              where org_id = ${rig.orgId}`;
+              where id = (select subscription_id from organizations where id = ${rig.orgId})`;
     expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:paid_plan");
   });
 
@@ -172,7 +177,7 @@ describe.skipIf(!HAS_DB)("competition layout provides Event Pass state", () => {
     await sql`update subscriptions
               set plan_key = 'pro', status = 'active', stripe_subscription_id = null,
                   comped_until = now() - interval '1 day'
-              where org_id = ${rig.orgId}`;
+              where id = (select subscription_id from organizations where id = ${rig.orgId})`;
     expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:none");
   });
 
@@ -181,13 +186,15 @@ describe.skipIf(!HAS_DB)("competition layout provides Event Pass state", () => {
     await sql`update subscriptions
               set plan_key = 'pro', status = 'past_due',
                   status_changed_at = now() - interval '20 days'
-              where org_id = ${rig.orgId}`;
+              where id = (select subscription_id from organizations where id = ${rig.orgId})`;
     expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:none");
   });
 
   it("reports 'none' for an org with no subscriptions row at all", async () => {
     const rig = await seed();
-    await sql`delete from subscriptions where org_id = ${rig.orgId}`;
+    // V314: unlink the org from its group so the resolver's LEFT JOIN finds
+    // nothing — the same "no subscription" state, now that org points at sub.
+    await sql`update organizations set subscription_id = null where id = ${rig.orgId}`;
     expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:none");
   });
 
@@ -196,7 +203,7 @@ describe.skipIf(!HAS_DB)("competition layout provides Event Pass state", () => {
     await sql`insert into competition_passes (competition_id, org_id)
               values (${rig.compId}, ${rig.orgId})`;
     await sql`update subscriptions set plan_key = 'pro_plus', status = 'active'
-              where org_id = ${rig.orgId}`;
+              where id = (select subscription_id from organizations where id = ${rig.orgId})`;
     const html = await renderLayout(rig.orgSlug, rig.compSlug);
     // The row is still reported honestly; the gate state is not.
     expect(html).toContain("pass:true");

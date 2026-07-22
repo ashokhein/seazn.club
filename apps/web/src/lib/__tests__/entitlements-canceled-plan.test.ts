@@ -50,18 +50,21 @@ async function seedOrg(over: {
     insert into organizations (name, slug, created_by)
     values (${"Cancel Org " + suffix}, ${"cancel-org-" + suffix}, ${ownerId}) returning id`;
   const comped = over.compedDaysFromNow !== undefined || over.indefinite === true;
-  await sql`
+  // V314: the subscription IS the group and the org points at it.
+  const [{ id: subId }] = await sql<{ id: string }[]>`
     insert into subscriptions
-      (org_id, plan_key, status, stripe_subscription_id,
+      (owner_user_id, plan_key, status, stripe_subscription_id,
        comped_until, comped_at, status_changed_at)
-    values (${orgId}, ${over.planKey ?? "pro"}, ${over.status}, ${"sub_" + suffix},
+    values (${ownerId}, ${over.planKey ?? "pro"}, ${over.status}, ${"sub_" + suffix},
             ${
               over.compedDaysFromNow === undefined
                 ? null
                 : sql`now() + (${over.compedDaysFromNow} * interval '1 day')`
             },
             ${comped ? sql`now()` : null},
-            now() - interval '1 day')`;
+            now() - interval '1 day')
+    returning id`;
+  await sql`update organizations set subscription_id = ${subId} where id = ${orgId}`;
   return orgId;
 }
 

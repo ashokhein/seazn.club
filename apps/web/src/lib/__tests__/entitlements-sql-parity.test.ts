@@ -29,9 +29,14 @@ async function seedOrg(): Promise<string> {
     insert into organizations (name, slug, created_by)
     values (${"Parity " + s}, ${"parity-" + s}, ${ownerId}) returning id`;
   await sql`
-    with _seed_sub as (
+    with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
       insert into subscriptions (owner_user_id, plan_key, status)
-      select created_by, 'community', 'active' from organizations where id = ${orgId}
+      select coalesce(o.created_by, (select id from _owner)), 'community', 'active' from organizations o where o.id = ${orgId}
       returning id
     )
     update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
@@ -89,7 +94,7 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
       update subscriptions
       set plan_key = 'pro', comped_until = now() - interval '1 day',
           stripe_subscription_id = null, status = 'active'
-      where id = (select subscription_id from organizations where id = ${orgId})`;
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
     await invalidateOrgEntitlements(orgId);
     expect(await hasFeature(orgId, "realtime")).toBe(false);
     expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
@@ -101,7 +106,7 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
       set plan_key = 'pro', status = 'past_due',
           status_changed_at = now() - interval '15 days',
           stripe_subscription_id = 'sub_test'
-      where id = (select subscription_id from organizations where id = ${orgId})`;
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
     await invalidateOrgEntitlements(orgId);
     expect(await hasFeature(orgId, "realtime")).toBe(false);
     expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
@@ -116,7 +121,7 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
     await sql`
       update subscriptions
       set plan_key = 'pro', status = 'canceled', stripe_subscription_id = 'sub_gone'
-      where id = (select subscription_id from organizations where id = ${orgId})`;
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
     await invalidateOrgEntitlements(orgId);
     expect(await hasFeature(orgId, "realtime")).toBe(false);
     expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
@@ -129,7 +134,7 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
       update subscriptions
       set plan_key = 'pro', status = 'canceled', stripe_subscription_id = 'sub_gone',
           comped_until = null, comped_at = now()
-      where id = (select subscription_id from organizations where id = ${orgId})`;
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
     await invalidateOrgEntitlements(orgId);
     expect(await hasFeature(orgId, "realtime")).toBe(true);
     expect(await sqlHasFeature(orgId, "realtime")).toBe(true);

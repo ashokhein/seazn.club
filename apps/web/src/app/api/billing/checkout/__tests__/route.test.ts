@@ -10,12 +10,16 @@
 // currency), the same idiom as api/admin/orgs/[id]/restore-trial's route test.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const getActiveOrgIdMock = vi.fn<() => Promise<string | null>>();
-const requireOrgRoleMock = vi.fn<() => Promise<{ user: { email: string } }>>();
-vi.mock("@/lib/auth", () => ({
-  getActiveOrgId: () => getActiveOrgIdMock(),
-  requireOrgRole: () => requireOrgRoleMock(),
+const requireUserMock = vi.fn<() => Promise<{ email: string }>>();
+const requireBillingOwnerMock =
+  vi.fn<() => Promise<{ orgId: string; subscriptionId: string }>>();
+const billedQuantityMock = vi.fn<() => Promise<number>>();
+vi.mock("@/lib/auth", () => ({ requireUser: () => requireUserMock() }));
+// Billing groups: the checkout is the GROUP payer's and buys one seat per org.
+vi.mock("@/server/usecases/billing-manage", () => ({
+  requireBillingOwner: () => requireBillingOwnerMock(),
 }));
+vi.mock("@/lib/billing-group", () => ({ billedQuantity: () => billedQuantityMock() }));
 
 // Dispatched on the query TEXT rather than call order, because the route also
 // calls sql() as a plain function to interpolate the price column name.
@@ -68,8 +72,9 @@ const post = () =>
 const sessionParams = () => createSessionMock.mock.calls[0][0] as Record<string, unknown>;
 
 beforeEach(() => {
-  getActiveOrgIdMock.mockReset().mockResolvedValue("org-1");
-  requireOrgRoleMock.mockReset().mockResolvedValue({ user: { email: "owner@test.local" } });
+  requireUserMock.mockReset().mockResolvedValue({ email: "owner@test.local" });
+  requireBillingOwnerMock.mockReset().mockResolvedValue({ orgId: "org-1", subscriptionId: "sub-1" });
+  billedQuantityMock.mockReset().mockResolvedValue(1);
   createSessionMock.mockReset().mockResolvedValue({ client_secret: "cs_test_secret" });
   creditMock.mockReset().mockResolvedValue({ outcome: "credited" });
   holdsPassMock.mockReset().mockResolvedValue(false);
