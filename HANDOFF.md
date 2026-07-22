@@ -1,60 +1,55 @@
 # HANDOFF
 
 ## Status
-Branch `feat/event-pass-e2e-and-entitlement-gaps`, worktree `.claude/worktrees/event-pass`.
-Task 24 (help pages + final verification) COMPLETE. **Nothing deployed.**
-Suite: `2622 passed / 0 failed / 11 skipped` (matches baseline @ 92a1c0cd).
-Smoke: `517 passed / 4 failed` (4 pre-existing V310/V311 stale asserts in scripts/smoke.ts).
+Branch `feat/openrouter-provider` — OpenRouter provider abstraction + a
+cost-aligned model fallback ladder. NOT merged. Verified GREEN 2026-07-22:
+tsc clean, full unit suite 268 files / 1790 tests, eslint clean. See
+memory `project_openrouter_ladder.md` for the full picture.
 
 ## Current task
-Task 24 done. Plan's implementation tasks are finished. Remaining is owner review + the
-two pre-existing test-fixture defects below (both OUT of Task 24 scope).
+None in flight. Awaiting the merge/PR + production-flip decision (user).
 
 ## Done
-- `apps/web/content/help/billing/plans.md`: Pro "unlimited team members" → "15 team
-  members" (live matrix: Pro `members.max`=15 via V270; only Pro Plus is unlimited).
-- `apps/web/content/help/billing/event-pass.md`: realtime line now affirms the PUBLIC
-  spectator surface (commit 711032d0), not just the venue screen.
-- `apps/web/content/help/billing/downgrade.md`: reviewed against live matrix — no change
-  needed (fee ladder 8/2/1, pass 5%, brand COLOUR Pro-only + logo free, fees run on Community).
-- Verified every number in all three pages against `seazn_club.plan_entitlements` (live).
-- Full report: `.superpowers/sdd/task-24-report.md` (gitignored).
+- Provider seam (`src/server/ai/`): AiProvider, anthropic/openrouter adapters,
+  `resolveProvider(name)`; policy deny+zdr+allowlist[xai,google-vertex].
+- Fallback ladder (`schedule-ai.ts` `runLadder<T>`): gemini→sonnet→grok,
+  opt-in `SCHEDULING_AI_LADDER`; unset = today's sonnet-direct. Tests:
+  `schedule-ai-ladder.test.ts` (17).
+- Phase B officials on the same ladder, own env `OFFICIALS_AI_LADDER`
+  (default sonnet-direct). Tests: `officials-ai-ladder.test.ts` (4).
+- Cost alignment: real OpenRouter cost summed across rungs; ledger/analytics
+  stamp the winning rung's model + rungs_tried.
+- Bench: `withGreedyDraft` fills all bench packs from the real solver (14/14
+  bracket). Verdict in design/v4/06 §12–§15 (gemini clean; grok 1/3 slow).
+- Sub-processors + help GDPR copy: /legal/sub-processors names Anthropic /
+  OpenRouter / Google-Vertex / xAI; ai-scheduling + ai-officials help updated.
+- Stale anthropicClient()/ANTHROPIC_API_KEY comment cleanup.
 
 ## In progress
-None.
+Nothing.
 
 ## Next steps
-1. Owner: fix stale e2e assertion `apps/web/e2e/event-pass.spec.ts:374` — anchored regex
-   `/upgrade$` rejects the intended `?feature=` query the pass CTA now carries (added by
-   76020eeb, which updated pricing-v3.spec.ts + upgrade-gate.test.tsx but not this file).
-   U1 desktop+mobile red since then; 12 downstream serial tests cascade. Fix:
-   `new RegExp(\`/c/${rig.compSlug}/upgrade(\\?|$)\`)`.
-2. Owner: reconcile the 4 stale smoke asserts in `scripts/smoke.ts` (lines 578, 2181,
-   3546, 4365) with the V310/V311 packaging, or accept them as known-fail.
-3. Deploy chain V306–V313 (never deployed); Task 25 test-infra (CI/env/Redis/sweepRegistrations).
+1. Decide merge path: rebase onto current main (main..HEAD carries dup
+   #199/#200 squash artifacts — drop on rebase), then open a PR. Optionally
+   run `/code-review ultra` first (user-triggered, billed).
+2. Before the production flip: legal sign-off on the sub-processor copy, then
+   set Fly env `SCHEDULING_AI_LADDER` + `OPENROUTER_API_KEY`.
+3. USER: rotate leaked keys (ANTHROPIC, STRIPE, OpenRouter provisioning+inference).
 
 ## Key decisions
-- 2026-07-21 (append-only prior entries preserved below):
-- Task 24: help copy is verified against the LIVE matrix, never the existing prose. Any
-  number the matrix contradicts is a defect even if the V310/V311 repackaging didn't cause
-  it (that is why Pro members 15-not-∞ was corrected).
-- Task 24: did NOT edit `event-pass.spec.ts` / `scripts/smoke.ts` — brief scope is the 3
-  billing help `.md` files only; both stale-fixture defects are reported, not worked around.
-- Prior: see `docs/superpowers/specs/2026-07-21-event-pass-and-entitlement-gaps-design.md`
-  D1-D24. Pre-launch, zero customers: no backfill/grandfathering. Full review rigour +
-  Opus on every task (owner ruling).
+- 2026-07-22: gemini→sonnet→grok ladder; grok LAST (1 clean/3, slow/flaky).
+- 2026-07-22: ladder is opt-in env; code default stays sonnet-direct (keeps
+  local/CI/tests unchanged; "gemini default" = a deploy-env action).
+- 2026-07-22: officials gets its OWN OFFICIALS_AI_LADDER (unbenched → must not
+  inherit the schedule ladder).
+- 2026-07-21: no sonnet-via-OpenRouter; allowlist narrowed to xai+google-vertex.
 
 ## Gotchas
-- **Env: ONE file, `<root>/.env.local`;** `apps/web/.env.local` is a gitignored symlink to
-  it. Smoke needs `--env-file=.env.local` from repo root or DATABASE_URL is unset (~28 checks).
-- **Never `pkill -f "next dev"`** — scope to port: `lsof -ti :3021 | xargs kill`. This
-  branch's port is 3021; a prod server may already be running there.
-- **Stale `apps/web/.next` = phantom 404s.** `rm -rf apps/web/.next` before a fresh build.
-- **e2e needs a PROD build** (`next build && next start`) + `E2E_PROD_TARGET=1` +
-  `PLAYWRIGHT_BASE`; `next dev`'s login_url path is not exposed in prod. Do NOT enable
-  `.github/workflows/e2e.yml` (owner disables it deliberately).
-- **Migration numbers claimed in `/tmp/seaznclub/RESERVATIONS.md`** — `feat/billing-groups`
-  owns V309.
+- Run the live bench FROM apps/web (`--root apps/web`) or `server-only` import
+  fails. `AI_AB_OPEN_Q=0` skips billed baseline cells; `AI_AB_ONLY_ARM` filters.
+- grok emits >32k output on OpenRouter (max_tokens not a hard cap there).
+- NEVER enable `.github/workflows/e2e.yml` (disabled deliberately).
 
 ## Verify
 cd apps/web && npx tsc --noEmit && npx vitest run
+# 2026-07-22: tsc clean; 268 files / 1790 pass, 693 skip (LIVE-gated); eslint clean.
