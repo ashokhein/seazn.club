@@ -14,10 +14,16 @@ const SUB_PROCESSORS = [
     url: "https://supabase.com/privacy",
   },
   {
-    name: "Vercel",
-    purpose: "Serverless hosting and edge runtime",
-    location: "EU / global CDN",
-    url: "https://vercel.com/legal/privacy-policy",
+    name: "Fly.io",
+    purpose: "Application hosting (containers)",
+    location: "UK (London)",
+    url: "https://fly.io/legal/privacy-policy",
+  },
+  {
+    name: "Upstash",
+    purpose: "Redis — rate limiting, caching, ephemeral state",
+    location: "EU",
+    url: "https://upstash.com/trust/privacy",
   },
   {
     name: "Stripe",
