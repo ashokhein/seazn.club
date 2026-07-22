@@ -7,8 +7,13 @@
 //
 // Layout it creates:
 //   Alice  — Pro, 5 orgs on ONE bill        (the "association" payer)
-//   Bob    — Community, 2 orgs on one bill   (receives a handover in the test)
+//   Bob    — Pro, 2 orgs on one bill         (receives a handover in the test)
 //   Carol  — Community, 1 org
+//
+// Bob is Pro, not Community, on purpose: the per-USER cap (orgs.max_owned) lets
+// Community own only ONE org, so a 2-org Community user is a state the app would
+// never let you create — creating a 2nd org there fails "Plan upgrade required:
+// orgs.max_owned". Owning several orgs at all needs Pro (5) or Pro Plus (10).
 //
 // It writes the group shape directly (org -> subscription), matching what
 // createOrgForUser produces, so the app reads it exactly as if you had clicked
@@ -74,9 +79,9 @@ async function main() {
   const aliceGroup = await makeGroup(alice, "pro", 5);
   for (let i = 1; i <= 5; i++) await makeOrg(aliceGroup, alice, `Alice Club ${i}`);
 
-  // Bob — Community, 2 orgs on one bill.
+  // Bob — Pro, 2 orgs on one bill. Pro because Community caps a user at 1 org.
   const bob = await makeUser(`bob-${tag}@demo.test`, "Bob Owner");
-  const bobGroup = await makeGroup(bob, "community", 1);
+  const bobGroup = await makeGroup(bob, "pro", 2);
   for (let i = 1; i <= 2; i++) await makeOrg(bobGroup, bob, `Bob Club ${i}`);
 
   // Carol — Community, 1 org.
@@ -93,7 +98,7 @@ async function main() {
   console.log("\n  Billing-groups demo seeded (3 users, 8 orgs). Log in per user:\n");
   console.log("  Alice  — Pro, 5 orgs on one bill (the payer)");
   console.log(`         ${aLink}\n`);
-  console.log("  Bob    — Community, 2 orgs (receives a handover)");
+  console.log("  Bob    — Pro, 2 orgs (receives a handover)");
   console.log(`         ${bLink}\n`);
   console.log("  Carol  — Community, 1 org");
   console.log(`         ${cLink}\n`);
