@@ -54,6 +54,9 @@ export interface StripeFixtureServer {
   }): void;
   /** The proration total (minor units) the NEXT invoice preview returns. */
   setUpcomingProration(amountMinor: number, currency?: string): void;
+  /** The customer a confirmed SetupIntent reports — handOverGroup checks it
+   *  against the group's stripe_customer_id, so a test sets it to match. */
+  setSetupIntentCustomer(customerId: string): void;
   reset(): void;
   close(): Promise<void>;
 }
@@ -109,6 +112,7 @@ export async function startStripeFixtureServer(
   const subs = new Map<string, SubState>();
   const calls: StripeFixtureCall[] = [];
   let upcoming = { amount: 0, currency: "usd" };
+  let siCustomer = "cus_fixture";
 
   const server: Server = createServer((req, res) => {
     void (async () => {
@@ -167,7 +171,7 @@ export async function startStripeFixtureServer(
           object: "setup_intent",
           status: "succeeded",
           payment_method: "pm_fix_confirmed",
-          customer: "cus_fixture",
+          customer: siCustomer,
         });
       }
 
@@ -219,6 +223,9 @@ export async function startStripeFixtureServer(
     },
     setUpcomingProration(amountMinor, currency = "usd") {
       upcoming = { amount: amountMinor, currency };
+    },
+    setSetupIntentCustomer(customerId) {
+      siCustomer = customerId;
     },
     reset() {
       subs.clear();
