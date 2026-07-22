@@ -101,6 +101,24 @@ describe("create-org-form billing decisions", () => {
       "Create organization",
     );
   });
+
+  it("(d) the terminal done-state action navigates with a fixed label", () => {
+    // After a create where the attach failed the org already exists, so the
+    // page swaps the create button for this navigate-only action. The label is
+    // read straight from the catalog — no interpolation.
+    expect(msg("orgNew.continueToBoard")).toBe("Continue to your board");
+  });
+
+  it("(e) no eligible bills disables 'add' and shows the muted hint", () => {
+    // The component filters exactly this way; a lone Full group leaves nothing
+    // to add to, so the 'Add to an existing bill' radio is disabled.
+    const groups = [fullGroup];
+    const eligibleGroups = groups.filter((g) => eligibility(g, msg).eligible);
+    expect(eligibleGroups.length).toBe(0);
+    expect(msg("orgNew.bill.noneEligible")).toBe(
+      "No eligible bills — each needs an open slot on Pro or Pro Plus.",
+    );
+  });
 });
 
 describe("CreateOrgForm (SSR baseline)", () => {

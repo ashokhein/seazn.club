@@ -1007,6 +1007,8 @@
   "orgNew.createAndAdd": "Create & add — {amount} now",
   "orgNew.createAndAddFree": "Create & add to this bill",
   "orgNew.attachFailed": "Created on its own bill. Couldn’t add it to that bill: {reason}",
+  "orgNew.continueToBoard": "Continue to your board",
+  "orgNew.bill.noneEligible": "No eligible bills — each needs an open slot on Pro or Pro Plus.",
   "magicLink.missingToken": "Missing sign-in token.",
   "magicLink.failed": "Sign-in failed",
   "magicLink.signingIn": "Signing you in…",

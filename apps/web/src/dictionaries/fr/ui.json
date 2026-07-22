@@ -1007,6 +1007,8 @@
   "orgNew.createAndAdd": "Créer et ajouter — {amount} maintenant",
   "orgNew.createAndAddFree": "Créer et ajouter à cette facture",
   "orgNew.attachFailed": "Créée sur sa propre facture. Impossible de l’ajouter à cette facture : {reason}",
+  "orgNew.continueToBoard": "Continuer vers votre tableau",
+  "orgNew.bill.noneEligible": "Aucune facture éligible — chacune a besoin d’une place libre sur Pro ou Pro Plus.",
   "magicLink.missingToken": "Jeton de connexion manquant.",
   "magicLink.failed": "Échec de la connexion",
   "magicLink.signingIn": "Connexion en cours…",

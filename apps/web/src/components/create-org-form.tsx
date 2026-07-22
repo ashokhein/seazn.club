@@ -80,6 +80,10 @@ export function CreateOrgForm() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Terminal success-with-caveat: the org was created but couldn't join the
+  // chosen bill. It is on its own bill, so a second submit would only create a
+  // duplicate — we withhold the create button and offer navigation instead.
+  const [done, setDone] = useState(false);
 
   // Billing choice state. `groups === null` = not yet loaded; the fieldset is
   // withheld until we know whether the creator owns any bill at all.
@@ -178,6 +182,9 @@ export function CreateOrgForm() {
         setNotice(
           msg("orgNew.attachFailed", { reason: data.attach.reason ?? "" }),
         );
+        // The org exists on its own bill; block any re-submit that would
+        // duplicate it. The page now offers navigation, not another create.
+        setDone(true);
         setBusy(false);
         return;
       }
@@ -252,6 +259,7 @@ export function CreateOrgForm() {
               className="mt-1 h-4 w-4 accent-purple-600"
               checked={choice === "add"}
               onChange={chooseAdd}
+              disabled={eligibleGroups.length === 0}
             />
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-medium text-slate-900">
@@ -260,6 +268,11 @@ export function CreateOrgForm() {
               <span className="block text-xs text-emerald-700">
                 {msg("orgNew.bill.addToExistingHint")}
               </span>
+              {eligibleGroups.length === 0 && (
+                <span className="mt-1 block text-xs text-slate-400">
+                  {msg("orgNew.bill.noneEligible")}
+                </span>
+              )}
 
               {choice === "add" && (
                 <span className="mt-3 block space-y-2">
@@ -314,14 +327,27 @@ export function CreateOrgForm() {
         </p>
       )}
 
-      <button
-        disabled={busy || name.trim().length < 1}
-        className="btn btn-primary w-full py-2.5"
-      >
-        {busy
-          ? msg("orgNew.creating")
-          : submitLabel({ choice, preview: attaching ? preview : null, msg })}
-      </button>
+      {done ? (
+        <button
+          type="button"
+          onClick={() => {
+            router.push("/dashboard");
+            router.refresh();
+          }}
+          className="btn btn-primary w-full py-2.5"
+        >
+          {msg("orgNew.continueToBoard")}
+        </button>
+      ) : (
+        <button
+          disabled={busy || name.trim().length < 1}
+          className="btn btn-primary w-full py-2.5"
+        >
+          {busy
+            ? msg("orgNew.creating")
+            : submitLabel({ choice, preview: attaching ? preview : null, msg })}
+        </button>
+      )}
     </form>
   );
 }

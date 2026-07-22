@@ -1007,6 +1007,8 @@
   "orgNew.createAndAdd": "Crear y añadir — {amount} ahora",
   "orgNew.createAndAddFree": "Crear y añadir a esta factura",
   "orgNew.attachFailed": "Creada con su propia factura. No se pudo añadir a esa factura: {reason}",
+  "orgNew.continueToBoard": "Continuar a tu panel",
+  "orgNew.bill.noneEligible": "No hay facturas elegibles — cada una necesita un espacio libre en Pro o Pro Plus.",
   "magicLink.missingToken": "Falta el token de inicio de sesión.",
   "magicLink.failed": "Error al iniciar sesión",
   "magicLink.signingIn": "Iniciando sesión…",
