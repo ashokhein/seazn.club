@@ -93,6 +93,11 @@ describe.skipIf(!HAS_DB)("listGroupTransferOffers — recipient cost summary", (
     expect(mine?.summary?.org_count).toBe(2); // the deleted org is excluded
     expect(mine?.summary?.currency).toBe("gbp");
     expect(typeof mine?.summary?.renewal_date).toBe("number");
+    // The discriminator the recipient copy keys off: this group carries a
+    // current_period_end (so renewal_date is a number) but has NO live Stripe
+    // subscription, so has_live_subscription must be false — the case that would
+    // otherwise render a false "billed at renewal" line off the stale date.
+    expect(mine?.summary?.has_live_subscription).toBe(false);
     // No live subscription → best-effort renewal is null (never the exact number).
     expect(mine?.summary?.renewal).toBeNull();
 

@@ -29,6 +29,11 @@ export interface IncomingSummary {
   org_count: number;
   currency: string;
   renewal_date: number | null;
+  /** True when the group has a LIVE Stripe subscription. The renewal copy keys
+   *  off THIS, not `renewal_date`: a no-live group can carry a stale
+   *  `current_period_end`, and keying off the date would tell a recipient who
+   *  will never be billed that their card renews. */
+  has_live_subscription: boolean;
   charge_now_minor: 0;
   renewal: { amount_minor: number; interval: "monthly" | "annual" } | null;
 }
@@ -57,7 +62,7 @@ export function incomingOnly<T extends { direction: "made_by_me" | "made_to_me" 
   return offers.filter((o) => o.direction === "made_to_me");
 }
 
-export function IncomingTransferOffers({ currentUserId: _currentUserId }: { currentUserId: string }) {
+export function IncomingTransferOffers() {
   const msg = useMsg();
   const [incoming, setIncoming] = useState<IncomingOffer[]>([]);
   // The incoming offer whose card form is open (setup_intent_id), if any.
@@ -153,19 +158,23 @@ export function OfferSummary({ summary }: { summary: IncomingSummary }) {
         : msg("billing.group.transfer.summary.intervalMonthly");
     renewalLine = msg("billing.group.transfer.summary.renewal", {
       amount: formatMinor(summary.renewal.amount_minor, currency, locale),
+      // Only render a date when we actually have one — a live quote can arrive
+      // without a period end, and a dangling date is worse than none.
       date: summary.renewal_date
         ? fmtDate(UTC, summary.renewal_date * 1000, { day: "numeric", month: "long", year: "numeric" })
         : "",
       interval,
     });
+  } else if (!summary.has_live_subscription) {
+    // A community/no-live group genuinely has nothing to bill. Keyed off the
+    // LIVE-SUBSCRIPTION flag, never `renewal_date`: a no-live group can carry a
+    // stale period end, and using the date would tell a recipient who will never
+    // be billed that their card renews at the plan's rate.
+    renewalLine = msg("billing.group.transfer.summary.noRenewal");
   } else {
-    // No renewal quote: a community/no-live group genuinely has nothing to bill;
-    // a live group whose Stripe quote missed still renews, just at an amount we
-    // could not fetch — one neutral fallback covers the latter.
-    renewalLine =
-      summary.renewal_date === null
-        ? msg("billing.group.transfer.summary.noRenewal")
-        : msg("billing.group.transfer.summary.renewalFallback");
+    // A live group whose Stripe quote missed still renews, just at an amount we
+    // could not fetch — one neutral fallback covers it.
+    renewalLine = msg("billing.group.transfer.summary.renewalFallback");
   }
 
   return (

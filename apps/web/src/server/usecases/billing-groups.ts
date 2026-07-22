@@ -1142,6 +1142,12 @@ export interface TransferOfferSummary {
   org_count: number;
   currency: string;
   renewal_date: number | null;
+  /** True when the group has a LIVE Stripe subscription. The recipient copy keys
+   *  off this, not `renewal_date`: a no-live group can carry a stale
+   *  `current_period_end`, and using the date as the discriminator would tell a
+   *  recipient who will never be billed that their card renews at the plan's
+   *  rate. `renewal_date === null` is not "no subscription". */
+  has_live_subscription: boolean;
   charge_now_minor: 0;
   renewal: { amount_minor: number; interval: "monthly" | "annual" } | null;
 }
@@ -1213,6 +1219,7 @@ async function transferOfferSummary(subscriptionId: string): Promise<TransferOff
     org_count: n,
     currency: group_currency(group),
     renewal_date,
+    has_live_subscription: hasLiveSubscription(group),
     charge_now_minor: 0,
     renewal: await transferRenewalQuote(group),
   };
@@ -1263,7 +1270,18 @@ export async function listGroupTransferOffers(
     const toMe = r.to_user_id === userId;
     let clientSecret: string | null = null;
     // Only the recipient sees what they are taking on; the offerer already pays.
-    const summary = toMe ? await transferOfferSummary(r.subscription_id) : null;
+    // Best-effort, exactly like the client_secret retrieve below: a DB blip in
+    // the count/quote must leave the offer visible (just without a summary), not
+    // blank the WHOLE list — an outage must not blank the list.
+    const summary = toMe
+      ? await transferOfferSummary(r.subscription_id).catch((err) => {
+          console.error(
+            `[billing] could not load transfer summary for group ${r.subscription_id}`,
+            err,
+          );
+          return null;
+        })
+      : null;
     if (toMe) {
       // Best-effort: an offer whose secret cannot be fetched is still worth
       // showing — the recipient can see it exists and ask for a new one — and a

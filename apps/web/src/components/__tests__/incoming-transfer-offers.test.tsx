@@ -25,6 +25,7 @@ const summary = (over: Partial<IncomingSummary> = {}): IncomingSummary => ({
   org_count: 2,
   currency: "gbp",
   renewal_date: null,
+  has_live_subscription: false,
   charge_now_minor: 0,
   renewal: null,
   ...over,
@@ -57,7 +58,7 @@ describe("IncomingTransferOffers (SSR baseline)", () => {
   it("renders nothing before any offer loads", () => {
     const html = renderToStaticMarkup(
       <DictProvider dict={enDict} locale="en">
-        <IncomingTransferOffers currentUserId="u_me" />
+        <IncomingTransferOffers />
       </DictProvider>,
     );
     // No fetch has run in the node env, so there are no incoming offers and the
@@ -92,5 +93,22 @@ describe("OfferSummary copy", () => {
     expect(html).toContain("No charge today.");
     expect(html).toContain("£37");
     expect(html).toContain("monthly");
+  });
+
+  // The renewal line is discriminated on has_live_subscription, NOT renewal_date:
+  // a no-live group can carry a stale renewal_date, and keying off the date would
+  // state a false bill to a recipient who will never be charged.
+  it("uses the plan's-rate fallback for a live sub whose quote missed — even with no renewal_date", () => {
+    const html = renderSummary(summary({ renewal: null, has_live_subscription: true, renewal_date: null }));
+    expect(html).toContain("rate at renewal");
+    expect(html).not.toContain("no paid subscription");
+  });
+
+  it("uses the no-ongoing-charge line for a no-live group — even when it carries a renewal_date", () => {
+    const html = renderSummary(
+      summary({ renewal: null, has_live_subscription: false, renewal_date: 1_800_000_000 }),
+    );
+    expect(html).toContain("no paid subscription");
+    expect(html).not.toContain("rate at renewal");
   });
 });
