@@ -10,6 +10,7 @@ import {
   emailChangeNoticeTemplate,
   accountDeletionTemplate,
   inviteTemplate,
+  transferOfferTemplate,
   registrationTemplate,
   type RegistrationEmailArgs,
   paymentReminderTemplate,
@@ -348,6 +349,20 @@ export async function sendInviteEmail(
 ): Promise<boolean> {
   const dict = await getDictionary(locale, "emails");
   return send({ to, ...inviteTemplate(orgName, link, dict) });
+}
+
+/** A payer offered a whole billing group to this recipient (billing-group
+ *  transfer). The recipient adds their own card to take it over; the link goes
+ *  to the billing settings of an org they can reach in the group. */
+export async function sendTransferOfferEmail(
+  to: string,
+  payerName: string,
+  groupName: string,
+  link: string,
+  locale: Locale = "en",
+): Promise<boolean> {
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, ...transferOfferTemplate(payerName, groupName, link, dict) });
 }
 
 export interface RegistrationEmail extends RegistrationEmailArgs {

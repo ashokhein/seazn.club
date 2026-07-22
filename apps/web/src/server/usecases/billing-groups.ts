@@ -26,6 +26,7 @@ import {
 import { activeOrgCount, assertWithinGroupCap, groupOrgLimit } from "@/lib/billing-group";
 import { hasLiveSubscription } from "@/lib/subscription-status";
 import { intervalForPrice } from "@/lib/billing-manage";
+import { sendTransferOfferEmail } from "@/lib/email";
 
 interface GroupRow {
   id: string;
@@ -968,6 +969,18 @@ export async function offerGroupTransfer(args: {
     if (!si.client_secret) throw new HttpError(500, "Stripe returned no client secret");
     await sql`
       update billing_group_transfers set setup_intent_id = ${si.id} where id = ${claim.id}`;
+
+    // BEST-EFFORT notification. The offer is already committed above; email is a
+    // convenience, so a send failure (or a missing RESEND key, or a query blip)
+    // must never surface as a failed transfer. Everything below is swallowed.
+    await notifyTransferOfferRecipient({
+      subscriptionId,
+      actorUserId,
+      recipientEmail: recipient.email,
+    }).catch((err) => {
+      console.error("[billing-groups] transfer-offer email failed (best-effort):", err);
+    });
+
     return {
       status: "pending_card",
       subscription_id: subscriptionId,
@@ -1368,6 +1381,37 @@ async function finishHandover(
   // Re-derives the has_payment_method mirror from Stripe rather than assuming —
   // the same rule every other writer follows.
   await syncPaymentMethodFlagForSubscription(group.id);
+}
+
+/** Fire the transfer-offer email to the recipient. Best-effort: the caller
+ *  wraps this so nothing here can fail the offer. Builds the accept link from an
+ *  org the recipient can reach in the group (the group's primary org, oldest
+ *  live one first — same choice billing-events makes for its notifications), and
+ *  uses that org's name as the human label for the group. */
+async function notifyTransferOfferRecipient(args: {
+  subscriptionId: string;
+  actorUserId: string;
+  recipientEmail: string;
+}): Promise<void> {
+  const { subscriptionId, actorUserId, recipientEmail } = args;
+  const [org] = await sql<{ slug: string; name: string }[]>`
+    select slug, name from organizations
+     where subscription_id = ${subscriptionId} and deleted_at is null
+     order by created_at limit 1`;
+  if (!org) return; // no reachable org → no meaningful link to send.
+
+  const [payer] = await sql<{ display_name: string }[]>`
+    select display_name from users where id = ${actorUserId}`;
+  const payerName = payer?.display_name || "The current payer";
+
+  const base = (
+    process.env.OAUTH_BASE_URL ||
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    "http://localhost:3000"
+  ).replace(/\/$/, "");
+  const link = `${base}/o/${org.slug}/settings/billing`;
+
+  await sendTransferOfferEmail(recipientEmail, payerName, org.name, link);
 }
 
 async function transferRecipient(
