@@ -78,6 +78,9 @@ export interface GroupView {
   recipients: Recipient[];
   /** Live offers this payer has made on THIS group. */
   outgoing: ViewOffer[];
+  /** Offers made TO the current user (any group) — a bill someone wants to
+   *  hand them. Shown wherever this panel renders so it is never missed. */
+  incoming: ViewOffer[];
   /** True when the panel has no story to tell and should not render. */
   hidden: boolean;
 }
@@ -154,6 +157,10 @@ export function groupView(args: {
   const outgoing = offers.filter(
     (o) => o.direction === "made_by_me" && o.subscription_id === subscriptionId,
   );
+  // Offers made TO this user, for ANY group — "someone wants to hand you their
+  // bill". Not scoped to subscriptionId: the recipient does not own the group
+  // being offered, so it would never match theirs.
+  const incoming = offers.filter((o) => o.direction === "made_to_me");
 
   // A solo organisation with nothing to add and nothing paid ahead has no
   // grouping story, and a panel saying "On this bill: 1" on every Community
@@ -169,7 +176,8 @@ export function groupView(args: {
     candidates.length === 0 &&
     blocked.length === 0 &&
     freeSlots === 0 &&
-    outgoing.length === 0;
+    outgoing.length === 0 &&
+    incoming.length === 0;
 
   return {
     onBill,
@@ -181,6 +189,7 @@ export function groupView(args: {
     blocked,
     recipients,
     outgoing,
+    incoming,
     hidden,
   };
 }

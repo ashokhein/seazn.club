@@ -374,6 +374,21 @@ describe("outstanding offers", () => {
       ],
     )!;
     expect(v.outgoing.map((o) => o.setup_intent_id)).toEqual(["mine"]);
+    // The incoming offer is surfaced separately (its own accept UI), for ANY
+    // group — the recipient does not own the group being handed to them.
+    expect(v.incoming.map((o) => o.setup_intent_id)).toEqual(["incoming"]);
+  });
+
+  it("stays visible for a solo bill that has ONLY an incoming offer", () => {
+    // A user with a lone Community org gets offered someone else's bill: no
+    // orgs to add, no outgoing offer, but the panel must still render so they
+    // can accept it.
+    const v = view(
+      [group({ id: "grp-1", quantity_paid: 1, orgs: [org({ id: "solo" })] })],
+      [offer({ setup_intent_id: "in", subscription_id: "grp-9", direction: "made_to_me" })],
+    )!;
+    expect(v.hidden).toBe(false);
+    expect(v.incoming).toHaveLength(1);
   });
 
   it("has none when the payer has made no offer", () => {

@@ -17,6 +17,7 @@ import { Tip } from "@/components/ui/tip";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { useMsg } from "@/components/i18n/dict-provider";
 import { asCurrency, formatMinor } from "@/lib/currency";
+import { TransferOfferAccept } from "@/components/transfer-offer-accept";
 // The decisions live in a pure module so they can be tested. This component's
 // data arrives in an effect and the vitest environment here is `node` with no
 // jsdom, so a render test would assert against the null returned before the
@@ -66,6 +67,8 @@ export function BillingGroupPanel({
   const [offers, setOffers] = useState<Offer[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The incoming offer whose card form is open (setup_intent_id), if any.
+  const [acceptingId, setAcceptingId] = useState<string | null>(null);
 
   async function load() {
     const [gRes, oRes] = await Promise.all([
@@ -90,8 +93,18 @@ export function BillingGroupPanel({
   if (!view || view.hidden) return null;
 
   const group = groups.find((g) => g.id === subscriptionId)!;
-  const { onBill, seatsPaid, freeSlots, atCap, hasLive, candidates, blocked, recipients, outgoing } =
-    view;
+  const {
+    onBill,
+    seatsPaid,
+    freeSlots,
+    atCap,
+    hasLive,
+    candidates,
+    blocked,
+    recipients,
+    outgoing,
+    incoming,
+  } = view;
 
   async function offer(to: { id: string; name: string | null }) {
     const ok = await confirm({
@@ -326,6 +339,41 @@ export function BillingGroupPanel({
           </ul>
         )}
       </div>
+
+      {/* A bill someone wants to hand to YOU. Shown wherever this panel renders
+          so an incoming offer is never missed, and the recipient enters a card
+          (their own) before it moves — the second phase of the handover. */}
+      {incoming.length > 0 && (
+        <div className="mt-5 rounded-xl border border-purple-200 bg-purple-50 p-4">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-purple-700">
+            {msg("billing.group.transfer.incomingTitle")}
+          </p>
+          {incoming.map((o) => (
+            <div key={o.setup_intent_id} className="text-sm text-slate-700">
+              <p>{msg("billing.group.transfer.incomingBody")}</p>
+              {acceptingId === o.setup_intent_id && o.client_secret ? (
+                <TransferOfferAccept
+                  clientSecret={o.client_secret}
+                  setupIntentId={o.setup_intent_id}
+                  onDone={() => {
+                    setAcceptingId(null);
+                    void load();
+                  }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setAcceptingId(o.setup_intent_id)}
+                  disabled={busy || !o.client_secret}
+                  className="btn btn-primary mt-2 text-sm"
+                >
+                  {msg("billing.group.transfer.incomingAccept")}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Hand the whole bill to someone else. Separated by a rule because it is
           a different kind of act from moving one organisation: it changes who
