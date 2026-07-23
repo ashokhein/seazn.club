@@ -35,6 +35,11 @@ import {
   type TaxIdType,
 } from "@/lib/billing-manage";
 export type { BillingInterval, IntervalPreview };
+import {
+  payerSegments,
+  filterInvoicesForViewer,
+  type PayerSegment,
+} from "@/lib/billing-invoice-scope";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
 
@@ -45,6 +50,8 @@ import { EVENTS } from "@/lib/analytics-events";
  */
 
 interface SubRow {
+  id: string;
+  owner_user_id: string;
   plan_key: string;
   status: string;
   stripe_customer_id: string | null;
@@ -58,12 +65,44 @@ interface SubRow {
 /** The billing GROUP behind an org (V310) — many orgs may share one row. */
 async function subRow(orgId: string): Promise<SubRow | null> {
   const [sub] = await sql<SubRow[]>`
-    select s.plan_key, s.status, s.stripe_customer_id, s.stripe_subscription_id,
-           s.current_period_end, s.trial_end, s.cancel_at_period_end, s.currency
+    select s.id, s.owner_user_id, s.plan_key, s.status, s.stripe_customer_id,
+           s.stripe_subscription_id, s.current_period_end, s.trial_end,
+           s.cancel_at_period_end, s.currency
     from subscriptions s
     join organizations o on o.subscription_id = s.id
     where o.id = ${orgId}`;
   return sub ?? null;
+}
+
+/**
+ * The payer timeline for a group, read from the transfer ledger (#privacy). A
+ * group is one Stripe customer whose invoices carry the payer-of-record's name
+ * and address; this drives filterInvoicesForViewer so each payer sees only their
+ * own tenure's invoices, never a predecessor's. Pure arithmetic lives in
+ * lib/billing-invoice-scope.
+ */
+export async function segmentsForGroup(subscriptionId: string): Promise<PayerSegment[]> {
+  const [grp] = await sql<{ owner_user_id: string }[]>`
+    select owner_user_id from subscriptions where id = ${subscriptionId}`;
+  if (!grp) return [];
+  const hops = await sql<{ from_user_id: string; to_user_id: string; resolved_at: Date }[]>`
+    select from_user_id, to_user_id, resolved_at
+    from billing_group_transfers
+    where subscription_id = ${subscriptionId}
+      and status = 'accepted' and resolved_at is not null
+    order by resolved_at asc`;
+  return payerSegments({
+    // The original payer owns every invoice before the first handover — there is
+    // no earlier payer, and subscriptions carry no creation timestamp — so the
+    // first tenure opens at the beginning of time.
+    originStartMs: 0,
+    currentPayerId: grp.owner_user_id,
+    transfers: hops.map((h) => ({
+      fromUserId: h.from_user_id,
+      toUserId: h.to_user_id,
+      resolvedAtMs: new Date(h.resolved_at).getTime(),
+    })),
+  });
 }
 
 /**
@@ -169,7 +208,7 @@ export async function getBillingOverview(orgId: string): Promise<BillingOverview
     }
 
     const customerId = sub.stripe_customer_id;
-    const [customer, pms, invoices, stripeSub, taxIds] = await Promise.all([
+    const [customer, pms, invoices, stripeSub, taxIds, segments] = await Promise.all([
       stripe.customers.retrieve(customerId),
       stripe.customers.listPaymentMethods(customerId, { type: "card", limit: 10 }),
       stripe.invoices.list({ customer: customerId, limit: 24 }),
@@ -180,6 +219,7 @@ export async function getBillingOverview(orgId: string): Promise<BillingOverview
           })
         : Promise.resolve(null),
       stripe.customers.listTaxIds(customerId, { limit: 10 }),
+      segmentsForGroup(sub.id),
     ]);
 
     if (customer.deleted) return null;
@@ -204,7 +244,11 @@ export async function getBillingOverview(orgId: string): Promise<BillingOverview
       select stripe_price_id_monthly, stripe_price_id_annual
       from plans where key = ${sub.plan_key}`;
     const priceId = stripeSub?.items.data[0]?.price?.id ?? null;
-    const rows = invoiceRows(invoices.data);
+    // Scope invoices to the current payer's own tenure(s) (#privacy): the group
+    // is one customer whose invoice PDFs snapshot the payer-of-record's name and
+    // address, so a new payer must not see a predecessor's. The viewer here is
+    // the payer — getBillingOverview runs only for them (page.tsx isPayer gate).
+    const rows = invoiceRows(filterInvoicesForViewer(invoices.data, segments, sub.owner_user_id));
 
     return {
       paymentMethods: paymentMethodRows(pms.data, defaultId),
