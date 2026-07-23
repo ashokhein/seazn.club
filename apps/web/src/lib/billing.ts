@@ -240,6 +240,15 @@ export function assertCheckoutAllowed(
       "This organization's subscription needs a working payment method — update your card or retry the invoice from the billing page instead of starting a new subscription.",
     );
   }
+  if (sub.status === "incomplete") {
+    // First payment never confirmed (e.g. a 3DS challenge left unfinished). The
+    // subscription already exists, so a fresh checkout would mint a second one —
+    // point them at completing the pending payment instead.
+    throw new HttpError(
+      409,
+      "This organization has a payment that hasn't finished — complete it, or retry the invoice from the billing page, instead of starting a new subscription.",
+    );
+  }
   throw new HttpError(
     409,
     "This organization already has a subscription — manage your plan from the billing page instead.",
@@ -390,7 +399,13 @@ const STATUS_MAP: Record<string, string> = {
   active: "active",
   past_due: "past_due",
   canceled: "canceled",
-  incomplete: "past_due",
+  // `incomplete` is kept DISTINCT, not folded into past_due (#206/#223-B): it
+  // means the FIRST invoice never succeeded, so the org has paid nothing and
+  // must NOT get the 14-day past_due grace (which is for a subscription that WAS
+  // active and then a renewal failed). It is still a LIVE status (it owns a real
+  // subscription — see LIVE_SUBSCRIPTION_STATUSES), so a second checkout is
+  // blocked; the entitlement resolver degrades it to community until it pays.
+  incomplete: "incomplete",
   incomplete_expired: "canceled",
   unpaid: "past_due",
   paused: "past_due",

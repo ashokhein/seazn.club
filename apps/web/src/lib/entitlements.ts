@@ -157,6 +157,13 @@ export async function orgPlanKey(orgId: string): Promise<string> {
       when s.status = 'past_due'
            and coalesce(s.status_changed_at, s.updated_at) <= now() - interval '14 days'
            then 'community'
+      -- A never-paid subscription conveys NO plan. 'incomplete' means the FIRST
+      -- invoice never succeeded (an abandoned 3DS challenge, a declined card at
+      -- the sheet). It used to fold into past_due and so inherited the 14-day
+      -- grace: full Pro, paid for nothing, until Stripe expired it ~23h later
+      -- (#206/#223-B). The past_due grace is for a subscription that WAS active
+      -- and then a renewal failed; a first payment that never landed gets none.
+      when s.status = 'incomplete' then 'community'
       -- A CANCELLED subscription does not convey its plan. Without this arm the
       -- only thing standing between a departed org and permanent Pro is the
       -- customer.subscription.deleted handler having run and written

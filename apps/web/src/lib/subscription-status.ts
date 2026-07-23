@@ -1,7 +1,8 @@
 /** Statuses in which a Stripe subscription still owns the org's billing. Our
- *  STATUS_MAP collapses incomplete/unpaid/paused into past_due, so this list
- *  is the whole non-terminal set of STRIPE-SOURCED statuses. `canceled` is
- *  terminal — a departed customer must be able to come back.
+ *  STATUS_MAP collapses unpaid/paused into past_due and keeps `incomplete`
+ *  distinct (a never-paid first invoice — live, but entitled to nothing until it
+ *  pays), so this list is the whole non-terminal set of STRIPE-SOURCED statuses.
+ *  `canceled` is terminal — a departed customer must be able to come back.
  *
  *  STATUS_MAP is NOT the whole vocabulary of subscriptions.status: 'suspended'
  *  is written in-app by the staff suspend route (api/admin/orgs/[id]/suspend)
@@ -22,6 +23,9 @@ export const LIVE_SUBSCRIPTION_STATUSES: readonly string[] = [
   "trialing",
   "active",
   "past_due",
+  // A never-paid first invoice still owns a real subscription (blocks a second
+  // checkout); the entitlement resolver grants it nothing until it pays (#206).
+  "incomplete",
 ];
 
 /**

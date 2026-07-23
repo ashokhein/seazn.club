@@ -400,6 +400,10 @@ export function needsRenewalResync(
 ): boolean {
   if (!sub?.stripe_subscription_id) return false;
   if (sub.status === "past_due") return true;
+  // `incomplete` grants nothing (#206), so a first payment that DID confirm but
+  // whose `active` webhook was missed would otherwise strand the org on
+  // community. Re-sync any incomplete row so the billing page self-heals it.
+  if (sub.status === "incomplete") return true;
   if (sub.status !== "active" && sub.status !== "trialing") return false;
   if (!sub.current_period_end) return false;
   return new Date(sub.current_period_end).getTime() < Date.now();
