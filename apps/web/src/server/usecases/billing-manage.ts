@@ -267,6 +267,36 @@ export async function getBillingOverview(orgId: string): Promise<BillingOverview
   }
 }
 
+/**
+ * A FORMER payer's own invoices for a group they no longer pay for (#privacy).
+ * The billing page gives the current payer their full invoice list; a former
+ * payer is a non-payer, so getBillingOverview returns null for them — yet the
+ * invoices from their own tenure are still on the shared customer and are
+ * legitimately theirs to see. This returns exactly those, scoped by the tenure
+ * windows, and nothing when the viewer is the current payer (they already have
+ * the full view) or was never a payer here. Best-effort: a Stripe hiccup yields
+ * an empty list rather than breaking the page.
+ */
+export async function getFormerPayerInvoices(
+  orgId: string,
+  viewerId: string,
+): Promise<InvoiceRow[]> {
+  const sub = await subRow(orgId);
+  if (!sub?.stripe_customer_id) return [];
+  if (sub.owner_user_id === viewerId) return []; // current payer uses the full view
+  const segments = await segmentsForGroup(sub.id);
+  if (!segments.some((s) => s.payerUserId === viewerId)) return []; // never a payer here
+  try {
+    const invoices = await getStripe().invoices.list({
+      customer: sub.stripe_customer_id,
+      limit: 24,
+    });
+    return invoiceRows(filterInvoicesForViewer(invoices.data, segments, viewerId));
+  } catch {
+    return [];
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Event Pass purchases (v3/07 §3, Task 14)
 // ---------------------------------------------------------------------------

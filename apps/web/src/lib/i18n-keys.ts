@@ -192,6 +192,8 @@ export type DictionaryKey =
   | "billing.passes.invoice"
   | "billing.passes.note"
   | "billing.passes.title"
+  | "billing.pastInvoices.note"
+  | "billing.pastInvoices.title"
   | "billing.payNow"
   | "billing.paymentFailed"
   | "billing.paymentMethods"

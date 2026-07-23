@@ -16,7 +16,12 @@ import {
 } from "@/components/billing-manage";
 import { BillingPassPurchases } from "@/components/billing-pass-purchases";
 import { BillingPassOffer, type PassCandidate } from "@/components/billing-pass-offer";
-import { getBillingOverview, getPassPurchases } from "@/server/usecases/billing-manage";
+import {
+  getBillingOverview,
+  getFormerPayerInvoices,
+  getPassPurchases,
+} from "@/server/usecases/billing-manage";
+import { InvoiceList } from "@/components/billing-invoice-list";
 import { type Subscription } from "@/lib/types";
 import { getLimit, isPaidPlan, orgPlanKey } from "@/lib/entitlements";
 import { TrackOnMount } from "@/components/analytics-track-mount";
@@ -105,9 +110,12 @@ export default async function BillingPage({
   // sees them whether or not they pay. getBillingOverview returns null for an
   // org with no Stripe customer or an unreachable Stripe, and passes are local
   // rows — an org that holds one must see it either way.
-  const [overview, passes] = await Promise.all([
+  const [overview, passes, pastInvoices] = await Promise.all([
     isPayer ? getBillingOverview(orgId) : null,
     isOwner ? getPassPurchases(orgId) : [],
+    // A former payer's own invoices from when they paid for this group. Self-
+    // gates: [] for the current payer, or anyone who never paid here (#privacy).
+    isPayer ? [] : getFormerPayerInvoices(orgId, user.id),
   ]);
 
   // The billing GROUP behind this org (V310). `org_id` is projected from the
@@ -416,66 +424,27 @@ export default async function BillingPage({
         />
 
         {/* Invoices — Stripe-hosted view/PDF links; we never render documents. */}
-        {isPayer && overview && overview.invoices.length > 0 && (
-          <section className="card mb-6 p-5">
-            <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
-              {t(dict, "billing.invoices")}
-            </h2>
-            <ul className="divide-y divide-slate-100">
-              {overview.invoices.map((inv) => (
-                <li
-                  key={inv.id}
-                  className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm"
-                >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <span className="text-slate-600">{fmt(inv.createdIso, locale)}</span>
-                    {inv.number && <span className="hidden text-slate-400 sm:inline">{inv.number}</span>}
-                    <span className="font-medium text-slate-800">
-                      {formatMinor(inv.totalMinor, asCurrency(inv.currency))}
-                    </span>
-                    <span
-                      className={`badge ${
-                        inv.status === "paid"
-                          ? "bg-green-100 text-green-700"
-                          : inv.isOpen
-                            ? "bg-amber-100 text-amber-700"
-                            : "bg-slate-100 text-slate-500"
-                      }`}
-                    >
-                      {inv.status}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs">
-                    {inv.isOpen && inv.hostedUrl && (
-                      <a
-                        href={inv.hostedUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="font-semibold text-amber-700 hover:underline"
-                      >
-                        {t(dict, "billing.payNow")} ↗
-                      </a>
-                    )}
-                    {inv.hostedUrl && (
-                      <a
-                        href={inv.hostedUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-purple-600 hover:underline"
-                      >
-                        {t(dict, "billing.view")} ↗
-                      </a>
-                    )}
-                    {inv.pdfUrl && (
-                      <a href={inv.pdfUrl} className="text-purple-600 hover:underline">
-                        PDF
-                      </a>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </section>
+        {isPayer && overview && (
+          <InvoiceList
+            invoices={overview.invoices}
+            heading={t(dict, "billing.invoices")}
+            dict={dict}
+            locale={locale}
+          />
+        )}
+
+        {/* A former payer's OWN invoices from when they paid for this group.
+            Scoped to their tenure(s) by getFormerPayerInvoices — never the
+            current payer's, whose name/address the PDFs would carry (#privacy).
+            Read-only, same look as the payer's list. */}
+        {!isPayer && (
+          <InvoiceList
+            invoices={pastInvoices}
+            heading={t(dict, "billing.pastInvoices.title")}
+            note={t(dict, "billing.pastInvoices.note")}
+            dict={dict}
+            locale={locale}
+          />
         )}
 
         {/* Usage */}
