@@ -227,6 +227,117 @@ function AddCardInner({ onClose }: { onClose: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
+// Proration breakdown — shared by the interval switch and the plan switch
+// ---------------------------------------------------------------------------
+
+/** The steady-state renewal, e.g. "£125.00/yr", or null when Stripe couldn't
+ *  quote it (that line is then hidden rather than guessed). */
+function renewalLabel(preview: IntervalPreview): string | null {
+  if (preview.renewalAmountMinor === null) return null;
+  const per = preview.interval === "annual" ? "yr" : "mo";
+  return `${formatMinor(preview.renewalAmountMinor, asCurrency(preview.currency))}/${per}`;
+}
+
+/**
+ * The proration for a plan or interval change, itemized the way Stripe will
+ * invoice it — the new billing period charged in full, minus credit for the
+ * unused time on the current plan, plus tax — so the number charged today is
+ * shown, not just asserted. Works in either direction: an upgrade charges
+ * today, a downgrade lands as account credit. `actions` are the confirm/keep
+ * buttons the caller owns.
+ */
+export function ProrationSummary({
+  preview,
+  heading,
+  actions,
+  error,
+}: {
+  preview: IntervalPreview;
+  heading: string;
+  actions: React.ReactNode;
+  error: string | null;
+}) {
+  const cur = asCurrency(preview.currency);
+  const money = (minor: number) => formatMinor(minor, cur);
+  const renewal = renewalLabel(preview);
+  const charged = preview.dueTodayMinor > 0;
+  const hasTax = preview.taxMinor > 0;
+
+  return (
+    <div className="mt-2 rounded-xl border border-purple-200 bg-purple-50/40 p-4 text-sm">
+      <p className="font-semibold text-slate-800">{heading}</p>
+
+      {preview.trialing ? (
+        <p className="mt-2 text-slate-700">
+          No charge today — you’re on the free trial. First charge
+          {renewal ? ` of ${renewal}` : ""}
+          {preview.newPeriodEnd ? ` on ${fmtDate(preview.newPeriodEnd)}` : " at trial end"}.
+        </p>
+      ) : (
+        <>
+          <table className="mt-3 w-full text-slate-700">
+            <caption className="sr-only">What you pay today</caption>
+            <tbody>
+              <tr>
+                <td className="py-1 pr-3">New billing period</td>
+                <td className="py-1 text-right tabular-nums">{money(preview.newPeriodMinor)}</td>
+              </tr>
+              {preview.unusedCreditMinor > 0 && (
+                <tr>
+                  <td className="py-1 pr-3">Credit for unused time</td>
+                  <td className="py-1 text-right tabular-nums text-slate-600">
+                    −{money(preview.unusedCreditMinor)}
+                  </td>
+                </tr>
+              )}
+              {charged && hasTax && (
+                <>
+                  <tr className="border-t border-purple-200/70">
+                    <td className="py-1 pr-3 pt-1.5">Subtotal</td>
+                    <td className="py-1 pt-1.5 text-right tabular-nums">
+                      {money(preview.subtotalMinor)}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="py-1 pr-3">Tax</td>
+                    <td className="py-1 text-right tabular-nums">{money(preview.taxMinor)}</td>
+                  </tr>
+                </>
+              )}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-purple-300">
+                <td className="pt-2 pr-3 font-semibold text-slate-800">
+                  {charged ? "Charged today" : "Credit to your balance"}
+                </td>
+                <td className="pt-2 text-right font-semibold tabular-nums text-slate-900">
+                  {charged ? money(preview.dueTodayMinor) : money(preview.creditMinor)}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+
+          {!charged && preview.creditMinor > 0 && (
+            <p className="mt-2 text-xs text-slate-600">
+              No charge today — this credit pays your future invoices.
+            </p>
+          )}
+          {renewal && (
+            <p className="mt-2 text-slate-700">
+              Then renews at <span className="font-semibold">{renewal}</span>
+              {preview.newPeriodEnd ? ` from ${fmtDate(preview.newPeriodEnd)}` : ""}.
+            </p>
+          )}
+        </>
+      )}
+
+      <div className="mt-3 flex items-center gap-3">{actions}</div>
+      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Interval switch with proration preview
 // ---------------------------------------------------------------------------
 
@@ -290,63 +401,26 @@ export function PlanIntervalSwitcher({ current }: { current: "monthly" | "annual
     );
   }
 
-  const renewal =
-    preview.renewalAmountMinor !== null
-      ? `${formatMinor(preview.renewalAmountMinor, asCurrency(preview.currency))}/${preview.interval === "annual" ? "yr" : "mo"}`
-      : null;
-
   return (
-    <div className="mt-2 rounded-xl border border-purple-200 bg-purple-50/40 p-4 text-sm">
-      <p className="font-semibold text-slate-800">
-        Switch to {preview.interval === "annual" ? "yearly" : "monthly"} billing
-      </p>
-      <ul className="mt-2 space-y-1 text-slate-700">
-        {preview.trialing ? (
-          <li>
-            No charge today — you’re on the free trial. First charge{renewal ? ` of ${renewal}` : ""}
-            {preview.newPeriodEnd ? ` on ${fmtDate(preview.newPeriodEnd)}` : " at trial end"}.
-          </li>
-        ) : preview.dueTodayMinor > 0 ? (
-          <li>
-            <span className="font-semibold">
-              {formatMinor(preview.dueTodayMinor, asCurrency(preview.currency))}
-            </span>{" "}
-            charged today — the new period minus credit for unused time.
-          </li>
-        ) : (
-          <li>
-            No charge today.{" "}
-            {preview.creditMinor > 0 && (
-              <>
-                <span className="font-semibold">
-                  {formatMinor(preview.creditMinor, asCurrency(preview.currency))}
-                </span>{" "}
-                of unused time becomes account credit and pays future invoices.
-              </>
-            )}
-          </li>
-        )}
-        {!preview.trialing && renewal && (
-          <li>
-            Then renews at {renewal}
-            {preview.newPeriodEnd ? ` from ${fmtDate(preview.newPeriodEnd)}` : ""}.
-          </li>
-        )}
-      </ul>
-      <div className="mt-3 flex items-center gap-3">
-        <button className="btn btn-primary" onClick={confirm} disabled={phase === "confirming"}>
-          {phase === "confirming" ? "Applying…" : "Confirm switch"}
-        </button>
-        <button
-          className="btn btn-ghost"
-          onClick={() => setPreview(null)}
-          disabled={phase === "confirming"}
-        >
-          Keep current billing
-        </button>
-      </div>
-      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
-    </div>
+    <ProrationSummary
+      preview={preview}
+      heading={`Switch to ${preview.interval === "annual" ? "yearly" : "monthly"} billing`}
+      error={error}
+      actions={
+        <>
+          <button className="btn btn-primary" onClick={confirm} disabled={phase === "confirming"}>
+            {phase === "confirming" ? "Applying…" : "Confirm switch"}
+          </button>
+          <button
+            className="btn btn-ghost"
+            onClick={() => setPreview(null)}
+            disabled={phase === "confirming"}
+          >
+            Keep current billing
+          </button>
+        </>
+      }
+    />
   );
 }
 
@@ -421,61 +495,26 @@ export function PlanKeySwitcher({
     );
   }
 
-  const renewal =
-    preview.renewalAmountMinor !== null
-      ? `${formatMinor(preview.renewalAmountMinor, asCurrency(preview.currency))}/${preview.interval === "annual" ? "yr" : "mo"}`
-      : null;
-
   return (
-    <div className="mt-2 rounded-xl border border-purple-200 bg-purple-50/40 p-4 text-sm">
-      <p className="font-semibold text-slate-800">{switchLabel}</p>
-      <ul className="mt-2 space-y-1 text-slate-700">
-        {preview.trialing ? (
-          <li>
-            No charge today — you’re on the free trial. First charge{renewal ? ` of ${renewal}` : ""}
-            {preview.newPeriodEnd ? ` on ${fmtDate(preview.newPeriodEnd)}` : " at trial end"}.
-          </li>
-        ) : preview.dueTodayMinor > 0 ? (
-          <li>
-            <span className="font-semibold">
-              {formatMinor(preview.dueTodayMinor, asCurrency(preview.currency))}
-            </span>{" "}
-            charged today — the new period minus credit for unused time.
-          </li>
-        ) : (
-          <li>
-            No charge today.{" "}
-            {preview.creditMinor > 0 && (
-              <>
-                <span className="font-semibold">
-                  {formatMinor(preview.creditMinor, asCurrency(preview.currency))}
-                </span>{" "}
-                of unused time becomes account credit and pays future invoices.
-              </>
-            )}
-          </li>
-        )}
-        {!preview.trialing && renewal && (
-          <li>
-            Then renews at {renewal}
-            {preview.newPeriodEnd ? ` from ${fmtDate(preview.newPeriodEnd)}` : ""}.
-          </li>
-        )}
-      </ul>
-      <div className="mt-3 flex items-center gap-3">
-        <button className="btn btn-primary" onClick={confirm} disabled={phase === "confirming"}>
-          {phase === "confirming" ? "Applying…" : msg("billing.planChange.confirm")}
-        </button>
-        <button
-          className="btn btn-ghost"
-          onClick={() => setPreview(null)}
-          disabled={phase === "confirming"}
-        >
-          Keep current plan
-        </button>
-      </div>
-      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
-    </div>
+    <ProrationSummary
+      preview={preview}
+      heading={switchLabel}
+      error={error}
+      actions={
+        <>
+          <button className="btn btn-primary" onClick={confirm} disabled={phase === "confirming"}>
+            {phase === "confirming" ? "Applying…" : msg("billing.planChange.confirm")}
+          </button>
+          <button
+            className="btn btn-ghost"
+            onClick={() => setPreview(null)}
+            disabled={phase === "confirming"}
+          >
+            Keep current plan
+          </button>
+        </>
+      }
+    />
   );
 }
 

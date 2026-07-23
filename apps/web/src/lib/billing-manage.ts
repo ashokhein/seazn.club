@@ -26,6 +26,17 @@ export interface IntervalPreview {
   dueTodayMinor: number;
   creditMinor: number;
   currency: string;
+  /** The itemized breakdown behind dueTodayMinor, so the confirm dialog can show
+   *  the same lines Stripe will invoice: the new period charged in full, minus
+   *  credit for the unused time on the old plan, plus tax. All minor units, all
+   *  tax-exclusive except dueTodayMinor (the tax-inclusive total). */
+  newPeriodMinor: number;
+  /** Credit for the unused remainder of the current period (a positive number). */
+  unusedCreditMinor: number;
+  /** newPeriodMinor − unusedCreditMinor, before tax. */
+  subtotalMinor: number;
+  /** Tax on the subtotal (0 when the customer is not taxed). */
+  taxMinor: number;
   /** When the next full charge lands (new period end; trial end while trialing). */
   newPeriodEnd: string | null;
   /** The recurring amount at the new interval (SET price point, sub currency). */
@@ -101,24 +112,48 @@ export function buildIntervalChangeParams(
 export interface IntervalPreviewSummary {
   dueTodayMinor: number;
   creditMinor: number;
+  newPeriodMinor: number;
+  unusedCreditMinor: number;
+  subtotalMinor: number;
+  taxMinor: number;
   currency: string;
   newPeriodEnd: string | null;
 }
 
-/** Collapse a preview invoice into what the confirm dialog shows. */
+/**
+ * Collapse a proration preview invoice into what the confirm dialog shows,
+ * including the itemized breakdown behind the total. Stripe returns one positive
+ * line for the new period at the new price and one negative line crediting the
+ * unused remainder of the current period; summing them by sign reproduces the
+ * "new plan − credit for unused time" lines the customer sees on the real
+ * invoice. subtotal/total are Stripe's own (tax and discounts already applied),
+ * so tax is the difference rather than anything we compute.
+ */
 export function summarizeIntervalPreview(invoice: {
   total: number;
+  subtotal: number;
   currency: string;
-  lines: { data: Array<{ period?: { end?: number | null } | null } | null> };
+  lines: { data: Array<{ amount?: number | null; period?: { end?: number | null } | null } | null> };
 }): IntervalPreviewSummary {
   let end: number | null = null;
+  let newPeriodMinor = 0;
+  let unusedCreditMinor = 0;
   for (const line of invoice.lines.data) {
     const e = line?.period?.end;
     if (typeof e === "number" && (end === null || e > end)) end = e;
+    const a = line?.amount;
+    if (typeof a === "number") {
+      if (a >= 0) newPeriodMinor += a;
+      else unusedCreditMinor += -a;
+    }
   }
   return {
     dueTodayMinor: Math.max(invoice.total, 0),
     creditMinor: Math.max(-invoice.total, 0),
+    newPeriodMinor,
+    unusedCreditMinor,
+    subtotalMinor: invoice.subtotal,
+    taxMinor: Math.max(invoice.total - invoice.subtotal, 0),
     currency: invoice.currency,
     newPeriodEnd: end === null ? null : new Date(end * 1000).toISOString(),
   };
