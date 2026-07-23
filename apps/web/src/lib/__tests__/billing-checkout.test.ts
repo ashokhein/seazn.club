@@ -418,13 +418,22 @@ describe("hasLiveSubscription", () => {
   });
 
   // Pins the `?? ""` fallback: a null status (row written before the column was
-  // populated) is not live, and neither is a raw Stripe status — STATUS_MAP has
-  // already folded `incomplete` into past_due before anything reaches here, so
-  // seeing the raw value means an unmapped write, not a live subscription.
-  it("is false for a null status or a raw unmapped Stripe status", () => {
+  // populated) is not live, and neither is an unmapped Stripe status.
+  it("is false for a null status or an unmapped Stripe status", () => {
     expect(hasLiveSubscription({ stripe_subscription_id: "sub_1", status: null })).toBe(false);
+    // incomplete_expired maps to canceled (terminal); a bare unknown is not live.
+    expect(
+      hasLiveSubscription({ stripe_subscription_id: "sub_1", status: "incomplete_expired" }),
+    ).toBe(false);
+    expect(hasLiveSubscription({ stripe_subscription_id: "sub_1", status: "wat" })).toBe(false);
+  });
+
+  // #206: `incomplete` is now a distinct, live status (it owns a real
+  // subscription, so a second checkout is blocked) — even though it is entitled
+  // to nothing until the first payment lands.
+  it("is true for incomplete — a never-paid subscription still owns billing", () => {
     expect(hasLiveSubscription({ stripe_subscription_id: "sub_1", status: "incomplete" })).toBe(
-      false,
+      true,
     );
   });
 });
@@ -449,12 +458,21 @@ describe("assertCheckoutAllowed past_due", () => {
     expect(status).toBe(409);
   });
 
-  // STATUS_MAP folds Stripe's `incomplete` into past_due, so this message is
-  // the whole recovery path for an org whose first payment never confirmed.
-  it("names the recovery path so the block is not a dead end", () => {
-    expect(() =>
-      assertCheckoutAllowed({ stripe_subscription_id: "sub_1", status: "past_due" }),
-    ).toThrow(/payment method|retry/i);
+  // #206: an org whose FIRST payment never confirmed now carries `incomplete`,
+  // not past_due. It still owns a subscription (block a second checkout), and the
+  // message names the recovery path so the block is not a dead end.
+  it("409s an incomplete org and names the recovery path", () => {
+    const call = () =>
+      assertCheckoutAllowed({ stripe_subscription_id: "sub_1", status: "incomplete" });
+    expect(call).toThrow(HttpError);
+    expect(call).toThrow(/hasn't finished|complete it|retry/i);
+    let status: unknown;
+    try {
+      call();
+    } catch (e) {
+      status = (e as HttpError).status;
+    }
+    expect(status).toBe(409);
   });
 
   it("still lets a departed customer buy again", () => {

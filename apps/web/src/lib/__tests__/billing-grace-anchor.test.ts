@@ -10,6 +10,7 @@ import type Stripe from "stripe";
 import { sql } from "@/lib/db";
 import { syncSubscription } from "@/lib/billing";
 import { processStripeEvent } from "@/server/usecases/billing-events";
+import { orgPlanKey } from "@/lib/entitlements";
 
 import { setOrgPlan } from "./_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -120,5 +121,49 @@ describe.skipIf(!HAS_DB)("status_changed_at transition stamping", () => {
     const held = await readAnchor(orgId);
     expect(held.status).toBe("past_due");
     expect(new Date(held.status_changed_at!).getTime()).toBeLessThan(Date.now() - 9 * 86_400_000);
+  });
+});
+
+// The bug this closes (#206 / #223-B): a checkout whose FIRST payment never
+// confirmed (abandoned 3DS, declined card at the sheet) lands `incomplete`.
+// STATUS_MAP used to fold that into past_due, and the 14-day past_due grace
+// then handed the org full Pro, paid for nothing, until Stripe expired the
+// subscription ~23h later. `incomplete` is now a distinct status the resolver
+// grants nothing — while genuine dunning (a renewal that failed after the sub
+// was active) still gets its grace.
+describe.skipIf(!HAS_DB)("incomplete never-paid grace hole (#206)", () => {
+  async function setSub(
+    orgId: string,
+    over: { status: string; plan_key?: string; ageDays?: number },
+  ) {
+    await sql`
+      update subscriptions
+         set plan_key = ${over.plan_key ?? "pro"},
+             status = ${over.status},
+             stripe_subscription_id = ${`sub_${randomUUID().slice(0, 8)}`},
+             status_changed_at = now() - (${over.ageDays ?? 0} * interval '1 day')
+       where id = (select subscription_id from organizations where id = ${orgId})`;
+  }
+
+  it("an incomplete subscription conveys NO plan, even fresh inside the 14-day window", async () => {
+    const orgId = await seedOrg();
+    await setSub(orgId, { status: "incomplete", plan_key: "pro", ageDays: 0 });
+    // Before the fix this returned 'pro' (incomplete → past_due → grace).
+    expect(await orgPlanKey(orgId)).toBe("community");
+  });
+
+  it("a genuine past_due keeps Pro through the grace, then degrades — unchanged", async () => {
+    const orgId = await seedOrg();
+    await setSub(orgId, { status: "past_due", plan_key: "pro", ageDays: 3 });
+    expect(await orgPlanKey(orgId)).toBe("pro"); // within 14-day grace
+    await setSub(orgId, { status: "past_due", plan_key: "pro", ageDays: 15 });
+    expect(await orgPlanKey(orgId)).toBe("community"); // past the grace
+  });
+
+  it("syncSubscription writes Stripe `incomplete` as our incomplete, not past_due", async () => {
+    const orgId = await seedOrg();
+    const subId = `sub_inc_${randomUUID().slice(0, 8)}`;
+    await syncSubscription(orgId, stripeSub({ id: subId, status: "incomplete" }));
+    expect((await readAnchor(orgId)).status).toBe("incomplete");
   });
 });

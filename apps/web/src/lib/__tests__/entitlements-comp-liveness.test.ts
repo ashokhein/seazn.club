@@ -62,8 +62,20 @@ afterAll(async () => {
 });
 
 describe.skipIf(!HAS_DB)("comp-expiry arm derives its status list from billing", () => {
-  // The tie-proof: parameterised over the array itself.
+  // The tie-proof: parameterised over the array itself. Every live status keeps
+  // the plan despite a lapsed comp — EXCEPT `incomplete`, the one live status
+  // that conveys no plan (a never-paid first invoice; #206). It is in the list
+  // because it still owns a subscription slot (blocks a second checkout), but a
+  // dedicated resolver arm degrades it to community regardless of a comp.
   for (const status of LIVE_SUBSCRIPTION_STATUSES) {
+    if (status === "incomplete") {
+      it(`a never-paid '${status}' subscription degrades despite a lapsed comped_until`, async () => {
+        const orgId = await seedLapsedComp({ status });
+        expect(await hasFeature(orgId, "exports.branded")).toBe(false);
+        expect(await getLimit(orgId, "competitions.max_active")).toBe(COMMUNITY_MAX_ACTIVE);
+      });
+      continue;
+    }
     it(`a live '${status}' subscription still owns the plan despite a lapsed comped_until`, async () => {
       const orgId = await seedLapsedComp({ status });
       expect(await hasFeature(orgId, "exports.branded")).toBe(true);
