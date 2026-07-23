@@ -29,6 +29,10 @@ What changes is the platform fee: back on Community the rate returns to **8%**, 
 
 **Passed competitions keep their own rate.** A competition covered by an [Event Pass](/help/billing/event-pass) stays at **5%** after the downgrade, and keeps everything else the pass grants — bigger limits, branded exports, sponsor tiers and packages — while the rest of the org sits on Community.
 
+## Moving to a cheaper plan gives you credit, not a bill
+
+Stepping down from Pro Plus to Pro (rather than cancelling to Community) is a plan change, so it's prorated: the time you'd already paid for on the pricier plan comes back as **account credit** that pays your next invoices automatically — the confirm step shows "No charge today" and the credit added, never a fresh charge. See the [itemised table you'll see before confirming](/help/billing/plans#changing-plan-or-billing-period-mid-cycle).
+
 ## Common questions
 
 **Do frozen results disappear from public pages?** No — read-only means the record stands; visitors notice nothing.

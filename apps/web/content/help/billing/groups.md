@@ -99,7 +99,17 @@ Details worth knowing:
 - **The payer can withdraw an offer** at any time before it's accepted.
 - **Send them the link.** There's no inbox for pending offers yet, so the offer has to reach the recipient the way you'd send anything else. If they lose it, withdraw it and make a new one.
 - **A group with nothing to bill** — Community, or a subscription that has already been cancelled — moves in a single step, because there's no invoice to fail. It can only be handed to someone who already owns an organisation in the group, since there's no acceptance step to serve as their consent.
-- **Nothing about the organisations changes.** Same plan, same limits, same entry-fee rate, same Stripe Connect accounts, same payouts. The only things that move are who is billed and where the invoices and receipts go.
+- **Nothing about the organisations changes.** Same plan, same limits, same entry-fee rate, same Stripe Connect accounts, same payouts. The only things that move are who is billed, and who sees which invoices — see [what happens to your invoices](#what-happens-to-your-invoices-when-the-bill-changes-hands) just below.
+
+### What happens to your invoices when the bill changes hands
+
+A billing group is **one account** at our payment processor, so every invoice the group has ever been sent lives in one place. But each invoice carries the **name and billing address of whoever was paying when it went out** — printed on the PDF. So when the bill changes hands, we split the history by *who paid*, never showing one payer another's details:
+
+- **The new payer sees only their own invoices** — the ones sent from the handover onward. They never see yours, and never see your name or address on an older receipt.
+- **You keep yours.** Your invoices from when *you* paid stay visible to you, read-only, under **Settings → Billing → Your past invoices** on any organisation still in the group — even though you've stopped paying for it. Nothing to download in a rush before you hand over.
+- **If the bill ever comes back to you** later, you see both your earlier stretch and your new one — and still none of the invoices from whoever paid in between.
+
+This is only about who can *see* an invoice. It moves no money and changes no plan.
 
 ## The entry-fee rate locks when sales start
 
@@ -128,5 +138,7 @@ Each organisation keeps its own Stripe account, its own verification, its own ba
 **What currency does the group bill in?** One, fixed at the group's first checkout — organisations that join later are billed in it too, whatever their own entry fees are charged in.
 
 **One organisation was suspended by our team. Do we stop paying for it?** No. Suspension is a moderation action, not a billing one — the slot stays yours and the other organisations in the group are unaffected.
+
+**I handed the group over — where did my old invoices go?** Nowhere. They stay with you: your invoices from when you were the payer remain visible, read-only, under **Settings → Billing** on any organisation still in the group. The new payer can't see them — an invoice carries the billing name and address of whoever paid it, so we only ever show each person their own. See [what happens to your invoices](#what-happens-to-your-invoices-when-the-bill-changes-hands).
 
 **What if the payer deletes their account?** The group passes to the longest-standing owner of an organisation inside it, so nobody is left paying for organisations they can no longer manage — and nobody loses their plan because someone else closed an account. If there's nobody left who could ever manage it, the subscription is cancelled rather than orphaned. If you're deliberately handing over, do it properly with an offer first: that way the incoming payer's own card is on file before you go.

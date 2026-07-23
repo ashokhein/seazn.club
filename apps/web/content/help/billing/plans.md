@@ -37,7 +37,22 @@ Stripe's own processing fee is separate and set by Stripe. The whole money journ
 
 A subscription is a **billing group**: one card and one invoice for up to 5 organisations on Pro, or 10 on Pro Plus. The first is the plan's normal price and each one after that is half — $9/month on Pro, $19/month on Pro Plus. Every organisation in the group runs on the group's plan, so its entry-fee rate follows too. Community holds one organisation. See [one subscription, several organisations](/help/billing/groups).
 
+## Changing plan or billing period mid-cycle
+
+Switch plan — up or down — or flip between monthly and yearly, and we don't wait for your next renewal. The change is priced on the spot, and you see an **itemised table before you confirm**, taken live from our payment processor so the figure is exact:
+
+| Line | What it is |
+| --- | --- |
+| New billing period | the new plan's rate for the time left in this period |
+| Credit for unused time | what you already paid on the old plan, handed back |
+| Tax | on the difference |
+| **Charged today** | the net — usually far less than the sticker price |
+
+**Upgrading mid-cycle** only charges the difference for the days that are left, so it's cheap — not a fresh full period. **Downgrading usually costs nothing today**: the unused time you'd paid for turns into **account credit** that pays your next invoices automatically, shown as "Credit to your balance" instead of a charge. **On a free trial**, any change is still free — the table shows "No charge today" and tells you the date of your first charge. Whatever the case, the number you confirm is the number you're billed.
+
 ## Common questions
+
+**If I change plan mid-month, do I get charged twice?** No. You pay only the prorated difference for the time left in the current period, shown in an itemised table before you confirm — and a downgrade turns your unused time into account credit rather than a charge. See [changing plan mid-cycle](#changing-plan-or-billing-period-mid-cycle).
 
 **Does a passed competition use up an active-competition slot?** No — a competition covered by an [Event Pass](/help/billing/event-pass) doesn't count against your plan's active-competition limit, so a Community org running its annual tournament on a pass still has all 5 free slots.
 
