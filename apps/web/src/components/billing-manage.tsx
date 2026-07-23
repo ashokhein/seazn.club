@@ -257,34 +257,42 @@ export function ProrationSummary({
   actions: React.ReactNode;
   error: string | null;
 }) {
+  const msg = useMsg();
   const cur = asCurrency(preview.currency);
   const money = (minor: number) => formatMinor(minor, cur);
   const renewal = renewalLabel(preview);
+  const renewDate = fmtDate(preview.newPeriodEnd);
   const charged = preview.dueTodayMinor > 0;
   const hasTax = preview.taxMinor > 0;
+
+  // The trial line has no proration to itemize; pick the sentence that fits the
+  // pieces Stripe could quote (amount and/or trial-end date may be absent).
+  const trialText =
+    renewal && renewDate
+      ? msg("billing.proration.trial", { amount: renewal, date: renewDate })
+      : renewal
+        ? msg("billing.proration.trialNoDate", { amount: renewal })
+        : renewDate
+          ? msg("billing.proration.trialNoAmount", { date: renewDate })
+          : msg("billing.proration.trialNoAmountNoDate");
 
   return (
     <div className="mt-2 rounded-xl border border-purple-200 bg-purple-50/40 p-4 text-sm">
       <p className="font-semibold text-slate-800">{heading}</p>
 
       {preview.trialing ? (
-        <p className="mt-2 text-slate-700">
-          No charge today — you’re on the free trial. First charge
-          {renewal ? ` of ${renewal}` : ""}
-          {preview.newPeriodEnd ? ` on ${fmtDate(preview.newPeriodEnd)}` : " at trial end"}.
-        </p>
+        <p className="mt-2 text-slate-700">{trialText}</p>
       ) : (
         <>
           <table className="mt-3 w-full text-slate-700">
-            <caption className="sr-only">What you pay today</caption>
             <tbody>
               <tr>
-                <td className="py-1 pr-3">New billing period</td>
+                <td className="py-1 pr-3">{msg("billing.proration.newPeriod")}</td>
                 <td className="py-1 text-right tabular-nums">{money(preview.newPeriodMinor)}</td>
               </tr>
               {preview.unusedCreditMinor > 0 && (
                 <tr>
-                  <td className="py-1 pr-3">Credit for unused time</td>
+                  <td className="py-1 pr-3">{msg("billing.proration.unusedCredit")}</td>
                   <td className="py-1 text-right tabular-nums text-slate-600">
                     −{money(preview.unusedCreditMinor)}
                   </td>
@@ -293,13 +301,13 @@ export function ProrationSummary({
               {charged && hasTax && (
                 <>
                   <tr className="border-t border-purple-200/70">
-                    <td className="py-1 pr-3 pt-1.5">Subtotal</td>
+                    <td className="py-1 pr-3 pt-1.5">{msg("billing.proration.subtotal")}</td>
                     <td className="py-1 pt-1.5 text-right tabular-nums">
                       {money(preview.subtotalMinor)}
                     </td>
                   </tr>
                   <tr>
-                    <td className="py-1 pr-3">Tax</td>
+                    <td className="py-1 pr-3">{msg("billing.proration.tax")}</td>
                     <td className="py-1 text-right tabular-nums">{money(preview.taxMinor)}</td>
                   </tr>
                 </>
@@ -308,7 +316,9 @@ export function ProrationSummary({
             <tfoot>
               <tr className="border-t border-purple-300">
                 <td className="pt-2 pr-3 font-semibold text-slate-800">
-                  {charged ? "Charged today" : "Credit to your balance"}
+                  {charged
+                    ? msg("billing.proration.chargedToday")
+                    : msg("billing.proration.creditToBalance")}
                 </td>
                 <td className="pt-2 text-right font-semibold tabular-nums text-slate-900">
                   {charged ? money(preview.dueTodayMinor) : money(preview.creditMinor)}
@@ -318,14 +328,13 @@ export function ProrationSummary({
           </table>
 
           {!charged && preview.creditMinor > 0 && (
-            <p className="mt-2 text-xs text-slate-600">
-              No charge today — this credit pays your future invoices.
-            </p>
+            <p className="mt-2 text-xs text-slate-600">{msg("billing.proration.creditNote")}</p>
           )}
           {renewal && (
             <p className="mt-2 text-slate-700">
-              Then renews at <span className="font-semibold">{renewal}</span>
-              {preview.newPeriodEnd ? ` from ${fmtDate(preview.newPeriodEnd)}` : ""}.
+              {renewDate
+                ? msg("billing.proration.renews", { amount: renewal, date: renewDate })
+                : msg("billing.proration.renewsNoDate", { amount: renewal })}
             </p>
           )}
         </>
@@ -342,8 +351,10 @@ export function ProrationSummary({
 // ---------------------------------------------------------------------------
 
 export function PlanIntervalSwitcher({ current }: { current: "monthly" | "annual" }) {
+  const msg = useMsg();
   const router = useRouter();
   const target = current === "monthly" ? "annual" : "monthly";
+  const toKey = target === "annual" ? "billing.intervalChange.toYearly" : "billing.intervalChange.toMonthly";
   const [preview, setPreview] = useState<IntervalPreview | null>(null);
   const [phase, setPhase] = useState<"idle" | "previewing" | "confirming">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -390,11 +401,7 @@ export function PlanIntervalSwitcher({ current }: { current: "monthly" | "annual
     return (
       <div>
         <button className="btn btn-ghost" onClick={loadPreview} disabled={phase !== "idle"}>
-          {phase === "previewing"
-            ? "Checking the numbers…"
-            : target === "annual"
-              ? "Switch to yearly billing"
-              : "Switch to monthly billing"}
+          {phase === "previewing" ? msg("billing.change.checking") : msg(toKey)}
         </button>
         {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
       </div>
@@ -404,19 +411,25 @@ export function PlanIntervalSwitcher({ current }: { current: "monthly" | "annual
   return (
     <ProrationSummary
       preview={preview}
-      heading={`Switch to ${preview.interval === "annual" ? "yearly" : "monthly"} billing`}
+      heading={msg(
+        preview.interval === "annual"
+          ? "billing.intervalChange.toYearly"
+          : "billing.intervalChange.toMonthly",
+      )}
       error={error}
       actions={
         <>
           <button className="btn btn-primary" onClick={confirm} disabled={phase === "confirming"}>
-            {phase === "confirming" ? "Applying…" : "Confirm switch"}
+            {phase === "confirming"
+              ? msg("billing.change.applying")
+              : msg("billing.intervalChange.confirm")}
           </button>
           <button
             className="btn btn-ghost"
             onClick={() => setPreview(null)}
             disabled={phase === "confirming"}
           >
-            Keep current billing
+            {msg("billing.intervalChange.keep")}
           </button>
         </>
       }
@@ -488,7 +501,7 @@ export function PlanKeySwitcher({
     return (
       <div>
         <button className="btn btn-ghost" onClick={loadPreview} disabled={phase !== "idle"}>
-          {phase === "previewing" ? "Checking the numbers…" : switchLabel}
+          {phase === "previewing" ? msg("billing.change.checking") : switchLabel}
         </button>
         {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
       </div>
@@ -503,14 +516,14 @@ export function PlanKeySwitcher({
       actions={
         <>
           <button className="btn btn-primary" onClick={confirm} disabled={phase === "confirming"}>
-            {phase === "confirming" ? "Applying…" : msg("billing.planChange.confirm")}
+            {phase === "confirming" ? msg("billing.change.applying") : msg("billing.planChange.confirm")}
           </button>
           <button
             className="btn btn-ghost"
             onClick={() => setPreview(null)}
             disabled={phase === "confirming"}
           >
-            Keep current plan
+            {msg("billing.planChange.keep")}
           </button>
         </>
       }
