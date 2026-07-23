@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { handler } from "@/lib/http";
 import { HttpError } from "@/lib/errors";
-import { reconcileGroupQuantities } from "@/server/usecases/billing-groups";
+import { countOrgsWithoutGroup, reconcileGroupQuantities } from "@/server/usecases/billing-groups";
 
 /** POST /api/cron/billing-quantity — daily: for every live billing group whose
  *  paid-for seat count disagrees with its organisation count, put the Stripe
@@ -19,6 +19,12 @@ export async function POST() {
     if (!secret) throw new HttpError(503, "CRON_SECRET is not configured");
     const given = (await headers()).get("x-cron-secret");
     if (given !== secret) throw new HttpError(401, "Bad cron secret");
-    return reconcileGroupQuantities();
+    // orphanOrgs is the #232 P2 invariant guard: 0 in a healthy database. The
+    // schedule warns when reconcile corrects drift or an orphan appears.
+    const [reconcile, orphanOrgs] = await Promise.all([
+      reconcileGroupQuantities(),
+      countOrgsWithoutGroup(),
+    ]);
+    return { ...reconcile, orphanOrgs };
   });
 }

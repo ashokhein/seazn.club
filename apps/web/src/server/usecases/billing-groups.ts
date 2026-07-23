@@ -390,6 +390,22 @@ export async function reconcileGroupQuantities(limit = 500): Promise<{
 }
 
 /**
+ * How many live organisations violate the "every org bills through a group"
+ * invariant (#232 P2). Should be 0 — V314 backfilled every org and
+ * createOrgForUser always stamps subscription_id. The column is not yet
+ * NOT NULL (the constraint waits on cleaning up billing-agnostic test fixtures
+ * that insert bare orgs), so this is the operational guard in the meantime: the
+ * daily reconcile cron surfaces the count and the schedule warns when it drifts
+ * above zero, catching a regression the FK alone cannot.
+ */
+export async function countOrgsWithoutGroup(): Promise<number> {
+  const [{ n }] = await sql<{ n: string }[]>`
+    select count(*)::text as n from organizations
+     where subscription_id is null and deleted_at is null`;
+  return Number(n);
+}
+
+/**
  * Cancel a group ONLY if it is still empty.
  *
  * Two shapes have already failed here, and the reason is worth stating exactly,

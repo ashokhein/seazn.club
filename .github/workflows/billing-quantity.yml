@@ -1,0 +1,58 @@
+# Billing quantity reconcile (#232 P1): POST the seat-quantity reconcile endpoint
+# daily. /api/cron/billing-quantity puts each live group's Stripe subscription-
+# item quantity back on the true org count — drift is silent by nature (an attach
+# or detach whose sync failed, an org created during a Stripe outage) and Stripe
+# cuts every renewal from that item, so an uncorrected drift over- or under-bills
+# forever. It also reports orphanOrgs (#232 P2): organisations with no billing
+# group, which should always be 0 (createOrgForUser always stamps one).
+#
+# Auth: the x-cron-secret header must match the app's CRON_SECRET env — set the
+# same value in BOTH places:
+#   gh secret set CRON_SECRET                                  # this workflow
+#   flyctl secrets set -c fly.stg.toml CRON_SECRET=<same>      # the app
+# For PRODUCTION, duplicate this file with the prod BASE_URL and mirror the
+# secret into the prod Fly app.
+#
+# Skips with a warning until the GitHub secret exists, fails loud on any non-200,
+# and warns when reconcile corrects drift, hits a failure, or finds an orphan org
+# — so a persistent problem is visible in the Actions tab.
+name: Billing quantity reconcile
+
+on:
+  schedule:
+    - cron: "41 6 * * *" # daily, early morning
+  workflow_dispatch: {} # manual run for testing
+
+permissions: {}
+
+concurrency:
+  group: billing-quantity-reconcile
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Reconcile Stripe seat quantity (staging)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      BASE_URL: https://seazn-club-stg.fly.dev
+    steps:
+      - name: Secret missing — skip
+        if: env.CRON_SECRET == ''
+        run: echo "::warning::CRON_SECRET not set — billing quantity not reconciled. Set it with 'gh secret set CRON_SECRET' and mirror it into the Fly app."
+
+      - name: POST /api/cron/billing-quantity
+        if: env.CRON_SECRET != ''
+        run: |
+          body=$(curl --silent --show-error --fail-with-body \
+            --max-time 300 --retry 2 --retry-all-errors \
+            -X POST "$BASE_URL/api/cron/billing-quantity" \
+            -H "x-cron-secret: $CRON_SECRET")
+          echo "response: $body"
+          corrected=$(echo "$body" | jq -r '.data.corrected // 0')
+          failed=$(echo "$body" | jq -r '.data.failed // 0')
+          orphans=$(echo "$body" | jq -r '.data.orphanOrgs // 0')
+          if [ "$corrected" != "0" ] || [ "$failed" != "0" ] || [ "$orphans" != "0" ]; then
+            echo "::warning::billing quantity: corrected=$corrected failed=$failed orphanOrgs=$orphans"
+          fi

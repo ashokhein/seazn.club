@@ -1,0 +1,55 @@
+# Billing events sweep (#232 P1): POST the stuck-event repair endpoint hourly.
+# /api/cron/billing-events re-pulls each webhook event stuck in `received` (a
+# deploy crash or transient DB error mid-handler leaves the ledger row
+# unprocessed forever) FRESH from Stripe and replays it; handlers are
+# replay-idempotent, attempts are capped, then staff are alerted once (parked).
+#
+# Auth: the x-cron-secret header must match the app's CRON_SECRET env — set the
+# same value in BOTH places:
+#   gh secret set CRON_SECRET                                  # this workflow
+#   flyctl secrets set -c fly.stg.toml CRON_SECRET=<same>      # the app
+# For PRODUCTION, duplicate this file with the prod BASE_URL and mirror the
+# secret into the prod Fly app.
+#
+# Skips with a warning until the GitHub secret exists (a missing secret must not
+# fill the Actions tab with red), fails loud on any non-200, and warns when the
+# sweep reports failures or parked events so a persistent problem is visible.
+name: Billing events sweep
+
+on:
+  schedule:
+    - cron: "23 * * * *" # hourly, offset from the other crons
+  workflow_dispatch: {} # manual run for testing
+
+permissions: {}
+
+concurrency:
+  group: billing-events-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Replay stuck Stripe events (staging)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      BASE_URL: https://seazn-club-stg.fly.dev
+    steps:
+      - name: Secret missing — skip
+        if: env.CRON_SECRET == ''
+        run: echo "::warning::CRON_SECRET not set — stuck billing events not swept. Set it with 'gh secret set CRON_SECRET' and mirror it into the Fly app."
+
+      - name: POST /api/cron/billing-events
+        if: env.CRON_SECRET != ''
+        run: |
+          body=$(curl --silent --show-error --fail-with-body \
+            --max-time 120 --retry 2 --retry-all-errors \
+            -X POST "$BASE_URL/api/cron/billing-events" \
+            -H "x-cron-secret: $CRON_SECRET")
+          echo "response: $body"
+          failed=$(echo "$body" | jq -r '.data.failed // 0')
+          alerted=$(echo "$body" | jq -r '.data.alerted // 0')
+          if [ "$failed" != "0" ] || [ "$alerted" != "0" ]; then
+            echo "::warning::billing events sweep: failed=$failed parked/alerted=$alerted"
+          fi
