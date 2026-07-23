@@ -97,27 +97,59 @@ describe("buildIntervalPreviewParams / buildIntervalChangeParams", () => {
 });
 
 describe("summarizeIntervalPreview", () => {
-  const lines = { data: [{ period: { end: 1_800_000_000 } }, { period: { end: 1_790_000_000 } }] };
+  const lines = {
+    data: [
+      { amount: 15_000, period: { end: 1_800_000_000 } },
+      { amount: -6_482, period: { end: 1_790_000_000 } },
+    ],
+  };
 
-  it("positive total = due today, and the new period end comes from the latest line", () => {
-    const s = summarizeIntervalPreview({ total: 13_240, currency: "gbp", lines });
+  it("itemizes the breakdown behind the total (the real-invoice shape, VAT included)", () => {
+    // £150.00 new period, −£64.82 credit for unused time, £85.18 subtotal,
+    // +£17.04 VAT = £102.22 charged today — the invoice this dialog previews.
+    const s = summarizeIntervalPreview({
+      total: 10_222,
+      subtotal: 8_518,
+      currency: "gbp",
+      lines,
+    });
     expect(s).toEqual({
-      dueTodayMinor: 13_240,
+      dueTodayMinor: 10_222,
       creditMinor: 0,
+      newPeriodMinor: 15_000,
+      unusedCreditMinor: 6_482,
+      subtotalMinor: 8_518,
+      taxMinor: 1_704,
       currency: "gbp",
       newPeriodEnd: new Date(1_800_000_000 * 1000).toISOString(),
     });
   });
 
-  it("negative total = customer credit, nothing due today", () => {
-    const s = summarizeIntervalPreview({ total: -4_500, currency: "usd", lines });
-    expect(s.dueTodayMinor).toBe(0);
-    expect(s.creditMinor).toBe(4_500);
+  it("reports no tax line when the customer is not taxed (total == subtotal)", () => {
+    const s = summarizeIntervalPreview({ total: 8_518, subtotal: 8_518, currency: "gbp", lines });
+    expect(s.taxMinor).toBe(0);
+    expect(s.dueTodayMinor).toBe(8_518);
   });
 
-  it("tolerates missing line periods", () => {
-    const s = summarizeIntervalPreview({ total: 0, currency: "eur", lines: { data: [] } });
+  it("negative total = customer credit, nothing due today", () => {
+    // Downgrade direction: a big unused-time credit outweighs the new period.
+    const s = summarizeIntervalPreview({
+      total: -4_500,
+      subtotal: -4_500,
+      currency: "usd",
+      lines: { data: [{ amount: 2_000, period: null }, { amount: -6_500, period: null }] },
+    });
+    expect(s.dueTodayMinor).toBe(0);
+    expect(s.creditMinor).toBe(4_500);
+    expect(s.newPeriodMinor).toBe(2_000);
+    expect(s.unusedCreditMinor).toBe(6_500);
+  });
+
+  it("tolerates missing line periods and amounts", () => {
+    const s = summarizeIntervalPreview({ total: 0, subtotal: 0, currency: "eur", lines: { data: [] } });
     expect(s.newPeriodEnd).toBeNull();
+    expect(s.newPeriodMinor).toBe(0);
+    expect(s.unusedCreditMinor).toBe(0);
   });
 });
 
