@@ -3,9 +3,11 @@
 // Keys NOT listed here are deliberately unadvertised (vestigial D9 keys +
 // domains.custom until Spec 2 ships) — /admin still shows them under "other".
 export const ENTITLEMENT_DOMAINS: { slug: string; features: string[] }[] = [
+  // scorers.max is deliberately absent (#244): the seat is dormant legacy and
+  // retired from the pricing comparison; /admin still surfaces it under "other".
   { slug: "scale", features: [
     "competitions.max_active", "orgs.max_owned", "divisions.per_competition.max",
-    "entrants.per_division.max", "members.max", "scorers.max",
+    "entrants.per_division.max", "members.max",
     "clubs.max", "teams.max", "teams.squad_max",
     "stages.per_division.max", "dashboard.public.max", "import.bulk",
   ]},
@@ -30,8 +32,12 @@ export const ENTITLEMENT_DOMAINS: { slug: string; features: string[] }[] = [
     // (dashboard.public.max sits under scale, dashboard.branding under brand).
     "dashboard.player_profiles",
   ]},
+  // officials.per_fixture.max is absent: V319 makes it ∞ on every plan, so a
+  // comparison row would read ∞/∞/∞/∞ and tell no story. The roles_multi/marks
+  // ticks already say "officials are included on every plan"; officials.auto is
+  // the only real differentiator left.
   { slug: "officials", features: [
-    "officials.per_fixture.max", "officials.roles_multi", "officials.auto", "officials.marks",
+    "officials.roles_multi", "officials.auto", "officials.marks",
   ]},
   { slug: "brand", features: [
     "branding", "dashboard.branding", "realtime", "embeds.enabled",

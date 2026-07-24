@@ -66,7 +66,8 @@ const INT_FEATURES = new Set([
   "divisions.per_competition.max",
   "entrants.per_division.max",
   "members.max",
-  "scorers.max",
+  // scorers.max retired from the comparison (#244); officials.per_fixture.max
+  // dropped because V319 makes it ∞ on every plan — an all-∞ row tells no story.
   "clubs.max",
   "teams.max",
   "teams.squad_max",
@@ -74,7 +75,6 @@ const INT_FEATURES = new Set([
   "dashboard.public.max",
   "import.bulk",
   "schedule.checkpoints.max",
-  "officials.per_fixture.max",
   // Graded quota on every tier (V302: 5 / 10 / 20 / 50) — a bool tick would
   // render "—" on all four columns and hide the only thing that varies.
   "scheduling.ai.runs_per_division.max",

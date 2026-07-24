@@ -10,7 +10,7 @@ An **Event Pass** upgrades one competition for its lifetime — bigger limits, t
 
 For the competition it covers, and every division inside it:
 
-- **64 entrants** per division (Community allows 32) and up to **10 divisions** in the competition (Community allows 2).
+- **128 entrants** per division (Community allows 64) and up to **10 divisions** in the competition (Community allows 4).
 - **A 5% platform fee** on card entry fees, instead of Community's 8% — on a $2,000 event that's $60 back in your pocket.
 - **Branded exports** — order of play, match sheets, rotas and posters carry your masthead, logo and sponsor line instead of exporting as plain tables.
 - **Public player cards** — entrants get their public profile pages.
