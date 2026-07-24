@@ -53,6 +53,7 @@ import { officialsAiPlanForDivision } from "../officials-ai";
 import { GENERIC_CONFIG, seedOrg } from "./_seed";
 
 import { setOrgPlan } from "@/lib/__tests__/_billing-group";
+import { balance, walletIdFor } from "@/lib/credits";
 const HAS_DB = !!process.env.DATABASE_URL;
 const TZ = "Europe/London";
 const MIN = 60_000;
@@ -561,19 +562,24 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
 });
 
 describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — gates (v4/03 §2, corpus 00 §6)", () => {
-  it("community org → 402 with feature_key officials.auto", async () => {
+  // Task 4 review: officials.auto (Pro Plus) was removed from this path — AI
+  // officials is wallet-metered on any tier now, so a community org is blocked
+  // by an empty credit wallet, not a plan gate (see [[v17_ai_credit_wallet]]).
+  it("community org with 0 credits → 402 with feature_key ai.credits", async () => {
     const { auth } = await seedOrg("community");
     const { divisionId, fixtureIds } = await seedOfficials(auth, {
       entrants: 3,
       officials: [{ name: "Ref A", roles: ["referee"] }],
     });
+    const walletId = await walletIdFor(auth.orgId);
+    expect(await balance(walletId)).toBe(0);
     await expect(
       officialsAiPlanForDivision(auth, divisionId, {
         instruction: "assign",
         policy: POLICY,
         schedule: spread(fixtureIds),
       }),
-    ).rejects.toMatchObject({ status: 402, featureKey: "officials.auto" });
+    ).rejects.toMatchObject({ status: 402, featureKey: "ai.credits" });
     expect(parse).not.toHaveBeenCalled();
   });
 
