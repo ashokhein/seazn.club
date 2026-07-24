@@ -7,6 +7,7 @@ import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import type { Organization, OrgMembership, OrgRole, User } from "@/lib/types";
 import { AuthError, PaymentRequiredError } from "@/lib/errors";
 import { getLimit } from "@/lib/entitlements";
+import { grantMonthly, walletIdFor } from "@/lib/credits";
 import { isReservedSlug } from "@/lib/public-site";
 import { routes } from "@/lib/routes";
 import { slugify, uniqueSlug } from "@/server/usecases/slugs";
@@ -293,6 +294,22 @@ export async function createOrgForUser(
       if (!unique || attempt >= 4) throw err;
     }
   }
+  // Bootstrap the AI credit wallet synchronously: the daily billing-grant cron
+  // (grantMonthlyForAllWallets) is the steady-state granter, but it only runs
+  // once a day — a brand-new Community org would otherwise sit with an EMPTY
+  // wallet for up to 24h and 402 (`ai.credits`) on its very first AI attempt,
+  // worse than the old free per-division cap it replaced. grantMonthly's own
+  // `(wallet_id, period)` idempotency key means this call and the cron's next
+  // pass for the same calendar month can never double-grant — whichever runs
+  // first wins, the other is a no-op. Best-effort: a failure here must not
+  // block org creation (the cron will still pick this wallet up within a day).
+  try {
+    const walletId = await walletIdFor(org.id);
+    await grantMonthly(walletId, "community", 1);
+  } catch (err) {
+    console.error(`[credits] bootstrap grant failed for org ${org.id}`, err);
+  }
+
   await invalidateUserOrgs(userId);
   return org;
 }

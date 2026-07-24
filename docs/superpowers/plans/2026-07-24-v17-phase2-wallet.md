@@ -70,15 +70,19 @@ expires the prior period's unspent `grant`-bucket balance (D1 use-or-lose,
 single compensating `expiry` row) before adding the new allowance, atomically
 + idempotently per `(wallet, period)` via an advisory lock + pre-check (`pack`
 bucket, D2, untouched); `.github/workflows/billing-grant.yml` schedules
-`/api/cron/billing-grant` daily, mirroring `billing-quantity.yml`. Anchor
-(MEDIUM): paid wallets now key their period off the real
-`subscriptions.current_period_end` (the actual Stripe billing-cycle boundary,
-README §7 item 7); Community — no Stripe period to anchor on — keeps a plain
-calendar-month fallback as an **accepted simplification** (day-of-month
-clamping for a flat, non-scaled 10/mo grant isn't worth the complexity;
-bounded skew, never a double-grant/skip — see `grantMonthlyForAllWallets`'s
-docstring). `scripts/smoke.ts` billing-grant coverage remains deferred (LOW,
-out of scope for this fix pass).
+`/api/cron/billing-grant` daily, mirroring `billing-quantity.yml`. Anchor: a
+first pass keyed paid wallets off `subscriptions.current_period_end` on the
+theory that it tracked "the real billing cycle" — a later re-review (commit
+`5d345a43`) reverted this as a regression and confirmed **calendar-month
+cadence for EVERY wallet, paid or Community, regardless of billing interval**
+(SPEC-2 §5.4 Cadence, README §7 item 7): an annual-billed Pro subscription's
+`current_period_end` only advances once a year, so anchoring on it collapsed
+12 monthly grants into a single lump on the yearly renewal — exactly the
+outcome the Cadence rule forbids. `grantMonthly`'s only anchor is now
+`monthlyPeriod()` (plain `YYYY-MM`, server clock), for every wallet alike;
+`grantMonthlyForAllWallets` no longer reads `current_period_end` at all.
+`scripts/smoke.ts` billing-grant coverage remains deferred (LOW, out of scope
+for this fix pass).
 
 ## Self-review
 - SPEC-2 coverage: §5.1 store → T1; §5.4 grant/trial/plan-change → T2; §5.2 reserve/settle → T3; §5.3 track → the ledger rows (T1); §11 wallet/scaled → T1/T2; AI-metered-on-every-tier → T4. Stripe packs (§6/§8) + operator allocation (SPEC-5) are **Phase 3+**, not here.
