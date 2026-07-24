@@ -402,6 +402,54 @@ export async function grantTrialForRow(
 }
 
 /**
+ * Record a paid credit pack (SPEC-2 §5.1/§6, v17 Phase 3 Task 1): append a
+ * `pack_purchase` row (`bucket='pack'`, never-expire per D2) to the wallet —
+ * the ledger row IS the purchase record, per the plan's "prefer the ledger
+ * row" note; there is no separate purchases table.
+ *
+ * **Idempotent on the Stripe id:** `stripeRef` (a payment_intent id, or the
+ * checkout session id when no intent is present) becomes both `ref` (the
+ * ledger's "which Stripe object paid for this" column, SPEC-2 §5.1) and the
+ * `idempotency_key` (`pack:${stripeRef}`) — a webhook replay of the SAME
+ * completed checkout conflicts on the unique constraint and no-ops rather
+ * than double-crediting, exactly like `grantMonthly`'s per-period key and
+ * `grantTrialForRow`'s per-org key.
+ *
+ * Same advisory-lock idiom as `reserve()`/`grantMonthly()`, even though a
+ * pure credit can never trip the `balance_after >= 0` CHECK by itself: without
+ * it, two concurrent credits to one wallet (this pack racing another pack, or
+ * an admin_adjust) could each read the same prior sum and each write a
+ * `balance_after` snapshot that undercounts the other's credit. That is
+ * cosmetic for `balance()`/`packBalance()` (always a live `sum(delta)`), but
+ * the reconcile job (SPEC-2 §5.3) asserts `balance_after` against that same
+ * running sum, so it has to stay accurate.
+ *
+ * Returns the credits actually granted (0 if this Stripe id was already
+ * recorded — a replay).
+ */
+export async function recordPackPurchase(
+  walletId: string,
+  credits: number,
+  stripeRef: string,
+): Promise<number> {
+  if (!Number.isInteger(credits) || credits <= 0) {
+    throw new Error(`recordPackPurchase: credits must be a positive integer, got ${credits}`);
+  }
+  return sql.begin(async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtext(${"ai-credit-wallet:" + walletId}))`;
+    const inserted = await appendLedgerRow(tx, {
+      walletId,
+      delta: credits,
+      source: "pack_purchase",
+      bucket: "pack",
+      ref: stripeRef,
+      idempotencyKey: `pack:${stripeRef}`,
+    });
+    return inserted ? credits : 0;
+  });
+}
+
+/**
  * Reserve `cost` credits against `walletId` for an AI run started by `orgId`
  * (SPEC-2 §5.2 step 2, §5.4 spend order). The ledger's `source` CHECK has no
  * distinct "hold" value, so the hold IS the debit from the moment it's

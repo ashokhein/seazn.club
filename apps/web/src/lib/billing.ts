@@ -87,8 +87,12 @@ export function assertPriceBillsQuantity(args: {
  *
  * Rare before linkStripeCustomer ran on the Event Pass path; the COMMON path
  * afterwards, for every org that buys a pass and later upgrades.
+ *
+ * Exported so `lib/credit-packs.ts` (v17 Phase 3 Task 1) can reuse it verbatim
+ * on the credit-pack checkout — same existing-customer tax requirement, no
+ * reason to duplicate the probed shape.
  */
-const CUSTOMER_UPDATE_FOR_TAX = {
+export const CUSTOMER_UPDATE_FOR_TAX = {
   customer_update: { address: "auto", name: "auto" },
 } as const satisfies Pick<Stripe.Checkout.SessionCreateParams, "customer_update">;
 

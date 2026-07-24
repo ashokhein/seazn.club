@@ -17,6 +17,8 @@ import {
   syncPaymentMethodFlagForSubscription,
   syncSubscriptionForGroup,
 } from "@/lib/billing";
+import { CREDIT_PACKS } from "@/lib/credit-packs";
+import { recordPackPurchase, walletIdFor } from "@/lib/credits";
 import {
   invalidateGroupEntitlements,
   invalidateOrgEntitlements,
@@ -90,6 +92,31 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   }
   const orgId = session.metadata?.org_id;
   if (!orgId) return;
+
+  // AI credit pack one-time purchase (v17 SPEC-2 §5.1/§6, Phase 3 Task 1) —
+  // grants the pack into the org's wallet. Unlike the Event Pass branch below
+  // there is no reconcile-on-return path (credit packs are not competition-
+  // scoped, so there is nowhere in-app to reconcile from); this webhook is the
+  // only writer, made safe to replay by recordPackPurchase's idempotency key.
+  if (session.metadata?.kind === "credit_pack") {
+    const packKey = session.metadata.pack_key;
+    const pack = packKey ? CREDIT_PACKS[packKey] : undefined;
+    if (pack && session.payment_status === "paid") {
+      // The payment_intent id is the durable "which charge paid for this"
+      // reference; falling back to the session id only covers a session type
+      // that somehow completed with no intent (never expected for mode:
+      // "payment", but a session id is still a valid, unique idempotency
+      // anchor either way).
+      const stripeRef =
+        (typeof session.payment_intent === "string" ? session.payment_intent : null) ??
+        session.id;
+      const walletId = await walletIdFor(orgId);
+      await recordPackPurchase(walletId, pack.credits, stripeRef);
+      if (session.customer) await linkStripeCustomer(orgId, session.customer as string);
+      await pinBillingCurrency(orgId, session.currency);
+    }
+    return;
+  }
 
   // Event Pass one-time purchase (v3/07 §3) — reconcile-on-return usually
   // lands first; recordPassPurchase is idempotent either way.

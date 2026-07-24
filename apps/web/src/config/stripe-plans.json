@@ -115,5 +115,60 @@
         "currency_options": { "eur": 2900, "gbp": 2500, "inr": 199900, "aud": 4500 }
       }
     }
+  ],
+  "$comment_packs": "AI credit packs (v17 SPEC-2 §5/§6): one-time top-ups into the org/group's ai_credit_ledger wallet (bucket='pack', never-expire — D2). Not tied to a `plans` row, so the checkout route resolves the live price by `lookup_key` at request time (stripe.prices.list) instead of a stored id — stripe-sync.ts only needs to ensure the price exists, never write it back to a table. `credits` is our own field (never sent to Stripe) — the webhook re-derives the grant amount from this catalog by `key`, never from session metadata, so a purchase's credit amount can never be tampered with client-side.",
+  "packs": [
+    {
+      "key": "credits_10",
+      "credits": 40,
+      "product": {
+        "name": "Seazn Club AI Credits — 40",
+        "description": "One-time top-up: 40 AI credits (schedule / officials / news runs) for your organisation's shared wallet. Purchased credits never expire."
+      },
+      "price": {
+        "lookup_key": "seazn_credits_10",
+        "unit_amount": 1000,
+        "currency_options": { "eur": 900, "gbp": 800, "inr": 79900, "aud": 1500 }
+      }
+    },
+    {
+      "key": "credits_25",
+      "credits": 105,
+      "product": {
+        "name": "Seazn Club AI Credits — 105",
+        "description": "One-time top-up: 105 AI credits (schedule / officials / news runs) for your organisation's shared wallet. Purchased credits never expire."
+      },
+      "price": {
+        "lookup_key": "seazn_credits_25",
+        "unit_amount": 2500,
+        "currency_options": { "eur": 2300, "gbp": 2000, "inr": 199900, "aud": 3800 }
+      }
+    },
+    {
+      "key": "credits_50",
+      "credits": 220,
+      "product": {
+        "name": "Seazn Club AI Credits — 220",
+        "description": "One-time top-up: 220 AI credits (schedule / officials / news runs) for your organisation's shared wallet. Purchased credits never expire."
+      },
+      "price": {
+        "lookup_key": "seazn_credits_50",
+        "unit_amount": 5000,
+        "currency_options": { "eur": 4600, "gbp": 4000, "inr": 399900, "aud": 7500 }
+      }
+    },
+    {
+      "key": "credits_100",
+      "credits": 460,
+      "product": {
+        "name": "Seazn Club AI Credits — 460",
+        "description": "One-time top-up: 460 AI credits (schedule / officials / news runs) for your organisation's shared wallet. Purchased credits never expire."
+      },
+      "price": {
+        "lookup_key": "seazn_credits_100",
+        "unit_amount": 10000,
+        "currency_options": { "eur": 9200, "gbp": 7900, "inr": 799900, "aud": 15000 }
+      }
+    }
   ]
 }

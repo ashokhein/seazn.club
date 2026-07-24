@@ -50,10 +50,21 @@ export interface PassSpec {
   product: { name: string; description?: string };
   price: PriceSpec;
 }
+/** A one-time AI credit pack (v17 SPEC-2 §5/§6). Structurally identical to a
+ *  PassSpec — one product, one flat price — plus `credits`, which is never
+ *  sent to Stripe: it is the ledger delta the webhook grants, read straight
+ *  from this seed by `key` (never trusted from session metadata). */
+export interface PackSpec {
+  key: string;
+  credits: number;
+  product: { name: string; description?: string };
+  price: PriceSpec;
+}
 export interface Seed {
   currency: string;
   plans: PlanSpec[];
   passes?: PassSpec[];
+  packs?: PackSpec[];
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -376,6 +387,13 @@ async function main(): Promise<void> {
       await sql`
         update plans set stripe_price_id_onetime = ${price.priceId} where key = ${pass.key}`;
       console.log(`✓ ${pass.key}: onetime=${price.priceId}`);
+    }
+    // AI credit packs (v17 Phase 3 Task 1): same idempotent ensurePrice, but no
+    // `plans` row to write back to — createCreditPackCheckout (lib/credit-packs.ts)
+    // resolves the live price by lookup_key at request time instead.
+    for (const pack of seed.packs ?? []) {
+      const price = await ensurePrice(stripe, pack.price, pack.product, pack.key, seed.currency, null);
+      console.log(`✓ ${pack.key}: onetime=${price.priceId} (${pack.credits} credits)`);
     }
     console.log("Stripe sync complete.");
   } finally {
