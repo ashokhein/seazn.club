@@ -38,6 +38,14 @@
 - [ ] Extra-seat: recurring add-on raises `members.max` for one org; size-pack: one-time raises `entrants.per_division.max` for one competition (SPEC-2 §4b), follows the SPEC-4 lifecycle lock.
 - [ ] Live-Stripe + unit green; i18n. Commit + push.
 
+### Task 4: Credit pack refunds claw back only unspent credits
+**Files:** `billing-events.ts` (`charge.refunded` handler, alongside `syncRegistrationRefund`/`handleSponsorChargeRefunded`/`revokePassForRefundedChargeAndNotify`); `credits.ts` (new claw-back helper); test.
+**Produces:** a `charge.refunded` branch that no-ops on non-pack charges and, for a refunded pack charge, appends a compensating ledger row capped at the pack bucket's current unspent balance.
+- [ ] Failing test: refunding a pack charge whose credits are still fully unspent claws back exactly that amount; a charge refunded after some/all of its pack credits were already spent claws back only what remains in the `pack` bucket (never drives `packBalance` negative, never touches the `grant` bucket or already-spent credits) (SPEC-2 §8/§9).
+- [ ] Match the refunded charge back to its `pack_purchase` ledger row via the charge's `payment_intent` (the same `ref` `recordPackPurchase` stamped); no match (e.g. pre-fix session with no ref) — surface it the same way as the T1 review fix (log + staff alert), do not silently no-op a real refund.
+- [ ] Claw-back write: one `source='expiry'` (or a new dedicated refund source, whichever `credits.ts` review prefers), `bucket='pack'`, `delta = -min(unspent pack credits for this purchase, remaining pack balance)` — never negative balance, idempotent on the charge/refund id (a replayed `charge.refunded` must not double-claw-back).
+- [ ] Test green; typecheck. Commit + push.
+
 ## Self-review
-- SPEC-2 coverage: §5.1 pack_purchase bucket → T1; §6/§8 Stripe packs → T1; §3 org_addons additive → T2; §4b size pack + §11.3 scope → T2/T3. Operator allocation (SPEC-5) + UI (SPEC-6) are later.
-- Order: credit packs (T1) completes the wallet loop first; org_addons (T2) is the separate additive axis; T3 wires the Stripe add-on SKUs.
+- SPEC-2 coverage: §5.1 pack_purchase bucket → T1; §6/§8 Stripe packs → T1; §3 org_addons additive → T2; §4b size pack + §11.3 scope → T2/T3; §8/§9 pack refund claw-back → T4. Operator allocation (SPEC-5) + UI (SPEC-6) are later.
+- Order: credit packs (T1) completes the wallet loop first; org_addons (T2) is the separate additive axis; T3 wires the Stripe add-on SKUs; T4 closes the pack refund gap the review flagged.

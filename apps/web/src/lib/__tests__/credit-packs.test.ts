@@ -2,8 +2,11 @@
 // credit packs (v17 SPEC-2 §5/§6/§8, Phase 3 Task 1). Pure (no Stripe/DB) —
 // mirrors billing-checkout.test.ts's coverage of buildPassCheckoutParams:
 // mode:"payment", locked currency, no payment_method_types, and the
-// `kind: "credit_pack"` / `pack_key` metadata contract the webhook branches
-// on (never a raw credits number in metadata — see credit-packs.ts).
+// `kind: "credit_pack"` / `pack_key` / `credits` metadata contract the webhook
+// branches on. `metadata.credits` SNAPSHOTS the grant amount at checkout-
+// creation time (P3 T1 review fix) so the webhook grants exactly what was
+// sold even if the live CREDIT_PACKS catalog changes or drops the `pack_key`
+// before the session is paid — see credit-packs.ts and billing-events.ts.
 import { describe, expect, it } from "vitest";
 import { buildCreditPackCheckoutParams, CREDIT_PACKS } from "@/lib/credit-packs";
 import seed from "@/config/stripe-plans.json";
@@ -54,10 +57,8 @@ describe("buildCreditPackCheckoutParams", () => {
       kind: "credit_pack",
       org_id: "org-abc",
       pack_key: "credits_10",
+      credits: "40",
     });
-    // No credits NUMBER in metadata — the webhook must re-derive it from
-    // CREDIT_PACKS by pack_key, never trust a metadata value for the amount.
-    expect(p.metadata).not.toHaveProperty("credits");
     expect("subscription_data" in p).toBe(false);
     expect("payment_method_collection" in p).toBe(false);
   });

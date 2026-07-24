@@ -633,6 +633,46 @@ export async function sendStuckEventsAlertEmail(opts: StuckEventsAlertEmail): Pr
   return send({ to: opts.to, transactional: true, subject, html, text });
 }
 
+export interface CreditPackGrantFailedAlertEmail {
+  to: string;
+  sessionId: string;
+  orgId: string;
+  packKey?: string;
+  reason: string;
+}
+
+/** Internal staff alert (P3 T1 review fix): a PAID `credit_pack` checkout
+ *  session arrived with no usable credit-amount snapshot in its metadata (a
+ *  pre-fix session, corrupt metadata, or a `pack_key` the catalog fallback
+ *  also could not resolve) — the buyer paid but the wallet grant could not be
+ *  safely determined, so nothing was granted rather than risking a silent
+ *  wrong amount. A human must inspect and grant manually. Built inline, no
+ *  user-facing i18n — same ops-only pattern as `sendStuckEventsAlertEmail`. */
+export async function sendCreditPackGrantFailedAlertEmail(
+  opts: CreditPackGrantFailedAlertEmail,
+): Promise<boolean> {
+  const subject = `Credit pack purchase could not be granted: ${opts.sessionId}`;
+  const bodyText =
+    `A paid credit-pack checkout session (${opts.sessionId}, org ${opts.orgId}` +
+    `${opts.packKey ? `, pack_key ${opts.packKey}` : ""}) could not be granted: ${opts.reason}. ` +
+    `The buyer was charged but no wallet credits have been granted yet — inspect and grant manually.`;
+  const html = renderEmail({
+    subject,
+    preheader: `Paid credit pack ungranted — org ${opts.orgId}`,
+    eyebrow: "Billing · Credit packs",
+    title: "Credit pack grant failed",
+    contentHtml:
+      paragraph(escapeHtml(bodyText)) +
+      panel(
+        "Session",
+        `${opts.sessionId}\norg: ${opts.orgId}${opts.packKey ? `\npack_key: ${opts.packKey}` : ""}\nreason: ${opts.reason}`,
+      ),
+    footerNote: "Automated staff alert — credit pack webhook (P3 T1).",
+  });
+  const text = `${bodyText}\n\nSession: ${opts.sessionId} · org ${opts.orgId} · reason: ${opts.reason}`;
+  return send({ to: opts.to, transactional: true, subject, html, text });
+}
+
 /** True when Resend is configured. */
 export function emailConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY);

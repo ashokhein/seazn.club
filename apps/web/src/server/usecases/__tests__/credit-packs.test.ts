@@ -8,11 +8,12 @@
 //
 // Real Postgres required; skipped without DATABASE_URL. Run against the
 // fresh v17 schema: DATABASE_URL=$(cat /tmp/v17_base_url) DB_SCHEMA=seazn_club_v17.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type Stripe from "stripe";
 import { sql } from "@/lib/db";
 import { balance, packBalance, walletIdFor } from "@/lib/credits";
+import { CREDIT_PACKS } from "@/lib/credit-packs";
 import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 import { processStripeEvent } from "../billing-events";
 
@@ -28,15 +29,24 @@ async function seedOrg(): Promise<string> {
 }
 
 /** Minimal checkout.session.completed event for a credit pack — only the
- *  fields handleCheckoutCompleted's credit_pack branch reads. */
+ *  fields handleCheckoutCompleted's credit_pack branch reads. `credits`
+ *  defaults to the catalog amount for `packKey` (mirroring what
+ *  `buildCreditPackCheckoutParams` snapshots at checkout-creation time);
+ *  pass `credits: null` to simulate a pre-fix session with no snapshot at
+ *  all, and an unknown `packKey` to simulate a removed catalog entry. */
 function packCheckoutEvent(over: {
   orgId: string;
-  packKey: string;
+  packKey?: string;
+  credits?: number | null;
   paymentIntent?: string | null;
   sessionId?: string;
   paymentStatus?: string;
   customer?: string | null;
 }): Stripe.Event {
+  const credits =
+    over.credits === null
+      ? undefined
+      : (over.credits ?? (over.packKey ? CREDIT_PACKS[over.packKey]?.credits : undefined));
   return {
     id: `evt_${uniq()}`,
     type: "checkout.session.completed",
@@ -47,7 +57,12 @@ function packCheckoutEvent(over: {
         payment_intent: over.paymentIntent ?? `pi_${uniq()}`,
         customer: over.customer ?? null,
         currency: "usd",
-        metadata: { kind: "credit_pack", org_id: over.orgId, pack_key: over.packKey },
+        metadata: {
+          kind: "credit_pack",
+          org_id: over.orgId,
+          ...(over.packKey ? { pack_key: over.packKey } : {}),
+          ...(credits !== undefined ? { credits: String(credits) } : {}),
+        },
       },
     },
   } as unknown as Stripe.Event;
@@ -133,11 +148,42 @@ describe.skipIf(!HAS_DB)("webhook → credit pack purchase", () => {
     expect(await balance(walletId)).toBe(0);
   });
 
-  it("an unknown pack_key grants nothing rather than throwing (ACKs the webhook)", async () => {
+  it("an unknown pack_key with NO credits snapshot grants nothing rather than throwing (ACKs the webhook) — surfaced, not silent", async () => {
     const orgId = await seedOrg();
     const walletId = await walletIdFor(orgId);
-    await processStripeEvent(packCheckoutEvent({ orgId, packKey: "not_a_real_pack" }));
-    expect(await balance(walletId)).toBe(0);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await processStripeEvent(
+        packCheckoutEvent({ orgId, packKey: "not_a_real_pack", credits: null }),
+      );
+      expect(await balance(walletId)).toBe(0);
+      // Paid-but-ungranted must be visible, not a quiet no-op (review fix, P3 T1).
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("paid but ungranted"));
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it("a removed pack_key still grants the SNAPSHOTTED credits.metadata amount (catalog drift is safe)", async () => {
+    const orgId = await seedOrg();
+    const walletId = await walletIdFor(orgId);
+    await processStripeEvent(
+      packCheckoutEvent({ orgId, packKey: "not_a_real_pack_anymore", credits: 40 }),
+    );
+    expect(await packBalance(walletId)).toBe(40);
+  });
+
+  it("no pack_key and no credits snapshot at all is surfaced as an error, not a silent no-op", async () => {
+    const orgId = await seedOrg();
+    const walletId = await walletIdFor(orgId);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await processStripeEvent(packCheckoutEvent({ orgId, credits: null }));
+      expect(await balance(walletId)).toBe(0);
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("paid but ungranted"));
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 
   it("purchased pack credits are spendable — reserve() draws from the pack bucket", async () => {

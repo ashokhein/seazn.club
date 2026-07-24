@@ -46,10 +46,16 @@ const INTEGRATION_IDENTIFIER = "seazn_credit_pack_wmzqkdxc";
  * embedded_page + return_url, invoice_creation so the purchase shows up on
  * the billing page) with the pack's own metadata contract: `kind:
  * "credit_pack"` disambiguates the webhook branch from the plan/pass ones
- * sharing the same endpoint, and only `pack_key` is carried — never a
- * credits NUMBER — so the webhook always re-derives the grant amount from
- * `CREDIT_PACKS`, not from a value a compromised metadata channel could
- * misstate.
+ * sharing the same endpoint. `metadata.credits` SNAPSHOTS the grant amount at
+ * checkout-creation time (review fix, P3 T1): the webhook fires whenever the
+ * buyer finishes paying, which can be well after this session was created, so
+ * re-deriving the amount from the LIVE `CREDIT_PACKS` catalog by `pack_key` at
+ * that later moment risks a deploy having changed the pack's credit amount or
+ * removed the key entirely out from under an open session — either silently
+ * over/under-granting, or (removed key) silently granting zero on a paid
+ * purchase. Snapshotting here means the webhook grants exactly what was sold,
+ * independent of any later catalog edit. `pack_key` is still carried too (for
+ * display/audit and as the last-resort fallback the webhook logs against).
  */
 export function buildCreditPackCheckoutParams(args: {
   priceId: string;
@@ -79,7 +85,12 @@ export function buildCreditPackCheckoutParams(args: {
     // RENDER time from the buyer's IP unless explicitly disabled — we quote
     // one currency, we must charge in that currency.
     adaptive_pricing: { enabled: false },
-    metadata: { kind: "credit_pack", org_id: args.orgId, pack_key: args.packKey },
+    metadata: {
+      kind: "credit_pack",
+      org_id: args.orgId,
+      pack_key: args.packKey,
+      credits: String(args.credits),
+    },
     line_items: [{ price: args.priceId, quantity: 1 }],
     return_url: args.returnUrl,
     allow_promotion_codes: true,

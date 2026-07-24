@@ -30,6 +30,7 @@ import {
   sendPassRevokedEmail,
   sendStaffDisputeAlertEmail,
   sendStuckEventsAlertEmail,
+  sendCreditPackGrantFailedAlertEmail,
 } from "@/lib/email";
 import {
   handleRegistrationCheckoutCompleted,
@@ -99,21 +100,67 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   // scoped, so there is nowhere in-app to reconcile from); this webhook is the
   // only writer, made safe to replay by recordPackPurchase's idempotency key.
   if (session.metadata?.kind === "credit_pack") {
-    const packKey = session.metadata.pack_key;
-    const pack = packKey ? CREDIT_PACKS[packKey] : undefined;
-    if (pack && session.payment_status === "paid") {
-      // The payment_intent id is the durable "which charge paid for this"
-      // reference; falling back to the session id only covers a session type
-      // that somehow completed with no intent (never expected for mode:
-      // "payment", but a session id is still a valid, unique idempotency
-      // anchor either way).
-      const stripeRef =
-        (typeof session.payment_intent === "string" ? session.payment_intent : null) ??
-        session.id;
-      const walletId = await walletIdFor(orgId);
-      await recordPackPurchase(walletId, pack.credits, stripeRef);
-      if (session.customer) await linkStripeCustomer(orgId, session.customer as string);
-      await pinBillingCurrency(orgId, session.currency);
+    if (session.payment_status === "paid") {
+      const packKey = session.metadata.pack_key;
+      // The grant amount is SNAPSHOTTED into metadata.credits at checkout
+      // creation (review fix, P3 T1) — the webhook can fire long after this
+      // session was created, so re-deriving the amount from the live
+      // CREDIT_PACKS catalog by pack_key here would grant the WRONG amount if
+      // a deploy changed the pack's credits in the meantime, or silently
+      // grant ZERO if the pack_key was removed. The catalog lookup is kept
+      // only as a logged last-resort fallback for pre-fix sessions that never
+      // got a snapshot; it is never a silent no-op.
+      const snapshotRaw = session.metadata.credits;
+      const snapshot = snapshotRaw ? Number(snapshotRaw) : NaN;
+      const credits =
+        Number.isFinite(snapshot) && snapshot > 0
+          ? snapshot
+          : (() => {
+              const fallback = packKey ? CREDIT_PACKS[packKey]?.credits : undefined;
+              if (fallback) {
+                console.error(
+                  `[billing] credit_pack session ${session.id} had no usable credits snapshot ` +
+                    `(metadata.credits=${String(snapshotRaw)}) — fell back to catalog lookup by pack_key ${packKey}`,
+                );
+              }
+              return fallback;
+            })();
+      if (credits) {
+        // The payment_intent id is the durable "which charge paid for this"
+        // reference; falling back to the session id only covers a session type
+        // that somehow completed with no intent (never expected for mode:
+        // "payment", but a session id is still a valid, unique idempotency
+        // anchor either way).
+        const stripeRef =
+          (typeof session.payment_intent === "string" ? session.payment_intent : null) ??
+          session.id;
+        const walletId = await walletIdFor(orgId);
+        await recordPackPurchase(walletId, credits, stripeRef);
+        if (session.customer) await linkStripeCustomer(orgId, session.customer as string);
+        await pinBillingCurrency(orgId, session.currency);
+      } else {
+        // Paid, but neither the metadata snapshot nor the catalog fallback
+        // could resolve a credit amount — a silent zero-grant here would be
+        // an invisible paid-but-ungranted purchase (the bug this fix closes).
+        // Surface it the same way other billing anomalies in this file are
+        // surfaced: a `[billing]` console.error plus a best-effort staff
+        // alert email, and still ACK the webhook (nothing here is retryable
+        // into a better outcome — a human must grant this manually).
+        console.error(
+          `[billing] credit_pack session ${session.id} (org ${orgId}) paid but ungranted — ` +
+            `no credits snapshot and no resolvable pack_key (${packKey ?? "none"})`,
+        );
+        const alertTo = process.env.STAFF_ALERT_EMAIL;
+        if (alertTo) {
+          void sendCreditPackGrantFailedAlertEmail({
+            to: alertTo,
+            sessionId: session.id,
+            orgId,
+            packKey,
+            reason: "no credits snapshot and no resolvable pack_key",
+          }).catch(() => {});
+        }
+      }
     }
     return;
   }
