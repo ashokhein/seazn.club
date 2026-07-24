@@ -96,8 +96,8 @@ async function bucketBalance(exec: Executor, walletId: string, bucket: Bucket): 
 /**
  * Credits left in the resetting **grant** bucket (monthly/trial/earn grants —
  * SPEC-2 §5.4 D1, use-or-lose). `reserve()` always burns this bucket first;
- * a future grant reset (Task 6) is a single `expiry` row against this bucket
- * only, leaving `packBalance` untouched.
+ * `grantMonthly`'s reset is a single `expiry` row against this bucket only,
+ * leaving `packBalance` untouched.
  */
 export async function grantBalance(walletId: string): Promise<number> {
   return bucketBalance(sql, walletId, "grant");
@@ -112,10 +112,12 @@ export async function packBalance(walletId: string): Promise<number> {
 }
 
 /** Calendar-month period the monthly grant is scoped to (server clock,
- *  `YYYY-MM`). The exact reset ANCHOR (billing-cycle for paid, creation-day
- *  calendar for Community — SPEC-2 §5.4) is the caller's job: this only needs
- *  a value that is stable within one grant window so the idempotency key
- *  can't double-fire, whatever schedule invokes it. */
+ *  `YYYY-MM`). This is the FALLBACK anchor — used as-is for Community (no
+ *  Stripe subscription to anchor on; README §7 item 7's "creation-day
+ *  calendar" is an accepted simplification here, see
+ *  `grantMonthlyForAllWallets`'s docstring) and as the default when a caller
+ *  (e.g. a direct `grantMonthly` call, or a test) doesn't pass an explicit
+ *  `periodKey`. */
 function monthlyPeriod(): string {
   return new Date().toISOString().slice(0, 7);
 }
@@ -167,15 +169,36 @@ async function appendLedgerRow(
 /**
  * The monthly grant: `ai.credits.monthly(planKey) * quantityPaid` credits
  * (SPEC-2 §5.4 D1, §11.2 — scales the grant to a billing group's paid seats;
- * a standalone org is `quantityPaid = 1`). **Use-or-lose**: this does not
- * carry a balance forward, it just adds this period's allowance on top of
- * whatever is left.
+ * a standalone org is `quantityPaid = 1`).
  *
- * **Idempotent** per `(wallet_id, 'monthly', period)` via `idempotency_key` —
- * a second call for the same wallet in the same calendar month is a no-op
- * (`ON CONFLICT DO NOTHING`), so a cron retry or webhook replay can't
- * double-grant. A plan with no `ai.credits.monthly` row (or `quantityPaid`
- * of 0) grants nothing.
+ * **Use-or-lose (D1, Task 6 review CRITICAL 1):** before adding this period's
+ * allowance, whatever is left in the `grant` bucket from the PRIOR period is
+ * expired — a single compensating `source='expiry'`, `bucket='grant'` row
+ * whose `delta` is the negative of the current grant-bucket balance. Net
+ * effect: after this call the `grant` bucket holds exactly this period's
+ * amount, never a carried-forward bank. The `pack` bucket (purchased packs,
+ * D2) is never touched here — `bucketBalance`/`appendLedgerRow` are scoped to
+ * `bucket = 'grant'` throughout.
+ *
+ * **`periodKey`** identifies "this period" for both the expiry guard and the
+ * grant idempotency key. Callers that have a real billing-cycle boundary
+ * (a subscription's `current_period_end`, which only changes when Stripe
+ * actually rolls the period — see `grantMonthlyForAllWallets`) should pass
+ * that; it defaults to the calendar month (`monthlyPeriod()`) for direct
+ * callers/tests and for wallets with no such boundary (Community).
+ *
+ * **Atomic + idempotent per `(wallet_id, period)`:** the whole
+ * expire-then-grant sequence runs inside one transaction, serialized per
+ * wallet by the same `pg_advisory_xact_lock` idiom `reserve()` uses (so two
+ * overlapping cron invocations for the same wallet can't race each other). A
+ * pre-check for an existing `monthly:${walletId}:${period}` row short-circuits
+ * to a no-op BEFORE the expiry runs — so a second call in the same period
+ * neither re-expires nor double-grants, even though by then the grant bucket
+ * again holds a positive balance (this period's own grant) that would
+ * otherwise look like "leftover to expire". A plan with no
+ * `ai.credits.monthly` row (or `quantityPaid` of 0) grants nothing and never
+ * touches the ledger (no expiry either — nothing to reset against a grant
+ * that never happens).
  *
  * Returns the credits actually granted this call (0 if skipped).
  */
@@ -183,6 +206,7 @@ export async function grantMonthly(
   walletId: string,
   planKey: string,
   quantityPaid: number,
+  periodKey?: string,
 ): Promise<number> {
   const [entitlement] = await sql<{ int_value: number | null }[]>`
     select int_value from plan_entitlements
@@ -191,13 +215,33 @@ export async function grantMonthly(
   const delta = perSeat * quantityPaid;
   if (delta <= 0) return 0;
 
+  const period = periodKey ?? monthlyPeriod();
+  const key = `monthly:${walletId}:${period}`;
+
   return sql.begin(async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtext(${"ai-credit-wallet:" + walletId}))`;
+
+    const [already] = await tx<{ id: string }[]>`
+      select id from ai_credit_ledger where idempotency_key = ${key}`;
+    if (already) return 0; // this period already granted — no re-expiry, no double grant.
+
+    const leftover = await bucketBalance(tx, walletId, "grant");
+    if (leftover > 0) {
+      await appendLedgerRow(tx, {
+        walletId,
+        delta: -leftover,
+        source: "expiry",
+        bucket: "grant",
+        idempotencyKey: `monthly-expiry:${walletId}:${period}`,
+      });
+    }
+
     const inserted = await appendLedgerRow(tx, {
       walletId,
       delta,
       source: "monthly_grant",
       bucket: "grant",
-      idempotencyKey: `monthly:${walletId}:${monthlyPeriod()}`,
+      idempotencyKey: key,
     });
     return inserted ? delta : 0;
   });
@@ -221,24 +265,33 @@ export async function grantMonthly(
  * community group whose org was soft-deleted) — no wallet left to spend a
  * grant from.
  *
- * **Idempotent per calendar month**, inherited from `grantMonthly`'s own
- * `(wallet, monthly, YYYY-MM)` key: calling this daily is safe — whichever
- * day first succeeds for a wallet in a month wins, every later call that
- * month (same day retried, or a later day) is a no-op. This does NOT yet
- * implement the billing-cycle-day-exact anchor SPEC-2 §5.4 / README §7
- * calls for (paid resets on the Stripe period's own day, Community on its
- * creation-day) — that needs per-wallet reset-day bookkeeping this task
- * does not add. Calendar-month is a conservative stand-in: it can grant up
- * to ~29 days later/earlier than the "true" anchor day, but it can never
- * double-grant or skip a month.
+ * **Anchor (Task 6 review MEDIUM, README §7 item 7):** paid subscriptions
+ * key their period off `current_period_end` — the exact Stripe billing-cycle
+ * boundary Stripe itself only advances via webhook sync on the true renewal
+ * day, so `periodKey = cpe:<current_period_end>` naturally changes exactly
+ * once per real billing cycle (many daily cron polls between renewals see
+ * the same value and no-op via `grantMonthly`'s idempotency check; the poll
+ * right after a renewal sync sees a new value and grants+resets). This is
+ * the real billing-cycle anchor the design calls for, not an approximation.
+ * **Accepted simplification:** Community rows carry no Stripe subscription
+ * and so no `current_period_end` (`createOrgForUser` never sets one) —
+ * these fall back to `monthlyPeriod()`'s plain calendar month rather than a
+ * true creation-day anchor, which would need day-of-month/month-length
+ * clamping (e.g. an org created on the 31st) for no real benefit (Community
+ * grants a flat, non-scaled 10/mo regardless of anchor day). This is safe:
+ * calendar-month can grant up to ~29 days later/earlier than the "true"
+ * creation-day, but per `grantMonthly`'s own idempotency it can never
+ * double-grant or skip a month either way.
  *
  * One wallet's failure (a bad plan_key, a transient DB error) is logged and
  * skipped rather than aborting the whole sweep, matching
  * `reconcileGroupQuantities`'s per-group try/catch.
  */
 export async function grantMonthlyForAllWallets(): Promise<{ wallets: number; granted: number }> {
-  const rows = await sql<{ id: string; plan_key: string; quantity_paid: number }[]>`
-    select s.id, s.plan_key, s.quantity_paid from subscriptions s
+  const rows = await sql<
+    { id: string; plan_key: string; quantity_paid: number; current_period_end: string | Date | null }[]
+  >`
+    select s.id, s.plan_key, s.quantity_paid, s.current_period_end from subscriptions s
      where s.status in ('trialing', 'active', 'past_due')
        and exists (
              select 1 from organizations o
@@ -247,7 +300,10 @@ export async function grantMonthlyForAllWallets(): Promise<{ wallets: number; gr
   for (const row of rows) {
     try {
       const qty = row.plan_key === "community" ? 1 : row.quantity_paid;
-      granted += await grantMonthly(row.id, row.plan_key, qty);
+      const periodKey = row.current_period_end
+        ? `cpe:${new Date(row.current_period_end).toISOString()}`
+        : undefined; // Community — no Stripe period boundary; grantMonthly falls back to calendar month.
+      granted += await grantMonthly(row.id, row.plan_key, qty, periodKey);
     } catch (err) {
       console.error(`[credits] monthly grant failed for wallet ${row.id}`, err);
     }

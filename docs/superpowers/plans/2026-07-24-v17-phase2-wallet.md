@@ -65,6 +65,21 @@ Grants (`grantMonthly`/`grantTrial`) are implemented but never CALLED — withou
 - [ ] Regression test: trial fires once, before the stamp; monthly grant per period, idempotent.
 - [ ] Touches checkout/webhook → run **live-Stripe** (`BILLING_LIVE=1`). commit + push.
 
+**Task 6 review fix (2026-07-24):** two CRITICALs closed — `grantMonthly` now
+expires the prior period's unspent `grant`-bucket balance (D1 use-or-lose,
+single compensating `expiry` row) before adding the new allowance, atomically
++ idempotently per `(wallet, period)` via an advisory lock + pre-check (`pack`
+bucket, D2, untouched); `.github/workflows/billing-grant.yml` schedules
+`/api/cron/billing-grant` daily, mirroring `billing-quantity.yml`. Anchor
+(MEDIUM): paid wallets now key their period off the real
+`subscriptions.current_period_end` (the actual Stripe billing-cycle boundary,
+README §7 item 7); Community — no Stripe period to anchor on — keeps a plain
+calendar-month fallback as an **accepted simplification** (day-of-month
+clamping for a flat, non-scaled 10/mo grant isn't worth the complexity;
+bounded skew, never a double-grant/skip — see `grantMonthlyForAllWallets`'s
+docstring). `scripts/smoke.ts` billing-grant coverage remains deferred (LOW,
+out of scope for this fix pass).
+
 ## Self-review
 - SPEC-2 coverage: §5.1 store → T1; §5.4 grant/trial/plan-change → T2; §5.2 reserve/settle → T3; §5.3 track → the ledger rows (T1); §11 wallet/scaled → T1/T2; AI-metered-on-every-tier → T4. Stripe packs (§6/§8) + operator allocation (SPEC-5) are **Phase 3+**, not here.
 - Order: ledger core (T1–3) is LLM-independent; the AI-path integration (T4) is last + guarded.
