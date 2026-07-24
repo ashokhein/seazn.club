@@ -616,26 +616,48 @@ async function revokePassForRefundedChargeAndNotify(charge: Stripe.Charge): Prom
  *  — under the wallet advisory lock, capped at the purchase, never below zero,
  *  never touching the resetting `grant` bucket, idempotent on replay).
  *
- *  A pack charge is identified off the refunded charge's own metadata: Part A
- *  stamps `payment_intent_data.metadata.kind = 'credit_pack'`, which Stripe
- *  copies onto the Charge, so no Stripe round-trip is needed — the same
- *  DB-/object-only style as the sibling refund handlers, and the reason this
- *  no-ops silently on a registration/sponsor/pass refund (they carry no such
- *  metadata) without alerting.
+ *  A pack charge is identified by matching the charge's `payment_intent`
+ *  against the stored `pack_purchase` ledger row — NOT off `charge.metadata`.
+ *  Stripe does NOT copy `payment_intent_data.metadata` onto the Charge object
+ *  (Charge metadata and PaymentIntent metadata are distinct fields), so
+ *  `charge.metadata` is `{}` for these Checkout-created pack charges; reading it
+ *  as the gate would return early on EVERY real pack refund. Instead this
+ *  mirrors the sibling refund handlers (`revokePassForRefundedCharge`,
+ *  registration/sponsor): match `charge.payment_intent` to a DB row.
+ *  `recordPackRefund` does exactly that — a `matched === true` result proves a
+ *  `pack_purchase` row exists for this PI, i.e. it WAS a pack, with no metadata
+ *  and no Stripe round-trip on the common path.
  *
- *  A charge that IS a pack (metadata says so) but has no `pack_purchase` ledger
- *  row is a paid-but-never-granted pack (the T1 paid-but-ungranted class) now
- *  refunded: nothing to claw back, but never a silent drop — logged + a
- *  best-effort staff alert, mirroring the buy path's ungranted-pack handling. */
+ *  When `recordPackRefund` returns `matched === false` the charge is EITHER a
+ *  non-pack charge (registration/sponsor/pass — the common case, silent no-op)
+ *  OR a pack that was paid but never granted then refunded (the T1
+ *  paid-but-ungranted class — must alert). These can only be told apart off the
+ *  PaymentIntent's metadata (which Part A DOES stamp), so we distinguish with a
+ *  guarded PaymentIntent retrieve — only when `STRIPE_SECRET_KEY` is set, done
+ *  OUTSIDE any tx (mirroring the dispute path's charge retrieve): if
+ *  `pi.metadata.kind === 'credit_pack'` it was an ungranted pack → log + a
+ *  best-effort staff alert; otherwise a genuine non-pack charge → silent. */
 async function handlePackChargeRefunded(charge: Stripe.Charge): Promise<void> {
   if (!charge.refunded) return;
-  if (charge.metadata?.kind !== "credit_pack") return;
   const intent =
     typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
-  if (!intent) return;
+  if (!intent) return; // no intent to match a pack_purchase row against
 
   const { matched } = await recordPackRefund(intent);
-  if (matched) return;
+  if (matched) return; // it was a pack and recordPackRefund already clawed back.
+
+  // matched === false: `recordPackRefund`'s cheap indexed `pack_purchase`
+  // lookup found no row (no wallet lock taken). Distinguish an ungranted pack
+  // from a genuine non-pack charge off the PaymentIntent metadata — a guarded
+  // retrieve, keyless envs skip it (a plain non-pack refund no-ops silently).
+  if (!process.env.STRIPE_SECRET_KEY) return;
+  let pi: Stripe.PaymentIntent;
+  try {
+    pi = await getStripe().paymentIntents.retrieve(intent);
+  } catch {
+    return; // a retrieve failure must never block the webhook ACK
+  }
+  if (pi.metadata?.kind !== "credit_pack") return; // a genuine non-pack charge.
 
   console.error(
     `[billing] credit_pack charge ${charge.id} (intent ${intent}) refunded but no ` +
@@ -646,8 +668,8 @@ async function handlePackChargeRefunded(charge: Stripe.Charge): Promise<void> {
     void sendCreditPackGrantFailedAlertEmail({
       to: alertTo,
       sessionId: charge.id,
-      orgId: charge.metadata?.org_id ?? "unknown",
-      packKey: charge.metadata?.pack_key,
+      orgId: pi.metadata?.org_id ?? "unknown",
+      packKey: pi.metadata?.pack_key,
       reason: "refunded pack charge has no pack_purchase ledger row to claw back",
     }).catch(() => {});
   }
