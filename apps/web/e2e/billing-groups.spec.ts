@@ -170,7 +170,10 @@ test.describe.serial("billing groups", () => {
     }
   });
 
-  test("removing an organisation warns about the refund and the slot", async ({ page }) => {
+  test("removing from a non-live group says Community now, nothing to refund", async ({ page }) => {
+    // baseline() leaves the group non-live (no stripe_subscription_id), so there
+    // is no paid period to ride out and no seat to free — the dialog states the
+    // one outcome that applies: the org moves to Community now, nothing charged.
     await baseline();
     await activate(page, orgA);
     await page.goto("/settings/billing");
@@ -182,14 +185,59 @@ test.describe.serial("billing groups", () => {
 
     const dialog = page.getByRole("alertdialog");
     await expect(dialog).toBeVisible();
-    // Both surprises stated before the click, not discovered on the invoice.
-    await expect(dialog).toContainText("There is no refund");
-    await expect(dialog).toContainText("the slot stays yours until the subscription renews");
+    // The surprise stated before the click, not discovered on the invoice.
+    await expect(dialog).toContainText("moves to its own Community plan now");
+    await expect(dialog).toContainText("there is nothing to refund");
+    // Non-live has no seat to choose about, so the two-mode question is absent.
+    await expect(dialog).not.toContainText("How should");
 
     // Cancelling must be inert: the organisation is still on the bill.
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
     await expect(panel.getByText(`Group B ${TAG}`)).toBeVisible();
+  });
+
+  test("removing from a live group offers the seat choice: ride out or free the slot", async ({
+    page,
+  }) => {
+    // The seat outcome only exists on a live bill, so this case forces the id
+    // directly (spec convention, see file header) — then clears it so the rest
+    // of the serial run stays on its non-live baseline. Escape cancels before
+    // any confirm, so no Stripe call is ever made.
+    await baseline();
+    try {
+      await setOrgSubscriptionSql(orgA, {
+        plan_key: "pro",
+        status: "active",
+        stripe_subscription_id: "sub_e2e_detach_live",
+      });
+      await activate(page, orgA);
+      await page.goto("/settings/billing");
+      const panel = panelOf(page);
+      await expect(panel).toBeVisible({ timeout: 20_000 });
+
+      const row = panel.locator("li").filter({ hasText: `Group B ${TAG}` });
+      await row.getByRole("button", { name: "Remove from this bill" }).click();
+
+      const dialog = page.getByRole("alertdialog");
+      await expect(dialog).toBeVisible();
+      // The choice, and both outcomes, stated before the irreversible click.
+      await expect(dialog).toContainText("How should");
+      await expect(dialog).toContainText("Keep its plan until the period ends");
+      await expect(dialog).toContainText("Free up the seat now");
+      // The seat that stays reusable — the slot the old single-message named.
+      await expect(dialog).toContainText("keep the seat you have paid for");
+
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(panel.getByText(`Group B ${TAG}`)).toBeVisible();
+    } finally {
+      await setOrgSubscriptionSql(orgA, {
+        plan_key: "pro",
+        status: "active",
+        stripe_subscription_id: null,
+      });
+    }
   });
 
   test("moving an organisation in states the price first", async ({ page }) => {
