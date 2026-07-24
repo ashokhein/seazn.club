@@ -48,9 +48,11 @@ describe.skipIf(!process.env.DATABASE_URL)("V290 pro_plus matrix", () => {
       select feature_key, plan_key, int_value, bool_value from plan_entitlements
       where feature_key in ('officials.per_fixture.max','schedule.checkpoints.max','domains.custom','support.priority','registration.fee_percent')`;
     const get = (k: string, p: string) => rows.find((r) => r.feature_key === k && r.plan_key === p);
-    expect(get("officials.per_fixture.max", "community")?.int_value).toBe(1);
+    // v17 #253 — officials ungated on every plan (per_fixture NULL = unlimited)
+    expect(get("officials.per_fixture.max", "community")?.int_value).toBeNull();
     expect(get("officials.per_fixture.max", "pro")?.int_value).toBeNull();
-    expect(get("schedule.checkpoints.max", "community")?.int_value).toBe(1);
+    // v17 free-runs-big — community save points 1 → 2
+    expect(get("schedule.checkpoints.max", "community")?.int_value).toBe(2);
     expect(get("schedule.checkpoints.max", "pro")?.int_value).toBe(5);
     expect(get("schedule.checkpoints.max", "pro_plus")?.int_value).toBeNull();
     expect(get("domains.custom", "pro")?.bool_value).toBe(false);
