@@ -56,6 +56,13 @@
 - [ ] Remove `scheduling.ai.runs_per_division.max` from `plan_entitlements` + `INT_FEATURES`; the wallet replaces it. Update `pro-plus-matrix.test.ts` (drop the V302 run-cap assertions) + any route test that asserts the old cap **only if it can run** (the AI-route timeouts stay out of scope).
 - [ ] commit + **push**.
 
+### Task 6: Wire grants into billing (checkout + cron) — closes the grant-wiring gap (Task 2 review)
+Grants (`grantMonthly`/`grantTrial`) are implemented but never CALLED — without this task they ship dead-on-arrival.
+- [ ] **Trial grant:** call `grantTrial(orgId)` at first paid checkout / plan-change **BEFORE** `syncSubscriptionForGroup` stamps `trial_used_at` (`apps/web/src/lib/billing.ts:724`) — same transaction, using `grantTrial`'s `for update of s` lock. Otherwise the guard is already tripped and trial credits never fire.
+- [ ] **Monthly grant:** grant each active wallet `ai.credits.monthly × quantity_paid` per billing period — extend `api/cron/billing-quantity` (or a new `billing-grant` cron). Idempotent per period (Task 2 guard). Community/free wallets: grant 10/mo on a creation-day calendar anchor (README §7).
+- [ ] Regression test: trial fires once, before the stamp; monthly grant per period, idempotent.
+- [ ] Touches checkout/webhook → run **live-Stripe** (`BILLING_LIVE=1`). commit + push.
+
 ## Self-review
 - SPEC-2 coverage: §5.1 store → T1; §5.4 grant/trial/plan-change → T2; §5.2 reserve/settle → T3; §5.3 track → the ledger rows (T1); §11 wallet/scaled → T1/T2; AI-metered-on-every-tier → T4. Stripe packs (§6/§8) + operator allocation (SPEC-5) are **Phase 3+**, not here.
 - Order: ledger core (T1–3) is LLM-independent; the AI-path integration (T4) is last + guarded.
