@@ -26,7 +26,13 @@ import {
 import { activeOrgCount, assertWithinGroupCap, groupOrgLimit } from "@/lib/billing-group";
 import { hasLiveSubscription } from "@/lib/subscription-status";
 import { intervalForPrice } from "@/lib/billing-manage";
-import { sendTransferOfferEmail, sendTransferCompleteEmail } from "@/lib/email";
+import { toLocale, type Locale } from "@/lib/i18n-constants";
+import {
+  sendTransferOfferEmail,
+  sendTransferCompleteEmail,
+  sendGroupOrgRemovedEmail,
+  sendGroupOrgLeftEmail,
+} from "@/lib/email";
 
 interface GroupRow {
   id: string;
@@ -773,8 +779,14 @@ export async function detachOrgFromGroup(args: {
     // concurrent attach and detach of the SAME org serialise instead of losing
     // one of the two writes. See the note in attachOrgToGroup.
     const [org] = await tx<
-      { subscription_id: string | null; created_by: string | null; deleted_at: Date | null }[]
-    >`select subscription_id, created_by, deleted_at from organizations
+      {
+        subscription_id: string | null;
+        created_by: string | null;
+        deleted_at: Date | null;
+        name: string;
+        slug: string;
+      }[]
+    >`select subscription_id, created_by, deleted_at, name, slug from organizations
         where id = ${orgId} for update`;
     if (!org || org.deleted_at) throw new HttpError(404, "Organisation not found.");
     if (!org.subscription_id)
@@ -805,9 +817,10 @@ export async function detachOrgFromGroup(args: {
         "This organisation has no owner to bill — transfer ownership before separating it.",
       );
 
-    const others = await tx<{ id: string }[]>`
-      select id from organizations
-       where subscription_id = ${group.id} and id <> ${orgId} and deleted_at is null`;
+    const others = await tx<{ id: string; slug: string }[]>`
+      select id, slug from organizations
+       where subscription_id = ${group.id} and id <> ${orgId} and deleted_at is null
+       order by created_at, id`;
     if (others.length === 0 && group.owner_user_id === orgOwnerId)
       throw new HttpError(400, "This organisation already has its own billing group.");
 
@@ -841,10 +854,28 @@ export async function detachOrgFromGroup(args: {
     await tx`update organizations set subscription_id = ${fresh.id} where id = ${orgId}`;
     // `comped` drives the seat spend below: a seat is only consumed when a comp
     // was actually handed out (ride_out on a paying group), never on a release.
-    return { from: group.id, to: fresh.id, remaining: others.length, comped: compedUntil != null };
+    return {
+      from: group.id,
+      to: fresh.id,
+      remaining: others.length,
+      comped: compedUntil != null,
+      // Carried out of the tx so the post-commit notification can tell the party
+      // that did NOT initiate the removal. See notifyDetachParties.
+      orgName: org.name,
+      orgSlug: org.slug,
+      orgOwnerId,
+      payerId: group.owner_user_id,
+      ridesOutUntil: compedUntil,
+      remainingSlug: others[0]?.slug ?? null,
+    };
   });
 
   await invalidateMove(orgId, result.from, result.to);
+
+  // Tell whoever did NOT press the button. Best-effort and after the commit, like
+  // the transfer notifications — the detach is done and a mail failure cannot
+  // undo it. Runs regardless of the cancel/sync branching below.
+  await notifyDetachParties({ actorUserId, ...result });
 
   // Never leave a live subscription at quantity 0: the last org out cancels the
   // group it left. cancelBillingGroup is best-effort at Stripe and always makes
@@ -1520,6 +1551,65 @@ function billingSettingsLink(slug: string): string {
     "http://localhost:3000"
   ).replace(/\/$/, "");
   return `${base}/o/${slug}/settings/billing`;
+}
+
+/** A user's contact + preferred locale for a best-effort notification, or null
+ *  if they have no reachable email (deleted, or never had one). */
+async function notifyContact(userId: string): Promise<{ email: string; locale: Locale } | null> {
+  const [u] = await sql<{ email: string | null; locale: string | null }[]>`
+    select email, locale from users where id = ${userId} and deleted_at is null`;
+  if (!u?.email) return null;
+  return { email: u.email, locale: toLocale(u.locale) };
+}
+
+/**
+ * After a detach, email whichever party did NOT initiate it:
+ *  - the payer pushed someone else's org out  → tell that org's OWNER what
+ *    happened to the plan (ride-out date, or Community now) and that its billing
+ *    is now theirs;
+ *  - the org's own owner left                  → tell the PAYER their bill
+ *    changed (the seat is a reusable freed slot, or it left with the org).
+ *
+ * When the actor owns both the org and the group there is no one else to tell.
+ * Best-effort: a mail failure cannot undo the committed detach.
+ */
+async function notifyDetachParties(args: {
+  actorUserId: string;
+  orgName: string;
+  orgSlug: string;
+  orgOwnerId: string | null;
+  payerId: string;
+  ridesOutUntil: Date | string | null;
+  comped: boolean;
+  remainingSlug: string | null;
+}): Promise<void> {
+  const { actorUserId, orgName, orgSlug, orgOwnerId, payerId, ridesOutUntil, comped, remainingSlug } =
+    args;
+  try {
+    if (actorUserId === payerId && orgOwnerId && orgOwnerId !== payerId) {
+      const to = await notifyContact(orgOwnerId);
+      if (!to) return;
+      const until = ridesOutUntil
+        ? new Intl.DateTimeFormat(to.locale, { dateStyle: "long" }).format(new Date(ridesOutUntil))
+        : null;
+      await sendGroupOrgRemovedEmail(
+        to.email,
+        await payerDisplayName(payerId),
+        orgName,
+        until,
+        billingSettingsLink(orgSlug),
+        to.locale,
+      );
+    } else if (actorUserId === orgOwnerId && payerId !== orgOwnerId && remainingSlug) {
+      const to = await notifyContact(payerId);
+      if (!to) return;
+      // seatFreed = release (no comp): the payer kept the seat as a reusable
+      // slot. On ride_out the seat left with the org, so the next invoice shrinks.
+      await sendGroupOrgLeftEmail(to.email, orgName, !comped, billingSettingsLink(remainingSlug), to.locale);
+    }
+  } catch (err) {
+    console.error("[billing-groups] detach notification failed (best-effort):", err);
+  }
 }
 
 /** Fire the transfer-OFFER email to the recipient (live-sub path, two-phase).
