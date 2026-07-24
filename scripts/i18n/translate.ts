@@ -1,7 +1,7 @@
 // Incremental AI translation (v5 i18n §7). en/*.json is the source of truth.
 // Only keys whose source hash changed since the last run are re-translated
 // (manifest tracks hashes), so re-runs are cheap and self-healing. Translations
-// go through claude-opus-4-8 with structured output, a per-run glossary, and
+// go through claude-sonnet-5 with structured output, a per-run glossary, and
 // explicit {placeholder}/brand preservation. Run: `npm run i18n:translate`.
 import Anthropic from "@anthropic-ai/sdk";
 import { readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
@@ -14,7 +14,7 @@ const DICT = join(here, "../../apps/web/src/dictionaries");
 const MANIFEST = join(here, "manifest.json");
 const GLOSSARY = join(here, "glossary.json");
 const EN = "en";
-const MODEL = "claude-opus-4-8";
+const MODEL = "claude-sonnet-5";
 
 type StrMap = Record<string, string>;
 type Manifest = Record<string, StrMap>; // locale → key → source-hash

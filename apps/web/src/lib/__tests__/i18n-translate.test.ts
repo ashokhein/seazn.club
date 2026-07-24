@@ -30,7 +30,7 @@ describe("translateBatch", () => {
       model: string;
       output_config: { format: { type: string } };
     };
-    expect(arg.model).toBe("claude-opus-4-8");
+    expect(arg.model).toBe("claude-sonnet-5");
     expect(arg.output_config.format.type).toBe("json_schema");
   });
 });
