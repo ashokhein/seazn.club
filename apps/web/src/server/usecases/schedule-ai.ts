@@ -1478,22 +1478,16 @@ export async function aiPlanForDivision(
   }
   await requireFeature(auth.orgId, "scheduling.ai");
 
-  // priorRuns is no longer a gate (the per-division run cap is replaced by the
-  // credit wallet, SPEC-2 §5.2/Task 4) — it still rides on `gate` for the
-  // schedule.ai_generated audit trail; Task 5 retires the cap's matrix key and
-  // can drop this count entirely then.
+  // The per-division run cap this used to also gate on is retired (v17 Phase
+  // 2 Task 5, V322) — runs are metered by the credit wallet on every tier
+  // now (SPEC-2 §5.2/Task 4). This lookup only resolves the division's
+  // competition + frozen state for the checks below.
   const gate = await withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<{ competition_id: string; schedule_locked: boolean }[]>`
       select competition_id, schedule_locked from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
-    const [row] = await tx<{ n: number }[]>`
-      select count(*)::int as n from competition_events
-      where competition_id = ${division.competition_id}
-        and type = 'schedule.ai_generated'
-        and payload->>'division_id' = ${divisionId}`;
     return {
       competitionId: division.competition_id,
-      priorRuns: row?.n ?? 0,
       frozen: division.schedule_locked ?? false,
     };
   });

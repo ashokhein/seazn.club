@@ -723,7 +723,6 @@
   "upgrade.compare.everyComp": "Every competition",
   "upgrade.limit.divisions": "Divisions in this competition",
   "upgrade.limit.entrants": "Entrants per division",
-  "upgrade.limit.aiRuns": "AI schedule runs per division",
   "upgrade.limit.fee": "Platform fee on card entry fees",
   "upgrade.limit.formats": "Advanced formats — double elimination, ladders, americano",
   "upgrade.limit.realtime": "Realtime scoreboard and slideshow",

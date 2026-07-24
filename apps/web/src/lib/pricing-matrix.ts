@@ -75,9 +75,10 @@ const INT_FEATURES = new Set([
   "dashboard.public.max",
   "import.bulk",
   "schedule.checkpoints.max",
-  // Graded quota on every tier (V302: 5 / 10 / 20 / 50) — a bool tick would
-  // render "—" on all four columns and hide the only thing that varies.
-  "scheduling.ai.runs_per_division.max",
+  // scheduling.ai.runs_per_division.max retired (v17 Phase 2 Task 5, V322):
+  // the graded per-division run cap is gone, replaced by the AI credit
+  // wallet, which meters spend rather than a plan-graded count — there is no
+  // longer a number to render here.
 ]);
 
 function cellFormatter(feature: string): (cell: MatrixCell | undefined) => string {

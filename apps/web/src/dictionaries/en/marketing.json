@@ -139,7 +139,6 @@
   "pricing.matrix.scheduling.constraints": "Scheduling constraints",
   "pricing.matrix.scheduling.multi_division": "Multi-division scheduling",
   "pricing.matrix.scheduling.ai": "AI-assisted scheduling",
-  "pricing.matrix.scheduling.ai.runs_per_division.max": "AI schedule runs per division",
   "pricing.matrix.schedule.checkpoints.max": "Schedule save points",
   "pricing.matrix.schedule.versioning": "Schedule version history",
   "pricing.matrix.scoring.ball_by_ball": "Ball-by-ball scoring",

@@ -102,13 +102,8 @@ const DATA: MatrixData = {
     pro: cell(null, true),
     pro_plus: cell(null, true),
   },
-  // Real V302 values: a graded quota on every tier, not an on/off flag.
-  "scheduling.ai.runs_per_division.max": {
-    community: cell(5),
-    event_pass: cell(10),
-    pro: cell(20),
-    pro_plus: cell(50),
-  },
+  // scheduling.ai.runs_per_division.max retired (v17 Phase 2 Task 5, V322) —
+  // no rows left, no fixture entry needed.
   // W1 Task 11: clubs & teams register caps render as numbers, ∞ for
   // unlimited — never a bare ✓/— tick. V319 raised the community caps
   // (clubs 2 → 5, teams 2 → 8) and dropped the event_pass rows, so the pass
@@ -263,19 +258,11 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
     expect(row("pricing.matrix.fees").free).not.toBe("—");
   });
 
-  // Two rows the Event Pass lifts that /pricing used to omit entirely: the AI
-  // run cap fell outside ENTITLEMENT_DOMAINS, and dashboard.player_profiles was
-  // classed as vestigial (see the banned-list test below). Both are live gates,
-  // so the matrix has to price them.
-  it("renders the AI run cap as a graded quota, not a bool tick (V302)", () => {
-    expect(row("pricing.matrix.scheduling.ai.runs_per_division.max")).toMatchObject({
-      free: "5",
-      pass: "10",
-      pro: "20",
-      plus: "50",
-    });
-  });
-
+  // dashboard.player_profiles is a row the Event Pass lifts that /pricing used
+  // to omit entirely (classed as vestigial — see the banned-list test below);
+  // it is a live gate, so the matrix has to price it. The AI run cap row that
+  // used to sit alongside it was retired in v17 Phase 2 Task 5 (V322): the
+  // credit wallet meters spend now, not a plan-graded per-division count.
   it("renders public player profiles with the pass lifting them (V307/V308)", () => {
     expect(row("pricing.matrix.dashboard.player_profiles")).toMatchObject({
       free: "—",

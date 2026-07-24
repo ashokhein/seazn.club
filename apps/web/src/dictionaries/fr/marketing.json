@@ -139,7 +139,6 @@
   "pricing.matrix.scheduling.constraints": "Contraintes de planification",
   "pricing.matrix.scheduling.multi_division": "Planification multi-division",
   "pricing.matrix.scheduling.ai": "Planification assistée par IA",
-  "pricing.matrix.scheduling.ai.runs_per_division.max": "Générations IA du calendrier par division",
   "pricing.matrix.schedule.checkpoints.max": "Points de sauvegarde du calendrier",
   "pricing.matrix.schedule.versioning": "Historique des versions du calendrier",
   "pricing.matrix.scoring.ball_by_ball": "Score balle par balle",

@@ -26,9 +26,11 @@ describe.skipIf(!process.env.DATABASE_URL)("V290 pro_plus matrix", () => {
   });
 
   // Owner 2026-07-19 (V302, supersedes the V291 amendment): AI scheduling is
-  // granted on every plan with a graded per-division run cap — community 5 /
-  // event pass 10 / pro 20 / pro plus 50.
-  it("grants scheduling.ai on every plan with the V302 graded run caps", async () => {
+  // granted on every plan. V322 (v17 Phase 2 Task 5) retired the graded
+  // per-division run cap that used to ride alongside it — the AI credit
+  // wallet meters spend on every tier now, not a plan-graded count, so the
+  // matrix key is gone rather than merely equal across plans.
+  it("grants scheduling.ai on every plan; the retired run cap has no rows left", async () => {
     const rows = await sql<{ feature_key: string; plan_key: string; bool_value: boolean | null; int_value: number | null }[]>`
       select feature_key, plan_key, bool_value, int_value from plan_entitlements
       where feature_key in ('scheduling.ai','scheduling.ai.runs_per_division.max')`;
@@ -37,10 +39,8 @@ describe.skipIf(!process.env.DATABASE_URL)("V290 pro_plus matrix", () => {
     expect(get("scheduling.ai", "pro_plus")?.bool_value).toBe(true);
     expect(get("scheduling.ai", "community")?.bool_value).toBe(true);
     expect(get("scheduling.ai", "event_pass")?.bool_value).toBe(true);
-    expect(get("scheduling.ai.runs_per_division.max", "community")?.int_value).toBe(5);
-    expect(get("scheduling.ai.runs_per_division.max", "event_pass")?.int_value).toBe(10);
-    expect(get("scheduling.ai.runs_per_division.max", "pro")?.int_value).toBe(20);
-    expect(get("scheduling.ai.runs_per_division.max", "pro_plus")?.int_value).toBe(50);
+    // V322: the wallet is the gate now, not the matrix — zero rows anywhere.
+    expect(rows.filter((r) => r.feature_key === "scheduling.ai.runs_per_division.max")).toEqual([]);
   });
 
   it("seeds the new quota keys with the approved ladder", async () => {

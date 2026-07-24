@@ -42,11 +42,10 @@ export interface CompareRow {
 export const PASS_COMPARE_ROWS: readonly CompareRow[] = [
   { labelKey: "upgrade.limit.divisions", features: ["divisions.per_competition.max"], kind: "number" },
   { labelKey: "upgrade.limit.entrants", features: ["entrants.per_division.max"], kind: "number" },
-  {
-    labelKey: "upgrade.limit.aiRuns",
-    features: ["scheduling.ai.runs_per_division.max"],
-    kind: "number",
-  },
+  // The AI-runs row (upgrade.limit.aiRuns) was retired here in v17 Phase 2
+  // Task 5 (V322): scheduling.ai.runs_per_division.max no longer has a
+  // plan_entitlements row (the credit wallet meters runs on every tier now),
+  // so there is no longer a number for this table to quote.
   { labelKey: "upgrade.limit.fee", features: ["registration.fee_percent"], kind: "percent" },
   {
     labelKey: "upgrade.limit.formats",

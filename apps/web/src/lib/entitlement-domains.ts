@@ -18,9 +18,12 @@ export const ENTITLEMENT_DOMAINS: { slug: string; features: string[] }[] = [
     "formats.advanced", "formats.double_elim", "standings.custom_points",
     "standings.carry_over", "tiebreakers.custom", "discipline.enforced",
   ]},
+  // scheduling.ai.runs_per_division.max retired (v17 Phase 2 Task 5, V322):
+  // the AI credit wallet meters runs on every tier now, not a plan-graded
+  // per-division count — the comparison table has nothing left to show here.
   { slug: "scheduling", features: [
     "scheduling.board", "scheduling.constraints", "scheduling.multi_division",
-    "scheduling.ai", "scheduling.ai.runs_per_division.max",
+    "scheduling.ai",
     "schedule.checkpoints.max", "schedule.versioning",
   ]},
   { slug: "scoring", features: [

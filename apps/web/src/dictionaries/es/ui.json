@@ -723,7 +723,6 @@
   "upgrade.compare.everyComp": "Todas las competiciones",
   "upgrade.limit.divisions": "Divisiones en esta competición",
   "upgrade.limit.entrants": "Participantes por división",
-  "upgrade.limit.aiRuns": "Generaciones de calendario con IA por división",
   "upgrade.limit.fee": "Comisión de plataforma sobre inscripciones con tarjeta",
   "upgrade.limit.formats": "Formatos avanzados — doble eliminación, escaleras, americano",
   "upgrade.limit.realtime": "Marcador y presentación en tiempo real",

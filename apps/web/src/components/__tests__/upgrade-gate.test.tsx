@@ -197,10 +197,11 @@ describe("UpgradeGate — paid plan (D1: any paid plan → Pro path only)", () =
   // Every key the pass lifts is one a paid plan lifts FURTHER — that is why
   // lib/entitlements.ts applies the pass arm only when the resolved plan is
   // community. Selling the pass to a paid org therefore sells strictly less
-  // than they hold: 10 AI runs per division against Pro's 20, 64 entrants
-  // against Pro's 256.
+  // than they hold: 64 entrants against Pro's 256.
+  // (scheduling.ai.runs_per_division.max used to be a second such row — 10 AI
+  // runs per division against Pro's 20 — retired in v17 Phase 2 Task 5, V322:
+  // the credit wallet meters runs on every tier now, not a plan-graded count.)
   const DOWNGRADE_KEYS = [
-    "scheduling.ai.runs_per_division.max",
     "entrants.per_division.max",
   ];
 
