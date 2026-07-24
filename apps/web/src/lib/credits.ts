@@ -112,12 +112,14 @@ export async function packBalance(walletId: string): Promise<number> {
 }
 
 /** Calendar-month period the monthly grant is scoped to (server clock,
- *  `YYYY-MM`). This is the FALLBACK anchor — used as-is for Community (no
- *  Stripe subscription to anchor on; README §7 item 7's "creation-day
- *  calendar" is an accepted simplification here, see
- *  `grantMonthlyForAllWallets`'s docstring) and as the default when a caller
- *  (e.g. a direct `grantMonthly` call, or a test) doesn't pass an explicit
- *  `periodKey`. */
+ *  `YYYY-MM`) — the ONLY anchor `grantMonthly` uses, for every wallet, paid
+ *  or Community (SPEC-2 §5.4 Cadence: "grant is monthly regardless of
+ *  billing cadence"). Deliberately has no notion of a subscription's Stripe
+ *  billing cycle at all — an annual-billed plan's `current_period_end` only
+ *  advances once a year, so keying off it (a prior version of this module
+ *  did, for paid wallets) collapses 12 monthly grants into a single lump on
+ *  the renewal date, which is the exact regression this cadence rule exists
+ *  to forbid. */
 function monthlyPeriod(): string {
   return new Date().toISOString().slice(0, 7);
 }
@@ -171,6 +173,18 @@ async function appendLedgerRow(
  * (SPEC-2 §5.4 D1, §11.2 — scales the grant to a billing group's paid seats;
  * a standalone org is `quantityPaid = 1`).
  *
+ * **Cadence is monthly regardless of billing interval (SPEC-2 §5.4 Cadence
+ * — CRITICAL regression fix):** the period is always the calendar month
+ * (`monthlyPeriod()`, `YYYY-MM`, server clock), for every wallet, paid or
+ * Community. An annual-billed Pro subscription ($159/yr) still gets 60/mo
+ * granted 12 times across the year — NOT a single 720 lump on its one
+ * yearly renewal. This function has no notion of Stripe's billing cycle at
+ * all; it must never be keyed off `subscriptions.current_period_end` — a
+ * prior version of the cron (`grantMonthlyForAllWallets`) did exactly that
+ * for paid wallets, which collapses to one grant per YEAR for any
+ * annual-interval plan, since `current_period_end` only advances on the
+ * true (yearly) renewal.
+ *
  * **Use-or-lose (D1, Task 6 review CRITICAL 1):** before adding this period's
  * allowance, whatever is left in the `grant` bucket from the PRIOR period is
  * expired — a single compensating `source='expiry'`, `bucket='grant'` row
@@ -179,13 +193,6 @@ async function appendLedgerRow(
  * amount, never a carried-forward bank. The `pack` bucket (purchased packs,
  * D2) is never touched here — `bucketBalance`/`appendLedgerRow` are scoped to
  * `bucket = 'grant'` throughout.
- *
- * **`periodKey`** identifies "this period" for both the expiry guard and the
- * grant idempotency key. Callers that have a real billing-cycle boundary
- * (a subscription's `current_period_end`, which only changes when Stripe
- * actually rolls the period — see `grantMonthlyForAllWallets`) should pass
- * that; it defaults to the calendar month (`monthlyPeriod()`) for direct
- * callers/tests and for wallets with no such boundary (Community).
  *
  * **Atomic + idempotent per `(wallet_id, period)`:** the whole
  * expire-then-grant sequence runs inside one transaction, serialized per
@@ -206,7 +213,6 @@ export async function grantMonthly(
   walletId: string,
   planKey: string,
   quantityPaid: number,
-  periodKey?: string,
 ): Promise<number> {
   const [entitlement] = await sql<{ int_value: number | null }[]>`
     select int_value from plan_entitlements
@@ -215,7 +221,7 @@ export async function grantMonthly(
   const delta = perSeat * quantityPaid;
   if (delta <= 0) return 0;
 
-  const period = periodKey ?? monthlyPeriod();
+  const period = monthlyPeriod();
   const key = `monthly:${walletId}:${period}`;
 
   return sql.begin(async (tx) => {
@@ -265,50 +271,51 @@ export async function grantMonthly(
  * community group whose org was soft-deleted) — no wallet left to spend a
  * grant from.
  *
- * **Anchor (Task 6 review MEDIUM, README §7 item 7):** paid subscriptions
- * key their period off `current_period_end` — the exact Stripe billing-cycle
- * boundary Stripe itself only advances via webhook sync on the true renewal
- * day, so `periodKey = cpe:<current_period_end>` naturally changes exactly
- * once per real billing cycle (many daily cron polls between renewals see
- * the same value and no-op via `grantMonthly`'s idempotency check; the poll
- * right after a renewal sync sees a new value and grants+resets). This is
- * the real billing-cycle anchor the design calls for, not an approximation.
- * **Accepted simplification:** Community rows carry no Stripe subscription
- * and so no `current_period_end` (`createOrgForUser` never sets one) —
- * these fall back to `monthlyPeriod()`'s plain calendar month rather than a
- * true creation-day anchor, which would need day-of-month/month-length
- * clamping (e.g. an org created on the 31st) for no real benefit (Community
- * grants a flat, non-scaled 10/mo regardless of anchor day). This is safe:
- * calendar-month can grant up to ~29 days later/earlier than the "true"
- * creation-day, but per `grantMonthly`'s own idempotency it can never
- * double-grant or skip a month either way.
+ * **Anchor (README §7 item 7; Task 6 re-review CRITICAL fix): calendar month
+ * for EVERY wallet, paid or Community — never `current_period_end`.** An
+ * earlier version of this sweep keyed paid subscriptions off
+ * `subscriptions.current_period_end` on the theory that it tracked "the real
+ * billing cycle" — but SPEC-2 §5.4's Cadence rule is explicit that the grant
+ * is monthly *regardless of billing cadence* (an annual Pro at $159/yr must
+ * still get 60/mo × 12, not a single 720 lump). Since `current_period_end`
+ * for an annual-interval subscription only advances once a year, that
+ * anchor silently collapsed 12 grants into 1 for every annual org — a
+ * cadence regression, not an approximation. `grantMonthly`'s own
+ * `monthlyPeriod()` (plain `YYYY-MM`, server clock) is now the only anchor
+ * this function uses, for both paid and Community wallets alike; every live
+ * wallet gets a fresh grant once per calendar month, independent of what
+ * Stripe's billing interval or renewal date happen to be.
  *
  * One wallet's failure (a bad plan_key, a transient DB error) is logged and
  * skipped rather than aborting the whole sweep, matching
- * `reconcileGroupQuantities`'s per-group try/catch.
+ * `reconcileGroupQuantities`'s per-group try/catch — `failed` is returned
+ * (mirroring `reconcileGroupQuantities`'s own `{checked, corrected, failed}`
+ * shape) so the caller (the cron route, then `billing-grant.yml`) can warn
+ * on a persistent per-wallet grant failure instead of it going unnoticed.
  */
-export async function grantMonthlyForAllWallets(): Promise<{ wallets: number; granted: number }> {
-  const rows = await sql<
-    { id: string; plan_key: string; quantity_paid: number; current_period_end: string | Date | null }[]
-  >`
-    select s.id, s.plan_key, s.quantity_paid, s.current_period_end from subscriptions s
+export async function grantMonthlyForAllWallets(): Promise<{
+  wallets: number;
+  granted: number;
+  failed: number;
+}> {
+  const rows = await sql<{ id: string; plan_key: string; quantity_paid: number }[]>`
+    select s.id, s.plan_key, s.quantity_paid from subscriptions s
      where s.status in ('trialing', 'active', 'past_due')
        and exists (
              select 1 from organizations o
               where o.subscription_id = s.id and o.deleted_at is null)`;
   let granted = 0;
+  let failed = 0;
   for (const row of rows) {
     try {
       const qty = row.plan_key === "community" ? 1 : row.quantity_paid;
-      const periodKey = row.current_period_end
-        ? `cpe:${new Date(row.current_period_end).toISOString()}`
-        : undefined; // Community — no Stripe period boundary; grantMonthly falls back to calendar month.
-      granted += await grantMonthly(row.id, row.plan_key, qty, periodKey);
+      granted += await grantMonthly(row.id, row.plan_key, qty);
     } catch (err) {
+      failed++;
       console.error(`[credits] monthly grant failed for wallet ${row.id}`, err);
     }
   }
-  return { wallets: rows.length, granted };
+  return { wallets: rows.length, granted, failed };
 }
 
 /**

@@ -1,13 +1,19 @@
-// v17 Task 6: the daily cron entry point (api/cron/billing-grant) that grants
-// every LIVE wallet its ai.credits.monthly(plan) * quantity_paid allowance —
-// scaled for paid plans, flat for community (SPEC-2 §11.2). Each grant first
-// expires any unspent grant-bucket leftover from the prior period (D1,
-// use-or-lose, Task 6 review fix) before adding the new allowance. Idempotent
-// per period: paid wallets key off the real `current_period_end` billing-cycle
-// boundary (README §7 item 7's anchor), Community falls back to plain
-// calendar month (accepted simplification, no Stripe period to anchor on).
+// v17 Task 6 (re-review, CRITICAL cadence fix): the daily cron entry point
+// (api/cron/billing-grant) that grants every LIVE wallet its
+// ai.credits.monthly(plan) * quantity_paid allowance — scaled for paid plans,
+// flat for community (SPEC-2 §11.2). Each grant first expires any unspent
+// grant-bucket leftover from the prior period (D1, use-or-lose, Task 6 review
+// fix) before adding the new allowance. Idempotent per period: EVERY wallet —
+// paid or Community — keys its period off the plain calendar month
+// (`YYYY-MM`, server clock; README §7 item 7's anchor). This is deliberately
+// NOT the Stripe billing-cycle boundary (`current_period_end`): SPEC-2 §5.4
+// Cadence requires the grant to be monthly *regardless of billing cadence* —
+// an annual Pro ($159/yr) still gets 60/mo × 12, not a 720 lump — and an
+// annual subscription's `current_period_end` only advances once a year, so
+// anchoring on it (a prior version of this cron did, for paid wallets) is a
+// cadence regression, not an approximation.
 // Real Postgres required; skipped without DATABASE_URL.
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import { balance, grantBalance, grantMonthlyForAllWallets } from "@/lib/credits";
@@ -32,6 +38,10 @@ afterAll(async () => {
   const client = globalForDb._sql;
   globalForDb._sql = undefined;
   await client?.end();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 // grantMonthlyForAllWallets full-table-scans every LIVE subscription row in
@@ -102,12 +112,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     expect(await balance(subId)).toBe(60);
   });
 
-  it("anchors a paid wallet's period on current_period_end — a new Stripe cycle grants again within the same calendar month", { timeout: 30000 }, async () => {
-    // grantMonthlyForAllWallets scans every LIVE subscription row in the
-    // schema each call; this test calls it 3x sequentially, which — on a
-    // long-running local schema with many accumulated fixture rows — can
-    // exceed vitest's default 5s per-test timeout ([[feedback_run_live_billing_tests]]-adjacent
-    // gotcha, not a real slowdown in the code path itself).
+  it("a paid wallet's period is the calendar month, never current_period_end — a Stripe cycle change within the same month is a no-op", { timeout: CRON_TEST_TIMEOUT }, async () => {
     const orgId = await seedOrg();
     const subId = await setOrgPlan(orgId, "pro");
     const cycle1 = new Date("2026-07-05T00:00:00Z");
@@ -117,22 +122,23 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     expect(await balance(subId)).toBe(60);
 
     // Same calendar month, same period boundary — a second poll (e.g. the
-    // next day's cron run) must be a no-op, not a calendar-month re-grant.
+    // next day's cron run) must be a no-op.
     await grantMonthlyForAllWallets();
     expect(await balance(subId)).toBe(60);
 
-    // Stripe rolls the subscription to its next cycle (webhook sync advances
-    // current_period_end) — still the same calendar month, but a genuinely
-    // new billing period, so the next poll must expire + re-grant.
+    // Stripe rolls the subscription to a new cycle (webhook sync advances
+    // current_period_end) but we're still in the SAME calendar month — this
+    // must stay a no-op. Anchoring on current_period_end (the pre-fix
+    // behavior) would have expired + re-granted here; the fix must not.
     const cycle2 = new Date("2026-07-19T00:00:00Z");
     await sql`update subscriptions set current_period_end = ${cycle2} where id = ${subId}`;
 
     await grantMonthlyForAllWallets();
-    expect(await grantBalance(subId)).toBe(60); // reset to the new period's own amount, not 120
+    expect(await grantBalance(subId)).toBe(60); // still exactly one month's grant, not 120
     expect(await balance(subId)).toBe(60);
   });
 
-  it("Community wallets fall back to plain calendar month (no Stripe period to anchor on)", { timeout: CRON_TEST_TIMEOUT }, async () => {
+  it("Community wallets grant on plain calendar month (no Stripe period at all)", { timeout: CRON_TEST_TIMEOUT }, async () => {
     const orgId = await seedOrg();
     const subId = await setOrgPlan(orgId, "community");
     const [row] = await sql<{ current_period_end: string | null }[]>`
@@ -144,5 +150,50 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
 
     await grantMonthlyForAllWallets();
     expect(await balance(subId)).toBe(10); // still idempotent via the calendar-month key
+  });
+
+  it("REGRESSION (SPEC-2 §5.4 Cadence): an annual (yearly-renewing) Pro subscription still grants 12x/year, not a single lump", { timeout: 30000 }, async () => {
+    // grantMonthlyForAllWallets scans every LIVE subscription row in the
+    // schema each call; this test calls it across simulated months, which —
+    // on a long-running local schema with many accumulated fixture rows —
+    // can exceed vitest's default 5s per-test timeout
+    // ([[feedback_run_live_billing_tests]]-adjacent gotcha, not a real
+    // slowdown in the code path itself).
+    const orgId = await seedOrg();
+    const subId = await setOrgPlan(orgId, "pro");
+    // Simulate an ANNUAL Stripe cycle: current_period_end sits a full year
+    // out and never moves across this test — exactly the shape that made
+    // the old current_period_end-anchored cron grant only ONCE for the
+    // whole year (60, not 720/12mo). The fix must grant fresh credits every
+    // calendar month regardless.
+    await sql`
+      update subscriptions
+         set current_period_end = ${new Date("2027-06-01T00:00:00Z")}
+       where id = ${subId}`;
+
+    vi.useFakeTimers({ now: new Date("2026-06-05T00:00:00Z"), toFake: ["Date"] });
+
+    await grantMonthlyForAllWallets();
+    expect(await balance(subId)).toBe(60); // month N
+
+    // Same calendar month — a second poll must stay a no-op.
+    await grantMonthlyForAllWallets();
+    expect(await balance(subId)).toBe(60);
+
+    // Advance to month N+1 — current_period_end is UNCHANGED (still a year
+    // out), yet a fresh grant must land: cadence is monthly, not
+    // billing-cycle.
+    vi.setSystemTime(new Date("2026-07-03T00:00:00Z"));
+    await grantMonthlyForAllWallets();
+    expect(await grantBalance(subId)).toBe(60); // reset to this month's own 60, not banked to 120
+    expect(await balance(subId)).toBe(60);
+
+    // ...and month N+2, proving this isn't a one-off double-grant fluke —
+    // 3 calendar months in, 3 grants, still 60 in the bucket each time
+    // (180 total ever granted across the ledger, use-or-lose resets each).
+    vi.setSystemTime(new Date("2026-08-10T00:00:00Z"));
+    await grantMonthlyForAllWallets();
+    expect(await grantBalance(subId)).toBe(60);
+    expect(await balance(subId)).toBe(60);
   });
 });

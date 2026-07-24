@@ -97,7 +97,7 @@ All resolved via the north star (ARPU > conversion > margin floor > clarity):
 4. **Pack expiry → 24 months** from purchase (bounds deferred-revenue liability + captures breakage; long enough to feel permanent). ⚠ **needs finance/legal sign-off** — prepaid-credit / gift-card rules vary by jurisdiction (per stripe skill + finance).
 5. **Trials → custom `ai.credits.trial` ~20, once/org** (SPEC-2 §5.4).
 6. **AI officials auto → credit-metered on any tier** — same model as AI scheduling (wallet-gated, not plan-gated). Consistent, and it is revenue.
-7. **Grant reset anchor → billing-cycle anchor** for paid tiers (aligns with the Stripe period + proration); **creation-day calendar month** for Community.
+7. **Grant reset anchor → plain calendar month, for every tier** (paid and Community alike). This is NOT the Stripe billing-cycle boundary: SPEC-2 §5.4's Cadence rule is explicit that the grant is monthly *regardless of billing cadence* — an annual Pro ($159/yr) still gets 60/mo × 12, never a 720 lump — and an annual subscription's `current_period_end` only advances once a year, so anchoring paid tiers on it would silently collapse 12 grants into 1.
 8. **Operator allocation →** default **free-for-all** from the pool (no row = unlimited share); an org at its cap is a **hard block** (402 "ask your operator"), operator raises it instantly (SPEC-5 §1). Hard, because soft defeats the purpose.
 9. **Coming-soon Pro Plus features → tease now, build post-v17** (each its own project). No v17 scope creep.
 

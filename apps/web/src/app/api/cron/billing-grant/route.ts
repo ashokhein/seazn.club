@@ -13,12 +13,14 @@ import { grantMonthlyForAllWallets } from "@/lib/credits";
  *  `.github/workflows/billing-grant.yml`, same daily cadence as
  *  billing-quantity.
  *
- *  **Anchor (README §7 item 7):** paid wallets reset on the real Stripe
- *  billing-cycle boundary (`subscriptions.current_period_end`); Community
- *  wallets — which carry no Stripe period — fall back to plain calendar
- *  month, an accepted simplification (see `grantMonthlyForAllWallets`'s
- *  docstring for why this is safe: bounded skew, never a double-grant or a
- *  skipped month).
+ *  **Anchor (README §7 item 7; Cadence fix, SPEC-2 §5.4):** every wallet —
+ *  paid or Community — resets on the plain calendar month, never on
+ *  `subscriptions.current_period_end`. Keying paid wallets off the Stripe
+ *  billing-cycle boundary was tried and reverted: an annual-interval
+ *  subscription's `current_period_end` only advances once a year, so that
+ *  anchor collapsed 12 monthly grants into a single lump — a cadence
+ *  regression, not the "regardless of billing cadence" behavior SPEC-2 §5.4
+ *  requires (see `grantMonthlyForAllWallets`'s docstring).
  *
  *  Cron-shaped like /api/cron/billing-quantity: x-cron-secret header
  *  (CRON_SECRET env). */

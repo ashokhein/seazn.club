@@ -8,10 +8,13 @@
 # use-or-lose reset) never fires in staging/prod — same failure mode
 # billing-quantity.yml exists to avoid for seat-quantity drift.
 #
-# Idempotent per wallet-period (`lib/credits.ts`'s `grantMonthly`), so a daily
-# poll is safe: most days are a no-op, the poll following a real billing-cycle
-# rollover (paid) or calendar-month rollover (Community) is the one that
-# grants.
+# Idempotent per wallet-period (`lib/credits.ts`'s `grantMonthly`), keyed on
+# the plain calendar month for EVERY wallet — paid or Community — never on a
+# subscription's Stripe billing-cycle boundary (SPEC-2 §5.4 Cadence: grant is
+# monthly regardless of billing interval, so an annual Pro still gets
+# 60/mo x 12, not a single lump on its yearly renewal). A daily poll is safe:
+# most days are a no-op, the poll after a calendar-month rollover is the one
+# that grants.
 #
 # Auth: the x-cron-secret header must match the app's CRON_SECRET env — the
 # same secret billing-quantity.yml already uses, set in BOTH places:
@@ -21,8 +24,10 @@
 # secret into the prod Fly app.
 #
 # Skips with a warning until the GitHub secret exists, fails loud on any
-# non-200, and warns when a wallet's grant fails — so a persistent problem is
-# visible in the Actions tab.
+# non-200, and warns when a wallet's grant fails (`failed` from
+# grantMonthlyForAllWallets — mirrors billing-quantity.yml's own
+# corrected/failed/orphanOrgs conditional warning) — so a persistent problem
+# is visible in the Actions tab.
 name: Billing AI credit grant
 
 on:
@@ -59,4 +64,8 @@ jobs:
           echo "response: $body"
           wallets=$(echo "$body" | jq -r '.data.wallets // 0')
           granted=$(echo "$body" | jq -r '.data.granted // 0')
-          echo "::notice::billing grant: wallets=$wallets granted=$granted"
+          failed=$(echo "$body" | jq -r '.data.failed // 0')
+          echo "::notice::billing grant: wallets=$wallets granted=$granted failed=$failed"
+          if [ "$failed" != "0" ]; then
+            echo "::warning::billing grant: $failed wallet(s) failed to grant this run — see app logs for [credits] monthly grant failed"
+          fi
