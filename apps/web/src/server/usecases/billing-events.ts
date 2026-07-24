@@ -462,7 +462,11 @@ export async function syncSeatAddonsForSubscription(
       );
       continue;
     }
-    const featureKey = item.metadata?.feature_key || SEAT_ADDON.featureKey;
+    // A seat SKU lifts members.max BY DEFINITION (isSeatAddonItem matched it by
+    // lookup_key). Pin the feature_key instead of trusting item metadata: a
+    // divergent metadata.feature_key would write the row on an arbitrary cap
+    // that the members.max-scoped reconcile below never cancels — a stuck lift.
+    const featureKey = SEAT_ADDON.featureKey;
     const qty = item.quantity ?? 0;
     if (qty <= 0) {
       // A quantity-0 seat item is a removal in disguise: never write qty=0

@@ -156,6 +156,33 @@ describe.skipIf(!HAS_DB)("extra-seat add-on — webhook sync → resolver", () =
     expect(n).toBe(1);
   });
 
+  it("pins feature_key to members.max even when seat-item metadata says otherwise (no stuck lift)", async () => {
+    const org = await createOrgForUser(await makeUser(), "Seat Org Pin");
+    const walletId = await walletIdFor(org.id);
+    const itemId = `si_${uniq()}`;
+    // A seat item whose metadata names a DIFFERENT cap. A seat lifts members.max
+    // by definition, so the webhook must ignore the rogue key — otherwise the row
+    // lands on the wrong cap and the members.max-scoped reconcile never cancels it.
+    const rogue = {
+      id: itemId,
+      quantity: 1,
+      price: { id: `price_${itemId}`, lookup_key: "seazn_seat_monthly" },
+      metadata: { target_org_id: org.id, feature_key: "orgs.max_owned" },
+    } as unknown as Stripe.SubscriptionItem;
+
+    await syncSeatAddonsForSubscription(subWith([rogue]), walletId);
+
+    // Lands on members.max (pinned), not the rogue key.
+    expect(await getLimit(org.id, "members.max")).toBe(planBase + 1);
+    const [row] = await sql<{ feature_key: string }[]>`
+      select feature_key from org_addons where stripe_item_id = ${itemId}`;
+    expect(row?.feature_key).toBe("members.max");
+
+    // …and a later removal still cancels it — proves it is not a stuck lift.
+    await syncSeatAddonsForSubscription(subWith([]), walletId);
+    expect(await getLimit(org.id, "members.max")).toBe(planBase);
+  });
+
   it("V324: qty=0, delta_each=0 and negative delta_each are rejected by the CHECK", async () => {
     const org = await createOrgForUser(await makeUser(), "Seat Org Guard");
     const walletId = await walletIdFor(org.id);
