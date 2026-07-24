@@ -5,9 +5,10 @@ import { deleteMark, putMark } from "@/server/usecases/official-marks";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-/** Rate an accepted, decided assignment (SPEC-3, console). Pro `officials.marks`
- *  in the usecase; the mark window (accepted + decided/finalized) is enforced
- *  there too. Upsert — one mark per assignment, editable forever. */
+/** Rate an accepted, decided assignment (SPEC-3, console). Available on every
+ *  plan (V319 ungated marks — no entitlement gate, no 402); the mark window
+ *  (accepted + decided/finalized) is enforced in the usecase. Upsert — one mark
+ *  per assignment, editable forever. */
 export async function PUT(req: Request, { params }: Ctx) {
   return v1(async () => {
     const { id } = await params;
