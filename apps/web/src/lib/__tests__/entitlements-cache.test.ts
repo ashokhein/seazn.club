@@ -27,6 +27,15 @@ vi.mock("@/lib/cache", () => ({
   },
 }));
 
+// getLimit's non-null path now adds an uncached add-on sum (v17 Phase 3 T2),
+// which resolves the org's wallet via walletIdFor. This suite mocks the DB
+// wholesale (every sql call → []), so walletIdFor would throw "no organization";
+// stub it to the group-of-one identity (wallet = orgId). The add-on sum then
+// reads [] → 0, leaving the deny=0 semantics under test unchanged.
+vi.mock("@/lib/credits", () => ({
+  walletIdFor: async (orgId: string) => orgId,
+}));
+
 import { hasFeature, getLimit } from "@/lib/entitlements";
 
 beforeEach(() => {
