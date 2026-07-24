@@ -20,6 +20,7 @@ import {
 import { CREDIT_PACKS } from "@/lib/credit-packs";
 import { recordPackPurchase, recordPackRefund, walletIdFor } from "@/lib/credits";
 import { SEAT_ADDON, isSeatAddonItem } from "@/lib/seat-addons";
+import { getSizePack } from "@/lib/size-packs";
 import {
   invalidateGroupEntitlements,
   invalidateOrgEntitlements,
@@ -32,6 +33,7 @@ import {
   sendStaffDisputeAlertEmail,
   sendStuckEventsAlertEmail,
   sendCreditPackGrantFailedAlertEmail,
+  sendSizePackGrantFailedAlertEmail,
 } from "@/lib/email";
 import {
   handleRegistrationCheckoutCompleted,
@@ -92,6 +94,17 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     await handleRegistrationCheckoutCompleted(session);
     return;
   }
+
+  // Size-pack one-time purchase (v17 SPEC-2 §3, Phase 3 Task 3b) — lifts ONE
+  // competition's entrant cap by writing an org_addons row. This is the SINGLE
+  // writer of that row; idempotent on the payment_intent id (the V324 partial
+  // unique index on stripe_item_id). Handled before the generic org_id gate
+  // below because it keys on its own target_org_id metadata, not org_id.
+  if (session.metadata?.kind === "size_pack") {
+    if (session.payment_status === "paid") await grantSizePackAddon(session);
+    return;
+  }
+
   const orgId = session.metadata?.org_id;
   if (!orgId) return;
 
@@ -217,6 +230,84 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   }
 
   // Subscription details arrive via subscription.created; nothing more to do here.
+}
+
+/**
+ * Grant a paid size-pack purchase (v17 Phase 3 Task 3b): write ONE org_addons
+ * row lifting the target competition's entrant cap. The SINGLE writer of that
+ * row.
+ *
+ * Snapshot-first (T1 lesson): the grant reads feature_key + delta_each from the
+ * session metadata SNAPSHOT stamped at checkout creation, so a later catalog
+ * edit can never change an already-bought pack. The live size_pack_catalog is
+ * only a LOGGED last-resort fallback (staff-alerted on drift) — never a silent
+ * wrong/zero grant.
+ *
+ * Idempotent: a one-time pack has no subscription item, so stripe_item_id holds
+ * the PAYMENT_INTENT id (the Stripe object that created the row); the V324
+ * partial unique index makes a redelivered webhook a no-op via
+ * `on conflict (stripe_item_id) where stripe_item_id is not null do nothing` —
+ * the WHERE predicate matches the partial index. A replay must not double-lift.
+ */
+async function grantSizePackAddon(session: Stripe.Checkout.Session): Promise<void> {
+  const md = session.metadata ?? {};
+  const targetOrgId = md.target_org_id;
+  const targetCompetitionId = md.target_competition_id;
+  const sizePackKey = md.size_pack_key;
+  if (!targetOrgId || !targetCompetitionId) {
+    console.error(
+      `[billing] size_pack session ${session.id} missing target_org_id/target_competition_id ` +
+        `— cannot resolve which cap to lift; skipping`,
+    );
+    return;
+  }
+
+  // Snapshot-first: trust what was stamped at checkout creation.
+  const snapDelta = md.delta_each ? Number(md.delta_each) : NaN;
+  let featureKey = md.feature_key || "";
+  let deltaEach = Number.isFinite(snapDelta) && snapDelta > 0 ? snapDelta : NaN;
+  if (!featureKey || !Number.isFinite(deltaEach)) {
+    const cat = sizePackKey ? await getSizePack(sizePackKey) : null;
+    if (cat) {
+      featureKey = featureKey || cat.feature_key;
+      deltaEach = Number.isFinite(deltaEach) ? deltaEach : cat.delta_each;
+      console.error(
+        `[billing] size_pack session ${session.id} had no usable snapshot ` +
+          `(feature_key=${md.feature_key ?? "none"}, delta_each=${md.delta_each ?? "none"}) ` +
+          `— fell back to catalog lookup by size_pack_key ${sizePackKey}`,
+      );
+    }
+  }
+  if (!featureKey || !Number.isFinite(deltaEach) || deltaEach <= 0) {
+    // Paid but ungranted — surface it, never a silent no-op (mirrors credit packs).
+    console.error(
+      `[billing] size_pack session ${session.id} (org ${targetOrgId}) paid but ungranted ` +
+        `— no usable snapshot and no resolvable size_pack_key (${sizePackKey ?? "none"})`,
+    );
+    const alertTo = process.env.STAFF_ALERT_EMAIL;
+    if (alertTo) {
+      void sendSizePackGrantFailedAlertEmail({
+        to: alertTo,
+        sessionId: session.id,
+        targetOrgId,
+        competitionId: targetCompetitionId,
+        sizePackKey,
+        reason: "no snapshot and no resolvable size_pack_key",
+      }).catch(() => {});
+    }
+    return;
+  }
+
+  const stripeItemId =
+    typeof session.payment_intent === "string" ? session.payment_intent : session.id;
+  const walletId = await walletIdFor(targetOrgId);
+  await sql`
+    insert into org_addons
+      (wallet_id, target_org_id, target_competition_id, feature_key, delta_each, qty,
+       stripe_item_id, status)
+    values (${walletId}, ${targetOrgId}, ${targetCompetitionId}, ${featureKey},
+            ${deltaEach}, 1, ${stripeItemId}, 'active')
+    on conflict (stripe_item_id) where stripe_item_id is not null do nothing`;
 }
 
 /**

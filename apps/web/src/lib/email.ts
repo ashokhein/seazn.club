@@ -673,6 +673,50 @@ export async function sendCreditPackGrantFailedAlertEmail(
   return send({ to: opts.to, transactional: true, subject, html, text });
 }
 
+export interface SizePackGrantFailedAlertEmail {
+  to: string;
+  sessionId: string;
+  targetOrgId: string;
+  competitionId?: string;
+  sizePackKey?: string;
+  reason: string;
+}
+
+/** Internal staff alert (v17 Phase 3 Task 3b): a PAID `size_pack` checkout
+ *  session arrived with no usable feature_key/delta_each snapshot in its
+ *  metadata, and the catalog fallback could not resolve one either — the buyer
+ *  paid but the cap-lift could not be safely determined, so nothing was granted
+ *  rather than risking a wrong lift. A human must inspect and grant manually.
+ *  Ops-only, no user-facing i18n (mirrors sendCreditPackGrantFailedAlertEmail). */
+export async function sendSizePackGrantFailedAlertEmail(
+  opts: SizePackGrantFailedAlertEmail,
+): Promise<boolean> {
+  const subject = `Size pack purchase could not be granted: ${opts.sessionId}`;
+  const bodyText =
+    `A paid size-pack checkout session (${opts.sessionId}, org ${opts.targetOrgId}` +
+    `${opts.competitionId ? `, competition ${opts.competitionId}` : ""}` +
+    `${opts.sizePackKey ? `, size_pack_key ${opts.sizePackKey}` : ""}) could not be granted: ` +
+    `${opts.reason}. The buyer was charged but no entrant-cap add-on has been granted yet — ` +
+    `inspect and grant manually.`;
+  const html = renderEmail({
+    subject,
+    preheader: `Paid size pack ungranted — org ${opts.targetOrgId}`,
+    eyebrow: "Billing · Size packs",
+    title: "Size pack grant failed",
+    contentHtml:
+      paragraph(escapeHtml(bodyText)) +
+      panel(
+        "Session",
+        `${opts.sessionId}\norg: ${opts.targetOrgId}` +
+          `${opts.competitionId ? `\ncompetition: ${opts.competitionId}` : ""}` +
+          `${opts.sizePackKey ? `\nsize_pack_key: ${opts.sizePackKey}` : ""}\nreason: ${opts.reason}`,
+      ),
+    footerNote: "Automated staff alert — size pack webhook (P3 T3b).",
+  });
+  const text = `${bodyText}\n\nSession: ${opts.sessionId} · org ${opts.targetOrgId} · reason: ${opts.reason}`;
+  return send({ to: opts.to, transactional: true, subject, html, text });
+}
+
 /** True when Resend is configured. */
 export function emailConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY);

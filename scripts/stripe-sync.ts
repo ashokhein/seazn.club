@@ -74,12 +74,26 @@ export interface SeatSpec {
   product: { name: string; description?: string };
   price: PriceSpec;
 }
+/** The size-pack ONE-TIME add-on (v17 SPEC-2 §3/§11.3, Phase 3 Task 3b).
+ *  Structurally like a SeatSpec — one product, one price, `feature_key`/
+ *  `delta_each` that are OUR fields (never sent to Stripe) — but its price is
+ *  ONE-TIME (no `interval`, so priceCreateParams omits `recurring`), because a
+ *  competition is a bounded event, not a subscription. No `plans` row: the
+ *  checkout resolves the live price by lookup_key at request time. */
+export interface SizePackSpec {
+  key: string;
+  feature_key: string;
+  delta_each: number;
+  product: { name: string; description?: string };
+  price: PriceSpec;
+}
 export interface Seed {
   currency: string;
   plans: PlanSpec[];
   passes?: PassSpec[];
   packs?: PackSpec[];
   seats?: SeatSpec[];
+  size_packs?: SizePackSpec[];
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -419,6 +433,24 @@ async function main(): Promise<void> {
       const price = await ensurePrice(stripe, seat.price, seat.product, seat.key, seed.currency, null);
       console.log(
         `✓ ${seat.key}: recurring=${price.priceId} (${seat.feature_key} +${seat.delta_each}/seat)`,
+      );
+    }
+    // Size-pack ONE-TIME add-on (v17 Phase 3 Task 3b): idempotent ensurePrice
+    // like the packs (no `interval` → one-time), no `plans` row to write back —
+    // createSizePackCheckout (lib/size-packs.resolveSizePackPriceId) resolves the
+    // live price by lookup_key at request time. The pack SHAPE is DB-configurable
+    // (size_pack_catalog, V325); only the PRICE is Stripe-owned and synced here.
+    for (const sizePack of seed.size_packs ?? []) {
+      const price = await ensurePrice(
+        stripe,
+        sizePack.price,
+        sizePack.product,
+        sizePack.key,
+        seed.currency,
+        null,
+      );
+      console.log(
+        `✓ ${sizePack.key}: onetime=${price.priceId} (${sizePack.feature_key} +${sizePack.delta_each})`,
       );
     }
     console.log("Stripe sync complete.");
