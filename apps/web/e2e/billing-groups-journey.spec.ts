@@ -240,8 +240,11 @@ test.describe.serial("billing groups — visual workflow", () => {
 
     const dialog = dialogOf(page);
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText("There is no refund");
-    await expect(dialog).toContainText("the slot stays yours until the subscription renews");
+    // This workflow's group is non-live (no stripe_subscription_id, see file
+    // header), so removal has no paid seat to ride out or free: the org moves to
+    // Community now and there is nothing to refund.
+    await expect(dialog).toContainText("moves to its own Community plan now");
+    await expect(dialog).toContainText("there is nothing to refund");
     await shot(dialog, "detach-confirm");
   });
 
