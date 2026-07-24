@@ -449,8 +449,12 @@ async function main() {
     // current_period_end and no comped_until on a SQL-set plan there is no
     // paid-through date to inherit, so Community is the only safe landing —
     // detach must never mint a paid plan that nothing can ever expire.
+    // `mode: "release"` exercises the removal-mode param end to end; on a group
+    // with no live subscription both modes land the org in Community and leave
+    // the payer's freed slot reusable, which the re-attach below then proves.
     const detached = (await call(admin, "/api/billing/group/detach", "POST", {
       org_id: org2.id,
+      mode: "release",
     })) as { subscription_id: string; cancelled_group: string | null };
     check("billing-group: detach gives the org a group of its own", !!detached.subscription_id);
     check(

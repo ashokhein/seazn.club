@@ -224,7 +224,7 @@ async function assertGroupCanBillSeats(group: GroupRow, quantity: number): Promi
  */
 export async function syncGroupQuantity(
   subscriptionId: string,
-  opts: { renewal?: boolean; invoicedQuantity?: number } = {},
+  opts: { renewal?: boolean; invoicedQuantity?: number; spendFreedSeat?: boolean } = {},
 ): Promise<QuantitySync> {
   const res = (await sql.begin(async (tx) => {
     // Bound the blast radius of holding this lock across a Stripe round trip: if
@@ -302,9 +302,19 @@ export async function syncGroupQuantity(
     // the same period charge for a seat the customer had already bought.
     // Falls back to the pre-write item quantity when the line carries none.
     const raised = charged ? active : 0;
+    // A `ride_out` detach (spendFreedSeat) hands the departing org a comp that
+    // rides out THIS paid period, so the seat it leaves on is SPENT, not freed:
+    // quantity_paid drops by one — never below the orgs that remain — and the
+    // next re-add is charged again. Without it the freed slot stays reusable AND
+    // the departed org keeps the plan: one paid seat entitling two orgs, farmable
+    // without limit by cycling attach/detach. This is the ONE decrement allowed
+    // to lower quantity_paid below what Stripe still holds, and it is safe because
+    // the seat has been converted into the departing org's comp, not refunded.
     const paid = opts.renewal
       ? Math.max(opts.invoicedQuantity ?? heldBefore, raised)
-      : Math.max(group.quantity_paid, heldBefore, raised);
+      : opts.spendFreedSeat
+        ? Math.max(active, group.quantity_paid - 1)
+        : Math.max(group.quantity_paid, heldBefore, raised);
     if (paid !== group.quantity_paid) {
       await tx`
         update subscriptions set quantity_paid = ${paid}, updated_at = now()
@@ -686,6 +696,21 @@ export interface DetachResult {
 }
 
 /**
+ * How the departing org leaves, and what happens to the seat it was on.
+ *
+ *  - `ride_out` (default): the org keeps the plan until the paid period ends,
+ *    then drops to Community. The seat is SPENT — it follows the org, so the
+ *    payer's next re-add is charged again.
+ *  - `release`: the org drops to Community immediately, losing access the moment
+ *    it leaves. The seat is KEPT — a freed slot the payer can reuse for free
+ *    until the period ends.
+ *
+ * You can never keep the plan AND reuse the slot from one seat: that combination
+ * is the farm this split exists to prevent.
+ */
+export type DetachMode = "ride_out" | "release";
+
+/**
  * Move `orgId` out of its billing group and onto a fresh one of its own.
  *
  * EITHER SIDE may initiate: the group's payer can push an org out, and the
@@ -693,7 +718,8 @@ export interface DetachResult {
  * funding them in order to leave, and no payer is trapped funding an org that
  * refuses to pay.
  *
- * DETACH REQUIRES NO PAYMENT. The new group inherits:
+ * DETACH REQUIRES NO PAYMENT TODAY. On a `ride_out` (the default) the new group
+ * inherits:
  *  - `plan_key`      — it keeps the plan it was already using, but ONLY when
  *    there is a date on which that plan expires (below);
  *  - `comped_until = coalesce(current_period_end, comped_until)` — which the
@@ -708,21 +734,23 @@ export interface DetachResult {
  *  - `trial_used_at` — inheriting the stamp is what stops detach farming a
  *    fresh 14-day trial by cycling in and out of a group.
  *
- * NEVER MINT AN UNEXPIRING PAID PLAN. When neither date exists, or when the old
- * group was not actually paying (past_due, cancelled — an org cannot inherit a
- * paid-through period from a payer who has not paid, and doing so would let a
- * dunning org escape its own degradation by leaving), the new group is plain
- * Community and the org subscribes for itself.
+ * NEVER MINT AN UNEXPIRING PAID PLAN. On a `release`, or when neither date
+ * exists, or when the old group was not actually paying (past_due, cancelled —
+ * an org cannot inherit a paid-through period from a payer who has not paid, and
+ * doing so would let a dunning org escape its own degradation by leaving), the
+ * new group is plain Community and the org subscribes for itself.
  *
  * The old group's Stripe quantity DOES come down, with `proration_behavior:
- * "none"` — no credit now (the slot stays theirs until the period ends), but
- * the next invoice is honest. See syncGroupQuantity.
+ * "none"` — no credit now, but the next invoice is honest. Whether the freed
+ * seat stays reusable (release) or is spent with the departing org (ride_out) is
+ * decided by `spendFreedSeat`. See syncGroupQuantity.
  */
 export async function detachOrgFromGroup(args: {
   actorUserId: string;
   orgId: string;
+  mode?: DetachMode;
 }): Promise<DetachResult> {
-  const { actorUserId, orgId } = args;
+  const { actorUserId, orgId, mode = "ride_out" } = args;
 
   const result = await sql.begin(async (tx) => {
     // Org row first, then its group — the same lock order attach takes, so a
@@ -767,14 +795,24 @@ export async function detachOrgFromGroup(args: {
     if (others.length === 0 && group.owner_user_id === orgOwnerId)
       throw new HttpError(400, "This organisation already has its own billing group.");
 
-    // Only a group that is actually paying can hand on a paid-through period.
-    // A past_due group is mid-dunning and its orgs are counting down to
-    // community; letting one leave with a comp would hand it exactly the
-    // entitlement the dunning is withdrawing.
+    // Two modes, and the seat is what separates them (see the doc comment):
+    //  - `release`: the org drops to Community the moment it leaves, and the payer
+    //    KEEPS the seat they bought — a freed slot they can reuse for free until
+    //    the period ends. No comp handed out, so there is nothing to farm.
+    //  - `ride_out`: the org keeps the plan until the paid period ends (a comp),
+    //    and the seat it rides out on is SPENT — it follows the org, so a re-add
+    //    is charged again. You never get both the comp AND the reusable slot from
+    //    one seat; that combination was the farm.
+    //
+    // Only a group that is actually paying can hand on a paid-through period. A
+    // past_due group is mid-dunning and its orgs are counting down to community;
+    // letting one leave with a comp would hand it exactly the entitlement the
+    // dunning is withdrawing — so ride_out degrades to release for it.
     const paying = group.status === "active" || group.status === "trialing";
-    const compedUntil = paying
-      ? (group.current_period_end ?? group.comped_until ?? null)
-      : null;
+    const compedUntil =
+      mode === "ride_out" && paying
+        ? (group.current_period_end ?? group.comped_until ?? null)
+        : null;
     // No expiry date means no paid plan. Community is the only safe landing.
     const planKey = compedUntil ? group.plan_key : "community";
 
@@ -785,7 +823,9 @@ export async function detachOrgFromGroup(args: {
               ${compedUntil}, ${group.trial_used_at}, now())
       returning id`;
     await tx`update organizations set subscription_id = ${fresh.id} where id = ${orgId}`;
-    return { from: group.id, to: fresh.id, remaining: others.length };
+    // `comped` drives the seat spend below: a seat is only consumed when a comp
+    // was actually handed out (ride_out on a paying group), never on a release.
+    return { from: group.id, to: fresh.id, remaining: others.length, comped: compedUntil != null };
   });
 
   await invalidateMove(orgId, result.from, result.to);
@@ -812,8 +852,13 @@ export async function detachOrgFromGroup(args: {
   // they keep the slot they bought for the rest of this period, and the NEXT
   // invoice is the smaller one. Best-effort: a detach must always complete (the
   // eviction path especially), and the reconcile sweep catches what fails.
+  //
+  // `spendFreedSeat` when a comp was handed out (ride_out): the seat follows the
+  // departing org, so quantity_paid comes down with it and a re-add is charged
+  // again. On a release no comp was minted, so the seat stays a reusable freed
+  // slot and quantity_paid holds — the two halves that keep the farm shut.
   try {
-    await syncGroupQuantity(result.from);
+    await syncGroupQuantity(result.from, { spendFreedSeat: result.comped });
   } catch (err) {
     console.error(
       `[billing] detach: org ${orgId} left group ${result.from} but the quantity sync failed`,
