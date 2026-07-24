@@ -1016,43 +1016,12 @@ test.describe("T12 · Connect health banner surfaces payout trouble", () => {
 });
 
 // ===========================================================================
-// T15 — Pro AI generation cap (20 per division; V302, supersedes V291's 5)
+// T15 — Pro AI generation cap — RETIRED (v17 Phase 2 Task 5, V322)
 // ===========================================================================
-
-test.describe("T15 · Pro AI scheduling is capped per division", () => {
-  test("the 21st generation on a division 402s with the cap key", async ({ page }) => {
-    const org = await activeOrg(page); // shared Pro org (scheduling.ai + cap=20)
-    const comp = await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", {
-      name: `T15 ${TAG} ${randomBytes(3).toString("hex")}`,
-      visibility: "private",
-    });
-    const div = await apiJson<{ id: string }>(
-      page.request,
-      `/api/v1/competitions/${comp.data!.id}/divisions`,
-      "POST",
-      { name: "Open", sport_key: "generic", variant_key: "score", config: GENERIC_CONFIG, eligibility: [] },
-    );
-
-    // Seed the 20 prior AI runs the cap counts from the audit ledger.
-    await withDb(async (sql) => {
-      for (let i = 0; i < 20; i++) {
-        await sql`
-          insert into competition_events (competition_id, org_id, type, payload, actor_id)
-          values (${comp.data!.id}, ${org.id}, 'schedule.ai_generated',
-                  ${sql.json({ division_id: div.data!.id })}, null)`;
-      }
-    });
-
-    // The 21st generation is refused BEFORE the LLM with the per-division cap key.
-    const res = await page.request.post(
-      `/api/v1/divisions/${div.data!.id}/schedule/ai-plan`,
-      {
-        headers: { "content-type": "application/json" },
-        data: JSON.stringify({ instruction: "no back-to-back games for anyone" }),
-      },
-    );
-    expect(res.status()).toBe(402);
-    const body = (await res.json()) as { error?: { feature_key?: string } };
-    expect(body.error?.feature_key).toBe("scheduling.ai.runs_per_division.max");
-  });
-});
+//
+// The per-division AI-run count cap this test covered is gone: AI schedule
+// runs are now metered by the AI credit wallet
+// (lib/credits.ts) on every tier, not a plan-graded per-division count, so
+// there is no 402-at-the-21st-run behavior left to assert here. A wallet-
+// empty 402 e2e test is deferred until Task 6 (grants wiring) lands — until
+// then e2e orgs have no reliable way to drain a wallet.
