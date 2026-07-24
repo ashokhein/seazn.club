@@ -4,6 +4,25 @@ import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { CHECKOUT_BRANDING, CUSTOMER_UPDATE_FOR_TAX } from "@/lib/billing";
+import { SEAT_ADDON } from "@/lib/seat-addons";
+
+/** A size-pack may lift any additive cap EXCEPT the seat-managed one. The
+ *  extra-seat webhook reconcile (syncSeatAddonsForSubscription) cancels every
+ *  active `members.max` org_addons row on the wallet whose Stripe item it no
+ *  longer sees; a size-pack's one-time payment_intent id is never in that
+ *  seen-set, so a size-pack pointed at `members.max` would be silently canceled
+ *  by the next seat `subscription.updated` on the same group. `feature_key` is
+ *  admin-configurable (owner intent) for every OTHER cap — forbid only this one
+ *  collision at write time (single source of truth: SEAT_ADDON.featureKey). */
+function assertNotSeatManaged(featureKey: string | undefined): void {
+  if (featureKey === SEAT_ADDON.featureKey) {
+    throw new HttpError(
+      400,
+      `A size-pack cannot lift '${SEAT_ADDON.featureKey}' — that cap is managed by the ` +
+        `extra-seat add-on and would be canceled by its next subscription sync.`,
+    );
+  }
+}
 
 // Size-pack one-time add-on (design/v17-pricing-entitlements/SPEC-2 §3/§11.3,
 // v17 Phase 3 Task 3b): a one-time Checkout Session that lifts ONE
@@ -66,6 +85,7 @@ export async function createSizePack(input: {
   stripe_lookup_key: string;
   active?: boolean;
 }): Promise<SizePackCatalogRow> {
+  assertNotSeatManaged(input.feature_key);
   const [row] = await sql<SizePackCatalogRow[]>`
     insert into size_pack_catalog (key, label, feature_key, delta_each, stripe_lookup_key, active)
     values (${input.key}, ${input.label}, ${input.feature_key}, ${input.delta_each},
@@ -88,6 +108,7 @@ export async function updateSizePack(
     active: boolean;
   }>,
 ): Promise<SizePackCatalogRow | null> {
+  assertNotSeatManaged(patch.feature_key);
   const [row] = await sql<SizePackCatalogRow[]>`
     update size_pack_catalog set
       label             = coalesce(${patch.label ?? null}, label),

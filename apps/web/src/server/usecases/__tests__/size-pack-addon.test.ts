@@ -63,7 +63,7 @@ import { sql } from "@/lib/db";
 import { createOrgForUser } from "@/lib/auth";
 import { walletIdFor } from "@/lib/credits";
 import { getLimit } from "@/lib/entitlements";
-import { getSizePack } from "@/lib/size-packs";
+import { getSizePack, createSizePack, updateSizePack } from "@/lib/size-packs";
 import { createSizePackCheckout } from "../size-pack-checkout";
 import { processStripeEvent } from "../billing-events";
 import { GET as adminList, POST as adminCreate } from "@/app/api/admin/size-packs/route";
@@ -229,6 +229,37 @@ describe.skipIf(!HAS_DB)("size_pack_catalog V325 guard", () => {
       sql`insert into size_pack_catalog (key, label, feature_key, delta_each, stripe_lookup_key)
           values (${`bad-${uniq()}`}, 'bad', ${FEATURE}, -1, 'seazn_bad')`,
     ).rejects.toThrow();
+  });
+
+  it("forbids a catalog row that lifts the seat-managed cap (members.max)", async () => {
+    // A size-pack pointed at members.max would be silently canceled by the next
+    // extra-seat subscription sync (the seat reconcile sweeps every members.max
+    // row on the wallet, and a one-time pi_ id is never in its seen-set). The
+    // catalog write refuses it — while still allowing every OTHER cap.
+    await expect(
+      createSizePack({
+        key: `sp-seat-${uniq()}`,
+        label: "rogue seat pack",
+        feature_key: "members.max",
+        delta_each: 5,
+        stripe_lookup_key: "seazn_size_pack_32",
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+
+    // A non-colliding cap is accepted (admin-configurability preserved)…
+    const ok = await createSizePack({
+      key: `sp-ok-${uniq()}`,
+      label: "entrants pack",
+      feature_key: FEATURE,
+      delta_each: 16,
+      stripe_lookup_key: "seazn_size_pack_32",
+    });
+    expect(ok.feature_key).toBe(FEATURE);
+
+    // …and an EDIT to members.max is refused too.
+    await expect(
+      updateSizePack(ok.key, { feature_key: "members.max" }),
+    ).rejects.toMatchObject({ status: 400 });
   });
 });
 
