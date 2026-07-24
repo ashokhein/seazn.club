@@ -64,10 +64,10 @@ const GENERIC = {
   config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
 };
 
-/** Community's `entrants.per_division.max` (V311). The pass lifts it to 64, so
- *  entry 33 is the boundary that separates them — 17–32, which the spec's U7
- *  still names, is allowed on BOTH since V311 and proves nothing. */
-const COMMUNITY_ENTRANT_CAP = 32;
+/** Community's `entrants.per_division.max` (V319). The pass lifts it to 128, so
+ *  entry 65 is the boundary that separates them — 33–64, which the spec's U7
+ *  still names, is allowed on BOTH since V319 and proves nothing. */
+const COMMUNITY_ENTRANT_CAP = 64;
 
 // ---------------------------------------------------------------------------
 // One-shot SQL against the app's schema (helpers.ts keeps withDb private).
@@ -158,7 +158,7 @@ async function seedSiblingCompetition(orgId: string, label: string): Promise<{ i
   });
 }
 
-/** Fill a division to `taken` spot-holding entries. Inserted directly: 32 round
+/** Fill a division to `taken` spot-holding entries. Inserted directly: 64 round
  *  trips through the public endpoint would trip its own per-IP rate limit long
  *  before they finished. Scoped to a division this spec created. */
 async function fillDivision(divisionId: string, orgId: string, taken: number): Promise<void> {
@@ -389,8 +389,8 @@ for (const vp of VIEWPORTS) {
       // unconditional skip (billing.spec.ts:255-257 learned this the hard way).
       expect(probeStatus).toBe(200);
 
-      // Community's `divisions.per_competition.max` is 2 — fill it, then bite.
-      for (const name of ["One", "Two"]) {
+      // Community's `divisions.per_competition.max` is 4 — fill it, then bite.
+      for (const name of ["One", "Two", "Three", "Four"]) {
         const d = await apiJson<{ id: string }>(
           page.request,
           `/api/v1/competitions/${rig.compId}/divisions`,
@@ -404,7 +404,7 @@ for (const vp of VIEWPORTS) {
         page.request,
         `/api/v1/competitions/${rig.compId}/divisions`,
         "POST",
-        { name: "Three", ...GENERIC },
+        { name: "Five", ...GENERIC },
       );
       expect(bitten.status).toBe(402);
 
@@ -467,14 +467,14 @@ for (const vp of VIEWPORTS) {
         .toBe(true);
 
       // The gate is gone: the write that 402'd before now goes through.
-      const third = await apiJson<{ id: string }>(
+      const fifth = await apiJson<{ id: string }>(
         page.request,
         `/api/v1/competitions/${rig.compId}/divisions`,
         "POST",
-        { name: "Three", ...GENERIC },
+        { name: "Five", ...GENERIC },
       );
-      expect(third.status).toBe(201);
-      divisionIds.push(third.data!.id);
+      expect(fifth.status).toBe(201);
+      divisionIds.push(fifth.data!.id);
     });
 
     test(`U6 · division 11 hits a Pro-only ceiling and the pass is never re-sold (${vp.name})`, async ({
@@ -484,7 +484,7 @@ for (const vp of VIEWPORTS) {
       test.setTimeout(180_000);
       await signIn(page, rig.ownerEmail);
 
-      // The pass grants 10. Fill 4..10, then ask for 11.
+      // The pass grants 10. Fill 6..10, then ask for 11.
       for (let n = divisionIds.length + 1; n <= 10; n++) {
         const d = await apiJson<{ id: string }>(
           page.request,
@@ -534,7 +534,7 @@ for (const vp of VIEWPORTS) {
       expect(await page.locator("main").innerText()).not.toContain("$29");
     });
 
-    test(`U7 · public registration passes 32 on the passed competition only (${vp.name})`, async ({
+    test(`U7 · public registration passes 64 on the passed competition only (${vp.name})`, async ({
       page,
     }) => {
       test.skip(!stripeUsable, "Stripe not usable — U1 skipped the pass money path");
@@ -580,7 +580,7 @@ for (const vp of VIEWPORTS) {
         )).status,
       ).toBeLessThan(300);
 
-      // Both sit exactly ON the community cap, so entry 33 is the question.
+      // Both sit exactly ON the community cap, so entry 65 is the question.
       await fillDivision(passedDivision, rig.orgId, COMMUNITY_ENTRANT_CAP);
       await fillDivision(plainDiv.data!.id, rig.orgId, COMMUNITY_ENTRANT_CAP);
 
@@ -597,10 +597,10 @@ for (const vp of VIEWPORTS) {
           },
         );
 
-      const onPassed = await submit(rig.compSlug, passedDivision, "Entry Thirty Three");
-      const onPlain = await submit(plain.slug, plainDiv.data!.id, "Plain Thirty Three");
+      const onPassed = await submit(rig.compSlug, passedDivision, "Entry Sixty Five");
+      const onPlain = await submit(plain.slug, plainDiv.data!.id, "Plain Sixty Five");
 
-      // The pass lifts `entrants.per_division.max` 32 → 64 for ITS competition.
+      // The pass lifts `entrants.per_division.max` 64 → 128 for ITS competition.
       expect(onPassed.status).toBe(201);
       expect(onPassed.data!.status).toBe("pending");
       // …and only its competition. Without this arm the test would still pass
@@ -705,7 +705,7 @@ for (const vp of VIEWPORTS) {
       await expect(page.locator("[data-pass-active]")).toBeVisible({ timeout: 20_000 });
 
       // …and still GRANTS: an 11th division is refused, a 10th-slot write is not.
-      // (Divisions 3–10 exist only because the pass raised the cap from 2.)
+      // (Divisions 5–10 exist only because the pass raised the cap from 4.)
       const overCap = await apiJson(
         page.request,
         `/api/v1/competitions/${rig.compId}/divisions`,

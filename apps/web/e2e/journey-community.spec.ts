@@ -152,7 +152,7 @@ test.describe.serial("community lifecycle", () => {
     crowdedDivisionId = div.data!.id;
 
     // The community entrant cap, read from the matrix rather than hard-coded —
-    // V311 moved it 16 → 32 and this test went green-then-red with it (the
+    // V319 moved it 32 → 64 and this test went green-then-red with it (the
     // over-cap entry started coming back 201). Deriving it keeps the assertion
     // from drifting with the packaging again.
     const entrantCap = await communityLimit("entrants.per_division.max");
@@ -184,34 +184,36 @@ test.describe.serial("community lifecycle", () => {
     });
   });
 
-  test("3rd division in a competition is Pro-only (free cap: 2)", async ({ request }) => {
+  test("5th division in a competition is Pro-only (free cap: 4)", async ({ request }) => {
     const GENERIC = {
       sport_key: "generic",
       variant_key: "score",
       config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
     };
-    // The limits competition holds one division; the 2nd fits the v3 cap…
-    const second = await apiJson(
+    // The limits competition holds one division; divisions 2–4 fit the V319 cap…
+    for (const name of ["Reserves", "Thirds", "Fourths"]) {
+      const fit = await apiJson(
+        request,
+        `/api/v1/competitions/${limitsCompetitionId}/divisions`,
+        "POST",
+        { name, ...GENERIC },
+      );
+      expect(fit.status).toBe(201);
+    }
+    // …the 5th is the paid layer.
+    const fifth = await apiJson(
       request,
       `/api/v1/competitions/${limitsCompetitionId}/divisions`,
       "POST",
-      { name: "Reserves", ...GENERIC },
+      { name: "Fifths", ...GENERIC },
     );
-    expect(second.status).toBe(201);
-    // …the 3rd is the paid layer.
-    const third = await apiJson(
-      request,
-      `/api/v1/competitions/${limitsCompetitionId}/divisions`,
-      "POST",
-      { name: "Thirds", ...GENERIC },
-    );
-    expect(third.status).toBe(402);
-    expect(third.error?.code).toBe("PAYMENT_REQUIRED");
+    expect(fifth.status).toBe(402);
+    expect(fifth.error?.code).toBe("PAYMENT_REQUIRED");
   });
 
   test("the active-competition ceiling bites in the wizard", async ({ page, request }) => {
     // Community runs up to `competitions.max_active` competitions — read from
-    // the matrix, since V311 moved it (2 → 5) and a hard-coded "2nd competition
+    // the matrix, since V319 moved it (5 → 10) and a hard-coded "2nd competition
     // 402s" quietly came back 201. The Limits comp already holds a slot; create
     // up to the cap, then the next 402s. Loop rather than count: sibling specs
     // sharing this community org may already occupy slots.

@@ -35,13 +35,13 @@ const GENERIC_CONFIG = {
   progressScore: false,
 };
 
-/** Community's `entrants.per_division.max` (V311). An Event Pass lifts it to 64
- *  for its own competition, so entry 33 is the boundary that separates a passed
+/** Community's `entrants.per_division.max` (V319). An Event Pass lifts it to 128
+ *  for its own competition, so entry 65 is the boundary that separates a passed
  *  comp (accepted, holds a real spot) from a community one (waitlisted). This is
  *  the grant the pass STILL uniquely provides after V310 made registration.paid
  *  true on every plan — card intake no longer closes on pass/plan loss, so the
  *  old "card payments temporarily unavailable" proof is dead. */
-const COMMUNITY_ENTRANT_CAP = 32;
+const COMMUNITY_ENTRANT_CAP = 64;
 
 // ---------------------------------------------------------------------------
 // Signed-webhook harness (Step 1)
@@ -224,7 +224,7 @@ async function seedStripeDivision(
 }
 
 /** Fill a division to `taken` spot-holding entries (status 'pending'), inserted
- *  directly — 32 round-trips through the public endpoint would trip its per-IP
+ *  directly — 64 round-trips through the public endpoint would trip its per-IP
  *  rate limit long before they finished. Mirrors event-pass.spec.ts::fillDivision. */
 async function fillDivision(divisionId: string, orgId: string, taken: number): Promise<void> {
   const tag = randomBytes(5).toString("hex");
@@ -448,23 +448,23 @@ test.describe("T2 · API keys cannot delete a competition", () => {
 // ===========================================================================
 
 test.describe("T3 · Event Pass refund revokes the pass", () => {
-  test("charge.refunded revokes the pass — the entrant cap drops 64 → 32", async ({
+  test("charge.refunded revokes the pass — the entrant cap drops 128 → 64", async ({
     request,
   }) => {
     const intent = uid("pi");
     const org = await seedOrg({ plan: "community", chargesEnabled: true, connected: true });
     const { compId, compSlug } = await seedComp(org.orgId);
     // Uncapped by the organiser, so the PLAN quota is the only ceiling; sit the
-    // division ON the community cap so entry 33 separates a passed comp from a
+    // division ON the community cap so entry 65 separates a passed comp from a
     // community one. (V310 killed the card-intake-closes proof — see the
     // COMMUNITY_ENTRANT_CAP note; the entrant cap is what the pass still grants.)
     const { divisionId } = await seedStripeDivision(compId, null);
     await grantPass(compId, org.orgId, intent);
     await fillDivision(divisionId, org.orgId, COMMUNITY_ENTRANT_CAP);
 
-    // While the pass is held the cap is 64: entry 33 takes a real spot. A
+    // While the pass is held the cap is 128: entry 65 takes a real spot. A
     // passless community org would waitlist this, so the assertion is NOT vacuous.
-    const held = await submitPublicRegistration(request, org.orgSlug, compSlug, divisionId, "Held 33");
+    const held = await submitPublicRegistration(request, org.orgSlug, compSlug, divisionId, "Held 65");
     expect(held.status).toBe(201);
     expect(held.data!.status).toBe("pending");
 
@@ -486,11 +486,11 @@ test.describe("T3 · Event Pass refund revokes the pass", () => {
     );
     expect(passGone.length).toBe(0);
 
-    // … and the cap has dropped back to 32: the next entry (the 34th spot-holder)
+    // … and the cap has dropped back to 64: the next entry (the 66th spot-holder)
     // is over the community ceiling and waitlists. Reverting the revocation leaves
-    // the cap at 64 and this comes back 'pending' — so the assertion can still fail.
+    // the cap at 128 and this comes back 'pending' — so the assertion can still fail.
     const afterRevoke = await submitPublicRegistration(
-      request, org.orgSlug, compSlug, divisionId, "After Refund 34",
+      request, org.orgSlug, compSlug, divisionId, "After Refund 66",
     );
     expect(afterRevoke.status).toBe(201);
     expect(afterRevoke.data!.status).toBe("waitlisted");
@@ -732,7 +732,7 @@ test.describe("T7 · platform disputes truth-up entitlements", () => {
     ).toBeVisible({ timeout: 20_000 });
   });
 
-  test("Event Pass: a lost dispute revokes the pass — the entrant cap drops 64 → 32", async ({
+  test("Event Pass: a lost dispute revokes the pass — the entrant cap drops 128 → 64", async ({
     request,
   }) => {
     const intent = uid("pi");
@@ -743,8 +743,8 @@ test.describe("T7 · platform disputes truth-up entitlements", () => {
     await grantPass(compId, org.orgId, intent);
     await fillDivision(divisionId, org.orgId, COMMUNITY_ENTRANT_CAP);
 
-    // Pass held → cap 64 → entry 33 holds a spot (a passless community waitlists).
-    const held = await submitPublicRegistration(request, org.orgSlug, compSlug, divisionId, "Held 33");
+    // Pass held → cap 128 → entry 65 holds a spot (a passless community waitlists).
+    const held = await submitPublicRegistration(request, org.orgSlug, compSlug, divisionId, "Held 65");
     expect(held.status).toBe(201);
     expect(held.data!.status).toBe("pending");
 
@@ -767,10 +767,10 @@ test.describe("T7 · platform disputes truth-up entitlements", () => {
     );
     expect(passGone.length).toBe(0);
 
-    // Cap back to 32 → the 34th spot-holder waitlists. Reverting the dispute
-    // revocation leaves it 64 and this reads 'pending', so it can still fail.
+    // Cap back to 64 → the 66th spot-holder waitlists. Reverting the dispute
+    // revocation leaves it 128 and this reads 'pending', so it can still fail.
     const afterRevoke = await submitPublicRegistration(
-      request, org.orgSlug, compSlug, divisionId, "After Dispute 34",
+      request, org.orgSlug, compSlug, divisionId, "After Dispute 66",
     );
     expect(afterRevoke.status).toBe(201);
     expect(afterRevoke.data!.status).toBe("waitlisted");
@@ -915,12 +915,12 @@ test.describe("T9 · past-due grace degrades to community after 14 days", () => 
 // ===========================================================================
 
 test.describe("T10 · a pass lifts the entrant cap on its own comp only", () => {
-  test("Community org: entry 33 waitlists on the no-pass comp, holds a spot on the passed comp", async ({
+  test("Community org: entry 65 waitlists on the no-pass comp, holds a spot on the passed comp", async ({
     page,
   }) => {
     // Connect stays LIVE; only the paid entitlement lapsed (community plan). V310
     // made registration.paid true on every plan, so card intake no longer closes
-    // on plan loss — the entrant cap (community 32, pass 64) is the grant the pass
+    // on plan loss — the entrant cap (community 64, pass 128) is the grant the pass
     // still uniquely provides, and it is competition-scoped.
     const org = await seedOrg({ plan: "community", chargesEnabled: true, connected: true });
 
@@ -931,7 +931,7 @@ test.describe("T10 · a pass lifts the entrant cap on its own comp only", () => 
     const passedDiv = await seedStripeDivision(passed.compId, null);
     await grantPass(passed.compId, org.orgId);
 
-    // Both sit exactly ON the community cap; entry 33 is the question.
+    // Both sit exactly ON the community cap; entry 65 is the question.
     await fillDivision(plainDiv.divisionId, org.orgId, COMMUNITY_ENTRANT_CAP);
     await fillDivision(passedDiv.divisionId, org.orgId, COMMUNITY_ENTRANT_CAP);
 
@@ -941,16 +941,16 @@ test.describe("T10 · a pass lifts the entrant cap on its own comp only", () => 
     await expect(page.getByRole("radio").first()).toBeEnabled();
 
     const onPlain = await submitPublicRegistration(
-      page.request, org.orgSlug, plain.compSlug, plainDiv.divisionId, "Plain 33",
+      page.request, org.orgSlug, plain.compSlug, plainDiv.divisionId, "Plain 65",
     );
     const onPassed = await submitPublicRegistration(
-      page.request, org.orgSlug, passed.compSlug, passedDiv.divisionId, "Passed 33",
+      page.request, org.orgSlug, passed.compSlug, passedDiv.divisionId, "Passed 65",
     );
 
-    // The pass lifts entrants.per_division.max 32 → 64 for ITS comp: entry 33 holds.
+    // The pass lifts entrants.per_division.max 64 → 128 for ITS comp: entry 65 holds.
     expect(onPassed.status).toBe(201);
     expect(onPassed.data!.status).toBe("pending");
-    // …and only its comp — the sibling still waitlists at 32. This is also the
+    // …and only its comp — the sibling still waitlists at 64. This is also the
     // org-wide-leak guard: a raised cap must not spill to the no-pass comp.
     // (Drop the pass and BOTH waitlist; leak it org-wide and BOTH pass — either
     // way an arm flips, so neither assertion is vacuous.)

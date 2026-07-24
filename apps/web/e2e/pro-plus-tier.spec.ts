@@ -278,15 +278,16 @@ test.describe("Pro Plus · officials-per-fixture quota", () => {
 });
 
 test.describe("Pro Plus · schedule save-point quota", () => {
-  test("Community: the 2nd save point 402s (limit 1)", async ({ page }) => {
+  test("Community: the 3rd save point 402s (limit 2)", async ({ page }) => {
     const org = await seedOrg({ plan: "community" });
     await loginAsOwner(page, org.ownerEmail);
     const { divisionId } = await seedDivision(page.request);
 
     expect((await createCheckpoint(page.request, divisionId, `cp1 ${hex()}`)).status).toBe(201);
-    const second = await createCheckpoint(page.request, divisionId, `cp2 ${hex()}`);
-    expect(second.status).toBe(402);
-    expect(second.featureKey).toBe("schedule.checkpoints.max");
+    expect((await createCheckpoint(page.request, divisionId, `cp2 ${hex()}`)).status).toBe(201);
+    const third = await createCheckpoint(page.request, divisionId, `cp3 ${hex()}`);
+    expect(third.status).toBe(402);
+    expect(third.featureKey).toBe("schedule.checkpoints.max");
   });
 
   test("Pro: 5 save points are allowed, the 6th 402s (limit 5)", async ({ page }) => {
