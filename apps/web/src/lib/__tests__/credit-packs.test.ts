@@ -63,6 +63,18 @@ describe("buildCreditPackCheckoutParams", () => {
     expect("payment_method_collection" in p).toBe(false);
   });
 
+  it("stamps the PaymentIntent metadata so charge.refunded can recognise a pack charge (P3 T4)", () => {
+    // Stripe copies PI metadata onto the Charge; the refund webhook reads it
+    // there (the Charge does NOT carry the session metadata). No `credits`
+    // snapshot here — a refund claws back from the ledger, never a wire number.
+    const p = buildCreditPackCheckoutParams({ ...base, customerEmail: "a@b.com" });
+    expect(p.payment_intent_data?.metadata).toEqual({
+      kind: "credit_pack",
+      org_id: "org-abc",
+      pack_key: "credits_10",
+    });
+  });
+
   it("never sends payment_method_types (stripe skill: dynamic payment methods)", () => {
     const p = buildCreditPackCheckoutParams({ ...base, customerEmail: "a@b.com" });
     expect("payment_method_types" in p).toBe(false);

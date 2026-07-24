@@ -450,6 +450,72 @@ export async function recordPackPurchase(
 }
 
 /**
+ * Claw back a refunded credit pack (SPEC-2 §5, v17 Phase 3 Task 4): a Stripe
+ * `charge.refunded` for a pack purchase debits ONLY the credits the customer
+ * has not yet spent from the `pack` bucket. `stripeRef` is the same value
+ * `recordPackPurchase` stamped as `ref` (the payment_intent id) — the buy and
+ * refund paths MUST agree on it or nothing matches.
+ *
+ * **Never over-claws, never goes negative, never touches `grant`:** the debit
+ * is `min(originalGrant, packBalance)` — capped so it can neither exceed what
+ * the purchase granted (a customer who bought two packs and spent from one
+ * keeps the other's credits) NOR drive the `pack` bucket below zero (credits
+ * already spent are gone; we don't retro-charge them). Only the `pack` bucket
+ * is read/written; the resetting `grant` bucket (monthly/trial) is a separate
+ * pool and a refund of a paid pack must never expire free grant credits.
+ *
+ * **Under the SAME wallet advisory lock the spend path takes** (`reserve`):
+ * the `packBalance` read and the debit insert happen inside one
+ * `pg_advisory_xact_lock`'d transaction on the wallet, so a spend racing this
+ * refund can't lost-update the balance — without it, a concurrent reserve and
+ * this claw-back could both read the same `packBalance` and each write a
+ * `balance_after` that individually satisfies `>= 0` while the true post-write
+ * total oversells (the exact hazard `reserve`'s lock exists for). The
+ * immutable `pack_purchase` row (its `wallet_id` never changes) is read first
+ * to LEARN which wallet to lock; the balance-sensitive read+write then all sit
+ * under the lock.
+ *
+ * **Idempotent on `pack_refund:${stripeRef}`:** a replayed `charge.refunded`
+ * conflicts on the unique idempotency key and no-ops (`ON CONFLICT DO
+ * NOTHING`) — the pack is clawed back exactly once no matter how many times
+ * Stripe redelivers the event.
+ *
+ * Returns `{matched:false}` when no `pack_purchase` row exists for this ref
+ * (the caller decides silent-no-op vs staff-alert — a non-pack charge vs a
+ * paid-but-never-granted pack). Otherwise `{matched:true, clawedBack}` where
+ * `clawedBack` is the credits debited THIS call (0 if all were already spent,
+ * or on a replay the earlier call already clawed).
+ */
+export async function recordPackRefund(
+  stripeRef: string,
+): Promise<{ clawedBack: number; matched: boolean }> {
+  return sql.begin(async (tx) => {
+    const [purchase] = await tx<{ wallet_id: string; delta: number }[]>`
+      select wallet_id, delta from ai_credit_ledger
+       where source = 'pack_purchase' and ref = ${stripeRef}`;
+    if (!purchase) return { clawedBack: 0, matched: false };
+
+    const walletId = purchase.wallet_id;
+    await tx`select pg_advisory_xact_lock(hashtext(${"ai-credit-wallet:" + walletId}))`;
+
+    const originalGrant = purchase.delta;
+    const pb = await bucketBalance(tx, walletId, "pack");
+    const clawback = Math.min(originalGrant, Math.max(0, pb));
+    if (clawback <= 0) return { clawedBack: 0, matched: true };
+
+    const inserted = await appendLedgerRow(tx, {
+      walletId,
+      delta: -clawback,
+      source: "refund",
+      bucket: "pack",
+      ref: stripeRef,
+      idempotencyKey: `pack_refund:${stripeRef}`,
+    });
+    return { clawedBack: inserted ? clawback : 0, matched: true };
+  });
+}
+
+/**
  * Reserve `cost` credits against `walletId` for an AI run started by `orgId`
  * (SPEC-2 §5.2 step 2, §5.4 spend order). The ledger's `source` CHECK has no
  * distinct "hold" value, so the hold IS the debit from the moment it's

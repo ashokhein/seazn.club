@@ -18,7 +18,7 @@ import {
   syncSubscriptionForGroup,
 } from "@/lib/billing";
 import { CREDIT_PACKS } from "@/lib/credit-packs";
-import { recordPackPurchase, walletIdFor } from "@/lib/credits";
+import { recordPackPurchase, recordPackRefund, walletIdFor } from "@/lib/credits";
 import {
   invalidateGroupEntitlements,
   invalidateOrgEntitlements,
@@ -611,6 +611,48 @@ async function revokePassForRefundedChargeAndNotify(charge: Stripe.Charge): Prom
   );
 }
 
+/** AI credit-pack refund (v17 SPEC-2 §5, Phase 3 Task 4): a refunded pack
+ *  charge claws back only the customer's UNSPENT pack credits (`recordPackRefund`
+ *  — under the wallet advisory lock, capped at the purchase, never below zero,
+ *  never touching the resetting `grant` bucket, idempotent on replay).
+ *
+ *  A pack charge is identified off the refunded charge's own metadata: Part A
+ *  stamps `payment_intent_data.metadata.kind = 'credit_pack'`, which Stripe
+ *  copies onto the Charge, so no Stripe round-trip is needed — the same
+ *  DB-/object-only style as the sibling refund handlers, and the reason this
+ *  no-ops silently on a registration/sponsor/pass refund (they carry no such
+ *  metadata) without alerting.
+ *
+ *  A charge that IS a pack (metadata says so) but has no `pack_purchase` ledger
+ *  row is a paid-but-never-granted pack (the T1 paid-but-ungranted class) now
+ *  refunded: nothing to claw back, but never a silent drop — logged + a
+ *  best-effort staff alert, mirroring the buy path's ungranted-pack handling. */
+async function handlePackChargeRefunded(charge: Stripe.Charge): Promise<void> {
+  if (!charge.refunded) return;
+  if (charge.metadata?.kind !== "credit_pack") return;
+  const intent =
+    typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
+  if (!intent) return;
+
+  const { matched } = await recordPackRefund(intent);
+  if (matched) return;
+
+  console.error(
+    `[billing] credit_pack charge ${charge.id} (intent ${intent}) refunded but no ` +
+      `pack_purchase ledger row found — nothing to claw back (was it ever granted?)`,
+  );
+  const alertTo = process.env.STAFF_ALERT_EMAIL;
+  if (alertTo) {
+    void sendCreditPackGrantFailedAlertEmail({
+      to: alertTo,
+      sessionId: charge.id,
+      orgId: charge.metadata?.org_id ?? "unknown",
+      packKey: charge.metadata?.pack_key,
+      reason: "refunded pack charge has no pack_purchase ledger row to claw back",
+    }).catch(() => {});
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Platform-charge disputes (Task 7, P1-4, decisions §6.2)
 // ---------------------------------------------------------------------------
@@ -834,6 +876,7 @@ export async function processStripeEvent(event: Stripe.Event): Promise<void> {
       await syncRegistrationRefund(event.data.object as Stripe.Charge);
       await handleSponsorChargeRefunded(event.data.object as Stripe.Charge);
       await revokePassForRefundedChargeAndNotify(event.data.object as Stripe.Charge);
+      await handlePackChargeRefunded(event.data.object as Stripe.Charge);
       break;
     case "payment_intent.succeeded":
       // Sponsor order paid (v10) — activates the sponsor row, replay-safe.

@@ -91,6 +91,22 @@ export function buildCreditPackCheckoutParams(args: {
       pack_key: args.packKey,
       credits: String(args.credits),
     },
+    // Stamp the PaymentIntent's metadata too — Stripe copies it onto the Charge
+    // at charge-creation, so the `charge.refunded` handler (Phase 3 Task 4) can
+    // recognise a pack charge directly off the refunded charge's own metadata
+    // with no Stripe round-trip, the same DB-/object-only style the sibling
+    // refund handlers use. The session `metadata` above is what the BUY webhook
+    // reads; a Charge does NOT carry the session's metadata, only the PI's, so
+    // the REFUND path needs this. The grant amount is deliberately NOT restamped
+    // here (a refund claws back from the ledger's recorded purchase, never a
+    // number off the wire).
+    payment_intent_data: {
+      metadata: {
+        kind: "credit_pack",
+        org_id: args.orgId,
+        pack_key: args.packKey,
+      },
+    },
     line_items: [{ price: args.priceId, quantity: 1 }],
     return_url: args.returnUrl,
     allow_promotion_codes: true,
