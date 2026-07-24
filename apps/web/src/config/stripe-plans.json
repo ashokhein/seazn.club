@@ -116,7 +116,7 @@
       }
     }
   ],
-  "$comment_packs": "AI credit packs (v17 SPEC-2 §5/§6): one-time top-ups into the org/group's ai_credit_ledger wallet (bucket='pack', never-expire — D2). Not tied to a `plans` row, so the checkout route resolves the live price by `lookup_key` at request time (stripe.prices.list) instead of a stored id — stripe-sync.ts only needs to ensure the price exists, never write it back to a table. `credits` is our own field (never sent to Stripe) — the webhook re-derives the grant amount from this catalog by `key`, never from session metadata, so a purchase's credit amount can never be tampered with client-side.",
+  "$comment_packs": "AI credit packs (v17 SPEC-2 §5/§6): one-time top-ups into the org/group's ai_credit_ledger wallet (bucket='pack', never-expire — D2). Not tied to a `plans` row, so the checkout route resolves the live price by `lookup_key` at request time (stripe.prices.list) instead of a stored id — stripe-sync.ts only needs to ensure the price exists, never write it back to a table. `credits` is our own field (never sent to Stripe) — the webhook grants the `credits` snapshot stamped into the session metadata at checkout creation (server-set, so it cannot be tampered with client-side); this catalog is only the logged fallback when the snapshot is absent (a drift the webhook staff-alerts, never a silent wrong/zero grant).",
   "packs": [
     {
       "key": "credits_10",

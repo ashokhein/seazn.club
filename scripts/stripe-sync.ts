@@ -52,8 +52,9 @@ export interface PassSpec {
 }
 /** A one-time AI credit pack (v17 SPEC-2 §5/§6). Structurally identical to a
  *  PassSpec — one product, one flat price — plus `credits`, which is never
- *  sent to Stripe: it is the ledger delta the webhook grants, read straight
- *  from this seed by `key` (never trusted from session metadata). */
+ *  sent to Stripe: it is the ledger delta the webhook grants. The webhook grants
+ *  the `credits` snapshot stamped into session metadata at checkout creation;
+ *  this seed is only the logged fallback (staff-alerted on drift). */
 export interface PackSpec {
   key: string;
   credits: number;

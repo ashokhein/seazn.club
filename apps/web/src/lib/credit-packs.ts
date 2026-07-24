@@ -18,9 +18,11 @@ import stripePlans from "@/config/stripe-plans.json";
  *  NOT the live Stripe price id (that is resolved by lookup_key at request
  *  time, see `resolveCreditPackPriceId`, so no `plans`-style table column is
  *  needed to cache it). `credits` is never sent to Stripe; it is the ledger
- *  delta the webhook grants, read from THIS catalog by `key` — never trusted
- *  from Stripe session metadata, which a client cannot alter but which this
- *  still avoids depending on as a source of truth. */
+ *  delta the webhook grants. The webhook grants the `credits` SNAPSHOT that the
+ *  checkout route stamped into the session metadata at creation (server-set, so
+ *  a client cannot alter it); THIS catalog is only the logged fallback when the
+ *  snapshot is absent — a drift the webhook staff-alerts rather than granting a
+ *  silent wrong/zero amount (T1 review fix). */
 export interface CreditPackCatalogEntry {
   credits: number;
   lookupKey: string;
