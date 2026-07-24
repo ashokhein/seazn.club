@@ -49,8 +49,8 @@ describe.skipIf(!HAS_DB)("ai credit wallet — balance + wallet resolution", () 
     const walletId = randomUUID();
     await sql`
       insert into ai_credit_ledger
-        (wallet_id, delta, source, balance_after, idempotency_key)
-      values (${walletId}, 40, 'monthly_grant', 40, ${`grant-${walletId}`})`;
+        (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${walletId}, 40, 'monthly_grant', 'grant', 40, ${`grant-${walletId}`})`;
     expect(await balance(walletId)).toBe(40);
   });
 });

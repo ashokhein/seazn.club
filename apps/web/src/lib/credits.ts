@@ -17,15 +17,32 @@ import { PaymentRequiredError } from "@/lib/errors";
 import { sql } from "@/lib/db";
 
 type Tx = postgres.TransactionSql;
+/** Anything the ledger's tagged-template queries can run against: the shared
+ *  `sql` client for a plain read, or a transaction handle when the caller
+ *  already holds one (`grantTrial`'s `for update`, `reserve`'s advisory
+ *  lock, ...). */
+type Executor = Tx | ReturnType<typeof postgres>;
 
-/** A CHECK-constraint violation (Postgres `23514`) — the only error
- *  `ai_credit_ledger`'s `balance_after >= 0` guard can raise. Distinguishes
- *  "this insert would have oversold the wallet" from any other DB failure. */
+/** Which independently-resettable pool a ledger row affects (SPEC-2 §5.4,
+ *  V321): `grant` for monthly/trial/earn grants (use-or-lose, resets each
+ *  cycle), `pack` for purchased packs (never expire). `run_spend`/`refund`/
+ *  `expiry` rows carry whichever bucket they debit, credit back, or expire. */
+type Bucket = "grant" | "pack";
+
+/** The `ai_credit_ledger_balance_after_check` CHECK-constraint violation
+ *  (Postgres `23514`) — the only failure mode that means "this insert would
+ *  have oversold the wallet". `ai_credit_ledger` carries two other `23514`
+ *  CHECKs (`source`, `bucket` enums) that share the same Postgres error code
+ *  but mean "caller passed a bad enum value", not "402 out of credits" — this
+ *  must key on the constraint name, not just the code, or those enum bugs
+ *  would masquerade as a normal insufficient-balance response. */
+const BALANCE_CHECK_CONSTRAINT = "ai_credit_ledger_balance_after_check";
 function isCheckViolation(err: unknown): boolean {
   return (
     typeof err === "object" &&
     err !== null &&
-    (err as { code?: string }).code === "23514"
+    (err as { code?: string }).code === "23514" &&
+    (err as { constraint_name?: string }).constraint_name === BALANCE_CHECK_CONSTRAINT
   );
 }
 
@@ -64,6 +81,36 @@ export async function balance(walletId: string): Promise<number> {
   return Number(row?.bal ?? 0);
 }
 
+/**
+ * `sum(delta)` scoped to one bucket (SPEC-2 §5.4, V321) — the primitive
+ * `grantBalance`/`packBalance` share, and `reserve()` uses (under its own
+ * transaction/lock) to compute the grant-first split.
+ */
+async function bucketBalance(exec: Executor, walletId: string, bucket: Bucket): Promise<number> {
+  const [row] = await exec<{ bal: string | null }[]>`
+    select coalesce(sum(delta), 0)::text as bal
+      from ai_credit_ledger where wallet_id = ${walletId} and bucket = ${bucket}`;
+  return Number(row?.bal ?? 0);
+}
+
+/**
+ * Credits left in the resetting **grant** bucket (monthly/trial/earn grants —
+ * SPEC-2 §5.4 D1, use-or-lose). `reserve()` always burns this bucket first;
+ * a future grant reset (Task 6) is a single `expiry` row against this bucket
+ * only, leaving `packBalance` untouched.
+ */
+export async function grantBalance(walletId: string): Promise<number> {
+  return bucketBalance(sql, walletId, "grant");
+}
+
+/**
+ * Credits left in the **pack** bucket (purchased packs — SPEC-2 §5.4 D2,
+ * never expire). `reserve()` only dips into this once `grantBalance` is 0.
+ */
+export async function packBalance(walletId: string): Promise<number> {
+  return bucketBalance(sql, walletId, "pack");
+}
+
 /** Calendar-month period the monthly grant is scoped to (server clock,
  *  `YYYY-MM`). The exact reset ANCHOR (billing-cycle for paid, creation-day
  *  calendar for Community — SPEC-2 §5.4) is the caller's job: this only needs
@@ -97,6 +144,7 @@ async function appendLedgerRow(
     walletId: string;
     delta: number;
     source: string;
+    bucket: Bucket;
     ref?: string | null;
     spentByOrgId?: string | null;
     idempotencyKey: string | null;
@@ -108,8 +156,8 @@ async function appendLedgerRow(
   const balanceAfter = Number(prior?.bal ?? 0) + row.delta;
   const [inserted] = await tx<{ id: string }[]>`
     insert into ai_credit_ledger
-      (wallet_id, delta, source, ref, spent_by_org_id, balance_after, idempotency_key)
-    values (${row.walletId}, ${row.delta}, ${row.source}, ${row.ref ?? null},
+      (wallet_id, delta, source, bucket, ref, spent_by_org_id, balance_after, idempotency_key)
+    values (${row.walletId}, ${row.delta}, ${row.source}, ${row.bucket}, ${row.ref ?? null},
             ${row.spentByOrgId ?? null}, ${balanceAfter}, ${row.idempotencyKey})
     on conflict (idempotency_key) do nothing
     returning id`;
@@ -148,6 +196,7 @@ export async function grantMonthly(
       walletId,
       delta,
       source: "monthly_grant",
+      bucket: "grant",
       idempotencyKey: `monthly:${walletId}:${monthlyPeriod()}`,
     });
     return inserted ? delta : 0;
@@ -198,6 +247,7 @@ export async function grantTrial(orgId: string): Promise<number> {
       walletId,
       delta,
       source: "trial_grant",
+      bucket: "grant",
       idempotencyKey: `trial:${walletId}`,
     });
     if (!inserted) return 0;
@@ -211,11 +261,20 @@ export async function grantTrial(orgId: string): Promise<number> {
 
 /**
  * Reserve `cost` credits against `walletId` for an AI run started by `orgId`
- * (SPEC-2 §5.2 step 2). The ledger's `source` CHECK has no distinct "hold"
- * value, so the hold IS the debit from the moment it's written — a
- * `run_spend` row with `ref` left `null` until `settle()` links the
- * eventual `ai_run_id`. Returns the row's id (the "hold id" `settle`/
- * `release` take).
+ * (SPEC-2 §5.2 step 2, §5.4 spend order). The ledger's `source` CHECK has no
+ * distinct "hold" value, so the hold IS the debit from the moment it's
+ * written — one or two `run_spend` rows (see below) with `ref` left `null`
+ * until `settle()` links the eventual `ai_run_id`.
+ *
+ * **Grant-first spend order (§5.4):** the debit draws from `grantBalance`
+ * before touching `packBalance` — `g = min(cost, grantBalance)`,
+ * `p = cost - g` — so a run never wastes a paid pack credit while free/trial
+ * grant balance remains. This writes **one ledger row per non-zero bucket**
+ * (never a mixed-bucket row, so a future grant reset stays a single `expiry`
+ * row against the grant bucket alone, untouched packs and all). Returns the
+ * row id(s) as a comma-joined "hold id" — a single id when the whole cost
+ * came from one bucket (the common case), two comma-joined ids when the
+ * spend straddled both. `settle`/`release` below both accept either shape.
  *
  * **Oversell guard:** the ledger has no counter row to `select ... for
  * update`, so two concurrent reserves against the same wallet are
@@ -227,7 +286,9 @@ export async function grantTrial(orgId: string): Promise<number> {
  * alone can't see other rows). With the lock, the second reserve computes
  * its balance from the first's committed result and its insert either
  * succeeds or trips the CHECK — translated here to `PaymentRequiredError`
- * (402) rather than a raw Postgres error.
+ * (402) rather than a raw Postgres error. Both the grant-bucket and
+ * pack-bucket debit for one reserve happen inside this same locked section,
+ * so a split spend is atomic too.
  */
 export async function reserve(walletId: string, orgId: string, cost: number): Promise<string> {
   if (!Number.isInteger(cost) || cost <= 0) {
@@ -236,19 +297,33 @@ export async function reserve(walletId: string, orgId: string, cost: number): Pr
   try {
     return await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtext(${"ai-credit-wallet:" + walletId}))`;
-      const inserted = await appendLedgerRow(tx, {
-        walletId,
-        delta: -cost,
-        source: "run_spend",
-        spentByOrgId: orgId,
-        idempotencyKey: null,
-      });
-      // idempotencyKey is null, which never conflicts under the unique
-      // constraint (Postgres treats every NULL as distinct) — appendLedgerRow
-      // always inserts here, or the CHECK aborts the transaction first (see
-      // catch below). `inserted` is therefore never null on this path; the
-      // fallback is only to satisfy the type checker.
-      return inserted?.id ?? "";
+
+      const grantAvailable = Math.max(0, await bucketBalance(tx, walletId, "grant"));
+      const grantCut = Math.min(cost, grantAvailable);
+      const packCut = cost - grantCut;
+
+      const ids: string[] = [];
+      for (const [bucket, cut] of [
+        ["grant", grantCut],
+        ["pack", packCut],
+      ] as const) {
+        if (cut <= 0) continue;
+        const inserted = await appendLedgerRow(tx, {
+          walletId,
+          delta: -cut,
+          source: "run_spend",
+          bucket,
+          spentByOrgId: orgId,
+          idempotencyKey: null,
+        });
+        // idempotencyKey is null, which never conflicts under the unique
+        // constraint (Postgres treats every NULL as distinct) — appendLedgerRow
+        // always inserts here, or the CHECK aborts the transaction first (see
+        // catch below). `inserted` is therefore never null on this path; the
+        // fallback is only to satisfy the type checker.
+        ids.push(inserted?.id ?? "");
+      }
+      return ids.join(",");
     });
   } catch (err) {
     if (isCheckViolation(err)) throw new PaymentRequiredError("ai.credits");
@@ -257,56 +332,77 @@ export async function reserve(walletId: string, orgId: string, cost: number): Pr
 }
 
 /**
- * Settle a hold (SPEC-2 §5.2 step 4a): the AI run succeeded, so link the
- * hold row to the `ai_run_id` it paid for. No new row — the hold already
- * moved the balance when `reserve()` wrote it; this only backfills `ref`.
+ * Settle a hold (SPEC-2 §5.2 step 4a): the AI run succeeded, so link every
+ * row of the hold to the `ai_run_id` it paid for (a hold is one row, or two
+ * comma-joined ids when `reserve()` split the spend across both buckets —
+ * see `reserve`). No new row — the hold already moved the balance when
+ * `reserve()` wrote it; this only backfills `ref`.
  *
  * **Idempotent:** the `where ref is null` guard means a second `settle()`
  * call for the same hold — whatever `aiRunId` it's called with — is a
- * no-op that leaves the original link untouched, rather than an error or a
- * silent overwrite.
+ * no-op that leaves the original link(s) untouched, rather than an error or
+ * a silent overwrite.
  *
  * Returns whether this call was the one that linked it (`false` if the
  * hold doesn't exist, isn't a `run_spend` row, or was already settled).
  */
 export async function settle(holdId: string, aiRunId: string): Promise<boolean> {
-  const [row] = await sql<{ id: string }[]>`
+  const ids = holdId.split(",");
+  const rows = await sql<{ id: string }[]>`
     update ai_credit_ledger
        set ref = ${aiRunId}
-     where id = ${holdId} and source = 'run_spend' and ref is null
+     where id in ${sql(ids)} and source = 'run_spend' and ref is null
     returning id`;
-  return !!row;
+  return rows.length > 0;
 }
 
 /**
  * Release a hold (SPEC-2 §5.2 step 4b): the AI run failed, so refund the
- * cost via a compensating credit row (net zero — the user isn't charged
- * for our error) rather than deleting or editing the original hold (the
- * ledger is append-only, it's money).
+ * cost via a compensating credit row per original row (net zero — the user
+ * isn't charged for our error) rather than deleting or editing the original
+ * hold (the ledger is append-only, it's money). Each refund lands back in
+ * the same bucket its debit came from, so a split grant+pack spend refunds
+ * to grant and pack independently.
  *
- * **Idempotent per hold:** the compensating row is keyed
- * `release:${holdId}`, so a second `release()` of the same hold is a
+ * **Not-yet-settled guard:** only holds with `ref is null` are refunded — a
+ * hold with `ref` already set means the AI run genuinely happened and
+ * incurred real COGS (`settle()` linked it), so releasing it would hand back
+ * a credit for consumed work rather than for our error. This mirrors
+ * `settle()`'s own `ref is null` check from the other direction.
+ *
+ * **Idempotent per hold:** each compensating row is keyed
+ * `release:${rowId}`, so a second `release()` of the same hold is a
  * no-op (`ON CONFLICT DO NOTHING`) — no double refund.
  *
- * Returns the amount refunded (0 if the hold doesn't exist / isn't a
- * `run_spend` row, or was already released).
+ * Throws if no row of the hold exists at all (a caller bug — an unknown
+ * `holdId`). Returns the total refunded across the hold's row(s) — 0 if
+ * every row was already settled or already released.
  */
 export async function release(holdId: string): Promise<number> {
   return sql.begin(async (tx) => {
-    const [hold] = await tx<{ wallet_id: string; delta: number }[]>`
-      select wallet_id, delta from ai_credit_ledger
-       where id = ${holdId} and source = 'run_spend'`;
-    if (!hold) throw new Error(`release: no hold ${holdId}`);
+    const ids = holdId.split(",");
+    const holds = await tx<{ id: string; wallet_id: string; delta: number; bucket: Bucket; ref: string | null }[]>`
+      select id, wallet_id, delta, bucket, ref from ai_credit_ledger
+       where id in ${tx(ids)} and source = 'run_spend'`;
+    if (holds.length === 0) throw new Error(`release: no hold ${holdId}`);
 
-    const cost = -hold.delta;
-    const inserted = await appendLedgerRow(tx, {
-      walletId: hold.wallet_id,
-      delta: cost,
-      source: "refund",
-      ref: holdId,
-      idempotencyKey: `release:${holdId}`,
-    });
-    return inserted ? cost : 0;
+    let total = 0;
+    for (const hold of holds) {
+      if (hold.ref !== null) continue; // already settled — a real run
+      // happened and incurred real COGS; refunding it would hand back a
+      // credit for consumed work, not for our error.
+      const cost = -hold.delta;
+      const inserted = await appendLedgerRow(tx, {
+        walletId: hold.wallet_id,
+        delta: cost,
+        source: "refund",
+        bucket: hold.bucket,
+        ref: hold.id,
+        idempotencyKey: `release:${hold.id}`,
+      });
+      if (inserted) total += cost;
+    }
+    return total;
   });
 }
 
@@ -317,11 +413,18 @@ export async function release(holdId: string): Promise<number> {
  *
  * `fn` is expected to perform the metered work (the model call) and return
  * the `ai_run_id` it produced alongside its own result — `settle` needs
- * that id to link the ledger row (SPEC-2 §5.3, `ref → ai_runs`). If `fn`
- * throws (model error, timeout, ...) the hold is released before the error
- * is rethrown, so a failed run never costs a credit. If the wallet has
- * insufficient balance, `reserve` throws `PaymentRequiredError` (402) and
- * `fn` never runs at all — no partial charge, no partial run.
+ * that id to link the ledger row (SPEC-2 §5.3, `ref → ai_runs`). If the
+ * wallet has insufficient balance, `reserve` throws `PaymentRequiredError`
+ * (402) and `fn` never runs at all — no partial charge, no partial run.
+ *
+ * **Only a failure of `fn` itself refunds.** If `fn` throws (model error,
+ * timeout, ...) no run happened and no COGS was incurred, so the hold is
+ * released before the error is rethrown — a failed run never costs a
+ * credit. But if `fn` *succeeds* and it is `settle()` that then throws (a DB
+ * blip linking `ref`, say), the run genuinely happened and genuinely cost
+ * real COGS — releasing in that case would hand back a credit for consumed
+ * work, exactly what `release()`'s not-yet-settled guard exists to prevent.
+ * So that failure is only logged and rethrown, never released.
  */
 export async function spendCredit<T>(
   walletId: string,
@@ -330,12 +433,21 @@ export async function spendCredit<T>(
   fn: () => Promise<{ aiRunId: string; result: T }>,
 ): Promise<T> {
   const holdId = await reserve(walletId, orgId, cost);
+  let ran: { aiRunId: string; result: T };
   try {
-    const { aiRunId, result } = await fn();
-    await settle(holdId, aiRunId);
-    return result;
+    ran = await fn();
   } catch (err) {
     await release(holdId);
     throw err;
   }
+  try {
+    await settle(holdId, ran.aiRunId);
+  } catch (err) {
+    console.error(
+      `[credits] settle failed for hold ${holdId} (run ${ran.aiRunId}) — NOT releasing, the run already consumed COGS`,
+      err,
+    );
+    throw err;
+  }
+  return ran.result;
 }
