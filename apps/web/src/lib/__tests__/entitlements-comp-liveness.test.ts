@@ -16,7 +16,7 @@ import { getLimit, hasFeature } from "@/lib/entitlements";
 // is a finite number on community and unlimited (null) on pro, so it genuinely
 // separates them. V311 (D22) moved the community value 1 → 5; what this suite
 // proves is WHICH MATRIX the degrade landed on, not the number itself.
-const COMMUNITY_MAX_ACTIVE = 5;
+const COMMUNITY_MAX_ACTIVE = 10;
 import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscription-status";
 
 const HAS_DB = !!process.env.DATABASE_URL;

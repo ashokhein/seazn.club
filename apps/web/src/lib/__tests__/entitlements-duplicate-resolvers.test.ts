@@ -164,8 +164,8 @@ describe.skipIf(!HAS_DB)("the org plan panel shows what enforcement will do", ()
     });
     // Boolean keys still report { enabled }, numeric keys still { limit }.
     expect(data.entitlements["exports"]).toEqual({ enabled: true });
-    // V311 (D22): community's active-competition cap is 5, was 1.
-    expect(data.entitlements["competitions.max_active"]).toEqual({ limit: 5 });
+    // V319 (v17 phase 1): community's active-competition cap is 10, was 5.
+    expect(data.entitlements["competitions.max_active"]).toEqual({ limit: 10 });
   });
 
   it("degrades a lapsed comp instead of promising the Pro matrix", async () => {
@@ -177,9 +177,9 @@ describe.skipIf(!HAS_DB)("the org plan panel shows what enforcement will do", ()
       where id = (select subscription_id from organizations o where o.id = ${orgId})`;
     const data = await readPanel(orgId);
     // The raw plan_key is still reported (contract), but every VALUE resolves
-    // as community: pro is unlimited here, community caps at 5 (V311).
+    // as community: pro is unlimited here, community caps at 10 (V319).
     expect(data.plan_key).toBe("pro");
-    expect(data.entitlements["competitions.max_active"]).toEqual({ limit: 5 });
+    expect(data.entitlements["competitions.max_active"]).toEqual({ limit: 10 });
     expect(data.entitlements["api.access"]).toEqual({ enabled: false });
   });
 

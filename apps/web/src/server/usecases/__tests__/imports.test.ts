@@ -171,18 +171,18 @@ describe.skipIf(!HAS_DB)("bulk import (Jul3/01)", () => {
     ]);
   });
 
-  it("Community org is blocked at row 21 with a 402 carrying import.bulk", async () => {
+  it("Community org is blocked at row 51 with a 402 carrying import.bulk", async () => {
     const { auth } = await seedOrg("community");
     await seedDivision(auth);
-    const rows = Array.from({ length: 21 }, (_, i) => `Team ${i}`);
+    const rows = Array.from({ length: 51 }, (_, i) => `Team ${i}`);
     const csv = ["Team", ...rows].join("\n");
     await expect(createImport(auth, csvUpload(csv))).rejects.toThrow(PaymentRequiredError);
     await expect(createImport(auth, csvUpload(csv))).rejects.toMatchObject({
       featureKey: "import.bulk",
     });
-    // 20 rows fit, but clubs stay Pro-only at commit
-    const under = await createImport(auth, csvUpload(["Team", ...rows.slice(0, 20)].join("\n")));
-    expect(under.rowCount).toBe(20);
+    // 50 rows fit (V319 raised import.bulk 20 → 50), but clubs stay Pro-only at commit
+    const under = await createImport(auth, csvUpload(["Team", ...rows.slice(0, 50)].join("\n")));
+    expect(under.rowCount).toBe(50);
   });
 
   it("Community commit with club columns succeeds under the clubs cap (hierarchy opened, V291)", async () => {
@@ -190,7 +190,7 @@ describe.skipIf(!HAS_DB)("bulk import (Jul3/01)", () => {
     await seedDivision(auth);
     const preview = await createImport(auth, csvUpload("Club,Team,Division\nAcme SC,Acme U12,u12"));
     // clubs.hierarchy is granted to community/event_pass (V291); the cap is the
-    // brake now, and 1 club/1 team is under the community 2/2 limits.
+    // brake now, and 1 club/1 team is under the community 5/8 limits (V319).
     const result = await commitImport(auth, preview.importId, null);
     expect(result.stats.clubs).toBe(1);
     const clubs = await listClubs(auth);
@@ -200,27 +200,32 @@ describe.skipIf(!HAS_DB)("bulk import (Jul3/01)", () => {
   it("Community import over clubs.max is rejected with featureKey clubs.max at commit", async () => {
     const { auth } = await seedOrg("community");
     await seedDivision(auth);
-    // seed the org at the community clubs cap (2 clubs)
+    // seed the org at the community clubs cap (5 clubs, V319)
     await sql`insert into clubs (org_id, name) values
-      (${auth.orgId}, 'Existing One'), (${auth.orgId}, 'Existing Two')`;
+      (${auth.orgId}, 'Existing One'), (${auth.orgId}, 'Existing Two'),
+      (${auth.orgId}, 'Existing Three'), (${auth.orgId}, 'Existing Four'),
+      (${auth.orgId}, 'Existing Five')`;
     const preview = await createImport(auth, csvUpload("Club\nDelta SC"));
     expect(preview.plan.issues).toEqual([]);
     expect(preview.plan.stats.clubs).toBe(1);
     await expect(commitImport(auth, preview.importId, null)).rejects.toMatchObject({
       featureKey: "clubs.max",
     });
-    // rejected before any write — still exactly 2 clubs
+    // rejected before any write — still exactly 5 clubs
     const [{ n }] = await sql<{ n: number }[]>`
       select count(*)::int as n from clubs where org_id = ${auth.orgId}`;
-    expect(n).toBe(2);
+    expect(n).toBe(5);
   });
 
   it("Community import over teams.max is rejected with featureKey teams.max at commit", async () => {
     const { auth } = await seedOrg("community");
     await seedDivision(auth);
-    // seed the org at the community teams cap (2 teams)
+    // seed the org at the community teams cap (8 teams, V319)
     await sql`insert into teams (org_id, name) values
-      (${auth.orgId}, 'Team One'), (${auth.orgId}, 'Team Two')`;
+      (${auth.orgId}, 'Team One'), (${auth.orgId}, 'Team Two'),
+      (${auth.orgId}, 'Team Three'), (${auth.orgId}, 'Team Four'),
+      (${auth.orgId}, 'Team Five'), (${auth.orgId}, 'Team Six'),
+      (${auth.orgId}, 'Team Seven'), (${auth.orgId}, 'Team Eight')`;
     const preview = await createImport(auth, csvUpload("Team\nDelta United"));
     expect(preview.plan.issues).toEqual([]);
     expect(preview.plan.stats.teams).toBe(1);

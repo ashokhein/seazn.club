@@ -23,7 +23,7 @@ import { getLimit, hasFeature, orgPlanKey } from "@/lib/entitlements";
 // Same separator the sibling comp-liveness suite uses: `exports` is true on both
 // matrices and so cannot fail, while competitions.max_active is finite on
 // community and unlimited (null) on pro. Proves WHICH MATRIX was resolved.
-const COMMUNITY_MAX_ACTIVE = 5;
+const COMMUNITY_MAX_ACTIVE = 10;
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);

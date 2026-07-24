@@ -134,10 +134,10 @@ afterAll(async () => {
 });
 
 describe.skipIf(!HAS_DB)("entrants.per_division.max is resolved against the competition being entered", () => {
-  it("accepts entry 33 on the passed competition and waitlists it on an unpassed one", async () => {
+  it("accepts entry 65 on the passed competition and waitlists it on an unpassed one", async () => {
     const { orgId, orgSlug, auth } = await seedCommunityOrg();
-    const passed = await seedFullDivision(auth, orgId, 32);
-    const plain = await seedFullDivision(auth, orgId, 32);
+    const passed = await seedFullDivision(auth, orgId, 64);
+    const plain = await seedFullDivision(auth, orgId, 64);
     await sql`
       insert into competition_passes (competition_id, org_id)
       values (${passed.competitionId}, ${orgId}) on conflict (competition_id) do nothing`;
@@ -145,9 +145,9 @@ describe.skipIf(!HAS_DB)("entrants.per_division.max is resolved against the comp
 
     // Guard against a vacuous pass: the two quotas must actually differ, or
     // both arms below would agree for reasons that have nothing to do with
-    // scoping. 32 spots taken sits exactly on the community cap.
-    expect(await getLimit(orgId, "entrants.per_division.max")).toBe(32);
-    expect(await getLimit(orgId, "entrants.per_division.max", passed.competitionId)).toBe(64);
+    // scoping. 64 spots taken sits exactly on the community cap (V319).
+    expect(await getLimit(orgId, "entrants.per_division.max")).toBe(64);
+    expect(await getLimit(orgId, "entrants.per_division.max", passed.competitionId)).toBe(128);
 
     const onPassed = await submitRegistration(
       orgSlug, passed.compSlug,
@@ -161,7 +161,7 @@ describe.skipIf(!HAS_DB)("entrants.per_division.max is resolved against the comp
     );
 
     // RED before the fix: the quota was resolved org-wide, so the passed
-    // competition capped at 32 too and this came back 'waitlisted'.
+    // competition capped at 64 too and this came back 'waitlisted'.
     expect(onPassed.registration.status).toBe("pending");
     // The pass lifts ONE competition — the sibling stays on the community cap.
     expect(onPlain.registration.status).toBe("waitlisted");

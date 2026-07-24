@@ -270,11 +270,13 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
       select court_label from fixtures where id = ${fixtures[0]!.id}`;
     expect(row!.court_label).toBe("C1");
 
-    // Community: first checkpoint free, second 402 (quota, not versioning)
+    // Community: first two checkpoints free, third 402 (V319 raised the cap
+    // 1 → 2; quota, not versioning)
     const { auth: freeAuth } = await seedOrg("community");
     const { division: freeDiv } = await seedDivision(freeAuth);
     await createCheckpoint(freeAuth, freeDiv.id, "one");
-    await expect(createCheckpoint(freeAuth, freeDiv.id, "two")).rejects.toMatchObject({
+    await createCheckpoint(freeAuth, freeDiv.id, "two");
+    await expect(createCheckpoint(freeAuth, freeDiv.id, "three")).rejects.toMatchObject({
       featureKey: "schedule.checkpoints.max",
     });
   });
@@ -283,11 +285,12 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
   // organiser's save points. A community org already holding one could not apply
   // an AI schedule at all: the anchor 402'd, applyAiPlans aborted, and the AI
   // generation had already been spent producing the plan.
-  it("AI anchors are exempt from the save-point quota — community keeps its one manual slot", async () => {
+  it("AI anchors are exempt from the save-point quota — community keeps its two manual slots", async () => {
     const { auth } = await seedOrg("community");
     const { division } = await seedDivision(auth);
 
     await createCheckpoint(auth, division.id, "my save point");
+    await createCheckpoint(auth, division.id, "my second save point");
     await expect(createCheckpoint(auth, division.id, "another")).rejects.toMatchObject({
       featureKey: "schedule.checkpoints.max",
     });
@@ -303,7 +306,7 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
       createCheckpoint(auth, division.id, "Before AI · run 3", "ai"),
     ).resolves.toBeTruthy();
 
-    // …and the manual quota is still exactly as spent: one used, none free.
+    // …and the manual quota is still exactly as spent: two used, none free.
     await expect(createCheckpoint(auth, division.id, "yet another")).rejects.toMatchObject({
       featureKey: "schedule.checkpoints.max",
     });
@@ -348,6 +351,7 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
     const { auth } = await seedOrg("community");
     const { division } = await seedDivision(auth);
     const cp = await createCheckpoint(auth, division.id, "wrong moment");
+    await createCheckpoint(auth, division.id, "second slot"); // fill to the cap of 2 (V319)
     await expect(createCheckpoint(auth, division.id, "the one I wanted")).rejects.toMatchObject({
       featureKey: "schedule.checkpoints.max",
     });

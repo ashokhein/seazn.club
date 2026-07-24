@@ -1,5 +1,5 @@
-// Cap enforcement (W1 §4): community grids cap clubs/teams at 2 and squad at 20
-// (V291 plan_entitlements). createClub/createTeam/setTeamSquad must throw
+// Cap enforcement (W1 §4): community grids cap clubs at 5, teams at 8, and squad
+// at 20 (V319 plan_entitlements). createClub/createTeam/setTeamSquad must throw
 // PaymentRequiredError(featureKey) once a create would cross the plan limit.
 // Each test seeds a fresh org (unique orgId → unique entitlement cache key), so
 // the 300s entitlement cache never leaks a limit across tests. Real Postgres.
@@ -29,21 +29,25 @@ afterAll(async () => {
 });
 
 describe.skipIf(!HAS_DB)("club/team caps", () => {
-  it("blocks the 3rd club on community with PaymentRequiredError(clubs.max)", async () => {
+  it("blocks the 6th club on community with PaymentRequiredError(clubs.max)", async () => {
     const auth = await seedOrg(); // fixture org is community by default
-    await createClub(auth, { name: "Cap One" });
-    await createClub(auth, { name: "Cap Two" });
-    await expect(createClub(auth, { name: "Cap Three" })).rejects.toMatchObject({
+    for (const name of ["Cap One", "Cap Two", "Cap Three", "Cap Four", "Cap Five"]) {
+      await createClub(auth, { name }); // community cap is 5 (V319)
+    }
+    await expect(createClub(auth, { name: "Cap Six" })).rejects.toMatchObject({
       featureKey: "clubs.max",
     });
   });
 
-  it("blocks the 3rd team org-wide on community with teams.max", async () => {
+  it("blocks the 9th team org-wide on community with teams.max", async () => {
     const auth2 = await seedOrg(); // fresh org fixture
     const club = await createClub(auth2, { name: "T Cap" });
     await createTeam(auth2, { name: "T1", club_id: club.id });
-    await createTeam(auth2, { name: "T2" }); // standalone counts too
-    await expect(createTeam(auth2, { name: "T3" })).rejects.toMatchObject({
+    // Fill to the community teams cap of 8 (V319); standalone teams count too.
+    for (const name of ["T2", "T3", "T4", "T5", "T6", "T7", "T8"]) {
+      await createTeam(auth2, { name });
+    }
+    await expect(createTeam(auth2, { name: "T9" })).rejects.toMatchObject({
       featureKey: "teams.max",
     });
   });
