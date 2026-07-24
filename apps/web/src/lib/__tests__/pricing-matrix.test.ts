@@ -109,17 +109,17 @@ const DATA: MatrixData = {
     pro: cell(20),
     pro_plus: cell(50),
   },
-  // W1 Task 11: clubs & teams register caps (real V291 values) render as
-  // numbers, ∞ for unlimited — never a bare ✓/— tick.
+  // W1 Task 11: clubs & teams register caps render as numbers, ∞ for
+  // unlimited — never a bare ✓/— tick. V319 raised the community caps
+  // (clubs 2 → 5, teams 2 → 8) and dropped the event_pass rows, so the pass
+  // column now falls through to community (5 / 8), exactly like the DB.
   "clubs.max": {
-    community: cell(2, true),
-    event_pass: cell(2, true),
+    community: cell(5),
     pro: cell(20, true),
     pro_plus: cell(null, true),
   },
   "teams.max": {
-    community: cell(2, true),
-    event_pass: cell(2, true),
+    community: cell(8),
     pro: cell(40, true),
     pro_plus: cell(null, true),
   },
@@ -178,16 +178,18 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
     });
   });
 
-  it("renders the W1 clubs/teams caps as numbers, ∞ for unlimited (spec V291)", () => {
+  it("renders the W1 clubs/teams caps as numbers, ∞ for unlimited (V319 caps)", () => {
+    // V319: community clubs 2 → 5, teams 2 → 8; no event_pass row, so the pass
+    // column falls through to community.
     expect(row("pricing.matrix.clubs.max")).toMatchObject({
-      free: "2",
-      pass: "2",
+      free: "5",
+      pass: "5",
       pro: "20",
       plus: "∞",
     });
     expect(row("pricing.matrix.teams.max")).toMatchObject({
-      free: "2",
-      pass: "2",
+      free: "8",
+      pass: "8",
       pro: "40",
       plus: "∞",
     });

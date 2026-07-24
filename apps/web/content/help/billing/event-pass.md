@@ -33,7 +33,7 @@ The annual club championship, a one-off fundraiser, a school sports day: events 
 
 - The pass covers **that competition only**, for as long as it runs.
 - It does **not** carry to next season's edition — a new edition is a new pass (or the moment Pro starts making sense).
-- A passed competition **doesn't count against your active-competition limit** — the pass is self-contained, so a Community org keeps all 5 free slots while its passed event runs.
+- A passed competition **doesn't count against your active-competition limit** — the pass is self-contained, so a Community org keeps all 10 free slots while its passed event runs.
 - Refunding a pass — or losing a chargeback on one — **revokes it**: the competition drops back to your plan's normal limits and the owner gets an email. Nothing you've built is deleted; the extra divisions, the entrant headroom, branded exports and the sponsor tools simply switch off and the platform fee returns to your plan's rate, exactly like a downgrade.
 - Buy the same pass twice (a double-tap, or two people checking out at once) and only the first charge sticks — the **duplicate is refunded automatically**, so a competition is never billed twice.
 - A pass produces a **proper invoice**, named after the competition it covers, alongside any subscription invoices on your [billing page](/o/settings/billing) — so three passes read as three events, not three identical charges.
