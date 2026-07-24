@@ -186,16 +186,23 @@ describe.skipIf(!HAS_DB)("size-pack add-on — webhook → resolver", () => {
     expect(n).toBe(1);
   });
 
-  it("editing the catalog delta AFTER purchase does not change the granted pack (snapshot)", async () => {
+  it("the grant reads the metadata snapshot, not the live catalog (snapshot-first)", async () => {
     const org = await createOrgForUser(await makeUser(), "SizePack Snapshot");
     const comp = await makeComp(org.id);
 
-    await processStripeEvent(sizePackEvent({ targetOrgId: org.id, targetCompId: comp }));
-    expect(await getLimit(org.id, FEATURE, comp)).toBe(planBase + 32);
-
-    // Catalog bumped 32 → 64; the already-granted (frozen) row is unaffected.
+    // The catalog DRIFTS to 64 BEFORE the webhook fires, but the paid session's
+    // metadata snapshot is still 32 (what the buyer actually paid for). The
+    // grant must honour the snapshot, not re-derive from the live catalog —
+    // else a webhook lagging an admin edit would grant the wrong amount. (A
+    // post-grant edit can't test this: the org_addons row is frozen at insert,
+    // so it stays +32 either way — that only re-proves the resolver, test #1.)
     await sql`update size_pack_catalog set delta_each = 64 where key = 'size_pack_32'`;
     try {
+      await processStripeEvent(
+        sizePackEvent({ targetOrgId: org.id, targetCompId: comp, deltaEach: 32 }),
+      );
+      // +32 (snapshot) — NOT +64 (live catalog). A grant that read the catalog
+      // would lift by 64 here and fail this assertion.
       expect(await getLimit(org.id, FEATURE, comp)).toBe(planBase + 32);
     } finally {
       await sql`update size_pack_catalog set delta_each = 32 where key = 'size_pack_32'`;
