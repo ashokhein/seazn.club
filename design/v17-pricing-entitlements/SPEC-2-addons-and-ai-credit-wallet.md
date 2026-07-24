@@ -116,7 +116,7 @@ balance(wallet) = sum(delta)
 4b. fail    → release: compensating +cost row (net zero; user not charged for our error)
 ```
 
-- **Concurrency:** the `balance_after >= 0` CHECK + transactional insert prevents two parallel runs both grabbing the last credit. No app lock needed.
+- **Concurrency:** a per-wallet `pg_advisory_xact_lock` inside `reserve()` serializes read→compute→insert. **The `balance_after >= 0` CHECK alone does NOT prevent oversell** — two txns can both read the same stale balance and each compute a non-negative `balance_after` (lost-update; proven in Phase-2 Task 3). The advisory lock + CHECK together block it.
 - **Idempotent:** spend keyed by `run_id` → retries / webhook replays never double-debit.
 - **Spend order:** burn the resetting **grant credits first**, then **paid packs** (never waste paid credits on the free/trial allowance).
 
