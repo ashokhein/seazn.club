@@ -8,7 +8,6 @@ import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql, withTenant } from "@/lib/db";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
-import { PaymentRequiredError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { deleteMark, myMarksAverage, orgMarksSummary, putMark } from "../official-marks";
 
@@ -210,16 +209,13 @@ describe.skipIf(!HAS_DB)("official marks (SPEC-3, PROMPT-80)", () => {
     expect(await myMarksAverage(refUser)).toEqual({ average: 3, count: 3 });
   });
 
-  it("community orgs are gated on every marks entry point (PlusReveal 402)", async () => {
+  it("community orgs can use every marks entry point free (V319, #253)", async () => {
     const ctx = await seedOrg("community");
     const off = await makeOfficial(ctx);
     const { fixtureOfficialId } = await makeAssignment(ctx, off);
-    await expect(putMark(ctx.auth, fixtureOfficialId, { mark: 3 })).rejects.toBeInstanceOf(
-      PaymentRequiredError,
-    );
-    await expect(deleteMark(ctx.auth, fixtureOfficialId)).rejects.toBeInstanceOf(
-      PaymentRequiredError,
-    );
-    await expect(orgMarksSummary(ctx.auth, off)).rejects.toBeInstanceOf(PaymentRequiredError);
+    await putMark(ctx.auth, fixtureOfficialId, { mark: 3 });
+    expect(await orgMarksSummary(ctx.auth, off)).toMatchObject({ average: 3, count: 1 });
+    await deleteMark(ctx.auth, fixtureOfficialId);
+    expect(await orgMarksSummary(ctx.auth, off)).toMatchObject({ average: null, count: 0 });
   });
 });

@@ -19,6 +19,7 @@ import {
   patchFixtureOfficials,
 } from "../officials";
 import { acceptedOfficialCovers, fixtureScope } from "../scorers";
+import { orgMarksSummary, putMark } from "../official-marks";
 import { makeUser as makeSeedUser, seedOrg as seedSeedOrg, seedFutureDivision } from "./_seed";
 
 import { setOrgPlan } from "@/lib/__tests__/_billing-group";
@@ -306,7 +307,7 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
     expect(after[0]!.officials).toEqual([]);
   });
 
-  it("Community: manual single-role free; multi-role and auto 402", async () => {
+  it("Community: manual single- and multi-role free (V319); auto still 402", async () => {
     const { auth } = await seedOrg("community");
     const { division, fixtures } = await seedScheduledDivision(auth);
     const ref = await createOfficial(auth, {
@@ -317,13 +318,14 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
       set: [{ official_id: ref.id, role_key: "referee", locked: false }],
     });
 
-    await expect(
-      createOfficial(auth, {
-        display_name: "Multi",
-        role_keys: ["referee", "judge"],
-      }),
-    ).rejects.toMatchObject({ featureKey: "officials.roles_multi" });
+    // multi-role officials are free on every plan since V319 (#253).
+    const multi = await createOfficial(auth, {
+      display_name: "Multi",
+      role_keys: ["referee", "judge"],
+    });
+    expect(multi.role_keys).toEqual(["referee", "judge"]);
 
+    // officials.auto (the AI Officials path) STAYS gated.
     await expect(
       autoAssignOfficials(auth, division.id, {
         policy: {
@@ -340,7 +342,7 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
     ).rejects.toMatchObject({ featureKey: "officials.auto" });
   });
 
-  it("Community: officials.per_fixture.max caps a fixture at one official; Pro lifts it", async () => {
+  it("Community: multiple officials per fixture are free (V319, #253)", async () => {
     const { auth } = await seedOrg("community");
     const { fixtures } = await seedScheduledDivision(auth);
     const refA = await createOfficial(auth, {
@@ -352,24 +354,7 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
       role_keys: ["referee"],
     });
 
-    // one official per fixture stays free
-    await patchFixtureOfficials(auth, fixtures[0]!.id, {
-      set: [{ official_id: refA.id, role_key: "referee", locked: false }],
-    });
-
-    // two officials, same role (so roles_multi never fires) → 402 on the quota
-    await expect(
-      patchFixtureOfficials(auth, fixtures[0]!.id, {
-        set: [
-          { official_id: refA.id, role_key: "referee", locked: false },
-          { official_id: refB.id, role_key: "referee", locked: false },
-        ],
-      }),
-    ).rejects.toMatchObject({ featureKey: "officials.per_fixture.max" });
-
-    await setOrgPlan(auth.orgId);
-    await invalidateOrgEntitlements(auth.orgId);
-
+    // two officials, same role, on a Community org — no per_fixture.max cap.
     const { officials } = await patchFixtureOfficials(auth, fixtures[0]!.id, {
       set: [
         { official_id: refA.id, role_key: "referee", locked: false },
@@ -377,6 +362,42 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
       ],
     });
     expect(officials).toHaveLength(2);
+  });
+
+  // Regression guard (#253): a Community org can create a multi-role official,
+  // assign a 2nd official to one fixture, and record a mark — all with no 402.
+  it("Community regression: multi-role, 2nd official, and marks all free (#253)", async () => {
+    const { auth } = await seedOrg("community");
+    const { fixtures } = await seedScheduledDivision(auth);
+
+    const multi = await createOfficial(auth, {
+      display_name: "Multi",
+      role_keys: ["referee", "judge"],
+    });
+    expect(multi.role_keys).toEqual(["referee", "judge"]);
+    const refB = await createOfficial(auth, {
+      display_name: "Ref B",
+      role_keys: ["umpire"],
+    });
+
+    // two officials, two roles, one fixture (exercises the ex-roles_multi and
+    // ex-per_fixture.max patch gates).
+    const { officials } = await patchFixtureOfficials(auth, fixtures[0]!.id, {
+      set: [
+        { official_id: multi.id, role_key: "referee", locked: false },
+        { official_id: refB.id, role_key: "umpire", locked: false },
+      ],
+    });
+    expect(officials).toHaveLength(2);
+
+    // record a mark — needs an accepted, decided assignment.
+    const [fo] = await sql<{ id: string }[]>`
+      select id from fixture_officials
+      where fixture_id = ${fixtures[0]!.id} and official_id = ${multi.id} limit 1`;
+    await sql`update fixture_officials set response = 'accepted' where id = ${fo!.id}`;
+    await sql`update fixtures set status = 'decided' where id = ${fixtures[0]!.id}`;
+    await putMark(auth, fo!.id, { mark: 5, comment: "great" });
+    expect(await orgMarksSummary(auth, multi.id)).toMatchObject({ average: 5, count: 1 });
   });
 
   it("bulk officials import is idempotent on display name", async () => {
