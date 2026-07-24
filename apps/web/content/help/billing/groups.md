@@ -81,6 +81,8 @@ Two details worth knowing:
 - The organisation's owner becomes the owner of its new, standalone billing — there's no role to grant.
 - A free trial doesn't reset on the way out. If the group has used its trial, the departing organisation has used it too.
 
+Whoever didn't do it gets an email. If the payer removes an organisation, that organisation's owner is told what happened to the plan — whether it rides out the period or drops to Community now — and that its billing is now theirs. If an owner takes their own organisation out, the payer is told their next bill has changed. Nobody acts on someone else's bill without the other side hearing about it.
+
 ## No refunds, and the freed slot
 
 Removing never refunds, and adding always charges immediately — we don't call Stripe to move money mid-period either way. The two removal choices differ only in **who keeps the value of the seat you already paid for**: the departing organisation, which rides out the period on its plan, or you, as a freed slot to reuse.

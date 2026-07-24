@@ -12,6 +12,8 @@ import {
   inviteTemplate,
   transferOfferTemplate,
   transferCompleteTemplate,
+  groupOrgRemovedTemplate,
+  groupOrgLeftTemplate,
   registrationTemplate,
   type RegistrationEmailArgs,
   paymentReminderTemplate,
@@ -379,6 +381,35 @@ export async function sendTransferCompleteEmail(
 ): Promise<boolean> {
   const dict = await getDictionary(locale, "emails");
   return send({ to, ...transferCompleteTemplate(payerName, groupName, link, dict) });
+}
+
+/** A group's payer pushed an org off the shared bill (billing-group detach). The
+ *  org's OWNER is told what happened — `ridesOutUntil` set = keeps the plan
+ *  until then, null = on Community now — and that its billing is now theirs. */
+export async function sendGroupOrgRemovedEmail(
+  to: string,
+  payerName: string,
+  orgName: string,
+  ridesOutUntil: string | null,
+  link: string,
+  locale: Locale = "en",
+): Promise<boolean> {
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, ...groupOrgRemovedTemplate(payerName, orgName, ridesOutUntil, link, dict) });
+}
+
+/** An org's own owner left a billing group (billing-group detach). The PAYER is
+ *  told their bill changed — `seatFreed` true = the seat is a reusable freed
+ *  slot (release), false = it left with the org and the next invoice is smaller. */
+export async function sendGroupOrgLeftEmail(
+  to: string,
+  orgName: string,
+  seatFreed: boolean,
+  link: string,
+  locale: Locale = "en",
+): Promise<boolean> {
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, ...groupOrgLeftTemplate(orgName, seatFreed, link, dict) });
 }
 
 export interface RegistrationEmail extends RegistrationEmailArgs {
