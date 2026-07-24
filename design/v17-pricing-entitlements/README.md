@@ -31,6 +31,8 @@ Three out-of-box moves woven through:
 2. **Free runs BIG, pays for polish + power + fee** — not headcount walls. Attract every organizer; monetize brand removal, feature depth, and the fee %.
 3. **Pro Plus = operator + enterprise roadmap**, not "Pro with bigger numbers." Splits Pro↔Pro Plus by *axis* (depth vs breadth), fixing the soft-differentiation flagged in #245.
 
+**Amplifiers** (SPEC-5): operator credit allocation (v17), earn-credits + auto-topup (fast-follow). Everything ships in **phases** — see §9.
+
 ## 3. The 4 tiers (kept — no new SKU tier)
 
 | Tier | Axis / job | Price |
@@ -40,7 +42,7 @@ Three out-of-box moves woven through:
 | **Pro** | **Depth** — run one club/league brilliantly. | $19/mo · $159/yr |
 | **Pro Plus** | **Breadth / operator** — run a network of orgs + enterprise roadmap. | $39/mo · $327/yr |
 
-**Decision (2026-07-24):** keep the existing 4 tiers. A separate sales-led *Enterprise* SKU is **not** created now — enterprise-grade features live inside Pro Plus, the not-yet-built ones shown as **"coming soon"** (see SPEC-1 §Pro-vs-Pro-Plus). This gives Pro Plus a visible roadmap = the differentiator Pro lacks, without building an Enterprise tier prematurely.
+**Decision (2026-07-24):** keep the existing 4 tiers. A separate sales-led *Enterprise* SKU is **not** created now — enterprise-grade features live inside Pro Plus, the not-yet-built ones shown as **"coming soon"** (SPEC-1 §6). This gives Pro Plus a visible roadmap = the differentiator Pro lacks, without building an Enterprise tier prematurely.
 
 ## 4. What changes vs today (summary)
 
@@ -53,16 +55,21 @@ Three out-of-box moves woven through:
 | Scorers | `scorers.max` 1/1/1/∞ | **retired** — officials replaced it (#244) |
 | Pro↔Pro Plus | soft (∞ vs caps) | **axis split** — depth vs operator + coming-soon list |
 | Expansion revenue | pick a higher plan | **add-ons**: AI credits · size packs · seats · orgs |
-| Admin | overrides + billing-events | + **credit grants + unified adjustment/audit layer** |
+| Trials | 14-day, tier features | + **custom trial credit** (`ai.credits.trial` ~20, once/org) |
+| Multi-org (billing groups) | per-org assumptions | **group-level** — one shared credit wallet + one-payer add-ons (SPEC-2 §11) |
+| Operator (Pro Plus) | shared pool only | **per-org allocation console** (SPEC-5 §1) |
+| Admin | overrides + billing-events | + **credit grants + unified adjustment/audit layer** (SPEC-3) |
 
 ## 5. Spec index
 
 | File | Covers |
 |---|---|
-| [`SPEC-1-plan-entitlement-matrix.md`](./SPEC-1-plan-entitlement-matrix.md) | Full 4-tier × entitlement matrix; fee ladder; feature ownership; Pro↔Pro Plus axis + coming-soon; officials ungate; scorers retire; dead-key disposition; resolver + enforcement; migration sketch |
-| [`SPEC-2-addons-and-ai-credit-wallet.md`](./SPEC-2-addons-and-ai-credit-wallet.md) | 3 add-on shapes; `org_addons` additive caps; per-comp size ladder; AI credit ledger (store/consume/track); credit pricing; margin math; Stripe products |
+| [`SPEC-1-plan-entitlement-matrix.md`](./SPEC-1-plan-entitlement-matrix.md) | Full 4-tier × entitlement matrix; fee ladder; Pro↔Pro Plus axis + coming-soon; officials ungate; scorers retire; dead-key disposition; **one-resolver guardrail**; migration sketch |
+| [`SPEC-2-addons-and-ai-credit-wallet.md`](./SPEC-2-addons-and-ai-credit-wallet.md) | 3 add-on shapes; `org_addons` additive caps; size ladder; AI credit ledger (store/consume/track); trial + plan-change + annual rules; **billing-group wallet** (§11) |
 | [`SPEC-3-admin-adjustments.md`](./SPEC-3-admin-adjustments.md) | Admin adjustment layer (credits/overrides/add-ons/passes/plan); safety rules; unified audit trail; `/admin` surface |
-| [`SPEC-4-event-pass-validity.md`](./SPEC-4-event-pass-validity.md) | Event Pass auto-lock lifecycle (absorbs #248–#252): lock on end/`ends_on`, no carry to next edition, next-edition UX, help copy, 12-mo safety cap |
+| [`SPEC-4-event-pass-validity.md`](./SPEC-4-event-pass-validity.md) | Event Pass auto-lock lifecycle (absorbs #248–#252): lock on end/`ends_on`, no carry to next edition, next-edition UX |
+| [`SPEC-5-operator-and-credit-economy.md`](./SPEC-5-operator-and-credit-economy.md) | Operator credit allocation (v17); earn-credits + auto-topup (fast-follow) |
+| [`SPEC-6-ui-surfaces.md`](./SPEC-6-ui-surfaces.md) | Every new/changed screen/page/tab/modal: pricing page, credits tab, add-ons, operator console, admin tabs — wireframes + i18n/help closing passes |
 
 ## 6. Relationship to open issues (`pricing-entitlements`)
 
@@ -70,29 +77,50 @@ Three out-of-box moves woven through:
 |---|---|
 | #242 inventory | baseline (BEFORE column in SPEC-1) |
 | #243 free AI COGS | **solved offensively** — AI wallet (SPEC-2), free grant = margin floor |
-| #245 teams.active.max | **superseded (confirmed 2026-07-24)** — Pro↔Pro Plus axis reframe (SPEC-1 §6) replaces the knob; **close #245 as superseded**, do not ship `teams.active.max` |
+| #245 teams.active.max | **superseded (confirmed)** — Pro↔Pro Plus axis reframe (SPEC-1 §6); **close #245** |
 | #244 scorers.max | **retire** the key (SPEC-1 §8) |
-| #246 dead keys | **disposition each** — revive `stats.club_championship` as Pro Plus analytics; kill the rest (SPEC-1 §9) |
+| #246 dead keys | **disposition each** — revive `stats.club_championship`; kill the rest (SPEC-1 §9) |
 | #253 ungate officials | **included** (SPEC-1 §7) |
-| #248–#252 Event Pass validity | **absorbed** — [`SPEC-4`](./SPEC-4-event-pass-validity.md) ports the full lifecycle spec + child issue map |
+| #248–#252 Event Pass validity | **absorbed** — [`SPEC-4`](./SPEC-4-event-pass-validity.md) |
 
-**Every open `pricing-entitlements` issue now has a home in v17.**
+**Every open `pricing-entitlements` issue now has a home in v17.** New scope beyond the issues (wallet, add-ons, operator allocation, admin layer, UI) is captured in SPEC-2/3/5/6.
 
 ## 7. Open questions (need product call before build)
 
-> **Tunable dials** — deliberate numbers meant to be re-tuned without a redesign: free entrants (64) · credit price ($0.25/credit) · fee ladder (8/5/2/1%) · monthly AI grants (10/60/200). Build them as config knobs, not hard constants, so they flex with data.
+> **Tunable dials** — deliberate numbers meant to be re-tuned without a redesign: free entrants (64) · credit price ($0.25/credit) · fee ladder (8/5/2/1%) · monthly AI grants (10/60/200) · **trial credit (~20)** · earn amounts. Build them as config knobs, not hard constants.
 
-1. ~~Free entrants — 64 vs 32~~ → **RESOLVED: 64** (2026-07-24), flagged tunable (above). Primary COGS/abuse-vs-attraction lever; revisit if free abuse appears. Knock-on: Event Pass **S dropped** → ladder is **M ≤128 / L ∞** (SPEC-2 §4).
+1. ~~Free entrants — 64 vs 32~~ → **RESOLVED: 64** (tunable). Knock-on: Event Pass ladder **M ≤128 / L ∞** (SPEC-2 §4).
 2. Pro `orgs.max_owned` — keep **5** base, or lower base + sell extra-org add-on harder?
 3. Credit unit — **1 credit = 1 run** (simple) vs size-weighted (COGS-precise)?
-4. Pack expiry — **never** vs 24-month cap (D2)?
-5. AI officials auto — fully credit-metered on any tier, or keep a light Pro+ gate?
-6. Build any "coming soon" Pro Plus feature now, or ship the re-org first and tease?
+4. Pack expiry — **never** vs 24-month cap?
+5. ~~Trials — grant which tier's credits?~~ → **RESOLVED: custom `ai.credits.trial` ~20, once/org** (SPEC-2 §5.4).
+6. AI officials auto — fully credit-metered on any tier, or keep a light Pro+ gate?
 7. Grant reset anchor — calendar month vs billing-cycle anchor?
+8. Operator allocation — default when no cap set = **free-for-all from pool** (confirm); hard-cap vs soft-cap on overrun?
+9. Build any "coming soon" Pro Plus feature now, or ship the re-org first and tease?
 
 ## 8. Non-goals
 
 - No development in this pass — design only.
 - Not deleting historical data on any downgrade/lapse (freeze pattern stays).
 - Not building the sales-led Enterprise tier.
+- Not building earn-credits / auto-topup in the core — **fast-follow** (SPEC-5 §2–3).
 - Not changing the resolver's core order (`override → pass → plan → deny`) — only adding an additive layer.
+
+## 9. Build phasing
+
+v17 is **7 subsystems** — build in slices, each valuable + shippable alone. Order = dependency order.
+
+| Phase | Ships | New subsystem | Value alone | Depends on |
+|---|---|---|---|---|
+| **1 — Re-org** ⭐ | matrix, fees, officials ungate, scorers retire, Pro↔Pro Plus labels + coming-soon, dead keys, pricing page (SPEC-6 A1/A2) | none (config + render + help) | "more valuable packaging" **immediately**, lowest risk | — |
+| **2 — Wallet** | `ai_credit_ledger`, grant, reserve→settle, trial/plan-change, 402, credits tab (A3/A4/A6) | ledger | fixes #243 margin; AI metered | 1 |
+| **3 — Add-ons** | `org_addons` additive, size-pack, seat, Stripe products, add-ons tab (A5/A7) | add-on billing | expansion revenue | 1,2 |
+| **4 — Admin** | adjustment layer + audit, `/admin/orgs/[id]` tabs (C1–C4) | admin console | ops + support | 2,3 |
+| **5 — Pass lock** | SPEC-4 auto-lock, ended/next-edition (A8) | resolver arm | closes the loophole | 1 (parallel-ok) |
+| **6 — Operator** | SPEC-5 §1 allocation console (B1/B2) | operator console | Pro Plus moat | 2 + groups (built) |
+| **fast-follow** | earn-credits (SPEC-5 §2), auto-topup (SPEC-5 §3), D1/D2 | — | growth + smoothing | 2,3 |
+
+**Phase 1 is the MVP.** Every phase carries its own tests, i18n, and help pages (closing passes per SPEC-6).
+
+**Global closing passes (every phase):** i18n × 4 locales · help pages · frontend-design + screenshot-verify · regression test that fails without the change · smoke-demo extension.

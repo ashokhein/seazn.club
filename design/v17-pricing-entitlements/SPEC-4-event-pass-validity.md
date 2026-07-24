@@ -2,6 +2,8 @@
 
 Absorbs GitHub issues **#248 (SPEC)** and children **#249–#252** into the v17 home. This is the *lifecycle* half of Event Pass (when a pass stops applying); the *matrix* half (what a pass lifts) is in [`SPEC-1 §5`](./SPEC-1-plan-entitlement-matrix.md) and the *size ladder* in [`SPEC-2 §4`](./SPEC-2-addons-and-ai-credit-wallet.md).
 
+**UI surfaces:** SPEC-6 §A7 (Pass M/L buy), §A8 (Pass ended → next-edition).
+
 ---
 
 ## 1. Purpose

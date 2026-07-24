@@ -2,6 +2,8 @@
 
 One audited surface for staff to adjust anything money- or entitlement-related — grant credits, override caps, comp add-ons, grant passes, set plans. See [`README.md`](./README.md); wallet in [`SPEC-2`](./SPEC-2-addons-and-ai-credit-wallet.md).
 
+**UI surfaces:** SPEC-6 §C1 (org tabs), §C2 (credit grant modal), §C3 (entitlements grid), §C4 (adjustments log).
+
 ---
 
 ## 1. The adjustment set
@@ -16,7 +18,7 @@ All five write an attributed, reversible row to their existing store — nothing
 | **Grant an Event Pass** | `competition_passes` (staff-granted) | goodwill on one competition |
 | **Set plan / extend trial** | subscription override + `restoreTrial` (exists) | beta partner on Pro Plus free; extend trial |
 
-The credit path reuses the ledger's `admin_adjust` source + `created_by` + reason from SPEC-2 §5.1 — no new primitive.
+The credit path reuses the ledger's `admin_adjust` source + `created_by` + reason from SPEC-2 §5.1 — no new primitive. Credit grants target the **group wallet** (`wallet_id`, SPEC-2 §11), so they benefit every org in a billing group. A **custom trial credit** (a sales-led POC that needs more than the default `ai.credits.trial` ~20) is just an `admin_adjust` grant with reason `sales_comp` — no separate mechanism.
 
 ## 2. Safety rules (money-adjacent)
 

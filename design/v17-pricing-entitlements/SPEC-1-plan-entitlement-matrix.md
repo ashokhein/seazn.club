@@ -2,6 +2,8 @@
 
 Owns the re-organized quota + feature matrix across the 4 tiers. See [`README.md`](./README.md) for the north star and decisions. Add-on axes and the AI wallet are in [`SPEC-2`](./SPEC-2-addons-and-ai-credit-wallet.md); admin adjustments in [`SPEC-3`](./SPEC-3-admin-adjustments.md).
 
+**UI surfaces:** SPEC-6 §A1 (pricing page), §A2 (plan comparison / entitlement matrix), §C3 (admin entitlements grid).
+
 ---
 
 ## 1. How entitlements work (unchanged core)
@@ -56,8 +58,10 @@ Owns the re-organized quota + feature matrix across the 4 tiers. See [`README.md
 |---|---:|---:|---:|---:|
 | `registration.fee_percent` | 8 | 5 | 2 | 1 |
 | `ai.credits.monthly` **(new)** | 10 | +25 one-time³ | 60 | 200 |
+| `ai.credits.trial` **(new)** | — | — | 20⁴ | 20⁴ |
 
 ³ Event Pass grants a **one-time** +25 credit boost on purchase (not a monthly reset — Pass is one-time). Packs top up any tier (SPEC-2).
+⁴ Trial of a paid tier grants a **custom one-time** credit (default 20), **once per org** (`trial_used_at` guard). Convert → monthly grant; expire → Community 10. Tunable (SPEC-2 §5.4). Prevents trial-farming for credits.
 
 **Margin floor by design:** free's 10 credits/mo ≈ $1–5/mo max COGS per free org (blended ~$0.12/run, worst ~$0.47). #243 solved without walling AI.
 
@@ -92,7 +96,7 @@ The differentiator is **job**, not size. Pro Plus's price is justified by its **
 | **Live now** (justifies price) | **Coming soon** (roadmap) |
 |---|---|
 | Everything in Pro | Multi-org command center (cross-org roll-up dashboard) |
-| Consolidated multi-org billing — *built* (billing groups, `usecases/billing-groups.ts`) | Shared templates + branding across orgs |
+| Consolidated multi-org billing + **shared credit wallet** — *built* (billing groups, `usecases/billing-groups.ts`; wallet SPEC-2 §11) | Shared templates + branding across orgs |
 | Write API + webhooks (`api.write`) | Cross-competition analytics (revive `stats.club_championship`) |
 | Unlimited scale (seats / clubs / teams / entrants) | Custom domain / white-label (`domains.custom`) |
 | 1% entry-fee cut | SSO / SAML |
@@ -130,6 +134,8 @@ Goal: `/admin/entitlements` shows no mystery rows; every live key has a story (c
 - Render: `lib/pricing-cards.ts`, `pricing-matrix.ts`, `entitlement-domains.ts`, `feature-copy.ts`
 - Help: `apps/web/content/help/billing/plans.md`
 
+**One-resolver guardrail:** ALL feature decisions — server usecases **and** public/read paths (`public-site/data.ts`, `embed-data.ts`, `slideshow-data.ts`) — must route through the single resolver (now additive + wallet-aware + pass-lock-aware). No path may read `plan_key` directly for a feature decision, or add-ons / wallet / pass-lock will silently not apply there.
+
 ## 11. Migration sketch (when built — not now)
 
 1. New `plan_entitlements` delta (`V3xx`): updated ints/bools per §3–§5; new `ai.credits.monthly`; officials ungate; scorers rows removed from matrix; dead-key disposition.
@@ -146,6 +152,7 @@ Goal: `/admin/entitlements` shows no mystery rows; every live key has a story (c
 - [ ] Pro Plus pricing card shows Live + Coming-soon, Live justifies price alone.
 - [ ] AI run enforcement reads the wallet (SPEC-2), not `runs_per_division.max`.
 - [ ] `/admin/entitlements` shows only live, storied keys.
+- [ ] Public-site / embed / slideshow entitlement reads go through the one resolver (test: add-on + pass-lock honored on a public page).
 
 ## 13. Open questions
 
