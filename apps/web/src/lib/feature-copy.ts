@@ -62,6 +62,12 @@ const FEATURE_REASONS: Record<string, string> = {
   "scheduling.ai": "AI Schedule (plan, refine and repair your schedule from plain-language instructions) is not available on this plan.",
   "scheduling.ai.runs_per_division.max":
     "You've used this division's AI schedule generations — free plans include 5, an Event Pass 10, Pro 20 and Pro Plus 50.",
+  // AI credit wallet (v17 Phase 2, SPEC-2 §5.2): AI Schedule and AI Officials
+  // are metered by a prepaid credit balance on every tier, not by plan — this
+  // fires when the wallet (`reserve()` in lib/credits.ts) is empty, replacing
+  // the old per-division run cap above.
+  "ai.credits":
+    "You're out of AI credits for this billing period. Top up a credit pack or upgrade your plan to keep using AI Schedule and AI Officials.",
   "schedule.versioning": "Multi-site scope locks are a Pro feature — undo/redo always works.",
   "schedule.checkpoints.max": "You've reached your plan's save points — Pro includes five, Pro Plus unlimited. Undo/redo always works.",
   "domains.custom": "Serving your public pages on your own domain is a Pro Plus feature.",

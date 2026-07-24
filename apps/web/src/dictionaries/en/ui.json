@@ -537,6 +537,7 @@
   "billing.checkoutComplete": "Checkout complete — your plan is now",
   "billing.trialSuffix": " (trial)",
   "billing.currentPlan": "Current plan",
+  "billing.aiCredits.outOfCredits": "You're out of AI credits for this billing period. Top up a credit pack or upgrade your plan to keep using AI Schedule and AI Officials.",
   "billing.group.title": "Organisations on this bill",
   "billing.group.counts": "On this bill: {orgs} · Seats paid for: {seats}",
   "billing.group.capacity": "Room for {max}",

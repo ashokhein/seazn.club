@@ -36,6 +36,7 @@ import {
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
+import { spendCredit, walletIdFor } from "@/lib/credits";
 import { rateLimit } from "@/lib/rate-limit";
 import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -1000,9 +1001,12 @@ async function runOfficialsAiPlanLadder(
 
 // ===========================================================================
 // Phase B endpoint orchestrator (design/v4/03 §2). Gates → pack → run →
-// telemetry. NO run cap (the V291 scheduling.ai.runs_per_division.max cap is
-// Phase A only). Gate order per corpus 00 §6: kill-switch → officials.auto →
-// officials.roles_multi (only when >1 role) → rate limit.
+// telemetry. NO per-division run cap (the old V291
+// scheduling.ai.runs_per_division.max cap was Phase A only) — instead, every
+// run is metered by the AI credit wallet on every tier (SPEC-2 §5.2), same as
+// Phase A. Gate order per corpus 00 §6: kill-switch → officials.auto →
+// officials.roles_multi (only when >1 role) → rate limit → wallet reserve
+// (right before the LLM call).
 // ===========================================================================
 
 /**
@@ -1011,8 +1015,8 @@ async function runOfficialsAiPlanLadder(
  * on the error's extra) so refused spend is still metered.
  *
  * @throws HttpError 403 FEATURE_DISABLED (kill switch), 402 (officials.auto /
- *   officials.roles_multi), 429 (rate limit), plus everything
- *   buildOfficialsPack/runOfficialsAiPlan raise (404/422/503).
+ *   officials.roles_multi / an empty AI credit wallet), 429 (rate limit), plus
+ *   everything buildOfficialsPack/runOfficialsAiPlan raise (404/422/503).
  */
 export async function officialsAiPlanForDivision(
   auth: AuthCtx,
@@ -1029,6 +1033,11 @@ export async function officialsAiPlanForDivision(
   if (input.policy.roles.length > 1) {
     await requireFeature(auth.orgId, "officials.roles_multi");
   }
+  // AI runs are metered by the credit wallet on EVERY tier (SPEC-2 §5.2), not
+  // by plan — resolve the wallet up front; the actual reserve/402 happens
+  // right before the LLM call below.
+  const walletId = await walletIdFor(auth.orgId);
+
   await rateLimit(`ai-officials:${divisionId}`, { max: 5, windowSeconds: 3600 });
 
   const pack = await buildOfficialsPack(auth, divisionId, {
@@ -1042,7 +1051,14 @@ export async function officialsAiPlanForDivision(
 
   let result: OfficialsPlanResult & { served_model: string; escalated_from?: string; rungs_tried: string[] };
   try {
-    result = await runOfficialsAiPlanLadder(pack);
+    // Reserve 1 credit → run the architect → settle on success / release on
+    // failure (SPEC-2 §5.2). PaymentRequiredError("ai.credits") from an empty
+    // wallet falls through untouched below (matches no HttpError code here)
+    // and rethrows as the 402.
+    result = await spendCredit(walletId, auth.orgId, 1, async () => ({
+      aiRunId: crypto.randomUUID(),
+      result: await runOfficialsAiPlanLadder(pack),
+    }));
   } catch (err) {
     // Meter a refused / un-correctable / timed-out run's token spend too —
     // usage rides on the 422 extra so a failed architect call is not invisible

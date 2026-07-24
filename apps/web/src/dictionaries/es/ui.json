@@ -537,6 +537,7 @@
   "billing.checkoutComplete": "Compra completada — tu plan ahora es",
   "billing.trialSuffix": " (prueba)",
   "billing.currentPlan": "Plan actual",
+  "billing.aiCredits.outOfCredits": "Se han agotado tus créditos de IA para este periodo de facturación. Compra un paquete de créditos o mejora tu plan para seguir usando el Horario con IA y los Árbitros con IA.",
   "billing.group.title": "Organizaciones en esta factura",
   "billing.group.counts": "En esta factura: {orgs} · Plazas pagadas: {seats}",
   "billing.group.capacity": "Cabida para {max}",

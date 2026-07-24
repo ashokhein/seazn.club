@@ -537,6 +537,7 @@
   "billing.checkoutComplete": "Afrekenen voltooid — je abonnement is nu",
   "billing.trialSuffix": " (proefperiode)",
   "billing.currentPlan": "Huidig abonnement",
+  "billing.aiCredits.outOfCredits": "Je AI-credits voor deze factureringsperiode zijn op. Koop een creditpakket of upgrade je abonnement om AI Planning en AI Officials te blijven gebruiken.",
   "billing.group.title": "Organisaties op deze factuur",
   "billing.group.counts": "Op deze factuur: {orgs} · Betaalde plekken: {seats}",
   "billing.group.capacity": "Ruimte voor {max}",

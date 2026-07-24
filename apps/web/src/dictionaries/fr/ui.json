@@ -537,6 +537,7 @@
   "billing.checkoutComplete": "Paiement terminé — votre forfait est désormais",
   "billing.trialSuffix": " (essai)",
   "billing.currentPlan": "Forfait actuel",
+  "billing.aiCredits.outOfCredits": "Vous n'avez plus de crédits IA pour cette période de facturation. Achetez un pack de crédits ou passez à un forfait supérieur pour continuer à utiliser l'IA Planning et l'IA Officiels.",
   "billing.group.title": "Organisations sur cette facture",
   "billing.group.counts": "Sur cette facture : {orgs} · Places payées : {seats}",
   "billing.group.capacity": "Capacité de {max}",
