@@ -140,7 +140,8 @@ ai_credit_ledger.ref → ai_runs(model, tokens, cost_usd, competition_id)   -- l
 |---|---|---|
 | **D1** monthly grant | **reset (use-or-lose)** each cycle | grant = taste + margin floor, not a bank |
 | **Cadence** | grant is **monthly regardless of billing cadence** | annual Pro ($159/yr) still gets 60/mo × 12, NOT a 720 lump (spike/waste) |
-| **D2** purchased packs | **never expire** (or 24-mo cap — open) | paid money; expiring paid credits = bad will / breakage risk |
+| **Anchor** | **billing-cycle** (paid) / **creation-day calendar** (Community) | resets align with the Stripe period + proration |
+| **D2** purchased packs | **expire 24 months** from purchase ⚠ finance/legal sign-off | bounds deferred revenue + captures breakage; long enough to feel permanent |
 | **Trial grant** | `ai.credits.trial` one-time (default **20**), **once per org** (`trial_used_at` guard) | taste without COGS; convert→monthly grant, expire→Community 10/mo. Guard stops trial-farming for free credits |
 | **Downgrade** | keep wallet balance; grant resets to new (lower) tier next cycle; packs persist | credits are money — freeze-not-delete extends to the wallet; AI still runs on any tier |
 | **Upgrade** | monthly grant rises to new tier (next cycle; optional prorated immediate top-up) | |

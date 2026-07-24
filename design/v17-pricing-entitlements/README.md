@@ -85,19 +85,21 @@ Three out-of-box moves woven through:
 
 **Every open `pricing-entitlements` issue now has a home in v17.** New scope beyond the issues (wallet, add-ons, operator allocation, admin layer, UI) is captured in SPEC-2/3/5/6.
 
-## 7. Open questions (need product call before build)
+## 7. Resolved decisions (2026-07-24)
 
-> **Tunable dials** — deliberate numbers meant to be re-tuned without a redesign: free entrants (64) · credit price ($0.25/credit) · fee ladder (8/5/2/1%) · monthly AI grants (10/60/200) · **trial credit (~20)** · earn amounts. Build them as config knobs, not hard constants.
+> **Tunable dials** — deliberate numbers, re-tuned without redesign: free entrants (64) · credit price ($0.25/credit) · fee ladder (8/5/2/1%) · monthly AI grants (10/60/200) · trial credit (~20) · earn amounts. Build as config knobs, not constants.
 
-1. ~~Free entrants — 64 vs 32~~ → **RESOLVED: 64** (tunable). Knock-on: Event Pass ladder **M ≤128 / L ∞** (SPEC-2 §4).
-2. Pro `orgs.max_owned` — keep **5** base, or lower base + sell extra-org add-on harder?
-3. Credit unit — **1 credit = 1 run** (simple) vs size-weighted (COGS-precise)?
-4. Pack expiry — **never** vs 24-month cap?
-5. ~~Trials — grant which tier's credits?~~ → **RESOLVED: custom `ai.credits.trial` ~20, once/org** (SPEC-2 §5.4).
-6. AI officials auto — fully credit-metered on any tier, or keep a light Pro+ gate?
-7. Grant reset anchor — calendar month vs billing-cycle anchor?
-8. Operator allocation — default when no cap set = **free-for-all from pool** (confirm); hard-cap vs soft-cap on overrun?
-9. Build any "coming soon" Pro Plus feature now, or ship the re-org first and tease?
+All resolved via the north star (ARPU > conversion > margin floor > clarity):
+
+1. **Free entrants → 64** (tunable). Event Pass ladder M ≤128 / L ∞ (SPEC-2 §4a).
+2. **Pro `orgs.max_owned` → keep 5.** The Pro↔Pro Plus line is **operator tools** (command center, shared wallet, per-org allocation, cross-org roll-up), **not** org count — a Pro user may run a few clubs; the operator *layer* is Pro Plus (SPEC-1 §6).
+3. **Credit unit → 1 credit = 1 run** (simple; COGS bounded by tier size caps). Size multiplier deferred until telemetry shows a run class > ~2× median COGS.
+4. **Pack expiry → 24 months** from purchase (bounds deferred-revenue liability + captures breakage; long enough to feel permanent). ⚠ **needs finance/legal sign-off** — prepaid-credit / gift-card rules vary by jurisdiction (per stripe skill + finance).
+5. **Trials → custom `ai.credits.trial` ~20, once/org** (SPEC-2 §5.4).
+6. **AI officials auto → credit-metered on any tier** — same model as AI scheduling (wallet-gated, not plan-gated). Consistent, and it is revenue.
+7. **Grant reset anchor → billing-cycle anchor** for paid tiers (aligns with the Stripe period + proration); **creation-day calendar month** for Community.
+8. **Operator allocation →** default **free-for-all** from the pool (no row = unlimited share); an org at its cap is a **hard block** (402 "ask your operator"), operator raises it instantly (SPEC-5 §1). Hard, because soft defeats the purpose.
+9. **Coming-soon Pro Plus features → tease now, build post-v17** (each its own project). No v17 scope creep.
 
 ## 8. Non-goals
 

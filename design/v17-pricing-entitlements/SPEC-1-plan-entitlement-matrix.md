@@ -106,6 +106,8 @@ The differentiator is **job**, not size. Pro Plus's price is justified by its **
 
 **Ethics guardrail:** never gate money on undelivered features. "Coming soon" items are badged roadmap only; the Live column stands alone. When a coming-soon feature ships, it moves to Live; if the roadmap grows, a future sales-led Enterprise tier can split off — out of scope here.
 
+**Operator tools, not org count (Q2):** Pro may own up to 5 orgs, but the multi-org **command center**, shared wallet, per-org allocation, and cross-org roll-up are Pro Plus. Org count is not the wall — the operator *layer* is. Build coming-soon features **post-v17** (Q9), each as its own project.
+
 ## 7. Officials — ungate (#253)
 
 Set on **all four** plans: `officials.roles_multi = true`, `officials.marks = true`, `officials.per_fixture.max = null`. Remove `requireFeature`/`withinLimit`/UI gates for those keys in `usecases/officials.ts` + directory. **`ai.officials.auto`** (the AI Architect path) is **not** free — it is credit-metered (SPEC-2); split it off the old `officials.auto` gate so ungating manual officials doesn't give away metered AI.

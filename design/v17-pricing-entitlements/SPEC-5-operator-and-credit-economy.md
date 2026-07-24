@@ -34,6 +34,7 @@ AND (alloc.monthly_cap IS NULL
      OR alloc.spent_this_period + cost <= alloc.monthly_cap) -- org within its slice
 ```
 
+- **Hard cap** (Q8): an org at its `monthly_cap` is **blocked** (402 — "ask your operator to raise it") even if the pool has credit; a soft cap defeats the purpose. The operator raises it instantly (UI §B2). Default (no `org_credit_allocation` row) = **free-for-all** share from the pool.
 - On settle, increment `spent_this_period` for that org.
 - `spent_this_period` resets with the grant cycle; caps are editable anytime (takes effect next check).
 
