@@ -19,6 +19,7 @@ import {
 } from "@/lib/billing";
 import { CREDIT_PACKS } from "@/lib/credit-packs";
 import { recordPackPurchase, recordPackRefund, walletIdFor } from "@/lib/credits";
+import { SEAT_ADDON, isSeatAddonItem } from "@/lib/seat-addons";
 import {
   invalidateGroupEntitlements,
   invalidateOrgEntitlements,
@@ -424,6 +425,86 @@ async function handleSubscriptionChanged(stripeSub: Stripe.Subscription) {
   // through it, so a single-org invalidation would leave siblings on the old
   // plan for the 300s TTL.
   await invalidateGroupEntitlements(resolved.subscriptionId);
+  // Extra-seat add-ons ride the same subscription as extra items (SPEC-2 §11.3,
+  // Phase 3 Task 3a); reflect their current state into org_addons. getLimit sums
+  // org_addons UNCACHED (lib/entitlements.addonBonus), so no further entitlement
+  // invalidation is needed for a seat change to bite on the next read.
+  await syncSeatAddonsForSubscription(stripeSub, resolved.subscriptionId);
+}
+
+/**
+ * Reflect a subscription's extra-seat items into org_addons (v17 SPEC-2 §3,
+ * §11.3, Phase 3 Task 3a). The ROUTE (setExtraSeats) mutates Stripe; THIS is
+ * the SINGLE writer of the seat rows, so Stripe and the DB can never diverge.
+ *
+ * `subscriptionId` is the resolved billing GROUP (the wallet id for every org
+ * grouped under it — coalesce(subscription_id, org_id) resolves to exactly this
+ * for a member org). For each seat item present on the subscription, UPSERT its
+ * org_addons row keyed on `stripe_item_id` (the V324 partial-unique key IS the
+ * idempotency — a redelivered event neither duplicates a row nor double-counts
+ * the cap). Any active seat row for this group whose item Stripe no longer
+ * reports (removed, or quantity 0) is FLIPPED to status='canceled'
+ * (freeze-not-delete, V323/V324) — never deleted, never written with qty=0
+ * (the V324 CHECK forbids it).
+ */
+export async function syncSeatAddonsForSubscription(
+  stripeSub: Stripe.Subscription,
+  subscriptionId: string,
+): Promise<void> {
+  const seatItems = (stripeSub.items?.data ?? []).filter(isSeatAddonItem);
+  const seenItemIds: string[] = [];
+  for (const item of seatItems) {
+    const targetOrgId = item.metadata?.target_org_id;
+    if (!targetOrgId) {
+      console.error(
+        `[billing] seat item ${item.id} on subscription ${stripeSub.id} carries no ` +
+          `target_org_id metadata — cannot resolve which org's cap to lift; skipping`,
+      );
+      continue;
+    }
+    const featureKey = item.metadata?.feature_key || SEAT_ADDON.featureKey;
+    const qty = item.quantity ?? 0;
+    if (qty <= 0) {
+      // A quantity-0 seat item is a removal in disguise: never write qty=0
+      // (the V324 CHECK forbids it), flip any existing row to canceled instead.
+      await sql`
+        update org_addons set status = 'canceled'
+         where stripe_item_id = ${item.id} and status <> 'canceled'`;
+      continue;
+    }
+    // The wallet the resolver keys on (SPEC-2 §11.1): a grouped org resolves to
+    // its group's subscription id, i.e. `subscriptionId` here.
+    const walletId = await walletIdFor(targetOrgId);
+    await sql`
+      insert into org_addons
+        (wallet_id, target_org_id, target_competition_id, feature_key, delta_each, qty,
+         stripe_item_id, status)
+      values (${walletId}, ${targetOrgId}, null, ${featureKey}, ${SEAT_ADDON.deltaEach},
+              ${qty}, ${item.id}, 'active')
+      on conflict (stripe_item_id) where stripe_item_id is not null
+      do update set qty = excluded.qty, status = 'active',
+        wallet_id = excluded.wallet_id, target_org_id = excluded.target_org_id,
+        feature_key = excluded.feature_key, delta_each = excluded.delta_each`;
+    seenItemIds.push(item.id);
+  }
+
+  // Reconcile removals: an active Stripe-origin seat row (non-null
+  // stripe_item_id, the seat feature_key) for THIS group whose item Stripe no
+  // longer reports is gone. Scoped to SEAT_ADDON.featureKey so a future
+  // size-pack add-on (Task 3b) on a different feature on the same wallet is
+  // never swept here. When no seat items remain, every active seat row goes.
+  if (seenItemIds.length === 0) {
+    await sql`
+      update org_addons set status = 'canceled'
+       where wallet_id = ${subscriptionId} and feature_key = ${SEAT_ADDON.featureKey}
+         and stripe_item_id is not null and status = 'active'`;
+  } else {
+    await sql`
+      update org_addons set status = 'canceled'
+       where wallet_id = ${subscriptionId} and feature_key = ${SEAT_ADDON.featureKey}
+         and stripe_item_id is not null and status = 'active'
+         and stripe_item_id not in ${sql(seenItemIds)}`;
+  }
 }
 
 async function handleSubscriptionDeleted(stripeSub: Stripe.Subscription) {

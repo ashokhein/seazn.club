@@ -61,11 +61,25 @@ export interface PackSpec {
   product: { name: string; description?: string };
   price: PriceSpec;
 }
+/** The extra-seat RECURRING add-on (v17 SPEC-2 §3/§11.3). Like a PassSpec/PackSpec
+ *  it is one product + one price, but its price carries an `interval` (recurring,
+ *  not one-time) and it lifts a cap: `feature_key`/`delta_each` are OUR fields
+ *  (never sent to Stripe) — the webhook grants a `feature_key` add-on of
+ *  `delta_each` per seat. No `plans` row: the seat usecase resolves the live
+ *  price by lookup_key at request time, so this only ensures the price exists. */
+export interface SeatSpec {
+  key: string;
+  feature_key: string;
+  delta_each: number;
+  product: { name: string; description?: string };
+  price: PriceSpec;
+}
 export interface Seed {
   currency: string;
   plans: PlanSpec[];
   passes?: PassSpec[];
   packs?: PackSpec[];
+  seats?: SeatSpec[];
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -395,6 +409,17 @@ async function main(): Promise<void> {
     for (const pack of seed.packs ?? []) {
       const price = await ensurePrice(stripe, pack.price, pack.product, pack.key, seed.currency, null);
       console.log(`✓ ${pack.key}: onetime=${price.priceId} (${pack.credits} credits)`);
+    }
+    // Extra-seat recurring add-on (v17 Phase 3 Task 3a): same idempotent
+    // ensurePrice as a plan, but no `plans` row to write back to — the seat
+    // usecase (lib/seat-addons.resolveSeatPriceId) resolves the live price by
+    // lookup_key at request time. The price's `interval` makes it RECURRING
+    // (priceCreateParams sends `recurring`), unlike the one-time packs above.
+    for (const seat of seed.seats ?? []) {
+      const price = await ensurePrice(stripe, seat.price, seat.product, seat.key, seed.currency, null);
+      console.log(
+        `✓ ${seat.key}: recurring=${price.priceId} (${seat.feature_key} +${seat.delta_each}/seat)`,
+      );
     }
     console.log("Stripe sync complete.");
   } finally {
