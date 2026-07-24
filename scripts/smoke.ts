@@ -3968,8 +3968,9 @@ async function drainWallet(orgId: string, remaining = 0): Promise<void> {
 /** Top up an org's AI credit wallet by `amount` via a single raw ledger
  *  credit row — the keyless-safe analog of the old `insertEntitlementOverride`
  *  "admin lifts the cap" step, updated for the wallet model: there is no
- *  per-division cap to override any more, only a balance to credit (mirrors
- *  an admin manually crediting a pack purchase, SPEC-2 §5.4 D2). */
+ *  per-division cap to override any more, only a balance to credit. Uses the
+ *  grant bucket (SPEC-2 §5.4 D1); the bucket is immaterial to smoke, which only
+ *  needs a spendable balance to drain. */
 async function topUpWallet(orgId: string, amount: number): Promise<void> {
   const walletId = await walletIdForOrg(orgId);
   const current = await walletBalance(orgId);

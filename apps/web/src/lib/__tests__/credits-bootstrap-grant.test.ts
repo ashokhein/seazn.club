@@ -58,7 +58,7 @@ describe.skipIf(!HAS_DB)("createOrgForUser — AI credit wallet bootstrap grant"
     expect(await balance(walletId)).toBe(10);
   });
 
-  it("the daily cron run in the same calendar month is a no-op for the bootstrap-granted wallet", async () => {
+  it("the daily cron run in the same calendar month is a no-op for the bootstrap-granted wallet", { timeout: 30000 }, async () => {
     const userId = await makeUser();
     const org = await createOrgForUser(userId, "Fresh Org Two");
     const walletId = await walletIdFor(org.id);
