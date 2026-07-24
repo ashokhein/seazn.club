@@ -127,7 +127,7 @@ Update `apps/web/content/help/billing/event-pass.md`: lock triggers (status, `en
 
 ## 12. Interaction with v17 size ladder
 
-The Event Pass **M/L** ladder (SPEC-2 §4) and this lifecycle lock are orthogonal but combine: a locked pass of any size falls back to Community caps. The size a pass *granted* is irrelevant once locked. Size-pack add-ons bought by subscribers follow the **same** competition lifecycle lock.
+The Event Pass **M/L** ladder (SPEC-2 §4a) is **two pass plan_keys** — `competition_passes.pass_key` is `event_pass` (M) or `event_pass_l` (L); the lock is on the row, **rung-agnostic**. A locked pass of either rung falls back to Community caps. The size a pass *granted* is irrelevant once locked. Size-pack add-ons bought by subscribers follow the **same** competition lifecycle lock.
 
 ## 13. Implementation sketch (when built — not now)
 

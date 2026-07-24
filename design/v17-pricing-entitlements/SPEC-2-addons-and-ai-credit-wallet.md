@@ -25,10 +25,11 @@ Each shape needs a different mechanism — two are new, one reuses the Event Pas
 Recurring add-ons raise an int cap additively. Today the resolver's override *replaces*; add-ons must *add*. Group-aware (see §11):
 
 ```
-effective_cap(org) = plan_base(group plan)
+effective_cap(org, comp) = plan_base(group plan)
                    + sum(delta_each * qty  where status = active
-                         AND (target_org_id = org OR target_org_id IS NULL))
-                     -- target_org_id NULL = group-wide; set = this org only
+                         AND (target_org_id = org OR target_org_id IS NULL)
+                         AND (target_competition_id = comp OR target_competition_id IS NULL))
+                     -- NULLs widen scope: group-wide / any-org / any-competition
 ```
 
 New table (group-reconciled — see §11.3):
@@ -40,6 +41,8 @@ org_addons(
                              --  coalesce(group_sub_id, org_id) for a standalone org
   target_org_id    text,     -- NULL = group-wide (shared capacity);
                              --  set = one org (e.g. an extra seat). See §11.3
+  target_competition_id text, -- NULL = any comp; set = one competition
+                             --  (subscriber size pack, §4b)
   feature_key      text,     -- e.g. members.max, orgs.max_owned
   delta_each       int,      -- +1 per unit
   qty              int,      -- Stripe line quantity
@@ -55,25 +58,26 @@ org_addons(
 
 **Extra-org** already works via Stripe graduated quantity ($9 Pro / $19 Pro Plus per org/mo); fold it in as `feature_key = orgs.max_owned`, `target_org_id = NULL` (group-wide capacity).
 
-## 4. Mechanism 2 — per-comp scale = Event Pass ladder
+## 4. Mechanism 2 — per-competition scale (TWO mechanisms, by buyer)
 
-Per-competition scale reuses `competition_passes` (one-time, competition-scoped, auto-locks when the comp ends per #248). Two entry points, one mechanism:
+"Per-comp scale" is **two different needs** using two mechanisms — conflating them was the gap the Phase-1 plan caught. The pass arm is **community-only** (`entitlements.ts` fires it only for non-paid plans), so a subscriber cannot ride it.
 
-| Entry point | Buyer | SKU |
+### 4a. Event Pass ladder (Community) — two pass plan_keys
+
+The pass arm grants whatever `plan_entitlements` rows exist for `competition_passes.pass_key`, and **`pass_key` is already a FK to `plans`**. So the M/L ladder is just **two pass plan_keys — zero resolver change**:
+
+| pass plan_key | Price | Caps |
 |---|---|---|
-| **Event Pass M/L** | Community (lift one comp) | M ≤128 / ≤10 div · L ∞ / ≤20 (S dropped: free = 64) |
-| **Size pack** | Pro subscriber exceeding a cap on one comp | one-time bump on that `competition_id` |
+| `event_pass` (M, base) | $29 | ≤128 entrants · ≤10 divisions |
+| `event_pass_l` (L) | ~$59 | ∞ entrants · ≤20 divisions |
 
-Suggested prices (USD set-points; INR PPP-cheap like plans):
+### 4b. Size pack (subscriber) — per-competition add-on
 
-| Pass / pack | Price | Cap |
-|---|---|---|
-| Event Pass **M** (base, today's $29) | $29 | ≤128 entrants · ≤10 divisions |
-| Event Pass **L** | ~$59 | ∞ entrants · ≤20 divisions |
+A Pro/Pro Plus org exceeding its cap on ONE competition is **not** an Event Pass. It is a **per-competition add-on**: an `org_addons` row with **`target_competition_id`** set (§3) — additive on the plan cap, that comp only. Reuses the additive add-on model (no new resolver arm) and follows the SPEC-4 lifecycle lock via the competition.
 
-All lift the same polish features for that competition (SPEC-1 §5) and grant a one-time +25 AI credits into the buyer's wallet (§5).
+**Rejected — a `size` column on `competition_passes`:** it adds a resolver special-case (size beats the plan value) and pulls scale out of the matrix. 4a + 4b reuse two mechanisms that already exist.
 
-**Resolved (2026-07-24):** free `entrants.per_division.max` = **64** (tunable — README §7). So Event Pass **S is dropped** (≤32 would be worse than free); ladder re-tiered to **M ≤128 · L ∞**. If free is later re-tuned, re-check that M sits comfortably above it.
+**Resolved (2026-07-24):** free `entrants.per_division.max` = **64** (tunable — README §7); Event Pass **S dropped**; ladder = `event_pass` M ≤128 / `event_pass_l` L ∞. If free is re-tuned, re-check M sits above it.
 
 ## 5. Mechanism 3 — the AI credit wallet
 
@@ -222,7 +226,7 @@ e.g. a Pro Plus group of 3 paid org-seats → 200 * 3 = **600 credits/mo** share
 | **AI credits** | **group-wide** (shared wallet) | ledger row, `wallet_id` |
 | **Extra org** | group-wide (`quantity_paid++`) | on the group sub (exists) |
 | **Extra seat** (`members.max`) | **targeted** to one org | `org_addons.target_org_id` set |
-| **Size pack** | competition-scoped | `competition_passes` (one org's comp) |
+| **Size pack** (subscriber) | competition-scoped | `org_addons.target_competition_id` (§4b) — one org's comp) |
 
 Charge always on the group's one payer (`wallet_id`); apply per the rule above (`target_org_id`).
 
