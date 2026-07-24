@@ -54,6 +54,7 @@
 ### Task 5: Retire the run-cap matrix key
 **Files:** `V321` migration; `pricing-matrix.ts` (INT_FEATURES); matrix/route tests.
 - [ ] Remove `scheduling.ai.runs_per_division.max` from `plan_entitlements` + `INT_FEATURES`; the wallet replaces it. Update `pro-plus-matrix.test.ts` (drop the V302 run-cap assertions) + any route test that asserts the old cap **only if it can run** (the AI-route timeouts stay out of scope).
+- [ ] Task 4 review (2026-07-24): `officials.auto` (V290, bool pro_plus-only) is now vestigial for the AI officials path — `officials-ai.ts` no longer gates on it (wallet-only, any tier). Retire/normalize it here alongside the run-cap key (it's still load-bearing for the separate MANUAL `officials.ts` gate — check before removing outright).
 - [ ] commit + **push**.
 
 ### Task 6: Wire grants into billing (checkout + cron) — closes the grant-wiring gap (Task 2 review)

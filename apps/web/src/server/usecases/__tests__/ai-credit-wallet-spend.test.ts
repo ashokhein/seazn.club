@@ -140,8 +140,11 @@ function refusalResponse(): AiChatResponse<unknown> {
   };
 }
 
-/** community org promoted to pro_plus directly (officials.auto is Pro Plus
- *  post-V290) — mirrors officials-ai-route.test.ts's seedPlusOrg. */
+/** community org promoted to pro_plus directly — mirrors
+ *  officials-ai-route.test.ts's seedPlusOrg. Plan no longer matters on the AI
+ *  officials path (Task 4 review: officials.auto, Pro Plus post-V290, is the
+ *  MANUAL officials.ts gate, not this one) — kept around for parity with the
+ *  zero-LLM-call solver-draft test below, which isn't plan-specific either. */
 async function seedPlusOrg(): Promise<AuthCtx> {
   const { auth } = await seedOrg("community");
   await setOrgPlan(auth.orgId, "pro_plus");
@@ -291,5 +294,48 @@ describe.skipIf(!HAS_DB)("AI credit wallet metering — officials-ai (SPEC-2 §5
     expect(spends).toHaveLength(1);
     expect(spends[0]).toMatchObject({ delta: -1 });
     expect(spends[0]!.ref).not.toBeNull();
+  });
+
+  // Task 4 review (CRITICAL): officials-ai.ts was calling
+  // requireFeature(orgId, "officials.auto") — a Pro-Plus-only bool — BEFORE
+  // the wallet spend, so a Community org got a plan-upgrade 402 even with
+  // credits. The wallet must be the ONLY gate, on any tier (SPEC-1 §5, §7).
+  it("a Community org WITH credits can run AI officials (no plan gate, wallet-metered)", async () => {
+    const { auth } = await seedOrg("community");
+    const { divisionId, fixtureIds } = await seedPlannableDivision(auth, { officials: 1 });
+    const walletId = await walletIdFor(auth.orgId);
+    await grantCredits(walletId, 3);
+
+    const out = await officialsAiPlanForDivision(auth, divisionId, {
+      instruction: "",
+      policy: POLICY,
+      schedule: spread(fixtureIds),
+    });
+    expect(chat).not.toHaveBeenCalled();
+    expect(out.usage).toEqual({ input_tokens: 0, output_tokens: 0, repair_rounds: 0 });
+    expect(await balance(walletId)).toBe(2);
+
+    const rows = await ledgerRows(walletId);
+    const spends = rows.filter((r) => r.source === "run_spend");
+    expect(spends).toHaveLength(1);
+    expect(spends[0]).toMatchObject({ delta: -1 });
+    expect(spends[0]!.ref).not.toBeNull();
+  });
+
+  it("a Community org with 0 credits gets 402 from the wallet, not a plan gate", async () => {
+    const { auth } = await seedOrg("community");
+    const { divisionId, fixtureIds } = await seedPlannableDivision(auth, { officials: 1 });
+    const walletId = await walletIdFor(auth.orgId);
+    expect(await balance(walletId)).toBe(0);
+
+    await expect(
+      officialsAiPlanForDivision(auth, divisionId, {
+        instruction: "cover it",
+        policy: POLICY,
+        schedule: spread(fixtureIds),
+      }),
+    ).rejects.toMatchObject({ status: 402, featureKey: "ai.credits" });
+    expect(chat).not.toHaveBeenCalled();
+    expect(await balance(walletId)).toBe(0);
   });
 });

@@ -1003,10 +1003,12 @@ async function runOfficialsAiPlanLadder(
 // Phase B endpoint orchestrator (design/v4/03 §2). Gates → pack → run →
 // telemetry. NO per-division run cap (the old V291
 // scheduling.ai.runs_per_division.max cap was Phase A only) — instead, every
-// run is metered by the AI credit wallet on every tier (SPEC-2 §5.2), same as
-// Phase A. Gate order per corpus 00 §6: kill-switch → officials.auto →
-// officials.roles_multi (only when >1 role) → rate limit → wallet reserve
-// (right before the LLM call).
+// run is metered by the AI credit wallet on every tier (SPEC-1 §5, §7 / SPEC-2
+// §5.2): the AI officials path is NOT plan-gated — officials.auto (V290,
+// bool_value=true for pro_plus only) is the MANUAL officials.ts gate, not this
+// one. Gate order here: kill-switch → officials.roles_multi (only when >1
+// role) → rate limit → wallet reserve (right before the LLM call) — the wallet
+// is the only spend gate, on any tier.
 // ===========================================================================
 
 /**
@@ -1014,9 +1016,9 @@ async function runOfficialsAiPlanLadder(
  * (phase "officials") fires on success AND on a 422 AI_PLAN_FAILED (usage rides
  * on the error's extra) so refused spend is still metered.
  *
- * @throws HttpError 403 FEATURE_DISABLED (kill switch), 402 (officials.auto /
- *   officials.roles_multi / an empty AI credit wallet), 429 (rate limit), plus
- *   everything buildOfficialsPack/runOfficialsAiPlan raise (404/422/503).
+ * @throws HttpError 403 FEATURE_DISABLED (kill switch), 402 (officials.roles_multi
+ *   / an empty AI credit wallet), 429 (rate limit), plus everything
+ *   buildOfficialsPack/runOfficialsAiPlan raise (404/422/503).
  */
 export async function officialsAiPlanForDivision(
   auth: AuthCtx,
@@ -1029,7 +1031,6 @@ export async function officialsAiPlanForDivision(
   if (!(await isServerFeatureEnabled("ai-scheduling", distinctId, { orgId: auth.orgId, fallback: true }))) {
     throw new HttpError(403, "AI scheduling is currently turned off", "FEATURE_DISABLED");
   }
-  await requireFeature(auth.orgId, "officials.auto");
   if (input.policy.roles.length > 1) {
     await requireFeature(auth.orgId, "officials.roles_multi");
   }
