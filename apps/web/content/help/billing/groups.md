@@ -67,7 +67,12 @@ Whatever the code, the amount shown before you confirm is the real, post-discoun
 
 Either side can end it. The payer can push an organisation out; the organisation's owner can pull it out. Nobody needs the payer's permission to leave, and no payer is stuck funding an organisation that won't cooperate.
 
-**Leaving costs nothing.** No payment, no card, no settling up. The organisation keeps the plan it had — and the entry-fee rate that came with it — until the end of the period the group already paid for. After that it falls back to Community limits unless it takes out its own subscription. Nothing is deleted, exactly as in a [downgrade](/help/billing/downgrade).
+**Leaving costs nothing** — no payment, no card, no settling up. What you decide is what happens to the seat the group already paid for, because that seat can go one of two ways and never both:
+
+- **Keep its plan until the period ends.** The organisation keeps the plan it had — and the entry-fee rate that came with it — until the end of the period the group already paid for, then falls back to Community. The seat **goes with it**: the group's next invoice is one seat smaller, and adding a replacement organisation now costs a new seat.
+- **Free up the seat now.** The organisation drops to Community straight away and loses the plan immediately. The seat stays with the payer as a **freed slot**, which another organisation can fill at no extra charge until the period renews — on an annual plan that can be worth eleven months.
+
+You can't have both from one seat — keep the plan on the way out *and* reuse the slot for free — because that would be two organisations entitled by a single paid seat. So the only question is which of the two is worth more to you. An organisation leaving a group that isn't currently billing (Community, or a cancelled subscription) has no period to ride out, so it simply moves to its own Community plan. Nothing is deleted either way, exactly as in a [downgrade](/help/billing/downgrade).
 
 Competitions that have **already taken a payment keep their locked entry-fee rate** whatever happens to the plan — leaving a group never raises the fee on a competition whose entrants have started paying. Only competitions that haven't sold a place yet move to the new rate.
 
@@ -76,11 +81,11 @@ Two details worth knowing:
 - The organisation's owner becomes the owner of its new, standalone billing — there's no role to grant.
 - A free trial doesn't reset on the way out. If the group has used its trial, the departing organisation has used it too.
 
-## The slot stays paid until renewal
+## No refunds, and the freed slot
 
-When an organisation leaves, we don't call Stripe to reduce the bill mid-period — you've already paid for that slot, so you keep it. The count is trued up at renewal, and until then the freed slot can be filled by another organisation **at no extra charge**. On an annual plan that can be worth eleven months.
+Removing never refunds, and adding always charges immediately — we don't call Stripe to move money mid-period either way. The two removal choices differ only in **who keeps the value of the seat you already paid for**: the departing organisation, which rides out the period on its plan, or you, as a freed slot to reuse.
 
-Adding always charges immediately; removing never refunds. Nothing changes at all if you add an organisation back into a slot you're still paying for.
+If you chose **Free up the seat now**, that slot can be filled by another organisation **at no extra charge** until renewal, and nothing changes at all if you add an organisation back into it. If you chose **Keep its plan until the period ends**, the seat left with the organisation, so the next organisation you add is a fresh seat and is charged as one. Either way the count is trued up at renewal.
 
 ## Handing the group to a new payer
 

@@ -676,9 +676,11 @@ describe.skipIf(!HAS_DB)("detach", () => {
     expect(fresh.comped_until?.toISOString()).toBe(old.current_period_end.toISOString());
     // Inheriting the stamp is what stops detach farming a fresh 14-day trial.
     expect(fresh.trial_used_at?.toISOString()).toBe(trialStamp);
-    // The paid slot stays theirs for the rest of the period — no refund, and a
-    // re-add before renewal is free.
-    expect((await readGroup(group)).quantity_paid).toBe(2);
+    // ride_out (the default) SPENDS the seat: it follows the departed org — which
+    // keeps the plan until the period ends — so quantity_paid comes down with it
+    // and a re-add is charged again. This is what shuts the detach farm. (A
+    // `release` instead holds the seat as a reusable freed slot; see its test.)
+    expect((await readGroup(group)).quantity_paid).toBe(1);
   });
 
   it("LOWERS the Stripe quantity, with no proration, so the next invoice is smaller", async () => {
@@ -708,9 +710,11 @@ describe.skipIf(!HAS_DB)("detach", () => {
     // "none", never create_prorations: a credit on the way down would be a
     // refund path, and there is deliberately none.
     expect(params.proration_behavior).toBe("none");
-    // Local record of what has been paid for does NOT drop here — only the
-    // renewal invoice lowers it, which is when those slots are actually spent.
-    expect((await readGroup(group)).quantity_paid).toBe(3);
+    // ride_out (the default) SPENDS one seat with the departing org, so the local
+    // record drops by one — 3 to 2, never below the two orgs that remain. A
+    // `release` would instead HOLD it at 3 (freed slot reusable); that half is
+    // covered by the release test.
+    expect((await readGroup(group)).quantity_paid).toBe(2);
   });
 
   it("mints COMMUNITY, never an unexpiring paid plan, out of a staff-comped group", async () => {
@@ -851,6 +855,77 @@ describe.skipIf(!HAS_DB)("detach", () => {
     await expect(
       detachOrgFromGroup({ actorUserId: owner, orgId: loose.orgId }),
     ).rejects.toThrow(/already has its own billing group/i);
+  });
+
+  it("ride_out SPENDS the freed seat, so a re-add is charged again — closes the detach farm", async () => {
+    // The farm: buy one extra seat once, then cycle orgs through it for free.
+    // Attaching orgB charges seat 2 (quantity_paid -> 2). Detaching orgB with a
+    // comp (ride_out) hands it pro_plus until the period ends, so the seat is
+    // SPENT and must go with it — otherwise the freed slot is reusable AND the
+    // departed org keeps the plan, one paid seat entitling two orgs, minted
+    // without limit by repeating attach/detach. The seat follows the comped org.
+    const payer = await makeUser("payer");
+    const group = await makeGroup(payer, {
+      plan: "pro_plus",
+      stripeSubId: "sub_farm_" + uniq(),
+      quantityPaid: 1,
+      periodEndDays: 30,
+    });
+    stripeMock.state.quantity = 1;
+    await makeOrg(group, payer); // seat 1, the payer's own org
+
+    // Buy seat 2.
+    const orgB = await makeLooseOrg(payer);
+    const attach1 = await attachOrgToGroup({
+      actorUserId: payer,
+      orgId: orgB.orgId,
+      subscriptionId: group,
+    });
+    expect(attach1).toMatchObject({ quantity: 2, charged: true });
+    expect((await readGroup(group)).quantity_paid).toBe(2);
+
+    // Detach orgB, riding out the paid period: the seat it rides out on is spent.
+    await detachOrgFromGroup({ actorUserId: payer, orgId: orgB.orgId, mode: "ride_out" });
+    expect((await readGroup(group)).quantity_paid).toBe(1);
+
+    // Re-adding a fresh org must CHARGE now, not ride the freed slot for free.
+    const orgC = await makeLooseOrg(payer);
+    stripeMock.subscriptionsUpdate.mockClear();
+    const attach2 = await attachOrgToGroup({
+      actorUserId: payer,
+      orgId: orgC.orgId,
+      subscriptionId: group,
+    });
+    expect(attach2).toMatchObject({ quantity: 2, charged: true });
+    expect((await readGroup(group)).quantity_paid).toBe(2);
+  });
+
+  it("release drops the org to Community immediately and keeps the freed slot reusable", async () => {
+    // The other half of the choice: the payer frees the slot NOW. The removed org
+    // loses pro_plus the instant it leaves (Community, no ride-out comp), and the
+    // seat the payer already bought stays theirs — reusable at no charge until the
+    // period ends. No comp handed out, so nothing to farm.
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const group = await makeGroup(payer, {
+      plan: "pro_plus",
+      stripeSubId: "sub_rel_" + uniq(),
+      quantityPaid: 2,
+      periodEndDays: 30,
+    });
+    stripeMock.state.quantity = 2;
+    await makeOrg(group, payer);
+    const orgId = await makeOrg(group, clubOwner);
+
+    const res = await detachOrgFromGroup({ actorUserId: clubOwner, orgId, mode: "release" });
+
+    const fresh = await readGroup(res.subscription_id);
+    expect(fresh.plan_key).toBe("community");
+    expect(fresh.comped_until).toBeNull();
+    // Access is lost the same second — no riding out the period.
+    expect(await hasFeature(orgId, "api.access")).toBe(false);
+    // The payer keeps the seat they paid for: freed slot, reusable this period.
+    expect((await readGroup(group)).quantity_paid).toBe(2);
   });
 });
 

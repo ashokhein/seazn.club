@@ -43,6 +43,61 @@ function EffectsList({ items }: { items: string[] }) {
   );
 }
 
+type DetachMode = "ride_out" | "release";
+
+/**
+ * The two ways to take an org off a live bill, offered as a choice because they
+ * trade opposite things and you can never have both from one seat (that combo is
+ * the farm): ride_out keeps the org's plan to the period end but the seat leaves
+ * with it, release drops the org to Community now but the payer keeps the freed
+ * seat to reuse. Owns its own selection and reports it up — the confirm dialog
+ * renders OUTSIDE the DictProvider, so its copy is resolved by the caller and
+ * passed in as plain strings.
+ */
+function DetachModeChoice({
+  rideOut,
+  release,
+  onChange,
+}: {
+  rideOut: { label: string; body: string };
+  release: { label: string; body: string };
+  onChange: (mode: DetachMode) => void;
+}) {
+  const [mode, setMode] = useState<DetachMode>("ride_out");
+  const pick = (m: DetachMode) => {
+    setMode(m);
+    onChange(m);
+  };
+  const options: [DetachMode, { label: string; body: string }][] = [
+    ["ride_out", rideOut],
+    ["release", release],
+  ];
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      {options.map(([m, o]) => (
+        <label
+          key={m}
+          className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${
+            mode === m ? "border-purple-400 bg-purple-50" : "border-slate-200 hover:border-slate-300"
+          }`}
+        >
+          <input
+            type="radio"
+            name="detach-mode"
+            checked={mode === m}
+            onChange={() => pick(m)}
+            className="mt-1 accent-purple-600"
+          />
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-slate-800">{o.label}</span>
+            <span className="mt-0.5 block text-xs text-slate-500">{o.body}</span>
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
 async function api(path: string, body: unknown): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(path, {
     method: "POST",
@@ -196,17 +251,43 @@ export function BillingGroupPanel({
   }
 
   async function detach(org: GroupOrg) {
+    // Captured by the choice widget's onChange (a plain closure var, read after
+    // the dialog resolves). Only offered when the group is actually paying: a
+    // group with no live subscription has no paid period to ride out, so both
+    // modes land the org in Community now and there is nothing to choose.
+    let mode: DetachMode = "ride_out";
     const ok = await confirm({
       title: msg("billing.group.detach.confirmTitle", { org: org.name }),
-      // No refund and the slot stays paid (confirmBody), then what removal does
-      // to the org itself: the downgrade at period end, which competitions keep
-      // their locked fee rate, and that Connect is untouched.
-      body: (
+      body: hasLive ? (
         <>
-          <p>{msg("billing.group.detach.confirmBody", { org: org.name })}</p>
+          <p>{msg("billing.group.detach.mode.question", { org: org.name })}</p>
+          <DetachModeChoice
+            rideOut={{
+              label: msg("billing.group.detach.mode.rideOut.label", { org: org.name }),
+              body: msg("billing.group.detach.mode.rideOut.body", { org: org.name }),
+            }}
+            release={{
+              label: msg("billing.group.detach.mode.release.label", { org: org.name }),
+              body: msg("billing.group.detach.mode.release.body", { org: org.name }),
+            }}
+            onChange={(m) => {
+              mode = m;
+            }}
+          />
+          {/* The fee-lock and Connect consequences hold for either mode; the
+              plan/seat outcome is stated in the choice itself. */}
           <EffectsList
             items={[
-              msg("billing.group.detach.effects.downgrade"),
+              msg("billing.group.detach.effects.feeLock"),
+              msg("billing.group.detach.effects.connect"),
+            ]}
+          />
+        </>
+      ) : (
+        <>
+          <p>{msg("billing.group.detach.confirmBodyImmediate", { org: org.name })}</p>
+          <EffectsList
+            items={[
               msg("billing.group.detach.effects.feeLock"),
               msg("billing.group.detach.effects.connect"),
             ]}
@@ -215,14 +296,19 @@ export function BillingGroupPanel({
       ),
       confirmLabel: msg("billing.group.detach.confirmAction"),
       tone: "danger",
-      // Removing an org drops it to Community at period end with no refund; the
-      // slowest, most deliberate of the three, so type to confirm here too.
+      // Removing an org is destructive and irreversible from the payer's side;
+      // the slowest, most deliberate of the three, so type to confirm here too.
       typedName: "CONFIRM",
     });
     if (!ok) return;
     setBusy(true);
     setError(null);
-    const res = await api("/api/billing/group/detach", { org_id: org.id });
+    // A group that is not billing has no paid period to ride out — send release
+    // so the intent matches the copy the payer just read.
+    const res = await api("/api/billing/group/detach", {
+      org_id: org.id,
+      mode: hasLive ? mode : "release",
+    });
     if (!res.ok) setError(res.error ?? msg("billing.group.error"));
     await load();
     setBusy(false);
