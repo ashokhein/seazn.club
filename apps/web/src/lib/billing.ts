@@ -10,6 +10,7 @@ import {
 } from "@/lib/entitlements";
 import { requireSubscriptionIdForOrg, subscriptionIdForOrg } from "@/lib/billing-group";
 import { LIVE_SUBSCRIPTION_STATUSES, hasLiveSubscription } from "@/lib/subscription-status";
+import { grantTrialForRow } from "@/lib/credits";
 
 /**
  * Checkout branding (verified against API 2026-06-24.dahlia). Kept in code
@@ -707,46 +708,67 @@ export async function syncSubscriptionForGroup(
   // null = this object cannot answer; see paymentMethodFromStripeSubscription.
   const hasPm = paymentMethodFromStripeSubscription(stripeSub);
 
-  await sql`
-    update subscriptions set
-      -- Unknown price keeps the group's current plan (never mass-downgrade on drift).
-      plan_key               = coalesce(${knownPlanKey}, subscriptions.plan_key, 'community'),
-      status                 = ${status},
-      stripe_subscription_id = ${stripeSub.id},
-      current_period_end     = ${periodEnd ? new Date(periodEnd * 1000).toISOString() : null},
-      trial_end              = ${
-        stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString() : null
-      },
-      -- One trial per group — and "trial" means "has had Pro". Any subscription
-      -- reaching us counts, including a dashboard-created one that never
-      -- carried a trial_end (V277's backfill always assumed this; the code
-      -- did not). Never cleared except by the staff Restore trial action.
-      trial_used_at          = coalesce(subscriptions.trial_used_at, now()),
-      cancel_at_period_end   = ${stripeSub.cancel_at_period_end},
-      -- Card on file: only OVERWRITE when this Stripe object could actually
-      -- answer. A trialing subscription created by the no-card checkout never
-      -- carries its own default_payment_method, so an unexpanded webhook
-      -- payload says nothing -- and clearing on it would re-arm the
-      -- add-a-payment-method banner for an org that has already added one
-      -- (the 2026-07-20 report). The in-app and payment_method webhook
-      -- writers keep the mirror honest in that case.
-      has_payment_method     = coalesce(${hasPm}::boolean, subscriptions.has_payment_method),
-      currency               = coalesce(${stripeSub.currency ?? null}, subscriptions.currency),
-      -- Task 7 fold-in: a re-buy (new sub id) clears any stale dispute flags so an
-      -- old dispute's late loss can't downgrade the fresh sub; a renewal (same id)
-      -- leaves an in-flight dispute's flags intact.
-      disputed_at            = case when subscriptions.stripe_subscription_id
-                                      is distinct from ${stripeSub.id}
-                                    then null else subscriptions.disputed_at end,
-      dispute_id             = case when subscriptions.stripe_subscription_id
-                                      is distinct from ${stripeSub.id}
-                                    then null else subscriptions.dispute_id end,
-      -- Grace anchor: stamp only on a real status TRANSITION — a same-status
-      -- re-sync (webhook replay, dunning retry) must not move it.
-      status_changed_at      = case when subscriptions.status is distinct from ${status}
-                                    then now() else subscriptions.status_changed_at end,
-      updated_at             = now()
-    where id = ${subscriptionId}`;
+  await sql.begin(async (tx) => {
+    // v17 Task 6 (SPEC-2 §5.4): grant `ai.credits.trial` in the SAME
+    // transaction — and off the SAME row lock — as the `trial_used_at`
+    // stamp below, so a concurrent sync can never win the stamp before the
+    // grant runs (`grantTrialForRow`'s only guard is "the caller already
+    // holds the lock and already knows trial_used_at is null"). Read the
+    // PRE-update trial_used_at here: a brand-new paid subscription is still
+    // 'community' in the DB until the UPDATE below commits, so the grant
+    // must use the plan this sync is ABOUT to set (`knownPlanKey`), not
+    // whatever is currently stored — reading the stale plan would look up
+    // the trial matrix row for the wrong plan and silently grant 0.
+    const [current] = await tx<{ plan_key: string; trial_used_at: string | null }[]>`
+      select plan_key, trial_used_at from subscriptions where id = ${subscriptionId} for update`;
+    if (current && current.trial_used_at === null) {
+      const resolvedPlanKey = knownPlanKey ?? current.plan_key ?? "community";
+      await grantTrialForRow(tx, subscriptionId, resolvedPlanKey);
+    }
+
+    await tx`
+      update subscriptions set
+        -- Unknown price keeps the group's current plan (never mass-downgrade on drift).
+        plan_key               = coalesce(${knownPlanKey}, subscriptions.plan_key, 'community'),
+        status                 = ${status},
+        stripe_subscription_id = ${stripeSub.id},
+        current_period_end     = ${periodEnd ? new Date(periodEnd * 1000).toISOString() : null},
+        trial_end              = ${
+          stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString() : null
+        },
+        -- One trial per group — and "trial" means "has had Pro". Any subscription
+        -- reaching us counts, including a dashboard-created one that never
+        -- carried a trial_end (V277's backfill always assumed this; the code
+        -- did not). Never cleared except by the staff Restore trial action.
+        -- (The credit grant above may already have stamped this inside this
+        -- same transaction — coalesce leaves that stamp untouched either way.)
+        trial_used_at          = coalesce(subscriptions.trial_used_at, now()),
+        cancel_at_period_end   = ${stripeSub.cancel_at_period_end},
+        -- Card on file: only OVERWRITE when this Stripe object could actually
+        -- answer. A trialing subscription created by the no-card checkout never
+        -- carries its own default_payment_method, so an unexpanded webhook
+        -- payload says nothing -- and clearing on it would re-arm the
+        -- add-a-payment-method banner for an org that has already added one
+        -- (the 2026-07-20 report). The in-app and payment_method webhook
+        -- writers keep the mirror honest in that case.
+        has_payment_method     = coalesce(${hasPm}::boolean, subscriptions.has_payment_method),
+        currency               = coalesce(${stripeSub.currency ?? null}, subscriptions.currency),
+        -- Task 7 fold-in: a re-buy (new sub id) clears any stale dispute flags so an
+        -- old dispute's late loss can't downgrade the fresh sub; a renewal (same id)
+        -- leaves an in-flight dispute's flags intact.
+        disputed_at            = case when subscriptions.stripe_subscription_id
+                                        is distinct from ${stripeSub.id}
+                                      then null else subscriptions.disputed_at end,
+        dispute_id             = case when subscriptions.stripe_subscription_id
+                                        is distinct from ${stripeSub.id}
+                                      then null else subscriptions.dispute_id end,
+        -- Grace anchor: stamp only on a real status TRANSITION — a same-status
+        -- re-sync (webhook replay, dunning retry) must not move it.
+        status_changed_at      = case when subscriptions.status is distinct from ${status}
+                                      then now() else subscriptions.status_changed_at end,
+        updated_at             = now()
+      where id = ${subscriptionId}`;
+  });
 }
 
 /**

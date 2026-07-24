@@ -204,6 +204,58 @@ export async function grantMonthly(
 }
 
 /**
+ * Cron entry point (Task 6, `api/cron/billing-grant`): grant every LIVE
+ * subscription row its monthly allowance for this period.
+ *
+ * Every org — paid or Community — has a `subscriptions` row (a group-of-one
+ * when not actually grouped, `lib/auth.ts`'s `createOrgForUser`), so a single
+ * scan of `subscriptions` covers both halves of SPEC-2 §11.2 without a
+ * separate "orgs with no group" pass: a paid plan grants
+ * `ai.credits.monthly(plan) * quantity_paid` (scaled to seats); `community`
+ * grants a FLAT 10 regardless of `quantity_paid` — §11.2 is explicit that
+ * Community is "never grouped" and never seat-scaled, even though its
+ * group-of-one row technically carries a `quantity_paid` column.
+ *
+ * The `exists (... organizations ...)` guard skips a group with no live org
+ * left in it (an orphan the empty-group cleanup hasn't caught yet, or a
+ * community group whose org was soft-deleted) — no wallet left to spend a
+ * grant from.
+ *
+ * **Idempotent per calendar month**, inherited from `grantMonthly`'s own
+ * `(wallet, monthly, YYYY-MM)` key: calling this daily is safe — whichever
+ * day first succeeds for a wallet in a month wins, every later call that
+ * month (same day retried, or a later day) is a no-op. This does NOT yet
+ * implement the billing-cycle-day-exact anchor SPEC-2 §5.4 / README §7
+ * calls for (paid resets on the Stripe period's own day, Community on its
+ * creation-day) — that needs per-wallet reset-day bookkeeping this task
+ * does not add. Calendar-month is a conservative stand-in: it can grant up
+ * to ~29 days later/earlier than the "true" anchor day, but it can never
+ * double-grant or skip a month.
+ *
+ * One wallet's failure (a bad plan_key, a transient DB error) is logged and
+ * skipped rather than aborting the whole sweep, matching
+ * `reconcileGroupQuantities`'s per-group try/catch.
+ */
+export async function grantMonthlyForAllWallets(): Promise<{ wallets: number; granted: number }> {
+  const rows = await sql<{ id: string; plan_key: string; quantity_paid: number }[]>`
+    select s.id, s.plan_key, s.quantity_paid from subscriptions s
+     where s.status in ('trialing', 'active', 'past_due')
+       and exists (
+             select 1 from organizations o
+              where o.subscription_id = s.id and o.deleted_at is null)`;
+  let granted = 0;
+  for (const row of rows) {
+    try {
+      const qty = row.plan_key === "community" ? 1 : row.quantity_paid;
+      granted += await grantMonthly(row.id, row.plan_key, qty);
+    } catch (err) {
+      console.error(`[credits] monthly grant failed for wallet ${row.id}`, err);
+    }
+  }
+  return { wallets: rows.length, granted };
+}
+
+/**
  * The one-time trial grant (SPEC-2 §5.4): `ai.credits.trial` (default 20,
  * pro / pro_plus only — community and event_pass carry no matrix row for
  * this key, so they simply grant nothing). **Once per org**, guarded by the
@@ -235,28 +287,55 @@ export async function grantTrial(orgId: string): Promise<number> {
        where o.id = ${orgId}
        for update of s`;
     if (!row || row.trial_used_at) return 0;
-
-    const [entitlement] = await tx<{ int_value: number | null }[]>`
-      select int_value from plan_entitlements
-       where plan_key = ${row.plan_key} and feature_key = 'ai.credits.trial'`;
-    const delta = entitlement?.int_value ?? 0;
-    if (delta <= 0) return 0;
-
-    const walletId = row.subscription_id;
-    const inserted = await appendLedgerRow(tx, {
-      walletId,
-      delta,
-      source: "trial_grant",
-      bucket: "grant",
-      idempotencyKey: `trial:${walletId}`,
-    });
-    if (!inserted) return 0;
-
-    await tx`
-      update subscriptions set trial_used_at = now()
-       where id = ${walletId} and trial_used_at is null`;
-    return delta;
+    return grantTrialForRow(tx, row.subscription_id, row.plan_key);
   });
+}
+
+/**
+ * The trial-grant primitive `grantTrial` (above) and `syncSubscriptionForGroup`
+ * (`lib/billing.ts`, v17 Task 6) both build on: given a subscription row
+ * ALREADY locked (`for update`) by the caller in an open transaction, and the
+ * plan key to grant against, insert the `ai.credits.trial` row and stamp
+ * `trial_used_at` if eligible.
+ *
+ * Split out so `syncSubscriptionForGroup` can decide the grant from the SAME
+ * lock it takes to stamp `trial_used_at` itself — sharing one transaction is
+ * what makes "trial credits land before/with the stamp, never after" atomic
+ * rather than a best-effort ordering. The caller is responsible for the
+ * `for update` lock and for checking `trial_used_at is null` first (this
+ * function does not re-check — `grantTrial` above checks via its own `row`
+ * read; `syncSubscriptionForGroup` checks via its own).
+ *
+ * Takes `planKey` explicitly rather than re-reading `subscriptions.plan_key`:
+ * a caller mid-sync (a brand-new paid subscription is still `'community'` in
+ * the DB until its own UPDATE commits) must pass the plan this grant is
+ * ABOUT to apply, or the `ai.credits.trial` matrix lookup silently reads the
+ * wrong (usually pre-upgrade) plan and grants 0.
+ */
+export async function grantTrialForRow(
+  tx: Tx,
+  subscriptionId: string,
+  planKey: string | null,
+): Promise<number> {
+  const [entitlement] = await tx<{ int_value: number | null }[]>`
+    select int_value from plan_entitlements
+     where plan_key = ${planKey} and feature_key = 'ai.credits.trial'`;
+  const delta = entitlement?.int_value ?? 0;
+  if (delta <= 0) return 0;
+
+  const inserted = await appendLedgerRow(tx, {
+    walletId: subscriptionId,
+    delta,
+    source: "trial_grant",
+    bucket: "grant",
+    idempotencyKey: `trial:${subscriptionId}`,
+  });
+  if (!inserted) return 0;
+
+  await tx`
+    update subscriptions set trial_used_at = now()
+     where id = ${subscriptionId} and trial_used_at is null`;
+  return delta;
 }
 
 /**
