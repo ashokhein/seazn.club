@@ -1,6 +1,7 @@
 import { sql } from "@/lib/db";
 import { PaymentRequiredError } from "@/lib/errors";
 import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
+import { walletIdFor } from "@/lib/credits";
 // Leaf module, NOT lib/billing.ts: billing imports invalidateOrgEntitlements
 // from here, so importing it back would close a cycle.
 import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscription-status";
@@ -322,8 +323,55 @@ export async function hasFeatureOnAnyPass(orgId: string, featureKey: string): Pr
 }
 
 /**
+ * The ADDITIVE add-on axis (SPEC-2 §3, §11.3, V323): capacity purchased (or
+ * admin-granted) on TOP of the plan's base cap. Sums `delta_each · qty` over
+ * the org's non-canceled add-on rows whose target matches, so
+ * effective_cap = plan_base + bonus.
+ *
+ * Keyed by the org's WALLET (`coalesce(group_subscription_id, org_id)`, the
+ * same billing entity `lib/credits` charges), because an add-on is bought by
+ * the group payer once and lifts every org on the wallet — unless
+ * `target_org_id` narrows it to one org. `status in ('active','granted')` is
+ * the count set: 'active' (Stripe-paid) and 'granted' (admin) both lift the
+ * cap; 'canceled' is frozen-not-deleted and does not.
+ *
+ * Scope (SPEC-2 §11.3): a null `target_org_id` is group-wide, a null
+ * `target_competition_id` is any-comp. When `competitionId` is undefined — an
+ * org-level cap like members.max — `target_competition_id = null` cannot match
+ * a comp-scoped row, so ONLY any-comp rows count: a comp-scoped size pack must
+ * never lift an org-level cap.
+ *
+ * Deliberately UNCACHED (unlike `resolve()`): a just-purchased seat must lift
+ * the cap on the very next check, and a just-canceled one must drop it, without
+ * waiting out the 300s entitlement TTL — which is exactly why the caller
+ * (`getLimit`) sums this after `resolve()` returns, not inside it.
+ */
+async function addonBonus(
+  orgId: string,
+  featureKey: string,
+  competitionId?: string,
+): Promise<number> {
+  const walletId = await walletIdFor(orgId);
+  const [r] = await sql<{ bonus: number }[]>`
+    select coalesce(sum(delta_each * qty), 0)::int as bonus
+      from org_addons
+     where wallet_id = ${walletId}
+       and feature_key = ${featureKey}
+       and status in ('active', 'granted')
+       and (target_org_id is null or target_org_id = ${orgId})
+       and (target_competition_id is null or target_competition_id = ${competitionId ?? null})`;
+  return r?.bonus ?? 0;
+}
+
+/**
  * Returns the numeric limit for a metric, or null for unlimited.
  * Returns 0 if the feature key is not in the plan's entitlement matrix.
+ *
+ * The single int-reader path (`withinLimit`/`requireFeature`-adjacent callers
+ * all funnel through here), so the add-on layer lives here and nowhere else:
+ * `resolve()` gives the cached plan base, then `addonBonus` adds any purchased
+ * capacity on top. A null base is UNLIMITED and short-circuits BEFORE the
+ * add-on query — an add-on can never turn unlimited into a finite number.
  */
 export async function getLimit(
   orgId: string,
@@ -331,8 +379,10 @@ export async function getLimit(
   competitionId?: string,
 ): Promise<number | null> {
   const row = await resolve(orgId, featureKey, competitionId);
-  if (!row) return 0;
-  return row.int_value;
+  const base = row ? row.int_value : 0;
+  if (base === null) return null;
+  const bonus = await addonBonus(orgId, featureKey, competitionId);
+  return base + bonus;
 }
 
 /**
