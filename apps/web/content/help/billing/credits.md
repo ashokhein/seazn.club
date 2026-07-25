@@ -22,6 +22,8 @@ The grant meter on the Credits tab shows how much of this month's grant you've u
 
 When your monthly grant runs low, you can **buy a credit pack**. Pack credits — and the **one-time credits an Event Pass adds** — go into a separate pool that **never expires**. AI runs always spend your monthly grant first, so a pack is only touched once the grant is gone. That way a pack you buy is never wasted while free grant credits remain.
 
+To buy one, use **Buy credits** on the Credits tab. Pick a pack from the ladder — the larger packs include **bonus credits** for the same price per credit, and the top pack is marked **best value** — and pay. Packs are charged in your billing group's currency, and the credits land in your wallet as soon as the payment clears.
+
 ## Shared across a billing group
 
 Billing is group-level: one subscription can pay for several organisations. When it does, those organisations **share one credit wallet** — buy once, and any organisation in the group can spend from the pool. The monthly grant scales with the number of paid seats. The Credits tab shows a "shared across N organisations" note when your organisation is part of a group, and the run history records which organisation spent each credit.

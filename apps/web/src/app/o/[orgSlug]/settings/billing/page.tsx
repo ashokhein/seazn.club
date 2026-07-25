@@ -28,7 +28,7 @@ import { type Subscription } from "@/lib/types";
 import { getLimit, isPaidPlan, orgPlanKey } from "@/lib/entitlements";
 import { TrackOnMount } from "@/components/analytics-track-mount";
 import { EVENTS } from "@/lib/analytics-events";
-import { asCurrency, formatMinor, passPrice, proPrice, proPlusPrice } from "@/lib/currency";
+import { asCurrency, formatMinor, passPrice, proPrice, proPlusPrice, creditPackOptions } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
 import { planLabel } from "@/lib/plan-label";
 import { BackLink } from "@/components/back-link";
@@ -486,6 +486,8 @@ export default async function BillingPage({
           dict={dict}
           locale={locale}
           exportHref={`${routes.billing(orgSlug)}/credits.csv`}
+          packs={creditPackOptions(currency)}
+          currency={currency}
         />
 
         {/* Event Pass — directly under the meter it moves: a passed

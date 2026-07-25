@@ -54,3 +54,16 @@ export async function fetchPassCheckoutClientSecret(
     fetchFn,
   );
 }
+
+/** POST /api/billing/credit-pack-checkout for a one-time AI credit pack
+ *  (v17 SPEC-6 §A4). Same embedded-secret contract as the plan/pass checkouts. */
+export async function fetchCreditPackCheckoutClientSecret(
+  packKey: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<CheckoutSecretResult> {
+  return fetchClientSecret(
+    "/api/billing/credit-pack-checkout",
+    { pack_key: packKey },
+    fetchFn,
+  );
+}

@@ -1,5 +1,7 @@
 import { t, plural, type Dict, type Locale, type TKey } from "@/lib/i18n";
 import type { CreditsTabView } from "@/server/usecases/credits-tab";
+import { BuyCredits } from "@/components/buy-credits";
+import type { Currency, CreditPackOption } from "@/lib/currency";
 
 interface Props {
   view: CreditsTabView;
@@ -7,6 +9,9 @@ interface Props {
   locale: Locale;
   /** GET route that streams the run history as CSV (session-authed, payer-safe). */
   exportHref: string;
+  /** The credit-pack ladder (SPEC-6 §A4), priced in the group's locked currency. */
+  packs: CreditPackOption[];
+  currency: Currency;
 }
 
 function fmtDay(iso: string, locale: Locale): string {
@@ -25,7 +30,7 @@ function fmtDay(iso: string, locale: Locale): string {
  * lives in a `.scroll-x` container so the page never scrolls horizontally at
  * 375px; the summary rows stack.
  */
-export function BillingCredits({ view, dict, locale, exportHref }: Props) {
+export function BillingCredits({ view, dict, locale, exportHref, packs, currency }: Props) {
   const grantPct = view.grantCap > 0 ? Math.min((view.grantUsed / view.grantCap) * 100, 100) : 0;
   const grantLeft = Math.max(0, view.grantCap - view.grantUsed);
 
@@ -69,10 +74,13 @@ export function BillingCredits({ view, dict, locale, exportHref }: Props) {
         </div>
 
         {/* Packs */}
-        <p className="mt-3 text-sm text-slate-600">
-          {t(dict, "billing.credits.packs", { count: view.packBalance })}{" "}
-          <span className="text-xs text-slate-500">({t(dict, "billing.credits.packsNote")})</span>
-        </p>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-slate-600">
+            {t(dict, "billing.credits.packs", { count: view.packBalance })}{" "}
+            <span className="text-xs text-slate-500">({t(dict, "billing.credits.packsNote")})</span>
+          </p>
+          <BuyCredits packs={packs} currency={currency} dict={dict} locale={locale} />
+        </div>
 
         {/* Shared pool (grouped org only) */}
         {view.sharedOrgCount > 1 && (

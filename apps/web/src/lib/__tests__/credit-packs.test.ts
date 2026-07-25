@@ -10,7 +10,7 @@
 import { describe, expect, it } from "vitest";
 import { buildCreditPackCheckoutParams, CREDIT_PACKS } from "@/lib/credit-packs";
 import seed from "@/config/stripe-plans.json";
-import { SUPPORTED_CURRENCIES, type Currency } from "@/lib/currency";
+import { SUPPORTED_CURRENCIES, creditPackOptions, type Currency } from "@/lib/currency";
 
 const base = {
   priceId: "price_pack_10",
@@ -43,6 +43,37 @@ describe("CREDIT_PACKS catalog", () => {
       }
     }
     expect(missing).toEqual([]);
+  });
+});
+
+describe("creditPackOptions (Buy Credits ladder, SPEC-6 §A4)", () => {
+  it("renders the ladder from the SAME catalog keys the checkout route validates", () => {
+    const opts = creditPackOptions("usd");
+    // Same keys as CREDIT_PACKS — the modal sends pack_key, the route checks it.
+    expect(opts.map((o) => o.key)).toEqual(Object.keys(CREDIT_PACKS));
+    for (const o of opts) expect(o.credits).toBe(CREDIT_PACKS[o.key]!.credits);
+  });
+
+  it("derives the bonus % from the smallest pack's rate and flags one best value", () => {
+    const opts = creditPackOptions("usd");
+    expect(opts[0]!.bonusPct).toBe(0); // the baseline rung has no bonus
+    // Bonus rises with size; only the top rung is best value.
+    expect(opts.filter((o) => o.bestValue)).toHaveLength(1);
+    expect(opts.at(-1)!.bestValue).toBe(true);
+    expect(opts.at(-1)!.bonusPct).toBe(Math.max(...opts.map((o) => o.bonusPct)));
+  });
+
+  it("prices each rung in the requested currency's set price points", () => {
+    for (const currency of SUPPORTED_CURRENCIES as readonly Currency[]) {
+      for (const o of creditPackOptions(currency)) {
+        const pack = (seed.packs ?? []).find((p) => p.key === o.key)!;
+        const expected =
+          currency === "usd"
+            ? pack.price.unit_amount
+            : (pack.price.currency_options as Record<string, number>)[currency];
+        expect(o.amountMinor).toBe(expected);
+      }
+    }
   });
 });
 
