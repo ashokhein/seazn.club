@@ -46,6 +46,7 @@ import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { resolveLogoUrl } from "@/server/public-site/data";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 import { recoverDisputedTransfer as recoverDisputedTransferCore } from "./dispute-recovery";
+import { FIRST_PAID_EARN, tryEarnGrant } from "@/lib/credits";
 
 type Tx = postgres.TransactionSql;
 
@@ -1066,7 +1067,7 @@ export async function handleRegistrationCheckoutCompleted(
 }
 
 type PayOutcome =
-  | { kind: "confirmed"; divisionId: string; competitionId: string }
+  | { kind: "confirmed"; divisionId: string; competitionId: string; orgId: string }
   | { kind: "late" | "duplicate"; reg: RegistrationRow; competitionId: string; intent: string }
   | null;
 
@@ -1140,12 +1141,27 @@ async function confirmPaidRegistration(
       paid: true,
       amount_cents: amountTotal ?? reg.amount_cents,
     }, null);
-    return { kind: "confirmed", divisionId: reg.division_id, competitionId: div.competition_id };
+    return {
+      kind: "confirmed",
+      divisionId: reg.division_id,
+      competitionId: div.competition_id,
+      orgId: reg.org_id,
+    };
   })) as unknown as PayOutcome;
 
   if (!outcome) return;
   if (outcome.kind === "confirmed") {
     fireDivisionRevalidate(outcome.divisionId, outcome.competitionId);
+    // Growth loop (SPEC-5 §2 C): the organiser's FIRST competition to take a paid
+    // registration earns free AI credits. Fires only on a genuine first-time paid
+    // CONFIRMATION (not a replay, a double-pay duplicate, or a late payment to a
+    // withdrawn/expired reg that gets refunded), so the org's once-per-earn grant
+    // is never spent on a payment that bounced back. Keyed once-per-ORG
+    // (`earn:first_paid:${orgId}`) — every later paid registration no-ops on the
+    // idempotency key. Best-effort (tryEarnGrant never throws) so a grant hiccup
+    // never blocks the webhook ACK; orgId is the ORGANISER (reg.org_id mirrors the
+    // division's/competition's org), not the registrant.
+    await tryEarnGrant(outcome.orgId, "first_paid", FIRST_PAID_EARN);
     return;
   }
   // Refunds happen OUTSIDE the tx (network). A failure surfaces on the
