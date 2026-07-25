@@ -18,10 +18,11 @@ export const REFERRAL_COOKIE = "ref";
 /** Length of a generated referral code. */
 export const REFERRAL_CODE_LEN = 8;
 
-/** URL-safe, unambiguous alphabet — no 0/O/1/I/l (matches the look-alike
- *  exclusions `lib/ref-code.ts` uses for registration codes, a different
- *  feature/format). Not cryptographic, just unguessable enough for a
- *  shareable marketing link. */
+/** URL-safe, unambiguous alphabet — excludes the 0/O/1/I/l look-alikes. This is
+ *  deliberately its OWN alphabet, not `lib/ref-code.ts`'s: that primitive builds
+ *  phone-quotable, checksummed registration refs (`SZ-XXXX-XXXX`), a different
+ *  format for a different feature. Not cryptographic, just unguessable enough
+ *  for a shareable marketing link. */
 const REFERRAL_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
 /** How many collision-retry attempts `getOrCreateReferralCode` makes before
