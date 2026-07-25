@@ -98,7 +98,11 @@ export async function adjustmentsForOrg(
            s.created_at
     from staff_audit_log s
     left join users u on u.id = s.actor_id
-    where s.target_type = 'org'
+    -- entitlement_override(_removed) log with target_type='entitlement' (the
+    -- feature they touch), target_id still the org id — include that type so
+    -- cap overrides surface in the org's log. The action-set filter below is
+    -- what scopes the rows; these two are the only 'entitlement'-typed actions.
+    where s.target_type in ('org', 'entitlement')
       and s.target_id = ${orgId}
       and s.action = any(${ADJUSTMENT_ACTIONS as unknown as string[]})
       ${before ? sql`and s.created_at < ${before}` : sql``}

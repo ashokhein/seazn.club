@@ -76,7 +76,10 @@ describe.skipIf(!HAS_DB)("adjustmentsForOrg (SPEC-3 §3)", () => {
 
     const credit = await log(staff.id, "credit_adjust", "org", orgId, { reason_code: "promo" }, t(1));
     const addon = await log(staff.id, "addon_grant", "org", orgId, { reason: "sales comp" }, t(2));
-    const override = await log(staff.id, "entitlement_override", "org", orgId, {}, t(3));
+    // The real writer (entitlement-override route) logs target_type='entitlement'
+    // with target_id=org id — seed that true shape so the log's type filter is
+    // exercised, not a fiction. Fails if adjustmentsForOrg only reads 'org'.
+    const override = await log(staff.id, "entitlement_override", "entitlement", orgId, {}, t(3));
     const comp = await log(staff.id, "comp_to_pro", "org", orgId, {}, t(4));
 
     // Noise that must NOT surface:
@@ -93,7 +96,7 @@ describe.skipIf(!HAS_DB)("adjustmentsForOrg (SPEC-3 §3)", () => {
     const orgId = await makeOrg();
     await log(staff.id, "credit_adjust", "org", orgId, { reason_code: "bug_fix" }, t(1));
     await log(staff.id, "addon_revoke", "org", orgId, { reason: "downgrade" }, t(2));
-    await log(staff.id, "entitlement_override_removed", "org", orgId, {}, t(3));
+    await log(staff.id, "entitlement_override_removed", "entitlement", orgId, {}, t(3));
     await log(staff.id, "admin_downgrade", "org", orgId, {}, t(4));
 
     const byAction = Object.fromEntries(
