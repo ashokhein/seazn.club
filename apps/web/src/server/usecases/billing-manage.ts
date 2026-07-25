@@ -9,7 +9,7 @@ import {
   syncPaymentMethodFlagFromCards,
   syncSubscription,
 } from "@/lib/billing";
-import { invalidateEntitlementsForOrgGroup } from "@/lib/entitlements";
+import { invalidateEntitlementsForOrgGroup, isPassLocked } from "@/lib/entitlements";
 import { subscriptionIdForOrg } from "@/lib/billing-group";
 import { logStaffAction } from "@/lib/admin";
 import {
@@ -316,6 +316,15 @@ export interface PassPurchaseRow {
   amountMinor: number | null;
   currency: string | null;
   hostedInvoiceUrl: string | null;
+  /**
+   * SPEC-4 §9: the pass has stopped lifting the plan (its competition is
+   * completed/archived, or its end date passed the 7-day grace). Computed from
+   * `isPassLocked` — the ONE place the lock rule lives (entitlements.ts, T1) —
+   * so the Active/Ended badge the billing page renders can never disagree with
+   * what the resolver actually enforces. Finished events stay readable; the
+   * paid-for-running lifts are what switch off.
+   */
+  ended: boolean;
 }
 
 interface PassInvoice {
@@ -376,9 +385,12 @@ export async function getPassPurchases(orgId: string): Promise<PassPurchaseRow[]
       slug: string;
       purchased_at: Date | string;
       stripe_payment_intent: string | null;
+      status: string;
+      ends_on: Date | string | null;
     }[]
   >`
-    select cp.competition_id, c.name, c.slug, cp.purchased_at, cp.stripe_payment_intent
+    select cp.competition_id, c.name, c.slug, cp.purchased_at, cp.stripe_payment_intent,
+           c.status, c.ends_on
     from competition_passes cp
     join competitions c on c.id = cp.competition_id
     where cp.org_id = ${orgId}
@@ -396,6 +408,7 @@ export async function getPassPurchases(orgId: string): Promise<PassPurchaseRow[]
     amountMinor: invoices[i]?.amountMinor ?? null,
     currency: invoices[i]?.currency ?? null,
     hostedInvoiceUrl: invoices[i]?.hostedInvoiceUrl ?? null,
+    ended: isPassLocked(r.status, r.ends_on),
   }));
 }
 

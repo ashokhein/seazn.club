@@ -64,6 +64,15 @@ async function grantPass(
     values (${compId}, ${orgId}, ${intent}, ${purchasedAt})`;
 }
 
+/** SPEC-4 §9: set the competition's lifecycle so `ended` can be exercised. */
+async function setCompLifecycle(
+  compId: string,
+  status: string,
+  endsOn: string | null,
+): Promise<void> {
+  await sql`update competitions set status = ${status}, ends_on = ${endsOn} where id = ${compId}`;
+}
+
 /** One paid invoice for the intent, as invoicePayments.list returns it. */
 function invoiceFor(total: number, currency = "gbp", url = "https://invoice.stripe.test/i/x") {
   return { data: [{ invoice: { total, currency, hosted_invoice_url: url } }] };
@@ -205,5 +214,34 @@ describe.skipIf(!HAS_DB)("getPassPurchases", () => {
   it("returns an empty list for an org that holds no pass", async () => {
     const orgId = await seedOrg();
     expect(await getPassPurchases(orgId)).toEqual([]);
+  });
+
+  // SPEC-4 §9: `ended` mirrors the resolver lock (isPassLocked) — the badge the
+  // billing page will render (SPEC-6 UI). A running competition's pass is
+  // active; a completed/archived one, or one whose end date passed the 7-day
+  // grace, is ended.
+  it("marks the pass ended exactly when its competition is locked", async () => {
+    const orgId = await seedOrg();
+    const live = await seedComp(orgId, "live-cup");
+    const done = await seedComp(orgId, "done-cup");
+    const shelved = await seedComp(orgId, "shelved-cup");
+    const lapsed = await seedComp(orgId, "lapsed-cup");
+    await grantPass(live.id, orgId, null, "2026-01-01T09:00:00Z");
+    await grantPass(done.id, orgId, null, "2026-01-02T09:00:00Z");
+    await grantPass(shelved.id, orgId, null, "2026-01-03T09:00:00Z");
+    await grantPass(lapsed.id, orgId, null, "2026-01-04T09:00:00Z");
+    await setCompLifecycle(live.id, "live", null);
+    await setCompLifecycle(done.id, "completed", null);
+    await setCompLifecycle(shelved.id, "archived", null);
+    // A live competition whose end date passed more than 7 days ago (grace).
+    const eightDaysAgo = new Date(Date.now() - 8 * 86_400_000).toISOString().slice(0, 10);
+    await setCompLifecycle(lapsed.id, "live", eightDaysAgo);
+
+    const byId = Object.fromEntries((await getPassPurchases(orgId)).map((r) => [r.competitionId, r]));
+
+    expect(byId[live.id].ended).toBe(false);
+    expect(byId[done.id].ended).toBe(true);
+    expect(byId[shelved.id].ended).toBe(true);
+    expect(byId[lapsed.id].ended).toBe(true);
   });
 });

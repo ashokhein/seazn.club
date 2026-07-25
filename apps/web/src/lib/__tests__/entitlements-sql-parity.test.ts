@@ -153,6 +153,49 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
     expect(await sqlHasFeature(orgId, "realtime", otherId)).toBe(false);
   });
 
+  // v17 SPEC-4 §7: an Event Pass stops applying once its competition is over.
+  // Both resolvers must agree the pass is LOCKED, not just that it is honoured on
+  // a live competition — so an archived comp and a long-ended comp are proven in
+  // lockstep here, next to the honoured case above.
+  it("both resolvers drop a pass on an ARCHIVED competition", async () => {
+    const compId = await seedCompetition(orgId, "archived");
+    await sql`
+      insert into competition_passes (competition_id, org_id) values (${compId}, ${orgId})`;
+    await invalidateOrgEntitlements(orgId);
+    // Honoured while live…
+    expect(await hasFeature(orgId, "realtime", compId)).toBe(true);
+    expect(await sqlHasFeature(orgId, "realtime", compId)).toBe(true);
+    // …dropped once archived, in BOTH resolvers.
+    await sql`update competitions set status = 'archived' where id = ${compId}`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime", compId)).toBe(false);
+    expect(await sqlHasFeature(orgId, "realtime", compId)).toBe(false);
+  });
+
+  it("both resolvers drop a pass on a COMPLETED (finished) competition", async () => {
+    const compId = await seedCompetition(orgId, "completed");
+    await sql`
+      insert into competition_passes (competition_id, org_id) values (${compId}, ${orgId})`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime", compId)).toBe(true);
+    expect(await sqlHasFeature(orgId, "realtime", compId)).toBe(true);
+    await sql`update competitions set status = 'completed' where id = ${compId}`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime", compId)).toBe(false);
+    expect(await sqlHasFeature(orgId, "realtime", compId)).toBe(false);
+  });
+
+  it("both resolvers drop a pass on a competition ended beyond the grace window", async () => {
+    const compId = await seedCompetition(orgId, "ended");
+    await sql`
+      update competitions set ends_on = (current_date - 8)::date where id = ${compId}`;
+    await sql`
+      insert into competition_passes (competition_id, org_id) values (${compId}, ${orgId})`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime", compId)).toBe(false);
+    expect(await sqlHasFeature(orgId, "realtime", compId)).toBe(false);
+  });
+
   it("coalesces a null-bool Event Pass row THROUGH to the plan, not into a deny", async () => {
     // A pass row whose bool_value is null is NO answer, not a deny: it must fall
     // through to the plan row, exactly as org_has_feature's coalesce does.
