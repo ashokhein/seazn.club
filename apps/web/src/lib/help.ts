@@ -67,6 +67,7 @@ export const HELP_ARTICLE_SLUGS = [
   "billing/downgrade",
   "billing/event-pass",
   "billing/credits",
+  "billing/operator",
   "api/keys",
 ] as const;
 
