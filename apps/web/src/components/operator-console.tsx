@@ -80,8 +80,14 @@ export function OperatorConsole({
       </div>
 
       {/* Members table lives in a scroll-x container so the page never
-          h-scrolls at 375px; the four columns keep a sensible min width. */}
-      <div className="scroll-x scroll-x-fade -mx-1 px-1">
+          h-scrolls at 375px; the four columns keep a sensible min width.
+          tabIndex/role/aria make the scroll region keyboard-reachable (axe). */}
+      <div
+        className="scroll-x scroll-x-fade -mx-1 px-1"
+        tabIndex={0}
+        role="region"
+        aria-label={t(dict, "billing.operator.col.org")}
+      >
         <table className="w-full min-w-[32rem] text-left text-sm">
           <thead>
             <tr className="border-b border-purple-100 text-xs uppercase tracking-wide text-slate-400">
