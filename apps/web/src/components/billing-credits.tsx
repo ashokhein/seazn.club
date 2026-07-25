@@ -94,7 +94,7 @@ export function BillingCredits({ view, dict, locale, exportHref, packs, currency
           <span className="text-sm text-slate-600">
             {t(dict, "billing.credits.autoTopup")}
           </span>
-          <span className="badge bg-slate-100 text-slate-500">
+          <span className="badge bg-slate-100 text-slate-600">
             {t(dict, "billing.credits.autoTopupOff")}
           </span>
           <button
@@ -126,7 +126,12 @@ export function BillingCredits({ view, dict, locale, exportHref, packs, currency
             {t(dict, "billing.credits.empty")}
           </p>
         ) : (
-          <div className="scroll-x scroll-x-fade -mx-1 px-1">
+          <div
+            className="scroll-x scroll-x-fade -mx-1 px-1"
+            tabIndex={0}
+            role="region"
+            aria-label={t(dict, "billing.credits.history")}
+          >
             <table className="w-full min-w-[34rem] text-left text-sm">
               <thead>
                 <tr className="border-b border-purple-100 text-xs uppercase tracking-wide text-slate-400">
