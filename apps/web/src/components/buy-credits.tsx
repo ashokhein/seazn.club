@@ -6,7 +6,11 @@ import { Modal } from "@/components/modal";
 import { stripePromise } from "@/lib/stripe-browser";
 import { fetchCreditPackCheckoutClientSecret } from "@/lib/billing-checkout-client";
 import { formatMinor, type Currency, type CreditPackOption } from "@/lib/currency";
-import { t, plural, type Dict, type Locale } from "@/lib/i18n";
+// Client-safe i18n: `@/lib/i18n` pulls in `server-only`, which breaks the build
+// when this "use client" modal is embedded in the board (A6). Import the pure
+// runtime + types the same way the client dict-provider does.
+import { t, plural } from "@/lib/i18n-runtime";
+import type { Dict, Locale } from "@/lib/i18n-constants";
 
 /**
  * The Buy Credits modal (SPEC-6 §A4): a radio ladder of never-expire credit
