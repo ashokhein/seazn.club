@@ -318,6 +318,7 @@ export type DictionaryKey =
   | "board.ai.elapsed"
   | "board.ai.error.conflict"
   | "board.ai.error.invalid"
+  | "board.ai.error.outOfCredits"
   | "board.ai.error.rateLimited"
   | "board.ai.error.tooLarge"
   | "board.ai.error.unavailable"

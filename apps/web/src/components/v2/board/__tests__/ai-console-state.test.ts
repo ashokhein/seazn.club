@@ -217,6 +217,15 @@ describe("aiErrorKey (status → localized copy key)", () => {
     expect(aiErrorKey(400)).toBe("board.ai.error.invalid");
   });
 
+  it("splits 402 on the feature key: an empty AI wallet tops up, a plan gate upgrades", () => {
+    // AI is credit-metered on every tier now, so an out-of-credits 402 (feature_key
+    // ai.credits) must offer a top-up, not "upgrade to Pro". A plain (non-credit)
+    // paywall 402 still routes to the upgrade line.
+    expect(aiErrorKey(402, "ai.credits")).toBe("board.ai.error.outOfCredits");
+    expect(aiErrorKey(402)).toBe("board.ai.error.upgrade");
+    expect(aiErrorKey(402, "scheduling.ai")).toBe("board.ai.error.upgrade");
+  });
+
   it("splits 422 on the server code: TOO_LARGE vs everything else", () => {
     expect(aiErrorKey(422, "AI_PLAN_TOO_LARGE")).toBe("board.ai.error.tooLarge");
     expect(aiErrorKey(422, "AI_PLAN_FAILED")).toBe("board.ai.error.invalid");
@@ -248,6 +257,12 @@ describe("applyErrorKey (apply outcome → localized copy key)", () => {
     expect(applyErrorKey(outcome({ errorCode: "schedule.checkpoints.max", errorStatus: 402 }))).toBe(
       "board.ai.apply.checkpointQuota",
     );
+  });
+
+  it("routes an out-of-credits 402 at apply to the top-up line", () => {
+    // ai-apply forwards the 402's feature_key as errorCode; an empty AI wallet
+    // (ai.credits) must reach the top-up copy, not the checkpoint-quota or upgrade line.
+    expect(applyErrorKey(outcome({ errorCode: "ai.credits", errorStatus: 402 }))).toBe("board.ai.error.outOfCredits");
   });
 
   it("sharpens an actionable failure through the outcome's status + code", () => {

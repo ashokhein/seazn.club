@@ -126,6 +126,17 @@ function stepDone(state: AiConsoleState, step: AiStep): boolean {
   }
 }
 
+// The server code aiErrorKey sharpens on. A 402 paywall's envelope `code` is the
+// generic "PAYMENT_REQUIRED" — the specific key rides in `extra.feature_key` (an
+// empty AI wallet → "ai.credits", a save-point cap → "schedule.checkpoints.max"),
+// so prefer the feature key and fall back to the typed code (a 422's
+// AI_PLAN_TOO_LARGE). This mirrors ai-apply.ts's `featureKeyOf(err) ?? codeOf(err)`
+// precedence; they don't collide (a 402 carries feature_key, a 422 does not).
+function aiErrorCodeOf(err: unknown): string | undefined {
+  if (!(err instanceof ApiV1Error)) return undefined;
+  return typeof err.extra.feature_key === "string" ? err.extra.feature_key : err.code;
+}
+
 // Re-export so the board imports the ghost/diff fixture shape from one place.
 export type { AiConsoleFixture } from "./ai-diff";
 
@@ -369,8 +380,7 @@ export function AiConsole({
       if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
       // Map the status (+ code) to a localized line; never render raw server text.
       const status = err instanceof ApiV1Error ? err.status : 0;
-      const code = err instanceof ApiV1Error ? err.code : undefined;
-      dispatch({ type: "RUN_ERROR", error: { status, message: msg(aiErrorKey(status, code)) } });
+      dispatch({ type: "RUN_ERROR", error: { status, message: msg(aiErrorKey(status, aiErrorCodeOf(err))) } });
     }
   }, [busy, divisionId, msg, officialsPolicy, state.instruction, state.mode, state.scope, state.schedulePlan]);
 
@@ -413,8 +423,7 @@ export function AiConsole({
       } catch (err) {
         if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
         const status = err instanceof ApiV1Error ? err.status : 0;
-        const code = err instanceof ApiV1Error ? err.code : undefined;
-        dispatch({ type: "RUN_ERROR", error: { status, message: msg(aiErrorKey(status, code)) } });
+        dispatch({ type: "RUN_ERROR", error: { status, message: msg(aiErrorKey(status, aiErrorCodeOf(err))) } });
       }
     },
     [busy, divisionId, msg, officialsPolicy, state.schedulePlan],
@@ -556,8 +565,7 @@ export function AiConsole({
       onApplied?.();
     } catch (err) {
       const status = err instanceof ApiV1Error ? err.status : 0;
-      const code = err instanceof ApiV1Error ? err.code : undefined;
-      dispatch({ type: "APPLY_ERROR", error: { status, message: msg(aiErrorKey(status, code)) } });
+      dispatch({ type: "APPLY_ERROR", error: { status, message: msg(aiErrorKey(status, aiErrorCodeOf(err))) } });
     } finally {
       setUndoing(false);
     }

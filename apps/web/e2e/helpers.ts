@@ -288,6 +288,16 @@ export async function seedAiGeneratedRuns(
   });
 }
 
+/** Zero an org's AI-credit wallet (v17): delete its ledger rows so the next
+ *  run's reserve refuses with 402 ai.credits. Wallet id = coalesce(
+ *  subscription_id, id) per SPEC-2 §11.1. Superuser (RLS-bypassing). */
+export async function drainAiCredits(orgId: string): Promise<void> {
+  await withDb(async (sql) => {
+    await sql`delete from ai_credit_ledger where wallet_id =
+      (select coalesce(subscription_id, id)::text from organizations where id = ${orgId})`;
+  });
+}
+
 /** The most recent AI-sourced schedule apply audit for a division (v4 Task 17):
  *  the division_events 'schedule_applied' row with payload.source = 'ai'. */
 export async function getAiScheduleApply(

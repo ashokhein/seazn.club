@@ -249,7 +249,7 @@ test.describe("Pro Plus · billing surface", () => {
 // ===========================================================================
 
 test.describe("Pro Plus · officials-per-fixture quota", () => {
-  test("Community: one official per fixture is fine, a second 402s", async ({ page }) => {
+  test("Community: officials-per-fixture is ungated (#253, unlimited)", async ({ page }) => {
     const org = await seedOrg({ plan: "community" });
     await loginAsOwner(page, org.ownerEmail);
     const orgId = (await activeOrg(page)).id;
@@ -260,10 +260,9 @@ test.describe("Pro Plus · officials-per-fixture quota", () => {
     const one = await setFixtureOfficials(page.request, fixtureId, [o1!]);
     expect(one.status).toBe(200);
 
-    // A second official on the same fixture is over the community quota.
+    // A second official on the same fixture is allowed — officials ungated (#253).
     const two = await setFixtureOfficials(page.request, fixtureId, [o1!, o2!]);
-    expect(two.status).toBe(402);
-    expect(two.featureKey).toBe("officials.per_fixture.max");
+    expect(two.status).toBe(200);
   });
 
   test("Pro: officials-per-fixture is unlimited", async ({ page }) => {
@@ -420,11 +419,11 @@ test.describe("Pro Plus · disclosure + admin matrix", () => {
     // per-division count, so the comparison table has nothing left to show
     // there — no row to assert on.
 
-    // V290 quota: officials-per-fixture community 1 / pro ∞ / pro_plus ∞.
+    // Officials-per-fixture is ungated on every tier now (#253): community ∞ / pro ∞ / pro_plus ∞.
     const ofpRow = page
       .locator("tbody tr")
       .filter({ has: page.getByRole("cell", { name: "officials.per_fixture.max", exact: true }) });
-    await expect(ofpRow.locator("td").nth(2)).toHaveText("1"); // Community
+    await expect(ofpRow.locator("td").nth(2)).toHaveText("∞"); // Community
     await expect(ofpRow.locator("td").nth(4)).toHaveText("∞"); // Pro
     await expect(ofpRow.locator("td").nth(5)).toHaveText("∞"); // Pro Plus
 

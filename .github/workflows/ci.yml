@@ -56,6 +56,15 @@ jobs:
           git diff --exit-code openapi/v1.json || {
             echo "openapi/v1.json is stale — run 'npm run openapi:gen' and commit."; exit 1; }
       - run: npm test --workspace apps/web
+      # Live-Stripe tier probe (sk_test, test-mode): confirms our plan/tier
+      # amounts still round-trip real Stripe. Self-contained (no stripe:sync /
+      # DATABASE_URL needed). The secret is withheld from fork PRs, so it just
+      # skips there; runs on the owner's branch PRs.
+      - name: Live-Stripe tier probe (sk_test)
+        run: npm test --workspace apps/web -- --run src/lib/__tests__/billing-tiers.live.test.ts
+        env:
+          BILLING_LIVE: "1"
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
       # Engine suite includes the PROMPT-14 simulation harness (SIM_RUNS
       # defaults to 200 divisions per sport×format when CI=true) and the
       # coverage gate (≥90% lines; 100% on core/ and tiebreakers.ts).
@@ -159,6 +168,10 @@ jobs:
       SCHEDULING_AI_BASE_URL: "http://127.0.0.1:4319"
       AI_FIXTURE_PORT: "4319"
       ANTHROPIC_API_KEY: sk-ant-ci-smoke-fixture
+      # Stripe test-mode key (sk_test) so the smoke card-attach / billing paths
+      # exercise real test-mode Stripe instead of skipping (`pm: skipped …`).
+      # Withheld from fork PRs (they skip); present on the owner's branch PRs.
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
 
     steps:
       - uses: actions/checkout@v5

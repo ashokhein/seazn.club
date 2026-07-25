@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { TAG, apiJson, setOrgSubscriptionSql, setOwnerStaffSql } from "./helpers";
+import { TAG, apiJson, communityLimit, setOrgSubscriptionSql, setOwnerStaffSql } from "./helpers";
 
 // Subscription lifecycle states Stripe normally owns (trialing, past_due) —
 // forced via SQL so the app-wide billing banner and CTAs can be asserted
@@ -89,10 +89,12 @@ test.describe.serial("billing lifecycle states", () => {
       });
 
     // Fill Community's active-competition quota until it BITES — the ceiling
-    // is plan data (1 today) so it is discovered, not hardcoded. Observing the
-    // 402 is what stops the post-grant 201 from proving nothing.
+    // is plan data (V319 took competitions.max_active to 10) so it is read
+    // from the matrix, not hardcoded. Observing the 402 is what stops the
+    // post-grant 201 from proving nothing.
+    const maxActive = await communityLimit("competitions.max_active");
     let blockedAt = 0;
-    for (let i = 1; i <= 6 && blockedAt === 0; i++) {
+    for (let i = 1; i <= maxActive + 1 && blockedAt === 0; i++) {
       const res = await newCompetition(`Grant ${i}`);
       if (res.status === 402) {
         expect(res.error?.code).toBe("PAYMENT_REQUIRED");
@@ -165,11 +167,13 @@ test.describe.serial("billing lifecycle states", () => {
       });
 
     // Discover Community's real ceiling by filling it until a create 402s
-    // (plan data, not a constant — see the sibling "staff trial grant" test
+    // (plan data, not a constant — V319 took competitions.max_active to 10;
+    // read it from the matrix, see the sibling "staff trial grant" test
     // above). The oldest one created ("FreezeOldest") is what must show up
     // frozen later, since selectFrozen keeps the most-recently-active N.
+    const maxActive = await communityLimit("competitions.max_active");
     let blockedAt = 0;
-    for (let i = 1; i <= 6 && blockedAt === 0; i++) {
+    for (let i = 1; i <= maxActive + 1 && blockedAt === 0; i++) {
       const res = await newCompetition(i === 1 ? "FreezeOldest" : `FreezeFiller ${i}`);
       if (res.status === 402) {
         expect(res.error?.code).toBe("PAYMENT_REQUIRED");

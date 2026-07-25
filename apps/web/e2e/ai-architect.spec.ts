@@ -6,7 +6,7 @@ import {
   apiJson,
   activeOrg,
   setOrgPlanBySql,
-  seedAiGeneratedRuns,
+  drainAiCredits,
   getAiScheduleApply,
   getFixtureScheduleSources,
 } from "./helpers";
@@ -286,31 +286,35 @@ test("blackout injected over a scheduled fixture surfaces the repair nudge", asy
   await shot(page, "06-repair-scoped");
 });
 
-test.describe("community quota", () => {
+test.describe("community credit gate", () => {
   test.use({ storageState: "e2e/.auth/community.json" });
 
-  test("a community org at its 5-runs/division cap is refused before any model call", async ({
+  test("a community org with an empty AI-credit wallet is refused before any model call", async ({
     page,
     request,
   }) => {
     fixture.reset();
     const org = await activeOrg(page);
-    // No settings PUT / officials — the quota gate fires before the pack builds.
+    // No settings PUT / officials — the credit reserve refuses before the pack builds.
     const { competitionId, divisionId } = await seedAiDivision(request, { settings: false });
     try {
-      // Sit exactly at the free tier's cap: five prior generations for this division.
-      await seedAiGeneratedRuns(competitionId, org.id, divisionId, 5);
+      // v17: AI is credit-metered (1 credit/run). Drain the community wallet to 0
+      // so the next run's reserve refuses (V322 credit wallet replaced the retired
+      // V302 per-division run cap).
+      await drainAiCredits(org.id);
 
       await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
       await openConsole(page);
-      // The community org CAN open the wizard (V302 grants scheduling.ai) …
+      // The community org CAN open the wizard (scheduling.ai is granted) …
       await page.locator("#ai-instruction").fill("Spread the matches across the day.");
       await page.getByRole("button", { name: "Generate schedule" }).click();
 
-      // … but the sixth run is refused with the quota copy, and no model call fires.
-      await expect(page.getByText("AI scheduling needs a Pro plan.")).toBeVisible({ timeout: 20_000 });
+      // … but the run is refused with the out-of-credits copy, and no model call fires.
+      await expect(
+        page.getByText("You're out of AI credits for this billing period.", { exact: false }),
+      ).toBeVisible({ timeout: 20_000 });
       expect(fixture.calls.length).toBe(0);
-      await shot(page, "07-community-quota");
+      await shot(page, "07-community-out-of-credits");
     } finally {
       // Free the community org's single active-competition slot for the serial specs.
       await apiJson(request, `/api/v1/competitions/${competitionId}`, "PATCH", { status: "archived" });
