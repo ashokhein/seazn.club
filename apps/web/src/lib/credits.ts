@@ -75,7 +75,14 @@ export async function walletIdFor(orgId: string): Promise<string> {
  * no rows is 0.
  */
 export async function balance(walletId: string): Promise<number> {
-  const [row] = await sql<{ bal: string | null }[]>`
+  return walletBalance(sql, walletId);
+}
+
+/** `sum(delta)` over the whole wallet, against any executor — the shared read
+ *  behind `balance()` (plain client) and the in-transaction balance readbacks
+ *  `adminAdjust` returns after a locked grant/deduct. */
+async function walletBalance(exec: Executor, walletId: string): Promise<number> {
+  const [row] = await exec<{ bal: string | null }[]>`
     select coalesce(sum(delta), 0)::text as bal
       from ai_credit_ledger where wallet_id = ${walletId}`;
   return Number(row?.bal ?? 0);
@@ -152,6 +159,10 @@ async function appendLedgerRow(
     ref?: string | null;
     spentByOrgId?: string | null;
     idempotencyKey: string | null;
+    // Attribution for staff-written rows (admin_adjust, SPEC-3 §1/§2): who and
+    // why. Null on every machine-written row (grant/spend/refund/expiry).
+    createdBy?: string | null;
+    reason?: string | null;
   },
 ): Promise<{ id: string } | null> {
   const [prior] = await tx<{ bal: string | null }[]>`
@@ -160,9 +171,11 @@ async function appendLedgerRow(
   const balanceAfter = Number(prior?.bal ?? 0) + row.delta;
   const [inserted] = await tx<{ id: string }[]>`
     insert into ai_credit_ledger
-      (wallet_id, delta, source, bucket, ref, spent_by_org_id, balance_after, idempotency_key)
+      (wallet_id, delta, source, bucket, ref, spent_by_org_id, balance_after,
+       idempotency_key, created_by, reason)
     values (${row.walletId}, ${row.delta}, ${row.source}, ${row.bucket}, ${row.ref ?? null},
-            ${row.spentByOrgId ?? null}, ${balanceAfter}, ${row.idempotencyKey})
+            ${row.spentByOrgId ?? null}, ${balanceAfter}, ${row.idempotencyKey},
+            ${row.createdBy ?? null}, ${row.reason ?? null})
     on conflict (idempotency_key) do nothing
     returning id`;
   return inserted ?? null;
@@ -706,4 +719,134 @@ export async function spendCredit<T>(
     throw err;
   }
   return ran.result;
+}
+
+/**
+ * A staff credit DEDUCT that would drive the wallet (or a bucket) below zero
+ * (SPEC-3 §2 "no adjustment can push a balance below 0"). Thrown by
+ * `adminAdjust`; the admin credits route maps it to HTTP 422. A distinct typed
+ * error (not the spend path's `PaymentRequiredError`/402) because this is a
+ * staff mis-click on an over-large clawback, not an org running out of credit
+ * mid-run.
+ */
+export class InsufficientBalanceError extends Error {
+  constructor(message = "This deduction would drive the wallet below zero.") {
+    super(message);
+    this.name = "InsufficientBalanceError";
+  }
+}
+
+/**
+ * The staff grant/deduct primitive (SPEC-3 §1, the first adjustment
+ * write-path; reuses SPEC-2 §5.1's `admin_adjust` source + `created_by` +
+ * `reason` — no new store). Appends attributed `admin_adjust` ledger row(s)
+ * to a wallet the caller has already resolved via `walletIdFor(orgId)` (SPEC-2
+ * §11), so the adjustment benefits every org in a billing group.
+ *
+ * **Bucket (SPEC-2 §5.4 / V321):** a POSITIVE grant lands in the resetting
+ * `grant` bucket — the bucket `admin_adjust` writes per V321's own column
+ * comment — unless `opts.bucket` pins it (e.g. a comped pack into `pack`). A
+ * DEDUCT burns grant-first then pack (the same spend order `reserve()` uses),
+ * so a clawback never wastes a paid pack credit while free grant remains, and
+ * writes one row per bucket it touches.
+ *
+ * **Never below zero (§2):** the whole read→compute→insert runs inside one
+ * transaction serialized per wallet by the same
+ * `pg_advisory_xact_lock(hashtext('ai-credit-wallet:' || walletId))` idiom
+ * `reserve()`/`grantMonthly()` take, so a deduct racing a spend can't
+ * lost-update the balance. A deduct larger than the wallet's total balance is
+ * refused with `InsufficientBalanceError` before any row is written — the
+ * ledger stays append-only (a deduct is a negative row, never an edit/delete).
+ *
+ * **Idempotent (§2 "no double-grant on double-click"):** a replay of the same
+ * `idempotencyKey` finds the prior row (checked under the lock) and no-ops,
+ * returning `{ applied: false, balanceAfter: <current> }`. A straddling deduct
+ * writes its second (pack) row under a derived key so both rows satisfy the
+ * unique constraint while a replay still conflicts on the base key.
+ */
+export async function adminAdjust(
+  walletId: string,
+  delta: number,
+  opts: { createdBy: string; reason: string; idempotencyKey: string; bucket?: Bucket },
+): Promise<{ applied: boolean; balanceAfter: number }> {
+  if (!Number.isInteger(delta) || delta === 0) {
+    throw new Error(`adminAdjust: delta must be a non-zero integer, got ${delta}`);
+  }
+  const { createdBy, reason, idempotencyKey } = opts;
+  return sql.begin(async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtext(${"ai-credit-wallet:" + walletId}))`;
+
+    const [already] = await tx<{ id: string }[]>`
+      select id from ai_credit_ledger where idempotency_key = ${idempotencyKey}`;
+    if (already) {
+      return { applied: false, balanceAfter: await walletBalance(tx, walletId) };
+    }
+
+    if (delta > 0) {
+      await appendLedgerRow(tx, {
+        walletId,
+        delta,
+        source: "admin_adjust",
+        bucket: opts.bucket ?? "grant",
+        createdBy,
+        reason,
+        idempotencyKey,
+      });
+      return { applied: true, balanceAfter: await walletBalance(tx, walletId) };
+    }
+
+    const need = -delta;
+    const grantAvail = Math.max(0, await bucketBalance(tx, walletId, "grant"));
+    const packAvail = Math.max(0, await bucketBalance(tx, walletId, "pack"));
+    if (grantAvail + packAvail < need) {
+      throw new InsufficientBalanceError(
+        `adminAdjust: deduct of ${need} exceeds wallet ${walletId} balance ${grantAvail + packAvail}`,
+      );
+    }
+    const grantCut = Math.min(need, grantAvail);
+    const packCut = need - grantCut;
+    let usedKey = false;
+    for (const [bucket, cut] of [
+      ["grant", grantCut],
+      ["pack", packCut],
+    ] as const) {
+      if (cut <= 0) continue;
+      await appendLedgerRow(tx, {
+        walletId,
+        delta: -cut,
+        source: "admin_adjust",
+        bucket,
+        createdBy,
+        reason,
+        idempotencyKey: usedKey ? `${idempotencyKey}#${bucket}` : idempotencyKey,
+      });
+      usedKey = true;
+    }
+    return { applied: true, balanceAfter: await walletBalance(tx, walletId) };
+  });
+}
+
+/**
+ * The org-facing label for a staff credit adjustment in the org's OWN history
+ * (SPEC-3 §5) — "+20 credits — Seazn goodwill". The internal `reason_code`
+ * (`sales_comp`, etc.) is operational and stays internal; this maps it to warm
+ * public phrasing and must NEVER echo the raw code. A deduct reads as a
+ * neutral "Account adjustment" regardless of code (a removal isn't goodwill),
+ * and any unrecognised code falls back to the same neutral phrase rather than
+ * leaking. The org-history VIEW that renders this is SPEC-6; this is data only.
+ */
+export function friendlyAdjustLabel(deltaSign: 1 | -1, reason_code: string): string {
+  if (deltaSign < 0) return "Account adjustment";
+  switch (reason_code) {
+    case "support_goodwill":
+    case "promo":
+    case "bug_fix":
+      return "Seazn goodwill";
+    case "sales_comp":
+      return "Account credit";
+    case "refund_adjust":
+      return "Refund adjustment";
+    default:
+      return "Account adjustment";
+  }
 }
