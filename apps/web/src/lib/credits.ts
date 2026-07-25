@@ -549,8 +549,14 @@ export async function recordPackRefund(
  * only holds inside the period are summed). Runs inside the caller's executor
  * (`reserve`'s advisory-locked tx) so the check sees this reserve's own prior
  * writes. Returns a non-negative integer.
+ *
+ * Exported (Phase 6 Task 2, SPEC-5 §1) so the operator allocation console
+ * (`server/usecases/operator-allocation.ts`) reports each member org's burn
+ * from the SAME derive the `reserve()` cap gate checks against — one source of
+ * truth for the period-spend rule. The console passes the plain `sql` client
+ * (a read, no transaction); `reserve` passes its advisory-locked `tx`.
  */
-async function spentThisPeriodByOrg(
+export async function spentThisPeriodByOrg(
   exec: Executor,
   walletId: string,
   orgId: string,
