@@ -82,6 +82,20 @@ describe("POST /api/admin/orgs/[id]/credits", () => {
     );
   });
 
+  it("does NOT write a second audit row when the adjustment is an idempotent replay", async () => {
+    // A replayed idempotency key returns applied:false (adminAdjust wrote no
+    // second ledger row). The route must skip logStaffAction too, else the
+    // SPEC-3 §3 unified log double-counts one adjustment.
+    adminAdjustMock.mockResolvedValueOnce({ applied: false, balanceAfter: 20 });
+    const res = await post("org-1", okBody(20));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ok: true,
+      data: { ok: true, balance_after: 20, applied: false },
+    });
+    expect(logStaffActionMock).not.toHaveBeenCalled();
+  });
+
   it("builds the stored reason from reason_code + optional note", async () => {
     await post("org-1", { delta: 5, reason_code: "promo", note: "launch week", idempotency_key: KEY });
     const opts = adminAdjustMock.mock.calls[0]![2] as { reason: string };

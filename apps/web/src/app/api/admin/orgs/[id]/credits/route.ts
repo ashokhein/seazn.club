@@ -64,13 +64,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       throw err;
     }
 
-    await logStaffAction(staff.id, "credit_adjust", "org", id, {
-      delta,
-      reason_code,
-      note: note ?? null,
-      wallet_id: walletId,
-      balance_after: result.balanceAfter,
-    });
+    // Only the first application of an idempotency key changes state. A
+    // replayed double-click is a no-op (applied:false) and must NOT write a
+    // second audit row — the SPEC-3 §3 unified adjustments log reads
+    // staff_audit_log, and a duplicate would read as two grants for one
+    // adjustment. The first request already logged it.
+    if (result.applied) {
+      await logStaffAction(staff.id, "credit_adjust", "org", id, {
+        delta,
+        reason_code,
+        note: note ?? null,
+        wallet_id: walletId,
+        balance_after: result.balanceAfter,
+      });
+    }
     return { ok: true, balance_after: result.balanceAfter, applied: result.applied };
   });
 }
