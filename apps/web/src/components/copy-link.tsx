@@ -5,8 +5,18 @@ import QRCode from "qrcode";
 
 /** Shows an absolute share URL (origin + path) with a one-click copy button.
  *  Pass `qrFileName` to add a QR reveal — a printable code for noticeboards
- *  (generated client-side from the same URL, downloadable as a PNG). */
-export function CopyLink({ path, qrFileName }: { path: string; qrFileName?: string }) {
+ *  (generated client-side from the same URL, downloadable as a PNG). `label`
+ *  names the link for screen readers (axe `label` rule — a bare readonly
+ *  input has no accessible name otherwise); defaults to a generic caption. */
+export function CopyLink({
+  path,
+  qrFileName,
+  label = "Shareable link",
+}: {
+  path: string;
+  qrFileName?: string;
+  label?: string;
+}) {
   const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState(false);
   const [qrUrl, setQrUrl] = useState<string | null>(null);
@@ -38,6 +48,7 @@ export function CopyLink({ path, qrFileName }: { path: string; qrFileName?: stri
         <input
           readOnly
           value={url}
+          aria-label={label}
           onFocus={(e) => e.currentTarget.select()}
           className="w-full min-w-0 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-600 sm:flex-1"
         />

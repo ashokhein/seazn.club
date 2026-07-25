@@ -1,6 +1,7 @@
 import "server-only";
 import { sql } from "@/lib/db";
 import { balance, packBalance, walletIdFor } from "@/lib/credits";
+import { getOrCreateReferralCode } from "@/lib/referral";
 
 /**
  * The AI-credit wallet home (SPEC-6 §A3): everything the org billing page's
@@ -55,6 +56,16 @@ export interface CreditsTabView {
    *  when > 1 (SPEC-2 §11.1). */
   sharedOrgCount: number;
   history: CreditHistoryRow[];
+  /** This org's shareable `/refer/<code>` code (SPEC-5 §2), minted on first
+   *  read via `getOrCreateReferralCode` — never regenerated once set. */
+  referralCode: string;
+  /** How many orgs were created with this org as `referred_by_org_id`. */
+  referredCount: number;
+  /** Credits this wallet has earned AS A REFERRER (the +20 grants stamped
+   *  `earn:referral:*` on a referred org's first paid competition) — excludes
+   *  the +10 "welcome" grant a REFERRED org earns on its own wallet, which is
+   *  keyed `earn:referral_welcome:*` and never sums into this org's own total. */
+  referralEarned: number;
 }
 
 const HISTORY_LIMIT = 50;
@@ -157,23 +168,35 @@ export async function getCreditsTab(orgId: string): Promise<CreditsTabView> {
   const perSeat = entitlement?.int_value ?? 0;
   const grantCap = perSeat * (planKey === "community" ? 1 : quantityPaid);
 
-  const [bal, packBal, spent, history, shared] = await Promise.all([
-    balance(walletId),
-    packBalance(walletId),
-    // Credits burned FROM the grant bucket this calendar month — the meter's
-    // numerator. Derived straight from run_spend rows, NOT `grantCap −
-    // grantBalance`: an org that hasn't been granted yet this period has an
-    // empty grant bucket but has spent nothing, and must read 0 used, not full.
-    sql<{ used: string | null }[]>`
+  const [bal, packBal, spent, history, shared, referralCode, referred, referralEarned] =
+    await Promise.all([
+      balance(walletId),
+      packBalance(walletId),
+      // Credits burned FROM the grant bucket this calendar month — the meter's
+      // numerator. Derived straight from run_spend rows, NOT `grantCap −
+      // grantBalance`: an org that hasn't been granted yet this period has an
+      // empty grant bucket but has spent nothing, and must read 0 used, not full.
+      sql<{ used: string | null }[]>`
       select coalesce(sum(-delta), 0)::text as used from ai_credit_ledger
        where wallet_id = ${walletId} and bucket = 'grant' and source = 'run_spend'
          and created_at >= date_trunc('month', now())`,
-    creditHistory(walletId),
-    sql<{ n: number }[]>`
+      creditHistory(walletId),
+      sql<{ n: number }[]>`
       select count(*)::int as n from organizations
        where coalesce(subscription_id, id)::text = ${walletId}
          and deleted_at is null`,
-  ]);
+      // #267 (SPEC-5 §2): mint-on-first-read, never overwritten once set.
+      getOrCreateReferralCode(orgId),
+      sql<{ n: number }[]>`
+      select count(*)::int as n from organizations where referred_by_org_id = ${orgId}`,
+      // Credits earned AS A REFERRER only (`earn:referral:*`) — the referred
+      // org's own +10 welcome grant is keyed `earn:referral_welcome:*` and
+      // never matches this `like` pattern (see the field's doc comment).
+      sql<{ n: string | null }[]>`
+      select coalesce(sum(delta), 0)::text as n from ai_credit_ledger
+       where wallet_id = ${walletId} and source = 'earn_grant'
+         and idempotency_key like 'earn:referral:%'`,
+    ]);
 
   const grantUsed = Math.max(0, Math.min(grantCap, Number(spent[0]?.used ?? 0)));
 
@@ -185,5 +208,8 @@ export async function getCreditsTab(orgId: string): Promise<CreditsTabView> {
     packBalance: packBal,
     sharedOrgCount: Math.max(1, shared[0]?.n ?? 1),
     history,
+    referralCode,
+    referredCount: referred[0]?.n ?? 0,
+    referralEarned: Number(referralEarned[0]?.n ?? 0),
   };
 }

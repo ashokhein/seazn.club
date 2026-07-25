@@ -58,7 +58,11 @@ export default async function DivisionRegistrationsPage({
               {t(dict, "div.registrations.publicLink.desc", { name: competition.name })}
             </p>
             <div className="mt-2">
-              <CopyLink path={registerUrl} qrFileName={`register-${competition.slug}.png`} />
+              <CopyLink
+                path={registerUrl}
+                qrFileName={`register-${competition.slug}.png`}
+                label={t(dict, "div.registrations.publicLink.title")}
+              />
             </div>
           </div>
         ) : (
