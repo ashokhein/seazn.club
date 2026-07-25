@@ -4,7 +4,7 @@
 // withdrawal, idempotent entrant materialisation, auto/manual refund policy,
 // eligibility + guardian-consent validation, Community fee gate (402).
 // Real Postgres required; skipped without DATABASE_URL.
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type Stripe from "stripe";
 
@@ -48,6 +48,22 @@ vi.mock("@/lib/email", async (importOriginal) => ({
   sendDisputeLostEmail: emailMock.disputeLost,
 }));
 
+// #267 T3 (SPEC-5 §2): a targeted, org-id-scoped walletIdFor failure, so the
+// referral best-effort test can force the referrer grant to throw without
+// touching any other org's credit resolution (everything else passes through
+// to the real implementation).
+const creditsMock = vi.hoisted(() => ({ failWalletFor: new Set<string>() }));
+vi.mock("@/lib/credits", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/credits")>();
+  return {
+    ...actual,
+    walletIdFor: async (orgId: string) => {
+      if (creditsMock.failWalletFor.has(orgId)) throw new Error("forced test failure");
+      return actual.walletIdFor(orgId);
+    },
+  };
+});
+
 import { sql } from "@/lib/db";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
@@ -88,7 +104,7 @@ import { LEGAL_VERSION } from "@/lib/legal";
 import { resolveNameDisplay } from "@/lib/name-display";
 
 import { setOrgPlan } from "@/lib/__tests__/_billing-group";
-import { FIRST_PAID_EARN, balance, walletIdFor } from "@/lib/credits";
+import { FIRST_PAID_EARN, LIFETIME_EARN_CAP, REFERRAL_EARN, balance, walletIdFor } from "@/lib/credits";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 // ---------------------------------------------------------------------------
@@ -294,6 +310,10 @@ beforeEach(() => {
   stripeMock.reversalCreate.mockReset().mockResolvedValue({ id: "trr_test_1" });
   stripeMock.reversalList.mockReset().mockResolvedValue({ data: [] });
   emailMock.disputeLost.mockClear();
+});
+
+afterEach(() => {
+  creditsMock.failWalletFor.clear();
 });
 
 afterAll(async () => {
@@ -532,6 +552,168 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     );
     await handleRegistrationCheckoutCompleted(fakeSession(second.registration.id, 2000));
     expect(await balance(walletId)).toBe(before + FIRST_PAID_EARN);
+  });
+
+  it("#267 T3: a referred org's first confirmed paid registration grants the REFERRER +20, once per referred org", async () => {
+    const { orgId: referrerOrgId } = await seedOrg("pro");
+    const referrerWallet = await walletIdFor(referrerOrgId);
+    // seedOrg("pro") gives the referrer its own group-of-one subscription, so
+    // the grant lands in that group's wallet, not the bare org id.
+    expect(referrerWallet).not.toBe(referrerOrgId);
+    const referrerBefore = await balance(referrerWallet);
+
+    const { orgId, orgSlug, ownerId } = await seedOrg("pro");
+    await sql`update organizations set referred_by_org_id = ${referrerOrgId} where id = ${orgId}`;
+    const owner = asOwner(orgId, ownerId);
+
+    const { competition, division } = await rig(owner);
+    await putRegistrationSettings(owner, division.id, {
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 2000,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
+    });
+    const first = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, division_id: division.id },
+      "http://test.local",
+    );
+    await handleRegistrationCheckoutCompleted(fakeSession(first.registration.id, 2000));
+    expect(await balance(referrerWallet)).toBe(referrerBefore + REFERRAL_EARN);
+
+    // A SECOND paid competition for the SAME referred org: keyed on the
+    // referred org (earn:referral:${orgId}), so it no-ops — no extra grant.
+    const { competition: comp2, division: div2 } = await rig(owner);
+    await putRegistrationSettings(owner, div2.id, {
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 2000,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
+    });
+    const second = await submitRegistration(
+      orgSlug,
+      comp2.slug,
+      { ...SUBMIT_BASE, division_id: div2.id },
+      "http://test.local",
+    );
+    await handleRegistrationCheckoutCompleted(fakeSession(second.registration.id, 2000));
+    expect(await balance(referrerWallet)).toBe(referrerBefore + REFERRAL_EARN);
+  });
+
+  it("#267 T3: a non-referred org's first paid registration grants no referral credit to anyone", async () => {
+    const { orgId, orgSlug, ownerId } = await seedOrg("pro");
+    const owner = asOwner(orgId, ownerId);
+    const walletId = await walletIdFor(orgId);
+
+    const { competition, division } = await rig(owner);
+    await putRegistrationSettings(owner, division.id, {
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 2000,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
+    });
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, division_id: division.id },
+      "http://test.local",
+    );
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 2000));
+
+    // Only the org's own first_paid earn landed — no referral row for it.
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from ai_credit_ledger
+       where idempotency_key = ${`earn:referral:${orgId}`}`;
+    expect(n).toBe(0);
+    expect(await balance(walletId)).toBe(FIRST_PAID_EARN);
+  });
+
+  it("#267 T3: the referrer's lifetime cap floors the +20, never overshoots", async () => {
+    const { orgId: referrerOrgId } = await seedOrg("pro");
+    const referrerWallet = await walletIdFor(referrerOrgId);
+    // Put the referrer 5 credits below the cap via a raw seed row (same
+    // recipe as credits-earn.test.ts's seedEarned helper).
+    await sql`
+      insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${referrerWallet}, ${LIFETIME_EARN_CAP - 5}, 'earn_grant', 'pack', ${LIFETIME_EARN_CAP - 5}, ${`seed-${randomUUID()}`})`;
+
+    const { orgId, orgSlug, ownerId } = await seedOrg("pro");
+    await sql`update organizations set referred_by_org_id = ${referrerOrgId} where id = ${orgId}`;
+    const owner = asOwner(orgId, ownerId);
+
+    const { competition, division } = await rig(owner);
+    await putRegistrationSettings(owner, division.id, {
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 2000,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
+    });
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, division_id: division.id },
+      "http://test.local",
+    );
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 2000));
+
+    // Only the remaining 5 of headroom granted — capped, never over.
+    expect(await balance(referrerWallet)).toBe(LIFETIME_EARN_CAP);
+  });
+
+  it("#267 T3: best-effort — a referrer wallet-resolution failure never blocks the webhook confirmation", async () => {
+    const { orgId: referrerOrgId } = await seedOrg("pro");
+    const { orgId, orgSlug, ownerId } = await seedOrg("pro");
+    await sql`update organizations set referred_by_org_id = ${referrerOrgId} where id = ${orgId}`;
+    const owner = asOwner(orgId, ownerId);
+    creditsMock.failWalletFor.add(referrerOrgId);
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { competition, division } = await rig(owner);
+    await putRegistrationSettings(owner, division.id, {
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 2000,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
+    });
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, division_id: division.id },
+      "http://test.local",
+    );
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 2000));
+
+    const [row] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(row.status).toBe("confirmed"); // webhook still confirmed despite the grant failure
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it("capacity: overflow waitlists; withdrawal auto-promotes the oldest; auto-refund pre-lock", async () => {

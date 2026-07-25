@@ -7,7 +7,7 @@ import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import type { Organization, OrgMembership, OrgRole, User } from "@/lib/types";
 import { AuthError, PaymentRequiredError } from "@/lib/errors";
 import { getLimit } from "@/lib/entitlements";
-import { grantMonthly, walletIdFor } from "@/lib/credits";
+import { grantMonthly, recordEarnGrant, REFERRAL_WELCOME_EARN, walletIdFor } from "@/lib/credits";
 import { isReservedSlug } from "@/lib/public-site";
 import { consumeReferralCookie } from "@/lib/referral";
 import { routes } from "@/lib/routes";
@@ -310,6 +310,18 @@ export async function createOrgForUser(
     await grantMonthly(walletId, "community", 1);
   } catch (err) {
     console.error(`[credits] bootstrap grant failed for org ${org.id}`, err);
+  }
+
+  // Growth loop (SPEC-5 §2): an org that signed up via a referral link earns a
+  // welcome credit grant. Best-effort + idempotent per org (ref = org.id), so a
+  // grant hiccup never blocks org creation and a retry never double-grants.
+  if (opts?.referredByOrgId) {
+    try {
+      const walletId = await walletIdFor(org.id);
+      await recordEarnGrant(walletId, org.id, "referral_welcome", org.id, REFERRAL_WELCOME_EARN);
+    } catch (err) {
+      console.error(`[credits] referral welcome grant failed for org ${org.id}`, err);
+    }
   }
 
   await invalidateUserOrgs(userId);
