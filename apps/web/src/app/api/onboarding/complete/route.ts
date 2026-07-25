@@ -14,11 +14,18 @@ export async function POST() {
   // Grant to the user's active org (a user reaching "onboarding complete" has an
   // org); no side-effecting ensureActiveOrg here — read-only resolution, skip if
   // none.
-  const orgs = await getUserOrgs(user.id);
-  if (orgs.length > 0) {
-    const activeId = await getActiveOrgId();
-    const orgId = orgs.find((o) => o.id === activeId)?.id ?? orgs[0].id;
-    await tryEarnGrant(orgId, "onboarding", ONBOARDING_EARN);
+  // Best-effort covers the ORG RESOLUTION too, not just the grant: getUserOrgs /
+  // getActiveOrgId throwing must not 500 onboarding after markOnboardingDone has
+  // committed (tryEarnGrant alone swallows only its own errors).
+  try {
+    const orgs = await getUserOrgs(user.id);
+    if (orgs.length > 0) {
+      const activeId = await getActiveOrgId();
+      const orgId = orgs.find((o) => o.id === activeId)?.id ?? orgs[0].id;
+      await tryEarnGrant(orgId, "onboarding", ONBOARDING_EARN);
+    }
+  } catch {
+    // earn is a growth-loop nicety; never let it fail onboarding completion.
   }
 
   return NextResponse.json({ ok: true });
