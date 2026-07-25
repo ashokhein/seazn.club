@@ -520,6 +520,119 @@ export async function recordPassGrant(
 }
 
 /**
+ * Per-source earn amounts + the lifetime cap (SPEC-5 §2 — the PLG "earn free
+ * credits" loop). All three are tunable knobs that bound COGS: the two grant
+ * amounts are what an org gets for each milestone, and `LIFETIME_EARN_CAP` is
+ * the hard ceiling on how many `earn_grant` credits ANY single wallet can ever
+ * accrue across all earn sources combined — so the loop can never mint unbounded
+ * free credits no matter how many milestones an org hits (or a referral source a
+ * later task adds). Defaults: 10 for onboarding, 10 for the first paid
+ * competition, 100 lifetime — a new org can earn its way to at most 100 free
+ * credits ($25 of COGS at $0.25/credit) before every further earn no-ops.
+ */
+export const ONBOARDING_EARN = 10;
+export const FIRST_PAID_EARN = 10;
+export const LIFETIME_EARN_CAP = 100;
+
+/**
+ * Grant an org free AI credits for a growth milestone (SPEC-5 §2): onboarding
+ * completion or its first paid competition. Mirror of `recordPassGrant` — the
+ * credits land in the never-expire **`pack`** bucket (SPEC-2 §5.4 D2, earned
+ * credits are kept, not the monthly-reset `grant` bucket), `source='earn_grant'`,
+ * under the same wallet advisory lock every credit write takes.
+ *
+ * **Idempotent on `earn:${reason}:${ref}`:** the caller chooses `ref` so each
+ * milestone fires at most once — `ref = orgId` for BOTH sources here. Onboarding
+ * is naturally once-per-org (one org, one onboarding). "First paid competition"
+ * is made once-per-ORG by keying on the org, NOT the competition:
+ * `earn:first_paid:${orgId}` — so the org's first paid competition grants and
+ * every later paid competition conflicts on the unique key and no-ops (simpler
+ * and correct vs a separate "has any prior paid comp" query). A replay of the
+ * same milestone grants nothing.
+ *
+ * **Lifetime earn cap (money-safety):** before granting, sum this wallet's
+ * existing `earn_grant` credits and grant only `min(amount, LIFETIME_EARN_CAP −
+ * alreadyEarned)`, floored at 0 — so the total earned can never exceed the cap
+ * even across sources (a wallet 5 below the cap earning 10 gets exactly 5; a
+ * wallet at the cap gets 0 and writes no row). The read+cap+insert all sit under
+ * the advisory lock so two concurrent earns can't both see the same headroom and
+ * jointly overshoot the cap.
+ *
+ * Returns the credits actually granted this call (`{ granted: 0 }` on a replay
+ * or when the cap leaves no headroom).
+ */
+export async function recordEarnGrant(
+  walletId: string,
+  orgId: string,
+  reason: "onboarding" | "first_paid",
+  ref: string,
+  amount: number,
+): Promise<{ granted: number }> {
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new Error(`recordEarnGrant: amount must be a positive integer, got ${amount}`);
+  }
+  const key = `earn:${reason}:${ref}`;
+  return sql.begin(async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtext(${"ai-credit-wallet:" + walletId}))`;
+
+    // Idempotency pre-check under the lock (same shape as grantMonthly): a
+    // milestone already granted (or a cap-floored partial grant already
+    // recorded) short-circuits to a no-op before we touch the ledger again.
+    const [already] = await tx<{ id: string }[]>`
+      select id from ai_credit_ledger where idempotency_key = ${key}`;
+    if (already) return { granted: 0 };
+
+    // Lifetime earn cap: how much this wallet has earned across ALL earn
+    // sources, so the ceiling is enforced pool-wide, not per source.
+    const [earned] = await tx<{ total: string | null }[]>`
+      select coalesce(sum(delta), 0)::text as total
+        from ai_credit_ledger
+       where wallet_id = ${walletId} and source = 'earn_grant'`;
+    const alreadyEarned = Math.max(0, Number(earned?.total ?? 0));
+    const grantable = Math.max(0, Math.min(amount, LIFETIME_EARN_CAP - alreadyEarned));
+    if (grantable <= 0) return { granted: 0 };
+
+    const inserted = await appendLedgerRow(tx, {
+      walletId,
+      delta: grantable,
+      source: "earn_grant",
+      bucket: "pack",
+      ref,
+      spentByOrgId: orgId,
+      idempotencyKey: key,
+    });
+    return { granted: inserted ? grantable : 0 };
+  });
+}
+
+/**
+ * Best-effort wrapper around `recordEarnGrant` for the growth-loop HOOK sites
+ * (onboarding-complete route + the Event Pass checkout webhook, SPEC-5 §2 B/C).
+ * Resolves the wallet and grants, but NEVER throws — a credit-grant failure must
+ * not fail the onboarding flow or the money-row webhook it rides on (same
+ * discipline as the other post-commit grants in `billing-events.ts` and the
+ * bootstrap grant in `createOrgForUser`). Logs and returns 0 on any error.
+ *
+ * `ref = orgId` for both sources: onboarding is one-per-org, and first_paid is
+ * keyed on the org (not the competition) so ONLY the org's first paid
+ * competition grants (see `recordEarnGrant`'s idempotency note).
+ */
+export async function tryEarnGrant(
+  orgId: string,
+  reason: "onboarding" | "first_paid",
+  amount: number,
+): Promise<number> {
+  try {
+    const walletId = await walletIdFor(orgId);
+    const { granted } = await recordEarnGrant(walletId, orgId, reason, orgId, amount);
+    return granted;
+  } catch (err) {
+    console.error(`[credits] earn grant failed (org ${orgId}, ${reason})`, err);
+    return 0;
+  }
+}
+
+/**
  * Claw back a refunded / disputed Event Pass grant (SPEC-2 §5, money-safety):
  * a `charge.refunded` or a lost dispute on a pass charge revokes the pass, so
  * the one-time `PASS_CREDIT_GRANT` it added must be pulled back — mirror of

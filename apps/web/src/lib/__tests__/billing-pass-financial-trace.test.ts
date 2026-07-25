@@ -46,7 +46,7 @@ import {
   revokePassForRefundedCharge,
 } from "@/lib/billing";
 import { processStripeEvent } from "@/server/usecases/billing-events";
-import { balance, packBalance, reserve, walletIdFor } from "@/lib/credits";
+import { FIRST_PAID_EARN, balance, packBalance, reserve, walletIdFor } from "@/lib/credits";
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -330,12 +330,19 @@ describe.skipIf(!HAS_DB)("Event Pass grants one-time AI credits", () => {
     });
     stripeMock.retrieve.mockResolvedValue(session);
 
+    // A paid Event Pass through the WEBHOOK is also this org's first paid
+    // competition, so the SPEC-5 §2 first_paid earn (FIRST_PAID_EARN) stacks on
+    // top of the SPEC-2 pass grant — 25 (pass) + 10 (earn). Both are one-time and
+    // idempotent, so the replay below adds nothing. (The direct recordPassPurchase
+    // tests above stay at PASS_CREDIT_GRANT — the earn hook lives in the webhook
+    // handler, not in recordPassPurchase.)
     await processStripeEvent(passEvent(session));
-    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT + FIRST_PAID_EARN);
     // A second delivery of the same payment is a replay, not a new purchase:
-    // recordPassGrant's per-payment-intent idempotency key makes it a no-op.
+    // recordPassGrant's per-payment-intent idempotency key makes it a no-op, and
+    // the earn hook's per-org key likewise no-ops.
     expect(await reconcilePassCheckout(orgId, "cs_grant_replay")).toBe(true);
-    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT + FIRST_PAID_EARN);
   });
 
   it("a refunded duplicate second charge does NOT grant a second time", async () => {

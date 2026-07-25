@@ -18,7 +18,14 @@ import {
   syncSubscriptionForGroup,
 } from "@/lib/billing";
 import { CREDIT_PACKS } from "@/lib/credit-packs";
-import { recordPackPurchase, recordPackRefund, recordPassRefund, walletIdFor } from "@/lib/credits";
+import {
+  FIRST_PAID_EARN,
+  recordPackPurchase,
+  recordPackRefund,
+  recordPassRefund,
+  tryEarnGrant,
+  walletIdFor,
+} from "@/lib/credits";
 import { SEAT_ADDON, isSeatAddonItem } from "@/lib/seat-addons";
 import { getSizePack } from "@/lib/size-packs";
 import {
@@ -207,6 +214,14 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
         // First purchase of ANY kind fixes the org's billing currency, so a
         // pass buyer is never re-quoted in another currency for Pro later.
         await pinBillingCurrency(orgId, session.currency);
+        // Growth loop (SPEC-5 §2 C): a paid Event Pass IS an org paying to run a
+        // competition — its FIRST one earns free AI credits. Keyed once-per-ORG
+        // (`earn:first_paid:${orgId}`), so only the first paid competition grants
+        // and every later one no-ops via the idempotency key. Best-effort
+        // (tryEarnGrant never throws) so a grant hiccup never blocks the money
+        // row; skipped for the refunded-duplicate above (that payer isn't running
+        // the competition). Idempotency also self-heals a webhook replay.
+        await tryEarnGrant(orgId, "first_paid", FIRST_PAID_EARN);
       }
     }
     return;
