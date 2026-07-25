@@ -472,22 +472,28 @@ export async function recordPackPurchase(
  * bucket (SPEC-2 §5.4 D2) exactly like a bought credit pack, not the use-or-lose
  * `grant` bucket.
  *
- * **Idempotent on the competition, not the payment intent:** `competitionId` is
- * the anchor the `competition_passes` row itself is unique on (V271, ON CONFLICT
- * (competition_id)), and — unlike the payment intent — it is always present
- * (a staff-granted / legacy pass carries no intent). Keying `pass_grant:${
- * competitionId}` makes a webhook/reconcile replay, or a second owner's
- * duplicate charge for the same competition, conflict on the unique idempotency
- * key and no-op rather than double-granting. The payment intent (when present)
- * is still stamped as `ref` for the money trace.
+ * **Idempotent on the payment intent, falling back to the competition:** the
+ * anchor is `paymentIntent ?? competitionId`. A real paid pass carries a Stripe
+ * payment intent (unique per purchase); keying `pass_grant:${paymentIntent}`
+ * makes a webhook/reconcile replay of that SAME payment conflict on the unique
+ * idempotency key and no-op rather than double-granting — while a genuine
+ * RE-purchase of the same competition (after a refund revoked the first pass)
+ * carries a NEW intent, so it re-grants fresh (review MINOR-2; keying on the
+ * competition alone would wrongly suppress the re-grant, since the deleted
+ * pass's grant row still occupies `pass_grant:${competitionId}`). A staff-
+ * granted / legacy pass carries no intent and falls back to the competition id
+ * (always present, and unique per V271's ON CONFLICT (competition_id) — so two
+ * intent-less passes for one competition still can't double-grant). The anchor
+ * is also stamped as `ref` so the claw-back (`recordPassRefund`) can find this
+ * grant by the same value, and for the money trace.
  *
  * Same advisory-lock idiom as `recordPackPurchase` — a pure credit can't trip
  * the `balance_after >= 0` CHECK, but the lock keeps the `balance_after`
  * snapshot accurate under a concurrent credit to the same wallet (the reconcile
  * job asserts against it).
  *
- * Returns the credits actually granted (0 if this competition's grant was
- * already recorded — a replay).
+ * Returns the credits actually granted (0 if this purchase's grant was already
+ * recorded — a replay).
  */
 export async function recordPassGrant(
   walletId: string,
@@ -498,6 +504,7 @@ export async function recordPassGrant(
   if (!Number.isInteger(credits) || credits <= 0) {
     throw new Error(`recordPassGrant: credits must be a positive integer, got ${credits}`);
   }
+  const anchor = paymentIntent ?? competitionId;
   return sql.begin(async (tx) => {
     await tx`select pg_advisory_xact_lock(hashtext(${"ai-credit-wallet:" + walletId}))`;
     const inserted = await appendLedgerRow(tx, {
@@ -505,10 +512,79 @@ export async function recordPassGrant(
       delta: credits,
       source: "pass_grant",
       bucket: "pack",
-      ref: paymentIntent ?? competitionId,
-      idempotencyKey: `pass_grant:${competitionId}`,
+      ref: anchor,
+      idempotencyKey: `pass_grant:${anchor}`,
     });
     return inserted ? credits : 0;
+  });
+}
+
+/**
+ * Claw back a refunded / disputed Event Pass grant (SPEC-2 §5, money-safety):
+ * a `charge.refunded` or a lost dispute on a pass charge revokes the pass, so
+ * the one-time `PASS_CREDIT_GRANT` it added must be pulled back — mirror of
+ * `recordPackRefund` for the pass's `pass_grant` row. Without this the pass
+ * entitlement is revoked but the 25 credits stay (a ~$6.25/cycle leak, farmable
+ * by cycling buy→refund).
+ *
+ * `anchor` is the same value `recordPassGrant` stamped as `ref` and keyed on:
+ * the Stripe payment intent for a real paid pass (the revoke paths carry it on
+ * the charge / dispute), or the competition id for an intent-less pass. The buy
+ * and refund paths MUST agree on it or nothing matches.
+ *
+ * **Never over-claws, never goes negative, never touches `grant`:** the debit
+ * is `min(originalGrant, packBalance)` — capped so it can neither exceed what
+ * the pass granted NOR drive the `pack` bucket below zero (credits the buyer
+ * already spent are gone; we don't retro-charge them). Only the never-expire
+ * `pack` bucket the grant landed in is read/written; the resetting `grant`
+ * bucket (monthly/trial) is a separate pool a pass refund must never expire.
+ *
+ * **Under the SAME wallet advisory lock the spend path takes** (`reserve`): the
+ * `packBalance` read and the debit insert sit inside one `pg_advisory_xact_lock`'d
+ * transaction on the wallet, so a spend racing this claw-back can't lost-update
+ * the balance. The immutable `pass_grant` row (its `wallet_id` never changes) is
+ * read first to LEARN which wallet to lock; the balance-sensitive read+write
+ * then all sit under the lock.
+ *
+ * **Idempotent on `pass_refund:${anchor}`:** a replayed refund, a
+ * refund-then-dispute, or a double webhook conflict on the unique idempotency
+ * key and no-op (`ON CONFLICT DO NOTHING`) — the pass is clawed back exactly
+ * once. Uses the existing `refund` source (already enumerated by the ledger's
+ * source CHECK — no new migration); a pass refund's `ref` is the anchor, never
+ * a `run_spend` hold id, so it can't match a hold in `spentThisPeriodByOrg`
+ * (identical to how `recordPackRefund`'s refund rows stay out of that derive).
+ *
+ * Returns `{matched:false}` when no `pass_grant` row exists for this anchor
+ * (a non-pass charge, or an intent-less pass never granted). Otherwise
+ * `{matched:true, clawedBack}` where `clawedBack` is the credits debited THIS
+ * call (0 if all were already spent, or on a replay the earlier call clawed).
+ */
+export async function recordPassRefund(
+  anchor: string,
+): Promise<{ clawedBack: number; matched: boolean }> {
+  return sql.begin(async (tx) => {
+    const [grant] = await tx<{ wallet_id: string; delta: number }[]>`
+      select wallet_id, delta from ai_credit_ledger
+       where source = 'pass_grant' and ref = ${anchor}`;
+    if (!grant) return { clawedBack: 0, matched: false };
+
+    const walletId = grant.wallet_id;
+    await tx`select pg_advisory_xact_lock(hashtext(${"ai-credit-wallet:" + walletId}))`;
+
+    const originalGrant = grant.delta;
+    const pb = await bucketBalance(tx, walletId, "pack");
+    const clawback = Math.min(originalGrant, Math.max(0, pb));
+    if (clawback <= 0) return { clawedBack: 0, matched: true };
+
+    const inserted = await appendLedgerRow(tx, {
+      walletId,
+      delta: -clawback,
+      source: "refund",
+      bucket: "pack",
+      ref: anchor,
+      idempotencyKey: `pass_refund:${anchor}`,
+    });
+    return { clawedBack: inserted ? clawback : 0, matched: true };
   });
 }
 

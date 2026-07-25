@@ -10,7 +10,7 @@ import {
 } from "@/lib/entitlements";
 import { requireSubscriptionIdForOrg, subscriptionIdForOrg } from "@/lib/billing-group";
 import { LIVE_SUBSCRIPTION_STATUSES, hasLiveSubscription } from "@/lib/subscription-status";
-import { grantTrialForRow, recordPassGrant, walletIdFor } from "@/lib/credits";
+import { grantTrialForRow, recordPassGrant, recordPassRefund, walletIdFor } from "@/lib/credits";
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
 
 /**
@@ -857,11 +857,22 @@ export async function refundDuplicatePassPayment(intent: string): Promise<void> 
  * refunded pass charge revokes the pass — money back means the comp rejoins
  * the quota (the freeze machinery handles any overage lazily). Partial
  * refunds leave the pass; owner outreach is a support flow, not code.
+ *
+ * v17 money-safety: the refund also claws back the pass's one-time
+ * `PASS_CREDIT_GRANT` (`recordPassRefund`, keyed on the same payment intent the
+ * grant used) — money back must mean credits back, or the 25 credits stay
+ * farmable after the entitlement is gone. The claw-back runs BEFORE the delete
+ * and is idempotent on `pass_refund:${intent}`, so a crash between the two, or a
+ * webhook redelivery, self-heals: the retry re-claws (a no-op if it already
+ * landed) and re-deletes. It reads the immutable `pass_grant` ledger row, not
+ * the `competition_passes` row, so it works even once the pass is deleted. A
+ * non-pass refund (no `pass_grant` for this intent) is a harmless no-op.
  */
 export async function revokePassForRefundedCharge(charge: Stripe.Charge): Promise<boolean> {
   const intent =
     typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
   if (!intent || !charge.refunded) return false;
+  await recordPassRefund(intent);
   const [revoked] = await sql<{ org_id: string; competition_id: string }[]>`
     delete from competition_passes where stripe_payment_intent = ${intent}
     returning org_id, competition_id`;
