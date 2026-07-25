@@ -179,6 +179,7 @@ export function aiConsoleReducer(s: AiConsoleState, a: AiConsoleAction): AiConso
 /** ui-catalog copy keys for a failed run. */
 export type AiErrorKey =
   | "board.ai.error.upgrade"
+  | "board.ai.error.outOfCredits"
   | "board.ai.error.unavailable"
   | "board.ai.error.rateLimited"
   | "board.ai.error.conflict"
@@ -192,11 +193,14 @@ export type AiErrorKey =
  * the returned key through the ui catalog so a raw, untranslated server string
  * never reaches the UI. 422 splits on the code: AI_PLAN_TOO_LARGE asks the user
  * to narrow the scope; anything else is a plain "couldn't use that instruction".
+ * 402 splits on the feature key: an empty AI credit wallet (feature_key
+ * "ai.credits") asks the organiser to top up — AI is metered on every tier now,
+ * so "upgrade to Pro" is only right for the plain (non-credit) paywall.
  */
 export function aiErrorKey(status: number, code?: string): AiErrorKey {
   switch (status) {
     case 402:
-      return "board.ai.error.upgrade";
+      return code === "ai.credits" ? "board.ai.error.outOfCredits" : "board.ai.error.upgrade";
     case 503:
       // AI isn't configured on this server (no key / disabled) — a distinct line
       // from the run failures so the organiser isn't told to just try again.

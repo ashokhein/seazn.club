@@ -46,6 +46,7 @@
   "board.ai.errorLabel": "Kon niet voltooien.",
   "board.ai.errorGeneric": "Er ging iets mis. Probeer opnieuw.",
   "board.ai.error.upgrade": "AI-planning vereist een Pro-abonnement.",
+  "board.ai.error.outOfCredits": "Je AI-credits voor deze factureringsperiode zijn op. Koop een creditpakket of upgrade je abonnement om AI Planning te blijven gebruiken.",
   "board.ai.error.unavailable": "AI-planning is niet beschikbaar op deze server.",
   "board.ai.error.rateLimited": "Te veel runs zojuist — wacht even en probeer opnieuw.",
   "board.ai.error.conflict": "Het schema is gewijzigd tijdens het plannen — heropen en probeer opnieuw.",

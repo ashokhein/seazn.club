@@ -46,6 +46,7 @@
   "board.ai.errorLabel": "Couldn't finish.",
   "board.ai.errorGeneric": "Something went wrong. Try again.",
   "board.ai.error.upgrade": "AI scheduling needs a Pro plan.",
+  "board.ai.error.outOfCredits": "You're out of AI credits for this billing period. Top up a credit pack or upgrade your plan to keep using AI Schedule.",
   "board.ai.error.unavailable": "AI scheduling isn't available on this server.",
   "board.ai.error.rateLimited": "Too many runs just now — wait a moment and try again.",
   "board.ai.error.conflict": "The schedule changed while planning — reopen and try again.",

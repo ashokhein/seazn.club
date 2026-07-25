@@ -46,6 +46,7 @@
   "board.ai.errorLabel": "Impossible de terminer.",
   "board.ai.errorGeneric": "Une erreur s'est produite. Réessayez.",
   "board.ai.error.upgrade": "La planification IA nécessite un forfait Pro.",
+  "board.ai.error.outOfCredits": "Vous n'avez plus de crédits IA pour cette période de facturation. Achetez un pack de crédits ou passez à un forfait supérieur pour continuer à utiliser l'IA Planning.",
   "board.ai.error.unavailable": "La planification IA n'est pas disponible sur ce serveur.",
   "board.ai.error.rateLimited": "Trop d'exécutions à la fois — patientez un instant et réessayez.",
   "board.ai.error.conflict": "Le calendrier a changé pendant la planification — rouvrez et réessayez.",
