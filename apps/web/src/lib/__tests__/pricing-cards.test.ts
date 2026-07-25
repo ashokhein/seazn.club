@@ -4,6 +4,7 @@ import {
   FREE_FEATURES,
   PASS_FEATURES,
   PRO_FEATURES,
+  PASS_CREDIT_GRANT,
   ticketTiers,
 } from "../pricing-cards";
 import { sql } from "@/lib/db";
@@ -36,6 +37,21 @@ describe("pricing cards", () => {
   });
   it("only the Event Pass glows", () => {
     expect(ticketTiers("usd").map((t) => Boolean(t.glow))).toEqual([false, true, false]);
+  });
+
+  // v17 (SPEC-6 A1): the graded per-division run cap became the credit wallet
+  // (V322). The dead "10 AI schedule runs per division" bullet must stay gone —
+  // the pass's credit story is the dedicated credits line, not a bullet.
+  it("the retired AI-run-cap bullet is gone from the Event Pass card", () => {
+    expect(PASS_FEATURES.join(" | ")).not.toMatch(/AI schedule runs/i);
+    expect(PASS_FEATURES.join(" | ")).not.toMatch(/runs per division/i);
+  });
+
+  // The Event Pass credit grant is a one-time top-up with NO ai.credits.monthly
+  // row in plan_entitlements, so pricing-cards is its single source. Pin it so
+  // the card copy and the (future) wallet grant can't silently diverge.
+  it("the Event Pass card quotes the +25 one-time credit grant", () => {
+    expect(PASS_CREDIT_GRANT).toBe(25);
   });
 });
 
@@ -85,6 +101,16 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
   it("the Pro card quotes the live pro entrant cap", async () => {
     const entrants = await capFor("entrants.per_division.max", "pro");
     expect(PRO_FEATURES.join(" | ")).toContain(`${entrants} entrants per division`);
+  });
+
+  // v17 (SPEC-6 A1): the /pricing card credit lines render the live
+  // `ai.credits.monthly` value straight off plan_entitlements (no hardcoded
+  // second source). This pins the wireframe numbers (10 / 60 / 200) so a matrix
+  // move surfaces as a failing test rather than silent marketing drift.
+  it("plan_entitlements grants the credit-line numbers the cards quote (10 / 60 / 200)", async () => {
+    expect(await capFor("ai.credits.monthly", "community")).toBe(10);
+    expect(await capFor("ai.credits.monthly", "pro")).toBe(60);
+    expect(await capFor("ai.credits.monthly", "pro_plus")).toBe(200);
   });
 
   // The in-app billing panel is a SECOND hand-written copy of the same claims,

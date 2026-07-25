@@ -32,9 +32,10 @@ import {
 // in-process no-op round-trip), so seeding the plan at org-creation time never
 // races a cached entitlement.
 //
-// The pricing-page reveal MECHANICS (hidden → click → $39) are already pinned
-// by pricing-pro-plus.spec.ts; the reveal test below is complementary — it
-// asserts the revealed card advertises this wave's moved-up features.
+// The pricing-page Pro Plus card presence + price ($39, Popular) are pinned by
+// pricing-pro-plus.spec.ts; the card test below is complementary — it asserts
+// the always-visible fourth card advertises this wave's moved-up features
+// (v17 SPEC-6 A1 promoted it from the old reveal to a full card).
 
 const GENERIC_CONFIG = {
   resultMode: "score",
@@ -382,7 +383,7 @@ test.describe("Pro Plus · moved-up features", () => {
 // ===========================================================================
 
 test.describe("Pro Plus · disclosure + admin matrix", () => {
-  test("Pricing reveal surfaces the moved-up features as Pro Plus selling points", async ({
+  test("Pricing Pro Plus card surfaces the moved-up features as selling points", async ({
     browser,
   }) => {
     // Anonymous visitor (default storageState is signed-in), own context.
@@ -390,15 +391,12 @@ test.describe("Pro Plus · disclosure + admin matrix", () => {
     const page = await ctx.newPage();
     try {
       await page.goto("/en/pricing");
-      await expect(page.locator("[data-plus-revealed]")).toHaveCount(0);
-      await page.locator("[data-plus-reveal-cta]").click();
-
-      const revealed = page.locator("[data-plus-revealed]");
-      await expect(revealed).toBeVisible();
+      const plusCard = page.locator("[data-plus-card]");
+      await expect(plusCard).toBeVisible();
       // The features this wave moved onto Pro Plus are its headline offer.
-      await expect(revealed).toContainText("AI-assisted scheduling");
-      await expect(revealed).toContainText("Auto officials assignment");
-      await expect(revealed).toContainText("Write API access");
+      await expect(plusCard).toContainText("AI-assisted scheduling");
+      await expect(plusCard).toContainText("Auto officials assignment");
+      await expect(plusCard).toContainText("Write API access");
     } finally {
       await ctx.close();
     }
