@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { ArrowLeftRight } from "lucide-react";
 import { api } from "@/lib/client";
 import type { OrgMembership } from "@/lib/types";
@@ -26,6 +26,7 @@ export function OrgSwitcher({
   activeId: string;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -47,10 +48,21 @@ export function OrgSwitcher({
     setBusy(id);
     try {
       await api("/api/orgs/active", { method: "POST", json: { org_id: id } });
-      // PROMPT-30: the URL owns which org a page shows — navigate to the
-      // chosen org's settings; a cookie flip alone would change nothing.
-      const slug = orgs.find((o) => o.id === id)?.slug;
-      if (slug) router.push(routes.orgSettings(slug));
+      // PROMPT-30: the URL owns which org a page shows — a cookie flip alone
+      // changes nothing, so navigate. Stay on the SAME page under the new org by
+      // swapping the /o/<slug>/ segment, rather than always dumping the user on
+      // settings. Only org-level settings sub-paths transfer safely; a
+      // competition/entity path (/o/<slug>/c/…) belongs to the OLD org and would
+      // 404 under the new one, so those fall back to the new org's settings.
+      const newSlug = orgs.find((o) => o.id === id)?.slug;
+      const oldSlug = orgs.find((o) => o.id === activeId)?.slug;
+      if (newSlug) {
+        let target = routes.orgSettings(newSlug);
+        if (oldSlug && pathname.startsWith(`/o/${oldSlug}/settings`)) {
+          target = `/o/${newSlug}${pathname.slice(`/o/${oldSlug}`.length)}`;
+        }
+        router.push(target);
+      }
       router.refresh();
     } finally {
       setBusy(null);
