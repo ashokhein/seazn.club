@@ -89,7 +89,9 @@ export function AdminCreditsPanel({
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error ?? "Adjustment failed");
-      setBalanceAfter(typeof d.balance_after === "number" ? d.balance_after : null);
+      // The handler wraps success as { ok, data:{ balance_after, applied } }, so
+      // the balance is under d.data — reading top-level left the confirmation dead.
+      setBalanceAfter(typeof d.data?.balance_after === "number" ? d.data.balance_after : null);
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Adjustment failed");
