@@ -40,8 +40,10 @@ const stripeMock = vi.hoisted(() => {
 vi.mock("@/lib/stripe", () => ({ getStripe: () => stripeMock.stripe }));
 
 import { sql } from "@/lib/db";
-import { reconcilePassCheckout } from "@/lib/billing";
+import { reconcilePassCheckout, recordPassPurchase } from "@/lib/billing";
 import { processStripeEvent } from "@/server/usecases/billing-events";
+import { balance, walletIdFor } from "@/lib/credits";
+import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
@@ -278,5 +280,95 @@ describe.skipIf(!HAS_DB)("Event Pass leaves a financial trace (webhook)", () => 
     const [sub] = await readSub(orgId);
     expect(sub.stripe_customer_id).toBe(replay);
     expect(sub.currency).toBe("eur");
+  });
+});
+
+// SPEC-1 fn3 / SPEC-2 §5, SPEC-6 §A7: a paid Event Pass tops the buyer's wallet
+// up by the one-time PASS_CREDIT_GRANT the /pricing card advertises. This is the
+// MONEY path — the grant must fire exactly once per competition no matter how
+// many times the webhook / reconcile redeliver, and never for a refunded
+// duplicate second charge.
+describe.skipIf(!HAS_DB)("Event Pass grants one-time AI credits", () => {
+  it("a bought pass grants PASS_CREDIT_GRANT credits to the org's wallet", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    const walletId = await walletIdFor(orgId);
+    expect(await balance(walletId)).toBe(0);
+
+    const res = await recordPassPurchase({
+      orgId,
+      competitionId: compId,
+      paymentIntent: "pi_grant_" + uniq(),
+    });
+    expect(res.recorded).toBe(true);
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+  });
+
+  it("a webhook + reconcile replay of the same payment does NOT double-grant", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    const walletId = await walletIdFor(orgId);
+    const session = passSession(orgId, compId, {
+      customer: "cus_grant_replay_" + uniq(),
+      currency: "gbp",
+      payment_intent: "pi_grant_replay",
+    });
+    stripeMock.retrieve.mockResolvedValue(session);
+
+    await processStripeEvent(passEvent(session));
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+    // A second delivery of the same payment is a replay, not a new purchase:
+    // recordPassGrant's per-competition idempotency key makes it a no-op.
+    expect(await reconcilePassCheckout(orgId, "cs_grant_replay")).toBe(true);
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+  });
+
+  it("a refunded duplicate second charge does NOT grant a second time", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    const walletId = await walletIdFor(orgId);
+    // First owner records the pass and earns the grant.
+    stripeMock.retrieve.mockResolvedValue(
+      passSession(orgId, compId, { payment_intent: "pi_grant_winner" }),
+    );
+    expect(await reconcilePassCheckout(orgId, "cs_grant_winner")).toBe(true);
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+
+    // A second owner pays for the SAME competition; the charge is refunded and
+    // the wallet must NOT be credited again (the grant is keyed on the comp).
+    await processStripeEvent(
+      passEvent(passSession(orgId, compId, { payment_intent: "pi_grant_loser" })),
+    );
+    expect(stripeMock.refundCreate).toHaveBeenCalledTimes(1);
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+  });
+
+  it("in a billing group the credits land in the shared group pool", async () => {
+    // Two orgs sharing ONE subscription (a real billing group): walletIdFor
+    // resolves both to the group's subscription id, so a pass bought by the
+    // second org credits the pool the first org also spends from (SPEC-2 §11.1).
+    const { orgId: payerOrg } = await seedPassBuyer();
+    const [{ subscription_id }] = await sql<{ subscription_id: string }[]>`
+      select subscription_id from organizations where id = ${payerOrg}`;
+    const suffix = uniq();
+    const [{ id: memberOrg }] = await sql<{ id: string }[]>`
+      insert into organizations (name, slug, subscription_id)
+      values (${"Group Member " + suffix}, ${"group-member-" + suffix}, ${subscription_id})
+      returning id`;
+    const [{ id: memberComp }] = await sql<{ id: string }[]>`
+      insert into competitions (org_id, name, slug)
+      values (${memberOrg}, ${"Member Cup " + suffix}, ${"member-cup-" + suffix})
+      returning id`;
+
+    const groupWallet = await walletIdFor(memberOrg);
+    expect(groupWallet).toBe(subscription_id);
+    expect(await walletIdFor(payerOrg)).toBe(subscription_id);
+
+    const res = await recordPassPurchase({
+      orgId: memberOrg,
+      competitionId: memberComp,
+      paymentIntent: "pi_grant_group_" + uniq(),
+    });
+    expect(res.recorded).toBe(true);
+    // The 25 lands in the ONE shared pool, visible from either org's walletId.
+    expect(await balance(groupWallet)).toBe(PASS_CREDIT_GRANT);
+    expect(await balance(await walletIdFor(payerOrg))).toBe(PASS_CREDIT_GRANT);
   });
 });

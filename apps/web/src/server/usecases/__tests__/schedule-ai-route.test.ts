@@ -67,7 +67,9 @@ import { aiPlanForDivision } from "../schedule-ai";
 import { GENERIC_CONFIG, seedOrg } from "./_seed";
 
 import { setOrgPlan } from "@/lib/__tests__/_billing-group";
-import { balance, recordPackPurchase, walletIdFor } from "@/lib/credits";
+import { balance, recordPackPurchase, reserve, walletIdFor } from "@/lib/credits";
+import { recordPassPurchase } from "@/lib/billing";
+import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
 const HAS_DB = !!process.env.DATABASE_URL;
 const TZ = "Europe/London";
 const MIN = 60_000;
@@ -361,21 +363,37 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, credit-metered v17
   // behavior left to assert — credit exhaustion (the two tests above) is the
   // only spend limit now, so the cap/override-lift cases are gone, not rewritten.
 
-  it("an Event Pass grants NO AI credits — AI stays metered on the org's own wallet (V302 quota-lift retired)", async () => {
+  it("an Event Pass grants PASS_CREDIT_GRANT one-time AI credits; once drained the org 402s again", async () => {
     const { auth } = await seedOrg("community");
-    const { divisionId } = await seedPlannable(auth);
+    const { divisionId, fixtureIds } = await seedPlannable(auth);
     const [{ competition_id }] = await sql<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${divisionId}`;
-    await sql`
-      insert into competition_passes (competition_id, org_id)
-      values (${competition_id}, ${auth.orgId})
-      on conflict (competition_id) do nothing`;
-    await invalidateOrgEntitlements(auth.orgId);
-    // An Event Pass lifts entrants/formats, never the AI wallet (SPEC-2 §4a —
-    // event_pass carries no ai.credits.monthly row): the pass adds zero credits,
-    // so a community org holding a pass but an empty wallet still 402s at the
-    // reserve, before the LLM. (Pre-v17 this pass lifted the free run quota to 10.)
+    // The pass buyer's wallet starts empty (seedOrg skips the bootstrap grant).
     const walletId = await walletIdFor(auth.orgId);
+    expect(await balance(walletId)).toBe(0);
+    // Buying the Event Pass tops the wallet up by the one-time grant the /pricing
+    // card advertises (SPEC-1 fn3 / SPEC-2 §5, SPEC-6 §A7) — NOT a resetting
+    // ai.credits.monthly allowance, a single purchase-time top-up. This is the
+    // real grant path (recordPassPurchase, the one production insert of the pass
+    // row) so the credits actually land, unlike a bare SQL insert.
+    const res = await recordPassPurchase({
+      orgId: auth.orgId,
+      competitionId: competition_id,
+      paymentIntent: `pi_pass_${randomUUID()}`,
+    });
+    expect(res.recorded).toBe(true);
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+    // The granted credits are spendable: a real run succeeds and debits one.
+    parse.mockResolvedValue(planResponse(legalPlan(fixtureIds)));
+    const out = await aiPlanForDivision(auth, divisionId, {
+      instruction: "plan it",
+      mode: "generate",
+    });
+    expect(out.proposal).toHaveLength(fixtureIds.length);
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT - 1);
+    // Drain the rest — a pass is a finite top-up, not an unlimited lift: once the
+    // wallet empties the next run 402s at the reserve, before the LLM.
+    await reserve(walletId, auth.orgId, PASS_CREDIT_GRANT - 1);
     expect(await balance(walletId)).toBe(0);
     await expect(
       aiPlanForDivision(auth, divisionId, {
@@ -386,7 +404,7 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, credit-metered v17
       status: 402,
       featureKey: "ai.credits",
     });
-    expect(parse).not.toHaveBeenCalled();
+    expect(parse).toHaveBeenCalledTimes(1); // only the funded run reached the LLM
   });
 
   it("override bool_value=false kills a pro_plus org → 402", async () => {

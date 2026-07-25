@@ -10,7 +10,8 @@ import {
 } from "@/lib/entitlements";
 import { requireSubscriptionIdForOrg, subscriptionIdForOrg } from "@/lib/billing-group";
 import { LIVE_SUBSCRIPTION_STATUSES, hasLiveSubscription } from "@/lib/subscription-status";
-import { grantTrialForRow } from "@/lib/credits";
+import { grantTrialForRow, recordPassGrant, walletIdFor } from "@/lib/credits";
+import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
 
 /**
  * Checkout branding (verified against API 2026-06-24.dahlia). Kept in code
@@ -785,18 +786,35 @@ export async function syncSubscriptionForGroup(
  * (webhook + reconcile racing on one intent — NOT a duplicate) or a genuine
  * SECOND charge (two owners / two tabs). `duplicateIntent` is the losing intent
  * only in the second case, so callers can send it straight back (P0-3b).
+ *
+ * v17 (SPEC-1 fn3 / SPEC-2 §5, SPEC-6 §A7): a recorded pass also tops the org's
+ * wallet up by `PASS_CREDIT_GRANT` one-time credits — the "+25 AI credits" the
+ * /pricing card advertises. This is the ONE authoritative grant point: it is the
+ * only production insert of a `competition_passes` row, so both the webhook and
+ * the reconcile-on-return path funnel through here, and `recordPassGrant`'s
+ * per-competition idempotency key makes a replay a guaranteed no-op. The grant
+ * is deliberately NOT emitted for a genuine duplicate second charge (that payer
+ * is refunded, not credited) — only for the winning insert and for a same-intent
+ * replay (which heals a first attempt that died between the pass insert and the
+ * grant).
  */
 export async function recordPassPurchase(args: {
   orgId: string;
   competitionId: string;
   paymentIntent?: string | null;
 }): Promise<{ recorded: boolean; duplicateIntent: string | null }> {
+  const grantPassCredits = () =>
+    walletIdFor(args.orgId).then((walletId) =>
+      recordPassGrant(walletId, PASS_CREDIT_GRANT, args.competitionId, args.paymentIntent),
+    );
+
   const [inserted] = await sql<{ competition_id: string }[]>`
     insert into competition_passes (competition_id, org_id, stripe_payment_intent)
     values (${args.competitionId}, ${args.orgId}, ${args.paymentIntent ?? null})
     on conflict (competition_id) do nothing
     returning competition_id`;
   if (inserted) {
+    await grantPassCredits();
     await invalidateOrgEntitlements(args.orgId);
     return { recorded: true, duplicateIntent: null };
   }
@@ -807,6 +825,10 @@ export async function recordPassPurchase(args: {
     args.paymentIntent && existing?.stripe_payment_intent !== args.paymentIntent
       ? args.paymentIntent
       : null;
+  // A same-intent replay (not a duplicate) re-attempts the grant to heal a first
+  // attempt that recorded the pass but died before crediting — the per-
+  // competition idempotency key makes it a no-op if the grant already landed.
+  if (!dup) await grantPassCredits();
   return { recorded: false, duplicateIntent: dup };
 }
 

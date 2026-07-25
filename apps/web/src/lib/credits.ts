@@ -463,6 +463,56 @@ export async function recordPackPurchase(
 }
 
 /**
+ * The one-time Event Pass credit grant (SPEC-1 fn3 / SPEC-2 §5, SPEC-6 §A7): a
+ * paid Event Pass tops the buyer's wallet up by a fixed one-off grant (the
+ * `PASS_CREDIT_GRANT` the /pricing card advertises). Unlike `grantMonthly`, this
+ * is NOT a resetting allowance — there is no `ai.credits.monthly` row for
+ * `event_pass`, deliberately, so `grantMonthly` never re-grants it; the pass is
+ * a single purchase-time top-up, so it lands in the never-expiring **`pack`**
+ * bucket (SPEC-2 §5.4 D2) exactly like a bought credit pack, not the use-or-lose
+ * `grant` bucket.
+ *
+ * **Idempotent on the competition, not the payment intent:** `competitionId` is
+ * the anchor the `competition_passes` row itself is unique on (V271, ON CONFLICT
+ * (competition_id)), and — unlike the payment intent — it is always present
+ * (a staff-granted / legacy pass carries no intent). Keying `pass_grant:${
+ * competitionId}` makes a webhook/reconcile replay, or a second owner's
+ * duplicate charge for the same competition, conflict on the unique idempotency
+ * key and no-op rather than double-granting. The payment intent (when present)
+ * is still stamped as `ref` for the money trace.
+ *
+ * Same advisory-lock idiom as `recordPackPurchase` — a pure credit can't trip
+ * the `balance_after >= 0` CHECK, but the lock keeps the `balance_after`
+ * snapshot accurate under a concurrent credit to the same wallet (the reconcile
+ * job asserts against it).
+ *
+ * Returns the credits actually granted (0 if this competition's grant was
+ * already recorded — a replay).
+ */
+export async function recordPassGrant(
+  walletId: string,
+  credits: number,
+  competitionId: string,
+  paymentIntent?: string | null,
+): Promise<number> {
+  if (!Number.isInteger(credits) || credits <= 0) {
+    throw new Error(`recordPassGrant: credits must be a positive integer, got ${credits}`);
+  }
+  return sql.begin(async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtext(${"ai-credit-wallet:" + walletId}))`;
+    const inserted = await appendLedgerRow(tx, {
+      walletId,
+      delta: credits,
+      source: "pass_grant",
+      bucket: "pack",
+      ref: paymentIntent ?? competitionId,
+      idempotencyKey: `pass_grant:${competitionId}`,
+    });
+    return inserted ? credits : 0;
+  });
+}
+
+/**
  * Claw back a refunded credit pack (SPEC-2 §5, v17 Phase 3 Task 4): a Stripe
  * `charge.refunded` for a pack purchase debits ONLY the credits the customer
  * has not yet spent from the `pack` bucket. `stripeRef` is the same value
