@@ -17,6 +17,10 @@ import {
   syncPaymentMethodFlagForSubscription,
   syncSubscriptionForGroup,
 } from "@/lib/billing";
+import { CREDIT_PACKS } from "@/lib/credit-packs";
+import { recordPackPurchase, recordPackRefund, walletIdFor } from "@/lib/credits";
+import { SEAT_ADDON, isSeatAddonItem } from "@/lib/seat-addons";
+import { getSizePack } from "@/lib/size-packs";
 import {
   invalidateGroupEntitlements,
   invalidateOrgEntitlements,
@@ -28,6 +32,8 @@ import {
   sendPassRevokedEmail,
   sendStaffDisputeAlertEmail,
   sendStuckEventsAlertEmail,
+  sendCreditPackGrantFailedAlertEmail,
+  sendSizePackGrantFailedAlertEmail,
 } from "@/lib/email";
 import {
   handleRegistrationCheckoutCompleted,
@@ -88,8 +94,90 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     await handleRegistrationCheckoutCompleted(session);
     return;
   }
+
+  // Size-pack one-time purchase (v17 SPEC-2 §3, Phase 3 Task 3b) — lifts ONE
+  // competition's entrant cap by writing an org_addons row. This is the SINGLE
+  // writer of that row; idempotent on the payment_intent id (the V324 partial
+  // unique index on stripe_item_id). Handled before the generic org_id gate
+  // below because it keys on its own target_org_id metadata, not org_id.
+  if (session.metadata?.kind === "size_pack") {
+    if (session.payment_status === "paid") await grantSizePackAddon(session);
+    return;
+  }
+
   const orgId = session.metadata?.org_id;
   if (!orgId) return;
+
+  // AI credit pack one-time purchase (v17 SPEC-2 §5.1/§6, Phase 3 Task 1) —
+  // grants the pack into the org's wallet. Unlike the Event Pass branch below
+  // there is no reconcile-on-return path (credit packs are not competition-
+  // scoped, so there is nowhere in-app to reconcile from); this webhook is the
+  // only writer, made safe to replay by recordPackPurchase's idempotency key.
+  if (session.metadata?.kind === "credit_pack") {
+    if (session.payment_status === "paid") {
+      const packKey = session.metadata.pack_key;
+      // The grant amount is SNAPSHOTTED into metadata.credits at checkout
+      // creation (review fix, P3 T1) — the webhook can fire long after this
+      // session was created, so re-deriving the amount from the live
+      // CREDIT_PACKS catalog by pack_key here would grant the WRONG amount if
+      // a deploy changed the pack's credits in the meantime, or silently
+      // grant ZERO if the pack_key was removed. The catalog lookup is kept
+      // only as a logged last-resort fallback for pre-fix sessions that never
+      // got a snapshot; it is never a silent no-op.
+      const snapshotRaw = session.metadata.credits;
+      const snapshot = snapshotRaw ? Number(snapshotRaw) : NaN;
+      const credits =
+        Number.isFinite(snapshot) && snapshot > 0
+          ? snapshot
+          : (() => {
+              const fallback = packKey ? CREDIT_PACKS[packKey]?.credits : undefined;
+              if (fallback) {
+                console.error(
+                  `[billing] credit_pack session ${session.id} had no usable credits snapshot ` +
+                    `(metadata.credits=${String(snapshotRaw)}) — fell back to catalog lookup by pack_key ${packKey}`,
+                );
+              }
+              return fallback;
+            })();
+      if (credits) {
+        // The payment_intent id is the durable "which charge paid for this"
+        // reference; falling back to the session id only covers a session type
+        // that somehow completed with no intent (never expected for mode:
+        // "payment", but a session id is still a valid, unique idempotency
+        // anchor either way).
+        const stripeRef =
+          (typeof session.payment_intent === "string" ? session.payment_intent : null) ??
+          session.id;
+        const walletId = await walletIdFor(orgId);
+        await recordPackPurchase(walletId, credits, stripeRef);
+        if (session.customer) await linkStripeCustomer(orgId, session.customer as string);
+        await pinBillingCurrency(orgId, session.currency);
+      } else {
+        // Paid, but neither the metadata snapshot nor the catalog fallback
+        // could resolve a credit amount — a silent zero-grant here would be
+        // an invisible paid-but-ungranted purchase (the bug this fix closes).
+        // Surface it the same way other billing anomalies in this file are
+        // surfaced: a `[billing]` console.error plus a best-effort staff
+        // alert email, and still ACK the webhook (nothing here is retryable
+        // into a better outcome — a human must grant this manually).
+        console.error(
+          `[billing] credit_pack session ${session.id} (org ${orgId}) paid but ungranted — ` +
+            `no credits snapshot and no resolvable pack_key (${packKey ?? "none"})`,
+        );
+        const alertTo = process.env.STAFF_ALERT_EMAIL;
+        if (alertTo) {
+          void sendCreditPackGrantFailedAlertEmail({
+            to: alertTo,
+            sessionId: session.id,
+            orgId,
+            packKey,
+            reason: "no credits snapshot and no resolvable pack_key",
+          }).catch(() => {});
+        }
+      }
+    }
+    return;
+  }
 
   // Event Pass one-time purchase (v3/07 §3) — reconcile-on-return usually
   // lands first; recordPassPurchase is idempotent either way.
@@ -142,6 +230,84 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   }
 
   // Subscription details arrive via subscription.created; nothing more to do here.
+}
+
+/**
+ * Grant a paid size-pack purchase (v17 Phase 3 Task 3b): write ONE org_addons
+ * row lifting the target competition's entrant cap. The SINGLE writer of that
+ * row.
+ *
+ * Snapshot-first (T1 lesson): the grant reads feature_key + delta_each from the
+ * session metadata SNAPSHOT stamped at checkout creation, so a later catalog
+ * edit can never change an already-bought pack. The live size_pack_catalog is
+ * only a LOGGED last-resort fallback (staff-alerted on drift) — never a silent
+ * wrong/zero grant.
+ *
+ * Idempotent: a one-time pack has no subscription item, so stripe_item_id holds
+ * the PAYMENT_INTENT id (the Stripe object that created the row); the V324
+ * partial unique index makes a redelivered webhook a no-op via
+ * `on conflict (stripe_item_id) where stripe_item_id is not null do nothing` —
+ * the WHERE predicate matches the partial index. A replay must not double-lift.
+ */
+async function grantSizePackAddon(session: Stripe.Checkout.Session): Promise<void> {
+  const md = session.metadata ?? {};
+  const targetOrgId = md.target_org_id;
+  const targetCompetitionId = md.target_competition_id;
+  const sizePackKey = md.size_pack_key;
+  if (!targetOrgId || !targetCompetitionId) {
+    console.error(
+      `[billing] size_pack session ${session.id} missing target_org_id/target_competition_id ` +
+        `— cannot resolve which cap to lift; skipping`,
+    );
+    return;
+  }
+
+  // Snapshot-first: trust what was stamped at checkout creation.
+  const snapDelta = md.delta_each ? Number(md.delta_each) : NaN;
+  let featureKey = md.feature_key || "";
+  let deltaEach = Number.isFinite(snapDelta) && snapDelta > 0 ? snapDelta : NaN;
+  if (!featureKey || !Number.isFinite(deltaEach)) {
+    const cat = sizePackKey ? await getSizePack(sizePackKey) : null;
+    if (cat) {
+      featureKey = featureKey || cat.feature_key;
+      deltaEach = Number.isFinite(deltaEach) ? deltaEach : cat.delta_each;
+      console.error(
+        `[billing] size_pack session ${session.id} had no usable snapshot ` +
+          `(feature_key=${md.feature_key ?? "none"}, delta_each=${md.delta_each ?? "none"}) ` +
+          `— fell back to catalog lookup by size_pack_key ${sizePackKey}`,
+      );
+    }
+  }
+  if (!featureKey || !Number.isFinite(deltaEach) || deltaEach <= 0) {
+    // Paid but ungranted — surface it, never a silent no-op (mirrors credit packs).
+    console.error(
+      `[billing] size_pack session ${session.id} (org ${targetOrgId}) paid but ungranted ` +
+        `— no usable snapshot and no resolvable size_pack_key (${sizePackKey ?? "none"})`,
+    );
+    const alertTo = process.env.STAFF_ALERT_EMAIL;
+    if (alertTo) {
+      void sendSizePackGrantFailedAlertEmail({
+        to: alertTo,
+        sessionId: session.id,
+        targetOrgId,
+        competitionId: targetCompetitionId,
+        sizePackKey,
+        reason: "no snapshot and no resolvable size_pack_key",
+      }).catch(() => {});
+    }
+    return;
+  }
+
+  const stripeItemId =
+    typeof session.payment_intent === "string" ? session.payment_intent : session.id;
+  const walletId = await walletIdFor(targetOrgId);
+  await sql`
+    insert into org_addons
+      (wallet_id, target_org_id, target_competition_id, feature_key, delta_each, qty,
+       stripe_item_id, status)
+    values (${walletId}, ${targetOrgId}, ${targetCompetitionId}, ${featureKey},
+            ${deltaEach}, 1, ${stripeItemId}, 'active')
+    on conflict (stripe_item_id) where stripe_item_id is not null do nothing`;
 }
 
 /**
@@ -350,6 +516,90 @@ async function handleSubscriptionChanged(stripeSub: Stripe.Subscription) {
   // through it, so a single-org invalidation would leave siblings on the old
   // plan for the 300s TTL.
   await invalidateGroupEntitlements(resolved.subscriptionId);
+  // Extra-seat add-ons ride the same subscription as extra items (SPEC-2 §11.3,
+  // Phase 3 Task 3a); reflect their current state into org_addons. getLimit sums
+  // org_addons UNCACHED (lib/entitlements.addonBonus), so no further entitlement
+  // invalidation is needed for a seat change to bite on the next read.
+  await syncSeatAddonsForSubscription(stripeSub, resolved.subscriptionId);
+}
+
+/**
+ * Reflect a subscription's extra-seat items into org_addons (v17 SPEC-2 §3,
+ * §11.3, Phase 3 Task 3a). The ROUTE (setExtraSeats) mutates Stripe; THIS is
+ * the SINGLE writer of the seat rows, so Stripe and the DB can never diverge.
+ *
+ * `subscriptionId` is the resolved billing GROUP (the wallet id for every org
+ * grouped under it — coalesce(subscription_id, org_id) resolves to exactly this
+ * for a member org). For each seat item present on the subscription, UPSERT its
+ * org_addons row keyed on `stripe_item_id` (the V324 partial-unique key IS the
+ * idempotency — a redelivered event neither duplicates a row nor double-counts
+ * the cap). Any active seat row for this group whose item Stripe no longer
+ * reports (removed, or quantity 0) is FLIPPED to status='canceled'
+ * (freeze-not-delete, V323/V324) — never deleted, never written with qty=0
+ * (the V324 CHECK forbids it).
+ */
+export async function syncSeatAddonsForSubscription(
+  stripeSub: Stripe.Subscription,
+  subscriptionId: string,
+): Promise<void> {
+  const seatItems = (stripeSub.items?.data ?? []).filter(isSeatAddonItem);
+  const seenItemIds: string[] = [];
+  for (const item of seatItems) {
+    const targetOrgId = item.metadata?.target_org_id;
+    if (!targetOrgId) {
+      console.error(
+        `[billing] seat item ${item.id} on subscription ${stripeSub.id} carries no ` +
+          `target_org_id metadata — cannot resolve which org's cap to lift; skipping`,
+      );
+      continue;
+    }
+    // A seat SKU lifts members.max BY DEFINITION (isSeatAddonItem matched it by
+    // lookup_key). Pin the feature_key instead of trusting item metadata: a
+    // divergent metadata.feature_key would write the row on an arbitrary cap
+    // that the members.max-scoped reconcile below never cancels — a stuck lift.
+    const featureKey = SEAT_ADDON.featureKey;
+    const qty = item.quantity ?? 0;
+    if (qty <= 0) {
+      // A quantity-0 seat item is a removal in disguise: never write qty=0
+      // (the V324 CHECK forbids it), flip any existing row to canceled instead.
+      await sql`
+        update org_addons set status = 'canceled'
+         where stripe_item_id = ${item.id} and status <> 'canceled'`;
+      continue;
+    }
+    // The wallet the resolver keys on (SPEC-2 §11.1): a grouped org resolves to
+    // its group's subscription id, i.e. `subscriptionId` here.
+    const walletId = await walletIdFor(targetOrgId);
+    await sql`
+      insert into org_addons
+        (wallet_id, target_org_id, target_competition_id, feature_key, delta_each, qty,
+         stripe_item_id, status)
+      values (${walletId}, ${targetOrgId}, null, ${featureKey}, ${SEAT_ADDON.deltaEach},
+              ${qty}, ${item.id}, 'active')
+      on conflict (stripe_item_id) where stripe_item_id is not null
+      do update set qty = excluded.qty, status = 'active',
+        wallet_id = excluded.wallet_id, target_org_id = excluded.target_org_id,
+        feature_key = excluded.feature_key, delta_each = excluded.delta_each`;
+    seenItemIds.push(item.id);
+  }
+
+  // Reconcile removals: an active Stripe-origin seat row (non-null
+  // stripe_item_id, the seat feature_key) for THIS group whose item Stripe no
+  // longer reports is gone. Scoped to SEAT_ADDON.featureKey so a future
+  // size-pack add-on (Task 3b) on a different feature on the same wallet is
+  // never swept here. When no seat items remain, every active seat row goes.
+  if (seenItemIds.length === 0) {
+    await sql`
+      update org_addons set status = 'canceled'
+       where wallet_id = ${subscriptionId} and feature_key = ${SEAT_ADDON.featureKey}
+         and stripe_item_id is not null and status = 'active'`;
+  } else {
+    await sql`
+      update org_addons set status = 'canceled'
+       where wallet_id = ${subscriptionId} and feature_key = ${SEAT_ADDON.featureKey}
+         and stripe_item_id is not null and status = 'active'
+         and stripe_item_id not in ${sql(seenItemIds)}`;
+  }
 }
 
 async function handleSubscriptionDeleted(stripeSub: Stripe.Subscription) {
@@ -535,6 +785,70 @@ async function revokePassForRefundedChargeAndNotify(charge: Stripe.Charge): Prom
   void sendPassRevokedEmail({ to, orgName: ctx.org_name, competitionName: ctx.comp_name }).catch(
     () => {},
   );
+}
+
+/** AI credit-pack refund (v17 SPEC-2 §5, Phase 3 Task 4): a refunded pack
+ *  charge claws back only the customer's UNSPENT pack credits (`recordPackRefund`
+ *  — under the wallet advisory lock, capped at the purchase, never below zero,
+ *  never touching the resetting `grant` bucket, idempotent on replay).
+ *
+ *  A pack charge is identified by matching the charge's `payment_intent`
+ *  against the stored `pack_purchase` ledger row — NOT off `charge.metadata`.
+ *  Stripe does NOT copy `payment_intent_data.metadata` onto the Charge object
+ *  (Charge metadata and PaymentIntent metadata are distinct fields), so
+ *  `charge.metadata` is `{}` for these Checkout-created pack charges; reading it
+ *  as the gate would return early on EVERY real pack refund. Instead this
+ *  mirrors the sibling refund handlers (`revokePassForRefundedCharge`,
+ *  registration/sponsor): match `charge.payment_intent` to a DB row.
+ *  `recordPackRefund` does exactly that — a `matched === true` result proves a
+ *  `pack_purchase` row exists for this PI, i.e. it WAS a pack, with no metadata
+ *  and no Stripe round-trip on the common path.
+ *
+ *  When `recordPackRefund` returns `matched === false` the charge is EITHER a
+ *  non-pack charge (registration/sponsor/pass — the common case, silent no-op)
+ *  OR a pack that was paid but never granted then refunded (the T1
+ *  paid-but-ungranted class — must alert). These can only be told apart off the
+ *  PaymentIntent's metadata (which Part A DOES stamp), so we distinguish with a
+ *  guarded PaymentIntent retrieve — only when `STRIPE_SECRET_KEY` is set, done
+ *  OUTSIDE any tx (mirroring the dispute path's charge retrieve): if
+ *  `pi.metadata.kind === 'credit_pack'` it was an ungranted pack → log + a
+ *  best-effort staff alert; otherwise a genuine non-pack charge → silent. */
+async function handlePackChargeRefunded(charge: Stripe.Charge): Promise<void> {
+  if (!charge.refunded) return;
+  const intent =
+    typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
+  if (!intent) return; // no intent to match a pack_purchase row against
+
+  const { matched } = await recordPackRefund(intent);
+  if (matched) return; // it was a pack and recordPackRefund already clawed back.
+
+  // matched === false: `recordPackRefund`'s cheap indexed `pack_purchase`
+  // lookup found no row (no wallet lock taken). Distinguish an ungranted pack
+  // from a genuine non-pack charge off the PaymentIntent metadata — a guarded
+  // retrieve, keyless envs skip it (a plain non-pack refund no-ops silently).
+  if (!process.env.STRIPE_SECRET_KEY) return;
+  let pi: Stripe.PaymentIntent;
+  try {
+    pi = await getStripe().paymentIntents.retrieve(intent);
+  } catch {
+    return; // a retrieve failure must never block the webhook ACK
+  }
+  if (pi.metadata?.kind !== "credit_pack") return; // a genuine non-pack charge.
+
+  console.error(
+    `[billing] credit_pack charge ${charge.id} (intent ${intent}) refunded but no ` +
+      `pack_purchase ledger row found — nothing to claw back (was it ever granted?)`,
+  );
+  const alertTo = process.env.STAFF_ALERT_EMAIL;
+  if (alertTo) {
+    void sendCreditPackGrantFailedAlertEmail({
+      to: alertTo,
+      sessionId: charge.id,
+      orgId: pi.metadata?.org_id ?? "unknown",
+      packKey: pi.metadata?.pack_key,
+      reason: "refunded pack charge has no pack_purchase ledger row to claw back",
+    }).catch(() => {});
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -760,6 +1074,7 @@ export async function processStripeEvent(event: Stripe.Event): Promise<void> {
       await syncRegistrationRefund(event.data.object as Stripe.Charge);
       await handleSponsorChargeRefunded(event.data.object as Stripe.Charge);
       await revokePassForRefundedChargeAndNotify(event.data.object as Stripe.Charge);
+      await handlePackChargeRefunded(event.data.object as Stripe.Charge);
       break;
     case "payment_intent.succeeded":
       // Sponsor order paid (v10) — activates the sponsor row, replay-safe.

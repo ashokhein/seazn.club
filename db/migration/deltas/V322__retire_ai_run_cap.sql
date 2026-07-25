@@ -1,0 +1,17 @@
+-- V322 — retire the per-division AI run cap matrix key (v17 Phase 2 Task 5,
+-- design/v17-pricing-entitlements/SPEC-2-addons-and-ai-credit-wallet.md §5.2).
+--
+-- V320/V321 built the AI credit wallet and Task 4 wired `spendCredit()` into
+-- both `schedule-ai.ts` and `officials-ai.ts`, replacing the graded
+-- per-division `withinLimit("scheduling.ai.runs_per_division.max", ...)` gate
+-- (V302: community 5 / event_pass 10 / pro 20 / pro_plus 50) entirely — AI
+-- runs are now metered by the wallet on every tier, not by a plan-graded
+-- count. The matrix key has no reader left; delete it on every plan.
+--
+-- `scheduling.ai` (the bool feature-flag gating access to AI scheduling at
+-- all) is untouched and stays true on every plan — the wallet is the spend
+-- gate, the bool is still the feature-availability gate.
+--
+-- Same Flyway convention as V319/V320/V321 (unqualified DDL,
+-- -defaultSchema=seazn_club at apply time).
+delete from plan_entitlements where feature_key = 'scheduling.ai.runs_per_division.max';

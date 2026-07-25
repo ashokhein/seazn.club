@@ -138,11 +138,11 @@ describe.skipIf(!HAS_DB)("the table's rows against the live matrix", () => {
 
   it("keeps the entrants row honest — the claim this table was built to fix", async () => {
     // The dictionary said "32 entrants per division (Free: 16)". The matrix
-    // says 32 free and 64 on the pass. Pinned by name because it is the exact
-    // bug, not a hypothetical one.
+    // now says 64 free and 128 on the pass (V319). Pinned by name because it is
+    // the exact bug, not a hypothetical one.
     const seen = await cells();
-    expect(seen.get("community|entrants.per_division.max")?.int_value).toBe(32);
-    expect(seen.get("event_pass|entrants.per_division.max")?.int_value).toBe(64);
+    expect(seen.get("community|entrants.per_division.max")?.int_value).toBe(64);
+    expect(seen.get("event_pass|entrants.per_division.max")?.int_value).toBe(128);
     expect(seen.get("pro|entrants.per_division.max")?.int_value).toBe(256);
   });
 });

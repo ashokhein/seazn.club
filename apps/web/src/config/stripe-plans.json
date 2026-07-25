@@ -56,7 +56,7 @@
       "key": "pro_plus",
       "product": {
         "name": "Seazn Club Pro Plus",
-        "description": "Everything in Pro, plus unlimited members, scorers and clubs inside every organisation, a 1% platform fee on entry fees, AI-assisted scheduling, auto officials assignment, write API access and priority support. Covers up to 10 organisations on one bill — each extra organisation is half the base rate."
+        "description": "Everything in Pro, plus unlimited members, teams and clubs inside every organisation, a 1% platform fee on entry fees, AI-assisted scheduling, auto officials assignment, write API access and priority support. Covers up to 10 organisations on one bill — each extra organisation is half the base rate."
       },
       "prices": {
         "monthly": {
@@ -107,12 +107,102 @@
       "key": "event_pass",
       "product": {
         "name": "Seazn Club Event Pass",
-        "description": "One-time upgrade for a single competition: 10 divisions, 64 entrants per division, advanced formats, a 5% entry-fee rate instead of 8%, branded exports, public player profiles, sponsor tiers and paid packages, realtime and 10 AI schedule runs per division — for the event's lifetime."
+        "description": "One-time upgrade for a single competition: 10 divisions, 128 entrants per division, advanced formats, a 5% entry-fee rate instead of 8%, branded exports, public player profiles, sponsor tiers and paid packages, realtime and 10 AI schedule runs per division — for the event's lifetime."
       },
       "price": {
         "lookup_key": "seazn_event_pass",
         "unit_amount": 2900,
         "currency_options": { "eur": 2900, "gbp": 2500, "inr": 199900, "aud": 4500 }
+      }
+    }
+  ],
+  "$comment_packs": "AI credit packs (v17 SPEC-2 §5/§6): one-time top-ups into the org/group's ai_credit_ledger wallet (bucket='pack', never-expire — D2). Not tied to a `plans` row, so the checkout route resolves the live price by `lookup_key` at request time (stripe.prices.list) instead of a stored id — stripe-sync.ts only needs to ensure the price exists, never write it back to a table. `credits` is our own field (never sent to Stripe) — the webhook grants the `credits` snapshot stamped into the session metadata at checkout creation (server-set, so it cannot be tampered with client-side); this catalog is only the logged fallback when the snapshot is absent (a drift the webhook staff-alerts, never a silent wrong/zero grant).",
+  "packs": [
+    {
+      "key": "credits_10",
+      "credits": 40,
+      "product": {
+        "name": "Seazn Club AI Credits — 40",
+        "description": "One-time top-up: 40 AI credits (schedule / officials / news runs) for your organisation's shared wallet. Purchased credits never expire."
+      },
+      "price": {
+        "lookup_key": "seazn_credits_10",
+        "unit_amount": 1000,
+        "currency_options": { "eur": 900, "gbp": 800, "inr": 79900, "aud": 1500 }
+      }
+    },
+    {
+      "key": "credits_25",
+      "credits": 105,
+      "product": {
+        "name": "Seazn Club AI Credits — 105",
+        "description": "One-time top-up: 105 AI credits (schedule / officials / news runs) for your organisation's shared wallet. Purchased credits never expire."
+      },
+      "price": {
+        "lookup_key": "seazn_credits_25",
+        "unit_amount": 2500,
+        "currency_options": { "eur": 2300, "gbp": 2000, "inr": 199900, "aud": 3800 }
+      }
+    },
+    {
+      "key": "credits_50",
+      "credits": 220,
+      "product": {
+        "name": "Seazn Club AI Credits — 220",
+        "description": "One-time top-up: 220 AI credits (schedule / officials / news runs) for your organisation's shared wallet. Purchased credits never expire."
+      },
+      "price": {
+        "lookup_key": "seazn_credits_50",
+        "unit_amount": 5000,
+        "currency_options": { "eur": 4600, "gbp": 4000, "inr": 399900, "aud": 7500 }
+      }
+    },
+    {
+      "key": "credits_100",
+      "credits": 460,
+      "product": {
+        "name": "Seazn Club AI Credits — 460",
+        "description": "One-time top-up: 460 AI credits (schedule / officials / news runs) for your organisation's shared wallet. Purchased credits never expire."
+      },
+      "price": {
+        "lookup_key": "seazn_credits_100",
+        "unit_amount": 10000,
+        "currency_options": { "eur": 9200, "gbp": 7900, "inr": 799900, "aud": 15000 }
+      }
+    }
+  ],
+  "$comment_seats": "Extra-seat recurring add-on (v17 SPEC-2 §3/§11.3, Phase 3 Task 3a): a RECURRING $4/seat/month line item that rides the billing group's EXISTING subscription as an extra subscription item (stripe.subscriptionItems.create/.update, one invoice + one cycle + native proration — never a second subscription). quantity = seat count; each seat lifts members.max by delta_each (1). `feature_key`/`delta_each` are OUR fields (never sent to Stripe) — the customer.subscription.updated webhook (billing-events.syncSeatAddonsForSubscription) is the SINGLE writer of the resulting org_addons(feature_key='members.max', status='active') row, keyed idempotently on the subscription-item id. Like the packs there is no `plans` row: the seat usecase resolves the live price by `lookup_key` at request time (stripe.prices.list), so stripe-sync.ts only ensures the price exists. A flat per_unit RECURRING price (seats are per-org quantity, not a graduated group ladder); per-currency amounts are SET price points (v3/07 §4), never FX conversions.",
+  "seats": [
+    {
+      "key": "extra_seat",
+      "feature_key": "members.max",
+      "delta_each": 1,
+      "product": {
+        "name": "Seazn Club Extra Seat",
+        "description": "One extra member seat for an organisation, billed monthly. Adds one to the organisation's member limit for as long as it is active."
+      },
+      "price": {
+        "lookup_key": "seazn_seat_monthly",
+        "unit_amount": 400,
+        "interval": "month",
+        "currency_options": { "eur": 400, "gbp": 350, "inr": 34900, "aud": 650 }
+      }
+    }
+  ],
+  "$comment_size_packs": "Size-pack ONE-TIME add-on (v17 SPEC-2 §3/§11.3, Phase 3 Task 3b): a $10 one-time purchase that lifts ONE competition's entrants.per_division.max by delta_each (+32). Unlike the recurring seat it is a mode:'payment' Checkout Session (a competition is a bounded event, not recurring) with NO `interval` on the price. `feature_key`/`delta_each` are OUR fields (never sent to Stripe) — the checkout.session.completed webhook (billing-events.grantSizePackAddon) is the SINGLE writer of the resulting org_addons(target_competition_id, feature_key='entrants.per_division.max', status='active') row, keyed idempotently on the PAYMENT_INTENT id (a one-time pack has no subscription item). The pack SHAPE is admin-editable via the size_pack_catalog DB table (V325); this entry is only the code-seeded default + the Stripe-owned price. Like the packs there is no `plans` row: the checkout resolves the live price by `lookup_key` at request time (stripe.prices.list), so stripe-sync.ts only ensures the price exists. Per-currency amounts mirror the credits_10 pack's scale (same $10 price point), SET points (v3/07 §4), never FX conversions.",
+  "size_packs": [
+    {
+      "key": "size_pack_32",
+      "feature_key": "entrants.per_division.max",
+      "delta_each": 32,
+      "product": {
+        "name": "Seazn Club Size Pack — +32 entrants",
+        "description": "One-time upgrade for a single competition: adds 32 to its per-division entrant limit. Applies to one competition only."
+      },
+      "price": {
+        "lookup_key": "seazn_size_pack_32",
+        "unit_amount": 1000,
+        "currency_options": { "eur": 900, "gbp": 800, "inr": 79900, "aud": 1500 }
       }
     }
   ]

@@ -6,11 +6,11 @@ order: 1
 
 ## Community — free forever
 
-Run real competitions, free: 5 active competitions, 2 divisions in each, 3 team members, 32 entrants per division, 1 public dashboard, full scoring and scheduling, and 1 official per fixture. Your **organisation logo** sits on your public pages, you can **charge entry fees** (by card or offline) at an 8% platform fee, exports come out as plain PDF/XLSX, and AI Schedule runs 5 times per division. When something is finished, complete or archive it to free the slot.
+Run real competitions, free: 10 active competitions, 4 divisions in each, 5 team members, 64 entrants per division, 1 public dashboard, full scoring and scheduling, and unlimited match officials per fixture. Your **organisation logo** sits on your public pages, you can **charge entry fees** (by card or offline) at an 8% platform fee, exports come out as plain PDF/XLSX, and AI Schedule runs 5 times per division. When something is finished, complete or archive it to free the slot.
 
 ## Event Pass — $29 one-time
 
-One-time upgrade for a single competition, for that event's lifetime, without a subscription: **64 entrants** per division, up to **10 divisions**, branded exports, public player cards, sponsor tiers and paid packages, the realtime scoreboard and slideshow, advanced formats including double elimination, 10 AI schedule runs per division, and a **5% platform fee** on entry fees instead of 8%. Your brand **colour** is not part of it — that stays Pro. A passed competition doesn't count against your active-competition limit. Right for the annual tournament that doesn't justify a year of Pro. It doesn't carry to next year's edition. [What the pass buys, in full](/help/billing/event-pass).
+One-time upgrade for a single competition, for that event's lifetime, without a subscription: **128 entrants** per division, up to **10 divisions**, branded exports, public player cards, sponsor tiers and paid packages, the realtime scoreboard and slideshow, advanced formats including double elimination, 10 AI schedule runs per division, and a **5% platform fee** on entry fees instead of 8%. Your brand **colour** is not part of it — that stays Pro. A passed competition doesn't count against your active-competition limit. Right for the annual tournament that doesn't justify a year of Pro. It doesn't carry to next year's edition. [What the pass buys, in full](/help/billing/event-pass).
 
 ## Pro — $19/month, up to 5 organisations
 
@@ -18,7 +18,13 @@ Unlimited active competitions and divisions, 256 entrants per division, 15 team 
 
 ## Pro Plus — $39/month, up to 10 organisations
 
-Everything in Pro, plus unlimited entrants per division, unlimited seats, scorers and clubs, a **1% platform fee** on entry fees (Pro pays 2%), 50 AI schedule runs per division, automatic officials assignment, a write-scoped API key for integrations, and priority support. Built for platforms, leagues and federations running many competitions at once. The pricing page reveals the Pro Plus card behind a "Show Pro Plus" button below the main three offers — it's the same 4-plan comparison table underneath either way.
+Everything in Pro, plus unlimited entrants per division, unlimited seats, teams and clubs, a **1% platform fee** on entry fees (Pro pays 2%), 50 AI schedule runs per division, automatic officials assignment, a write-scoped API key for integrations, and priority support. Built for platforms, leagues and federations running many competitions at once. The pricing page reveals the Pro Plus card behind a "Show Pro Plus" button below the main three offers — it's the same 4-plan comparison table underneath either way.
+
+**Coming soon to Pro Plus** — on the roadmap, not yet purchasable: a multi-org command centre, shared templates & branding across organisations, cross-competition analytics, custom domain & white-label, SSO / SAML, an SLA & dedicated support, data export & warehouse, and bulk & scheduled automation.
+
+## Match officials — included on every plan
+
+Assigning match officials — referees, umpires, judges and more, multiple roles per person, and organiser marks — is **free on every plan, Community included**. There's no officials paywall and no per-fixture cap. Automatic officials *assignment* is the one part that stays Pro Plus. See [match officials](/help/scheduling/officials).
 
 ## The platform fee on entry fees
 
@@ -54,7 +60,7 @@ Switch plan — up or down — or flip between monthly and yearly, and we don't 
 
 **If I change plan mid-month, do I get charged twice?** No. You pay only the prorated difference for the time left in the current period, shown in an itemised table before you confirm — and a downgrade turns your unused time into account credit rather than a charge. See [changing plan mid-cycle](#changing-plan-or-billing-period-mid-cycle).
 
-**Does a passed competition use up an active-competition slot?** No — a competition covered by an [Event Pass](/help/billing/event-pass) doesn't count against your plan's active-competition limit, so a Community org running its annual tournament on a pass still has all 5 free slots.
+**Does a passed competition use up an active-competition slot?** No — a competition covered by an [Event Pass](/help/billing/event-pass) doesn't count against your plan's active-competition limit, so a Community org running its annual tournament on a pass still has all 10 free slots.
 
 **Is AI Schedule a paid feature?** No — AI Schedule runs on every plan, including Community. Only the number of runs per division differs (5 / 10 / 20 / 50), and automatic *officials* assignment is separate and Pro Plus. See [AI Schedule](/help/scheduling/ai-scheduling).
 

@@ -299,16 +299,19 @@ describe.skipIf(!HAS_DB)("downgrade simulation (doc 10 §2.4)", () => {
   it("pro → community: data kept, over-quota frozen, coarse scoring still works", async () => {
     const { auth } = await seedOrg("pro");
 
-    // Seven active competitions under Pro. B carries real play (a generic
+    // Twelve active competitions under Pro. B carries real play (a generic
     // fixture we keep scoring, plus a football division with fine events).
-    // Community's cap is 5 since V311 (was 1), so the org has to sit TWO over
-    // for this to remain a partial-freeze test — with three competitions the
-    // downgrade would now freeze nothing and every assertion below would pass
-    // vacuously.
+    // Community's cap is 10 since V319 (was 5), so the org has to sit TWO over
+    // for this to remain a partial-freeze test — with fewer than twelve
+    // competitions the downgrade would now freeze nothing and every assertion
+    // below would pass vacuously.
     const compA = await makeCompetition(auth, "Alpha");
     const compB = await makeCompetition(auth, "Beta");
     const compC = await makeCompetition(auth, "Gamma");
-    for (const n of ["Delta", "Epsilon", "Zeta", "Eta"]) await makeCompetition(auth, n);
+    for (const n of [
+      "Delta", "Epsilon", "Zeta", "Eta", "Theta",
+      "Iota", "Kappa", "Lambda", "Mu",
+    ]) await makeCompetition(auth, n);
     const rigGeneric = await makeFixture(auth, compB.id, "generic", GENERIC_CONFIG);
     const rigFootball = await makeFixture(auth, compB.id, "football", {});
 
@@ -329,10 +332,10 @@ describe.skipIf(!HAS_DB)("downgrade simulation (doc 10 §2.4)", () => {
 
     await setPlan(auth.orgId, "community");
 
-    // Nothing deleted; the five most recently active survive the community cap
-    // (V311: 5) — the two least recently active freeze.
+    // Nothing deleted; the ten most recently active survive the community cap
+    // (V319: 10) — the two least recently active freeze.
     const { items } = await listCompetitions(auth, { cursor: null, limit: 50 });
-    expect(items).toHaveLength(7);
+    expect(items).toHaveLength(12);
     const byId = new Map(items.map((c) => [c.id, c]));
     expect(byId.get(compA.id)?.frozen).toBe(true);
     expect(byId.get(compB.id)?.frozen).toBe(false);
@@ -390,27 +393,25 @@ describe.skipIf(!HAS_DB)("event pass (v3/07 §3)", () => {
     const passed = await makeCompetition(auth, "Passed");
     await grantPass(auth.orgId, passed.id);
 
-    // Passed comp: divisions cap is the pass's 10, not community's 2.
-    await makeDivision(auth, passed.id, "generic", GENERIC_CONFIG);
-    await makeDivision(auth, passed.id, "generic", GENERIC_CONFIG);
+    // Passed comp: divisions cap is the pass's 10, not community's 4 (V319).
+    for (let i = 0; i < 4; i++) await makeDivision(auth, passed.id, "generic", GENERIC_CONFIG);
     await expect(
-      makeDivision(auth, passed.id, "generic", GENERIC_CONFIG), // 3rd — beyond community
+      makeDivision(auth, passed.id, "generic", GENERIC_CONFIG), // 5th — beyond community
     ).resolves.toBeDefined();
 
     // A passed comp stops counting toward competitions.max_active, so the
     // free slot opens for a sibling…
     const sibling = await makeCompetition(auth, "Sibling");
-    // …which stays on community caps: 3rd division 402s.
-    await makeDivision(auth, sibling.id, "generic", GENERIC_CONFIG);
-    await makeDivision(auth, sibling.id, "generic", GENERIC_CONFIG);
+    // …which stays on community caps: 5th division 402s (community cap is 4).
+    for (let i = 0; i < 4; i++) await makeDivision(auth, sibling.id, "generic", GENERIC_CONFIG);
     await expect(
       makeDivision(auth, sibling.id, "generic", GENERIC_CONFIG),
     ).rejects.toMatchObject({ status: 402, featureKey: "divisions.per_competition.max" });
   });
 
-  // V311 (D22) moved this rung: community 32, pass 64. The pass had to rise
-  // with community — left at 32 it would have lifted nothing at all.
-  it("entrants: 64 on the passed comp, 65th still 402s with the same key", async () => {
+  // V319 moved this rung: community 64, pass 128. The pass had to rise
+  // with community — left at 64 it would have lifted nothing at all.
+  it("entrants: 128 on the passed comp, 129th still 402s with the same key", async () => {
     const { auth } = await seedOrg("community");
     const comp = await makeCompetition(auth, "PE");
     await grantPass(auth.orgId, comp.id);
@@ -418,13 +419,13 @@ describe.skipIf(!HAS_DB)("event pass (v3/07 §3)", () => {
     await createEntrants(
       auth,
       division.id,
-      Array.from({ length: 64 }, (_, i) => ({
+      Array.from({ length: 128 }, (_, i) => ({
         kind: "individual" as const, display_name: `E${i}`, seed: i + 1, members: [],
       })) as never,
     );
     await expect(
       createEntrants(auth, division.id, [
-        { kind: "individual", display_name: "E65", seed: 65, members: [] },
+        { kind: "individual", display_name: "E129", seed: 129, members: [] },
       ] as never),
     ).rejects.toMatchObject({ status: 402, featureKey: "entrants.per_division.max" });
   });
@@ -460,7 +461,7 @@ describe.skipIf(!HAS_DB)("event pass (v3/07 §3)", () => {
     expect(await getLimit(auth.orgId, "entrants.per_division.max", comp.id)).toBe(256);
     // …and the pass takes back over when the org drops to community.
     await setPlan(auth.orgId, "community");
-    expect(await getLimit(auth.orgId, "entrants.per_division.max", comp.id)).toBe(64);
+    expect(await getLimit(auth.orgId, "entrants.per_division.max", comp.id)).toBe(128);
   });
 
   it("org override beats the pass", async () => {
@@ -478,10 +479,10 @@ describe.skipIf(!HAS_DB)("event pass (v3/07 §3)", () => {
     const { auth } = await seedOrg("community");
     const comp = await makeCompetition(auth, "PC");
     // Prime the comp-scoped cache with the community value…
-    expect(await getLimit(auth.orgId, "entrants.per_division.max", comp.id)).toBe(32);
+    expect(await getLimit(auth.orgId, "entrants.per_division.max", comp.id)).toBe(64);
     // …then grantPass (insert + invalidate) must surface the pass value.
     await grantPass(auth.orgId, comp.id);
-    expect(await getLimit(auth.orgId, "entrants.per_division.max", comp.id)).toBe(64);
+    expect(await getLimit(auth.orgId, "entrants.per_division.max", comp.id)).toBe(128);
   });
 
   // V310 fee ladder (D20): community 8 → pass 5 → pro 2 → pro plus 1. The

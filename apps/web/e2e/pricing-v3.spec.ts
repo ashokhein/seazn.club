@@ -26,12 +26,12 @@ test.describe("pricing page v3", () => {
         await expect(matrix.locator("thead")).toContainText(col);
       }
       await expect(matrix.locator("tbody")).toContainText("Entrants per division");
-      // Straight from plan_entitlements: 32 / 64 / 256. V311 raised Community
-      // 16 → 32 and the Event Pass 32 → 64, so the old 16 appears nowhere in
+      // Straight from plan_entitlements: 64 / 128 / 256. V319 raised Community
+      // 32 → 64 and the Event Pass 64 → 128, so the old 32 appears nowhere in
       // this row — asserting it fails against the live matrix.
       const entrantsRow = matrix.locator("tr", { hasText: "Entrants per division" });
-      await expect(entrantsRow).toContainText("32");
       await expect(entrantsRow).toContainText("64");
+      await expect(entrantsRow).toContainText("128");
       await expect(entrantsRow).toContainText("256");
 
       // The rest of what V310/V311 repackaged, on the page that sells it.
@@ -41,8 +41,8 @@ test.describe("pricing page v3", () => {
       // plan columns start at 1: community, event pass, pro, pro plus.
       const cell = (label: string, plan: 0 | 1 | 2 | 3) =>
         matrix.locator("tr", { hasText: label }).locator("td").nth(plan + 1);
-      // Divisions per competition: community 2, pass 10 (the pass's own ceiling).
-      await expect(cell("Divisions per competition", 0)).toHaveText("2");
+      // Divisions per competition: community 4, pass 10 (the pass's own ceiling).
+      await expect(cell("Divisions per competition", 0)).toHaveText("4");
       await expect(cell("Divisions per competition", 1)).toHaveText("10");
       // The fee ladder — the pass's only recurring saving.
       await expect(cell("Platform fee on entry fees", 0)).toContainText("8%");
@@ -106,8 +106,8 @@ test.describe.serial("event pass gate (community org)", () => {
       await apiJson<{ id: string }[]>(request, "/api/orgs")
     ).data![0]!.id;
 
-    // Fill the free quota (2 divisions), then hit the wall.
-    for (const name of ["One", "Two"]) {
+    // Fill the free quota (4 divisions), then hit the wall.
+    for (const name of ["One", "Two", "Three", "Four"]) {
       const d = await apiJson(request, `/api/v1/competitions/${compId}/divisions`, "POST", {
         name,
         ...GENERIC,
@@ -115,7 +115,7 @@ test.describe.serial("event pass gate (community org)", () => {
       expect(d.status).toBe(201);
     }
     const gated = await apiJson(request, `/api/v1/competitions/${compId}/divisions`, "POST", {
-      name: "Three",
+      name: "Five",
       ...GENERIC,
     });
     expect(gated.status).toBe(402);
@@ -143,11 +143,11 @@ test.describe.serial("event pass gate (community org)", () => {
     // The 402 above cached this org's resolved limit server-side, so the
     // grant must also bust the entitlement cache (staging has Redis).
     await grantCompetitionPassSql(orgId, compId, request);
-    const third = await apiJson(request, `/api/v1/competitions/${compId}/divisions`, "POST", {
-      name: "Three",
+    const fifth = await apiJson(request, `/api/v1/competitions/${compId}/divisions`, "POST", {
+      name: "Five",
       ...GENERIC,
     });
-    expect(third.status).toBe(201);
+    expect(fifth.status).toBe(201);
 
     // …the upgrade page confirms, and the pass frees the active-comp slot
     // for a sibling that stays community-capped.
@@ -173,7 +173,7 @@ test.describe.serial("event pass gate (community org)", () => {
       visibility: "private",
     });
     expect(sibling.status).toBe(201);
-    for (const name of ["S1", "S2"]) {
+    for (const name of ["S1", "S2", "S3", "S4"]) {
       await apiJson(request, `/api/v1/competitions/${sibling.data!.id}/divisions`, "POST", {
         name,
         ...GENERIC,
@@ -183,7 +183,7 @@ test.describe.serial("event pass gate (community org)", () => {
       request,
       `/api/v1/competitions/${sibling.data!.id}/divisions`,
       "POST",
-      { name: "S3", ...GENERIC },
+      { name: "S5", ...GENERIC },
     );
     expect(siblingGated.status).toBe(402);
 

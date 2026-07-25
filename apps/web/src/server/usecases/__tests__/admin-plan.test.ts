@@ -115,18 +115,21 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     const { orgId, actorId } = await seedOrg();
     await compToPro(actorId, orgId, null, "pre-test comp");
     const s = randomUUID().slice(0, 8);
-    // Seven active competitions against a community cap of 5 (V311 raised it
-    // from 1) — two over, so the "two stalest freeze" arithmetic below still
+    // Twelve active competitions against a community cap of 10 (V319 raised it
+    // from 5) — two over, so the "two stalest freeze" arithmetic below still
     // exercises a partial freeze rather than an all-or-nothing one.
-    for (const n of ["One", "Two", "Three", "Four", "Five", "Six", "Seven"]) {
+    for (const n of [
+      "One", "Two", "Three", "Four", "Five", "Six",
+      "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve",
+    ]) {
       await sql`
         insert into competitions (org_id, name, slug, status)
         values (${orgId}, ${n + " " + s}, ${n.toLowerCase() + "-" + s}, 'published')`;
     }
 
     const preview = await downgradeFreezePreview(orgId);
-    expect(preview.limit).toBe(5); // community quota (V311)
-    expect(preview.active).toBe(7);
+    expect(preview.limit).toBe(10); // community quota (V319)
+    expect(preview.active).toBe(12);
     expect(preview.frozen).toHaveLength(2); // the two stalest
 
     const result = await adminDowngrade(actorId, orgId, "abuse of comp");

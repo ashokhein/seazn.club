@@ -9,7 +9,6 @@ import "server-only";
 import type postgres from "postgres";
 import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
-import { requireFeature } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 
 type Tx = postgres.TransactionSql;
@@ -17,8 +16,6 @@ type Tx = postgres.TransactionSql;
 // the superuser connection (same reasoning as me-officiating.ts): withTenant
 // scopes to one org and this aggregate is cross-org by design.
 const superuser = sql as unknown as Tx;
-
-const FEATURE = "officials.marks";
 
 // A mark binds to the performance, not the result — decided/finalized only.
 // Marks on later-voided fixtures still count (SPEC-3): voiding a result never
@@ -65,7 +62,6 @@ export async function putMark(
   fixtureOfficialId: string,
   input: { mark: number; comment?: string },
 ): Promise<void> {
-  await requireFeature(auth.orgId, FEATURE);
   await withTenant(auth.orgId, async (tx) => {
     const a = await rateableAssignment(tx, auth.orgId, fixtureOfficialId);
     await tx`
@@ -81,14 +77,12 @@ export async function putMark(
 
 /** Clear the mark for an assignment (idempotent). */
 export async function deleteMark(auth: AuthCtx, fixtureOfficialId: string): Promise<void> {
-  await requireFeature(auth.orgId, FEATURE);
   await withTenant(auth.orgId, (tx) =>
     tx`delete from official_marks where fixture_official_id = ${fixtureOfficialId}`);
 }
 
 /** Org-scoped avg/count + the last 5 comments for the org official profile. */
 export async function orgMarksSummary(auth: AuthCtx, officialId: string): Promise<MarkSummary> {
-  await requireFeature(auth.orgId, FEATURE);
   return withTenant(auth.orgId, async (tx) => {
     const [agg] = await tx<{ average: number | null; count: number }[]>`
       select avg(mark)::float as average, count(*)::int as count

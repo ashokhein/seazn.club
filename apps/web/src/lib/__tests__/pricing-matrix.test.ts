@@ -22,39 +22,57 @@ const cell = (int: number | null = null, bool: boolean | null = null) => ({
   bool_value: bool,
 });
 
-// Mirrors the real local-DB values for the rows under test (V290 + V310 + V311).
+// Mirrors the real local-DB values for the rows under test (V290 + V310 + V319).
 const DATA: MatrixData = {
   "competitions.max_active": {
-    // V311: community 1 → 5. Still no event_pass row — a passed competition
+    // V319: community 5 → 10. Still no event_pass row — a passed competition
     // leaves the active count instead of raising the org-wide cap.
-    community: cell(5),
+    community: cell(10),
     pro: cell(null),
     pro_plus: cell(null),
   },
   "divisions.per_competition.max": {
-    community: cell(2),
+    // V319: community 2 → 4. event_pass 10 already > 4.
+    community: cell(4),
     event_pass: cell(10),
     pro: cell(null),
     pro_plus: cell(null),
   },
   "entrants.per_division.max": {
-    // V311: 32 / 64 / 256 / ∞.
-    community: cell(32),
-    event_pass: cell(64),
+    // V319: 64 / 128 / 256 / ∞.
+    community: cell(64),
+    event_pass: cell(128),
     pro: cell(256),
     pro_plus: cell(null),
   },
   "schedule.checkpoints.max": {
     // No event_pass row — pass falls through to community, exactly like the
     // resolver does (db/migration/deltas/V290 comment).
-    community: cell(1),
+    community: cell(2),
     pro: cell(5),
     pro_plus: cell(null),
   },
-  "officials.per_fixture.max": {
-    community: cell(1),
-    pro: cell(null),
-    pro_plus: cell(null),
+  // V319 ungate (#253): officials are included on every plan — roles_multi and
+  // marks are ticks across all four, so no officials row is a paywall. Only
+  // officials.auto (AI officials) stays a Pro/Pro-Plus differentiator.
+  // officials.per_fixture.max is deliberately NOT rendered (∞ everywhere).
+  "officials.roles_multi": {
+    community: cell(null, true),
+    event_pass: cell(null, true),
+    pro: cell(null, true),
+    pro_plus: cell(null, true),
+  },
+  "officials.auto": {
+    community: cell(null, false),
+    event_pass: cell(null, false),
+    pro: cell(null, true),
+    pro_plus: cell(null, true),
+  },
+  "officials.marks": {
+    community: cell(null, true),
+    event_pass: cell(null, true),
+    pro: cell(null, true),
+    pro_plus: cell(null, true),
   },
   // V310 (D18/D19/D20): charging entry fees is free for everyone; the pass and
   // the paid plans buy a CHEAPER cut, not the ability itself.
@@ -84,24 +102,19 @@ const DATA: MatrixData = {
     pro: cell(null, true),
     pro_plus: cell(null, true),
   },
-  // Real V302 values: a graded quota on every tier, not an on/off flag.
-  "scheduling.ai.runs_per_division.max": {
-    community: cell(5),
-    event_pass: cell(10),
-    pro: cell(20),
-    pro_plus: cell(50),
-  },
-  // W1 Task 11: clubs & teams register caps (real V291 values) render as
-  // numbers, ∞ for unlimited — never a bare ✓/— tick.
+  // scheduling.ai.runs_per_division.max retired (v17 Phase 2 Task 5, V322) —
+  // no rows left, no fixture entry needed.
+  // W1 Task 11: clubs & teams register caps render as numbers, ∞ for
+  // unlimited — never a bare ✓/— tick. V319 raised the community caps
+  // (clubs 2 → 5, teams 2 → 8) and dropped the event_pass rows, so the pass
+  // column now falls through to community (5 / 8), exactly like the DB.
   "clubs.max": {
-    community: cell(2, true),
-    event_pass: cell(2, true),
+    community: cell(5),
     pro: cell(20, true),
     pro_plus: cell(null, true),
   },
   "teams.max": {
-    community: cell(2, true),
-    event_pass: cell(2, true),
+    community: cell(8),
     pro: cell(40, true),
     pro_plus: cell(null, true),
   },
@@ -135,8 +148,9 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
   });
 
   it("renders the prose quota row for competitions.max_active", () => {
+    // V319: community free tier now runs big — 10 active competitions.
     expect(row("pricing.matrix.competitions.max_active")).toMatchObject({
-      free: "5",
+      free: "10",
       pass: "pricing.matrix.passedEvent",
       pro: "∞",
       plus: "∞",
@@ -144,30 +158,33 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
   });
 
   it("renders ∞ for unlimited ints, never the word Unlimited", () => {
+    // V319 community caps: 4 divisions, 64 entrants.
     expect(row("pricing.matrix.divisions.per_competition.max")).toMatchObject({
-      free: "2",
+      free: "4",
       pass: "10",
       pro: "∞",
       plus: "∞",
     });
     expect(row("pricing.matrix.entrants.per_division.max")).toMatchObject({
-      free: "32",
-      pass: "64",
+      free: "64",
+      pass: "128",
       pro: "256",
       plus: "∞",
     });
   });
 
-  it("renders the W1 clubs/teams caps as numbers, ∞ for unlimited (spec V291)", () => {
+  it("renders the W1 clubs/teams caps as numbers, ∞ for unlimited (V319 caps)", () => {
+    // V319: community clubs 2 → 5, teams 2 → 8; no event_pass row, so the pass
+    // column falls through to community.
     expect(row("pricing.matrix.clubs.max")).toMatchObject({
-      free: "2",
-      pass: "2",
+      free: "5",
+      pass: "5",
       pro: "20",
       plus: "∞",
     });
     expect(row("pricing.matrix.teams.max")).toMatchObject({
-      free: "2",
-      pass: "2",
+      free: "8",
+      pass: "8",
       pro: "40",
       plus: "∞",
     });
@@ -181,17 +198,50 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
 
   it("falls the pass column through to community when no event_pass row exists", () => {
     expect(row("pricing.matrix.schedule.checkpoints.max")).toMatchObject({
-      free: "1",
-      pass: "1",
+      free: "2",
+      pass: "2",
       pro: "5",
       plus: "∞",
     });
-    expect(row("pricing.matrix.officials.per_fixture.max")).toMatchObject({
-      free: "1",
-      pass: "1",
-      pro: "∞",
-      plus: "∞",
+  });
+
+  // #244: scorers retired from ALL marketing/comparison copy. The DB key and
+  // role code stay, but no scorer row may appear anywhere in the pricing table.
+  it("renders no scorer row anywhere (retired from marketing, #244)", () => {
+    const haystack = JSON.stringify(sections).toLowerCase();
+    expect(haystack).not.toContain("scorer");
+  });
+
+  // V319 ungate (#253): officials are included on every plan. The comparison
+  // must not read as a paywall — roles_multi and marks tick across all four
+  // columns; only officials.auto (AI officials) is a Pro/Pro-Plus differentiator.
+  it("shows officials as included on every plan, not a paywalled row", () => {
+    expect(row("pricing.matrix.officials.roles_multi")).toMatchObject({
+      free: "✓",
+      pass: "✓",
+      pro: "✓",
+      plus: "✓",
     });
+    expect(row("pricing.matrix.officials.marks")).toMatchObject({
+      free: "✓",
+      pass: "✓",
+      pro: "✓",
+      plus: "✓",
+    });
+    // The AI-officials path is still gated — the honest differentiator.
+    expect(row("pricing.matrix.officials.auto")).toMatchObject({
+      free: "—",
+      pass: "—",
+      pro: "✓",
+      plus: "✓",
+    });
+  });
+
+  // The all-∞ trap: officials.per_fixture.max is ∞ on every plan after V319, so
+  // it must not be rendered — a mystery ∞/∞/∞/∞ row tells no story.
+  it("does not render the undifferentiated officials.per_fixture.max row", () => {
+    const labelKeys = allRows.map((r) => r.labelKey);
+    expect(labelKeys).not.toContain("pricing.matrix.officials.per_fixture.max");
   });
 
   it("folds registration.paid + fee_percent into one entry-fee cell, keyed pricing.matrix.fees", () => {
@@ -208,19 +258,11 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
     expect(row("pricing.matrix.fees").free).not.toBe("—");
   });
 
-  // Two rows the Event Pass lifts that /pricing used to omit entirely: the AI
-  // run cap fell outside ENTITLEMENT_DOMAINS, and dashboard.player_profiles was
-  // classed as vestigial (see the banned-list test below). Both are live gates,
-  // so the matrix has to price them.
-  it("renders the AI run cap as a graded quota, not a bool tick (V302)", () => {
-    expect(row("pricing.matrix.scheduling.ai.runs_per_division.max")).toMatchObject({
-      free: "5",
-      pass: "10",
-      pro: "20",
-      plus: "50",
-    });
-  });
-
+  // dashboard.player_profiles is a row the Event Pass lifts that /pricing used
+  // to omit entirely (classed as vestigial — see the banned-list test below);
+  // it is a live gate, so the matrix has to price it. The AI run cap row that
+  // used to sit alongside it was retired in v17 Phase 2 Task 5 (V322): the
+  // credit wallet meters spend now, not a plan-graded per-division count.
   it("renders public player profiles with the pass lifting them (V307/V308)", () => {
     expect(row("pricing.matrix.dashboard.player_profiles")).toMatchObject({
       free: "—",
@@ -320,44 +362,48 @@ describe.skipIf(!HAS_DB)("V310 packaging: logos + paid entry for everyone", () =
   });
 });
 
-// V311 (D22) — the scale caps. /pricing and the help pages have advertised
-// "32 players" and "5 seasons" since the v3 rewrite while the matrix said 16
-// and 1; the marketing was the intent, the matrix was the bug. These assert the
-// intent against the live matrix, because a fixture can be edited to say
-// anything and the resolver reads the table.
+// V319 (v17 Phase 1) — the free tier "runs big". Community rises to 64 entrants
+// and 10 competitions (from V311's 32 / 5), and the pass rises above it to 128.
+// These assert the intent against the live matrix, because a fixture can be
+// edited to say anything and the resolver reads the table.
 //
 // Real Postgres required; skipped without DATABASE_URL (CI sets it).
-describe.skipIf(!HAS_DB)("V311 scale caps: community 32 entrants, 5 competitions", () => {
+describe.skipIf(!HAS_DB)("V319 scale caps: community 64 entrants, 10 competitions", () => {
   const load = async (key: string) => {
     const rows = await sql<{ plan_key: string; bool_value: boolean | null; int_value: number | null }[]>`
       select plan_key, bool_value, int_value from plan_entitlements where feature_key = ${key}`;
     return (plan: string) => rows.find((r) => r.plan_key === plan);
   };
 
-  it("ladders entrants.per_division.max 32 / 64 / 256 / ∞", async () => {
+  it("ladders entrants.per_division.max 64 / 128 / 256 / ∞", async () => {
     const get = await load("entrants.per_division.max");
-    expect(get("community")?.int_value).toBe(32);
-    // The pass MUST rise too. With community at 32 a pass still stuck on 32
-    // would lift nothing — the key would drop out of the pass-lifted set and
+    expect(get("community")?.int_value).toBe(64);
+    // The pass MUST rise above community. With community at 64 a pass stuck on
+    // 64 would lift nothing — the key would drop out of the pass-lifted set and
     // the $29 purchase would buy no extra entrants at all.
-    expect(get("event_pass")?.int_value).toBe(64);
+    expect(get("event_pass")?.int_value).toBe(128);
     expect(get("pro")?.int_value).toBe(256);
     expect(get("pro_plus"), "pro_plus must keep a row").toBeDefined();
     expect(get("pro_plus")?.int_value, "null int_value is unlimited").toBeNull();
   });
 
-  it("keeps entrants.per_division.max in the pass-lifted set (32 vs 64)", async () => {
+  it("keeps entrants.per_division.max in the pass-lifted set (64 vs 128)", async () => {
     const get = await load("entrants.per_division.max");
     expect(get("event_pass")?.int_value).not.toBe(get("community")?.int_value);
   });
 
-  it("raises community competitions.max_active to 5, pro/pro_plus stay unlimited", async () => {
+  it("raises community competitions.max_active to 10, pro/pro_plus stay unlimited", async () => {
     const get = await load("competitions.max_active");
-    expect(get("community")?.int_value).toBe(5);
+    expect(get("community")?.int_value).toBe(10);
     expect(get("pro"), "pro must keep a row").toBeDefined();
     expect(get("pro")?.int_value).toBeNull();
     expect(get("pro_plus"), "pro_plus must keep a row").toBeDefined();
     expect(get("pro_plus")?.int_value).toBeNull();
+  });
+
+  it("raises community divisions.per_competition.max to 4", async () => {
+    const get = await load("divisions.per_competition.max");
+    expect(get("community")?.int_value).toBe(4);
   });
 
   // Deliberate absence, not an oversight. A passed competition is already

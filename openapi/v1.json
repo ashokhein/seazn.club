@@ -49073,7 +49073,7 @@
     },
     "/api/v1/divisions/{id}/officials/ai-plan": {
       "post": {
-        "summary": "AI Officials Architect: assign officials to a dry-run/current schedule, engine-refereed; propose-only, empty instruction = solver draft (Pro Plus `officials.auto`)",
+        "summary": "AI Officials Architect: assign officials to a dry-run/current schedule, engine-refereed; propose-only, empty instruction = solver draft (credit-metered on any tier, 1 credit/run — 402 `ai.credits` when the wallet is empty)",
         "tags": [
           "officials"
         ],
@@ -53935,7 +53935,7 @@
     },
     "/api/v1/divisions/{id}/schedule/ai-plan": {
       "post": {
-        "summary": "AI Schedule Architect: propose times+courts (generate/refine/repair), engine-verified; propose-only; all plans (`scheduling.ai`), capped per division by `scheduling.ai.runs_per_division.max` (5 free / 10 Event Pass / 20 Pro / 50 Pro Plus)",
+        "summary": "AI Schedule Architect: propose times+courts (generate/refine/repair), engine-verified; propose-only; all plans (`scheduling.ai`), metered by the AI credit wallet (402 when it's empty)",
         "tags": [
           "scheduling"
         ],

@@ -6,8 +6,8 @@ import { formatMinor, passPrice, proPrice, type Currency } from "@/lib/currency"
 // lib/__tests__/pricing-cards.test.ts. Moving a cap means moving the copy here
 // AND in billing.community.* / billing.pro.* across all four dictionaries.
 export const FREE_FEATURES = [
-  "5 active competitions, 2 divisions",
-  "32 entrants per division",
+  "10 active competitions, 4 divisions",
+  "64 entrants per division",
   "League, groups + knockout & swiss formats",
   // V310: charging entry fees is free on every plan — only the platform cut
   // differs (8 / 5 / 2 / 1%). "Free-event" undersold Community and made the
@@ -24,7 +24,7 @@ export const FREE_FEATURES = [
 // The first four are also the home-page stub (ticketTiers slices them).
 export const PASS_FEATURES = [
   "Upgrades ONE competition, forever",
-  "10 divisions, 64 entrants each",
+  "10 divisions, 128 entrants each",
   "Advanced formats — double elim, ladders",
   "5% platform fee on entry fees, not 8%",
   "Branded exports & public player cards",
@@ -50,12 +50,28 @@ export const PRO_FEATURES = [
 // Pro Plus is progressively disclosed on /pricing (spec §4) — same five
 // selling points as billing.plus.f1-f5 (Task 8's in-app upgrade prompt), kept
 // in marketing tone. Mirrored as dict keys pricing.plus.f1-f5 for i18n.
+// #244: "scorers" retired from marketing — the seat is dormant legacy; the card
+// leads with members/teams/clubs instead.
 export const PLUS_CARD_FEATURES = [
-  "Unlimited members, scorers & clubs",
+  "Unlimited members, teams & clubs",
   "1% platform fee on entry fees",
   "AI-assisted scheduling",
   "Auto officials assignment",
   "Write API access & priority support",
+];
+
+// Pro Plus roadmap (SPEC-1 §6): badged "coming soon", NOT purchasable. Rendered
+// as a muted list under the Plus card so the tier's ceiling reads as ambition,
+// not a paywall. Mirrored as dict keys pricing.plus.soon1-soon8 for i18n.
+export const PLUS_COMING_SOON: string[] = [
+  "Multi-org command centre",
+  "Shared templates & branding across orgs",
+  "Cross-competition analytics",
+  "Custom domain & white-label",
+  "SSO / SAML",
+  "SLA & dedicated support",
+  "Data export & warehouse",
+  "Bulk & scheduled automation",
 ];
 
 export interface TicketTier {

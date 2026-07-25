@@ -1,0 +1,71 @@
+# AI credit monthly grant (v17 Task 6 review, CRITICAL 2): POST the monthly
+# grant endpoint daily. /api/cron/billing-grant grants every LIVE billing
+# wallet its `ai.credits.monthly(plan) * quantity_paid` allowance for the
+# current period (SPEC-2 §5.4/§11.2) — first EXPIRING any unspent grant-bucket
+# balance left over from the prior period (D1, use-or-lose), then adding the
+# new allowance; purchased packs (D2) are never touched. Without this
+# schedule the route exists but never runs, so the monthly grant (and its
+# use-or-lose reset) never fires in staging/prod — same failure mode
+# billing-quantity.yml exists to avoid for seat-quantity drift.
+#
+# Idempotent per wallet-period (`lib/credits.ts`'s `grantMonthly`), keyed on
+# the plain calendar month for EVERY wallet — paid or Community — never on a
+# subscription's Stripe billing-cycle boundary (SPEC-2 §5.4 Cadence: grant is
+# monthly regardless of billing interval, so an annual Pro still gets
+# 60/mo x 12, not a single lump on its yearly renewal). A daily poll is safe:
+# most days are a no-op, the poll after a calendar-month rollover is the one
+# that grants.
+#
+# Auth: the x-cron-secret header must match the app's CRON_SECRET env — the
+# same secret billing-quantity.yml already uses, set in BOTH places:
+#   gh secret set CRON_SECRET                                  # this workflow
+#   flyctl secrets set -c fly.stg.toml CRON_SECRET=<same>      # the app
+# For PRODUCTION, duplicate this file with the prod BASE_URL and mirror the
+# secret into the prod Fly app.
+#
+# Skips with a warning until the GitHub secret exists, fails loud on any
+# non-200, and warns when a wallet's grant fails (`failed` from
+# grantMonthlyForAllWallets — mirrors billing-quantity.yml's own
+# corrected/failed/orphanOrgs conditional warning) — so a persistent problem
+# is visible in the Actions tab.
+name: Billing AI credit grant
+
+on:
+  schedule:
+    - cron: "17 7 * * *" # daily, early morning
+  workflow_dispatch: {} # manual run for testing
+
+permissions: {}
+
+concurrency:
+  group: billing-grant-monthly
+  cancel-in-progress: false
+
+jobs:
+  grant:
+    name: Grant monthly AI credits (staging)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      BASE_URL: https://seazn-club-stg.fly.dev
+    steps:
+      - name: Secret missing — skip
+        if: env.CRON_SECRET == ''
+        run: echo "::warning::CRON_SECRET not set — AI credits not granted. Set it with 'gh secret set CRON_SECRET' and mirror it into the Fly app."
+
+      - name: POST /api/cron/billing-grant
+        if: env.CRON_SECRET != ''
+        run: |
+          body=$(curl --silent --show-error --fail-with-body \
+            --max-time 300 --retry 2 --retry-all-errors \
+            -X POST "$BASE_URL/api/cron/billing-grant" \
+            -H "x-cron-secret: $CRON_SECRET")
+          echo "response: $body"
+          wallets=$(echo "$body" | jq -r '.data.wallets // 0')
+          granted=$(echo "$body" | jq -r '.data.granted // 0')
+          failed=$(echo "$body" | jq -r '.data.failed // 0')
+          echo "::notice::billing grant: wallets=$wallets granted=$granted failed=$failed"
+          if [ "$failed" != "0" ]; then
+            echo "::warning::billing grant: $failed wallet(s) failed to grant this run — see app logs for [credits] monthly grant failed"
+          fi

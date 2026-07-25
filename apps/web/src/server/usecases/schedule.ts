@@ -7,7 +7,7 @@ import "server-only";
 import type postgres from "postgres";
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
-import { requireFeature, getLimit } from "@/lib/entitlements";
+import { requireFeature } from "@/lib/entitlements";
 import { cacheDelPattern } from "@/lib/cache";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { publishDivisionUpdate } from "@/lib/realtime";
@@ -583,10 +583,12 @@ export async function applySchedule(
  *  schedule apply from the division ledger (v4/03 §10) plus the division's
  *  generation budget. `last` is the trimmed instruction + human summary +
  *  apply timestamp, or null when the division has never been AI-scheduled.
- *  `runs.used` counts the same 'schedule.ai_generated' rows the ai-plan quota
- *  gate counts (failures never appear there); `runs.max` is the plan's
- *  per-division cap resolved with the same overlay chain as the gate
- *  (event-pass lift, admin override), null = unlimited. Read-gated at route. */
+ *  `runs.used` counts the same 'schedule.ai_generated' rows the ai-plan
+ *  orchestrator writes (failures never appear there); `runs.max` is always
+ *  null now — v17 Phase 2 Task 5 (V322) retired the plan-graded per-division
+ *  cap it used to resolve, replaced by the AI credit wallet, which meters
+ *  spend rather than a per-division count (see `spendCredit` in
+ *  schedule-ai.ts). Read-gated at route. */
 export async function lastAiApply(
   auth: AuthCtx,
   divisionId: string,
@@ -594,7 +596,7 @@ export async function lastAiApply(
   last: { at: string; instruction: string; summary: string } | null;
   runs: { used: number; max: number | null };
 }> {
-  const { rows, competitionId, used } = await withTenant(auth.orgId, async (tx) => {
+  const { rows, used } = await withTenant(auth.orgId, async (tx) => {
     const rows = await tx<
       { created_at: Date; payload: { ai?: { instruction?: string; summary?: string } } }[]
     >`
@@ -611,9 +613,8 @@ export async function lastAiApply(
       where competition_id = ${division.competition_id}
         and type = 'schedule.ai_generated'
         and payload->>'division_id' = ${divisionId}`;
-    return { rows, competitionId: division.competition_id, used: count?.n ?? 0 };
+    return { rows, used: count?.n ?? 0 };
   });
-  const max = await getLimit(auth.orgId, "scheduling.ai.runs_per_division.max", competitionId);
   const ai = rows[0]?.payload.ai ?? {};
   return {
     last:
@@ -624,7 +625,7 @@ export async function lastAiApply(
             instruction: ai.instruction ?? "",
             summary: ai.summary ?? "",
           },
-    runs: { used, max },
+    runs: { used, max: null },
   };
 }
 

@@ -53,7 +53,7 @@ test.describe.serial("pro lifecycle", () => {
         config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
       },
     );
-    // A 3rd division would 402 on community (divisions.per_competition.max = 2).
+    // A 5th division would 402 on community (divisions.per_competition.max = 4).
     expect(div.status).toBe(201);
     divisionId = div.data!.id;
     divisionSlug = div.data!.slug;

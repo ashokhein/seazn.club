@@ -155,15 +155,17 @@ describe.skipIf(!HAS_DB)("AI audit trail in the ledger (v4/03 §10)", () => {
     expect(event.payload.ai?.repair_rounds).toBe(2);
 
     // ai-last recalls the trimmed instruction + summary + a timestamp, plus the
-    // generation budget. `used` counts schedule.ai_generated rows (written by
+    // generation count. `used` counts schedule.ai_generated rows (written by
     // the ai-plan orchestrator, not by apply) — this flow applied directly, so
-    // the budget shows 0 used of the community cap.
+    // `used` is 0; `max` is always null (V322 retired the per-division cap).
     const { last, runs } = await lastAiApply(auth, division.id);
     expect(last).not.toBeNull();
     expect(last!.instruction).toBe("keep courts balanced");
     expect(last!.summary).toBe("scheduled 6 fixtures across 1 court");
     expect(new Date(last!.at).toString()).not.toBe("Invalid Date");
-    expect(runs).toEqual({ used: 0, max: 5 }); // V302 community cap; no generation ran here
+    // V322 (v17 Phase 2 Task 5): the per-division cap is retired, max is
+    // always null now — the credit wallet meters runs, not this endpoint.
+    expect(runs).toEqual({ used: 0, max: null });
 
     // A generation row (what the ai-plan orchestrator writes) moves the count.
     await sql`
@@ -171,7 +173,7 @@ describe.skipIf(!HAS_DB)("AI audit trail in the ledger (v4/03 §10)", () => {
       select competition_id, ${auth.orgId}, 'schedule.ai_generated',
              ${sql.json({ division_id: division.id })}
       from divisions where id = ${division.id}`;
-    expect((await lastAiApply(auth, division.id)).runs).toEqual({ used: 1, max: 5 });
+    expect((await lastAiApply(auth, division.id)).runs).toEqual({ used: 1, max: null });
 
     // Binding #1 (integration): the persisted fixtures read back through the
     // Fixture response schema with schedule_source "ai".
@@ -202,6 +204,6 @@ describe.skipIf(!HAS_DB)("AI audit trail in the ledger (v4/03 §10)", () => {
     });
     const recall = await lastAiApply(auth, division.id);
     expect(recall.last).toBeNull();
-    expect(recall.runs).toEqual({ used: 0, max: 5 });
+    expect(recall.runs).toEqual({ used: 0, max: null });
   });
 });

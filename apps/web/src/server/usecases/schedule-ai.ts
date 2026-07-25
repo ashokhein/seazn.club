@@ -19,8 +19,9 @@ import {
   type AiTurn,
 } from "@/server/ai/provider";
 import { withTenant } from "@/lib/db";
-import { HttpError, PaymentRequiredError } from "@/lib/errors";
-import { requireFeature, withinLimit } from "@/lib/entitlements";
+import { HttpError } from "@/lib/errors";
+import { requireFeature } from "@/lib/entitlements";
+import { spendCredit, walletIdFor } from "@/lib/credits";
 import { rateLimit } from "@/lib/rate-limit";
 import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import { aiRunCostUsd } from "@/lib/ai-pricing";
@@ -1446,17 +1447,18 @@ async function runAiPlanLadder(
 
 /**
  * POST /divisions/{id}/schedule/ai-plan orchestrator. Gate order is deliberate
- * (design/v4/00 §5): the staged-rollout kill switch (fail-open) → the paid gate
- * (`scheduling.ai`, 402) → the per-division run cap (upstream V291, 402 before
- * any LLM spend) → the spend limiter (5/division/hour, 429) → build the
- * deterministic pack → run the architect → append the schedule.ai_generated
+ * (design/v4/00 §5, wallet per SPEC-2 §5.2): the staged-rollout kill switch
+ * (fail-open) → the paid gate (`scheduling.ai`, 402) → the frozen-division
+ * check → the spend limiter (5/division/hour, 429) → build the deterministic
+ * pack → reserve 1 AI credit, run the architect, settle/release (402 on an
+ * empty wallet, right before the LLM call) → append the schedule.ai_generated
  * audit event → optional dry officials coverage. Telemetry fires on success AND
  * on a 422 AI_PLAN_FAILED (usage rides on the error's extra) so refused spend is
  * still metered.
  *
- * @throws HttpError 403 FEATURE_DISABLED (kill switch), 402 (paid gate or
- *   over-quota run cap), 409 SCHEDULE_LOCKED (frozen division — refused before
- *   the quota and spend gates), 429 (rate limit), plus everything
+ * @throws HttpError 403 FEATURE_DISABLED (kill switch), 402 (paid gate or an
+ *   empty AI credit wallet), 409 SCHEDULE_LOCKED (frozen division — refused
+ *   before the spend gates), 429 (rate limit), plus everything
  *   buildSchedulePack/runAiPlan raise (409/422/400/503).
  */
 export async function aiPlanForDivision(
@@ -1476,23 +1478,16 @@ export async function aiPlanForDivision(
   }
   await requireFeature(auth.orgId, "scheduling.ai");
 
-  // Pro AI cap (owner 2026-07-18, amends pro-plus D4): Pro keeps AI scheduling
-  // but is limited to N generations per division; Pro Plus is unlimited (null
-  // int_value → withinLimit returns ok). Count prior runs from the audit ledger
-  // and refuse the (cap+1)th here, before the LLM call, so an over-quota org
-  // never burns a request.
+  // The per-division run cap this used to also gate on is retired (v17 Phase
+  // 2 Task 5, V322) — runs are metered by the credit wallet on every tier
+  // now (SPEC-2 §5.2/Task 4). This lookup only resolves the division's
+  // competition + frozen state for the checks below.
   const gate = await withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<{ competition_id: string; schedule_locked: boolean }[]>`
       select competition_id, schedule_locked from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
-    const [row] = await tx<{ n: number }[]>`
-      select count(*)::int as n from competition_events
-      where competition_id = ${division.competition_id}
-        and type = 'schedule.ai_generated'
-        and payload->>'division_id' = ${divisionId}`;
     return {
       competitionId: division.competition_id,
-      priorRuns: row?.n ?? 0,
       frozen: division.schedule_locked ?? false,
     };
   });
@@ -1510,13 +1505,11 @@ export async function aiPlanForDivision(
       "SCHEDULE_LOCKED",
     );
   }
-  const cap = await withinLimit(
-    auth.orgId,
-    "scheduling.ai.runs_per_division.max",
-    gate.priorRuns + 1,
-    gate.competitionId,
-  );
-  if (!cap.ok) throw new PaymentRequiredError("scheduling.ai.runs_per_division.max");
+  // AI runs are metered by the credit wallet on EVERY tier (SPEC-2 §5.2), not
+  // by plan — resolve the wallet up front; the actual reserve/402 happens right
+  // before the LLM call below, so a frozen-division or rate-limited request
+  // never touches the wallet at all.
+  const walletId = await walletIdFor(auth.orgId);
 
   await rateLimit(`ai-plan:${divisionId}`, { max: 5, windowSeconds: 3600 });
 
@@ -1524,7 +1517,14 @@ export async function aiPlanForDivision(
 
   let result: AiPlanResult & { served_model: string; escalated_from?: string; rungs_tried: string[] };
   try {
-    result = await runAiPlanLadder(pack, movableIds);
+    // Reserve 1 credit → run the architect → settle on success / release on
+    // failure (SPEC-2 §5.2). PaymentRequiredError("ai.credits") from an empty
+    // wallet falls through the catch below untouched (it matches neither
+    // planErr nor providerErr) and rethrows as the 402.
+    result = await spendCredit(walletId, auth.orgId, 1, async () => ({
+      aiRunId: crypto.randomUUID(),
+      result: await runAiPlanLadder(pack, movableIds),
+    }));
   } catch (err) {
     // Meter a refused / un-correctable / timed-out run's token spend too —
     // usage rides on the 422 extra so a failed architect call is not invisible

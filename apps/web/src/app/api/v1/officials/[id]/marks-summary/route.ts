@@ -5,7 +5,8 @@ import { orgMarksSummary } from "@/server/usecases/official-marks";
 type Ctx = { params: Promise<{ id: string }> };
 
 /** Org-scoped mark average + count + recent comments for an official (SPEC-3,
- *  console). Pro `officials.marks` (402 PlusReveal) in the usecase. */
+ *  console). Available on every plan (V319 ungated marks — no entitlement gate,
+ *  no 402). */
 export async function GET(req: Request, { params }: Ctx) {
   return v1(async () => {
     const { id } = await params;

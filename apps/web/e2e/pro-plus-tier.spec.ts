@@ -278,15 +278,16 @@ test.describe("Pro Plus · officials-per-fixture quota", () => {
 });
 
 test.describe("Pro Plus · schedule save-point quota", () => {
-  test("Community: the 2nd save point 402s (limit 1)", async ({ page }) => {
+  test("Community: the 3rd save point 402s (limit 2)", async ({ page }) => {
     const org = await seedOrg({ plan: "community" });
     await loginAsOwner(page, org.ownerEmail);
     const { divisionId } = await seedDivision(page.request);
 
     expect((await createCheckpoint(page.request, divisionId, `cp1 ${hex()}`)).status).toBe(201);
-    const second = await createCheckpoint(page.request, divisionId, `cp2 ${hex()}`);
-    expect(second.status).toBe(402);
-    expect(second.featureKey).toBe("schedule.checkpoints.max");
+    expect((await createCheckpoint(page.request, divisionId, `cp2 ${hex()}`)).status).toBe(201);
+    const third = await createCheckpoint(page.request, divisionId, `cp3 ${hex()}`);
+    expect(third.status).toBe(402);
+    expect(third.featureKey).toBe("schedule.checkpoints.max");
   });
 
   test("Pro: 5 save points are allowed, the 6th 402s (limit 5)", async ({ page }) => {
@@ -404,7 +405,7 @@ test.describe("Pro Plus · disclosure + admin matrix", () => {
     }
   });
 
-  test("/admin/entitlements shows the Pro Plus column incl. the V302 AI-cap row", async ({ page }) => {
+  test("/admin/entitlements shows the Pro Plus column", async ({ page }) => {
     const org = await seedOrg({ plan: "pro_plus", staff: true });
     await loginAsOwner(page, org.ownerEmail);
     await page.goto("/admin/entitlements");
@@ -414,13 +415,10 @@ test.describe("Pro Plus · disclosure + admin matrix", () => {
       timeout: 20_000,
     });
 
-    // V302 grading: AI runs per division — community 5 / Event Pass 10 / Pro 20 / Pro Plus 50.
-    const capRow = page
-      .locator("tbody tr")
-      .filter({ has: page.getByRole("cell", { name: "scheduling.ai.runs_per_division.max", exact: true }) });
-    await expect(capRow).toHaveCount(1);
-    await expect(capRow.locator("td").nth(4)).toHaveText("20"); // Pro
-    await expect(capRow.locator("td").nth(5)).toHaveText("50"); // Pro Plus
+    // The AI-run cap row is retired (v17 Phase 2 Task 5, V322): AI runs are
+    // metered by the credit wallet on every tier now, not a plan-graded
+    // per-division count, so the comparison table has nothing left to show
+    // there — no row to assert on.
 
     // V290 quota: officials-per-fixture community 1 / pro ∞ / pro_plus ∞.
     const ofpRow = page

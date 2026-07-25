@@ -126,8 +126,8 @@ test.describe.serial("billing", () => {
     await setOrgPlanBySql({ orgId: orgB }, "pro");
 
     // ONE over the community ceiling, and the ceiling is read from the matrix
-    // rather than written down. It has already moved once inside this branch
-    // (V310/V311 took `competitions.max_active` from 2 to 5) and this test went
+    // rather than written down. It has already moved inside this branch
+    // (V319 took `competitions.max_active` from 5 to 10) and this test went
     // quietly green-then-red with it: three competitions no longer overshoot
     // anything, so nothing froze and the 402 below came back 201. Derive the
     // count and the assertion cannot drift with the packaging again.

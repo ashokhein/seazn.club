@@ -17,8 +17,7 @@ import {
 import { z } from "zod";
 import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
-import { requireFeature, withinLimit } from "@/lib/entitlements";
-import { PaymentRequiredError } from "@/lib/errors";
+import { requireFeature } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { AiApplyMeta } from "@/server/api-v1/schemas";
 import { sendOfficialAssignedEmail } from "@/lib/email";
@@ -57,13 +56,6 @@ export type CreateOfficialInput = z.infer<typeof CreateOfficialInput>;
 
 export const PatchOfficialInput = CreateOfficialInput.partial();
 export type PatchOfficialInput = z.infer<typeof PatchOfficialInput>;
-
-// Jul3/02 §5: judge + referee (multi-role officials) are Pro.
-async function assertRolesAllowed(orgId: string, roleKeys?: string[]): Promise<void> {
-  if (roleKeys && roleKeys.length > 1) {
-    await requireFeature(orgId, "officials.roles_multi");
-  }
-}
 
 export async function listOfficials(auth: AuthCtx): Promise<OfficialRow[]> {
   return withTenant(auth.orgId, (tx) => tx<OfficialRow[]>`
@@ -178,7 +170,6 @@ export async function inviteOfficial(
 }
 
 export async function createOfficial(auth: AuthCtx, input: CreateOfficialInput): Promise<OfficialRow> {
-  await assertRolesAllowed(auth.orgId, input.role_keys);
   return withTenant(auth.orgId, async (tx) => {
     const [row] = await tx<OfficialRow[]>`
       insert into officials (org_id, person_id, entrant_id, display_name, email,
@@ -196,7 +187,6 @@ export async function patchOfficial(
   id: string,
   patch: PatchOfficialInput,
 ): Promise<OfficialRow> {
-  await assertRolesAllowed(auth.orgId, patch.role_keys);
   return withTenant(auth.orgId, async (tx) => {
     const cols = Object.keys(patch);
     if (cols.length === 0) throw new HttpError(400, "empty patch");
@@ -254,7 +244,6 @@ export async function importOfficials(
         rolesCol >= 0 && cells[rolesCol]?.trim()
           ? cells[rolesCol]!.split(/[,;\s]+/).filter(Boolean).map((r) => r.toLowerCase())
           : ["referee"];
-      if (roles.length > 1) await requireFeature(auth.orgId, "officials.roles_multi");
       const cap = capCol >= 0 ? Number.parseInt(cells[capCol] ?? "", 10) : Number.NaN;
       await tx`
         insert into officials (org_id, display_name, role_keys, max_per_day)
@@ -371,9 +360,6 @@ export async function autoAssignOfficials(
   input: AutoAssignInput,
 ): Promise<AssignResult> {
   await requireFeature(auth.orgId, "officials.auto");
-  if (input.policy.roles.length > 1) {
-    await requireFeature(auth.orgId, "officials.roles_multi");
-  }
   return withTenant(auth.orgId, async (tx) => {
     const [division] = await tx`select 1 from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
@@ -478,23 +464,14 @@ export const PatchFixtureOfficialsInput = z.object({
 export type PatchFixtureOfficialsInput = z.infer<typeof PatchFixtureOfficialsInput>;
 
 /** PATCH /fixtures/{id}/officials — manual set/move/lock (7 Jan drag-drop).
- *  Replaces the fixture's assignments. Manual single-role stays free
- *  **for one official per fixture** on every plan (Jul3/02 §5); a multi-role
- *  set needs officials.roles_multi, and more than one official per fixture
- *  needs officials.per_fixture.max (V290). */
+ *  Replaces the fixture's assignments. Manual officials — multi-role and any
+ *  number per fixture — are free on every plan since V319 (#253); only the AI
+ *  officials.auto path stays gated. */
 export async function patchFixtureOfficials(
   auth: AuthCtx,
   fixtureId: string,
   input: PatchFixtureOfficialsInput,
 ): Promise<{ officials: unknown }> {
-  const roleCount = new Set(input.set.map((s) => s.role_key)).size;
-  if (roleCount > 1) await requireFeature(auth.orgId, "officials.roles_multi");
-  // V290 (D5): Community includes ONE official per fixture; the quota is the
-  // requested set (replace semantics), so over-limit sets 402 up front.
-  // Existing over-limit assignments are never deleted — freeze principle.
-  const officialCount = new Set(input.set.map((s) => s.official_id)).size;
-  const officialQuota = await withinLimit(auth.orgId, "officials.per_fixture.max", officialCount);
-  if (!officialQuota.ok) throw new PaymentRequiredError("officials.per_fixture.max");
   return withTenant(auth.orgId, async (tx) => {
     const [fixture] = await tx<{ id: string }[]>`select id from fixtures where id = ${fixtureId}`;
     if (!fixture) throw new HttpError(404, "fixture not found");

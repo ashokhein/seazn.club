@@ -291,20 +291,20 @@ describe.skipIf(!HAS_DB)("scorer role (doc 13, PROMPT-18)", () => {
     });
   });
 
-  it("quotas: 4th member and 2nd scorer → 402 with the feature key (doc 13 §5)", async () => {
-    const { orgId } = await seedOrg(); // community: members.max 3, scorers.max 1
+  it("quotas: 6th member and 2nd scorer → 402 with the feature key (doc 13 §5)", async () => {
+    const { orgId } = await seedOrg(); // community: members.max 5 (V319), scorers.max 1
 
-    // Members pool: owner occupies 1 seat; two more accepts fit; the 4th is 402.
-    for (let i = 0; i < 2; i++) {
+    // Members pool: owner occupies 1 seat; four more accepts fit; the 6th is 402.
+    for (let i = 0; i < 4; i++) {
       const t = await makeInvite(orgId, "viewer");
       await grantInvite((await loadInvite(t))!, await makeUser(`v${i}`));
     }
-    const fourth = await makeInvite(orgId, "viewer");
+    const sixth = await makeInvite(orgId, "viewer");
     await expect(
-      grantInvite((await loadInvite(fourth))!, await makeUser("v3")),
+      grantInvite((await loadInvite(sixth))!, await makeUser("v5")),
     ).rejects.toMatchObject({ featureKey: "members.max" });
 
-    // Scorer pool is separate: one scorer still fits at 3/3 members…
+    // Scorer pool is separate: one scorer still fits at 5/5 members…
     const s1 = await makeInvite(orgId, "scorer");
     await grantInvite((await loadInvite(s1))!, await makeUser("s1"));
     // …the second scorer seat is 402.
@@ -328,15 +328,15 @@ describe.skipIf(!HAS_DB)("scorer role (doc 13, PROMPT-18)", () => {
 
   it("downgrade freeze (doc 10 §2.4): over-quota member seats go read-only, owner exempt", async () => {
     const { orgId, ownerId } = await seedOrg();
-    // Force an over-quota state (as a pro→community downgrade would): 3 admins
-    // + owner = 4 non-scorer seats against members.max 3. Explicit created_at
-    // offsets — the freeze selector keeps the most recently joined.
+    // Force an over-quota state (as a pro→community downgrade would): 5 admins
+    // + owner = 6 non-scorer seats against members.max 5 (V319). Explicit
+    // created_at offsets — the freeze selector keeps the most recently joined.
     const admins: string[] = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 5; i++) {
       const userId = await makeUser("admin");
       await sql`
         insert into org_members (org_id, user_id, role, created_at)
-        values (${orgId}, ${userId}, 'admin', now() - make_interval(hours => ${3 - i}))`;
+        values (${orgId}, ${userId}, 'admin', now() - make_interval(hours => ${5 - i}))`;
       admins.push(userId);
     }
 

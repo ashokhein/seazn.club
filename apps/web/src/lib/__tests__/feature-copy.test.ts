@@ -8,11 +8,9 @@ describe("feature-copy V290", () => {
     }
     expect(featurePlan("scheduling.board")).toBe("pro");
     expect(featurePlan("officials.roles_multi")).toBe("pro");
-    // V302 (owner 2026-07-19): AI scheduling exists on every tier as a graded
-    // per-division quota (free 5 / pass 10 / pro 20 / plus 50); both keys
-    // advertise Pro as the next step up, the reason copy names the ladder.
+    // V302 (owner 2026-07-19): AI scheduling exists on every tier; Pro is the
+    // next step up for the bool feature-flag itself.
     expect(featurePlan("scheduling.ai")).toBe("pro");
-    expect(featurePlan("scheduling.ai.runs_per_division.max")).toBe("pro");
   });
   it("has reasons for the new keys and none for the dead one", () => {
     expect(featureReason("officials.per_fixture.max")).toMatch(/one official per fixture/i);
@@ -20,9 +18,12 @@ describe("feature-copy V290", () => {
     expect(featureReason("scheduling.ai")).toMatch(/AI Schedule/);
     expect(featureReason("domains.custom")).toMatch(/domain/i);
     expect(featureReason("support.priority")).toMatch(/priority/i);
-    // V302: the cap breach copy names the full quota ladder.
-    const cap = featureReason("scheduling.ai.runs_per_division.max");
-    for (const part of ["5", "10", "20", "50"]) expect(cap).toContain(part);
+    // scheduling.ai.runs_per_division.max retired (v17 Phase 2 Task 5, V322):
+    // the graded per-division cap copy is gone — falls back to the generic
+    // line, same as any other deleted key.
+    expect(featureReason("scheduling.ai.runs_per_division.max")).toBe(
+      "This feature needs a plan upgrade.",
+    );
     // officials.assignment was deleted (D5) — falls back to the generic line.
     expect(featureReason("officials.assignment")).toBe("This feature needs a plan upgrade.");
   });

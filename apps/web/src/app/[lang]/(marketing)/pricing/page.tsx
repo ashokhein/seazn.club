@@ -13,6 +13,7 @@ import {
   PASS_FEATURES,
   PRO_FEATURES,
   PLUS_CARD_FEATURES,
+  PLUS_COMING_SOON,
 } from "@/lib/pricing-cards";
 import { formatMinor, passPrice, proPrice, proPlusPrice, type Currency } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
@@ -269,6 +270,22 @@ export default async function PricingPage({
                         </li>
                       ))}
                     </ul>
+                    {/* Roadmap (SPEC-1 §6): badged "coming soon", not
+                        purchasable. Muted so the tier's ceiling reads as
+                        ambition rather than a paywall. */}
+                    <div className="mb-8 rounded-xl border border-indigo-100 bg-white/60 p-4">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-indigo-400">
+                        {t(d, "pricing.plus.soonLabel")}
+                      </p>
+                      <ul className="space-y-1.5 text-sm text-slate-500">
+                        {PLUS_COMING_SOON.map((_, i) => (
+                          <li key={i} className="flex items-start gap-2">
+                            <span className="mt-0.5 text-indigo-300">◦</span>
+                            {t(d, `pricing.plus.soon${i + 1}`)}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                     <Link
                       href="/login?tab=signup"
                       className="btn w-full justify-center bg-indigo-600 py-3 text-white hover:bg-indigo-700"

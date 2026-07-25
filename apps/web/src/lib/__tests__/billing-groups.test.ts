@@ -119,7 +119,7 @@ describe.skipIf(!HAS_DB)("a billing group of three orgs", () => {
 
     for (const orgId of orgIds) {
       expect(await hasFeature(orgId, "api.access")).toBe(false);
-      expect(await getLimit(orgId, "members.max")).toBe(3);
+      expect(await getLimit(orgId, "members.max")).toBe(5);
     }
   });
 
@@ -133,7 +133,7 @@ describe.skipIf(!HAS_DB)("a billing group of three orgs", () => {
 
     for (const orgId of orgIds) {
       expect(await hasFeature(orgId, "api.access")).toBe(false);
-      expect(await getLimit(orgId, "members.max")).toBe(3);
+      expect(await getLimit(orgId, "members.max")).toBe(5);
     }
 
     // The blast radius is reads only. This is the cost the design accepted:
@@ -277,7 +277,7 @@ describe.skipIf(!HAS_DB)("suspension is org-scoped, billing is group-scoped", ()
     await invalidateOrgEntitlements(suspended!); // moderation is an org-scoped write
 
     expect(await hasFeature(suspended!, "api.access")).toBe(false);
-    expect(await getLimit(suspended!, "members.max")).toBe(3);
+    expect(await getLimit(suspended!, "members.max")).toBe(5);
     for (const orgId of siblings) {
       expect(await hasFeature(orgId, "api.access")).toBe(true);
       expect(await getLimit(orgId, "members.max")).toBe(15);

@@ -3,9 +3,11 @@
 // Keys NOT listed here are deliberately unadvertised (vestigial D9 keys +
 // domains.custom until Spec 2 ships) — /admin still shows them under "other".
 export const ENTITLEMENT_DOMAINS: { slug: string; features: string[] }[] = [
+  // scorers.max is deliberately absent (#244): the seat is dormant legacy and
+  // retired from the pricing comparison; /admin still surfaces it under "other".
   { slug: "scale", features: [
     "competitions.max_active", "orgs.max_owned", "divisions.per_competition.max",
-    "entrants.per_division.max", "members.max", "scorers.max",
+    "entrants.per_division.max", "members.max",
     "clubs.max", "teams.max", "teams.squad_max",
     "stages.per_division.max", "dashboard.public.max", "import.bulk",
   ]},
@@ -16,9 +18,12 @@ export const ENTITLEMENT_DOMAINS: { slug: string; features: string[] }[] = [
     "formats.advanced", "formats.double_elim", "standings.custom_points",
     "standings.carry_over", "tiebreakers.custom", "discipline.enforced",
   ]},
+  // scheduling.ai.runs_per_division.max retired (v17 Phase 2 Task 5, V322):
+  // the AI credit wallet meters runs on every tier now, not a plan-graded
+  // per-division count — the comparison table has nothing left to show here.
   { slug: "scheduling", features: [
     "scheduling.board", "scheduling.constraints", "scheduling.multi_division",
-    "scheduling.ai", "scheduling.ai.runs_per_division.max",
+    "scheduling.ai",
     "schedule.checkpoints.max", "schedule.versioning",
   ]},
   { slug: "scoring", features: [
@@ -30,8 +35,12 @@ export const ENTITLEMENT_DOMAINS: { slug: string; features: string[] }[] = [
     // (dashboard.public.max sits under scale, dashboard.branding under brand).
     "dashboard.player_profiles",
   ]},
+  // officials.per_fixture.max is absent: V319 makes it ∞ on every plan, so a
+  // comparison row would read ∞/∞/∞/∞ and tell no story. The roles_multi/marks
+  // ticks already say "officials are included on every plan"; officials.auto is
+  // the only real differentiator left.
   { slug: "officials", features: [
-    "officials.per_fixture.max", "officials.roles_multi", "officials.auto", "officials.marks",
+    "officials.roles_multi", "officials.auto", "officials.marks",
   ]},
   { slug: "brand", features: [
     "branding", "dashboard.branding", "realtime", "embeds.enabled",

@@ -50,10 +50,50 @@ export interface PassSpec {
   product: { name: string; description?: string };
   price: PriceSpec;
 }
+/** A one-time AI credit pack (v17 SPEC-2 §5/§6). Structurally identical to a
+ *  PassSpec — one product, one flat price — plus `credits`, which is never
+ *  sent to Stripe: it is the ledger delta the webhook grants. The webhook grants
+ *  the `credits` snapshot stamped into session metadata at checkout creation;
+ *  this seed is only the logged fallback (staff-alerted on drift). */
+export interface PackSpec {
+  key: string;
+  credits: number;
+  product: { name: string; description?: string };
+  price: PriceSpec;
+}
+/** The extra-seat RECURRING add-on (v17 SPEC-2 §3/§11.3). Like a PassSpec/PackSpec
+ *  it is one product + one price, but its price carries an `interval` (recurring,
+ *  not one-time) and it lifts a cap: `feature_key`/`delta_each` are OUR fields
+ *  (never sent to Stripe) — the webhook grants a `feature_key` add-on of
+ *  `delta_each` per seat. No `plans` row: the seat usecase resolves the live
+ *  price by lookup_key at request time, so this only ensures the price exists. */
+export interface SeatSpec {
+  key: string;
+  feature_key: string;
+  delta_each: number;
+  product: { name: string; description?: string };
+  price: PriceSpec;
+}
+/** The size-pack ONE-TIME add-on (v17 SPEC-2 §3/§11.3, Phase 3 Task 3b).
+ *  Structurally like a SeatSpec — one product, one price, `feature_key`/
+ *  `delta_each` that are OUR fields (never sent to Stripe) — but its price is
+ *  ONE-TIME (no `interval`, so priceCreateParams omits `recurring`), because a
+ *  competition is a bounded event, not a subscription. No `plans` row: the
+ *  checkout resolves the live price by lookup_key at request time. */
+export interface SizePackSpec {
+  key: string;
+  feature_key: string;
+  delta_each: number;
+  product: { name: string; description?: string };
+  price: PriceSpec;
+}
 export interface Seed {
   currency: string;
   plans: PlanSpec[];
   passes?: PassSpec[];
+  packs?: PackSpec[];
+  seats?: SeatSpec[];
+  size_packs?: SizePackSpec[];
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -376,6 +416,42 @@ async function main(): Promise<void> {
       await sql`
         update plans set stripe_price_id_onetime = ${price.priceId} where key = ${pass.key}`;
       console.log(`✓ ${pass.key}: onetime=${price.priceId}`);
+    }
+    // AI credit packs (v17 Phase 3 Task 1): same idempotent ensurePrice, but no
+    // `plans` row to write back to — createCreditPackCheckout (lib/credit-packs.ts)
+    // resolves the live price by lookup_key at request time instead.
+    for (const pack of seed.packs ?? []) {
+      const price = await ensurePrice(stripe, pack.price, pack.product, pack.key, seed.currency, null);
+      console.log(`✓ ${pack.key}: onetime=${price.priceId} (${pack.credits} credits)`);
+    }
+    // Extra-seat recurring add-on (v17 Phase 3 Task 3a): same idempotent
+    // ensurePrice as a plan, but no `plans` row to write back to — the seat
+    // usecase (lib/seat-addons.resolveSeatPriceId) resolves the live price by
+    // lookup_key at request time. The price's `interval` makes it RECURRING
+    // (priceCreateParams sends `recurring`), unlike the one-time packs above.
+    for (const seat of seed.seats ?? []) {
+      const price = await ensurePrice(stripe, seat.price, seat.product, seat.key, seed.currency, null);
+      console.log(
+        `✓ ${seat.key}: recurring=${price.priceId} (${seat.feature_key} +${seat.delta_each}/seat)`,
+      );
+    }
+    // Size-pack ONE-TIME add-on (v17 Phase 3 Task 3b): idempotent ensurePrice
+    // like the packs (no `interval` → one-time), no `plans` row to write back —
+    // createSizePackCheckout (lib/size-packs.resolveSizePackPriceId) resolves the
+    // live price by lookup_key at request time. The pack SHAPE is DB-configurable
+    // (size_pack_catalog, V325); only the PRICE is Stripe-owned and synced here.
+    for (const sizePack of seed.size_packs ?? []) {
+      const price = await ensurePrice(
+        stripe,
+        sizePack.price,
+        sizePack.product,
+        sizePack.key,
+        seed.currency,
+        null,
+      );
+      console.log(
+        `✓ ${sizePack.key}: onetime=${price.priceId} (${sizePack.feature_key} +${sizePack.delta_each})`,
+      );
     }
     console.log("Stripe sync complete.");
   } finally {

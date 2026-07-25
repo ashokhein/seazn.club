@@ -28,15 +28,17 @@ test("deleting a setup division lifts the free-plan divisions gate", async ({ pa
   );
   expect(first.status).toBe(201);
   const divisionId = first.data!.id;
-  const filler = await apiJson(request, `/api/v1/competitions/${compId}/divisions`, "POST", {
-    name: "Filler",
-    ...GENERIC,
-  });
-  expect(filler.status).toBe(201);
+  for (const name of ["Filler 2", "Filler 3", "Filler 4"]) {
+    const filler = await apiJson(request, `/api/v1/competitions/${compId}/divisions`, "POST", {
+      name,
+      ...GENERIC,
+    });
+    expect(filler.status).toBe(201);
+  }
 
-  // Community divisions.per_competition.max = 2 (v3): the third is 402-gated.
+  // Community divisions.per_competition.max = 4 (V319): the fifth is 402-gated.
   const gated = await apiJson(request, `/api/v1/competitions/${compId}/divisions`, "POST", {
-    name: "Second",
+    name: "Fifth",
     ...GENERIC,
   });
   expect(gated.status).toBe(402);
@@ -61,7 +63,7 @@ test("deleting a setup division lifts the free-plan divisions gate", async ({ pa
 
   // The gate has lifted — the slot is free again.
   const retried = await apiJson(request, `/api/v1/competitions/${compId}/divisions`, "POST", {
-    name: "Second",
+    name: "Fifth",
     ...GENERIC,
   });
   expect(retried.status).toBe(201);

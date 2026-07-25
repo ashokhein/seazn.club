@@ -8,10 +8,12 @@ type Ctx = { params: Promise<{ id: string }> };
 /** POST /divisions/{id}/officials/ai-plan — the AI Officials Architect, Phase B
  *  of design/v4. Propose-only: the model assigns officials to the dry-run (or
  *  current) schedule, the engine referee is authoritative, and nothing is
- *  written. Gated Pro Plus `officials.auto` (+ `officials.roles_multi` when the
- *  policy asks for more than one role) behind the shared `ai-scheduling` kill
- *  switch + a per-division rate limit; uncapped (the V291 run cap is Phase A
- *  only). The v1() wrapper is load-bearing: it propagates HttpError `code`
+ *  written. Credit-metered on any tier (v17 SPEC-2 §5.2): 1 credit per run,
+ *  spent from the org's AI credit wallet — a 402 with feature_key `ai.credits`
+ *  means the wallet is empty, not a plan gate (+ `officials.roles_multi` when
+ *  the policy asks for more than one role) behind the shared `ai-scheduling`
+ *  kill switch + a per-division rate limit; uncapped (the V291 run cap is
+ *  Phase A only). The v1() wrapper is load-bearing: it propagates HttpError `code`
  *  (AI_PLAN_FAILED / FEATURE_DISABLED / NO_OFFICIALS) and `extra.usage` that the
  *  generic lib/http.ts handler would drop. */
 export async function POST(req: Request, { params }: Ctx) {

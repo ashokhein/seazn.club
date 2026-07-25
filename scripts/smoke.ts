@@ -423,7 +423,7 @@ async function main() {
     );
     check(
       "billing-group: quotas are per org, not shared across the group",
-      org2Ent.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 20,
+      org2Ent.entitlements["members.max"]?.limit === 15,
     );
 
     // 5. The listing now shows BOTH orgs on the group, and quantity_paid is
@@ -622,9 +622,10 @@ async function main() {
 
   // --- v4 AI Schedule Architect (Task 18): two-phase happy path on a fresh Pro
   // Plus org (schedule ai-plan → apply+ledger → ai-last → officials draft) plus
-  // the graded run-cap 402 and an admin-override lift on a fresh community org.
+  // the AI credit wallet 402 and a wallet top-up lift on a fresh community org
+  // (v17 Phase 2, V320+ — replaced the old graded per-division run cap).
   // The T17 fixture server stands in for the model (needs the server booted with
-  // SCHEDULING_AI_BASE_URL); the cap 402 is keyless-safe and always runs.
+  // SCHEDULING_AI_BASE_URL); the wallet 402 is keyless-safe and always runs.
   await v4AiSuite(admin, org2.id, renamed.slug);
 
   await pagePlayoffSuite(admin);
@@ -1215,15 +1216,23 @@ async function smokePlanMatrix(): Promise<void> {
     "matrix/community: exports.branded denies",
     commEnt.entitlements["exports.branded"]?.enabled === false,
   );
-  // V302: the AI Schedule Architect is granted on EVERY plan; only the
-  // per-division generation quota is graded (community 5).
+  // V302: the AI Schedule Architect is granted on EVERY plan; the graded axis
+  // is no longer a per-division run count (retired V322) but the monthly AI
+  // credit wallet allowance (community 10, V320).
   check(
     "matrix/community: scheduling.ai is granted on every plan (V302)",
     commEnt.entitlements["scheduling.ai"]?.enabled === true,
   );
   check(
-    "matrix/community: scheduling.ai.runs_per_division.max resolves 5",
-    commEnt.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 5,
+    "matrix/community: ai.credits.monthly resolves 10 (V320)",
+    commEnt.entitlements["ai.credits.monthly"]?.limit === 10,
+  );
+  // The bootstrap grant (createOrgForUser) synchronously seeds this period's
+  // allowance at org creation, so a brand-new Community org's wallet already
+  // holds it — no up-to-24h wait on the daily billing-grant cron.
+  check(
+    "matrix/community: a freshly-created org's AI credit wallet is bootstrap-granted 10 credits",
+    (await walletBalance(commOrg)) === 10,
   );
 
   // A scored-through division so a real export renders.
@@ -1265,18 +1274,19 @@ async function smokePlanMatrix(): Promise<void> {
     plainExport.status === 200 && plainBytes.subarray(0, 5).toString() === "%PDF-",
   );
 
-  // The graded run cap is the paid boundary now (not the feature itself): seed
-  // 5 prior runs on this division → the 6th ai-plan 402s at the cap BEFORE any
-  // model call (keyless-safe), and the 402 carries the contextual upgrade prompt
-  // the UpgradeGate renders.
-  await seedAiRuns(commOrg, cComp.id, cDiv.id, 5);
+  // The prepaid credit wallet is the paid boundary now (not the feature
+  // itself, and no longer a per-division count): drain the org's wallet to 0
+  // → the next ai-plan 402s at `ai.credits` BEFORE any model call
+  // (keyless-safe), and the 402 carries the contextual upgrade prompt the
+  // UpgradeGate renders.
+  await drainWallet(commOrg, 0);
   const commAi = await v1(comm, `/api/v1/divisions/${cDiv.id}/schedule/ai-plan`, "POST", {
     instruction: "two courts, weekday evenings only",
   });
   const commAiErr = featureKey(commAi);
   check(
-    "matrix/community: the 6th AI run/division 402s at the graded cap (scheduling.ai.runs_per_division.max)",
-    commAi.status === 402 && commAiErr.feature_key === "scheduling.ai.runs_per_division.max",
+    "matrix/community: an AI run 402s once the wallet is exhausted (ai.credits)",
+    commAi.status === 402 && commAiErr.feature_key === "ai.credits",
   );
   check(
     "matrix/community: the cap 402 carries the upgrade prompt (reason)",
@@ -1298,16 +1308,20 @@ async function smokePlanMatrix(): Promise<void> {
     proEnt.entitlements["scheduling.ai"]?.enabled === true,
   );
   check(
-    "matrix/pro: scheduling.ai.runs_per_division.max resolves 20 (V302)",
-    proEnt.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 20,
+    "matrix/pro: ai.credits.monthly resolves 60 (V320)",
+    proEnt.entitlements["ai.credits.monthly"]?.limit === 60,
   );
   check(
     "matrix/pro: officials.per_fixture.max is unlimited (null)",
     proEnt.entitlements["officials.per_fixture.max"]?.limit === null,
   );
 
-  // Behavioural proof of the cap: seed 20 prior AI runs on a division, the 21st
-  // 402s at the cap (fires before the LLM → keyless-safe).
+  // Behavioural proof of the wallet gate: setPlan is a raw plan_key flip (it
+  // does not itself grant the pro-tier monthly allowance — that only happens
+  // through a real checkout/sync or the daily cron), so this org's wallet
+  // still holds whatever the community bootstrap grant left it. Drain it to 0
+  // and the same `ai.credits` 402 fires — the gate is plan-independent, it
+  // only reads the balance.
   const proComp = v1data<{ id: string }>(
     await v1(pro, "/api/v1/competitions", "POST", {
       name: `Matrix Pro ${tag}`,
@@ -1319,14 +1333,13 @@ async function smokePlanMatrix(): Promise<void> {
       ...genericDiv,
     }),
   );
-  await seedAiRuns(proOrg, proComp.id, proDiv.id, 20);
+  await drainWallet(proOrg, 0);
   const proCapped = await v1(pro, `/api/v1/divisions/${proDiv.id}/schedule/ai-plan`, "POST", {
     instruction: "spread evenly across both courts",
   });
   check(
-    "matrix/pro: the 21st AI run/division 402s at the cap (scheduling.ai.runs_per_division.max)",
-    proCapped.status === 402 &&
-      featureKey(proCapped).feature_key === "scheduling.ai.runs_per_division.max",
+    "matrix/pro: an AI run 402s once the wallet is exhausted (ai.credits)",
+    proCapped.status === 402 && featureKey(proCapped).feature_key === "ai.credits",
   );
 
   // === PERSONA 3 — pro_plus ============================================
@@ -1336,8 +1349,8 @@ async function smokePlanMatrix(): Promise<void> {
   const plusEnt = await readEnt(plus, plusOrg);
   check("matrix/pro_plus: org resolves the pro_plus plan", plusEnt.plan_key === "pro_plus");
   check(
-    "matrix/pro_plus: scheduling.ai.runs_per_division.max resolves 50 (V302)",
-    plusEnt.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 50,
+    "matrix/pro_plus: ai.credits.monthly resolves 200 (V320)",
+    plusEnt.entitlements["ai.credits.monthly"]?.limit === 200,
   );
   check(
     "matrix/pro_plus: registration.fee_percent resolves 1",
@@ -1464,8 +1477,8 @@ async function smokePlanMatrix(): Promise<void> {
     passEnt.plan_key === "community",
   );
   check(
-    "matrix/event_pass: org-wide members.max resolves the community value (3)",
-    passEnt.entitlements["members.max"]?.limit === 3,
+    "matrix/event_pass: org-wide members.max resolves the community value (5)",
+    passEnt.entitlements["members.max"]?.limit === 5,
   );
 
   // === Task 20 — populated-competition assertions per plan org ===========
@@ -1492,8 +1505,8 @@ async function smokePlanMatrix(): Promise<void> {
  * the passed competition is ALLOWED, the sibling competition is REFUSED. A
  * check that a passless community org would also satisfy proves nothing about
  * the pass, and where a grant is a CEILING the pair is the only shape that can
- * fail for the right reason — "allowed at 64" alone passes on a plan with no
- * ceiling at all, and "refused at 65" alone passes on Community's 32.
+ * fail for the right reason — "allowed at 128" alone passes on a plan with no
+ * ceiling at all, and "refused at 129" alone passes on Community's 64.
  *
  * The sibling competition is also the leak detector: `competition_passes` is
  * joined into the resolver per competition (lib/entitlements.ts resolveFromDb),
@@ -1504,17 +1517,24 @@ async function smokePlanMatrix(): Promise<void> {
  *    branding" is a test that cannot fail. Dropped. It is NOT the same key as
  *    `dashboard.branding` (the brand-colour gate), which stays Pro-only and
  *    which the pass does not grant, so neither is substituted for the other.
- *  • "the 32-entrant cap" — V311 raised Community to 32 and the pass to 64.
- *    Asserting 32 asserts what a passless community org already gets.
+ *  • "the entrant cap" — V319 raised Community to 64 and the pass to 128.
+ *    Asserting 64 asserts what a passless community org already gets.
  * The live matrix (`set search_path = seazn_club`; the `public` schema holds a
  * stale pre-v3 copy) is the authority for every figure below.
  *
  * ── Keyless- and model-safe ────────────────────────────────────────────────
- * Nothing here needs Stripe, and nothing spends an Anthropic token. The AI
- * probes run `mode: "repair"` against a division with no movable fixtures, so
- * the request dies at AI_PLAN_EMPTY_SCOPE inside buildSchedulePack — which sits
- * AFTER the quota gate and BEFORE the model call, making "not capped" and
- * "capped" cleanly distinguishable for free.
+ * Nothing here needs Stripe, and nothing spends an Anthropic token.
+ *
+ * ── AI credits are no longer part of this pair pattern (v17 Phase 2) ────────
+ * The old graded per-division AI run cap (community 5, pass 10 — a
+ * per-division count, seeded via fake competition_events and read with
+ * `mode: "repair"` against an empty-scope division to stay keyless-safe) was
+ * retired (V322): AI runs are now metered by a prepaid, ORG-WIDE credit wallet
+ * (`ai_credit_ledger`, V320+), and Event Pass carries no `ai.credits.monthly`
+ * row at all — it never touches the wallet, so there is no pass-vs-sibling
+ * pair to assert here. The wallet's plan-matrix figure (community 10) staying
+ * put org-wide, regardless of a competition-scoped pass, is covered by the
+ * org-wide entitlements check further down in this suite instead.
  */
 async function passGrantsSuite(): Promise<void> {
   const genericDiv = {
@@ -1523,7 +1543,6 @@ async function passGrantsSuite(): Promise<void> {
     config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
   };
   const featureKey = (r: V1Res) => (r.json.error as { feature_key?: string } | undefined)?.feature_key;
-  const errCode = (r: V1Res) => r.json.error?.code;
 
   const s = newSession();
   const orgId = (await signIn(s, `passgrant_${tag}@example.com`)).org_id;
@@ -1588,70 +1607,56 @@ async function passGrantsSuite(): Promise<void> {
     board[key] = { divId: div.id, fixtureId: fixtures[0]!.id };
   }
 
-  // === entrants.per_division.max — community 32, pass 64 =================
+  // === entrants.per_division.max — community 64, pass 128 (V319) ==========
   const passCap = await mkDiv(passComp.id, "Entrant Cap");
   const plainCap = await mkDiv(plainComp.id, "Entrant Cap");
-  const passTo64 = await v1(s, `/api/v1/divisions/${passCap.id}/entrants`, "POST", entrants(64, 1, "P"));
-  const pass65 = await v1(s, `/api/v1/divisions/${passCap.id}/entrants`, "POST", entrants(1, 65, "P"));
-  const plainTo32 = await v1(s, `/api/v1/divisions/${plainCap.id}/entrants`, "POST", entrants(32, 1, "C"));
-  const plain33 = await v1(s, `/api/v1/divisions/${plainCap.id}/entrants`, "POST", entrants(1, 33, "C"));
+  const passTo128 = await v1(s, `/api/v1/divisions/${passCap.id}/entrants`, "POST", entrants(128, 1, "P"));
+  const pass129 = await v1(s, `/api/v1/divisions/${passCap.id}/entrants`, "POST", entrants(1, 129, "P"));
+  const plainTo64 = await v1(s, `/api/v1/divisions/${plainCap.id}/entrants`, "POST", entrants(64, 1, "C"));
+  const plain65 = await v1(s, `/api/v1/divisions/${plainCap.id}/entrants`, "POST", entrants(1, 65, "C"));
   check(
-    "pass grants/entrants: the passed competition seats 64 — past community's 32",
-    passTo64.status === 201,
+    "pass grants/entrants: the passed competition seats 128 — past community's 64",
+    passTo128.status === 201,
   );
   check(
-    "pass grants/entrants: the 65th is refused (the pass ceiling is 64, not unlimited)",
-    pass65.status === 402 && featureKey(pass65) === "entrants.per_division.max",
+    "pass grants/entrants: the 129th is refused (the pass ceiling is 128, not unlimited)",
+    pass129.status === 402 && featureKey(pass129) === "entrants.per_division.max",
   );
   check(
-    "pass grants/entrants: the sibling competition seats 32 (community's own cap)",
-    plainTo32.status === 201,
+    "pass grants/entrants: the sibling competition seats 64 (community's own cap)",
+    plainTo64.status === 201,
   );
   check(
-    "pass grants/entrants: the sibling is refused at 33 — the 64 did not leak org-wide",
-    plain33.status === 402 && featureKey(plain33) === "entrants.per_division.max",
+    "pass grants/entrants: the sibling is refused at 65 — the 128 did not leak org-wide",
+    plain65.status === 402 && featureKey(plain65) === "entrants.per_division.max",
   );
 
-  // === scheduling.ai.runs_per_division.max — community 5, pass 10 =========
-  // Three probes bracket the number exactly: 6th admitted on the pass, 11th
-  // refused on the pass, 6th refused on the sibling. Seeding only one side
-  // would pass whether the grant were 10 or unchanged at 5.
+  // === AI credits (V320+) — no longer a per-division/per-competition cap ===
+  // The old graded per-division AI run cap (community 5, pass 10) was retired
+  // (V322): AI runs are metered by a prepaid, ORG-WIDE credit wallet
+  // (ai_credit_ledger), not a per-division count, and Event Pass grants
+  // no ai.credits.monthly row at all (it is a competition-scoped entrant/
+  // division bump only, SPEC-2 §4a) — a pass neither raises nor otherwise
+  // touches the org's AI wallet. `passAiDiv` still exists purely as the
+  // passed competition's THIRD division, which the divisions.per_competition.
+  // max probe just below needs. The "AI credits stay at the community figure
+  // org-wide, unaffected by the pass" half of this story is covered by the
+  // org-wide entitlements check further down (`ai.credits.monthly === 10`).
   const passAiDiv = await mkDiv(passComp.id, "AI Five");
-  await seedAiRuns(orgId, passComp.id, passAiDiv.id, 5);
-  await seedAiRuns(orgId, passComp.id, passCap.id, 10);
-  await seedAiRuns(orgId, plainComp.id, plainCap.id, 5);
-  const emptyRepair = {
-    instruction: "smoke probe: repair with nothing movable in scope",
-    mode: "repair",
-    scope: { courts: [] },
-  };
-  const passAi6 = await v1(s, `/api/v1/divisions/${passAiDiv.id}/schedule/ai-plan`, "POST", emptyRepair);
-  const passAi11 = await v1(s, `/api/v1/divisions/${passCap.id}/schedule/ai-plan`, "POST", emptyRepair);
-  const plainAi6 = await v1(s, `/api/v1/divisions/${plainCap.id}/schedule/ai-plan`, "POST", emptyRepair);
-  check(
-    "pass grants/ai: the 6th run/division is ADMITTED on the passed competition (past community's 5)",
-    passAi6.status === 422 && errCode(passAi6) === "AI_PLAN_EMPTY_SCOPE",
-  );
-  check(
-    "pass grants/ai: the 11th run/division is refused (the pass ceiling is 10)",
-    passAi11.status === 402 && featureKey(passAi11) === "scheduling.ai.runs_per_division.max",
-  );
-  check(
-    "pass grants/ai: the sibling is refused at its 6th — the 10 did not leak org-wide",
-    plainAi6.status === 402 && featureKey(plainAi6) === "scheduling.ai.runs_per_division.max",
-  );
 
-  // === divisions.per_competition.max — community 2, pass 10 ===============
-  // The passed competition already holds three (Board, Entrant Cap, AI Five);
-  // that third one is itself the proof it is past community's 2, because the
-  // sibling — same org, same day — is refused its third below.
-  const plainThird = await v1(s, `/api/v1/competitions/${plainComp.id}/divisions`, "POST", {
-    name: "Third",
+  // === divisions.per_competition.max — community 4, pass 10 (V319) =========
+  // The sibling (no pass) already holds two divisions (Board, Entrant Cap);
+  // community's cap is 4, so a 3rd and 4th still land, and the 5th is refused —
+  // proving the pass did not lift the sibling's per-competition division cap.
+  await v1(s, `/api/v1/competitions/${plainComp.id}/divisions`, "POST", { name: "Third", ...genericDiv });
+  await v1(s, `/api/v1/competitions/${plainComp.id}/divisions`, "POST", { name: "Fourth", ...genericDiv });
+  const plainFifth = await v1(s, `/api/v1/competitions/${plainComp.id}/divisions`, "POST", {
+    name: "Fifth",
     ...genericDiv,
   });
   check(
-    "pass grants/divisions: the sibling competition is refused a 3rd division (community's cap is 2)",
-    plainThird.status === 402 && featureKey(plainThird) === "divisions.per_competition.max",
+    "pass grants/divisions: the sibling competition is refused a 5th division (community's cap is 4)",
+    plainFifth.status === 402 && featureKey(plainFifth) === "divisions.per_competition.max",
   );
   let passDivisionsOk = true;
   for (let i = 4; i <= 10; i++) {
@@ -1666,7 +1671,7 @@ async function passGrantsSuite(): Promise<void> {
     ...genericDiv,
   });
   check(
-    "pass grants/divisions: the passed competition takes all 10 (past community's 2)",
+    "pass grants/divisions: the passed competition takes all 10 (past community's 4)",
     passDivisionsOk,
   );
   check(
@@ -1820,10 +1825,10 @@ async function passGrantsSuite(): Promise<void> {
       flagOff("sponsors.monetize"),
   );
   check(
-    "pass grants/scope: every quota stays at the community figure org-wide (32/2/5 entrants/divisions/AI, fee 8%)",
-    ent.entitlements["entrants.per_division.max"]?.limit === 32 &&
-      ent.entitlements["divisions.per_competition.max"]?.limit === 2 &&
-      ent.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 5 &&
+    "pass grants/scope: every quota stays at the community figure org-wide (64/4/10 entrants/divisions/AI credits, fee 8%)",
+    ent.entitlements["entrants.per_division.max"]?.limit === 64 &&
+      ent.entitlements["divisions.per_competition.max"]?.limit === 4 &&
+      ent.entitlements["ai.credits.monthly"]?.limit === 10 &&
       ent.entitlements["registration.fee_percent"]?.limit === 8,
   );
 }
@@ -1832,8 +1837,8 @@ async function passGrantsSuite(): Promise<void> {
  *  walks the whole /clubs/[id] hub lifecycle over HTTP — create a club, PATCH
  *  its profile (home ground), add a committee contact, create a *standalone*
  *  team, move it under the club, then replace its squad with a person created
- *  inline (the squad editor's quick-add). The free path proves the V292
- *  community cap: clubs.max = 2, so two clubs succeed and the third 402s with
+ *  inline (the squad editor's quick-add). The free path proves the V319
+ *  community cap: clubs.max = 5, so five clubs succeed and the sixth 402s with
  *  the `feature_key` the contextual <UpgradeGate> reads. Both run on their own
  *  fresh orgs (Pro flipped via setPlan, free stays community) so the suite is
  *  order-independent — the earlier suites downgrade the shared org2. */
@@ -1984,24 +1989,22 @@ async function clubsSuite(): Promise<void> {
   );
   check("clubs pro: roster/sync on a team-less entrant 422s", soloSync.status === 422);
 
-  // --- Free path: the tunable community clubs.max = 2 (V292). Two clubs land,
-  // the third 402s with the feature key that drives the paywall.
+  // --- Free path: the tunable community clubs.max = 5 (V319 "free runs big").
+  // Five clubs land, the sixth 402s with the feature key that drives the paywall.
   const free = newSession();
   await signIn(free, `clubfree_${tag}@example.com`);
-  const c1 = await v1(free, "/api/v1/clubs", "POST", {
-    name: `Free Club One ${tag}`,
-  });
-  const c2 = await v1(free, "/api/v1/clubs", "POST", {
-    name: `Free Club Two ${tag}`,
-  });
-  check("clubs free: first two clubs allowed on community", c1.status === 201 && c2.status === 201);
-  const c3 = await v1(free, "/api/v1/clubs", "POST", {
-    name: `Free Club Three ${tag}`,
+  const freeClubs = [];
+  for (let i = 1; i <= 5; i++) {
+    freeClubs.push(await v1(free, "/api/v1/clubs", "POST", { name: `Free Club ${i} ${tag}` }));
+  }
+  check("clubs free: first five clubs allowed on community", freeClubs.every((r) => r.status === 201));
+  const c6 = await v1(free, "/api/v1/clubs", "POST", {
+    name: `Free Club Six ${tag}`,
   });
   check(
-    "clubs free: third club 402s with the clubs.max feature key",
-    c3.status === 402 &&
-      (c3.json.error as { feature_key?: string } | undefined)?.feature_key === "clubs.max",
+    "clubs free: sixth club 402s with the clubs.max feature key",
+    c6.status === 402 &&
+      (c6.json.error as { feature_key?: string } | undefined)?.feature_key === "clubs.max",
   );
 }
 
@@ -2671,7 +2674,10 @@ async function marksReportsSuite(
   const freeMark = await v1(commOwner, `/api/v1/fixture-officials/${freeFoId}/mark`, "PUT", {
     mark: 3,
   });
-  check("marks free: rating is gated 402 (Pro officials.marks)", freeMark.status === 402);
+  check(
+    "marks free: rating is ungated on community (204, officials.marks #253)",
+    freeMark.status === 204,
+  );
   const freeDraft = await v1(free.ref, `/api/v1/me/officiating/${freeFoId}/report`, "PUT", {
     body: "community game",
     incidents: [],
@@ -3905,33 +3911,79 @@ async function seedStripeFeeDivision(divisionId: string): Promise<void> {
   }
 }
 
-/** payments-hardening Task 15 (Pro AI cap): seed N prior `schedule.ai_generated`
- *  competition_events for a division — the per-division AI cap counts exactly
- *  these. Mirrors schedule-plus.test.ts's seed; the LLM can't run headless, so
- *  we seed the ledger the cap reads and let the (cap+1)th request 402 BEFORE the
- *  model call (keyless-safe). */
-async function seedAiRuns(
-  orgId: string,
-  competitionId: string,
-  divisionId: string,
-  n: number,
-): Promise<void> {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL is required to seed AI runs in smoke");
-  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
-  const sql = postgres(url, {
-    connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
-    ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
-    prepare: !url.includes(":6543"),
-    max: 1,
-  });
+/** v17 Phase-2 (V320+): the AI Schedule/Officials Architect is metered by a
+ *  prepaid credit WALLET (`ai_credit_ledger`), not a per-division run count —
+ *  the old graded per-division cap key was retired outright (V322). The
+ *  wallet id an org spends from is `coalesce(subscription_id, org_id)`
+ *  (`lib/credits.ts`'s `walletIdFor`, mirrored here as raw SQL since smoke
+ *  can't import server-only app code). */
+async function walletIdForOrg(orgId: string): Promise<string> {
+  const sql = smokeDb();
   try {
-    for (let i = 0; i < n; i++) {
-      await sql`
-        insert into competition_events (competition_id, org_id, type, payload)
-        values (${competitionId}, ${orgId}, 'schedule.ai_generated',
-                ${sql.json({ division_id: divisionId })})`;
-    }
+    const [row] = await sql<{ wallet_id: string }[]>`
+      select coalesce(subscription_id, id)::text as wallet_id
+        from organizations where id = ${orgId}`;
+    if (!row) throw new Error(`walletIdForOrg: no organization ${orgId}`);
+    return row.wallet_id;
+  } finally {
+    await sql.end();
+  }
+}
+
+/** Credits currently in an org's AI wallet: `sum(delta)` over the ledger
+ *  (mirrors `lib/credits.ts`'s `balance()`). */
+async function walletBalance(orgId: string): Promise<number> {
+  const walletId = await walletIdForOrg(orgId);
+  const sql = smokeDb();
+  try {
+    const [row] = await sql<{ bal: string | null }[]>`
+      select coalesce(sum(delta), 0)::text as bal
+        from ai_credit_ledger where wallet_id = ${walletId}`;
+    return Number(row?.bal ?? 0);
+  } finally {
+    await sql.end();
+  }
+}
+
+/** Drain an org's AI credit wallet down to exactly `remaining` credits via a
+ *  single raw ledger debit row — the keyless-safe way smoke proves the
+ *  `ai.credits` 402 fires without spending on a real model call. This
+ *  replaces the old `seedAiRuns` (which seeded fake `schedule.ai_generated`
+ *  competition_events for the now-retired per-division count cap). A no-op if
+ *  the wallet already holds `remaining` or less. */
+async function drainWallet(orgId: string, remaining = 0): Promise<void> {
+  const walletId = await walletIdForOrg(orgId);
+  const current = await walletBalance(orgId);
+  const drain = current - remaining;
+  if (drain <= 0) return;
+  const sql = smokeDb();
+  try {
+    await sql`
+      insert into ai_credit_ledger
+        (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${walletId}, ${-drain}, 'admin_adjust', 'grant', ${remaining},
+              ${`smoke-drain-${tag}-${orgId}-${Date.now()}`})`;
+  } finally {
+    await sql.end();
+  }
+}
+
+/** Top up an org's AI credit wallet by `amount` via a single raw ledger
+ *  credit row — the keyless-safe analog of the old `insertEntitlementOverride`
+ *  "admin lifts the cap" step, updated for the wallet model: there is no
+ *  per-division cap to override any more, only a balance to credit. Uses the
+ *  grant bucket (SPEC-2 §5.4 D1); the bucket is immaterial to smoke, which only
+ *  needs a spendable balance to drain. */
+async function topUpWallet(orgId: string, amount: number): Promise<void> {
+  const walletId = await walletIdForOrg(orgId);
+  const current = await walletBalance(orgId);
+  const sql = smokeDb();
+  try {
+    await sql`
+      insert into ai_credit_ledger
+        (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${walletId}, ${amount}, 'admin_adjust', 'grant', ${current + amount},
+              ${`smoke-topup-${tag}-${orgId}-${Date.now()}`})`;
   } finally {
     await sql.end();
   }
@@ -3954,7 +4006,10 @@ function smokeDb() {
 /** Grant an org-wide entitlement override — the same row /admin/entitlements
  *  writes. A boolean `value` lands in bool_value (a flag grant, e.g.
  *  api.access), a number in int_value (a graded cap, e.g.
- *  scheduling.ai.runs_per_division.max).
+ *  entrants.per_division.max). Not used for AI runs any more — those are
+ *  metered by the credit wallet (`drainWallet`/`topUpWallet`), not an
+ *  entitlement override (the old graded per-division run cap was retired,
+ *  V322).
  *
  *  This is a raw-SQL write behind the resolver's back, exactly like setPlan's,
  *  so it busts the org's entitlement cache afterwards for the same reason: both
@@ -4086,9 +4141,10 @@ interface AiPlanResponseLite {
  *  cost_usd) → apply with the `ai` provenance block → ai-last recall → officials
  *  ai-plan with an EMPTY instruction (zero-token solver draft →
  *  schedule.ai_officials_generated stamped model "solver-draft"). A fresh
- *  community org proves the graded per-division run cap (seed 5 → the 6th 402s at
- *  scheduling.ai.runs_per_division.max, before any model spend) and that an admin
- *  entitlement override lifts it (→ 200).
+ *  community org proves the AI credit WALLET gate (v17 Phase 2, V320+): drain
+ *  its wallet to 0 → the next run 402s at `ai.credits`, before any model
+ *  spend, and topping the wallet back up (the wallet-model analog of the old
+ *  admin entitlement override) admits the next run (→ 200).
  *
  *  The model is never real: the Task 17 fixture server echoes the pack's own
  *  deterministic draft, so a run is CLEAN by construction. Model-dependent steps
@@ -4117,11 +4173,11 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
   }
 
   try {
-    // ---- Free path: the graded run cap (keyless — 402 fires before any model) ----
+    // ---- Free path: the AI credit wallet gate (keyless — 402 fires before any model) ----
     const free = newSession();
     const freeOrg = (await signIn(free, `smoke-ai-free-${tag}@example.com`)).org_id;
     const freeDivIds = await seedPlannableAiDivision(free, "AI Free");
-    await seedAiRuns(freeOrg, freeDivIds.compId, freeDivIds.divId, 5);
+    await drainWallet(freeOrg, 0);
     const capped = await v1(
       free,
       `/api/v1/divisions/${freeDivIds.divId}/schedule/ai-plan`,
@@ -4131,14 +4187,13 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
       },
     );
     check(
-      "v4 AI/free: the 6th run/division 402s at the graded cap (scheduling.ai.runs_per_division.max)",
+      "v4 AI/free: an AI run 402s once the wallet is exhausted (ai.credits)",
       capped.status === 402 &&
-        (capped.json.error as { feature_key?: string } | undefined)?.feature_key ===
-          "scheduling.ai.runs_per_division.max",
+        (capped.json.error as { feature_key?: string } | undefined)?.feature_key === "ai.credits",
     );
 
-    // ---- Admin override lifts the cap → the next run is admitted (needs model) ----
-    await insertEntitlementOverride(free, freeOrg, "scheduling.ai.runs_per_division.max", 6);
+    // ---- Topping the wallet back up admits the next run (needs model) ----
+    await topUpWallet(freeOrg, 1);
     if (fixture) {
       const lifted = await v1(
         free,
@@ -4149,7 +4204,7 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
         },
       );
       check(
-        "v4 AI/override: an entitlement override lifts the cap → the next run is admitted (200 + proposal)",
+        "v4 AI/topup: crediting the wallet admits the next run (200 + proposal)",
         lifted.status === 200 && Array.isArray(v1data<AiPlanResponseLite>(lifted).proposal),
       );
     }
@@ -4225,8 +4280,12 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
         last.status === 200 && lastData?.last?.instruction === instruction,
       );
       check(
-        "v4 AI/plus: ai-last reports the generation budget (1 used of pro_plus 50)",
-        lastData?.runs?.used === 1 && lastData?.runs?.max === 50,
+        // v17 Phase 2 Task 5 (V322) retired the per-division run cap `runs.max`
+        // used to resolve (pro_plus 50); the AI credit wallet meters spend
+        // instead, so `runs.max` is now always null (lastAiApply, schedule.ts) —
+        // `runs.used` still counts the same schedule.ai_generated rows.
+        "v4 AI/plus: ai-last reports 1 run used and no per-division max (wallet-metered now)",
+        lastData?.runs?.used === 1 && lastData?.runs?.max === null,
       );
 
       const offRes = await v1(plus, `/api/v1/divisions/${divId}/officials/ai-plan`, "POST", {
@@ -4309,8 +4368,9 @@ async function proPlusSuite(): Promise<void> {
   const fixtureId = v1data<{ fixtures: { id: string }[] }>(gen).fixtures[0]!.id;
   await v1(owner, `/api/v1/divisions/${div.id}/start`, "POST");
 
-  // (a) Community: a fixture already covers ONE official free on every plan
-  // (Jul3/02 §5) — a 2nd distinct official on the SAME fixture 402s.
+  // (a) Community: officials are ungated on every plan (#253, V319 —
+  // officials.per_fixture.max is now unlimited), so a 2nd distinct official on
+  // the SAME fixture is allowed (200), not refused.
   const offA = v1data<{ id: string }>(
     await v1(owner, "/api/v1/officials", "POST", {
       display_name: `Plus Ref A ${tag}`,
@@ -4330,15 +4390,14 @@ async function proPlusSuite(): Promise<void> {
         { official_id: offB.id, role_key: "referee", locked: false },
       ],
     });
-  const officialsDenied = await setTwoOfficials();
+  const officialsAllowed = await setTwoOfficials();
   check(
-    "pp: community 402s a 2nd official on one fixture (officials.per_fixture.max)",
-    officialsDenied.status === 402 &&
-      (officialsDenied.json.error as { feature_key?: string } | undefined)?.feature_key ===
-        "officials.per_fixture.max",
+    "pp: community allows a 2nd official on one fixture (officials.per_fixture.max ungated #253)",
+    officialsAllowed.status === 200,
   );
 
-  // (a) Community: the 1st save point is free, the 2nd 402s.
+  // (a) Community: save points — community's cap is 2 (V319), so the 1st and
+  // 2nd land and the 3rd 402s.
   const cp1 = await v1(owner, `/api/v1/divisions/${div.id}/checkpoints`, "POST", {
     label: `plus 1 ${tag}`,
   });
@@ -4346,10 +4405,14 @@ async function proPlusSuite(): Promise<void> {
   const cp2 = await v1(owner, `/api/v1/divisions/${div.id}/checkpoints`, "POST", {
     label: `plus 2 ${tag}`,
   });
+  check("pp: community's second save point is free (cap is 2)", cp2.status === 201);
+  const cp3Denied = await v1(owner, `/api/v1/divisions/${div.id}/checkpoints`, "POST", {
+    label: `plus 3 denied ${tag}`,
+  });
   check(
-    "pp: community 402s a 2nd save point (schedule.checkpoints.max)",
-    cp2.status === 402 &&
-      (cp2.json.error as { feature_key?: string } | undefined)?.feature_key ===
+    "pp: community 402s a 3rd save point (schedule.checkpoints.max)",
+    cp3Denied.status === 402 &&
+      (cp3Denied.json.error as { feature_key?: string } | undefined)?.feature_key ===
         "schedule.checkpoints.max",
   );
 
@@ -4425,9 +4488,9 @@ async function pricingV3Suite(): Promise<void> {
   const who = await signIn(buyer, `pass_${tag}@example.com`);
   const orgId = who.org_id;
 
-  // Free caps (v3.1 matrix, V311): community now runs up to 5 active
-  // competitions (was 1), still 2 divisions inside each. The pass lifts the
-  // per-competition DIVISION cap — that is the boundary this test drives below.
+  // Free caps (v17 matrix, V319 "free runs big"): community now runs several
+  // active competitions, with 4 divisions inside each (was 2). The pass lifts
+  // the per-competition DIVISION cap — that is the boundary this test drives.
   const compA = v1data<{ id: string; slug: string }>(
     await v1(buyer, "/api/v1/competitions", "POST", {
       name: `Pass Cup ${tag}`,
@@ -4436,28 +4499,28 @@ async function pricingV3Suite(): Promise<void> {
   const secondComp = await v1(buyer, "/api/v1/competitions", "POST", {
     name: `Second Cup ${tag}`,
   });
-  check("p36: 2nd active competition allowed on free (V311 raised the cap to 5)", secondComp.status === 201);
-  for (const name of ["Div 1", "Div 2"]) {
+  check("p36: 2nd active competition allowed on free (community runs several)", secondComp.status === 201);
+  for (const name of ["Div 1", "Div 2", "Div 3", "Div 4"]) {
     const d = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
       name,
       ...genericDivision,
     });
     check(`p36: free org creates ${name.toLowerCase()}`, d.status === 201);
   }
-  const div3Blocked = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
-    name: "Div 3",
+  const div5Blocked = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
+    name: "Div 5",
     ...genericDivision,
   });
-  check("p36: 3rd division blocked on free (402)", div3Blocked.status === 402);
+  check("p36: 5th division blocked on free (402, community's cap is 4)", div5Blocked.status === 402);
 
-  // Event Pass on comp A lifts ITS per-competition caps — the 3rd division it
+  // Event Pass on comp A lifts ITS per-competition caps — the 5th division it
   // just refused now lands.
   await grantPass(orgId, compA.id);
-  const div3 = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
-    name: "Div 3",
+  const div5 = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
+    name: "Div 5",
     ...genericDivision,
   });
-  check("p36: pass lifts division cap on the passed comp", div3.status === 201);
+  check("p36: pass lifts division cap on the passed comp", div5.status === 201);
   const compB = v1data<{ id: string }>(
     await v1(buyer, "/api/v1/competitions", "POST", {
       name: `Sibling Cup ${tag}`,
@@ -4466,15 +4529,15 @@ async function pricingV3Suite(): Promise<void> {
   check("p36: a sibling competition is created (community runs several)", !!compB.id);
 
   // …while the sibling competition — no pass — stays on the community DIVISION
-  // cap, proving the pass is scoped to comp A and not the org.
-  for (const name of ["S1", "S2"]) {
+  // cap (4), proving the pass is scoped to comp A and not the org.
+  for (const name of ["S1", "S2", "S3", "S4"]) {
     await v1(buyer, `/api/v1/competitions/${compB.id}/divisions`, "POST", {
       name,
       ...genericDivision,
     });
   }
   const sibBlocked = await v1(buyer, `/api/v1/competitions/${compB.id}/divisions`, "POST", {
-    name: "S3",
+    name: "S5",
     ...genericDivision,
   });
   check("p36: sibling comp still community-capped (402)", sibBlocked.status === 402);
@@ -4486,7 +4549,7 @@ async function pricingV3Suite(): Promise<void> {
   });
   check("p36: pass purchase blocked on Pro (400)", proBuy.status === 400);
   const sibUnderPro = await v1(buyer, `/api/v1/competitions/${compB.id}/divisions`, "POST", {
-    name: "S3",
+    name: "S5",
     ...genericDivision,
   });
   check("p36: pro lifts the sibling comp", sibUnderPro.status === 201);
@@ -4494,7 +4557,7 @@ async function pricingV3Suite(): Promise<void> {
   // Downgrade: the pass survives — comp A keeps its 10-division headroom.
   await setPlan(orgId, "community", buyer);
   const afterDowngrade = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
-    name: "Div 4",
+    name: "Div 6",
     ...genericDivision,
   });
   check("p36: pass survives downgrade (comp A still lifted)", afterDowngrade.status === 201);
@@ -6068,8 +6131,8 @@ async function divisionLifecycleSuite(admin: Session, proOrgId: string): Promise
   };
 
   // --- Free path: a fresh org (no subscription row) is community — the
-  // divisions.per_competition quota is 2 (v3 matrix), and DELETE frees a
-  // slot. Creating the org switches the active-org cookie onto it.
+  // divisions.per_competition quota is 4 (V319 "free runs big"), and DELETE
+  // frees a slot. Creating the org switches the active-org cookie onto it.
   await call(admin, "/api/orgs", "POST", { name: `Del Org ${tag}` });
   const comp = await v1(admin, "/api/v1/competitions", "POST", {
     name: `Del Cup ${tag}`,
@@ -6081,15 +6144,17 @@ async function divisionLifecycleSuite(admin: Session, proOrgId: string): Promise
   });
   check("del: free org creates division 1", first.status === 201);
   const firstId = v1data<{ id: string }>(first).id;
-  await v1(admin, `/api/v1/competitions/${compId}/divisions`, "POST", {
-    name: "Filler",
-    ...genericDivision,
-  });
+  for (const name of ["Filler 2", "Filler 3", "Filler 4"]) {
+    await v1(admin, `/api/v1/competitions/${compId}/divisions`, "POST", {
+      name,
+      ...genericDivision,
+    });
+  }
   const blocked = await v1(admin, `/api/v1/competitions/${compId}/divisions`, "POST", {
-    name: "Second",
+    name: "Fifth",
     ...genericDivision,
   });
-  check("del: division 3 blocked on free (402)", blocked.status === 402);
+  check("del: division 5 blocked on free (402, community's cap is 4)", blocked.status === 402);
 
   // Open registration blocks delete; closing it unblocks.
   await v1(admin, `/api/v1/divisions/${firstId}/registration-settings`, "PUT", {

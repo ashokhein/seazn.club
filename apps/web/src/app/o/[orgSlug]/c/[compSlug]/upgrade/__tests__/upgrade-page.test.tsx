@@ -33,9 +33,7 @@ const h = vi.hoisted(() => ({
     { plan_key: "community", feature_key: "entrants.per_division.max", bool_value: null, int_value: 32 },
     { plan_key: "event_pass", feature_key: "entrants.per_division.max", bool_value: null, int_value: 64 },
     { plan_key: "pro", feature_key: "entrants.per_division.max", bool_value: null, int_value: 256 },
-    { plan_key: "community", feature_key: "scheduling.ai.runs_per_division.max", bool_value: null, int_value: 5 },
-    { plan_key: "event_pass", feature_key: "scheduling.ai.runs_per_division.max", bool_value: null, int_value: 10 },
-    { plan_key: "pro", feature_key: "scheduling.ai.runs_per_division.max", bool_value: null, int_value: 20 },
+    // scheduling.ai.runs_per_division.max retired (v17 Phase 2 Task 5, V322).
     { plan_key: "community", feature_key: "registration.fee_percent", bool_value: null, int_value: 8 },
     { plan_key: "event_pass", feature_key: "registration.fee_percent", bool_value: null, int_value: 5 },
     { plan_key: "pro", feature_key: "registration.fee_percent", bool_value: null, int_value: 2 },

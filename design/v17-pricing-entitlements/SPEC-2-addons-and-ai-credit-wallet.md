@@ -116,7 +116,7 @@ balance(wallet) = sum(delta)
 4b. fail    → release: compensating +cost row (net zero; user not charged for our error)
 ```
 
-- **Concurrency:** the `balance_after >= 0` CHECK + transactional insert prevents two parallel runs both grabbing the last credit. No app lock needed.
+- **Concurrency:** a per-wallet `pg_advisory_xact_lock` inside `reserve()` serializes read→compute→insert. **The `balance_after >= 0` CHECK alone does NOT prevent oversell** — two txns can both read the same stale balance and each compute a non-negative `balance_after` (lost-update; proven in Phase-2 Task 3). The advisory lock + CHECK together block it.
 - **Idempotent:** spend keyed by `run_id` → retries / webhook replays never double-debit.
 - **Spend order:** burn the resetting **grant credits first**, then **paid packs** (never waste paid credits on the free/trial allowance).
 
@@ -140,7 +140,7 @@ ai_credit_ledger.ref → ai_runs(model, tokens, cost_usd, competition_id)   -- l
 |---|---|---|
 | **D1** monthly grant | **reset (use-or-lose)** each cycle | grant = taste + margin floor, not a bank |
 | **Cadence** | grant is **monthly regardless of billing cadence** | annual Pro ($159/yr) still gets 60/mo × 12, NOT a 720 lump (spike/waste) |
-| **Anchor** | **billing-cycle** (paid) / **creation-day calendar** (Community) | resets align with the Stripe period + proration |
+| **Anchor** | **plain calendar month, for every tier** (paid and Community alike) — never the Stripe billing-cycle boundary | matches Cadence above: an annual subscription's `current_period_end` only advances once a year, so anchoring paid tiers on it would collapse 12 grants into 1 |
 | **D2** purchased packs | **expire 24 months** from purchase ⚠ finance/legal sign-off | bounds deferred revenue + captures breakage; long enough to feel permanent |
 | **Trial grant** | `ai.credits.trial` one-time (default **20**), **once per org** (`trial_used_at` guard) | taste without COGS; convert→monthly grant, expire→Community 10/mo. Guard stops trial-farming for free credits |
 | **Downgrade** | keep wallet balance; grant resets to new (lower) tier next cycle; packs persist | credits are money — freeze-not-delete extends to the wallet; AI still runs on any tier |

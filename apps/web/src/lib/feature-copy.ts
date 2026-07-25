@@ -60,8 +60,15 @@ const FEATURE_REASONS: Record<string, string> = {
   "officials.per_fixture.max": "Community includes one official per fixture — more need Pro.",
   "officials.marks": "Rating your match officials is a Pro feature.",
   "scheduling.ai": "AI Schedule (plan, refine and repair your schedule from plain-language instructions) is not available on this plan.",
-  "scheduling.ai.runs_per_division.max":
-    "You've used this division's AI schedule generations — free plans include 5, an Event Pass 10, Pro 20 and Pro Plus 50.",
+  // scheduling.ai.runs_per_division.max retired (v17 Phase 2 Task 5, V322):
+  // the graded per-division run cap below it is gone, replaced by the
+  // AI credit wallet's "ai.credits" reason (right below).
+  // AI credit wallet (v17 Phase 2, SPEC-2 §5.2): AI Schedule and AI Officials
+  // are metered by a prepaid credit balance on every tier, not by plan — this
+  // fires when the wallet (`reserve()` in lib/credits.ts) is empty, replacing
+  // the old per-division run cap above.
+  "ai.credits":
+    "You're out of AI credits for this billing period. Top up a credit pack or upgrade your plan to keep using AI Schedule and AI Officials.",
   "schedule.versioning": "Multi-site scope locks are a Pro feature — undo/redo always works.",
   "schedule.checkpoints.max": "You've reached your plan's save points — Pro includes five, Pro Plus unlimited. Undo/redo always works.",
   "domains.custom": "Serving your public pages on your own domain is a Pro Plus feature.",
@@ -97,10 +104,9 @@ export function featureReason(featureKey: string): string {
 
 // Cheapest plan that unlocks each feature (mirrors plan_entitlements,
 // V112 + V240 + V290 + V291 + V302). Everything not listed unlocks on Pro —
-// only the above-Pro (Pro Plus) exceptions need rows. The AI run cap is a
-// graded quota on every tier (V302: 5/10/20/50), so like
-// schedule.checkpoints.max it advertises Pro as the next step up and the
-// reason copy spells out the full ladder.
+// only the above-Pro (Pro Plus) exceptions need rows. (The AI run cap that
+// used to be a graded quota here — V302: 5/10/20/50 — was retired in v17
+// Phase 2 Task 5, V322: the credit wallet meters runs on every tier now.)
 const PLUS_FEATURES = new Set([
   "api.write",
   "scorers.max",

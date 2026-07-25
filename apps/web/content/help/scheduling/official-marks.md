@@ -4,7 +4,7 @@ description: Rate an accepted official 1–5 after a fixture is decided, add an 
 order: 8
 ---
 
-Once a fixture is **decided**, you can mark the officials who covered it — a 1–5 score with an optional comment, the way FA clubs mark referees every weekend. Marking is a **Pro feature** (`officials.marks`); Community sees the upgrade prompt in its place.
+Once a fixture is **decided**, you can mark the officials who covered it — a 1–5 score with an optional comment, the way FA clubs mark referees every weekend. Marking is **available on every plan** — Community, Event Pass, Pro and Pro Plus alike.
 
 ## Rate an official
 

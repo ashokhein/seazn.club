@@ -34,5 +34,7 @@ export const PASS_FEATURES = new Set([
   "exports.branded",
   "sponsors.tiers",
   "sponsors.monetize",
-  "scheduling.ai.runs_per_division.max",
+  // scheduling.ai.runs_per_division.max retired (v17 Phase 2 Task 5, V322) —
+  // the AI credit wallet meters runs on every tier now, so it no longer has a
+  // plan_entitlements row for the pass to lift.
 ]);
