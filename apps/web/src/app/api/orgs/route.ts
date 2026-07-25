@@ -1,5 +1,6 @@
 import { createOrgForUser, getUserOrgs, requireUser, setActiveOrgId } from "@/lib/auth";
 import { handler } from "@/lib/http";
+import { consumeReferralCookie } from "@/lib/referral";
 import { createOrgSchema } from "@/lib/types";
 
 /** List the organizations the current user belongs to (with their role). */
@@ -17,7 +18,8 @@ export async function POST(req: Request) {
   return handler(async () => {
     const user = await requireUser();
     const { name, attachToGroupId } = createOrgSchema.parse(await req.json());
-    const org = await createOrgForUser(user.id, name);
+    const referredByOrgId = await consumeReferralCookie(user.id);
+    const org = await createOrgForUser(user.id, name, { referredByOrgId });
     await setActiveOrgId(org.id);
     if (!attachToGroupId) return org;
     try {

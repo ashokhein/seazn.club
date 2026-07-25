@@ -8,6 +8,7 @@ import crypto from "node:crypto";
 import { z } from "zod";
 import { sql } from "@/lib/db";
 import { createOrgForUser, getUserOrgs } from "@/lib/auth";
+import { consumeReferralCookie } from "@/lib/referral";
 import { createCompetition } from "@/server/usecases/competitions";
 import { createDivision } from "@/server/usecases/divisions";
 import { routes } from "@/lib/routes";
@@ -101,8 +102,10 @@ export async function createFromDraft(
   draft: FunnelDraft,
 ): Promise<{ redirect: string; orgId: string }> {
   const orgs = await getUserOrgs(userId);
+  const referredByOrgId = await consumeReferralCookie(userId);
   const org =
-    orgs[0] ?? (await createOrgForUser(userId, `${draft.payload.name} organisers`));
+    orgs[0] ??
+    (await createOrgForUser(userId, `${draft.payload.name} organisers`, { referredByOrgId }));
 
   const auth: AuthCtx = { orgId: org.id, via: "session", userId, role: "owner", keyId: null };
   const competition = await createCompetition(auth, {

@@ -1,18 +1,18 @@
 import "server-only";
 import { randomInt } from "node:crypto";
+import { cookies } from "next/headers";
 import { sql } from "@/lib/db";
 // Referral attribution primitive (design/v17-pricing-entitlements/SPEC-5 §2,
-// issue #267 Task 1 — FOUNDATION only). This module owns the shareable
-// per-org code (`referral_code`, V332) and its resolver; the attribution
-// flow (stamping `referred_by_org_id` at org creation, the self-referral
-// guard, the cookie read/write) and the earn-credit grant it eventually
-// feeds are later tasks. Deliberately a leaf module — no `lib/credits` or
-// entitlements import, to avoid a cycle; the cookie NAME is exported here
-// (a pure const) so a later task's cookie IO and this module agree on it
-// without either importing `next/headers`.
+// issue #267). Task 1 built the shareable per-org code (`referral_code`,
+// V333) and its resolver; Task 2 (this revision) adds the attribution flow —
+// the `/refer/<code>` cookie read + self-referral guard, consumed at org
+// creation to stamp `referred_by_org_id`. Still deliberately no `lib/credits`
+// or entitlements import (avoids a cycle) — the earn-credit grant the
+// referral eventually feeds is a later task, wired off `referred_by_org_id`
+// once it is stamped, not off anything in this module.
 
-/** Cookie name a later task sets when a visitor lands via `/refer/<code>`
- *  and reads at org-creation time to stamp `referred_by_org_id`. */
+/** Cookie name set when a visitor lands via `/refer/<code>` and read at
+ *  org-creation time (`consumeReferralCookie`) to stamp `referred_by_org_id`. */
 export const REFERRAL_COOKIE = "ref";
 
 /** Length of a generated referral code. */
@@ -117,4 +117,70 @@ export async function resolveReferralCode(
      where o.referral_code = ${code}`;
   if (!row) return null;
   return { orgId: row.id, ownerUserId: row.owner_user_id, ownerEmail: row.owner_email };
+}
+
+/** Best-effort clear of the referral cookie. Cookie writes are only legal from
+ *  a route handler / server action — a Server Component render (e.g. the
+ *  `ensureActiveOrg` auto-provision path) throws on `cookies().delete(...)`.
+ *  Swallow that: a failed clear must never block org creation. The one
+ *  accepted edge this leaves: if the clear silently fails on an RSC path, the
+ *  cookie lingers and the user's NEXT explicit org create would re-run the
+ *  guard against the same code — bounded, because once they have an org
+ *  `ensureActiveOrg`'s auto-provision branch never fires again, and the
+ *  route-handler path (`POST /api/orgs`) clears it successfully. */
+async function clearReferralCookie(
+  jar: Awaited<ReturnType<typeof cookies>>,
+): Promise<void> {
+  try {
+    jar.delete(REFERRAL_COOKIE);
+  } catch {
+    // RSC render context — cookie write is illegal here. Ignored by design.
+  }
+}
+
+/**
+ * Read + consume the referral cookie for a user who is creating their org
+ * (SPEC-5 §2). Resolves the code to its referrer, applies the self-referral
+ * guard ("distinct payer/email" — a code must not attribute an org to its own
+ * owner, by user id OR by email), best-effort clears the cookie so a later
+ * org create by the same browser does not re-consume it, and returns the
+ * referrer org id — or `null` for: no cookie, an unknown/expired code, or a
+ * self-referral.
+ */
+export async function consumeReferralCookie(newUserId: string): Promise<string | null> {
+  let jar: Awaited<ReturnType<typeof cookies>>;
+  try {
+    jar = await cookies();
+  } catch {
+    // Called with no active Next.js request scope at all (e.g. a script or a
+    // plain unit test driving `createOrgForUser`'s callers directly, outside
+    // any route/RSC render) — `cookies()` itself throws here, not just a
+    // write. No request scope means no cookie to read; degrade to "no
+    // referral" rather than propagate, same best-effort spirit as the clear
+    // below.
+    return null;
+  }
+  const code = jar.get(REFERRAL_COOKIE)?.value;
+  if (!code) return null;
+
+  const ref = await resolveReferralCode(code);
+  if (!ref) {
+    await clearReferralCookie(jar);
+    return null;
+  }
+
+  const [user] = await sql<{ email: string | null }[]>`
+    select email from users where id = ${newUserId}`;
+  const newUserEmail = user?.email ?? null;
+
+  const sameUser = ref.ownerUserId !== null && ref.ownerUserId === newUserId;
+  const sameEmail =
+    ref.ownerEmail !== null &&
+    newUserEmail !== null &&
+    ref.ownerEmail.toLowerCase() === newUserEmail.toLowerCase();
+
+  await clearReferralCookie(jar);
+  if (sameUser || sameEmail) return null;
+
+  return ref.orgId;
 }
