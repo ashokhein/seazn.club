@@ -1477,8 +1477,8 @@ async function smokePlanMatrix(): Promise<void> {
     passEnt.plan_key === "community",
   );
   check(
-    "matrix/event_pass: org-wide members.max resolves the community value (3)",
-    passEnt.entitlements["members.max"]?.limit === 3,
+    "matrix/event_pass: org-wide members.max resolves the community value (5)",
+    passEnt.entitlements["members.max"]?.limit === 5,
   );
 
   // === Task 20 — populated-competition assertions per plan org ===========
@@ -1505,8 +1505,8 @@ async function smokePlanMatrix(): Promise<void> {
  * the passed competition is ALLOWED, the sibling competition is REFUSED. A
  * check that a passless community org would also satisfy proves nothing about
  * the pass, and where a grant is a CEILING the pair is the only shape that can
- * fail for the right reason — "allowed at 64" alone passes on a plan with no
- * ceiling at all, and "refused at 65" alone passes on Community's 32.
+ * fail for the right reason — "allowed at 128" alone passes on a plan with no
+ * ceiling at all, and "refused at 129" alone passes on Community's 64.
  *
  * The sibling competition is also the leak detector: `competition_passes` is
  * joined into the resolver per competition (lib/entitlements.ts resolveFromDb),
@@ -1517,8 +1517,8 @@ async function smokePlanMatrix(): Promise<void> {
  *    branding" is a test that cannot fail. Dropped. It is NOT the same key as
  *    `dashboard.branding` (the brand-colour gate), which stays Pro-only and
  *    which the pass does not grant, so neither is substituted for the other.
- *  • "the 32-entrant cap" — V311 raised Community to 32 and the pass to 64.
- *    Asserting 32 asserts what a passless community org already gets.
+ *  • "the entrant cap" — V319 raised Community to 64 and the pass to 128.
+ *    Asserting 64 asserts what a passless community org already gets.
  * The live matrix (`set search_path = seazn_club`; the `public` schema holds a
  * stale pre-v3 copy) is the authority for every figure below.
  *
@@ -1607,28 +1607,28 @@ async function passGrantsSuite(): Promise<void> {
     board[key] = { divId: div.id, fixtureId: fixtures[0]!.id };
   }
 
-  // === entrants.per_division.max — community 32, pass 64 =================
+  // === entrants.per_division.max — community 64, pass 128 (V319) ==========
   const passCap = await mkDiv(passComp.id, "Entrant Cap");
   const plainCap = await mkDiv(plainComp.id, "Entrant Cap");
-  const passTo64 = await v1(s, `/api/v1/divisions/${passCap.id}/entrants`, "POST", entrants(64, 1, "P"));
-  const pass65 = await v1(s, `/api/v1/divisions/${passCap.id}/entrants`, "POST", entrants(1, 65, "P"));
-  const plainTo32 = await v1(s, `/api/v1/divisions/${plainCap.id}/entrants`, "POST", entrants(32, 1, "C"));
-  const plain33 = await v1(s, `/api/v1/divisions/${plainCap.id}/entrants`, "POST", entrants(1, 33, "C"));
+  const passTo128 = await v1(s, `/api/v1/divisions/${passCap.id}/entrants`, "POST", entrants(128, 1, "P"));
+  const pass129 = await v1(s, `/api/v1/divisions/${passCap.id}/entrants`, "POST", entrants(1, 129, "P"));
+  const plainTo64 = await v1(s, `/api/v1/divisions/${plainCap.id}/entrants`, "POST", entrants(64, 1, "C"));
+  const plain65 = await v1(s, `/api/v1/divisions/${plainCap.id}/entrants`, "POST", entrants(1, 65, "C"));
   check(
-    "pass grants/entrants: the passed competition seats 64 — past community's 32",
-    passTo64.status === 201,
+    "pass grants/entrants: the passed competition seats 128 — past community's 64",
+    passTo128.status === 201,
   );
   check(
-    "pass grants/entrants: the 65th is refused (the pass ceiling is 64, not unlimited)",
-    pass65.status === 402 && featureKey(pass65) === "entrants.per_division.max",
+    "pass grants/entrants: the 129th is refused (the pass ceiling is 128, not unlimited)",
+    pass129.status === 402 && featureKey(pass129) === "entrants.per_division.max",
   );
   check(
-    "pass grants/entrants: the sibling competition seats 32 (community's own cap)",
-    plainTo32.status === 201,
+    "pass grants/entrants: the sibling competition seats 64 (community's own cap)",
+    plainTo64.status === 201,
   );
   check(
-    "pass grants/entrants: the sibling is refused at 33 — the 64 did not leak org-wide",
-    plain33.status === 402 && featureKey(plain33) === "entrants.per_division.max",
+    "pass grants/entrants: the sibling is refused at 65 — the 128 did not leak org-wide",
+    plain65.status === 402 && featureKey(plain65) === "entrants.per_division.max",
   );
 
   // === AI credits (V320+) — no longer a per-division/per-competition cap ===
@@ -1644,17 +1644,19 @@ async function passGrantsSuite(): Promise<void> {
   // org-wide entitlements check further down (`ai.credits.monthly === 10`).
   const passAiDiv = await mkDiv(passComp.id, "AI Five");
 
-  // === divisions.per_competition.max — community 2, pass 10 ===============
-  // The passed competition already holds three (Board, Entrant Cap, AI Five);
-  // that third one is itself the proof it is past community's 2, because the
-  // sibling — same org, same day — is refused its third below.
-  const plainThird = await v1(s, `/api/v1/competitions/${plainComp.id}/divisions`, "POST", {
-    name: "Third",
+  // === divisions.per_competition.max — community 4, pass 10 (V319) =========
+  // The sibling (no pass) already holds two divisions (Board, Entrant Cap);
+  // community's cap is 4, so a 3rd and 4th still land, and the 5th is refused —
+  // proving the pass did not lift the sibling's per-competition division cap.
+  await v1(s, `/api/v1/competitions/${plainComp.id}/divisions`, "POST", { name: "Third", ...genericDiv });
+  await v1(s, `/api/v1/competitions/${plainComp.id}/divisions`, "POST", { name: "Fourth", ...genericDiv });
+  const plainFifth = await v1(s, `/api/v1/competitions/${plainComp.id}/divisions`, "POST", {
+    name: "Fifth",
     ...genericDiv,
   });
   check(
-    "pass grants/divisions: the sibling competition is refused a 3rd division (community's cap is 2)",
-    plainThird.status === 402 && featureKey(plainThird) === "divisions.per_competition.max",
+    "pass grants/divisions: the sibling competition is refused a 5th division (community's cap is 4)",
+    plainFifth.status === 402 && featureKey(plainFifth) === "divisions.per_competition.max",
   );
   let passDivisionsOk = true;
   for (let i = 4; i <= 10; i++) {
@@ -1669,7 +1671,7 @@ async function passGrantsSuite(): Promise<void> {
     ...genericDiv,
   });
   check(
-    "pass grants/divisions: the passed competition takes all 10 (past community's 2)",
+    "pass grants/divisions: the passed competition takes all 10 (past community's 4)",
     passDivisionsOk,
   );
   check(
@@ -1823,9 +1825,9 @@ async function passGrantsSuite(): Promise<void> {
       flagOff("sponsors.monetize"),
   );
   check(
-    "pass grants/scope: every quota stays at the community figure org-wide (32/2/10 entrants/divisions/AI credits, fee 8%)",
-    ent.entitlements["entrants.per_division.max"]?.limit === 32 &&
-      ent.entitlements["divisions.per_competition.max"]?.limit === 2 &&
+    "pass grants/scope: every quota stays at the community figure org-wide (64/4/10 entrants/divisions/AI credits, fee 8%)",
+    ent.entitlements["entrants.per_division.max"]?.limit === 64 &&
+      ent.entitlements["divisions.per_competition.max"]?.limit === 4 &&
       ent.entitlements["ai.credits.monthly"]?.limit === 10 &&
       ent.entitlements["registration.fee_percent"]?.limit === 8,
   );
@@ -1835,8 +1837,8 @@ async function passGrantsSuite(): Promise<void> {
  *  walks the whole /clubs/[id] hub lifecycle over HTTP — create a club, PATCH
  *  its profile (home ground), add a committee contact, create a *standalone*
  *  team, move it under the club, then replace its squad with a person created
- *  inline (the squad editor's quick-add). The free path proves the V292
- *  community cap: clubs.max = 2, so two clubs succeed and the third 402s with
+ *  inline (the squad editor's quick-add). The free path proves the V319
+ *  community cap: clubs.max = 5, so five clubs succeed and the sixth 402s with
  *  the `feature_key` the contextual <UpgradeGate> reads. Both run on their own
  *  fresh orgs (Pro flipped via setPlan, free stays community) so the suite is
  *  order-independent — the earlier suites downgrade the shared org2. */
@@ -1987,24 +1989,22 @@ async function clubsSuite(): Promise<void> {
   );
   check("clubs pro: roster/sync on a team-less entrant 422s", soloSync.status === 422);
 
-  // --- Free path: the tunable community clubs.max = 2 (V292). Two clubs land,
-  // the third 402s with the feature key that drives the paywall.
+  // --- Free path: the tunable community clubs.max = 5 (V319 "free runs big").
+  // Five clubs land, the sixth 402s with the feature key that drives the paywall.
   const free = newSession();
   await signIn(free, `clubfree_${tag}@example.com`);
-  const c1 = await v1(free, "/api/v1/clubs", "POST", {
-    name: `Free Club One ${tag}`,
-  });
-  const c2 = await v1(free, "/api/v1/clubs", "POST", {
-    name: `Free Club Two ${tag}`,
-  });
-  check("clubs free: first two clubs allowed on community", c1.status === 201 && c2.status === 201);
-  const c3 = await v1(free, "/api/v1/clubs", "POST", {
-    name: `Free Club Three ${tag}`,
+  const freeClubs = [];
+  for (let i = 1; i <= 5; i++) {
+    freeClubs.push(await v1(free, "/api/v1/clubs", "POST", { name: `Free Club ${i} ${tag}` }));
+  }
+  check("clubs free: first five clubs allowed on community", freeClubs.every((r) => r.status === 201));
+  const c6 = await v1(free, "/api/v1/clubs", "POST", {
+    name: `Free Club Six ${tag}`,
   });
   check(
-    "clubs free: third club 402s with the clubs.max feature key",
-    c3.status === 402 &&
-      (c3.json.error as { feature_key?: string } | undefined)?.feature_key === "clubs.max",
+    "clubs free: sixth club 402s with the clubs.max feature key",
+    c6.status === 402 &&
+      (c6.json.error as { feature_key?: string } | undefined)?.feature_key === "clubs.max",
   );
 }
 
@@ -2674,7 +2674,10 @@ async function marksReportsSuite(
   const freeMark = await v1(commOwner, `/api/v1/fixture-officials/${freeFoId}/mark`, "PUT", {
     mark: 3,
   });
-  check("marks free: rating is gated 402 (Pro officials.marks)", freeMark.status === 402);
+  check(
+    "marks free: rating is ungated on community (204, officials.marks #253)",
+    freeMark.status === 204,
+  );
   const freeDraft = await v1(free.ref, `/api/v1/me/officiating/${freeFoId}/report`, "PUT", {
     body: "community game",
     incidents: [],
@@ -4365,8 +4368,9 @@ async function proPlusSuite(): Promise<void> {
   const fixtureId = v1data<{ fixtures: { id: string }[] }>(gen).fixtures[0]!.id;
   await v1(owner, `/api/v1/divisions/${div.id}/start`, "POST");
 
-  // (a) Community: a fixture already covers ONE official free on every plan
-  // (Jul3/02 §5) — a 2nd distinct official on the SAME fixture 402s.
+  // (a) Community: officials are ungated on every plan (#253, V319 —
+  // officials.per_fixture.max is now unlimited), so a 2nd distinct official on
+  // the SAME fixture is allowed (200), not refused.
   const offA = v1data<{ id: string }>(
     await v1(owner, "/api/v1/officials", "POST", {
       display_name: `Plus Ref A ${tag}`,
@@ -4386,15 +4390,14 @@ async function proPlusSuite(): Promise<void> {
         { official_id: offB.id, role_key: "referee", locked: false },
       ],
     });
-  const officialsDenied = await setTwoOfficials();
+  const officialsAllowed = await setTwoOfficials();
   check(
-    "pp: community 402s a 2nd official on one fixture (officials.per_fixture.max)",
-    officialsDenied.status === 402 &&
-      (officialsDenied.json.error as { feature_key?: string } | undefined)?.feature_key ===
-        "officials.per_fixture.max",
+    "pp: community allows a 2nd official on one fixture (officials.per_fixture.max ungated #253)",
+    officialsAllowed.status === 200,
   );
 
-  // (a) Community: the 1st save point is free, the 2nd 402s.
+  // (a) Community: save points — community's cap is 2 (V319), so the 1st and
+  // 2nd land and the 3rd 402s.
   const cp1 = await v1(owner, `/api/v1/divisions/${div.id}/checkpoints`, "POST", {
     label: `plus 1 ${tag}`,
   });
@@ -4402,10 +4405,14 @@ async function proPlusSuite(): Promise<void> {
   const cp2 = await v1(owner, `/api/v1/divisions/${div.id}/checkpoints`, "POST", {
     label: `plus 2 ${tag}`,
   });
+  check("pp: community's second save point is free (cap is 2)", cp2.status === 201);
+  const cp3Denied = await v1(owner, `/api/v1/divisions/${div.id}/checkpoints`, "POST", {
+    label: `plus 3 denied ${tag}`,
+  });
   check(
-    "pp: community 402s a 2nd save point (schedule.checkpoints.max)",
-    cp2.status === 402 &&
-      (cp2.json.error as { feature_key?: string } | undefined)?.feature_key ===
+    "pp: community 402s a 3rd save point (schedule.checkpoints.max)",
+    cp3Denied.status === 402 &&
+      (cp3Denied.json.error as { feature_key?: string } | undefined)?.feature_key ===
         "schedule.checkpoints.max",
   );
 
@@ -4481,9 +4488,9 @@ async function pricingV3Suite(): Promise<void> {
   const who = await signIn(buyer, `pass_${tag}@example.com`);
   const orgId = who.org_id;
 
-  // Free caps (v3.1 matrix, V311): community now runs up to 5 active
-  // competitions (was 1), still 2 divisions inside each. The pass lifts the
-  // per-competition DIVISION cap — that is the boundary this test drives below.
+  // Free caps (v17 matrix, V319 "free runs big"): community now runs several
+  // active competitions, with 4 divisions inside each (was 2). The pass lifts
+  // the per-competition DIVISION cap — that is the boundary this test drives.
   const compA = v1data<{ id: string; slug: string }>(
     await v1(buyer, "/api/v1/competitions", "POST", {
       name: `Pass Cup ${tag}`,
@@ -4492,28 +4499,28 @@ async function pricingV3Suite(): Promise<void> {
   const secondComp = await v1(buyer, "/api/v1/competitions", "POST", {
     name: `Second Cup ${tag}`,
   });
-  check("p36: 2nd active competition allowed on free (V311 raised the cap to 5)", secondComp.status === 201);
-  for (const name of ["Div 1", "Div 2"]) {
+  check("p36: 2nd active competition allowed on free (community runs several)", secondComp.status === 201);
+  for (const name of ["Div 1", "Div 2", "Div 3", "Div 4"]) {
     const d = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
       name,
       ...genericDivision,
     });
     check(`p36: free org creates ${name.toLowerCase()}`, d.status === 201);
   }
-  const div3Blocked = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
-    name: "Div 3",
+  const div5Blocked = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
+    name: "Div 5",
     ...genericDivision,
   });
-  check("p36: 3rd division blocked on free (402)", div3Blocked.status === 402);
+  check("p36: 5th division blocked on free (402, community's cap is 4)", div5Blocked.status === 402);
 
-  // Event Pass on comp A lifts ITS per-competition caps — the 3rd division it
+  // Event Pass on comp A lifts ITS per-competition caps — the 5th division it
   // just refused now lands.
   await grantPass(orgId, compA.id);
-  const div3 = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
-    name: "Div 3",
+  const div5 = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
+    name: "Div 5",
     ...genericDivision,
   });
-  check("p36: pass lifts division cap on the passed comp", div3.status === 201);
+  check("p36: pass lifts division cap on the passed comp", div5.status === 201);
   const compB = v1data<{ id: string }>(
     await v1(buyer, "/api/v1/competitions", "POST", {
       name: `Sibling Cup ${tag}`,
@@ -4522,15 +4529,15 @@ async function pricingV3Suite(): Promise<void> {
   check("p36: a sibling competition is created (community runs several)", !!compB.id);
 
   // …while the sibling competition — no pass — stays on the community DIVISION
-  // cap, proving the pass is scoped to comp A and not the org.
-  for (const name of ["S1", "S2"]) {
+  // cap (4), proving the pass is scoped to comp A and not the org.
+  for (const name of ["S1", "S2", "S3", "S4"]) {
     await v1(buyer, `/api/v1/competitions/${compB.id}/divisions`, "POST", {
       name,
       ...genericDivision,
     });
   }
   const sibBlocked = await v1(buyer, `/api/v1/competitions/${compB.id}/divisions`, "POST", {
-    name: "S3",
+    name: "S5",
     ...genericDivision,
   });
   check("p36: sibling comp still community-capped (402)", sibBlocked.status === 402);
@@ -4542,7 +4549,7 @@ async function pricingV3Suite(): Promise<void> {
   });
   check("p36: pass purchase blocked on Pro (400)", proBuy.status === 400);
   const sibUnderPro = await v1(buyer, `/api/v1/competitions/${compB.id}/divisions`, "POST", {
-    name: "S3",
+    name: "S5",
     ...genericDivision,
   });
   check("p36: pro lifts the sibling comp", sibUnderPro.status === 201);
@@ -4550,7 +4557,7 @@ async function pricingV3Suite(): Promise<void> {
   // Downgrade: the pass survives — comp A keeps its 10-division headroom.
   await setPlan(orgId, "community", buyer);
   const afterDowngrade = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
-    name: "Div 4",
+    name: "Div 6",
     ...genericDivision,
   });
   check("p36: pass survives downgrade (comp A still lifted)", afterDowngrade.status === 201);
@@ -6124,8 +6131,8 @@ async function divisionLifecycleSuite(admin: Session, proOrgId: string): Promise
   };
 
   // --- Free path: a fresh org (no subscription row) is community — the
-  // divisions.per_competition quota is 2 (v3 matrix), and DELETE frees a
-  // slot. Creating the org switches the active-org cookie onto it.
+  // divisions.per_competition quota is 4 (V319 "free runs big"), and DELETE
+  // frees a slot. Creating the org switches the active-org cookie onto it.
   await call(admin, "/api/orgs", "POST", { name: `Del Org ${tag}` });
   const comp = await v1(admin, "/api/v1/competitions", "POST", {
     name: `Del Cup ${tag}`,
@@ -6137,15 +6144,17 @@ async function divisionLifecycleSuite(admin: Session, proOrgId: string): Promise
   });
   check("del: free org creates division 1", first.status === 201);
   const firstId = v1data<{ id: string }>(first).id;
-  await v1(admin, `/api/v1/competitions/${compId}/divisions`, "POST", {
-    name: "Filler",
-    ...genericDivision,
-  });
+  for (const name of ["Filler 2", "Filler 3", "Filler 4"]) {
+    await v1(admin, `/api/v1/competitions/${compId}/divisions`, "POST", {
+      name,
+      ...genericDivision,
+    });
+  }
   const blocked = await v1(admin, `/api/v1/competitions/${compId}/divisions`, "POST", {
-    name: "Second",
+    name: "Fifth",
     ...genericDivision,
   });
-  check("del: division 3 blocked on free (402)", blocked.status === 402);
+  check("del: division 5 blocked on free (402, community's cap is 4)", blocked.status === 402);
 
   // Open registration blocks delete; closing it unblocks.
   await v1(admin, `/api/v1/divisions/${firstId}/registration-settings`, "PUT", {
