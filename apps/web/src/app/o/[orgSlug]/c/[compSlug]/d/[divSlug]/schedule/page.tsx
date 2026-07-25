@@ -12,6 +12,7 @@ import { listDivisionFixtures } from "@/server/usecases/fixtures";
 import { listEntrants } from "@/server/usecases/entrants";
 import { getScheduleSettings } from "@/server/usecases/schedule";
 import { hasFeature } from "@/lib/entitlements";
+import { preferredCurrency } from "@/lib/currency-server";
 import { withTenant } from "@/lib/db";
 import { ScheduleBoard } from "@/components/v2/schedule-board";
 import { StandaloneScheduleSettings } from "@/components/v2/board/settings-panel";
@@ -57,6 +58,7 @@ export default async function DivisionSchedulePage({
     officials,
     blackouts,
     busy,
+    currency,
   ] = await Promise.all([
     getCompetition(auth, division.competition_id),
     listStages(auth, id),
@@ -69,6 +71,7 @@ export default async function DivisionSchedulePage({
     listOfficialsForConsole(auth),
     listOfficialBlackouts(auth),
     listOfficialBusyElsewhere(auth),
+    preferredCurrency(auth.orgId),
   ]);
 
   // Feed wiring for TBD card labels ("Winner of R1 #2" — doc 12 §2).
@@ -202,6 +205,7 @@ export default async function DivisionSchedulePage({
               constraintsAllowed={constraints}
               canManage={canEdit && !frozen}
               aiAllowed={aiAllowed}
+              currency={currency}
               competitionStart={competition.starts_on}
               competitionEnd={competition.ends_on}
               venueCap={venueLabel(division.sport_key)}

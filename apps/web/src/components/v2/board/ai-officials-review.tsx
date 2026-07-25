@@ -18,7 +18,9 @@ import { useMsg } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 import type { AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
 import { OfficialAvatar } from "@/components/v2/officials-shared";
+import type { Currency } from "@/lib/currency";
 import { AiTrace, type TraceEvent } from "./ai-trace";
+import { AiOutOfCredits } from "./ai-out-of-credits";
 import type { AiConsoleFixture } from "./ai-diff";
 import {
   buildOfficialsGrid,
@@ -102,6 +104,7 @@ export function buildOfficialsTrace(
 export function AiOfficialsReview({
   plan,
   placements,
+  currency,
   fixtures,
   roster,
   roles,
@@ -121,6 +124,9 @@ export function AiOfficialsReview({
 }: {
   plan: AiOfficialsPlanResponse | null;
   placements: OfficialsPlacement[];
+  /** Org's locked billing currency — the shared out-of-credits block (A6)
+   *  prices its Buy-credits ladder in it. */
+  currency: Currency;
   fixtures: AiConsoleFixture[];
   roster: OfficialsRosterEntry[];
   roles: string[];
@@ -130,7 +136,7 @@ export function AiOfficialsReview({
   hasPrior: boolean;
   busy: boolean;
   traceNonce: number;
-  error: { status: number; message: string } | null;
+  error: { status: number; message: string; key?: string } | null;
   instruction: string;
   onInstruction: (v: string) => void;
   wishes: OfficialsWish[];
@@ -247,11 +253,17 @@ export function AiOfficialsReview({
         </div>
       )}
 
-      {/* An auto-draft that failed leaves no plan — surface it, offer a retry. */}
+      {/* An auto-draft that failed leaves no plan — surface it, offer a retry. An
+          empty AI wallet (ai.credits 402) shows the SAME A6 recovery block the
+          board's brief/apply steps use, so officials never dead-ends differently. */}
       {error && (
-        <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          <span className="font-semibold">{msg("board.ai.errorLabel")}</span> {error.message}
-        </p>
+        error.key === "board.ai.error.outOfCredits" ? (
+          <AiOutOfCredits currency={currency} />
+        ) : (
+          <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            <span className="font-semibold">{msg("board.ai.errorLabel")}</span> {error.message}
+          </p>
+        )
       )}
 
       {/* Refine turn — officials wish chips + instruction + Re-plan. */}

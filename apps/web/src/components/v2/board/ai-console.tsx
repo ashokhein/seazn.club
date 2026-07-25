@@ -17,6 +17,8 @@ import { useMsg } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { PlanBadge } from "@/components/plan-badge";
+import type { Currency } from "@/lib/currency";
+import { AiOutOfCredits } from "./ai-out-of-credits";
 import { RunElapsed } from "./run-elapsed";
 import type {
   AiPlanRequest,
@@ -145,6 +147,7 @@ export function AiConsole({
   expectedSeq,
   aiAllowed,
   scheduleFrozen,
+  currency,
   brief,
   fixtures,
   officialsPolicy,
@@ -167,6 +170,9 @@ export function AiConsole({
    *  organiser is blocked from using — the server refuses with 409
    *  SCHEDULE_LOCKED, and this stops the button offering it in the first place. */
   scheduleFrozen: boolean;
+  /** The org's locked billing currency — the out-of-credits recovery block (A6)
+   *  prices its Buy-credits pack ladder in it. */
+  currency: Currency;
   /** Live brief inputs derived by the board (pre-flight card + chip pickers). */
   brief: AiBriefContext;
   /** This division's current fixtures (before any proposal) — powers the diff
@@ -379,8 +385,11 @@ export function AiConsole({
       // A cancelled run is not an error — the console is closing or superseded.
       if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
       // Map the status (+ code) to a localized line; never render raw server text.
+      // Carry the copy key too — the render enriches an `ai.credits` out-of-credits
+      // key into the A6 recovery block (buy / upgrade / auto-topup).
       const status = err instanceof ApiV1Error ? err.status : 0;
-      dispatch({ type: "RUN_ERROR", error: { status, message: msg(aiErrorKey(status, aiErrorCodeOf(err))) } });
+      const key = aiErrorKey(status, aiErrorCodeOf(err));
+      dispatch({ type: "RUN_ERROR", error: { status, message: msg(key), key } });
     }
   }, [busy, divisionId, msg, officialsPolicy, state.instruction, state.mode, state.scope, state.schedulePlan]);
 
@@ -423,7 +432,8 @@ export function AiConsole({
       } catch (err) {
         if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
         const status = err instanceof ApiV1Error ? err.status : 0;
-        dispatch({ type: "RUN_ERROR", error: { status, message: msg(aiErrorKey(status, aiErrorCodeOf(err))) } });
+        const key = aiErrorKey(status, aiErrorCodeOf(err));
+        dispatch({ type: "RUN_ERROR", error: { status, message: msg(key), key } });
       }
     },
     [busy, divisionId, msg, officialsPolicy, state.schedulePlan],
@@ -521,9 +531,10 @@ export function AiConsole({
         // Map the real failure (checkpoint 402 save-point cap, schedule 422/409,
         // …) through aiErrorKey instead of the flat generic; the outcome now
         // carries the status+code applyErrorKey needs.
+        const key = applyErrorKey(result);
         dispatch({
           type: "APPLY_ERROR",
-          error: { status: result.errorStatus ?? 0, message: msg(applyErrorKey(result)) },
+          error: { status: result.errorStatus ?? 0, message: msg(key), key },
         });
       }
     },
@@ -565,7 +576,8 @@ export function AiConsole({
       onApplied?.();
     } catch (err) {
       const status = err instanceof ApiV1Error ? err.status : 0;
-      dispatch({ type: "APPLY_ERROR", error: { status, message: msg(aiErrorKey(status, aiErrorCodeOf(err))) } });
+      const key = aiErrorKey(status, aiErrorCodeOf(err));
+      dispatch({ type: "APPLY_ERROR", error: { status, message: msg(key), key } });
     } finally {
       setUndoing(false);
     }
@@ -590,6 +602,7 @@ export function AiConsole({
           run={run}
           busy={busy}
           msg={msg}
+          currency={currency}
           brief={brief}
           preflight={preflight}
           wishes={wishes}
@@ -615,6 +628,7 @@ export function AiConsole({
         <OfficialsStep
           state={state}
           dispatch={dispatch}
+          currency={currency}
           fixtures={fixtures}
           roster={roster ?? []}
           policyRoles={(officialsPolicy ?? DEFAULT_OFFICIALS_POLICY).roles}
@@ -644,6 +658,7 @@ export function AiConsole({
         <ApplyStep
           state={state}
           plan={state.schedulePlan}
+          currency={currency}
           fixtures={fixtures}
           settingsReady={settings !== null}
           applying={applying}
@@ -779,6 +794,7 @@ function BriefStep({
   run,
   busy,
   msg,
+  currency,
   brief,
   preflight,
   wishes,
@@ -795,6 +811,7 @@ function BriefStep({
    *  never offer it. */
   scheduleFrozen: boolean;
   msg: ReturnType<typeof useMsg>;
+  currency: Currency;
   brief: AiBriefContext;
   preflight: PreflightInput;
   wishes: Wish[];
@@ -899,9 +916,13 @@ function BriefStep({
       <AiPreflight {...preflight} />
 
       {state.run === "error" && state.error && (
-        <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          <span className="font-semibold">{msg("board.ai.errorLabel")}</span> {state.error.message}
-        </p>
+        state.error.key === "board.ai.error.outOfCredits" ? (
+          <AiOutOfCredits currency={currency} />
+        ) : (
+          <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            <span className="font-semibold">{msg("board.ai.errorLabel")}</span> {state.error.message}
+          </p>
+        )
       )}
 
       {/* A frozen board rejects every apply, so a run could only ever produce a
@@ -1084,6 +1105,7 @@ function ScheduleStep({
 function OfficialsStep({
   state,
   dispatch,
+  currency,
   fixtures,
   roster,
   policyRoles,
@@ -1098,6 +1120,7 @@ function OfficialsStep({
 }: {
   state: AiConsoleState;
   dispatch: (a: Parameters<typeof aiConsoleReducer>[1]) => void;
+  currency: Currency;
   fixtures: AiConsoleFixture[];
   roster: OfficialsRosterEntry[];
   policyRoles: string[];
@@ -1119,6 +1142,7 @@ function OfficialsStep({
     <AiOfficialsReview
       plan={state.officialsPlan}
       placements={placements}
+      currency={currency}
       fixtures={fixtures}
       roster={roster}
       roles={policyRoles}
@@ -1148,6 +1172,7 @@ function OfficialsStep({
 function ApplyStep({
   state,
   plan,
+  currency,
   fixtures,
   settingsReady,
   applying,
@@ -1162,6 +1187,7 @@ function ApplyStep({
 }: {
   state: AiConsoleState;
   plan: AiPlanResponse | null;
+  currency: Currency;
   fixtures: AiConsoleFixture[];
   settingsReady: boolean;
   applying: boolean;
@@ -1267,9 +1293,13 @@ function ApplyStep({
       )}
 
       {state.run === "error" && state.error && (
-        <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          <span className="font-semibold">{msg("board.ai.errorLabel")}</span> {state.error.message}
-        </p>
+        state.error.key === "board.ai.error.outOfCredits" ? (
+          <AiOutOfCredits currency={currency} />
+        ) : (
+          <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            <span className="font-semibold">{msg("board.ai.errorLabel")}</span> {state.error.message}
+          </p>
+        )
       )}
 
       <div className="flex flex-wrap items-center gap-2 pt-1">

@@ -12,6 +12,7 @@ import { listDivisionFixtures } from "@/server/usecases/fixtures";
 import { listEntrants } from "@/server/usecases/entrants";
 import { getScheduleSettings } from "@/server/usecases/schedule";
 import { hasFeature } from "@/lib/entitlements";
+import { preferredCurrency } from "@/lib/currency-server";
 import { withTenant } from "@/lib/db";
 import { ScheduleBoard } from "@/components/v2/schedule-board";
 import { feedLabels, type FeedRow } from "@/lib/schedule-board";
@@ -72,10 +73,11 @@ export default async function CompetitionSchedulePage({
     );
   }
 
-  const [boardEditable, constraints, aiAllowed] = await Promise.all([
+  const [boardEditable, constraints, aiAllowed, currency] = await Promise.all([
     hasFeature(auth.orgId, "scheduling.board"),
     hasFeature(auth.orgId, "scheduling.constraints"),
     hasFeature(auth.orgId, "scheduling.ai"),
+    preferredCurrency(auth.orgId),
   ]);
   const perDivision = await Promise.all(
     divisions.map(async (d) => ({
@@ -147,6 +149,7 @@ export default async function CompetitionSchedulePage({
           constraintsAllowed={constraints}
           canManage={canEdit && !frozen}
           aiAllowed={aiAllowed}
+          currency={currency}
         />
       </main>
     </>

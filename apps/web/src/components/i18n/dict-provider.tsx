@@ -61,6 +61,14 @@ export function useLocale(): Locale {
   return useDictContext().locale;
 }
 
+/** The raw active dict, for islands that pass it to a `t(dict, …)` child (e.g.
+ *  the shared BuyCredits modal). Falls back to the English catalog outside a
+ *  provider so it never throws in a bare test render. */
+export function useDict(): Dict {
+  const ctx = useContext(DictContext);
+  return ctx?.dict ?? messages;
+}
+
 /** Typed drop-in for the `ui` copy catalog: a console island replaces
  *  `import { msg } from "@/lib/messages"` + `msg("k")` with
  *  `const msg = useMsg()` + `msg("k")` and gets the active locale (the /o layout
