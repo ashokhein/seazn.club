@@ -18,7 +18,7 @@ import {
   syncSubscriptionForGroup,
 } from "@/lib/billing";
 import { CREDIT_PACKS } from "@/lib/credit-packs";
-import { recordPackPurchase, recordPackRefund, walletIdFor } from "@/lib/credits";
+import { recordPackPurchase, recordPackRefund, recordPassRefund, walletIdFor } from "@/lib/credits";
 import { SEAT_ADDON, isSeatAddonItem } from "@/lib/seat-addons";
 import { getSizePack } from "@/lib/size-packs";
 import {
@@ -955,6 +955,12 @@ async function handlePlatformDispute(
       select org_id from competition_passes where stripe_payment_intent = ${intent}`;
     if (pass) {
       if (phase === "closed" && dispute.status === "lost") {
+        // Money-safety: claw back the pass's one-time credit grant (keyed on the
+        // same payment intent) BEFORE the delete, so a lost dispute pulls the 25
+        // credits like a refund does. Idempotent on `pass_refund:${intent}` — a
+        // dispute after a refund (or a redelivered event) won't double-claw, and
+        // it reads the immutable `pass_grant` ledger row, not the pass row.
+        await recordPassRefund(intent);
         await sql`delete from competition_passes where stripe_payment_intent = ${intent}`;
         await invalidateOrgEntitlements(pass.org_id);
       }

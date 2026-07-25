@@ -9,11 +9,23 @@ interface Props {
   annualPerMonth: string;
   annualTotal: string;
   features: string[];
+  /** v17 credits line (SPEC-6 A1) — localized on the server, rendered as one of
+   *  the two tier differentiators (fee % + credits) above the feature list. */
+  creditsLine?: string;
+  /** Localized "Start 14-day trial" CTA (falls back to the English literal). */
+  ctaLabel?: string;
 }
 
 /** Pro pricing card with the annual toggle DEFAULT-ON (v3/07 §4): the yearly
  *  price is the real offer — "$13.25/mo billed yearly — save 30%". */
-export function ProPriceCard({ monthly, annualPerMonth, annualTotal, features }: Props) {
+export function ProPriceCard({
+  monthly,
+  annualPerMonth,
+  annualTotal,
+  features,
+  creditsLine,
+  ctaLabel,
+}: Props) {
   const [annual, setAnnual] = useState(true);
 
   return (
@@ -51,6 +63,13 @@ export function ProPriceCard({ monthly, annualPerMonth, annualTotal, features }:
         Annual billing
       </label>
 
+      {creditsLine && (
+        <p className="mb-4 flex items-center gap-1.5 rounded-lg bg-purple-100/70 px-3 py-2 text-sm font-semibold text-purple-800">
+          <span aria-hidden>⚡</span>
+          {creditsLine}
+        </p>
+      )}
+
       <ul className="mb-8 flex-1 space-y-2.5 text-sm text-slate-600">
         {features.map((f) => (
           <li key={f} className="flex items-start gap-2">
@@ -60,7 +79,7 @@ export function ProPriceCard({ monthly, annualPerMonth, annualTotal, features }:
         ))}
       </ul>
       <Link href="/login?tab=signup" className="btn btn-primary w-full justify-center py-3">
-        Start 14-day trial →
+        {ctaLabel ?? "Start 14-day trial →"}
       </Link>
     </div>
   );

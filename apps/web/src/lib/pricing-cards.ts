@@ -30,8 +30,19 @@ export const PASS_FEATURES = [
   "Branded exports & public player cards",
   "Sponsor tiers & paid sponsorship packages",
   "Realtime scoreboard & slideshow",
-  "10 AI schedule runs per division",
+  // v17 (SPEC-6 A1): the retired "10 AI schedule runs per division" line is
+  // gone — the graded run cap became the credit wallet (V322). The pass's
+  // credit story is the dedicated credits line on the card (PASS_CREDIT_GRANT),
+  // not a bullet, so it reads as one of the two v17 differentiators (fee % +
+  // credits) rather than being buried in the list.
 ];
+
+// v17 AI credit wallet (SPEC-6 A1 / A7): the Event Pass tops the org wallet up
+// by a one-time grant when a competition is upgraded. Unlike the monthly plan
+// grants (community/pro/pro_plus), the pass has NO `ai.credits.monthly` row in
+// plan_entitlements — it is a one-off top-up, so this is the single source for
+// the number the pricing card quotes. Pinned by pricing-cards.test.ts.
+export const PASS_CREDIT_GRANT = 25;
 
 export const PRO_FEATURES = [
   "Unlimited competitions & divisions",

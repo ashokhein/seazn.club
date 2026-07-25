@@ -16,6 +16,7 @@ import { track, EVENTS } from "@/lib/analytics";
 import { useMsg, useLocale } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 import { dayKey, daySlots, type FeedLabelPair } from "@/lib/schedule-board";
+import type { Currency } from "@/lib/currency";
 import { dayLabel, dayWeekday, dayDateShort, timeLabel } from "@/lib/day-label";
 import { BoardAgenda } from "./board/board-agenda";
 import { BoardGrid } from "./board/board-grid";
@@ -71,6 +72,10 @@ interface Props {
   /** Client-side entitlement read for the AI console (scheduling.ai). When
    *  false the docked console renders the paywall instead of the wizard. */
   aiAllowed?: boolean;
+  /** The org's locked billing currency — prices the AI console's out-of-credits
+   *  recovery block (A6) Buy-credits ladder. Defaults to USD for callers that
+   *  don't host the AI console. */
+  currency?: Currency;
   /** Competition run dates — drive the week view's day span. */
   competitionStart?: string | null;
   competitionEnd?: string | null;
@@ -103,6 +108,7 @@ export function ScheduleBoard({
   constraintsAllowed,
   canManage,
   aiAllowed = false,
+  currency = "usd",
   competitionStart,
   competitionEnd,
   venueCap = "Court",
@@ -850,6 +856,7 @@ export function ScheduleBoard({
           divisionId={single.id}
           expectedSeq={single.seq}
           aiAllowed={aiAllowed}
+          currency={currency}
           // Absent lock state reads as unfrozen: the server is the authority
           // (409 SCHEDULE_LOCKED), so a missing field must not hide the button.
           scheduleFrozen={single.schedule_locked ?? false}

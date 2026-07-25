@@ -10,7 +10,8 @@ import {
 } from "@/lib/entitlements";
 import { requireSubscriptionIdForOrg, subscriptionIdForOrg } from "@/lib/billing-group";
 import { LIVE_SUBSCRIPTION_STATUSES, hasLiveSubscription } from "@/lib/subscription-status";
-import { grantTrialForRow } from "@/lib/credits";
+import { grantTrialForRow, recordPassGrant, recordPassRefund, walletIdFor } from "@/lib/credits";
+import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
 
 /**
  * Checkout branding (verified against API 2026-06-24.dahlia). Kept in code
@@ -785,18 +786,35 @@ export async function syncSubscriptionForGroup(
  * (webhook + reconcile racing on one intent — NOT a duplicate) or a genuine
  * SECOND charge (two owners / two tabs). `duplicateIntent` is the losing intent
  * only in the second case, so callers can send it straight back (P0-3b).
+ *
+ * v17 (SPEC-1 fn3 / SPEC-2 §5, SPEC-6 §A7): a recorded pass also tops the org's
+ * wallet up by `PASS_CREDIT_GRANT` one-time credits — the "+25 AI credits" the
+ * /pricing card advertises. This is the ONE authoritative grant point: it is the
+ * only production insert of a `competition_passes` row, so both the webhook and
+ * the reconcile-on-return path funnel through here, and `recordPassGrant`'s
+ * per-competition idempotency key makes a replay a guaranteed no-op. The grant
+ * is deliberately NOT emitted for a genuine duplicate second charge (that payer
+ * is refunded, not credited) — only for the winning insert and for a same-intent
+ * replay (which heals a first attempt that died between the pass insert and the
+ * grant).
  */
 export async function recordPassPurchase(args: {
   orgId: string;
   competitionId: string;
   paymentIntent?: string | null;
 }): Promise<{ recorded: boolean; duplicateIntent: string | null }> {
+  const grantPassCredits = () =>
+    walletIdFor(args.orgId).then((walletId) =>
+      recordPassGrant(walletId, PASS_CREDIT_GRANT, args.competitionId, args.paymentIntent),
+    );
+
   const [inserted] = await sql<{ competition_id: string }[]>`
     insert into competition_passes (competition_id, org_id, stripe_payment_intent)
     values (${args.competitionId}, ${args.orgId}, ${args.paymentIntent ?? null})
     on conflict (competition_id) do nothing
     returning competition_id`;
   if (inserted) {
+    await grantPassCredits();
     await invalidateOrgEntitlements(args.orgId);
     return { recorded: true, duplicateIntent: null };
   }
@@ -807,6 +825,10 @@ export async function recordPassPurchase(args: {
     args.paymentIntent && existing?.stripe_payment_intent !== args.paymentIntent
       ? args.paymentIntent
       : null;
+  // A same-intent replay (not a duplicate) re-attempts the grant to heal a first
+  // attempt that recorded the pass but died before crediting — the per-
+  // competition idempotency key makes it a no-op if the grant already landed.
+  if (!dup) await grantPassCredits();
   return { recorded: false, duplicateIntent: dup };
 }
 
@@ -835,11 +857,22 @@ export async function refundDuplicatePassPayment(intent: string): Promise<void> 
  * refunded pass charge revokes the pass — money back means the comp rejoins
  * the quota (the freeze machinery handles any overage lazily). Partial
  * refunds leave the pass; owner outreach is a support flow, not code.
+ *
+ * v17 money-safety: the refund also claws back the pass's one-time
+ * `PASS_CREDIT_GRANT` (`recordPassRefund`, keyed on the same payment intent the
+ * grant used) — money back must mean credits back, or the 25 credits stay
+ * farmable after the entitlement is gone. The claw-back runs BEFORE the delete
+ * and is idempotent on `pass_refund:${intent}`, so a crash between the two, or a
+ * webhook redelivery, self-heals: the retry re-claws (a no-op if it already
+ * landed) and re-deletes. It reads the immutable `pass_grant` ledger row, not
+ * the `competition_passes` row, so it works even once the pass is deleted. A
+ * non-pass refund (no `pass_grant` for this intent) is a harmless no-op.
  */
 export async function revokePassForRefundedCharge(charge: Stripe.Charge): Promise<boolean> {
   const intent =
     typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
   if (!intent || !charge.refunded) return false;
+  await recordPassRefund(intent);
   const [revoked] = await sql<{ org_id: string; competition_id: string }[]>`
     delete from competition_passes where stripe_payment_intent = ${intent}
     returning org_id, competition_id`;

@@ -40,8 +40,14 @@ const stripeMock = vi.hoisted(() => {
 vi.mock("@/lib/stripe", () => ({ getStripe: () => stripeMock.stripe }));
 
 import { sql } from "@/lib/db";
-import { reconcilePassCheckout } from "@/lib/billing";
+import {
+  reconcilePassCheckout,
+  recordPassPurchase,
+  revokePassForRefundedCharge,
+} from "@/lib/billing";
 import { processStripeEvent } from "@/server/usecases/billing-events";
+import { balance, packBalance, reserve, walletIdFor } from "@/lib/credits";
+import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
@@ -93,6 +99,19 @@ function passSession(
 /** The same session as a checkout.session.completed webhook event. */
 const passEvent = (session: Stripe.Checkout.Session) =>
   ({ type: "checkout.session.completed", data: { object: session } }) as unknown as Stripe.Event;
+
+/** A fully-refunded pass charge as revokePassForRefundedCharge sees it. */
+const refundedCharge = (intent: string) =>
+  ({ payment_intent: intent, refunded: true }) as unknown as Stripe.Charge;
+
+/** A charge.dispute.closed webhook event carrying the pass's payment intent. */
+const disputeClosedEvent = (intent: string, status: Stripe.Dispute["status"]) =>
+  ({
+    type: "charge.dispute.closed",
+    data: {
+      object: { id: "dp_" + uniq(), payment_intent: intent, status, amount: 2900, currency: "gbp" },
+    },
+  }) as unknown as Stripe.Event;
 
 const readSub = (orgId: string) =>
   sql<{ stripe_customer_id: string | null; currency: string | null }[]>`
@@ -280,3 +299,217 @@ describe.skipIf(!HAS_DB)("Event Pass leaves a financial trace (webhook)", () => 
     expect(sub.currency).toBe("eur");
   });
 });
+
+// SPEC-1 fn3 / SPEC-2 §5, SPEC-6 §A7: a paid Event Pass tops the buyer's wallet
+// up by the one-time PASS_CREDIT_GRANT the /pricing card advertises. This is the
+// MONEY path — the grant must fire exactly once per competition no matter how
+// many times the webhook / reconcile redeliver, and never for a refunded
+// duplicate second charge.
+describe.skipIf(!HAS_DB)("Event Pass grants one-time AI credits", () => {
+  it("a bought pass grants PASS_CREDIT_GRANT credits to the org's wallet", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    const walletId = await walletIdFor(orgId);
+    expect(await balance(walletId)).toBe(0);
+
+    const res = await recordPassPurchase({
+      orgId,
+      competitionId: compId,
+      paymentIntent: "pi_grant_" + uniq(),
+    });
+    expect(res.recorded).toBe(true);
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+  });
+
+  it("a webhook + reconcile replay of the same payment does NOT double-grant", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    const walletId = await walletIdFor(orgId);
+    const session = passSession(orgId, compId, {
+      customer: "cus_grant_replay_" + uniq(),
+      currency: "gbp",
+      payment_intent: "pi_grant_replay",
+    });
+    stripeMock.retrieve.mockResolvedValue(session);
+
+    await processStripeEvent(passEvent(session));
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+    // A second delivery of the same payment is a replay, not a new purchase:
+    // recordPassGrant's per-payment-intent idempotency key makes it a no-op.
+    expect(await reconcilePassCheckout(orgId, "cs_grant_replay")).toBe(true);
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+  });
+
+  it("a refunded duplicate second charge does NOT grant a second time", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    const walletId = await walletIdFor(orgId);
+    // First owner records the pass and earns the grant.
+    stripeMock.retrieve.mockResolvedValue(
+      passSession(orgId, compId, { payment_intent: "pi_grant_winner" }),
+    );
+    expect(await reconcilePassCheckout(orgId, "cs_grant_winner")).toBe(true);
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+
+    // A second owner pays for the SAME competition; the charge is refunded and
+    // the wallet must NOT be credited again (a duplicate second charge is sent
+    // back, never granted — recordPassPurchase's `if (!dup)` guard).
+    await processStripeEvent(
+      passEvent(passSession(orgId, compId, { payment_intent: "pi_grant_loser" })),
+    );
+    expect(stripeMock.refundCreate).toHaveBeenCalledTimes(1);
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+  });
+
+  it("in a billing group the credits land in the shared group pool", async () => {
+    // Two orgs sharing ONE subscription (a real billing group): walletIdFor
+    // resolves both to the group's subscription id, so a pass bought by the
+    // second org credits the pool the first org also spends from (SPEC-2 §11.1).
+    const { orgId: payerOrg } = await seedPassBuyer();
+    const [{ subscription_id }] = await sql<{ subscription_id: string }[]>`
+      select subscription_id from organizations where id = ${payerOrg}`;
+    const suffix = uniq();
+    const [{ id: memberOrg }] = await sql<{ id: string }[]>`
+      insert into organizations (name, slug, subscription_id)
+      values (${"Group Member " + suffix}, ${"group-member-" + suffix}, ${subscription_id})
+      returning id`;
+    const [{ id: memberComp }] = await sql<{ id: string }[]>`
+      insert into competitions (org_id, name, slug)
+      values (${memberOrg}, ${"Member Cup " + suffix}, ${"member-cup-" + suffix})
+      returning id`;
+
+    const groupWallet = await walletIdFor(memberOrg);
+    expect(groupWallet).toBe(subscription_id);
+    expect(await walletIdFor(payerOrg)).toBe(subscription_id);
+
+    const res = await recordPassPurchase({
+      orgId: memberOrg,
+      competitionId: memberComp,
+      paymentIntent: "pi_grant_group_" + uniq(),
+    });
+    expect(res.recorded).toBe(true);
+    // The 25 lands in the ONE shared pool, visible from either org's walletId.
+    expect(await balance(groupWallet)).toBe(PASS_CREDIT_GRANT);
+    expect(await balance(await walletIdFor(payerOrg))).toBe(PASS_CREDIT_GRANT);
+  });
+});
+
+// SPEC-2 §5 money-safety: revoking a pass (refund or lost dispute) must claw back
+// its one-time credit grant, or the 25 credits stay after the entitlement is gone
+// (~$6.25/cycle, farmable by cycling buy→refund). The sibling pack path already
+// claws back; this closes the asymmetry. MONEY path — no double-claw, no
+// below-zero, never touch credits the buyer already spent.
+describe.skipIf(!HAS_DB)("Event Pass claws back its credits on refund/dispute", () => {
+  it("a fully-refunded pass claws back the UNSPENT grant to 0", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    const walletId = await walletIdFor(orgId);
+    const intent = "pi_refund_" + uniq();
+
+    expect((await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: intent })).recorded).toBe(true);
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+
+    expect(await revokePassForRefundedCharge(refundedCharge(intent))).toBe(true);
+    // Nothing was spent, so the whole grant is clawed — wallet back to 0.
+    expect(await balance(walletId)).toBe(0);
+    expect(await packBalance(walletId)).toBe(0);
+  });
+
+  it("after spending 10 it claws only the 15 unspent — floors at 0, never negative, never touches the spent 10", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    const walletId = await walletIdFor(orgId);
+    const intent = "pi_partial_" + uniq();
+
+    await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: intent });
+    // Consume 10 of the 25 (a real AI run's hold from the pack bucket).
+    await reserve(walletId, orgId, 10);
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT - 10); // 15 left
+
+    expect(await revokePassForRefundedCharge(refundedCharge(intent))).toBe(true);
+    // Claws only the 15 unspent; the 10 already consumed is gone (not retro-
+    // charged), so the wallet floors at exactly 0 — never negative.
+    expect(await balance(walletId)).toBe(0);
+    expect(await packBalance(walletId)).toBe(0);
+  });
+
+  it("a lost dispute claws back the grant the same way", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    const walletId = await walletIdFor(orgId);
+    const intent = "pi_dispute_" + uniq();
+
+    await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: intent });
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+
+    await processStripeEvent(disputeClosedEvent(intent, "lost"));
+    expect(await balance(walletId)).toBe(0);
+    // The pass entitlement is revoked too.
+    const [pass] = await sql`select 1 from competition_passes where stripe_payment_intent = ${intent}`;
+    expect(pass).toBeUndefined();
+  });
+
+  it("refund then dispute (or a double webhook) does NOT double-claw", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    const walletId = await walletIdFor(orgId);
+    const intent = "pi_dbl_" + uniq();
+
+    await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: intent });
+    // First claw-back (refund) takes the wallet to 0.
+    await revokePassForRefundedCharge(refundedCharge(intent));
+    expect(await balance(walletId)).toBe(0);
+
+    // A redelivered refund and a trailing lost dispute must each be a no-op —
+    // the `pass_refund:${intent}` idempotency key already won. No below-zero.
+    await revokePassForRefundedCharge(refundedCharge(intent));
+    await processStripeEvent(disputeClosedEvent(intent, "lost"));
+    expect(await balance(walletId)).toBe(0);
+  });
+
+  it("a genuine RE-purchase of the same competition re-grants after a refund", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    const walletId = await walletIdFor(orgId);
+
+    // Buy → refund: the pass row is deleted and its 25 clawed.
+    await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: "pi_first_" + uniq() });
+    await revokePassForRefundedCharge(refundedCharge((await lastPassIntent(compId)) ?? ""));
+    expect(await balance(walletId)).toBe(0);
+
+    // Re-buy the SAME competition under a NEW payment intent — the grant is keyed
+    // on the intent, not the competition, so this genuinely re-grants (MINOR-2).
+    const second = await recordPassPurchase({
+      orgId,
+      competitionId: compId,
+      paymentIntent: "pi_second_" + uniq(),
+    });
+    expect(second.recorded).toBe(true);
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+  });
+
+  it("in a billing group the claw-back debits the shared group pool it credited", async () => {
+    const { orgId: payerOrg } = await seedPassBuyer();
+    const [{ subscription_id }] = await sql<{ subscription_id: string }[]>`
+      select subscription_id from organizations where id = ${payerOrg}`;
+    const suffix = uniq();
+    const [{ id: memberOrg }] = await sql<{ id: string }[]>`
+      insert into organizations (name, slug, subscription_id)
+      values (${"Claw Member " + suffix}, ${"claw-member-" + suffix}, ${subscription_id})
+      returning id`;
+    const [{ id: memberComp }] = await sql<{ id: string }[]>`
+      insert into competitions (org_id, name, slug)
+      values (${memberOrg}, ${"Claw Cup " + suffix}, ${"claw-cup-" + suffix})
+      returning id`;
+    const groupWallet = await walletIdFor(memberOrg);
+    const intent = "pi_grp_" + uniq();
+
+    await recordPassPurchase({ orgId: memberOrg, competitionId: memberComp, paymentIntent: intent });
+    expect(await balance(groupWallet)).toBe(PASS_CREDIT_GRANT);
+
+    expect(await revokePassForRefundedCharge(refundedCharge(intent))).toBe(true);
+    // Debited from the ONE shared pool, visible from either org's walletId.
+    expect(await balance(groupWallet)).toBe(0);
+    expect(await balance(await walletIdFor(payerOrg))).toBe(0);
+  });
+});
+
+/** The payment intent the pass row for `compId` currently carries — the anchor
+ *  the refund path keys the claw-back on. */
+async function lastPassIntent(compId: string): Promise<string | null> {
+  const [row] = await sql<{ stripe_payment_intent: string | null }[]>`
+    select stripe_payment_intent from competition_passes where competition_id = ${compId}`;
+  return row?.stripe_payment_intent ?? null;
+}

@@ -44,7 +44,11 @@ export interface AiConsoleState {
    *  apply (02 §6). Task 15's accept reads this; Task 13 only wires it. Cleared
    *  whenever a fresh proposal lands. */
   excludedFixtures: string[];
-  error: { status: number; message: string } | null;
+  /** The last failed run/apply. `key` is the copy key aiErrorKey/applyErrorKey
+   *  resolved to (the render reads it to enrich the `ai.credits` out-of-credits
+   *  state into an action block); it's optional so the reducer's callers can omit
+   *  it and the pure reducer tests stay shape-agnostic. */
+  error: { status: number; message: string; key?: string } | null;
 }
 
 export type AiConsoleAction =
@@ -54,13 +58,13 @@ export type AiConsoleAction =
   | { type: "RUN_START" }
   | { type: "RUN_FLAGGED" }
   | { type: "RUN_DONE"; plan: AiPlanResponse }
-  | { type: "RUN_ERROR"; error: { status: number; message: string } }
+  | { type: "RUN_ERROR"; error: { status: number; message: string; key?: string } }
   | { type: "GOTO_STEP"; step: AiStep }
   | { type: "OFFICIALS_DONE"; plan: AiOfficialsPlanResponse }
   | { type: "TOGGLE_EXCLUDE"; fixtureId: string }
   | { type: "APPLY_START" }
   | { type: "APPLY_SEQ_CONFLICT" }
-  | { type: "APPLY_ERROR"; error: { status: number; message: string } }
+  | { type: "APPLY_ERROR"; error: { status: number; message: string; key?: string } }
   | { type: "APPLIED" }
   | { type: "RESET" }
   | { type: "PREFILL_REPAIR"; scope?: AiScope };

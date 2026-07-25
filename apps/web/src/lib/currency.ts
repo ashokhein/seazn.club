@@ -77,6 +77,55 @@ export function passPrice(currency: Currency): number {
   return amountFor(pass.price, currency);
 }
 
+/** One rung of the AI credit-pack ladder (SPEC-6 §A4), ready for the client. */
+export interface CreditPackOption {
+  /** `pack_key` the checkout route validates against `CREDIT_PACKS`. */
+  key: string;
+  /** Credits granted on purchase — DATA from the catalog, never translated. */
+  credits: number;
+  /** Price in the display currency's minor units. */
+  amountMinor: number;
+  /** Bonus credits over the smallest pack's rate, as a whole percent (0 = none). */
+  bonusPct: number;
+  /** The single best-value rung (largest bonus) gets the marker. */
+  bestValue: boolean;
+}
+
+/**
+ * The credit-pack ladder for a currency, derived from `stripe-plans.json`'s
+ * `packs` — the SAME seed `lib/credit-packs.ts` builds `CREDIT_PACKS` from and
+ * that `stripe-sync` seeds Stripe from, so the Buy Credits modal, the checkout
+ * route and Stripe all read one price list (no second hardcoded ladder).
+ *
+ * `bonusPct` is computed against the smallest pack's credits-per-unit rate on
+ * the CANONICAL usd amounts (so the advertised bonus is currency-stable, not a
+ * rounding artefact of each currency's set price points); the largest bonus is
+ * flagged best value.
+ */
+export function creditPackOptions(currency: Currency): CreditPackOption[] {
+  const packs = stripePlans.packs ?? [];
+  if (packs.length === 0) return [];
+  // Rate of the smallest (usd) pack: credits per minor unit — the baseline a
+  // bigger pack's bonus is measured against.
+  const base = packs[0]!.credits / packs[0]!.price.unit_amount;
+  const withBonus = packs.map((p) => {
+    const expected = base * p.price.unit_amount;
+    const bonusPct = Math.round((p.credits / expected - 1) * 100);
+    return {
+      key: p.key,
+      credits: p.credits,
+      amountMinor: amountFor(p.price, currency),
+      bonusPct,
+    };
+  });
+  const maxBonus = Math.max(...withBonus.map((o) => o.bonusPct));
+  // The largest-amount rung carrying the top bonus is the one best-value marker.
+  const bestKey = maxBonus > 0
+    ? [...withBonus].reverse().find((o) => o.bonusPct === maxBonus)?.key
+    : undefined;
+  return withBonus.map((o) => ({ ...o, bestValue: o.key === bestKey }));
+}
+
 /**
  * Format minor units in a currency for marketing surfaces: whole amounts drop
  * the decimals ("$19", "₹1,399"), fractional ones keep them ("$13.25").
