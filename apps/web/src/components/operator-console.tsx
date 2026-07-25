@@ -120,7 +120,7 @@ export function OperatorConsole({
                       <span className="tabular-nums">
                         {unlimited ? t(dict, "billing.operator.unlimited") : m.monthlyCap}
                       </span>
-                      <span className="text-xs text-purple-400">{t(dict, "billing.operator.edit")}</span>
+                      <span className="text-xs text-purple-600">{t(dict, "billing.operator.edit")}</span>
                     </button>
                   </td>
                   <td className="py-3">
