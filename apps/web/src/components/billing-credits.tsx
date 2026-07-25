@@ -89,22 +89,15 @@ export function BillingCredits({ view, dict, locale, exportHref, packs, currency
           </p>
         )}
 
-        {/* Auto-topup — off-state placeholder (D1 fast-follow, not wired). */}
+        {/* Auto-topup — deferred (SPEC-5 §3, issue #266). Shown as "Coming soon"
+            rather than an actionable "set up", since it isn't wired yet. */}
         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-purple-100 pt-3">
           <span className="text-sm text-slate-600">
             {t(dict, "billing.credits.autoTopup")}
           </span>
           <span className="badge bg-slate-100 text-slate-600">
-            {t(dict, "billing.credits.autoTopupOff")}
+            {t(dict, "billing.credits.comingSoon")}
           </span>
-          <button
-            type="button"
-            disabled
-            className="btn btn-ghost text-xs"
-            title={t(dict, "billing.credits.comingSoon")}
-          >
-            {t(dict, "billing.credits.autoTopupSetup")}
-          </button>
         </div>
       </div>
 

@@ -18,7 +18,12 @@ import {
   syncSubscriptionForGroup,
 } from "@/lib/billing";
 import { CREDIT_PACKS } from "@/lib/credit-packs";
-import { recordPackPurchase, recordPackRefund, recordPassRefund, walletIdFor } from "@/lib/credits";
+import {
+  recordPackPurchase,
+  recordPackRefund,
+  recordPassRefund,
+  walletIdFor,
+} from "@/lib/credits";
 import { SEAT_ADDON, isSeatAddonItem } from "@/lib/seat-addons";
 import { getSizePack } from "@/lib/size-packs";
 import {
@@ -207,6 +212,11 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
         // First purchase of ANY kind fixes the org's billing currency, so a
         // pass buyer is never re-quoted in another currency for Pro later.
         await pinBillingCurrency(orgId, session.currency);
+        // NB: the SPEC-5 §2 "first paid competition" earn grant is NOT hooked
+        // here. Buying an Event Pass is not the same as an org taking a paid
+        // registration, and stacking +10 onto the pass's +25 credits was wrong.
+        // The earn now fires on the first genuinely-confirmed paid registration
+        // (confirmPaidRegistration in registrations.ts); the pass keeps only +25.
       }
     }
     return;

@@ -88,6 +88,7 @@ import { LEGAL_VERSION } from "@/lib/legal";
 import { resolveNameDisplay } from "@/lib/name-display";
 
 import { setOrgPlan } from "@/lib/__tests__/_billing-group";
+import { FIRST_PAID_EARN, balance, walletIdFor } from "@/lib/credits";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 // ---------------------------------------------------------------------------
@@ -476,6 +477,61 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     const [{ n }] = await sql<{ n: number }[]>`
       select count(*)::int as n from entrants where division_id = ${division.id}`;
     expect(n).toBe(1);
+  });
+
+  it("SPEC-5 §2: the org's FIRST confirmed paid registration earns the organiser +10, once per org", async () => {
+    // The growth grant lands on the ORGANISER (the competition's org), not the
+    // registrant, and fires only on a genuine first-time paid CONFIRMATION.
+    const { orgId, orgSlug, ownerId } = await seedOrg("pro");
+    const owner = asOwner(orgId, ownerId);
+    const walletId = await walletIdFor(orgId);
+    const before = await balance(walletId);
+
+    const { competition, division } = await rig(owner);
+    await putRegistrationSettings(owner, division.id, {
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 2000,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
+    });
+    const first = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, division_id: division.id },
+      "http://test.local",
+    );
+    await handleRegistrationCheckoutCompleted(fakeSession(first.registration.id, 2000));
+    // The organiser's wallet gained exactly the first_paid earn.
+    expect(await balance(walletId)).toBe(before + FIRST_PAID_EARN);
+
+    // A SECOND competition for the SAME org, also taking a paid registration:
+    // the once-per-ORG key (earn:first_paid:${orgId}) makes it a no-op — no
+    // additional grant.
+    const { competition: comp2, division: div2 } = await rig(owner);
+    await putRegistrationSettings(owner, div2.id, {
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 2000,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
+    });
+    const second = await submitRegistration(
+      orgSlug,
+      comp2.slug,
+      { ...SUBMIT_BASE, division_id: div2.id },
+      "http://test.local",
+    );
+    await handleRegistrationCheckoutCompleted(fakeSession(second.registration.id, 2000));
+    expect(await balance(walletId)).toBe(before + FIRST_PAID_EARN);
   });
 
   it("capacity: overflow waitlists; withdrawal auto-promotes the oldest; auto-refund pre-lock", async () => {

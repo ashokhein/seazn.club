@@ -330,6 +330,11 @@ describe.skipIf(!HAS_DB)("Event Pass grants one-time AI credits", () => {
     });
     stripeMock.retrieve.mockResolvedValue(session);
 
+    // A paid Event Pass grants ONLY the SPEC-2 pass credits (25). The SPEC-5 §2
+    // first_paid earn does NOT stack here: buying a pass is not the org taking a
+    // paid registration, so the earn hook lives in confirmPaidRegistration, not
+    // the pass webhook branch. Both writes are one-time and idempotent, so the
+    // replay below adds nothing.
     await processStripeEvent(passEvent(session));
     expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
     // A second delivery of the same payment is a replay, not a new purchase:
