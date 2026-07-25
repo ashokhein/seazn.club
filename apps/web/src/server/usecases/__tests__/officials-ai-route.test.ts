@@ -53,7 +53,7 @@ import { officialsAiPlanForDivision } from "../officials-ai";
 import { GENERIC_CONFIG, seedOrg } from "./_seed";
 
 import { setOrgPlan } from "@/lib/__tests__/_billing-group";
-import { balance, walletIdFor } from "@/lib/credits";
+import { balance, recordPackPurchase, walletIdFor } from "@/lib/credits";
 const HAS_DB = !!process.env.DATABASE_URL;
 const TZ = "Europe/London";
 const MIN = 60_000;
@@ -86,12 +86,16 @@ async function setSettings(divisionId: string): Promise<void> {
     on conflict (division_id) do update set config = excluded.config, tz = excluded.tz`;
 }
 
-/** community org promoted to pro_plus directly (seedOrg only knows pro/community);
- *  officials.auto is Pro Plus post-V290. */
+/** community org promoted to pro_plus directly (seedOrg only knows pro/community).
+ *  AI runs are wallet-metered on every tier now (v17 SPEC-2 §5.2), and seedOrg
+ *  never runs the org-creation bootstrap grant, so fund the wallet with a pack
+ *  well above any test's run count — otherwise every "should-run" test would
+ *  402 ai.credits at the reserve before reaching the mocked provider. */
 async function seedPlusOrg(): Promise<AuthCtx> {
   const { auth } = await seedOrg("community");
   await setOrgPlan(auth.orgId, "pro_plus");
   await invalidateOrgEntitlements(auth.orgId);
+  await recordPackPurchase(await walletIdFor(auth.orgId), 100, `seed-${randomUUID()}`);
   return auth;
 }
 
@@ -198,6 +202,13 @@ beforeEach(() => {
   captureServer.mockReset().mockResolvedValue(undefined);
   rlCounts.clear();
   process.env.ANTHROPIC_API_KEY = "test-key";
+  // Keep the model ladder on the mocked Anthropic rung: this worktree's dev
+  // .env.local carries a real OPENROUTER_API_KEY, which vitest loads. Left set,
+  // DEFAULT_LADDER's first (OpenRouter) rung reports configured and the runner
+  // makes a genuine live call that hangs the test. Unsetting it (as CI's env is)
+  // makes the OpenRouter rungs skip to the mocked sonnet rung — hermetic again.
+  delete process.env.OPENROUTER_API_KEY;
+  delete process.env.AI_PROVIDER;
 });
 
 describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", () => {
