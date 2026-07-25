@@ -200,6 +200,15 @@ export async function orgPlanKey(orgId: string): Promise<string> {
       when s.status = 'past_due'
            and coalesce(s.status_changed_at, s.updated_at) <= now() - interval '14 days'
            then 'community'
+      -- Trial-end backstop: a trialing sub whose trial ended over a day ago is a
+      -- MISSED transition webhook (Stripe moves trialing→active/past_due/canceled at
+      -- trial_end). The resolver stops trusting the stale status, cron-free, the same
+      -- way the past_due arm above does. 1-day grace absorbs Stripe's transition lag.
+      -- trial_end IS null on a never-trialed sub → guard it so those stay on plan.
+      when s.status = 'trialing'
+           and s.trial_end is not null
+           and s.trial_end <= now() - interval '1 day'
+           then 'community'
       -- A never-paid subscription conveys NO plan. 'incomplete' means the FIRST
       -- invoice never succeeded (an abandoned 3DS challenge, a declined card at
       -- the sheet). It used to fold into past_due and so inherited the 14-day
