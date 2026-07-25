@@ -76,7 +76,10 @@ describe.skipIf(!HAS_DB)("referral code primitive (SPEC-5 §2, #267 Task 1)", ()
 
     it("never overwrites an existing code — pre-set row wins over a concurrent caller", async () => {
       const { orgId } = await seedOrgWithOwner();
-      const preset = "ABCDEFGH";
+      // Run-unique, not a hardcoded literal: referral_code has a partial-unique
+      // index shared across ALL orgs, so a fixed preset collides with leftover
+      // rows from an earlier run on a persistent test schema (23505).
+      const preset = uniq().toUpperCase();
       await sql`update organizations set referral_code = ${preset} where id = ${orgId}`;
 
       const got = await getOrCreateReferralCode(orgId);
