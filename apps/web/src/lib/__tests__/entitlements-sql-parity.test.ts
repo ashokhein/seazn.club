@@ -219,6 +219,64 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
     await sql`delete from plan_entitlements where feature_key = ${key}`;
   });
 
+  // Trial-end backstop (fix/trialing-trial-end-backstop): the resolver never
+  // read trial_end before, so a trialing sub whose trial had ended kept
+  // granting Pro for ever once its transition webhook went missing. Both
+  // resolvers must agree at every point around the 1-day grace boundary.
+  it("keeps a MID-TRIAL subscription on its paid plan", async () => {
+    await sql`
+      update subscriptions
+      set plan_key = 'pro', status = 'trialing', stripe_subscription_id = 'sub_test',
+          trial_end = now() + interval '5 days'
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime")).toBe(true);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(true);
+  });
+
+  it("degrades a trialing sub whose trial_end is 2 days past", async () => {
+    await sql`
+      update subscriptions
+      set plan_key = 'pro', status = 'trialing', stripe_subscription_id = 'sub_test',
+          trial_end = now() - interval '2 days'
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime")).toBe(false);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
+  });
+
+  it("does NOT degrade a trialing sub within the 1-day grace (trial_end 12h ago)", async () => {
+    await sql`
+      update subscriptions
+      set plan_key = 'pro', status = 'trialing', stripe_subscription_id = 'sub_test',
+          trial_end = now() - interval '12 hours'
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime")).toBe(true);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(true);
+  });
+
+  it("keeps a trialing sub with a NULL trial_end on its paid plan", async () => {
+    await sql`
+      update subscriptions
+      set plan_key = 'pro', status = 'trialing', stripe_subscription_id = 'sub_test',
+          trial_end = null
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime")).toBe(true);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(true);
+  });
+
+  it("leaves an ACTIVE subscription unaffected by the trial-end backstop", async () => {
+    await sql`
+      update subscriptions
+      set plan_key = 'pro', status = 'active', stripe_subscription_id = 'sub_test'
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime")).toBe(true);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(true);
+  });
+
   it("treats a null-bool override as no answer, not as a deny", async () => {
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, bool_value, int_value)
