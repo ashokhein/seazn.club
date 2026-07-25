@@ -26,11 +26,15 @@ export function BuyCredits({
   currency,
   dict,
   locale,
+  triggerLabel,
 }: {
   packs: CreditPackOption[];
   currency: Currency;
   dict: Dict;
   locale: Locale;
+  /** Overrides the default "Buy credits" trigger copy (e.g. the operator
+   *  console's "Top up"). Reuses the same modal + checkout underneath. */
+  triggerLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
@@ -68,7 +72,7 @@ export function BuyCredits({
         className="btn btn-primary text-xs"
         data-buy-credits
       >
-        {t(dict, "billing.credits.buy")}
+        {triggerLabel ?? t(dict, "billing.credits.buy")}
       </button>
 
       {open && clientSecret && (

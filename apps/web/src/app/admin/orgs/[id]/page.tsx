@@ -3,10 +3,28 @@ import { notFound } from "next/navigation";
 import { sql } from "@/lib/db";
 import { AdminOrgActions } from "@/components/admin-org-actions";
 import { AdminPlanPanel } from "@/components/admin-plan-panel";
+import { AdminCreditsPanel } from "@/components/admin-credits-panel";
 import { AdminDiscoveryActions } from "@/components/admin-discovery-actions";
 import { hasFeature } from "@/lib/entitlements";
 import { cardsForCustomer, planPanel } from "@/server/usecases/admin-plan";
 import { feePercentFor } from "@/server/usecases/registrations";
+import { requireStaff } from "@/lib/admin";
+import { walletIdFor, balance as walletBalance } from "@/lib/credits";
+import { adjustmentsForOrg } from "@/server/usecases/admin-adjustments-log";
+
+/** Raw staff_audit_log action → friendly label for the adjustments log. */
+const ADJUSTMENT_LABELS: Record<string, string> = {
+  credit_adjust: "Credit adjustment",
+  addon_grant: "Add-on granted",
+  addon_revoke: "Add-on revoked",
+  comp_to_pro: "Comped to Pro",
+  admin_downgrade: "Downgraded",
+  extend_trial: "Trial extended",
+  restore_trial: "Trial restored",
+  entitlement_override: "Entitlement override",
+  entitlement_override_removed: "Override removed",
+  remove_payment_method: "Card removed",
+};
 
 export default async function AdminOrgPage({
   params,
@@ -58,6 +76,18 @@ export default async function AdminOrgPage({
     from staff_audit_log s join users u on u.id = s.actor_id
     where s.target_id = ${id} order by s.created_at desc limit 20`;
 
+  // SPEC-6 C2/C4 — AI credit wallet + unified adjustments log. The wallet is
+  // the group pool (coalesce(subscription_id, id)); count how many orgs share
+  // it so a grant's blast radius is visible. Caller's staff_role drives the
+  // modal's ≤50 hint only — the route still server-enforces the cap.
+  const staff = await requireStaff();
+  const walletId = await walletIdFor(id);
+  const walletBal = await walletBalance(walletId);
+  const [{ n: sharedByOrgs }] = await sql<{ n: number }[]>`
+    select count(*)::int as n from organizations
+    where coalesce(subscription_id, id)::text = ${walletId}`;
+  const adjustments = await adjustmentsForOrg(id, { limit: 50 });
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -100,6 +130,15 @@ export default async function AdminOrgPage({
         . Competitions with an Event Pass bill at the pass rate instead, so a charge on one
         of those will not match this number.
       </p>
+
+      {/* AI credits (SPEC-6 C2): wallet balance + Grant/deduct modal. */}
+      <AdminCreditsPanel
+        orgId={id}
+        walletId={walletId}
+        sharedByOrgs={sharedByOrgs}
+        balance={walletBal}
+        staffRole={staff.staff_role}
+      />
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Stats */}
@@ -191,6 +230,59 @@ export default async function AdminOrgPage({
           </div>
         </section>
       )}
+
+      {/* Adjustments log (SPEC-6 C4): the SPEC-3 §3 unified per-org log —
+          actor · action · category · reason · when · reversible, newest first.
+          Scroll container is keyboard-reachable (tabIndex/role/aria) so axe
+          does not flag an unfocusable scrollable region. */}
+      <section>
+        <h2 className="mb-2 text-sm font-semibold text-slate-300">Adjustments log</h2>
+        {adjustments.length === 0 ? (
+          <p className="text-xs text-slate-400">No staff adjustments recorded for this org.</p>
+        ) : (
+          <div
+            className="rounded-lg border border-slate-800 overflow-x-auto"
+            tabIndex={0}
+            role="region"
+            aria-label="Adjustments log"
+          >
+            <table className="w-full text-sm">
+              <thead className="bg-slate-800 text-xs text-slate-400">
+                <tr>
+                  <th className="px-3 py-2 text-left">When</th>
+                  <th className="px-3 py-2 text-left">Actor</th>
+                  <th className="px-3 py-2 text-left">Action</th>
+                  <th className="px-3 py-2 text-left">Category</th>
+                  <th className="px-3 py-2 text-left">Reason</th>
+                  <th className="px-3 py-2 text-left">Reversible</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {adjustments.map((a) => (
+                  <tr key={a.id} className="hover:bg-slate-800/50">
+                    <td className="px-3 py-2 text-xs text-slate-400 whitespace-nowrap">
+                      {new Date(a.createdAt).toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2 text-slate-300">{a.actorName ?? "—"}</td>
+                    <td className="px-3 py-2 text-slate-200">
+                      {ADJUSTMENT_LABELS[a.action] ?? a.action}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-slate-300">{a.category}</td>
+                    <td className="px-3 py-2 text-xs text-slate-300">{a.reason ?? "—"}</td>
+                    <td className="px-3 py-2 text-xs">
+                      {a.reversible ? (
+                        <span className="text-emerald-300">reversible</span>
+                      ) : (
+                        <span className="text-slate-400">final</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {/* Staff audit */}
       {auditLog.length > 0 && (

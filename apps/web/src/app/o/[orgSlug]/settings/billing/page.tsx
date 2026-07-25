@@ -35,6 +35,8 @@ import { BackLink } from "@/components/back-link";
 import { PoweredByStripe } from "@/components/powered-by-stripe";
 import { Tip } from "@/components/ui/tip";
 import { BillingGroupPanel } from "@/components/billing-group-panel";
+import { OperatorConsole } from "@/components/operator-console";
+import { allocationConsole } from "@/server/usecases/operator-allocation";
 import { IncomingTransferOffers } from "@/components/incoming-transfer-offers";
 import { routes } from "@/lib/routes";
 import { resolveLocale } from "@/lib/resolve-locale";
@@ -177,6 +179,18 @@ export default async function BillingPage({
   // AI-credit wallet home (SPEC-6 §A3). The wallet is group-shared, so every
   // member reaching this page sees the pool they spend from — not payer-gated.
   const creditsView = await getCreditsTab(orgId);
+
+  // Operator console (SPEC-6 §B1/B2, Pro Plus 🔒). The multi-org command
+  // center — per-member credit caps + burn + the shared pool — for the group
+  // PAYER. Payer-only (`allocationConsole` gates on `subscriptions.owner_user_id`),
+  // and shown only when THIS org's group is that operator group AND it has more
+  // than one member, so a solo/community org never sees it. allocationConsole
+  // resolves the payer's largest owned group; matching its wallet to this org's
+  // subscription ties the console to the org whose billing page we're on. Its
+  // 403 (a non-payer, or a payer with no live group) surfaces as "not shown".
+  const operator =
+    isPayer && sub?.id ? await allocationConsole(user.id).catch(() => null) : null;
+  const showOperator = !!operator && operator.walletId === sub?.id && operator.members.length > 1;
 
   // Event Pass offer (task 19, entry point 2 of 4) — see <BillingPassOffer>.
   //
@@ -382,7 +396,27 @@ export default async function BillingPage({
             component. Placed directly under the plan because the plan card now
             describes the GROUP, and this is the list that makes that concrete. */}
         {isPayer && sub?.id && (
-          <BillingGroupPanel subscriptionId={sub.id} currentUserId={user.id} />
+          <div id="billing-group">
+            <BillingGroupPanel subscriptionId={sub.id} currentUserId={user.id} />
+          </div>
+        )}
+
+        {/* Operator console (SPEC-6 §B1/B2) — the Pro Plus multi-org command
+            center. Sits with the group panel (its "Add organisation" scrolls
+            there) and the credit wallet; shown only to the operator group's
+            payer. "Top up" reuses the A4 Buy Credits modal; the per-org editor
+            PUTs the cap via /api/billing/group/allocation. */}
+        {showOperator && operator && (
+          <OperatorConsole
+            poolBalance={operator.poolBalance}
+            members={operator.members}
+            resetsInDays={creditsView.grantResetsInDays}
+            addOrgHref="#billing-group"
+            packs={creditPackOptions(currency)}
+            currency={currency}
+            dict={dict}
+            locale={locale}
+          />
         )}
 
         {/* Payment methods — card entry stays in Stripe's iframe (SAQ A). */}
