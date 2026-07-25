@@ -39,7 +39,10 @@ export interface CreditHistoryRow {
 export interface CreditsTabView {
   /** Pooled balance = `sum(ledger.delta)` (grant + pack). */
   balance: number;
-  /** Grant credits consumed this period = `grantCap − grantBalance`, clamped. */
+  /** Grant credits consumed this period = this month's grant-bucket `run_spend`,
+   *  clamped to [0, grantCap]. NOT `grantCap − grantBalance`: a never-granted org
+   *  has grantBalance 0 yet has used nothing, which that formula would misreport as
+   *  a full meter. */
   grantUsed: number;
   /** This period's monthly grant = `ai.credits.monthly(plan) * quantityPaid`
    *  (Community is flat, never seat-scaled — SPEC-2 §11.2). */

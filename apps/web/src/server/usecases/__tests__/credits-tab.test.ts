@@ -1,7 +1,8 @@
 // v17 SPEC-6 §A3 — the Credits-tab view model (server/usecases/credits-tab.ts).
 // Real-Postgres integration test: skips without DATABASE_URL. Exercises the
-// pure read/derive over the ledger — balance, the grant meter (cap − grant
-// balance), never-expire packs, shared-org count, and the run history mapping.
+// pure read/derive over the ledger — balance, the grant meter (this month's
+// grant-bucket run_spend, clamped), never-expire packs, shared-org count, and
+// the run history mapping.
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";

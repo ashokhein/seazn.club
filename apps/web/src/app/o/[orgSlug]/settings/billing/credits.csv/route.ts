@@ -12,7 +12,11 @@ export const dynamic = "force-dynamic";
 const HEADER = ["date", "action", "model", "change", "competition", "org"];
 
 function csvEscape(v: string | number): string {
-  const s = String(v);
+  let s = String(v);
+  // Formula-injection guard: a cell starting with = + - @ (or a leading tab/CR)
+  // is executed as a formula in Excel/Sheets. The only user-controlled cell is an
+  // org/competition name; neutralise it with a leading apostrophe.
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\n\r]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 }
 
