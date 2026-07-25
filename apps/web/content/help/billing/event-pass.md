@@ -4,7 +4,7 @@ description: A one-time upgrade for a single competition — bigger limits, bran
 order: 3
 ---
 
-An **Event Pass** upgrades one competition for its lifetime — bigger limits, the organiser extras that make an event look the part, and a cheaper platform fee — without a monthly subscription.
+An **Event Pass** upgrades one competition while it runs — bigger limits, the organiser extras that make an event look the part, and a cheaper platform fee — without a monthly subscription.
 
 ## What the pass includes
 
@@ -29,10 +29,21 @@ Charging entry fees, your org logo and plain PDF/XLSX exports need no pass at al
 
 The annual club championship, a one-off fundraiser, a school sports day: events that deserve the full kit for two weekends a year. If you run events most months, Pro costs less.
 
+## When a pass stops applying
+
+A pass lifts the plan **while its competition is running**. It stops once that competition is over:
+
+- You mark the competition **completed or archived**, or
+- Its **end date passed more than 7 days ago** (a grace window, so the pass doesn't switch off mid-finals).
+
+When that happens the event stays fully **readable** — nothing you built is deleted — but the paid-for-running lifts switch off: the entrant and division headroom drops back to your plan's limits, branded exports return to plain tables, the realtime board and sponsor tools stop, and the platform fee returns to your plan's rate. It's the same fallback as a downgrade, scoped to that one finished event.
+
+**Renaming a competition does not create a new pass requirement** — the pass is bound to the competition itself, not its name, so you can rename this year's event freely and its pass rides along. But a **brand-new competition needs its own pass, even if it has the same name**: completing this year's championship and creating next year's is a new event, so it's a new purchase (or the moment Pro starts making sense).
+
 ## The fine print
 
-- The pass covers **that competition only**, for as long as it runs.
-- It does **not** carry to next season's edition — a new edition is a new pass (or the moment Pro starts making sense).
+- The pass covers **that competition only**, while it runs.
+- It does **not** carry to next season's edition — a new edition is a new competition, so a new pass (or the moment Pro starts making sense).
 - A passed competition **doesn't count against your active-competition limit** — the pass is self-contained, so a Community org keeps all 10 free slots while its passed event runs.
 - Refunding a pass — or losing a chargeback on one — **revokes it**: the competition drops back to your plan's normal limits and the owner gets an email. Nothing you've built is deleted; the extra divisions, the entrant headroom, branded exports and the sponsor tools simply switch off and the platform fee returns to your plan's rate, exactly like a downgrade.
 - Buy the same pass twice (a double-tap, or two people checking out at once) and only the first charge sticks — the **duplicate is refunded automatically**, so a competition is never billed twice.

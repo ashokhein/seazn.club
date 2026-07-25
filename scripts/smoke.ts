@@ -1831,6 +1831,23 @@ async function passGrantsSuite(): Promise<void> {
       ent.entitlements["ai.credits.monthly"]?.limit === 10 &&
       ent.entitlements["registration.fee_percent"]?.limit === 8,
   );
+
+  // === lock — a pass stops lifting once its competition is terminal (SPEC-4
+  // §7/§13.5, isPassLocked). Every grant above held while `passComp` ran; retire
+  // it to `archived` and the SAME create that a moment ago succeeded under the
+  // pass — a tiered sponsor (sponsors.tiers, 201 as passTier) — must now 402.
+  // sponsors.tiers is boolean and state-free, so it flips cleanly, where the
+  // entrant cap (already at 128) would 402 either way. The status write does NOT
+  // invalidate the resolver's (org, competition, feature) cache, so bust it the
+  // way the suite does after any raw entitlement write — no sleep on the 300s TTL.
+  const retire = await v1(s, `/api/v1/competitions/${passComp.id}`, "PATCH", { status: "archived" });
+  check("pass grants/lock: the passed competition retires to archived (200)", retire.status === 200);
+  await bustOrgEntitlements(s, orgId);
+  const lockedTier = await tierOn(passComp.id, "locked");
+  check(
+    "pass grants/lock: once archived the pass no longer lifts sponsors.tiers — the create that held under the pass now 402s",
+    lockedTier.status === 402 && featureKey(lockedTier) === "sponsors.tiers",
+  );
 }
 
 /** clubs-w1 (W1 §5): parent clubs group teams across divisions. The Pro path
