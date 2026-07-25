@@ -100,6 +100,48 @@ export function isPaidPlan(planKey: string): boolean {
   return planKey !== "community";
 }
 
+/** Grace period (days) an Event Pass keeps applying AFTER its competition's
+ *  ends_on date, before the ended-competition lock (arm B) fires. SPEC-4 §7.2. */
+export const PASS_END_GRACE_DAYS = 7;
+
+/**
+ * Is an Event Pass no longer eligible to apply because its competition is over?
+ * (v17 SPEC-4 §7, the "hybrid" lifecycle rule, mapped to the real competition
+ * status vocabulary.)
+ *
+ * Compute-at-read (SPEC §13.1): NO column on competition_passes, no status
+ * write-back, no auto-archiving — the answer is derived from the competition's
+ * live `status` and `ends_on` every time. The pass ROW is never deleted; this is
+ * runtime eligibility only.
+ *
+ *   A (terminal):  status in {completed, archived} — SPEC §7's terminal set, and
+ *                  both are reachable: a finished competition is set to
+ *                  'completed' (usecases/competitions.ts) and archived to
+ *                  'archived'. The active set is {draft, published, live} (V270).
+ *   B (long-ended): ends_on is set AND ends_on + PASS_END_GRACE_DAYS < today.
+ *                   A date-only comparison (ends_on is a DATE), grace 7 days.
+ *
+ * Kept exactly in step with the SQL resolver's pass arm (org_has_feature, V328):
+ * `not (c.status in ('archived','completed') or (c.ends_on is not null and
+ * c.ends_on + interval '7 days' < current_date))`. The entitlements-sql-parity
+ * suite is the tie. Exported so the OFFER side can reuse it later; this task
+ * wires no other call site.
+ */
+export function isPassLocked(status: string, endsOn: Date | string | null): boolean {
+  if (status === "archived" || status === "completed") return true;
+  if (endsOn == null) return false;
+  // ends_on is a DATE; the postgres driver hands it back as a Date at UTC
+  // midnight, and `new Date('YYYY-MM-DD')` also parses to UTC midnight, so UTC
+  // getters give a stable day-number for either shape.
+  const end = endsOn instanceof Date ? endsOn : new Date(endsOn);
+  const endMs = end.getTime();
+  if (Number.isNaN(endMs)) return false;
+  const graceEndMs = endMs + PASS_END_GRACE_DAYS * 86_400_000;
+  const now = new Date();
+  const todayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return graceEndMs < todayMs;
+}
+
 /**
  * The org's plan AS THE RESOLVER SEES IT — after the read-time degradations,
  * which is the only version that predicts what an entitlement read will do.
@@ -232,13 +274,20 @@ async function resolveFromDb(
   // whether to OFFER a pass, on purpose: "the pass does nothing here" and
   // "stop selling the pass here" must never be able to disagree.
   if (!isPaidPlan(planKey) && competitionId) {
-    const [pass] = await sql<Resolved[]>`
-      select pe.bool_value, pe.int_value
+    // Also load the competition's lifecycle so a pass on an ARCHIVED or
+    // long-ended competition stops applying (v17 SPEC-4 §7). Compute-at-read:
+    // the competitions row is joined live, never a stored flag. The lock mirrors
+    // org_has_feature (V328); entitlements-sql-parity is the tie.
+    const [pass] = await sql<
+      (Resolved & { status: string; ends_on: Date | string | null })[]
+    >`
+      select pe.bool_value, pe.int_value, c.status, c.ends_on
       from competition_passes cp
+      join competitions c on c.id = cp.competition_id
       join plan_entitlements pe
         on pe.plan_key = cp.pass_key and pe.feature_key = ${featureKey}
       where cp.competition_id = ${competitionId} and cp.org_id = ${orgId}`;
-    if (pass) {
+    if (pass && !isPassLocked(pass.status, pass.ends_on)) {
       // Overlay field by field, EXACTLY as the override arm below and as the SQL
       // resolver's coalesce (org_has_feature, V306): a null pass bool_value is no
       // answer and falls THROUGH to the plan bool, never a deny. int_value stays
