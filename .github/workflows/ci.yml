@@ -233,6 +233,20 @@ jobs:
         env:
           REDIS_URL: redis://localhost:6379
 
+      # Live-Stripe against real test-mode Stripe (sk_test, already in the job env)
+      # on the real Postgres this job runs. Sync prices first, then run ONLY the
+      # CI-safe live suites: billing-tiers (self-contained) + billing-proration
+      # (needs synced prices). Deliberately EXCLUDED: billing-automatic-tax (needs
+      # a Stripe tax registration this account lacks) and schedule-ai-effort-ab
+      # (issues real model calls). These files self-skip in the src/server+src/lib
+      # step above (no BILLING_LIVE); here they run live. Skips cleanly on fork PRs,
+      # where STRIPE_SECRET_KEY is withheld.
+      - name: Live-Stripe integration tests (sk_test, real Postgres)
+        if: env.STRIPE_SECRET_KEY != ''
+        run: |
+          npm run stripe:sync
+          BILLING_LIVE=1 npm test --workspace apps/web -- src/lib/__tests__/billing-tiers.live.test.ts src/lib/__tests__/billing-proration.live.test.ts
+
       # Smoke runs against a PRODUCTION build, not `next dev`. The dev server
       # restarts itself once used heap crosses 80% of its V8 limit (which
       # `next dev` pins to HALF the machine's RAM — ~3.5 GB on the 7 GB
