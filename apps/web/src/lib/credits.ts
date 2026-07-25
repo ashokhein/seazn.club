@@ -529,6 +529,48 @@ export async function recordPackRefund(
 }
 
 /**
+ * Net credits `orgId` has spent on `walletId` THIS calendar month (SPEC-5 §1) —
+ * the derived quantity the operator allocation cap is checked against. There is
+ * deliberately NO `spent_this_period` counter: the ledger is the single source
+ * of truth (no reset job, no drift, no reserve/settle race), and the spend is
+ * already recorded as the `run_spend` hold tagged `spent_by_org_id = orgId`.
+ *
+ * **Nets refunds via the ref link, not a tag.** A failed run's `release()`
+ * writes a `source='refund'` row with `ref = hold.id` and NO `spent_by_org_id`
+ * (it doesn't re-tag the org), so the derive nets each hold by summing the
+ * refund rows that reference it — a released/failed run correctly gives its
+ * allowance back without touching `release()`. Pack refunds also use
+ * `source='refund'` but `ref` = a payment-intent id, never a `run_spend` row
+ * id, so they can't match a hold here.
+ *
+ * **Period bound** = `date_trunc('month', now())`, the same calendar-month
+ * anchor `grantMonthly` resets on — so the cap resets implicitly with the grant
+ * cycle. A hold from a prior month is excluded (its refund, if any, is moot —
+ * only holds inside the period are summed). Runs inside the caller's executor
+ * (`reserve`'s advisory-locked tx) so the check sees this reserve's own prior
+ * writes. Returns a non-negative integer.
+ */
+async function spentThisPeriodByOrg(
+  exec: Executor,
+  walletId: string,
+  orgId: string,
+): Promise<number> {
+  const [row] = await exec<{ spent: string | null }[]>`
+    select coalesce(sum(
+      -h.delta - coalesce((
+        select sum(r.delta) from ai_credit_ledger r
+         where r.source = 'refund' and r.ref = h.id::text
+      ), 0)
+    ), 0)::text as spent
+      from ai_credit_ledger h
+     where h.wallet_id = ${walletId}
+       and h.spent_by_org_id = ${orgId}
+       and h.source = 'run_spend'
+       and h.created_at >= date_trunc('month', now())`;
+  return Math.max(0, Number(row?.spent ?? 0));
+}
+
+/**
  * Reserve `cost` credits against `walletId` for an AI run started by `orgId`
  * (SPEC-2 §5.2 step 2, §5.4 spend order). The ledger's `source` CHECK has no
  * distinct "hold" value, so the hold IS the debit from the moment it's
@@ -566,6 +608,24 @@ export async function reserve(walletId: string, orgId: string, cost: number): Pr
   try {
     return await sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtext(${"ai-credit-wallet:" + walletId}))`;
+
+      // Operator allocation cap (SPEC-5 §1): a member org on a shared group
+      // wallet can be capped to a per-month credit share. NO row = free-for-all
+      // (spend up to the pool); NULL cap = unlimited share; a number = a HARD
+      // cap. Checked HERE, inside the advisory lock and BEFORE the bucket cuts,
+      // so the derive sees this reserve's own prior holds and the cap stays
+      // tight under concurrency (no over-spend race). A cap hit emits a DISTINCT
+      // 402 `ai.credits.allocation` (UI: "ask your operator to raise your cap")
+      // vs the pool-empty `ai.credits` ("buy credits") thrown by the CHECK below.
+      const [alloc] = await tx<{ monthly_cap: number | null }[]>`
+        select monthly_cap from org_credit_allocation
+         where wallet_id = ${walletId} and org_id = ${orgId}`;
+      if (alloc && alloc.monthly_cap != null) {
+        const spent = await spentThisPeriodByOrg(tx, walletId, orgId);
+        if (spent + cost > alloc.monthly_cap) {
+          throw new PaymentRequiredError("ai.credits.allocation");
+        }
+      }
 
       const grantAvailable = Math.max(0, await bucketBalance(tx, walletId, "grant"));
       const grantCut = Math.min(cost, grantAvailable);
