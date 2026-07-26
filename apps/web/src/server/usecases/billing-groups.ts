@@ -19,6 +19,7 @@ import {
   assertPriceBillsQuantity,
   syncPaymentMethodFlagForSubscription,
 } from "@/lib/billing";
+import { mergeWalletOnAttach } from "@/lib/credits";
 import {
   invalidateGroupEntitlements,
   invalidateOrgEntitlements,
@@ -697,6 +698,12 @@ export async function attachOrgToGroup(args: {
     assertWithinGroupCap(Number(heldRow?.n ?? 0), capLimit);
 
     await tx`update organizations set subscription_id = ${subscriptionId} where id = ${orgId}`;
+    // #285: merge whatever AI credits the org's OWN wallet held into the
+    // group's, in the SAME transaction as the move — org.subscription_id
+    // here is still the PRE-move value (read at the top of this function,
+    // before the UPDATE above), i.e. the wallet the org is leaving.
+    const oldWalletId = org.subscription_id ?? orgId;
+    await mergeWalletOnAttach(tx, oldWalletId, subscriptionId);
     return { from: org.subscription_id, moved: true };
   });
 

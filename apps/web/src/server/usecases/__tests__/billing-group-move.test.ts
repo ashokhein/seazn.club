@@ -473,6 +473,40 @@ describe.skipIf(!HAS_DB)("attach", () => {
     expect(stripeMock.subscriptionsUpdate).not.toHaveBeenCalled();
   });
 
+  it("merges the joining org's own wallet balance into the group's, bucket-preserving (#285)", async () => {
+    const payer = await makeUser("payer");
+    const group = await makeGroup(payer, { stripeSubId: "sub_wallet_" + uniq(), quantityPaid: 1 });
+    await makeOrg(group, payer);
+    // The group's own wallet already holds some credits.
+    await sql`insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${group}, 20, 'monthly_grant', 'grant', 20, ${"seed-" + uniq()})`;
+
+    const joiner = await makeLooseOrg(payer);
+    // The joining org's OWN solo wallet (its subscription-of-one) holds
+    // credits of its own, in BOTH buckets.
+    await sql`insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${joiner.subId}, 15, 'monthly_grant', 'grant', 15, ${"seed-" + uniq()})`;
+    await sql`insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${joiner.subId}, 30, 'pack_purchase', 'pack', 45, ${"seed-" + uniq()})`;
+
+    await attachOrgToGroup({ actorUserId: payer, orgId: joiner.orgId, subscriptionId: group });
+
+    // The old wallet (the joiner's solo subscription) is fully drained.
+    const [oldBal] = await sql<{ bal: string }[]>`
+      select coalesce(sum(delta),0)::text as bal from ai_credit_ledger where wallet_id = ${joiner.subId}`;
+    expect(Number(oldBal.bal)).toBe(0);
+
+    // The group's wallet now holds BOTH balances, each in its own bucket.
+    const [grantBal] = await sql<{ bal: string }[]>`
+      select coalesce(sum(delta),0)::text as bal from ai_credit_ledger
+       where wallet_id = ${group} and bucket = 'grant'`;
+    const [packBal] = await sql<{ bal: string }[]>`
+      select coalesce(sum(delta),0)::text as bal from ai_credit_ledger
+       where wallet_id = ${group} and bucket = 'pack'`;
+    expect(Number(grantBal.bal)).toBe(35); // 20 (group's own) + 15 (joiner's)
+    expect(Number(packBal.bal)).toBe(30); // joiner's pack, nothing pooled from grant
+  });
+
   it("lets an org join a TRIALING group and ride the trial, charging nothing today", async () => {
     const payer = await makeUser("payer");
     const group = await makeGroup(payer, {
