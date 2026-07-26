@@ -38,4 +38,8 @@ describe("orgSwitchTarget", () => {
       "/o/northside",
     );
   });
+
+  it("does not transfer a non-settings path that merely starts with 'settings' (/settingsX)", () => {
+    expect(orgSwitchTarget("/o/riverside/settingsX", "riverside", "northside")).toBe("/o/northside");
+  });
 });

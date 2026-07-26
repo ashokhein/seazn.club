@@ -24,7 +24,9 @@ export function orgSwitchTarget(
     const prefix = `/o/${oldSlug}`;
     if (pathname === prefix || pathname.startsWith(`${prefix}/`)) {
       const rest = pathname.slice(prefix.length); // "" | "/settings…" | "/c/…"
-      if (rest === "" || rest.startsWith("/settings")) return `/o/${newSlug}${rest}`;
+      if (rest === "" || rest === "/settings" || rest.startsWith("/settings/")) {
+        return `/o/${newSlug}${rest}`;
+      }
     }
   }
   return routes.orgHome(newSlug);
