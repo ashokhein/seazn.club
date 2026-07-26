@@ -284,8 +284,12 @@ describe.skipIf(!HAS_DB)("size-pack checkout gate (IDOR)", () => {
 describe.skipIf(!HAS_DB)("size-pack catalog admin CRUD", () => {
   it("superadmin can create, edit and soft-deactivate; a non-staff caller is refused", async () => {
     const key = `size_pack_test_${uniq()}`;
-    requireSuperadminMock.mockResolvedValue({ id: "staff", staff_role: "superadmin" });
-    requireStaffMock.mockResolvedValue({ id: "staff" });
+    // Real users.id, not "staff": the admin size-pack routes now write the
+    // staff-audit row INSIDE the route's tx (actor_id → users FK, #275's sweep),
+    // so a non-UUID actor id makes the create 500 instead of 200.
+    const staffId = await makeUser();
+    requireSuperadminMock.mockResolvedValue({ id: staffId, staff_role: "superadmin" });
+    requireStaffMock.mockResolvedValue({ id: staffId });
 
     // Create.
     const created = await adminCreate(
