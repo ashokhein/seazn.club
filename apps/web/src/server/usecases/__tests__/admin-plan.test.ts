@@ -96,6 +96,28 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     expect(audit.detail.reason).toBe("founder friend");
   });
 
+  it("atomicity: a bogus actor trips the audit FK and rolls the comp write back too", async () => {
+    // Since #272's sweep, compToPro writes its staff_audit_log row INSIDE the
+    // same tx as the plan change (staff_audit_log.actor_id is a real FK). A
+    // grant whose audit insert fails must leave the subscription untouched —
+    // the money-adjacent write and its audit commit together or not at all.
+    const { orgId } = await seedOrg();
+    const bogusActor = randomUUID(); // names no users row
+
+    await expect(compToPro(bogusActor, orgId, null, "founder friend")).rejects.toThrow();
+
+    // Plan never moved off community, and no audit row leaked.
+    const [row] = await sql<{ plan_key: string; comped_at: string | null }[]>`
+      select plan_key, comped_at from subscriptions
+      where id = (select subscription_id from organizations where id = ${orgId})`;
+    expect(row.plan_key).toBe("community");
+    expect(row.comped_at).toBeNull();
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from staff_audit_log
+      where target_id = ${orgId} and action = 'comp_to_pro'`;
+    expect(n).toBe(0);
+  });
+
   it("an entitlement override with a lapsed expiry stops resolving", async () => {
     const { orgId } = await seedOrg();
     await sql`

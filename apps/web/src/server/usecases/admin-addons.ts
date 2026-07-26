@@ -2,7 +2,6 @@ import "server-only";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { walletIdFor } from "@/lib/credits";
-import { logStaffAction } from "@/lib/admin";
 
 /**
  * Staff GRANT of an add-on (design/v17-pricing-entitlements/SPEC-3 §1 row 3):
@@ -71,31 +70,42 @@ export async function grantAddon(
       throw new HttpError(422, "target_org_id is not part of this organization's billing group.");
     }
   }
-  const [inserted] = await sql<{ id: string }[]>`
-    insert into org_addons
-      (wallet_id, target_org_id, target_competition_id, feature_key, delta_each, qty,
-       stripe_item_id, status, admin_idempotency_key)
-    values (${walletId}, ${targetOrgId}, null, ${featureKey}, ${deltaEach}, ${qty},
-            null, 'granted', ${idempotencyKey})
-    on conflict (admin_idempotency_key) where admin_idempotency_key is not null do nothing
-    returning id`;
+  // The org_addons grant and its staff_audit_log row commit TOGETHER (extend
+  // #272's adminAdjust pattern): a crash between the two can never leave a
+  // cap-lifting grant with no audit trail. The wallet reads above need no
+  // atomicity, only the write + audit — so they stay outside the tx.
+  return sql.begin(async (tx) => {
+    const [inserted] = await tx<{ id: string }[]>`
+      insert into org_addons
+        (wallet_id, target_org_id, target_competition_id, feature_key, delta_each, qty,
+         stripe_item_id, status, admin_idempotency_key)
+      values (${walletId}, ${targetOrgId}, null, ${featureKey}, ${deltaEach}, ${qty},
+              null, 'granted', ${idempotencyKey})
+      on conflict (admin_idempotency_key) where admin_idempotency_key is not null do nothing
+      returning id`;
 
-  // Replay: the key already granted — return the prior row, log nothing.
-  if (!inserted) {
-    const [existing] = await sql<{ id: string }[]>`
-      select id from org_addons where admin_idempotency_key = ${idempotencyKey}`;
-    return { id: existing!.id, applied: false };
-  }
+    // Replay: the key already granted — return the prior row, audit nothing
+    // (the §3 unified log reads staff_audit_log; a second row reads as two grants).
+    if (!inserted) {
+      const [existing] = await tx<{ id: string }[]>`
+        select id from org_addons where admin_idempotency_key = ${idempotencyKey}`;
+      return { id: existing!.id, applied: false };
+    }
 
-  await logStaffAction(actorId, "addon_grant", "org", orgId, {
-    feature_key: featureKey,
-    delta_each: deltaEach,
-    qty,
-    target_org_id: targetOrgId,
-    reason,
-    addon_id: inserted.id,
+    // Mirror logStaffAction's columns (lib/admin.ts) on THIS tx — never call
+    // logStaffAction itself here, it opens its own connection outside the tx.
+    await tx`
+      insert into staff_audit_log (actor_id, action, target_type, target_id, detail)
+      values (${actorId}, 'addon_grant', 'org', ${orgId}, ${tx.json({
+        feature_key: featureKey,
+        delta_each: deltaEach,
+        qty,
+        target_org_id: targetOrgId,
+        reason,
+        addon_id: inserted.id,
+      } as never)})`;
+    return { id: inserted.id, applied: true };
   });
-  return { id: inserted.id, applied: true };
 }
 
 /**
@@ -122,30 +132,38 @@ export async function revokeAddon(
 ): Promise<{ revoked: boolean }> {
   const walletId = await walletIdFor(orgId);
 
-  const flipped = await sql<{ id: string }[]>`
-    update org_addons set status = 'canceled'
-     where id = ${addonId}
-       and wallet_id = ${walletId}
-       and status = 'granted'
-       and stripe_item_id is null
-    returning id`;
+  // The status flip and its audit row commit TOGETHER (extend #272). A refusal
+  // throws inside the tx before any write, so it rolls back to a clean no-op.
+  return sql.begin(async (tx) => {
+    const flipped = await tx<{ id: string }[]>`
+      update org_addons set status = 'canceled'
+       where id = ${addonId}
+         and wallet_id = ${walletId}
+         and status = 'granted'
+         and stripe_item_id is null
+      returning id`;
 
-  if (flipped.length === 0) {
-    // Nothing flipped — decide between an idempotent replay (already canceled
-    // admin row) and a genuine refusal (unknown / other-org / Stripe-paid).
-    const [row] = await sql<
-      { wallet_id: string; status: string; stripe_item_id: string | null }[]
-    >`select wallet_id, status, stripe_item_id from org_addons where id = ${addonId}`;
-    if (!row || row.wallet_id !== walletId) {
-      throw new HttpError(404, "No such add-on for this org.");
+    if (flipped.length === 0) {
+      // Nothing flipped — decide between an idempotent replay (already canceled
+      // admin row) and a genuine refusal (unknown / other-org / Stripe-paid).
+      const [row] = await tx<
+        { wallet_id: string; status: string; stripe_item_id: string | null }[]
+      >`select wallet_id, status, stripe_item_id from org_addons where id = ${addonId}`;
+      if (!row || row.wallet_id !== walletId) {
+        throw new HttpError(404, "No such add-on for this org.");
+      }
+      if (row.stripe_item_id !== null) {
+        throw new HttpError(409, "This is a Stripe-paid add-on; cancel it through billing.");
+      }
+      if (row.status === "canceled") return { revoked: false }; // replay — no audit
+      throw new HttpError(409, "This add-on cannot be revoked from the admin adjustment layer.");
     }
-    if (row.stripe_item_id !== null) {
-      throw new HttpError(409, "This is a Stripe-paid add-on; cancel it through billing.");
-    }
-    if (row.status === "canceled") return { revoked: false }; // replay — no audit
-    throw new HttpError(409, "This add-on cannot be revoked from the admin adjustment layer.");
-  }
 
-  await logStaffAction(actorId, "addon_revoke", "org", orgId, { addon_id: addonId, reason });
-  return { revoked: true };
+    // Mirror logStaffAction's columns (lib/admin.ts) on THIS tx — see grantAddon.
+    await tx`
+      insert into staff_audit_log (actor_id, action, target_type, target_id, detail)
+      values (${actorId}, 'addon_revoke', 'org', ${orgId},
+              ${tx.json({ addon_id: addonId, reason } as never)})`;
+    return { revoked: true };
+  });
 }

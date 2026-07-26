@@ -1,5 +1,6 @@
-import { requireSuperadmin, logStaffAction } from "@/lib/admin";
+import { requireSuperadmin } from "@/lib/admin";
 import { updateSizePack, setSizePackActive } from "@/lib/size-packs";
+import { sql } from "@/lib/db";
 import { handler } from "@/lib/http";
 import { HttpError } from "@/lib/errors";
 import { z } from "zod";
@@ -23,9 +24,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ key: s
     const { key } = await params;
     const staff = await requireSuperadmin();
     const patch = schema.parse(await req.json());
-    const row = await updateSizePack(key, patch);
+    // Catalog edit + its audit row commit together (extend #272); local DB only.
+    const row = await sql.begin(async (tx) => {
+      const r = await updateSizePack(key, patch, tx);
+      if (!r) return null; // 404 below — nothing written, nothing to audit
+      await tx`
+        insert into staff_audit_log (actor_id, action, target_type, target_id, detail)
+        values (${staff.id}, 'size_pack_update', 'size_pack', ${key}, ${tx.json(patch as never)})`;
+      return r;
+    });
     if (!row) throw new HttpError(404, "Size pack not found");
-    await logStaffAction(staff.id, "size_pack_update", "size_pack", key, patch);
     return row;
   });
 }
@@ -37,9 +45,16 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ key:
   return handler(async () => {
     const { key } = await params;
     const staff = await requireSuperadmin();
-    const row = await setSizePackActive(key, false);
+    // Soft-deactivate + its audit row commit together (extend #272); local DB only.
+    const row = await sql.begin(async (tx) => {
+      const r = await setSizePackActive(key, false, tx);
+      if (!r) return null; // 404 below — nothing written, nothing to audit
+      await tx`
+        insert into staff_audit_log (actor_id, action, target_type, target_id, detail)
+        values (${staff.id}, 'size_pack_deactivate', 'size_pack', ${key}, ${tx.json({ label: r.label } as never)})`;
+      return r;
+    });
     if (!row) throw new HttpError(404, "Size pack not found");
-    await logStaffAction(staff.id, "size_pack_deactivate", "size_pack", key, { label: row.label });
     return row;
   });
 }

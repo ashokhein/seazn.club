@@ -1,8 +1,14 @@
 import "server-only";
 import type Stripe from "stripe";
+import type postgres from "postgres";
 import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
+
+/** A DB executor for the catalog writes: the shared `sql` client, or a
+ *  transaction handle when the caller (an admin route) wants the write and its
+ *  staff_audit_log row to commit atomically (extend #272). */
+type Exec = postgres.TransactionSql | typeof sql;
 import { CHECKOUT_BRANDING, CUSTOMER_UPDATE_FOR_TAX } from "@/lib/billing";
 import { SEAT_ADDON } from "@/lib/seat-addons";
 
@@ -77,16 +83,19 @@ export async function listSizePacks(opts: { activeOnly?: boolean } = {}): Promis
 }
 
 /** Create a catalog row (staff CRUD). */
-export async function createSizePack(input: {
-  key: string;
-  label: string;
-  feature_key: string;
-  delta_each: number;
-  stripe_lookup_key: string;
-  active?: boolean;
-}): Promise<SizePackCatalogRow> {
+export async function createSizePack(
+  input: {
+    key: string;
+    label: string;
+    feature_key: string;
+    delta_each: number;
+    stripe_lookup_key: string;
+    active?: boolean;
+  },
+  exec: Exec = sql,
+): Promise<SizePackCatalogRow> {
   assertNotSeatManaged(input.feature_key);
-  const [row] = await sql<SizePackCatalogRow[]>`
+  const [row] = await exec<SizePackCatalogRow[]>`
     insert into size_pack_catalog (key, label, feature_key, delta_each, stripe_lookup_key, active)
     values (${input.key}, ${input.label}, ${input.feature_key}, ${input.delta_each},
             ${input.stripe_lookup_key}, ${input.active ?? true})
@@ -107,9 +116,10 @@ export async function updateSizePack(
     stripe_lookup_key: string;
     active: boolean;
   }>,
+  exec: Exec = sql,
 ): Promise<SizePackCatalogRow | null> {
   assertNotSeatManaged(patch.feature_key);
-  const [row] = await sql<SizePackCatalogRow[]>`
+  const [row] = await exec<SizePackCatalogRow[]>`
     update size_pack_catalog set
       label             = coalesce(${patch.label ?? null}, label),
       feature_key       = coalesce(${patch.feature_key ?? null}, feature_key),
@@ -125,8 +135,12 @@ export async function updateSizePack(
 /** Soft-deactivate a catalog row (prefer this over DELETE — never orphan a
  *  purchased pack's catalog reference). A deactivated pack cannot be bought,
  *  but already-granted packs are unaffected (frozen org_addons rows). */
-export async function setSizePackActive(key: string, active: boolean): Promise<SizePackCatalogRow | null> {
-  return updateSizePack(key, { active });
+export async function setSizePackActive(
+  key: string,
+  active: boolean,
+  exec: Exec = sql,
+): Promise<SizePackCatalogRow | null> {
+  return updateSizePack(key, { active }, exec);
 }
 
 /**

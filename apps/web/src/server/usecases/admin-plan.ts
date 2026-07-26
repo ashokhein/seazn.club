@@ -163,38 +163,49 @@ export async function compToPro(
   if (until && until.getTime() <= Date.now()) {
     throw new HttpError(400, "The end date must be in the future.");
   }
-  await sql`
-    update subscriptions set
-      plan_key = 'pro',
-      -- status only moves when there is NO subscription id at all. A departed
-      -- org keeps its dead id, and writing a live-looking status onto that row
-      -- would resurrect liveness: the resolver's comp-expiry branch could never
-      -- fire (the comp would never lapse), checkout would 409 and downgrade
-      -- would 400. So a cancelled status stands. Same shape as extendTrial.
-      status = case when stripe_subscription_id is null then 'active' else status end,
-      comped_until = ${until ? until.toISOString() : null},
-      -- Provenance, not a deadline: this row's paid plan came from staff rather
-      -- than from Stripe. The resolver's cancelled arm keys off THIS, because a
-      -- forever-comp writes comped_until = null and would otherwise be
-      -- indistinguishable from an org that simply left (V313).
-      comped_at = now(),
-      -- A comp IS the free ride: the org has had Pro without paying, so a
-      -- later self-serve upgrade bills from day one. coalesce keeps the first
-      -- comp's date across re-comps. Reversible via Restore trial.
-      trial_used_at = coalesce(trial_used_at, now()),
-      status_changed_at = case when stripe_subscription_id is null
-                                    and status is distinct from 'active'
-                               then now() else status_changed_at end,
-      updated_at = now()
-    where id = ${subscriptionId}`;
-  // A comp moves plan_key on the shared row, so every org in the group is now
-  // on Pro — invalidate all of them, not just the one staff named.
-  await invalidateGroupEntitlements(subscriptionId);
-  await logStaffAction(actorId, "comp_to_pro", "org", orgId, {
-    reason,
-    before: { plan_key: before.plan_key, comped_until: before.comped_until },
-    after: { plan_key: "pro", comped_until: until?.toISOString() ?? "forever" },
+  // The plan write and its staff_audit_log row commit TOGETHER (extend #272):
+  // a crash between them can never leave a comp with no audit trail. No Stripe
+  // call is on this path — compToPro refuses live-Stripe orgs above — so the
+  // whole atomic unit is the local subscriptions write + the audit row.
+  await sql.begin(async (tx) => {
+    await tx`
+      update subscriptions set
+        plan_key = 'pro',
+        -- status only moves when there is NO subscription id at all. A departed
+        -- org keeps its dead id, and writing a live-looking status onto that row
+        -- would resurrect liveness: the resolver's comp-expiry branch could never
+        -- fire (the comp would never lapse), checkout would 409 and downgrade
+        -- would 400. So a cancelled status stands. Same shape as extendTrial.
+        status = case when stripe_subscription_id is null then 'active' else status end,
+        comped_until = ${until ? until.toISOString() : null},
+        -- Provenance, not a deadline: this row's paid plan came from staff rather
+        -- than from Stripe. The resolver's cancelled arm keys off THIS, because a
+        -- forever-comp writes comped_until = null and would otherwise be
+        -- indistinguishable from an org that simply left (V313).
+        comped_at = now(),
+        -- A comp IS the free ride: the org has had Pro without paying, so a
+        -- later self-serve upgrade bills from day one. coalesce keeps the first
+        -- comp's date across re-comps. Reversible via Restore trial.
+        trial_used_at = coalesce(trial_used_at, now()),
+        status_changed_at = case when stripe_subscription_id is null
+                                      and status is distinct from 'active'
+                                 then now() else status_changed_at end,
+        updated_at = now()
+      where id = ${subscriptionId}`;
+    // Mirror logStaffAction's columns (lib/admin.ts) on THIS tx — never call
+    // logStaffAction itself inside the tx, it opens its own connection.
+    await tx`
+      insert into staff_audit_log (actor_id, action, target_type, target_id, detail)
+      values (${actorId}, 'comp_to_pro', 'org', ${orgId}, ${tx.json({
+        reason,
+        before: { plan_key: before.plan_key, comped_until: before.comped_until },
+        after: { plan_key: "pro", comped_until: until?.toISOString() ?? "forever" },
+      } as never)})`;
   });
+  // A comp moves plan_key on the shared row, so every org in the group is now
+  // on Pro — invalidate all of them, not just the one staff named. Cache bust
+  // (Redis) stays OUT of the tx and runs after the truth has committed.
+  await invalidateGroupEntitlements(subscriptionId);
 }
 
 export interface FreezePreview {
@@ -428,14 +439,20 @@ export async function restoreTrial(
       "This organization is billed through Stripe — the next sync would re-stamp the trial as used.",
     );
   }
-  await sql`update subscriptions set trial_used_at = null, updated_at = now()
-            where id = ${subscriptionId}`;
-  // The trial burn is a GROUP fact now — restoring it re-opens the 14-day
-  // checkout trial for every org billing through this row.
-  await invalidateGroupEntitlements(subscriptionId);
-  await logStaffAction(actorId, "restore_trial", "org", orgId, {
-    reason,
-    before: { trial_used_at: before.trial_used_at },
-    after: { trial_used_at: null },
+  // The trial-burn clear and its audit row commit TOGETHER (extend #272); this
+  // path refuses live-Stripe orgs above, so it is local DB only.
+  await sql.begin(async (tx) => {
+    await tx`update subscriptions set trial_used_at = null, updated_at = now()
+             where id = ${subscriptionId}`;
+    await tx`
+      insert into staff_audit_log (actor_id, action, target_type, target_id, detail)
+      values (${actorId}, 'restore_trial', 'org', ${orgId}, ${tx.json({
+        reason,
+        before: { trial_used_at: before.trial_used_at },
+        after: { trial_used_at: null },
+      } as never)})`;
   });
+  // The trial burn is a GROUP fact now — restoring it re-opens the 14-day
+  // checkout trial for every org billing through this row. Cache bust after commit.
+  await invalidateGroupEntitlements(subscriptionId);
 }
