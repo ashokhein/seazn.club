@@ -55,7 +55,12 @@ vi.mock("@/lib/email", async (importActual) => {
 
 import { sql } from "@/lib/db";
 import { sendPassCreditReversalIncompleteAlertEmail } from "@/lib/email";
-import { PASS_CREDIT_INTENT_KEY, reversePassCreditOnRefund } from "../pass-credit";
+import {
+  PASS_CREDIT_INTENT_KEY,
+  creditPassTowardSubscription,
+  groupAlreadyRedeemed,
+  reversePassCreditOnRefund,
+} from "../pass-credit";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 12);
@@ -127,10 +132,30 @@ async function seedRedemption(opts: {
   return competitionId;
 }
 
+/** A second Event Pass for `orgId`, distinct competition + intent from
+ *  whatever `seedRedemption` already recorded — used to prove
+ *  `creditPassTowardSubscription` refuses a second mint while the group's
+ *  only redemption is undetermined. */
+async function seedCompetitionPass(orgId: string, intent: string): Promise<void> {
+  const suffix = uniq();
+  const [{ id: competitionId }] = await sql<{ id: string }[]>`
+    insert into competitions (org_id, name, slug)
+    values (${orgId}, ${"Second Pass " + suffix}, ${"second-pass-" + suffix}) returning id`;
+  await sql`
+    insert into competition_passes (competition_id, org_id, stripe_payment_intent, purchased_at)
+    values (${competitionId}, ${orgId}, ${intent}, now())`;
+}
+
 async function redemptionRow(intent: string) {
   const [row] = await sql<
-    { reversed_at: string | null; reversed_minor: number | null; amount_minor: number }[]
-  >`select reversed_at, reversed_minor, amount_minor from pass_credit_redemptions where payment_intent = ${intent}`;
+    {
+      reversed_at: string | null;
+      reversed_minor: number | null;
+      amount_minor: number;
+      reversal_undetermined_at: string | null;
+    }[]
+  >`select reversed_at, reversed_minor, amount_minor, reversal_undetermined_at
+    from pass_credit_redemptions where payment_intent = ${intent}`;
   return row;
 }
 
@@ -310,6 +335,7 @@ describe.skipIf(!HAS_DB)("reversePassCreditOnRefund", () => {
     const row = await redemptionRow(intent);
     expect(row?.reversed_at).not.toBeNull();
     expect(row?.reversed_minor).toBe(0);
+    expect(row?.reversal_undetermined_at).not.toBeNull();
 
     expect(sendPassCreditReversalIncompleteAlertEmail).toHaveBeenCalledTimes(1);
     const alertArgs = vi.mocked(sendPassCreditReversalIncompleteAlertEmail).mock.calls[0]![0];
@@ -338,6 +364,7 @@ describe.skipIf(!HAS_DB)("reversePassCreditOnRefund", () => {
     const row = await redemptionRow(intent);
     expect(row?.reversed_at).not.toBeNull();
     expect(row?.reversed_minor).toBe(0);
+    expect(row?.reversal_undetermined_at).not.toBeNull();
     expect(sendPassCreditReversalIncompleteAlertEmail).toHaveBeenCalledTimes(1);
     const alertArgs = vi.mocked(sendPassCreditReversalIncompleteAlertEmail).mock.calls[0]![0];
     expect(alertArgs.reason).toBe("undetermined");
@@ -362,5 +389,49 @@ describe.skipIf(!HAS_DB)("reversePassCreditOnRefund", () => {
     expect(sendPassCreditReversalIncompleteAlertEmail).toHaveBeenCalledTimes(1);
     const row = await redemptionRow(intent);
     expect(row?.reversed_minor).toBe(1000);
+  });
+
+  it("keeps the group's lifetime cap HELD after an undetermined reversal — the money bug this closes", async () => {
+    const customerId = "cus_" + uniq();
+    const { orgId, subscriptionId } = await seedOrgAndSubscription(customerId);
+    const intent = "pi_" + uniq();
+    ledger.push(grantEntry(intent));
+    ledger.push({ amount: -500, currency: "gbp" }); // unrelated credit -> unsafe
+    await seedRedemption({ subscriptionId, orgId, intent, amountMinor: 2500 });
+
+    await reversePassCreditOnRefund(intent);
+
+    // Pre-fix, reversed_at alone freed pass_credit_redemptions_group_cap the
+    // moment this ran, even though nothing was actually clawed back.
+    expect(await groupAlreadyRedeemed(subscriptionId)).toBe(true);
+
+    const row = await redemptionRow(intent);
+    expect(row?.reversed_at).not.toBeNull(); // idempotency stamp still set
+    expect(row?.reversal_undetermined_at).not.toBeNull(); // the actual fix
+  });
+
+  it("refuses a second mint while the group's only redemption is undetermined", async () => {
+    const customerId = "cus_" + uniq();
+    const { orgId, subscriptionId } = await seedOrgAndSubscription(customerId);
+    const intent = "pi_" + uniq();
+    ledger.push(grantEntry(intent));
+    ledger.push({ amount: 1500, currency: "gbp" });
+    ledger.push({ amount: -500, currency: "gbp" }); // unrelated credit -> unsafe
+    await seedRedemption({ subscriptionId, orgId, intent, amountMinor: 2500 });
+    await reversePassCreditOnRefund(intent);
+
+    // A SECOND, different pass for the same group attempts to mint a fresh
+    // credit — exactly the double-£25 shape the bug allowed.
+    const secondIntent = "pi_" + uniq();
+    await seedCompetitionPass(orgId, secondIntent);
+    stripeMock.createBalance.mockClear();
+
+    const second = await creditPassTowardSubscription(orgId);
+
+    expect(second.outcome).toBe("group_already_redeemed");
+    expect(second.amountMinor).toBe(0);
+    // Caught by the CHEAP pre-check (groupAlreadyRedeemed) — never even
+    // reaches a Stripe call.
+    expect(stripeMock.createBalance).not.toHaveBeenCalled();
   });
 });

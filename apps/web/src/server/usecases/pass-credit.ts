@@ -244,11 +244,14 @@ async function alreadyCredited(
 /**
  * Does this billing GROUP already hold a live (un-reversed) pass credit?
  *
- * `pass_credit_redemptions_group_cap` (V335) is the real backstop — a partial
- * unique index on `subscription_id where reversed_at is null` — so this read
- * is only an optimisation to avoid the Stripe round trip and the wasted
+ * `pass_credit_redemptions_group_cap` (V335, widened by V337) is the real
+ * backstop — a partial unique index on `subscription_id where reversed_at is
+ * null or reversal_undetermined_at is not null` — so this read is only an
+ * optimisation to avoid the Stripe round trip and the wasted
  * `createBalanceTransaction` call on the common case. A race that slips past
- * this SELECT is still caught by the index at INSERT time below.
+ * this SELECT is still caught by the index at INSERT time below. The
+ * predicate here must MATCH that index's (#286): an undetermined reversal
+ * (reversed_at stamped, nothing actually clawed back) still holds the cap.
  *
  * Exported (unlike `alreadyCredited`/`netPaidForIntent`) so the fail-closed
  * behaviour on a genuine DB fault can be pinned directly — the real suite
@@ -259,7 +262,9 @@ export async function groupAlreadyRedeemed(subscriptionId: string): Promise<bool
   try {
     const [row] = await sql<{ one: number }[]>`
       select 1 as one from pass_credit_redemptions
-      where subscription_id = ${subscriptionId} and reversed_at is null limit 1`;
+      where subscription_id = ${subscriptionId}
+        and (reversed_at is null or reversal_undetermined_at is not null)
+      limit 1`;
     return !!row;
   } catch {
     // Same rule as `alreadyCredited`: this function is load-bearing for the
@@ -624,11 +629,24 @@ export async function reversePassCreditOnRefund(intent: string): Promise<void> {
   // NULL to set gets a row back, so only that caller sends the staff alert
   // below. The loser returns having done nothing further, exactly as if it
   // had lost the earlier read-check.
-  const [won] = await sql<{ payment_intent: string }[]>`
-    update pass_credit_redemptions
-    set reversed_at = now(), reversed_minor = ${reverseAmount}
-    where payment_intent = ${intent} and reversed_at is null
-    returning payment_intent`;
+  // #286: `reversed_at` is stamped on every call — it still doubles as the
+  // "this webhook delivery has been handled" idempotency guard the
+  // early-return at the top of this function reads (line 524). But when
+  // `unsafe` is true nothing was actually clawed back, so
+  // `reversal_undetermined_at` is ALSO stamped, and V337's widened partial
+  // index keeps pass_credit_redemptions_group_cap HELD for this row even
+  // though reversed_at is set — the bug this migration exists to close.
+  const [won] = unsafe
+    ? await sql<{ payment_intent: string }[]>`
+        update pass_credit_redemptions
+        set reversed_at = now(), reversed_minor = ${reverseAmount}, reversal_undetermined_at = now()
+        where payment_intent = ${intent} and reversed_at is null
+        returning payment_intent`
+    : await sql<{ payment_intent: string }[]>`
+        update pass_credit_redemptions
+        set reversed_at = now(), reversed_minor = ${reverseAmount}
+        where payment_intent = ${intent} and reversed_at is null
+        returning payment_intent`;
   if (!won) return;
 
   if (unsafe || reverseAmount < redemption.amount_minor) {
