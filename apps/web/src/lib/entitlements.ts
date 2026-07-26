@@ -121,11 +121,17 @@ export const PASS_END_GRACE_DAYS = 7;
  *   B (long-ended): ends_on is set AND ends_on + PASS_END_GRACE_DAYS < today.
  *                   A date-only comparison (ends_on is a DATE), grace 7 days.
  *
- * Kept exactly in step with the SQL resolver's pass arm (org_has_feature, V328):
+ * Kept exactly in step with the SQL resolver's pass arm (org_has_feature, V328,
+ * grace boundary moved to UTC in V334):
  * `not (c.status in ('archived','completed') or (c.ends_on is not null and
- * c.ends_on + interval '7 days' < current_date))`. The entitlements-sql-parity
- * suite is the tie. Exported so the OFFER side can reuse it later; this task
- * wires no other call site.
+ * c.ends_on + interval '7 days' < (now() at time zone 'utc')::date))`. Both
+ * sides now compare against the UTC calendar date — the SQL used to compare
+ * against bare `current_date` (the DB session's TimeZone GUC, Europe/London in
+ * production), which could disagree with this function's UTC computation for
+ * an up-to-1h window around UTC midnight; V334 aligned SQL to this function's
+ * basis rather than the other way round. The entitlements-sql-parity suite is
+ * the tie. Exported so the OFFER side can reuse it later; this task wires no
+ * other call site.
  */
 export function isPassLocked(status: string, endsOn: Date | string | null): boolean {
   if (status === "archived" || status === "completed") return true;

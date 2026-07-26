@@ -196,6 +196,72 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
     expect(await sqlHasFeature(orgId, "realtime", compId)).toBe(false);
   });
 
+  // V334: the pass-lock grace boundary must be the UTC calendar date on BOTH
+  // sides, not the DB session's TimeZone GUC. Before the fix, the SQL arm
+  // compared against bare `current_date` (the session's TimeZone GUC —
+  // Europe/London in production) while the TS resolver (isPassLocked) always
+  // computes on the UTC calendar date, so around the moment the session's
+  // date rolls over the two can disagree on whether a pass is locked.
+  //
+  // Etc/GMT-14 (UTC+14) only rolls the session date FORWARD a day once the
+  // real UTC hour has reached 10 (10 + 14 = 24 wraps); Etc/GMT+12 (UTC-12) is
+  // the mirror — it rolls the date BACKWARD a day whenever the UTC hour is
+  // under 12. Between the two, every possible real-clock UTC hour gets a
+  // guaranteed one-day divergence from the UTC date, so this test can't
+  // spuriously pass by running during a UTC hour where a fixed tz offset
+  // happens not to cross midnight. `set local time zone` is scoped to a
+  // transaction (a single pinned connection via sql.begin) so it reverts
+  // automatically at commit — no other test or connection in the pool
+  // inherits it.
+  it("agrees with the TS resolver at the grace boundary under a non-UTC session TZ", async () => {
+    const compId = await seedCompetition(orgId, "tz-boundary");
+    const [{ h }] = await sql<{ h: number }[]>`
+      select extract(hour from now() at time zone 'utc')::int as h`;
+    const forward = h >= 10;
+
+    if (forward) {
+      // Session date lands one day AHEAD of the UTC date — production's
+      // Europe/London BST bug shape. `ends_on + 7 days` sits exactly ON the
+      // UTC boundary (not locked under UTC), so the buggy SQL (comparing
+      // against a date one day further on) wrongly locks it.
+      await sql`
+        update competitions
+        set ends_on = ((now() at time zone 'utc')::date - interval '7 days')::date
+        where id = ${compId}`;
+    } else {
+      // Mirror divergence: session date lands one day BEHIND the UTC date.
+      // `ends_on + 7 days` sits exactly on the SESSION date (not locked under
+      // the buggy session-TZ basis), one day short of the UTC boundary, so
+      // the buggy SQL wrongly leaves it unlocked while UTC says locked.
+      await sql`
+        update competitions
+        set ends_on = ((now() at time zone 'utc')::date - interval '8 days')::date
+        where id = ${compId}`;
+    }
+    await sql`
+      insert into competition_passes (competition_id, org_id) values (${compId}, ${orgId})`;
+    await invalidateOrgEntitlements(orgId);
+
+    // TS resolver: always UTC-based, unaffected by the DB session's TZ.
+    // Forward case is just inside the grace window (pass lifts); the mirror
+    // case is one day past it (pass is locked).
+    const expected = forward;
+    expect(await hasFeature(orgId, "realtime", compId)).toBe(expected);
+
+    // SQL resolver, forced onto a session TZ a calendar day off from UTC.
+    const sqlAnswer = await sql.begin(async (tx) => {
+      if (forward) {
+        await tx`set local time zone 'Etc/GMT-14'`;
+      } else {
+        await tx`set local time zone 'Etc/GMT+12'`;
+      }
+      const [row] = await tx<{ v: boolean }[]>`
+        select org_has_feature(${orgId}, 'realtime', ${compId}) as v`;
+      return row.v;
+    });
+    expect(sqlAnswer).toBe(expected);
+  });
+
   it("coalesces a null-bool Event Pass row THROUGH to the plan, not into a deny", async () => {
     // A pass row whose bool_value is null is NO answer, not a deny: it must fall
     // through to the plan row, exactly as org_has_feature's coalesce does.
