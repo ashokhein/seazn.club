@@ -103,10 +103,14 @@ export async function createFromDraft(
   draft: FunnelDraft,
 ): Promise<{ redirect: string; orgId: string }> {
   const orgs = await getUserOrgs(userId);
-  const referredByOrgId = await consumeReferralCookie(userId);
+  // Consume the referral cookie ONLY when actually creating a new org — an
+  // existing user (orgs[0]) can't be a fresh referral, so don't burn their
+  // cookie for nothing (it stays for a genuine new-org create later).
   const org =
     orgs[0] ??
-    (await createOrgForUser(userId, `${draft.payload.name} organisers`, { referredByOrgId }));
+    (await createOrgForUser(userId, `${draft.payload.name} organisers`, {
+      referredByOrgId: await consumeReferralCookie(userId),
+    }));
 
   const auth: AuthCtx = { orgId: org.id, via: "session", userId, role: "owner", keyId: null };
   const competition = await createCompetition(auth, {

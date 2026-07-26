@@ -7,15 +7,17 @@ import QRCode from "qrcode";
  *  Pass `qrFileName` to add a QR reveal — a printable code for noticeboards
  *  (generated client-side from the same URL, downloadable as a PNG). `label`
  *  names the link for screen readers (axe `label` rule — a bare readonly
- *  input has no accessible name otherwise); defaults to a generic caption. */
+ *  input has no accessible name otherwise). REQUIRED (no default) so every
+ *  caller supplies a translated string — a hardcoded English default would
+ *  silently ship untranslated to es/fr/nl. */
 export function CopyLink({
   path,
   qrFileName,
-  label = "Shareable link",
+  label,
 }: {
   path: string;
   qrFileName?: string;
-  label?: string;
+  label: string;
 }) {
   const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState(false);
