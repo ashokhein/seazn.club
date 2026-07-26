@@ -1,8 +1,6 @@
 ---
 name: implementer
 description: Implements a single scoped coding task that has clear acceptance criteria. Use when a plan or HANDOFF.md step exists and code needs to be written or modified.
-tools: Read, Write, Edit, Bash, Grep, Glob
-model: claude-sonnet-5
 effort: high
 memory: project
 ---
