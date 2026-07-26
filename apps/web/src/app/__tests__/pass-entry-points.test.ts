@@ -93,14 +93,21 @@ describe("no entry point re-derives 'is this org on a paid plan'", () => {
     ["the /pricing column", PRICING_PAGE],
   ])("%s asks the resolver", (_name, parts) => {
     const src = read(...parts);
-    expect(src).toMatch(/isPaidPlan\(\s*await\s+orgPlanKey\(/);
+    // The resolver's verdict may be read inline (`isPaidPlan(await orgPlanKey(…))`)
+    // or resolved ONCE into a local (`const effectivePlanKey = await orgPlanKey(…)`,
+    // then `isPaidPlan(effectivePlanKey)`). Both feed isPaidPlan from orgPlanKey,
+    // never from raw plan_key — which is the invariant this guards.
+    expect(src).toMatch(/isPaidPlan\(\s*(await\s+orgPlanKey\(|effectivePlanKey\b)/);
   });
 
   it("the billing page's pass offer does not reuse its raw-plan_key `isPaid`", () => {
     // `isPaid` on that page is computed from sub.plan_key for the Pro upgrade
     // section and is deliberately left alone; the pass offer must not borrow it.
+    // The page resolves once into `effectivePlanKey = await orgPlanKey(…)`; the
+    // pass offer reads THAT, not the raw `isPaid`.
     const src = read(...BILLING_PAGE);
-    expect(src).toMatch(/passOfferable[\s\S]{0,200}isPaidPlan\(\s*await\s+orgPlanKey\(/);
+    expect(src).toMatch(/effectivePlanKey\s*=\s*await\s+orgPlanKey\(/);
+    expect(src).toMatch(/passOfferable[\s\S]{0,200}isPaidPlan\(effectivePlanKey\b/);
   });
 
   it("the in-competition entry point reads the layout's one signal", () => {
