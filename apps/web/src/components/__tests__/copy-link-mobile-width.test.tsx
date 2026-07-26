@@ -9,7 +9,7 @@ import { CopyLink } from "@/components/copy-link";
 // The input must take the full row width on mobile.
 describe("CopyLink — mobile width", () => {
   it("gives the readonly URL input the full row width, with buttons on their own row", () => {
-    const html = renderToStaticMarkup(<CopyLink path="/shared/org/comp/register" qrFileName="q.png" />);
+    const html = renderToStaticMarkup(<CopyLink path="/shared/org/comp/register" qrFileName="q.png" label="Shareable link" />);
     const inputMatch = html.match(/<input[^>]*class="([^"]+)"/);
     expect(inputMatch).not.toBeNull();
     expect(inputMatch![1]).toContain("w-full");

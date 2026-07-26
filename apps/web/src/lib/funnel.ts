@@ -95,18 +95,23 @@ async function resolveSport(
  * Turn a claimed draft into real structure for `userId` and return where to
  * land: inside the new competition on the division's entrants tab. Uses the
  * standard use-cases, so quotas/slugs/audit all apply as if typed by hand.
- * Reads the referral cookie (`consumeReferralCookie`) to attribute the new org,
- * so this needs request scope — its only caller is the funnel claim route.
+ * Reads the referral cookie (`consumeReferralCookie`) ONLY when creating a new
+ * org, to attribute it — so this needs request scope; its only caller is the
+ * funnel claim route.
  */
 export async function createFromDraft(
   userId: string,
   draft: FunnelDraft,
 ): Promise<{ redirect: string; orgId: string }> {
   const orgs = await getUserOrgs(userId);
-  const referredByOrgId = await consumeReferralCookie(userId);
+  // Consume the referral cookie ONLY when actually creating a new org — an
+  // existing user (orgs[0]) can't be a fresh referral, so don't burn their
+  // cookie for nothing (it stays for a genuine new-org create later).
   const org =
     orgs[0] ??
-    (await createOrgForUser(userId, `${draft.payload.name} organisers`, { referredByOrgId }));
+    (await createOrgForUser(userId, `${draft.payload.name} organisers`, {
+      referredByOrgId: await consumeReferralCookie(userId),
+    }));
 
   const auth: AuthCtx = { orgId: org.id, via: "session", userId, role: "owner", keyId: null };
   const competition = await createCompetition(auth, {
