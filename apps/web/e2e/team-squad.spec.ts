@@ -4,8 +4,12 @@ import { TAG, apiJson } from "./helpers";
 // Add a team under a club on its /clubs/[id] hub (Teams tab) and manage the
 // persistent squad — no spreadsheet import. Names are namespaced so this spec
 // never collides with others sharing the per-run org.
-test("add a team to a club and manage its squad", async ({ page }) => {
-  const clubName = `Harbour ${TAG}`;
+test("add a team to a club and manage its squad", async ({ page }, testInfo) => {
+  // Retry-safe + distinct from import.spec's `Harbour ${TAG}`: Playwright retries
+  // reuse the module-level TAG, so a fixed club name 409s ("already exists") on a
+  // retry (and would collide cross-spec in the same worker). The retry index
+  // makes each attempt unique.
+  const clubName = `Harbour ${TAG} ${testInfo.retry}`;
   const teamName = `Squad ${TAG}`;
   const playerName = `Squaddie ${TAG}`;
 
