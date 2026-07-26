@@ -22,7 +22,6 @@ import {
   getPassPurchases,
 } from "@/server/usecases/billing-manage";
 import { InvoiceList } from "@/components/billing-invoice-list";
-import { BillingCredits } from "@/components/billing-credits";
 import { getCreditsTab } from "@/server/usecases/credits-tab";
 import { type Subscription } from "@/lib/types";
 import { getLimit, isPaidPlan, isPlanLapsed, orgPlanKey } from "@/lib/entitlements";
@@ -34,6 +33,7 @@ import { planLabel } from "@/lib/plan-label";
 import { BackLink } from "@/components/back-link";
 import { PoweredByStripe } from "@/components/powered-by-stripe";
 import { Tip } from "@/components/ui/tip";
+import Link from "@/components/ui/console-link";
 import { BillingGroupPanel } from "@/components/billing-group-panel";
 import { OperatorConsole } from "@/components/operator-console";
 import { allocationConsole } from "@/server/usecases/operator-allocation";
@@ -565,17 +565,17 @@ export default async function BillingPage({
           </div>
         </section>
 
-        {/* AI credits — the wallet home (SPEC-6 §A3). Under Usage because
-            credits are the metered axis; a passed competition and a spent
-            credit are both "how much of the plan you've used". */}
-        <BillingCredits
-          view={creditsView}
-          dict={dict}
-          locale={locale}
-          exportHref={`${routes.billing(orgSlug)}/credits.csv`}
-          packs={creditPackOptions(currency)}
-          currency={currency}
-        />
+        {/* AI credits moved to their own Settings tab (/settings/credits). A
+            payer lands on billing, so leave a pointer to the wallet here. */}
+        <Link
+          href={routes.credits(orgSlug)}
+          className="card mb-6 flex items-center justify-between gap-3 p-5 transition hover:border-purple-200 hover:bg-purple-50/40"
+        >
+          <span className="text-sm font-medium text-slate-700">
+            {t(dict, "billing.credits.link")}
+          </span>
+          <span aria-hidden className="text-lg text-purple-500">→</span>
+        </Link>
 
         {/* Event Pass — directly under the meter it moves: a passed
             competition stops counting against competitions.max_active. */}

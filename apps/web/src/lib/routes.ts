@@ -12,6 +12,8 @@ export const routes = {
   orgSettings: (org: Slug, tab?: string) =>
     tab ? `/o/${org}/settings?tab=${tab}` : `/o/${org}/settings`,
   billing: (org: Slug) => `/o/${org}/settings/billing`,
+  /** AI-credit wallet home — its own Settings tab (moved off the billing page). */
+  credits: (org: Slug) => `/o/${org}/settings/credits`,
   /** Entry-fee collection: Stripe Connect + offline instructions (spec 2026-07-12).
    *  Renamed from /settings/payments (2026-07-18); the old path redirects. */
   connect: (org: Slug) => `/o/${org}/settings/connect`,

@@ -4,7 +4,7 @@ import {
   Building2, Users, CreditCard, UserCircle,
   Pencil, Image as ImageIcon, Palette,
   User, Mail, Download, ShieldOff, KeyRound, Compass, Banknote, BookOpen, Cookie, Handshake,
-  Clock, Newspaper,
+  Clock, Newspaper, Sparkles,
   type LucideIcon,
 } from "lucide-react";
 import { getUserOrgs } from "@/lib/auth";
@@ -106,6 +106,9 @@ const NAV_ITEMS: { tab: Tab; labelKey: string; icon: LucideIcon; href?: string }
 
 const BILLING_NAV = { labelKey: "payments.planBilling", icon: CreditCard } as const;
 const CONNECT_NAV = { labelKey: "payments.title", icon: Banknote } as const;
+// AI Credits — its own route (the wallet moved off the billing page). Member-
+// visible like Billing/Connect; the page itself is not payer-gated.
+const CREDITS_NAV = { labelKey: "settings.nav.credits", icon: Sparkles } as const;
 
 export default async function SettingsPage({
   params,
@@ -275,6 +278,13 @@ export default async function SettingsPage({
               >
                 <BILLING_NAV.icon className="h-4 w-4 shrink-0 text-slate-500" strokeWidth={1.75} />
                 {t(dict, BILLING_NAV.labelKey)}
+              </Link>
+              <Link
+                href={routes.credits(orgSlug)}
+                className="flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-600 transition hover:bg-purple-50 hover:text-purple-700"
+              >
+                <CREDITS_NAV.icon className="h-4 w-4 shrink-0 text-slate-500" strokeWidth={1.75} />
+                {t(dict, CREDITS_NAV.labelKey)}
               </Link>
             </nav>
             <div className="my-4 hidden border-t border-purple-100 md:block" />
