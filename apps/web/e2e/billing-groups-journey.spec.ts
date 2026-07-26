@@ -106,7 +106,10 @@ test.describe.serial("billing groups — visual workflow", () => {
     await button.click();
     await expect(dialogOf(page)).toHaveCount(0);
     // Every mutation is followed by `load()`, so the panel is briefly stale.
-    await page.waitForLoadState("networkidle");
+    // Settle briefly instead of networkidle: the billing page holds a realtime
+    // socket, so the network is NEVER idle → networkidle hits the 60s test
+    // timeout. Web-first assertions after this auto-wait for the refreshed panel.
+    await page.waitForTimeout(500);
   }
 
   test("01 — a bill with one organisation, and others that could join it", async ({ page }) => {
@@ -394,8 +397,8 @@ test.describe.serial("billing groups — visual workflow", () => {
           select owner_user_id from subscriptions where id = ${groupId}`,
       );
       expect(owner[0].owner_user_id).toBe(heir);
-      await page.goto("/settings/billing");
-      await page.waitForLoadState("networkidle");
+      await page.goto("/settings/billing", { waitUntil: "load" });
+      await page.waitForTimeout(500); // settle, not networkidle (realtime socket never idles → 60s hang)
       await expect(panelOf(page)).toHaveCount(0);
       await shot(page, "handed-over-panel-gone");
     } finally {

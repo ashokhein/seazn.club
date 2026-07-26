@@ -97,8 +97,11 @@ test.describe.serial("billing groups", () => {
       });
       // The panel mounts, then fetches, then decides. `toHaveCount(0)` against
       // a page that has not finished those fetches passes for the wrong reason,
-      // so settle the network before asserting absence.
-      await soloPage.waitForLoadState("networkidle");
+      // so settle before asserting absence. Fixed settle, NOT networkidle: the
+      // billing page's realtime socket keeps the network busy, so networkidle
+      // never fires and hits the 60s test timeout. The heading was already
+      // asserted visible above, so the page has loaded.
+      await soloPage.waitForTimeout(500);
       await expect(panelOf(soloPage)).toHaveCount(0);
     } finally {
       await solo.close();
