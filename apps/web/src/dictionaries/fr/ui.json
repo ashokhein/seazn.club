@@ -547,6 +547,7 @@
   "billing.group.counts": "Sur cette facture : {orgs} · Places payées : {seats}",
   "billing.group.capacity": "Capacité de {max}",
   "billing.group.freedSlot": "Places payées libres jusqu’au renouvellement : {count}. Y déplacer une organisation ne coûte rien.",
+  "billing.group.trialFree": "Vous êtes en période d’essai : ajouter une organisation est gratuit jusqu’à sa fin — elle vous est facturée à ce moment-là.",
   "billing.group.suspended": "suspendue",
   "billing.group.remove": "Retirer de cette facture",
   "billing.group.add": "Ajouter une organisation",

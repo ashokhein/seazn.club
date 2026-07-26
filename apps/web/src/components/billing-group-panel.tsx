@@ -145,6 +145,12 @@ export function BillingGroupPanel({
   if (!view || view.hidden) return null;
 
   const group = groups.find((g) => g.id === subscriptionId)!;
+  // During a trial nothing is billed and quantity_paid is frozen at its baseline
+  // (see syncGroupQuantity), so `freeSlots` is 0 and the "paid slots free" line
+  // never fires — but the truth a payer needs is different, not absent: adding an
+  // organisation is free because it rides the trial, not because a seat was paid
+  // for and freed. Drive the copy off the group's own status.
+  const trialing = group.status === "trialing";
   const {
     onBill,
     seatsPaid,
@@ -332,11 +338,17 @@ export function BillingGroupPanel({
         )}
       </p>
 
-      {freeSlots > 0 && (
+      {trialing ? (
         <p className="mb-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-          {msg("billing.group.freedSlot", { count: String(freeSlots) })}
-          <Tip id="billing.freed-slot" className="ml-1 align-middle" />
+          {msg("billing.group.trialFree")}
         </p>
+      ) : (
+        freeSlots > 0 && (
+          <p className="mb-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            {msg("billing.group.freedSlot", { count: String(freeSlots) })}
+            <Tip id="billing.freed-slot" className="ml-1 align-middle" />
+          </p>
+        )
       )}
 
       <ul className="divide-y divide-slate-100 border-y border-slate-100">

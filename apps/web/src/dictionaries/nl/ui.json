@@ -547,6 +547,7 @@
   "billing.group.counts": "Op deze factuur: {orgs} · Betaalde plekken: {seats}",
   "billing.group.capacity": "Ruimte voor {max}",
   "billing.group.freedSlot": "Betaalde plekken vrij tot de verlenging: {count}. Een organisatie daarheen verplaatsen kost niets.",
+  "billing.group.trialFree": "Je hebt een proefperiode, dus een organisatie toevoegen is gratis tot die afloopt — je wordt er dan voor het eerst voor gefactureerd.",
   "billing.group.suspended": "geschorst",
   "billing.group.remove": "Van deze factuur halen",
   "billing.group.add": "Een organisatie toevoegen",

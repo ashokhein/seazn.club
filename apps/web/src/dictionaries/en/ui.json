@@ -547,6 +547,7 @@
   "billing.group.counts": "On this bill: {orgs} · Seats paid for: {seats}",
   "billing.group.capacity": "Room for {max}",
   "billing.group.freedSlot": "Paid slots free until renewal: {count}. Moving an organisation into one costs nothing.",
+  "billing.group.trialFree": "You're on a trial, so adding an organisation is free until it ends — you're first billed for it then.",
   "billing.group.suspended": "suspended",
   "billing.group.remove": "Remove from this bill",
   "billing.group.add": "Add an organisation",

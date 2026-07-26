@@ -114,6 +114,11 @@ export async function previewAttachCharge(
 ): Promise<{ amount_minor: number; currency: string } | null> {
   const group = await groupRow(subscriptionId);
   if (!group || !group.stripe_subscription_id || !hasLiveSubscription(group)) return null;
+  // A trial defers every charge to its end invoice, so attaching DURING a trial
+  // costs nothing now — the seat rides the trial and is first billed when it
+  // converts. Preview free rather than asking Stripe to price a proration the
+  // trial will defer (and which would otherwise read back as a phantom charge).
+  if (group.status === "trialing") return null;
   const active = await activeOrgCount(subscriptionId);
   const raised = active + 1;
   // A re-add into a paid-and-freed slot raises no proration.
@@ -268,6 +273,14 @@ export async function syncGroupQuantity(
     // after the update made the renewal path record the quantity it had just
     // SET rather than the one the invoice was cut from.
     const heldBefore = item.quantity ?? 0;
+    // A trial bills NOTHING until it converts: every quantity change rides the
+    // trial and is first invoiced at trial end (the renewal path below is the
+    // authoritative setter then). So while trialing we still sync the Stripe
+    // ITEM to the active count — the trial-end invoice must bill the right
+    // number — but never prorate, never report a charge, and (further down)
+    // never move quantity_paid, which would fabricate a paid seat nothing paid
+    // for and light up a phantom "freed slot" mid-trial.
+    const trialing = group.status === "trialing";
     let charged = false;
     let synced = false;
 
@@ -287,7 +300,7 @@ export async function syncGroupQuantity(
       // create_prorations and hand out a credit, which is the refund path this
       // design exists to have none of; without the second, re-adding into a slot
       // already paid for would charge twice for it.
-      const raising = active > heldBefore && active > group.quantity_paid;
+      const raising = active > heldBefore && active > group.quantity_paid && !trialing;
       await getStripe().subscriptions.update(group.stripe_subscription_id, {
         items: [{ id: item.id, quantity: active }],
         proration_behavior: raising ? "create_prorations" : "none",
@@ -318,9 +331,15 @@ export async function syncGroupQuantity(
     // the seat has been converted into the departing org's comp, not refunded.
     const paid = opts.renewal
       ? Math.max(opts.invoicedQuantity ?? heldBefore, raised)
-      : opts.spendFreedSeat
-        ? Math.max(active, group.quantity_paid - 1)
-        : Math.max(group.quantity_paid, heldBefore, raised);
+      : trialing
+        ? // Nothing has been billed yet: quantity_paid stays at its pre-trial
+          // baseline until the trial-end invoice (the renewal branch above) sets
+          // it. Freezing it here is what keeps a mid-trial attach from minting a
+          // phantom paid seat, and it self-heals when the trial converts.
+          group.quantity_paid
+        : opts.spendFreedSeat
+          ? Math.max(active, group.quantity_paid - 1)
+          : Math.max(group.quantity_paid, heldBefore, raised);
     if (paid !== group.quantity_paid) {
       await tx`
         update subscriptions set quantity_paid = ${paid}, updated_at = now()

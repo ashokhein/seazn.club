@@ -240,6 +240,7 @@ export type DictionaryKey =
   | "billing.group.transfer.summary.takingOver"
   | "billing.group.transfer.title"
   | "billing.group.transfer.withdraw"
+  | "billing.group.trialFree"
   | "billing.intervalChange.confirm"
   | "billing.intervalChange.keep"
   | "billing.intervalChange.toMonthly"
