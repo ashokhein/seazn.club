@@ -3,13 +3,15 @@
 // already sums (lib/entitlements.addonBonus), and freezes-not-deletes on revoke.
 //
 // These drive grantAddon/revokeAddon against real Postgres and assert on the
-// real resolver (getLimit). logStaffAction is mocked to a spy so we can assert
-// "audit exactly once on a real state change, never on a replay" without an
-// actor_id FK. The ent cache is disabled so a just-written row is seen at once.
+// real resolver (getLimit). Since #272's sweep, the staff_audit_log row is
+// written INSIDE grantAddon/revokeAddon's own tx (not via a mocked
+// logStaffAction), so audit is asserted by counting REAL rows — and ACTOR must
+// be a real users.id, because staff_audit_log.actor_id is a live FK. The ent
+// cache is disabled so a just-written row is seen at once.
 //
 // Real Postgres required; skipped without DATABASE_URL. Run on the fresh v17
 // schema: DATABASE_URL=$(cat /tmp/v17_base_url) DB_SCHEMA=seazn_club_v17.
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 
 vi.mock("@/lib/cache", () => ({
@@ -20,12 +22,6 @@ vi.mock("@/lib/cache", () => ({
   incrWindow: async () => 1,
 }));
 
-const logStaffActionMock = vi.fn<(...args: unknown[]) => Promise<void>>();
-vi.mock("@/lib/admin", async (orig) => ({
-  ...(await (orig as () => Promise<Record<string, unknown>>)()),
-  logStaffAction: (...args: unknown[]) => logStaffActionMock(...args),
-}));
-
 import { sql } from "@/lib/db";
 import { createOrgForUser } from "@/lib/auth";
 import { walletIdFor } from "@/lib/credits";
@@ -34,7 +30,8 @@ import { grantAddon, revokeAddon } from "../admin-addons";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const FEATURE = "members.max";
-const ACTOR = "staff-tester";
+// A real staff user — actor_id is an FK, so the audit insert now needs one.
+let ACTOR: string;
 const uniq = () => randomUUID().slice(0, 8);
 
 async function makeUser(): Promise<string> {
@@ -44,8 +41,18 @@ async function makeUser(): Promise<string> {
   return id;
 }
 
-beforeEach(() => {
-  logStaffActionMock.mockClear();
+/** Count real staff_audit_log rows for an org + action (replaces the old
+ *  logStaffAction spy now that the audit commits inside the write's own tx). */
+async function auditCount(orgId: string, action: string): Promise<number> {
+  const [{ n }] = await sql<{ n: number }[]>`
+    select count(*)::int as n from staff_audit_log
+    where target_id = ${orgId} and action = ${action}`;
+  return n;
+}
+
+beforeAll(async () => {
+  if (!HAS_DB) return;
+  ACTOR = await makeUser();
 });
 
 afterAll(async () => {
@@ -78,7 +85,7 @@ describe.skipIf(!HAS_DB)("grantAddon", () => {
       select status, stripe_item_id from org_addons where id = ${id}`;
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ status: "granted", stripe_item_id: null });
-    expect(logStaffActionMock).toHaveBeenCalledTimes(1);
+    expect(await auditCount(org.id, "addon_grant")).toBe(1);
   });
 
   it("a target_org_id grant lifts only that org; a sibling on the same wallet is unaffected", async () => {
@@ -128,7 +135,7 @@ describe.skipIf(!HAS_DB)("grantAddon", () => {
     const [{ n }] = await sql<{ n: number }[]>`
       select count(*)::int as n from org_addons where wallet_id = ${walletId}`;
     expect(n).toBe(0);
-    expect(logStaffActionMock).not.toHaveBeenCalled();
+    expect(await auditCount(org.id, "addon_grant")).toBe(0);
   });
 
   it("rejects a NONEXISTENT target_org_id with the same typed 422 (not a 500), no row written", async () => {
@@ -153,7 +160,7 @@ describe.skipIf(!HAS_DB)("grantAddon", () => {
     const [{ n }] = await sql<{ n: number }[]>`
       select count(*)::int as n from org_addons where wallet_id = ${walletId}`;
     expect(n).toBe(0);
-    expect(logStaffActionMock).not.toHaveBeenCalled();
+    expect(await auditCount(org.id, "addon_grant")).toBe(0);
   });
 
   it("rejects delta_each <= 0 and qty <= 0 with no row written", async () => {
@@ -183,7 +190,7 @@ describe.skipIf(!HAS_DB)("grantAddon", () => {
     const [{ n }] = await sql<{ n: number }[]>`
       select count(*)::int as n from org_addons where wallet_id = ${walletId}`;
     expect(n).toBe(0);
-    expect(logStaffActionMock).not.toHaveBeenCalled();
+    expect(await auditCount(org.id, "addon_grant")).toBe(0);
   });
 
   it("is idempotent on the key — a replay makes one row, applied:false, one audit row", async () => {
@@ -206,7 +213,28 @@ describe.skipIf(!HAS_DB)("grantAddon", () => {
     const [{ n }] = await sql<{ n: number }[]>`
       select count(*)::int as n from org_addons where wallet_id = ${walletId}`;
     expect(n).toBe(1);
-    expect(logStaffActionMock).toHaveBeenCalledTimes(1);
+    expect(await auditCount(org.id, "addon_grant")).toBe(1); // logged once, not on replay
+  });
+
+  it("atomicity: a bogus (nonexistent) actor trips the audit FK and rolls the GRANT back too", async () => {
+    // staff_audit_log.actor_id is a real FK to users(id): a grant whose audit
+    // insert fails must roll the org_addons row back with it — both-or-neither.
+    const org = await createOrgForUser(await makeUser(), "Addon Atomic Org");
+    const walletId = await walletIdFor(org.id);
+    const bogusActor = randomUUID(); // names no users row
+
+    await expect(
+      grantAddon(bogusActor, org.id, {
+        featureKey: FEATURE, deltaEach: 3, qty: 1, targetOrgId: null, reason: "promo",
+        idempotencyKey: `atomic-${uniq()}-abcd`,
+      }),
+    ).rejects.toThrow();
+
+    // Neither row survives: the grant and its audit committed together, or not at all.
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from org_addons where wallet_id = ${walletId}`;
+    expect(n).toBe(0);
+    expect(await auditCount(org.id, "addon_grant")).toBe(0);
   });
 });
 
@@ -218,14 +246,13 @@ describe.skipIf(!HAS_DB)("revokeAddon", () => {
       featureKey: FEATURE, deltaEach: 3, qty: 2, targetOrgId: null, reason: "sales_comp", idempotencyKey: `rev-${uniq()}-abcd`,
     });
     expect(await getLimit(org.id, FEATURE)).toBe(base + 6);
-    logStaffActionMock.mockClear();
 
     const res = await revokeAddon(ACTOR, org.id, id, "bug_fix");
     expect(res.revoked).toBe(true);
     expect(await getLimit(org.id, FEATURE)).toBe(base); // fell back to plan base
     const [row] = await sql<{ status: string }[]>`select status from org_addons where id = ${id}`;
     expect(row.status).toBe("canceled"); // freeze-not-delete: still present
-    expect(logStaffActionMock).toHaveBeenCalledTimes(1);
+    expect(await auditCount(org.id, "addon_revoke")).toBe(1);
   });
 
   it("revoking again is a no-op: {revoked:false}, no error, no second audit row", async () => {
@@ -234,11 +261,10 @@ describe.skipIf(!HAS_DB)("revokeAddon", () => {
       featureKey: FEATURE, deltaEach: 3, qty: 1, targetOrgId: null, reason: "promo", idempotencyKey: `rev2-${uniq()}-abcd`,
     });
     await revokeAddon(ACTOR, org.id, id, "promo");
-    logStaffActionMock.mockClear();
 
     const res = await revokeAddon(ACTOR, org.id, id, "promo");
     expect(res.revoked).toBe(false);
-    expect(logStaffActionMock).not.toHaveBeenCalled();
+    expect(await auditCount(org.id, "addon_revoke")).toBe(1); // the replay logged nothing new
   });
 
   it("refuses a Stripe-paid active row and another org's row — both untouched", async () => {
