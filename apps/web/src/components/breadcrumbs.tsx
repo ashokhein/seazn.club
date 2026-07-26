@@ -9,8 +9,8 @@ import Link from "@/components/ui/console-link";
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
-import { routes } from "@/lib/routes";
 import { buildCrumbs, type BreadcrumbNameMap } from "@/lib/breadcrumb-chain";
+import { orgSwitchTarget } from "@/components/org-switcher";
 import { useMsg } from "@/components/i18n/dict-provider";
 
 export type { BreadcrumbNameMap };
@@ -21,9 +21,19 @@ interface BreadcrumbsProps {
   names: BreadcrumbNameMap;
 }
 
-function OrgCrumb({ orgName, orgs }: Pick<BreadcrumbsProps, "orgName" | "orgs">) {
+function OrgCrumb({
+  orgName,
+  orgs,
+  pathname,
+}: Pick<BreadcrumbsProps, "orgName" | "orgs"> & { pathname: string }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  // The org segment doubles as the switcher. Land on the SAME page under the
+  // target org (Settings → Settings) instead of always bouncing to the org
+  // home — the "switching org redirects to the dashboard" bug. orgSwitchTarget
+  // transfers org-level paths (/o/<slug>, /settings…) and falls back to the new
+  // org home for entity paths (/c, /d) that can't exist under another org.
+  const oldSlug = pathname.match(/^\/o\/([^/]+)/)?.[1];
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => {
@@ -57,7 +67,7 @@ function OrgCrumb({ orgName, orgs }: Pick<BreadcrumbsProps, "orgName" | "orgs">)
             <Link
               key={o.slug}
               role="menuitem"
-              href={routes.orgHome(o.slug)}
+              href={orgSwitchTarget(pathname, oldSlug, o.slug)}
               onClick={() => setOpen(false)}
               className={`block truncate px-3 py-2 text-sm transition hover:bg-cream/10 hover:text-cream ${
                 o.name === orgName ? "font-medium text-lime-400" : "text-cream/80"
@@ -107,13 +117,13 @@ export function Breadcrumbs({ orgName, orgs, names }: BreadcrumbsProps) {
           </Link>
         ) : (
           <div className="flex min-w-0 items-center py-2 sm:hidden">
-            <OrgCrumb orgName={orgName} orgs={orgs} />
+            <OrgCrumb orgName={orgName} orgs={orgs} pathname={pathname} />
           </div>
         )}
 
         {/* Desktop trail: every level links; the current page is plain text. */}
         <nav aria-label="Breadcrumb" className="hidden min-w-0 items-center gap-1 py-2 sm:flex">
-          <OrgCrumb orgName={orgName} orgs={orgs} />
+          <OrgCrumb orgName={orgName} orgs={orgs} pathname={pathname} />
           {crumbs.slice(1).map((crumb, i) => {
             const isLast = i === crumbs.length - 2;
             return (
