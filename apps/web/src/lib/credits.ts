@@ -1073,16 +1073,34 @@ export class InsufficientBalanceError extends Error {
  * returning `{ applied: false, balanceAfter: <current> }`. A straddling deduct
  * writes its second (pack) row under a derived key so both rows satisfy the
  * unique constraint while a replay still conflicts on the base key.
+ *
+ * **Self-audits atomically (PR-B follow-up):** when `opts.audit` is given, the
+ * `staff_audit_log` row for this adjustment is written INSIDE this same
+ * `sql.begin` transaction, right after the ledger delta — so the money move
+ * and its audit trail commit or roll back together (a crash between the
+ * ledger write and a separate post-commit `logStaffAction` call used to be
+ * able to leave an adjustment with no audit row). Only written on a real
+ * applied adjustment: the idempotent-replay early-return above skips it, so a
+ * double-click never writes a second audit row either.
  */
 export async function adminAdjust(
   walletId: string,
   delta: number,
-  opts: { createdBy: string; reason: string; idempotencyKey: string; bucket?: Bucket },
+  opts: {
+    createdBy: string;
+    reason: string;
+    idempotencyKey: string;
+    bucket?: Bucket;
+    /** Staff-audit target for this adjustment. Omit only for a caller that
+     *  audits itself some other way; every current caller (the admin credits
+     *  route) passes this. `target_type` is always `"org"` here. */
+    audit?: { orgId: string; action: string; details?: Record<string, unknown> };
+  },
 ): Promise<{ applied: boolean; balanceAfter: number }> {
   if (!Number.isInteger(delta) || delta === 0) {
     throw new Error(`adminAdjust: delta must be a non-zero integer, got ${delta}`);
   }
-  const { createdBy, reason, idempotencyKey } = opts;
+  const { createdBy, reason, idempotencyKey, audit } = opts;
   return sql.begin(async (tx) => {
     await tx`select pg_advisory_xact_lock(hashtext(${"ai-credit-wallet:" + walletId}))`;
 
@@ -1090,6 +1108,14 @@ export async function adminAdjust(
       select id from ai_credit_ledger where idempotency_key = ${idempotencyKey}`;
     if (already) {
       return { applied: false, balanceAfter: await walletBalance(tx, walletId) };
+    }
+
+    async function auditApplied(balanceAfter: number): Promise<void> {
+      if (!audit) return;
+      await tx`
+        insert into staff_audit_log (actor_id, action, target_type, target_id, detail)
+        values (${createdBy}, ${audit.action}, 'org', ${audit.orgId},
+                ${tx.json({ ...audit.details, balance_after: balanceAfter } as never)})`;
     }
 
     if (delta > 0) {
@@ -1102,7 +1128,9 @@ export async function adminAdjust(
         reason,
         idempotencyKey,
       });
-      return { applied: true, balanceAfter: await walletBalance(tx, walletId) };
+      const balanceAfter = await walletBalance(tx, walletId);
+      await auditApplied(balanceAfter);
+      return { applied: true, balanceAfter };
     }
 
     const need = -delta;
@@ -1132,7 +1160,9 @@ export async function adminAdjust(
       });
       usedKey = true;
     }
-    return { applied: true, balanceAfter: await walletBalance(tx, walletId) };
+    const balanceAfter = await walletBalance(tx, walletId);
+    await auditApplied(balanceAfter);
+    return { applied: true, balanceAfter };
   });
 }
 

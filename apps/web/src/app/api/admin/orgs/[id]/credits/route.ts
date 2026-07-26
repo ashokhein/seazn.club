@@ -1,5 +1,5 @@
 import { sql } from "@/lib/db";
-import { requireStaff, logStaffAction } from "@/lib/admin";
+import { requireStaff } from "@/lib/admin";
 import { adminAdjust, walletIdFor, InsufficientBalanceError } from "@/lib/credits";
 import { handler, HttpError } from "@/lib/http";
 import { z } from "zod";
@@ -52,10 +52,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     let result: { applied: boolean; balanceAfter: number };
     try {
+      // The staff-audit row is written INSIDE adminAdjust's own transaction
+      // (PR-B follow-up) — the ledger delta and the audit row commit or roll
+      // back together, and a replayed idempotency_key (applied:false) writes
+      // no second audit row. See adminAdjust's docblock in lib/credits.ts.
       result = await adminAdjust(walletId, delta, {
         createdBy: staff.id,
         reason,
         idempotencyKey: idempotency_key,
+        audit: {
+          orgId: id,
+          action: "credit_adjust",
+          details: { delta, reason_code, note: note ?? null, wallet_id: walletId },
+        },
       });
     } catch (err) {
       if (err instanceof InsufficientBalanceError) {
@@ -64,20 +73,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       throw err;
     }
 
-    // Only the first application of an idempotency key changes state. A
-    // replayed double-click is a no-op (applied:false) and must NOT write a
-    // second audit row — the SPEC-3 §3 unified adjustments log reads
-    // staff_audit_log, and a duplicate would read as two grants for one
-    // adjustment. The first request already logged it.
-    if (result.applied) {
-      await logStaffAction(staff.id, "credit_adjust", "org", id, {
-        delta,
-        reason_code,
-        note: note ?? null,
-        wallet_id: walletId,
-        balance_after: result.balanceAfter,
-      });
-    }
     return { ok: true, balance_after: result.balanceAfter, applied: result.applied };
   });
 }

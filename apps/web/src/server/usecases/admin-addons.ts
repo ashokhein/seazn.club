@@ -25,6 +25,15 @@ import { logStaffAction } from "@/lib/admin";
  * `applied:false` and writes NO second audit row (the SPEC-3 §3 unified log
  * reads staff_audit_log; a duplicate there reads as two grants for one action).
  *
+ * **Target org must be in the granting org's group (PR-B follow-up):** a set
+ * `targetOrgId` that isn't actually a member of this wallet's billing group
+ * (a typo, or a foreign org id) would still write a `granted` row that
+ * resolves for nobody — an inert "success" that misleads the operator. So a
+ * set `targetOrgId` is checked against the wallet BEFORE the insert
+ * (`walletIdFor(targetOrgId) === walletId`, the same wallet-equality the
+ * sibling test in `admin-addons.test.ts` sets up); a mismatch throws a 422
+ * and writes no row. `targetOrgId: null` (group-wide) skips the check.
+ *
  * @returns the row id and whether this call actually created it.
  */
 export async function grantAddon(
@@ -48,6 +57,9 @@ export async function grantAddon(
   }
 
   const walletId = await walletIdFor(orgId);
+  if (targetOrgId !== null && (await walletIdFor(targetOrgId)) !== walletId) {
+    throw new HttpError(422, "target_org_id is not part of this organization's billing group.");
+  }
   const [inserted] = await sql<{ id: string }[]>`
     insert into org_addons
       (wallet_id, target_org_id, target_competition_id, feature_key, delta_each, qty,

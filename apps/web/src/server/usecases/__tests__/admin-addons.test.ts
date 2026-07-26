@@ -106,6 +106,31 @@ describe.skipIf(!HAS_DB)("grantAddon", () => {
     expect(await getLimit(orgB.id, FEATURE)).toBe(baseB); // sibling untouched
   });
 
+  it("rejects a target_org_id that is not in the granting org's wallet/group, with no row written", async () => {
+    // org and foreignOrg are on two DIFFERENT (standalone) wallets — a typo'd
+    // or foreign target_org_id must not resolve as an inert, misleading grant.
+    const org = await createOrgForUser(await makeUser(), "Addon Group Guard Org");
+    const foreignOrg = await createOrgForUser(await makeUser(), "Addon Group Guard Foreign");
+    const walletId = await walletIdFor(org.id);
+    expect(await walletIdFor(foreignOrg.id)).not.toBe(walletId);
+
+    await expect(
+      grantAddon(ACTOR, org.id, {
+        featureKey: FEATURE,
+        deltaEach: 2,
+        qty: 1,
+        targetOrgId: foreignOrg.id,
+        reason: "sales_comp",
+        idempotencyKey: `foreign-${uniq()}-abcd`,
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from org_addons where wallet_id = ${walletId}`;
+    expect(n).toBe(0);
+    expect(logStaffActionMock).not.toHaveBeenCalled();
+  });
+
   it("rejects delta_each <= 0 and qty <= 0 with no row written", async () => {
     const org = await createOrgForUser(await makeUser(), "Addon Bad Input");
     const walletId = await walletIdFor(org.id);
