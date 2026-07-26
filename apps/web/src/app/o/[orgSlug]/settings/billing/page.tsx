@@ -25,7 +25,7 @@ import { InvoiceList } from "@/components/billing-invoice-list";
 import { BillingCredits } from "@/components/billing-credits";
 import { getCreditsTab } from "@/server/usecases/credits-tab";
 import { type Subscription } from "@/lib/types";
-import { getLimit, isPaidPlan, orgPlanKey } from "@/lib/entitlements";
+import { getLimit, isPaidPlan, isPlanLapsed, orgPlanKey } from "@/lib/entitlements";
 import { TrackOnMount } from "@/components/analytics-track-mount";
 import { EVENTS } from "@/lib/analytics-events";
 import { asCurrency, formatMinor, passPrice, proPrice, proPlusPrice, creditPackOptions } from "@/lib/currency";
@@ -146,6 +146,18 @@ export default async function BillingPage({
   // would otherwise throw at Stripe against a dead subscription id.
   const hasStripeSubscription = hasLiveSubscription(sub);
 
+  // The resolver's verdict, computed once (it also feeds `passOfferable` below).
+  // The raw row can lie: a trial that lapsed past its 1-day grace, an expired
+  // staff comp, or a past_due sub deep in dunning all still carry
+  // `plan_key = 'pro'`, while `orgPlanKey` degrades them to community. The
+  // "Current plan" card must show THIS, not the stale row — otherwise it prints
+  // "Pro / trialing" with a contradictory "Trial ended" note.
+  const effectivePlanKey = await orgPlanKey(orgId);
+  const planLapsed = isPlanLapsed(planKey, effectivePlanKey);
+  // The plan the card should actually name: the resolved one when lapsed
+  // (→ "Community"), the raw one otherwise (a live trial still reads "Pro").
+  const displayPlanKey = planLapsed ? effectivePlanKey : planKey;
+
   // v2 usage vs plan quotas (doc 10 §1) — v1 seasons/tournaments died at the
   // PROMPT-15 cutover; overrides are honoured via getLimit.
   //
@@ -202,7 +214,7 @@ export default async function BillingPage({
   // lifts entitlements and must still be offered. `isPaidPlan(orgPlanKey())` is
   // the one definition of "already paid for more than this"; nothing here
   // re-invents it.
-  const passOfferable = isOwner && !isPaidPlan(await orgPlanKey(orgId));
+  const passOfferable = isOwner && !isPaidPlan(effectivePlanKey);
   // Competitions the pass would actually do something for: active, and not
   // already passed. `not exists` is presence-only — a staff-granted pass has a
   // null `stripe_payment_intent` and is fully active, so filtering on payment
@@ -268,19 +280,50 @@ export default async function BillingPage({
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-xl font-bold text-slate-800">
-                  {planLabel(planKey)}
+                  {planLabel(displayPlanKey)}
                 </span>
-                <span className={`badge ${STATUS_BADGE[status] ?? "bg-slate-100 text-slate-500"}`}>
-                  {t(dict, `billing.status.${status}`)}
-                </span>
+                {planLapsed ? (
+                  <span className="badge bg-amber-100 text-amber-800">
+                    {t(dict, "billing.status.lapsed")}
+                  </span>
+                ) : (
+                  <span className={`badge ${STATUS_BADGE[status] ?? "bg-slate-100 text-slate-500"}`}>
+                    {t(dict, `billing.status.${status}`)}
+                  </span>
+                )}
               </div>
 
-              {status === "trialing" && trialDays !== null && (
+              {/* Live trial (or trial within the 1-day grace) — resolver still
+                  reads Pro, so this is the honest "N days left" / just-ended
+                  note. Suppressed once lapsed, where the block below takes over. */}
+              {!planLapsed && status === "trialing" && trialDays !== null && (
                 <p className="mt-1 text-sm text-purple-600">
                   {trialDays > 0
                     ? plural(dict, "billing.trialRemaining", trialDays, locale)
                     : t(dict, "billing.trialEnded")}
                 </p>
+              )}
+
+              {/* Lapsed: the row still claims a paid plan the resolver has
+                  dropped to Community. Name what happened and, for the payer,
+                  the way back. A trial lapse carries a date; other lapses
+                  (comp expiry, exhausted dunning) do not. */}
+              {planLapsed && (
+                <div className="mt-2">
+                  <p className="text-sm text-amber-700">
+                    {status === "trialing" && sub?.trial_end
+                      ? t(dict, "billing.lapsed.trialNote", {
+                          plan: planLabel(planKey),
+                          date: fmt(sub.trial_end, locale) ?? "",
+                        })
+                      : t(dict, "billing.lapsed.expiredNote", { plan: planLabel(planKey) })}
+                  </p>
+                  {isPayer && (
+                    <a href="#upgrade" className="btn btn-primary mt-3 inline-flex">
+                      {t(dict, "billing.lapsed.cta", { plan: planLabel(planKey) })}
+                    </a>
+                  )}
+                </div>
               )}
               {sub?.current_period_end && status === "active" && (
                 <p className="mt-1 text-sm text-slate-500">
@@ -307,6 +350,7 @@ export default async function BillingPage({
 
             {isPayer &&
               isPaid &&
+              !planLapsed &&
               status === "trialing" &&
               ((overview?.paymentMethods.length ?? 0) === 0 ? (
                 <a href="#payment-methods" className="btn btn-primary">
@@ -320,7 +364,7 @@ export default async function BillingPage({
                   {t(dict, "billing.cardOnFile")}
                 </p>
               ))}
-            {isPayer && isPaid && !hasStripeSubscription && <DowngradeButton />}
+            {isPayer && isPaid && !planLapsed && !hasStripeSubscription && <DowngradeButton />}
           </div>
 
           {/* Read-only treatment for an org owner who is not the payer: the
@@ -533,9 +577,12 @@ export default async function BillingPage({
           dict={dict}
         />
 
-        {/* Upgrade / plan comparison */}
-        {!isPaid && isPayer && (
-          <section className="card p-5">
+        {/* Upgrade / plan comparison. Shown on Community, and also when a paid
+            plan has LAPSED (raw pro/pro_plus, resolver → community) so a lapsed
+            payer has a way back — the "Current plan" card's resubscribe CTA
+            anchors here. */}
+        {(!isPaid || planLapsed) && isPayer && (
+          <section id="upgrade" className="card p-5">
             <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
               {t(dict, "billing.upgradeToPro")}
             </h2>

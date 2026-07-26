@@ -100,6 +100,19 @@ export function isPaidPlan(planKey: string): boolean {
   return planKey !== "community";
 }
 
+/** A subscription whose row still claims a paid plan (`pro`/`pro_plus`) while
+ *  the resolver has degraded it to community — a lapsed trial, an expired staff
+ *  comp, or exhausted dunning. The billing page uses this to show the RESOLVED
+ *  plan plus a resubscribe path for such an org, instead of the stale
+ *  "Pro / trialing" the raw row would print. Pure so the display logic is
+ *  unit-testable without a DB. */
+export function isPlanLapsed(
+  rawPlanKey: string | null | undefined,
+  effectivePlanKey: string,
+): boolean {
+  return isPaidPlan(rawPlanKey ?? "community") && !isPaidPlan(effectivePlanKey);
+}
+
 /** Grace period (days) an Event Pass keeps applying AFTER its competition's
  *  ends_on date, before the ended-competition lock (arm B) fires. SPEC-4 §7.2. */
 export const PASS_END_GRACE_DAYS = 7;
