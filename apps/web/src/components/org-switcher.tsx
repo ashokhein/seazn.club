@@ -7,6 +7,31 @@ import { api } from "@/lib/client";
 import type { OrgMembership } from "@/lib/types";
 import { routes } from "@/lib/routes";
 
+/**
+ * Where to land after switching from `oldSlug` to `newSlug`, given the current
+ * path. Org-level paths — the org home (`/o/<slug>`) and any `/settings…`
+ * sub-path — transfer to the SAME page under the new org, so switching from
+ * Settings → Billing stays on Settings → Billing. A competition/entity path
+ * (`/o/<slug>/c/…`, `/d/…`) belongs to the OLD org and can't exist under the
+ * new one, so it falls back to the new org's home. Pure + exported for tests.
+ */
+export function orgSwitchTarget(
+  pathname: string,
+  oldSlug: string | undefined,
+  newSlug: string,
+): string {
+  if (oldSlug) {
+    const prefix = `/o/${oldSlug}`;
+    if (pathname === prefix || pathname.startsWith(`${prefix}/`)) {
+      const rest = pathname.slice(prefix.length); // "" | "/settings…" | "/c/…"
+      if (rest === "" || rest === "/settings" || rest.startsWith("/settings/")) {
+        return `/o/${newSlug}${rest}`;
+      }
+    }
+  }
+  return routes.orgHome(newSlug);
+}
+
 const ROLE_BADGE: Record<string, string> = {
   owner: "bg-amber-100 text-amber-700",
   admin: "bg-purple-100 text-purple-700",
@@ -49,21 +74,19 @@ export function OrgSwitcher({
     try {
       await api("/api/orgs/active", { method: "POST", json: { org_id: id } });
       // PROMPT-30: the URL owns which org a page shows — a cookie flip alone
-      // changes nothing, so navigate. Stay on the SAME page under the new org by
-      // swapping the /o/<slug>/ segment, rather than always dumping the user on
-      // settings. Only org-level settings sub-paths transfer safely; a
-      // competition/entity path (/o/<slug>/c/…) belongs to the OLD org and would
-      // 404 under the new one, so those fall back to the new org's settings.
+      // changes nothing, so navigate. Stay on the SAME page under the new org
+      // (orgSwitchTarget swaps the /o/<slug> segment).
       const newSlug = orgs.find((o) => o.id === id)?.slug;
       const oldSlug = orgs.find((o) => o.id === activeId)?.slug;
       if (newSlug) {
-        let target = routes.orgSettings(newSlug);
-        if (oldSlug && pathname.startsWith(`/o/${oldSlug}/settings`)) {
-          target = `/o/${newSlug}${pathname.slice(`/o/${oldSlug}`.length)}`;
-        }
-        router.push(target);
+        // HARD navigation, not router.push + router.refresh: the active-org
+        // cookie was just flipped, and a client push while refresh() re-renders
+        // the OLD path against the NEW cookie can bounce the user to the org
+        // home ("redirects to dashboard"). A full load to the computed target
+        // applies the new org server-side and lands cleanly on the same page.
+        window.location.assign(orgSwitchTarget(pathname, oldSlug, newSlug));
+        return;
       }
-      router.refresh();
     } finally {
       setBusy(null);
       setOpen(false);
