@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import {
   grantMonthly,
+  recordEarnGrant,
   recordPackPurchase,
   reserve,
   settle,
@@ -61,5 +62,40 @@ describe.skipIf(!HAS_DB)("getCreditsTab", () => {
     expect(view.balance).toBe(0);
     expect(view.sharedOrgCount).toBe(1);
     expect(view.history).toHaveLength(0);
+  });
+
+  // #267 (SPEC-5 §2): the Invite & earn card's view fields — a minted,
+  // stable referral code; how many orgs this org referred; and credits
+  // earned AS THE REFERRER only (`earn:referral:*`), never conflated with a
+  // referred org's own `earn:referral_welcome:*` grant on its own wallet.
+  it("surfaces the referral code, referred-org count and referrer earnings", async () => {
+    const { auth } = await seedOrg("community");
+    const walletId = await walletIdFor(auth.orgId);
+
+    const first = await getCreditsTab(auth.orgId);
+    expect(first.referralCode).toMatch(/^[A-Z0-9]{8}$/);
+    expect(first.referredCount).toBe(0);
+    expect(first.referralEarned).toBe(0);
+
+    // getOrCreateReferralCode never regenerates once set.
+    const second = await getCreditsTab(auth.orgId);
+    expect(second.referralCode).toBe(first.referralCode);
+
+    const { auth: referredOrg } = await seedOrg("community");
+    await sql`
+      update organizations set referred_by_org_id = ${auth.orgId}
+       where id = ${referredOrg.orgId}`;
+
+    const referredKey = randomUUID();
+    await recordEarnGrant(walletId, referredOrg.orgId, "referral", referredKey, 20);
+    // A referred org's OWN welcome grant lives on a different wallet and a
+    // different idempotency-key namespace — must not leak into this org's
+    // `referralEarned` even if (by coincidence of test setup) it shared a
+    // wallet, so assert the `like` boundary explicitly with a near-miss key.
+    await recordEarnGrant(walletId, auth.orgId, "referral_welcome", randomUUID(), 10);
+
+    const view = await getCreditsTab(auth.orgId);
+    expect(view.referredCount).toBe(1);
+    expect(view.referralEarned).toBe(20);
   });
 });

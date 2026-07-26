@@ -534,6 +534,11 @@ export const ONBOARDING_EARN = 10;
 export const FIRST_PAID_EARN = 10;
 export const LIFETIME_EARN_CAP = 100;
 
+/** Referrer's reward when a referred org reaches its first paid competition (SPEC-5 §2). */
+export const REFERRAL_EARN = 20;
+/** A newly-referred org's welcome credits at signup-via-referral (SPEC-5 §2). */
+export const REFERRAL_WELCOME_EARN = 10;
+
 /**
  * Grant an org free AI credits for a growth milestone (SPEC-5 §2): onboarding
  * completion or its first paid competition. Mirror of `recordPassGrant` — the
@@ -564,7 +569,7 @@ export const LIFETIME_EARN_CAP = 100;
 export async function recordEarnGrant(
   walletId: string,
   orgId: string,
-  reason: "onboarding" | "first_paid",
+  reason: "onboarding" | "first_paid" | "referral" | "referral_welcome",
   ref: string,
   amount: number,
 ): Promise<{ granted: number }> {
@@ -619,7 +624,7 @@ export async function recordEarnGrant(
  */
 export async function tryEarnGrant(
   orgId: string,
-  reason: "onboarding" | "first_paid",
+  reason: "onboarding" | "first_paid" | "referral" | "referral_welcome",
   amount: number,
 ): Promise<number> {
   try {

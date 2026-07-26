@@ -731,6 +731,10 @@ async function main() {
   // quick-created person) on Pro, and the tunable clubs.max=2 community cap.
   // Own fresh orgs so it's independent of the destructive downgrades above.
   await clubsSuite();
+
+  // --- #267 (SPEC-5 §2): referral attribution + the referred org's welcome
+  // grant, over the real `ref`-cookie flow. Own fresh orgs; keyless-safe.
+  await referralSuite();
 }
 
 /** design/v9 PROMPT-55: the chargeback-liability copy is live on the public
@@ -2023,6 +2027,60 @@ async function clubsSuite(): Promise<void> {
     c6.status === 402 &&
       (c6.json.error as { feature_key?: string } | undefined)?.feature_key === "clubs.max",
   );
+}
+
+/** #267 (SPEC-5 §2): referral attribution + the new org's welcome grant — the
+ *  part live traffic actually exercises through `/refer/<code>` (cookie set →
+ *  a fresh signup's org creation stamps `referred_by_org_id` + earns +10). The
+ *  referrer's own +20-on-the-referred-org's-first-paid-competition side needs
+ *  a full Stripe checkout fixture and is already covered by
+ *  `registrations.ts`'s unit tests — not re-proven here. Own fresh orgs;
+ *  keyless-safe, no AI tokens spent. */
+async function referralSuite(): Promise<void> {
+  const referrerEmail = `referrer_${tag}@example.com`;
+  const referredEmail = `referred_${tag}@example.com`;
+
+  const referrer = newSession();
+  const referrerAuth = await signIn(referrer, referrerEmail);
+
+  // Mint the referrer's shareable code with the same once-only,
+  // never-overwrite UPDATE `getOrCreateReferralCode` uses — the mint race
+  // itself is unit-tested; smoke only needs a live code to attribute against.
+  const code = `SMK${tag}${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
+  const mint = smokeDb();
+  try {
+    await mint`
+      update organizations set referral_code = ${code}
+       where id = ${referrerAuth.org_id} and referral_code is null`;
+  } finally {
+    await mint.end();
+  }
+
+  // A fresh signup landing with the referrer's code in the `ref` cookie (as
+  // the `/refer/<code>` route would set it) — attribution happens inside
+  // `createOrgForUser` at account-creation time, not on this cookie-set step.
+  const referred = newSession();
+  referred.cookies.ref = code;
+  const referredAuth = await signIn(referred, referredEmail);
+
+  const walletId = await walletIdForOrg(referredAuth.org_id);
+  const db = smokeDb();
+  try {
+    const [org] = await db<{ referred_by_org_id: string | null }[]>`
+      select referred_by_org_id from organizations where id = ${referredAuth.org_id}`;
+    check(
+      "referral: a signup via /refer/<code> stamps referred_by_org_id",
+      org?.referred_by_org_id === referrerAuth.org_id,
+    );
+
+    const [grant] = await db<{ delta: number }[]>`
+      select delta from ai_credit_ledger
+       where wallet_id = ${walletId} and source = 'earn_grant'
+         and idempotency_key = ${`earn:referral_welcome:${referredAuth.org_id}`}`;
+    check("referral: the referred org's wallet earns a +10 welcome grant", grant?.delta === 10);
+  } finally {
+    await db.end();
+  }
 }
 
 /** PROMPT-53 player accounts over real HTTP: invite → claim → RSVP →
@@ -7246,6 +7304,12 @@ async function cleanup(tag: string): Promise<void> {
     // row is dropped inline after the claim assertions to free the seat; this
     // clears the leftover user row at teardown.
     `emailinvitee_${tag}@example.com`,
+    // #267 referralSuite — referrer + referred, own orgs. Both rows go in the
+    // same `delete from organizations` statement, so the self-referencing
+    // `referred_by_org_id` FK (NO ACTION, checked at end-of-statement) never
+    // trips: by the time it's checked, both rows are already gone together.
+    `referrer_${tag}@example.com`,
+    `referred_${tag}@example.com`,
   ];
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {

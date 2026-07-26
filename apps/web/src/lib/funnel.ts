@@ -8,6 +8,7 @@ import crypto from "node:crypto";
 import { z } from "zod";
 import { sql } from "@/lib/db";
 import { createOrgForUser, getUserOrgs } from "@/lib/auth";
+import { consumeReferralCookie } from "@/lib/referral";
 import { createCompetition } from "@/server/usecases/competitions";
 import { createDivision } from "@/server/usecases/divisions";
 import { routes } from "@/lib/routes";
@@ -94,15 +95,18 @@ async function resolveSport(
  * Turn a claimed draft into real structure for `userId` and return where to
  * land: inside the new competition on the division's entrants tab. Uses the
  * standard use-cases, so quotas/slugs/audit all apply as if typed by hand.
- * Cookie work (active org) stays in the route — this is request-scope free.
+ * Reads the referral cookie (`consumeReferralCookie`) to attribute the new org,
+ * so this needs request scope — its only caller is the funnel claim route.
  */
 export async function createFromDraft(
   userId: string,
   draft: FunnelDraft,
 ): Promise<{ redirect: string; orgId: string }> {
   const orgs = await getUserOrgs(userId);
+  const referredByOrgId = await consumeReferralCookie(userId);
   const org =
-    orgs[0] ?? (await createOrgForUser(userId, `${draft.payload.name} organisers`));
+    orgs[0] ??
+    (await createOrgForUser(userId, `${draft.payload.name} organisers`, { referredByOrgId }));
 
   const auth: AuthCtx = { orgId: org.id, via: "session", userId, role: "owner", keyId: null };
   const competition = await createCompetition(auth, {
