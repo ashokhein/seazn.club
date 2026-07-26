@@ -1,20 +1,20 @@
 // POST /api/admin/orgs/[id]/credits — the SPEC-3 §1/§2 staff credit
-// grant/deduct route. Guard, org-exists, wallet resolution, adminAdjust and
-// logStaffAction are all mocked so this asserts the ROUTE's own contract:
-// the support hard cap (§2 RBAC tiers), the 401 auth boundary, 404, and the
-// strict zod schema. adminAdjust's own ledger/idempotency/below-zero behaviour
-// is covered in lib/__tests__/credits-admin-adjust.test.ts. Mirrors the
-// sibling restore-trial route test idiom.
+// grant/deduct route. Guard, org-exists, wallet resolution, and adminAdjust
+// are all mocked so this asserts the ROUTE's own contract: the support hard
+// cap (§2 RBAC tiers), the 401 auth boundary, 404, and the strict zod schema.
+// adminAdjust's own ledger/idempotency/below-zero/audit behaviour is covered
+// in lib/__tests__/credits-admin-adjust.test.ts — the route itself no longer
+// calls logStaffAction (PR-B follow-up: the audit row moved INSIDE
+// adminAdjust's own transaction), it just passes an `audit` opt through.
+// Mirrors the sibling restore-trial route test idiom.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthError } from "@/lib/errors";
 import type { StaffRole } from "@/lib/admin";
 
 const requireStaffMock =
   vi.fn<() => Promise<{ id: string; staff_role: StaffRole | null }>>();
-const logStaffActionMock = vi.fn<(...args: unknown[]) => Promise<void>>();
 vi.mock("@/lib/admin", () => ({
   requireStaff: () => requireStaffMock(),
-  logStaffAction: (...args: unknown[]) => logStaffActionMock(...args),
 }));
 
 const sqlMock = vi.fn<(...args: unknown[]) => Promise<{ id: string }[]>>();
@@ -54,14 +54,13 @@ const okBody = (delta: number) => ({
 
 beforeEach(() => {
   requireStaffMock.mockReset().mockResolvedValue({ id: "staff-1", staff_role: "superadmin" });
-  logStaffActionMock.mockReset().mockResolvedValue(undefined);
   sqlMock.mockReset().mockResolvedValue([{ id: "org-1" }]);
   walletIdForMock.mockReset().mockResolvedValue("wallet-1");
   adminAdjustMock.mockReset().mockResolvedValue({ applied: true, balanceAfter: 20 });
 });
 
 describe("POST /api/admin/orgs/[id]/credits", () => {
-  it("grants credits and returns the new balance", async () => {
+  it("grants credits, returns the new balance, and passes an audit target through to adminAdjust", async () => {
     const res = await post("org-1", okBody(20));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
@@ -71,21 +70,26 @@ describe("POST /api/admin/orgs/[id]/credits", () => {
     expect(adminAdjustMock).toHaveBeenCalledWith(
       "wallet-1",
       20,
-      expect.objectContaining({ createdBy: "staff-1", idempotencyKey: KEY }),
-    );
-    expect(logStaffActionMock).toHaveBeenCalledWith(
-      "staff-1",
-      "credit_adjust",
-      "org",
-      "org-1",
-      expect.objectContaining({ delta: 20, reason_code: "support_goodwill", wallet_id: "wallet-1" }),
+      expect.objectContaining({
+        createdBy: "staff-1",
+        idempotencyKey: KEY,
+        audit: expect.objectContaining({
+          orgId: "org-1",
+          action: "credit_adjust",
+          details: expect.objectContaining({
+            delta: 20,
+            reason_code: "support_goodwill",
+            wallet_id: "wallet-1",
+          }),
+        }),
+      }),
     );
   });
 
-  it("does NOT write a second audit row when the adjustment is an idempotent replay", async () => {
-    // A replayed idempotency key returns applied:false (adminAdjust wrote no
-    // second ledger row). The route must skip logStaffAction too, else the
-    // SPEC-3 §3 unified log double-counts one adjustment.
+  it("an idempotent replay (applied:false) still returns 200 — adminAdjust itself skips the audit row", async () => {
+    // The route no longer decides whether to audit — adminAdjust does, inside
+    // its own transaction, and skips it entirely on a replay. The route just
+    // relays whatever `applied` it gets back.
     adminAdjustMock.mockResolvedValueOnce({ applied: false, balanceAfter: 20 });
     const res = await post("org-1", okBody(20));
     expect(res.status).toBe(200);
@@ -93,7 +97,6 @@ describe("POST /api/admin/orgs/[id]/credits", () => {
       ok: true,
       data: { ok: true, balance_after: 20, applied: false },
     });
-    expect(logStaffActionMock).not.toHaveBeenCalled();
   });
 
   it("builds the stored reason from reason_code + optional note", async () => {

@@ -43,6 +43,23 @@ async function adjustRowCount(walletId: string): Promise<number> {
   return Number(row!.n);
 }
 
+/** A real `users` row — `staff_audit_log.actor_id` is a real FK, so the
+ *  audit-writing tests need an actor that exists (a stub string like
+ *  "staff-1" would fail the FK the moment `adminAdjust` tries to audit). */
+async function makeStaffUser(): Promise<string> {
+  const [{ id }] = await sql<{ id: string }[]>`
+    insert into users (email, display_name, email_verified)
+    values (${`adjust-staff-${uniq()}@test.local`}, 'Adjust Staff', true) returning id`;
+  return id;
+}
+
+async function auditRowCount(orgId: string): Promise<number> {
+  const [row] = await sql<{ n: string }[]>`
+    select count(*)::text as n from staff_audit_log
+     where target_type = 'org' and target_id = ${orgId} and action = 'credit_adjust'`;
+  return Number(row!.n);
+}
+
 describe.skipIf(!HAS_DB)("adminAdjust", () => {
   it("grant +N writes one attributed admin_adjust row and raises the balance", async () => {
     const walletId = randomUUID();
@@ -131,6 +148,72 @@ describe.skipIf(!HAS_DB)("adminAdjust", () => {
     expect(res).toEqual({ applied: true, balanceAfter: 4 });
     expect(await grantBalance(walletId)).toBe(0);
     expect(await packBalance(walletId)).toBe(4);
+  });
+
+  it("self-audits atomically: a real applied adjustment writes BOTH the ledger row and one staff_audit_log row", async () => {
+    const walletId = randomUUID();
+    const orgId = randomUUID();
+    const staffId = await makeStaffUser();
+    const res = await adminAdjust(walletId, 25, {
+      createdBy: staffId,
+      reason: "sales_comp: audited grant",
+      idempotencyKey: `adj-${uniq()}`,
+      audit: { orgId, action: "credit_adjust", details: { delta: 25, reason_code: "sales_comp" } },
+    });
+    expect(res).toEqual({ applied: true, balanceAfter: 25 });
+    expect(await adjustRowCount(walletId)).toBe(1);
+    expect(await auditRowCount(orgId)).toBe(1);
+    const [row] = await sql<{ actor_id: string; detail: { delta: number; balance_after: number } }[]>`
+      select actor_id, detail from staff_audit_log
+       where target_type = 'org' and target_id = ${orgId} and action = 'credit_adjust'`;
+    expect(row).toMatchObject({ actor_id: staffId });
+    expect(row!.detail).toMatchObject({ delta: 25, balance_after: 25 });
+  });
+
+  it("atomicity: an audit write that fails rolls back the ledger row too (both or neither)", async () => {
+    // `staff_audit_log.actor_id` is a real FK to `users` — a `createdBy` that
+    // names no user makes the audit INSERT (inside adminAdjust's own tx) fail
+    // with an FK violation AFTER the ledger row would have been written. The
+    // whole transaction must roll back: no ledger row, no audit row.
+    const walletId = randomUUID();
+    const orgId = randomUUID();
+    const noSuchStaffId = randomUUID();
+    await expect(
+      adminAdjust(walletId, 25, {
+        createdBy: noSuchStaffId,
+        reason: "sales_comp: should roll back",
+        idempotencyKey: `adj-${uniq()}`,
+        audit: { orgId, action: "credit_adjust", details: { delta: 25 } },
+      }),
+    ).rejects.toThrow();
+    expect(await adjustRowCount(walletId)).toBe(0);
+    expect(await auditRowCount(orgId)).toBe(0);
+  });
+
+  it("idempotent replay writes no second ledger row AND no second audit row", async () => {
+    const walletId = randomUUID();
+    const orgId = randomUUID();
+    const staffId = await makeStaffUser();
+    const key = `adj-${uniq()}`;
+    const audit = { orgId, action: "credit_adjust", details: { delta: 25 } };
+
+    const first = await adminAdjust(walletId, 25, {
+      createdBy: staffId,
+      reason: "promo: launch",
+      idempotencyKey: key,
+      audit,
+    });
+    expect(first).toEqual({ applied: true, balanceAfter: 25 });
+
+    const replay = await adminAdjust(walletId, 25, {
+      createdBy: staffId,
+      reason: "promo: launch",
+      idempotencyKey: key,
+      audit,
+    });
+    expect(replay).toEqual({ applied: false, balanceAfter: 25 });
+    expect(await adjustRowCount(walletId)).toBe(1);
+    expect(await auditRowCount(orgId)).toBe(1);
   });
 
   it("two concurrent grants both apply with no lost update", async () => {

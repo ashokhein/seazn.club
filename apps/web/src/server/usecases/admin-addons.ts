@@ -25,6 +25,18 @@ import { logStaffAction } from "@/lib/admin";
  * `applied:false` and writes NO second audit row (the SPEC-3 §3 unified log
  * reads staff_audit_log; a duplicate there reads as two grants for one action).
  *
+ * **Target org must be in the granting org's group (PR-B follow-up):** a set
+ * `targetOrgId` that isn't actually a member of this wallet's billing group
+ * (a typo, a nonexistent org id, or a foreign org id) would still write a
+ * `granted` row that resolves for nobody — an inert "success" that misleads
+ * the operator. So a set `targetOrgId` is checked against the wallet BEFORE
+ * the insert, resolving the target's wallet with a plain (non-throwing)
+ * query — matching `walletIdFor`'s `coalesce(subscription_id, id)` but
+ * returning no row instead of throwing when the org doesn't exist — so a
+ * nonexistent org and a foreign org both throw the SAME typed 422 (the route
+ * maps this to a client error, not a 500 + Sentry noise on an operator typo).
+ * `targetOrgId: null` (group-wide) skips the check.
+ *
  * @returns the row id and whether this call actually created it.
  */
 export async function grantAddon(
@@ -48,6 +60,17 @@ export async function grantAddon(
   }
 
   const walletId = await walletIdFor(orgId);
+  if (targetOrgId !== null) {
+    // Resolve targetOrgId's wallet WITHOUT throwing on a missing org (unlike
+    // walletIdFor) — a nonexistent org and an existing-but-foreign org must
+    // both be rejected with the SAME typed 422 the route maps, not a 500.
+    const [targetRow] = await sql<{ wallet_id: string }[]>`
+      select coalesce(subscription_id, id)::text as wallet_id
+        from organizations where id = ${targetOrgId}`;
+    if (!targetRow || targetRow.wallet_id !== walletId) {
+      throw new HttpError(422, "target_org_id is not part of this organization's billing group.");
+    }
+  }
   const [inserted] = await sql<{ id: string }[]>`
     insert into org_addons
       (wallet_id, target_org_id, target_competition_id, feature_key, delta_each, qty,
