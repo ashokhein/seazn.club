@@ -1,8 +1,6 @@
 ---
 name: reviewer
 description: Reviews code changes for correctness, security, and team conventions. Use proactively after the implementer finishes, before committing.
-tools: Read, Grep, Glob, Write, Edit
-model: claude-sonnet-5
 effort: high
 memory: project
 ---
