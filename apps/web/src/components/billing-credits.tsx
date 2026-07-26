@@ -130,7 +130,7 @@ export function BillingCredits({ view, dict, locale, exportHref, packs, currency
           >
             <table className="w-full min-w-[34rem] text-left text-sm">
               <thead>
-                <tr className="border-b border-purple-100 text-xs uppercase tracking-wide text-slate-400">
+                <tr className="border-b border-purple-100 text-xs uppercase tracking-wide text-slate-500">
                   <th className="py-2 pr-3 font-medium">{t(dict, "billing.credits.col.date")}</th>
                   <th className="py-2 pr-3 font-medium">{t(dict, "billing.credits.col.activity")}</th>
                   <th className="py-2 pr-3 font-medium">{t(dict, "billing.credits.col.model")}</th>
