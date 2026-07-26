@@ -26,6 +26,11 @@ const h = vi.hoisted(() => ({
   passRow: null as { purchased_at: string; stripe_payment_intent: string | null } | null,
   purchases: [] as unknown[],
   reconciled: [] as string[],
+  // The org→group join `groupAlreadyRedeemed(subscriptionId)` needs. Defaults
+  // to a real group with no redemption, so every pre-existing "credit shown"
+  // case keeps meaning what it meant.
+  subscriptionId: "sub-1" as string | null,
+  groupRedeemed: false as boolean,
   matrix: [
     { plan_key: "community", feature_key: "divisions.per_competition.max", bool_value: null, int_value: 2 },
     { plan_key: "event_pass", feature_key: "divisions.per_competition.max", bool_value: null, int_value: 10 },
@@ -59,6 +64,12 @@ vi.mock("@/lib/db", () => {
     const text = (strings as TemplateStringsArray).join(" ");
     if (text.includes("competition_passes")) return Promise.resolve(h.passRow ? [h.passRow] : []);
     if (text.includes("plan_entitlements")) return Promise.resolve(h.matrix);
+    // groupAlreadyRedeemed's own query (pass-credit.ts) — checked before the
+    // org→group join below since both mention "organizations"-adjacent tables.
+    if (text.includes("pass_credit_redemptions"))
+      return Promise.resolve(h.groupRedeemed ? [{ one: 1 }] : []);
+    if (text.includes("organizations"))
+      return Promise.resolve(h.subscriptionId ? [{ id: h.subscriptionId }] : []);
     void vals;
     return Promise.resolve([]);
   };
@@ -109,6 +120,8 @@ beforeEach(() => {
   h.passRow = null;
   h.purchases = [];
   h.reconciled = [];
+  h.subscriptionId = "sub-1";
+  h.groupRedeemed = false;
 });
 
 /** A pass bought `days` ago, paid unless told otherwise. */
@@ -202,12 +215,24 @@ describe("owned", () => {
   it("promises the credit only while pass-credit.ts would actually pay it", async () => {
     heldPass({ days: 3 });
     expect(await render()).toContain(
-      "An Event Pass bought in the last 30 days comes off your first Pro invoice in full.",
+      "An Event Pass bought in the last 30 days comes off your first Pro invoice in full " +
+        "— once per billing group, the first time it subscribes.",
     );
 
     // `outside_window` — PASS_CREDIT_WINDOW_DAYS is 30 and inclusive.
     heldPass({ days: 45 });
     expect(await render()).not.toContain("comes off your first");
+  });
+
+  it("says nothing about a credit when the group already redeemed it", async () => {
+    // A pass otherwise eligible (paid, within window) but whose billing group
+    // already holds a `pass_credit_redemptions` row for a DIFFERENT pass must
+    // not promise a credit this checkout will not pay out — the same rule
+    // `creditPassTowardSubscription` itself enforces via `groupAlreadyRedeemed`.
+    heldPass({ days: 3 });
+    h.groupRedeemed = true;
+    const html = await render();
+    expect(html).not.toContain("comes off your first");
   });
 
   it("says nothing about a credit for a pass nobody paid for", async () => {

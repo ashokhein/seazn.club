@@ -146,6 +146,8 @@ Each organisation keeps its own Stripe account, its own verification, its own ba
 
 **One organisation was suspended by our team. Do we stop paying for it?** No. Suspension is a moderation action, not a billing one — the slot stays yours and the other organisations in the group are unaffected.
 
+**We bought an Event Pass for one of our organisations — does it credit the group?** Only if that same organisation is the one whose checkout starts the group's subscription. The credit checks that one organisation's own pass, not a shared pool across the group — a pass held by a different organisation, even one that joined the group earlier, earns nothing. If you want the pass to count, buy it for the organisation that will actually run the upgrade. See [Event Pass](/help/billing/event-pass).
+
 **I handed the group over — where did my old invoices go?** Nowhere. They stay with you: your invoices from when you were the payer remain visible, read-only, under **Settings → Billing** on any organisation still in the group. The new payer can't see them — an invoice carries the billing name and address of whoever paid it, so we only ever show each person their own. See [what happens to your invoices](#what-happens-to-your-invoices-when-the-bill-changes-hands).
 
 **What if the payer deletes their account?** The group passes to the longest-standing owner of an organisation inside it, so nobody is left paying for organisations they can no longer manage — and nobody loses their plan because someone else closed an account. If there's nobody left who could ever manage it, the subscription is cancelled rather than orphaned. If you're deliberately handing over, do it properly with an offer first: that way the incoming payer's own card is on file before you go.

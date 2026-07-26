@@ -31,6 +31,10 @@ import type { ReactNode } from "react";
 import { CompetitionPassProvider } from "@/components/competition-pass-provider";
 import { PASS_FEATURES, UpgradeGate } from "@/components/upgrade-gate";
 import { formatMinor, passPrice } from "@/lib/currency";
+import { DictProvider } from "@/components/i18n/dict-provider";
+import { t } from "@/lib/i18n-runtime";
+import uiEn from "@/dictionaries/en/ui.json";
+import type { Dict } from "@/lib/i18n-constants";
 
 // usePathname is the gate's only other input; a module-level handle lets each
 // case place the gate on a different route.
@@ -129,6 +133,27 @@ describe("UpgradeGate — pass held (D1: never re-sell a pass the org holds)", (
     const html = render(<UpgradeGate feature={LIFTABLE} />, { passActive: true });
     expect(html).toMatch(/bought in the last 30 days/i);
     expect(html).toMatch(/first Pro invoice/i);
+  });
+
+  it("pins the credit line to the upgrade.credit dict key, not a duplicated literal", () => {
+    // design doc 2026-07-26 §6: creditLine must read the SAME key as the
+    // upgrade page's `upgrade.credit`, not drift as a second hand-copied
+    // string. Computing `expected` from the real en dict at test time — via
+    // the same t()/interpolation the component itself uses — is what makes
+    // this catch a wording change, a typo'd key, AND a revert to a hardcoded
+    // string; a test that re-typed today's English sentence would only catch
+    // the first of those three.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const dict = uiEn as unknown as Dict;
+    const expected = t(dict, "upgrade.credit", { plan: "Pro" });
+    const html = renderToStaticMarkup(
+      <DictProvider dict={dict} locale="en">
+        <CompetitionPassProvider active paidPlan={false}>
+          <UpgradeGate feature={LIFTABLE} />
+        </CompetitionPassProvider>
+      </DictProvider>,
+    );
+    expect(html).toContain(expected);
   });
 
   it("says the feature is not on the pass when the pass could never lift it", () => {
