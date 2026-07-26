@@ -19,7 +19,7 @@
 //
 //   BILLING_LIVE=1 npx vitest run --root apps/web \
 //     src/server/usecases/__tests__/pass-credit-stack.live.test.ts --testTimeout=60000
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import Stripe from "stripe";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
@@ -37,7 +37,13 @@ afterAll(async () => {
 });
 
 describe.skipIf(!LIVE || !HAS_DB)("pass credit is capped per billing group", () => {
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+  // beforeAll, not describe-body scope — see pass-credit.live.test.ts: Vitest
+  // evaluates this factory during collection even when skipIf is true, so
+  // constructing here throws on every run without BILLING_LIVE=1.
+  let stripe: Stripe;
+  beforeAll(() => {
+    stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+  });
 
   it("credits ONE pass per group, however many passes are bought", async () => {
     // Pass A, credited, then the checkout is abandoned — no subscription. The

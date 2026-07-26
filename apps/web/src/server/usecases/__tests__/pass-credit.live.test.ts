@@ -28,7 +28,7 @@
 // Tax is left OFF on these subscriptions. The credit applies to the invoice
 // TOTAL, so tax would only scale every number here; billing-automatic-tax.live
 // owns the tax question.
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import Stripe from "stripe";
 import { buildEmbeddedCheckoutParams } from "@/lib/billing";
 import { PASS_CREDIT_INTENT_KEY, creditPassTowardSubscription } from "../pass-credit";
@@ -52,7 +52,17 @@ afterAll(async () => {
 });
 
 describe.skipIf(!LIVE || !HAS_DB)("pass credit against live Stripe (test mode)", () => {
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+  // Constructed in beforeAll, not at describe-body scope: Vitest evaluates the
+  // describe factory during COLLECTION even when skipIf is true, so
+  // `new Stripe(process.env.STRIPE_SECRET_KEY!)` right here throws
+  // "Neither apiKey nor config.authenticator provided" on every run without
+  // BILLING_LIVE=1 — a suite-collection failure, not a clean skip. Confirmed
+  // 2026-07-26 against the raw vitest JSON reporter (numFailedTestSuites:1)
+  // after a terminal summary wrongly read as a pass.
+  let stripe: Stripe;
+  beforeAll(() => {
+    stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+  });
 
   /** A fixture whose Stripe customer is deleted when the suite ends. */
   async function fixture(opts: Parameters<typeof passFixture>[1] = {}) {

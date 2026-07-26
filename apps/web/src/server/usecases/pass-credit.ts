@@ -2,6 +2,7 @@ import "server-only";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
+import { sendPassCreditReversalIncompleteAlertEmail } from "@/lib/email";
 
 /**
  * Pass-to-Pro upgrade credit (v3/07, D12). An org that bought a $29 Event Pass
@@ -436,4 +437,225 @@ export async function creditPassTowardSubscription(orgId: string): Promise<PassC
     currency: paid.currency,
     paymentIntent: intent,
   };
+}
+
+/**
+ * True when something OTHER than this pass's own grant has added credit to
+ * the customer's balance pool since it was granted — a plan-downgrade
+ * proration credit (`buildIntervalChangeParams`'s `always_invoice` posts a
+ * negative invoice total, which Stripe auto-credits onto the same
+ * `customer.balance` field `billing-manage.ts:256`/`:63` read) is the
+ * concrete case, but ANY other credit source qualifies.
+ *
+ * `customer.balance` is one undifferentiated scalar with no per-transaction
+ * attribution, so once a second credit source has touched it there is no way
+ * to ask Stripe how much of the CURRENT balance is this pass's money vs the
+ * other source. When this returns true, `reverseAmount`'s min() formula can
+ * no longer be trusted — the caller must not guess a split it cannot prove.
+ *
+ * Same bounded/autopaging shape as `alreadyCredited`, and the same
+ * fail-closed posture: a read failure is treated as "cannot prove the pool is
+ * clean" (returns true), not "assume clean and reverse anyway".
+ */
+async function otherCreditActivitySince(
+  customerId: string,
+  intent: string,
+  since: Date,
+): Promise<boolean> {
+  try {
+    const seen = await getStripe()
+      .customers.listBalanceTransactions(customerId, {
+        limit: 100,
+        created: { gte: Math.floor(since.getTime() / 1000) },
+      })
+      .autoPagingToArray({ limit: 1000 });
+    // A credit is a NEGATIVE amount (mirrors the negative-is-credit comment on
+    // the grant call below); the grant's own transaction is excluded by its
+    // metadata, not by the `gte` bound alone — the grant's Stripe-side
+    // `created` can land in the same second as `redeemed_at` (the grant call
+    // happens, THEN the row is inserted with `now()`), so the window can
+    // technically include it.
+    return seen.some((t) => t.amount < 0 && t.metadata?.[PASS_CREDIT_INTENT_KEY] !== intent);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * The webhook backstop for a Dashboard refund (design §5). Nothing in this
+ * codebase can stop support (or a chargeback) from refunding an Event Pass
+ * charge directly in Stripe, and `revokePassForRefundedChargeAndNotify`
+ * already claws back the pass entitlement and the 25 AI credits when that
+ * happens — but not the £/$ subscription credit `creditPassTowardSubscription`
+ * may have already granted. Left alone, a refunded pass would hand the money
+ * back in cash while the org keeps the discount.
+ *
+ * Called unconditionally from that wrapper (not gated on whether the pass row
+ * itself was deleted — a partial refund leaves it in place) with just the
+ * charge's payment intent; this function does its own lookup and is a silent
+ * no-op when there is nothing to reverse. Never throws — same contract as
+ * `creditPassTowardSubscription` — and the caller discards its result.
+ */
+export async function reversePassCreditOnRefund(intent: string): Promise<void> {
+  const [redemption] = await sql<
+    {
+      subscription_id: string;
+      org_id: string;
+      competition_id: string;
+      amount_minor: number;
+      currency: string;
+      redeemed_at: string | Date;
+      reversed_at: string | Date | null;
+    }[]
+  >`
+    select subscription_id, org_id, competition_id, amount_minor, currency, redeemed_at, reversed_at
+    from pass_credit_redemptions
+    where payment_intent = ${intent}`;
+  // No row: covers three silent-no-op cases — a non-pass charge refund, a
+  // duplicate-pass-payment refund (refundDuplicatePassPayment, lib/billing.ts:
+  // that intent was never the one mostRecentPass credited, so it never earns a
+  // row here), and a pass refunded before it ever earned a credit. Already
+  // reversed: a webhook replay — in ADDITION to, not instead of, the Stripe
+  // idempotency key below; this DB check protects the write and skips the
+  // network round trip, the key protects the Stripe call itself. (It is only
+  // a fast-path skip, not the sole race guard — the UPDATE below re-checks
+  // `reversed_at is null` for two genuinely concurrent deliveries that both
+  // pass this read before either writes.)
+  if (!redemption || redemption.reversed_at) return;
+
+  const [sub] = await sql<{ stripe_customer_id: string | null }[]>`
+    select stripe_customer_id from subscriptions where id = ${redemption.subscription_id}`;
+  if (!sub?.stripe_customer_id) {
+    // Should not happen — the redemption row only ever gets written for a
+    // group that already had a customer id at credit time — but never assume.
+    // This file's rule is "unproven state yields no credit outcome"; the
+    // mirror of that here is "unproven state performs no reversal".
+    console.error(
+      `[billing] pass credit reversal for intent ${intent}: subscription ` +
+        `${redemption.subscription_id} has no stripe_customer_id`,
+    );
+    return;
+  }
+
+  // Checked BEFORE reading the live balance: if the pool is not provably
+  // pass-money-only, no amount computed from `customer.balance` can be
+  // trusted, so there is nothing safe to compute — skip straight to the
+  // undetermined outcome without spending a second Stripe call on the
+  // balance read.
+  const unsafe = await otherCreditActivitySince(
+    sub.stripe_customer_id,
+    intent,
+    new Date(redemption.redeemed_at),
+  );
+
+  let reverseAmount = 0;
+  if (!unsafe) {
+    let customer: Stripe.Customer | Stripe.DeletedCustomer;
+    try {
+      customer = await getStripe().customers.retrieve(sub.stripe_customer_id);
+    } catch (err) {
+      console.error(`[billing] pass credit reversal failed for intent ${intent}: ${err}`);
+      return;
+    }
+    if (customer.deleted) {
+      console.error(
+        `[billing] pass credit reversal for intent ${intent}: customer ` +
+          `${sub.stripe_customer_id} is deleted`,
+      );
+      return;
+    }
+
+    // Stripe's customer balance is ONE POOL per currency, shared with any
+    // other credit source that customer might ever have — but `unsafe` above
+    // has already proven nothing else has touched it since this grant, so
+    // this min() is exactly correct here:
+    //   - capped at redemption.amount_minor — never reverses more than THIS
+    //     pass ever granted, however large the current balance is for
+    //     unrelated reasons.
+    //   - capped at max(-customer.balance, 0) — never creates a positive
+    //     (debt-inducing) balance. If less credit remains than was granted,
+    //     the difference was already consumed by an invoice and is written
+    //     off — see the alert below.
+    reverseAmount = Math.min(redemption.amount_minor, Math.max(-(customer.balance ?? 0), 0));
+
+    if (reverseAmount > 0) {
+      try {
+        await getStripe().customers.createBalanceTransaction(
+          sub.stripe_customer_id,
+          {
+            // POSITIVE = debit = reduces the customer's credit, mirroring the
+            // negative-is-credit comment on the grant call above.
+            amount: reverseAmount,
+            currency: redemption.currency,
+            description: `Event Pass credit reversal — pass refunded`,
+            metadata: { [PASS_CREDIT_INTENT_KEY]: intent, reversal: "refunded" },
+          },
+          // Distinct namespace from the group-cap lost-race reversal above
+          // (`pass-credit-reversal-${intent}`) even though the two can never
+          // fire for the same intent (that path only runs when NO redemption
+          // row was written for the insert; this path requires one to exist)
+          // — a shared key string across two semantically different reversal
+          // reasons is a landmine for whoever reads the Stripe dashboard or
+          // greps for the key next.
+          //
+          // Two genuinely concurrent deliveries reaching here with DIFFERENT
+          // `reverseAmount`s (each read `customer.balance` at a slightly
+          // different moment) hit this SAME idempotency key with DIFFERENT
+          // params — Stripe's documented behaviour is to reject the second
+          // call outright (idempotency-key-reused-with-different-parameters),
+          // landing it in the catch below: logged, no `reversed_at` write, a
+          // later retry can still succeed cleanly. Degrades safely without
+          // any extra handling.
+          { idempotencyKey: `pass-credit-refund-reversal-${intent}` },
+        );
+      } catch (err) {
+        // No `reversed_at` write below: a redelivered webhook must get a
+        // genuine retry, not a false "already handled".
+        console.error(`[billing] pass credit reversal failed for intent ${intent}: ${err}`);
+        return;
+      }
+    }
+  }
+
+  // `and reversed_at is null` + `returning`: the earlier read-check above is
+  // only a fast-path skip, not the real race guard. Two concurrent deliveries
+  // can both pass that read before either writes; this UPDATE is the actual
+  // optimistic-concurrency check — only the caller that flips the row from
+  // NULL to set gets a row back, so only that caller sends the staff alert
+  // below. The loser returns having done nothing further, exactly as if it
+  // had lost the earlier read-check.
+  const [won] = await sql<{ payment_intent: string }[]>`
+    update pass_credit_redemptions
+    set reversed_at = now(), reversed_minor = ${reverseAmount}
+    where payment_intent = ${intent} and reversed_at is null
+    returning payment_intent`;
+  if (!won) return;
+
+  if (unsafe || reverseAmount < redemption.amount_minor) {
+    // Two distinct reasons to alert, both money the business is not (or
+    // cannot safely) claw back: `unsafe` — other balance activity means the
+    // split cannot be proven, so NOTHING was reversed and a human must read
+    // the Stripe balance transaction history directly; otherwise, the
+    // (provable) unreversed remainder was already consumed by an invoice and
+    // is being written off. The redemption row already carries org_id and
+    // competition_id, so this is a lookup rather than a value passed through
+    // from the caller.
+    const alertTo = process.env.STAFF_ALERT_EMAIL;
+    if (alertTo) {
+      const [org] = await sql<{ name: string }[]>`
+        select name from organizations where id = ${redemption.org_id}`;
+      const [comp] = await sql<{ name: string }[]>`
+        select name from competitions where id = ${redemption.competition_id}`;
+      void sendPassCreditReversalIncompleteAlertEmail({
+        to: alertTo,
+        orgId: redemption.org_id,
+        orgName: org?.name ?? "unknown",
+        competitionName: comp?.name ?? "unknown",
+        grantedMinor: redemption.amount_minor,
+        reversedMinor: reverseAmount,
+        currency: redemption.currency,
+        reason: unsafe ? "undetermined" : "consumed",
+      }).catch(() => {});
+    }
+  }
 }

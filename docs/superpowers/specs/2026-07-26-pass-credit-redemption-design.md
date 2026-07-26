@@ -65,11 +65,27 @@ Consequences, all wanted:
 Ordering risk, measured rather than assumed: the credit must land before the
 first invoice is drawn. On the trial path — the majority, and the default for a
 first-time org — completion is 14 days ahead of invoice #1, so there is no
-contest. On the spent-trial path Checkout collects during the session, and we
-verified on 2026-07-25 that Checkout does **not** net a customer balance off
-`amount_total` (`pass-credit.live.test.ts`), so that first payment is unaffected
-either way and the credit lands against the following invoice. Behaviour there
-is unchanged from today.
+contest.
+
+On the spent-trial (no-trial) path this IS a real behaviour change, not a
+neutral one. Today the grant runs before the checkout session is even created,
+so the credit already sits on the customer when Checkout collects invoice #1.
+Under this design the grant runs from the subscription-created webhook /
+reconcile-on-return, both of which fire AFTER the session has completed — and a
+no-trial Checkout Session creates and pays its first invoice as part of
+completing the session, before either hook can run. So for this path the credit
+now lands one invoice later than it used to: invoice #1 is paid at full price,
+and the credit reduces invoice #2 instead. No money is lost, and we already
+verified (2026-07-25) that Checkout never showed a discount on `amount_total`
+for this path anyway, so nothing visible at the checkout step changes — only
+which invoice the credit first appears on.
+
+This only bites the minority of buyers who have already spent their one trial
+before buying a pass and upgrading — checkoutTrialDays() gives every
+first-time org (the common pass-buyer) the 14-day path, where there is no
+regression at all. Acceptable, but state it plainly rather than claim nothing
+changed; task 2's implementation must add a live test pinning WHERE the credit
+lands on the no-trial path under the new timing, not assume it.
 
 `orgHoldsAnyPass` / `requireCard` stay in the checkout route. That gate is about
 collecting a card during a trial and is unrelated to when money is credited.

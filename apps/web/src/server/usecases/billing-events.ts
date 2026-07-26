@@ -32,6 +32,10 @@ import {
 } from "@/lib/entitlements";
 import { orgIdsInGroup, subscriptionIdForOrg } from "@/lib/billing-group";
 import { syncGroupQuantity } from "@/server/usecases/billing-groups";
+import {
+  creditPassTowardSubscription,
+  reversePassCreditOnRefund,
+} from "@/server/usecases/pass-credit";
 import { getStripe } from "@/lib/stripe";
 import {
   sendPassRevokedEmail,
@@ -531,6 +535,46 @@ async function handleSubscriptionChanged(stripeSub: Stripe.Subscription) {
   // org_addons UNCACHED (lib/entitlements.addonBonus), so no further entitlement
   // invalidation is needed for a seat change to bite on the next read.
   await syncSeatAddonsForSubscription(stripeSub, resolved.subscriptionId);
+
+  // Pass-to-Pro credit (v3/07 D12; grant timing moved 2026-07-26 — see
+  // docs/superpowers/specs/2026-07-26-pass-credit-redemption-design.md §1). This
+  // is one of the two arms that "learn a subscription started"; the other is
+  // reconcileCheckout (lib/billing.ts), for environments where this webhook
+  // never arrives. `org_id` is the buying org — stamped onto BOTH the session
+  // and subscription_data.metadata by buildEmbeddedCheckoutParams, so it is
+  // present on every subscription this webhook was ever going to fire for.
+  //
+  // Deliberately UNCONDITIONAL rather than gated to "this is a genuine
+  // trialing/active transition": this handler fires on customer.subscription
+  // .created AND .updated, i.e. on every seat change, dunning retry and plan
+  // edit too, not just the moment the subscription first goes live. Gating on
+  // a transition would need to reliably distinguish "just started" from "still
+  // running" from a single event — and get the re-buy case right (a NEW
+  // subscription replacing a canceled one on the same group, the
+  // metadata_subscription_id branch of mayWriteGroup above) — for a saving
+  // that is not worth the risk of silently skipping the one event that should
+  // have minted the credit. `creditPassTowardSubscription` starts with
+  // `groupAlreadyRedeemed`, a single indexed SELECT that runs before any
+  // Stripe call and short-circuits on the (overwhelmingly common) case where
+  // the group has already redeemed or never held a pass, so calling it on
+  // every update is a cheap no-op, not a repeated Stripe round trip.
+  //
+  // One consequence worth naming: `mostRecentPass` inside the usecase reads
+  // whatever the org's most recent pass is AT THE MOMENT this particular
+  // webhook happens to succeed — not pinned to the event that started the
+  // subscription. If the very first attempt is skipped (mayWriteGroup
+  // refuses an out-of-order delivery, or `groupAlreadyRedeemed`'s DB read
+  // fails closed on a transient error), a LATER webhook — a dunning retry, a
+  // seat change — becomes the one that actually credits. That is a feature,
+  // not a bug: it is what makes a skipped first attempt self-healing rather
+  // than a permanently lost credit. It does mean the credit is not
+  // deterministically tied to "the subscription just started" the way the
+  // v3/07 window language ("bought in the last 30 days") reads — it is tied
+  // to "a webhook that could write this group's redemption eventually ran",
+  // bounded by `withinCreditWindow` inside the usecase either way.
+  if (stripeSub.metadata?.org_id) {
+    await creditPassTowardSubscription(stripeSub.metadata.org_id);
+  }
 }
 
 /**
@@ -789,6 +833,12 @@ async function revokePassForRefundedChargeAndNotify(charge: Stripe.Charge): Prom
           where p.stripe_payment_intent = ${intent}`
       : [];
   const revoked = await revokePassForRefundedCharge(charge);
+  // Unconditional — not gated on `revoked`: a partial refund leaves the pass
+  // row in place (revokePassForRefundedCharge only deletes on a full refund),
+  // but the credit reversal question is about the CHARGE's refund state, not
+  // the pass row's survival. `intent` is only undefined for a charge with no
+  // payment_intent, which could never have a redemption row to reverse.
+  if (intent) await reversePassCreditOnRefund(intent);
   if (!revoked || !ctx) return;
   const to = await orgOwnerEmail(ctx.org_id);
   if (!to) return;

@@ -12,6 +12,7 @@ import { requireSubscriptionIdForOrg, subscriptionIdForOrg } from "@/lib/billing
 import { LIVE_SUBSCRIPTION_STATUSES, hasLiveSubscription } from "@/lib/subscription-status";
 import { grantTrialForRow, recordPassGrant, recordPassRefund, walletIdFor } from "@/lib/credits";
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
+import { creditPassTowardSubscription } from "@/server/usecases/pass-credit";
 
 /**
  * Checkout branding (verified against API 2026-06-24.dahlia). Kept in code
@@ -999,6 +1000,31 @@ export async function reconcileCheckout(
       // immediately instead of waiting out the TTL, and no sibling org keeps
       // serving the old plan.
       await invalidateEntitlementsForOrgGroup(orgId);
+      // Pass-to-Pro credit (v3/07 D12; grant timing moved 2026-07-26 — see
+      // docs/superpowers/specs/2026-07-26-pass-credit-redemption-design.md §1).
+      // This is the reconcile-on-return arm of "learn a subscription started";
+      // the other is billing-events.ts handleSubscriptionChanged, for when the
+      // webhook DOES arrive. Run after the entitlement drop rather than before:
+      // entitlements are what the page renders next, so they take priority, and
+      // the credit is orthogonal to them (a balance transaction, not a plan
+      // flag) — ordering between the two has no observable effect either way.
+      // `orgId` is already this function's own parameter — no metadata lookup
+      // needed, unlike the webhook arm.
+      //
+      // creditPassTowardSubscription is documented never to throw, but this
+      // whole function is one big try/catch that reports ANY throw as a
+      // failed reconcile (`return false`) — and the plan sync above already
+      // committed, so that would be a lie: the sync succeeded and only the
+      // credit attempt, a wholly separate concern, did not. Caught locally so
+      // a broken promise from that seam degrades to a missed credit (still
+      // recoverable — the next webhook or return-reconcile tries again, and
+      // groupAlreadyRedeemed makes retrying free) rather than reconcileCheckout
+      // reporting the sync itself as failed.
+      try {
+        await creditPassTowardSubscription(orgId);
+      } catch (err) {
+        logReconcileFailure("reconcileCheckout (pass credit)", orgId, sessionId, err);
+      }
       return true;
     }
     return false;

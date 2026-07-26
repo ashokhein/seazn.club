@@ -23,7 +23,7 @@
 //   BILLING_LIVE=1 npx vitest run --root apps/web \
 //     src/server/usecases/__tests__/pass-credit-clock.live.test.ts \
 //     --testTimeout=300000
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import Stripe from "stripe";
 import { creditPassTowardSubscription } from "../pass-credit";
 import {
@@ -49,7 +49,13 @@ afterAll(async () => {
 });
 
 describe.skipIf(!LIVE || !HAS_DB)("pass credit across a 14-day trial (test clock)", () => {
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+  // beforeAll, not describe-body scope — see pass-credit.live.test.ts: Vitest
+  // evaluates this factory during collection even when skipIf is true, so
+  // constructing here throws on every run without BILLING_LIVE=1.
+  let stripe: Stripe;
+  beforeAll(() => {
+    stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+  });
 
   /**
    * Move the clock and wait for Stripe to finish billing everything the jump

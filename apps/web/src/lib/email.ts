@@ -717,6 +717,83 @@ export async function sendSizePackGrantFailedAlertEmail(
   return send({ to: opts.to, transactional: true, subject, html, text });
 }
 
+export interface PassCreditReversalIncompleteAlertEmail {
+  to: string;
+  orgId: string;
+  orgName: string;
+  competitionName: string;
+  /** What the original pass credit granted, in minor units. */
+  grantedMinor: number;
+  /** What was actually reversed on refund, in minor units — capped so the
+   *  customer is never pushed into debt (design 2026-07-26 §5). 0 when
+   *  `reason` is "undetermined": nothing was reversed at all. */
+  reversedMinor: number;
+  currency: string;
+  /**
+   * "consumed" — the unreversed portion was provably drawn down by an
+   * invoice; the numbers above are exact and nothing further can be done.
+   * "undetermined" — some OTHER credit source (e.g. a plan-downgrade
+   * proration credit) touched the customer's balance pool after this pass's
+   * credit was granted. `customer.balance` has no per-transaction
+   * attribution, so there is no safe way to compute what belongs to this
+   * pass — nothing was automatically reversed, and a human must read the
+   * Stripe balance transaction history directly.
+   */
+  reason: "consumed" | "undetermined";
+}
+
+/** Internal staff alert (design 2026-07-26 §5, `reversePassCreditOnRefund`):
+ *  an Event Pass was refunded but its pass-to-Pro subscription credit could
+ *  not be fully (or, in the "undetermined" case, at all) reversed. A human
+ *  needs the exact numbers and the reason, not just "something is off".
+ *  Ops-only, no user-facing i18n (mirrors sendCreditPackGrantFailedAlertEmail). */
+export async function sendPassCreditReversalIncompleteAlertEmail(
+  opts: PassCreditReversalIncompleteAlertEmail,
+): Promise<boolean> {
+  const absorbed = opts.grantedMinor - opts.reversedMinor;
+  const undetermined = opts.reason === "undetermined";
+  const subject = undetermined
+    ? `Pass credit reversal skipped — needs manual review — org ${opts.orgId}`
+    : `Pass credit reversal incomplete — org ${opts.orgId}`;
+  const bodyText = undetermined
+    ? `An Event Pass credit for "${opts.competitionName}" (org ${opts.orgName}, ${opts.orgId}) was ` +
+      `refunded, but other balance activity (for example, a plan-downgrade proration credit) was ` +
+      `detected on the customer since the ${opts.grantedMinor} ${opts.currency} credit was granted. ` +
+      `Stripe's customer balance is a single pool with no per-transaction attribution, so which part ` +
+      `of the current balance belongs to this pass cannot be determined safely — nothing was ` +
+      `automatically reversed. Review the customer's balance transaction history in Stripe directly.`
+    : `An Event Pass credit for "${opts.competitionName}" (org ${opts.orgName}, ${opts.orgId}) was ` +
+      `refunded. ${opts.grantedMinor} ${opts.currency} was originally granted; only ` +
+      `${opts.reversedMinor} ${opts.currency} of unspent credit could be reversed. The remaining ` +
+      `${absorbed} ${opts.currency} was already consumed by an invoice and is written off, not ` +
+      `recovered — the customer is never pushed into debt.`;
+  const html = renderEmail({
+    subject,
+    preheader: undetermined
+      ? `Manual review needed — org ${opts.orgName}`
+      : `${absorbed} ${opts.currency} absorbed — org ${opts.orgName}`,
+    eyebrow: "Billing · Event Pass",
+    title: undetermined ? "Pass credit reversal skipped" : "Pass credit reversal incomplete",
+    contentHtml:
+      paragraph(escapeHtml(bodyText)) +
+      panel(
+        "Reversal",
+        `org: ${opts.orgName} (${opts.orgId})\ncompetition: ${opts.competitionName}\n` +
+          `granted: ${opts.grantedMinor} ${opts.currency}\n` +
+          `reversed: ${opts.reversedMinor} ${opts.currency}\n` +
+          (undetermined
+            ? `reason: other balance activity detected — needs manual review`
+            : `absorbed: ${absorbed} ${opts.currency}`),
+      ),
+    footerNote: "Automated staff alert — pass credit refund webhook (design 2026-07-26 §5).",
+  });
+  const text =
+    `${bodyText}\n\norg: ${opts.orgName} (${opts.orgId}) · competition: ${opts.competitionName} · ` +
+    `granted ${opts.grantedMinor} ${opts.currency} · reversed ${opts.reversedMinor} ${opts.currency}` +
+    (undetermined ? "" : ` · absorbed ${absorbed} ${opts.currency}`);
+  return send({ to: opts.to, transactional: true, subject, html, text });
+}
+
 /** True when Resend is configured. */
 export function emailConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY);
