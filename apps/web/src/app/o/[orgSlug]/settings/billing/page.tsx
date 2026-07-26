@@ -312,11 +312,15 @@ export default async function BillingPage({
                 <div className="mt-2">
                   <p className="text-sm text-amber-700">
                     {status === "trialing" && sub?.trial_end
-                      ? t(dict, "billing.lapsed.trialNote", {
+                      ? t(dict, isPayer ? "billing.lapsed.trialNote" : "billing.lapsed.trialNoteGuest", {
                           plan: planLabel(planKey),
                           date: fmt(sub.trial_end, locale) ?? "",
                         })
-                      : t(dict, "billing.lapsed.expiredNote", { plan: planLabel(planKey) })}
+                      : t(
+                          dict,
+                          isPayer ? "billing.lapsed.expiredNote" : "billing.lapsed.expiredNoteGuest",
+                          { plan: planLabel(planKey) },
+                        )}
                   </p>
                   {isPayer && (
                     <a href="#upgrade" className="btn btn-primary mt-3 inline-flex">
