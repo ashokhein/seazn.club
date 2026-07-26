@@ -51,8 +51,8 @@
 
 ### W2 — resolver-truth (#287, #288, #289)
 
-- **#287** `invalidateOrgEntitlements(auth.orgId)` on any competition write in `updateCompetition` (usecases/competitions.ts:296-309); audit the pass-refund path for the same gap. Real deliverable: a Redis-gated suite (usecase-only seeding → warm cache → mutate via updateCompetition → assert the lock fires) with its own CI step alongside the rate-limiter step (ci.yml:227 scopes REDIS_URL to one step today — this class of defect is structurally invisible until this lands).
-- **#288** V336 copies `org_has_feature` (V334) forward adding degrade arms per the status audit (`incomplete`, `unpaid`, `incomplete_expired` → community). Two new parity cases: incomplete sub, suspended org.
+- **#287** `invalidateOrgEntitlements(auth.orgId)` on any competition write in `patchCompetition` (usecases/competitions.ts:212 — plan-verified name; the audit digest said "updateCompetition"); pass-refund path audited during planning: already correct (lib/billing.ts:819,881), W2 documents it with a proof test. scripts/smoke.ts:1839-1855 carries a manual `bustOrgEntitlements` workaround for this exact bug — W2 removes it so smoke can catch regressions. Real deliverable: a Redis-gated suite (usecase-only seeding → warm cache → mutate via updateCompetition → assert the lock fires) with its own CI step alongside the rate-limiter step (ci.yml:227 scopes REDIS_URL to one step today — this class of defect is structurally invisible until this lands).
+- **#288** V338 copies `org_has_feature` (V334) forward adding the `incomplete` → community arm. Plan-time status audit found `STATUS_MAP` (lib/billing.ts:404-416) collapses `unpaid`→`past_due` and `incomplete_expired`→`canceled` at write time — those literals never reach `subscriptions.status`, so only the one arm is needed; W2 ships tests proving the other two are non-issues. Two new parity cases: incomplete sub, suspended org.
 - **#289** competitions.ts:312-314 compares to `"live"`/`"completed"`; `statusChangedTo` typed as `z.infer<typeof CompetitionStatus> | null`.
 - **Smoke:** lock path added to scripts/smoke.ts.
 
@@ -66,7 +66,7 @@ One rework of the grant sweep (lib/credits.ts:314-324):
 
 ### W4 — credit-economics (#295, #296, #297)
 
-- **#295** `pack_units` column on ai_runs; credits-sold-vs-COGS panel on /admin/revenue; alert at ≥2× median run cost.
+- **#295** `pack_units` recorded per AI run (plan-verified: no `ai_runs` table exists — runs are `competition_events` rows, so it's a JSONB payload key, no migration); credits-sold-vs-COGS panel on /admin/revenue (two independent aggregates — ledger and run audit share no join key); staff-email alert at ≥2× trailing-median run cost, reusing the existing `STAFF_ALERT_EMAIL` pattern.
 - **#296** Move the onboarding-earn (credits.ts:533) and referral-welcome (credits.ts:540) call sites behind a published-competition-with-division signal (grants already idempotent per (reason, ref)). Daily earn_grant volume alert; day-0 spend signature noted for the panel. Check whether email verification already gates org creation first.
 - **#297** SPEC-2 §5.4 + README updated to record never-expires and the liability treatment. Help copy already correct.
 
@@ -98,7 +98,7 @@ Thread the existing `isPassLocked` predicate (billing-manage.ts:411 — no secon
 ## Standing acceptance rules (every wave)
 
 - Regression test that fails without the change.
-- New/changed user-facing strings in all four locales (en/es/fr/nl); gen-keys + i18n:check clean.
+- New/changed user-facing strings in all four locales (en/es/fr/nl); gen-keys + i18n:check clean. (Applies to UI dictionary strings — plan-verified that the help content tree `apps/web/content/help/` is a single-locale English tree with no `[lang]` nesting.)
 - UI designed with the frontend-design skill; screenshot-verified light+dark; clean at 375px, no horizontal page scroll.
 - Help pages are a closing pass in the same wave, not a follow-up.
 - Billing waves (W1, W4, W5, W6) run `BILLING_LIVE=1` live suites vs test-mode Stripe (30s timeout) plus e2e against a prod build.
