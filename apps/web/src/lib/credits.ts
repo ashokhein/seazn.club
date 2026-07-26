@@ -842,6 +842,45 @@ export async function mergeWalletOnAttach(
 }
 
 /**
+ * Record, for accountability, that `orgId` left a shared wallet holding
+ * `oldWalletId`'s balance behind (#285, "leaver takes no wallet share" —
+ * a decided default, not a bug: a shared group wallet has no notion of a
+ * per-org share to carry out, so `detachOrgFromGroup` mints the departing
+ * org a brand-new, empty wallet at `newWalletId` rather than attempting to
+ * split anything off `oldWalletId`).
+ *
+ * Writes to `staff_audit_log` (V103), not the money ledger: no credits
+ * actually move, so there is nothing for `ai_credit_ledger` — append-only
+ * TRUTH about money, SPEC-2 §5.1 — to record. `staff_audit_log` is the only
+ * generic actor+target+detail audit sink the schema has (`db/migration/
+ * deltas/V103__admin.sql`); `actor_id` carries no `is_staff` constraint at
+ * the database level, and every detach (staff-initiated or self-service) is
+ * exactly the kind of money-adjacent event that table exists to leave a
+ * trail for.
+ *
+ * Called INSIDE detachOrgFromGroup's own transaction, right after the fresh
+ * subscription row is minted, so the snapshot and the move commit together.
+ */
+export async function auditWalletForfeitedOnDetach(
+  tx: Tx,
+  actorUserId: string,
+  orgId: string,
+  oldWalletId: string,
+  newWalletId: string,
+): Promise<void> {
+  const grant = Math.max(0, await bucketBalance(tx, oldWalletId, "grant"));
+  const pack = Math.max(0, await bucketBalance(tx, oldWalletId, "pack"));
+  await tx`
+    insert into staff_audit_log (actor_id, action, target_type, target_id, detail)
+    values (${actorUserId}, 'billing_group.detach_wallet_not_carried', 'org', ${orgId},
+            ${tx.json({
+              old_wallet_id: oldWalletId,
+              new_wallet_id: newWalletId,
+              old_wallet_balance_left_behind: { grant, pack },
+            } as never)})`;
+}
+
+/**
  * Net credits `orgId` has spent on `walletId` THIS calendar month (SPEC-5 §1) —
  * the derived quantity the operator allocation cap is checked against. There is
  * deliberately NO `spent_this_period` counter: the ledger is the single source

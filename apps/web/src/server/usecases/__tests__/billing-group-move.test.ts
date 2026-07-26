@@ -963,6 +963,39 @@ describe.skipIf(!HAS_DB)("detach", () => {
   });
 });
 
+describe.skipIf(!HAS_DB)("detach leaves an audit trail for the wallet it does not carry (#285)", () => {
+  it("records the forfeited balance in staff_audit_log without moving any credits", async () => {
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const group = await makeGroup(payer, { stripeSubId: "sub_wallet_det_" + uniq() });
+    await makeOrg(group, payer);
+    const orgId = await makeOrg(group, clubOwner);
+    // The group's shared wallet holds some AI credits.
+    await sql`insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${group}, 40, 'monthly_grant', 'grant', 40, ${"seed-" + uniq()})`;
+
+    const res = await detachOrgFromGroup({ actorUserId: clubOwner, orgId });
+
+    // The wallet balance is untouched — the group keeps every credit
+    // ("leaver takes no wallet share on detach", decided default).
+    const [bal] = await sql<{ bal: string }[]>`
+      select coalesce(sum(delta),0)::text as bal from ai_credit_ledger where wallet_id = ${group}`;
+    expect(Number(bal.bal)).toBe(40);
+    // The departing org starts a fresh, empty wallet — no share carried.
+    const [newBal] = await sql<{ bal: string }[]>`
+      select coalesce(sum(delta),0)::text as bal from ai_credit_ledger where wallet_id = ${res.subscription_id}`;
+    expect(Number(newBal.bal)).toBe(0);
+
+    const [audit] = await sql<
+      { detail: { old_wallet_balance_left_behind?: { grant: number; pack: number } } }[]
+    >`
+      select detail from staff_audit_log
+       where target_id = ${orgId} and action = 'billing_group.detach_wallet_not_carried'
+       order by created_at desc limit 1`;
+    expect(audit?.detail?.old_wallet_balance_left_behind).toEqual({ grant: 40, pack: 0 });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Cache fan-out across a move
 // ---------------------------------------------------------------------------

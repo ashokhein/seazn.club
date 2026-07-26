@@ -19,7 +19,7 @@ import {
   assertPriceBillsQuantity,
   syncPaymentMethodFlagForSubscription,
 } from "@/lib/billing";
-import { mergeWalletOnAttach } from "@/lib/credits";
+import { auditWalletForfeitedOnDetach, mergeWalletOnAttach } from "@/lib/credits";
 import {
   invalidateGroupEntitlements,
   invalidateOrgEntitlements,
@@ -878,6 +878,10 @@ export async function detachOrgFromGroup(args: {
               ${compedUntil}, ${group.trial_used_at}, now())
       returning id`;
     await tx`update organizations set subscription_id = ${fresh.id} where id = ${orgId}`;
+    // #285: no wallet merge on detach (the departing org takes no share of
+    // the group's pool — decided default) — just an audit trail of what was
+    // left behind, for accountability.
+    await auditWalletForfeitedOnDetach(tx, actorUserId, orgId, group.id, fresh.id);
     // `comped` drives the seat spend below: a seat is only consumed when a comp
     // was actually handed out (ride_out on a paying group), never on a release.
     return {
