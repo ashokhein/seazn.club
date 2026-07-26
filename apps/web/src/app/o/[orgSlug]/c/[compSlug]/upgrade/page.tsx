@@ -52,7 +52,7 @@ import {
   type CompareCell,
   type MatrixCell,
 } from "@/lib/pass-comparison";
-import { withinCreditWindow } from "@/server/usecases/pass-credit";
+import { groupAlreadyRedeemed, withinCreditWindow } from "@/server/usecases/pass-credit";
 
 /** `plan_key → feature_key → cell` for the plans a given state compares. */
 type Matrix = Map<string, Map<string, NonNullable<MatrixCell>>>;
@@ -90,7 +90,7 @@ export default async function CompetitionUpgradePage({
     await reconcilePassCheckout(orgId, sp.session_id);
   }
 
-  const [[pass], planKey, currency, locale] = await Promise.all([
+  const [[pass], planKey, currency, locale, [subRow]] = await Promise.all([
     // Presence is ROW EXISTENCE. `stripe_payment_intent` is nullable (V271) and
     // a staff-granted pass is fully active; it is selected only to tell a
     // PURCHASE from a GRANT further down, where the difference decides whether
@@ -107,6 +107,13 @@ export default async function CompetitionUpgradePage({
     orgPlanKey(orgId),
     preferredCurrency(orgId),
     resolveLocale(),
+    // orgPlanKey() does the same org→subscription join internally but doesn't
+    // expose the id, and `groupAlreadyRedeemed` below needs the group's
+    // `subscriptions.id` directly (same join `creditPassTowardSubscription`
+    // itself does in pass-credit.ts).
+    sql<{ id: string }[]>`
+      select s.id from organizations o join subscriptions s on s.id = o.subscription_id
+      where o.id = ${orgId}`,
   ]);
   const dict = await getDictionary(locale, "ui");
 
@@ -135,11 +142,20 @@ export default async function CompetitionUpgradePage({
   const purchasedAt = pass ? new Date(pass.purchased_at) : null;
   // Every qualifier the credit line makes is checked here rather than hedged in
   // the copy: `server/usecases/pass-credit.ts` gives a staff grant no credit at
-  // all (`unpaid_pass`, null intent) and nothing outside the window
-  // (`outside_window`, inclusive at 30 days). Saying it anyway would be a
-  // promise the checkout will not keep.
+  // all (`unpaid_pass`, null intent), nothing outside the window
+  // (`outside_window`, inclusive at 30 days), and nothing to a group that has
+  // already spent its one lifetime credit against a different pass
+  // (`groupAlreadyRedeemed`). Saying it anyway would be a promise the checkout
+  // will not keep. `subRow` should always exist — every org has a group — but
+  // a missing row is treated as ineligible rather than assumed, matching this
+  // page's existing defensive style.
+  const subscriptionId = subRow?.id ?? null;
   const creditEligible =
-    !!pass?.stripe_payment_intent && !!purchasedAt && withinCreditWindow(purchasedAt);
+    !!pass?.stripe_payment_intent &&
+    !!purchasedAt &&
+    withinCreditWindow(purchasedAt) &&
+    !!subscriptionId &&
+    !(await groupAlreadyRedeemed(subscriptionId));
 
   const ceilingFeature = state.kind === "ceiling" ? state.feature : null;
   const title =

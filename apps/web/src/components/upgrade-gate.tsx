@@ -8,6 +8,7 @@ import { usePassGateState } from "@/components/competition-pass-provider";
 import { formatMinor, passPrice, proPlusPrice, proPrice } from "@/lib/currency";
 import { PASS_FEATURES } from "@/lib/pass-features";
 import { routes } from "@/lib/routes";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 /**
  * Feature keys an Event Pass lifts. Only these gates offer the per-event path
@@ -59,13 +60,20 @@ function passHrefFromPath(pathname: string | null, feature: string): string | nu
  * - "in the last 30 days" — `PASS_CREDIT_WINDOW_DAYS`, inclusive.
  * - "your first Pro invoice" — it is a customer BALANCE credit, applied by
  *   Stripe to the next invoice, not a discount on the checkout total.
+ * - "once per billing group" — `groupAlreadyRedeemed`, a lifetime cap.
  *
  * Refund, currency mismatch and already-credited also decline, but each of
  * those is a state the buyer either caused or cannot act on, and naming them
  * here would turn a goodwill line into terms and conditions.
+ *
+ * Uses the SAME dict key as the upgrade page's `upgrade.credit` (doc 2026-07-26
+ * §6) rather than a second key, so the two surfaces are structurally incapable
+ * of disagreeing. `<UpgradeGate>` is a client component, so this reads the key
+ * through `useMsg()` — the `/o/[orgSlug]` layout already wraps this whole tree
+ * in `<DictProvider>`, and `useMsg()` falls back to the English catalog outside
+ * one anyway, so no new plumbing was needed.
  */
-const creditLine = (plan: string) =>
-  `An Event Pass bought in the last 30 days comes off your first ${plan} invoice in full.`;
+const creditLine = (msg: ReturnType<typeof useMsg>, plan: string) => msg("upgrade.credit", { plan });
 
 /**
  * Name and monthly price of the plan that actually unlocks a key.
@@ -116,6 +124,7 @@ function paidPlan(feature: string): { name: string; price: string } {
 export function UpgradeGate({ feature, href = "/settings/billing", compact = false }: Props) {
   const reason = featureReason(feature);
   const pathname = usePathname();
+  const msg = useMsg();
   // "none" outside a competition (no provider) — org-level gates are untouched.
   const gate = usePassGateState();
   const passOwned = gate === "held";
@@ -170,7 +179,7 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
           </Link>
         </div>
         <p className="mt-2 text-xs text-purple-700">
-          {plan.name} covers every competition in your organization. {creditLine(plan.name)}
+          {plan.name} covers every competition in your organization. {creditLine(msg, plan.name)}
         </p>
       </div>
     );
