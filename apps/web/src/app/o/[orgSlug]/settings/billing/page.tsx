@@ -312,11 +312,15 @@ export default async function BillingPage({
                 <div className="mt-2">
                   <p className="text-sm text-amber-700">
                     {status === "trialing" && sub?.trial_end
-                      ? t(dict, "billing.lapsed.trialNote", {
+                      ? t(dict, isPayer ? "billing.lapsed.trialNote" : "billing.lapsed.trialNoteGuest", {
                           plan: planLabel(planKey),
                           date: fmt(sub.trial_end, locale) ?? "",
                         })
-                      : t(dict, "billing.lapsed.expiredNote", { plan: planLabel(planKey) })}
+                      : t(
+                          dict,
+                          isPayer ? "billing.lapsed.expiredNote" : "billing.lapsed.expiredNoteGuest",
+                          { plan: planLabel(planKey) },
+                        )}
                   </p>
                   {isPayer && (
                     <a href="#upgrade" className="btn btn-primary mt-3 inline-flex">
@@ -364,7 +368,12 @@ export default async function BillingPage({
                   {t(dict, "billing.cardOnFile")}
                 </p>
               ))}
-            {isPayer && isPaid && !planLapsed && !hasStripeSubscription && <DowngradeButton />}
+            {/* NOT gated on !planLapsed: a departed/canceled org (dead id) resolves
+                community so planLapsed is true, yet it must still offer Downgrade to
+                clean up. A lapsed TRIAL keeps a live Stripe sub, so !hasStripeSubscription
+                already hides Downgrade there — the planLapsed guard was redundant for
+                trials and wrongly hid it for canceled orgs (billing-states e2e). */}
+            {isPayer && isPaid && !hasStripeSubscription && <DowngradeButton />}
           </div>
 
           {/* Read-only treatment for an org owner who is not the payer: the
