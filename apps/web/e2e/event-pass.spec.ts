@@ -1,7 +1,7 @@
 import { test, expect, type Page, type APIRequestContext } from "@playwright/test";
 import Stripe from "stripe";
 import { randomBytes } from "node:crypto";
-import { TAG, apiJson, mintLoginPathBySql } from "./helpers";
+import { TAG, apiJson, mintLoginPathBySql, orgGroupIdSql } from "./helpers";
 
 // Event Pass, end to end, through a REAL Stripe test-mode purchase (task 22).
 //
@@ -192,12 +192,18 @@ async function stripeCustomerId(orgId: string): Promise<string | null> {
   });
 }
 
-/** Force a plan directly — the same SQL-flip convention helpers.ts uses, but
- *  keyed on an org THIS spec created, never a shared account. */
-async function setPlan(orgId: string, planKey: string): Promise<void> {
-  await withDb((sql) => sql`
-    update subscriptions set plan_key = ${planKey}, status = 'active'
-     where id = (select subscription_id from organizations where id = ${orgId})`);
+/** Pro's monthly Stripe price (same lookup the live suites use —
+ *  pass-credit-live-fixture.ts's `proPrices` — scoped to just what U14
+ *  needs to mint a real subscription). */
+async function proMonthlyPriceId(): Promise<string> {
+  return withDb(async (sql) => {
+    const [row] = await sql<{ stripe_price_id_monthly: string | null }[]>`
+      select stripe_price_id_monthly from plans where key = 'pro'`;
+    if (!row?.stripe_price_id_monthly) {
+      throw new Error("plans.pro has no stripe_price_id_monthly — run `npm run stripe:sync`");
+    }
+    return row.stripe_price_id_monthly;
+  });
 }
 
 /** Sign in as a seeded owner. Mints the login token in the DB rather than
@@ -337,6 +343,45 @@ async function buyPassWithTestCard(page: Page, url: string): Promise<void> {
   throw lastError;
 }
 
+/**
+ * Deliver a real Stripe object to the app's real webhook route with a real
+ * signature. Stripe has no public endpoint to reach on localhost, so every
+ * money-adjacent state this file cannot reach through the UI (a subscription
+ * starting, a subscription cancelling, a charge refunding) is instead minted
+ * for real against Stripe test mode and hand-delivered this way — first
+ * established here by U16's `charge.refunded`, reused by U14
+ * (`customer.subscription.created`) and U15 (`customer.subscription.deleted`).
+ */
+async function postSignedStripeWebhook(
+  page: Page,
+  type: string,
+  object: unknown,
+): Promise<void> {
+  const event = {
+    id: `evt_${randomBytes(8).toString("hex")}`,
+    object: "event",
+    api_version: "2024-06-20",
+    created: Math.floor(Date.now() / 1000),
+    livemode: false,
+    pending_webhooks: 0,
+    request: { id: null, idempotency_key: null },
+    type,
+    data: { object },
+  };
+  const payload = JSON.stringify(event);
+  const res = await page.request.post("/api/webhooks/stripe", {
+    headers: {
+      "stripe-signature": stripe.webhooks.generateTestHeaderString({
+        payload,
+        secret: WEBHOOK_SECRET,
+      }),
+      "content-type": "application/json",
+    },
+    data: payload,
+  });
+  expect(res.status()).toBeLessThan(300);
+}
+
 // ---------------------------------------------------------------------------
 
 test.beforeAll(() => {
@@ -370,6 +415,9 @@ for (const vp of VIEWPORTS) {
     // Set true by U1's probe only when the server's Stripe is usable; the rest
     // of the serial money path gates on it so CI (dummy key) skips cleanly.
     let stripeUsable = false;
+    // The REAL Stripe subscription U14 mints on the pass's own customer — U15
+    // cancels it (see U15 for why the self-serve UI can no longer drive that).
+    let proSubscriptionId = "";
 
     test(`U1 · buys the pass from the gate that bit, and the gate lifts (${vp.name})`, async ({
       page,
@@ -652,6 +700,36 @@ for (const vp of VIEWPORTS) {
       const pi = await stripe.paymentIntents.retrieve(passIntent);
       expect(customerId).toBe(pi.customer);
 
+      // The checkout call above only OPENS a Checkout session — it mints
+      // nothing. Task 2 (2d1d7885) moved the actual grant off this route and
+      // onto the subscription-created path (billing-events.ts
+      // handleSubscriptionChanged) / reconcile-on-return, neither of which a
+      // bare session-create reaches. Stripe has no public endpoint to deliver
+      // `customer.subscription.created` to on localhost, so — same technique
+      // U16 uses below for `charge.refunded` — a REAL test-mode subscription is
+      // minted on the SAME customer and hand-delivered with a real signature.
+      // `trial_period_days: 14` is production's default first-time trial
+      // (`checkoutTrialDays()`), which also matters for U16: a trialing
+      // subscription draws only a $0 invoice, so nothing should touch this
+      // balance before U16 refunds the pass.
+      const priceId = await proMonthlyPriceId();
+      const groupId = await orgGroupIdSql(rig.orgId);
+      const sub = await stripe.subscriptions.create({
+        customer: customerId!,
+        items: [{ price: priceId }],
+        currency: "usd",
+        trial_period_days: 14,
+        // BOTH keys, matching what buildEmbeddedCheckoutParams stamps in
+        // production exactly: `org_id` is what handleSubscriptionChanged reads
+        // to decide whether to credit at all; `subscription_id` is the durable
+        // stamp resolveGroupForStripeSub checks FIRST, ahead of the
+        // stripe_subscription_id / customer-id fallback arms.
+        metadata: { org_id: rig.orgId, subscription_id: groupId },
+      });
+      expect(sub.status).toBe("trialing");
+      proSubscriptionId = sub.id;
+      await postSignedStripeWebhook(page, "customer.subscription.created", sub);
+
       // $29 sits on the customer BALANCE (D12 — Checkout refuses `discounts`
       // alongside `allow_promotion_codes`, so a balance credit is the only lever).
       const customer = (await stripe.customers.retrieve(customerId!)) as Stripe.Customer;
@@ -680,19 +758,53 @@ for (const vp of VIEWPORTS) {
       test.setTimeout(120_000);
       await signIn(page, rig.ownerEmail);
 
+      // U14 already put this org on a REAL, live, trialing Stripe subscription
+      // — no SQL plan flip needed here any more (this test used to `setPlan`
+      // the org onto 'pro' directly). Doing that now would actively corrupt
+      // the row: it force-writes `status = 'active'` while
+      // `stripe_subscription_id` stays pointed at U14's real trialing sub,
+      // desyncing the DB from what Stripe actually reports.
+      //
       // On Pro the page must not price anything: Pro's matrix is a strict
       // superset of the pass, so an offer here would sell a downgrade.
-      await setPlan(rig.orgId, "pro");
       await page.goto(upgradeUrl(rig));
       await expect(page.locator("[data-plan-covered]")).toBeVisible({ timeout: 20_000 });
       await expect(page.locator("[data-pass-dormant]")).toBeVisible();
       await expect(page.locator("[data-pass-ticket]")).toHaveCount(0);
       expect(await page.locator("main").innerText()).not.toContain("$29");
 
-      // Downgrade through the app (no live Stripe subscription on this org).
+      // TRACED against production, not assumed (Part 2): a genuinely live
+      // Stripe subscription changes which button the billing page even OFFERS.
+      // `DowngradeButton` only renders `!hasStripeSubscription`
+      // (settings/billing/page.tsx:323) — it exists for an admin-comped Pro org
+      // (`downgradeToCommunity`, lib/billing.ts, refuses outright with a 400 the
+      // moment `hasLiveSubscription` is true: "use Cancel subscription
+      // instead"). This test used to exercise exactly that comped case, via the
+      // bare SQL `plan_key` flip removed above — never a real Stripe
+      // subscription. A real Stripe customer instead only gets
+      // `CancelSubscriptionButton` (:363), and its route
+      // (`setCancelAtPeriodEnd`, billing-manage.ts) ONLY ever SCHEDULES a
+      // cancellation for period end, even on a still-trialing subscription with
+      // nothing yet invoiced. None of this is a bug — it is the documented,
+      // pre-existing self-serve contract, just never reached by this test's old
+      // fixture — so there is no self-serve UI action that flips a REAL Stripe
+      // subscription to Community immediately. Like U16 below, this cancels the
+      // real subscription directly and hand-delivers the
+      // `customer.subscription.deleted` Stripe would have sent. Immediate
+      // cancel (not cancel-at-period-end) is the right call, not a shortcut:
+      // the subscription is still trialing and nothing has been invoiced, so
+      // there is nothing to prorate.
       await page.goto(`/o/${rig.orgSlug}/settings/billing`);
-      await page.getByRole("button", { name: "Downgrade to Community" }).click();
-      await page.getByRole("alertdialog").getByRole("button", { name: "Downgrade" }).click();
+      await expect(page.getByRole("button", { name: "Downgrade to Community" })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Cancel subscription" })).toBeVisible({
+        timeout: 20_000,
+      });
+
+      const canceled = await stripe.subscriptions.cancel(proSubscriptionId);
+      expect(canceled.status).toBe("canceled");
+      await postSignedStripeWebhook(page, "customer.subscription.deleted", canceled);
+
+      await page.goto(`/o/${rig.orgSlug}/settings/billing`);
       await expect(
         page.locator('[data-tour="billing-plan"]').getByText("Community", { exact: true }),
       ).toBeVisible({ timeout: 30_000 });
@@ -738,32 +850,27 @@ for (const vp of VIEWPORTS) {
       const pi = await stripe.paymentIntents.retrieve(passIntent, { expand: ["latest_charge"] });
       const charge = pi.latest_charge as Stripe.Charge;
       expect(charge.refunded).toBe(true);
-      const event = {
-        id: `evt_${randomBytes(8).toString("hex")}`,
-        object: "event",
-        api_version: "2024-06-20",
-        created: Math.floor(Date.now() / 1000),
-        livemode: false,
-        pending_webhooks: 0,
-        request: { id: null, idempotency_key: null },
-        type: "charge.refunded",
-        data: { object: charge },
-      };
-      const payload = JSON.stringify(event);
-      const res = await page.request.post("/api/webhooks/stripe", {
-        headers: {
-          "stripe-signature": stripe.webhooks.generateTestHeaderString({
-            payload,
-            secret: WEBHOOK_SECRET,
-          }),
-          "content-type": "application/json",
-        },
-        data: payload,
-      });
-      expect(res.status()).toBeLessThan(300);
+      await postSignedStripeWebhook(page, "charge.refunded", charge);
 
       // Money back means the competition rejoins the quota.
       expect(await passRows(rig.orgId)).toHaveLength(0);
+
+      // Task 3's other half of the refund (design §5,
+      // `reversePassCreditOnRefund`): the £/$ subscription credit U14 granted
+      // must come back too, not just the pass entitlement — otherwise a
+      // refunded pass hands the money back in cash while the org still banks
+      // the discount on its Pro invoice. By this point in the serial run
+      // nothing else has touched the balance: U14's 14-day trial never drew an
+      // invoice, and U15 cancelled the still-trialing subscription before it
+      // could either — so the credit should be fully unspent and the reversal
+      // a clean return to 0. Read from Stripe rather than hardcoded:
+      // `reverseAmount`'s own `min(granted, max(-balance, 0))` formula would
+      // hand back LESS than the full amount if anything upstream had spent
+      // part of it, which would be a real finding about U15, not this test.
+      const customerId = await stripeCustomerId(rig.orgId);
+      const refundedCustomer = (await stripe.customers.retrieve(customerId!)) as Stripe.Customer;
+      expect(refundedCustomer.balance).toBe(0);
+
       await page.goto(upgradeUrl(rig));
       await expect(page.locator("[data-pass-ticket]")).toContainText("$29");
       await expect(page.locator("[data-pass-buy]")).toBeVisible();
