@@ -131,6 +131,31 @@ describe.skipIf(!HAS_DB)("grantAddon", () => {
     expect(logStaffActionMock).not.toHaveBeenCalled();
   });
 
+  it("rejects a NONEXISTENT target_org_id with the same typed 422 (not a 500), no row written", async () => {
+    // A mistyped/nonexistent target_org_id must reject the same way as a real
+    // foreign org — walletIdFor would THROW a plain Error on a missing org,
+    // which would otherwise fall through handler()'s catch-all to a 500.
+    const org = await createOrgForUser(await makeUser(), "Addon Nonexistent Target Org");
+    const walletId = await walletIdFor(org.id);
+    const bogusOrgId = randomUUID();
+
+    await expect(
+      grantAddon(ACTOR, org.id, {
+        featureKey: FEATURE,
+        deltaEach: 2,
+        qty: 1,
+        targetOrgId: bogusOrgId,
+        reason: "sales_comp",
+        idempotencyKey: `bogus-${uniq()}-abcd`,
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from org_addons where wallet_id = ${walletId}`;
+    expect(n).toBe(0);
+    expect(logStaffActionMock).not.toHaveBeenCalled();
+  });
+
   it("rejects delta_each <= 0 and qty <= 0 with no row written", async () => {
     const org = await createOrgForUser(await makeUser(), "Addon Bad Input");
     const walletId = await walletIdFor(org.id);
