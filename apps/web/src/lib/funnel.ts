@@ -95,7 +95,8 @@ async function resolveSport(
  * Turn a claimed draft into real structure for `userId` and return where to
  * land: inside the new competition on the division's entrants tab. Uses the
  * standard use-cases, so quotas/slugs/audit all apply as if typed by hand.
- * Cookie work (active org) stays in the route — this is request-scope free.
+ * Reads the referral cookie (`consumeReferralCookie`) to attribute the new org,
+ * so this needs request scope — its only caller is the funnel claim route.
  */
 export async function createFromDraft(
   userId: string,

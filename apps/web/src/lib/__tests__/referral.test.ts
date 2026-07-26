@@ -113,5 +113,12 @@ describe.skipIf(!HAS_DB)("referral code primitive (SPEC-5 §2, #267 Task 1)", ()
     it("returns null for an unknown code", async () => {
       expect(await resolveReferralCode("NOPE1234")).toBeNull();
     });
+
+    it("does not resolve a soft-deleted org's code (no attribution/grant to a dead org)", async () => {
+      const { orgId } = await seedOrgWithOwner();
+      const code = await getOrCreateReferralCode(orgId);
+      await sql`update organizations set deleted_at = now() where id = ${orgId}`;
+      expect(await resolveReferralCode(code)).toBeNull();
+    });
   });
 });

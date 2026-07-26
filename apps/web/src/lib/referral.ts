@@ -114,7 +114,8 @@ export async function resolveReferralCode(
     select o.id, o.created_by as owner_user_id, u.email as owner_email
       from organizations o
       left join users u on u.id = o.created_by
-     where o.referral_code = ${code}`;
+     where o.referral_code = ${code}
+       and o.deleted_at is null`;
   if (!row) return null;
   return { orgId: row.id, ownerUserId: row.owner_user_id, ownerEmail: row.owner_email };
 }
