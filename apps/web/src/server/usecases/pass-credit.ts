@@ -35,6 +35,34 @@ export const PASS_CREDIT_WINDOW_DAYS = 30;
  */
 export const PASS_CREDIT_INTENT_KEY = "pass_payment_intent";
 
+/**
+ * Name of the partial unique index that enforces the group's lifetime cap
+ * (V335, `db/migration/deltas/V335__pass_credit_redemptions.sql`). This is
+ * an explicit `create unique index ... name`, unlike `payment_intent`'s bare
+ * `unique` column constraint, which Postgres auto-names
+ * `pass_credit_redemptions_payment_intent_key`. postgres.js surfaces which
+ * one fired on a 23505 via `err.constraint_name` — verified live 2026-07-26
+ * against this exact table: a payment_intent conflict reports
+ * `pass_credit_redemptions_payment_intent_key`, a group-cap conflict reports
+ * `pass_credit_redemptions_group_cap`. The two mean opposite things for
+ * whether a compensating Stripe transaction is owed — see the INSERT catch
+ * in `creditPassTowardSubscription` below.
+ */
+const GROUP_CAP_CONSTRAINT = "pass_credit_redemptions_group_cap";
+
+/**
+ * Name of the bare `unique` column constraint on `payment_intent`
+ * (`db/migration/deltas/V335__pass_credit_redemptions.sql`). Postgres
+ * auto-names an unadorned `column unique` constraint `<table>_<column>_key`,
+ * which is what this is — not derived from any naming convention, just what
+ * V335 actually creates. Named explicitly (rather than reached by excluding
+ * `GROUP_CAP_CONSTRAINT`) so a future migration that adds a THIRD unique
+ * constraint to this table cannot silently fall into the same branch as this
+ * one: an unrecognised constraint name must read as "we do not know what
+ * happened" (`redemption_unrecorded`), not be guessed to be this one.
+ */
+const PAYMENT_INTENT_CONSTRAINT = "pass_credit_redemptions_payment_intent_key";
+
 export type PassCreditOutcome =
   | "credited"
   /** No pass row at all for this org. */
@@ -54,7 +82,25 @@ export type PassCreditOutcome =
   /** Fully refunded, disputed, or otherwise nothing net left to credit. */
   | "nothing_owed"
   /** This exact pass intent has already been credited to this customer. */
-  | "already_credited";
+  | "already_credited"
+  /**
+   * The GROUP (not this org, not this intent) has already redeemed its one
+   * lifetime pass credit — `pass_credit_redemptions` holds a live row for the
+   * subscription. Deliberately its own outcome, not folded into
+   * `already_credited`: that name means "this exact intent, already seen";
+   * this means "a DIFFERENT pass already spent the group's one credit".
+   */
+  | "group_already_redeemed"
+  /**
+   * The Stripe credit succeeded but the local `pass_credit_redemptions` row
+   * could not be written, for a reason that is NOT the payment_intent unique
+   * constraint (which reads as `already_credited`, see below) or the
+   * group-cap index (which reads as `group_already_redeemed`). A genuine
+   * Postgres fault — connection, constraint we didn't anticipate, etc. — not
+   * a Stripe one, so it gets its own honest label instead of folding into
+   * `stripe_unreadable`.
+   */
+  | "redemption_unrecorded";
 
 export interface PassCreditResult {
   outcome: PassCreditOutcome;
@@ -195,6 +241,38 @@ async function alreadyCredited(
 }
 
 /**
+ * Does this billing GROUP already hold a live (un-reversed) pass credit?
+ *
+ * `pass_credit_redemptions_group_cap` (V335) is the real backstop — a partial
+ * unique index on `subscription_id where reversed_at is null` — so this read
+ * is only an optimisation to avoid the Stripe round trip and the wasted
+ * `createBalanceTransaction` call on the common case. A race that slips past
+ * this SELECT is still caught by the index at INSERT time below.
+ *
+ * Exported (unlike `alreadyCredited`/`netPaidForIntent`) so the fail-closed
+ * behaviour on a genuine DB fault can be pinned directly — the real suite
+ * runs against real Postgres rather than a mock, so there is no other seam
+ * to force this specific SELECT to fail without corrupting the whole test.
+ */
+export async function groupAlreadyRedeemed(subscriptionId: string): Promise<boolean> {
+  try {
+    const [row] = await sql<{ one: number }[]>`
+      select 1 as one from pass_credit_redemptions
+      where subscription_id = ${subscriptionId} and reversed_at is null limit 1`;
+    return !!row;
+  } catch {
+    // Same rule as `alreadyCredited`: this function is load-bearing for the
+    // lifetime cap even though it is only ever framed as an "optimisation"
+    // above (the index at INSERT time is the real backstop) — but the cap
+    // means nothing if a DB hiccup makes every request believe the SELECT
+    // came back empty. `creditPassTowardSubscription` never throws, so
+    // failing this check must fail toward "no credit", not toward "assume
+    // clear and race the unique index".
+    return true;
+  }
+}
+
+/**
  * Credit the org's most recent Event Pass toward the subscription it is about
  * to buy. Called by POST /api/billing/checkout BEFORE the session is created.
  *
@@ -218,8 +296,10 @@ export async function creditPassTowardSubscription(orgId: string): Promise<PassC
   const intent = pass.stripe_payment_intent;
   if (!intent) return none("unpaid_pass");
 
-  const [sub] = await sql<{ stripe_customer_id: string | null; currency: string | null }[]>`
-    select s.stripe_customer_id, s.currency from subscriptions s
+  const [sub] = await sql<
+    { id: string; stripe_customer_id: string | null; currency: string | null }[]
+  >`
+    select s.id, s.stripe_customer_id, s.currency from subscriptions s
     join organizations o on o.subscription_id = s.id
     where o.id = ${orgId}`;
   if (!sub?.stripe_customer_id) return none("no_customer", intent);
@@ -228,6 +308,11 @@ export async function creditPassTowardSubscription(orgId: string): Promise<PassC
   // subscription will be billed in — preferredCurrency() would fall through to
   // a cookie or Accept-Language — so there is no match to assert.
   if (!sub.currency) return none("currency_unknown", intent);
+
+  // The group's lifetime cap, checked BEFORE any Stripe read: cheaper than
+  // `netPaidForIntent`, and it is the rule most likely to fire once a group has
+  // redeemed once, so there is no reason to pay for a Stripe round trip first.
+  if (await groupAlreadyRedeemed(sub.id)) return none("group_already_redeemed", intent);
 
   const paid = await netPaidForIntent(intent);
   if (!paid.ok) return none(paid.reason, intent);
@@ -253,6 +338,96 @@ export async function creditPassTowardSubscription(orgId: string): Promise<PassC
     );
   } catch {
     return none("stripe_unreadable", intent);
+  }
+
+  // Credit-then-insert, deliberately: the row can only be written with numbers
+  // (amount/currency) Stripe has already confirmed, and it doubles as the
+  // race backstop below (a lost-race loser needs to know money already moved
+  // BEFORE it tries to record anything). The cost is a real crash window: if
+  // the process dies between the createBalanceTransaction call above
+  // returning and this INSERT committing, the customer keeps the credit but
+  // no local row says so. The `already_credited` metadata scan still blocks a
+  // retry of THIS SAME intent, so the narrow residual risk is a future,
+  // different pass on the same group sailing through `groupAlreadyRedeemed`
+  // and minting a second credit — exactly the defect this table exists to
+  // close, just for a single non-blocking SQL statement's width of the code
+  // rather than for every retry. The alternative, reserving the row first,
+  // trades that sliver for a much wider one: every ordinary Stripe failure
+  // (down, rate-limited, disputed) already returns cleanly with no side
+  // effect today, and reserving first would mean unwinding that reservation
+  // on every one of those paths too — each a new place a crash strands the
+  // group PERMANENTLY capped with nothing ever credited, and with no Stripe
+  // object to reconcile against to even notice. Under-crediting one retry
+  // window is recoverable (buy another pass, try again); over-reserving with
+  // no undo path is not.
+  try {
+    await sql`
+      insert into pass_credit_redemptions
+        (subscription_id, org_id, competition_id, payment_intent, amount_minor, currency)
+      values (${sub.id}, ${orgId}, ${pass.competition_id}, ${intent}, ${paid.amountMinor}, ${paid.currency})`;
+  } catch (err) {
+    // Two DIFFERENT unique constraints can trip 23505 here, and they mean
+    // opposite things — postgres.js surfaces which one on `constraint_name`
+    // (verified live 2026-07-26: same shape for both).
+    //
+    //   - GROUP_CAP_CONSTRAINT (the partial index on subscription_id where
+    //     reversed_at is null): a DIFFERENT intent won the group's one
+    //     lifetime credit between `groupAlreadyRedeemed` above and this
+    //     INSERT. The balance transaction above is a genuine SECOND credit
+    //     for the group and must be compensated.
+    //   - PAYMENT_INTENT_CONSTRAINT, the bare `payment_intent unique` column
+    //     constraint (Postgres auto-names it
+    //     `pass_credit_redemptions_payment_intent_key`): the SAME intent was
+    //     already redeemed — two concurrent requests for the same pass both
+    //     call createBalanceTransaction with idempotencyKey
+    //     `pass-credit-${intent}`, so Stripe dedupes them into ONE real
+    //     transaction and returns success to both callers. The loser did NOT
+    //     create a second credit, so compensating here would cancel the one
+    //     legitimate credit and leave the customer with a redemption row
+    //     claiming money that isn't on the balance any more. This is an
+    //     ordinary double-click, not a race, and `already_credited` is the
+    //     outcome that already describes it.
+    const pgErr = err as { code?: string; constraint_name?: string };
+    if (pgErr.code === "23505" && pgErr.constraint_name === GROUP_CAP_CONSTRAINT) {
+      try {
+        await getStripe().customers.createBalanceTransaction(
+          sub.stripe_customer_id,
+          {
+            amount: paid.amountMinor,
+            currency: paid.currency,
+            description: `Event Pass credit reversal — lost race, ${pass.name}`,
+            metadata: { [PASS_CREDIT_INTENT_KEY]: intent, org_id: orgId, reversal: "lost_race" },
+          },
+          // Same belt as the grant above: a retried reversal (e.g. the first
+          // response never arrived) must not double-debit the customer.
+          { idempotencyKey: `pass-credit-reversal-${intent}` },
+        );
+      } catch {
+        // Best-effort: nothing more to do without throwing out of a function
+        // whose whole contract is "never throws".
+      }
+      return none("group_already_redeemed", intent);
+    }
+    if (pgErr.code === "23505" && pgErr.constraint_name === PAYMENT_INTENT_CONSTRAINT) {
+      // Same-intent double-click. Stripe already collapsed the two
+      // createBalanceTransaction calls into one credit — do NOT touch Stripe.
+      return none("already_credited", intent);
+    }
+    // Anything else here — including a 23505 on a constraint name that is
+    // NEITHER of the two named above — is an unexpected local-DB failure, not
+    // a Stripe one. The Stripe credit already happened and is real, so this
+    // must not read as `stripe_unreadable` (which would mislabel a DB fault
+    // as a Stripe one and could mislead reconciliation). A genuinely unknown
+    // constraint name is deliberately NOT assumed to be the payment_intent
+    // case by exclusion: today this table has exactly two unique constraints,
+    // but a future migration adding a third would otherwise silently route a
+    // real race into `already_credited`, skip the compensation actually owed,
+    // and quietly reopen the stacking bug this whole table exists to close.
+    // `redemption_unrecorded` is the honest "we do not know what state this
+    // is in" outcome for every one of those cases, known or not, rather than
+    // a guess. No compensation either: unlike the group-cap case this is not
+    // a proven second credit, just an unwritten row for a legitimate one.
+    return none("redemption_unrecorded", intent);
   }
 
   return {

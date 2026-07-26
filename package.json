@@ -35,6 +35,7 @@
     "i18n:translate": "node --env-file-if-exists=apps/web/.env.local --experimental-strip-types scripts/i18n/translate.ts",
     "stripe:sync": "node --env-file-if-exists=apps/web/.env.local --experimental-strip-types scripts/stripe-sync.ts",
     "openapi:gen": "node --experimental-strip-types scripts/openapi-gen.ts",
-    "check:rls": "node --experimental-strip-types scripts/check-rls.ts"
+    "check:rls": "node --experimental-strip-types scripts/check-rls.ts",
+    "backfill:pass-credit-redemptions": "node --env-file-if-exists=apps/web/.env.local --experimental-strip-types scripts/backfill-pass-credit-redemptions.ts"
   }
 }

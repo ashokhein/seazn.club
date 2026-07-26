@@ -53,6 +53,7 @@ import {
   PASS_CREDIT_INTENT_KEY,
   PASS_CREDIT_WINDOW_DAYS,
   creditPassTowardSubscription,
+  groupAlreadyRedeemed,
   orgHoldsAnyPass,
   withinCreditWindow,
 } from "../pass-credit";
@@ -221,10 +222,93 @@ describe.skipIf(!HAS_DB)("creditPassTowardSubscription", () => {
     const second = await creditPassTowardSubscription(orgId);
 
     expect(first.outcome).toBe("credited");
-    expect(second.outcome).toBe("already_credited");
+    // The group-cap check (pass_credit_redemptions, V335) now runs BEFORE the
+    // per-intent `alreadyCredited` scan, so an ordinary same-intent retry hits
+    // the durable local row first and reads as `group_already_redeemed`, not
+    // `already_credited` — that outcome is reserved for the narrower case
+    // where the local row is missing (see "still recovers via the per-intent
+    // scan" below) but Stripe already holds the credit.
+    expect(second.outcome).toBe("group_already_redeemed");
     expect(second.amountMinor).toBe(0);
     expect(stripeMock.createBalance).toHaveBeenCalledTimes(1);
     expect(ledger).toHaveLength(1);
+  });
+
+  it("refuses a second pass in the same group, even on a different payment intent", async () => {
+    const orgId = await seedOrg();
+    await seedPass(orgId, { purchasedAt: daysAgo(5), label: "spring" });
+    const first = await creditPassTowardSubscription(orgId);
+    expect(first.outcome).toBe("credited");
+
+    // A second, distinct pass — different competition, different intent — is
+    // exactly the stacking defect (design 2026-07-26 §2): the group's ONE
+    // lifetime credit is already spent, not this intent's.
+    await seedPass(orgId, { purchasedAt: daysAgo(1), label: "autumn" });
+    const second = await creditPassTowardSubscription(orgId);
+
+    expect(second.outcome).toBe("group_already_redeemed");
+    expect(second.amountMinor).toBe(0);
+    expect(stripeMock.createBalance).toHaveBeenCalledTimes(1);
+    expect(ledger).toHaveLength(1);
+  });
+
+  it("shares the group's ONE credit across two orgs on the same subscription", async () => {
+    const orgA = await seedOrg();
+    const [{ subscription_id: subscriptionId }] = await sql<{ subscription_id: string }[]>`
+      select subscription_id from organizations where id = ${orgA}`;
+    const suffix = uniq();
+    const [{ id: orgB }] = await sql<{ id: string }[]>`
+      insert into organizations (name, slug, subscription_id)
+      values (${"Credit Org " + suffix}, ${"credit-org-" + suffix}, ${subscriptionId})
+      returning id`;
+    orgIds.push(orgB);
+
+    await seedPass(orgA, { purchasedAt: daysAgo(5) });
+    await seedPass(orgB, { purchasedAt: daysAgo(1) });
+
+    // This is the reason the cap is keyed on subscription_id and not org_id: a
+    // group is one Stripe customer, so a per-org cap would let it collect one
+    // £25 credit per member org.
+    expect((await creditPassTowardSubscription(orgA)).outcome).toBe("credited");
+    expect((await creditPassTowardSubscription(orgB)).outcome).toBe("group_already_redeemed");
+    expect(stripeMock.createBalance).toHaveBeenCalledTimes(1);
+  });
+
+  it("frees the cap again once the redemption is reversed", async () => {
+    const orgId = await seedOrg();
+    await seedPass(orgId, { purchasedAt: daysAgo(5), label: "spring" });
+    expect((await creditPassTowardSubscription(orgId)).outcome).toBe("credited");
+
+    // Stands in for the Phase 2 admin refund action, which is the only thing
+    // that will ever set this column in production.
+    await sql`
+      update pass_credit_redemptions set reversed_at = now()
+      where org_id = ${orgId} and reversed_at is null`;
+
+    await seedPass(orgId, { purchasedAt: daysAgo(1), label: "autumn" });
+    const res = await creditPassTowardSubscription(orgId);
+
+    expect(res.outcome).toBe("credited");
+    expect(stripeMock.createBalance).toHaveBeenCalledTimes(2);
+  });
+
+  it("still recovers via the per-intent scan when the local row is missing", async () => {
+    // Simulates the documented crash window: createBalanceTransaction
+    // succeeded (the ledger has the entry, metadata and all) but the process
+    // died before the INSERT into pass_credit_redemptions landed. The row this
+    // test deletes is exactly what that crash would have left un-written.
+    const orgId = await seedOrg();
+    await seedPass(orgId, { purchasedAt: daysAgo(2) });
+    expect((await creditPassTowardSubscription(orgId)).outcome).toBe("credited");
+    await sql`delete from pass_credit_redemptions where org_id = ${orgId}`;
+
+    // groupAlreadyRedeemed now sees nothing, so the retry falls through to the
+    // per-intent Stripe metadata scan — which still remembers, and still
+    // refuses. Without this fallback, the missing row would let the retry
+    // mint a second credit for the SAME intent.
+    const retry = await creditPassTowardSubscription(orgId);
+    expect(retry.outcome).toBe("already_credited");
+    expect(stripeMock.createBalance).toHaveBeenCalledTimes(1);
   });
 
   it("credits ONE pass — the most recent — never the sum of several", async () => {
@@ -445,6 +529,185 @@ describe.skipIf(!HAS_DB)("creditPassTowardSubscription", () => {
     await seedPass(theirs, { purchasedAt: daysAgo(1) });
 
     expect((await creditPassTowardSubscription(mine)).outcome).toBe("no_pass");
+  });
+
+  // ── The 23505 branch (money-bug regression, round 2) ──────────────────────
+  // V335 carries TWO unique constraints on pass_credit_redemptions, and they
+  // mean opposite things on conflict: `payment_intent unique` (the SAME
+  // intent, an ordinary double-click — Stripe already deduped the two
+  // createBalanceTransaction calls via idempotencyKey into ONE real credit,
+  // so there is nothing to undo) vs `pass_credit_redemptions_group_cap` (a
+  // DIFFERENT intent for the same group, a genuine race, a genuine second
+  // credit that must be reversed). Treating every 23505 as the second case
+  // — as the code used to — cancels the one legitimate credit on a same-intent
+  // double-click and leaves the customer with a redemption row claiming money
+  // that is no longer on their Stripe balance.
+
+  it("a same-intent conflict reads as already_credited and never compensates", async () => {
+    const orgId = await seedOrg();
+    const { intent } = await seedPass(orgId, { purchasedAt: daysAgo(2) });
+
+    // A row for this EXACT intent already exists, but under a DIFFERENT
+    // group — the shape a real double-click race leaves behind (the winner's
+    // insert lands between this org's own groupAlreadyRedeemed check, which
+    // only looks at ITS OWN subscription, and its INSERT). No live suite
+    // exercises this deterministically today, which is how it shipped.
+    const otherOrgId = await seedOrg();
+    const [{ subscription_id: otherSubId }] = await sql<{ subscription_id: string }[]>`
+      select subscription_id from organizations where id = ${otherOrgId}`;
+    const { competitionId: otherCompId } = await seedPass(otherOrgId, {
+      intent,
+      purchasedAt: daysAgo(2),
+      label: "other-group",
+    });
+    await sql`
+      insert into pass_credit_redemptions
+        (subscription_id, org_id, competition_id, payment_intent, amount_minor, currency)
+      values (${otherSubId}, ${otherOrgId}, ${otherCompId}, ${intent}, 2900, 'gbp')`;
+
+    const res = await creditPassTowardSubscription(orgId);
+
+    expect(res.outcome).toBe("already_credited");
+    expect(res.amountMinor).toBe(0);
+    // Exactly ONE createBalanceTransaction call — the grant this run made.
+    // A bug that treats this as a lost race would call it a SECOND time to
+    // reverse the credit it just gave; asserting count alone would not catch
+    // that mistake, so pin the real balance too.
+    expect(stripeMock.createBalance).toHaveBeenCalledTimes(1);
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]!.amount).toBe(-2900);
+    const net = ledger.reduce((sum, t) => sum + t.amount, 0);
+    // The credit stands: net balance is still negative (a real credit), not
+    // zero (which is what a wrongful reversal would produce).
+    expect(net).toBe(-2900);
+  });
+
+  it("a group-cap conflict compensates, with an idempotency key, down to net zero", async () => {
+    const orgId = await seedOrg();
+    const { intent } = await seedPass(orgId, { purchasedAt: daysAgo(2) });
+    const [{ subscription_id: subId }] = await sql<{ subscription_id: string }[]>`
+      select subscription_id from organizations where id = ${orgId}`;
+
+    // A second org in the SAME group, whose redemption for a DIFFERENT
+    // intent lands between this call's groupAlreadyRedeemed check and its own
+    // INSERT — forced deterministically as a side effect of the mocked
+    // Stripe call, which sits exactly between those two.
+    const suffix = uniq();
+    const [{ id: winnerOrgId }] = await sql<{ id: string }[]>`
+      insert into organizations (name, slug, subscription_id)
+      values (${"Winner Org " + suffix}, ${"winner-org-" + suffix}, ${subId})
+      returning id`;
+    orgIds.push(winnerOrgId);
+    const { competitionId: winnerCompId, intent: winnerIntent } = await seedPass(winnerOrgId, {
+      purchasedAt: daysAgo(1),
+      label: "winner",
+    });
+
+    stripeMock.createBalance.mockImplementationOnce(async (_customerId: string, params: FakeBalanceTxn) => {
+      ledger.push(params);
+      await sql`
+        insert into pass_credit_redemptions
+          (subscription_id, org_id, competition_id, payment_intent, amount_minor, currency)
+        values (${subId}, ${winnerOrgId}, ${winnerCompId}, ${winnerIntent}, 2900, 'gbp')`;
+      return { id: `cbtxn_${uniq()}` };
+    });
+
+    const res = await creditPassTowardSubscription(orgId);
+
+    expect(res.outcome).toBe("group_already_redeemed");
+    expect(res.amountMinor).toBe(0);
+    // Two calls: the grant, then the compensating reversal.
+    expect(stripeMock.createBalance).toHaveBeenCalledTimes(2);
+    const net = ledger.reduce((sum, t) => sum + t.amount, 0);
+    expect(net).toBe(0);
+    const [, reversalParams, reversalOpts] = stripeMock.createBalance.mock.calls[1]!;
+    expect(reversalParams.amount).toBe(2900);
+    expect(reversalOpts).toMatchObject({ idempotencyKey: `pass-credit-reversal-${intent}` });
+
+    // Real state, not just call counts: exactly one LIVE redemption for the
+    // group, and it belongs to the WINNER, not the org that lost the race.
+    const rows = await sql<{ org_id: string }[]>`
+      select org_id from pass_credit_redemptions
+      where subscription_id = ${subId} and reversed_at is null`;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.org_id).toBe(winnerOrgId);
+  });
+
+  it("an unrelated DB failure on the insert is its own outcome, not stripe_unreadable", async () => {
+    const orgId = await seedOrg();
+    await seedPass(orgId, { purchasedAt: daysAgo(2) });
+    // amount_minor is a plain `int` column: this overflows it (a real
+    // Postgres 22003, not 23505), so the credit itself is genuine — Stripe
+    // was already told to move the money — but the local row cannot be
+    // written. Mislabelling this stripe_unreadable would blame Stripe for a
+    // schema fault that is entirely ours.
+    stripeMock.retrieveIntent.mockResolvedValue(paidIntent({ captured: 3_000_000_000 }));
+
+    const res = await creditPassTowardSubscription(orgId);
+
+    expect(res.outcome).toBe("redemption_unrecorded");
+    // The Stripe credit already happened and is real — no compensation is
+    // owed (this is not the group-cap race), and it must not be re-tried
+    // here either.
+    expect(stripeMock.createBalance).toHaveBeenCalledTimes(1);
+    expect(ledger).toHaveLength(1);
+  });
+
+  it("an unrecognised constraint name reads as redemption_unrecorded, never already_credited", async () => {
+    // Guards the exclusion this branch used to make: today the INSERT catch
+    // names GROUP_CAP_CONSTRAINT and PAYMENT_INTENT_CONSTRAINT explicitly and
+    // treats anything else as `redemption_unrecorded` — but a future
+    // migration adding a THIRD unique constraint to this table must not fall
+    // into `already_credited` by exclusion, which would skip a compensation
+    // that might genuinely be owed. Forces a REAL Postgres 23505 under a
+    // constraint name pass-credit.ts has never heard of, by adding a
+    // temporary third unique constraint for the lifetime of this test alone
+    // — not a hand-forged error object.
+    const orgId = await seedOrg();
+    const { competitionId } = await seedPass(orgId, { purchasedAt: daysAgo(2) });
+    const [{ subscription_id: subId }] = await sql<{ subscription_id: string }[]>`
+      select subscription_id from organizations where id = ${orgId}`;
+
+    await sql`
+      alter table pass_credit_redemptions
+        add constraint pass_credit_redemptions_test_unknown_unique unique (competition_id, currency)`;
+    try {
+      // A REVERSED row sharing (competition_id, currency) with the credit
+      // this test is about to earn. reversed_at is set so it does NOT trip
+      // GROUP_CAP_CONSTRAINT (that partial index ignores reversed rows), and
+      // its payment_intent is a different string so PAYMENT_INTENT_CONSTRAINT
+      // is not touched either — the ONLY constraint the real INSERT below can
+      // hit is the temporary one just added.
+      await sql`
+        insert into pass_credit_redemptions
+          (subscription_id, org_id, competition_id, payment_intent, amount_minor, currency, reversed_at)
+        values (${subId}, ${orgId}, ${competitionId}, ${"pi_unrelated_" + uniq()}, 2900, 'gbp', now())`;
+
+      const res = await creditPassTowardSubscription(orgId);
+
+      expect(res.outcome).toBe("redemption_unrecorded");
+      expect(res.amountMinor).toBe(0);
+      // The Stripe credit already happened and is real. An unrecognised
+      // constraint must NOT be assumed to be the harmless same-intent case —
+      // but it must also not be compensated as if it were a proven second
+      // credit (that's the group-cap case only). Exactly one call: the
+      // original grant, nothing more.
+      expect(stripeMock.createBalance).toHaveBeenCalledTimes(1);
+      expect(ledger).toHaveLength(1);
+      expect(ledger[0]!.amount).toBe(-2900);
+    } finally {
+      await sql`
+        alter table pass_credit_redemptions
+          drop constraint if exists pass_credit_redemptions_test_unknown_unique`;
+    }
+  });
+
+  it("groupAlreadyRedeemed fails CLOSED on a genuine DB fault, not open", async () => {
+    // A real Postgres error (invalid uuid input), not a mock — this function
+    // has no throw-safety net of its own (unlike alreadyCredited), so a fault
+    // here must still read as "assume redeemed" rather than "assume clear and
+    // race the unique index".
+    await expect(groupAlreadyRedeemed("not-a-uuid")).resolves.toBe(true);
   });
 });
 
