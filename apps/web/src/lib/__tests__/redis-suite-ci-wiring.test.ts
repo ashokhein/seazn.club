@@ -52,11 +52,15 @@ function redisSuites(): string[] {
  * leaves every executable form intact. Applies YAML's actual comment rule (`#`
  * at line start or after whitespace), so a `#` inside a quoted command survives.
  */
-function ciExecutableText(): string {
-  return readFileSync(CI_YML, "utf8")
+function stripComments(text: string): string {
+  return text
     .split("\n")
     .map((line) => line.replace(/(^|\s)#.*$/, ""))
     .join("\n");
+}
+
+function ciExecutableText(): string {
+  return stripComments(readFileSync(CI_YML, "utf8"));
 }
 
 describe("Redis-gated suites are wired into CI", () => {
@@ -70,12 +74,36 @@ describe("Redis-gated suites are wired into CI", () => {
   it("strips the commentary that would otherwise satisfy the check", () => {
     // The reduction itself needs a guard: if ciExecutableText ever stopped
     // stripping, every assertion below would silently go back to being
-    // satisfiable by prose. ci.yml's comment block above the Redis steps names
-    // both suites, so `npm test` (only ever in a `run:`) must survive while
-    // that commentary does not.
-    const exec = ciExecutableText();
-    expect(exec).toContain("npm test");
-    expect(exec).not.toContain("Redis-gated, so they still self-skip here");
+    // satisfiable by prose.
+    //
+    // Asserted against a LITERAL FIXTURE, not against ci.yml's own prose. An
+    // earlier version pinned a real sentence from the workflow's comment block,
+    // which made an unrelated reword of that comment fail this test — and, worse,
+    // made the guard silently vacuous the moment someone "fixed" it by deleting
+    // the sentence. The rule is what is being tested, so the rule gets its own
+    // input: executable text survives, comments do not, and a `#` inside a
+    // quoted command is not a comment (YAML's actual rule).
+    const fixture = [
+      "# a whole comment line naming decoy-fixture.redis.test.ts",
+      "      - name: keep me",
+      "        run: npm test -- src/lib/__tests__/kept-fixture.redis.test.ts # trailing note",
+      "        run: curl https://example.test/spec#anchor-not-a-comment",
+    ].join("\n");
+    const stripped = stripComments(fixture);
+
+    // Executable text survives, including a multi-token `run:` line...
+    expect(stripped).toContain("run: npm test -- src/lib/__tests__/kept-fixture.redis.test.ts");
+    expect(stripped).toContain("- name: keep me");
+    // ...and a `#` with no whitespace before it is part of the token, not a
+    // comment, so a fragment in a URL is not silently truncated.
+    expect(stripped).toContain("https://example.test/spec#anchor-not-a-comment");
+    // Commentary does not survive — including the filename it named, which is
+    // the whole reason this stripping exists.
+    expect(stripped).not.toContain("a whole comment line");
+    expect(stripped).not.toContain("decoy-fixture.redis.test.ts");
+    expect(stripped).not.toContain("trailing note");
+    // And the real reader is wired to that same rule rather than reimplementing it.
+    expect(ciExecutableText()).toContain("npm test");
   });
 
   it("finds at least one Redis-gated suite to check", () => {
@@ -94,5 +122,21 @@ describe("Redis-gated suites are wired into CI", () => {
     // because the fix is to add a step, and the person who just added the suite
     // is the one who needs telling.
     expect(unwired, `not run by any ci.yml step: ${unwired.join(", ")}`).toEqual([]);
+  });
+
+  it("gives each Redis-gated suite a step that actually owns REDIS_URL", () => {
+    // Naming the file is not enough. These suites gate on
+    // `!HAS_DB || !HAS_REDIS`, so a suite wired into a step WITHOUT REDIS_URL
+    // self-skips and reports green — the same silent no-op as never wiring it
+    // at all, and harder to spot because the filename is right there in the
+    // workflow. REDIS_URL is deliberately step-scoped (job-wide breaks the
+    // src/server suites), so there must be at least one step-scoped occurrence
+    // per suite.
+    const exec = ciExecutableText();
+    const withRedisUrl = exec.split("REDIS_URL:").length - 1;
+    expect(
+      withRedisUrl,
+      `${redisSuites().length} Redis-gated suite(s) but only ${withRedisUrl} step(s) set REDIS_URL`,
+    ).toBeGreaterThanOrEqual(redisSuites().length);
   });
 });
