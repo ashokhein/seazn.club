@@ -686,6 +686,7 @@
   "billing.credits.action.earn": "Crédits gagnés",
   "billing.credits.action.refund": "Remboursement",
   "billing.credits.action.expiry": "Réinitialisation de la dotation",
+  "billing.credits.action.groupMerge": "Déplacés sur cette facture",
   "billing.credits.action.adminGoodwill": "Geste commercial Seazn",
   "billing.credits.action.adminCredit": "Crédit de compte",
   "billing.credits.action.adminRefund": "Ajustement de remboursement",

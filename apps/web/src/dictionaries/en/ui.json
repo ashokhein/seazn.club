@@ -686,6 +686,7 @@
   "billing.credits.action.earn": "Earned credits",
   "billing.credits.action.refund": "Refund",
   "billing.credits.action.expiry": "Grant reset",
+  "billing.credits.action.groupMerge": "Moved onto this bill",
   "billing.credits.action.adminGoodwill": "Seazn goodwill",
   "billing.credits.action.adminCredit": "Account credit",
   "billing.credits.action.adminRefund": "Refund adjustment",
