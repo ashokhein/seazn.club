@@ -124,8 +124,11 @@ function actionKey(source: string, delta: number, reason: string | null): string
 /** Whole days from `now` until the first of next calendar month, derived from
  *  the SAME `utcMonthStart()` anchor the meter's period window is bounded by
  *  (#292) — so the days-remaining number and the window can never disagree
- *  about which month it is. */
-function daysUntilMonthReset(periodStart: Date, now = new Date()): number {
+ *  about which month it is. Both args come from ONE clock sample in the
+ *  caller: sampling `now` here independently would, for a request straddling
+ *  UTC midnight on the 1st, measure to a boundary that had already passed and
+ *  report 0 days left instead of a full fresh month. */
+function daysUntilMonthReset(periodStart: Date, now: Date): number {
   const next = Date.UTC(periodStart.getUTCFullYear(), periodStart.getUTCMonth() + 1, 1);
   return Math.max(0, Math.ceil((next - now.getTime()) / 86_400_000));
 }
@@ -178,7 +181,10 @@ export async function getCreditsTab(orgId: string): Promise<CreditsTabView> {
      where plan_key = ${planKey} and feature_key = 'ai.credits.monthly'`;
   const perSeat = entitlement?.int_value ?? 0;
 
-  const periodStart = utcMonthStart();
+  // ONE clock sample for every month-derived number on this view (see
+  // daysUntilMonthReset) — never two independent `new Date()`s.
+  const now = new Date();
+  const periodStart = utcMonthStart(now);
 
   const [bal, packBal, spent, history, shared, referralCode, referred, referralEarned] =
     await Promise.all([
@@ -215,12 +221,20 @@ export async function getCreditsTab(orgId: string): Promise<CreditsTabView> {
     ]);
 
   const sharedOrgCount = Math.max(1, shared[0]?.n ?? 1);
-  // The cap must be what `grantMonthlyForAllWallets` ACTUALLY granted, not an
-  // independent formula: Community is flat (never seat-scaled — SPEC-2 §11.2),
-  // and a TRIALING paid wallet grants on max(quantity_paid, live orgs) because
-  // syncGroupQuantity freezes quantity_paid for the trial's duration (#291 —
-  // see that function's docstring for the full rule). Reading the frozen count
-  // alone showed a trialing group with a mid-trial rider "70 used / 60".
+  // QUANTITY follows `grantMonthlyForAllWallets`'s rule exactly: Community is
+  // flat (never seat-scaled — SPEC-2 §11.2), and a TRIALING paid wallet grants
+  // on max(quantity_paid, live orgs) because syncGroupQuantity freezes
+  // quantity_paid for the trial's duration (#291 — see that function's
+  // docstring for the full rule). Reading the frozen count alone showed a
+  // trialing group with a mid-trial rider "70 used / 60".
+  //
+  // KNOWN DIVERGENCE, quantity only — the PLAN dimension is NOT unified: this
+  // reads the raw `s.plan_key` (:173) while the sweep resolves it through
+  // `orgPlanKey`, which degrades a suspended / past_due>14d / expired-comp
+  // wallet to Community. So a suspended Pro org is granted 10 but this tab
+  // still shows a cap of 60. Display-level only (the ledger and every spend
+  // path use the resolved plan); deliberately left for a follow-up rather than
+  // changed here, since switching it changes what customers see.
   const grantCap =
     perSeat *
     (planKey === "community" ? 1 : trialing ? Math.max(quantityPaid, sharedOrgCount) : quantityPaid);
@@ -230,7 +244,7 @@ export async function getCreditsTab(orgId: string): Promise<CreditsTabView> {
     balance: bal,
     grantUsed,
     grantCap,
-    grantResetsInDays: daysUntilMonthReset(periodStart),
+    grantResetsInDays: daysUntilMonthReset(periodStart, now),
     packBalance: packBal,
     sharedOrgCount,
     history,

@@ -148,9 +148,13 @@ export async function packBalance(walletId: string): Promise<number> {
  *  spend wrongly counted as inside July). Only `date_trunc(...) at time
  *  zone 'utc'` (a SECOND conversion, back to a real timestamptz) is
  *  TZ-safe in SQL; doing the truncation in JS and passing a `Date`
- *  sidesteps the whole subtlety, and is what every call site now does. */
-export function utcMonthStart(): Date {
-  const now = new Date();
+ *  sidesteps the whole subtlety, and is what every call site now does.
+ *
+ *  `now` defaults to the current instant; pass one explicitly when the caller
+ *  ALSO derives something else from the same clock (the Credits tab derives
+ *  both the period window and the days-until-reset), so a request that
+ *  straddles UTC midnight on the 1st cannot read two different months. */
+export function utcMonthStart(now = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 }
 

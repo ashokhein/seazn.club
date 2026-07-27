@@ -91,6 +91,26 @@ describe.skipIf(!HAS_DB)("getCreditsTab", () => {
     expect(view.sharedOrgCount).toBe(2);
   });
 
+  // The other side of the same rule: the trial max() must NOT leak into an
+  // ACTIVE sub. Once billing is live, quantity_paid is no longer frozen —
+  // syncGroupQuantity tracks the org count — so an extra live org that is not
+  // yet paid for must not inflate the cap above what was granted.
+  it("does NOT scale an ACTIVE sub's cap to live orgs — quantity_paid is the cap", async () => {
+    const { auth } = await seedOrg("pro");
+    const groupId = (await orgGroupId(auth.orgId))!;
+    await sql`update subscriptions set status = 'active', quantity_paid = 1 where id = ${groupId}`;
+
+    const { auth: extra } = await seedOrg("community");
+    await sql`update organizations set subscription_id = ${groupId} where id = ${extra.orgId}`;
+
+    const walletId = await walletIdFor(auth.orgId);
+    expect(await grantMonthly(walletId, "pro", 1)).toBe(60); // what the sweep grants
+
+    const view = await getCreditsTab(auth.orgId);
+    expect(view.grantCap).toBe(60); // NOT 120 — the trial max() must not apply
+    expect(view.sharedOrgCount).toBe(2);
+  });
+
   it("REGRESSION (#292): the used-this-month meter excludes a hold recorded 30 minutes before the UTC month boundary", async () => {
     const [{ tz }] = await sql<{ tz: string }[]>`select current_setting('TimeZone') as tz`;
     // getCreditsTab has no tx to force a TZ on (see this task's Testability
