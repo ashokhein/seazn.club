@@ -784,6 +784,30 @@ async function handleSubscriptionDeleted(stripeSub: Stripe.Subscription) {
         status_changed_at = case when status is distinct from 'canceled'
                                  then now() else status_changed_at end
     where id = ${subscriptionId}`;
+  // The plan is only ONE of the two axes the resolver adds up (v17 gap #293,
+  // acceptance item 4). Recurring add-ons sit on TOP of the plan base, and
+  // nothing here was cancelling them: syncOrgAddonsForSubscription runs only on
+  // `customer.subscription.updated`, and a DELETED subscription still reports
+  // its items, so its reconcile sweep never sees an empty list and never fires.
+  // A churned group therefore kept `community base 1 + N` orgs.max_owned for
+  // ever and unpaid — buy the rider, create org #11, cancel the subscription,
+  // keep the capacity. That is V314:244-245's "silent reseller", and it is a
+  // strictly bigger hole than the self-serve reduction setExtraOrgs guards,
+  // which churn bypasses entirely.
+  //
+  // Scoped exactly like that sweep: this feature key only, and
+  // `stripe_item_id is not null`, so an ADMIN-granted comp of the same cap
+  // (SPEC-3, status='granted', null item id) and every seat / size-pack row on
+  // the same wallet survive. FROZEN, never deleted (V323/V324) — the qty stays
+  // for history and for a re-buy.
+  //
+  // Seats have the same hole (`members.max` add-ons also outlive a cancel).
+  // That is INHERITED, not introduced here, and closing it means deciding what
+  // a re-buy inherits — deliberately out of scope, not overlooked.
+  await sql`
+    update org_addons set status = 'canceled'
+     where wallet_id = ${subscriptionId} and feature_key = ${ORG_ADDON_FEATURE_KEY}
+       and stripe_item_id is not null and status = 'active'`;
   // A cancel drops EVERY org in the group to Community at once.
   await invalidateGroupEntitlements(subscriptionId);
   // Attribution only. Prefer the org the checkout named, but ONLY if it still
