@@ -801,7 +801,7 @@
   "upgrade.ladder.entrantsCapped": "{count} entrants each",
   "upgrade.ladder.entrantsUnlimited": "Unlimited entrants",
   "upgrade.ladder.preparing": "Preparing checkout…",
-  "upgrade.buyError.rung": "This pass size isn’t on sale right now. Pick the other size, or contact support.",
+  "upgrade.buyError.rung": "This pass size isn’t on sale right now. Try the other size, or contact support.",
   "upgrade.buyError.stale": "This purchase can’t go ahead — the page may be out of date. Reload and try again.",
   "upgrade.buyError.generic": "Checkout is unavailable right now. Please try again.",
   "upgrade.slotNote": "A competition with a pass stops counting against your free competition slots.",

@@ -84,8 +84,11 @@ export const PASS_RUNG_SIZE_KEY: Record<PassKey, DictionaryKey> = {
  * Three buckets, and the middle one is deliberately NOT narrowed to "bad rung":
  *
  *   503  the only thing this route 503s for is a rung whose one-time price has
- *        not been `stripe:sync`'d in this environment. Unambiguous, and the
- *        honest advice is to buy the other size.
+ *        not been `stripe:sync`'d in this environment. Unambiguous as a CAUSE,
+ *        so the copy names the rung — but it says "try the other size" rather
+ *        than "pick the other size", because an environment that has never been
+ *        synced at all has both rungs in this state and the second one would be
+ *        a second dead end.
  *   4xx  every other refusal — already holds a pass, plan now covers it, no
  *        active org, signed out, competition gone, rung not in `PASS_KEYS`.
  *        They differ in cause and NOT in remedy: each means the page was

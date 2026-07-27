@@ -144,13 +144,28 @@ export function PassRungLadder({
       <fieldset className="mt-3 space-y-2" disabled={!canBuy}>
         <legend className="sr-only">{t(dict, "upgrade.ladder.legend")}</legend>
         {options.map((option) => {
-          const active = option.key === selected;
+          // Checked in the DOM either way — a radio group must have one — but
+          // only DRESSED as chosen when there is someone to choose. A reader who
+          // cannot buy did not pick M, and a lime stamp in a control they cannot
+          // operate claims they did; for them these two rows are a price list.
+          const checked = option.key === selected;
+          const active = checked && canBuy;
           return (
             <label
               key={option.key}
               data-pass-rung={option.key}
               data-pass-rung-active={active || undefined}
-              className={`flex items-start gap-2.5 rounded-xl border px-3 py-2.5 transition focus-within:ring-2 focus-within:ring-lime-300 ${
+              // WHITE ring, not lime. Lime already means "this is the rung you
+              // chose" on this row, and a lime focus ring on top of a lime
+              // selection border is two signals wearing the same colour.
+              //
+              // `focus-within` rather than `has-focus-visible:`: the latter
+              // compiles to a fully transparent ring in this build (verified in
+              // the browser — `:has(:focus-visible)` matches but no box-shadow
+              // lands), which would silently leave keyboard users with no focus
+              // indicator at all on a purchase control. A ring that also shows
+              // on click is the safe side of that trade.
+              className={`flex items-start gap-2.5 rounded-xl border px-3 py-2.5 transition focus-within:ring-2 focus-within:ring-white ${
                 canBuy ? "cursor-pointer" : "cursor-default"
               } ${
                 active
@@ -160,13 +175,13 @@ export function PassRungLadder({
             >
               {/* The visible control is the size stamp below; the input stays in
                   the accessibility tree and keeps native radio-group keyboard
-                  behaviour. `focus-within` on the label is what keeps the focus
-                  ring visible while the input itself is not. */}
+                  behaviour (arrow keys move the selection). The label's ring is
+                  what keeps focus visible while the input itself is not. */}
               <input
                 type="radio"
                 name="pass-rung"
                 value={option.key}
-                checked={active}
+                checked={checked}
                 onChange={() => onSelect(option.key)}
                 className="sr-only"
               />

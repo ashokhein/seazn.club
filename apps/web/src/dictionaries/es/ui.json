@@ -801,7 +801,7 @@
   "upgrade.ladder.entrantsCapped": "{count} participantes cada una",
   "upgrade.ladder.entrantsUnlimited": "Participantes ilimitados",
   "upgrade.ladder.preparing": "Preparando el pago…",
-  "upgrade.buyError.rung": "Este tamaño de pase no está a la venta ahora mismo. Elige el otro tamaño o escribe a soporte.",
+  "upgrade.buyError.rung": "Este tamaño de pase no está a la venta ahora mismo. Prueba con el otro tamaño o escribe a soporte.",
   "upgrade.buyError.stale": "Esta compra no puede continuar: puede que la página esté desactualizada. Recarga e inténtalo de nuevo.",
   "upgrade.buyError.generic": "El pago no está disponible ahora mismo. Inténtalo de nuevo.",
   "upgrade.slotNote": "Una competición con pase deja de contar en tus plazas de competición gratuitas.",

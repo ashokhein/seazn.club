@@ -801,7 +801,7 @@
   "upgrade.ladder.entrantsCapped": "{count} participants chacune",
   "upgrade.ladder.entrantsUnlimited": "Participants illimités",
   "upgrade.ladder.preparing": "Préparation du paiement…",
-  "upgrade.buyError.rung": "Cette taille de pass n’est pas en vente pour le moment. Choisissez l’autre taille ou contactez le support.",
+  "upgrade.buyError.rung": "Cette taille de pass n’est pas en vente pour le moment. Essayez l’autre taille ou contactez le support.",
   "upgrade.buyError.stale": "Cet achat ne peut pas aboutir — la page n’est peut-être plus à jour. Rechargez et réessayez.",
   "upgrade.buyError.generic": "Le paiement est indisponible pour le moment. Veuillez réessayer.",
   "upgrade.slotNote": "Une compétition dotée d’un pass ne compte plus dans vos créneaux de compétition gratuits.",

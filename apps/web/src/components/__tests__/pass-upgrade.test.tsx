@@ -213,6 +213,17 @@ describe("PassRungLadder — what the buyer is shown", () => {
     expect(html).toContain("disabled");
   });
 
+  it("dresses nothing as chosen for a reader who cannot choose", () => {
+    // The radio stays checked — a group needs one — but a lime "you picked
+    // this" stamp inside a control they cannot operate claims a decision the
+    // reader never made. For them the ladder is a price list.
+    const { tree, html } = ladder({ canBuy: false });
+    expect(html).not.toContain("data-pass-rung-active");
+    expect(radios(tree).filter((r) => propsOf(r).checked === true)).toHaveLength(1);
+    // …and the owner still gets the marker, so this is not just "never render".
+    expect(ladder({ canBuy: true }).html).toContain("data-pass-rung-active");
+  });
+
   it("says checkout is being prepared while it is", () => {
     const { tree, html } = ladder({ loading: true });
     expect(propsOf(buyButton(tree)!).disabled).toBe(true);

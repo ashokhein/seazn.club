@@ -801,7 +801,7 @@
   "upgrade.ladder.entrantsCapped": "{count} deelnemers per divisie",
   "upgrade.ladder.entrantsUnlimited": "Onbeperkt deelnemers",
   "upgrade.ladder.preparing": "Afrekenen voorbereiden…",
-  "upgrade.buyError.rung": "Dit passformaat is nu niet te koop. Kies het andere formaat of neem contact op met support.",
+  "upgrade.buyError.rung": "Dit passformaat is nu niet te koop. Probeer het andere formaat of neem contact op met support.",
   "upgrade.buyError.stale": "Deze aankoop kan niet doorgaan — de pagina is mogelijk verouderd. Herlaad en probeer het opnieuw.",
   "upgrade.buyError.generic": "Afrekenen is nu niet beschikbaar. Probeer het opnieuw.",
   "upgrade.slotNote": "Een competitie met een pass telt niet meer mee voor je gratis competitieplekken.",
