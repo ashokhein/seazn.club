@@ -992,6 +992,75 @@ export async function sendExtraOrgAllowanceAlertEmail(
   return send({ to: opts.to, transactional: true, subject, html, text });
 }
 
+export interface ExtraOrgRepriceFailedAlertEmail {
+  to: string;
+  /** The billing GROUP (subscriptions.id) — what a human looks up first. */
+  subscriptionId: string;
+  /** The Stripe subscription the rider rides, so the item is reachable in the
+   *  Dashboard without a second lookup. */
+  stripeSubscriptionId: string;
+  planKey: string;
+  /** The subscription ITEM that is on the wrong price. Null when the failure
+   *  happened before any item could be named (catalog resolution). */
+  itemId: string | null;
+  /** What it is on now vs what the group's plan says it should be — the whole
+   *  point of the alert, and what a manual fix has to change. */
+  currentPriceId: string | null;
+  expectedPriceId: string | null;
+  reason: string;
+}
+
+/**
+ * Internal staff alert (v17 gap #293, Task 4b): the webhook could not move an
+ * extra-organisation rider onto the price its group's CURRENT plan charges, so
+ * that group is billing the WRONG RATE — $9 on a Pro Plus plan (the arbitrage
+ * the two rates exist to close) or $19 on Pro (an overcharge).
+ *
+ * This alert exists because the convergence has no other backstop. It is driven
+ * only by `customer.subscription.updated`, so a group that never changes plan
+ * again never re-converges: without this, a failure is silent and permanent. A
+ * daily reconciliation sweep and an /admin mismatch list are tracked as #332;
+ * until they land, THIS is the entire safety net.
+ *
+ * Never blocks and never retries — the webhook has already ACKed by design.
+ * Ops-only, no user-facing i18n (mirrors sendExtraOrgAllowanceAlertEmail).
+ */
+export async function sendExtraOrgRepriceFailedAlertEmail(
+  opts: ExtraOrgRepriceFailedAlertEmail,
+): Promise<boolean> {
+  const subject = `Extra-org rider stuck on the wrong price (group ${opts.subscriptionId})`;
+  const bodyText =
+    `The extra-organisation add-on for a ${opts.planKey} billing group could not be moved onto that ` +
+    `plan's rider price, so the group is being billed at the WRONG RATE until someone acts. The two ` +
+    `rates ($9 Pro / $19 Pro Plus) are load-bearing: left on the Pro price, a Pro Plus group undercuts ` +
+    `the tier ladder; left on the Pro Plus price, a Pro group is overcharged. Reason: ${opts.reason}. ` +
+    `Fix it in the Stripe Dashboard by changing the item's price (restate the quantity — Stripe resets ` +
+    `it to 1 on a price change), or re-run stripe:sync if the catalog is the problem and then touch the ` +
+    `subscription so a fresh customer.subscription.updated re-converges it. Nothing retries this on its ` +
+    `own (#332 tracks the reconciliation sweep).`;
+  const html = renderEmail({
+    subject,
+    preheader: `${opts.planKey} group on the wrong rider rate`,
+    eyebrow: "Billing · Pricing integrity",
+    title: "Extra-org rider on the wrong price",
+    contentHtml:
+      paragraph(escapeHtml(bodyText)) +
+      panel(
+        "Group",
+        `billing group: ${opts.subscriptionId}\nstripe subscription: ${opts.stripeSubscriptionId}\n` +
+          `plan: ${opts.planKey}\nsubscription item: ${opts.itemId ?? "(none named)"}\n` +
+          `price now: ${opts.currentPriceId ?? "(unknown)"}\n` +
+          `price expected: ${opts.expectedPriceId ?? "(unresolved)"}\nreason: ${opts.reason}`,
+      ),
+    footerNote: "Automated staff alert — extra-organisation re-price failure (v17 gap #293).",
+  });
+  const text =
+    `${bodyText}\n\nbilling group: ${opts.subscriptionId} · stripe sub: ${opts.stripeSubscriptionId} · ` +
+    `plan: ${opts.planKey} · item: ${opts.itemId ?? "(none)"} · ` +
+    `price ${opts.currentPriceId ?? "(unknown)"} -> ${opts.expectedPriceId ?? "(unresolved)"}`;
+  return send({ to: opts.to, transactional: true, subject, html, text });
+}
+
 /** True when Resend is configured. */
 export function emailConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY);

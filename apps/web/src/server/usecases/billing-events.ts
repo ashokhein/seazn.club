@@ -52,6 +52,7 @@ import {
   sendStuckEventsAlertEmail,
   sendCreditPackGrantFailedAlertEmail,
   sendSizePackGrantFailedAlertEmail,
+  sendExtraOrgRepriceFailedAlertEmail,
 } from "@/lib/email";
 import type { StaffDisputeAlertArgs } from "@/lib/email-templates";
 import {
@@ -735,13 +736,22 @@ export async function syncSeatAddonsForSubscription(
  * `customer.subscription.updated`; on that event every id already matches and
  * nothing is written. The `no write when already correct` tests pin it.
  *
- * NEVER THROWS. The reachable failure is an unsynced catalog
- * (`resolveOrgAddonPriceId` 503). A throw here would fail the whole webhook,
- * which Stripe then retries for ever and which would block every handler after
- * it — including the row sync, which is the thing the entitlement resolver
- * actually reads. So a failure is logged with the group, subscription and item
- * ids and processing continues: rows still reconcile, only the PRICE stays
- * stale, and the next plan event (or the next purchase) re-converges.
+ * NEVER THROWS. The reachable failures are an unsynced catalog
+ * (`resolveOrgAddonPriceId` 503) and a Stripe rejection of the item update
+ * (notably a subscription in a currency the rider price does not define — the
+ * #191 class of problem). A throw here would fail the whole webhook, which
+ * Stripe then retries for ever and which would block every handler after it —
+ * including the row sync, which is the thing the entitlement resolver actually
+ * reads. So a failure is logged AND STAFF-ALERTED and processing continues:
+ * rows still reconcile, only the PRICE stays stale.
+ *
+ * A FAILURE IS OBSERVABLE, NOT REPAIRED. There is no retry and no sweep: this
+ * runs only on `customer.subscription.updated`, so "the next plan event
+ * re-converges it" is worth nothing for a group that never changes plan again.
+ * That group bills the wrong rate indefinitely, which is why every failure path
+ * raises a staff alert rather than only a log. The daily reconciliation sweep
+ * and the /admin mismatch list that would actually REPAIR it are tracked as
+ * issue #332; until they land, the alert is the entire safety net.
  */
 export async function convergeOrgAddonPrices(
   stripeSub: Stripe.Subscription,
@@ -754,6 +764,12 @@ export async function convergeOrgAddonPrices(
   // group we bill, and the overwhelming majority carry no rider at all — this
   // guard is what stops `subscription.updated` becoming a `prices.list`.
   if (orgItems.length === 0) return;
+  // Stripe emits a final `customer.subscription.updated` carrying
+  // status: "canceled" just before `deleted`. There is nothing to re-price on a
+  // dead subscription — an item update against one is rejected — so skip it
+  // rather than spend a round trip, fail, and alert staff about a group that is
+  // leaving anyway. handleSubscriptionDeleted owns what happens next.
+  if (!isLiveStripeStatus(stripeSub.status)) return;
   try {
     // The group's plan AFTER syncSubscriptionForGroup has written this event,
     // which is why this call sits downstream of it. Read from the row rather
@@ -780,25 +796,68 @@ export async function convergeOrgAddonPrices(
     // most once: if some item already holds it, no other item is moved onto it.
     // Consolidating duplicates is setExtraOrgs' job, not a webhook's — the
     // webhook's contract here is "the rate is right", not "the shape is tidy".
+    // Scanned over EVERY org-addon item, including a quantity-0 one. That is
+    // deliberate and is why this predicate differs from the `qty <= 0` skip
+    // below: a zero-quantity subscription item still EXISTS in Stripe and still
+    // occupies its price, so it still blocks another item from moving onto it.
+    // The skip below is about not paying to re-rate something on its way out;
+    // this is about what Stripe will accept. They are different questions.
     let targetClaimed = orgItems.some((it) => it.price?.id === expectedPriceId);
     for (const item of orgItems) {
       // Already on the current plan's price: the converged steady state, and
       // the reason a second identical event writes nothing.
       if (item.price?.id === expectedPriceId) continue;
-      const qty = item.quantity ?? 0;
       // A quantity-0 item is a removal in disguise; the row sync below flips
       // its row to canceled. Re-pricing it would be paying a Stripe write to
       // correct the rate of something that is on its way out.
-      if (qty <= 0) continue;
+      if ((item.quantity ?? 0) <= 0) continue;
       if (targetClaimed) {
         console.error(
           `[billing] extra-org rider ${item.id} on subscription ${stripeSub.id} (group ` +
             `${subscriptionId}) is on price ${item.price?.id} but ${expectedPriceId} is already ` +
             `held by another item — leaving it for setExtraOrgs to consolidate`,
         );
+        // Alerted, not just logged: this group bills the wrong rate on this
+        // item until a human or a purchase consolidates the duplicate, and
+        // nothing here will try again.
+        await maybeAlertOrgRepriceFailed({
+          subscriptionId,
+          stripeSubscriptionId: stripeSub.id,
+          planKey,
+          itemId: item.id,
+          currentPriceId: item.price?.id ?? null,
+          expectedPriceId,
+          reason: "another subscription item already holds the target price (duplicate rider)",
+        });
         continue;
       }
       try {
+        // RE-READ THE ITEM LIVE before mutating it. The quantity we are about
+        // to send back to Stripe must not come from this event's snapshot:
+        // webhook deliveries are not ordered, and runEvent's lease dedupes only
+        // the SAME event, so an older `updated` can be processed after a newer
+        // purchase. Concretely — a Pro group with 2 riders upgrades (E1, qty 2),
+        // then buys 3 more (qty 5, E2); if E1 lands after E2 it would write
+        // `quantity: 2` and silently revoke three organisations of paid
+        // capacity, which the row sync would then faithfully record.
+        //
+        // That is strictly worse than the ordinary stale-payload bug this
+        // codebase already tolerates: before this function existed a stale
+        // payload corrupted only ROWS, and the next event repaired them. This
+        // one corrupts STRIPE, which is authoritative, and nothing repairs it.
+        // Every sibling that mutates a subscription re-reads first for the same
+        // reason (syncGroupQuantity, setExtraOrgs, setExtraSeats); this is the
+        // mismatch branch only, which is rare and already spending a round trip.
+        const live = await getStripe().subscriptionItems.retrieve(item.id);
+        // Someone got there first — a purchase (setExtraOrgs re-prices too) or
+        // an earlier delivery of this same convergence. Nothing to do, and the
+        // price is now claimed.
+        if (live?.price?.id === expectedPriceId) {
+          targetClaimed = true;
+          continue;
+        }
+        const qty = live?.quantity ?? item.quantity ?? 0;
+        if (qty <= 0) continue;
         const updated = await getStripe().subscriptionItems.update(item.id, {
           price: expectedPriceId,
           // NOT optional — see the doc comment. Stripe resets quantity to 1 on
@@ -813,21 +872,39 @@ export async function convergeOrgAddonPrices(
             `(group ${subscriptionId})`,
         );
         // Hand the ROW SYNC the post-update item, not the one this event
-        // arrived with. It keys on `stripe_item_id` and `quantity`, both of
-        // which an in-place update preserves, so this is belt-and-braces
-        // rather than load-bearing today — but the alternative is a caller
-        // reconciling rows from a payload we have knowingly invalidated, which
-        // is exactly the shape of bug that appears the moment someone adds a
-        // field the sync reads.
+        // arrived with. It keys on `stripe_item_id` and `quantity`, and the
+        // live quantity above may legitimately differ from the payload's, so
+        // this is load-bearing rather than belt-and-braces: without it the sync
+        // would write the STALE quantity into org_addons and hand the group a
+        // cap it is no longer paying for (or withhold one it is).
         const idx = items.indexOf(item);
         if (updated && idx >= 0) items[idx] = updated;
       } catch (err) {
+        // An item that vanished between this event being emitted and being
+        // processed is a benign race, not something to page anyone about —
+        // there is nothing left to re-price.
+        if (isStripeResourceMissing(err)) {
+          console.warn(
+            `[billing] extra-org rider ${item.id} is gone from subscription ${stripeSub.id} ` +
+              `(group ${subscriptionId}) — nothing to re-price`,
+          );
+          continue;
+        }
         console.error(
           `[billing] could not re-price extra-org rider ${item.id} to ${expectedPriceId} ` +
             `(plan ${planKey}, subscription ${stripeSub.id}, group ${subscriptionId}) — ` +
             `the row still reconciles, only the rate stays stale`,
           err,
         );
+        await maybeAlertOrgRepriceFailed({
+          subscriptionId,
+          stripeSubscriptionId: stripeSub.id,
+          planKey,
+          itemId: item.id,
+          currentPriceId: item.price?.id ?? null,
+          expectedPriceId,
+          reason: `Stripe rejected the item update: ${errText(err)}`,
+        });
       }
     }
   } catch (err) {
@@ -836,6 +913,69 @@ export async function convergeOrgAddonPrices(
     console.error(
       `[billing] could not resolve the extra-org rider price for group ${subscriptionId} ` +
         `(subscription ${stripeSub.id}) — rows still reconcile, rates stay stale`,
+      err,
+    );
+    await maybeAlertOrgRepriceFailed({
+      subscriptionId,
+      stripeSubscriptionId: stripeSub.id,
+      // The plan read may itself be what failed, so nothing here is assumed.
+      planKey: "unknown",
+      itemId: null,
+      currentPriceId: null,
+      expectedPriceId: null,
+      reason: `could not resolve the rider price for this group's plan: ${errText(err)}`,
+    });
+  }
+}
+
+/** Stripe's "you asked for something that isn't there" code, read defensively —
+ *  the error may be a StripeError, a plain Error, or anything a mock threw. */
+function isStripeResourceMissing(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { code?: unknown }).code === "resource_missing"
+  );
+}
+
+/** A short, safe rendering of an unknown throw for an OPS-ONLY alert body.
+ *  Never rendered to a customer — this file's alerts are staff email. */
+function errText(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+/**
+ * Best-effort staff alert (v17 gap #293, Task 4b): a billing group's
+ * extra-organisation rider is stuck on a price that is NOT its plan's rate.
+ *
+ * NEVER THROWS, and gated on STAFF_ALERT_EMAIL before anything else — the same
+ * discipline as maybeAlertOrgAllowance (extra-orgs.ts), which this deliberately
+ * mirrors. It sits on the webhook's failure path, so an alert that threw would
+ * turn "the rate is stale" into "the whole webhook fails and retries for ever",
+ * i.e. the telemetry would become a strictly worse outcome than the fault it
+ * reports. Awaited rather than fire-and-forget: this path is rare, a webhook has
+ * no user waiting on it, and a floating promise cannot be tested honestly.
+ *
+ * Exported so the never-throws contract can be tested DIRECTLY rather than
+ * through the caller's own catch, which would hide a missing wrapper.
+ */
+export async function maybeAlertOrgRepriceFailed(opts: {
+  subscriptionId: string;
+  stripeSubscriptionId: string;
+  planKey: string;
+  itemId: string | null;
+  currentPriceId: string | null;
+  expectedPriceId: string | null;
+  reason: string;
+}): Promise<void> {
+  try {
+    const alertTo = process.env.STAFF_ALERT_EMAIL;
+    if (!alertTo) return;
+    await sendExtraOrgRepriceFailedAlertEmail({ to: alertTo, ...opts });
+  } catch (err) {
+    console.error(
+      `[billing] extra-org re-price alert failed (group ${opts.subscriptionId})`,
       err,
     );
   }

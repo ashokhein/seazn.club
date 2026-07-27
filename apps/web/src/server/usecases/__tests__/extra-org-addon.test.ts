@@ -8,7 +8,7 @@
 // mutates Stripe ONLY, plus the >= 25 total-allowance staff alert.
 //
 // Real Postgres required; skipped without DATABASE_URL.
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type Stripe from "stripe";
 
@@ -35,11 +35,17 @@ const {
   pricesListSpy,
   requireBillingOwnerMock,
   allowanceAlertSpy,
+  itemRetrieveSpy,
+  repriceAlertSpy,
 } = vi.hoisted(() => ({
   retrieveSpy: vi.fn(),
   itemCreateSpy: vi.fn(),
   itemUpdateSpy: vi.fn(),
   itemDelSpy: vi.fn(),
+  // Task 4b: converge re-reads the ITEM live before mutating it, so the
+  // quantity it writes back can never come from a stale event snapshot.
+  itemRetrieveSpy: vi.fn(),
+  repriceAlertSpy: vi.fn(async () => true),
   // Typed with the resolver's args so a test can answer PER LOOKUP KEY (Task 4b
   // needs pro and pro_plus to resolve to different live price ids); the default
   // implementation ignores them.
@@ -52,7 +58,12 @@ const {
 vi.mock("@/lib/stripe", () => ({
   getStripe: () => ({
     subscriptions: { retrieve: retrieveSpy },
-    subscriptionItems: { create: itemCreateSpy, update: itemUpdateSpy, del: itemDelSpy },
+    subscriptionItems: {
+      create: itemCreateSpy,
+      update: itemUpdateSpy,
+      del: itemDelSpy,
+      retrieve: itemRetrieveSpy,
+    },
     prices: { list: pricesListSpy },
   }),
 }));
@@ -64,6 +75,7 @@ vi.mock("@/server/usecases/billing-manage", () => ({
 vi.mock("@/lib/email", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/email")>()),
   sendExtraOrgAllowanceAlertEmail: allowanceAlertSpy,
+  sendExtraOrgRepriceFailedAlertEmail: repriceAlertSpy,
 }));
 
 import { sql } from "@/lib/db";
@@ -76,6 +88,7 @@ import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 import { ORG_ADDONS } from "@/lib/org-addons";
 import {
   convergeOrgAddonPrices,
+  maybeAlertOrgRepriceFailed,
   processStripeEvent,
   syncOrgAddonsForSubscription,
   syncSeatAddonsForSubscription,
@@ -1592,9 +1605,25 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
    *  from the id an item is CARRYING, which is the whole point of the test. */
   const livePriceFor = (lookupKey: string) => `price_live_${lookupKey}`;
 
+  /** Subscription-item ids, UNIQUE PER TEST. `org_addons`' V324 unique index is
+   *  on `stripe_item_id` ALONE (feature-key and wallet agnostic), so a literal
+   *  id reused between tests does not insert a second row — it UPSERTS the
+   *  previous test's row onto this test's wallet. Assertions scoped by wallet
+   *  still pass, which is what hides it; an assertion like "the row does not
+   *  exist yet" instead reads another test's leftovers and fails for a reason
+   *  that has nothing to do with the code. */
+  let riderId: string;
+  let dupA: string;
+  let dupB: string;
+  let seatId: string;
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
+    riderId = `si_rider_${uniq()}`;
+    dupA = `si_dup_a_${uniq()}`;
+    dupB = `si_dup_b_${uniq()}`;
+    seatId = `si_seat_${uniq()}`;
     // Resolve by lookup key, so pro and pro_plus resolve to DIFFERENT ids.
     pricesListSpy.mockImplementation(async (args: { lookup_keys: string[] }) => ({
       data: [{ id: livePriceFor(args.lookup_keys[0]!) }],
@@ -1609,23 +1638,46 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
         metadata: { feature_key: "orgs.max_owned" },
       }),
     );
+    // LIVE Stripe by default agrees with whatever the payload said — tests that
+    // care about staleness override this per test.
+    itemRetrieveSpy.mockImplementation(async (id: string) => liveItems[id] ?? null);
+    liveItems = {};
+    repriceAlertSpy.mockResolvedValue(true);
+    // Every alert in this codebase is gated on STAFF_ALERT_EMAIL first, so
+    // without this the alert assertions would pass vacuously.
+    vi.stubEnv("STAFF_ALERT_EMAIL", "ops@test.local");
   });
 
-  /** A rider item as the webhook sees it. `priceId` defaults to the live price
-   *  for that lookup key (i.e. already converged); pass one explicitly to model
-   *  an item stranded on another tier's price, or on a superseded one. */
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  /** What Stripe would return from `subscriptionItems.retrieve`, keyed by item
+   *  id. `riderItem` registers the item here as it builds it, so LIVE agrees
+   *  with the payload by default; a test models a STALE payload by mutating the
+   *  entry afterwards. That asymmetry is the point — the payload is a snapshot,
+   *  Stripe is the truth. */
+  let liveItems: Record<string, unknown> = {};
+
+  /** A rider item as the webhook sees it, also registered as its live Stripe
+   *  state. `priceId` defaults to the live price for that lookup key (i.e.
+   *  already converged); pass one explicitly to model an item stranded on
+   *  another tier's price, or on a superseded one. */
   const riderItem = (
     id: string,
     lookupKey: string,
     quantity: number,
     priceId: string = livePriceFor(lookupKey),
-  ) =>
-    ({
+  ) => {
+    const item = {
       id,
       quantity,
       price: { id: priceId, lookup_key: lookupKey },
       metadata: { feature_key: "orgs.max_owned" },
-    }) as unknown as Stripe.SubscriptionItem;
+    };
+    liveItems[id] = { ...item, price: { ...item.price } };
+    return item as unknown as Stripe.SubscriptionItem;
+  };
 
   const planItem = {
     id: "si_plan",
@@ -1669,12 +1721,12 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
     const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
     // The state right after an upgrade: the group row says pro_plus, the rider
     // item is still on the Pro price it was bought at.
-    const stranded = riderItem("si_rider", proEntry.lookupKey, 3);
+    const stranded = riderItem(riderId, proEntry.lookupKey, 3);
     await processStripeEvent(updatedEvent(stripeSubId, walletId, [stranded]));
 
     // Moved onto the CURRENT plan's price…
     expect(itemUpdateSpy).toHaveBeenCalledTimes(1);
-    expect(itemUpdateSpy).toHaveBeenCalledWith("si_rider", {
+    expect(itemUpdateSpy).toHaveBeenCalledWith(riderId, {
       price: livePriceFor(proPlusEntry.lookupKey),
       // NOT optional: Stripe resets quantity to 1 on a price change unless it
       // is restated (billing/subscriptions/change-price). Omitting it would cut
@@ -1690,7 +1742,7 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
       select stripe_item_id, qty, status from org_addons
        where wallet_id = ${walletId} and feature_key = 'orgs.max_owned'`;
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.stripe_item_id).toBe("si_rider");
+    expect(rows[0]!.stripe_item_id).toBe(riderId);
     expect(rows[0]!.qty).toBe(3);
     expect(rows[0]!.status).toBe("active");
     // A re-price is a RATE change, never a capacity change.
@@ -1701,13 +1753,13 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
   it("pro_plus -> pro: re-prices the overcharge direction too", async () => {
     const { walletId, stripeSubId } = await makeBilledGroupOrg("pro");
     await convergeOrgAddonPrices(
-      subFor(stripeSubId, [planItem, riderItem("si_rider", proPlusEntry.lookupKey, 2)]),
+      subFor(stripeSubId, [planItem, riderItem(riderId, proPlusEntry.lookupKey, 2)]),
       walletId,
     );
     expect(pricesListSpy).toHaveBeenCalledWith(
       expect.objectContaining({ lookup_keys: [proEntry.lookupKey] }),
     );
-    expect(itemUpdateSpy).toHaveBeenCalledWith("si_rider", {
+    expect(itemUpdateSpy).toHaveBeenCalledWith(riderId, {
       price: livePriceFor(proEntry.lookupKey),
       quantity: 2,
       proration_behavior: "create_prorations",
@@ -1720,7 +1772,7 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
     // IDS answers both the same way — move to the price the catalog resolves.
     const { walletId, stripeSubId } = await makeBilledGroupOrg("pro");
     const superseded = {
-      id: "si_rider",
+      id: riderId,
       quantity: 1,
       price: { id: "price_superseded", lookup_key: null },
       metadata: { feature_key: "orgs.max_owned" },
@@ -1728,7 +1780,7 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
 
     await convergeOrgAddonPrices(subFor(stripeSubId, [planItem, superseded]), walletId);
 
-    expect(itemUpdateSpy).toHaveBeenCalledWith("si_rider", {
+    expect(itemUpdateSpy).toHaveBeenCalledWith(riderId, {
       price: livePriceFor(proEntry.lookupKey),
       quantity: 1,
       proration_behavior: "create_prorations",
@@ -1738,7 +1790,7 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
   it("an already-correct price is NOT written — this is what stops it churning every event", async () => {
     const { walletId, stripeSubId } = await makeBilledGroupOrg("pro");
     await convergeOrgAddonPrices(
-      subFor(stripeSubId, [planItem, riderItem("si_rider", proEntry.lookupKey, 4)]),
+      subFor(stripeSubId, [planItem, riderItem(riderId, proEntry.lookupKey, 4)]),
       walletId,
     );
     expect(itemUpdateSpy).not.toHaveBeenCalled();
@@ -1748,7 +1800,7 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
 
   it("CONVERGES, does not loop: the event our own update produces writes nothing", async () => {
     const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
-    const items = [planItem, riderItem("si_rider", proEntry.lookupKey, 2)];
+    const items = [planItem, riderItem(riderId, proEntry.lookupKey, 2)];
     const sub = subFor(stripeSubId, items);
 
     await convergeOrgAddonPrices(sub, walletId);
@@ -1789,7 +1841,7 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
 
     await processStripeEvent(
-      updatedEvent(stripeSubId, walletId, [riderItem("si_rider", proEntry.lookupKey, 1)]),
+      updatedEvent(stripeSubId, walletId, [riderItem(riderId, proEntry.lookupKey, 1)]),
     );
 
     // No price to move to, and cancelling from inside a webhook is the cancel
@@ -1819,7 +1871,7 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
     // resolver actually reads.
     await expect(
       processStripeEvent(
-        updatedEvent(stripeSubId, walletId, [riderItem("si_rider", proEntry.lookupKey, 2)]),
+        updatedEvent(stripeSubId, walletId, [riderItem(riderId, proEntry.lookupKey, 2)]),
       ),
     ).resolves.toBeUndefined();
 
@@ -1833,7 +1885,7 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
     const [row] = await sql<{ stripe_item_id: string; qty: number; status: string }[]>`
       select stripe_item_id, qty, status from org_addons
        where wallet_id = ${walletId} and feature_key = 'orgs.max_owned'`;
-    expect(row).toMatchObject({ stripe_item_id: "si_rider", qty: 2, status: "active" });
+    expect(row).toMatchObject({ stripe_item_id: riderId, qty: 2, status: "active" });
   });
 
   it("a failing Stripe update is LOGGED, never thrown — the row sync still runs", async () => {
@@ -1843,12 +1895,12 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
 
     await expect(
       processStripeEvent(
-        updatedEvent(stripeSubId, walletId, [riderItem("si_rider", proEntry.lookupKey, 2)]),
+        updatedEvent(stripeSubId, walletId, [riderItem(riderId, proEntry.lookupKey, 2)]),
       ),
     ).resolves.toBeUndefined();
 
     const messages = logged.mock.calls.map((c) => String(c[0]));
-    expect(messages.some((m) => m.includes("si_rider"))).toBe(true);
+    expect(messages.some((m) => m.includes(riderId))).toBe(true);
     logged.mockRestore();
 
     const [row] = await sql<{ qty: number; status: string }[]>`
@@ -1862,13 +1914,13 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
     await convergeOrgAddonPrices(
       subFor(stripeSubId, [
         planItem,
-        seatItem("si_seat", orgId, 5),
-        riderItem("si_rider", proEntry.lookupKey, 1),
+        seatItem(seatId, orgId, 5),
+        riderItem(riderId, proEntry.lookupKey, 1),
       ]),
       walletId,
     );
     expect(itemUpdateSpy).toHaveBeenCalledTimes(1);
-    expect(itemUpdateSpy.mock.calls[0]![0]).toBe("si_rider");
+    expect(itemUpdateSpy.mock.calls[0]![0]).toBe(riderId);
   });
 
   it("claims the target price once: a duplicate rider is left for setExtraOrgs to consolidate", async () => {
@@ -1881,29 +1933,280 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
     await convergeOrgAddonPrices(
       subFor(stripeSubId, [
         planItem,
-        riderItem("si_dup_a", proEntry.lookupKey, 1),
-        riderItem("si_dup_b", proEntry.lookupKey, 1),
+        riderItem(dupA, proEntry.lookupKey, 1),
+        riderItem(dupB, proEntry.lookupKey, 1),
       ]),
       walletId,
     );
     expect(itemUpdateSpy).toHaveBeenCalledTimes(1);
-    expect(itemUpdateSpy.mock.calls[0]![0]).toBe("si_dup_a");
-    expect(logged.mock.calls.some((c) => String(c[0]).includes("si_dup_b"))).toBe(true);
+    expect(itemUpdateSpy.mock.calls[0]![0]).toBe(dupA);
+    expect(logged.mock.calls.some((c) => String(c[0]).includes(dupB))).toBe(true);
     logged.mockRestore();
+    // …and the loser is ALERTED, not just logged: it bills the wrong rate until
+    // a human or a purchase consolidates it, and nothing here retries.
+    expect(repriceAlertSpy).toHaveBeenCalledTimes(1);
+    expect(repriceAlertSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ itemId: dupB, expectedPriceId: livePriceFor(proPlusEntry.lookupKey) }),
+    );
   });
 
-  it("converges BEFORE the row sync, so the sync never reconciles a payload we invalidated", async () => {
+  // Renamed from "converges BEFORE the row sync": mutating the payload holds
+  // at ANY call order, so the old name promised an ordering guarantee this
+  // assertion never made. It pins the PAYLOAD REWRITE; the test after it pins
+  // the order.
+  it("rewrites the event payload with the post-update item, so no stale item reaches the sync", async () => {
     const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
     const event = updatedEvent(stripeSubId, walletId, [
-      riderItem("si_rider", proEntry.lookupKey, 2),
+      riderItem(riderId, proEntry.lookupKey, 2),
     ]);
     await processStripeEvent(event);
 
-    // The handler hands the ROW SYNC the post-update item, not the one the
-    // event arrived carrying.
     const items = (event.data.object as Stripe.Subscription).items.data;
-    const rider = items.find((it) => it.id === "si_rider")!;
+    const rider = items.find((it) => it.id === riderId)!;
     expect(rider.price.id).toBe(livePriceFor(proPlusEntry.lookupKey));
     expect(rider.quantity).toBe(2);
+  });
+
+  it("runs the re-price BEFORE the row sync — observed from the DB at update time", async () => {
+    // The order is asserted from OBSERVABLE STATE rather than from the payload:
+    // at the moment the Stripe update fires, the org_addons row must not exist
+    // yet, because the row sync has not run. Swap the two calls in
+    // handleSubscriptionChanged and the row is already there — which is the
+    // reversal this test exists to catch, and which mutating the payload
+    // (the test above) cannot see at all.
+    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    let rowExistedAtUpdateTime: boolean | null = null;
+    itemUpdateSpy.mockImplementation(
+      async (id: string, params: { price: string; quantity: number }) => {
+        const [seen] = await sql<{ one: number }[]>`
+          select 1 as one from org_addons where stripe_item_id = ${id}`;
+        rowExistedAtUpdateTime = !!seen;
+        return {
+          id,
+          quantity: params.quantity,
+          price: { id: params.price, lookup_key: null },
+          metadata: { feature_key: "orgs.max_owned" },
+        };
+      },
+    );
+
+    await processStripeEvent(
+      updatedEvent(stripeSubId, walletId, [riderItem(riderId, proEntry.lookupKey, 2)]),
+    );
+
+    expect(itemUpdateSpy).toHaveBeenCalledTimes(1);
+    expect(rowExistedAtUpdateTime).toBe(false);
+    // And the sync did run afterwards, so this is "before", not "instead of".
+    const [row] = await sql<{ qty: number }[]>`
+      select qty from org_addons where stripe_item_id = ${riderId}`;
+    expect(row?.qty).toBe(2);
+  });
+
+  // -------------------------------------------------------------------------
+  // Review fix round 1 — the quantity written back to Stripe must be LIVE.
+  // Webhook deliveries are not ordered and runEvent's lease dedupes only the
+  // same event, so an older `updated` can be processed after a newer purchase.
+  // Trusting the payload's quantity would revoke paid capacity in STRIPE, which
+  // is authoritative — unlike a stale row, which the next event repairs.
+  // -------------------------------------------------------------------------
+
+  it("STALE EVENT: re-reads the live quantity, so an out-of-order delivery cannot shrink the rider", async () => {
+    const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    // E1: the upgrade event, emitted when the group held 2 riders.
+    const stale = riderItem(riderId, proEntry.lookupKey, 2);
+    // E2 already happened: the customer bought 3 more, so Stripe holds 5.
+    liveItems[riderId] = { ...(liveItems[riderId] as object), quantity: 5 };
+
+    await processStripeEvent(updatedEvent(stripeSubId, walletId, [stale]));
+
+    expect(itemRetrieveSpy).toHaveBeenCalledWith(riderId);
+    // 5, never the payload's 2. Sending 2 would revoke three organisations of
+    // paid capacity — and because Stripe is authoritative, nothing would undo it.
+    expect(itemUpdateSpy).toHaveBeenCalledWith(riderId, {
+      price: livePriceFor(proPlusEntry.lookupKey),
+      quantity: 5,
+      proration_behavior: "create_prorations",
+    });
+    // …and the row the sync then writes carries the live quantity too, so the
+    // cap matches what the customer is actually paying for.
+    const [row] = await sql<{ qty: number }[]>`
+      select qty from org_addons where stripe_item_id = ${riderId}`;
+    expect(row?.qty).toBe(5);
+    expect(await getLimit(orgId, "orgs.max_owned")).toBe(proPlusBase + 5);
+  });
+
+  it("STALE EVENT: a rider already converged by a newer delivery is left alone", async () => {
+    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    const stale = riderItem(riderId, proEntry.lookupKey, 2);
+    // Stripe already holds the pro_plus price — an earlier delivery of this
+    // same convergence, or a purchase, got there first.
+    liveItems[riderId] = {
+      ...(liveItems[riderId] as object),
+      price: { id: livePriceFor(proPlusEntry.lookupKey), lookup_key: proPlusEntry.lookupKey },
+    };
+
+    await convergeOrgAddonPrices(subFor(stripeSubId, [planItem, stale]), walletId);
+
+    expect(itemRetrieveSpy).toHaveBeenCalledWith(riderId);
+    expect(itemUpdateSpy).not.toHaveBeenCalled();
+    expect(repriceAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it("an item deleted between emission and processing is a benign race, not an alert", async () => {
+    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    const item = riderItem(riderId, proEntry.lookupKey, 2);
+    const gone = Object.assign(new Error("No such subscription item"), {
+      code: "resource_missing",
+    });
+    itemRetrieveSpy.mockRejectedValue(gone);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await convergeOrgAddonPrices(subFor(stripeSubId, [planItem, item]), walletId);
+
+    expect(itemUpdateSpy).not.toHaveBeenCalled();
+    // There is nothing left to re-price, so paging a human would be noise.
+    expect(logged).not.toHaveBeenCalled();
+    expect(repriceAlertSpy).not.toHaveBeenCalled();
+    logged.mockRestore();
+  });
+
+  // -------------------------------------------------------------------------
+  // Review fix round 1 — a failed convergence must be OBSERVABLE. There is no
+  // retry and no sweep (#332), and this runs only on subscription.updated, so a
+  // group that never changes plan again never re-converges. A log nobody reads
+  // is not a safety net for the load-bearing $9/$19 split.
+  // -------------------------------------------------------------------------
+
+  it("ALERTS staff when the catalog cannot name a price, with the identifiers to act on", async () => {
+    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    pricesListSpy.mockResolvedValue({ data: [] }); // stripe:sync never run here
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await processStripeEvent(
+      updatedEvent(stripeSubId, walletId, [riderItem(riderId, proEntry.lookupKey, 2)]),
+    );
+    logged.mockRestore();
+
+    expect(repriceAlertSpy).toHaveBeenCalledTimes(1);
+    expect(repriceAlertSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "ops@test.local",
+        subscriptionId: walletId,
+        stripeSubscriptionId: stripeSubId,
+      }),
+    );
+  });
+
+  it("ALERTS staff when Stripe REJECTS THE CURRENCY — the #191 class, logged and not thrown", async () => {
+    // The rider prices carry currency_options for eur/gbp/inr/aud. A group
+    // whose subscription currency is outside that set has the item update
+    // rejected outright, and the group then sits on the wrong rate for ever.
+    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    itemUpdateSpy.mockRejectedValue(
+      Object.assign(
+        new Error(
+          "The price specified has unit_amount_decimal in currency jpy, " +
+            "but the subscription is in currency usd.",
+        ),
+        { code: "price_currency_mismatch", type: "StripeInvalidRequestError" },
+      ),
+    );
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // Never throws: a rejected currency must not fail the whole webhook.
+    await expect(
+      processStripeEvent(
+        updatedEvent(stripeSubId, walletId, [riderItem(riderId, proEntry.lookupKey, 2)]),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(logged.mock.calls.some((c) => String(c[0]).includes(riderId))).toBe(true);
+    logged.mockRestore();
+
+    expect(repriceAlertSpy).toHaveBeenCalledTimes(1);
+    expect(repriceAlertSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subscriptionId: walletId,
+        itemId: riderId,
+        currentPriceId: livePriceFor(proEntry.lookupKey),
+        expectedPriceId: livePriceFor(proPlusEntry.lookupKey),
+        reason: expect.stringContaining("currency"),
+      }),
+    );
+
+    // …and the rows still reconciled: only the RATE is stale.
+    const [row] = await sql<{ qty: number; status: string }[]>`
+      select qty, status from org_addons where stripe_item_id = ${riderId}`;
+    expect(row).toMatchObject({ qty: 2, status: "active" });
+  });
+
+  it("stays silent when STAFF_ALERT_EMAIL is unset — the gate comes before the send", async () => {
+    vi.stubEnv("STAFF_ALERT_EMAIL", "");
+    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    pricesListSpy.mockResolvedValue({ data: [] });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await processStripeEvent(
+      updatedEvent(stripeSubId, walletId, [riderItem(riderId, proEntry.lookupKey, 2)]),
+    );
+    logged.mockRestore();
+    expect(repriceAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it("a failing ALERT can never be what breaks the webhook", async () => {
+    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    pricesListSpy.mockResolvedValue({ data: [] });
+    repriceAlertSpy.mockRejectedValue(new Error("resend is down"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // Telemetry on a failure path must never turn "the rate is stale" into
+    // "the webhook fails and Stripe retries it for ever".
+    await expect(
+      processStripeEvent(
+        updatedEvent(stripeSubId, walletId, [riderItem(riderId, proEntry.lookupKey, 2)]),
+      ),
+    ).resolves.toBeUndefined();
+    logged.mockRestore();
+
+    const [row] = await sql<{ qty: number }[]>`
+      select qty from org_addons where stripe_item_id = ${riderId}`;
+    expect(row?.qty).toBe(2);
+  });
+
+  it("maybeAlertOrgRepriceFailed resolves rather than throwing when the send throws", async () => {
+    repriceAlertSpy.mockRejectedValue(new Error("resend is down"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(
+      maybeAlertOrgRepriceFailed({
+        subscriptionId: "grp",
+        stripeSubscriptionId: "sub",
+        planKey: "pro",
+        itemId: "si",
+        currentPriceId: "p1",
+        expectedPriceId: "p2",
+        reason: "test",
+      }),
+    ).resolves.toBeUndefined();
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
+  });
+
+  it("a CANCELED subscription is skipped — no update attempt, no alert, no noise", async () => {
+    // Stripe emits a final `updated` carrying status canceled just before
+    // `deleted`. Re-pricing an item on a dead subscription fails, and alerting
+    // about a group that is leaving anyway is noise, not signal.
+    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const sub = subFor(stripeSubId, [planItem, riderItem(riderId, proEntry.lookupKey, 2)]);
+    (sub as { status?: string }).status = "canceled";
+
+    await convergeOrgAddonPrices(sub, walletId);
+
+    expect(pricesListSpy).not.toHaveBeenCalled();
+    expect(itemRetrieveSpy).not.toHaveBeenCalled();
+    expect(itemUpdateSpy).not.toHaveBeenCalled();
+    expect(repriceAlertSpy).not.toHaveBeenCalled();
+    expect(logged).not.toHaveBeenCalled();
+    logged.mockRestore();
   });
 });
