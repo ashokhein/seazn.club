@@ -65,6 +65,36 @@ describe.skipIf(!HAS_DB)("getCreditsTab", () => {
     expect(view.history).toHaveLength(0);
   });
 
+  it("REGRESSION (#292): the used-this-month meter excludes a hold recorded 30 minutes before the UTC month boundary", async () => {
+    const [{ tz }] = await sql<{ tz: string }[]>`select current_setting('TimeZone') as tz`;
+    // getCreditsTab has no tx to force a TZ on (see this task's Testability
+    // note) — this only reproduces under a non-UTC ambient session TimeZone
+    // (Europe/London here and in production). Skip cleanly rather than
+    // false-fail on a UTC-default DB.
+    if (tz === "UTC" || tz === "Etc/UTC") return;
+
+    const { auth } = await seedOrg("pro");
+    const walletId = await walletIdFor(auth.orgId);
+    await grantMonthly(walletId, "pro", 1);
+
+    // 23:30 UTC on the last day of the PRIOR month — under the ambient
+    // Europe/London (BST, UTC+1) session TZ this instant reads as "00:30"
+    // on the 1st, an hour INTO the new month locally, so a session-TZ-
+    // anchored boundary wrongly counts it. Computed relative to Postgres's
+    // own clock so this holds on any run date, not hardcoded.
+    await sql`
+      insert into ai_credit_ledger
+        (wallet_id, delta, source, bucket, spent_by_org_id, balance_after,
+         idempotency_key, created_at)
+      values (${walletId}, -7, 'run_spend', 'grant', ${auth.orgId}, 53,
+              ${`edge-${randomUUID()}`},
+              date_trunc('month', now() at time zone 'utc') at time zone 'utc' - interval '30 minutes')`;
+
+    const view = await getCreditsTab(auth.orgId);
+
+    expect(view.grantUsed).toBe(0); // must NOT count toward the current UTC month
+  });
+
   // v17 gap #285: credits that arrive because the org joined a billing group
   // (mergeWalletOnAttach's `group_merge` rows) must be labelled as their own
   // thing. The actionKey mapping's `default:` arm returned "adminAdjust", so

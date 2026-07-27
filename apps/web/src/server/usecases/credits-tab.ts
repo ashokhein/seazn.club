@@ -1,6 +1,6 @@
 import "server-only";
 import { sql } from "@/lib/db";
-import { balance, packBalance, walletIdFor } from "@/lib/credits";
+import { balance, packBalance, utcMonthStart, walletIdFor } from "@/lib/credits";
 import { getOrCreateReferralCode } from "@/lib/referral";
 
 /**
@@ -175,6 +175,8 @@ export async function getCreditsTab(orgId: string): Promise<CreditsTabView> {
   const perSeat = entitlement?.int_value ?? 0;
   const grantCap = perSeat * (planKey === "community" ? 1 : quantityPaid);
 
+  const periodStart = utcMonthStart();
+
   const [bal, packBal, spent, history, shared, referralCode, referred, referralEarned] =
     await Promise.all([
       balance(walletId),
@@ -183,10 +185,14 @@ export async function getCreditsTab(orgId: string): Promise<CreditsTabView> {
       // numerator. Derived straight from run_spend rows, NOT `grantCap −
       // grantBalance`: an org that hasn't been granted yet this period has an
       // empty grant bucket but has spent nothing, and must read 0 used, not full.
+      // Bound by the shared `utcMonthStart()` anchor passed as a timestamptz
+      // PARAMETER (#292) — `date_trunc('month', now())` truncated in the DB
+      // session's TimeZone (Europe/London in prod), so a spend at 23:30 UTC on
+      // the last of the month counted into the NEXT month's meter.
       sql<{ used: string | null }[]>`
       select coalesce(sum(-delta), 0)::text as used from ai_credit_ledger
        where wallet_id = ${walletId} and bucket = 'grant' and source = 'run_spend'
-         and created_at >= date_trunc('month', now())`,
+         and created_at >= ${periodStart}`,
       creditHistory(walletId),
       sql<{ n: number }[]>`
       select count(*)::int as n from organizations
