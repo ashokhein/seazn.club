@@ -23,7 +23,7 @@ export async function POST(
 
     // organizations.status ONLY. Suspension used to also stamp
     // subscriptions.status = 'suspended', which was harmless while a
-    // subscription belonged to exactly one org. Since V310 a subscription is a
+    // subscription belonged to exactly one org. Since V314 a subscription is a
     // shared BILLING GROUP: writing to it would stop billing and degrade
     // entitlements for every OTHER org in the group — orgs that may belong to
     // uninvolved people and have done nothing wrong. Suspension is moderation,

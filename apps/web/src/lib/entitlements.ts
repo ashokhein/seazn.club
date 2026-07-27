@@ -194,11 +194,11 @@ export async function orgPlanKey(orgId: string): Promise<string> {
       -- coalesce is load-bearing: a bare NOT IN over a null status yields NULL,
       -- not true, so the arm would silently never fire for rows with no status.
       -- Negating the live list is WIDER than the old "status = canceled" test.
-      -- It used to also fire for 'suspended' on this row; since V310 NOTHING
-      -- writes that status (staff suspension moved to organizations.status, and
-      -- V310 cleared the rows the old route left behind), so that arm is now
-      -- reachable only by genuinely dead subscriptions. Suspension is handled by
-      -- the org branch below instead.
+      -- It used to also fire for 'suspended' on this row; since V314 §2b
+      -- NOTHING writes that status (staff suspension moved to
+      -- organizations.status, and V314 reset the rows the old route left behind
+      -- to 'active'), so that arm is now reachable only by genuinely dead
+      -- subscriptions. Suspension is handled by the org branch below instead.
       --
       -- MODERATION, not billing: a suspended ORG resolves community regardless
       -- of what its group pays for. This is deliberately scoped to the one org —
