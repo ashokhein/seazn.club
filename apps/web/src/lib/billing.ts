@@ -708,7 +708,33 @@ export async function syncSubscriptionForGroup(
   // keep the org's current plan instead of silently downgrading every affected
   // customer — the stripe:sync drift is a staff problem, not the customer's.
   if (priceId && !knownPlanKey) console.error("syncSubscription: unknown price", priceId);
-  const status = STATUS_MAP[stripeSub.status] ?? "past_due";
+  // Loud for the same reason the unknown-price branch above is: the fallback
+  // below silently lands a possibly-PAYING customer on a status that conveys
+  // nothing, and a drift we never see is a drift nobody fixes. Same shape as
+  // its sibling, plus the subscription id — unlike a price, a status gives a
+  // human nothing to look up without knowing which subscription it came from.
+  // `Object.hasOwn`, not a bare index: STATUS_MAP is a Record indexed by a
+  // string that comes off the wire, so `STATUS_MAP["constructor"]` (or
+  // "toString", "valueOf", …) returns an inherited FUNCTION rather than
+  // undefined. That is truthy, so a bare index would skip the error log below
+  // AND survive the `??` fallback — writing a Function into subscriptions.status
+  // and degrading a customer silently, which is the exact pair of failures both
+  // lines exist to prevent. Resolved once, so the log and the value can never
+  // disagree about what "known" means.
+  const mapped = Object.hasOwn(STATUS_MAP, stripeSub.status)
+    ? STATUS_MAP[stripeSub.status]
+    : undefined;
+  if (!mapped) console.error("syncSubscription: unknown status", stripeSub.status, stripeSub.id);
+  // Fallback = the status Stripe invented since this map was written. It must
+  // fail SAFE, and `past_due` (the old fallback) failed OPEN: a never-paid
+  // status we don't recognise — the likely shape of anything new in the
+  // incomplete family — would inherit the 14-day dunning grace in orgPlanKey
+  // and convey full Pro, paid for nothing, until a human noticed. `incomplete`
+  // conveys no plan AND is still in LIVE_SUBSCRIPTION_STATUSES, so the org is
+  // not orphaned and cannot open a second checkout. Anything genuinely paid
+  // that lands here corrects itself on the next webhook once the status is
+  // mapped; the reverse mistake bills nobody and entitles everybody.
+  const status = mapped ?? "incomplete";
   // In Stripe v22, current_period_end lives on each subscription item.
   const periodEnd = stripeSub.items.data[0]?.current_period_end ?? null;
   // null = this object cannot answer; see paymentMethodFromStripeSubscription.
@@ -830,6 +856,15 @@ export async function recordPassPurchase(args: {
   // attempt that recorded the pass but died before crediting — the per-
   // competition idempotency key makes it a no-op if the grant already landed.
   if (!dup) await grantPassCredits();
+  // ...and busts the cache UNCONDITIONALLY on the way out. The healing path
+  // exists precisely because a first attempt can die after the insert — and it
+  // can die between the insert and the invalidate too, leaving a warm DENY (or
+  // a stale pre-purchase answer) that outlives the pass for the full 300s TTL.
+  // A retry that heals the grant but not the cache heals nothing the buyer can
+  // see. Idempotent and fail-open by construction (cacheDelPattern swallows its
+  // own errors), so running it on the duplicate-charge branch too costs a Redis
+  // DEL of a prefix that is usually already empty and can never fail the ACK.
+  await invalidateOrgEntitlements(args.orgId);
   return { recorded: false, duplicateIntent: dup };
 }
 

@@ -2,14 +2,15 @@ import "server-only";
 // Competition use-cases (doc 08 §3). The service layer both /api/v1 routes and
 // Server Components call — the only writer. Auth happens in the route (an
 // AuthCtx proves it); tenancy is enforced by withTenant + RLS.
+import { z } from "zod";
 import { withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
-import { requireFeature, withinLimit } from "@/lib/entitlements";
+import { invalidateOrgEntitlements, requireFeature, withinLimit } from "@/lib/entitlements";
 import { captureServer } from "@/lib/posthog-server";
-import { EVENTS } from "@/lib/analytics-events";
+import { EVENTS, type AnalyticsEvent } from "@/lib/analytics-events";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { page, type ListQuery, type Page } from "@/server/api-v1/http";
-import type { CreateCompetition, PatchCompetition } from "@/server/api-v1/schemas";
+import { CompetitionStatus, type CreateCompetition, type PatchCompetition } from "@/server/api-v1/schemas";
 import { fireDiscoveryRevalidate, invalidateDiscoveryCache } from "@/server/public-site/revalidate";
 import { invalidateSlugCache } from "@/server/slug-resolve";
 import {
@@ -198,6 +199,21 @@ export function shouldFireMadePublic(
   return newVisibility === "public" && oldVisibility !== "public";
 }
 
+/** v17 #289: `live` = play started; `completed` = wrapped up. `published`
+ *  does NOT count as started — a competition can sit published for weeks
+ *  before its first fixture. Pure like shouldFireMadePublic above, and
+ *  typed on the zod enum (not `string`) so a typo'd literal fails tsc
+ *  instead of silently comparing false forever — exactly how the
+ *  pre-#289 bug shipped: `statusChangedTo === "active"` compared against
+ *  values that could never equal any CompetitionStatus member. */
+export function competitionLifecycleEvent(
+  statusChangedTo: z.infer<typeof CompetitionStatus> | null,
+): AnalyticsEvent | null {
+  if (statusChangedTo === "live") return EVENTS.COMPETITION_STARTED;
+  if (statusChangedTo === "completed") return EVENTS.COMPETITION_COMPLETED;
+  return null;
+}
+
 // A frozen competition is read-only — but retiring it (status → completed/
 // archived) must stay possible, or the org could never get back under quota.
 function isRetirePatch(patch: PatchCompetition): boolean {
@@ -223,7 +239,7 @@ export async function patchCompetition(
   if (patch.discovery?.tagline || patch.discovery?.hero_image_path) {
     await requireFeature(auth.orgId, "discovery.branding");
   }
-  let statusChangedTo: string | null = null;
+  let statusChangedTo: z.infer<typeof CompetitionStatus> | null = null;
   let previousSlug: string | null = null;
   let oldVisibility: string | null = null;
   const { row, discoveryTouched } = await withTenant(auth.orgId, async (tx) => {
@@ -298,6 +314,16 @@ export async function patchCompetition(
         Boolean(patch.discovery ?? patch.name ?? patch.starts_on ?? patch.ends_on ?? patch.status));
     return { row, discoveryTouched };
   });
+  // v17 #287: ANY competition write can move status/ends_on, which the Event
+  // Pass lock (isPassLocked) reads live off this row on every resolve — so
+  // invalidate broadly (not gated to "did status/ends_on change") rather than
+  // reason about which columns matter. Fail-open by construction:
+  // invalidateOrgEntitlements -> cacheDelPattern swallows every Redis error
+  // internally (lib/cache.ts) and never throws, so this can never fail the
+  // write it rides on; the 300s TTL is the last-resort bound if it's ever
+  // skipped. Outside the tx, same reasoning as the discovery/slug busts below
+  // — invalidation never rolls back a write.
+  await invalidateOrgEntitlements(auth.orgId);
   // Toggle-off is immediate (doc 15 §1): drop the Redis window and fire the
   // `discovery` ISR tag. Outside the tx — invalidation never rolls back a write.
   if (discoveryTouched) {
@@ -307,11 +333,12 @@ export async function patchCompetition(
   // A rename busts the cached slug resolution (old + new key) — outside the
   // tx, same reasoning as the discovery invalidation above.
   if (previousSlug) await invalidateSlugCache("competition", auth.orgId, previousSlug, row.slug);
-  // Lifecycle events (feature 1): tournament start/finish. `active` = play is on;
-  // `complete` = it's wrapped up.
-  if (statusChangedTo === "active" || statusChangedTo === "complete") {
+  // Lifecycle events (feature 1): tournament start/finish. Pure helper so
+  // the rule is unit-tested without a DB (mirrors shouldFireMadePublic).
+  const lifecycleEvent = competitionLifecycleEvent(statusChangedTo);
+  if (lifecycleEvent) {
     await captureServer({
-      event: statusChangedTo === "active" ? EVENTS.COMPETITION_STARTED : EVENTS.COMPETITION_COMPLETED,
+      event: lifecycleEvent,
       distinctId: auth.userId ?? `org:${auth.orgId}`,
       orgId: auth.orgId,
       properties: { competition_id: id },

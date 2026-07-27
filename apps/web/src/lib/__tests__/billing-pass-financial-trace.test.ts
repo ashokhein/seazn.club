@@ -253,7 +253,11 @@ describe.skipIf(!HAS_DB)("Event Pass leaves a financial trace (webhook)", () => 
       passSession(orgId, compId, {
         customer: winner,
         currency: "gbp",
-        payment_intent: "pi_winner",
+        // Run-unique like every other intent in this file. These trace tests
+        // assert customer/currency, not balance, so a literal here never went
+        // red — it just quietly stopped granting from run 2 onward, hollowing
+        // out the money half of the path they exercise.
+        payment_intent: "pi_winner_" + uniq(),
       }),
     );
     expect(await reconcilePassCheckout(orgId, "cs_first")).toBe(true);
@@ -267,7 +271,7 @@ describe.skipIf(!HAS_DB)("Event Pass leaves a financial trace (webhook)", () => 
         passSession(orgId, compId, {
           customer: "cus_pass_loser_" + uniq(),
           currency: "usd",
-          payment_intent: "pi_loser",
+          payment_intent: "pi_loser_" + uniq(),
         }),
       ),
     );
@@ -284,7 +288,11 @@ describe.skipIf(!HAS_DB)("Event Pass leaves a financial trace (webhook)", () => 
     const session = passSession(orgId, compId, {
       customer: replay,
       currency: "eur",
-      payment_intent: "pi_replay",
+      // Run-unique: this test's whole claim is that a replay "re-runs BOTH
+      // writes idempotently". With a literal intent, run 2+ found the grant
+      // already keyed and no-oped it, so the assertion stood over a path that
+      // had quietly lost its grant half.
+      payment_intent: "pi_replay_" + uniq(),
     });
     stripeMock.retrieve.mockResolvedValue(session);
 
@@ -326,7 +334,13 @@ describe.skipIf(!HAS_DB)("Event Pass grants one-time AI credits", () => {
     const session = passSession(orgId, compId, {
       customer: "cus_grant_replay_" + uniq(),
       currency: "gbp",
-      payment_intent: "pi_grant_replay",
+      // Run-unique, like every sibling: recordPassGrant's idempotency key is
+      // `pass_grant:${paymentIntent}` (lib/credits.ts), so a fixed intent makes
+      // the grant single-use PER DATABASE — green on CI's fresh container,
+      // permanently red on the second run against the persistent local test DB.
+      // The replay under test is expressed by reusing THIS session, not by
+      // hardcoding a literal.
+      payment_intent: "pi_grant_replay_" + uniq(),
     });
     stripeMock.retrieve.mockResolvedValue(session);
 
@@ -348,7 +362,10 @@ describe.skipIf(!HAS_DB)("Event Pass grants one-time AI credits", () => {
     const walletId = await walletIdFor(orgId);
     // First owner records the pass and earns the grant.
     stripeMock.retrieve.mockResolvedValue(
-      passSession(orgId, compId, { payment_intent: "pi_grant_winner" }),
+      // Run-unique for the same reason as the replay test above: a hardcoded
+      // winning intent grants once per DATABASE, so the wallet reads 0 on
+      // every re-run and this test accuses the code of a bug it does not have.
+      passSession(orgId, compId, { payment_intent: "pi_grant_winner_" + uniq() }),
     );
     expect(await reconcilePassCheckout(orgId, "cs_grant_winner")).toBe(true);
     expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
@@ -357,7 +374,7 @@ describe.skipIf(!HAS_DB)("Event Pass grants one-time AI credits", () => {
     // the wallet must NOT be credited again (a duplicate second charge is sent
     // back, never granted — recordPassPurchase's `if (!dup)` guard).
     await processStripeEvent(
-      passEvent(passSession(orgId, compId, { payment_intent: "pi_grant_loser" })),
+      passEvent(passSession(orgId, compId, { payment_intent: "pi_grant_loser_" + uniq() })),
     );
     expect(stripeMock.refundCreate).toHaveBeenCalledTimes(1);
     expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);

@@ -1866,21 +1866,48 @@ async function passGrantsSuite(): Promise<void> {
       ent.entitlements["registration.fee_percent"]?.limit === 8,
   );
 
-  // === lock — a pass stops lifting once its competition is terminal (SPEC-4
-  // §7/§13.5, isPassLocked). Every grant above held while `passComp` ran; retire
-  // it to `archived` and the SAME create that a moment ago succeeded under the
-  // pass — a tiered sponsor (sponsors.tiers, 201 as passTier) — must now 402.
-  // sponsors.tiers is boolean and state-free, so it flips cleanly, where the
-  // entrant cap (already at 128) would 402 either way. The status write does NOT
-  // invalidate the resolver's (org, competition, feature) cache, so bust it the
-  // way the suite does after any raw entitlement write — no sleep on the 300s TTL.
+  // === lock (archived) — a pass stops lifting once its competition is
+  // terminal (SPEC-4 §7/§13.5, isPassLocked). Every grant above held while
+  // `passComp` ran; retire it to `archived` and the SAME create that a moment
+  // ago succeeded under the pass — a tiered sponsor (sponsors.tiers, 201 as
+  // passTier) — must now 402. sponsors.tiers is boolean and state-free, so it
+  // flips cleanly, where the entrant cap (already at 128) would 402 either
+  // way. v17 #287: the status write DOES invalidate the resolver's
+  // (org, competition, feature) cache now — patchCompetition busts it inside
+  // the same call — so, unlike every raw-SQL write elsewhere in this suite,
+  // there is deliberately NO bustOrgEntitlements call below. If that
+  // invalidation ever regresses, this 402 goes stale on any Redis-backed
+  // target (staging, a prod smoke run) for up to the 300s TTL; locally/CI
+  // REDIS_URL is normally unset so the cache is inert and this only proves
+  // the resolver logic, not the invalidation itself (see the dedicated
+  // Redis-gated suite, entitlements-cache-invalidation.redis.test.ts).
   const retire = await v1(s, `/api/v1/competitions/${passComp.id}`, "PATCH", { status: "archived" });
   check("pass grants/lock: the passed competition retires to archived (200)", retire.status === 200);
-  await bustOrgEntitlements(s, orgId);
   const lockedTier = await tierOn(passComp.id, "locked");
   check(
     "pass grants/lock: once archived the pass no longer lifts sponsors.tiers — the create that held under the pass now 402s",
     lockedTier.status === 402 && featureKey(lockedTier) === "sponsors.tiers",
+  );
+
+  // === lock (completed) — the OTHER terminal status (isPassLocked's set is
+  // {archived, completed}), on a fresh comp so it's independent of the
+  // archived case above. Also proves the pass was genuinely lifting the
+  // ENTRANT cap (not just a boolean flag): 65 seats past community's 64
+  // while live, then the 66th 402s the instant the completing PATCH commits.
+  const lockComp = await mkComp("Grants Lock Completed");
+  await grantPass(orgId, lockComp.id);
+  const lockDiv = await mkDiv(lockComp.id, "Lock Cap");
+  const lockPast64 = await v1(s, `/api/v1/divisions/${lockDiv.id}/entrants`, "POST", entrants(65, 1, "L"));
+  check(
+    "pass grants/lock(completed): the pass seats 65 — past community's 64 — while the competition is live",
+    lockPast64.status === 201,
+  );
+  const complete = await v1(s, `/api/v1/competitions/${lockComp.id}`, "PATCH", { status: "completed" });
+  check("pass grants/lock(completed): the competition completes (200)", complete.status === 200);
+  const overCap = await v1(s, `/api/v1/divisions/${lockDiv.id}/entrants`, "POST", entrants(1, 66, "L"));
+  check(
+    "pass grants/lock(completed): once completed the pass stops lifting entrants.per_division.max — the 66th create 402s with no stale-cache window",
+    overCap.status === 402 && featureKey(overCap) === "entrants.per_division.max",
   );
 }
 
