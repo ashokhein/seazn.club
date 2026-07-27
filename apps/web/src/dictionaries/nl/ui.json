@@ -692,7 +692,7 @@
   "billing.credits.action.adminRefund": "Terugbetalingscorrectie",
   "billing.credits.action.adminAdjust": "Accountcorrectie",
   "billing.credits.referral.title": "Uitnodigen & verdienen",
-  "billing.credits.referral.desc": "Deel je link. Zodra een organisatie die je aanbrengt haar eerste competitie publiceert, verdient zij 10 credits. Zodra die competitie de eerste betaalde inschrijving ontvangt, verdien jij 20.",
+  "billing.credits.referral.desc": "Deel je link. Zodra een organisatie die je aanbrengt haar eerste competitie met een divisie publiceert, verdient zij 10 credits. Zodra die competitie de eerste betaalde inschrijving ontvangt, verdien jij 20.",
   "billing.credits.referral.stats.one": "{count} organisatie aangebracht · {earned} credits verdiend",
   "billing.credits.referral.stats.other": "{count} organisaties aangebracht · {earned} credits verdiend",
   "billing.credits.referral.howItWorks": "Hoe het werkt",
