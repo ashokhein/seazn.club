@@ -5,6 +5,9 @@
 // surface as nulls rather than being filtered out.
 import { sql } from "@/lib/db";
 import { aiRunUnitNoun } from "@/lib/ai-pricing";
+// lib/credits is a leaf w.r.t. server/usecases (it imports only other lib
+// modules), so reading it here closes no import cycle.
+import { EARN_GRANT_DAILY_ALERT_THRESHOLD, earnGrantVolumeToday } from "@/lib/credits";
 import { sendAiRunCostAlertEmail } from "@/lib/email";
 
 export const AI_RUN_EVENT_TYPES = [
@@ -320,6 +323,15 @@ export interface AiMarginReport {
   /** Always both phases, in a fixed order, even when one has no runs — a
    *  stable table shape, and "officials: no runs yet" is itself information. */
   byPhase: AiPhaseUnitRow[];
+  /** Earn grants issued TODAY (v17 gap #296) — deliberately a different
+   *  window from `days` above: it is the same UTC-day count the daily cron
+   *  alert checks, read through the same `earnGrantVolumeToday` so the panel
+   *  and the alert email can never disagree. Surfaced here so staff can watch
+   *  it approach the threshold instead of only learning once the email fires. */
+  earn_grants_today: number;
+  /** The count at which the daily alert fires — shown next to the count so
+   *  the number above means something without opening the code. */
+  earn_grant_alert_threshold: number;
 }
 
 export type AiRunPhase = "schedule" | "officials";
@@ -535,5 +547,7 @@ export async function aiMarginReport(days: number): Promise<AiMarginReport> {
     aggregate: marginRow(null, "All orgs", totalCredits, totalCogs),
     byOrg,
     byPhase,
+    earn_grants_today: await earnGrantVolumeToday(),
+    earn_grant_alert_threshold: EARN_GRANT_DAILY_ALERT_THRESHOLD,
   };
 }

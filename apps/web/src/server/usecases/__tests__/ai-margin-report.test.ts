@@ -19,6 +19,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import { AI_RUN_UNIT_NOUN } from "@/lib/ai-pricing";
+import { EARN_GRANT_DAILY_ALERT_THRESHOLD, earnGrantVolumeToday } from "@/lib/credits";
 import {
   aiMarginReport,
   costPerUnitUsd,
@@ -152,6 +153,35 @@ describe.skipIf(!HAS_DB)("aiMarginReport (v17 gap #295)", () => {
     expect(row!.revenue_usd).toBe(0);
     expect(row!.cogs_usd).toBeCloseTo(0.05, 2);
     expect(row!.margin_pct).toBeNull();
+  });
+});
+
+describe.skipIf(!HAS_DB)("aiMarginReport — earn-grant volume (v17 gap #296)", () => {
+  it("carries today's earn-grant count and the alert threshold, so staff see distance-to-alert", async () => {
+    // #296 wanted daily earn_grant volume visible in admin, not only in the
+    // cron's alert email — an operator should be able to see the number
+    // trending toward the threshold before the email lands.
+    //
+    // Asserted as a FLOOR, not a delta: the rows seeded here carry
+    // created_at = now(), so today's count must include them whatever else
+    // the shared schema holds. (T6's future-anchor trick buys exactness, but
+    // it needs an explicit dayStart, and this reads the live default window
+    // the panel itself renders.)
+    const before = await aiMarginReport(DAYS);
+    expect(before.earn_grant_alert_threshold).toBe(EARN_GRANT_DAILY_ALERT_THRESHOLD);
+
+    for (let i = 0; i < 3; i++) {
+      await sql`
+        insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+        values (${randomUUID()}, 10, 'earn_grant', 'pack', 10, ${`panel-vol-${uniq()}`})`;
+    }
+
+    const after = await aiMarginReport(DAYS);
+    expect(after.earn_grants_today).toBeGreaterThanOrEqual(3);
+    // Reads the same source the alert does, so the panel and the email can
+    // never disagree about today's number.
+    expect(after.earn_grants_today).toBeGreaterThanOrEqual(before.earn_grants_today);
+    expect(after.earn_grants_today).toBe(await earnGrantVolumeToday());
   });
 });
 

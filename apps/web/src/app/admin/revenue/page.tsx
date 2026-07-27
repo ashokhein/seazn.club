@@ -161,6 +161,29 @@ function AiMarginSection({ margin }: { margin: AiMarginReport }) {
         </p>
       </div>
 
+      {/* Earn-grant volume (v17 gap #296). Deliberately OUTSIDE the idle
+          branch below: earn grants are farmed by signing up and publishing,
+          which burns no AI credits at all — so a farming spike would be
+          invisible on a day with no AI runs, which is exactly the day it is
+          most likely to happen. Today's UTC count, next to the threshold the
+          daily alert fires at, so staff can watch the distance close instead
+          of only finding out when the email lands. */}
+      <div className="rounded-lg bg-slate-800 px-4 py-3 text-sm">
+        <span className="text-slate-400">Earn grants today</span>{" "}
+        <span
+          className={`font-semibold tabular-nums ${
+            margin.earn_grants_today >= margin.earn_grant_alert_threshold
+              ? "text-red-300"
+              : "text-white"
+          }`}
+        >
+          {count(margin.earn_grants_today)}
+        </span>{" "}
+        <span className="text-xs text-slate-500">
+          of {count(margin.earn_grant_alert_threshold)} — staff alert fires at the threshold
+        </span>
+      </div>
+
       {idle ? (
         <div className="rounded-lg bg-slate-800 p-6 text-sm text-slate-400">
           No AI runs or credit spend in the last {margin.days} days. Numbers appear once organisers
