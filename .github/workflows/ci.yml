@@ -207,8 +207,9 @@ jobs:
       # pass-scoping-guard (no enforcement site drops the competition id) —
       # plus every billing-*/entitlements-* DB suite ran in NO job at all: the
       # unit job has no DATABASE_URL, so they skipped there and read as green.
-      # rate-limit.redis.test.ts is Redis-gated, so it still self-skips here and
-      # executes in the step below, which owns REDIS_URL.
+      # rate-limit.redis.test.ts and entitlements-cache-invalidation.redis.test.ts
+      # are Redis-gated, so they still self-skip here and execute in the two
+      # dedicated steps below, each of which owns REDIS_URL for itself alone.
       - name: Engine-db + service-layer + lib integration tests (real Postgres)
         run: npm test --workspace apps/web -- run src/server src/lib
 
@@ -230,6 +231,20 @@ jobs:
       # cache — stale reads, false failures. The limiter test is self-contained.
       - name: Rate-limiter integration tests (real Redis)
         run: npm test --workspace apps/web -- run src/lib/__tests__/rate-limit.redis.test.ts
+        env:
+          REDIS_URL: redis://localhost:6379
+
+      # v17 #287: the counterpart REDIS_URL-scoped step. patchCompetition
+      # (and the pass grant/refund paths) must bust ent:<org>:* the instant
+      # they write — a cached Event Pass answer must not outlive the write
+      # it rode in on. Needs its own step for the same reason as the
+      # limiter above: with REDIS_URL unset (the step above's
+      # src/server+src/lib run, and any plain local `npm test`), cacheGet
+      # always misses and every read hits Postgres fresh (lib/cache.ts) —
+      # the bug this suite catches is structurally invisible without a
+      # real Redis actually going stale.
+      - name: Entitlement cache invalidation tests (real Redis)
+        run: npm test --workspace apps/web -- run src/lib/__tests__/entitlements-cache-invalidation.redis.test.ts
         env:
           REDIS_URL: redis://localhost:6379
 
