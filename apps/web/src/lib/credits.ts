@@ -325,7 +325,25 @@ export async function grantMonthly(
  * churned org gets its Community 10/mo like any other Community wallet
  * instead of silently nothing. No retroactive back-grant for months already
  * missed (v17-gap design decision) — this only fixes the sweep going
- * forward.
+ * forward. Two visible deploy-day effects follow from that, both expected:
+ * a wallet ALREADY granted this month (a trialing group, say) is not topped
+ * up to a newly-resolved rate mid-month — `grantMonthly`'s
+ * `monthly:${walletId}:${period}` key short-circuits it to a no-op until the
+ * next period — and conversely the FIRST sweep to reach a previously-skipped
+ * (churned) wallet expires whatever stale grant bucket it was still carrying
+ * before granting the resolved rate, so that wallet's balance visibly DROPS,
+ * one way, to the Community 10; that is the correct outcome of D1's
+ * use-or-lose grant meeting a wallet the old sweep had frozen, not a
+ * regression.
+ *
+ * **Why one scan of `subscriptions` reaches every wallet:** every org has a
+ * `subscriptions` row — `lib/auth.ts`'s `createOrgForUser` inserts a
+ * Community group-of-one and stamps `organizations.subscription_id` with it
+ * in the same transaction as the org itself, so an ungrouped org is simply a
+ * group of one — which is why scanning `subscriptions` with the live-org
+ * lateral below covers every wallet in a single pass, with no second scan
+ * over ungrouped orgs. (`countOrgsWithoutGroup`, run daily by the
+ * billing-quantity cron, is the standing alarm on that invariant.)
  *
  * **Which org answers for the group:** `orgPlanKey` takes a single org id,
  * but a wallet can back several orgs (a billing group). The `rep` lateral

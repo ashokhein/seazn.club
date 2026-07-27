@@ -111,13 +111,18 @@ describe.skipIf(!HAS_DB)("getCreditsTab", () => {
     expect(view.sharedOrgCount).toBe(2);
   });
 
-  it("REGRESSION (#292): the used-this-month meter excludes a hold recorded 30 minutes before the UTC month boundary", async () => {
+  it("REGRESSION (#292): the used-this-month meter excludes a hold recorded 30 minutes before the UTC month boundary", async (ctx) => {
     const [{ tz }] = await sql<{ tz: string }[]>`select current_setting('TimeZone') as tz`;
     // getCreditsTab has no tx to force a TZ on (see this task's Testability
     // note) — this only reproduces under a non-UTC ambient session TimeZone
-    // (Europe/London here and in production). Skip cleanly rather than
-    // false-fail on a UTC-default DB.
-    if (tz === "UTC" || tz === "Etc/UTC") return;
+    // (Europe/London here and in production). On a UTC-default database (CI's
+    // postgres) this is genuinely unable to run, so SKIP it rather than
+    // early-`return`: a bare return reports PASSED and hides the fact that the
+    // regression went unexercised.
+    ctx.skip(
+      tz === "UTC" || tz === "Etc/UTC",
+      `needs a non-UTC ambient session TimeZone to reproduce (DB TimeZone is ${tz})`,
+    );
 
     const { auth } = await seedOrg("pro");
     const walletId = await walletIdFor(auth.orgId);

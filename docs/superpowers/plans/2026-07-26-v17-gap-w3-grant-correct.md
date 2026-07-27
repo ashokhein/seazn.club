@@ -316,7 +316,7 @@
 
   Then run #279's own suite (verification step, not a new test — it exercises `syncGroupQuantity`/`attachOrgToGroup`/`detachOrgFromGroup`/`previewAttachCharge`, none of which this task touches, but it starts a real `e2e/stripe-fixture-server` on a fixed port so it must be run alone):
   ```
-  DATABASE_URL=postgresql://postgres@127.0.0.1:54329/seazn_smoke DATABASE_SSL=disable DB_SCHEMA=v17gap_w3 npx vitest run src/server/usecases/__tests__/billing-group-trial-seat.test.ts
+  cd apps/web && DATABASE_URL=postgresql://postgres@127.0.0.1:54329/seazn_smoke DATABASE_SSL=disable DB_SCHEMA=v17gap_w3 npx vitest run src/server/usecases/__tests__/billing-group-trial-seat.test.ts
   ```
   Expected: all 4 tests pass unchanged — "freezes quantity_paid through a trial attach and detach", "previews a trial attach as free", "lets the trial-end renewal set quantity_paid to the active count", "still inflates quantity_paid on an ACTIVE (non-trial) group". This confirms `quantity_paid` itself is never written by this task's change — only what it's multiplied by for the grant — so #279's freeze guarantee and this task's grant-scaling coexist without either function touching the other's invariant.
 

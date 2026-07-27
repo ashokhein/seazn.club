@@ -229,7 +229,8 @@ export async function getCreditsTab(orgId: string): Promise<CreditsTabView> {
   // trialing group with a mid-trial rider "70 used / 60".
   //
   // KNOWN DIVERGENCE, quantity only — the PLAN dimension is NOT unified: this
-  // reads the raw `s.plan_key` (:173) while the sweep resolves it through
+  // reads the raw `s.plan_key` from the `plan` query above while the sweep
+  // resolves it through
   // `orgPlanKey`, which degrades a suspended / past_due>14d / expired-comp
   // wallet to Community. So a suspended Pro org is granted 10 but this tab
   // still shows a cap of 60. Display-level only (the ledger and every spend
