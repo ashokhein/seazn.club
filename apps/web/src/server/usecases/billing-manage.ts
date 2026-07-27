@@ -10,6 +10,7 @@ import {
   syncSubscription,
 } from "@/lib/billing";
 import { invalidateEntitlementsForOrgGroup, isPassLocked } from "@/lib/entitlements";
+import { isPassKey, type PassKey } from "@/lib/currency";
 import { subscriptionIdForOrg } from "@/lib/billing-group";
 import { logStaffAction } from "@/lib/admin";
 import {
@@ -306,6 +307,17 @@ export interface PassPurchaseRow {
   competitionName: string;
   /** Slug, so the row can link at the competition the pass covers. */
   competitionSlug: string;
+  /**
+   * WHICH rung was bought (v17 #294). Without it the billing list renders a $29
+   * M purchase and a $59 L purchase identically — and `amountMinor` cannot
+   * stand in for it: it is null for a staff grant and null again whenever the
+   * Stripe read fails, which is exactly when the reader has least else to go on.
+   *
+   * `isPassKey`-guarded at the query, never cast: the column is `not null
+   * default 'event_pass'` (V271) so a row predating #294 reads as M, and a rung
+   * a future build sells degrades to a real label rather than an undefined one.
+   */
+  passKey: PassKey;
   purchasedIso: string;
   /**
    * Minor units off the Stripe invoice Task 13's `invoice_creation` mints, or
@@ -383,14 +395,15 @@ export async function getPassPurchases(orgId: string): Promise<PassPurchaseRow[]
       competition_id: string;
       name: string;
       slug: string;
+      pass_key: string;
       purchased_at: Date | string;
       stripe_payment_intent: string | null;
       status: string;
       ends_on: Date | string | null;
     }[]
   >`
-    select cp.competition_id, c.name, c.slug, cp.purchased_at, cp.stripe_payment_intent,
-           c.status, c.ends_on
+    select cp.competition_id, c.name, c.slug, cp.pass_key, cp.purchased_at,
+           cp.stripe_payment_intent, c.status, c.ends_on
     from competition_passes cp
     join competitions c on c.id = cp.competition_id
     where cp.org_id = ${orgId}
@@ -404,6 +417,7 @@ export async function getPassPurchases(orgId: string): Promise<PassPurchaseRow[]
     competitionId: r.competition_id,
     competitionName: r.name,
     competitionSlug: r.slug,
+    passKey: isPassKey(r.pass_key) ? r.pass_key : "event_pass",
     purchasedIso: new Date(r.purchased_at).toISOString(),
     amountMinor: invoices[i]?.amountMinor ?? null,
     currency: invoices[i]?.currency ?? null,

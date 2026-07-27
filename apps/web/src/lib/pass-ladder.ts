@@ -8,9 +8,11 @@
 // written down in code or copy.) Prices come from `lib/currency`'s
 // stripe-plans.json-backed `passPrice` for the same reason — one price list,
 // the same one `stripe:sync` pushes to Stripe.
-import { passPrice, type Currency, type PassKey } from "@/lib/currency";
+import { PASS_KEYS, passPrice, type Currency, type PassKey } from "@/lib/currency";
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
+import type { Dict } from "@/lib/i18n-constants";
 import type { DictionaryKey } from "@/lib/i18n-keys";
+import { t } from "@/lib/i18n-runtime";
 
 export interface PassRungOption {
   key: PassKey;
@@ -42,6 +44,86 @@ export function passLadderOptions(currency: Currency, caps: PassRungCaps): PassR
     divisions: caps[key].divisions,
     credits: PASS_CREDIT_GRANT,
   }));
+}
+
+/** A rung with a price attached — the least any "which of these is cheapest"
+ *  question needs to know. Structural so `PassRungOption` satisfies it too. */
+export interface PricedRung {
+  key: PassKey;
+  amountMinor: number;
+}
+
+/**
+ * The cheapest of some priced rungs, ties going to the earlier one.
+ *
+ * Split out from `lowestPassRung` so the CHOICE can be tested against a price
+ * list where the answer is not M. Against the live seed M is cheapest in all
+ * five currencies, so a "lowest" that simply returned `event_pass` would pass
+ * every assertion made against the real numbers — and would keep passing on the
+ * day L is discounted or a rung is added underneath.
+ *
+ * Ties keep ladder order because the price is quoted NEXT TO a rung name on
+ * some surfaces; a coin-flip between equal amounts would flip the name.
+ */
+export function lowestPricedRung<T extends PricedRung>(rungs: readonly T[]): T {
+  // PASS_KEYS is a non-empty `as const` tuple and every caller derives from it,
+  // so there is always a first element to reduce from.
+  return rungs.reduce((lowest, rung) => (rung.amountMinor < lowest.amountMinor ? rung : lowest));
+}
+
+/**
+ * The rung a surface should quote when it shows ONE price for a product that
+ * sells at two — "Event Pass — from $29 one-time".
+ *
+ * Five surfaces (the paywall, the billing-page offer, the dashboard card menu,
+ * the competition header and competition settings) invite a purchase without
+ * offering the choice; the choice itself lives on the upgrade page. Each of them
+ * passed the literal `"event_pass"` to `passPrice`, which is honest only while M
+ * is the cheapest rung — an assumption `tsc` cannot see and no test held. This
+ * derives it instead, and hands back the KEY as well as the amount so a caller
+ * that also names the rung cannot name a different one from the one it priced.
+ */
+export function lowestPassRung(currency: Currency): PricedRung {
+  return lowestPricedRung(
+    PASS_KEYS.map((key) => ({ key, amountMinor: passPrice(currency, key) })),
+  );
+}
+
+/**
+ * "Event Pass L active" — the held signal, NAMING the rung.
+ *
+ * The three surfaces that render it (the dashboard card's seal, the competition
+ * header, competition settings) said a flat "Event Pass active": the product
+ * FAMILY, with nothing beside it to say which size. That reads as M's name to an
+ * org that paid $59 for L, on the only surfaces where the rung is not disclosed
+ * anywhere else — the upgrade page's own stub prints `data-pass-held-rung`
+ * immediately under the family name, which is why it needs no change.
+ *
+ * A helper rather than a `t(dict, "pass.entry.active", { rung })` at each call
+ * site: `t()` renders a forgotten var as the literal `{rung}`, and three call
+ * sites each remembering is three chances to ship a brace to a customer.
+ */
+export function passActiveLabel(dict: Dict, passKey: PassKey): string {
+  return t(dict, "pass.entry.active", { rung: t(dict, PASS_RUNG_NAME_KEY[passKey]) });
+}
+
+/**
+ * Both rungs' held signals, finished.
+ *
+ * The pages that mount `<CompetitionPassEntry>` hold the dictionary but not the
+ * rung — the pass row is resolved once by the competition LAYOUT and reaches the
+ * island through `CompetitionPassProvider`. So the page hands over every label
+ * and the island picks the one it knows about.
+ *
+ * An explicit object literal, not `Object.fromEntries(PASS_KEYS.map(…))`: a
+ * third rung must be a compile error here, not a card that silently falls back
+ * to a missing key.
+ */
+export function passActiveLabels(dict: Dict): Record<PassKey, string> {
+  return {
+    event_pass: passActiveLabel(dict, "event_pass"),
+    event_pass_l: passActiveLabel(dict, "event_pass_l"),
+  };
 }
 
 /**

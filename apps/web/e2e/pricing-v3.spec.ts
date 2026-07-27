@@ -181,7 +181,9 @@ test.describe.serial("event pass gate (community org)", () => {
     await page.goto(passHref!.replace(/\/upgrade(\?.*)?$/, "/schedule"));
     const owned = page.locator("[data-pass-owned]").first();
     await expect(owned).toBeVisible({ timeout: 20_000 });
-    await expect(owned).toContainText("Event Pass active");
+    // `grantCompetitionPassSql` grants M, and since v17 #294 this card names
+    // the rung rather than the product family.
+    await expect(owned).toContainText("Event Pass M active");
     await expect(owned).not.toContainText("$29");
     await expect(page.locator("[data-pass-cta]")).toHaveCount(0);
 

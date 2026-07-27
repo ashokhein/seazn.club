@@ -1,6 +1,7 @@
 import Link from "@/components/ui/console-link";
 import { routes } from "@/lib/routes";
 import { asCurrency, formatMinor } from "@/lib/currency";
+import { PASS_RUNG_NAME_KEY } from "@/lib/pass-ladder";
 import { t, type Dict, type Locale } from "@/lib/i18n";
 import type { PassPurchaseRow } from "@/server/usecases/billing-manage";
 
@@ -54,6 +55,15 @@ export function BillingPassPurchases({ rows, orgSlug, locale, dict, invoicesList
                 {row.competitionName}
               </Link>
               <p className="text-xs text-slate-500">
+                {/* WHICH pass, first (v17 #294). Two rungs sell at different
+                    prices and the amount beside it cannot stand in for the
+                    rung: it is absent for a staff grant and absent again
+                    whenever the Stripe read failed — precisely the rows where
+                    the reader has nothing else to identify the purchase by. */}
+                <span data-pass-rung={row.passKey} className="font-medium text-slate-700">
+                  {t(dict, PASS_RUNG_NAME_KEY[row.passKey])}
+                </span>
+                {" · "}
                 {new Date(row.purchasedIso).toLocaleDateString(locale, {
                   day: "numeric",
                   month: "short",

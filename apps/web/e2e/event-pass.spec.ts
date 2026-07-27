@@ -591,7 +591,11 @@ for (const vp of VIEWPORTS) {
         '[data-pass-owned][data-feature="divisions.per_competition.max"]',
       );
       await expect(owned).toBeVisible({ timeout: 30_000 });
-      await expect(owned).toContainText("Event Pass active");
+      // NAMES the rung since v17 #294: U1 bought M through the real Stripe
+      // sheet, so this card must say M and not the product family. A literal
+      // "Event Pass active" would now be a rung-blind assertion on the one
+      // surface a $59 buyer reads to learn which ceiling stopped them.
+      await expect(owned).toContainText("Event Pass M active");
       // Page-wide, and deliberately so: no gate anywhere on this page may offer
       // the pass a second time to an org that already holds it.
       await expect(page.locator("[data-pass-cta]")).toHaveCount(0);
@@ -698,6 +702,11 @@ for (const vp of VIEWPORTS) {
       // the row renders an amount ONLY when the Stripe invoice read succeeded
       // (a staff grant, or a failed read, renders the date alone).
       await expect(purchases).toContainText("$29");
+      // …and WHICH rung it was (v17 #294). Pinned to the key, not the label:
+      // a rename of `upgrade.rung.m` must not quietly empty this. U1 bought M
+      // through the real Stripe sheet, so nothing here is seeded.
+      await expect(purchases.locator('[data-pass-rung="event_pass"]')).toBeVisible();
+      await expect(purchases.locator('[data-pass-rung="event_pass_l"]')).toHaveCount(0);
       const invoice = purchases.getByRole("link", { name: /invoice/i }).first();
       await expect(invoice).toHaveAttribute("href", /invoice\.stripe\.com/);
     });

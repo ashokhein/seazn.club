@@ -2128,6 +2128,7 @@ export type DictionaryKey =
   | "pad.won"
   | "pass.entry.active"
   | "pass.entry.buy"
+  | "pass.gate.buy"
   | "pass.menu.buy"
   | "passRevoked.body"
   | "passRevoked.footer"

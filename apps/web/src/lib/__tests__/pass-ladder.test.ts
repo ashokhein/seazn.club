@@ -15,10 +15,15 @@ import { describe, expect, it } from "vitest";
 import {
   PASS_RUNG_NAME_KEY,
   PASS_RUNG_SIZE_KEY,
+  lowestPassRung,
+  lowestPricedRung,
+  passActiveLabel,
+  passActiveLabels,
   passCheckoutErrorKey,
   passLadderOptions,
 } from "../pass-ladder";
-import { PASS_KEYS } from "@/lib/currency";
+import { PASS_KEYS, SUPPORTED_CURRENCIES, passPrice } from "@/lib/currency";
+import uiEn from "@/dictionaries/en/ui.json";
 
 const CAPS = {
   event_pass: { entrants: 128, divisions: 10 },
@@ -78,6 +83,94 @@ describe("rung label maps", () => {
       expect(PASS_KEYS.filter((k) => !map[k]).join(", ")).toBe("");
       expect(new Set(Object.values(map)).size).toBe(PASS_KEYS.length);
     }
+  });
+});
+
+describe("lowestPricedRung", () => {
+  // The reducer, tested away from the seed. Against the LIVE price list M is
+  // cheapest, so an implementation that simply returned "event_pass" would pass
+  // every assertion in the sibling describe below — and would then quote $29
+  // "from" on the day a rung is added under it, or the day L is discounted.
+  it("picks the cheapest rung, whichever one that is", () => {
+    const rungs = [
+      { key: "event_pass", amountMinor: 9900 },
+      { key: "event_pass_l", amountMinor: 1900 },
+    ] as const;
+    expect(lowestPricedRung(rungs).key).toBe("event_pass_l");
+  });
+
+  it("keeps the earlier rung when two are priced the same", () => {
+    // Ordering is the tie-break, not chance: `passLadderOptions` renders M
+    // first, and a "from" price that flipped rung between renders on equal
+    // amounts would flip the NAME beside it too.
+    const rungs = [
+      { key: "event_pass", amountMinor: 2900 },
+      { key: "event_pass_l", amountMinor: 2900 },
+    ] as const;
+    expect(lowestPricedRung(rungs).key).toBe("event_pass");
+  });
+});
+
+describe("lowestPassRung", () => {
+  // Every surface that quotes ONE number for a two-rung product ("Event Pass —
+  // from $29") has to quote the floor. Before #294 they each passed the literal
+  // "event_pass", which is right only for as long as M stays the cheapest rung
+  // — and `tsc` cannot see that assumption at all.
+  it("is the cheapest rung in every supported currency", () => {
+    const wrong = SUPPORTED_CURRENCIES.filter((c) => {
+      const cheapest = Math.min(...PASS_KEYS.map((k) => passPrice(c, k)));
+      return lowestPassRung(c).amountMinor !== cheapest;
+    });
+    expect(wrong.join(", ")).toBe("");
+  });
+
+  it("quotes M's real price point today, and names M as the rung it quoted", () => {
+    expect(lowestPassRung("usd")).toEqual({ key: "event_pass", amountMinor: 2900 });
+    expect(lowestPassRung("gbp")).toEqual({ key: "event_pass", amountMinor: 2500 });
+  });
+
+  it("never quotes the more expensive rung", () => {
+    const over = SUPPORTED_CURRENCIES.filter(
+      (c) => lowestPassRung(c).amountMinor > passPrice(c, "event_pass_l"),
+    );
+    expect(over.join(", ")).toBe("");
+  });
+});
+
+describe("passActiveLabel", () => {
+  // The held signal on the dashboard card, the competition header and
+  // competition settings said a flat "Event Pass active" — the FAMILY name,
+  // with nothing beside it naming the rung. An org that paid $59 for L reads
+  // its competition as holding the $29 product.
+  it("names the rung that is actually held", () => {
+    expect(passActiveLabel(uiEn, "event_pass")).toBe("Event Pass M active");
+    expect(passActiveLabel(uiEn, "event_pass_l")).toBe("Event Pass L active");
+  });
+
+  it("leaves no un-substituted placeholder in the rendered label", () => {
+    // `t()` returns the literal `{rung}` when the caller forgets the var, and
+    // three call sites would each have to remember. This helper is the reason
+    // none of them can.
+    for (const key of PASS_KEYS) expect(passActiveLabel(uiEn, key)).not.toContain("{");
+  });
+
+  it("labels each rung differently", () => {
+    expect(passActiveLabel(uiEn, "event_pass")).not.toBe(passActiveLabel(uiEn, "event_pass_l"));
+  });
+});
+
+describe("passActiveLabels", () => {
+  // A server page holds the dict; only the client provider knows which rung is
+  // held. So the page hands over BOTH finished strings and the island picks.
+  it("carries a finished label for every rung the product sells", () => {
+    const labels = passActiveLabels(uiEn);
+    expect(PASS_KEYS.filter((k) => !labels[k]).join(", ")).toBe("");
+    expect(new Set(Object.values(labels)).size).toBe(PASS_KEYS.length);
+  });
+
+  it("agrees with passActiveLabel rung for rung", () => {
+    const labels = passActiveLabels(uiEn);
+    for (const key of PASS_KEYS) expect(labels[key]).toBe(passActiveLabel(uiEn, key));
   });
 });
 

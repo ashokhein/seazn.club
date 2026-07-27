@@ -1,9 +1,9 @@
 // Standing guard for the four Event Pass entry points (task 19, spec D3).
 //
 // Before this change `routes.competitionUpgrade` had EXACTLY ONE inbound link
-// in the entire app — `components/upgrade-gate.tsx`, the paywall. The $29 pass
-// was therefore only discoverable to someone a limit had already blocked. The
-// four surfaces below are the fix.
+// in the entire app — `components/upgrade-gate.tsx`, the paywall. The pass was
+// therefore only discoverable to someone a limit had already blocked. The four
+// surfaces below are the fix.
 //
 // Two of them (the competition list and the billing page) are server pages that
 // cannot be unit-rendered: they need cookies, an authenticated session and a
@@ -13,11 +13,11 @@
 //
 // ===========================================================================
 // If you found this red, an entry point lost its link or grew a second notion
-// of "is this org on a paid plan". Do NOT relax the assertion. The pass grants
-// 10 AI runs per division against pro's 20, and 64 entrants per division
-// against pro's 256 — so a surface that gets paid-ness wrong sells a paying
-// customer a DOWNGRADE. That defect shipped once already (fixed in f70b8e52)
-// and a new surface is exactly where it comes back.
+// of "is this org on a paid plan". Do NOT relax the assertion. Pro's matrix is a
+// strict superset of the pass's at every key the pass lifts — so a surface that
+// gets paid-ness wrong sells a paying customer a DOWNGRADE. That defect shipped
+// once already (fixed in f70b8e52) and a new surface is exactly where it comes
+// back.
 // ===========================================================================
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -132,6 +132,62 @@ describe("no entry point can re-sell a pass the org already holds", () => {
     const src = code(...BILLING_PAGE);
     expect(src).toMatch(/not exists[\s\S]{0,200}competition_passes/);
     expect(src).not.toContain("stripe_payment_intent");
+  });
+});
+
+// ===========================================================================
+// v17 #294 — two rungs, and five surfaces that invite a purchase without
+// offering the choice between them.
+//
+// The paywall, the billing-page offer, the dashboard card menu, the competition
+// header and competition settings each passed the literal "event_pass" to
+// `passPrice`. That is honest only while M is the CHEAPEST rung, and nothing
+// held that assumption: `passPrice`'s required key made tsc enumerate these
+// call sites exactly once, and after that they read as deliberate choices.
+// `lowestPassRung` derives the floor instead — a discount on L, or a rung added
+// underneath, moves every one of these numbers with it.
+// ===========================================================================
+describe("a surface that offers no rung quotes the ladder's floor", () => {
+  const PAYWALL = ["components", "upgrade-gate.tsx"];
+  const OFFER = ["app", "o", "[orgSlug]", "settings", "billing", "page.tsx"];
+
+  it.each([
+    ["the paywall", PAYWALL],
+    ["the billing-page offer", OFFER],
+    ["the dashboard card menu", COMPETITION_LIST],
+    ["the competition header", COMPETITION_HEADER],
+    ["competition settings", COMPETITION_SETTINGS],
+  ])("%s derives its price, and names no rung", (_name, parts) => {
+    const src = code(...parts);
+    expect(src).toContain("lowestPassRung(");
+    // The literal is what made this wrong. A surface that quotes ONE rung is
+    // stating that rung's price as the product's price.
+    expect(src).not.toMatch(/passPrice\(/);
+  });
+});
+
+describe("the competition layout resolves what its islands cannot", () => {
+  const LAYOUT = ["app", "o", "[orgSlug]", "c", "[compSlug]", "layout.tsx"];
+
+  it("reads the pass ROW's rung, not just its existence", () => {
+    // `select 1` was enough while one rung existed. The held signals under this
+    // layout have nothing else on screen naming the size, so an L holder read
+    // "Event Pass active" — M's product.
+    const src = code(...LAYOUT);
+    expect(src).toMatch(/select pass_key\s+from competition_passes/);
+    // Guarded, never cast: the column is `not null default 'event_pass'`, so a
+    // row written by a rung this build predates must degrade to a real label.
+    expect(src).toContain("isPassKey(");
+  });
+
+  it("resolves the org's currency on the server and hands it to the client", () => {
+    // A client island cannot read cookies, the org's subscription currency or
+    // Accept-Language — which is why <UpgradeGate> priced every reader on earth
+    // in hardcoded usd. This layout is the only provider mount, so it is the
+    // only place that can fix it.
+    const src = code(...LAYOUT);
+    expect(src).toContain("preferredCurrency(org.id)");
+    expect(src).toMatch(/currency=\{currency\}/);
   });
 });
 

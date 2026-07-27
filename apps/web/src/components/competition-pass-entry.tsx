@@ -2,7 +2,7 @@
 // Event Pass discovery inside a competition (spec D3, task 19).
 //
 // Until now `routes.competitionUpgrade` had exactly ONE inbound link — the
-// paywall in <UpgradeGate>. The $29 pass was therefore only findable by an
+// paywall in <UpgradeGate>. The pass was therefore only findable by an
 // organiser who had already been blocked, which is the worst moment to meet a
 // price. This is the same offer, in the competition's own chrome, before the
 // refusal.
@@ -12,34 +12,48 @@
 // paid plan) once per request, and there must stay exactly one definition of
 // which upsell is honest here.
 //
-//   paid_plan → nothing. Pro's matrix is a strict superset of the pass, so an
-//               invitation to spend $29 here sells a DOWNGRADE (the pass grants
-//               10 AI runs per division against pro's 20, and 64 entrants per
-//               division against pro's 256). This is the defect fixed in the
-//               gate by f70b8e52; a new surface must not reintroduce it.
+//   paid_plan → nothing. Pro's matrix is a strict superset of the pass's at
+//               every key the pass lifts, so an invitation to buy one here
+//               sells a DOWNGRADE. This is the defect fixed in the gate by
+//               f70b8e52; a new surface must not reintroduce it.
 //   held      → the "on" signal, never a buy link. Presence is ROW EXISTENCE:
 //               a staff-granted pass has a null `stripe_payment_intent` and is
-//               fully active, so it must read as active here too (spec D1).
+//               fully active, so it must read as active here too (spec D1). The
+//               signal NAMES the rung (v17 #294) — nothing else in this
+//               competition's chrome says whether the $29 or the $59 pass is
+//               the one running.
 //   none      → the offer.
 //
 // Outside a competition there is no provider and the hook answers "none", so
 // this component must never be mounted where `href` cannot name a competition.
 import Link from "@/components/ui/console-link";
 import { Ticket } from "lucide-react";
-import { usePassGateState } from "@/components/competition-pass-provider";
+import { usePassGateState, usePassRung } from "@/components/competition-pass-provider";
+import type { PassKey } from "@/lib/currency";
 
 export function CompetitionPassEntry({
   href,
   buyLabel,
-  activeLabel,
+  activeLabels,
   canBuy,
 }: {
   /** routes.competitionUpgrade(orgSlug, compSlug). */
   href: string;
-  /** "Event Pass — $29 one-time", priced on the server (currency is a cookie). */
+  /** "Event Pass — from $29 one-time", priced on the server (currency is a
+   *  cookie) at the ladder's FLOOR — the choice of rung lives on the page this
+   *  links to. */
   buyLabel: string;
-  /** "Event Pass active". */
-  activeLabel: string;
+  /**
+   * The held signal for EVERY rung ("Event Pass M active", "Event Pass L
+   * active") — `passActiveLabels(dict)`.
+   *
+   * Both, because the page holds the dictionary and this island holds the rung:
+   * only the competition layout read `competition_passes`, and only it knows
+   * which pass is running. A `Record<PassKey, string>` rather than one string
+   * plus a rung so a third rung is a compile error at the page, not a card that
+   * silently keeps saying "M".
+   */
+  activeLabels: Record<PassKey, string>;
   /**
    * Can this viewer act on the offer? Editors get the link; everyone else gets
    * nothing rather than a price they cannot pay. The ACTIVE signal is not
@@ -48,6 +62,7 @@ export function CompetitionPassEntry({
   canBuy: boolean;
 }) {
   const gate = usePassGateState();
+  const rung = usePassRung();
 
   if (gate === "paid_plan") return null;
 
@@ -55,9 +70,12 @@ export function CompetitionPassEntry({
     // The console's floodlit "this is on" device (globals.css .app-eyebrow:
     // condensed caps, lime tick) — the same treatment task 17 gave the
     // pass-owned paywall, so one pass reads identically wherever it surfaces.
+    //
+    // `gate === "held"` is derived from the rung being non-null, so the
+    // fallback cannot be reached; it is here so no rung is ever invented.
     return (
-      <p data-pass-held className="app-eyebrow mb-1">
-        {activeLabel}
+      <p data-pass-held data-pass-held-rung={rung ?? undefined} className="app-eyebrow mb-1">
+        {activeLabels[rung ?? "event_pass"]}
       </p>
     );
   }

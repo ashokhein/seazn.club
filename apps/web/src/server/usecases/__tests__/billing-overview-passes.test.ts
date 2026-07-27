@@ -30,6 +30,7 @@ vi.mock("@/lib/stripe", () => ({
 
 import { sql } from "@/lib/db";
 import { getPassPurchases } from "../billing-manage";
+import type { PassKey } from "@/lib/currency";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 12);
@@ -53,15 +54,20 @@ async function seedComp(orgId: string, label: string): Promise<{ id: string; slu
   return { id, slug };
 }
 
+/** `passKey` is REQUIRED (v17 #294): the column is `not null default
+ *  'event_pass'`, so an omitted rung is silently an M row — the same landmine
+ *  `recordPassPurchase` carried, and the exact state a test asserting L would
+ *  pass against for the wrong reason. */
 async function grantPass(
   compId: string,
   orgId: string,
   intent: string | null,
   purchasedAt: string,
+  passKey: PassKey,
 ): Promise<void> {
   await sql`
-    insert into competition_passes (competition_id, org_id, stripe_payment_intent, purchased_at)
-    values (${compId}, ${orgId}, ${intent}, ${purchasedAt})`;
+    insert into competition_passes (competition_id, org_id, stripe_payment_intent, purchased_at, pass_key)
+    values (${compId}, ${orgId}, ${intent}, ${purchasedAt}, ${passKey})`;
 }
 
 /** SPEC-4 §9: set the competition's lifecycle so `ended` can be exercised. */
@@ -101,8 +107,8 @@ describe.skipIf(!HAS_DB)("getPassPurchases", () => {
     const orgId = await seedOrg();
     const spring = await seedComp(orgId, "spring-open");
     const autumn = await seedComp(orgId, "autumn-cup");
-    await grantPass(spring.id, orgId, `pi_${uniq()}`, "2026-03-01T10:00:00Z");
-    await grantPass(autumn.id, orgId, `pi_${uniq()}`, "2026-09-01T10:00:00Z");
+    await grantPass(spring.id, orgId, `pi_${uniq()}`, "2026-03-01T10:00:00Z", "event_pass");
+    await grantPass(autumn.id, orgId, `pi_${uniq()}`, "2026-09-01T10:00:00Z", "event_pass");
     stripeMock.list.mockResolvedValue(invoiceFor(2900));
 
     const rows = await getPassPurchases(orgId);
@@ -117,11 +123,39 @@ describe.skipIf(!HAS_DB)("getPassPurchases", () => {
     expect(rows[1].purchasedIso).toBe("2026-03-01T10:00:00.000Z");
   });
 
+  it("carries the RUNG that was bought, on every row", async () => {
+    // v17 #294. Without it the billing list renders a $29 M purchase and a $59
+    // L purchase identically. `amountMinor` cannot stand in: it is null for a
+    // staff grant and null again whenever the Stripe read fails — precisely
+    // the rows where nothing else identifies the purchase.
+    const orgId = await seedOrg();
+    const small = await seedComp(orgId, "small-open");
+    const big = await seedComp(orgId, "big-open");
+    await grantPass(small.id, orgId, `pi_${uniq()}`, "2026-03-01T10:00:00Z", "event_pass");
+    await grantPass(big.id, orgId, `pi_${uniq()}`, "2026-09-01T10:00:00Z", "event_pass_l");
+    stripeMock.list.mockResolvedValue(invoiceFor(2900));
+
+    const byId = Object.fromEntries(
+      (await getPassPurchases(orgId)).map((r) => [r.competitionId, r.passKey]),
+    );
+
+    // Both arms: "L reads L" alone would pass against a reader hardcoded to L.
+    expect(byId[big.id]).toBe("event_pass_l");
+    expect(byId[small.id]).toBe("event_pass");
+  });
+
+  // Deliberately NOT tested from the database: `competition_passes.pass_key`
+  // carries an FK to `plans` (V341's own RED was that violation), so a row with
+  // an unrecognised rung cannot exist. The `isPassKey` guard in
+  // `getPassPurchases` is defence against a build predating a rung someone
+  // else's migration added, and the only way to exercise it would be to insert
+  // a bogus `plans` row — a GLOBAL table other suites read from.
+
   it("takes the amount and the hosted invoice link from the pass's own invoice", async () => {
     const orgId = await seedOrg();
     const comp = await seedComp(orgId, "club-champs");
     const intent = `pi_${uniq()}`;
-    await grantPass(comp.id, orgId, intent, "2026-05-05T09:00:00Z");
+    await grantPass(comp.id, orgId, intent, "2026-05-05T09:00:00Z", "event_pass");
     stripeMock.list.mockResolvedValue(
       invoiceFor(2900, "gbp", "https://invoice.stripe.test/i/club-champs"),
     );
@@ -142,7 +176,7 @@ describe.skipIf(!HAS_DB)("getPassPurchases", () => {
   it("keeps a pass with NO payment intent — staff-granted, and never charged", async () => {
     const orgId = await seedOrg();
     const comp = await seedComp(orgId, "comped-cup");
-    await grantPass(comp.id, orgId, null, "2026-04-01T09:00:00Z");
+    await grantPass(comp.id, orgId, null, "2026-04-01T09:00:00Z", "event_pass");
 
     const [row] = await getPassPurchases(orgId);
 
@@ -158,7 +192,7 @@ describe.skipIf(!HAS_DB)("getPassPurchases", () => {
   it("still lists the pass when Stripe is unreachable — only the money columns go", async () => {
     const orgId = await seedOrg();
     const comp = await seedComp(orgId, "storm-shield");
-    await grantPass(comp.id, orgId, `pi_${uniq()}`, "2026-06-01T09:00:00Z");
+    await grantPass(comp.id, orgId, `pi_${uniq()}`, "2026-06-01T09:00:00Z", "event_pass");
     stripeMock.list.mockRejectedValue(new Error("Stripe is down"));
 
     const [row] = await getPassPurchases(orgId);
@@ -172,7 +206,7 @@ describe.skipIf(!HAS_DB)("getPassPurchases", () => {
   it("still lists the pass for an org with no Stripe account at all", async () => {
     const orgId = await seedOrg();
     const comp = await seedComp(orgId, "keyless-cup");
-    await grantPass(comp.id, orgId, `pi_${uniq()}`, "2026-07-01T09:00:00Z");
+    await grantPass(comp.id, orgId, `pi_${uniq()}`, "2026-07-01T09:00:00Z", "event_pass");
     // getStripe() throws before any request is made — the getBillingOverview
     // null case, which must not take the purchases list down with it.
     stripeMock.fail = true;
@@ -186,7 +220,7 @@ describe.skipIf(!HAS_DB)("getPassPurchases", () => {
   it("leaves the money columns null when the intent matches no invoice", async () => {
     const orgId = await seedOrg();
     const comp = await seedComp(orgId, "legacy-cup");
-    await grantPass(comp.id, orgId, `pi_${uniq()}`, "2026-02-01T09:00:00Z");
+    await grantPass(comp.id, orgId, `pi_${uniq()}`, "2026-02-01T09:00:00Z", "event_pass");
     // A pass bought before Task 13 turned on invoice_creation: a real charge,
     // but no invoice object behind it.
     stripeMock.list.mockResolvedValue({ data: [] });
@@ -203,8 +237,8 @@ describe.skipIf(!HAS_DB)("getPassPurchases", () => {
     const theirs = await seedOrg();
     const myComp = await seedComp(mine, "mine");
     const theirComp = await seedComp(theirs, "theirs");
-    await grantPass(myComp.id, mine, null, "2026-01-01T09:00:00Z");
-    await grantPass(theirComp.id, theirs, null, "2026-01-02T09:00:00Z");
+    await grantPass(myComp.id, mine, null, "2026-01-01T09:00:00Z", "event_pass");
+    await grantPass(theirComp.id, theirs, null, "2026-01-02T09:00:00Z", "event_pass");
 
     const rows = await getPassPurchases(mine);
 
@@ -226,10 +260,10 @@ describe.skipIf(!HAS_DB)("getPassPurchases", () => {
     const done = await seedComp(orgId, "done-cup");
     const shelved = await seedComp(orgId, "shelved-cup");
     const lapsed = await seedComp(orgId, "lapsed-cup");
-    await grantPass(live.id, orgId, null, "2026-01-01T09:00:00Z");
-    await grantPass(done.id, orgId, null, "2026-01-02T09:00:00Z");
-    await grantPass(shelved.id, orgId, null, "2026-01-03T09:00:00Z");
-    await grantPass(lapsed.id, orgId, null, "2026-01-04T09:00:00Z");
+    await grantPass(live.id, orgId, null, "2026-01-01T09:00:00Z", "event_pass");
+    await grantPass(done.id, orgId, null, "2026-01-02T09:00:00Z", "event_pass");
+    await grantPass(shelved.id, orgId, null, "2026-01-03T09:00:00Z", "event_pass");
+    await grantPass(lapsed.id, orgId, null, "2026-01-04T09:00:00Z", "event_pass");
     await setCompLifecycle(live.id, "live", null);
     await setCompLifecycle(done.id, "completed", null);
     await setCompLifecycle(shelved.id, "archived", null);

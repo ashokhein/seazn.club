@@ -14,7 +14,8 @@ import { StatusChip, divisionChipState, CHIP_SORT } from "@/components/ui/status
 import { divisionAccent, monogram } from "@/lib/division-hue";
 import { resolveLogoUrl } from "@/server/public-site/data";
 import { CompetitionPassEntry } from "@/components/competition-pass-entry";
-import { formatMinor, passPrice } from "@/lib/currency";
+import { formatMinor } from "@/lib/currency";
+import { lowestPassRung, passActiveLabels } from "@/lib/pass-ladder";
 import { preferredCurrency } from "@/lib/currency-server";
 import { routes } from "@/lib/routes";
 import { resolveLocale } from "@/lib/resolve-locale";
@@ -53,9 +54,11 @@ export default async function CompetitionPage({
             <CompetitionPassEntry
               href={routes.competitionUpgrade(orgSlug, compSlug)}
               buyLabel={t(dict, "pass.entry.buy", {
-                price: formatMinor(passPrice(currency, "event_pass"), currency),
+                // The ladder's FLOOR, derived — the copy says "from" and this
+                // link leads to the page where the rung is actually chosen.
+                price: formatMinor(lowestPassRung(currency).amountMinor, currency),
               })}
-              activeLabel={t(dict, "pass.entry.active")}
+              activeLabels={passActiveLabels(dict)}
               canBuy={canEdit}
             />
             <h1 className="page-title mt-1 truncate">
