@@ -323,13 +323,32 @@ function marginRow(
  * is a reconciled per-run figure and the panel's own copy says so.
  */
 export async function aiMarginReport(days: number): Promise<AiMarginReport> {
+  // Net spend per org: holds minus their own refunds, the same derive
+  // `spentThisPeriodByOrg` (lib/credits.ts) does for a single wallet+org.
+  //
+  // That function expresses the refund leg as a CORRELATED SUBQUERY, which is
+  // fine there — it is scoped to one wallet and one org, so it runs a handful
+  // of times. Copying the shape into this platform-wide rollup is not: with no
+  // index on (source, ref) the planner re-scans the WHOLE ledger once per hold
+  // row. Measured on a 725-hold / 16,840-row test schema: 722 loops, 285,190
+  // buffer hits, 922ms — and it grows as holds x ledger, so a production
+  // ledger would simply never render this page.
+  //
+  // Pre-aggregating the refunds once and hash-joining is the same arithmetic
+  // in two scans. `ref` is the hold's id as text (holds carry no `ref` of
+  // their own until settle), and the `source = 'refund'` filter is unchanged,
+  // so the join key cannot collide with a pack_purchase's payment-intent ref.
   const creditRows = await sql<{ org_id: string | null; credits_spent: string }[]>`
+    with refunds as (
+      select ref, sum(delta) as refunded
+        from ai_credit_ledger
+       where source = 'refund' and ref is not null
+       group by ref
+    )
     select h.spent_by_org_id as org_id,
-           coalesce(sum(-h.delta - coalesce((
-             select sum(r.delta) from ai_credit_ledger r
-              where r.source = 'refund' and r.ref = h.id::text
-           ), 0)), 0)::text as credits_spent
+           coalesce(sum(-h.delta - coalesce(r.refunded, 0)), 0)::text as credits_spent
       from ai_credit_ledger h
+      left join refunds r on r.ref = h.id::text
      where h.source = 'run_spend'
        and h.created_at >= now() - make_interval(days => ${days})
      group by h.spent_by_org_id`;
