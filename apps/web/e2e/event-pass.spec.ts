@@ -2,6 +2,11 @@ import { test, expect, type Page, type APIRequestContext } from "@playwright/tes
 import Stripe from "stripe";
 import { randomBytes } from "node:crypto";
 import { TAG, apiJson, mintLoginPathBySql, orgGroupIdSql } from "./helpers";
+// Type-only (erased at build, so no `@/` alias resolution happens at runtime).
+// The wire test at the foot of this file names the rungs and the currency it
+// prices them in; retyping either union here is how a third rung would end up
+// unwitnessed.
+import type { PassKey } from "../src/lib/currency";
 
 // Event Pass, end to end, through a REAL Stripe test-mode purchase (task 22).
 //
@@ -964,4 +969,142 @@ test.describe("checkout sheet vs the cookie banner", () => {
       }
     });
   }
+});
+
+/**
+ * THE WIRE — v17 #294's named live-probe deliverable.
+ *
+ * The buyer's rung has to survive three hops: the picker's React state → the
+ * POST body the browser sends → the Stripe price the route resolves for that
+ * rung. Only the first hop has ever had an automated witness.
+ * `pass-upgrade.test.tsx` drives a fake hook dispatcher and asserts the rung
+ * reaching `fetchPassCheckoutClientSecret`; before it existed, substituting a
+ * literal `"event_pass"` at `pass-upgrade.tsx:298` passed EVERY suite and
+ * `tsc`. What no unit test can see is the network — the body a real browser
+ * actually sends, and the amount Stripe is actually asked to collect for it.
+ *
+ * This asserts both, for both rungs, in one run:
+ *
+ *   • the POST body observed ON THE WIRE carries the rung the buyer picked;
+ *   • the session it opens — fetched back FROM STRIPE by id, not from anything
+ *     this repo computed — is stamped with that rung, built on the SAME price id
+ *     `plans.<rung>.stripe_price_id_onetime` holds, and charges that price's own
+ *     amount in the session's currency.
+ *
+ * Both directions, because a page hardcoded to L would satisfy the L half on
+ * its own — the same anti-vacuity trap the unit witness closed with an M
+ * counterpart.
+ *
+ * The amounts are never written down here: they come from the `plans` row and
+ * the live Stripe price, so this stays correct in every currency and at any
+ * future price point. What the app ADVERTISES for each rung is compared against
+ * what Stripe collects in `pass-checkout-l.live.test.ts`; this file's unique job
+ * is the network hop, which no unit test can reach.
+ *
+ * Nothing is paid: the sheet is opened and the session expired immediately. The
+ * rung's price must be synced (`npm run stripe:sync`) or the route 503s, which
+ * the probe turns into a clean skip rather than a hang at the Stripe iframe.
+ */
+/** The one-time price id the checkout route resolves for a rung — read from the
+ *  same `plans` column the route itself reads, never a literal. */
+async function onetimePriceId(passKey: PassKey): Promise<string | null> {
+  return withDb(async (sql) => {
+    const [row] = await sql<{ price_id: string | null }[]>`
+      select stripe_price_id_onetime as price_id from plans where key = ${passKey}`;
+    return row?.price_id ?? null;
+  });
+}
+
+/** A session opened for `passKey` must be built on THAT rung's price row, and
+ *  charge that price's own amount in the session's currency. Nothing is written
+ *  down, so this survives a repricing and holds in every supported currency. */
+async function expectPricedForTheRung(
+  session: Stripe.Checkout.Session,
+  passKey: PassKey,
+): Promise<void> {
+  const priceId = await onetimePriceId(passKey);
+  expect(priceId, `plans.${passKey} is unsynced — run \`npm run stripe:sync\``).toBeTruthy();
+  const line = session.line_items?.data[0]?.price?.id ?? null;
+  expect(line, `the ${passKey} session was built on a DIFFERENT rung's Stripe price`).toBe(priceId);
+  const price = await stripe.prices.retrieve(priceId!, { expand: ["currency_options"] });
+  const expected = price.currency_options?.[session.currency!]?.unit_amount ?? price.unit_amount;
+  expect(session.amount_total, `${passKey} did not collect its own price point`).toBe(expected);
+}
+
+test.describe("the rung the buyer picks is the rung Stripe is asked for", () => {
+  test("L and M each reach the wire, and Stripe quotes each at its own price", async ({ page }) => {
+    test.setTimeout(180_000);
+    const rig = await seedRig("wire");
+    await signIn(page, rig.ownerEmail);
+
+    // Probe the EXPENSIVE rung. An unsynced L is the ordinary state of any
+    // environment where `stripe:sync` has not run for it, and probing M instead
+    // would turn that into a failure at the Stripe iframe rather than a skip.
+    const probeL = await passCheckoutProbeStatus(page.request, rig.orgId, rig.compId, "event_pass_l");
+    test.skip(probeL >= 500, "Stripe not usable / event_pass_l unsynced — skipping");
+    expect(probeL, "L must not 503 — `npm run stripe:sync` writes its one-time price id").toBe(200);
+
+    // Every pass-checkout POST this page makes, exactly as the browser sent it,
+    // and the client_secret that came back (`<session id>_secret_…`) so the
+    // session can be read from Stripe rather than from our own view of it.
+    const posted: string[] = [];
+    const secrets: string[] = [];
+    page.on("request", (req) => {
+      if (req.method() === "POST" && req.url().includes("/api/billing/pass-checkout")) {
+        posted.push(req.postData() ?? "");
+      }
+    });
+    page.on("response", async (res) => {
+      if (!res.url().includes("/api/billing/pass-checkout")) return;
+      const body = (await res.json().catch(() => null)) as { data?: { client_secret?: string } } | null;
+      if (body?.data?.client_secret) secrets.push(body.data.client_secret);
+    });
+
+    /** Pick `rung` in the ladder, press buy, and return STRIPE's view of the
+     *  session that opened — asserting the wire body on the way through. */
+    async function openThroughTheUi(rung: PassKey): Promise<Stripe.Checkout.Session> {
+      const seen = posted.length;
+      await page.goto(upgradeUrl(rig));
+      // M is options[0] and therefore pre-selected. Asserted, not assumed: "L
+      // reached the wire" proves nothing if L was what the page opened on.
+      await expect(page.locator('[data-pass-rung="event_pass"][data-pass-rung-active]')).toBeVisible();
+      if (rung !== "event_pass") await page.locator(`[data-pass-rung="${rung}"]`).click();
+      await expect(page.locator(`[data-pass-rung="${rung}"][data-pass-rung-active]`)).toBeVisible();
+
+      await page.locator("[data-pass-buy]").click();
+      // The sheet mounting at all is the proof the route did not 503 for L.
+      await expect(page.locator('iframe[src*="stripe.com"]').first()).toBeVisible({ timeout: 45_000 });
+      await expect.poll(() => posted.length, { timeout: 15_000 }).toBeGreaterThan(seen);
+      await expect.poll(() => secrets.length, { timeout: 15_000 }).toBeGreaterThan(0);
+
+      const body = JSON.parse(posted[posted.length - 1]!) as { pass_key?: string; competition_id?: string };
+      expect(body.competition_id).toBe(rig.compId);
+      expect(body.pass_key, "the browser asked Stripe for a rung the buyer did not pick").toBe(rung);
+
+      // `line_items` is not returned by default, and it is what says WHICH
+      // Stripe price the route actually put in the session.
+      const session = await stripe.checkout.sessions.retrieve(
+        secrets[secrets.length - 1]!.split("_secret_")[0]!,
+        { expand: ["line_items"] },
+      );
+      await stripe.checkout.sessions.expire(session.id).catch(() => undefined);
+      return session;
+    }
+
+    const l = await openThroughTheUi("event_pass_l");
+    expect(l.metadata?.pass_key).toBe("event_pass_l");
+    await expectPricedForTheRung(l, "event_pass_l");
+
+    const m = await openThroughTheUi("event_pass");
+    expect(m.metadata?.pass_key).toBe("event_pass");
+    await expectPricedForTheRung(m, "event_pass");
+
+    // Currency-agnostic backstop: whatever the buyer's currency, L costs more.
+    expect(l.currency).toBe(m.currency);
+    expect(l.amount_total!).toBeGreaterThan(m.amount_total!);
+    // Two rungs, two sessions. A rung-blind idempotency key would hand the
+    // second press the FIRST session, and the two amounts would then agree by
+    // accident rather than because each rung resolved its own price.
+    expect(l.id).not.toBe(m.id);
+  });
 });
