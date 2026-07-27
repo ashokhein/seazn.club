@@ -761,7 +761,11 @@ export async function sendPassCreditReversalIncompleteAlertEmail(
       `detected on the customer since the ${opts.grantedMinor} ${opts.currency} credit was granted. ` +
       `Stripe's customer balance is a single pool with no per-transaction attribution, so which part ` +
       `of the current balance belongs to this pass cannot be determined safely — nothing was ` +
-      `automatically reversed. Review the customer's balance transaction history in Stripe directly.`
+      `automatically reversed. Review the customer's balance transaction history in Stripe directly. ` +
+      `Note that the billing group's one lifetime Event Pass credit is now BLOCKED by this ` +
+      `unresolved record: it still holds the lifetime cap, so no org in this group can earn ` +
+      `another pass credit. Settling the customer's balance in Stripe does NOT release it, and there is no ` +
+      `self-serve way to clear it yet — staff resolution tooling is planned.`
     : `An Event Pass credit for "${opts.competitionName}" (org ${opts.orgName}, ${opts.orgId}) was ` +
       `refunded. ${opts.grantedMinor} ${opts.currency} was originally granted; only ` +
       `${opts.reversedMinor} ${opts.currency} of unspent credit could be reversed. The remaining ` +
@@ -782,7 +786,8 @@ export async function sendPassCreditReversalIncompleteAlertEmail(
           `granted: ${opts.grantedMinor} ${opts.currency}\n` +
           `reversed: ${opts.reversedMinor} ${opts.currency}\n` +
           (undetermined
-            ? `reason: other balance activity detected — needs manual review`
+            ? `reason: other balance activity detected — needs manual review\n` +
+              `group lifetime pass credit: BLOCKED until this record is resolved`
             : `absorbed: ${absorbed} ${opts.currency}`),
       ),
     footerNote: "Automated staff alert — pass credit refund webhook (design 2026-07-26 §5).",

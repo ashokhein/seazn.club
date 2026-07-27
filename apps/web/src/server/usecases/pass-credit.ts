@@ -377,7 +377,9 @@ export async function creditPassTowardSubscription(orgId: string): Promise<PassC
     // (verified live 2026-07-26: same shape for both).
     //
     //   - GROUP_CAP_CONSTRAINT (the partial index on subscription_id where
-    //     reversed_at is null): a DIFFERENT intent won the group's one
+    //     `reversed_at is null or reversal_undetermined_at is not null` — V337
+    //     widened it so an undetermined reversal keeps holding the cap): a
+    //     DIFFERENT intent won the group's one
     //     lifetime credit between `groupAlreadyRedeemed` above and this
     //     INSERT. The balance transaction above is a genuine SECOND credit
     //     for the group and must be compensated.
@@ -636,6 +638,14 @@ export async function reversePassCreditOnRefund(intent: string): Promise<void> {
   // `reversal_undetermined_at` is ALSO stamped, and V337's widened partial
   // index keeps pass_credit_redemptions_group_cap HELD for this row even
   // though reversed_at is set — the bug this migration exists to close.
+  // This wave the hold is PERMANENT: nothing ever clears
+  // `reversal_undetermined_at`, so the group's one lifetime pass credit stays
+  // blocked until staff resolution tooling ships — there is no self-serve
+  // release path, and resolving the balance in Stripe does not touch this row.
+  // The staff alert below says so in as many words
+  // (`sendPassCreditReversalIncompleteAlertEmail`, reason "undetermined"),
+  // because holding the cap forever is only defensible while a human is being
+  // told about every row that does it.
   const [won] = unsafe
     ? await sql<{ payment_intent: string }[]>`
         update pass_credit_redemptions
