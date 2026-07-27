@@ -253,7 +253,11 @@ describe.skipIf(!HAS_DB)("Event Pass leaves a financial trace (webhook)", () => 
       passSession(orgId, compId, {
         customer: winner,
         currency: "gbp",
-        payment_intent: "pi_winner",
+        // Run-unique like every other intent in this file. These trace tests
+        // assert customer/currency, not balance, so a literal here never went
+        // red — it just quietly stopped granting from run 2 onward, hollowing
+        // out the money half of the path they exercise.
+        payment_intent: "pi_winner_" + uniq(),
       }),
     );
     expect(await reconcilePassCheckout(orgId, "cs_first")).toBe(true);
@@ -267,7 +271,7 @@ describe.skipIf(!HAS_DB)("Event Pass leaves a financial trace (webhook)", () => 
         passSession(orgId, compId, {
           customer: "cus_pass_loser_" + uniq(),
           currency: "usd",
-          payment_intent: "pi_loser",
+          payment_intent: "pi_loser_" + uniq(),
         }),
       ),
     );
@@ -284,7 +288,11 @@ describe.skipIf(!HAS_DB)("Event Pass leaves a financial trace (webhook)", () => 
     const session = passSession(orgId, compId, {
       customer: replay,
       currency: "eur",
-      payment_intent: "pi_replay",
+      // Run-unique: this test's whole claim is that a replay "re-runs BOTH
+      // writes idempotently". With a literal intent, run 2+ found the grant
+      // already keyed and no-oped it, so the assertion stood over a path that
+      // had quietly lost its grant half.
+      payment_intent: "pi_replay_" + uniq(),
     });
     stripeMock.retrieve.mockResolvedValue(session);
 
