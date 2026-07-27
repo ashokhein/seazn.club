@@ -43,7 +43,11 @@ async function raw(
   body?: unknown,
 ): Promise<{
   status: number;
-  json: { ok: boolean; data?: unknown; error?: string };
+  // `issues` is the ZodError detail lib/http.ts attaches to a schema rejection.
+  // Carried so a check can assert WHICH field was rejected: "Invalid input" is
+  // zod's blanket message, so on its own it cannot tell a rejected `pass_key`
+  // from a rejected anything-else.
+  json: { ok: boolean; data?: unknown; error?: string; issues?: { path?: unknown[] }[] };
 }> {
   const res = await fetch(BASE + path, {
     method,
@@ -2152,8 +2156,10 @@ async function passRungLSuite(): Promise<void> {
   // one-pass rule. The reasons themselves are pinned in
   // lib/__tests__/pass-checkout-plan-gate.test.ts; this is the wire version.
   check(
-    "pass L/checkout: an unrecognised rung is refused (400) by the SCHEMA — the enum is built from PASS_KEYS, not a hardcoded list",
-    badRung.status === 400 && badRung.json.error === "Invalid input",
+    "pass L/checkout: an unrecognised rung is refused (400) by the SCHEMA, naming pass_key — the enum is built from PASS_KEYS, not a hardcoded list",
+    badRung.status === 400 &&
+      badRung.json.error === "Invalid input" &&
+      (badRung.json.issues ?? []).some((i) => (i.path ?? []).includes("pass_key")),
   );
   const alreadyPassed = await raw(s, "/api/billing/pass-checkout", "POST", {
     competition_id: lComp.id,
