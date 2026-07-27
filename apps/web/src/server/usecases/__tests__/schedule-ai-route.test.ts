@@ -399,10 +399,11 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, credit-metered v17
     expect(ok!.payload.pack_units).toBe(fixtureIds.length);
 
     expect(maybeAlertExpensiveRun).toHaveBeenCalledTimes(1);
-    // The call is fire-and-forget (the tenant's response must not block on a
+    // The call is deferred tail work (the tenant's response must not block on a
     // median scan + email send), so the snapshot lands a tick later — but it
-    // still proves the ledger row was committed before the alert ran.
-    await vi.waitFor(() => expect(generatedRowsWhenAlerted).toBe(1));
+    // still proves the ledger row was committed before the alert ran. Generous
+    // timeout: the spy body runs a real count(*) against a loaded CI database.
+    await vi.waitFor(() => expect(generatedRowsWhenAlerted).toBe(1), { timeout: 5000 });
     const call = vi.mocked(maybeAlertExpensiveRunSpy).mock.calls[0]![0] as {
       orgId: string;
       competitionId: string;

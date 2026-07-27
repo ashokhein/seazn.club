@@ -25,6 +25,7 @@ import { spendCredit, walletIdFor } from "@/lib/credits";
 import { rateLimit } from "@/lib/rate-limit";
 import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import { aiRunCostUsd } from "@/lib/ai-pricing";
+import { deferred } from "@/lib/deferred";
 import { maybeAlertExpensiveRun } from "@/server/usecases/ai-runs-admin";
 import {
   slotFixtures,
@@ -1665,19 +1666,20 @@ export async function aiPlanForDivision(
   // Deliberately AFTER the schedule.ai_generated insert above: the baseline
   // median is read from that same table, so this run counts in its own window
   // (moot at AI_RUN_MEDIAN_MIN_SAMPLE=20, but the order is pinned by test).
-  // Deliberately NOT awaited: the check is a table scan plus an email send, and
-  // the tenant's paid response must not wait on staff telemetry. Safe as a
-  // floating promise precisely because it swallows every error internally.
+  // Registered as tail work: the check is a table scan plus an email send, and
+  // the tenant's paid response must not wait on staff telemetry.
   // Also deliberately success-only — an expensive FAILURE (schedule.ai_failed
   // carries a real cost_usd) does not alert here; aborted/retried runs are a
   // different cost story and a different alert class, out of #295's scope.
-  void maybeAlertExpensiveRun({
-    orgId: auth.orgId,
-    competitionId: gate.competitionId,
-    phase: "schedule",
-    model,
-    costUsd: cost_usd,
-  });
+  deferred(() =>
+    maybeAlertExpensiveRun({
+      orgId: auth.orgId,
+      competitionId: gate.competitionId,
+      phase: "schedule",
+      model,
+      costUsd: cost_usd,
+    }),
+  );
 
   const officials_coverage = input.officials_policy
     ? coveragePreview(pack, result.proposal, input.officials_policy)

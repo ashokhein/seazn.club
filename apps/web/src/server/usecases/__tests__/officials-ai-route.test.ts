@@ -340,9 +340,10 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
     expect(ok!.payload.pack_units).toBe(fixtureIds.length);
 
     expect(maybeAlertExpensiveRun).toHaveBeenCalledTimes(1);
-    // The call is fire-and-forget (the tenant's response must not block on a
-    // median scan + email send), so the snapshot lands a tick later.
-    await vi.waitFor(() => expect(generatedRowsWhenAlerted).toBe(1));
+    // The call is deferred tail work (the tenant's response must not block on a
+    // median scan + email send), so the snapshot lands a tick later. Generous
+    // timeout: the spy body runs a real count(*) against a loaded CI database.
+    await vi.waitFor(() => expect(generatedRowsWhenAlerted).toBe(1), { timeout: 5000 });
     const call = vi.mocked(maybeAlertExpensiveRunSpy).mock.calls[0]![0] as {
       orgId: string;
       competitionId: string;

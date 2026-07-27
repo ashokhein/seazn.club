@@ -53,6 +53,7 @@ import {
   type LadderRung,
 } from "./schedule-ai";
 import { aiRunCostUsd } from "@/lib/ai-pricing";
+import { deferred } from "@/lib/deferred";
 import { maybeAlertExpensiveRun } from "@/server/usecases/ai-runs-admin";
 import { divisionFixtures, loadSettings } from "./schedule";
 import {
@@ -1145,22 +1146,23 @@ export async function officialsAiPlanForDivision(
   // without a baseline or STAFF_ALERT_EMAIL — see maybeAlertExpensiveRun.
   // Deliberately AFTER the ledger insert above (the baseline median is read
   // from that same table, so this run counts in its own window — moot at
-  // AI_RUN_MEDIAN_MIN_SAMPLE=20, but the order is pinned by test), and
-  // deliberately NOT awaited: the check is a table scan plus an email send,
-  // and the tenant's paid response must not wait on staff telemetry. Safe as a
-  // floating promise precisely because it swallows every error internally.
+  // AI_RUN_MEDIAN_MIN_SAMPLE=20, but the order is pinned by test). Registered
+  // as tail work: the check is a table scan plus an email send, and the
+  // tenant's paid response must not wait on staff telemetry.
   // Success-only by design — an expensive FAILURE (schedule.ai_failed carries
   // a real cost_usd) is a different cost story and a different alert class,
   // out of #295's scope. Skipped (no competitionId) only if the division
   // vanished mid-run, in which case recordOfficialsRun recorded nothing either.
   if (competitionId) {
-    void maybeAlertExpensiveRun({
-      orgId: auth.orgId,
-      competitionId,
-      phase: "officials",
-      model: usedModel,
-      costUsd: cost_usd,
-    });
+    deferred(() =>
+      maybeAlertExpensiveRun({
+        orgId: auth.orgId,
+        competitionId,
+        phase: "officials",
+        model: usedModel,
+        costUsd: cost_usd,
+      }),
+    );
   }
 
   await captureServer({
