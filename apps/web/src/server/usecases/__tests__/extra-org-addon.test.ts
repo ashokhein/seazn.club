@@ -70,9 +70,12 @@ import { HttpError } from "@/lib/errors";
 import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 import { ORG_ADDONS } from "@/lib/org-addons";
 import { syncOrgAddonsForSubscription, syncSeatAddonsForSubscription } from "../billing-events";
+import { detachOrgFromGroup } from "../billing-groups";
+import { POST } from "@/app/api/billing/extra-orgs/route";
 import {
   MAX_EXTRA_ORGS,
   ORG_ALLOWANCE_ALERT_THRESHOLD,
+  extraOrgsInUse,
   maybeAlertOrgAllowance,
   setExtraOrgs,
   shouldAlertOnOrgAllowance,
@@ -108,6 +111,19 @@ async function makeBilledGroupOrg(
     update subscriptions set stripe_subscription_id = ${stripeSubId} where id = ${walletId}`;
   requireBillingOwnerMock.mockResolvedValue({ orgId, subscriptionId: walletId });
   return { orgId, walletId, stripeSubId };
+}
+
+/** Pad a billing group out to a given size. Bare rows on purpose: the usage
+ *  floor counts ORGANISATIONS IN THE GROUP, so what matters is the row and its
+ *  `subscription_id`, not who owns it. (An org with no owner member also
+ *  cannot be detached, which is what makes the detach test below pick a real
+ *  owned org instead.) */
+async function addFillerOrgs(walletId: string, n: number): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    await sql`
+      insert into organizations (name, slug, subscription_id)
+      values (${`Filler ${uniq()}`}, ${`filler-${uniq()}-${i}`}, ${walletId})`;
+  }
 }
 
 /** Give the deferred() tail work room to run. Outside a Next request scope
@@ -378,10 +394,14 @@ describe.skipIf(!HAS_DB)("extra-org purchase — setExtraOrgs mutates Stripe onl
     vi.unstubAllEnvs();
   });
 
-  it("refuses a count outside 0..MAX with 400, before the payer gate or Stripe", async () => {
-    await expect(setExtraOrgs(MAX_EXTRA_ORGS + 1)).rejects.toMatchObject({ status: 400 });
-    await expect(setExtraOrgs(-1)).rejects.toMatchObject({ status: 400 });
-    await expect(setExtraOrgs(1.5)).rejects.toMatchObject({ status: 400 });
+  // 422, NOT 400. requireBillingOwner raises 400 for "No active organization"
+  // and "No billing account for the selected organization", both reachable
+  // from a stale org cookie — so a shared 400 would tell someone to fix a
+  // number when the real remedy is reselecting an organisation.
+  it("refuses a count outside 0..MAX with 422, before the payer gate or Stripe", async () => {
+    await expect(setExtraOrgs(MAX_EXTRA_ORGS + 1)).rejects.toMatchObject({ status: 422 });
+    await expect(setExtraOrgs(-1)).rejects.toMatchObject({ status: 422 });
+    await expect(setExtraOrgs(1.5)).rejects.toMatchObject({ status: 422 });
     expect(requireBillingOwnerMock).not.toHaveBeenCalled();
     expect(retrieveSpy).not.toHaveBeenCalled();
   });
@@ -744,5 +764,345 @@ describe("extra-org route auth (IDOR)", () => {
     await expect(setExtraOrgs(1)).rejects.toMatchObject({ status: 403 });
     expect(retrieveSpy).not.toHaveBeenCalled();
     expect(itemCreateSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3 (owner-approved addition) — the usage floor.
+//
+// Caps in this codebase are ADMISSION-ONLY: assertMayOwnAnotherOrg and
+// assertWithinGroupCap both check `count + 1 > limit` on the way IN and are
+// never re-evaluated against organisations that already exist (T2's
+// investigation, report §5). So without this guard the add-on is optional
+// after month one: buy it, create org #11, cancel it — the cap falls back to
+// 10, org #11 keeps working for ever, the group keeps paying 11 seats and
+// stops paying the $9/$19 rider. That IS the "silent reseller" case
+// V314__billing_groups.sql:244-245 was written about.
+//
+// The fix refuses only REDUCTIONS below current usage. There is no org
+// deletion anywhere in the product (no deleteOrg; /api/orgs/[id] has PATCH
+// only), so detach is the ONLY exit — which is why the floor counts orgs in
+// the GROUP, not orgs a user owns. Count the wrong thing and the customer pays
+// for ever with no way out, so the detach-then-reduce test below drives the
+// REAL detachOrgFromGroup usecase rather than describing it.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!HAS_DB)("extra-org usage floor — you cannot cancel what you are using", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  /** A pro_plus group holding `total` live orgs, with `extras` purchased
+   *  riders already on its Stripe subscription. Pro Plus (base 10) keeps the
+   *  fixture small: 11 orgs is one over the base. */
+  async function groupInUse(total: number, extras: number) {
+    const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    await addFillerOrgs(walletId, total - 1);
+    const addonItem = {
+      id: "si_addon",
+      quantity: extras,
+      price: { id: "price_addon", lookup_key: proPlusEntry.lookupKey },
+    };
+    // items.data[0] is the PLAN item, as it is in production — syncGroupQuantity
+    // reads that one, setExtraOrgs finds the add-on by lookup_key.
+    retrieveSpy.mockResolvedValue({
+      id: stripeSubId,
+      items: {
+        data: [
+          {
+            id: "si_plan",
+            quantity: total,
+            price: { id: "price_plan", billing_scheme: "tiered", lookup_key: "seazn_pro_plus_monthly" },
+          },
+          ...(extras > 0 ? [addonItem] : []),
+        ],
+      },
+    });
+    return { orgId, walletId, stripeSubId };
+  }
+
+  it("refuses to reduce below the organisations the group is actually using", async () => {
+    // 11 live orgs on a base of 10: exactly one org is standing on the rider.
+    const { walletId } = await groupInUse(proPlusBase + 1, 1);
+    expect(await extraOrgsInUse(walletId, "pro_plus")).toBe(1);
+
+    await expect(setExtraOrgs(0)).rejects.toMatchObject({ status: 423 });
+
+    // The add-on is untouched — the leak is that this DELETE used to go through.
+    expect(itemDelSpy).not.toHaveBeenCalled();
+    expect(itemUpdateSpy).not.toHaveBeenCalled();
+    expect(itemCreateSpy).not.toHaveBeenCalled();
+  });
+
+  it("allows a reduction to exactly what is in use (the boundary, not one past it)", async () => {
+    const { walletId } = await groupInUse(proPlusBase + 1, 2);
+    expect(await extraOrgsInUse(walletId, "pro_plus")).toBe(1);
+
+    const result = await setExtraOrgs(1);
+
+    expect(result.extraOrgs).toBe(1);
+    expect(itemUpdateSpy).toHaveBeenCalledWith("si_addon", {
+      quantity: 1,
+      proration_behavior: "none",
+    });
+  });
+
+  it("increases are never refused, however many organisations the group holds", async () => {
+    await groupInUse(proPlusBase + 1, 1);
+
+    await expect(setExtraOrgs(5)).resolves.toMatchObject({ extraOrgs: 5 });
+    expect(itemUpdateSpy).toHaveBeenCalledWith("si_addon", {
+      quantity: 5,
+      proration_behavior: "create_prorations",
+    });
+  });
+
+  it("DETACH THEN REDUCE: the real exit works, so nobody is trapped paying for ever", async () => {
+    const { walletId, stripeSubId } = await groupInUse(proPlusBase, 1);
+    // A twelfth… eleventh org, owned by a real user so it can be detached
+    // (filler orgs have no owner member and detach refuses those on purpose).
+    const leaverOwner = await makeUser();
+    const leaver = await createOrgForUser(leaverOwner, `Org Addon Leaver ${uniq()}`);
+    await sql`update organizations set subscription_id = ${walletId} where id = ${leaver.id}`;
+    expect(await extraOrgsInUse(walletId, "pro_plus")).toBe(1);
+    await expect(setExtraOrgs(0)).rejects.toMatchObject({ status: 423 });
+
+    // The documented way out — the real usecase, not a hand-written UPDATE.
+    await detachOrgFromGroup({ actorUserId: leaverOwner, orgId: leaver.id, mode: "release" });
+
+    // The group is back inside its plan's own cap, so the rider is now
+    // genuinely optional and cancelling it is allowed.
+    expect(await extraOrgsInUse(walletId, "pro_plus")).toBe(0);
+    retrieveSpy.mockResolvedValue({
+      id: stripeSubId,
+      items: {
+        data: [
+          {
+            id: "si_plan",
+            quantity: proPlusBase,
+            price: { id: "price_plan", billing_scheme: "tiered", lookup_key: "seazn_pro_plus_monthly" },
+          },
+          { id: "si_addon", quantity: 1, price: { id: "price_addon", lookup_key: proPlusEntry.lookupKey } },
+        ],
+      },
+    });
+
+    await expect(setExtraOrgs(0)).resolves.toMatchObject({ extraOrgs: 0 });
+    expect(itemDelSpy).toHaveBeenCalledWith("si_addon", { proration_behavior: "none" });
+  });
+
+  it("an ADMIN-COMPED rider is not counted as usage — a comped group is never forced to buy", async () => {
+    const { walletId } = await groupInUse(proPlusBase + 1, 0);
+    // SPEC-3 staff comp: status='granted', no stripe_item_id. It is what is
+    // holding org #11 up, so it must lower the floor, or this group is told to
+    // buy a rider for capacity it was given.
+    await sql`
+      insert into org_addons (wallet_id, target_org_id, feature_key, delta_each, qty, status)
+      values (${walletId}, null, 'orgs.max_owned', 1, 1, 'granted')`;
+
+    expect(await extraOrgsInUse(walletId, "pro_plus")).toBe(0);
+    await expect(setExtraOrgs(0)).resolves.toMatchObject({ extraOrgs: 0 });
+  });
+
+  it("never traps a group whose plan has no orgs.max_owned row at all", async () => {
+    // Unknown base => no floor. Refusing on the basis of a cap we cannot read
+    // would be the one unrecoverable outcome, so this fails OPEN.
+    const { walletId } = await groupInUse(proPlusBase + 1, 1);
+    expect(await extraOrgsInUse(walletId, `no_such_plan_${uniq()}`)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review findings A and B — the two ways the "one item, right price"
+// assumption breaks in production.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!HAS_DB)("extra-org item reconciliation — tier changes and duplicates", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  const planItem = {
+    id: "si_plan",
+    quantity: 1,
+    price: { id: "price_plan", billing_scheme: "tiered", lookup_key: "seazn_plan_monthly" },
+  };
+  const addonItem = (id: string, lookupKey: string, quantity: number) => ({
+    id,
+    quantity,
+    price: { id: `price_${id}`, lookup_key: lookupKey },
+  });
+
+  // FINDING A. isOrgAddonItem matches BOTH tiers' lookup keys, so an item
+  // bought on Pro is still "an org add-on" after the group upgrades to Pro
+  // Plus. Reusing it would bill $9 per extra for ever on a $19 plan — the
+  // exact "Pro + extras undercuts Pro Plus" arbitrage the two rates exist to
+  // close, reached by upgrading rather than by staying put.
+  it("re-prices when the group upgraded Pro -> Pro Plus: the $9 item is replaced, not reused", async () => {
+    const { stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    retrieveSpy.mockResolvedValue({
+      id: stripeSubId,
+      items: { data: [planItem, addonItem("si_old_pro", proEntry.lookupKey, 2)] },
+    });
+
+    await setExtraOrgs(3);
+
+    expect(itemDelSpy).toHaveBeenCalledWith("si_old_pro", {
+      proration_behavior: "create_prorations",
+    });
+    expect(pricesListSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ lookup_keys: [proPlusEntry.lookupKey] }),
+    );
+    expect(itemCreateSpy).toHaveBeenCalledWith(expect.objectContaining({ quantity: 3 }));
+    // The bug was that this branch ran instead, keeping the old rate for ever.
+    expect(itemUpdateSpy).not.toHaveBeenCalled();
+  });
+
+  it("re-prices the mirror case Pro Plus -> Pro, so a downgrade stops overcharging", async () => {
+    const { stripeSubId } = await makeBilledGroupOrg("pro");
+    retrieveSpy.mockResolvedValue({
+      id: stripeSubId,
+      items: { data: [planItem, addonItem("si_old_plus", proPlusEntry.lookupKey, 1)] },
+    });
+
+    await setExtraOrgs(1);
+
+    expect(itemDelSpy).toHaveBeenCalledWith("si_old_plus", {
+      proration_behavior: "create_prorations",
+    });
+    expect(pricesListSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ lookup_keys: [proEntry.lookupKey] }),
+    );
+    expect(itemCreateSpy).toHaveBeenCalledWith(expect.objectContaining({ quantity: 1 }));
+    expect(itemUpdateSpy).not.toHaveBeenCalled();
+  });
+
+  it("leaves a correctly-priced item alone — re-pricing must not churn the normal case", async () => {
+    const { stripeSubId } = await makeBilledGroupOrg("pro");
+    retrieveSpy.mockResolvedValue({
+      id: stripeSubId,
+      items: { data: [planItem, addonItem("si_ok", proEntry.lookupKey, 1)] },
+    });
+
+    await setExtraOrgs(2);
+
+    expect(itemUpdateSpy).toHaveBeenCalledWith("si_ok", {
+      quantity: 2,
+      proration_behavior: "create_prorations",
+    });
+    expect(itemDelSpy).not.toHaveBeenCalled();
+    expect(itemCreateSpy).not.toHaveBeenCalled();
+  });
+
+  // FINDING B. Two concurrent calls both see an empty item list and both
+  // create. A `find` then sees only the first.
+  it("cancelling removes EVERY duplicate — none is left billing invisibly", async () => {
+    const { stripeSubId } = await makeBilledGroupOrg("pro");
+    retrieveSpy.mockResolvedValue({
+      id: stripeSubId,
+      items: {
+        data: [
+          planItem,
+          addonItem("si_dup_a", proEntry.lookupKey, 1),
+          addonItem("si_dup_b", proEntry.lookupKey, 1),
+        ],
+      },
+    });
+
+    await expect(setExtraOrgs(0)).resolves.toMatchObject({ extraOrgs: 0 });
+
+    expect(itemDelSpy).toHaveBeenCalledWith("si_dup_a", { proration_behavior: "none" });
+    expect(itemDelSpy).toHaveBeenCalledWith("si_dup_b", { proration_behavior: "none" });
+    expect(itemDelSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("consolidates duplicates onto one item rather than stranding the second", async () => {
+    const { stripeSubId } = await makeBilledGroupOrg("pro");
+    retrieveSpy.mockResolvedValue({
+      id: stripeSubId,
+      items: {
+        data: [
+          planItem,
+          addonItem("si_dup_a", proEntry.lookupKey, 2),
+          addonItem("si_dup_b", proEntry.lookupKey, 3),
+        ],
+      },
+    });
+
+    await setExtraOrgs(4);
+
+    expect(itemDelSpy).toHaveBeenCalledWith("si_dup_b", {
+      proration_behavior: "create_prorations",
+    });
+    // 5 were billed, 4 are wanted: a reduction from the customer's side, so no
+    // mid-cycle charge on the survivor.
+    expect(itemUpdateSpy).toHaveBeenCalledWith("si_dup_a", {
+      quantity: 4,
+      proration_behavior: "none",
+    });
+    expect(itemCreateSpy).not.toHaveBeenCalled();
+  });
+
+  it("counts duplicates TOGETHER, so the >= 25 alert cannot be dodged by a stranded item", async () => {
+    vi.stubEnv("STAFF_ALERT_EMAIL", "ops@seazn.test");
+    const { stripeSubId } = await makeBilledGroupOrg("pro");
+    retrieveSpy.mockResolvedValue({
+      id: stripeSubId,
+      items: {
+        data: [
+          planItem,
+          addonItem("si_dup_a", proEntry.lookupKey, 10),
+          addonItem("si_dup_b", proEntry.lookupKey, 9),
+        ],
+      },
+    });
+
+    await setExtraOrgs(20);
+
+    await vi.waitFor(() => expect(allowanceAlertSpy).toHaveBeenCalledTimes(1));
+    expect(allowanceAlertSpy).toHaveBeenCalledWith(
+      // 19 previously billed across two items, not the 10 a `find` would see.
+      expect.objectContaining({ previousExtraOrgs: 19, extraOrgs: 20, totalAllowance: proBase + 20 }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review finding C — 400 is reserved for org/session state, so the route must
+// never emit one for a malformed body.
+// ---------------------------------------------------------------------------
+
+describe("extra-org route — a 400 from this endpoint always means org state", () => {
+  const post = (body: unknown) =>
+    POST(
+      new Request("http://localhost/api/billing/extra-orgs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("answers 422, not 400, when count is the wrong type", async () => {
+    expect((await post({ count: "three" })).status).toBe(422);
+  });
+
+  it("answers 422, not 400, for an unknown field (strict schema)", async () => {
+    expect((await post({ count: 1, orgId: "sneaky" })).status).toBe(422);
+  });
+
+  it("answers 422 for a count past MAX_EXTRA_ORGS, with the bound owned by the usecase", async () => {
+    expect((await post({ count: MAX_EXTRA_ORGS + 1 })).status).toBe(422);
+    expect(requireBillingOwnerMock).not.toHaveBeenCalled();
+  });
+
+  it("still surfaces the payer gate's own 403", async () => {
+    requireBillingOwnerMock.mockRejectedValueOnce(new HttpError(403, "nope"));
+    expect((await post({ count: 1 })).status).toBe(403);
   });
 });

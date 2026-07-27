@@ -54,14 +54,31 @@ export const ORG_ALLOWANCE_ALERT_THRESHOLD = 25;
  * messages are hardcoded English and must never be rendered verbatim into the
  * four-locale UI. The client maps status -> DictionaryKey (the
  * `passCheckoutErrorKey` pattern):
- *   400 — `count` is not an integer in 0..MAX_EXTRA_ORGS (client-side bug).
+ *   400 — SESSION / ORG-SELECTION state, and nothing else. `requireBillingOwner`
+ *         raises it for "No active organization" and "No billing account for
+ *         the selected organization" (billing-manage.ts:130,136), both
+ *         reachable from a stale or foreign org cookie. Remedy is "pick an
+ *         organisation again". The count refusal deliberately does NOT share
+ *         this status — telling someone to fix a number when they need to
+ *         reselect an org is the mis-copy this split exists to prevent.
  *   401 — not signed in (AuthError, from requireBillingOwner).
  *   403 — signed in, but not this billing group's payer.
  *   409 — the GROUP cannot hold the add-on at all: no live paid subscription,
- *         or a plan with no extra-org SKU. Remedy is "move to Pro / Pro Plus",
- *         not "retry" — which is why it is not folded into the 400.
+ *         or a plan with no extra-org SKU. Remedy is "move to Pro / Pro Plus".
+ *   422 — `count` is not an integer in 0..MAX_EXTRA_ORGS. Remedy is "choose a
+ *         different number"; unreachable from a correct control. The route
+ *         converts its own schema failures to this too, so a 400 from this
+ *         endpoint ALWAYS means org state.
+ *   423 — the reduction would take the group below the organisations it is
+ *         ACTUALLY USING. Remedy is "move an organisation out of the group
+ *         first" — a different ACTION from 409's "change plan" and from 422's
+ *         "pick another number", which is why it is neither. See
+ *         `extraOrgsInUse`.
  *   503 — the Stripe catalog has not been synced for this account
  *         (resolveOrgAddonPriceId). Remedy is "try later / contact support".
+ *   500 — anything unexpected, notably a Stripe API failure, which escapes
+ *         `handler` carrying raw English. T6 needs a generic key for this;
+ *         never render the body's `error`.
  *
  * @param count total extra organisations this group should hold beyond its
  *   plan's base cap (0 removes the add-on).
@@ -71,7 +88,7 @@ export async function setExtraOrgs(
 ): Promise<{ subscriptionId: string; extraOrgs: number }> {
   if (!Number.isInteger(count) || count < 0 || count > MAX_EXTRA_ORGS) {
     throw new HttpError(
-      400,
+      422,
       `extra organisations must be an integer between 0 and ${MAX_EXTRA_ORGS}.`,
     );
   }
@@ -107,26 +124,80 @@ export async function setExtraOrgs(
   }
 
   const live = await getStripe().subscriptions.retrieve(stripeSubId);
-  // Group-wide: there is only ever ONE org-addon item on a subscription
-  // (unlike seats, which carry one item per target org), so any match wins.
-  const existing = live.items.data.find((it) => isOrgAddonItem(it));
-  const previousExtraOrgs = existing?.quantity ?? 0;
+  // FILTER, not find. "There is only ever one org-addon item" is an
+  // assumption, not an invariant: two concurrent calls both see an empty item
+  // list and both create one. A `find` would then see only the first, so a
+  // cancel would strand the second (billed for ever, invisible to the UI), the
+  // previous count would be understated, and the resolver — which SUMS
+  // org_addons rows — would quietly hand out double the cap. Every branch
+  // below therefore reconciles the whole set down to at most one item.
+  const addonItems = live.items.data.filter((it) => isOrgAddonItem(it));
+  // The total the customer is actually being billed for, across duplicates.
+  // Both the usage floor and the >= 25 alert read this, so a stranded second
+  // item cannot make either of them compute against the wrong number.
+  const previousExtraOrgs = addonItems.reduce((n, it) => n + (it.quantity ?? 0), 0);
+
+  // The usage floor. Caps here are ADMISSION-ONLY — `assertMayOwnAnotherOrg`
+  // and `assertWithinGroupCap` both check `count + 1 > limit` on the way IN and
+  // are never re-evaluated against organisations that already exist. Without
+  // this, the add-on is optional after month one: buy it, create org #11,
+  // cancel it, and the group keeps 11 working organisations while paying for
+  // 10 — the "silent reseller" V314__billing_groups.sql:244-245 names.
+  //
+  // Only REDUCTIONS are checked, and only against a floor that is genuinely
+  // attributable to purchased riders. Checking every call would refuse a
+  // no-op `setExtraOrgs(0)` from a group that never bought anything.
+  if (count < previousExtraOrgs) {
+    const floor = await extraOrgsInUse(subscriptionId, planKey);
+    if (count < floor) {
+      throw new HttpError(
+        423,
+        `This billing group is using ${floor} extra organisation(s); it cannot go below that ` +
+          `until one is moved out of the group.`,
+      );
+    }
+  }
 
   if (count === 0) {
     // Removal is a DELETE in Stripe — a subscription item cannot hold
     // quantity 0. The webhook then flips the org_addons row to canceled
     // (freeze-not-delete). Removing does not refund mid-cycle.
-    if (existing) {
-      await getStripe().subscriptionItems.del(existing.id, { proration_behavior: "none" });
+    // EVERY item, not just the first: a stranded duplicate would otherwise
+    // keep billing after the customer has cancelled.
+    for (const item of addonItems) {
+      await getStripe().subscriptionItems.del(item.id, { proration_behavior: "none" });
     }
     return { subscriptionId, extraOrgs: 0 };
   }
 
-  if (existing) {
+  // The survivor is an item already on the price for the group's CURRENT plan.
+  // Matching on the plan's own lookup_key — not merely on "is an org add-on" —
+  // is what makes a tier change re-price. `isOrgAddonItem` matches BOTH tiers'
+  // keys, so a Pro group that bought riders at $9 and then upgraded to Pro Plus
+  // would otherwise keep paying $9 per rider for ever, and every later purchase
+  // would take the update branch and never re-resolve the price. That is the
+  // exact "Pro + extras undercuts Pro Plus" arbitrage the two rates exist to
+  // close, reached by upgrading rather than by staying put; the mirror case
+  // (Pro Plus -> Pro) overcharges instead. Neither is acceptable.
+  const survivor = addonItems.find((it) => it.price?.lookup_key === addon.lookupKey);
+  // Everything else goes: duplicates from a concurrent create, AND any item
+  // stranded on another tier's price by a plan change.
+  for (const item of addonItems) {
+    if (survivor && item.id === survivor.id) continue;
+    // Prorated, unlike the cancel path above: this is a SWAP, not a customer
+    // choosing to stop, so the unused remainder is credited and the
+    // replacement charged pro-rata. The customer pays the difference, which is
+    // what a plan change does to the plan item itself.
+    await getStripe().subscriptionItems.del(item.id, { proration_behavior: "create_prorations" });
+  }
+
+  if (survivor) {
     // Raising prorates now; lowering takes effect with no mid-cycle refund —
-    // mirrors setExtraSeats' and syncGroupQuantity's proration rule.
+    // mirrors setExtraSeats' and syncGroupQuantity's proration rule. Measured
+    // against the TOTAL previously billed, not the survivor's own quantity, so
+    // consolidating duplicates reads as the reduction the customer sees.
     const raising = count > previousExtraOrgs;
-    await getStripe().subscriptionItems.update(existing.id, {
+    await getStripe().subscriptionItems.update(survivor.id, {
       quantity: count,
       proration_behavior: raising ? "create_prorations" : "none",
     });
@@ -170,6 +241,53 @@ export async function setExtraOrgs(
     }),
   );
   return { subscriptionId, extraOrgs: count };
+}
+
+/**
+ * How many PURCHASED extra organisations this group is actually standing on —
+ * the lowest `count` a reduction may go to.
+ *
+ * `live orgs in the GROUP` − `plan base` − `admin-comped riders`, floored at 0.
+ *
+ * Counts organisations in the **billing group**, not organisations a user
+ * owns, because the only exit is `detachOrgFromGroup` — there is no org
+ * deletion anywhere in the product (no `deleteOrg`; `/api/orgs/[id]` has PATCH
+ * only). Counting the wrong set would leave a customer paying for ever with no
+ * way out, which is a far worse failure than the leak this closes.
+ *
+ * Soft-deleted orgs are excluded, matching `syncGroupQuantity`'s billed count
+ * and `liveOrgIdsInGroup` — a deleted org bills nothing and holds no quota, so
+ * it must not hold a rider hostage either.
+ *
+ * Admin comps (`status='granted'`, SPEC-3) are SUBTRACTED. They lift the same
+ * cap, so a group whose eleventh org is standing on a staff comp is not using
+ * a purchased rider at all, and must never be told to buy one to keep what it
+ * was given.
+ *
+ * FAILS OPEN. An unknown or unlimited base (`null`, or no `plan_entitlements`
+ * row) returns 0 — no floor. Refusing on the basis of a cap we cannot read is
+ * the one unrecoverable outcome here; leaking a rider is recoverable.
+ *
+ * Exported so a server component can compute the control's lower bound and
+ * make the 422 a backstop rather than the primary UX (Task 6).
+ */
+export async function extraOrgsInUse(subscriptionId: string, planKey: string): Promise<number> {
+  const [base] = await sql<{ int_value: number | null }[]>`
+    select int_value from plan_entitlements
+     where plan_key = ${planKey} and feature_key = 'orgs.max_owned'`;
+  if (!base || base.int_value === null) return 0;
+
+  const [orgs] = await sql<{ n: number }[]>`
+    select count(*)::int as n from organizations
+     where subscription_id = ${subscriptionId} and deleted_at is null`;
+  const [granted] = await sql<{ bonus: number }[]>`
+    select coalesce(sum(delta_each * qty), 0)::int as bonus
+      from org_addons
+     where wallet_id = ${subscriptionId}
+       and feature_key = ${ORG_ADDON_FEATURE_KEY}
+       and status = 'granted'`;
+
+  return Math.max(0, (orgs?.n ?? 0) - base.int_value - (granted?.bonus ?? 0));
 }
 
 /**
