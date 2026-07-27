@@ -4,8 +4,11 @@
 // these tests drive it against real Postgres and assert on the resolver
 // (getLimit / groupOrgLimit), mirroring extra-seat-addon.test.ts.
 //
+// Task 3 adds the other half: the PURCHASE usecase (setExtraOrgs), which
+// mutates Stripe ONLY.
+//
 // Real Postgres required; skipped without DATABASE_URL.
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type Stripe from "stripe";
 
@@ -20,14 +23,46 @@ vi.mock("@/lib/cache", () => ({
   incrWindow: async () => 1,
 }));
 
+// Purchase-route tests (Task 3): stub the group-payer gate so a non-payer can
+// be proven refused BEFORE any Stripe call, spy on Stripe to assert exactly
+// which mutation fired, and spy on the staff-alert email so the >= 25
+// allowance watch is observable without sending anything.
+const {
+  retrieveSpy,
+  itemCreateSpy,
+  itemUpdateSpy,
+  itemDelSpy,
+  pricesListSpy,
+  requireBillingOwnerMock,
+} = vi.hoisted(() => ({
+  retrieveSpy: vi.fn(),
+  itemCreateSpy: vi.fn(),
+  itemUpdateSpy: vi.fn(),
+  itemDelSpy: vi.fn(),
+  pricesListSpy: vi.fn(async () => ({ data: [{ id: "price_org_addon" }] })),
+  requireBillingOwnerMock: vi.fn(),
+}));
+vi.mock("@/lib/stripe", () => ({
+  getStripe: () => ({
+    subscriptions: { retrieve: retrieveSpy },
+    subscriptionItems: { create: itemCreateSpy, update: itemUpdateSpy, del: itemDelSpy },
+    prices: { list: pricesListSpy },
+  }),
+}));
+vi.mock("@/server/usecases/billing-manage", () => ({
+  requireBillingOwner: requireBillingOwnerMock,
+}));
+
 import { sql } from "@/lib/db";
 import { createOrgForUser } from "@/lib/auth";
 import { walletIdFor } from "@/lib/credits";
 import { getLimit } from "@/lib/entitlements";
 import { groupOrgLimit } from "@/lib/billing-group";
+import { HttpError } from "@/lib/errors";
 import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 import { ORG_ADDONS } from "@/lib/org-addons";
 import { syncOrgAddonsForSubscription, syncSeatAddonsForSubscription } from "../billing-events";
+import { MAX_EXTRA_ORGS, setExtraOrgs } from "../extra-orgs";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
@@ -46,6 +81,19 @@ async function makeGroupOrg(
   await setOrgPlan(org.id, planKey);
   const walletId = await walletIdFor(org.id);
   return { orgId: org.id, walletId };
+}
+
+/** A group that looks BILLED: a live Stripe subscription id on the group row,
+ *  and the payer gate stubbed to hand setExtraOrgs this exact group. */
+async function makeBilledGroupOrg(
+  planKey: "pro" | "pro_plus",
+): Promise<{ orgId: string; walletId: string; stripeSubId: string }> {
+  const { orgId, walletId } = await makeGroupOrg(planKey);
+  const stripeSubId = `sub_stripe_${uniq()}`;
+  await sql`
+    update subscriptions set stripe_subscription_id = ${stripeSubId} where id = ${walletId}`;
+  requireBillingOwnerMock.mockResolvedValue({ orgId, subscriptionId: walletId });
+  return { orgId, walletId, stripeSubId };
 }
 
 /** An org-addon subscription item as the webhook sees it: the recurring SKU
@@ -290,5 +338,147 @@ describe.skipIf(!HAS_DB)("extra-org add-on — never sweeps another add-on famil
       select status from org_addons
        where wallet_id = ${walletId} and stripe_item_id is null`;
     expect(rows.map((r) => r.status)).toEqual(["granted"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3 — the PURCHASE usecase. setExtraOrgs mutates STRIPE ONLY; the webhook
+// above stays the single writer of org_addons.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!HAS_DB)("extra-org purchase — setExtraOrgs mutates Stripe only", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it("refuses a count outside 0..MAX with 400, before the payer gate or Stripe", async () => {
+    await expect(setExtraOrgs(MAX_EXTRA_ORGS + 1)).rejects.toMatchObject({ status: 400 });
+    await expect(setExtraOrgs(-1)).rejects.toMatchObject({ status: 400 });
+    await expect(setExtraOrgs(1.5)).rejects.toMatchObject({ status: 400 });
+    expect(requireBillingOwnerMock).not.toHaveBeenCalled();
+    expect(retrieveSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses a community group (no live subscription) with 409, before any Stripe call", async () => {
+    const org = await createOrgForUser(await makeUser(), `Org Addon Community ${uniq()}`);
+    const walletId = await walletIdFor(org.id);
+    requireBillingOwnerMock.mockResolvedValue({ orgId: org.id, subscriptionId: walletId });
+
+    await expect(setExtraOrgs(1)).rejects.toMatchObject({ status: 409 });
+    expect(retrieveSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses with 409 when the group's plan has no add-on SKU, distinct from a bad count", async () => {
+    // A LIVE Stripe subscription whose plan simply cannot buy extra orgs.
+    const { orgId, walletId } = await makeGroupOrg("pro");
+    await sql`
+      update subscriptions
+         set stripe_subscription_id = ${`sub_stripe_${uniq()}`}, plan_key = 'community'
+       where id = ${walletId}`;
+    requireBillingOwnerMock.mockResolvedValue({ orgId, subscriptionId: walletId });
+
+    await expect(setExtraOrgs(1)).rejects.toMatchObject({ status: 409 });
+    expect(retrieveSpy).not.toHaveBeenCalled();
+  });
+
+  it("creates a subscription item on the PLAN-SPECIFIC price, group-wide metadata only", async () => {
+    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro");
+    retrieveSpy.mockResolvedValueOnce({ id: stripeSubId, items: { data: [] } });
+
+    const result = await setExtraOrgs(2);
+
+    expect(result).toEqual({ subscriptionId: walletId, extraOrgs: 2 });
+    expect(retrieveSpy).toHaveBeenCalledWith(stripeSubId);
+    expect(pricesListSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ lookup_keys: [proEntry.lookupKey] }),
+    );
+    expect(itemCreateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subscription: stripeSubId,
+        price: "price_org_addon",
+        quantity: 2,
+        proration_behavior: "create_prorations",
+        // Group-wide: NO target_org_id (unlike a seat item).
+        metadata: { feature_key: "orgs.max_owned" },
+      }),
+    );
+  });
+
+  it("resolves the PRO PLUS price for a pro_plus group, not pro's", async () => {
+    const { stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    retrieveSpy.mockResolvedValueOnce({ id: stripeSubId, items: { data: [] } });
+
+    await setExtraOrgs(1);
+
+    expect(pricesListSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ lookup_keys: [proPlusEntry.lookupKey] }),
+    );
+    expect(pricesListSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ lookup_keys: [proEntry.lookupKey] }),
+    );
+  });
+
+  it("raising an existing item prorates now; lowering waits for renewal", async () => {
+    const { stripeSubId } = await makeBilledGroupOrg("pro");
+    const existing = { id: "si_existing", quantity: 2, price: { lookup_key: proEntry.lookupKey } };
+    retrieveSpy.mockResolvedValueOnce({ id: stripeSubId, items: { data: [existing] } });
+
+    await setExtraOrgs(5);
+    expect(itemUpdateSpy).toHaveBeenCalledWith("si_existing", {
+      quantity: 5,
+      proration_behavior: "create_prorations",
+    });
+
+    retrieveSpy.mockResolvedValueOnce({ id: stripeSubId, items: { data: [existing] } });
+    await setExtraOrgs(1);
+    expect(itemUpdateSpy).toHaveBeenCalledWith("si_existing", {
+      quantity: 1,
+      proration_behavior: "none",
+    });
+    expect(itemCreateSpy).not.toHaveBeenCalled();
+  });
+
+  it("removal is a Stripe DELETE, proration_behavior none", async () => {
+    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro");
+    const existing = { id: "si_existing", quantity: 3, price: { lookup_key: proEntry.lookupKey } };
+    retrieveSpy.mockResolvedValueOnce({ id: stripeSubId, items: { data: [existing] } });
+
+    const result = await setExtraOrgs(0);
+
+    expect(result).toEqual({ subscriptionId: walletId, extraOrgs: 0 });
+    expect(itemDelSpy).toHaveBeenCalledWith("si_existing", { proration_behavior: "none" });
+  });
+
+  it("removing when there is no item is a no-op, not a Stripe DELETE", async () => {
+    const { stripeSubId } = await makeBilledGroupOrg("pro");
+    retrieveSpy.mockResolvedValueOnce({ id: stripeSubId, items: { data: [] } });
+
+    await expect(setExtraOrgs(0)).resolves.toMatchObject({ extraOrgs: 0 });
+    expect(itemDelSpy).not.toHaveBeenCalled();
+  });
+
+  it("writes NO org_addons row — the webhook is the single writer", async () => {
+    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro");
+    retrieveSpy.mockResolvedValueOnce({ id: stripeSubId, items: { data: [] } });
+
+    await setExtraOrgs(3);
+
+    const [row] = await sql<{ n: number }[]>`
+      select count(*)::int as n from org_addons where wallet_id = ${walletId}`;
+    expect(row?.n).toBe(0);
+  });
+});
+
+describe("extra-org route auth (IDOR)", () => {
+  it("a non-payer is refused 403 before any Stripe call", async () => {
+    vi.clearAllMocks();
+    requireBillingOwnerMock.mockRejectedValueOnce(
+      new HttpError(403, "Only the person who pays for this billing group can manage its subscription."),
+    );
+
+    await expect(setExtraOrgs(1)).rejects.toMatchObject({ status: 403 });
+    expect(retrieveSpy).not.toHaveBeenCalled();
+    expect(itemCreateSpy).not.toHaveBeenCalled();
   });
 });
