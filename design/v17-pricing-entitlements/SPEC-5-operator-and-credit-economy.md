@@ -46,11 +46,26 @@ List member orgs · each org's monthly cap (editable) · each org's burn this pe
 
 Credits as a PLG growth loop. COGS $0.12/credit but perceived $0.25 → cheap CAC.
 
+**Decision (2026-07-26, v17 gap #296 — option 1 of 3 considered):** the day-0
+grants (Community's monthly 10 + the two earn grants below) were farmable at
+scale — an email address is free, and both earn grants used to pay out at
+signup/onboarding-complete, before any signal a real organiser exists.
+Option 2 (halve the amounts) and option 3 (a global earn budget with no
+per-user gate) were rejected — the first is a dial, not a fix, and the
+second degrades silently for legitimate new users once tripped. Chosen: gate
+onboarding completion AND the referral welcome grant behind the org
+**publishing a competition with at least one division** — the cheapest
+signal that a human is running something real. The monthly 10 stays
+ungated (it is the margin floor doing its job, and it is what the pricing
+page promises). A daily `earn_grant` volume alert (platform-wide, not
+per-wallet — farming spreads across many throwaway orgs) is the backstop.
+
 | Source | Grant | Guard |
 |---|---|---|
-| Referral (referred org reaches first paid comp) | tunable (e.g. 20) | once per **referred** org; block self-referral (distinct payer/email) |
-| Onboarding completion | tunable (e.g. 10) | once per org |
-| First paid competition | tunable (e.g. 10) | once per org |
+| Referral (referred org reaches first paid comp) | tunable (e.g. 20) | once per **referred** org; block self-referral (distinct payer/email); **unchanged by #296** — already gated on a real payment |
+| Referral welcome (new org signs up via a referral link) | tunable (e.g. 10) | once per org · **gated on the org's first published competition with ≥1 division (#296, was: at signup)** |
+| Onboarding completion | tunable (e.g. 10) | once per org · **gated on the org's first published competition with ≥1 division (#296, was: at onboarding-complete)** |
+| First paid competition | tunable (e.g. 10) | once per org; **unchanged by #296** — already gated on a real payment |
 
 `source = earn_grant`, idempotent per `(wallet_id, earn_reason, ref)`; **lifetime earn cap** per wallet to bound COGS. Amounts are tunable dials.
 

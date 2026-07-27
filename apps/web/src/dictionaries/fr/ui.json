@@ -692,7 +692,7 @@
   "billing.credits.action.adminRefund": "Ajustement de remboursement",
   "billing.credits.action.adminAdjust": "Ajustement de compte",
   "billing.credits.referral.title": "Parrainer & gagner",
-  "billing.credits.referral.desc": "Partagez votre lien. Quand une organisation que vous parrainez dispute sa première compétition payante, vous gagnez 20 crédits ; elle démarre avec 10.",
+  "billing.credits.referral.desc": "Partagez votre lien. Quand une organisation que vous parrainez publie sa première compétition, elle gagne 10 crédits. Quand cette compétition reçoit sa première inscription payante, vous gagnez 20.",
   "billing.credits.referral.stats.one": "{count} organisation parrainée · {earned} crédits gagnés",
   "billing.credits.referral.stats.other": "{count} organisations parrainées · {earned} crédits gagnés",
   "billing.credits.referral.howItWorks": "Comment ça marche",

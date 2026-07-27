@@ -171,12 +171,15 @@ export function BillingCredits({ view, dict, locale, exportHref, packs, currency
       </div>
     </section>
 
-    {/* Invite & earn (SPEC-5 §2, #267) — the org's shareable referral link.
-        A referred org's first paid competition earns THIS org 20 credits; the
-        referred org starts with 10 at signup. Same card/eyebrow idiom as the
-        section above, kept separate since it's its own feature (referral
-        growth loop, not the wallet itself). CopyLink is the only client
-        child — it never imports `@/lib/i18n`, just `path`. */}
+    {/* Invite & earn (SPEC-5 §2, #267; gating updated by v17 gap #296) — the
+        org's shareable referral link. A referred org's first paid
+        competition earns THIS org 20 credits; the referred org earns its own
+        10 once it publishes a competition with a division (not at signup —
+        see server/usecases/competitions.ts's shouldFireGrowthEarnGrants).
+        Same card/eyebrow idiom as the section above, kept separate since
+        it's its own feature (referral growth loop, not the wallet itself).
+        CopyLink is the only client child — it never imports `@/lib/i18n`,
+        just `path`. */}
     <section data-referral className="card mb-6 p-5">
       <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-purple-600">
         {t(dict, "billing.credits.referral.title")}

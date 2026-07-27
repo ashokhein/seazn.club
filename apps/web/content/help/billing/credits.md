@@ -44,8 +44,8 @@ Automatic top-ups — buying a pack automatically when your balance runs low —
 
 The Credits tab also has your **Invite & earn** card, with your own shareable link. Share it with another organiser:
 
-- When the organisation you refer runs its **first paid competition**, **you earn 20 credits**.
-- **They** start with **10 credits** the moment they sign up through your link.
+- **They** earn **10 credits** once they **publish their first competition** (with at least one division) — a welcome credit for running something real, not just for signing up.
+- When that organisation goes on to run its **first paid competition**, **you earn 20 credits**.
 
 Both grants land straight in the credit wallet, on top of whatever the plan already grants. Referral earnings are bounded by a lifetime cap shared with other earned-credit rewards, so a very active referrer eventually tops out — the card always shows how many organisations you've referred and how many credits you've earned so far.
 
