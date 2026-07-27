@@ -929,6 +929,69 @@ export async function sendEarnGrantVolumeAlertEmail(opts: EarnGrantVolumeAlertEm
   return send({ to: opts.to, transactional: true, subject, html, text });
 }
 
+export interface ExtraOrgAllowanceAlertEmail {
+  to: string;
+  /** The billing GROUP (subscriptions.id) — the thing that holds the orgs. */
+  subscriptionId: string;
+  /** The org whose payer made the purchase; the entry point for a sales
+   *  conversation, not the scope of the allowance (which is group-wide). */
+  orgId: string;
+  planKey: string;
+  /** The plan's own `orgs.max_owned` from plan_entitlements (pro 5 /
+   *  pro_plus 10 today) — READ, never assumed, so the copy cannot drift from
+   *  the seed. */
+  baseCap: number;
+  extraOrgs: number;
+  previousExtraOrgs: number;
+  /** baseCap + extraOrgs — what actually crossed the threshold. */
+  totalAllowance: number;
+  threshold: number;
+}
+
+/** Internal staff alert (v17 gap #293): a billing group just BOUGHT its way to
+ *  `threshold` or more total organisations. Deliberately not a block — the
+ *  self-serve cap (MAX_EXTRA_ORGS) is far higher and stays an abuse bound, not
+ *  a sales signal. V314's `orgs.max_owned` seed recorded the intent that a
+ *  group at this size "becomes an enterprise conversation rather than a silent
+ *  reseller"; this is that conversation being started while the customer is
+ *  actively expanding, instead of a sweep noticing weeks later.
+ *  Ops-only, no user-facing i18n (mirrors sendEarnGrantVolumeAlertEmail). Not
+ *  deduped: a group that keeps adding organisations is exactly the one to keep
+ *  hearing about. */
+export async function sendExtraOrgAllowanceAlertEmail(
+  opts: ExtraOrgAllowanceAlertEmail,
+): Promise<boolean> {
+  const subject = `Large billing group: ${opts.totalAllowance} organisations (group ${opts.subscriptionId})`;
+  const bodyText =
+    `A ${opts.planKey} billing group just raised its extra-organisation add-on from ` +
+    `${opts.previousExtraOrgs} to ${opts.extraOrgs}, taking its total organisation allowance to ` +
+    `${opts.totalAllowance} (plan base ${opts.baseCap} + ${opts.extraOrgs} purchased), at or above the ` +
+    `alert threshold of ${opts.threshold}. The purchase was NOT blocked — this is a sales prompt, not a ` +
+    `guard. A group this size is an enterprise conversation: check whether a negotiated plan serves them ` +
+    `better than a growing per-organisation rider, and whether the organisations look like one federation ` +
+    `or like resale.`;
+  const html = renderEmail({
+    subject,
+    preheader: `${opts.totalAllowance} organisations · ${opts.planKey}`,
+    eyebrow: "Billing · Growth",
+    title: "Large billing group",
+    contentHtml:
+      paragraph(escapeHtml(bodyText)) +
+      panel(
+        "Group",
+        `billing group: ${opts.subscriptionId}\norg (purchaser's active): ${opts.orgId}\n` +
+          `plan: ${opts.planKey}\nplan base cap: ${opts.baseCap}\n` +
+          `extra organisations: ${opts.previousExtraOrgs} -> ${opts.extraOrgs}\n` +
+          `total allowance: ${opts.totalAllowance}\nthreshold: ${opts.threshold}`,
+      ),
+    footerNote: "Automated staff alert — extra-organisation purchase (v17 gap #293).",
+  });
+  const text =
+    `${bodyText}\n\nbilling group: ${opts.subscriptionId} · plan: ${opts.planKey} · ` +
+    `base ${opts.baseCap} + ${opts.extraOrgs} extra = ${opts.totalAllowance} (threshold ${opts.threshold})`;
+  return send({ to: opts.to, transactional: true, subject, html, text });
+}
+
 /** True when Resend is configured. */
 export function emailConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY);

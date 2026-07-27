@@ -1,15 +1,30 @@
 import "server-only";
 import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
+import { deferred } from "@/lib/deferred";
 import { HttpError } from "@/lib/errors";
+import { sendExtraOrgAllowanceAlertEmail } from "@/lib/email";
 import { hasLiveSubscription } from "@/lib/subscription-status";
 import { requireBillingOwner } from "@/server/usecases/billing-manage";
 import { orgAddonForPlan, resolveOrgAddonPriceId, isOrgAddonItem } from "@/lib/org-addons";
 
-/** Self-serve bound on the RIDER. The group's own plan cap (10 on Pro Plus
- *  today) is far smaller than this; a request for hundreds is a bug or abuse,
- *  not a real purchase. The real cap is the customer's card. */
+/** Self-serve bound on the RIDER, not on the business. The group's own plan cap
+ *  (10 on Pro Plus today) is far smaller than this; a request for hundreds is a
+ *  bug or abuse, not a real purchase. Deliberately NOT the point at which a
+ *  human gets involved — that is ORG_ALLOWANCE_ALERT_THRESHOLD below, which
+ *  alerts without ever refusing. This one refuses. */
 export const MAX_EXTRA_ORGS = 50;
+
+/** Total organisations (plan base + purchased extras) at which a purchase
+ *  starts a sales conversation (v17 gap #293 Q2, owner decision 2026-07-27).
+ *  Base caps are pro 5 / pro_plus 10, so it trips at roughly 20 / 15 extras.
+ *
+ *  It is a TOTAL, not a rider count: V314's `orgs.max_owned` seed recorded the
+ *  intent that a group of this size "becomes an enterprise conversation rather
+ *  than a silent reseller", and that is a statement about how many
+ *  organisations exist under one bill — a Pro Plus group reaches it with fewer
+ *  purchased riders than a Pro one, which is correct. */
+export const ORG_ALLOWANCE_ALERT_THRESHOLD = 25;
 
 /**
  * Add / adjust / remove the extra-organisation recurring add-on for the
@@ -55,7 +70,7 @@ export async function setExtraOrgs(
       `extra organisations must be an integer between 0 and ${MAX_EXTRA_ORGS}.`,
     );
   }
-  const { subscriptionId } = await requireBillingOwner();
+  const { orgId, subscriptionId } = await requireBillingOwner();
 
   const [group] = await sql<
     { stripe_subscription_id: string | null; status: string | null; plan_key: string }[]
@@ -90,6 +105,7 @@ export async function setExtraOrgs(
   // Group-wide: there is only ever ONE org-addon item on a subscription
   // (unlike seats, which carry one item per target org), so any match wins.
   const existing = live.items.data.find((it) => isOrgAddonItem(it));
+  const previousExtraOrgs = existing?.quantity ?? 0;
 
   if (count === 0) {
     // Removal is a DELETE in Stripe — a subscription item cannot hold
@@ -104,7 +120,7 @@ export async function setExtraOrgs(
   if (existing) {
     // Raising prorates now; lowering takes effect with no mid-cycle refund —
     // mirrors setExtraSeats' and syncGroupQuantity's proration rule.
-    const raising = count > (existing.quantity ?? 0);
+    const raising = count > previousExtraOrgs;
     await getStripe().subscriptionItems.update(existing.id, {
       quantity: count,
       proration_behavior: raising ? "create_prorations" : "none",
@@ -124,5 +140,109 @@ export async function setExtraOrgs(
     });
   }
 
+  // Enterprise watch (v17 gap #293 Q2). Registered as TAIL WORK: it costs a
+  // query and an email send, and the buyer's request must not wait on staff
+  // telemetry — nor can it fail for it (deferred swallows, and
+  // maybeAlertOrgAllowance is wrapped in its own right). Deliberately AFTER
+  // the Stripe mutation succeeded: an alert about a purchase that did not
+  // happen is worse than no alert.
+  deferred(() =>
+    maybeAlertOrgAllowance({
+      subscriptionId,
+      orgId,
+      planKey,
+      extraOrgs: count,
+      previousExtraOrgs,
+    }),
+  );
   return { subscriptionId, extraOrgs: count };
+}
+
+/**
+ * Does this change warrant a staff alert? Pure, so the rule is testable
+ * without a database, Stripe or an inbox.
+ *
+ * Only a PURCHASE counts — an increase. Dropping from 45 riders to 40 leaves a
+ * group far above the threshold but is the opposite of the signal we want, and
+ * a no-op re-save is not a sales moment either.
+ *
+ * `baseCap === null` is an UNLIMITED plan (the resolver's convention): there is
+ * no total allowance for a purchase to take to 25, so it is silent rather than
+ * always-alerting. Buying riders on an unlimited plan is a separate oddity, and
+ * no plan is unlimited on orgs.max_owned today.
+ */
+export function shouldAlertOnOrgAllowance(opts: {
+  baseCap: number | null;
+  extraOrgs: number;
+  previousExtraOrgs: number;
+}): boolean {
+  if (opts.extraOrgs <= opts.previousExtraOrgs) return false;
+  if (opts.baseCap === null) return false;
+  return opts.baseCap + opts.extraOrgs >= ORG_ALLOWANCE_ALERT_THRESHOLD;
+}
+
+/**
+ * Best-effort staff alert (v17 gap #293): a purchase just took a billing
+ * group's TOTAL organisation allowance to ORG_ALLOWANCE_ALERT_THRESHOLD or
+ * more. NEVER THROWS — a telemetry failure must not fail a purchase Stripe has
+ * already accepted (the same discipline as maybeAlertExpensiveRun and every
+ * other post-commit alert here). Silent when `STAFF_ALERT_EMAIL` is unset,
+ * matching every other alert in billing-events.ts / ai-runs-admin.ts.
+ *
+ * Exported so the never-throws contract can be tested DIRECTLY rather than
+ * through deferred()'s own swallow, which would hide a missing wrapper.
+ */
+export async function maybeAlertOrgAllowance(opts: {
+  subscriptionId: string;
+  orgId: string;
+  planKey: string;
+  extraOrgs: number;
+  previousExtraOrgs: number;
+}): Promise<void> {
+  try {
+    // Cheap guards FIRST: the common case is an unconfigured alert address or
+    // an ordinary small purchase, and neither should pay for a query.
+    const alertTo = process.env.STAFF_ALERT_EMAIL;
+    if (!alertTo) return;
+    if (opts.extraOrgs <= opts.previousExtraOrgs) return;
+
+    // The plan's own cap, READ rather than assumed: hardcoding "pro 5" here
+    // would make the threshold silently wrong the day a base cap moves.
+    const [row] = await sql<{ int_value: number | null }[]>`
+      select int_value from plan_entitlements
+       where plan_key = ${opts.planKey} and feature_key = 'orgs.max_owned'`;
+    // No row at all means this plan grants the feature nothing — not
+    // "unlimited". Only an explicit NULL int_value is unlimited.
+    if (!row) return;
+    const baseCap = row.int_value;
+    if (
+      !shouldAlertOnOrgAllowance({
+        baseCap,
+        extraOrgs: opts.extraOrgs,
+        previousExtraOrgs: opts.previousExtraOrgs,
+      })
+    ) {
+      return;
+    }
+    // shouldAlertOnOrgAllowance already answers false for a null (unlimited)
+    // baseCap — this is a narrowing for the compiler, not a second rule.
+    if (baseCap === null) return;
+
+    await sendExtraOrgAllowanceAlertEmail({
+      to: alertTo,
+      subscriptionId: opts.subscriptionId,
+      orgId: opts.orgId,
+      planKey: opts.planKey,
+      baseCap,
+      extraOrgs: opts.extraOrgs,
+      previousExtraOrgs: opts.previousExtraOrgs,
+      totalAllowance: baseCap + opts.extraOrgs,
+      threshold: ORG_ALLOWANCE_ALERT_THRESHOLD,
+    });
+  } catch (err) {
+    console.error(
+      `[billing] extra-org allowance alert failed (group ${opts.subscriptionId})`,
+      err,
+    );
+  }
 }

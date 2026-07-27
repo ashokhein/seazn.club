@@ -5,7 +5,7 @@
 // (getLimit / groupOrgLimit), mirroring extra-seat-addon.test.ts.
 //
 // Task 3 adds the other half: the PURCHASE usecase (setExtraOrgs), which
-// mutates Stripe ONLY.
+// mutates Stripe ONLY, plus the >= 25 total-allowance staff alert.
 //
 // Real Postgres required; skipped without DATABASE_URL.
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -34,6 +34,7 @@ const {
   itemDelSpy,
   pricesListSpy,
   requireBillingOwnerMock,
+  allowanceAlertSpy,
 } = vi.hoisted(() => ({
   retrieveSpy: vi.fn(),
   itemCreateSpy: vi.fn(),
@@ -41,6 +42,7 @@ const {
   itemDelSpy: vi.fn(),
   pricesListSpy: vi.fn(async () => ({ data: [{ id: "price_org_addon" }] })),
   requireBillingOwnerMock: vi.fn(),
+  allowanceAlertSpy: vi.fn(async () => true),
 }));
 vi.mock("@/lib/stripe", () => ({
   getStripe: () => ({
@@ -52,6 +54,12 @@ vi.mock("@/lib/stripe", () => ({
 vi.mock("@/server/usecases/billing-manage", () => ({
   requireBillingOwner: requireBillingOwnerMock,
 }));
+// Partial mock: billing-events.ts imports a dozen other senders from this
+// module, so only the one under test is replaced.
+vi.mock("@/lib/email", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/email")>()),
+  sendExtraOrgAllowanceAlertEmail: allowanceAlertSpy,
+}));
 
 import { sql } from "@/lib/db";
 import { createOrgForUser } from "@/lib/auth";
@@ -62,7 +70,13 @@ import { HttpError } from "@/lib/errors";
 import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 import { ORG_ADDONS } from "@/lib/org-addons";
 import { syncOrgAddonsForSubscription, syncSeatAddonsForSubscription } from "../billing-events";
-import { MAX_EXTRA_ORGS, setExtraOrgs } from "../extra-orgs";
+import {
+  MAX_EXTRA_ORGS,
+  ORG_ALLOWANCE_ALERT_THRESHOLD,
+  maybeAlertOrgAllowance,
+  setExtraOrgs,
+  shouldAlertOnOrgAllowance,
+} from "../extra-orgs";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
@@ -94,6 +108,18 @@ async function makeBilledGroupOrg(
     update subscriptions set stripe_subscription_id = ${stripeSubId} where id = ${walletId}`;
   requireBillingOwnerMock.mockResolvedValue({ orgId, subscriptionId: walletId });
   return { orgId, walletId, stripeSubId };
+}
+
+/** Give the deferred() tail work room to run. Outside a Next request scope
+ *  deferred() falls back to inline fire-and-forget, so the alert (an env
+ *  check, one query, one send) settles on its own after setExtraOrgs resolves.
+ *  Three real DB round trips of slack — the POSITIVE assertions use
+ *  vi.waitFor and never depend on this; only the "did NOT alert" ones do. */
+async function flushDeferred(): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await sql`select 1 as ok`;
+  }
 }
 
 /** An org-addon subscription item as the webhook sees it: the recurring SKU
@@ -467,6 +493,173 @@ describe.skipIf(!HAS_DB)("extra-org purchase — setExtraOrgs mutates Stripe onl
     const [row] = await sql<{ n: number }[]>`
       select count(*)::int as n from org_addons where wallet_id = ${walletId}`;
     expect(row?.n).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3 (owner-approved addition) — the >= 25 total-allowance staff alert.
+// MAX_EXTRA_ORGS stays the self-serve cap: a purchase below it is NEVER
+// blocked. Crossing 25 total organisations starts a SALES conversation while
+// the customer is actively expanding, honouring V314:244-245's recorded intent
+// ("an eleventh org becomes an enterprise conversation rather than a silent
+// reseller") by ALERTING rather than BLOCKING.
+// ---------------------------------------------------------------------------
+
+describe("extra-org allowance alert — the pure trigger", () => {
+  it("fires only when a PURCHASE lands the total allowance at or above the threshold", () => {
+    const t = ORG_ALLOWANCE_ALERT_THRESHOLD;
+    expect(t).toBe(25);
+    // pro base 5 + 20 extras = 25.
+    expect(shouldAlertOnOrgAllowance({ baseCap: 5, extraOrgs: 20, previousExtraOrgs: 19 })).toBe(true);
+    expect(shouldAlertOnOrgAllowance({ baseCap: 5, extraOrgs: 19, previousExtraOrgs: 18 })).toBe(false);
+    // pro_plus base 10 + 15 = 25: the threshold is on the TOTAL, so a bigger
+    // base trips it with FEWER extras. A rule written against `extraOrgs`
+    // alone would answer the same for both and is what this pins against.
+    expect(shouldAlertOnOrgAllowance({ baseCap: 10, extraOrgs: 15, previousExtraOrgs: 0 })).toBe(true);
+    expect(shouldAlertOnOrgAllowance({ baseCap: 10, extraOrgs: 14, previousExtraOrgs: 0 })).toBe(false);
+  });
+
+  it("never fires on a reduction or a no-op, even far above the threshold", () => {
+    expect(shouldAlertOnOrgAllowance({ baseCap: 5, extraOrgs: 40, previousExtraOrgs: 45 })).toBe(false);
+    expect(shouldAlertOnOrgAllowance({ baseCap: 5, extraOrgs: 40, previousExtraOrgs: 40 })).toBe(false);
+    expect(shouldAlertOnOrgAllowance({ baseCap: 5, extraOrgs: 0, previousExtraOrgs: 40 })).toBe(false);
+  });
+
+  it("stays silent on an unlimited plan — there is no total to reach", () => {
+    expect(shouldAlertOnOrgAllowance({ baseCap: null, extraOrgs: 50, previousExtraOrgs: 0 })).toBe(false);
+  });
+});
+
+describe.skipIf(!HAS_DB)("extra-org allowance alert — at purchase time", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    allowanceAlertSpy.mockResolvedValue(true);
+  });
+
+  it("alerts staff when the purchase takes the group to the threshold, reading the base from plan_entitlements", async () => {
+    vi.stubEnv("STAFF_ALERT_EMAIL", "ops@seazn.test");
+    const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro");
+    retrieveSpy.mockResolvedValueOnce({ id: stripeSubId, items: { data: [] } });
+
+    const extras = ORG_ALLOWANCE_ALERT_THRESHOLD - proBase;
+    await setExtraOrgs(extras);
+
+    await vi.waitFor(() => expect(allowanceAlertSpy).toHaveBeenCalledTimes(1));
+    expect(allowanceAlertSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "ops@seazn.test",
+        subscriptionId: walletId,
+        orgId,
+        planKey: "pro",
+        baseCap: proBase,
+        extraOrgs: extras,
+        previousExtraOrgs: 0,
+        totalAllowance: ORG_ALLOWANCE_ALERT_THRESHOLD,
+        threshold: ORG_ALLOWANCE_ALERT_THRESHOLD,
+      }),
+    );
+  });
+
+  it("alerts a pro_plus group at FEWER extras — the threshold is the total, not the rider", async () => {
+    vi.stubEnv("STAFF_ALERT_EMAIL", "ops@seazn.test");
+    const { stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    retrieveSpy.mockResolvedValueOnce({ id: stripeSubId, items: { data: [] } });
+
+    await setExtraOrgs(ORG_ALLOWANCE_ALERT_THRESHOLD - proPlusBase);
+
+    await vi.waitFor(() => expect(allowanceAlertSpy).toHaveBeenCalledTimes(1));
+    expect(allowanceAlertSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ planKey: "pro_plus", baseCap: proPlusBase }),
+    );
+  });
+
+  it("stays silent one organisation below the threshold — the purchase is never blocked either", async () => {
+    vi.stubEnv("STAFF_ALERT_EMAIL", "ops@seazn.test");
+    const { stripeSubId } = await makeBilledGroupOrg("pro");
+    retrieveSpy.mockResolvedValueOnce({ id: stripeSubId, items: { data: [] } });
+
+    const result = await setExtraOrgs(ORG_ALLOWANCE_ALERT_THRESHOLD - proBase - 1);
+
+    expect(result.extraOrgs).toBe(ORG_ALLOWANCE_ALERT_THRESHOLD - proBase - 1);
+    await flushDeferred();
+    expect(allowanceAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it("stays silent when STAFF_ALERT_EMAIL is unset, however large the purchase", async () => {
+    const { stripeSubId } = await makeBilledGroupOrg("pro");
+    retrieveSpy.mockResolvedValueOnce({ id: stripeSubId, items: { data: [] } });
+
+    await setExtraOrgs(MAX_EXTRA_ORGS);
+
+    await flushDeferred();
+    expect(allowanceAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it("stays silent when the change LOWERS the count, even above the threshold", async () => {
+    vi.stubEnv("STAFF_ALERT_EMAIL", "ops@seazn.test");
+    const { stripeSubId } = await makeBilledGroupOrg("pro");
+    retrieveSpy.mockResolvedValueOnce({
+      id: stripeSubId,
+      items: { data: [{ id: "si_big", quantity: 40, price: { lookup_key: proEntry.lookupKey } }] },
+    });
+
+    await setExtraOrgs(30); // total 35, still far above 25 — but a REDUCTION.
+
+    await flushDeferred();
+    expect(allowanceAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it("still buys the organisations when the alert send blows up — MAX_EXTRA_ORGS is the only bound", async () => {
+    vi.stubEnv("STAFF_ALERT_EMAIL", "ops@seazn.test");
+    allowanceAlertSpy.mockRejectedValue(new Error("resend is down"));
+    const { stripeSubId } = await makeBilledGroupOrg("pro");
+    retrieveSpy.mockResolvedValueOnce({ id: stripeSubId, items: { data: [] } });
+
+    const result = await setExtraOrgs(MAX_EXTRA_ORGS);
+
+    expect(result.extraOrgs).toBe(MAX_EXTRA_ORGS);
+    expect(itemCreateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ quantity: MAX_EXTRA_ORGS }),
+    );
+    await vi.waitFor(() => expect(allowanceAlertSpy).toHaveBeenCalled());
+    await flushDeferred();
+  });
+
+  it("maybeAlertOrgAllowance resolves rather than throwing when the send throws", async () => {
+    vi.stubEnv("STAFF_ALERT_EMAIL", "ops@seazn.test");
+    allowanceAlertSpy.mockRejectedValue(new Error("resend is down"));
+    const { orgId, walletId } = await makeGroupOrg("pro");
+
+    // Called directly, NOT through deferred()'s swallow: this is what proves
+    // the alert itself is wrapped, rather than only its caller.
+    await expect(
+      maybeAlertOrgAllowance({
+        subscriptionId: walletId,
+        orgId,
+        planKey: "pro",
+        extraOrgs: MAX_EXTRA_ORGS,
+        previousExtraOrgs: 0,
+      }),
+    ).resolves.toBeUndefined();
+    expect(allowanceAlertSpy).toHaveBeenCalled();
+  });
+
+  it("maybeAlertOrgAllowance resolves when the base-cap lookup finds no plan row", async () => {
+    vi.stubEnv("STAFF_ALERT_EMAIL", "ops@seazn.test");
+    const { orgId, walletId } = await makeGroupOrg("pro");
+
+    await expect(
+      maybeAlertOrgAllowance({
+        subscriptionId: walletId,
+        orgId,
+        planKey: `no_such_plan_${uniq()}`,
+        extraOrgs: MAX_EXTRA_ORGS,
+        previousExtraOrgs: 0,
+      }),
+    ).resolves.toBeUndefined();
+    await flushDeferred();
+    expect(allowanceAlertSpy).not.toHaveBeenCalled();
   });
 });
 
