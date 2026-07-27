@@ -708,6 +708,13 @@ export async function syncSubscriptionForGroup(
   // keep the org's current plan instead of silently downgrading every affected
   // customer — the stripe:sync drift is a staff problem, not the customer's.
   if (priceId && !knownPlanKey) console.error("syncSubscription: unknown price", priceId);
+  // Loud for the same reason the unknown-price branch above is: the fallback
+  // below silently lands a possibly-PAYING customer on a status that conveys
+  // nothing, and a drift we never see is a drift nobody fixes. Same shape as
+  // its sibling, plus the subscription id — unlike a price, a status gives a
+  // human nothing to look up without knowing which subscription it came from.
+  if (!STATUS_MAP[stripeSub.status])
+    console.error("syncSubscription: unknown status", stripeSub.status, stripeSub.id);
   // Fallback = the status Stripe invented since this map was written. It must
   // fail SAFE, and `past_due` (the old fallback) failed OPEN: a never-paid
   // status we don't recognise — the likely shape of anything new in the

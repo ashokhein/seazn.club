@@ -4,7 +4,7 @@
 // when dunning STARTED — repeated invoice.payment_failed retries touch
 // updated_at but must never move the anchor.
 // Real Postgres required; skipped without DATABASE_URL.
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type Stripe from "stripe";
 import { sql } from "@/lib/db";
@@ -207,6 +207,7 @@ describe.skipIf(!HAS_DB)("incomplete never-paid grace hole (#206)", () => {
     await sql`update subscriptions set plan_key = 'pro'
               where id = (select subscription_id from organizations where id = ${orgId})`;
     const subId = `sub_future_${randomUUID().slice(0, 8)}`;
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
     await syncSubscription(
       orgId,
       stripeSub({
@@ -222,6 +223,15 @@ describe.skipIf(!HAS_DB)("incomplete never-paid grace hole (#206)", () => {
     // Still LIVE, though — the org owns a real Stripe subscription, so it must
     // not be able to open a second checkout and mint a duplicate.
     expect(LIVE_SUBSCRIPTION_STATUSES).toContain("incomplete");
+    // And it is LOUD. Degrading a possibly-paying customer silently is how a
+    // STATUS_MAP drift survives in production — the subscription id is in the
+    // log because a status alone gives nobody anything to look up.
+    expect(err).toHaveBeenCalledWith(
+      "syncSubscription: unknown status",
+      "some_future_status",
+      subId,
+    );
+    err.mockRestore();
   });
 
   it("syncSubscription writes Stripe 'incomplete_expired' as our canceled — degrades immediately, no grace (#288 audit)", async () => {
