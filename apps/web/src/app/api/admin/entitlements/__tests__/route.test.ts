@@ -6,7 +6,7 @@
 // a malformed body 400s before any DB write.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthError } from "@/lib/errors";
-import type { AdminEntRow } from "@/lib/entitlement-admin";
+import { ADMIN_PLAN_KEYS, type AdminEntRow } from "@/lib/entitlement-admin";
 
 const requireSuperadminMock = vi.fn<() => Promise<{ id: string }>>();
 const logStaffActionMock = vi.fn<(...args: unknown[]) => Promise<void>>();
@@ -97,6 +97,30 @@ describe("PATCH /api/admin/entitlements", () => {
     expect(sqlMock).not.toHaveBeenCalled();
     expect(logStaffActionMock).not.toHaveBeenCalled();
     expect(cacheDelPatternMock).not.toHaveBeenCalled();
+  });
+
+  // v17 #294: the enum is built from ADMIN_PLAN_KEYS, the same list the admin
+  // page renders columns from — so an operator can never be shown a cell whose
+  // save the route refuses. Before this, an L cell rendered nowhere; had the
+  // page been widened alone, every L edit would have 400'd.
+  it("accepts an edit to the L rung's matrix", async () => {
+    const res = await patch({
+      plan_key: "event_pass_l",
+      feature_key: "divisions.per_competition.max",
+      int_value: 20,
+    });
+    expect(res.status).toBe(200);
+    expect(sqlMock).toHaveBeenCalledTimes(1);
+    expect(sqlMock.mock.calls[0][1]).toBe("event_pass_l");
+    expect(cacheDelPatternMock).toHaveBeenCalledWith("ent:*");
+  });
+
+  it("every plan the admin page renders a column for is editable", async () => {
+    for (const plan of ADMIN_PLAN_KEYS) {
+      sqlMock.mockClear();
+      const res = await patch({ plan_key: plan, feature_key: "clubs.max", int_value: 1 });
+      expect(res.status, `${plan} must be editable`).toBe(200);
+    }
   });
 
   it("400s on an unknown plan_key before any write", async () => {

@@ -36,7 +36,8 @@ test.describe("pricing page — Pro Plus card", () => {
       const matrix = page.locator("[data-pricing-matrix]");
       await expect(matrix).toBeVisible();
       await expect(matrix.locator("thead")).toContainText("Pro Plus");
-      for (const col of ["Community", "Event Pass", "Pro"]) {
+      // Both Event Pass rungs are their own column since v17 #294.
+      for (const col of ["Community", "Event Pass M", "Event Pass L", "Pro"]) {
         await expect(matrix.locator("thead")).toContainText(col);
       }
     } finally {

@@ -36,6 +36,17 @@ describe("pricing cards", () => {
     const [, passInr] = ticketTiers("inr");
     expect(passInr!.price).not.toBe("$29");
   });
+  // v17 #294: the home stub still leads with M's price, because M is what the
+  // lowest rung costs — but with two rungs on sale that figure is a FLOOR, not
+  // the price. Unprefixed it reads as "an Event Pass costs $29", which is
+  // false for half the product. Community has no prefix: Free really is free.
+  it("marks the Event Pass price as a floor, and only that one", () => {
+    const [community, pass, pro] = ticketTiers("usd");
+    expect(pass!.prefix, "the pass is a ladder, so its price is a 'from'").toBeTruthy();
+    expect(community!.prefix).toBeUndefined();
+    expect(pro!.prefix).toBeUndefined();
+  });
+
   it("only the Event Pass glows", () => {
     expect(ticketTiers("usd").map((t) => Boolean(t.glow))).toEqual([false, true, false]);
   });
@@ -113,6 +124,9 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
   const dict = (locale: string): Record<string, string> =>
     JSON.parse(readFileSync(`src/dictionaries/${locale}/ui.json`, "utf8"));
 
+  const marketing = (locale: string): Record<string, string> =>
+    JSON.parse(readFileSync(`src/dictionaries/${locale}/marketing.json`, "utf8"));
+
   const LOCALES = ["en", "fr", "es", "nl"];
 
   it("the Community card quotes the live entrant and competition caps", async () => {
@@ -162,5 +176,75 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
     for (const locale of LOCALES) {
       expect(dict(locale)["billing.pro.f2"], `${locale}`).toContain(String(entrants));
     }
+  });
+
+  // ── v17 #294: the same D22 discipline, now for TWO rungs ──────────────────
+  //
+  // Every surface below is hand-written prose that quotes a cap, and each one
+  // described only the M rung before this task. The numerals are identical
+  // across en/fr/es/nl, so the digits are checkable without reading the prose
+  // around them — the same reasoning the four-locale tests above rely on.
+
+  it("the /pricing FAQ answer names the L rung's live caps and its price", async () => {
+    const divisions = await capFor("divisions.per_competition.max", "event_pass_l");
+    expect(divisions).toBe(20);
+    for (const locale of LOCALES) {
+      const answer = marketing(locale)["pricing.faq.eventPass.a"];
+      expect(answer, `${locale}: no answer`).toBeTruthy();
+      expect(answer, `${locale}: L's division cap`).toContain(String(divisions));
+      // The price must be INTERPOLATED, never written down: `{passL}` is
+      // substituted with the switched currency at render time, so a hardcoded
+      // "$59" here would show dollars to a GBP visitor — the exact bug #191
+      // was filed for on the M rung's copy.
+      expect(answer, `${locale}: interpolated L price`).toContain("{passL}");
+    }
+  });
+
+  // GAP B from T3's sweep: this tip said "64 entrants per division" while the
+  // live matrix has said 128 since V319 — a PRE-EXISTING content bug, wrong by
+  // half, independent of the L rung. Pinning it against the matrix is what
+  // stops it recurring; naming L is what this wave adds.
+  it("the Event Pass tip quotes the live M entrant cap and L's ceiling", async () => {
+    const mEntrants = await capFor("entrants.per_division.max", "event_pass");
+    const lDivisions = await capFor("divisions.per_competition.max", "event_pass_l");
+    const communityEntrants = await capFor("entrants.per_division.max", "community");
+    expect(mEntrants).toBe(128);
+    for (const locale of LOCALES) {
+      const body = dict(locale)["tips.billing.event-pass.body"];
+      expect(body, `${locale}: no tip body`).toBeTruthy();
+      expect(body, `${locale}: M entrant cap`).toContain(String(mEntrants));
+      expect(body, `${locale}: L division cap`).toContain(String(lDivisions));
+      // The bug itself: the tip must never quote COMMUNITY's cap as the
+      // pass's. The tip describes only what the pass grants, so this figure
+      // has no legitimate reason to appear in it.
+      expect(body, `${locale}: must not quote community's cap`).not.toContain(
+        String(communityEntrants),
+      );
+    }
+  });
+
+  it("the Event Pass help article presents both rungs with their live caps", async () => {
+    const article = readFileSync("content/help/billing/event-pass.md", "utf8");
+    const mEntrants = await capFor("entrants.per_division.max", "event_pass");
+    const mDivisions = await capFor("divisions.per_competition.max", "event_pass");
+    const lDivisions = await capFor("divisions.per_competition.max", "event_pass_l");
+    expect(await capFor("entrants.per_division.max", "event_pass_l"), "L is unlimited").toBeNull();
+    expect(article).toContain(`**${mEntrants} entrants**`);
+    expect(article).toContain(`**${mDivisions} divisions**`);
+    expect(article).toContain(`**${lDivisions} divisions**`);
+    // The article's own name for L's null cap. Without it a reader comparing
+    // the two sizes has no reason to pay the difference.
+    expect(article.toLowerCase()).toContain("unlimited entrants");
+    // Same 64-for-128 defect as the tip, in the "Can I buy a pass on top of
+    // Pro?" answer, which compared Pro's 256 against "the pass's 64".
+    expect(article).not.toMatch(/pass(?:'s|es)?\s+64\b/i);
+  });
+
+  it("the shared pass bullet names both rungs' division caps", async () => {
+    const mDivisions = await capFor("divisions.per_competition.max", "event_pass");
+    const lDivisions = await capFor("divisions.per_competition.max", "event_pass_l");
+    const bullets = PASS_FEATURES.join(" | ");
+    expect(bullets).toContain(`${mDivisions} divisions`);
+    expect(bullets, "L's ceiling is what the second rung sells").toContain(String(lDivisions));
   });
 });

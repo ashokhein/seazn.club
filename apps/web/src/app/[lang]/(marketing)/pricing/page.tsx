@@ -6,7 +6,14 @@ import { sql } from "@/lib/db";
 import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { TrackOnMount } from "@/components/analytics-track-mount";
 import { EVENTS } from "@/lib/analytics-events";
-import { buildPricingSections, type MatrixData } from "@/lib/pricing-matrix";
+import {
+  buildPricingSections,
+  PRICING_PLAN_KEYS,
+  PRICING_COLUMN_LABEL_KEY,
+  type MatrixData,
+  type PricingPlanKey,
+} from "@/lib/pricing-matrix";
+import { passLadderOptions, PASS_RUNG_MARKETING_KEY } from "@/lib/pass-ladder";
 import {
   FREE_FEATURES,
   PASS_FEATURES,
@@ -28,6 +35,17 @@ import { hasLocale } from "@/lib/i18n-constants";
 
 // The switcher cookie re-renders prices per request.
 export const dynamic = "force-dynamic";
+
+/** Per-column cell styling. A `Record` so a plan added to PRICING_PLAN_KEYS
+ *  without a tone is a compile error, not an unstyled column. Both pass rungs
+ *  share the lime the Event Pass card uses — they are one offer, two sizes. */
+const CELL_TONE: Record<PricingPlanKey, string> = {
+  community: "text-slate-500",
+  event_pass: "text-[#4d7c0f]",
+  event_pass_l: "text-[#4d7c0f]",
+  pro: "font-medium text-purple-700",
+  pro_plus: "font-medium text-indigo-700",
+};
 
 const FAQ_KEYS = [
   "card",
@@ -92,7 +110,7 @@ async function loadMatrix(): Promise<MatrixData> {
   >`
     select plan_key, feature_key, bool_value, int_value
     from plan_entitlements
-    where plan_key in ('community', 'event_pass', 'pro', 'pro_plus')`;
+    where plan_key = any(${[...PRICING_PLAN_KEYS]})`;
   const data: MatrixData = {};
   for (const r of rows) {
     (data[r.feature_key] ??= {})[r.plan_key] = {
@@ -138,6 +156,35 @@ export default async function PricingPage({
     plusCredits != null ? t(d, "pricing.credits.perMonthOperator", { count: plusCredits }) : null;
 
   const passLabel = formatMinor(passPrice(currency, "event_pass"), currency);
+  const passLLabel = formatMinor(passPrice(currency, "event_pass_l"), currency);
+
+  // The M/L ladder on the Event Pass card. Prices come from stripe-plans.json;
+  // the CAPS come from the same `matrix` the comparison table below renders
+  // from, so the card and the table can never quote different limits for the
+  // same rung (the whole reason lib/pass-ladder.ts takes caps as an argument).
+  //
+  // Rendered only when every figure is real. `loadMatrix` fails soft to `{}`
+  // when the DB is unreachable at build, and a null `int_value` legitimately
+  // means UNLIMITED — so a missing row read through `?? null` would advertise
+  // an unlimited pass. Absence must suppress the block, not embellish it.
+  const rungCap = (feature: string, plan: string): number | null | undefined =>
+    matrix[feature]?.[plan]?.int_value;
+  const passLadder = (["event_pass", "event_pass_l"] as const).every(
+    (k) =>
+      matrix["entrants.per_division.max"]?.[k] !== undefined &&
+      typeof rungCap("divisions.per_competition.max", k) === "number",
+  )
+    ? passLadderOptions(currency, {
+        event_pass: {
+          entrants: rungCap("entrants.per_division.max", "event_pass") ?? null,
+          divisions: rungCap("divisions.per_competition.max", "event_pass") ?? null,
+        },
+        event_pass_l: {
+          entrants: rungCap("entrants.per_division.max", "event_pass_l") ?? null,
+          divisions: rungCap("divisions.per_competition.max", "event_pass_l") ?? null,
+        },
+      })
+    : null;
   // Who is reading the Event Pass column? An anonymous visitor still gets the
   // signup path; a signed-in organiser gets handed to their competition list,
   // which is the only place a pass can actually be bought. The nav on this very
@@ -154,6 +201,7 @@ export default async function PricingPage({
   // without placeholders untouched, so only the ones that quote a price change.
   const faqVars = {
     pass: passLabel,
+    passL: passLLabel,
     pro: proMonthly,
     proAnnual: formatMinor(proPrice("annual", currency), currency),
     plus: plusMonthly,
@@ -220,17 +268,59 @@ export default async function PricingPage({
                 <p className="mk-display mb-1 text-xs font-semibold tracking-[0.18em] text-[#4d7c0f]">
                   {t(d, "pricing.pass.name")}
                 </p>
+                {/* "from", because the pass is a ladder: $29 is the floor, not
+                    the price. The two rungs are laid out below so a buyer sees
+                    the difference without clicking through to a competition. */}
                 <p className="mb-1 text-4xl font-bold text-slate-900">
+                  <span className="mr-1.5 align-middle text-sm font-semibold uppercase tracking-wider text-slate-400">
+                    {t(d, "pricing.pass.from")}
+                  </span>
                   {passLabel}
                   <span className="text-lg font-normal text-slate-500">
                     {t(d, "pricing.pass.per")}
                   </span>
                 </p>
                 <p className="mb-4 text-sm text-slate-500">{t(d, "pricing.pass.note")}</p>
+                {/* The ladder, led by the entrant/division difference — the
+                    only thing that differs between the rungs — in the same
+                    order and shape as the in-app picker (spec A7). No "best
+                    value" badge and no multiplier claim: L/M is 2.03× in USD
+                    but 1.96× in GBP, so any "double" framing is false
+                    somewhere. */}
+                {passLadder && (
+                  <ul className="mb-4 space-y-1.5" data-pass-ladder>
+                    {passLadder.map((o) => (
+                      <li
+                        key={o.key}
+                        className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-lg bg-white/70 px-3 py-2"
+                      >
+                        <span className="min-w-4 text-sm font-bold text-[#4d7c0f]">
+                          {t(d, PASS_RUNG_MARKETING_KEY[o.key])}
+                        </span>
+                        <span className="text-sm font-semibold text-slate-900">
+                          {formatMinor(o.amountMinor, currency)}
+                        </span>
+                        <span className="basis-full text-xs text-slate-500 sm:basis-auto">
+                          {o.entrants === null
+                            ? t(d, "pricing.pass.ladder.capsUnlimited", {
+                                divisions: o.divisions ?? "",
+                              })
+                            : t(d, "pricing.pass.ladder.caps", {
+                                divisions: o.divisions ?? "",
+                                entrants: o.entrants,
+                              })}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 <p className="mb-4 flex items-center gap-1.5 rounded-lg bg-[#eaf6cf] px-3 py-2 text-sm font-semibold text-[#4d7c0f]">
                   <span aria-hidden>⚡</span>
                   {passCreditsLine}
                 </p>
+                {passLadder && (
+                  <p className="mb-4 text-xs text-slate-500">{t(d, "pricing.pass.ladderNote")}</p>
+                )}
                 <ul className="mb-8 flex-1 space-y-2.5 text-sm text-slate-600">
                   {PASS_FEATURES.map((f) => (
                     <li key={f} className="flex items-start gap-2">
@@ -366,18 +456,23 @@ export default async function PricingPage({
             </div>
 
             {/* Feature comparison table — rendered from plan_entitlements,
-                grouped into ENTITLEMENT_DOMAINS sections. Always 4 plan
-                columns, matching the four cards above. */}
+                grouped into ENTITLEMENT_DOMAINS sections. Columns come from
+                PRICING_PLAN_KEYS, the same tuple `loadMatrix` selects on, so a
+                plan can never be read from the database and then have nowhere
+                to render. Wider than the card grid on purpose: the Event Pass
+                is one card and two columns, because the rungs differ in the
+                only two rows a buyer chooses between. */}
             {sections.length > 0 && (
               <div className="scroll-x scroll-x-fade mt-12 rounded-2xl border border-purple-100 bg-white">
                 <table className="table w-full" data-pricing-matrix>
                   <thead>
                     <tr>
                       <th className="py-3 text-left">{t(d, "pricing.table.feature")}</th>
-                      <th className="py-3 text-center">{t(d, "pricing.table.community")}</th>
-                      <th className="py-3 text-center">{t(d, "pricing.table.pass")}</th>
-                      <th className="py-3 text-center">{t(d, "pricing.table.pro")}</th>
-                      <th className="py-3 text-center">{t(d, "pricing.table.proPlus")}</th>
+                      {PRICING_PLAN_KEYS.map((plan) => (
+                        <th key={plan} className="py-3 text-center whitespace-nowrap">
+                          {t(d, PRICING_COLUMN_LABEL_KEY[plan])}
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody className="text-sm">
@@ -385,7 +480,7 @@ export default async function PricingPage({
                       <Fragment key={section.labelKey}>
                         <tr>
                           <td
-                            colSpan={5}
+                            colSpan={PRICING_PLAN_KEYS.length + 1}
                             className="bg-purple-50/60 pt-5 pb-1.5 text-xs font-semibold uppercase tracking-wider text-purple-500"
                           >
                             {t(d, section.labelKey)}
@@ -404,10 +499,11 @@ export default async function PricingPage({
                                 </span>
                               )}
                             </td>
-                            <td className="text-center text-slate-500">{cellText(r.free)}</td>
-                            <td className="text-center text-[#4d7c0f]">{cellText(r.pass)}</td>
-                            <td className="text-center font-medium text-purple-700">{cellText(r.pro)}</td>
-                            <td className="text-center font-medium text-indigo-700">{cellText(r.plus)}</td>
+                            {PRICING_PLAN_KEYS.map((plan) => (
+                              <td key={plan} className={`text-center ${CELL_TONE[plan]}`}>
+                                {cellText(r.cells[plan])}
+                              </td>
+                            ))}
                           </tr>
                         ))}
                       </Fragment>

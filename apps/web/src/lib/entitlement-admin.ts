@@ -24,7 +24,38 @@ export interface AdminEntFeature {
 
 export interface AdminEntSection { slug: string; features: AdminEntFeature[] }
 
-const PLANS = ["community", "event_pass", "pro", "pro_plus"] as const;
+/**
+ * Every plan `/admin/entitlements` shows a column for — and the single list
+ * three separate files used to keep their own copy of: this pivot, the page's
+ * `<th>` row, and the PATCH route's zod enum.
+ *
+ * Adding the L rung (v17 #294) is what made the duplication expensive: the
+ * three had to move together or an operator would get a column they cannot
+ * save (page widened, enum not) or a plan they cannot see at all (enum
+ * widened, page not). Importing this everywhere makes a new plan key one edit.
+ */
+export const ADMIN_PLAN_KEYS = [
+  "community",
+  "event_pass",
+  "event_pass_l",
+  "pro",
+  "pro_plus",
+] as const;
+
+export type AdminPlanKey = (typeof ADMIN_PLAN_KEYS)[number];
+
+/** Column heading per plan. `/admin` is staff-only and deliberately not
+ *  localised (dark shell, English throughout), so these are plain strings —
+ *  but they are a `Record`, so a plan with no heading is a compile error. */
+export const ADMIN_PLAN_LABEL: Record<AdminPlanKey, string> = {
+  community: "Community",
+  event_pass: "Event Pass M",
+  event_pass_l: "Event Pass L",
+  pro: "Pro",
+  pro_plus: "Pro Plus",
+};
+
+const PLANS = ADMIN_PLAN_KEYS;
 
 function render(cell: AdminEntRow | undefined): string {
   if (!cell) return "—";

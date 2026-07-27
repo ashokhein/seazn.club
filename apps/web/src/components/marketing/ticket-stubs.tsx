@@ -33,6 +33,11 @@ export function TicketStubs({ currency }: { currency: Currency }) {
             {t.tier}
           </p>
           <p className="mk-display my-1 text-4xl font-bold tabular-nums text-[var(--mk-cream)]">
+            {t.prefix ? (
+              <span className="mr-1 align-middle text-xs font-semibold uppercase tracking-[0.12em] text-[#b7aede]">
+                {t.prefix}
+              </span>
+            ) : null}
             {t.price}
             {t.period ? (
               <span className="text-base font-medium text-[#b7aede]">{t.period}</span>

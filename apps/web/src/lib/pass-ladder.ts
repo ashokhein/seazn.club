@@ -72,6 +72,20 @@ export const PASS_RUNG_SIZE_KEY: Record<PassKey, DictionaryKey> = {
 };
 
 /**
+ * The size code again, in the MARKETING dictionary — for `/pricing`, which
+ * loads `marketing` and not `ui`, and would otherwise have to ship a second
+ * dictionary to a page that needs two words from it.
+ *
+ * Same shape and same reason as the two maps above: a third rung is a compile
+ * error here rather than a `/pricing` card that silently prices two sizes and
+ * labels one.
+ */
+export const PASS_RUNG_MARKETING_KEY: Record<PassKey, DictionaryKey> = {
+  event_pass: "pricing.pass.rung.m",
+  event_pass_l: "pricing.pass.rung.l",
+};
+
+/**
  * Which localised sentence a failed checkout gets, from the HTTP status alone.
  *
  * The buyer must never be shown the server's own text. Every message

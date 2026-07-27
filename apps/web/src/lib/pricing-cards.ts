@@ -24,7 +24,10 @@ export const FREE_FEATURES = [
 // The first four are also the home-page stub (ticketTiers slices them).
 export const PASS_FEATURES = [
   "Upgrades ONE competition, forever",
-  "10 divisions, 128 entrants each",
+  // v17 #294: two rungs, so this line names both ceilings. It led with M's
+  // alone while L existed, which reads as "an Event Pass caps at 128" — the
+  // exact limit an L buyer is paying to remove.
+  "10 divisions, 128 entrants each — 20 & unlimited on L",
   "Advanced formats — double elim, ladders",
   "5% platform fee on entry fees, not 8%",
   "Branded exports & public player cards",
@@ -88,6 +91,11 @@ export const PLUS_COMING_SOON: string[] = [
 export interface TicketTier {
   tier: string;
   price: string;
+  /** Small qualifier rendered BEFORE the price — "from" on a tier that is a
+   *  ladder rather than a single price (v17 #294: the Event Pass sells at two
+   *  rungs, so its cheapest is a floor, not the cost). Absent means the price
+   *  is the price. */
+  prefix?: string;
   period?: string;
   bullets: string[];
   glow?: boolean;
@@ -102,6 +110,10 @@ export function ticketTiers(currency: Currency): TicketTier[] {
     { tier: "Community", price: "Free", bullets: FREE_FEATURES.slice(0, 4) },
     {
       tier: "Event Pass",
+      // The LOWEST rung, marked as a floor. `passPrice` is required to name a
+      // rung, so this is a deliberate M — the stub has no room to compare two,
+      // and "from" hands the reader to /pricing for the difference.
+      prefix: "from",
       price: formatMinor(passPrice(currency, "event_pass"), currency),
       period: " once",
       bullets: PASS_FEATURES.slice(0, 4),

@@ -21,36 +21,53 @@ test.describe("pricing page v3", () => {
       await page.goto("/pricing");
       const matrix = page.locator("[data-pricing-matrix]");
       await expect(matrix).toBeVisible();
-      // Column headers come from the three plans; rows from plan_entitlements.
-      for (const col of ["Community", "Event Pass", "Pro"]) {
+      // Column headers come from the plans; rows from plan_entitlements. The
+      // Event Pass is TWO columns since v17 #294 — "Event Pass M" and "Event
+      // Pass L" — so the pass heading is asserted at both sizes.
+      for (const col of ["Community", "Event Pass M", "Event Pass L", "Pro"]) {
         await expect(matrix.locator("thead")).toContainText(col);
       }
       await expect(matrix.locator("tbody")).toContainText("Entrants per division");
-      // Straight from plan_entitlements: 64 / 128 / 256. V319 raised Community
-      // 32 → 64 and the Event Pass 64 → 128, so the old 32 appears nowhere in
-      // this row — asserting it fails against the live matrix.
+      // Straight from plan_entitlements: 64 / 128 / ∞ / 256. V319 raised
+      // Community 32 → 64 and the Event Pass 64 → 128, so the old 32 appears
+      // nowhere in this row — asserting it fails against the live matrix.
       const entrantsRow = matrix.locator("tr", { hasText: "Entrants per division" });
       await expect(entrantsRow).toContainText("64");
       await expect(entrantsRow).toContainText("128");
       await expect(entrantsRow).toContainText("256");
+      // V341: L's cap is NULL — unlimited. This ∞ is the figure the L rung is
+      // sold on, and the one an L buyer would be misquoted if the table still
+      // had a single pass column.
+      await expect(entrantsRow).toContainText("∞");
 
       // The rest of what V310/V311 repackaged, on the page that sells it.
       // These are the rows this branch MOVED, so a matrix drift shows up here
       // before a buyer finds it (task 22).
       // Cell 0 of every row is the feature LABEL (a <td>, not a <th>), so the
-      // plan columns start at 1: community, event pass, pro, pro plus.
-      const cell = (label: string, plan: 0 | 1 | 2 | 3) =>
+      // plan columns start at 1. The order is lib/pricing-matrix's
+      // PRICING_PLAN_KEYS: community, event pass M, event pass L, pro, pro
+      // plus. v17 #294 inserted L at index 2, shifting pro and pro plus right.
+      const cell = (label: string, plan: 0 | 1 | 2 | 3 | 4) =>
         matrix.locator("tr", { hasText: label }).locator("td").nth(plan + 1);
-      // Divisions per competition: community 4, pass 10 (the pass's own ceiling).
+      // Divisions per competition: community 4, M 10, L 20 — the two rungs'
+      // own ceilings, and one of only two rows where they differ at all.
       await expect(cell("Divisions per competition", 0)).toHaveText("4");
       await expect(cell("Divisions per competition", 1)).toHaveText("10");
-      // The fee ladder — the pass's only recurring saving.
+      await expect(cell("Divisions per competition", 2)).toHaveText("20");
+      // Entrants: the other. L renders ∞ where M renders its 128 cap.
+      await expect(cell("Entrants per division", 1)).toHaveText("128");
+      await expect(cell("Entrants per division", 2)).toHaveText("∞");
+      // The fee ladder — flat across the rungs by decision (#294): L buys a
+      // bigger event, never a cheaper cut.
       await expect(cell("Platform fee on entry fees", 0)).toContainText("8%");
       await expect(cell("Platform fee on entry fees", 1)).toContainText("5%");
-      await expect(cell("Platform fee on entry fees", 2)).toContainText("2%");
-      // V308 added player profiles to the pass column…
+      await expect(cell("Platform fee on entry fees", 2)).toContainText("5%");
+      await expect(cell("Platform fee on entry fees", 3)).toContainText("2%");
+      // V308 added player profiles to the pass columns — BOTH of them, since
+      // V341 derives L's matrix from M's.
       await expect(cell("Public player profiles", 0)).toHaveText("—");
       await expect(cell("Public player profiles", 1)).toHaveText("✓");
+      await expect(cell("Public player profiles", 2)).toHaveText("✓");
       // …and V310 made `branding` free on EVERY plan, so the community cell
       // must NOT be a dash. Re-gating it would be a silent takeaway.
       await expect(cell("Custom branding", 0)).toHaveText("✓");

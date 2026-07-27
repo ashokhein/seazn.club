@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { groupForAdmin, type AdminEntRow } from "../entitlement-admin";
+import {
+  ADMIN_PLAN_KEYS,
+  ADMIN_PLAN_LABEL,
+  groupForAdmin,
+  type AdminEntRow,
+} from "../entitlement-admin";
 
 // V290: /admin/entitlements pivots plan_entitlements rows into the same
 // domain grouping as /pricing (ENTITLEMENT_DOMAINS), plus a trailing "other"
@@ -15,6 +20,33 @@ describe("groupForAdmin", () => {
     // unknown key not in ENTITLEMENT_DOMAINS at all
     { feature_key: "some.vestigial.key", plan_key: "pro_plus", bool_value: true, int_value: null },
   ];
+
+  // v17 #294. Before this, THREE files each wrote the plan list out by hand —
+  // this pivot, the page's <th> row, and the PATCH route's zod enum — so a new
+  // plan key needed three edits and any one of them missed left operators
+  // unable to see or edit that plan's matrix. `ADMIN_PLAN_KEYS` is now the one
+  // list, and every plan in it must carry a column heading.
+  it("pivots every plan in ADMIN_PLAN_KEYS, including the L rung", () => {
+    expect([...ADMIN_PLAN_KEYS]).toContain("event_pass_l");
+    const membersMax = groupForAdmin(rows)
+      .find((s) => s.slug === "scale")!
+      .features.find((f) => f.feature_key === "members.max")!;
+    for (const plan of ADMIN_PLAN_KEYS) {
+      expect(membersMax.cells[plan], `${plan} cell`).toBeTruthy();
+      expect(membersMax.raw[plan], `${plan} raw`).toBeDefined();
+    }
+    expect(Object.keys(membersMax.cells).sort().join(",")).toBe(
+      [...ADMIN_PLAN_KEYS].sort().join(","),
+    );
+  });
+
+  it("labels every admin column — a plan with no heading is an invisible plan", () => {
+    const labels = ADMIN_PLAN_KEYS.map((p) => ADMIN_PLAN_LABEL[p]);
+    expect(labels.filter(Boolean)).toHaveLength(ADMIN_PLAN_KEYS.length);
+    expect(new Set(labels).size, "two plans sharing a heading is unreadable").toBe(
+      ADMIN_PLAN_KEYS.length,
+    );
+  });
 
   it("caps at 9 sections (8 domains + trailing other)", () => {
     const sections = groupForAdmin(rows);
