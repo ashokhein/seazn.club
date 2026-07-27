@@ -4,6 +4,7 @@
 // ledger; the payload columns arrived with the cost work, so pre-existing rows
 // surface as nulls rather than being filtered out.
 import { sql } from "@/lib/db";
+import { aiRunUnitNoun } from "@/lib/ai-pricing";
 import { sendAiRunCostAlertEmail } from "@/lib/email";
 
 export const AI_RUN_EVENT_TYPES = [
@@ -183,4 +184,241 @@ export async function maybeAlertExpensiveRun(opts: {
   } catch (err) {
     console.error(`[ai-runs] expensive-run alert check failed (org ${opts.orgId})`, err);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Credits sold vs COGS — the margin monitor behind /admin/revenue
+// (v17 gap #295; SPEC-2 §5.3 "live margin monitor", SPEC-3 §6).
+// ---------------------------------------------------------------------------
+
+/** SPEC-2 §6 base list price — the revenue-equivalent this report prices
+ *  net credit spend at. Tunable dial (README §7 style); not read from
+ *  stripe-plans.json because the packs price in bonus-scaled tiers, and
+ *  this report is about the FLOOR price every credit is worth, not what any
+ *  one purchase actually paid. */
+export const CREDIT_LIST_PRICE_USD = 0.25;
+
+export interface AiMarginRow {
+  org_id: string | null;
+  org_name: string;
+  /** Net credits consumed (run_spend, netted against their own refunds) in
+   *  the window — the same derive `spentThisPeriodByOrg` uses, generalized
+   *  across every org instead of one. */
+  credits_spent: number;
+  /** credits_spent priced at CREDIT_LIST_PRICE_USD — the "credits sold" side
+   *  of the margin monitor (SPEC-2 §5.3 / SPEC-3 §6). */
+  revenue_usd: number;
+  /** Real $ COGS from the AI run audit trail in the same window — see the
+   *  plan's Migration note for why this is an independent aggregate, not a
+   *  per-run join against credits_spent. */
+  cogs_usd: number;
+  /** null when revenue_usd is 0 (nothing sold/spent yet) rather than a
+   *  divide-by-zero or a misleading 0%/100%. */
+  margin_pct: number | null;
+}
+
+/** Per-phase COGS and size, the only level at which a $/unit figure is
+ *  meaningful (v17 gap #295). Carries NO revenue or margin: the credit ledger
+ *  records which ORG burned a credit, never which PHASE, so splitting revenue
+ *  by phase would be an invention. */
+export interface AiPhaseUnitRow {
+  phase: AiRunPhase;
+  /** Plural noun for one unit on THIS phase — schedule counts the movable
+   *  subset it was asked to place, officials counts every fixture in the pack.
+   *  The label travels with the number so nobody compares the two. */
+  unit_noun: string;
+  runs: number;
+  /** Runs in the window whose event carries no `pack_units`. The key only
+   *  started being stamped in this wave, so every older run lands here. Their
+   *  COGS stays in `cogs_usd` — dropping it would understate the platform's
+   *  real spend — but it is excluded from the $/unit ratio, which is why
+   *  `sized_cogs_usd` exists as a separate numerator. */
+  runs_missing_units: number;
+  /** Sum of `pack_units` across the runs that carry it. */
+  units: number;
+  /** COGS across ALL runs of this phase, sized or not. The phase rows
+   *  partition the report's total COGS. */
+  cogs_usd: number;
+  /** COGS of the runs that DO carry units — the numerator of
+   *  `cost_per_unit_usd`, so the ratio never divides an unsized run's cost by
+   *  someone else's units. */
+  sized_cogs_usd: number;
+  /** `sized_cogs_usd / units`, or null when the phase recorded no units at
+   *  all. NEVER blended across phases. */
+  cost_per_unit_usd: number | null;
+}
+
+export interface AiMarginReport {
+  days: number;
+  aggregate: AiMarginRow;
+  byOrg: AiMarginRow[];
+  /** Always both phases, in a fixed order, even when one has no runs — a
+   *  stable table shape, and "officials: no runs yet" is itself information. */
+  byPhase: AiPhaseUnitRow[];
+}
+
+export type AiRunPhase = "schedule" | "officials";
+
+const PHASES: readonly AiRunPhase[] = ["schedule", "officials"];
+
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+/** Pure: $ per unit for one phase, or null when the phase recorded no units.
+ *  Split out of the rollup so the divide-by-zero branch — which a production
+ *  window really can hit, since every pre-wave run event carries no
+ *  `pack_units` — is testable without a database. Zero sized COGS over real
+ *  units is a genuine $0.00/unit (officials records solver-draft runs at
+ *  cost 0) and stays 0, not null. Six decimals: a per-fixture cost lives
+ *  around $0.0004 and rounding to cents would erase it. */
+export function costPerUnitUsd(sizedCogsUsd: number, units: number): number | null {
+  if (!units || units <= 0) return null;
+  return Math.round((sizedCogsUsd / units) * 1_000_000) / 1_000_000;
+}
+
+function marginRow(
+  orgId: string | null,
+  orgName: string,
+  creditsSpent: number,
+  cogsUsdRaw: number,
+): AiMarginRow {
+  const revenueUsd = round2(creditsSpent * CREDIT_LIST_PRICE_USD);
+  const cogsUsd = round2(cogsUsdRaw);
+  const marginPct =
+    revenueUsd > 0 ? Math.round(((revenueUsd - cogsUsd) / revenueUsd) * 1000) / 10 : null;
+  return {
+    org_id: orgId,
+    org_name: orgName,
+    credits_spent: creditsSpent,
+    revenue_usd: revenueUsd,
+    cogs_usd: cogsUsd,
+    margin_pct: marginPct,
+  };
+}
+
+/**
+ * Credits sold vs COGS consumed, per org and aggregate, plus per-phase unit
+ * economics (v17 gap #295, SPEC-2 §5.3's "live margin monitor", SPEC-3 §6's
+ * "/admin/revenue — add credits sold vs COGS"). `credits_spent` nets refunds
+ * the same way `spentThisPeriodByOrg` (`lib/credits.ts`) does for one org,
+ * generalized to a GROUP BY across every org that spent in the window.
+ * `cogs_usd` sums `cost_usd` off every AI run event (success AND failure — a
+ * failed run still burns real tokens) in the same window.
+ *
+ * The credit side and the COGS side are INDEPENDENT aggregates joined by org
+ * id in JS, not a SQL join: `ai_credit_ledger` and `competition_events` share
+ * no run id to join on (see the wave plan's Migration note), so nothing here
+ * is a reconciled per-run figure and the panel's own copy says so.
+ */
+export async function aiMarginReport(days: number): Promise<AiMarginReport> {
+  const creditRows = await sql<{ org_id: string | null; credits_spent: string }[]>`
+    select h.spent_by_org_id as org_id,
+           coalesce(sum(-h.delta - coalesce((
+             select sum(r.delta) from ai_credit_ledger r
+              where r.source = 'refund' and r.ref = h.id::text
+           ), 0)), 0)::text as credits_spent
+      from ai_credit_ledger h
+     where h.source = 'run_spend'
+       and h.created_at >= now() - make_interval(days => ${days})
+     group by h.spent_by_org_id`;
+
+  const cogsRows = await sql<{ org_id: string | null; cogs_usd: string | null }[]>`
+    select org_id, coalesce(sum((payload->>'cost_usd')::numeric), 0)::text as cogs_usd
+      from competition_events
+     where type = any(${AI_RUN_EVENT_TYPES as unknown as string[]})
+       and created_at >= now() - make_interval(days => ${days})
+     group by org_id`;
+
+  // Phase attribution. Both phases record FAILURES under the same event type
+  // (schedule.ai_failed) and stamp `phase` in the payload, so the type alone
+  // cannot tell them apart — keying off it would file every officials failure
+  // under schedule and skew both $/unit figures. Total by construction: a
+  // legacy failure with no stamped phase falls to 'officials', matching
+  // `listAiRuns` above so the two /admin surfaces cannot disagree.
+  const phaseRows = await sql<
+    {
+      phase: string;
+      runs: number;
+      runs_missing_units: number;
+      units: string;
+      cogs_usd: string;
+      sized_cogs_usd: string;
+    }[]
+  >`
+    select case
+             when type = 'schedule.ai_generated' then 'schedule'
+             when type = 'schedule.ai_officials_generated' then 'officials'
+             when payload->>'phase' = 'schedule' then 'schedule'
+             else 'officials'
+           end as phase,
+           count(*)::int as runs,
+           count(*) filter (where payload->>'pack_units' is null)::int as runs_missing_units,
+           coalesce(sum((payload->>'pack_units')::numeric), 0)::text as units,
+           coalesce(sum((payload->>'cost_usd')::numeric), 0)::text as cogs_usd,
+           coalesce(sum((payload->>'cost_usd')::numeric)
+                    filter (where payload->>'pack_units' is not null), 0)::text as sized_cogs_usd
+      from competition_events
+     where type = any(${AI_RUN_EVENT_TYPES as unknown as string[]})
+       and created_at >= now() - make_interval(days => ${days})
+     group by 1`;
+
+  const orgIds = new Set<string>();
+  for (const r of creditRows) if (r.org_id) orgIds.add(r.org_id);
+  for (const r of cogsRows) if (r.org_id) orgIds.add(r.org_id);
+
+  const names = orgIds.size
+    ? await sql<{ id: string; name: string }[]>`
+        select id, name from organizations where id in ${sql([...orgIds])}`
+    : [];
+  const nameById = new Map(names.map((n) => [n.id, n.name]));
+  // Clamp at 0 exactly as `spentThisPeriodByOrg` does: a refund can only ever
+  // net a hold back to zero, so a negative here would be corrupt data, and
+  // negative "credits sold" would poison the margin.
+  const creditsByOrg = new Map(
+    creditRows.map((r) => [r.org_id, Math.max(0, Number(r.credits_spent))]),
+  );
+  const cogsByOrg = new Map(cogsRows.map((r) => [r.org_id, Number(r.cogs_usd ?? 0)]));
+
+  const byOrg = [...orgIds]
+    .map((orgId) =>
+      marginRow(
+        orgId,
+        nameById.get(orgId) ?? "Unknown org",
+        creditsByOrg.get(orgId) ?? 0,
+        cogsByOrg.get(orgId) ?? 0,
+      ),
+    )
+    .sort((a, b) => b.cogs_usd - a.cogs_usd);
+
+  // Totals come off the RAW per-org numbers, not the rounded rows, so the
+  // aggregate cannot drift a cent away from the phase partition below.
+  let totalCredits = 0;
+  let totalCogs = 0;
+  for (const orgId of orgIds) {
+    totalCredits += creditsByOrg.get(orgId) ?? 0;
+    totalCogs += cogsByOrg.get(orgId) ?? 0;
+  }
+
+  const phaseByKey = new Map(phaseRows.map((r) => [r.phase, r]));
+  const byPhase = PHASES.map((phase) => {
+    const r = phaseByKey.get(phase);
+    const units = Number(r?.units ?? 0);
+    const sizedCogs = round2(Number(r?.sized_cogs_usd ?? 0));
+    return {
+      phase,
+      unit_noun: aiRunUnitNoun(phase),
+      runs: r?.runs ?? 0,
+      runs_missing_units: r?.runs_missing_units ?? 0,
+      units,
+      cogs_usd: round2(Number(r?.cogs_usd ?? 0)),
+      sized_cogs_usd: sizedCogs,
+      cost_per_unit_usd: costPerUnitUsd(sizedCogs, units),
+    } satisfies AiPhaseUnitRow;
+  });
+
+  return {
+    days,
+    aggregate: marginRow(null, "All orgs", totalCredits, totalCogs),
+    byOrg,
+    byPhase,
+  };
 }
