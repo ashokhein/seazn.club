@@ -25,7 +25,7 @@ import {
   recordPassRefund,
   walletIdFor,
 } from "@/lib/credits";
-import { isPassKey } from "@/lib/currency";
+import { isPassKey, type PassKey } from "@/lib/currency";
 import { SEAT_ADDON, isSeatAddonItem } from "@/lib/seat-addons";
 import { getSizePack } from "@/lib/size-packs";
 import {
@@ -828,34 +828,51 @@ async function orgOwnerEmail(orgId: string): Promise<string | null> {
 }
 
 /** Event Pass refund (P0-3a): a fully-refunded pass charge — dashboard refunds
- *  included — revokes the pass and emails the org owner. The org + competition
- *  are read BEFORE the revoke deletes the row; the email is fire-and-forget so
- *  a Resend hiccup never blocks the webhook ACK. */
+ *  included — revokes the pass and emails the org owner. The org, competition
+ *  and RUNG are read BEFORE the revoke deletes the row; the email is
+ *  fire-and-forget so a Resend hiccup never blocks the webhook ACK.
+ *
+ *  The read is no longer gated on `charge.refunded` (v17 #294). A PARTIAL refund
+ *  leaves the pass row alone but still runs `reversePassCreditOnRefund` below,
+ *  and that path's staff alert has to name the rung too — which is only knowable
+ *  here, from the row, before it can be deleted. One extra indexed lookup by
+ *  payment intent on partial refunds; the buyer email is still gated on
+ *  `revoked`, so nothing customer-visible changes. */
 async function revokePassForRefundedChargeAndNotify(charge: Stripe.Charge): Promise<void> {
   const intent =
     typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
-  const [ctx] =
-    intent && charge.refunded
-      ? await sql<{ org_id: string; org_name: string; comp_name: string }[]>`
-          select p.org_id, o.name as org_name, c.name as comp_name
-          from competition_passes p
-          join organizations o on o.id = p.org_id
-          join competitions   c on c.id = p.competition_id
-          where p.stripe_payment_intent = ${intent}`
-      : [];
+  const [ctx] = intent
+    ? await sql<{ org_id: string; org_name: string; comp_name: string; pass_key: string }[]>`
+        select p.org_id, o.name as org_name, c.name as comp_name, p.pass_key
+        from competition_passes p
+        join organizations o on o.id = p.org_id
+        join competitions   c on c.id = p.competition_id
+        where p.stripe_payment_intent = ${intent}`
+    : [];
+  // isPassKey, not a cast: the column is `not null default 'event_pass'`, so a
+  // row written before #294 is genuinely M, and a rung this build predates must
+  // still produce a real label rather than a missing dictionary key.
+  const passKey: PassKey | null = ctx
+    ? isPassKey(ctx.pass_key)
+      ? ctx.pass_key
+      : "event_pass"
+    : null;
   const revoked = await revokePassForRefundedCharge(charge);
   // Unconditional — not gated on `revoked`: a partial refund leaves the pass
   // row in place (revokePassForRefundedCharge only deletes on a full refund),
   // but the credit reversal question is about the CHARGE's refund state, not
   // the pass row's survival. `intent` is only undefined for a charge with no
   // payment_intent, which could never have a redemption row to reverse.
-  if (intent) await reversePassCreditOnRefund(intent);
-  if (!revoked || !ctx) return;
+  if (intent) await reversePassCreditOnRefund(intent, passKey);
+  if (!revoked || !ctx || !passKey) return;
   const to = await orgOwnerEmail(ctx.org_id);
   if (!to) return;
-  void sendPassRevokedEmail({ to, orgName: ctx.org_name, competitionName: ctx.comp_name }).catch(
-    () => {},
-  );
+  void sendPassRevokedEmail({
+    to,
+    orgName: ctx.org_name,
+    competitionName: ctx.comp_name,
+    passKey,
+  }).catch(() => {});
 }
 
 /** AI credit-pack refund (v17 SPEC-2 §5, Phase 3 Task 4): a refunded pack

@@ -81,7 +81,7 @@ describe.skipIf(!LIVE || !HAS_DB)("pass credit reversal against live Stripe (tes
     // `reversePassCreditOnRefund` closes.
     await stripe.refunds.create({ payment_intent: f.intent });
 
-    await reversePassCreditOnRefund(f.intent);
+    await reversePassCreditOnRefund(f.intent, "event_pass");
 
     // Only the unspent £10 comes back. The £15 already billed to the invoice
     // is written off, not clawed back — reversing the full £25 would have put

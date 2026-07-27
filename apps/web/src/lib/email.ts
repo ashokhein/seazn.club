@@ -5,6 +5,7 @@ import { type Locale } from "@/lib/i18n-constants";
 // Leaf module (imports nothing) — safe here even though ai-runs-admin.ts, the
 // other consumer of the unit noun, imports this file.
 import { aiRunUnitNoun } from "@/lib/ai-pricing";
+import type { PassKey } from "@/lib/currency";
 import {
   verificationTemplate,
   passwordResetTemplate,
@@ -725,6 +726,10 @@ export interface PassCreditReversalIncompleteAlertEmail {
   orgId: string;
   orgName: string;
   competitionName: string;
+  /** WHICH Event Pass rung earned the credit being reversed (v17 #294). Every
+   *  sentence below said "An Event Pass credit for …", so whoever triages a $59
+   *  Event Pass L reversal went looking for a $29 charge. */
+  passKey: PassKey;
   /** What the original pass credit granted, in minor units. */
   grantedMinor: number;
   /** What was actually reversed on refund, in minor units — capped so the
@@ -755,11 +760,14 @@ export async function sendPassCreditReversalIncompleteAlertEmail(
 ): Promise<boolean> {
   const absorbed = opts.grantedMinor - opts.reversedMinor;
   const undetermined = opts.reason === "undetermined";
+  // Ops-only copy, so this is not translated — but it must still name the rung,
+  // and both branches build their own sentence, so both carry it.
+  const rung = opts.passKey === "event_pass_l" ? "Event Pass L" : "Event Pass M";
   const subject = undetermined
     ? `Pass credit reversal skipped — needs manual review — org ${opts.orgId}`
     : `Pass credit reversal incomplete — org ${opts.orgId}`;
   const bodyText = undetermined
-    ? `An Event Pass credit for "${opts.competitionName}" (org ${opts.orgName}, ${opts.orgId}) was ` +
+    ? `An ${rung} credit for "${opts.competitionName}" (org ${opts.orgName}, ${opts.orgId}) was ` +
       `refunded, but other balance activity (for example, a plan-downgrade proration credit) was ` +
       `detected on the customer since the ${opts.grantedMinor} ${opts.currency} credit was granted. ` +
       `Stripe's customer balance is a single pool with no per-transaction attribution, so which part ` +
@@ -769,7 +777,7 @@ export async function sendPassCreditReversalIncompleteAlertEmail(
       `unresolved record: it still holds the lifetime cap, so no org in this group can earn ` +
       `another pass credit. Settling the customer's balance in Stripe does NOT release it, and there is no ` +
       `self-serve way to clear it yet — staff resolution tooling is planned.`
-    : `An Event Pass credit for "${opts.competitionName}" (org ${opts.orgName}, ${opts.orgId}) was ` +
+    : `An ${rung} credit for "${opts.competitionName}" (org ${opts.orgName}, ${opts.orgId}) was ` +
       `refunded. ${opts.grantedMinor} ${opts.currency} was originally granted; only ` +
       `${opts.reversedMinor} ${opts.currency} of unspent credit could be reversed. The remaining ` +
       `${absorbed} ${opts.currency} was already consumed by an invoice and is written off, not ` +
@@ -779,13 +787,14 @@ export async function sendPassCreditReversalIncompleteAlertEmail(
     preheader: undetermined
       ? `Manual review needed — org ${opts.orgName}`
       : `${absorbed} ${opts.currency} absorbed — org ${opts.orgName}`,
-    eyebrow: "Billing · Event Pass",
+    eyebrow: `Billing · ${rung}`,
     title: undetermined ? "Pass credit reversal skipped" : "Pass credit reversal incomplete",
     contentHtml:
       paragraph(escapeHtml(bodyText)) +
       panel(
         "Reversal",
         `org: ${opts.orgName} (${opts.orgId})\ncompetition: ${opts.competitionName}\n` +
+          `rung: ${rung}\n` +
           `granted: ${opts.grantedMinor} ${opts.currency}\n` +
           `reversed: ${opts.reversedMinor} ${opts.currency}\n` +
           (undetermined

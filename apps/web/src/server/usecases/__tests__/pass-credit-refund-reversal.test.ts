@@ -204,7 +204,7 @@ describe.skipIf(!HAS_DB)("reversePassCreditOnRefund", () => {
     ledger.push(grantEntry(intent));
     await seedRedemption({ subscriptionId, orgId, intent, amountMinor: 2500 });
 
-    await reversePassCreditOnRefund(intent);
+    await reversePassCreditOnRefund(intent, "event_pass");
 
     expect(stripeMock.createBalance).toHaveBeenCalledTimes(1);
     const [, params] = stripeMock.createBalance.mock.calls[0];
@@ -226,7 +226,7 @@ describe.skipIf(!HAS_DB)("reversePassCreditOnRefund", () => {
     ledger.push({ amount: 1500, currency: "gbp" });
     await seedRedemption({ subscriptionId, orgId, intent, amountMinor: 2500 });
 
-    await reversePassCreditOnRefund(intent);
+    await reversePassCreditOnRefund(intent, "event_pass");
 
     expect(stripeMock.createBalance).toHaveBeenCalledTimes(1);
     const [, params] = stripeMock.createBalance.mock.calls[0];
@@ -255,7 +255,7 @@ describe.skipIf(!HAS_DB)("reversePassCreditOnRefund", () => {
     ledger.push({ amount: 2500, currency: "gbp" });
     await seedRedemption({ subscriptionId, orgId, intent, amountMinor: 2500 });
 
-    await reversePassCreditOnRefund(intent);
+    await reversePassCreditOnRefund(intent, "event_pass");
 
     // Nothing to reverse — the Stripe call must not even be attempted.
     expect(stripeMock.createBalance).not.toHaveBeenCalled();
@@ -276,7 +276,7 @@ describe.skipIf(!HAS_DB)("reversePassCreditOnRefund", () => {
     // credited), and a pass refunded before it ever earned a credit.
     const intent = "pi_never_credited_" + uniq();
 
-    await reversePassCreditOnRefund(intent);
+    await reversePassCreditOnRefund(intent, "event_pass");
 
     expect(stripeMock.listBalance).not.toHaveBeenCalled();
     expect(stripeMock.retrieveCustomer).not.toHaveBeenCalled();
@@ -290,7 +290,7 @@ describe.skipIf(!HAS_DB)("reversePassCreditOnRefund", () => {
     const intent = "pi_" + uniq();
     await seedRedemption({ subscriptionId, orgId, intent, amountMinor: 2500, reversed: true });
 
-    await reversePassCreditOnRefund(intent);
+    await reversePassCreditOnRefund(intent, "event_pass");
 
     expect(stripeMock.listBalance).not.toHaveBeenCalled();
     expect(stripeMock.retrieveCustomer).not.toHaveBeenCalled();
@@ -305,7 +305,7 @@ describe.skipIf(!HAS_DB)("reversePassCreditOnRefund", () => {
     await seedRedemption({ subscriptionId, orgId, intent, amountMinor: 2500 });
     stripeMock.createBalance.mockRejectedValueOnce(new Error("Stripe is down"));
 
-    await expect(reversePassCreditOnRefund(intent)).resolves.toBeUndefined();
+    await expect(reversePassCreditOnRefund(intent, "event_pass")).resolves.toBeUndefined();
 
     const row = await redemptionRow(intent);
     expect(row?.reversed_at).toBeNull();
@@ -325,7 +325,7 @@ describe.skipIf(!HAS_DB)("reversePassCreditOnRefund", () => {
     ledger.push({ amount: -500, currency: "gbp" }); // unrelated credit
     await seedRedemption({ subscriptionId, orgId, intent, amountMinor: 2500 });
 
-    await reversePassCreditOnRefund(intent);
+    await reversePassCreditOnRefund(intent, "event_pass");
 
     // Cannot prove the split between this pass and the unrelated credit —
     // must not guess, so the balance is never even read, let alone touched.
@@ -354,7 +354,7 @@ describe.skipIf(!HAS_DB)("reversePassCreditOnRefund", () => {
       throw new Error("Stripe unreachable");
     });
 
-    await reversePassCreditOnRefund(intent);
+    await reversePassCreditOnRefund(intent, "event_pass");
 
     // "Cannot prove the pool is clean" fails the same direction as "proven
     // dirty" — never "assume clean and reverse anyway".
@@ -384,7 +384,7 @@ describe.skipIf(!HAS_DB)("reversePassCreditOnRefund", () => {
     ledger.push({ amount: 1500, currency: "gbp" });
     await seedRedemption({ subscriptionId, orgId, intent, amountMinor: 2500 });
 
-    await Promise.all([reversePassCreditOnRefund(intent), reversePassCreditOnRefund(intent)]);
+    await Promise.all([reversePassCreditOnRefund(intent, "event_pass"), reversePassCreditOnRefund(intent, "event_pass")]);
 
     expect(sendPassCreditReversalIncompleteAlertEmail).toHaveBeenCalledTimes(1);
     const row = await redemptionRow(intent);
@@ -399,7 +399,7 @@ describe.skipIf(!HAS_DB)("reversePassCreditOnRefund", () => {
     ledger.push({ amount: -500, currency: "gbp" }); // unrelated credit -> unsafe
     await seedRedemption({ subscriptionId, orgId, intent, amountMinor: 2500 });
 
-    await reversePassCreditOnRefund(intent);
+    await reversePassCreditOnRefund(intent, "event_pass");
 
     // Pre-fix, reversed_at alone freed pass_credit_redemptions_group_cap the
     // moment this ran, even though nothing was actually clawed back.
@@ -418,7 +418,7 @@ describe.skipIf(!HAS_DB)("reversePassCreditOnRefund", () => {
     ledger.push({ amount: 1500, currency: "gbp" });
     ledger.push({ amount: -500, currency: "gbp" }); // unrelated credit -> unsafe
     await seedRedemption({ subscriptionId, orgId, intent, amountMinor: 2500 });
-    await reversePassCreditOnRefund(intent);
+    await reversePassCreditOnRefund(intent, "event_pass");
 
     // A SECOND, different pass for the same group attempts to mint a fresh
     // credit — exactly the double-£25 shape the bug allowed.

@@ -2135,6 +2135,8 @@ export type DictionaryKey =
   | "passRevoked.panelBody"
   | "passRevoked.panelTitle"
   | "passRevoked.preheader"
+  | "passRevoked.rung.l"
+  | "passRevoked.rung.m"
   | "passRevoked.subject"
   | "passRevoked.text"
   | "passRevoked.textAllowance"

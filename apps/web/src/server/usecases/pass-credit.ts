@@ -3,6 +3,7 @@ import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { sendPassCreditReversalIncompleteAlertEmail } from "@/lib/email";
+import type { PassKey } from "@/lib/currency";
 
 /**
  * Pass-to-Pro upgrade credit (v3/07, D12). An org that bought a $29 Event Pass
@@ -503,7 +504,22 @@ async function otherCreditActivitySince(
  * no-op when there is nothing to reverse. Never throws — same contract as
  * `creditPassTowardSubscription` — and the caller discards its result.
  */
-export async function reversePassCreditOnRefund(intent: string): Promise<void> {
+export async function reversePassCreditOnRefund(
+  intent: string,
+  /**
+   * The RUNG the refunded pass was, for the staff alert below — or null when
+   * the caller found no `competition_passes` row for this intent, in which case
+   * there is no redemption row either and this function returns before ever
+   * using it (v17 #294).
+   *
+   * REQUIRED and passed in rather than looked up here: the wrapper reads the
+   * pass row BEFORE `revokePassForRefundedCharge` deletes it, which on a full
+   * refund is the last moment the rung exists. A default would put the wave's
+   * third silently-wrong-rung landmine on the one path that reports money the
+   * business could not claw back.
+   */
+  passKey: PassKey | null,
+): Promise<void> {
   const [redemption] = await sql<
     {
       subscription_id: string;
@@ -676,6 +692,10 @@ export async function reversePassCreditOnRefund(intent: string): Promise<void> {
         select name from competitions where id = ${redemption.competition_id}`;
       void sendPassCreditReversalIncompleteAlertEmail({
         to: alertTo,
+        // A redemption row only ever exists for a charge that WAS a pass, so
+        // the caller found a row and `passKey` is non-null here; the fallback
+        // keeps the alert honest rather than inventing a rung.
+        passKey: passKey ?? "event_pass",
         orgId: redemption.org_id,
         orgName: org?.name ?? "unknown",
         competitionName: comp?.name ?? "unknown",
