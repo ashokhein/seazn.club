@@ -306,6 +306,32 @@ describe.skipIf(!HAS_DB)("suspension is org-scoped, billing is group-scoped", ()
     expect(await groupOrgLimit(subId)).toBe(5);
   });
 
+  it("the degenerate (every-org-suspended) branch also honours a purchased add-on (v17 gap #293)", async () => {
+    // The NORMAL branch resolves through getLimit, which sums org_addons on top
+    // of the plan base. The every-org-suspended branch read plan_entitlements
+    // straight and never asked the add-on table at all, so a group that had
+    // bought extra organisations reported the bare plan cap the moment its last
+    // un-suspended org was suspended. Moderation state must not hide capacity
+    // the group is already paying for.
+    const { subId, orgIds } = await seedGroup("pro", 2);
+    for (const id of orgIds) {
+      await sql`update organizations set status = 'suspended' where id = ${id}`;
+      await invalidateOrgEntitlements(id);
+    }
+    expect(await groupOrgLimit(subId)).toBe(5); // pro base, no add-on yet
+
+    await sql`
+      insert into org_addons (wallet_id, target_org_id, feature_key, delta_each, qty, status)
+      values (${subId}, null, 'orgs.max_owned', 1, 2, 'active')`;
+
+    expect(await groupOrgLimit(subId)).toBe(7);
+
+    // Frozen-not-deleted: a canceled row lifts nothing, exactly as the resolver
+    // treats it on the normal branch.
+    await sql`update org_addons set status = 'canceled' where wallet_id = ${subId}`;
+    expect(await groupOrgLimit(subId)).toBe(5);
+  });
+
   it("keeps counting a suspended org toward the bill, and stops counting a deleted one", async () => {
     const { subId, orgIds } = await seedGroup("pro", 3);
     expect(await activeOrgCount(subId)).toBe(3);

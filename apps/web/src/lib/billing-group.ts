@@ -11,7 +11,7 @@ import "server-only";
 // arithmetic only, so it can be imported from either side without a cycle.
 import { sql } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
-import { getLimit } from "@/lib/entitlements";
+import { addonBonusForWallet, getLimit } from "@/lib/entitlements";
 
 /** The group an org bills through, or null if it has none. */
 export async function subscriptionIdForOrg(orgId: string): Promise<string | null> {
@@ -174,7 +174,17 @@ export async function groupOrgLimit(subscriptionId: string): Promise<number | nu
   const [pe] = await sql<{ int_value: number | null }[]>`
     select int_value from plan_entitlements
      where plan_key = ${grp.plan_key} and feature_key = 'orgs.max_owned'`;
-  return pe?.int_value ?? null;
+  // The plan base is only half the cap (v17 gap #293): the branch above sums
+  // purchased extra-organisation add-ons via getLimit, and this one must too, or
+  // suspending the last un-suspended org silently revokes capacity the group is
+  // paying $9/$19 a month for. `subscriptionId` IS the wallet id, so no org is
+  // needed to resolve one — which is the whole point, since none is available.
+  //
+  // A null base is UNLIMITED (or the plan has no row at all), and no add-on can
+  // raise "no cap", so short-circuit exactly as getLimit does rather than spend
+  // a round trip.
+  if (pe?.int_value == null) return null;
+  return pe.int_value + (await addonBonusForWallet(subscriptionId, "orgs.max_owned"));
 }
 
 /** Apply a limit resolved by groupOrgLimit to a count read under the lock.

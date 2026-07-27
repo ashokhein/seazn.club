@@ -423,22 +423,44 @@ export async function hasFeatureOnAnyPass(orgId: string, featureKey: string): Pr
  * the cap on the very next check, and a just-canceled one must drop it, without
  * waiting out the 300s entitlement TTL — which is exactly why the caller
  * (`getLimit`) sums this after `resolve()` returns, not inside it.
+ *
+ * This is the WALLET-keyed core (v17 gap #293), exported for callers that
+ * already KNOW the wallet and have no org to resolve one through. The only such
+ * caller today is `groupOrgLimit`'s every-org-suspended branch
+ * (lib/billing-group.ts): the subscription id it is asked about IS the wallet,
+ * and every live org in the group is suspended, so the org-keyed `addonBonus`
+ * below cannot reach that case at all.
+ *
+ * Omitting `orgId` narrows the sum to GROUP-WIDE rows only (`target_org_id is
+ * null`) — correct for a cap like orgs.max_owned, which is a property of the
+ * group and is never meaningfully scoped to one member org.
  */
-async function addonBonus(
-  orgId: string,
+export async function addonBonusForWallet(
+  walletId: string,
   featureKey: string,
+  orgId?: string,
   competitionId?: string,
 ): Promise<number> {
-  const walletId = await walletIdFor(orgId);
   const [r] = await sql<{ bonus: number }[]>`
     select coalesce(sum(delta_each * qty), 0)::int as bonus
       from org_addons
      where wallet_id = ${walletId}
        and feature_key = ${featureKey}
        and status in ('active', 'granted')
-       and (target_org_id is null or target_org_id = ${orgId})
+       and (target_org_id is null or target_org_id = ${orgId ?? null})
        and (target_competition_id is null or target_competition_id = ${competitionId ?? null})`;
   return r?.bonus ?? 0;
+}
+
+/** The org-keyed entry point: resolve the org's wallet, then sum. Rows targeted
+ *  AT this org count as well as the group-wide ones. */
+async function addonBonus(
+  orgId: string,
+  featureKey: string,
+  competitionId?: string,
+): Promise<number> {
+  const walletId = await walletIdFor(orgId);
+  return addonBonusForWallet(walletId, featureKey, orgId, competitionId);
 }
 
 /**
