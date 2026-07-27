@@ -56,6 +56,17 @@ vi.mock("@/lib/cache", async (importOriginal) => {
   return { ...actual, incrWindow };
 });
 
+// vi.hoisted for the same reason as the block at the top of this file: the
+// vi.mock factory below is hoisted above every import, so a plain top-level
+// const would still be in its TDZ when schedule-ai.ts pulls ai-runs-admin in.
+const { maybeAlertExpensiveRun } = vi.hoisted(() => ({
+  maybeAlertExpensiveRun: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/server/usecases/ai-runs-admin", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ai-runs-admin")>();
+  return { ...actual, maybeAlertExpensiveRun };
+});
+
 import { sql } from "@/lib/db";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -64,6 +75,7 @@ import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
 import { aiPlanForDivision } from "../schedule-ai";
+import { maybeAlertExpensiveRun as maybeAlertExpensiveRunSpy } from "../ai-runs-admin";
 import { GENERIC_CONFIG, seedOrg } from "./_seed";
 
 import { setOrgPlan } from "@/lib/__tests__/_billing-group";
@@ -232,6 +244,7 @@ beforeEach(() => {
   parse.mockReset();
   isServerFeatureEnabled.mockReset().mockResolvedValue(true);
   captureServer.mockReset().mockResolvedValue(undefined);
+  maybeAlertExpensiveRun.mockClear();
   rlCounts.clear();
   process.env.ANTHROPIC_API_KEY = "test-key";
   // Keep the model ladder on the mocked Anthropic rung: this worktree's dev
@@ -355,6 +368,65 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, credit-metered v17
       select count(*)::int as n from competition_events
       where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}`;
     expect(n).toBe(1);
+  });
+
+  it("records pack_units alongside cost, and calls the expensive-run alert check with the run's numbers (v17 gap #295)", async () => {
+    const auth = await seedPlusOrg();
+    const { divisionId, fixtureIds } = await seedPlannable(auth);
+    parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
+
+    // CALL-ORDER PIN: the alert must run AFTER the schedule.ai_generated row is
+    // committed. maybeAlertExpensiveRun reads its baseline median out of that
+    // same competition_events table, so the order decides whether a run is
+    // counted in its own baseline. At AI_RUN_MEDIAN_MIN_SAMPLE=20 the effect is
+    // arithmetically moot, but the contract must not drift silently — so the
+    // spy snapshots the committed row count at the moment it is called.
+    let generatedRowsWhenAlerted = -1;
+    maybeAlertExpensiveRun.mockImplementationOnce(async () => {
+      const [row] = await sql<{ n: number }[]>`
+        select count(*)::int as n from competition_events
+        where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}`;
+      generatedRowsWhenAlerted = row!.n;
+    });
+
+    await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" });
+
+    const [ok] = await sql<{ payload: Record<string, unknown> }[]>`
+      select payload from competition_events
+      where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}`;
+    // buildSchedulePack put every fixture in scope (no repair scope) — pack_units
+    // is the same count already reported to PostHog as `fixtures`.
+    expect(ok!.payload.pack_units).toBe(fixtureIds.length);
+
+    expect(maybeAlertExpensiveRun).toHaveBeenCalledTimes(1);
+    expect(generatedRowsWhenAlerted).toBe(1); // ledger row committed before the alert
+    const call = vi.mocked(maybeAlertExpensiveRunSpy).mock.calls[0]![0] as {
+      orgId: string;
+      competitionId: string;
+      phase: string;
+      model: string;
+      costUsd: number | null;
+    };
+    expect(call.orgId).toBe(auth.orgId);
+    expect(call.phase).toBe("schedule");
+    expect(typeof call.costUsd).toBe("number");
+
+    // Failures carry pack_units too (same fixture count the failed attempt saw).
+    parse.mockResolvedValueOnce({
+      parsed_output: null,
+      stop_reason: "refusal",
+      usage: { input_tokens: 700, output_tokens: 40 },
+    });
+    await expect(
+      aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" }),
+    ).rejects.toMatchObject({ code: "AI_PLAN_FAILED" });
+    const [failed] = await sql<{ payload: Record<string, unknown> }[]>`
+      select payload from competition_events
+      where type = 'schedule.ai_failed' and payload->>'division_id' = ${divisionId}`;
+    expect(failed!.payload.pack_units).toBe(fixtureIds.length);
+    // A failed run is not compared for the expensive-run alert (only ok) — a
+    // costly failure is a different alert class (#295 scope decision).
+    expect(maybeAlertExpensiveRun).toHaveBeenCalledTimes(1);
   });
 
   // The V302 per-division run caps (Pro 20 / Pro Plus 50) and their admin

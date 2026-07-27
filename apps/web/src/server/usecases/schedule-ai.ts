@@ -25,6 +25,7 @@ import { spendCredit, walletIdFor } from "@/lib/credits";
 import { rateLimit } from "@/lib/rate-limit";
 import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import { aiRunCostUsd } from "@/lib/ai-pricing";
+import { maybeAlertExpensiveRun } from "@/server/usecases/ai-runs-admin";
 import {
   slotFixtures,
   validateAssignments,
@@ -1583,6 +1584,11 @@ export async function aiPlanForDivision(
                       repair_rounds: usage.repair_rounds ?? 0,
                     },
                     cost_usd,
+                    // Size measure alongside cost (v17 gap #295 — instrument
+                    // now, weight later): the fixture count the pack builder
+                    // already computed, the same number already reported to
+                    // PostHog as `fixtures`.
+                    pack_units: movableIds.size,
                     // Provider diagnostics stay server-side (ops needs the real
                     // status; the tenant gets a bare 503).
                     ...(providerErr
@@ -1632,6 +1638,11 @@ export async function aiPlanForDivision(
                 model,
                 usage: result.usage,
                 cost_usd,
+                // Size measure alongside cost (v17 gap #295): the fixture
+                // count the pack builder already computed — the smallest
+                // correct instrumentation ahead of any size-weighted pricing
+                // decision (deferred, SPEC-2 §5.1).
+                pack_units: movableIds.size,
                 // Ladder telemetry: which model was tried first and rejected,
                 // the full ordered chain of rungs attempted (so a 3-rung fall
                 // gemini→sonnet→grok is auditable — `model` above is only the
@@ -1647,6 +1658,22 @@ export async function aiPlanForDivision(
                     }
                   : {}),
               } as never)}, ${auth.userId})`;
+  });
+
+  // Expensive-run watch (v17 gap #295): best-effort, never throws, silent
+  // without a baseline or STAFF_ALERT_EMAIL — see maybeAlertExpensiveRun.
+  // Deliberately AFTER the schedule.ai_generated insert above: the baseline
+  // median is read from that same table, so this run counts in its own window
+  // (moot at AI_RUN_MEDIAN_MIN_SAMPLE=20, but the order is pinned by test).
+  // Also deliberately success-only — an expensive FAILURE (schedule.ai_failed
+  // carries a real cost_usd) does not alert here; aborted/retried runs are a
+  // different cost story and a different alert class, out of #295's scope.
+  await maybeAlertExpensiveRun({
+    orgId: auth.orgId,
+    competitionId: gate.competitionId,
+    phase: "schedule",
+    model,
+    costUsd: cost_usd,
   });
 
   const officials_coverage = input.officials_policy
