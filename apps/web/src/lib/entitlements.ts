@@ -441,12 +441,50 @@ export async function addonBonusForWallet(
   orgId?: string,
   competitionId?: string,
 ): Promise<number> {
+  return addonBonusForWalletByStatus(
+    walletId,
+    featureKey,
+    COUNTING_ADDON_STATUSES,
+    orgId,
+    competitionId,
+  );
+}
+
+/** The statuses that COUNT toward a cap. 'canceled' is frozen-not-deleted
+ *  (V323) and never counts. */
+const COUNTING_ADDON_STATUSES = ["active", "granted"] as const;
+
+/**
+ * `addonBonusForWallet`, narrowed to a subset of statuses — the SAME statement,
+ * so the scope predicates cannot drift.
+ *
+ * It exists for one caller: `extraOrgsInUse` (server/usecases/extra-orgs.ts),
+ * which must subtract only the ADMIN-GRANTED half of the bonus. Capacity a
+ * group was GIVEN is not capacity it is renting, so a comped organisation must
+ * never make the customer look like they are standing on a purchased rider.
+ *
+ * It is parameterised rather than copied because the copy was already made
+ * once and already lost the `target_org_id` / `target_competition_id`
+ * predicates — a silent divergence from the very function it was inverting. A
+ * shared statement makes that class of bug unrepresentable; see
+ * `entitlements-duplicate-resolvers.test.ts` for why this codebase is strict
+ * about it.
+ */
+export async function addonBonusForWalletByStatus(
+  walletId: string,
+  featureKey: string,
+  statuses: readonly string[],
+  orgId?: string,
+  competitionId?: string,
+): Promise<number> {
+  // `in ()` is a syntax error, not an empty set — refuse to build one.
+  if (statuses.length === 0) return 0;
   const [r] = await sql<{ bonus: number }[]>`
     select coalesce(sum(delta_each * qty), 0)::int as bonus
       from org_addons
      where wallet_id = ${walletId}
        and feature_key = ${featureKey}
-       and status in ('active', 'granted')
+       and status in ${sql([...statuses])}
        and (target_org_id is null or target_org_id = ${orgId ?? null})
        and (target_competition_id is null or target_competition_id = ${competitionId ?? null})`;
   return r?.bonus ?? 0;

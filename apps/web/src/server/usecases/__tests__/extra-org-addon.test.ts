@@ -69,7 +69,7 @@ vi.mock("@/lib/email", async (importOriginal) => ({
 import { sql } from "@/lib/db";
 import { createOrgForUser } from "@/lib/auth";
 import { walletIdFor } from "@/lib/credits";
-import { getLimit } from "@/lib/entitlements";
+import { getLimit, invalidateOrgEntitlements } from "@/lib/entitlements";
 import { groupOrgLimit } from "@/lib/billing-group";
 import { HttpError } from "@/lib/errors";
 import { setOrgPlan } from "@/lib/__tests__/_billing-group";
@@ -180,6 +180,9 @@ function subWith(items: Stripe.SubscriptionItem[]): Stripe.Subscription {
 
 let proBase: number;
 let proPlusBase: number;
+/** What the resolver DEGRADES to — dunning, an incomplete first payment and a
+ *  suspended org all read this plan. The floor must never. */
+let communityBase: number;
 const proEntry = ORG_ADDONS.find((e) => e.planKey === "pro")!;
 const proPlusEntry = ORG_ADDONS.find((e) => e.planKey === "pro_plus")!;
 
@@ -188,9 +191,10 @@ beforeAll(async () => {
   // Plan bases are READ, never hard-coded (V314 seeded pro 5 / pro_plus 10).
   const rows = await sql<{ plan_key: string; int_value: number | null }[]>`
     select plan_key, int_value from plan_entitlements
-     where feature_key = 'orgs.max_owned' and plan_key in ('pro', 'pro_plus')`;
+     where feature_key = 'orgs.max_owned' and plan_key in ('pro', 'pro_plus', 'community')`;
   proBase = rows.find((r) => r.plan_key === "pro")?.int_value ?? 0;
   proPlusBase = rows.find((r) => r.plan_key === "pro_plus")?.int_value ?? 0;
+  communityBase = rows.find((r) => r.plan_key === "community")?.int_value ?? 0;
 });
 
 afterAll(async () => {
@@ -835,7 +839,7 @@ describe.skipIf(!HAS_DB)("extra-org usage floor — you cannot cancel what you a
   it("refuses to reduce below the organisations the group is actually using", async () => {
     // 11 live orgs on a base of 10: exactly one org is standing on the rider.
     const { walletId } = await groupInUse(proPlusBase + 1, 1);
-    expect(await extraOrgsInUse(walletId, "pro_plus")).toBe(1);
+    expect(await extraOrgsInUse(walletId, "pro_plus", 1)).toBe(1);
 
     await expect(setExtraOrgs(0)).rejects.toMatchObject({ status: 423 });
 
@@ -847,7 +851,7 @@ describe.skipIf(!HAS_DB)("extra-org usage floor — you cannot cancel what you a
 
   it("allows a reduction to exactly what is in use (the boundary, not one past it)", async () => {
     const { walletId } = await groupInUse(proPlusBase + 1, 2);
-    expect(await extraOrgsInUse(walletId, "pro_plus")).toBe(1);
+    expect(await extraOrgsInUse(walletId, "pro_plus", 2)).toBe(1);
 
     const result = await setExtraOrgs(1);
 
@@ -875,7 +879,7 @@ describe.skipIf(!HAS_DB)("extra-org usage floor — you cannot cancel what you a
     const leaverOwner = await makeUser();
     const leaver = await createOrgForUser(leaverOwner, `Org Addon Leaver ${uniq()}`);
     await sql`update organizations set subscription_id = ${walletId} where id = ${leaver.id}`;
-    expect(await extraOrgsInUse(walletId, "pro_plus")).toBe(1);
+    expect(await extraOrgsInUse(walletId, "pro_plus", 1)).toBe(1);
     await expect(setExtraOrgs(0)).rejects.toMatchObject({ status: 423 });
 
     // The documented way out — the real usecase, not a hand-written UPDATE.
@@ -883,7 +887,7 @@ describe.skipIf(!HAS_DB)("extra-org usage floor — you cannot cancel what you a
 
     // The group is back inside its plan's own cap, so the rider is now
     // genuinely optional and cancelling it is allowed.
-    expect(await extraOrgsInUse(walletId, "pro_plus")).toBe(0);
+    expect(await extraOrgsInUse(walletId, "pro_plus", 1)).toBe(0);
     retrieveSpy.mockResolvedValue({
       id: stripeSubId,
       items: {
@@ -903,7 +907,10 @@ describe.skipIf(!HAS_DB)("extra-org usage floor — you cannot cancel what you a
   });
 
   it("an ADMIN-COMPED rider is not counted as usage — a comped group is never forced to buy", async () => {
-    const { walletId } = await groupInUse(proPlusBase + 1, 0);
+    // 11 orgs on a base of 10, ONE purchased rider and one staff comp. The
+    // purchased rider matters: with none, the clamp would answer 0 whatever the
+    // comp arithmetic did, and this test would prove nothing.
+    const { walletId } = await groupInUse(proPlusBase + 1, 1);
     // SPEC-3 staff comp: status='granted', no stripe_item_id. It is what is
     // holding org #11 up, so it must lower the floor, or this group is told to
     // buy a rider for capacity it was given.
@@ -911,15 +918,17 @@ describe.skipIf(!HAS_DB)("extra-org usage floor — you cannot cancel what you a
       insert into org_addons (wallet_id, target_org_id, feature_key, delta_each, qty, status)
       values (${walletId}, null, 'orgs.max_owned', 1, 1, 'granted')`;
 
-    expect(await extraOrgsInUse(walletId, "pro_plus")).toBe(0);
+    // Without the comp this is 1; the comp is the only reason it is 0.
+    expect(await extraOrgsInUse(walletId, "pro_plus", 1)).toBe(0);
     await expect(setExtraOrgs(0)).resolves.toMatchObject({ extraOrgs: 0 });
+    expect(itemDelSpy).toHaveBeenCalledWith("si_addon", { proration_behavior: "none" });
   });
 
   it("never traps a group whose plan has no orgs.max_owned row at all", async () => {
     // Unknown base => no floor. Refusing on the basis of a cap we cannot read
     // would be the one unrecoverable outcome, so this fails OPEN.
     const { walletId } = await groupInUse(proPlusBase + 1, 1);
-    expect(await extraOrgsInUse(walletId, `no_such_plan_${uniq()}`)).toBe(0);
+    expect(await extraOrgsInUse(walletId, `no_such_plan_${uniq()}`, 1)).toBe(0);
   });
 });
 
@@ -1144,7 +1153,7 @@ describe.skipIf(!HAS_DB)("extra-org usage floor — a staff override is the base
 
     // 50 covers all 20 organisations, so NOTHING is standing on a rider.
     // Against plan_entitlements this read 20 - 5 = 15 and refused.
-    expect(await extraOrgsInUse(walletId, "pro")).toBe(0);
+    expect(await extraOrgsInUse(walletId, "pro", 3)).toBe(0);
 
     retrieveSpy.mockResolvedValue({
       id: stripeSubId,
@@ -1163,21 +1172,26 @@ describe.skipIf(!HAS_DB)("extra-org usage floor — a staff override is the base
   it("still holds the floor when the override is SMALLER than the organisations in use", async () => {
     // An override of 6 on a group of 8: two organisations are genuinely
     // standing on purchased riders, so the guard must still bite. Proves the
-    // fix reads the override rather than merely ignoring the base.
+    // fix READS the override rather than merely ignoring the base.
+    //
+    // FOUR riders purchased, not two, deliberately: at two the clamp would cap
+    // the answer at 2 and the plan base of 5 (raw floor 3) would give the same
+    // 2, so the test could not tell the override from the plan. At four,
+    // override-6 answers 2 and plan-5 answers 3.
     const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro");
     await addFillerOrgs(walletId, 7);
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, int_value)
       values (${orgId}, 'orgs.max_owned', 6)`;
 
-    expect(await extraOrgsInUse(walletId, "pro")).toBe(2);
+    expect(await extraOrgsInUse(walletId, "pro", 4)).toBe(2);
 
     retrieveSpy.mockResolvedValue({
       id: stripeSubId,
       items: {
         data: [
           { id: "si_plan", quantity: 8, price: { id: "price_plan", billing_scheme: "tiered" } },
-          { id: "si_addon", quantity: 2, price: { id: "price_addon", lookup_key: proEntry.lookupKey } },
+          { id: "si_addon", quantity: 4, price: { id: "price_addon", lookup_key: proEntry.lookupKey } },
         ],
       },
     });
@@ -1186,15 +1200,286 @@ describe.skipIf(!HAS_DB)("extra-org usage floor — a staff override is the base
     expect(itemUpdateSpy).not.toHaveBeenCalled();
   });
 
-  it("an EXPIRED override does not count — the resolver ignores it, so must the floor", async () => {
+  it("reads expires_at BOTH ways: the same override counts when live and not when expired", async () => {
+    // Round 4 shipped this as an expired-only assertion, and 8 - 5 = 3 came out
+    // the same under the implementation it was meant to guard AND the one it
+    // replaced — it carried no regression weight at all. Driving the SAME row
+    // through both states is what discriminates: an implementation that ignores
+    // overrides fails the live half, and one that ignores expiry fails the
+    // expired half. Neither can be reached by accident.
     const { orgId, walletId } = await makeBilledGroupOrg("pro");
     await addFillerOrgs(walletId, 7);
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, int_value, expires_at)
       values (${orgId}, 'orgs.max_owned', 50, now() - interval '1 day')`;
 
-    // Back to the plan base of 5: 8 orgs - 5 = 3 riders genuinely in use.
-    expect(await extraOrgsInUse(walletId, "pro")).toBe(3);
+    // Expired => dead, exactly as resolve() treats it. Back to the plan base of
+    // 5: 8 orgs - 5 = 3 riders genuinely in use.
+    expect(await extraOrgsInUse(walletId, "pro", 5)).toBe(3);
+
+    // The one and only change: push the SAME row's expiry into the future.
+    await sql`
+      update org_entitlement_overrides set expires_at = now() + interval '30 days'
+       where org_id = ${orgId} and feature_key = 'orgs.max_owned'`;
+
+    // 50 now covers all 8, so nothing stands on a rider.
+    expect(await extraOrgsInUse(walletId, "pro", 5)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round-5 CRITICAL — round 4 derived the floor from `groupOrgLimit`, which
+// resolves through `resolve()`. `hasLiveSubscription` ADMITS `past_due` and
+// `incomplete` (lib/subscription-status.ts), while `resolve()` collapses both
+// to `community` (lib/entitlements.ts). So the floor was computed against the
+// DEGRADED base rather than the plan the customer is paying for, and a customer
+// in dunning trying to cancel the rider they can no longer afford was refused
+// 423 and told to move an organisation out — when the remedy is to pay the
+// invoice. Deriving from the resolver re-created the very trap round 4 removed,
+// one layer down.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!HAS_DB)("extra-org usage floor — dunning must not invent riders", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  /** A Pro group of `liveOrgs` organisations with `riders` purchased add-on
+   *  ROWS in the DB (what the webhook writes) and a matching Stripe item. */
+  async function proGroupWithRiders(liveOrgs: number, riders: number) {
+    const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro");
+    await addFillerOrgs(walletId, liveOrgs - 1);
+    if (riders > 0) {
+      await sql`
+        insert into org_addons
+          (wallet_id, target_org_id, feature_key, delta_each, qty, status, stripe_item_id)
+        values (${walletId}, null, 'orgs.max_owned', 1, ${riders}, 'active', ${`si_${uniq()}`})`;
+    }
+    retrieveSpy.mockResolvedValue({
+      id: stripeSubId,
+      items: {
+        data: [
+          { id: "si_plan", quantity: liveOrgs, price: { id: "price_plan", billing_scheme: "tiered" } },
+          ...(riders > 0
+            ? [
+                {
+                  id: "si_addon",
+                  quantity: riders,
+                  price: { id: "price_addon", lookup_key: proEntry.lookupKey },
+                },
+              ]
+            : []),
+        ],
+      },
+    });
+    return { orgId, walletId, stripeSubId };
+  }
+
+  it("a PAST_DUE group beyond the grace window is not billed a floor it never bought", async () => {
+    // Exactly the measured case: Pro, 5 live orgs (= the plan base), 2 riders.
+    const { orgId, walletId } = await proGroupWithRiders(proBase, 2);
+    await sql`
+      update subscriptions
+         set status = 'past_due', status_changed_at = now() - interval '30 days'
+       where id = ${walletId}`;
+    await invalidateOrgEntitlements(orgId);
+
+    // POSITIVE DISCRIMINATOR (this suite's absence-assertions can pass against
+    // their own hole otherwise): prove the resolver really IS degraded here, so
+    // a floor of 0 below cannot be passing merely because nothing degraded.
+    // Healthy this is proBase + 2; in dunning it reads the COMMUNITY base.
+    expect(await groupOrgLimit(walletId)).toBe(communityBase + 2);
+
+    // Nothing stands on a rider: 5 organisations, a base of 5. Round 4 read the
+    // degraded cap and answered 4 — four riders that were never purchased.
+    expect(await extraOrgsInUse(walletId, "pro", 2)).toBe(0);
+  });
+
+  it("an INCOMPLETE subscription — a first payment that never landed — does not raise it either", async () => {
+    // `incomplete` gets no grace at all (#206/#223-B), so it degrades at once.
+    const { orgId, walletId } = await proGroupWithRiders(proBase, 2);
+    await sql`update subscriptions set status = 'incomplete' where id = ${walletId}`;
+    await invalidateOrgEntitlements(orgId);
+
+    expect(await groupOrgLimit(walletId)).toBe(communityBase + 2);
+    expect(await extraOrgsInUse(walletId, "pro", 2)).toBe(0);
+  });
+
+  it("a group in dunning can still CANCEL the rider it can no longer afford", async () => {
+    // The end-to-end shape of the trap. Round 4 answered 423 here, telling a
+    // customer to move an organisation out when the remedy is the invoice.
+    const { orgId, walletId } = await proGroupWithRiders(proBase, 2);
+    await sql`
+      update subscriptions
+         set status = 'past_due', status_changed_at = now() - interval '30 days'
+       where id = ${walletId}`;
+    await invalidateOrgEntitlements(orgId);
+
+    await expect(setExtraOrgs(0)).resolves.toMatchObject({ extraOrgs: 0 });
+    expect(itemDelSpy).toHaveBeenCalledWith("si_addon", { proration_behavior: "none" });
+  });
+
+  // NOTE for the next reader: a suspended-org case was drafted here and
+  // DELIBERATELY NOT SHIPPED. resolve() degrades a suspended org to community
+  // too, so it looks like the same bug — but `groupCapResolvingOrg` prefers a
+  // non-suspended org and `groupOrgLimit`'s degenerate branch reads
+  // plan_entitlements directly, so suspension could not reach the floor even
+  // before this fix. The test passed against the implementation it was meant to
+  // catch, i.e. it carried no regression weight, so it is a comment instead.
+});
+
+// ---------------------------------------------------------------------------
+// Round-5 CRITICAL, second half — `floor > previousExtraOrgs` is incoherent by
+// construction: you cannot stand on more riders than you purchased. Its absence
+// is what let the dunning bug ship, so it gets its own pin. It is reachable
+// with nothing broken at all: caps are ADMISSION-ONLY, so a plan downgrade
+// leaves a group holding more organisations than its total capacity and the raw
+// arithmetic blames the whole overhang on riders.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!HAS_DB)("extra-org usage floor — it can never quote unpurchased riders", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  async function overCapProGroup(liveOrgs: number, riders: number) {
+    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro");
+    await addFillerOrgs(walletId, liveOrgs - 1);
+    retrieveSpy.mockResolvedValue({
+      id: stripeSubId,
+      items: {
+        data: [
+          { id: "si_plan", quantity: liveOrgs, price: { id: "price_plan", billing_scheme: "tiered" } },
+          ...(riders > 0
+            ? [
+                {
+                  id: "si_addon",
+                  quantity: riders,
+                  price: { id: "price_addon", lookup_key: proEntry.lookupKey },
+                },
+              ]
+            : []),
+        ],
+      },
+    });
+    return { walletId, stripeSubId };
+  }
+
+  it("an over-cap group is quoted its RIDERS, not its overhang", async () => {
+    // 9 organisations on a Pro base of 5 with a single rider — total capacity
+    // 6, so three organisations are over-cap. The raw arithmetic says 4.
+    const { walletId } = await overCapProGroup(proBase + 4, 1);
+    expect(await extraOrgsInUse(walletId, "pro", 1)).toBe(1);
+  });
+
+  it("a group that purchased NOTHING has no floor, whatever its overhang", async () => {
+    const { walletId } = await overCapProGroup(proBase + 4, 0);
+    expect(await extraOrgsInUse(walletId, "pro", 0)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round-5 MINOR — the added-back sum omitted the scope predicates of the very
+// function it inverts (`addonBonusForWallet`: `target_org_id is null or = the
+// representative org`, `target_competition_id is null`). It now runs the SAME
+// statement, narrowed to 'granted', so the two cannot diverge again.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!HAS_DB)("extra-org usage floor — comps count only where they apply", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  /** 8 organisations on a Pro base of 5, with 5 riders billed so the clamp
+   *  never masks the arithmetic. Baseline floor is 3. */
+  async function group8() {
+    const { orgId, walletId } = await makeBilledGroupOrg("pro");
+    await addFillerOrgs(walletId, 7);
+    return { orgId, walletId };
+  }
+
+  const grant = (walletId: string, targetOrg: string | null, targetComp: string | null, qty: number) =>
+    sql`insert into org_addons
+          (wallet_id, target_org_id, target_competition_id, feature_key, delta_each, qty, status)
+        values (${walletId}, ${targetOrg}, ${targetComp}, 'orgs.max_owned', 1, ${qty}, 'granted')`;
+
+  it("baseline: no comp, so the plan base alone sets the floor", async () => {
+    const { walletId } = await group8();
+    expect(await extraOrgsInUse(walletId, "pro", 5)).toBe(3);
+  });
+
+  it("a GROUP-WIDE comp lowers the floor", async () => {
+    const { walletId } = await group8();
+    await grant(walletId, null, null, 2);
+    expect(await extraOrgsInUse(walletId, "pro", 5)).toBe(1);
+  });
+
+  it("a comp targeted AT the representative org lowers it too (the `or =` half)", async () => {
+    const { orgId, walletId } = await group8();
+    await grant(walletId, orgId, null, 2);
+    expect(await extraOrgsInUse(walletId, "pro", 5)).toBe(1);
+  });
+
+  it("a comp granted to ANOTHER organisation does not lower this group's floor", async () => {
+    const { walletId } = await group8();
+    const { orgId: strangerId } = await makeGroupOrg("pro");
+    await grant(walletId, strangerId, null, 2);
+    // Still 3. Without the target_org_id predicate this read 1.
+    expect(await extraOrgsInUse(walletId, "pro", 5)).toBe(3);
+  });
+
+  it("a COMPETITION-scoped comp does not lower an org-level cap", async () => {
+    const { walletId } = await group8();
+    await grant(walletId, null, randomUUID(), 2);
+    expect(await extraOrgsInUse(walletId, "pro", 5)).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round-5 — the delete-then-create window, PINNED AS IT STANDS TODAY. RF2 moved
+// the price resolve above the delete loop, which closed the 503 half; the
+// `create` call itself is still outside any transaction Stripe can offer, so a
+// create that fails after a successful delete strands the customer with no
+// rider. The report deferred the real fix (a single
+// `subscriptions.update({ items: [...] })`) but left it with NO red to turn
+// green. This is that red: when the items[] rewrite lands,
+// `subscriptionItems.del` stops being called and this test fails, which is
+// exactly the signal the follow-up needs.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!HAS_DB)("extra-org tier swap — today's non-atomic window", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    pricesListSpy.mockResolvedValue({ data: [{ id: "price_org_addon" }] });
+  });
+
+  it("a create that fails AFTER the delete leaves the group with no rider (follow-up: items[])", async () => {
+    const { stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    // Upgraded group still carrying the Pro-priced rider: a swap, not an update.
+    retrieveSpy.mockResolvedValue({
+      id: stripeSubId,
+      items: {
+        data: [
+          { id: "si_plan", quantity: 1, price: { id: "price_plan", billing_scheme: "tiered" } },
+          { id: "si_old_pro", quantity: 2, price: { id: "price_old", lookup_key: proEntry.lookupKey } },
+        ],
+      },
+    });
+    itemCreateSpy.mockRejectedValueOnce(new Error("stripe_down"));
+
+    await expect(setExtraOrgs(2)).rejects.toThrow(/stripe_down/);
+
+    // TODAY'S BEHAVIOUR, not the desired one: the working rider is already
+    // gone, its replacement never landed, and the error reaches the caller as a
+    // 500. The customer has lost capacity they were paying for until they retry.
+    expect(itemDelSpy).toHaveBeenCalledWith("si_old_pro", {
+      proration_behavior: "create_prorations",
+    });
+    expect(itemCreateSpy).toHaveBeenCalledTimes(1);
   });
 });
 

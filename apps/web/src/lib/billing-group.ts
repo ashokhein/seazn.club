@@ -132,6 +132,29 @@ export async function assertGroupMayHoldAnotherOrg(subscriptionId: string): Prom
 }
 
 /**
+ * The member organisation whose per-org entitlements speak for the WHOLE
+ * group's `orgs.max_owned` — the oldest live one that is NOT suspended, and a
+ * suspended one only if that is all there is.
+ *
+ * Extracted so there is exactly ONE statement of "which org answers for the
+ * group's cap". `groupOrgLimit` resolves the cap through it; `extraOrgsInUse`
+ * (server/usecases/extra-orgs.ts) reads that org's `org_entitlement_overrides`
+ * row through it. A second copy of this pick would let the purchase floor and
+ * the admission cap silently disagree about which override applies.
+ */
+export async function groupCapResolvingOrg(
+  subscriptionId: string,
+): Promise<{ id: string; status: string } | null> {
+  // `status = 'suspended'` orders false (0) before true (1).
+  const [pick] = await sql<{ id: string; status: string }[]>`
+    select id, status from organizations
+     where subscription_id = ${subscriptionId} and deleted_at is null
+     order by (status = 'suspended'), created_at
+     limit 1`;
+  return pick ?? null;
+}
+
+/**
  * The group's `orgs.max_owned`, resolved WITHOUT a transaction. null means
  * unlimited, or that there is no member org to resolve a plan through.
  *
@@ -153,13 +176,7 @@ export async function assertGroupMayHoldAnotherOrg(subscriptionId: string): Prom
  * the resolving org is the oldest one that is NOT suspended.
  */
 export async function groupOrgLimit(subscriptionId: string): Promise<number | null> {
-  // Oldest non-suspended live org first; a suspended one only if that is all
-  // there is. `status = 'suspended'` orders false (0) before true (1).
-  const [pick] = await sql<{ id: string; status: string }[]>`
-    select id, status from organizations
-     where subscription_id = ${subscriptionId} and deleted_at is null
-     order by (status = 'suspended'), created_at
-     limit 1`;
+  const pick = await groupCapResolvingOrg(subscriptionId);
   if (!pick) return null;
   if (pick.status !== "suspended") return getLimit(pick.id, "orgs.max_owned");
 
