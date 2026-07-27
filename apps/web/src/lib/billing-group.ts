@@ -180,9 +180,20 @@ export async function groupOrgLimit(subscriptionId: string): Promise<number | nu
   // paying $9/$19 a month for. `subscriptionId` IS the wallet id, so no org is
   // needed to resolve one — which is the whole point, since none is available.
   //
-  // A null base is UNLIMITED (or the plan has no row at all), and no add-on can
-  // raise "no cap", so short-circuit exactly as getLimit does rather than spend
-  // a round trip.
+  // TWO different states reach this short-circuit, and only ONE of them agrees
+  // with getLimit. Named separately because a later reader who "tightens" the
+  // wrong half breaks the correct one:
+  //
+  //  - `int_value` NULL = UNLIMITED. Exact parity with getLimit: no add-on can
+  //    raise "no cap", so both answer unlimited and skipping the bonus round
+  //    trip changes nothing.
+  //
+  //  - NO ROW AT ALL for the key. NOT parity: getLimit reports a missing row as
+  //    base 0 and adds the bonus on top, i.e. it REFUSES; this returns null,
+  //    i.e. UNLIMITED. Pre-existing behaviour, unchanged by v17 gap #293 and
+  //    reachable only in this degenerate branch (every live org in the group
+  //    suspended AND the plan carrying no orgs.max_owned row). Anyone closing
+  //    that divergence must close only THIS half.
   if (pe?.int_value == null) return null;
   return pe.int_value + (await addonBonusForWallet(subscriptionId, "orgs.max_owned"));
 }

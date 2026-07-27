@@ -224,23 +224,37 @@ describe.skipIf(!HAS_DB)("churn cancels the recurring add-ons it was renting", (
     expect(rows[0]!.qty).toBe(2);
   });
 
-  it("leaves the admin comp and the seat rider alone", async () => {
+  // An INVARIANT. This assertion must never go red: an admin comp is capacity
+  // the group was GIVEN, not something Stripe was billing, so no cancel path
+  // may ever revoke it. Deliberately split from the seat assertion below, which
+  // pins a BUG — bundling the two meant fixing that bug would red a test whose
+  // name promised a permanent rule.
+  it("leaves the admin comp alone — a grant is not something Stripe was billing", async () => {
     const { subId, stripeSubId } = await seedChurnGroup();
 
     await processStripeEvent(deletedEvent(stripeSubId, subId));
 
-    // An admin grant (status='granted', null stripe_item_id) is not something
-    // Stripe was billing, so churn must not revoke it — the same scoping the
-    // add-on sweep uses.
+    // status='granted', null stripe_item_id — the same scoping the add-on sweep
+    // uses, so both agree on what a comp is.
     const [granted] = await sql<{ status: string }[]>`
       select status from org_addons
        where wallet_id = ${subId} and feature_key = 'orgs.max_owned'
          and stripe_item_id is null`;
     expect(granted!.status).toBe("granted");
+  });
 
-    // Seats are a DIFFERENT feature key on the same wallet. They have the same
-    // churn hole (inherited, not introduced here) and closing it is a separate
-    // job — but this cancel must not reach across into them either way.
+  // PINNED BUG, not an invariant. Seats have the same churn hole this describe
+  // block closes for orgs.max_owned: a `members.max` rider outlives the
+  // subscription that paid for it. That is INHERITED, not introduced by v17 gap
+  // #293, and is tracked as issue #330. This test records TODAY's behaviour so
+  // the #293 cancel is proven not to reach across feature keys; when #330 is
+  // fixed, THIS is the test that should go red, and flipping it to 'canceled'
+  // is the expected edit.
+  it("PINNED BUG #330: the seat rider survives churn — it must go red when #330 is fixed", async () => {
+    const { subId, stripeSubId } = await seedChurnGroup();
+
+    await processStripeEvent(deletedEvent(stripeSubId, subId));
+
     const [seat] = await sql<{ status: string }[]>`
       select status from org_addons
        where wallet_id = ${subId} and feature_key = 'members.max'`;
