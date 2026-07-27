@@ -1472,9 +1472,21 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
     // Stripe now emits a SECOND customer.subscription.updated describing the
     // item as we left it. Feed exactly that back in — the payload converge
     // itself rewrote, which is the same object Stripe would send.
+    //
+    // Note the re-priced item reports `lookup_key: null` (see the itemUpdate
+    // mock): that is the post-drift-replacement shape, and it is the shape that
+    // makes this test DISCRIMINATE. Comparing lookup keys, the settled item
+    // reads as "not the current tier" for ever, and every subsequent event
+    // tries to move it again — a handler that oscillates on its own output.
+    // Comparing price IDS, it reads as settled. Hence the silence assertion:
+    // "no update call" alone is satisfied by the duplicate guard refusing the
+    // write, which is a different reason and one that logs.
     vi.clearAllMocks();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     await convergeOrgAddonPrices(sub, walletId);
     expect(itemUpdateSpy).not.toHaveBeenCalled();
+    expect(logged).not.toHaveBeenCalled();
+    logged.mockRestore();
   });
 
   it("spends NO Stripe round trip when the subscription carries no rider at all", async () => {
