@@ -64,6 +64,8 @@ import { createOrgForUser } from "@/lib/auth";
 import { walletIdFor } from "@/lib/credits";
 import { getLimit } from "@/lib/entitlements";
 import { getSizePack, createSizePack, updateSizePack } from "@/lib/size-packs";
+import { SEAT_ADDON } from "@/lib/seat-addons";
+import { ORG_ADDON_FEATURE_KEY } from "@/lib/org-addons";
 import { createSizePackCheckout } from "../size-pack-checkout";
 import { processStripeEvent } from "../billing-events";
 import { GET as adminList, POST as adminCreate } from "@/app/api/admin/size-packs/route";
@@ -240,7 +242,7 @@ describe.skipIf(!HAS_DB)("size_pack_catalog V325 guard", () => {
       createSizePack({
         key: `sp-seat-${uniq()}`,
         label: "rogue seat pack",
-        feature_key: "members.max",
+        feature_key: SEAT_ADDON.featureKey,
         delta_each: 5,
         stripe_lookup_key: "seazn_size_pack_32",
       }),
@@ -258,8 +260,43 @@ describe.skipIf(!HAS_DB)("size_pack_catalog V325 guard", () => {
 
     // …and an EDIT to members.max is refused too.
     await expect(
-      updateSizePack(ok.key, { feature_key: "members.max" }),
+      updateSizePack(ok.key, { feature_key: SEAT_ADDON.featureKey }),
     ).rejects.toMatchObject({ status: 400 });
+  });
+
+  // v17 gap #293 (W6 Task 4b, F5): the extra-ORGANISATION add-on gave
+  // orgs.max_owned the SAME sweep the seat add-on gives members.max —
+  // syncOrgAddonsForSubscription cancels every active row on the wallet with a
+  // non-null stripe_item_id — and grantSizePackAddon writes exactly that shape
+  // with a one-time payment_intent id that is never in the sweep's seen-set.
+  // The guard covered only half the sweep-owned caps, so an admin-configured
+  // pack on orgs.max_owned was bought and then silently cancelled.
+  it("forbids a catalog row that lifts the org-addon-managed cap (orgs.max_owned)", async () => {
+    await expect(
+      createSizePack({
+        key: `sp-org-${uniq()}`,
+        label: "rogue org pack",
+        feature_key: ORG_ADDON_FEATURE_KEY,
+        delta_each: 2,
+        stripe_lookup_key: "seazn_size_pack_32",
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+
+    // Still admin-configurable for every cap NO sweep owns.
+    const ok = await createSizePack({
+      key: `sp-ok-org-${uniq()}`,
+      label: "entrants pack",
+      feature_key: FEATURE,
+      delta_each: 16,
+      stripe_lookup_key: "seazn_size_pack_32",
+    });
+
+    // An EDIT is the reachable path too — feature_key is admin-editable.
+    await expect(
+      updateSizePack(ok.key, { feature_key: ORG_ADDON_FEATURE_KEY }),
+    ).rejects.toMatchObject({ status: 400 });
+    // …and the refused edit wrote nothing.
+    expect((await getSizePack(ok.key))!.feature_key).toBe(FEATURE);
   });
 });
 
