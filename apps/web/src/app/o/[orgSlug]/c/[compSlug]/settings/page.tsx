@@ -84,7 +84,7 @@ export default async function CompetitionSettingsPage({
           <CompetitionPassEntry
             href={routes.competitionUpgrade(orgSlug, compSlug)}
             buyLabel={t(dict, "pass.entry.buy", {
-              price: formatMinor(passPrice(currency), currency),
+              price: formatMinor(passPrice(currency, "event_pass"), currency),
             })}
             activeLabel={t(dict, "pass.entry.active")}
             canBuy={canEdit}

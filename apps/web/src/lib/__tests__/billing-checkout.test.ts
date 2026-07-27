@@ -339,9 +339,9 @@ describe("currency price points (v3/07 §4)", () => {
     expect(proPrice("monthly", "gbp")).toBe(1500);
     expect(proPrice("monthly", "inr")).toBe(139900);
     expect(proPrice("annual", "usd")).toBe(15900);
-    expect(passPrice("usd")).toBe(2900);
-    expect(passPrice("gbp")).toBe(2500);
-    expect(passPrice("aud")).toBe(4500);
+    expect(passPrice("usd", "event_pass")).toBe(2900);
+    expect(passPrice("gbp", "event_pass")).toBe(2500);
+    expect(passPrice("aud", "event_pass")).toBe(4500);
   });
 
   it("formats whole amounts without decimals", () => {

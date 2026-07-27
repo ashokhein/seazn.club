@@ -78,15 +78,19 @@ export const PASS_KEYS = ["event_pass", "event_pass_l"] as const;
 export type PassKey = (typeof PASS_KEYS)[number];
 
 /**
- * Event Pass one-time price in minor units for a currency, straight from
- * stripe-plans.json — the same seed `stripe:sync` pushes to Stripe, so the
- * advertised price is the charged price for either rung.
+ * What one Event Pass rung COSTS TO ADVERTISE, in minor units, straight from
+ * stripe-plans.json — the same seed `stripe:sync` pushes to Stripe.
  *
- * `passKey` defaults to the M rung so every pre-#294 call site (the pricing
- * page, the upgrade gate, the ticket stubs, settings/billing) keeps its meaning
- * unchanged; only the M/L picker passes it explicitly.
+ * Display only. The actual charge never comes from here: pass checkout resolves
+ * `plans.stripe_price_id_onetime` by pass key (`api/billing/pass-checkout`) and
+ * Stripe prices from that. So a wrong `passKey` here MISQUOTES — the page says
+ * $29 and the customer is charged $59 — rather than mischarging. That failure
+ * is invisible to every test that does not compare the two, which is why
+ * `passKey` is REQUIRED (v17 #294): with two rungs live there is no longer a
+ * safe default, and making callers name the rung lets `tsc` enumerate every
+ * surface that has to make the choice.
  */
-export function passPrice(currency: Currency, passKey: PassKey = "event_pass"): number {
+export function passPrice(currency: Currency, passKey: PassKey): number {
   const pass = stripePlans.passes?.find((p) => p.key === passKey);
   if (!pass) throw new Error(`stripe-plans.json is missing the ${passKey}`);
   return amountFor(pass.price, currency);

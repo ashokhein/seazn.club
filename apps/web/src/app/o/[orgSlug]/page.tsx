@@ -62,7 +62,7 @@ export default async function OrgHomePage({
     preferredCurrency(org.id),
   ]);
   const passed = new Set(passRows.map((r) => r.competition_id));
-  const passLabel = formatMinor(passPrice(currency), currency);
+  const passLabel = formatMinor(passPrice(currency, "event_pass"), currency);
 
   // Live first, then Registration open, Draft, Completed (v3/03 §2);
   // secondary = the query's recency order, kept by stable sort.

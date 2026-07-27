@@ -186,7 +186,7 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
   }
 
   if (passHref) {
-    const passLabel = `${formatMinor(passPrice("usd"), "usd")} one-time`;
+    const passLabel = `${formatMinor(passPrice("usd", "event_pass"), "usd")} one-time`;
     const proLabel = `${formatMinor(proPrice("monthly", "usd"), "usd")}/mo`;
     return (
       <div

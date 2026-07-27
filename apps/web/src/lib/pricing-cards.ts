@@ -102,7 +102,7 @@ export function ticketTiers(currency: Currency): TicketTier[] {
     { tier: "Community", price: "Free", bullets: FREE_FEATURES.slice(0, 4) },
     {
       tier: "Event Pass",
-      price: formatMinor(passPrice(currency), currency),
+      price: formatMinor(passPrice(currency, "event_pass"), currency),
       period: " once",
       bullets: PASS_FEATURES.slice(0, 4),
       glow: true,

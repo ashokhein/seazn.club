@@ -41,7 +41,7 @@ import type { Dict } from "@/lib/i18n-constants";
 let pathname: string | null = "/o/riverside/c/summer-league/d/new";
 vi.mock("next/navigation", () => ({ usePathname: () => pathname }));
 
-const PASS_PRICE = formatMinor(passPrice("usd"), "usd"); // "$29"
+const PASS_PRICE = formatMinor(passPrice("usd", "event_pass"), "usd"); // "$29"
 
 /** A key the pass lifts, and one it can never lift. */
 const LIFTABLE = "divisions.per_competition.max";

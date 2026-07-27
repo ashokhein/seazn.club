@@ -7,7 +7,7 @@ import {
   PASS_CREDIT_GRANT,
   ticketTiers,
 } from "../pricing-cards";
-import { passPrice } from "../currency";
+import { SUPPORTED_CURRENCIES, passPrice } from "../currency";
 import { sql } from "@/lib/db";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -57,17 +57,31 @@ describe("pricing cards", () => {
 
   // v17 #294 — the L rung's $59 price point, per-currency, alongside M's. Both
   // rungs are resolved by `passKey` from the SAME stripe-plans.json `passes`
-  // array stripe-sync seeds Stripe from, so an L price can never drift from
-  // what is charged. The default arg is pinned too: every pre-#294 call site
-  // passes one argument and must keep getting M.
+  // array stripe-sync seeds Stripe from, so a quoted price cannot drift from
+  // the price object Stripe holds for that rung.
   it("passPrice resolves both Event Pass rungs, keyed by passKey", () => {
-    expect(passPrice("usd")).toBe(2900); // default arg unchanged — M
     expect(passPrice("usd", "event_pass")).toBe(2900);
     expect(passPrice("usd", "event_pass_l")).toBe(5900);
     expect(passPrice("gbp", "event_pass_l")).toBe(4900);
     expect(passPrice("eur", "event_pass_l")).toBe(5900);
     expect(passPrice("inr", "event_pass_l")).toBe(449900);
     expect(passPrice("aud", "event_pass_l")).toBe(8900);
+  });
+
+  // `passKey` is REQUIRED (no default), so a surface that forgets the rung is a
+  // compile error rather than a page that quotes $29 for a $59 purchase. The
+  // per-currency sweep is what makes that guarantee real: if any currency ever
+  // resolved both rungs to the same amount, the picker would render two
+  // identical prices and no other test would notice.
+  it("quotes a DIFFERENT price for M and L in every supported currency", () => {
+    const same = SUPPORTED_CURRENCIES.filter(
+      (c) => passPrice(c, "event_pass") === passPrice(c, "event_pass_l"),
+    );
+    expect(same.join(", ")).toBe("");
+    for (const c of SUPPORTED_CURRENCIES) {
+      expect(passPrice(c, "event_pass_l"), `${c}: L must quote above M`)
+        .toBeGreaterThan(passPrice(c, "event_pass"));
+    }
   });
 });
 

@@ -263,7 +263,7 @@ function Ticket({
   granted: boolean;
 }) {
   const held = state.kind === "owned" || state.kind === "ceiling";
-  const price = formatMinor(passPrice(currency), currency);
+  const price = formatMinor(passPrice(currency, "event_pass"), currency);
 
   return (
     <section

@@ -582,7 +582,7 @@ export default async function BillingPage({
         <BillingPassOffer
           rows={passCandidates}
           orgSlug={orgSlug}
-          price={formatMinor(passPrice(currency), currency)}
+          price={formatMinor(passPrice(currency, "event_pass"), currency)}
           dict={dict}
         />
 

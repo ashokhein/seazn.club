@@ -137,7 +137,7 @@ export default async function PricingPage({
   const plusCreditsLine =
     plusCredits != null ? t(d, "pricing.credits.perMonthOperator", { count: plusCredits }) : null;
 
-  const passLabel = formatMinor(passPrice(currency), currency);
+  const passLabel = formatMinor(passPrice(currency, "event_pass"), currency);
   // Who is reading the Event Pass column? An anonymous visitor still gets the
   // signup path; a signed-in organiser gets handed to their competition list,
   // which is the only place a pass can actually be bought. The nav on this very
