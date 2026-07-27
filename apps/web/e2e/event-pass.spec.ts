@@ -1073,6 +1073,13 @@ test.describe("the rung the buyer picks is the rung Stripe is asked for", () => 
      *  session that opened — asserting the wire body on the way through. */
     async function openThroughTheUi(rung: PassKey): Promise<Stripe.Checkout.Session> {
       const seen = posted.length;
+      // Both watermarks, not just the request one. The response handler runs an
+      // `await res.json()`, so the secret lands strictly later than its POST —
+      // and on the SECOND call through here a `secrets.length > 0` poll is
+      // already satisfied by the FIRST leg's secret, so a slow body would let
+      // this read the previous rung's session id. Everything downstream then
+      // asserts against the wrong session and reds for the wrong reason.
+      const seenSecrets = secrets.length;
       await page.goto(upgradeUrl(rig));
       // M is options[0] and therefore pre-selected. Asserted, not assumed: "L
       // reached the wire" proves nothing if L was what the page opened on.
@@ -1084,7 +1091,7 @@ test.describe("the rung the buyer picks is the rung Stripe is asked for", () => 
       // The sheet mounting at all is the proof the route did not 503 for L.
       await expect(page.locator('iframe[src*="stripe.com"]').first()).toBeVisible({ timeout: 45_000 });
       await expect.poll(() => posted.length, { timeout: 15_000 }).toBeGreaterThan(seen);
-      await expect.poll(() => secrets.length, { timeout: 15_000 }).toBeGreaterThan(0);
+      await expect.poll(() => secrets.length, { timeout: 15_000 }).toBeGreaterThan(seenSecrets);
 
       const body = JSON.parse(posted[posted.length - 1]!) as { pass_key?: string; competition_id?: string };
       expect(body.competition_id).toBe(rig.compId);

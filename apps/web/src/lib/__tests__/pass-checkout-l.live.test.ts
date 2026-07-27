@@ -25,9 +25,10 @@
 // subject, not a precondition — and when it is missing these tests FAIL with a
 // message naming the command to run, rather than skipping quietly.
 //
-// Skipped unless BILLING_LIVE=1. Runs against Stripe TEST mode (the key in
-// .env.local is `rk_test_*`) and expires every session it opens; no real money
-// moves and nothing is created in the Stripe account. Run:
+// Skipped unless BILLING_LIVE=1. Runs against Stripe TEST mode — the key
+// `vitest.config.ts` loads is the repo-root `.env.local`'s `sk_test_*` — and
+// expires every session it opens; no real money moves and nothing is created in
+// the Stripe account. Run:
 //
 //   BILLING_LIVE=1 \
 //   DATABASE_URL=postgres://postgres@127.0.0.1:54329/seazn_test \
@@ -46,10 +47,14 @@ import { sql } from "@/lib/db";
 import stripePlans from "@/config/stripe-plans.json";
 
 const KEY = process.env.STRIPE_SECRET_KEY ?? "";
-// Both `sk_test_*` and `rk_test_*` count. The repo's key is RESTRICTED, and
-// `billing-tiers.live.test.ts` gates on `startsWith("sk_test")` — which means it
-// has been skipping silently rather than running. Test mode itself is asserted
-// below, so a live key cannot slip through this gate either.
+// Both `sk_test_*` and `rk_test_*` count, because the repo genuinely has two
+// test-mode keys in two files: `vitest.config.ts` loads the REPO-ROOT
+// `.env.local` (an `sk_test_*` key, which is what every BILLING_LIVE suite
+// including this one actually runs on), while `apps/web/.env.local` holds an
+// `rk_test_*` restricted key that only `npm run stripe:sync` reads. Accepting
+// both prefixes means this suite runs whichever file an environment has,
+// instead of skipping on a key that would have worked. Test mode itself is
+// asserted below, so a LIVE key cannot slip through this gate either.
 const LIVE = process.env.BILLING_LIVE === "1" && !!KEY;
 
 /** The rung under test, and its sibling — read from the seed, never retyped. */

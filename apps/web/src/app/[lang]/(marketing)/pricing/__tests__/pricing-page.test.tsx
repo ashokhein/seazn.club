@@ -88,11 +88,13 @@ describe("/pricing renders the Event Pass M/L ladder", () => {
     // 2.03x in USD but 1.96x in GBP and 2.25x in INR, so any "double" framing
     // is false in some currency (ledger copy constraint, T2).
     //
-    // "double elimination" / "double elim" is a BRACKET FORMAT and appears on
-    // this page in three unrelated places (the pass bullet, the matrix row
-    // label, the formats blurb). Stripped first so the guard means what it
-    // says — a broad /\bdouble\b/ over the whole page only ever tests that
-    // nobody renamed the format.
+    // "double elimination" / "double elim" is a BRACKET FORMAT and reaches
+    // this page in unrelated places (the pass bullet, the matrix row label).
+    // The strip is NECESSARY, not tidy: without it a page-wide /\bdouble\b/
+    // would be permanently RED on a page that has never made a multiplier
+    // claim, and the only way to get it green again would be to delete the
+    // guard. Stripped, it has real teeth — it fails on "double the size",
+    // "twice the price", "2×" and "2x" anywhere in the price copy.
     const priceCopy = text.toLowerCase().replace(/double elim(ination)?/g, "");
     expect(priceCopy).not.toMatch(/\bdouble\b|\btwice\b|\b2×\b|\b2x\b/);
     // Owner decision: no "best value" label anywhere on the ladder.

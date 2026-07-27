@@ -240,6 +240,107 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
     expect(article).not.toMatch(/pass(?:'s|es)?\s+64\b/i);
   });
 
+  // `content/help/billing/plans.md` was the ONE help article with no test
+  // reading it — its sibling `event-pass.md` (which it links to) has been
+  // pinned above since T6. That gap is not hypothetical: plans.md is exactly
+  // where the "64 entrants" rot survived V319 *and* V341, describing the pass
+  // with Community's cap for two migrations, and it is `order: 1` in the
+  // billing section — the first thing a reader deciding what to buy opens.
+  describe("the plans-at-a-glance article quotes the matrix, not remembered numbers", () => {
+    const article = () => readFileSync("content/help/billing/plans.md", "utf8");
+
+    /** One `## ` section's body. Scoped because the article legitimately quotes
+     *  FOUR plans' caps, so a page-wide assertion about any single number can
+     *  neither confirm nor deny which plan it belongs to — the precise reason
+     *  "64 entrants" read as correct here while describing the wrong plan. */
+    const section = (heading: string): string => {
+      const md = article();
+      const start = md.indexOf(`## ${heading}`);
+      expect(start, `no "## ${heading}" section`).toBeGreaterThan(-1);
+      const rest = md.slice(start + 3);
+      const end = rest.indexOf("\n## ");
+      return end === -1 ? rest : rest.slice(0, end);
+    };
+
+    it("gives each Event Pass rung its own live caps, and neither the other's", async () => {
+      const mEntrants = await capFor("entrants.per_division.max", "event_pass");
+      const mDivisions = await capFor("divisions.per_competition.max", "event_pass");
+      const lDivisions = await capFor("divisions.per_competition.max", "event_pass_l");
+      expect(await capFor("entrants.per_division.max", "event_pass_l"), "L is unlimited").toBeNull();
+
+      const pass = section("Event Pass");
+      expect(pass, "M's entrant cap").toContain(`**${mEntrants} entrants**`);
+      expect(pass, "M's division cap").toContain(`**${mDivisions} divisions**`);
+      expect(pass, "L's division cap").toContain(`**${lDivisions} divisions**`);
+      // L's null cap has to be SAID, or a reader has no reason to pay the
+      // difference between the two sizes.
+      expect(pass.toLowerCase(), "L's null entrant cap").toContain("unlimited entrants");
+    });
+
+    it("never describes the pass with Community's entrant cap — the bug that lived here", async () => {
+      const communityEntrants = await capFor("entrants.per_division.max", "community");
+      const proEntrants = await capFor("entrants.per_division.max", "pro");
+      const pass = section("Event Pass");
+      // Both neighbours: the rot was Community's number, but Pro's would read
+      // just as plausibly and would oversell the pass rather than undersell it.
+      expect(pass, "community's cap").not.toContain(String(communityEntrants));
+      expect(pass, "pro's cap").not.toContain(String(proEntrants));
+    });
+
+    it("quotes each plan's own live entrant cap in its own section", async () => {
+      const cases: Array<[string, string]> = [
+        ["Community", "community"],
+        ["Pro", "pro"],
+      ];
+      for (const [heading, planKey] of cases) {
+        const entrants = await capFor("entrants.per_division.max", planKey);
+        expect(section(heading), `${heading} entrants`).toContain(
+          `${entrants} entrants per division`,
+        );
+      }
+      // Pro Plus's cap is NULL in the matrix, so the article must say so in
+      // words rather than print a number.
+      expect(await capFor("entrants.per_division.max", "pro_plus")).toBeNull();
+      expect(section("Pro Plus").toLowerCase()).toContain("unlimited entrants per division");
+    });
+
+    it("quotes the live monthly credit allowances", async () => {
+      // The same three numbers the /pricing cards render live. Here they are
+      // hand-written prose, in a table-shaped sentence, four plans deep.
+      const md = article();
+      for (const plan of ["community", "pro", "pro_plus"]) {
+        const credits = await capFor("ai.credits.monthly", plan);
+        expect(md, `${plan} credits`).toContain(String(credits));
+      }
+    });
+
+    it("quotes the live platform fee in its table ROW, for every plan", async () => {
+      // The fee table is the article's densest claim about money and the only
+      // place a reader compares every plan at once. Asserted as the whole ROW,
+      // not as a bare "5%" anywhere in the file: the pass section separately
+      // mentions "a 5% platform fee", so an unscoped search finds a match even
+      // when the table itself has drifted.
+      const md = article();
+      const fee = async (plan: string) => await capFor("registration.fee_percent", plan);
+      const rows: Array<[string, number | null]> = [
+        ["Community", await fee("community")],
+        ["Pro", await fee("pro")],
+        ["Pro Plus", await fee("pro_plus")],
+      ];
+      for (const [label, pct] of rows) {
+        expect(md, `${label} fee row`).toContain(`| ${label} | ${pct}% |`);
+      }
+      // ONE "Event Pass" row covers both rungs, which is only honest while they
+      // charge the same. If a rung's fee ever moves, this fails and the article
+      // needs two rows — the same reasoning that gave each rung its own column
+      // on /pricing.
+      const m = await fee("event_pass");
+      const l = await fee("event_pass_l");
+      expect(l, "the rungs share one fee row, so they must share a fee").toBe(m);
+      expect(md, "Event Pass fee row").toContain(`| Event Pass | ${m}% |`);
+    });
+  });
+
   it("the shared pass bullet names both rungs' division caps", async () => {
     const mDivisions = await capFor("divisions.per_competition.max", "event_pass");
     const lDivisions = await capFor("divisions.per_competition.max", "event_pass_l");
