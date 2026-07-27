@@ -484,6 +484,77 @@ describe.skipIf(!HAS_DB)("extra-org purchase — setExtraOrgs mutates Stripe onl
     expect(itemDelSpy).not.toHaveBeenCalled();
   });
 
+  // T1 review, CRITICAL. Recognition (isOrgAddonItem) normally goes through
+  // price.lookup_key — but a drift replacement moves the key with Stripe's
+  // `transfer_lookup_key`, so an item ALREADY riding a live subscription
+  // starts reporting `price.lookup_key: null` and recognition falls entirely
+  // to the metadata setExtraOrgs stamped at create time. T2's sweep cancels
+  // every org-addon row whose item it no longer sees, so an unstamped item is
+  // silently cancelled and a paying customer loses the cap.
+  //
+  // These two tests are deliberately end-to-end across the seam: the metadata
+  // handed to the webhook is READ OFF the real create call rather than
+  // hand-written, so dropping the stamp in the usecase turns the first one red
+  // rather than leaving it asserting a copy of itself.
+  it("stamps an item that T2 still recognises after transfer_lookup_key nulls its lookup_key", async () => {
+    const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro");
+    retrieveSpy.mockResolvedValueOnce({ id: stripeSubId, items: { data: [] } });
+    await setExtraOrgs(2);
+
+    const created = itemCreateSpy.mock.calls[0]?.[0] as {
+      quantity: number;
+      metadata?: Record<string, string>;
+    };
+    const itemId = `si_${uniq()}`;
+    const asWebhookSeesIt = (lookupKey: string | null) =>
+      subWith([
+        {
+          id: itemId,
+          quantity: created.quantity,
+          price: { id: "price_org_addon", lookup_key: lookupKey },
+          metadata: created.metadata ?? {},
+        } as unknown as Stripe.SubscriptionItem,
+      ]);
+
+    // Before the replacement: matched on lookup_key, as usual.
+    await syncOrgAddonsForSubscription(asWebhookSeesIt(proEntry.lookupKey), walletId);
+    expect(await getLimit(orgId, "orgs.max_owned")).toBe(proBase + 2);
+
+    // After it: the key has moved to the replacement price, so this item's own
+    // lookup_key is null and ONLY the stamp can identify it.
+    await syncOrgAddonsForSubscription(asWebhookSeesIt(null), walletId);
+
+    expect(await getLimit(orgId, "orgs.max_owned")).toBe(proBase + 2);
+    const [row] = await sql<{ status: string }[]>`
+      select status from org_addons where stripe_item_id = ${itemId}`;
+    expect(row?.status).toBe("active");
+  });
+
+  it("shows the hazard: an UNSTAMPED item is swept the moment its lookup_key goes null", async () => {
+    const { orgId, walletId } = await makeGroupOrg("pro");
+    const itemId = `si_${uniq()}`;
+    const bare = (lookupKey: string | null) =>
+      subWith([
+        {
+          id: itemId,
+          quantity: 2,
+          price: { id: "price_org_addon", lookup_key: lookupKey },
+          metadata: {}, // what a create WITHOUT the stamp leaves behind
+        } as unknown as Stripe.SubscriptionItem,
+      ]);
+
+    await syncOrgAddonsForSubscription(bare(proEntry.lookupKey), walletId);
+    expect(await getLimit(orgId, "orgs.max_owned")).toBe(proBase + 2);
+
+    await syncOrgAddonsForSubscription(bare(null), walletId);
+
+    // The customer is still being billed for this item; the cap is gone.
+    expect(await getLimit(orgId, "orgs.max_owned")).toBe(proBase);
+    const [row] = await sql<{ status: string }[]>`
+      select status from org_addons where stripe_item_id = ${itemId}`;
+    expect(row?.status).toBe("canceled");
+  });
+
   it("writes NO org_addons row — the webhook is the single writer", async () => {
     const { walletId, stripeSubId } = await makeBilledGroupOrg("pro");
     retrieveSpy.mockResolvedValueOnce({ id: stripeSubId, items: { data: [] } });

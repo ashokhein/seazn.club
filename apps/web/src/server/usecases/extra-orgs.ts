@@ -6,7 +6,12 @@ import { HttpError } from "@/lib/errors";
 import { sendExtraOrgAllowanceAlertEmail } from "@/lib/email";
 import { hasLiveSubscription } from "@/lib/subscription-status";
 import { requireBillingOwner } from "@/server/usecases/billing-manage";
-import { orgAddonForPlan, resolveOrgAddonPriceId, isOrgAddonItem } from "@/lib/org-addons";
+import {
+  ORG_ADDON_FEATURE_KEY,
+  orgAddonForPlan,
+  resolveOrgAddonPriceId,
+  isOrgAddonItem,
+} from "@/lib/org-addons";
 
 /** Self-serve bound on the RIDER, not on the business. The group's own plan cap
  *  (10 on Pro Plus today) is far smaller than this; a request for hundreds is a
@@ -132,11 +137,20 @@ export async function setExtraOrgs(
       price: priceId,
       quantity: count,
       proration_behavior: "create_prorations",
-      // Group-wide: no target_org_id (unlike a seat item). The webhook reads
-      // feature_key off THIS metadata only as the unexpanded-price fallback
-      // match (isOrgAddonItem primarily matches on lookup_key) — dropping the
-      // stamp would silently cost the customer a cap they paid for.
-      metadata: { feature_key: addon.featureKey },
+      // Group-wide: no target_org_id (unlike a seat item), so feature_key is
+      // the whole stamp.
+      //
+      // NOT optional, and not merely a belt-and-braces fallback. Recognition
+      // (isOrgAddonItem) normally goes through price.lookup_key — but a drift
+      // replacement moves the key with `transfer_lookup_key`, so an item
+      // already riding a live subscription starts reporting
+      // `price.lookup_key: null` and recognition falls ENTIRELY to this
+      // metadata. T2's sweep cancels every org-addon row whose item it no
+      // longer sees, so an unstamped item is silently cancelled and the
+      // customer loses a cap they are still paying for. Same reason
+      // extra-seats.ts:86 stamps its own. Pinned to the catalog constant the
+      // webhook actually compares against, not to the per-entry copy.
+      metadata: { feature_key: ORG_ADDON_FEATURE_KEY },
     });
   }
 
