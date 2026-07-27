@@ -798,8 +798,12 @@ for (const vp of VIEWPORTS) {
       // `stripe_subscription_id` stays pointed at U14's real trialing sub,
       // desyncing the DB from what Stripe actually reports.
       //
-      // On Pro the page must not price anything: Pro's matrix is a strict
-      // superset of the pass, so an offer here would sell a downgrade.
+      // On Pro the page must not price anything: every boolean the pass lifts
+      // is already true on Pro, and Pro's caps sit above the M rung's, so an
+      // offer here would sell a downgrade. (Not a strict superset since v17
+      // #294 — L takes the entrant cap off entirely, above Pro's 256 — which
+      // is why the panel's copy claims features rather than everything, and why
+      // whether Pro may buy L at all is #327 rather than settled here.)
       await page.goto(upgradeUrl(rig));
       await expect(page.locator("[data-plan-covered]")).toBeVisible({ timeout: 20_000 });
       await expect(page.locator("[data-pass-dormant]")).toBeVisible();
