@@ -5,6 +5,7 @@ import { deferred } from "@/lib/deferred";
 import { HttpError } from "@/lib/errors";
 import { sendExtraOrgAllowanceAlertEmail } from "@/lib/email";
 import { hasLiveSubscription } from "@/lib/subscription-status";
+import { groupOrgLimit } from "@/lib/billing-group";
 import { requireBillingOwner } from "@/server/usecases/billing-manage";
 import {
   ORG_ADDON_FEATURE_KEY,
@@ -65,10 +66,11 @@ export const ORG_ALLOWANCE_ALERT_THRESHOLD = 25;
  *   403 — signed in, but not this billing group's payer.
  *   409 — the GROUP cannot hold the add-on at all: no live paid subscription,
  *         or a plan with no extra-org SKU. Remedy is "move to Pro / Pro Plus".
- *   422 — `count` is not an integer in 0..MAX_EXTRA_ORGS. Remedy is "choose a
- *         different number"; unreachable from a correct control. The route
- *         converts its own schema failures to this too, so a 400 from this
- *         endpoint ALWAYS means org state.
+ *   422 — `count` is not an integer in 0..MAX_EXTRA_ORGS, OR the request body
+ *         was unparseable (bad JSON, wrong type, unknown field). Remedy is
+ *         "choose a different number"; unreachable from a correct control. The
+ *         route converts EVERY body-parse failure to this, so a 400 from this
+ *         endpoint ALWAYS means org state and junk input never pages anyone.
  *   423 — the reduction would take the group below the organisations it is
  *         ACTUALLY USING. Remedy is "move an organisation out of the group
  *         first" — a different ACTION from 409's "change plan" and from 422's
@@ -179,7 +181,27 @@ export async function setExtraOrgs(
   // exact "Pro + extras undercuts Pro Plus" arbitrage the two rates exist to
   // close, reached by upgrading rather than by staying put; the mirror case
   // (Pro Plus -> Pro) overcharges instead. Neither is acceptable.
+  //
+  // A legitimate CURRENT-tier item also fails this match right after a drift
+  // replacement, because `transfer_lookup_key` leaves it reporting
+  // `lookup_key: null` — so it is deleted and recreated onto the replacement
+  // price. That is expected, not a defect: the two prices carry the same
+  // amount, so net proration is ~zero, it self-heals on the first call, and the
+  // metadata stamp keeps the item inside `addonItems` so it is reconciled
+  // rather than stranded — while never letting a keyless item BE the survivor,
+  // which is what would freeze it on a dead price.
   const survivor = addonItems.find((it) => it.price?.lookup_key === addon.lookupKey);
+
+  // Resolve the replacement price BEFORE deleting anything. The delete loop is
+  // destructive and `resolveOrgAddonPriceId` can throw 503 (catalog not synced
+  // for this account), so resolving afterwards meant a tier change against an
+  // unsynced catalog deleted the customer's working rider and THEN failed:
+  // they were left with no add-on at all and had to retry, having lost the one
+  // that worked. Resolving first turns that case into a clean no-op refusal.
+  // The remaining window is the `create` call alone; closing that too needs a
+  // single `subscriptions.update({ items: [...] })`, which is a follow-up.
+  const priceId = survivor ? null : await resolveOrgAddonPriceId(planKey);
+
   // Everything else goes: duplicates from a concurrent create, AND any item
   // stranded on another tier's price by a plan change.
   for (const item of addonItems) {
@@ -202,10 +224,9 @@ export async function setExtraOrgs(
       proration_behavior: raising ? "create_prorations" : "none",
     });
   } else {
-    const priceId = await resolveOrgAddonPriceId(planKey);
     await getStripe().subscriptionItems.create({
       subscription: stripeSubId,
-      price: priceId,
+      price: priceId!,
       quantity: count,
       proration_behavior: "create_prorations",
       // Group-wide: no target_org_id (unlike a seat item), so feature_key is
@@ -247,7 +268,28 @@ export async function setExtraOrgs(
  * How many PURCHASED extra organisations this group is actually standing on —
  * the lowest `count` a reduction may go to.
  *
- * `live orgs in the GROUP` − `plan base` − `admin-comped riders`, floored at 0.
+ * `live orgs in the GROUP` − `the capacity the group holds WITHOUT purchased
+ * riders`, floored at 0.
+ *
+ * That second term is **not** `plan_entitlements`. A staff
+ * `org_entitlement_overrides` row REPLACES the plan base outright
+ * (`resolve()`, entitlements.ts — `int_value: ov.int_value`, not a coalesce),
+ * and `groupOrgLimit` resolves the group's cap through a representative member
+ * org, so an override IS the group's effective base. Reading the plan table
+ * instead would tell a staff-comped group of 20 orgs on an override of 50 that
+ * it is "using" 15 riders it does not need, and refuse to let it cancel them —
+ * a TRAP, and one aimed squarely at the >= 25 population this feature exists to
+ * court, where an override is the natural staff remedy.
+ *
+ * So the base is derived the same way the attach path derives the cap:
+ * `groupOrgLimit` (override if present, else plan; degenerate all-suspended
+ * branch included) minus every add-on row it counted. No resolver SQL is
+ * duplicated here — `entitlements-duplicate-resolvers.test.ts` exists because
+ * this codebase has been bitten by exactly that before.
+ *
+ * Algebraically, with L = groupOrgLimit = effectiveBase + active + granted:
+ *
+ *     floor = liveOrgs − (effectiveBase + granted) = liveOrgs − L + active
  *
  * Counts organisations in the **billing group**, not organisations a user
  * owns, because the only exit is `detachOrgFromGroup` — there is no org
@@ -259,35 +301,50 @@ export async function setExtraOrgs(
  * and `liveOrgIdsInGroup` — a deleted org bills nothing and holds no quota, so
  * it must not hold a rider hostage either.
  *
- * Admin comps (`status='granted'`, SPEC-3) are SUBTRACTED. They lift the same
- * cap, so a group whose eleventh org is standing on a staff comp is not using
- * a purchased rider at all, and must never be told to buy one to keep what it
- * was given.
+ * Admin comps (`status='granted'`, SPEC-3) drop out of the floor by the
+ * arithmetic above: they are capacity the group was GIVEN, so a group whose
+ * eleventh org stands on a comp is using no purchased rider and must never be
+ * told to buy one to keep what it was given.
  *
- * FAILS OPEN. An unknown or unlimited base (`null`, or no `plan_entitlements`
- * row) returns 0 — no floor. Refusing on the basis of a cap we cannot read is
- * the one unrecoverable outcome here; leaking a rider is recoverable.
+ * TWO SEPARATE ZERO-RETURNS, and only one of them is a trade-off:
+ *  - **unlimited** (`groupOrgLimit` null — a null `int_value`, or no member org
+ *    to resolve through): 0 is CORRECT BY DEFINITION. An unlimited cap means
+ *    riders carry no capacity at all, so none can be in use. Not a compromise;
+ *    do not "tighten" it.
+ *  - **no `plan_entitlements` row for the key at all**: 0 is a deliberate
+ *    FAIL-OPEN. `getLimit` reports a missing row as base 0, which would make
+ *    the floor the entire org count and trap every group on that plan.
+ *    Refusing on a cap we cannot read is the one unrecoverable outcome here;
+ *    leaking a rider is recoverable. This branch is the judgement call.
  *
  * Exported so a server component can compute the control's lower bound and
- * make the 422 a backstop rather than the primary UX (Task 6).
+ * make the 423 a backstop rather than the primary UX (Task 6).
  */
 export async function extraOrgsInUse(subscriptionId: string, planKey: string): Promise<number> {
-  const [base] = await sql<{ int_value: number | null }[]>`
+  // Fail-open probe ONLY — see the doc comment. Never the source of the base:
+  // an override that replaces this row is precisely the case this function got
+  // wrong before.
+  const [planRow] = await sql<{ int_value: number | null }[]>`
     select int_value from plan_entitlements
      where plan_key = ${planKey} and feature_key = 'orgs.max_owned'`;
-  if (!base || base.int_value === null) return 0;
+  if (!planRow) return 0;
+
+  const capWithAddons = await groupOrgLimit(subscriptionId);
+  if (capWithAddons === null) return 0; // unlimited: riders carry nothing
 
   const [orgs] = await sql<{ n: number }[]>`
     select count(*)::int as n from organizations
      where subscription_id = ${subscriptionId} and deleted_at is null`;
-  const [granted] = await sql<{ bonus: number }[]>`
+  // Only the PURCHASED half is added back: `groupOrgLimit` already counted
+  // both, and comps must stay subtracted.
+  const [active] = await sql<{ bonus: number }[]>`
     select coalesce(sum(delta_each * qty), 0)::int as bonus
       from org_addons
      where wallet_id = ${subscriptionId}
        and feature_key = ${ORG_ADDON_FEATURE_KEY}
-       and status = 'granted'`;
+       and status = 'active'`;
 
-  return Math.max(0, (orgs?.n ?? 0) - base.int_value - (granted?.bonus ?? 0));
+  return Math.max(0, (orgs?.n ?? 0) - capWithAddons + (active?.bonus ?? 0));
 }
 
 /**

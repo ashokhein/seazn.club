@@ -1106,3 +1106,176 @@ describe("extra-org route — a 400 from this endpoint always means org state", 
     expect((await post({ count: 1 })).status).toBe(403);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Re-review RF1 — a staff override REPLACES the plan base (resolve() returns
+// `int_value: ov.int_value`, not a coalesce), and groupOrgLimit resolves the
+// group cap through a representative member org. So an override IS the
+// group's effective base, and reading plan_entitlements instead turns the
+// cancel guard from a leak-stopper into a TRAP — aimed squarely at the >= 25
+// population the alert exists to court, where an override is the natural
+// staff remedy.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!HAS_DB)("extra-org usage floor — a staff override is the base", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it("counts an override as capacity, so a comped group can cancel riders it does not need", async () => {
+    // A Pro group (plan base 5) grown to 20 organisations on a staff override
+    // of 50 — the exact enterprise shape #293's >= 25 alert is meant to create.
+    const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro");
+    await addFillerOrgs(walletId, 19);
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, int_value)
+      values (${orgId}, 'orgs.max_owned', 50)`;
+
+    // 50 covers all 20 organisations, so NOTHING is standing on a rider.
+    // Against plan_entitlements this read 20 - 5 = 15 and refused.
+    expect(await extraOrgsInUse(walletId, "pro")).toBe(0);
+
+    retrieveSpy.mockResolvedValue({
+      id: stripeSubId,
+      items: {
+        data: [
+          { id: "si_plan", quantity: 20, price: { id: "price_plan", billing_scheme: "tiered" } },
+          { id: "si_addon", quantity: 3, price: { id: "price_addon", lookup_key: proEntry.lookupKey } },
+        ],
+      },
+    });
+
+    await expect(setExtraOrgs(0)).resolves.toMatchObject({ extraOrgs: 0 });
+    expect(itemDelSpy).toHaveBeenCalledWith("si_addon", { proration_behavior: "none" });
+  });
+
+  it("still holds the floor when the override is SMALLER than the organisations in use", async () => {
+    // An override of 6 on a group of 8: two organisations are genuinely
+    // standing on purchased riders, so the guard must still bite. Proves the
+    // fix reads the override rather than merely ignoring the base.
+    const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro");
+    await addFillerOrgs(walletId, 7);
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, int_value)
+      values (${orgId}, 'orgs.max_owned', 6)`;
+
+    expect(await extraOrgsInUse(walletId, "pro")).toBe(2);
+
+    retrieveSpy.mockResolvedValue({
+      id: stripeSubId,
+      items: {
+        data: [
+          { id: "si_plan", quantity: 8, price: { id: "price_plan", billing_scheme: "tiered" } },
+          { id: "si_addon", quantity: 2, price: { id: "price_addon", lookup_key: proEntry.lookupKey } },
+        ],
+      },
+    });
+
+    await expect(setExtraOrgs(1)).rejects.toMatchObject({ status: 423 });
+    expect(itemUpdateSpy).not.toHaveBeenCalled();
+  });
+
+  it("an EXPIRED override does not count — the resolver ignores it, so must the floor", async () => {
+    const { orgId, walletId } = await makeBilledGroupOrg("pro");
+    await addFillerOrgs(walletId, 7);
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, int_value, expires_at)
+      values (${orgId}, 'orgs.max_owned', 50, now() - interval '1 day')`;
+
+    // Back to the plan base of 5: 8 orgs - 5 = 3 riders genuinely in use.
+    expect(await extraOrgsInUse(walletId, "pro")).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Re-review RF2 — the delete loop is destructive and ran BEFORE the price
+// resolve, so a tier change against an unsynced catalog deleted the working
+// rider and THEN threw 503.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!HAS_DB)("extra-org tier change — an unsynced catalog must not destroy the rider", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    pricesListSpy.mockResolvedValue({ data: [{ id: "price_org_addon" }] });
+  });
+
+  it("refuses 503 WITHOUT deleting the item it could not replace", async () => {
+    const { stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    // The group upgraded, so the Pro-priced item is not the survivor and must
+    // be swapped — but the replacement price does not exist in this account.
+    retrieveSpy.mockResolvedValue({
+      id: stripeSubId,
+      items: {
+        data: [
+          { id: "si_plan", quantity: 1, price: { id: "price_plan", billing_scheme: "tiered" } },
+          { id: "si_old_pro", quantity: 2, price: { id: "price_old", lookup_key: proEntry.lookupKey } },
+        ],
+      },
+    });
+    pricesListSpy.mockResolvedValue({ data: [] });
+
+    await expect(setExtraOrgs(2)).rejects.toMatchObject({ status: 503 });
+
+    // The whole point: the customer still has the rider that worked.
+    expect(itemDelSpy).not.toHaveBeenCalled();
+    expect(itemCreateSpy).not.toHaveBeenCalled();
+  });
+
+  it("resolves the price BEFORE deleting, so the swap order is resolve -> delete -> create", async () => {
+    const { stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    retrieveSpy.mockResolvedValue({
+      id: stripeSubId,
+      items: {
+        data: [
+          { id: "si_plan", quantity: 1, price: { id: "price_plan", billing_scheme: "tiered" } },
+          { id: "si_old_pro", quantity: 2, price: { id: "price_old", lookup_key: proEntry.lookupKey } },
+        ],
+      },
+    });
+
+    await setExtraOrgs(2);
+
+    expect(pricesListSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      itemDelSpy.mock.invocationCallOrder[0]!,
+    );
+    expect(itemDelSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      itemCreateSpy.mock.invocationCallOrder[0]!,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Re-review RF3 — `await req.json()` throws SyntaxError on a truncated body,
+// which failed the `instanceof ZodError` test and reached handler's unknown
+// branch: a 500 plus a Sentry capture, i.e. junk input could page someone.
+// ---------------------------------------------------------------------------
+
+describe("extra-org route — junk input must never page anyone", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const rawPost = (body: string) =>
+    POST(
+      new Request("http://localhost/api/billing/extra-orgs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      }),
+    );
+
+  it("answers 422, not 500, for a truncated JSON body", async () => {
+    const res = await rawPost('{"count": 1');
+    expect(res.status).toBe(422);
+  });
+
+  it("answers 422, not 500, for a body that is not JSON at all", async () => {
+    expect((await rawPost("not json")).status).toBe(422);
+  });
+
+  it("answers 422, not 500, for an empty body", async () => {
+    expect((await rawPost("")).status).toBe(422);
+  });
+});

@@ -1,4 +1,4 @@
-import { z, ZodError } from "zod";
+import { z } from "zod";
 import { handler } from "@/lib/http";
 import { HttpError } from "@/lib/errors";
 import { setExtraOrgs } from "@/server/usecases/extra-orgs";
@@ -27,15 +27,22 @@ export async function POST(req: Request) {
     let count: number;
     try {
       ({ count } = schema.parse(await req.json()));
-    } catch (err) {
-      // A malformed body is a bad REQUEST, not a bad session. `handler` turns a
-      // raw ZodError into a 400, and on this endpoint 400 is reserved for
-      // "reselect an organisation" — so convert it, and keep the promise that a
-      // 400 from here ALWAYS means org state.
-      if (err instanceof ZodError) {
-        throw new HttpError(422, "extra organisations must be a number.");
-      }
-      throw err;
+    } catch {
+      // ANY failure in this block is a malformed request body, and there are
+      // two distinct ways to get one: `schema.parse` throws ZodError for a
+      // wrong-typed or unknown field, and `req.json()` throws SyntaxError for
+      // a truncated or non-JSON body. Testing for ZodError alone let the
+      // SyntaxError through to `handler`'s unknown branch — a 500 plus a
+      // Sentry capture, i.e. a client sending junk could page someone.
+      //
+      // Catching everything is safe *because* this block does nothing but
+      // parse input: no DB, no Stripe, no business logic whose genuine failure
+      // could be swallowed here.
+      //
+      // 422 rather than 400 because `handler` maps a raw ZodError to 400, and
+      // on this endpoint 400 is reserved for "reselect an organisation" — this
+      // keeps the promise that a 400 from here ALWAYS means org state.
+      throw new HttpError(422, "extra organisations must be a number.");
     }
     return setExtraOrgs(count);
   });
