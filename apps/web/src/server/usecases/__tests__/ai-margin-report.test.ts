@@ -190,16 +190,19 @@ describe.skipIf(!HAS_DB)("aiMarginReport — byOrg ordering (v17 gap #295)", () 
       b.cogs_usd - a.cogs_usd ||
       b.revenue_usd - a.revenue_usd ||
       (a.org_id ?? "").localeCompare(b.org_id ?? "");
-    expect(report.byOrg.length).toBeGreaterThan(3); // else the check is thin
-    for (let i = 1; i < report.byOrg.length; i++) {
-      const prev = report.byOrg[i - 1]!;
-      const curr = report.byOrg[i]!;
-      expect(
-        cmp(prev, curr),
-        `byOrg[${i - 1}] (${prev.org_id}, cogs ${prev.cogs_usd}, rev ${prev.revenue_usd}) ` +
-          `must not sort after byOrg[${i}] (${curr.org_id}, cogs ${curr.cogs_usd}, rev ${curr.revenue_usd})`,
-      ).toBeLessThanOrEqual(0);
-    }
+    const assertOrdered = (rows: AiMarginRow[], label: string) => {
+      expect(rows.length, `${label}: too few rows for a meaningful check`).toBeGreaterThan(3);
+      for (let i = 1; i < rows.length; i++) {
+        const prev = rows[i - 1]!;
+        const curr = rows[i]!;
+        expect(
+          cmp(prev, curr),
+          `${label}[${i - 1}] (${prev.org_id}, cogs ${prev.cogs_usd}, rev ${prev.revenue_usd}) ` +
+            `must not sort after ${label}[${i}] (${curr.org_id}, cogs ${curr.cogs_usd}, rev ${curr.revenue_usd})`,
+        ).toBeLessThanOrEqual(0);
+      }
+    };
+    assertOrdered(report.byOrg, "byOrg");
 
     // Readable spot-checks on the seeded trio, on top of the invariant above.
     const at = (orgId: string) => report.byOrg.findIndex((r) => r.org_id === orgId);
@@ -210,9 +213,20 @@ describe.skipIf(!HAS_DB)("aiMarginReport — byOrg ordering (v17 gap #295)", () 
     const [firstTied, secondTied] = tiedA < tiedB ? [tiedA, tiedB] : [tiedB, tiedA];
     expect(at(firstTied)).toBeLessThan(at(secondTied)); // total tie -> org id asc
 
-    // And the whole ordering is reproducible across reads.
+    // The RULE is deterministic on a fresh read too. Deliberately re-checking
+    // the invariant rather than comparing the two arrays wholesale: sibling
+    // suites run in parallel against this schema and legitimately add orgs
+    // between the two reads (observed: 1120 vs 1121 rows), so equality of the
+    // row SET is not a property this test can or should assert.
     const again = await aiMarginReport(DAYS);
-    expect(again.byOrg.map((r) => r.org_id)).toEqual(report.byOrg.map((r) => r.org_id));
+    assertOrdered(again.byOrg, "byOrg(reread)");
+    // The seeded trio's RELATIVE order is fixed, whatever else appeared.
+    const rank = (rows: AiMarginRow[]) =>
+      orgs.map((o) => rows.findIndex((r) => r.org_id === o));
+    const [a1, b1, c1] = rank(report.byOrg);
+    const [a2, b2, c2] = rank(again.byOrg);
+    expect(Math.sign(a1! - b1!)).toBe(Math.sign(a2! - b2!));
+    expect(Math.sign(a1! - c1!)).toBe(Math.sign(a2! - c2!));
   });
 });
 

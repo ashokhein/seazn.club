@@ -33,6 +33,8 @@ import {
   AI_RUN_COST_ALERT_MULTIPLE,
   AI_RUN_MEDIAN_MIN_SAMPLE,
   MEDIAN_WINDOW_DAYS,
+  aiRunTotals,
+  listAiRuns,
   maybeAlertExpensiveRun,
   medianRunCostUsd,
   shouldAlertOnRunCost,
@@ -74,6 +76,30 @@ async function seedRuns(type: RunEventType, costUsd: number, n: number): Promise
     insert into competition_events (competition_id, org_id, type, payload)
     select ${comp!.id}::uuid, ${org!.id}::uuid, ${type}::text, ${sql.json({ cost_usd: costUsd })}::jsonb
       from generate_series(1, ${n})`;
+}
+
+/** Seed ONE run event with an arbitrary (possibly malformed) payload, and hand
+ *  back the competition id so the caller can delete it again. Malformed rows
+ *  MUST be cleaned up: unlike `pack_units`, a bad `cost_usd` is read by
+ *  medianRunCostUsd / aiRunTotals / listAiRuns, so leaving one behind poisons
+ *  every later suite in the shared schema. */
+async function seedRawRun(
+  type: string,
+  payload: Record<string, unknown>,
+): Promise<{ compId: string; orgName: string }> {
+  const suffix = randomUUID().slice(0, 8);
+  const orgName = `Malformed ${suffix}`;
+  const [org] = await sql<{ id: string }[]>`
+    insert into organizations (name, slug) values (${orgName}, ${"malformed-" + suffix})
+    returning id`;
+  const [comp] = await sql<{ id: string }[]>`
+    insert into competitions (org_id, name, slug, visibility, branding)
+    values (${org!.id}, 'Malformed Comp', ${"malformed-comp-" + suffix}, 'private', '{}')
+    returning id`;
+  await sql`
+    insert into competition_events (competition_id, org_id, type, payload)
+    values (${comp!.id}, ${org!.id}, ${type}, ${sql.json(payload as never)})`;
+  return { compId: comp!.id, orgName };
 }
 
 /** How many rows the median query would actually see — used to assert the
@@ -297,6 +323,89 @@ describe.skipIf(!HAS_DB)("maybeAlertExpensiveRun (v17 gap #295)", () => {
       costUsd: null,
     });
     expect(sendAiRunCostAlertEmail).not.toHaveBeenCalled();
+  });
+});
+
+// v17 gap #295, fix round 2 (controller ruling). `cost_usd` is a free-form
+// JSONB key, not a typed column, and every reader in ai-runs-admin.ts cast it
+// with a bare `::numeric`. ONE unreadable value therefore aborts the whole
+// query — and because maybeAlertExpensiveRun wraps everything in a try/catch
+// that only logs, the expensive-run alert this wave exists to ship would then
+// go SILENT, permanently, with nothing surfacing it. /admin/ai-runs (which
+// renders listAiRuns + aiRunTotals server-side) 500s for the same reason.
+//
+// Every test here plants a malformed row and removes it in a `finally` — the
+// schema is shared and long-lived, so a poison row left behind breaks every
+// later suite (which is exactly how this defect was discovered).
+describe.skipIf(!HAS_DB)("malformed cost_usd must not disable the readers (v17 gap #295)", () => {
+  it("does not silently kill the expensive-run alert", async () => {
+    await seedRuns("schedule.ai_generated", 0.5, SEED_N);
+    const { compId } = await seedRawRun("schedule.ai_generated", { cost_usd: "expensive" });
+    try {
+      process.env.STAFF_ALERT_EMAIL = "ops@seazn.test";
+      // Before the guard this threw PostgresError: invalid input syntax for
+      // type numeric: "expensive".
+      const median = await medianRunCostUsd("schedule.ai_generated", MEDIAN_WINDOW_DAYS);
+      expect(median).toBeGreaterThan(0);
+
+      // …and this is the real damage: the throw was swallowed, so the alert
+      // simply never fired again.
+      await maybeAlertExpensiveRun({
+        orgId: randomUUID(),
+        phase: "schedule",
+        model: "claude-sonnet-5",
+        costUsd: 50,
+      });
+      expect(sendAiRunCostAlertEmail).toHaveBeenCalledTimes(1);
+    } finally {
+      await sql`delete from competition_events where competition_id = ${compId}`;
+    }
+  });
+
+  it("excludes an unreadable row from the MIN-SAMPLE count, not just from the percentile", async () => {
+    // A row carrying no usable cost carries no signal either, so it must not
+    // help a thin window reach the >= 20 floor — otherwise 19 real runs plus
+    // one corrupt one would start emailing staff off a baseline of 19.
+    // Per-test synthetic type, so the window provably holds only these rows.
+    const probe = probeType();
+    await seedRuns(probe, 0.01, AI_RUN_MEDIAN_MIN_SAMPLE - 1); // 19 usable
+    const { compId } = await seedRawRun(probe, { cost_usd: "expensive" }); // 20th row, unusable
+    try {
+      expect(await medianRunCostUsd(probe, 1)).toBeNull();
+      // One more REAL row tips it over — proving the null above was the
+      // sample floor talking, not the malformed row breaking the query.
+      await seedRuns(probe, 0.01, 1);
+      expect(await medianRunCostUsd(probe, 1)).toBeCloseTo(0.01, 10);
+    } finally {
+      await sql`delete from competition_events where competition_id = ${compId}`;
+    }
+  });
+
+  it("keeps /admin/ai-runs rendering — listAiRuns and aiRunTotals degrade to nulls", async () => {
+    // Same page, same hazard, three more casts: usage counters and the
+    // division_id used in a LEFT JOIN, all read straight out of the payload.
+    const { compId, orgName } = await seedRawRun("schedule.ai_generated", {
+      cost_usd: "expensive",
+      usage: { input_tokens: "many", output_tokens: 12, repair_rounds: null },
+      division_id: "not-a-uuid",
+    });
+    try {
+      const rows = await listAiRuns(200);
+      const row = rows.find((r) => r.org_name === orgName);
+      expect(row, "the malformed run should still be listed, not omitted").toBeDefined();
+      expect(row!.cost_usd).toBeNull();
+      expect(row!.input_tokens).toBeNull();
+      expect(row!.division_name).toBeNull();
+      // A readable neighbour on the same row is still read.
+      expect(row!.output_tokens).toBe(12);
+
+      const totals = await aiRunTotals(MEDIAN_WINDOW_DAYS);
+      expect(totals.runs).toBeGreaterThan(0);
+      // The run is counted; its unreadable numbers simply are not summed.
+      expect(Number.isFinite(totals.input_tokens)).toBe(true);
+    } finally {
+      await sql`delete from competition_events where competition_id = ${compId}`;
+    }
   });
 });
 

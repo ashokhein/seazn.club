@@ -13,6 +13,47 @@ export const AI_RUN_EVENT_TYPES = [
   "schedule.ai_failed",
 ] as const;
 
+// ---------------------------------------------------------------------------
+// JSONB read guards (v17 gap #295)
+//
+// Everything this file reads out of `competition_events.payload` is free-form
+// JSONB, not a typed column: nothing in the database stops a future writer, a
+// replayed payload, or a hand-patched row putting a string where a number
+// belongs. A bare `::numeric` / `::int` / `::uuid` cast does not skip such a
+// row — it ABORTS THE WHOLE QUERY. That is not a cosmetic nit here:
+//
+//   * `medianRunCostUsd` throwing is swallowed by `maybeAlertExpensiveRun`'s
+//     own try/catch, so ONE bad row silences the expensive-run alert this
+//     wave ships — permanently, with nothing surfacing it.
+//   * `listAiRuns` / `aiRunTotals` are rendered server-side by
+//     /admin/ai-runs, and `aiMarginReport` by /admin/revenue, so the same row
+//     500s two staff pages until someone finds and deletes it.
+//
+// Policy, uniform across every reader below: an unreadable value is treated as
+// ABSENT, never as zero. The run still counts as a run; only the unreadable
+// number drops out. Regexes are bound as parameters so there is exactly one
+// copy of each and they cannot drift between call sites.
+//
+// Written with `[.]` rather than `\.` deliberately — a backslash escape inside
+// a JS template literal is not preserved, and the resulting bare `.` would
+// match any character and quietly defeat the guard.
+
+/** Accepts what `JSON.stringify` can emit for a number, INCLUDING exponent
+ *  form: it switches to exponential below 1e-6, so a genuinely tiny per-run
+ *  cost arrives as "1e-7". Rejecting those would silently understate cost —
+ *  a worse failure than the crash this replaces, because nothing surfaces it. */
+const NUMERIC_RE = "^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$";
+/** Token/round counters are whole numbers; JSON never emits an integer in
+ *  exponent form below 1e21. */
+const INT_RE = "^-?[0-9]+$";
+const UUID_RE = "^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$";
+
+/** "This run recorded a readable cost." `coalesce(..., false)` because a NULL
+ *  key makes the regex NULL, not false. */
+const COSTED = sql`coalesce(payload->>'cost_usd' ~ ${NUMERIC_RE}, false)`;
+/** Same predicate against the `e.` alias `listAiRuns` joins under. */
+const COSTED_E = sql`coalesce(e.payload->>'cost_usd' ~ ${NUMERIC_RE}, false)`;
+
 export interface AiRunRow {
   id: string;
   created_at: string;
@@ -40,17 +81,24 @@ export async function listAiRuns(limit: number): Promise<AiRunRow[]> {
            end as phase,
            e.payload->>'mode'  as mode,
            e.payload->>'model' as model,
-           (e.payload->'usage'->>'input_tokens')::int  as input_tokens,
-           (e.payload->'usage'->>'output_tokens')::int as output_tokens,
-           (e.payload->'usage'->>'repair_rounds')::int as repair_rounds,
-           (e.payload->>'cost_usd')::numeric::float8   as cost_usd,
+           case when e.payload->'usage'->>'input_tokens' ~ ${INT_RE}
+                then (e.payload->'usage'->>'input_tokens')::int end  as input_tokens,
+           case when e.payload->'usage'->>'output_tokens' ~ ${INT_RE}
+                then (e.payload->'usage'->>'output_tokens')::int end as output_tokens,
+           case when e.payload->'usage'->>'repair_rounds' ~ ${INT_RE}
+                then (e.payload->'usage'->>'repair_rounds')::int end as repair_rounds,
+           case when ${COSTED_E}
+                then (e.payload->>'cost_usd')::numeric::float8 end   as cost_usd,
            case
              when e.type = 'schedule.ai_failed' then coalesce(e.payload->>'outcome', 'failed')
              else 'ok'
            end as outcome
     from competition_events e
     join organizations o on o.id = e.org_id
-    left join divisions d on d.id = (e.payload->>'division_id')::uuid
+    -- Guarded too: this cast sits in a JOIN condition, so one malformed
+    -- division_id takes the whole listing down rather than one row's label.
+    left join divisions d on d.id = case when e.payload->>'division_id' ~ ${UUID_RE}
+                                         then (e.payload->>'division_id')::uuid end
     where e.type = any(${AI_RUN_EVENT_TYPES as unknown as string[]})
     order by e.created_at desc
     limit ${limit}`;
@@ -65,10 +113,16 @@ export interface AiRunTotals {
 
 export async function aiRunTotals(days: number): Promise<AiRunTotals> {
   const [row] = await sql<AiRunTotals[]>`
+    -- runs counts every row; only unreadable NUMBERS drop out of the sums,
+    -- so a corrupt payload understates spend rather than hiding the run or
+    -- taking /admin/ai-runs down. No new field is surfaced for that gap here
+    -- (the margin panel already carries runs_missing_cost).
     select count(*)::int as runs,
-           coalesce(sum((payload->'usage'->>'input_tokens')::int), 0)::int  as input_tokens,
-           coalesce(sum((payload->'usage'->>'output_tokens')::int), 0)::int as output_tokens,
-           sum((payload->>'cost_usd')::numeric)::float8 as cost_usd
+           coalesce(sum((payload->'usage'->>'input_tokens')::int)
+                    filter (where payload->'usage'->>'input_tokens' ~ ${INT_RE}), 0)::int  as input_tokens,
+           coalesce(sum((payload->'usage'->>'output_tokens')::int)
+                    filter (where payload->'usage'->>'output_tokens' ~ ${INT_RE}), 0)::int as output_tokens,
+           sum((payload->>'cost_usd')::numeric) filter (where ${COSTED})::float8 as cost_usd
     from competition_events
     where type = any(${AI_RUN_EVENT_TYPES as unknown as string[]})
       and created_at >= now() - make_interval(days => ${days})`;
@@ -118,7 +172,12 @@ export async function medianRunCostUsd(
            count(*)::int as n
       from competition_events
      where type = ${eventType}
-       and payload->>'cost_usd' is not null
+       -- Subsumes the old is-not-null check AND drops unreadable values.
+       -- Deliberately in the WHERE, not a FILTER on the percentile: a row
+       -- carrying no usable cost carries no signal either, so it must not help
+       -- a thin window reach AI_RUN_MEDIAN_MIN_SAMPLE. Otherwise 19 real runs
+       -- plus one corrupt row would start alerting off a baseline of 19.
+       and ${COSTED}
        and created_at >= now() - make_interval(days => ${days})`;
   if (!row || row.n < AI_RUN_MEDIAN_MIN_SAMPLE) return null;
   return row.median != null ? Number(row.median) : null;
@@ -267,40 +326,13 @@ export type AiRunPhase = "schedule" | "officials";
 
 const PHASES: readonly AiRunPhase[] = ["schedule", "officials"];
 
-/** "This run recorded a usable size." `pack_units` is a free-form JSONB key,
- *  not a typed column — nothing in the database stops a future writer, a
- *  hand-patched row, or a replayed payload putting a string there, and an
- *  unguarded `::numeric` cast throws for the whole GROUP BY. /admin/revenue
- *  renders this report server-side, so that one bad row would 500 the entire
- *  page rather than blanking one number, and would keep doing so until someone
- *  found and deleted it. Anything that is not a plain non-negative integer
- *  (the only shape either writer produces — `movableIds.size` /
- *  `pack.fixtures.length`) is therefore treated exactly like a missing size:
- *  counted in `runs` and `cogs_usd`, excluded from `units` and the ratio.
- *  `coalesce(..., false)` because a NULL key makes the regex NULL, not false.
- *
- *  No exponent form here on purpose: `pack_units` is an integer count, and JSON
- *  never serialises one in exponential notation below 1e21. */
+/** "This run recorded a usable size." Same guard policy as `COSTED` at the top
+ *  of this file — an unreadable `pack_units` is treated exactly like a missing
+ *  one: counted in `runs` and `cogs_usd`, excluded from `units` and the ratio.
+ *  A plain non-negative integer is the only shape either writer produces
+ *  (`movableIds.size` / `pack.fixtures.length`), so `INT_RE`'s leading `-?`
+ *  would be too generous here and this uses its own stricter pattern. */
 const SIZED = sql`coalesce(payload->>'pack_units' ~ '^[0-9]+$', false)`;
-
-/** "This run recorded a readable cost." Same hazard as `SIZED`, one key over —
- *  `cost_usd` is free-form JSONB too, and THIS report is the page-load path
- *  (unlike `aiRunTotals`/`medianRunCostUsd`, which are older code on other
- *  paths and are deliberately left alone here). One unparseable value would
- *  abort the whole GROUP BY and 500 /admin/revenue until someone found the row.
- *
- *  A run whose cost cannot be read is counted in `runs` and surfaced in
- *  `runs_missing_cost`, but contributes nothing to `cogs_usd` — we never invent
- *  a number, so COGS is a FLOOR whenever that counter is non-zero, and the
- *  panel says so.
- *
- *  Exponent form IS accepted: `JSON.stringify` switches to exponential below
- *  1e-6, so a genuinely tiny per-run cost arrives as "1e-7". Rejecting those
- *  would silently understate COGS, which is a worse failure than the crash it
- *  replaces because nothing surfaces it. Written with `[.]` rather than `\.` —
- *  a backslash escape inside a JS template literal is not preserved, and the
- *  resulting bare `.` would match any character and defeat the guard. */
-const COSTED = sql`coalesce(payload->>'cost_usd' ~ '^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$', false)`;
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
