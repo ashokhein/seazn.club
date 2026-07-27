@@ -282,7 +282,12 @@ export function PassUpgradeButton({
   dict: Dict;
   canBuy: boolean;
 }) {
-  const [selected, setSelected] = useState<PassKey>(options[0]!.key);
+  // `options` is always both rungs, smallest first (`passLadderOptions()`), so
+  // the fallback is unreachable today. It is here because a non-null assertion
+  // on a prop is a crash waiting for a caller: this is a "use client" island,
+  // and a throw during render takes the whole island's interactivity down —
+  // including the buy button — rather than degrading.
+  const [selected, setSelected] = useState<PassKey>(options[0]?.key ?? "event_pass");
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState<PassCheckoutFailure | null>(null);

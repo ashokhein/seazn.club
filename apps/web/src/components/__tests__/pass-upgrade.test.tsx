@@ -20,21 +20,35 @@
 //   `beginPassCheckout`  the one place a rung becomes money, lifted out of the
 //                     component with an injectable fetch.
 //
-// What remains unproven here is the two-line stateful shell between them
-// (`useState` + `start(passKey)`), which is verified in the browser instead.
-import { describe, expect, it, vi } from "vitest";
+// Those two seams leave one JOIN unwitnessed: the stateful shell that carries
+// the selection from the ladder to `beginPassCheckout`. That join is exactly
+// the mis-sale above — substituting a literal `"event_pass"` for `passKey`
+// inside `PassUpgradeButton.start` used to pass every suite AND `tsc`. So the
+// last describe in this file drives the SHELL too, with the ~30-line hook
+// harness below. See its comment for why that is not as reckless as it reads.
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
+import * as ReactRuntime from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   PassRungLadder,
+  PassUpgradeButton,
   beginPassCheckout,
   type PassCheckoutDeps,
 } from "@/components/pass-upgrade";
+// Mocked at the MODULE, not injected: the shell calls `beginPassCheckout` with
+// its default deps, so this is the only place a spy can sit on the real
+// production path from the click to the POST.
+import { fetchPassCheckoutClientSecret } from "@/lib/billing-checkout-client";
 import type { PassRungOption } from "@/lib/pass-ladder";
 import type { Dict } from "@/lib/i18n-constants";
 // The REAL dictionary, not a stub: `t()` returns the KEY on a miss, so this
 // also fails if a key the picker needs was never added to en/ui.json.
 import ui from "@/dictionaries/en/ui.json";
+
+vi.mock("@/lib/billing-checkout-client", () => ({
+  fetchPassCheckoutClientSecret: vi.fn(),
+}));
 
 const dict = ui as Dict;
 
@@ -269,5 +283,224 @@ describe("PassRungLadder — failed checkouts", () => {
 
   it("shows nothing at all until something has failed", () => {
     expect(ladder().html).not.toContain('role="alert"');
+  });
+});
+
+// ── Driving the stateful shell without a DOM ────────────────────────────────
+//
+// `PassUpgradeButton` is a `useState` component, and calling it directly throws
+// "Invalid hook call" — which is why the three legs above are tested through a
+// hookless ladder and an injectable checkout, and why the join between them was
+// left to a manual browser check. A manual check is not a regression test: the
+// mis-sale can be reintroduced by one token and nothing in CI would say so.
+//
+// So this harness supplies React's hook dispatcher itself. `useState` is one
+// slot of `internals.H`; a component that uses ONLY `useState` needs a cursor,
+// an array of cells, and a re-render on `set`. That is the whole thing. It is
+// deliberately NOT a general React renderer — it renders one function component
+// one level deep and returns the element tree, which is all a click needs.
+//
+// Why this rather than adding jsdom: jsdom is a dependency for every suite in
+// the workspace and a build-time cost forever, to cover two lines. This is 30
+// test-only lines that touch nothing else.
+//
+// How it fails when React changes: `react` is pinned to an exact version here
+// (package.json "react": "19.2.4", no caret). If a future upgrade moves the
+// dispatcher slot, the guard below throws with a message naming this comment,
+// and every test in this describe reds — loudly, not silently.
+type Cell = unknown;
+interface HookDispatcher {
+  useState: (initial: Cell) => [Cell, (next: Cell) => void];
+}
+
+function hookDispatcherSlot(): { H: HookDispatcher | null } {
+  const slot = (
+    ReactRuntime as unknown as {
+      __CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE?: {
+        H: HookDispatcher | null;
+      };
+    }
+  ).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
+  if (!slot) {
+    throw new Error(
+      "React's hook dispatcher slot has moved — the useState harness in " +
+        "pass-upgrade.test.tsx needs updating (see the comment above it).",
+    );
+  }
+  return slot;
+}
+
+/**
+ * Render a `useState`-only function component and keep re-rendering it as its
+ * state changes, so its handlers can be invoked the way a browser would.
+ */
+function renderIsland<P>(Component: (props: P) => ReactNode, props: P) {
+  const slot = hookDispatcherSlot();
+  const cells: Cell[] = [];
+  let cursor = 0;
+  let output: ReactNode = null;
+
+  const dispatcher: HookDispatcher = {
+    useState(initial) {
+      const index = cursor++;
+      if (index >= cells.length) {
+        cells.push(typeof initial === "function" ? (initial as () => Cell)() : initial);
+      }
+      const set = (next: Cell) => {
+        cells[index] =
+          typeof next === "function" ? (next as (previous: Cell) => Cell)(cells[index]) : next;
+        run();
+      };
+      return [cells[index], set];
+    },
+  };
+
+  function run() {
+    cursor = 0;
+    const previous = slot.H;
+    slot.H = dispatcher;
+    try {
+      output = Component(props);
+    } finally {
+      slot.H = previous;
+    }
+  }
+
+  run();
+  // A function, not a value: every interaction re-renders, and reading a stale
+  // tree would let the assertions pass against markup the buyer never saw.
+  return { tree: () => expandTree(output) };
+}
+
+/**
+ * `walk` plus one deliberate step further: a `PassRungLadder` element is
+ * EXPANDED into what it renders, because that is where the radios and the buy
+ * button live and this harness has no renderer to do it.
+ *
+ * Only the ladder, and only because it is hookless. `PassCheckoutSheet` is left
+ * opaque on purpose — expanding it would mount Stripe's provider and `Modal`,
+ * neither of which this suite stands up.
+ */
+function expandTree(node: ReactNode, out: ReactElement[] = []): ReactElement[] {
+  if (Array.isArray(node)) {
+    for (const child of node) expandTree(child, out);
+    return out;
+  }
+  if (!isValidElement(node)) return out;
+  out.push(node);
+  if (node.type === PassRungLadder) {
+    return expandTree(PassRungLadder(node.props as Parameters<typeof PassRungLadder>[0]), out);
+  }
+  return expandTree((node.props as { children?: ReactNode }).children, out);
+}
+
+describe("PassUpgradeButton — the buyer's selection reaches checkout", () => {
+  const secret = vi.mocked(fetchPassCheckoutClientSecret);
+
+  beforeEach(() => {
+    secret.mockReset();
+    secret.mockResolvedValue({ ok: true, clientSecret: "cs_test_x" });
+  });
+
+  function mount() {
+    return renderIsland(PassUpgradeButton, {
+      competitionId: "comp-1",
+      options: OPTIONS,
+      currency: "usd" as const,
+      dict,
+      canBuy: true,
+    });
+  }
+
+  const pick = (island: ReturnType<typeof mount>, key: string) => {
+    const radio = radios(island.tree()).find((r) => propsOf(r).value === key);
+    (propsOf(radio!).onChange as () => void)();
+  };
+  const press = async (island: ReturnType<typeof mount>) => {
+    // `onBuy` returns the shell's async `start`, so awaiting the handler awaits
+    // the checkout call itself — no microtask guessing.
+    await (propsOf(buyButton(island.tree())!).onClick as () => unknown)();
+  };
+
+  it("CHARGES FOR THE RUNG THE BUYER PICKED", async () => {
+    // The mis-sale, end to end through the real shell: choose L, press the one
+    // button, and see which rung crossed into checkout. Every leg of this is
+    // production code — the picker's onChange, `useState`, `start`'s parameter
+    // forwarding, `beginPassCheckout` — with only the network mocked.
+    const island = mount();
+    pick(island, "event_pass_l");
+    await press(island);
+
+    expect(secret).toHaveBeenCalledTimes(1);
+    // Scalar first: `toHaveBeenCalledWith` elides the rung in the JSON
+    // reporter's message, and the rung is the entire point of this test.
+    expect(secret.mock.calls[0]![1]).toBe("event_pass_l");
+    expect(secret).toHaveBeenCalledWith("comp-1", "event_pass_l");
+  });
+
+  it("still sells M when M is what is left selected", async () => {
+    // Keeps the test above honest: a shell hardcoded to L would pass it. This
+    // is also the exact path apps/web/e2e/event-pass.spec.ts drives — it never
+    // touches the picker, so M must survive an untouched ladder.
+    const island = mount();
+    await press(island);
+
+    expect(secret.mock.calls[0]![1]).toBe("event_pass");
+    expect(secret).toHaveBeenCalledWith("comp-1", "event_pass");
+  });
+
+  it("lets the buyer change their mind before paying", async () => {
+    const island = mount();
+    pick(island, "event_pass_l");
+    pick(island, "event_pass");
+    await press(island);
+
+    expect(secret.mock.calls[0]![1]).toBe("event_pass");
+  });
+
+  it("opens Stripe on the first press, with nothing in between", async () => {
+    // e2e/event-pass.spec.ts:325,922 click [data-pass-buy] and wait DIRECTLY
+    // for the Stripe iframe. This pins that contract: one press, and the very
+    // next render is the checkout sheet carrying the secret.
+    secret.mockResolvedValue({ ok: true, clientSecret: "cs_test_l" });
+    const island = mount();
+    pick(island, "event_pass_l");
+    await press(island);
+
+    // Asserted on the ELEMENT, not on rendered markup: the sheet mounts
+    // Stripe's real provider, which this suite deliberately does not stand up.
+    const sheet = island.tree().find((el) => "clientSecret" in propsOf(el));
+    expect(propsOf(sheet!).clientSecret).toBe("cs_test_l");
+    // …and the ladder is gone, so no second step was inserted before payment.
+    expect(buyButton(island.tree())).toBeUndefined();
+  });
+
+  it("does not take the whole island down when handed no rungs", () => {
+    // Unreachable today — `passLadderOptions()` always returns both — but this
+    // is a "use client" component, and a throw during its render does not
+    // degrade to a blank stub: it takes the island's interactivity with it,
+    // buy button included. A non-null assertion on a PROP is a crash waiting
+    // for a caller.
+    expect(() =>
+      renderIsland(PassUpgradeButton, {
+        competitionId: "comp-1",
+        options: [],
+        currency: "usd" as const,
+        dict,
+        canBuy: true,
+      }).tree(),
+    ).not.toThrow();
+  });
+
+  it("surfaces the refusal's status, so the buyer gets localised copy", async () => {
+    secret.mockResolvedValue({ ok: false, error: "Billing is not yet configured", status: 503 });
+    const island = mount();
+    pick(island, "event_pass_l");
+    await press(island);
+
+    const alert = island.tree().find((el) => "data-pass-buy-error" in propsOf(el));
+    expect(alert).toBeDefined();
+    // The ladder is still there — a failed attempt must not swallow the picker.
+    expect(buyButton(island.tree())).toBeDefined();
   });
 });
