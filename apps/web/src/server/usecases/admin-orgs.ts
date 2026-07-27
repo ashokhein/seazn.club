@@ -27,7 +27,18 @@ export async function setOrgSuspension(
   reason: string,
 ): Promise<"suspended" | "active"> {
   const newStatus = action === "suspend" ? "suspended" : "active";
-  await sql`update organizations set status = ${newStatus} where id = ${orgId}`;
+  // `returning id`, and a throw when it comes back empty. The route in front of
+  // this looks the org up and 404s first, so today the update always matches —
+  // but that guard belongs to the route, not to this function, and the next
+  // caller (a cron, a staff script, a second route) inherits none of it. Without
+  // this, an unknown or already-deleted org id updates zero rows and the use
+  // case still busts a cache, writes a staff-action log naming an org that was
+  // never touched, and RETURNS the status as though it had applied it. Failing
+  // here keeps the audit log truthful; the route's own 404 still fires first and
+  // its semantics are unchanged.
+  const [row] = await sql<{ id: string }[]>`
+    update organizations set status = ${newStatus} where id = ${orgId} returning id`;
+  if (!row) throw new Error(`setOrgSuspension: no organization ${orgId}`);
 
   // organizations.status is a resolver INPUT — `when o.status = 'suspended'
   // then 'community'` is the first arm of both orgPlanKey and the SQL

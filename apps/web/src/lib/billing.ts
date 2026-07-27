@@ -713,8 +713,18 @@ export async function syncSubscriptionForGroup(
   // nothing, and a drift we never see is a drift nobody fixes. Same shape as
   // its sibling, plus the subscription id — unlike a price, a status gives a
   // human nothing to look up without knowing which subscription it came from.
-  if (!STATUS_MAP[stripeSub.status])
-    console.error("syncSubscription: unknown status", stripeSub.status, stripeSub.id);
+  // `Object.hasOwn`, not a bare index: STATUS_MAP is a Record indexed by a
+  // string that comes off the wire, so `STATUS_MAP["constructor"]` (or
+  // "toString", "valueOf", …) returns an inherited FUNCTION rather than
+  // undefined. That is truthy, so a bare index would skip the error log below
+  // AND survive the `??` fallback — writing a Function into subscriptions.status
+  // and degrading a customer silently, which is the exact pair of failures both
+  // lines exist to prevent. Resolved once, so the log and the value can never
+  // disagree about what "known" means.
+  const mapped = Object.hasOwn(STATUS_MAP, stripeSub.status)
+    ? STATUS_MAP[stripeSub.status]
+    : undefined;
+  if (!mapped) console.error("syncSubscription: unknown status", stripeSub.status, stripeSub.id);
   // Fallback = the status Stripe invented since this map was written. It must
   // fail SAFE, and `past_due` (the old fallback) failed OPEN: a never-paid
   // status we don't recognise — the likely shape of anything new in the
@@ -724,7 +734,7 @@ export async function syncSubscriptionForGroup(
   // not orphaned and cannot open a second checkout. Anything genuinely paid
   // that lands here corrects itself on the next webhook once the status is
   // mapped; the reverse mistake bills nobody and entitles everybody.
-  const status = STATUS_MAP[stripeSub.status] ?? "incomplete";
+  const status = mapped ?? "incomplete";
   // In Stripe v22, current_period_end lives on each subscription item.
   const periodEnd = stripeSub.items.data[0]?.current_period_end ?? null;
   // null = this object cannot answer; see paymentMethodFromStripeSubscription.

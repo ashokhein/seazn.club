@@ -521,9 +521,10 @@ export async function setGroupSeatsPaidSql(groupId: string, seats: number): Prom
 }
 
 /**
- * Moderation state. V310 moved suspension off `subscriptions.status` and onto
- * the ORG, precisely so suspending one org cannot stop billing for the siblings
- * that merely share its payer — so this writes the org and nothing else.
+ * Moderation state. V314 §2b moved suspension off `subscriptions.status` and
+ * onto the ORG, precisely so suspending one org cannot stop billing for the
+ * siblings that merely share its payer — so this writes the org and nothing
+ * else.
  */
 export async function setOrgStatusSql(orgId: string, status: "active" | "suspended"): Promise<void> {
   await withDb(async (sql) => {

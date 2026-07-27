@@ -234,6 +234,32 @@ describe.skipIf(!HAS_DB)("incomplete never-paid grace hole (#206)", () => {
     err.mockRestore();
   });
 
+  it("a PROTOTYPE key is unknown too — 'constructor' does not smuggle a Function past the map", async () => {
+    // STATUS_MAP is an object literal, so every Object.prototype member is
+    // reachable through it BY NAME: `STATUS_MAP["constructor"]` is a Function,
+    // not undefined. A bare index therefore reads as "known" — it skips the
+    // unknown-status log above AND satisfies the `??` fallback, so the Function
+    // itself is what gets written to subscriptions.status. The status arrives on
+    // a webhook, so this key is attacker-reachable, and the resulting row lands
+    // outside LIVE_SUBSCRIPTION_STATUSES: silently dead, no log, no grace.
+    // `Object.hasOwn` is the fix, and it must not disturb the real keys.
+    const orgId = await seedOrg();
+    await sql`update subscriptions set plan_key = 'pro'
+              where id = (select subscription_id from organizations where id = ${orgId})`;
+    const subId = `sub_proto_${randomUUID().slice(0, 8)}`;
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    await syncSubscription(
+      orgId,
+      stripeSub({ id: subId, status: "constructor" as Stripe.Subscription.Status }),
+    );
+    // Same fail-SAFE landing as any other unheard-of status.
+    expect((await readAnchor(orgId)).status).toBe("incomplete");
+    expect(await orgPlanKey(orgId)).toBe("community");
+    // And LOUD — the bare index skipped this entirely.
+    expect(err).toHaveBeenCalledWith("syncSubscription: unknown status", "constructor", subId);
+    err.mockRestore();
+  });
+
   it("syncSubscription writes Stripe 'incomplete_expired' as our canceled — degrades immediately, no grace (#288 audit)", async () => {
     const orgId = await seedOrg();
     const subId = `sub_ie_${randomUUID().slice(0, 8)}`;

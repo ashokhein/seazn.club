@@ -30,7 +30,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  *  true, event_pass true — same probe key entitlements-sql-parity.test.ts
  *  uses, and for the same reason: V310 made `branding` free for community,
  *  so it can no longer show a pass LIFT). */
-export async function seedCommunityOrg(): Promise<AuthCtx> {
+async function seedCommunityOrg(): Promise<AuthCtx> {
   const suffix = randomUUID().slice(0, 8);
   const [{ id: ownerId }] = await sql<{ id: string }[]>`
     insert into users (email, display_name, email_verified)
@@ -244,5 +244,22 @@ describe.skipIf(!HAS_DB || !HAS_REDIS)("entitlement cache invalidation (real Red
       await setOrgSuspension(auth.userId!, auth.orgId, "reactivate", "cache bust probe"),
     ).toBe("active");
     expect(await hasFeature(auth.orgId, "realtime")).toBe(true);
+  });
+
+  it("refuses an org id that matched nothing, instead of logging a moderation that never happened", async () => {
+    // The suspend route looks the org up and 404s before calling this, so the
+    // update always matches TODAY. That guard belongs to the route, though, and
+    // the next caller — a cron, a staff script, a second route — inherits none
+    // of it. Without a rowcount check the use case updates zero rows and then
+    // carries on regardless: it busts a cache, writes a staff-action log naming
+    // an org it never touched, and RETURNS the new status as though it had been
+    // applied. The audit trail is the thing that must not be able to lie.
+    const ghost = randomUUID();
+    await expect(setOrgSuspension(ghost, ghost, "suspend", "no such org")).rejects.toThrow(
+      /no organization/i,
+    );
+    const [logged] = await sql`
+      select 1 from staff_audit_log where target_id = ${ghost}`;
+    expect(logged).toBeUndefined();
   });
 });
