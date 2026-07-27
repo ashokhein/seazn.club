@@ -4,7 +4,7 @@ import "server-only";
 // AuthCtx proves it); tenancy is enforced by withTenant + RLS.
 import { withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
-import { requireFeature, withinLimit } from "@/lib/entitlements";
+import { invalidateOrgEntitlements, requireFeature, withinLimit } from "@/lib/entitlements";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -298,6 +298,16 @@ export async function patchCompetition(
         Boolean(patch.discovery ?? patch.name ?? patch.starts_on ?? patch.ends_on ?? patch.status));
     return { row, discoveryTouched };
   });
+  // v17 #287: ANY competition write can move status/ends_on, which the Event
+  // Pass lock (isPassLocked) reads live off this row on every resolve — so
+  // invalidate broadly (not gated to "did status/ends_on change") rather than
+  // reason about which columns matter. Fail-open by construction:
+  // invalidateOrgEntitlements -> cacheDelPattern swallows every Redis error
+  // internally (lib/cache.ts) and never throws, so this can never fail the
+  // write it rides on; the 300s TTL is the last-resort bound if it's ever
+  // skipped. Outside the tx, same reasoning as the discovery/slug busts below
+  // — invalidation never rolls back a write.
+  await invalidateOrgEntitlements(auth.orgId);
   // Toggle-off is immediate (doc 15 §1): drop the Redis window and fire the
   // `discovery` ISR tag. Outside the tx — invalidation never rolls back a write.
   if (discoveryTouched) {
