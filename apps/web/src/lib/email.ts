@@ -2,6 +2,9 @@ import "server-only";
 import { sql } from "@/lib/db";
 import { getDictionary } from "@/lib/i18n";
 import { type Locale } from "@/lib/i18n-constants";
+// Leaf module (imports nothing) — safe here even though ai-runs-admin.ts, the
+// other consumer of the unit noun, imports this file.
+import { aiRunUnitNoun } from "@/lib/ai-pricing";
 import {
   verificationTemplate,
   passwordResetTemplate,
@@ -810,6 +813,19 @@ export interface AiRunCostAlertEmail {
   /** Trailing window the median was computed over — supplied by the caller
    *  (`MEDIAN_WINDOW_DAYS`) so the copy can never drift from the query. */
   windowDays: number;
+  /** Requested run mode, `schedule` phase only (`generate` / `regenerate` /
+   *  `repair` …) — the officials path has no mode concept, so this is absent
+   *  there rather than a placeholder. Named in the copy because a full
+   *  regenerate and a nudge are different cost classes; the MEDIAN it is
+   *  compared against stays pooled across modes (v17 gap #295 — mode-scoped
+   *  baselines wait on calibration data), which the copy says out loud. */
+  mode?: string | null;
+  /** `pack_units` as stamped on the run's own ledger row — the run's size.
+   *  NULLABLE on purpose: every event written before this wave carries no such
+   *  key, so the copy omits the size clause rather than printing a `0` that
+   *  would read as a real, empty pack. The unit differs per phase — see
+   *  `AI_RUN_UNIT_NOUN`. */
+  packUnits?: number | null;
 }
 
 /** Internal staff alert (v17 gap #295): a single AI run's cost landed at or
@@ -821,11 +837,28 @@ export interface AiRunCostAlertEmail {
 export async function sendAiRunCostAlertEmail(opts: AiRunCostAlertEmail): Promise<boolean> {
   const multiple = opts.medianUsd > 0 ? opts.costUsd / opts.medianUsd : null;
   const subject = `Expensive AI run: $${opts.costUsd.toFixed(4)} (org ${opts.orgId})`;
+  // Size clause. `packUnits` is nullable (pre-wave rows have no such key), and
+  // 0 is a REAL measurement (a pack with nothing movable) — so absence drops
+  // the clause entirely while zero is reported, and only the per-unit ratio is
+  // suppressed. The noun is phase-specific: schedule counts movable fixtures,
+  // officials counts every fixture in the pack.
+  const units = opts.packUnits ?? null;
+  const sizeText = units == null ? "" : ` over ${units} ${aiRunUnitNoun(opts.phase, units)}`;
+  const perUnit = units != null && units > 0 ? opts.costUsd / units : null;
+  const perUnitText =
+    perUnit == null ? "" : ` That is $${perUnit.toFixed(4)} per ${aiRunUnitNoun(opts.phase, 1)}` +
+      // The officials denominator is knowingly incomplete: cost scales with the
+      // roster the model has to reason over as well as the fixture count, and
+      // pack.officials.length is deliberately not stamped. Say so, or a reader
+      // will compare $/fixture across officials runs as if it were like-for-like.
+      (opts.phase === "officials" ? " (officials cost also scales with roster size, which is not stamped)." : ".");
   const bodyText =
-    `A ${opts.phase} AI run for org ${opts.orgId}` +
-    `${opts.competitionId ? ` (competition ${opts.competitionId})` : ""} cost $${opts.costUsd.toFixed(4)} on ` +
-    `${opts.model}${multiple ? `, ${multiple.toFixed(1)}x the trailing ${opts.windowDays}-day ${opts.phase} median ($${opts.medianUsd.toFixed(4)})` : ""}. ` +
-    `Size-weighted credit pricing is deferred until this class of run recurs — see v17 gap #295.`;
+    `A ${opts.phase} AI run${opts.mode ? ` (mode: ${opts.mode})` : ""} for org ${opts.orgId}` +
+    `${opts.competitionId ? ` (competition ${opts.competitionId})` : ""}${sizeText} cost $${opts.costUsd.toFixed(4)} on ` +
+    `${opts.model}${multiple ? `, ${multiple.toFixed(1)}x the trailing ${opts.windowDays}-day ${opts.phase} median ($${opts.medianUsd.toFixed(4)})` : ""}.` +
+    `${perUnitText}` +
+    ` That baseline is pooled across every mode and pack size — mode-scoped medians and` +
+    ` size-weighted credit pricing both wait on calibration data (v17 gap #295).`;
   const html = renderEmail({
     subject,
     preheader: `${opts.phase} run — org ${opts.orgId}`,
@@ -836,7 +869,11 @@ export async function sendAiRunCostAlertEmail(opts: AiRunCostAlertEmail): Promis
       panel(
         "Run",
         `org: ${opts.orgId}${opts.competitionId ? `\ncompetition: ${opts.competitionId}` : ""}\n` +
-          `phase: ${opts.phase}\nmodel: ${opts.model}\ncost: $${opts.costUsd.toFixed(4)}\n` +
+          `phase: ${opts.phase}${opts.mode ? `\nmode: ${opts.mode}` : ""}\n` +
+          // Spelled out rather than omitted: "no size on this row" is itself
+          // information (it dates the row to before the pack_units stamp).
+          `size: ${units == null ? "not recorded" : `${units} ${aiRunUnitNoun(opts.phase, units)}`}\n` +
+          `model: ${opts.model}\ncost: $${opts.costUsd.toFixed(4)}\n` +
           `median: $${opts.medianUsd.toFixed(4)}`,
       ),
     footerNote: "Automated staff alert — AI run cost check (v17 gap #295).",

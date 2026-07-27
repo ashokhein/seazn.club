@@ -410,10 +410,19 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, credit-metered v17
       phase: string;
       model: string;
       costUsd: number | null;
+      mode?: string | null;
+      packUnits?: number | null;
     };
     expect(call.orgId).toBe(auth.orgId);
     expect(call.phase).toBe("schedule");
     expect(typeof call.costUsd).toBe("number");
+    // The staff alert has to be triageable on its own (v17 gap #295 fold): the
+    // requested mode and the pack size travel with the cost, and the size is
+    // the SAME number stamped on the ledger row above — the alert and the
+    // audit trail can never disagree about how big the run was.
+    expect(call.mode).toBe("generate");
+    expect(call.packUnits).toBe(fixtureIds.length);
+    expect(call.packUnits).toBe(ok!.payload.pack_units);
 
     // Failures carry pack_units too (same fixture count the failed attempt saw).
     parse.mockResolvedValueOnce({

@@ -1671,6 +1671,11 @@ export async function aiPlanForDivision(
   // Also deliberately success-only — an expensive FAILURE (schedule.ai_failed
   // carries a real cost_usd) does not alert here; aborted/retried runs are a
   // different cost story and a different alert class, out of #295's scope.
+  // mode + pack_units travel with the cost so the staff email is triageable on
+  // its own — a regenerate over 400 movable fixtures at $0.90 is a different
+  // story from a nudge over 6 at the same price. pack_units is the SAME number
+  // stamped on the schedule.ai_generated row above (movableIds.size), so the
+  // alert and the audit trail can never disagree about the run's size.
   deferred(() =>
     maybeAlertExpensiveRun({
       orgId: auth.orgId,
@@ -1678,6 +1683,8 @@ export async function aiPlanForDivision(
       phase: "schedule",
       model,
       costUsd: cost_usd,
+      mode: input.mode,
+      packUnits: movableIds.size,
     }),
   );
 

@@ -1161,6 +1161,14 @@ export async function officialsAiPlanForDivision(
         phase: "officials",
         model: usedModel,
         costUsd: cost_usd,
+        // Same number stamped on the ledger row above, so the alert and the
+        // audit trail can never disagree about the run's size. No `mode` —
+        // officials runs have no mode concept, and the copy omits the clause
+        // rather than inventing one. Note the officials denominator counts
+        // EVERY fixture in the pack (schedule counts only the movable subset),
+        // which is why the copy labels the unit instead of printing a bare
+        // number.
+        packUnits: pack.fixtures.length,
       }),
     );
   }

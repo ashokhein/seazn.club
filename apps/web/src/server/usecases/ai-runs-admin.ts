@@ -141,6 +141,16 @@ export async function maybeAlertExpensiveRun(opts: {
   phase: "schedule" | "officials";
   model: string;
   costUsd: number | null;
+  /** Requested run mode — `schedule` only (the officials path has none).
+   *  Pass-through to the alert copy so an expensive run can be triaged without
+   *  opening /admin/ai-runs; deliberately does NOT narrow the median, which
+   *  stays pooled per phase until there is enough data to calibrate a
+   *  mode-scoped baseline (v17 gap #295). */
+  mode?: string | null;
+  /** The run's `pack_units` — the same number stamped on its ledger row, so
+   *  the alert and the audit trail cannot disagree about the run's size.
+   *  Nullable by contract (see `AiRunCostAlertEmail.packUnits`). */
+  packUnits?: number | null;
 }): Promise<void> {
   try {
     // Cheap guards FIRST. `competition_events` is the audit ledger and carries
@@ -164,6 +174,11 @@ export async function maybeAlertExpensiveRun(opts: {
       costUsd,
       medianUsd: median,
       windowDays: MEDIAN_WINDOW_DAYS,
+      // Forwarded only when the caller actually has them — an omitted mode or
+      // size must reach the copy as absent, never as "" or 0 (0 units is a
+      // real, empty pack and would be rendered as one).
+      ...(opts.mode ? { mode: opts.mode } : {}),
+      ...(opts.packUnits != null ? { packUnits: opts.packUnits } : {}),
     });
   } catch (err) {
     console.error(`[ai-runs] expensive-run alert check failed (org ${opts.orgId})`, err);

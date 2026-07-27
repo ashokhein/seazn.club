@@ -350,11 +350,21 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
       phase: string;
       model: string;
       costUsd: number | null;
+      mode?: string | null;
+      packUnits?: number | null;
     };
     expect(call.orgId).toBe(auth.orgId);
     expect(call.phase).toBe("officials");
     expect(call.competitionId).toBeTruthy();
     expect(typeof call.costUsd).toBe("number");
+    // Pack size travels with the cost so the staff alert is triageable on its
+    // own (v17 gap #295 fold), and it is the SAME number stamped on the ledger
+    // row — alert and audit trail can never disagree about the run's size.
+    expect(call.packUnits).toBe(fixtureIds.length);
+    expect(call.packUnits).toBe(ok!.payload.pack_units);
+    // Officials runs have no mode concept at all — nothing to forward, and
+    // nothing invented.
+    expect(call.mode).toBeUndefined();
 
     // Failures carry pack_units too (same fixture count the failed attempt saw).
     parse.mockResolvedValueOnce({

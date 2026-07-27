@@ -209,6 +209,46 @@ describe.skipIf(!HAS_DB)("maybeAlertExpensiveRun (v17 gap #295)", () => {
     expect(args.windowDays).toBe(MEDIAN_WINDOW_DAYS);
   });
 
+  it("forwards the run's mode and pack_units to the email (v17 gap #295 fold)", async () => {
+    // The alert is the only place a human sees this run before /admin/ai-runs,
+    // and "$0.90" alone cannot be triaged: mode says whether it is a full
+    // regenerate or a nudge, pack_units says whether the cost is proportionate.
+    // Both are pass-through only — the MEDIAN stays pooled across modes (see
+    // the pooled-baseline note in the copy), so nothing here narrows it.
+    await seedRuns("schedule.ai_generated", 0.5, SEED_N);
+    process.env.STAFF_ALERT_EMAIL = "ops@seazn.test";
+    await maybeAlertExpensiveRun({
+      orgId: randomUUID(),
+      phase: "schedule",
+      mode: "regenerate",
+      model: "claude-sonnet-5",
+      costUsd: 50,
+      packUnits: 40,
+    });
+    expect(sendAiRunCostAlertEmail).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(sendAiRunCostAlertEmail).mock.calls[0]![0];
+    expect(args.mode).toBe("regenerate");
+    expect(args.packUnits).toBe(40);
+  });
+
+  it("omits mode/pack_units rather than inventing them when the caller has none", async () => {
+    // The officials path has no mode at all, and a pre-wave caller may carry no
+    // size — the email must receive nothing rather than a zero it would render
+    // as a real, empty pack.
+    await seedRuns("schedule.ai_officials_generated", OFFICIALS_COST, SEED_N);
+    process.env.STAFF_ALERT_EMAIL = "ops@seazn.test";
+    await maybeAlertExpensiveRun({
+      orgId: randomUUID(),
+      phase: "officials",
+      model: "claude-sonnet-5",
+      costUsd: 50,
+    });
+    expect(sendAiRunCostAlertEmail).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(sendAiRunCostAlertEmail).mock.calls[0]![0];
+    expect(args.mode).toBeUndefined();
+    expect(args.packUnits).toBeUndefined();
+  });
+
   it("compares an officials run against the OFFICIALS baseline, not the schedule one", async () => {
     // Pins the phase -> event-type map: the two baselines are seeded orders of
     // magnitude apart, so an inverted ternary would email a visibly different
