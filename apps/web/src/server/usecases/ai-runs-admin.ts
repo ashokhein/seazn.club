@@ -261,6 +261,19 @@ export type AiRunPhase = "schedule" | "officials";
 
 const PHASES: readonly AiRunPhase[] = ["schedule", "officials"];
 
+/** "This run recorded a usable size." `pack_units` is a free-form JSONB key,
+ *  not a typed column — nothing in the database stops a future writer, a
+ *  hand-patched row, or a replayed payload putting a string there, and an
+ *  unguarded `::numeric` cast throws for the whole GROUP BY. /admin/revenue
+ *  renders this report server-side, so that one bad row would 500 the entire
+ *  page rather than blanking one number, and would keep doing so until someone
+ *  found and deleted it. Anything that is not a plain non-negative integer
+ *  (the only shape either writer produces — `movableIds.size` /
+ *  `pack.fixtures.length`) is therefore treated exactly like a missing size:
+ *  counted in `runs` and `cogs_usd`, excluded from `units` and the ratio.
+ *  `coalesce(..., false)` because a NULL key makes the regex NULL, not false. */
+const SIZED = sql`coalesce(payload->>'pack_units' ~ '^[0-9]+$', false)`;
+
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 /** Pure: $ per unit for one phase, or null when the phase recorded no units.
@@ -351,11 +364,12 @@ export async function aiMarginReport(days: number): Promise<AiMarginReport> {
              else 'officials'
            end as phase,
            count(*)::int as runs,
-           count(*) filter (where payload->>'pack_units' is null)::int as runs_missing_units,
-           coalesce(sum((payload->>'pack_units')::numeric), 0)::text as units,
+           count(*) filter (where not ${SIZED}) ::int as runs_missing_units,
+           coalesce(sum((payload->>'pack_units')::numeric)
+                    filter (where ${SIZED}), 0)::text as units,
            coalesce(sum((payload->>'cost_usd')::numeric), 0)::text as cogs_usd,
            coalesce(sum((payload->>'cost_usd')::numeric)
-                    filter (where payload->>'pack_units' is not null), 0)::text as sized_cogs_usd
+                    filter (where ${SIZED}), 0)::text as sized_cogs_usd
       from competition_events
      where type = any(${AI_RUN_EVENT_TYPES as unknown as string[]})
        and created_at >= now() - make_interval(days => ${days})
@@ -389,15 +403,6 @@ export async function aiMarginReport(days: number): Promise<AiMarginReport> {
     )
     .sort((a, b) => b.cogs_usd - a.cogs_usd);
 
-  // Totals come off the RAW per-org numbers, not the rounded rows, so the
-  // aggregate cannot drift a cent away from the phase partition below.
-  let totalCredits = 0;
-  let totalCogs = 0;
-  for (const orgId of orgIds) {
-    totalCredits += creditsByOrg.get(orgId) ?? 0;
-    totalCogs += cogsByOrg.get(orgId) ?? 0;
-  }
-
   const phaseByKey = new Map(phaseRows.map((r) => [r.phase, r]));
   const byPhase = PHASES.map((phase) => {
     const r = phaseByKey.get(phase);
@@ -414,6 +419,17 @@ export async function aiMarginReport(days: number): Promise<AiMarginReport> {
       cost_per_unit_usd: costPerUnitUsd(sizedCogs, units),
     } satisfies AiPhaseUnitRow;
   });
+
+  let totalCredits = 0;
+  for (const orgId of orgIds) totalCredits += creditsByOrg.get(orgId) ?? 0;
+
+  // Headline COGS is the sum of the ROUNDED phase rows, not an independently
+  // rounded grand total. Same event set either way, but rounding twice lets
+  // the two disagree by a cent, and the phase table is the one partition the
+  // panel shows in full — a staff member who adds those two rows must land on
+  // the headline. (The per-org table is capped in the view and offers no
+  // total, so it is not a partition anyone is invited to sum.)
+  const totalCogs = byPhase.reduce((s, r) => s + r.cogs_usd, 0);
 
   return {
     days,

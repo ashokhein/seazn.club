@@ -224,6 +224,60 @@ describe.skipIf(!HAS_DB)("aiMarginReport — per-phase unit economics (v17 gap #
     expect(after.units - before.units).toBeLessThan(1000);
   });
 
+  it("survives a malformed pack_units instead of 500-ing the whole page", async () => {
+    // `pack_units` is a free-form JSONB key, not a typed column — nothing in
+    // the database stops a future writer (or a hand-patched row) putting a
+    // string there. An unguarded ::numeric cast would throw, and /admin/revenue
+    // renders this report server-side, so one bad row would take down the
+    // entire page rather than one number. Treat it as "no size recorded".
+    const orgId = await seedOrg(`Margin bad ${uniq()}`);
+    const compId = await seedCompetition(orgId);
+    const before = phaseRow(await aiMarginReport(DAYS), "schedule");
+
+    await seedRunEvent(compId, orgId, "schedule.ai_generated", {
+      cost_usd: 900,
+      pack_units: "lots",
+    });
+
+    const after = phaseRow(await aiMarginReport(DAYS), "schedule");
+    // Counted as a run, counted in COGS, counted as size-less…
+    expect(after.runs - before.runs).toBeGreaterThanOrEqual(1);
+    expect(after.cogs_usd - before.cogs_usd).toBeGreaterThan(899.9);
+    expect(after.runs_missing_units - before.runs_missing_units).toBeGreaterThanOrEqual(1);
+    // …and contributes neither phantom units nor a $900 leak into the ratio.
+    expect(after.units - before.units).toBeLessThan(1000);
+    expect(after.sized_cogs_usd - before.sized_cogs_usd).toBeLessThan(1);
+  });
+
+  it("counts an escalated run's size ONCE — `movable` and `pack_units` are the same number, not two signals", async () => {
+    // schedule-ai stamps ladder telemetry on an escalated run, and that block
+    // carries `movable: movableIds.size` — the identical number already
+    // stamped as `pack_units`. Summing both would silently double every
+    // escalated run's size and halve the phase's cost per unit.
+    const orgId = await seedOrg(`Margin escalated ${uniq()}`);
+    const compId = await seedCompetition(orgId);
+    const before = phaseRow(await aiMarginReport(DAYS), "schedule");
+
+    await seedRunEvent(compId, orgId, "schedule.ai_generated", {
+      cost_usd: 400,
+      pack_units: 6_000_000,
+      // Exactly the shape schedule-ai.ts writes when the ladder falls through.
+      escalated_from: "gemini",
+      rungs_tried: ["gemini", "claude-sonnet-5"],
+      warnings: 2,
+      movable: 6_000_000,
+    });
+
+    const after = phaseRow(await aiMarginReport(DAYS), "schedule");
+    const dUnits = after.units - before.units;
+    expect(dUnits).toBeGreaterThanOrEqual(6_000_000);
+    // 12,000,000 would mean `movable` was counted as well.
+    expect(dUnits).toBeLessThan(6_100_000);
+    // One run, not two.
+    expect(after.runs - before.runs).toBeGreaterThanOrEqual(1);
+    expect(after.runs - before.runs).toBeLessThan(5);
+  });
+
   it("reads a failed run's phase off its payload, not off the event type", async () => {
     // Both phases record failures under the SAME type (schedule.ai_failed) and
     // stamp `phase` in the payload. Keying off the type alone would file every
@@ -305,8 +359,14 @@ describe.skipIf(!HAS_DB)("aiMarginReport — per-phase unit economics (v17 gap #
        where type in ('schedule.ai_generated', 'schedule.ai_officials_generated', 'schedule.ai_failed')
          and created_at >= now() - make_interval(days => ${DAYS})`;
     const report = await aiMarginReport(DAYS);
+    // EXACT, not "close to": the panel prints the headline COGS in a tile and
+    // the phase rows in a table directly under it, and a staff member adding
+    // those two rows must land on the headline. Rounding the grand total
+    // independently of the rows lets them disagree by a cent — observed at
+    // ~2,000 rows before the totals were single-sourced. The remaining slack
+    // is float addition noise only.
     const summed = report.byPhase.reduce((s, r) => s + r.cogs_usd, 0);
-    expect(summed).toBeCloseTo(report.aggregate.cogs_usd, 2);
+    expect(Math.abs(summed - report.aggregate.cogs_usd)).toBeLessThan(0.0000001);
     const runs = report.byPhase.reduce((s, r) => s + r.runs, 0);
     expect(n).toBeGreaterThan(0); // otherwise the check below passes vacuously
     expect(runs).toBeGreaterThanOrEqual(n);
