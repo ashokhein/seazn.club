@@ -8,9 +8,16 @@ order: 1
 
 Run real competitions, free: 10 active competitions, 4 divisions in each, 5 team members, 64 entrants per division, 1 public dashboard, full scoring and scheduling, and unlimited match officials per fixture. Your **organisation logo** sits on your public pages, you can **charge entry fees** (by card or offline) at an 8% platform fee, exports come out as plain PDF/XLSX, and your organisation gets **10 AI credits a month** to spend on AI scheduling and officials. When something is finished, complete or archive it to free the slot.
 
-## Event Pass — $29 one-time
+## Event Pass — from $29 one-time
 
-One-time upgrade for a single competition, for that event's lifetime, without a subscription: **128 entrants** per division, up to **10 divisions**, branded exports, public player cards, sponsor tiers and paid packages, the realtime scoreboard and slideshow, advanced formats including double elimination, a one-time top-up of **25 AI credits**, and a **5% platform fee** on entry fees instead of 8%. Your brand **colour** is not part of it — that stays Pro. A passed competition doesn't count against your active-competition limit. Right for the annual tournament that doesn't justify a year of Pro. It doesn't carry to next year's edition. [What the pass buys, in full](/help/billing/event-pass).
+One-time upgrade for a single competition, for that event's lifetime, without a subscription. It comes in **two sizes**, and the only difference between them is how big that one event may get:
+
+- **M — $29**: **128 entrants** per division, up to **10 divisions**.
+- **L — $59**: **unlimited entrants**, up to **20 divisions**.
+
+Both sizes carry everything else identically: branded exports, public player cards, sponsor tiers and paid packages, the realtime scoreboard and slideshow, advanced formats including double elimination, a one-time top-up of **25 AI credits**, and a **5% platform fee** on entry fees instead of 8%. Pick the size at checkout — a competition holds one pass and keeps it.
+
+Your brand **colour** is not part of either size — that stays Pro. A passed competition doesn't count against your active-competition limit. Right for the annual tournament that doesn't justify a year of Pro. It doesn't carry to next year's edition. [What the pass buys, in full](/help/billing/event-pass).
 
 ## Pro — $19/month, up to 5 organisations
 
@@ -18,7 +25,7 @@ Unlimited active competitions and divisions, 256 entrants per division, 15 team 
 
 ## Pro Plus — $39/month, up to 10 organisations
 
-Everything in Pro, plus unlimited entrants per division, unlimited seats, teams and clubs, a **1% platform fee** on entry fees (Pro pays 2%), **200 AI credits a month** on a shared operator wallet, automatic officials assignment, a write-scoped API key for integrations, and priority support. Built for platforms, leagues and federations running many competitions at once. The pricing page shows Pro Plus as a full fourth card — badged "Popular" — alongside Community, Event Pass and Pro, with the same 4-plan comparison table underneath.
+Everything in Pro, plus unlimited entrants per division, unlimited seats, teams and clubs, a **1% platform fee** on entry fees (Pro pays 2%), **200 AI credits a month** on a shared operator wallet, automatic officials assignment, a write-scoped API key for integrations, and priority support. Built for platforms, leagues and federations running many competitions at once. The pricing page shows Pro Plus as a full fourth card — badged "Popular" — alongside Community, Event Pass and Pro, with a comparison table underneath that gives each Event Pass size its own column.
 
 **Coming soon to Pro Plus** — on the roadmap, not yet purchasable: a multi-org command centre, shared templates & branding across organisations, cross-competition analytics, custom domain & white-label, SSO / SAML, an SLA & dedicated support, data export & warehouse, and bulk & scheduled automation.
 
@@ -62,7 +69,7 @@ Switch plan — up or down — or flip between monthly and yearly, and we don't 
 
 **Does a passed competition use up an active-competition slot?** No — a competition covered by an [Event Pass](/help/billing/event-pass) doesn't count against your plan's active-competition limit, so a Community org running its annual tournament on a pass still has all 10 free slots.
 
-**Is AI Schedule a paid feature?** No — AI Schedule runs on every plan, including Community. Only the number of runs per division differs (5 / 10 / 20 / 50), and automatic *officials* assignment is separate and Pro Plus. See [AI Schedule](/help/scheduling/ai-scheduling).
+**Is AI Schedule a paid feature?** No — AI Schedule runs on every plan, including Community. There is no per-division run cap any more: runs are paid for out of your organisation's **AI credit wallet**, which every plan tops up monthly (10 / 60 / 200) and an Event Pass adds 25 to, once. Automatic *officials* assignment is separate and Pro Plus. See [AI Schedule](/help/scheduling/ai-scheduling).
 
 **What happens to my data if I stop paying?** Nothing is deleted, ever — see [downgrading](/help/billing/downgrade).
 

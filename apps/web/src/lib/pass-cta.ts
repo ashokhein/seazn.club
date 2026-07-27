@@ -11,9 +11,10 @@
  *
  * `included` exists for the same reason the console entry points render
  * themselves away for a paid org: Pro's matrix is a strict superset of the
- * pass, so inviting a paying customer to spend $29 sells them a DOWNGRADE (the
- * pass grants 10 AI runs per division against pro's 20, and 64 entrants per
- * division against pro's 256). `paidPlan` must come from
+ * pass, so inviting a paying customer to buy one sells them a DOWNGRADE (an M
+ * pass grants 128 entrants per division against pro's 256, and neither rung
+ * lifts player stats, the brand colour, officials or API access at all).
+ * `paidPlan` must come from
  * `isPaidPlan(orgPlanKey())` — the resolver's derivation, degradations and all,
  * not `subscriptions.plan_key` raw — so a lapsed comp or a past_due org beyond
  * its grace, both of which resolve as community, still get the offer.

@@ -88,8 +88,9 @@ async function resolve(
  * under any paid plan the Event Pass is moot, because every key the pass lifts
  * the paid matrix lifts further. Anything that decides whether to OFFER a pass
  * must therefore ask exactly this question of exactly this plan key, or it will
- * offer a $29 downgrade (event_pass grants 10 AI runs per division against
- * pro's 20, and 64 entrants per division against pro's 256).
+ * offer a downgrade (event_pass grants 128 entrants per division against pro's
+ * 256, and neither pass rung lifts player stats, the brand colour, officials or
+ * API access at all).
  *
  * Note what this is NOT: `hasLiveSubscription`. That answers "is Stripe billing
  * this org", which is false for a staff comp — an org holding the Pro matrix

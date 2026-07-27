@@ -2,7 +2,9 @@ import { test, expect } from "@playwright/test";
 
 // v17 SPEC-6 A1: the Pro Plus card is now a full fourth card in the tier ladder
 // (the old progressive-disclosure reveal was promoted to a "Popular" hero card),
-// while the comparison table still renders all 4 plan columns regardless.
+// while the comparison table renders every plan column regardless. Since v17
+// #294 that is FIVE: the Event Pass sells at two rungs and each gets its own
+// column, so the table is Community / Event Pass M / Event Pass L / Pro / Pro Plus.
 // Anonymous visitor, no login: the default project storageState is signed-in
 // (pro.json), so every test here opens its own fresh, unauthenticated context.
 
@@ -32,7 +34,7 @@ test.describe("pricing page — Pro Plus card", () => {
     try {
       await page.goto("/en/pricing");
 
-      // Never clicked the reveal button — the 4-column table is unconditional.
+      // Never clicked the reveal button — the full plan table is unconditional.
       const matrix = page.locator("[data-pricing-matrix]");
       await expect(matrix).toBeVisible();
       await expect(matrix.locator("thead")).toContainText("Pro Plus");

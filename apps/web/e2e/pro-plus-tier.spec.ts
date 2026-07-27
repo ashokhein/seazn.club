@@ -417,20 +417,40 @@ test.describe("Pro Plus · disclosure + admin matrix", () => {
     // per-division count, so the comparison table has nothing left to show
     // there — no row to assert on.
 
-    // Officials-per-fixture is ungated on every tier now (#253): community ∞ / pro ∞ / pro_plus ∞.
+    // Cells are addressed by the PLAN they edit, never by column index.
+    //
+    // These assertions read `nth(4)` = Pro until v17 #294 inserted an Event
+    // Pass L column at index 4 and silently redefined every index to its
+    // right. Two of them then failed outright — and, worse, the api.write
+    // "Pro = DENY" pin below started passing VACUOUSLY against L's absent
+    // row, retiring a V290 guarantee without a single red. `data-ent-plan`
+    // (rendered by components/admin/ent-cell-editor) cannot drift that way.
+    const cell = (row: ReturnType<Page["locator"]>, plan: string) =>
+      row.locator(`[data-ent-plan="${plan}"]`);
+
+    // Officials-per-fixture is ungated on every SUBSCRIPTION tier now (#253):
+    // community ∞ / pro ∞ / pro_plus ∞. Neither pass rung has a row of its
+    // own, and an absent row resolves as DENY, so both render "—" — the
+    // distinction the admin grid exists to make visible.
     const ofpRow = page
       .locator("tbody tr")
       .filter({ has: page.getByRole("cell", { name: "officials.per_fixture.max", exact: true }) });
-    await expect(ofpRow.locator("td").nth(2)).toHaveText("∞"); // Community
-    await expect(ofpRow.locator("td").nth(4)).toHaveText("∞"); // Pro
-    await expect(ofpRow.locator("td").nth(5)).toHaveText("∞"); // Pro Plus
+    await expect(cell(ofpRow, "community")).toHaveText("∞");
+    await expect(cell(ofpRow, "pro")).toHaveText("∞");
+    await expect(cell(ofpRow, "pro_plus")).toHaveText("∞");
+    await expect(cell(ofpRow, "event_pass")).toHaveText("—");
+    await expect(cell(ofpRow, "event_pass_l")).toHaveText("—");
 
     // V290 hard move: api.write false on Pro, true on Pro Plus.
     const apiWriteRow = page
       .locator("tbody tr")
       .filter({ has: page.getByRole("cell", { name: "api.write", exact: true }) });
-    // DENY-aware admin cells (clubs W1): absent row renders "—", present-true "✓".
-    await expect(apiWriteRow.locator("td").nth(4)).toHaveText("—"); // Pro (no row = DENY)
-    await expect(apiWriteRow.locator("td").nth(5)).toHaveText("✓"); // Pro Plus
+    // DENY-aware admin cells (clubs W1): a present-false row and an absent row
+    // both render "—", present-true renders "✓".
+    await expect(cell(apiWriteRow, "pro")).toHaveText("—"); // present, false = DENY
+    await expect(cell(apiWriteRow, "pro_plus")).toHaveText("✓");
+    // The L rung is staff-visible and editable here — the whole point of
+    // widening this grid (#294). Absent row, so DENY.
+    await expect(cell(apiWriteRow, "event_pass_l")).toHaveText("—");
   });
 });
