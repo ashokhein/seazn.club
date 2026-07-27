@@ -368,4 +368,21 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
     expect(await hasFeature(orgId, "realtime")).toBe(false);
     expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
   });
+
+  // Coverage addition, not a regression: both resolvers already agreed a
+  // suspended ORG resolves community regardless of its subscription's plan
+  // (entitlements.ts:209, org_has_feature's first CASE arm) — this suite
+  // never had a case proving it. Passes before AND after V338; it is here
+  // so a future change to either arm trips this suite instead of shipping
+  // silently.
+  it("keeps a SUSPENDED org on community regardless of its subscription's plan", async () => {
+    await sql`
+      update subscriptions
+      set plan_key = 'pro', status = 'active', stripe_subscription_id = 'sub_susp'
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
+    await sql`update organizations set status = 'suspended' where id = ${orgId}`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime")).toBe(false);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
+  });
 });

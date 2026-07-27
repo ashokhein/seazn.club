@@ -166,4 +166,31 @@ describe.skipIf(!HAS_DB)("incomplete never-paid grace hole (#206)", () => {
     await syncSubscription(orgId, stripeSub({ id: subId, status: "incomplete" }));
     expect((await readAnchor(orgId)).status).toBe("incomplete");
   });
+
+  it("syncSubscription writes Stripe 'unpaid' as our past_due — never a literal 'unpaid' row (#288 audit)", async () => {
+    const orgId = await seedOrg();
+    const subId = `sub_unpaid_${randomUUID().slice(0, 8)}`;
+    await syncSubscription(orgId, stripeSub({ id: subId, status: "unpaid" }));
+    // STATUS_MAP (lib/billing.ts) collapses 'unpaid' into 'past_due' at
+    // write time — the resolver's existing past_due 14-day grace arm
+    // degrades it, exactly like any other dunning failure. Neither
+    // resolver needs its own 'unpaid' arm because the literal string
+    // never reaches subscriptions.status.
+    expect((await readAnchor(orgId)).status).toBe("past_due");
+  });
+
+  it("syncSubscription writes Stripe 'incomplete_expired' as our canceled — degrades immediately, no grace (#288 audit)", async () => {
+    const orgId = await seedOrg();
+    const subId = `sub_ie_${randomUUID().slice(0, 8)}`;
+    await sql`update subscriptions set plan_key = 'pro'
+              where id = (select subscription_id from organizations where id = ${orgId})`;
+    await syncSubscription(orgId, stripeSub({ id: subId, status: "incomplete_expired" }));
+    const row = await readAnchor(orgId);
+    expect(row.status).toBe("canceled");
+    // canceled + comped_at null is the immediate-degrade arm (no 14-day
+    // grace) in BOTH resolvers — unlike past_due above. Proves the
+    // DEGRADE from a paid-looking row, not just that plan_key already
+    // happened to read community.
+    expect(await orgPlanKey(orgId)).toBe("community");
+  });
 });
