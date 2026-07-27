@@ -830,6 +830,15 @@ export async function recordPassPurchase(args: {
   // attempt that recorded the pass but died before crediting — the per-
   // competition idempotency key makes it a no-op if the grant already landed.
   if (!dup) await grantPassCredits();
+  // ...and busts the cache UNCONDITIONALLY on the way out. The healing path
+  // exists precisely because a first attempt can die after the insert — and it
+  // can die between the insert and the invalidate too, leaving a warm DENY (or
+  // a stale pre-purchase answer) that outlives the pass for the full 300s TTL.
+  // A retry that heals the grant but not the cache heals nothing the buyer can
+  // see. Idempotent and fail-open by construction (cacheDelPattern swallows its
+  // own errors), so running it on the duplicate-charge branch too costs a Redis
+  // DEL of a prefix that is usually already empty and can never fail the ACK.
+  await invalidateOrgEntitlements(args.orgId);
   return { recorded: false, duplicateIntent: dup };
 }
 

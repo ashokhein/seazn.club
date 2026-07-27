@@ -1090,6 +1090,41 @@ describe.skipIf(!HAS_DB)("a move invalidates BOTH groups", () => {
     // And the moved org resolves the new group's plan immediately, not in 300s.
     expect(await hasFeature(joiner.orgId, "api.access")).toBe(true);
   });
+
+  // v17 W2 Task 8 (c): the detach half of the same property. The detach tests
+  // above read hasFeature only AFTER the call, against a cold cache — which a
+  // detach that never invalidated would also pass. This one WARMS the answer
+  // first, so the assertion can only hold if invalidateMove actually ran. It is
+  // the losing direction that matters here: a stale `true` keeps a departed org
+  // on somebody else's paid plan for up to the 300s TTL.
+  it("drops the cached entitlements of the org that LEFT and of the group it left", async () => {
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    // No period end and no comp: `release` and `ride_out` both land the leaver
+    // on Community, so the flip under test is the plan drop, not the mode.
+    const group = await makeGroup(payer, {
+      plan: "pro",
+      stripeSubId: null,
+      periodEndDays: null,
+      quantityPaid: 2,
+    });
+    const sibling = await makeOrg(group, payer);
+    const leaver = await makeOrg(group, clubOwner);
+
+    // Warm BOTH sides on the group's paid answer — real 300s entries.
+    expect(await hasFeature(leaver, "api.access")).toBe(true);
+    expect(await hasFeature(sibling, "api.access")).toBe(true);
+    expect(store.has(`ent:${leaver}:api.access`)).toBe(true);
+    expect(store.has(`ent:${sibling}:api.access`)).toBe(true);
+
+    await detachOrgFromGroup({ actorUserId: clubOwner, orgId: leaver });
+
+    expect(store.has(`ent:${leaver}:api.access`)).toBe(false);
+    expect(store.has(`ent:${sibling}:api.access`)).toBe(false);
+    // Without the bust this reads the warm `true` above and the org keeps Pro
+    // it no longer pays for.
+    expect(await hasFeature(leaver, "api.access")).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

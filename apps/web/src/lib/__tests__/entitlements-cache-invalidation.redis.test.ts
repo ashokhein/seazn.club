@@ -18,6 +18,7 @@ import { recordPassPurchase, revokePassForRefundedCharge } from "@/lib/billing";
 import type Stripe from "stripe";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition, patchCompetition } from "@/server/usecases/competitions";
+import { processStripeEvent } from "@/server/usecases/billing-events";
 import { setOrgPlan } from "./_billing-group";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -109,6 +110,42 @@ describe.skipIf(!HAS_DB || !HAS_REDIS)("entitlement cache invalidation (real Red
     expect(await hasFeature(auth.orgId, "realtime", compId)).toBe(true);
   });
 
+  it("recordPassPurchase busts the cache on the HEALING replay, not only the winning insert", async () => {
+    const auth = await seedCommunityOrg();
+    const [{ id: compId }] = await sql<{ id: string }[]>`
+      insert into competitions (org_id, name, slug)
+      values (${auth.orgId}, ${"Heal Cup " + randomUUID().slice(0, 6)},
+              ${"heal-cup-" + randomUUID().slice(0, 6)}) returning id`;
+    const intent = `pi_${randomUUID().slice(0, 8)}`;
+    await invalidateOrgEntitlements(auth.orgId);
+
+    // (1) Warm the cache on the pre-purchase DENY — a real 300s entry (denies
+    // are cached too; lib/entitlements.ts wraps them `{ v: null }`).
+    expect(await hasFeature(auth.orgId, "realtime", compId)).toBe(false);
+
+    // (2) Simulate a FIRST attempt that crashed between the pass insert and the
+    // invalidate: the row exists, the warm deny above was never busted. Raw SQL
+    // deliberately — going through recordPassPurchase here would bust it and
+    // destroy the very state under test.
+    await sql`insert into competition_passes (competition_id, org_id, stripe_payment_intent)
+              values (${compId}, ${auth.orgId}, ${intent})`;
+
+    // (3) The healing retry — SAME intent, so this is a replay, not a duplicate
+    // second charge: it takes the already-existed fallthrough, re-runs the
+    // credit grant and returns.
+    const result = await recordPassPurchase({
+      orgId: auth.orgId,
+      competitionId: compId,
+      paymentIntent: intent,
+    });
+    expect(result).toEqual({ recorded: false, duplicateIntent: null });
+
+    // (4) Pre-fix the fallthrough returned WITHOUT invalidating, so the stale
+    // deny warmed in (1) outlived the healed purchase for up to 5 minutes —
+    // a paid pass that does nothing. The invalidate is now unconditional.
+    expect(await hasFeature(auth.orgId, "realtime", compId)).toBe(true);
+  });
+
   it("revokePassForRefundedCharge busts the cache the instant a refund revokes the pass", async () => {
     const auth = await seedCommunityOrg();
     const [{ id: compId }] = await sql<{ id: string }[]>`
@@ -127,6 +164,51 @@ describe.skipIf(!HAS_DB || !HAS_REDIS)("entitlement cache invalidation (real Red
 
     // revokePassForRefundedCharge already calls invalidateOrgEntitlements
     // (lib/billing.ts:881) — this proves it, doesn't just assert it.
+    expect(await hasFeature(auth.orgId, "realtime", compId)).toBe(false);
+  });
+
+  // v17 W2 Task 8 (b). The dispute-lost revoke is a SECOND, independent delete
+  // of a competition_passes row (billing-events.ts handlePlatformDispute) — it
+  // does not go through revokePassForRefundedCharge, so the test above proves
+  // nothing about it. platform-dispute.test.ts asserts the row is gone; only a
+  // real Redis can show whether the org stops resolving the pass, and a
+  // chargeback that leaves 300s of paid-for entitlement behind is the one
+  // direction that costs money.
+  it("a lost dispute busts the cache the instant it revokes the pass", async () => {
+    const auth = await seedCommunityOrg();
+    const [{ id: compId }] = await sql<{ id: string }[]>`
+      insert into competitions (org_id, name, slug)
+      values (${auth.orgId}, ${"Dispute Cup " + randomUUID().slice(0, 6)},
+              ${"dispute-cup-" + randomUUID().slice(0, 6)}) returning id`;
+    const intent = `pi_${randomUUID().slice(0, 8)}`;
+    await recordPassPurchase({ orgId: auth.orgId, competitionId: compId, paymentIntent: intent });
+    await invalidateOrgEntitlements(auth.orgId);
+
+    // Warm the cache on the granted (true) answer.
+    expect(await hasFeature(auth.orgId, "realtime", compId)).toBe(true);
+
+    // The pass branch of handlePlatformDispute matches on payment_intent, so
+    // this runs keyless — no Stripe call, no mock (same reason
+    // platform-dispute.test.ts's pass tests do).
+    await processStripeEvent({
+      id: `evt_${randomUUID().slice(0, 12)}`,
+      type: "charge.dispute.closed",
+      data: {
+        object: {
+          id: `dp_${randomUUID().slice(0, 8)}`,
+          status: "lost",
+          amount: 2900,
+          currency: "gbp",
+          payment_intent: intent,
+          charge: `ch_${randomUUID().slice(0, 8)}`,
+        },
+      },
+    } as unknown as Stripe.Event);
+
+    // The row is gone AND the org knows it.
+    const [row] = await sql`
+      select 1 from competition_passes where stripe_payment_intent = ${intent}`;
+    expect(row).toBeUndefined();
     expect(await hasFeature(auth.orgId, "realtime", compId)).toBe(false);
   });
 });
