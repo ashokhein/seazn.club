@@ -3,7 +3,7 @@ import { handler } from "@/lib/http";
 import { HttpError } from "@/lib/errors";
 import { grantMonthlyForAllWallets } from "@/lib/credits";
 
-/** POST /api/cron/billing-grant — daily: grant every live billing wallet its
+/** POST /api/cron/billing-grant — daily: grant every billing wallet its
  *  `ai.credits.monthly(plan) * quantity_paid` allowance for this period
  *  (SPEC-2 §5.4/§11.2, v17 Task 6) — Community wallets included, flat 10.
  *  Each grant first EXPIRES any unspent `grant`-bucket balance left over

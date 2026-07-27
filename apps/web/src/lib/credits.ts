@@ -314,6 +314,18 @@ export async function grantMonthly(
  * `groupOrgLimit` special-cases the ORG CAP; see the plan task that added
  * this function for the reasoning.
  *
+ * **Trial grant scales to live orgs, not the frozen paid count (#291):**
+ * `syncGroupQuantity` (#279) freezes `quantity_paid` at its pre-trial
+ * baseline for the whole trial — a second org that joins mid-trial rides
+ * free and raises the ACTIVE org count without moving `quantity_paid` (by
+ * design: nothing has been billed yet). Granting on the frozen
+ * `quantity_paid` alone would under-grant that org's own seat's worth of
+ * credits, so a trialing wallet's quantity is `max(quantity_paid,
+ * liveOrgCount)` — never less than what's actually live. #279's own tests
+ * (`billing-group-trial-seat.test.ts`) assert `quantity_paid` itself stays
+ * frozen — this reads `live_org_count` alongside it rather than touching
+ * that column, so both stay true at once.
+ *
  * **Anchor (README §7 item 7): calendar month for EVERY wallet, paid or
  * Community — never `current_period_end`.** SPEC-2 §5.4's Cadence rule is
  * explicit that the grant is monthly *regardless of billing cadence* (an
@@ -333,22 +345,31 @@ export async function grantMonthlyForAllWallets(): Promise<{
   failed: number;
 }> {
   const rows = await sql<
-    { id: string; quantity_paid: number; rep_org_id: string }[]
+    { id: string; status: string; quantity_paid: number; rep_org_id: string; live_org_count: number }[]
   >`
-    select s.id, s.quantity_paid, rep.id as rep_org_id
+    select s.id, s.status, s.quantity_paid, rep.id as rep_org_id, live.n as live_org_count
       from subscriptions s
       cross join lateral (
         select o.id from organizations o
          where o.subscription_id = s.id and o.deleted_at is null
          order by (o.status = 'suspended'), o.created_at
          limit 1
-      ) rep`;
+      ) rep
+      cross join lateral (
+        select count(*)::int as n from organizations o
+         where o.subscription_id = s.id and o.deleted_at is null
+      ) live`;
   let granted = 0;
   let failed = 0;
   for (const row of rows) {
     try {
       const planKey = await orgPlanKey(row.rep_org_id);
-      const qty = planKey === "community" ? 1 : row.quantity_paid;
+      const qty =
+        planKey === "community"
+          ? 1
+          : row.status === "trialing"
+            ? Math.max(row.quantity_paid, row.live_org_count)
+            : row.quantity_paid;
       granted += await grantMonthly(row.id, planKey, qty);
     } catch (err) {
       failed++;

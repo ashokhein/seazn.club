@@ -44,13 +44,14 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-// grantMonthlyForAllWallets full-table-scans every LIVE subscription row in
-// the schema on each call. Run in isolation that's instant, but inside the
-// FULL vitest run (thousands of fixture rows accumulated by every other
-// suite in the same session) it can comfortably exceed vitest's default 5s
-// per-test timeout — not a regression in the code path itself, just the cost
-// of "every wallet" scaling with the whole test session's row count. Every
-// test here bumps its timeout accordingly.
+// grantMonthlyForAllWallets full-table-scans every subscription row with a
+// live org in the schema on each call, plus one resolver read per row. Run in
+// isolation that's instant, but inside the FULL vitest run (thousands of
+// fixture rows accumulated by every other suite in the same session) it can
+// comfortably exceed vitest's default 5s per-test timeout — not a regression
+// in the code path itself, just the cost of "every wallet" scaling with the
+// whole test session's row count. Every test here bumps its timeout
+// accordingly.
 const CRON_TEST_TIMEOUT = 20000;
 
 describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () => {
@@ -211,5 +212,24 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     await grantMonthlyForAllWallets();
     expect(await grantBalance(subId)).toBe(60);
     expect(await balance(subId)).toBe(60);
+  });
+
+  it("REGRESSION (#291): a trialing group grants for the LIVE org count when quantity_paid is frozen below it", { timeout: CRON_TEST_TIMEOUT }, async () => {
+    const orgId = await seedOrg();
+    const subId = await setOrgPlan(orgId, "pro", "trialing");
+    // #279 (syncGroupQuantity) freezes quantity_paid at its pre-trial
+    // baseline through the whole trial — simulate a second org that rode the
+    // trial for free without quantity_paid ever moving off its default (1).
+    const suffix = randomUUID().slice(0, 8);
+    await sql`
+      insert into organizations (name, slug, subscription_id)
+      values (${"Rider " + suffix}, ${"rider-" + suffix}, ${subId})`;
+
+    await grantMonthlyForAllWallets();
+
+    // max(quantity_paid=1, liveOrgCount=2) — not quantity_paid alone, or the
+    // rider org would spend against a wallet that only ever got 1 seat's
+    // worth of monthly credits.
+    expect(await balance(subId)).toBe(60 * 2);
   });
 });
