@@ -70,10 +70,25 @@ export function extraOrgPrice(
   return amountFor(tier, currency);
 }
 
-/** Event Pass one-time price in minor units for a currency. */
-export function passPrice(currency: Currency): number {
-  const pass = stripePlans.passes?.find((p) => p.key === "event_pass");
-  if (!pass) throw new Error("stripe-plans.json is missing the event_pass");
+/** The Event Pass rungs (v17 #294). Same upgrade, two sizes: `event_pass` is M
+ *  (10 divisions / 128 entrants), `event_pass_l` is L (20 / unlimited). These are
+ *  `plans` keys AND `stripe-plans.json` pass keys — M's is literally `event_pass`,
+ *  never `event_pass_m`. */
+export const PASS_KEYS = ["event_pass", "event_pass_l"] as const;
+export type PassKey = (typeof PASS_KEYS)[number];
+
+/**
+ * Event Pass one-time price in minor units for a currency, straight from
+ * stripe-plans.json — the same seed `stripe:sync` pushes to Stripe, so the
+ * advertised price is the charged price for either rung.
+ *
+ * `passKey` defaults to the M rung so every pre-#294 call site (the pricing
+ * page, the upgrade gate, the ticket stubs, settings/billing) keeps its meaning
+ * unchanged; only the M/L picker passes it explicitly.
+ */
+export function passPrice(currency: Currency, passKey: PassKey = "event_pass"): number {
+  const pass = stripePlans.passes?.find((p) => p.key === passKey);
+  if (!pass) throw new Error(`stripe-plans.json is missing the ${passKey}`);
   return amountFor(pass.price, currency);
 }
 

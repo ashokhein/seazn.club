@@ -7,6 +7,7 @@ import {
   PASS_CREDIT_GRANT,
   ticketTiers,
 } from "../pricing-cards";
+import { passPrice } from "../currency";
 import { sql } from "@/lib/db";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -52,6 +53,21 @@ describe("pricing cards", () => {
   // the card copy and the (future) wallet grant can't silently diverge.
   it("the Event Pass card quotes the +25 one-time credit grant", () => {
     expect(PASS_CREDIT_GRANT).toBe(25);
+  });
+
+  // v17 #294 — the L rung's $59 price point, per-currency, alongside M's. Both
+  // rungs are resolved by `passKey` from the SAME stripe-plans.json `passes`
+  // array stripe-sync seeds Stripe from, so an L price can never drift from
+  // what is charged. The default arg is pinned too: every pre-#294 call site
+  // passes one argument and must keep getting M.
+  it("passPrice resolves both Event Pass rungs, keyed by passKey", () => {
+    expect(passPrice("usd")).toBe(2900); // default arg unchanged — M
+    expect(passPrice("usd", "event_pass")).toBe(2900);
+    expect(passPrice("usd", "event_pass_l")).toBe(5900);
+    expect(passPrice("gbp", "event_pass_l")).toBe(4900);
+    expect(passPrice("eur", "event_pass_l")).toBe(5900);
+    expect(passPrice("inr", "event_pass_l")).toBe(449900);
+    expect(passPrice("aud", "event_pass_l")).toBe(8900);
   });
 });
 
