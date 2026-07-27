@@ -241,6 +241,19 @@ describe("owned", () => {
     expect(html).not.toContain("Event Pass M");
   });
 
+  it.each(["event_pass", "event_pass_l"] as const)(
+    "stamps the held rung's KEY on the seal for %s",
+    async (passKey) => {
+      // `data-pass-held-rung` was a VALUELESS flag here while the dashboard seal
+      // and <CompetitionPassEntry> both carry the key as a value — so
+      // `[data-pass-held-rung="event_pass_l"]`, the selector those two teach, hit
+      // nothing on this page. A selector that cannot match is worse than a
+      // missing one: it reads as a passing check.
+      heldPass({ passKey });
+      expect(await render()).toContain(`data-pass-held-rung="${passKey}"`);
+    },
+  );
+
   it("drops the other rung's column once a pass is held", async () => {
     // There is no M->L upgrade path (#294 Q3, deferred), so a second pass
     // column here would advertise a purchase the product cannot complete —

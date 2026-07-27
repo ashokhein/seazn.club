@@ -365,8 +365,17 @@ function Ticket({
             {/* WHICH pass. Two rungs are live (#294) and they differ by more
                 than money — an L holder reading only "Event Pass active" cannot
                 tell whether the 20-division ceiling they were sold is the one
-                this competition actually has. */}
-            <p data-pass-held-rung className="app-display mt-2 text-sm font-bold text-lime-300">
+                this competition actually has.
+
+                The attribute carries the KEY, matching the dashboard seal and
+                <CompetitionPassEntry>. It was a valueless flag here, so
+                `[data-pass-held-rung="event_pass_l"]` — which is how the other
+                two are selected — silently matched nothing on this page: a
+                selector that can only ever be wrong, never red. */}
+            <p
+              data-pass-held-rung={heldRung}
+              className="app-display mt-2 text-sm font-bold text-lime-300"
+            >
               {t(dict, PASS_RUNG_NAME_KEY[heldRung])}
             </p>
             {purchasedAt && (

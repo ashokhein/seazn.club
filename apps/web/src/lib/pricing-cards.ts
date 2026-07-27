@@ -1,4 +1,10 @@
-import { formatMinor, passPrice, proPrice, type Currency } from "@/lib/currency";
+import { formatMinor, proPrice, type Currency } from "@/lib/currency";
+// Mutually referential with pass-ladder (it reads PASS_CREDIT_GRANT from here).
+// Safe and deliberate: neither side touches the other at module scope — both
+// references sit inside function bodies — so there is no initialisation order
+// in which either binding is unset. Both modules are pure, with no `server-only`
+// and no module-scope `sql`.
+import { lowestPassRung } from "@/lib/pass-ladder";
 
 // Single source for plan-card bullets — shared by /pricing and the home
 // ticket stubs so the two can never drift (design/v3/12 §4.8).
@@ -110,11 +116,15 @@ export function ticketTiers(currency: Currency): TicketTier[] {
     { tier: "Community", price: "Free", bullets: FREE_FEATURES.slice(0, 4) },
     {
       tier: "Event Pass",
-      // The LOWEST rung, marked as a floor. `passPrice` is required to name a
-      // rung, so this is a deliberate M — the stub has no room to compare two,
-      // and "from" hands the reader to /pricing for the difference.
+      // The LOWEST rung, marked as a floor — the stub has no room to compare
+      // two, and "from" hands the reader to /pricing for the difference.
+      //
+      // DERIVED, not named. This read the literal "event_pass", which is honest
+      // only while M is the cheapest rung — precisely the assumption
+      // `lowestPassRung` exists to delete. A discount on L, or a rung added
+      // underneath, now moves this number with it.
       prefix: "from",
-      price: formatMinor(passPrice(currency, "event_pass"), currency),
+      price: formatMinor(lowestPassRung(currency).amountMinor, currency),
       period: " once",
       bullets: PASS_FEATURES.slice(0, 4),
       glow: true,

@@ -13,11 +13,16 @@
 //
 // ===========================================================================
 // If you found this red, an entry point lost its link or grew a second notion
-// of "is this org on a paid plan". Do NOT relax the assertion. Pro's matrix is a
-// strict superset of the pass's at every key the pass lifts — so a surface that
-// gets paid-ness wrong sells a paying customer a DOWNGRADE. That defect shipped
-// once already (fixed in f70b8e52) and a new surface is exactly where it comes
-// back.
+// of "is this org on a paid plan". Do NOT relax the assertion. Every boolean the
+// pass lifts is already true on a paid plan, and Pro's caps sit above the M
+// rung's — so a surface that gets paid-ness wrong sells a paying customer a
+// DOWNGRADE. That defect shipped once already (fixed in f70b8e52) and a new
+// surface is exactly where it comes back.
+//
+// ("Strict superset", which this said until v17 #294, is no longer true in one
+// direction: the L rung takes the entrant cap off entirely, above Pro's 256.
+// That is why the paid-plan copy claims FEATURES rather than everything, and
+// whether a paid org may buy L at all is #327.)
 // ===========================================================================
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -150,6 +155,12 @@ describe("no entry point can re-sell a pass the org already holds", () => {
 describe("a surface that offers no rung quotes the ladder's floor", () => {
   const PAYWALL = ["components", "upgrade-gate.tsx"];
   const OFFER = ["app", "o", "[orgSlug]", "settings", "billing", "page.tsx"];
+  // The SIXTH surface, and the one that made the five-file list a claim rather
+  // than a guarantee: `ticketTiers` (the home page's Event Pass stub) went on
+  // passing the literal "event_pass" while the branch reported that no
+  // production file passed a literal rung. A list that does not include every
+  // such surface cannot detect the next one.
+  const HOME_STUB = ["lib", "pricing-cards.ts"];
 
   it.each([
     ["the paywall", PAYWALL],
@@ -157,6 +168,7 @@ describe("a surface that offers no rung quotes the ladder's floor", () => {
     ["the dashboard card menu", COMPETITION_LIST],
     ["the competition header", COMPETITION_HEADER],
     ["competition settings", COMPETITION_SETTINGS],
+    ["the home-page ticket stub", HOME_STUB],
   ])("%s derives its price, and names no rung", (_name, parts) => {
     const src = code(...parts);
     expect(src).toContain("lowestPassRung(");
