@@ -19,7 +19,12 @@ import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import { AI_RUN_UNIT_NOUN } from "@/lib/ai-pricing";
-import { aiMarginReport, costPerUnitUsd, type AiPhaseUnitRow } from "../ai-runs-admin";
+import {
+  aiMarginReport,
+  costPerUnitUsd,
+  type AiMarginRow,
+  type AiPhaseUnitRow,
+} from "../ai-runs-admin";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
@@ -150,6 +155,67 @@ describe.skipIf(!HAS_DB)("aiMarginReport (v17 gap #295)", () => {
   });
 });
 
+describe.skipIf(!HAS_DB)("aiMarginReport — byOrg ordering (v17 gap #295)", () => {
+  it("breaks COGS ties deterministically, so the 25-row view cap cannot shuffle between loads", async () => {
+    // The panel shows only the top 25 of (today) 300+ orgs. Sorting on COGS
+    // alone leaves every tie — and $0.00 COGS is the common case — resolved by
+    // Set insertion order, which comes from two GROUP BY queries that carry no
+    // ORDER BY. Postgres is free to return those rows differently on any run,
+    // so an org could appear and disappear from the panel with no data change.
+    const cogs = 550;
+    const orgs = await Promise.all([
+      seedOrg(`Margin tie ${uniq()}`),
+      seedOrg(`Margin tie ${uniq()}`),
+      seedOrg(`Margin tie ${uniq()}`),
+    ]);
+    // Two fully tied (same COGS, same credits); one tied on COGS but richer.
+    const credits = [4, 4, 9];
+    for (const [i, orgId] of orgs.entries()) {
+      const compId = await seedCompetition(orgId);
+      await seedRunEvent(compId, orgId, "schedule.ai_generated", { cost_usd: cogs });
+      await sql`
+        insert into ai_credit_ledger (wallet_id, delta, source, bucket, spent_by_org_id, balance_after, idempotency_key)
+        values (${randomUUID()}, ${-credits[i]!}, 'run_spend', 'grant', ${orgId}, 0, ${`t-${uniq()}`})`;
+    }
+
+    const report = await aiMarginReport(DAYS);
+
+    // THE assertion: every adjacent pair obeys the full 3-key order. Checking
+    // only the seeded trio is not enough — V8's sort is stable, so with no
+    // tiebreaker those three keep whatever order the Set happened to give
+    // them, which is right about as often as it is wrong. (Verified: removing
+    // the tiebreakers left a trio-only test passing.) Across the schema's
+    // hundreds of tied $0.00 orgs, insertion order cannot satisfy this.
+    const cmp = (a: AiMarginRow, b: AiMarginRow) =>
+      b.cogs_usd - a.cogs_usd ||
+      b.revenue_usd - a.revenue_usd ||
+      (a.org_id ?? "").localeCompare(b.org_id ?? "");
+    expect(report.byOrg.length).toBeGreaterThan(3); // else the check is thin
+    for (let i = 1; i < report.byOrg.length; i++) {
+      const prev = report.byOrg[i - 1]!;
+      const curr = report.byOrg[i]!;
+      expect(
+        cmp(prev, curr),
+        `byOrg[${i - 1}] (${prev.org_id}, cogs ${prev.cogs_usd}, rev ${prev.revenue_usd}) ` +
+          `must not sort after byOrg[${i}] (${curr.org_id}, cogs ${curr.cogs_usd}, rev ${curr.revenue_usd})`,
+      ).toBeLessThanOrEqual(0);
+    }
+
+    // Readable spot-checks on the seeded trio, on top of the invariant above.
+    const at = (orgId: string) => report.byOrg.findIndex((r) => r.org_id === orgId);
+    const richer = orgs[2]!;
+    const [tiedA, tiedB] = [orgs[0]!, orgs[1]!];
+    expect(at(richer)).toBeLessThan(at(tiedA)); // more revenue wins the COGS tie
+    expect(at(richer)).toBeLessThan(at(tiedB));
+    const [firstTied, secondTied] = tiedA < tiedB ? [tiedA, tiedB] : [tiedB, tiedA];
+    expect(at(firstTied)).toBeLessThan(at(secondTied)); // total tie -> org id asc
+
+    // And the whole ordering is reproducible across reads.
+    const again = await aiMarginReport(DAYS);
+    expect(again.byOrg.map((r) => r.org_id)).toEqual(report.byOrg.map((r) => r.org_id));
+  });
+});
+
 describe.skipIf(!HAS_DB)("aiMarginReport — per-phase unit economics (v17 gap #295)", () => {
   it("segments $/unit BY PHASE and labels the unit — the two phases count different things", async () => {
     // schedule stamps movableIds.size (the movable SUBSET it was asked to
@@ -249,6 +315,64 @@ describe.skipIf(!HAS_DB)("aiMarginReport — per-phase unit economics (v17 gap #
     expect(after.sized_cogs_usd - before.sized_cogs_usd).toBeLessThan(1);
   });
 
+  it("survives a malformed cost_usd instead of 500-ing the whole page", async () => {
+    // Exactly the pack_units hazard one column over: cost_usd is a free-form
+    // JSONB key too, and this report is the page-load path. A run whose cost
+    // cannot be read is counted as a run, surfaced in runs_missing_cost, and
+    // contributes nothing to COGS — we do not invent a number, and we do not
+    // let one row take the page down.
+    const orgId = await seedOrg(`Margin badcost ${uniq()}`);
+    const compId = await seedCompetition(orgId);
+    const before = phaseRow(await aiMarginReport(DAYS), "schedule");
+
+    await seedRunEvent(compId, orgId, "schedule.ai_generated", {
+      cost_usd: "expensive",
+      pack_units: 4_000_000,
+    });
+
+    try {
+      const after = phaseRow(await aiMarginReport(DAYS), "schedule");
+      expect(after.runs - before.runs).toBeGreaterThanOrEqual(1);
+      expect(after.runs_missing_cost - before.runs_missing_cost).toBeGreaterThanOrEqual(1);
+      // No invented cost anywhere.
+      expect(after.cogs_usd - before.cogs_usd).toBeLessThan(1);
+      expect(after.sized_cogs_usd - before.sized_cogs_usd).toBeLessThan(1);
+      // Its size is not counted either: units and sized COGS must stay a MATCHED
+      // pair, or the ratio divides one set's cost by another set's units.
+      expect(after.units - before.units).toBeLessThan(1000);
+    } finally {
+      // MUST clean up, unlike the malformed-pack_units row above. `pack_units`
+      // is read by nothing outside this report, but `cost_usd` is read by
+      // `medianRunCostUsd` and `aiRunTotals`, whose casts are UNGUARDED. Left
+      // behind, this single row permanently breaks the expensive-run alert and
+      // /admin/ai-runs for every later suite in the shared schema — observed:
+      // 4 failures in ai-run-cost-alert.test.ts, including the alert silently
+      // never firing again. Filed as a finding; not fixed here (out of scope),
+      // so the test must not be the thing that plants it.
+      await sql`delete from competition_events where competition_id = ${compId}`;
+    }
+  });
+
+  it("accepts a cost in exponent form — a real, very small cost is not silently dropped", async () => {
+    // JSON.stringify switches to exponential below 1e-6, so a genuinely tiny
+    // per-run cost reaches the payload as "1e-7". A guard that only accepted
+    // plain decimals would quietly treat those as unrecorded and understate
+    // COGS — a worse failure than the crash it replaced, because it is silent.
+    const orgId = await seedOrg(`Margin expcost ${uniq()}`);
+    const compId = await seedCompetition(orgId);
+    const before = phaseRow(await aiMarginReport(DAYS), "officials");
+
+    await sql`
+      insert into competition_events (competition_id, org_id, type, payload)
+      values (${compId}, ${orgId}, 'schedule.ai_officials_generated',
+              ${sql.json({ cost_usd: 1e-7, pack_units: 1 } as never)})`;
+
+    const after = phaseRow(await aiMarginReport(DAYS), "officials");
+    expect(after.runs - before.runs).toBeGreaterThanOrEqual(1);
+    // Counted as costed, not as missing.
+    expect(after.runs_missing_cost - before.runs_missing_cost).toBe(0);
+  });
+
   it("counts an escalated run's size ONCE — `movable` and `pack_units` are the same number, not two signals", async () => {
     // schedule-ai stamps ladder telemetry on an escalated run, and that block
     // carries `movable: movableIds.size` — the identical number already
@@ -328,6 +452,7 @@ describe.skipIf(!HAS_DB)("aiMarginReport — per-phase unit economics (v17 gap #
     for (const row of report.byPhase) {
       expect(row.runs).toBe(0);
       expect(row.runs_missing_units).toBe(0);
+      expect(row.runs_missing_cost).toBe(0);
       expect(row.units).toBe(0);
       expect(row.cogs_usd).toBe(0);
       expect(row.cost_per_unit_usd).toBeNull();

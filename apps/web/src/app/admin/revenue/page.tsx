@@ -65,6 +65,7 @@ function Tile({
  *  blended cross-phase figure is offered anywhere. */
 function PhaseTable({ rows }: { rows: AiPhaseUnitRow[] }) {
   const missing = rows.reduce((s, r) => s + r.runs_missing_units, 0);
+  const missingCost = rows.reduce((s, r) => s + r.runs_missing_cost, 0);
   const runs = rows.reduce((s, r) => s + r.runs, 0);
   return (
     <section className="rounded-lg bg-slate-800 p-4">
@@ -116,13 +117,21 @@ function PhaseTable({ rows }: { rows: AiPhaseUnitRow[] }) {
           </tbody>
         </table>
       </div>
+      {/* Stated, never silently dropped. Two different gaps with two different
+          consequences: a run with no size still contributes its cost to COGS
+          (only the ratio loses it), whereas a run with no readable cost is
+          missing from COGS entirely — which makes COGS, and the margin above
+          it, a floor rather than a total. */}
       {missing > 0 && (
-        // Stated, never silently dropped: runs recorded before the size stamp
-        // landed carry no units. Their cost is in COGS; excluding them from
-        // the denominator is what keeps cost per unit honest.
         <p className="mt-2 text-xs text-slate-500">
           {count(missing)} of {count(runs)} runs recorded no size. Their cost is counted in COGS and
           left out of cost per unit.
+        </p>
+      )}
+      {missingCost > 0 && (
+        <p className="mt-1 text-xs text-amber-300/80">
+          {count(missingCost)} of {count(runs)} runs recorded no readable cost, so COGS and margin
+          are floors — the real spend is higher.
         </p>
       )}
     </section>

@@ -234,14 +234,20 @@ export interface AiPhaseUnitRow {
    *  real spend — but it is excluded from the $/unit ratio, which is why
    *  `sized_cogs_usd` exists as a separate numerator. */
   runs_missing_units: number;
-  /** Sum of `pack_units` across the runs that carry it. */
+  /** Runs whose `cost_usd` is missing or unreadable. Their spend was real but
+   *  is not recorded, so `cogs_usd` (and the margin above it) is a FLOOR
+   *  whenever this is non-zero. Surfaced rather than swallowed, exactly like
+   *  `runs_missing_units`. */
+  runs_missing_cost: number;
+  /** Sum of `pack_units` across the runs counted in `sized_cogs_usd` — a
+   *  MATCHED pair with it, so the ratio can never divide one set of runs'
+   *  cost by another set's units. */
   units: number;
-  /** COGS across ALL runs of this phase, sized or not. The phase rows
-   *  partition the report's total COGS. */
+  /** COGS across every run of this phase whose cost is readable, sized or not.
+   *  The phase rows partition the report's total COGS. */
   cogs_usd: number;
-  /** COGS of the runs that DO carry units — the numerator of
-   *  `cost_per_unit_usd`, so the ratio never divides an unsized run's cost by
-   *  someone else's units. */
+  /** COGS of the runs that carry BOTH a usable size and a readable cost — the
+   *  numerator of `cost_per_unit_usd`. */
   sized_cogs_usd: number;
   /** `sized_cogs_usd / units`, or null when the phase recorded no units at
    *  all. NEVER blended across phases. */
@@ -271,8 +277,30 @@ const PHASES: readonly AiRunPhase[] = ["schedule", "officials"];
  *  (the only shape either writer produces — `movableIds.size` /
  *  `pack.fixtures.length`) is therefore treated exactly like a missing size:
  *  counted in `runs` and `cogs_usd`, excluded from `units` and the ratio.
- *  `coalesce(..., false)` because a NULL key makes the regex NULL, not false. */
+ *  `coalesce(..., false)` because a NULL key makes the regex NULL, not false.
+ *
+ *  No exponent form here on purpose: `pack_units` is an integer count, and JSON
+ *  never serialises one in exponential notation below 1e21. */
 const SIZED = sql`coalesce(payload->>'pack_units' ~ '^[0-9]+$', false)`;
+
+/** "This run recorded a readable cost." Same hazard as `SIZED`, one key over —
+ *  `cost_usd` is free-form JSONB too, and THIS report is the page-load path
+ *  (unlike `aiRunTotals`/`medianRunCostUsd`, which are older code on other
+ *  paths and are deliberately left alone here). One unparseable value would
+ *  abort the whole GROUP BY and 500 /admin/revenue until someone found the row.
+ *
+ *  A run whose cost cannot be read is counted in `runs` and surfaced in
+ *  `runs_missing_cost`, but contributes nothing to `cogs_usd` — we never invent
+ *  a number, so COGS is a FLOOR whenever that counter is non-zero, and the
+ *  panel says so.
+ *
+ *  Exponent form IS accepted: `JSON.stringify` switches to exponential below
+ *  1e-6, so a genuinely tiny per-run cost arrives as "1e-7". Rejecting those
+ *  would silently understate COGS, which is a worse failure than the crash it
+ *  replaces because nothing surfaces it. Written with `[.]` rather than `\.` —
+ *  a backslash escape inside a JS template literal is not preserved, and the
+ *  resulting bare `.` would match any character and defeat the guard. */
+const COSTED = sql`coalesce(payload->>'cost_usd' ~ '^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$', false)`;
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
@@ -354,7 +382,9 @@ export async function aiMarginReport(days: number): Promise<AiMarginReport> {
      group by h.spent_by_org_id`;
 
   const cogsRows = await sql<{ org_id: string | null; cogs_usd: string | null }[]>`
-    select org_id, coalesce(sum((payload->>'cost_usd')::numeric), 0)::text as cogs_usd
+    select org_id,
+           coalesce(sum((payload->>'cost_usd')::numeric)
+                    filter (where ${COSTED}), 0)::text as cogs_usd
       from competition_events
      where type = any(${AI_RUN_EVENT_TYPES as unknown as string[]})
        and created_at >= now() - make_interval(days => ${days})
@@ -371,6 +401,7 @@ export async function aiMarginReport(days: number): Promise<AiMarginReport> {
       phase: string;
       runs: number;
       runs_missing_units: number;
+      runs_missing_cost: number;
       units: string;
       cogs_usd: string;
       sized_cogs_usd: string;
@@ -384,11 +415,16 @@ export async function aiMarginReport(days: number): Promise<AiMarginReport> {
            end as phase,
            count(*)::int as runs,
            count(*) filter (where not ${SIZED}) ::int as runs_missing_units,
+           count(*) filter (where not ${COSTED}) ::int as runs_missing_cost,
+           -- units and sized_cogs_usd share ONE filter so they stay a matched
+           -- pair: a run missing either half is out of both, and the ratio
+           -- below can never divide one set's cost by another set's units.
            coalesce(sum((payload->>'pack_units')::numeric)
-                    filter (where ${SIZED}), 0)::text as units,
-           coalesce(sum((payload->>'cost_usd')::numeric), 0)::text as cogs_usd,
+                    filter (where ${SIZED} and ${COSTED}), 0)::text as units,
            coalesce(sum((payload->>'cost_usd')::numeric)
-                    filter (where ${SIZED}), 0)::text as sized_cogs_usd
+                    filter (where ${COSTED}), 0)::text as cogs_usd,
+           coalesce(sum((payload->>'cost_usd')::numeric)
+                    filter (where ${SIZED} and ${COSTED}), 0)::text as sized_cogs_usd
       from competition_events
      where type = any(${AI_RUN_EVENT_TYPES as unknown as string[]})
        and created_at >= now() - make_interval(days => ${days})
@@ -420,7 +456,18 @@ export async function aiMarginReport(days: number): Promise<AiMarginReport> {
         cogsByOrg.get(orgId) ?? 0,
       ),
     )
-    .sort((a, b) => b.cogs_usd - a.cogs_usd);
+    // COGS alone is not a total order: $0.00 is the common case, and ties would
+    // otherwise resolve by Set-insertion order inherited from two GROUP BY
+    // queries that carry no ORDER BY. Postgres may return those rows in a
+    // different order on any run, so an org could appear and disappear from the
+    // view's 25-row cap with no underlying change. Revenue breaks most ties;
+    // org id is the tiebreak of last resort and guarantees ONE answer.
+    .sort(
+      (a, b) =>
+        b.cogs_usd - a.cogs_usd ||
+        b.revenue_usd - a.revenue_usd ||
+        (a.org_id ?? "").localeCompare(b.org_id ?? ""),
+    );
 
   const phaseByKey = new Map(phaseRows.map((r) => [r.phase, r]));
   const byPhase = PHASES.map((phase) => {
@@ -432,6 +479,7 @@ export async function aiMarginReport(days: number): Promise<AiMarginReport> {
       unit_noun: aiRunUnitNoun(phase),
       runs: r?.runs ?? 0,
       runs_missing_units: r?.runs_missing_units ?? 0,
+      runs_missing_cost: r?.runs_missing_cost ?? 0,
       units,
       cogs_usd: round2(Number(r?.cogs_usd ?? 0)),
       sized_cogs_usd: sizedCogs,
