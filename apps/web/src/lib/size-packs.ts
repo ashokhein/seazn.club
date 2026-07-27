@@ -43,7 +43,9 @@ const SWEEP_MANAGED_FEATURE_KEYS: readonly string[] = [
  *  documented: it is reachable today through the staff catalog CRUD. Forbid
  *  only these collisions, from the single source of truth for each key. */
 function assertNotSweepManaged(featureKey: string | undefined): void {
-  if (featureKey !== undefined && SWEEP_MANAGED_FEATURE_KEYS.includes(featureKey)) {
+  // An unset feature_key (a PATCH that does not touch it) needs no separate
+  // guard — it simply matches nothing.
+  if (SWEEP_MANAGED_FEATURE_KEYS.some((k) => k === featureKey)) {
     throw new HttpError(
       400,
       `A size-pack cannot lift '${featureKey}' — that cap is managed by a recurring add-on ` +
