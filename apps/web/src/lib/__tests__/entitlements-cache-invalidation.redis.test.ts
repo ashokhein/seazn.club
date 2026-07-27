@@ -19,6 +19,7 @@ import type Stripe from "stripe";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition, patchCompetition } from "@/server/usecases/competitions";
 import { processStripeEvent } from "@/server/usecases/billing-events";
+import { setOrgSuspension } from "@/server/usecases/admin-orgs";
 import { setOrgPlan } from "./_billing-group";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -210,5 +211,38 @@ describe.skipIf(!HAS_DB || !HAS_REDIS)("entitlement cache invalidation (real Red
       select 1 from competition_passes where stripe_payment_intent = ${intent}`;
     expect(row).toBeUndefined();
     expect(await hasFeature(auth.orgId, "realtime", compId)).toBe(false);
+  });
+
+  // v17 W2 Task 9. organizations.status is a RESOLVER INPUT, and the loudest
+  // one: `when o.status = 'suspended' then 'community'` is the FIRST arm of
+  // both resolvers (orgPlanKey's CASE and org_has_feature's SQL twin). The
+  // staff suspend route wrote that column and stopped, so on a Redis-backed
+  // target moderation was cosmetic for up to 300s — a suspended org kept
+  // serving its paid plan, and (worse for the innocent) a reactivated org
+  // stayed degraded just as long after staff had already restored it.
+  it("suspending an org busts the cache the instant moderation lands", async () => {
+    const auth = await seedCommunityOrg();
+    await setOrgPlan(auth.orgId, "pro", "active");
+    await invalidateOrgEntitlements(auth.orgId);
+
+    // Warm the cache on the PAID answer (`realtime` is Pro-only).
+    expect(await hasFeature(auth.orgId, "realtime")).toBe(true);
+
+    // The write under test, exactly as the route performs it — the route is a
+    // thin wrapper over this usecase, so no manual invalidate here.
+    expect(
+      await setOrgSuspension(auth.userId!, auth.orgId, "suspend", "cache bust probe"),
+    ).toBe("suspended");
+
+    // Pre-fix this read the 300s entry warmed above: suspended on paper,
+    // fully entitled in practice.
+    expect(await hasFeature(auth.orgId, "realtime")).toBe(false);
+
+    // And the same in the direction that harms the org rather than us: staff
+    // lift the suspension, the org must be whole again immediately.
+    expect(
+      await setOrgSuspension(auth.userId!, auth.orgId, "reactivate", "cache bust probe"),
+    ).toBe("active");
+    expect(await hasFeature(auth.orgId, "realtime")).toBe(true);
   });
 });
