@@ -1,7 +1,9 @@
 // v17 Task 6 (re-review, CRITICAL cadence fix): the daily cron entry point
 // (api/cron/billing-grant) that grants every LIVE wallet its
 // ai.credits.monthly(plan) * quantity_paid allowance — scaled for paid plans,
-// flat for community (SPEC-2 §11.2). Each grant first expires any unspent
+// flat for community (SPEC-2 §11.2); a TRIALING paid wallet scales by
+// max(quantity_paid, live_org_count) instead (#291, see
+// grantMonthlyForAllWallets' docstring). Each grant first expires any unspent
 // grant-bucket leftover from the prior period (D1, use-or-lose, Task 6 review
 // fix) before adding the new allowance. Idempotent per period: EVERY wallet —
 // paid or Community — keys its period off the plain calendar month
