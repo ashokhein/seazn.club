@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { handler } from "@/lib/http";
 import { HttpError } from "@/lib/errors";
-import { grantMonthlyForAllWallets } from "@/lib/credits";
+import { checkEarnGrantVolumeAlert, grantMonthlyForAllWallets } from "@/lib/credits";
 
 /** POST /api/cron/billing-grant — daily: grant every billing wallet its
  *  `ai.credits.monthly(plan) * quantity_paid` allowance for this period
@@ -25,13 +25,25 @@ import { grantMonthlyForAllWallets } from "@/lib/credits";
  *  requires (see `grantMonthlyForAllWallets`'s docstring).
  *
  *  Cron-shaped like /api/cron/billing-quantity: x-cron-secret header
- *  (CRON_SECRET env). */
+ *  (CRON_SECRET env). Also runs the earn_grant daily-volume farm-watch
+ *  (v17 gap #296) — same daily poll, no separate schedule. */
 export async function POST() {
   return handler(async () => {
     const secret = process.env.CRON_SECRET;
     if (!secret) throw new HttpError(503, "CRON_SECRET is not configured");
     const given = (await headers()).get("x-cron-secret");
     if (given !== secret) throw new HttpError(401, "Bad cron secret");
-    return grantMonthlyForAllWallets();
+    const result = await grantMonthlyForAllWallets();
+    // Growth-loop farm-watch (v17 gap #296): the SAME daily poll also checks
+    // today's earn_grant volume — no new cron/workflow, this one already
+    // runs once a day (billing-grant.yml). checkEarnGrantVolumeAlert never
+    // throws on its own, but the failure is caught here too so a check bug
+    // can never turn into a failed grant response.
+    try {
+      await checkEarnGrantVolumeAlert();
+    } catch (err) {
+      console.error("[cron/billing-grant] earn_grant volume check failed", err);
+    }
+    return result;
   });
 }

@@ -49,3 +49,32 @@ export function aiRunCostUsd(
   const usd = (inputTokens * p.input + outputTokens * p.output) / 1_000_000;
   return Math.round(usd * 10_000) / 10_000;
 }
+
+/** What ONE `pack_units` unit MEANS, per AI run phase (v17 gap #295).
+ *
+ *  The two run paths stamp the same JSONB key from different denominators:
+ *  `schedule-ai.ts` stamps `movableIds.size` — only the fixtures the pack asked
+ *  the model to place — while `officials-ai.ts` stamps `pack.fixtures.length`,
+ *  every fixture in the pack. So `pack_units` is NOT one measure with two
+ *  sources: a $/unit computed across both phases is arithmetic over two
+ *  different things. Every surface that renders a per-unit number must label it
+ *  with this noun and segment by phase.
+ *
+ *  Deliberately parked in this leaf: `lib/email.ts` (the staff alert copy) and
+ *  `server/usecases/ai-runs-admin.ts` (the margin panel) both need it, and
+ *  ai-runs-admin already imports lib/email — putting it in either would close
+ *  an import cycle. This module imports nothing. */
+export const AI_RUN_UNIT_NOUN = {
+  schedule: "movable fixture",
+  officials: "fixture",
+} as const;
+
+/** `AI_RUN_UNIT_NOUN[phase]`, pluralised for `count` (anything but exactly 1,
+ *  including a missing count, reads as the plural). */
+export function aiRunUnitNoun(
+  phase: keyof typeof AI_RUN_UNIT_NOUN,
+  count?: number | null,
+): string {
+  const noun = AI_RUN_UNIT_NOUN[phase];
+  return count === 1 ? noun : `${noun}s`;
+}

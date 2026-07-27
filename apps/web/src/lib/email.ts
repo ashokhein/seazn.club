@@ -2,6 +2,9 @@ import "server-only";
 import { sql } from "@/lib/db";
 import { getDictionary } from "@/lib/i18n";
 import { type Locale } from "@/lib/i18n-constants";
+// Leaf module (imports nothing) — safe here even though ai-runs-admin.ts, the
+// other consumer of the unit noun, imports this file.
+import { aiRunUnitNoun } from "@/lib/ai-pricing";
 import {
   verificationTemplate,
   passwordResetTemplate,
@@ -796,6 +799,124 @@ export async function sendPassCreditReversalIncompleteAlertEmail(
     `${bodyText}\n\norg: ${opts.orgName} (${opts.orgId}) · competition: ${opts.competitionName} · ` +
     `granted ${opts.grantedMinor} ${opts.currency} · reversed ${opts.reversedMinor} ${opts.currency}` +
     (undetermined ? "" : ` · absorbed ${absorbed} ${opts.currency}`);
+  return send({ to: opts.to, transactional: true, subject, html, text });
+}
+
+export interface AiRunCostAlertEmail {
+  to: string;
+  orgId: string;
+  competitionId?: string;
+  phase: "schedule" | "officials";
+  model: string;
+  costUsd: number;
+  medianUsd: number;
+  /** Trailing window the median was computed over — supplied by the caller
+   *  (`MEDIAN_WINDOW_DAYS`) so the copy can never drift from the query. */
+  windowDays: number;
+  /** Requested run mode, `schedule` phase only (`generate` / `regenerate` /
+   *  `repair` …) — the officials path has no mode concept, so this is absent
+   *  there rather than a placeholder. Named in the copy because a full
+   *  regenerate and a nudge are different cost classes; the MEDIAN it is
+   *  compared against stays pooled across modes (v17 gap #295 — mode-scoped
+   *  baselines wait on calibration data), which the copy says out loud. */
+  mode?: string | null;
+  /** `pack_units` as stamped on the run's own ledger row — the run's size.
+   *  NULLABLE on purpose: every event written before this wave carries no such
+   *  key, so the copy omits the size clause rather than printing a `0` that
+   *  would read as a real, empty pack. The unit differs per phase — see
+   *  `AI_RUN_UNIT_NOUN`. */
+  packUnits?: number | null;
+}
+
+/** Internal staff alert (v17 gap #295): a single AI run's cost landed at or
+ *  above AI_RUN_COST_ALERT_MULTIPLE x the trailing median for its
+ *  phase — the exact trigger SPEC-2 §5.1 named for revisiting the flat
+ *  1-credit-per-run price. Ops-only, no user-facing i18n (mirrors
+ *  sendStuckEventsAlertEmail). Not deduped — a run class that keeps tripping
+ *  this is the point, not a bug to suppress. */
+export async function sendAiRunCostAlertEmail(opts: AiRunCostAlertEmail): Promise<boolean> {
+  const multiple = opts.medianUsd > 0 ? opts.costUsd / opts.medianUsd : null;
+  const subject = `Expensive AI run: $${opts.costUsd.toFixed(4)} (org ${opts.orgId})`;
+  // Size clause. `packUnits` is nullable (pre-wave rows have no such key), and
+  // 0 is a REAL measurement (a pack with nothing movable) — so absence drops
+  // the clause entirely while zero is reported, and only the per-unit ratio is
+  // suppressed. The noun is phase-specific: schedule counts movable fixtures,
+  // officials counts every fixture in the pack.
+  const units = opts.packUnits ?? null;
+  const sizeText = units == null ? "" : ` over ${units} ${aiRunUnitNoun(opts.phase, units)}`;
+  const perUnit = units != null && units > 0 ? opts.costUsd / units : null;
+  const perUnitText =
+    perUnit == null ? "" : ` That is $${perUnit.toFixed(4)} per ${aiRunUnitNoun(opts.phase, 1)}` +
+      // The officials denominator is knowingly incomplete: cost scales with the
+      // roster the model has to reason over as well as the fixture count, and
+      // pack.officials.length is deliberately not stamped. Say so, or a reader
+      // will compare $/fixture across officials runs as if it were like-for-like.
+      (opts.phase === "officials" ? " (officials cost also scales with roster size, which is not stamped)." : ".");
+  const bodyText =
+    `A ${opts.phase} AI run${opts.mode ? ` (mode: ${opts.mode})` : ""} for org ${opts.orgId}` +
+    `${opts.competitionId ? ` (competition ${opts.competitionId})` : ""}${sizeText} cost $${opts.costUsd.toFixed(4)} on ` +
+    `${opts.model}${multiple ? `, ${multiple.toFixed(1)}x the trailing ${opts.windowDays}-day ${opts.phase} median ($${opts.medianUsd.toFixed(4)})` : ""}.` +
+    `${perUnitText}` +
+    ` That baseline is pooled across every mode and pack size — mode-scoped medians and` +
+    ` size-weighted credit pricing both wait on calibration data (v17 gap #295).`;
+  const html = renderEmail({
+    subject,
+    preheader: `${opts.phase} run — org ${opts.orgId}`,
+    eyebrow: "AI credits · Margin",
+    title: "Expensive AI run",
+    contentHtml:
+      paragraph(escapeHtml(bodyText)) +
+      panel(
+        "Run",
+        `org: ${opts.orgId}${opts.competitionId ? `\ncompetition: ${opts.competitionId}` : ""}\n` +
+          `phase: ${opts.phase}${opts.mode ? `\nmode: ${opts.mode}` : ""}\n` +
+          // Spelled out rather than omitted: "no size on this row" is itself
+          // information (it dates the row to before the pack_units stamp).
+          `size: ${units == null ? "not recorded" : `${units} ${aiRunUnitNoun(opts.phase, units)}`}\n` +
+          `model: ${opts.model}\ncost: $${opts.costUsd.toFixed(4)}\n` +
+          `median: $${opts.medianUsd.toFixed(4)}`,
+      ),
+    footerNote: "Automated staff alert — AI run cost check (v17 gap #295).",
+  });
+  const text =
+    `${bodyText}\n\norg: ${opts.orgId} · phase: ${opts.phase} · model: ${opts.model} · ` +
+    `cost $${opts.costUsd.toFixed(4)} · median $${opts.medianUsd.toFixed(4)}`;
+  return send({ to: opts.to, transactional: true, subject, html, text });
+}
+
+export interface EarnGrantVolumeAlertEmail {
+  to: string;
+  count: number;
+  threshold: number;
+}
+
+/** Internal staff alert (v17 gap #296 farm-watch): today's earn_grant ledger
+ *  rows (onboarding + referral-welcome + referral + first_paid, pooled
+ *  across every wallet) crossed the daily alert threshold — the backstop
+ *  for the publish-with-division gate, in case the gate itself is being
+ *  worked (many throwaway orgs each publishing one bare competition).
+ *  Ops-only, no user-facing i18n (mirrors sendStuckEventsAlertEmail). Fires
+ *  at most once per cron poll, not deduped across days — a persistent high
+ *  day repeats the alert, which is the point. */
+export async function sendEarnGrantVolumeAlertEmail(opts: EarnGrantVolumeAlertEmail): Promise<boolean> {
+  const subject = `Earn-grant volume alert: ${opts.count} today (threshold ${opts.threshold})`;
+  const bodyText =
+    `${opts.count} earn_grant credit rows have landed today, at or above the alert threshold of ` +
+    `${opts.threshold} (v17 gap #296 farm-watch — onboarding/referral-welcome earn grants gated on a ` +
+    `published competition with a division). Check /admin/revenue for the AI credit margin panel and ` +
+    `recent signups sharing an IP or email domain pattern; farmed accounts spend differently from real ` +
+    `ones (immediately, on large runs, then never again).`;
+  const html = renderEmail({
+    subject,
+    preheader: `${opts.count} earn grants today`,
+    eyebrow: "Credits · Growth loop",
+    title: "Earn-grant volume alert",
+    contentHtml:
+      paragraph(escapeHtml(bodyText)) +
+      panel("Today", `earn_grant rows: ${opts.count}\nthreshold: ${opts.threshold}`),
+    footerNote: "Automated staff alert — daily billing-grant cron (v17 gap #296).",
+  });
+  const text = `${bodyText}\n\nearn_grant rows today: ${opts.count} · threshold: ${opts.threshold}`;
   return send({ to: opts.to, transactional: true, subject, html, text });
 }
 

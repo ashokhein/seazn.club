@@ -40,6 +40,16 @@ vi.mock("@/lib/cache", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/cache")>();
   return { ...actual, incrWindow };
 });
+// vi.hoisted for the same reason as the block at the top of this file: the
+// vi.mock factory below is hoisted above every import, so a plain top-level
+// const would still be in its TDZ when officials-ai.ts pulls ai-runs-admin in.
+const { maybeAlertExpensiveRun } = vi.hoisted(() => ({
+  maybeAlertExpensiveRun: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/server/usecases/ai-runs-admin", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ai-runs-admin")>();
+  return { ...actual, maybeAlertExpensiveRun };
+});
 
 import { sql } from "@/lib/db";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
@@ -50,6 +60,7 @@ import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
 import { patchFixtureOfficials } from "../officials";
 import { officialsAiPlanForDivision } from "../officials-ai";
+import { maybeAlertExpensiveRun as maybeAlertExpensiveRunSpy } from "../ai-runs-admin";
 import { GENERIC_CONFIG, seedOrg } from "./_seed";
 
 import { setOrgPlan } from "@/lib/__tests__/_billing-group";
@@ -200,6 +211,7 @@ beforeEach(() => {
   parse.mockReset();
   isServerFeatureEnabled.mockReset().mockResolvedValue(true);
   captureServer.mockReset().mockResolvedValue(undefined);
+  maybeAlertExpensiveRun.mockClear();
   rlCounts.clear();
   process.env.ANTHROPIC_API_KEY = "test-key";
   // Keep the model ladder on the mocked Anthropic rung: this worktree's dev
@@ -291,6 +303,90 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
     expect(ev!.payload.model).toBe("solver-draft");
     expect(ev!.payload.cost_usd).toBe(0);
     expect(ev!.payload.outcome).toBe("ok");
+  });
+
+  it("records pack_units alongside cost, and calls the expensive-run alert check (v17 gap #295)", async () => {
+    const auth = await seedPlusOrg();
+    const { divisionId, fixtureIds, officialIds } = await seedOfficials(auth, {
+      entrants: 3,
+      officials: [{ name: "Ref A", roles: ["referee"] }],
+    });
+    parse.mockResolvedValueOnce(resp(assignAll(fixtureIds, officialIds[0]!)));
+
+    // CALL-ORDER PIN: the alert must run AFTER the officials ledger row is
+    // committed — maybeAlertExpensiveRun reads its baseline median out of that
+    // same competition_events table, so the order decides whether a run counts
+    // in its own baseline. Moot at AI_RUN_MEDIAN_MIN_SAMPLE=20, but the contract
+    // must not drift silently, so the spy snapshots the row count when called.
+    let generatedRowsWhenAlerted = -1;
+    maybeAlertExpensiveRun.mockImplementationOnce(async () => {
+      const [row] = await sql<{ n: number }[]>`
+        select count(*)::int as n from competition_events
+        where type = 'schedule.ai_officials_generated' and payload->>'division_id' = ${divisionId}`;
+      generatedRowsWhenAlerted = row!.n;
+    });
+
+    await officialsAiPlanForDivision(auth, divisionId, {
+      instruction: "assign",
+      policy: POLICY,
+      schedule: spread(fixtureIds),
+    });
+
+    const [ok] = await sql<{ payload: Record<string, unknown> }[]>`
+      select payload from competition_events
+      where type = 'schedule.ai_officials_generated' and payload->>'division_id' = ${divisionId}`;
+    // buildOfficialsPack put every fixture in the pack — pack_units is the same
+    // count already reported to PostHog as `fixtures`.
+    expect(ok!.payload.pack_units).toBe(fixtureIds.length);
+
+    expect(maybeAlertExpensiveRun).toHaveBeenCalledTimes(1);
+    // The call is deferred tail work (the tenant's response must not block on a
+    // median scan + email send), so the snapshot lands a tick later. Generous
+    // timeout: the spy body runs a real count(*) against a loaded CI database.
+    await vi.waitFor(() => expect(generatedRowsWhenAlerted).toBe(1), { timeout: 5000 });
+    const call = vi.mocked(maybeAlertExpensiveRunSpy).mock.calls[0]![0] as {
+      orgId: string;
+      competitionId: string;
+      phase: string;
+      model: string;
+      costUsd: number | null;
+      mode?: string | null;
+      packUnits?: number | null;
+    };
+    expect(call.orgId).toBe(auth.orgId);
+    expect(call.phase).toBe("officials");
+    expect(call.competitionId).toBeTruthy();
+    expect(typeof call.costUsd).toBe("number");
+    // Pack size travels with the cost so the staff alert is triageable on its
+    // own (v17 gap #295 fold), and it is the SAME number stamped on the ledger
+    // row — alert and audit trail can never disagree about the run's size.
+    expect(call.packUnits).toBe(fixtureIds.length);
+    expect(call.packUnits).toBe(ok!.payload.pack_units);
+    // Officials runs have no mode concept at all — nothing to forward, and
+    // nothing invented.
+    expect(call.mode).toBeUndefined();
+
+    // Failures carry pack_units too (same fixture count the failed attempt saw).
+    parse.mockResolvedValueOnce({
+      parsed_output: null,
+      stop_reason: "refusal",
+      usage: { input_tokens: 60, output_tokens: 20 },
+      content: [],
+    });
+    await expect(
+      officialsAiPlanForDivision(auth, divisionId, {
+        instruction: "assign",
+        policy: POLICY,
+        schedule: spread(fixtureIds),
+      }),
+    ).rejects.toMatchObject({ status: 422, code: "AI_PLAN_FAILED" });
+    const [failed] = await sql<{ payload: Record<string, unknown> }[]>`
+      select payload from competition_events
+      where type = 'schedule.ai_failed' and payload->>'division_id' = ${divisionId}`;
+    expect(failed!.payload.pack_units).toBe(fixtureIds.length);
+    // A failed run is not compared for the expensive-run alert (only ok) — a
+    // costly failure is a different alert class (#295 scope decision).
+    expect(maybeAlertExpensiveRun).toHaveBeenCalledTimes(1);
   });
 
   it("an overlap is repaired: repair_rounds:1 and no residual official_overlap", async () => {

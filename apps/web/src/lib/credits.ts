@@ -15,6 +15,7 @@ import { PaymentRequiredError } from "@/lib/errors";
 // cached snapshot carrying a `>= 0` CHECK that makes oversell impossible
 // atomically; `balance()` here reads the authoritative running sum.
 import { sql } from "@/lib/db";
+import { sendEarnGrantVolumeAlertEmail } from "@/lib/email";
 // #290: resolves the grant sweep's plan via the SAME resolver every other
 // entitlement read uses (orgPlanKey). This creates a deliberate two-file
 // import cycle — entitlements.ts already imports walletIdFor from THIS
@@ -156,6 +157,16 @@ export async function packBalance(walletId: string): Promise<number> {
  *  straddles UTC midnight on the 1st cannot read two different months. */
 export function utcMonthStart(now = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+}
+
+/** The current UTC calendar-DAY boundary (00:00 UTC) — same #292 discipline
+ *  as `utcMonthStart` (see its docstring for the full session-TZ story):
+ *  truncate in JS, hand SQL a real `timestamptz` PARAMETER, never
+ *  `date_trunc` in SQL — which truncates in the SESSION timezone
+ *  (Europe/London in prod), so a 23:30 UTC row would be filed under the
+ *  wrong day. */
+export function utcDayStart(now = new Date()): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
 
 /** Calendar-month period the monthly grant is scoped to (server clock,
@@ -1421,5 +1432,57 @@ export function friendlyAdjustLabel(deltaSign: 1 | -1, reason_code: string): str
       return "Refund adjustment";
     default:
       return "Account adjustment";
+  }
+}
+
+/**
+ * Daily earn_grant volume — farm-watch backstop for the publish-with-division
+ * gate (v17 gap #296). Counts EVERY `earn_grant` ledger row created at or
+ * after `dayStart` (default: the current UTC day boundary via
+ * `utcDayStart()` — a `timestamptz` parameter, NOT SQL `date_trunc('day',
+ * now())`, which truncates in the session TZ; #292 discipline, see
+ * `utcMonthStart`). Across every wallet — a farming attempt spreads across
+ * many throwaway orgs (each its own wallet), so a per-wallet count would
+ * never trip; only the platform-wide daily total catches the pattern.
+ */
+export async function earnGrantVolumeToday(dayStart: Date = utcDayStart()): Promise<number> {
+  const [row] = await sql<{ n: string }[]>`
+    select count(*)::text as n from ai_credit_ledger
+     where source = 'earn_grant' and created_at >= ${dayStart}`;
+  return Number(row?.n ?? 0);
+}
+
+/** Tunable dial (README §7 style). Pre-launch baseline: v17 has no
+ *  production traffic yet, so even generous organic daily earn activity
+ *  should be well under this — raise it once real usage sets a higher
+ *  organic floor. */
+export const EARN_GRANT_DAILY_ALERT_THRESHOLD = 20;
+
+/** Pure decision, split from the DB/email wiring below so it is unit
+ *  testable without depending on today's real (shared-schema) count. */
+export function shouldAlertOnEarnGrantVolume(
+  count: number,
+  threshold: number = EARN_GRANT_DAILY_ALERT_THRESHOLD,
+): boolean {
+  return count >= threshold;
+}
+
+/**
+ * Best-effort staff alert (v17 gap #296): checks today's earn_grant volume
+ * against EARN_GRANT_DAILY_ALERT_THRESHOLD and emails STAFF_ALERT_EMAIL when
+ * crossed. Never throws — called from the daily billing-grant cron
+ * alongside the real monthly grant sweep, and a check failure here must
+ * never fail that grant. Silent (no email attempted) when STAFF_ALERT_EMAIL
+ * is unset, matching every other alert in this codebase.
+ */
+export async function checkEarnGrantVolumeAlert(): Promise<void> {
+  try {
+    const count = await earnGrantVolumeToday();
+    if (!shouldAlertOnEarnGrantVolume(count)) return;
+    const alertTo = process.env.STAFF_ALERT_EMAIL;
+    if (!alertTo) return;
+    await sendEarnGrantVolumeAlertEmail({ to: alertTo, count, threshold: EARN_GRANT_DAILY_ALERT_THRESHOLD });
+  } catch (err) {
+    console.error("[credits] earn_grant volume alert check failed", err);
   }
 }

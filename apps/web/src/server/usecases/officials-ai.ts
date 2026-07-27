@@ -53,6 +53,8 @@ import {
   type LadderRung,
 } from "./schedule-ai";
 import { aiRunCostUsd } from "@/lib/ai-pricing";
+import { deferred } from "@/lib/deferred";
+import { maybeAlertExpensiveRun } from "@/server/usecases/ai-runs-admin";
 import { divisionFixtures, loadSettings } from "./schedule";
 import {
   listOfficialBusyElsewhere,
@@ -1089,6 +1091,10 @@ export async function officialsAiPlanForDivision(
           repair_rounds: usage.repair_rounds ?? 0,
         },
         cost_usd,
+        // Size measure alongside cost (v17 gap #295 — instrument now, weight
+        // later): the fixture count the pack builder already computed, the
+        // same number already reported to PostHog as `fixtures`.
+        pack_units: pack.fixtures.length,
       });
       await captureServer({
         event: "ai_plan_run",
@@ -1119,19 +1125,53 @@ export async function officialsAiPlanForDivision(
     result.usage.input_tokens === 0 && result.usage.output_tokens === 0 ? "solver-draft" : model;
   const cost_usd =
     result.usage.cost_usd ?? aiRunCostUsd(model, result.usage.input_tokens, result.usage.output_tokens);
-  await recordOfficialsRun(auth, divisionId, "schedule.ai_officials_generated", {
+  const competitionId = await recordOfficialsRun(auth, divisionId, "schedule.ai_officials_generated", {
     division_id: divisionId,
     phase: "officials",
     outcome: "ok",
     model: usedModel,
     usage: result.usage,
     cost_usd,
+    // Size measure alongside cost (v17 gap #295): the fixture count the pack
+    // builder already computed — the smallest correct instrumentation ahead
+    // of any size-weighted pricing decision (deferred, SPEC-2 §5.1).
+    pack_units: pack.fixtures.length,
     // Ladder telemetry: the first rung tried and the full ordered chain, when a
     // fallback happened (model above is only the winner).
     ...(result.escalated_from
       ? { escalated_from: result.escalated_from, rungs_tried: result.rungs_tried }
       : {}),
   });
+  // Expensive-run watch (v17 gap #295): best-effort, never throws, silent
+  // without a baseline or STAFF_ALERT_EMAIL — see maybeAlertExpensiveRun.
+  // Deliberately AFTER the ledger insert above (the baseline median is read
+  // from that same table, so this run counts in its own window — moot at
+  // AI_RUN_MEDIAN_MIN_SAMPLE=20, but the order is pinned by test). Registered
+  // as tail work: the check is a table scan plus an email send, and the
+  // tenant's paid response must not wait on staff telemetry.
+  // Success-only by design — an expensive FAILURE (schedule.ai_failed carries
+  // a real cost_usd) is a different cost story and a different alert class,
+  // out of #295's scope. Skipped (no competitionId) only if the division
+  // vanished mid-run, in which case recordOfficialsRun recorded nothing either.
+  if (competitionId) {
+    deferred(() =>
+      maybeAlertExpensiveRun({
+        orgId: auth.orgId,
+        competitionId,
+        phase: "officials",
+        model: usedModel,
+        costUsd: cost_usd,
+        // Same number stamped on the ledger row above, so the alert and the
+        // audit trail can never disagree about the run's size. No `mode` —
+        // officials runs have no mode concept, and the copy omits the clause
+        // rather than inventing one. Note the officials denominator counts
+        // EVERY fixture in the pack (schedule counts only the movable subset),
+        // which is why the copy labels the unit instead of printing a bare
+        // number.
+        packUnits: pack.fixtures.length,
+      }),
+    );
+  }
 
   await captureServer({
     event: "ai_plan_run",
@@ -1172,20 +1212,23 @@ export async function officialsAiPlanForDivision(
 /** Append one officials architect run to the competition audit ledger. Own
  *  event types ('schedule.ai_officials_generated' / 'schedule.ai_failed') —
  *  the Phase A quota counts 'schedule.ai_generated' only, so nothing here can
- *  ever consume a schedule generation. */
+ *  ever consume a schedule generation. Returns the competition id (so the
+ *  success call site can feed it to maybeAlertExpensiveRun, v17 gap #295),
+ *  or null when the division vanished mid-run and nothing was recorded. */
 async function recordOfficialsRun(
   auth: AuthCtx,
   divisionId: string,
   type: "schedule.ai_officials_generated" | "schedule.ai_failed",
   payload: Record<string, unknown>,
-): Promise<void> {
-  await withTenant(auth.orgId, async (tx) => {
+): Promise<string | null> {
+  return withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${divisionId}`;
-    if (!division) return; // division vanished mid-run — nothing to ledger
+    if (!division) return null; // division vanished mid-run — nothing to ledger
     await tx`
       insert into competition_events (competition_id, org_id, type, payload, actor_id)
       values (${division.competition_id}, ${auth.orgId}, ${type},
               ${tx.json(payload as never)}, ${auth.userId})`;
+    return division.competition_id;
   });
 }

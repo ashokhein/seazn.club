@@ -3,7 +3,7 @@ import "server-only";
 // Server Components call — the only writer. Auth happens in the route (an
 // AuthCtx proves it); tenancy is enforced by withTenant + RLS.
 import { z } from "zod";
-import { withTenant } from "@/lib/db";
+import { sql, withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import { invalidateOrgEntitlements, requireFeature, withinLimit } from "@/lib/entitlements";
 import { captureServer } from "@/lib/posthog-server";
@@ -12,6 +12,7 @@ import type { AuthCtx } from "@/server/api-v1/auth";
 import { page, type ListQuery, type Page } from "@/server/api-v1/http";
 import { CompetitionStatus, type CreateCompetition, type PatchCompetition } from "@/server/api-v1/schemas";
 import { fireDiscoveryRevalidate, invalidateDiscoveryCache } from "@/server/public-site/revalidate";
+import { ONBOARDING_EARN, REFERRAL_WELCOME_EARN, tryEarnGrant } from "@/lib/credits";
 import { invalidateSlugCache } from "@/server/slug-resolve";
 import {
   ACTIVE_COMPETITION_STATUSES,
@@ -199,6 +200,18 @@ export function shouldFireMadePublic(
   return newVisibility === "public" && oldVisibility !== "public";
 }
 
+// Growth-loop gate (SPEC-5 §2, v17 gap #296): true only on the transition
+// INTO "published" with at least one (non-archived) division on the
+// competition — the cheapest signal that a human is running a real
+// competition, not a scripted signup. Pure so it's unit-testable without a
+// DB, mirroring shouldFireMadePublic above.
+export function shouldFireGrowthEarnGrants(
+  statusChangedTo: string | null,
+  divisionCount: number,
+): boolean {
+  return statusChangedTo === "published" && divisionCount >= 1;
+}
+
 /** v17 #289: `live` = play started; `completed` = wrapped up. `published`
  *  does NOT count as started — a competition can sit published for weeks
  *  before its first fixture. Pure like shouldFireMadePublic above, and
@@ -242,6 +255,7 @@ export async function patchCompetition(
   let statusChangedTo: z.infer<typeof CompetitionStatus> | null = null;
   let previousSlug: string | null = null;
   let oldVisibility: string | null = null;
+  let publishedDivisionCount = 0;
   const { row, discoveryTouched } = await withTenant(auth.orgId, async (tx) => {
     if (patch.slug) {
       if (RESERVED_ENTITY_SLUGS.has(patch.slug)) {
@@ -258,6 +272,15 @@ export async function patchCompetition(
     if (!before) throw new HttpError(404, "competition not found");
     if (patch.status && patch.status !== before.status) statusChangedTo = patch.status;
     oldVisibility = before.visibility;
+    // Growth-loop gate (SPEC-5 §2, v17 gap #296): count divisions here, in
+    // the same tenant tx, only when the patch might trigger the earn grants
+    // below — avoids a division-count query on every unrelated patch.
+    if (statusChangedTo === "published") {
+      const [{ n }] = await tx<{ n: number }[]>`
+        select count(*)::int as n from divisions
+        where competition_id = ${id} and archived_at is null`;
+      publishedDivisionCount = n;
+    }
 
     const effective = { ...patch };
     // Rename regenerates the slug (v3/01 §2); the old slug keeps redirecting
@@ -353,6 +376,33 @@ export async function patchCompetition(
       orgId: auth.orgId,
       properties: { competition_id: id },
     });
+  }
+  // Growth-loop gate (SPEC-5 §2, v17 gap #296): onboarding + referral-welcome
+  // earn credits pay out only once this org proves a human is running a real
+  // competition — publishing one with at least one (non-archived) division —
+  // never at signup or onboarding-complete alone (moved off auth.ts's
+  // createOrgForUser and api/onboarding/complete/route.ts). Both grants are
+  // idempotent per org (tryEarnGrant never throws), so re-publishing, or
+  // publishing a second/third competition, is always a safe no-op.
+  //
+  // Best-effort, and the try/catch is load-bearing: this whole block runs
+  // AFTER the tenant transaction has committed. `tryEarnGrant` never throws,
+  // but the `referred_by_org_id` read is a raw query — a transient DB error
+  // there would escape as a 500 for a publish that already succeeded, and the
+  // grant would be lost for good, because the gate only fires on the
+  // TRANSITION into "published" and the row is already published on any
+  // retry. Swallow and log instead; the caller gets its row either way.
+  if (shouldFireGrowthEarnGrants(statusChangedTo, publishedDivisionCount)) {
+    try {
+      await tryEarnGrant(auth.orgId, "onboarding", ONBOARDING_EARN);
+      const [orgRow] = await sql<{ referred_by_org_id: string | null }[]>`
+        select referred_by_org_id from organizations where id = ${auth.orgId}`;
+      if (orgRow?.referred_by_org_id) {
+        await tryEarnGrant(auth.orgId, "referral_welcome", REFERRAL_WELCOME_EARN);
+      }
+    } catch (err) {
+      console.error(`[competitions] growth earn grants failed (org ${auth.orgId})`, err);
+    }
   }
   return row;
 }

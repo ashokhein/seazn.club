@@ -692,7 +692,7 @@
   "billing.credits.action.adminRefund": "Ajuste de reembolso",
   "billing.credits.action.adminAdjust": "Ajuste de cuenta",
   "billing.credits.referral.title": "Invita y gana",
-  "billing.credits.referral.desc": "Comparte tu enlace. Cuando una organización que refieras dispute su primera competición de pago, ganas 20 créditos; ella empieza con 10.",
+  "billing.credits.referral.desc": "Comparte tu enlace. Cuando una organización que refieras publique su primera competición con una división, gana 10 créditos. Cuando esa competición reciba su primera inscripción de pago, tú ganas 20.",
   "billing.credits.referral.stats.one": "{count} organización referida · {earned} créditos ganados",
   "billing.credits.referral.stats.other": "{count} organizaciones referidas · {earned} créditos ganados",
   "billing.credits.referral.howItWorks": "Cómo funciona",

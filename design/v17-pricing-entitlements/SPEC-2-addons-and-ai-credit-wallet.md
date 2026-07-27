@@ -104,7 +104,7 @@ balance(wallet) = sum(delta)
 
 **Wallet key = billing entity, not org** — see §11. Any org in a billing group spends from the one shared pool; `spent_by_org_id` records who, for per-org reporting. Rows are truth; `balance_after` is a cached snapshot + a `>= 0` guard that makes oversell impossible atomically. **Append-only** — corrections are compensating rows, never UPDATE/DELETE (it's money).
 
-**Credit unit:** **1 credit = 1 AI run.** Run *size* is already capped per tier (entrants/divisions), so COGS is bounded. A size-weight multiplier is a documented future option if a run class blows margin (open question #3).
+**Credit unit:** **1 credit = 1 AI run.** Run *size* is already capped per tier (entrants/divisions), so COGS is bounded. A size-weight multiplier is a documented future option if a run class blows margin (open question #3). Flat, monitored — instrumented 2026-07-26 (#295): `pack_units` stamped on every AI run, a COGS-vs-sold margin panel on `/admin/revenue`, and a 2x-median expensive-run staff alert are live; revisit weighting when the margin data says so.
 
 ### 5.2 Consume — reserve → run → settle
 
@@ -141,7 +141,7 @@ ai_credit_ledger.ref → ai_runs(model, tokens, cost_usd, competition_id)   -- l
 | **D1** monthly grant | **reset (use-or-lose)** each cycle | grant = taste + margin floor, not a bank |
 | **Cadence** | grant is **monthly regardless of billing cadence** | annual Pro ($159/yr) still gets 60/mo × 12, NOT a 720 lump (spike/waste) |
 | **Anchor** | **plain calendar month, for every tier** (paid and Community alike) — never the Stripe billing-cycle boundary | matches Cadence above: an annual subscription's `current_period_end` only advances once a year, so anchoring paid tiers on it would collapse 12 grants into 1 |
-| **D2** purchased packs | **expire 24 months** from purchase ⚠ finance/legal sign-off | bounds deferred revenue + captures breakage; long enough to feel permanent |
+| **D2** purchased packs | **never expire** (ratified 2026-07-26, #297 — supersedes this row's original 24-month decision) | shipped copy (help/billing/credits.md, all four Stripe pack descriptions) already promised this; ratifying costs zero code. Accepted liability treatment: an unbounded deferred-revenue balance with no breakage, carried as a standing prepaid-credit liability, not amortised — revisit only if volume or a jurisdiction's rules change. The Event Pass +25 grant (V330) lands in this same never-expiring `pack` bucket and inherits the same promise. |
 | **Trial grant** | `ai.credits.trial` one-time (default **20**), **once per org** (`trial_used_at` guard) | taste without COGS; convert→monthly grant, expire→Community 10/mo. Guard stops trial-farming for free credits |
 | **Downgrade** | keep wallet balance; grant resets to new (lower) tier next cycle; packs persist | credits are money — freeze-not-delete extends to the wallet; AI still runs on any tier |
 | **Upgrade** | monthly grant rises to new tier (next cycle; optional prorated immediate top-up) | |
