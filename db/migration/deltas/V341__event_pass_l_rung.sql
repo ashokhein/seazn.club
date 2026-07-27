@@ -36,8 +36,14 @@ on conflict (plan_key, feature_key) do update
 -- Overrides (#294 decision): unlimited entrants (int null = unlimited, the
 -- SAME convention pro's own divisions.per_competition.max/clubs.max rows
 -- already use), divisions capped at 20 (M is 10, per V319).
-insert into plan_entitlements (plan_key, feature_key, bool_value, int_value) values
-  ('event_pass_l', 'entrants.per_division.max',     null, null),
-  ('event_pass_l', 'divisions.per_competition.max', null, 20)
-on conflict (plan_key, feature_key) do update
-  set bool_value = excluded.bool_value, int_value = excluded.int_value;
+--
+-- These are UPDATEs, not inserts, and they touch int_value ONLY. Re-stating
+-- bool_value here would hand-copy M's value onto exactly the two rows the
+-- derivation above exists to protect — the rows stay derived, and only the
+-- one column being overridden is written. Both rows are guaranteed to exist:
+-- the INSERT...SELECT above copied every key M has, and M carries both.
+update plan_entitlements set int_value = null
+where plan_key = 'event_pass_l' and feature_key = 'entrants.per_division.max';
+
+update plan_entitlements set int_value = 20
+where plan_key = 'event_pass_l' and feature_key = 'divisions.per_competition.max';
