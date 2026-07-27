@@ -111,6 +111,9 @@ vi.mock("@/lib/stripe-browser", () => ({ stripePromise: Promise.resolve(null) })
 vi.mock("@/components/ui/tip", () => ({ Tip: () => <span data-tip /> }));
 
 import Page from "../page";
+// Pure module (no db, no server-only) — the real rung list, so the paid-plan
+// guard below covers every rung that exists rather than a copy of the list.
+import { PASS_KEYS } from "@/lib/currency";
 
 const RECEIPT = {
   competitionId: "comp-1",
@@ -365,9 +368,24 @@ describe("already on a paid plan", () => {
     h.planKey = "pro_plus";
     const html = await render();
     expect(html).toContain("Pro Plus");
-    // No Event Pass column either: a $29 column beside their plan is the quiet
+    // No pass column either: a pass column beside their plan is the quiet
     // version of the same sale.
-    expect(html).not.toContain("Event Pass</th>");
+    //
+    // Asserted on the column's PLAN KEY, and on EVERY rung. This guard used to
+    // read `not.toContain("Event Pass</th>")`, which the M/L rename
+    // ("Event Pass" → "Event Pass M") made vacuous without touching this line —
+    // `event_pass` could be put back into `columns` and the whole suite stayed
+    // green. Matching the key instead makes a renamed heading irrelevant, and
+    // sweeping PASS_KEYS means a third rung is covered the day it is added.
+    for (const rung of PASS_KEYS) {
+      expect(html).not.toContain(`data-compare-col="${rung}"`);
+    }
+    // And the reader's own view of the same fact, scoped to the table head so
+    // it cannot be satisfied by the "your plan already covers everything an
+    // Event Pass adds" sentence that PlanPanel renders elsewhere on this page.
+    const head = html.slice(html.indexOf("<thead"), html.indexOf("</thead>"));
+    expect(head).not.toContain("Event Pass");
+    expect(head).toContain("Pro Plus");
   });
 
   it("keeps a pass the org bought before it upgraded", async () => {

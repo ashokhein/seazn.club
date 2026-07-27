@@ -526,6 +526,13 @@ function Comparison({
                 <th
                   key={planKey}
                   scope="col"
+                  // The column's PLAN KEY, not its label. `upgrade.compare.*`
+                  // is copy and copy gets renamed — "Event Pass" became
+                  // "Event Pass M" the day the L rung landed, which silently
+                  // emptied the downgrade-sale guard that had been matching on
+                  // the heading text (f70b8e52). A guard has to name the thing
+                  // that is being sold, and that is the key.
+                  data-compare-col={planKey}
                   className={`w-20 px-2 py-2 text-center text-xs font-semibold uppercase tracking-wider sm:w-24 ${
                     sold(planKey) ? "text-purple-700" : "text-slate-400"
                   }`}
