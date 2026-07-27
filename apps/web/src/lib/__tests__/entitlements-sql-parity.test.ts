@@ -352,4 +352,20 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
     expect(await hasFeature(orgId, "exports")).toBe(true);
     expect(await sqlHasFeature(orgId, "exports")).toBe(true);
   });
+
+  // v17 #288: SQL org_has_feature was missing the 'incomplete' arm entirely
+  // (fell through to coalesce(plan_key)='pro') while entitlements.ts's
+  // orgPlanKey has carried it since #206/#223-B — a never-paid first
+  // invoice read Pro on every SQL-resolved public surface until Stripe
+  // auto-expired the subscription ~23h later. V338 copies the TS arm into
+  // SQL verbatim.
+  it("degrades an INCOMPLETE subscription (never-paid first invoice) to community", async () => {
+    await sql`
+      update subscriptions
+      set plan_key = 'pro', status = 'incomplete', stripe_subscription_id = 'sub_incomplete'
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime")).toBe(false);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
+  });
 });
