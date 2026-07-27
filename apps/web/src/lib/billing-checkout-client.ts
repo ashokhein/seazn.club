@@ -9,7 +9,16 @@ import type { PassKey } from "@/lib/currency";
 
 export type CheckoutSecretResult =
   | { ok: true; clientSecret: string }
-  | { ok: false; error: string };
+  /**
+   * `error` is the SERVER's own sentence — hardcoded English, and on an
+   * unexpected 500 a raw `err.message` (lib/http.ts). Do not render it to a
+   * buyer in a localised surface; render copy chosen from `status` instead
+   * (`passCheckoutErrorKey`, lib/pass-ladder.ts). It is kept because a status
+   * cannot say *which* 400 this was, so it is still the useful thing to log.
+   *
+   * `status` is null when no response was received at all — a rejected fetch.
+   */
+  | { ok: false; error: string; status: number | null };
 
 const FALLBACK_ERROR = "Checkout is unavailable right now. Please try again.";
 
@@ -27,11 +36,18 @@ async function fetchClientSecret(
     const data = await res.json().catch(() => null);
     const clientSecret = data?.data?.client_secret;
     if (!data?.ok || typeof clientSecret !== "string" || !clientSecret) {
-      return { ok: false, error: (data?.error as string) || FALLBACK_ERROR };
+      return {
+        ok: false,
+        error: (data?.error as string) || FALLBACK_ERROR,
+        // A real Response always carries one; a hand-rolled double in a test
+        // may not, and `undefined` leaking into a `number | null` field would
+        // route a known 503 into the generic "something went wrong" copy.
+        status: typeof res.status === "number" ? res.status : null,
+      };
     }
     return { ok: true, clientSecret };
   } catch {
-    return { ok: false, error: FALLBACK_ERROR };
+    return { ok: false, error: FALLBACK_ERROR, status: null };
   }
 }
 
@@ -64,8 +80,8 @@ export async function fetchCheckoutClientSecret(
  *  dependency reaches the client bundle.
  *
  *  A rung the server has no synced price for is a 503, and an unknown key a
- *  400 — both arrive as `{ ok: false, error }` carrying the SERVER's message,
- *  which callers should render verbatim. */
+ *  400 — both arrive as `{ ok: false, error, status }`. Render copy chosen from
+ *  `status`, never the server's `error` string: see the type above. */
 export async function fetchPassCheckoutClientSecret(
   competitionId: string,
   passKey: PassKey,

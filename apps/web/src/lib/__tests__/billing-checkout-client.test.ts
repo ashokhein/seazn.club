@@ -8,8 +8,8 @@ import {
   fetchPassCheckoutClientSecret,
 } from "@/lib/billing-checkout-client";
 
-function jsonResponse(body: unknown): Response {
-  return { json: async () => body } as unknown as Response;
+function jsonResponse(body: unknown, status = 200): Response {
+  return { status, json: async () => body } as unknown as Response;
 }
 
 describe("fetchCheckoutClientSecret", () => {
@@ -24,10 +24,17 @@ describe("fetchCheckoutClientSecret", () => {
 
   it("surfaces the server error (e.g. billing not configured) instead of hanging", async () => {
     const fetchFn = vi.fn().mockResolvedValue(
-      jsonResponse({ ok: false, error: "Billing is not yet configured. Please contact support." }),
+      jsonResponse(
+        { ok: false, error: "Billing is not yet configured. Please contact support." },
+        503,
+      ),
     );
     const r = await fetchCheckoutClientSecret("pro", "monthly", fetchFn as unknown as typeof fetch);
-    expect(r).toEqual({ ok: false, error: "Billing is not yet configured. Please contact support." });
+    expect(r).toEqual({
+      ok: false,
+      error: "Billing is not yet configured. Please contact support.",
+      status: 503,
+    });
   });
 
   it("falls back to a generic error when the body has no client_secret", async () => {
@@ -111,12 +118,17 @@ describe("fetchPassCheckoutClientSecret", () => {
 
   // 503 is the EXPECTED state of a rung whose price id has not been written back
   // by `stripe:sync` in this environment — not a bug, and not the same thing as
-  // "checkout is broken". The picker renders `error` verbatim, so the server's
-  // own words have to survive; the generic FALLBACK_ERROR here would tell an
-  // operator to retry forever instead of to run the sync.
+  // "checkout is broken". Both halves of that distinction have to survive this
+  // helper: the STATUS, which is what the localised picker renders from, and
+  // the server's own words, which are what an operator reads in a log. The
+  // generic FALLBACK_ERROR would tell them to retry forever instead of to run
+  // the sync.
   it("surfaces the server's 503 when a rung has no synced price, not the generic error", async () => {
     const fetchFn = vi.fn().mockResolvedValue(
-      jsonResponse({ ok: false, error: "Billing is not yet configured. Please contact support." }),
+      jsonResponse(
+        { ok: false, error: "Billing is not yet configured. Please contact support." },
+        503,
+      ),
     );
     const r = await fetchPassCheckoutClientSecret(
       "comp-1",
@@ -131,6 +143,11 @@ describe("fetchPassCheckoutClientSecret", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.error).toBe("Billing is not yet configured. Please contact support.");
+      // The STATUS is what a localised surface renders from — the message above
+      // is English-only, so a buyer never sees it (lib/pass-ladder.ts's
+      // passCheckoutErrorKey). Losing the status downgrades a precise "try the
+      // other size" into "something went wrong".
+      expect(r.status).toBe(503);
     }
   });
 
@@ -139,7 +156,7 @@ describe("fetchPassCheckoutClientSecret", () => {
   // and equally the server's words rather than ours.
   it("surfaces the server's 400 for a pass_key the route rejects", async () => {
     const fetchFn = vi.fn().mockResolvedValue(
-      jsonResponse({ ok: false, error: "Invalid input", issues: [] }),
+      jsonResponse({ ok: false, error: "Invalid input", issues: [] }, 400),
     );
     const r = await fetchPassCheckoutClientSecret(
       "comp-1",
@@ -147,6 +164,22 @@ describe("fetchPassCheckoutClientSecret", () => {
       fetchFn as unknown as typeof fetch,
     );
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toBe("Invalid input");
+    if (!r.ok) {
+      expect(r.error).toBe("Invalid input");
+      expect(r.status).toBe(400);
+    }
+  });
+
+  it("reports no status at all when the request never got a response", async () => {
+    // A rejected fetch is not a 500: nothing was refused, nothing was reached.
+    // `null` is what keeps that distinguishable from a server error.
+    const fetchFn = vi.fn().mockRejectedValue(new Error("offline"));
+    const r = await fetchPassCheckoutClientSecret(
+      "comp-1",
+      "event_pass_l",
+      fetchFn as unknown as typeof fetch,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.status).toBeNull();
   });
 });

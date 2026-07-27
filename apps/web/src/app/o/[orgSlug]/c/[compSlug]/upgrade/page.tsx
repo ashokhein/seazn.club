@@ -36,7 +36,12 @@ import { requireCompetitionPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";
 import { PassUpgradeButton } from "@/components/pass-upgrade";
 import { Tip } from "@/components/ui/tip";
-import { formatMinor, passPrice, proPrice, type Currency } from "@/lib/currency";
+import { formatMinor, isPassKey, proPrice, type Currency, type PassKey } from "@/lib/currency";
+import {
+  PASS_RUNG_NAME_KEY,
+  passLadderOptions,
+  type PassRungOption,
+} from "@/lib/pass-ladder";
 import { preferredCurrency } from "@/lib/currency-server";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, type Dict, type Locale } from "@/lib/i18n";
@@ -95,8 +100,12 @@ export default async function CompetitionUpgradePage({
     // a staff-granted pass is fully active; it is selected only to tell a
     // PURCHASE from a GRANT further down, where the difference decides whether
     // a receipt and a credit can be promised at all.
-    sql<{ purchased_at: Date | string; stripe_payment_intent: string | null }[]>`
-      select purchased_at, stripe_payment_intent
+    // `pass_key` names the RUNG (v17 #294) — with M and L both live, a $59
+    // buyer must not be told they hold the $29 product.
+    sql<
+      { purchased_at: Date | string; stripe_payment_intent: string | null; pass_key: string }[]
+    >`
+      select purchased_at, stripe_payment_intent, pass_key
       from competition_passes where competition_id = ${compId}`,
     // The resolver's derivation, NOT `subscriptions.plan_key` raw — see
     // lib/upgrade-page-state.ts. pass-checkout/route.ts now judges eligibility
@@ -125,10 +134,27 @@ export default async function CompetitionUpgradePage({
     feature: sp.feature ?? null,
   });
 
+  // Which rung this competition holds, if any. Unrecognised keys fall back to
+  // M — the same rule the reconcile and webhook paths apply (lib/billing.ts) —
+  // because a ticket naming no rung at all is worse than one naming the rung
+  // every historic row actually carries.
+  const heldKey = pass?.pass_key;
+  const heldRung: PassKey = isPassKey(heldKey) ? heldKey : "event_pass";
+
   // A paid org is compared against ITS OWN plan, never against a pass column —
   // rendering the $29 column for a Pro reader is the soft version of the same
   // downgrade sale.
-  const columns: string[] = paidPlan ? ["community", planKey] : ["community", "event_pass", "pro"];
+  //
+  // Both rungs appear only while both are still BUYABLE. Once a pass is held,
+  // the other rung is dropped: there is no M→L upgrade path (#294 open Q3,
+  // deferred by the owner), so a second pass column on the owned or ceiling
+  // state would advertise a purchase this product cannot complete — the same
+  // defect as the paid-plan downgrade sale, pointed the other way.
+  const columns: string[] = paidPlan
+    ? ["community", planKey]
+    : pass
+      ? ["community", heldRung, "pro"]
+      : ["community", "event_pass", "event_pass_l", "pro"];
   const [matrix, purchases] = await Promise.all([
     readMatrix(columns),
     // Only fetched where a receipt is rendered: one Stripe call per pass the ORG
@@ -138,6 +164,21 @@ export default async function CompetitionUpgradePage({
       : Promise.resolve<PassPurchaseRow[]>([]),
   ]);
   const receipt = purchases.find((p) => p.competitionId === compId) ?? null;
+
+  // The ladder the stub offers (v17 #294 / spec A7). Caps come out of the SAME
+  // `matrix` the comparison table below renders from, so the two halves of this
+  // page cannot quote different limits for the same rung. Only ever rendered in
+  // the `offer` state — a paid org's `columns` has no pass rows at all, and the
+  // ticket it gets is the held stub or nothing.
+  const rungCaps = (planKey: PassKey) => ({
+    entrants: matrix.get(planKey)?.get("entrants.per_division.max")?.int ?? null,
+    divisions: matrix.get(planKey)?.get("divisions.per_competition.max")?.int ?? null,
+  });
+  const ladderOptions: PassRungOption[] = passLadderOptions(currency, {
+    event_pass: rungCaps("event_pass"),
+    event_pass_l: rungCaps("event_pass_l"),
+  });
+
 
   const purchasedAt = pass ? new Date(pass.purchased_at) : null;
   // Every qualifier the credit line makes is checked here rather than hedged in
@@ -189,6 +230,8 @@ export default async function CompetitionUpgradePage({
           receipt={receipt}
           purchasedAt={purchasedAt}
           granted={!!pass && !pass.stripe_payment_intent}
+          heldRung={heldRung}
+          ladderOptions={ladderOptions}
         />
       )}
 
@@ -196,7 +239,10 @@ export default async function CompetitionUpgradePage({
         dict={dict}
         columns={columns}
         matrix={matrix}
-        highlight={paidPlan ? null : "event_pass"}
+        // Whichever pass columns are on screen: both while both are for sale,
+        // the held one afterwards. Derived rather than listed so it can never
+        // name a column `columns` does not have.
+        highlight={paidPlan ? null : columns.filter(isPassKey)}
         ceilingFeature={ceilingFeature}
       />
 
@@ -250,6 +296,8 @@ function Ticket({
   receipt,
   purchasedAt,
   granted,
+  heldRung,
+  ladderOptions,
 }: {
   dict: Dict;
   locale: Locale;
@@ -261,9 +309,12 @@ function Ticket({
   receipt: PassPurchaseRow | null;
   purchasedAt: Date | null;
   granted: boolean;
+  /** The rung on the pass this competition holds; ignored unless one is held. */
+  heldRung: PassKey;
+  /** Both rungs, smallest first. Rendered only in the unsold state. */
+  ladderOptions: PassRungOption[];
 }) {
   const held = state.kind === "owned" || state.kind === "ceiling";
-  const price = formatMinor(passPrice(currency, "event_pass"), currency);
 
   return (
     <section
@@ -305,6 +356,13 @@ function Ticket({
         {held ? (
           <div data-pass-active>
             <p className="app-eyebrow justify-center">{t(dict, "upgrade.active.title")}</p>
+            {/* WHICH pass. Two rungs are live (#294) and they differ by more
+                than money — an L holder reading only "Event Pass active" cannot
+                tell whether the 20-division ceiling they were sold is the one
+                this competition actually has. */}
+            <p data-pass-held-rung className="app-display mt-2 text-sm font-bold text-lime-300">
+              {t(dict, PASS_RUNG_NAME_KEY[heldRung])}
+            </p>
             {purchasedAt && (
               <p className="mt-3 text-xs text-white/70">
                 {t(dict, granted ? "upgrade.owned.granted" : "upgrade.owned.bought", {
@@ -345,22 +403,17 @@ function Ticket({
             )}
           </div>
         ) : (
-          <>
-            <p className="app-display text-4xl font-bold text-white tabular-nums">{price}</p>
-            <p className="app-eyebrow justify-center text-[0.6875rem]">
-              {t(dict, "upgrade.oneTime")}
-            </p>
-            {state.canBuy ? (
-              <div className="mt-1">
-                {/* The stub already prints the price twice its size; a button
-                    repeating it is the accessory to take off. It says what
-                    happens when it is pressed, and nothing else. */}
-                <PassUpgradeButton competitionId={competitionId} label={t(dict, "upgrade.buyCta")} />
-              </div>
-            ) : (
-              <p className="mt-1 text-xs text-white/70">{t(dict, "upgrade.ownerOnly")}</p>
-            )}
-          </>
+          // Two rungs means two prices, so the stub's single hero figure is
+          // gone: it could only ever have been honest about one of them, and a
+          // buyer choosing between sizes compares prices side by side. Each
+          // rung now carries its own, and the ladder is the price display.
+          <PassUpgradeButton
+            competitionId={competitionId}
+            options={ladderOptions}
+            currency={currency}
+            dict={dict}
+            canBuy={state.canBuy}
+          />
         )}
       </div>
     </section>
@@ -431,16 +484,19 @@ function Comparison({
   dict: Dict;
   columns: string[];
   matrix: Matrix;
-  /** Plan column to emphasise, or null when nothing is being sold. */
-  highlight: string | null;
+  /** Plan columns to emphasise, or null when nothing is being sold. */
+  highlight: string[] | null;
   ceilingFeature: string | null;
 }) {
+  const sold = (planKey: string) => !!highlight?.includes(planKey);
   const heading = (planKey: string) =>
     planKey === "community"
       ? t(dict, "upgrade.compare.free")
       : planKey === "event_pass"
         ? t(dict, "upgrade.compare.pass")
-        : planLabel(planKey);
+        : planKey === "event_pass_l"
+          ? t(dict, "upgrade.compare.passL")
+          : planLabel(planKey);
 
   return (
     <section className="mt-8">
@@ -471,7 +527,7 @@ function Comparison({
                   key={planKey}
                   scope="col"
                   className={`w-20 px-2 py-2 text-center text-xs font-semibold uppercase tracking-wider sm:w-24 ${
-                    planKey === highlight ? "text-purple-700" : "text-slate-400"
+                    sold(planKey) ? "text-purple-700" : "text-slate-400"
                   }`}
                 >
                   {heading(planKey)}
@@ -506,9 +562,9 @@ function Comparison({
                     <td
                       key={planKey}
                       className={`px-2 py-2.5 text-center tabular-nums ${
-                        planKey === highlight
+                        sold(planKey)
                           ? "bg-purple-50/60 font-semibold text-purple-900"
-                          : "text-slate-600"
+                            : "text-slate-600"
                       }`}
                     >
                       <Cell
@@ -528,16 +584,18 @@ function Comparison({
                 <td
                   key={planKey}
                   className={`px-2 py-2.5 text-center text-xs ${
-                    planKey === highlight
+                    sold(planKey)
                       ? "bg-purple-50/60 font-semibold text-purple-900"
-                      : "text-slate-500"
+                        : "text-slate-500"
                   }`}
                 >
+                  {/* Both rungs upgrade ONE competition — the difference is how
+                      big that competition may get, never how many it covers.
+                      An L column reading "every competition" would promise a
+                      subscription for $59. */}
                   {t(
                     dict,
-                    planKey === "event_pass"
-                      ? "upgrade.compare.thisComp"
-                      : "upgrade.compare.everyComp",
+                    isPassKey(planKey) ? "upgrade.compare.thisComp" : "upgrade.compare.everyComp",
                   )}
                 </td>
               ))}

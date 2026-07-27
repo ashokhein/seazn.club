@@ -33,6 +33,8 @@ vi.mock("@stripe/react-stripe-js", () => ({
 vi.mock("@/lib/stripe-browser", () => ({ stripePromise: sharedStripe }));
 
 import { PassCheckoutSheet, PassUpgradeButton } from "@/components/pass-upgrade";
+import type { Dict } from "@/lib/i18n-constants";
+import ui from "@/dictionaries/en/ui.json";
 
 const SECRET = "cs_test_a1_secret_b2";
 
@@ -121,16 +123,50 @@ describe("Event Pass checkout — presentation parity with Pro (D11)", () => {
 });
 
 describe("Event Pass checkout — the button that opens it", () => {
-  it("keeps the [data-pass-buy] hook and the priced label before checkout opens", () => {
+  it("keeps the [data-pass-buy] hook and a price before checkout opens", () => {
     // Unchanged contract: the closed state is still the primary CTA on the
     // upgrade page. pricing-v3.spec.ts owns [data-pass-cta]/[data-pass-owned]
     // and task 19 added [data-pass-entry] — this one is separate from all three.
+    //
+    // The M/L ladder (v17 #294) went INSIDE this button's own subtree rather
+    // than in front of it, precisely so this contract survived: one click, no
+    // interstitial, straight to the Stripe sheet.
     const html = renderToStaticMarkup(
-      <PassUpgradeButton competitionId="comp_1" label="Upgrade this event — $29" />,
+      <PassUpgradeButton
+        competitionId="comp_1"
+        options={[
+          { key: "event_pass", amountMinor: 2900, entrants: 128, divisions: 10, credits: 25 },
+          { key: "event_pass_l", amountMinor: 5900, entrants: null, divisions: 20, credits: 25 },
+        ]}
+        currency="usd"
+        dict={ui as Dict}
+        canBuy
+      />,
     );
     expect(html).toContain("data-pass-buy");
-    expect(html).toContain("Upgrade this event — $29");
+    expect(html).toContain("$29");
     expect(html).not.toContain('role="dialog"');
+  });
+
+  it("defaults to the smallest rung, which is the sale the e2e suite drives", () => {
+    // event-pass.spec.ts:325/:922 click [data-pass-buy] and wait directly for
+    // the Stripe iframe. It never touches the picker, so whatever is
+    // pre-selected here is what that whole real-money suite buys.
+    const html = renderToStaticMarkup(
+      <PassUpgradeButton
+        competitionId="comp_1"
+        options={[
+          { key: "event_pass", amountMinor: 2900, entrants: 128, divisions: 10, credits: 25 },
+          { key: "event_pass_l", amountMinor: 5900, entrants: null, divisions: 20, credits: 25 },
+        ]}
+        currency="usd"
+        dict={ui as Dict}
+        canBuy
+      />,
+    );
+    expect(html).toContain('checked="" value="event_pass"');
+    expect(html).not.toContain('checked="" value="event_pass_l"');
+    expect(html).toContain("Buy the pass — M");
   });
 });
 

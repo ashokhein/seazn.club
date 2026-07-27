@@ -230,9 +230,21 @@ const upgradeUrl = (rig: Rig, query = "") => `/o/${rig.orgSlug}/c/${rig.compSlug
  * client_secret. The `beforeAll` still HARD-FAILS a genuinely missing/garbage
  * key (a developer who forgot `set -a; . ./.env.local` must see a failure, not a
  * quiet green) — this only skips a *functional* probe that reports Stripe
- * unusable. The pass-checkout idempotency key is org+comp+user scoped, so the
- * session this mints is the SAME one `[data-pass-buy]` later reuses: no double
- * session, no interference with U1's "exactly one pass, one intent" assertion.
+ * unusable.
+ *
+ * The idempotency key is `pass-checkout-{org}-{comp}-{user}-{pass_key}` — the
+ * rung suffix arrived with the L rung (v17 #294; pinned by
+ * billing-pass-duplicate.test.ts). So the session this mints is the same one
+ * `[data-pass-buy]` later reuses ONLY when both name the same rung, which is
+ * why `passKey` is spelled out on both sides rather than left to a default:
+ * probing M and then buying L would mint a second session, and U1's "exactly
+ * one pass, one intent" assertion is what would catch it.
+ *
+ * `passKey` must therefore be the rung the caller INTENDS TO BUY, not simply
+ * the cheapest. Probing M while the UI buys L would turn an unsynced L price —
+ * the ordinary state of any environment where `npm run stripe:sync` has not run
+ * for that rung — from a clean skip into a mid-test failure at the Stripe
+ * iframe.
  *
  * `request` must carry the signed-in owner's session (a `page.request`): the
  * endpoint reads the active-org cookie (getActiveOrgId), so set it first.
@@ -241,10 +253,12 @@ async function passCheckoutProbeStatus(
   request: APIRequestContext,
   orgId: string,
   competitionId: string,
+  passKey: "event_pass" | "event_pass_l" = "event_pass",
 ): Promise<number> {
   await apiJson(request, "/api/orgs/active", "POST", { org_id: orgId });
   const probe = await apiJson(request, "/api/billing/pass-checkout", "POST", {
     competition_id: competitionId,
+    pass_key: passKey,
   });
   return probe.status;
 }
@@ -309,8 +323,10 @@ async function scrollSheetToEnd(page: Page): Promise<void> {
  * `/v1/payment_methods` is never called — verified in the traces of two failed
  * runs — so NOTHING reaches Stripe: no PaymentMethod, no PaymentIntent, no
  * charge. Re-opening from a fresh page load therefore cannot double-charge, and
- * the route's idempotency key (`pass-checkout-{org}-{comp}-{user}`) hands back
- * the SAME checkout session rather than minting a second one. U1 additionally
+ * the route's idempotency key (`pass-checkout-{org}-{comp}-{user}-{pass_key}`,
+ * rung-suffixed since v17 #294) hands back the SAME checkout session rather
+ * than minting a second one — the picker's selection is unchanged across the
+ * reload, so the rung in that key is too. U1 additionally
  * asserts that exactly one pass row and one intent exist afterwards, which is
  * what would catch a retry that did charge twice.
  *
@@ -322,6 +338,9 @@ async function buyPassWithTestCard(page: Page, url: string): Promise<void> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= 3; attempt++) {
     await page.goto(url);
+    // No rung is chosen first: the M/L picker (v17 #294) pre-selects M, so this
+    // single click still goes straight to the Stripe sheet and still buys the
+    // $29 rung these use cases are written against.
     await page.locator("[data-pass-buy]").click();
     await expect(page.locator('iframe[src*="stripe.com"]').first()).toBeVisible({
       timeout: 45_000,

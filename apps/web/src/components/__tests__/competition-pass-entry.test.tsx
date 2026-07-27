@@ -25,7 +25,9 @@ import { CompetitionPassProvider } from "@/components/competition-pass-provider"
 import { CompetitionPassEntry } from "@/components/competition-pass-entry";
 
 const HREF = "/o/riverside/c/summer-league/upgrade";
-const BUY = "Event Pass — $29 one-time";
+// "from" since v17 #294: two rungs are live and $29 is the ladder's FLOOR, not
+// the price. The label the page builds is `pass.entry.buy`.
+const BUY = "Event Pass — from $29 one-time";
 const ACTIVE = "Event Pass active";
 
 function render({
