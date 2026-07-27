@@ -13,7 +13,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   CompetitionPassProvider,
   usePassActive,
+  usePassCurrency,
   usePassGateState,
+  usePassRung,
 } from "@/components/competition-pass-provider";
 
 function Probe() {
@@ -22,6 +24,14 @@ function Probe() {
 
 function StateProbe() {
   return <span id="s">{`state:${usePassGateState()}`}</span>;
+}
+
+function RungProbe() {
+  return <span id="r">{`rung:${usePassRung()}`}</span>;
+}
+
+function CurrencyProbe() {
+  return <span id="c">{`currency:${usePassCurrency()}`}</span>;
 }
 
 describe("CompetitionPassProvider / usePassActive", () => {
@@ -34,7 +44,7 @@ describe("CompetitionPassProvider / usePassActive", () => {
 
   it("reports true inside a competition the org holds a pass for", () => {
     const html = renderToStaticMarkup(
-      <CompetitionPassProvider active>
+      <CompetitionPassProvider passKey="event_pass">
         <Probe />
       </CompetitionPassProvider>,
     );
@@ -45,7 +55,7 @@ describe("CompetitionPassProvider / usePassActive", () => {
     // The control arm: without it the assertion above would still pass if the
     // hook simply answered true once a provider existed.
     const html = renderToStaticMarkup(
-      <CompetitionPassProvider active={false}>
+      <CompetitionPassProvider passKey={null}>
         <Probe />
       </CompetitionPassProvider>,
     );
@@ -57,7 +67,7 @@ describe("CompetitionPassProvider / usePassActive", () => {
     // "should the gate offer a pass". Collapsing the two here would make the
     // hook lie to any future caller that asks about the purchase itself.
     const html = renderToStaticMarkup(
-      <CompetitionPassProvider active paidPlan>
+      <CompetitionPassProvider passKey="event_pass" paidPlan>
         <Probe />
       </CompetitionPassProvider>,
     );
@@ -68,7 +78,7 @@ describe("CompetitionPassProvider / usePassActive", () => {
     // Gates render several levels under the layout (page → card → toolbar), so
     // the value has to travel by context, not by prop drilling one level.
     const html = renderToStaticMarkup(
-      <CompetitionPassProvider active>
+      <CompetitionPassProvider passKey="event_pass">
         <div>
           <section>
             <Probe />
@@ -93,7 +103,7 @@ describe("usePassGateState", () => {
 
   it("is 'none' for a community org with no pass", () => {
     const html = state(
-      <CompetitionPassProvider active={false} paidPlan={false}>
+      <CompetitionPassProvider passKey={null} paidPlan={false}>
         <StateProbe />
       </CompetitionPassProvider>,
     );
@@ -102,7 +112,7 @@ describe("usePassGateState", () => {
 
   it("is 'held' for a community org that bought the pass", () => {
     const html = state(
-      <CompetitionPassProvider active paidPlan={false}>
+      <CompetitionPassProvider passKey="event_pass" paidPlan={false}>
         <StateProbe />
       </CompetitionPassProvider>,
     );
@@ -111,7 +121,7 @@ describe("usePassGateState", () => {
 
   it("is 'paid_plan' for a paid org with no pass", () => {
     const html = state(
-      <CompetitionPassProvider active={false} paidPlan>
+      <CompetitionPassProvider passKey={null} paidPlan>
         <StateProbe />
       </CompetitionPassProvider>,
     );
@@ -123,7 +133,7 @@ describe("usePassGateState", () => {
     // stops consulting the pass at that point, so the pass can no longer be
     // the reason anything is blocked.
     const html = state(
-      <CompetitionPassProvider active paidPlan>
+      <CompetitionPassProvider passKey="event_pass" paidPlan>
         <StateProbe />
       </CompetitionPassProvider>,
     );
@@ -134,10 +144,95 @@ describe("usePassGateState", () => {
     // The safe default: a caller that forgets the plan gets today's behaviour
     // (offer the pass), never a silently suppressed upsell for a paying org.
     const html = state(
-      <CompetitionPassProvider active={false}>
+      <CompetitionPassProvider passKey={null}>
         <StateProbe />
       </CompetitionPassProvider>,
     );
     expect(html).toContain("state:none");
+  });
+});
+
+// The rung, added by v17 #294. `usePassActive()` answers "is there a row" and
+// nothing more; with M ($29) and L ($59) both live, every surface that says a
+// pass is on and cannot say WHICH one is naming M's product to an L buyer.
+describe("usePassRung", () => {
+  it("is null outside a competition", () => {
+    expect(renderToStaticMarkup(<RungProbe />)).toContain("rung:null");
+  });
+
+  it("is null inside a competition that holds no pass", () => {
+    const html = renderToStaticMarkup(
+      <CompetitionPassProvider passKey={null}>
+        <RungProbe />
+      </CompetitionPassProvider>,
+    );
+    expect(html).toContain("rung:null");
+  });
+
+  it("reports the rung the competition actually holds", () => {
+    // Both arms, because "reports L" proves nothing if the hook answers L to
+    // everything — which is precisely the shape of the bug being fixed, with
+    // the literal the other way round.
+    for (const rung of ["event_pass", "event_pass_l"] as const) {
+      const html = renderToStaticMarkup(
+        <CompetitionPassProvider passKey={rung}>
+          <RungProbe />
+        </CompetitionPassProvider>,
+      );
+      expect(html).toContain(`rung:${rung}`);
+    }
+  });
+
+  it("still reports the rung under a paid plan", () => {
+    // Same contract as usePassActive(): this is the ROW's own question. The
+    // "should we offer/advertise it" precedence lives in usePassGateState.
+    const html = renderToStaticMarkup(
+      <CompetitionPassProvider passKey="event_pass_l" paidPlan>
+        <RungProbe />
+      </CompetitionPassProvider>,
+    );
+    expect(html).toContain("rung:event_pass_l");
+  });
+
+  it("agrees with usePassActive in both directions", () => {
+    // Two hooks, ONE field — the whole reason the provider carries a rung
+    // instead of a boolean beside a rung that can disagree with it.
+    const both = (passKey: "event_pass_l" | null) =>
+      renderToStaticMarkup(
+        <CompetitionPassProvider passKey={passKey}>
+          <Probe />
+          <RungProbe />
+        </CompetitionPassProvider>,
+      );
+    expect(both("event_pass_l")).toContain("pass:true");
+    expect(both(null)).toContain("pass:false");
+  });
+});
+
+// The currency, also #294. `preferredCurrency` is a server resolution (the
+// org's subscription, then the switcher cookie, then Accept-Language) and no
+// client island can compute any of it — which is why the paywall quoted a
+// hardcoded "usd" to a £-paying organiser for as long as it has existed.
+describe("usePassCurrency", () => {
+  it("is usd outside a competition — today's behaviour, not a crash", () => {
+    expect(renderToStaticMarkup(<CurrencyProbe />)).toContain("currency:usd");
+  });
+
+  it("defaults to usd when the prop is omitted", () => {
+    const html = renderToStaticMarkup(
+      <CompetitionPassProvider passKey={null}>
+        <CurrencyProbe />
+      </CompetitionPassProvider>,
+    );
+    expect(html).toContain("currency:usd");
+  });
+
+  it("carries the currency the org is actually charged in", () => {
+    const html = renderToStaticMarkup(
+      <CompetitionPassProvider passKey={null} currency="gbp">
+        <CurrencyProbe />
+      </CompetitionPassProvider>,
+    );
+    expect(html).toContain("currency:gbp");
   });
 });

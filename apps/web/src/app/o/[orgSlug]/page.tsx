@@ -15,7 +15,8 @@ import { ViewToggleContainer } from "@/components/ui/view-toggle";
 import { StatusChip, competitionChipState, CHIP_SORT } from "@/components/ui/status-chip";
 import { sql } from "@/lib/db";
 import { isPaidPlan, orgPlanKey } from "@/lib/entitlements";
-import { formatMinor, passPrice } from "@/lib/currency";
+import { formatMinor, isPassKey } from "@/lib/currency";
+import { lowestPassRung, passActiveLabels } from "@/lib/pass-ladder";
 import { preferredCurrency } from "@/lib/currency-server";
 import { routes } from "@/lib/routes";
 import { resolveLocale } from "@/lib/resolve-locale";
@@ -57,12 +58,25 @@ export default async function OrgHomePage({
       ? []
       : // Presence, never payment: a staff-granted pass has a null
         // `stripe_payment_intent` and is fully active.
-        sql<{ competition_id: string }[]>`
-          select competition_id from competition_passes where org_id = ${org.id}`,
+        //
+        // `pass_key` rides along (v17 #294): the seal on a passed card is the
+        // ONLY thing this page says about the pass, and with M and L both live
+        // "Event Pass active" names the $29 product to an org that paid $59.
+        sql<{ competition_id: string; pass_key: string }[]>`
+          select competition_id, pass_key from competition_passes where org_id = ${org.id}`,
     preferredCurrency(org.id),
   ]);
-  const passed = new Set(passRows.map((r) => r.competition_id));
-  const passLabel = formatMinor(passPrice(currency), currency);
+  // isPassKey, not a cast: the column is `not null default 'event_pass'` and a
+  // row written by a future rung this build predates must still land on a real
+  // label rather than an undefined lookup.
+  const passed = new Map(
+    passRows.map((r) => [r.competition_id, isPassKey(r.pass_key) ? r.pass_key : "event_pass"] as const),
+  );
+  const heldLabels = passActiveLabels(dict);
+  // The card menu's "Event Pass — from {price}" quotes the ladder FLOOR: the
+  // menu item offers no choice of rung, and the choice itself lives on the
+  // upgrade page it links to (v17 #294).
+  const passLabel = formatMinor(lowestPassRung(currency).amountMinor, currency);
 
   // Live first, then Registration open, Draft, Completed (v3/03 §2);
   // secondary = the query's recency order, kept by stable sort.
@@ -124,7 +138,7 @@ export default async function OrgHomePage({
           <ViewToggleContainer storageKey="seazn.view.competitions" toggle={competitions.length > 20}>
             {sorted.map(({ c, chip }) => {
               const s = stats.get(c.id);
-              const held = passed.has(c.id);
+              const heldRung = passed.get(c.id) ?? null;
               return (
                 <EntityCard
                   key={c.id}
@@ -145,12 +159,13 @@ export default async function OrgHomePage({
                           "Spring S…". The status chip already owns the card's
                           word; this says the pass is on and gets out of the
                           way, carrying its label on the element itself. */}
-                      {held && (
+                      {heldRung && (
                         <span
                           data-pass-held
+                          data-pass-held-rung={heldRung}
                           role="img"
-                          aria-label={t(dict, "pass.entry.active")}
-                          title={t(dict, "pass.entry.active")}
+                          aria-label={heldLabels[heldRung]}
+                          title={heldLabels[heldRung]}
                           className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-lime-100 text-lime-800 ring-1 ring-inset ring-lime-300"
                         >
                           <Ticket className="h-3 w-3" strokeWidth={2.25} aria-hidden />
@@ -177,7 +192,7 @@ export default async function OrgHomePage({
                         // on a paid plan (`passed` is empty and `paidPlan`
                         // suppresses the offer) — never re-sold, never a
                         // downgrade. Editors only: the buy itself is owner-only.
-                        ...(!paidPlan && !held && canEdit
+                        ...(!paidPlan && !heldRung && canEdit
                           ? [
                               {
                                 label: t(dict, "pass.menu.buy", { price: passLabel }),

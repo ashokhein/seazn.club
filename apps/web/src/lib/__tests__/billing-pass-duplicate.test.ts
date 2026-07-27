@@ -113,18 +113,21 @@ describe.skipIf(!HAS_DB)("recordPassPurchase duplicates", () => {
     const a = await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_a",
     });
     expect(a).toEqual({ recorded: true, duplicateIntent: null });
     const b = await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_b",
     });
     expect(b).toEqual({ recorded: false, duplicateIntent: "pi_b" });
     const same = await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_a",
     });
     expect(same).toEqual({ recorded: false, duplicateIntent: null }); // replay, not duplicate
@@ -135,6 +138,7 @@ describe.skipIf(!HAS_DB)("recordPassPurchase duplicates", () => {
     await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_first",
     });
     // Reconcile-on-return passes null when the session's intent isn't a string;
@@ -142,6 +146,7 @@ describe.skipIf(!HAS_DB)("recordPassPurchase duplicates", () => {
     const res = await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: null,
     });
     expect(res).toEqual({ recorded: false, duplicateIntent: null });
@@ -158,6 +163,7 @@ describe.skipIf(!HAS_DB)("recordPassPurchase duplicates", () => {
         recordPassPurchase({
           orgId,
           competitionId: compId,
+          passKey: "event_pass",
           paymentIntent: intent,
         }).then((r) => ({
           intent,
@@ -181,6 +187,7 @@ describe.skipIf(!HAS_DB)("Event Pass duplicate payment → auto-refund (checkout
     await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_first",
     });
     stripeMock.refundCreate.mockClear();
@@ -204,6 +211,7 @@ describe.skipIf(!HAS_DB)("Event Pass duplicate payment → auto-refund (checkout
     await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_solo",
     });
     stripeMock.refundCreate.mockClear();
@@ -218,6 +226,7 @@ describe.skipIf(!HAS_DB)("Event Pass duplicate payment → auto-refund (checkout
     await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_keep",
     });
     stripeMock.refundCreate.mockClear();
@@ -261,7 +270,7 @@ describe.skipIf(!HAS_DB)("pass-checkout idempotency key is scoped per user (P0-3
               where key = 'event_pass'`;
   });
 
-  it("keys checkout.sessions.create with pass-checkout-<org>-<comp>-<user>", async () => {
+  it("keys checkout.sessions.create with pass-checkout-<org>-<comp>-<user>-<rung>", async () => {
     const { orgId, compId } = await seedOrgWithComp();
     // A community sub carrying a currency short-circuits preferredCurrency BEFORE
     // it reaches next/headers (no request scope in a unit test) and keeps the
@@ -289,9 +298,14 @@ describe.skipIf(!HAS_DB)("pass-checkout idempotency key is scoped per user (P0-3
     // sessions (an org+comp-only key would 400 on their per-user customer_email
     // param mismatch) while a double-click still dedups. This fails if the key
     // drops the userId or otherwise changes shape.
+    //
+    // The trailing rung (v17 #294) is there for the same reason one level down:
+    // ONE owner who picks M, backs out and picks L sends a different price under
+    // the same key and would be 400'd, stuck on whichever rung they clicked
+    // first. The rung-routing cases live in pass-checkout-plan-gate.
     expect(stripeMock.checkoutCreate).toHaveBeenCalledTimes(1);
     expect(stripeMock.checkoutCreate.mock.calls[0][1]).toEqual({
-      idempotencyKey: `pass-checkout-${orgId}-${compId}-${authState.user.id}`,
+      idempotencyKey: `pass-checkout-${orgId}-${compId}-${authState.user.id}-event_pass`,
     });
   });
 });

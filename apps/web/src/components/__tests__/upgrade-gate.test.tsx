@@ -18,10 +18,10 @@
 //
 // The fourth row is task 17's own deferred follow-up. `usePassActive()` answered
 // only "does a pass ROW exist", so an org already on a paid plan read false and
-// was offered the $29 pass — which for a Pro org is a DOWNGRADE, not a redundant
-// sale: the pass grants 10 AI runs per division against Pro's 20, and 64
-// entrants per division against Pro's 256. The layout now carries the resolved
-// plan alongside the pass row and the gate reads one union.
+// was offered the pass — which for a Pro org is a DOWNGRADE, not a redundant
+// sale: Pro's matrix is a superset of the pass's at every key the pass lifts.
+// The layout now carries the resolved plan alongside the pass row and the gate
+// reads one union.
 //
 // Rendered through react-dom/server, like competition-pass-provider.test.tsx:
 // the suite runs in the node environment and the gate has no effects.
@@ -30,7 +30,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactNode } from "react";
 import { CompetitionPassProvider } from "@/components/competition-pass-provider";
 import { PASS_FEATURES, UpgradeGate } from "@/components/upgrade-gate";
-import { formatMinor, passPrice } from "@/lib/currency";
+import { formatMinor, passPrice, type Currency, type PassKey } from "@/lib/currency";
+import { lowestPassRung, passActiveLabel } from "@/lib/pass-ladder";
 import { DictProvider } from "@/components/i18n/dict-provider";
 import { t } from "@/lib/i18n-runtime";
 import uiEn from "@/dictionaries/en/ui.json";
@@ -41,7 +42,10 @@ import type { Dict } from "@/lib/i18n-constants";
 let pathname: string | null = "/o/riverside/c/summer-league/d/new";
 vi.mock("next/navigation", () => ({ usePathname: () => pathname }));
 
-const PASS_PRICE = formatMinor(passPrice("usd"), "usd"); // "$29"
+const PASS_PRICE = formatMinor(passPrice("usd", "event_pass"), "usd"); // "$29"
+// What a two-rung product may be quoted at on a surface offering no choice.
+const FLOOR_USD = formatMinor(lowestPassRung("usd").amountMinor, "usd"); // "$29"
+const FLOOR_GBP = formatMinor(lowestPassRung("gbp").amountMinor, "gbp"); // "£25"
 
 /** A key the pass lifts, and one it can never lift. */
 const LIFTABLE = "divisions.per_competition.max";
@@ -65,14 +69,20 @@ const UPGRADE_HREF = `/o/riverside/c/summer-league/upgrade?feature=${LIFTABLE}`;
 function render(
   node: ReactNode,
   {
-    passActive = false,
+    passKey = null,
     paidPlan = false,
-    provider = passActive || paidPlan,
-  }: { passActive?: boolean; paidPlan?: boolean; provider?: boolean } = {},
+    currency = "usd",
+    provider = passKey !== null || paidPlan,
+  }: {
+    passKey?: PassKey | null;
+    paidPlan?: boolean;
+    currency?: Currency;
+    provider?: boolean;
+  } = {},
 ) {
   return renderToStaticMarkup(
     provider ? (
-      <CompetitionPassProvider active={passActive} paidPlan={paidPlan}>
+      <CompetitionPassProvider passKey={passKey} paidPlan={paidPlan} currency={currency}>
         {node}
       </CompetitionPassProvider>
     ) : (
@@ -111,13 +121,66 @@ describe("UpgradeGate — pass not held (unchanged behaviour)", () => {
   });
 });
 
+// v17 #294. This card is the paywall AND the main inbound link to the upgrade
+// page, where the buyer is asked to choose between a $29 M and a $59 L. It
+// quoted M's price flat, as though that were the price of the product — and it
+// quoted it in hardcoded usd to every reader on earth.
+describe("UpgradeGate — the pass price it quotes", () => {
+  it("quotes the ladder's floor as a 'from' price, not one rung as the price", () => {
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, { passKey: null, provider: true });
+    const cta = html.slice(html.indexOf("data-pass-cta"));
+    expect(cta).toContain(FLOOR_USD);
+    // The word matters as much as the number: without it the card states a
+    // single price for a product that sells at two, which is the mis-sale.
+    expect(cta).toMatch(/from/i);
+  });
+
+  it("prices in the currency the org is CHARGED in, not in hardcoded usd", () => {
+    // `preferredCurrency` is a server resolution and this is a client island,
+    // so the layout hands it down through the pass provider. Before that this
+    // line read `passPrice("usd", …)` — a £-paying organiser was quoted $29
+    // for a pass Stripe would charge them £25 for.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, {
+      passKey: null,
+      provider: true,
+      currency: "gbp",
+    });
+    expect(html).toContain(FLOOR_GBP);
+    expect(html).not.toContain(FLOOR_USD);
+  });
+
+  it("prices the Pro path in that same currency", () => {
+    // One card, one currency. A pass in £ beside "Go Pro — $19/mo" is worse
+    // than the hardcoded usd it replaced.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, {
+      passKey: null,
+      provider: true,
+      currency: "gbp",
+    });
+    expect(html).not.toContain("$");
+    expect(html).toContain("£");
+  });
+
+  it("still quotes usd on an org-level page, where no provider resolves one", () => {
+    // The pass CTA cannot render without a competition, but the Pro price on
+    // the paid-plan/owned cards can — and outside a provider that must be
+    // exactly what it has always been.
+    pathname = "/o/riverside/settings/billing";
+    const html = render(<UpgradeGate feature={LIFTABLE} />);
+    expect(html).not.toContain("£");
+  });
+});
+
 describe("UpgradeGate — pass held (D1: never re-sell a pass the org holds)", () => {
   it("drops the $29 CTA at the pass's own ceiling", () => {
     // divisions.per_competition.max IS lifted by the pass (2 → 10). Seeing
     // this gate with a pass active means all 10 are used: another $29 buys
     // nothing, and Pro is the only real answer.
     pathname = "/o/riverside/c/summer-league/d/new";
-    const html = render(<UpgradeGate feature={LIFTABLE} />, { passActive: true });
+    const html = render(<UpgradeGate feature={LIFTABLE} />, { passKey: "event_pass" });
     expect(html).not.toContain(UPGRADE_HREF);
     expect(html).not.toContain(PASS_PRICE);
     expect(html).not.toContain("data-pass-gate");
@@ -125,12 +188,36 @@ describe("UpgradeGate — pass held (D1: never re-sell a pass the org holds)", (
     expect(html).toContain("/settings/billing");
   });
 
+  it("names the RUNG that is held, on the card that explains its ceiling", () => {
+    // v17 #294. This card's whole argument is "you've used everything the
+    // Event Pass includes here" — and WHICH ceiling that is depends entirely
+    // on which rung was bought (10 divisions/128 entrants, or 20/unlimited).
+    // Both arms, so a card hardcoded the other way fails too.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const dict = uiEn as unknown as Dict;
+
+    const l = render(<UpgradeGate feature={LIFTABLE} />, { passKey: "event_pass_l" });
+    expect(l).toContain(passActiveLabel(dict, "event_pass_l"));
+    expect(l).not.toContain(passActiveLabel(dict, "event_pass"));
+
+    const m = render(<UpgradeGate feature={LIFTABLE} />, { passKey: "event_pass" });
+    expect(m).toContain(passActiveLabel(dict, "event_pass"));
+    expect(m).not.toContain(passActiveLabel(dict, "event_pass_l"));
+  });
+
+  it("leaves no un-substituted placeholder in that signal", () => {
+    pathname = "/o/riverside/c/summer-league/d/new";
+    expect(render(<UpgradeGate feature={LIFTABLE} />, { passKey: "event_pass_l" })).not.toContain(
+      "{rung}",
+    );
+  });
+
   it("credits the pass already bought, within the window the credit code honours", () => {
     // server/usecases/pass-credit.ts: a pass BOUGHT (non-null payment intent)
     // within PASS_CREDIT_WINDOW_DAYS=30 is credited in full. The copy must
     // stay conditional on both, or it promises what the code refuses.
     pathname = "/o/riverside/c/summer-league/d/new";
-    const html = render(<UpgradeGate feature={LIFTABLE} />, { passActive: true });
+    const html = render(<UpgradeGate feature={LIFTABLE} />, { passKey: "event_pass" });
     expect(html).toMatch(/bought in the last 30 days/i);
     expect(html).toMatch(/first Pro invoice/i);
   });
@@ -148,7 +235,7 @@ describe("UpgradeGate — pass held (D1: never re-sell a pass the org holds)", (
     const expected = t(dict, "upgrade.credit", { plan: "Pro" });
     const html = renderToStaticMarkup(
       <DictProvider dict={dict} locale="en">
-        <CompetitionPassProvider active paidPlan={false}>
+        <CompetitionPassProvider passKey="event_pass" paidPlan={false}>
           <UpgradeGate feature={LIFTABLE} />
         </CompetitionPassProvider>
       </DictProvider>,
@@ -158,7 +245,7 @@ describe("UpgradeGate — pass held (D1: never re-sell a pass the org holds)", (
 
   it("says the feature is not on the pass when the pass could never lift it", () => {
     pathname = "/o/riverside/c/summer-league/schedule";
-    const html = render(<UpgradeGate feature={NOT_LIFTABLE} />, { passActive: true });
+    const html = render(<UpgradeGate feature={NOT_LIFTABLE} />, { passKey: "event_pass" });
     expect(html).toContain("data-pass-owned");
     expect(html).toMatch(/not included in the Event Pass/i);
     expect(html).not.toContain(PASS_PRICE);
@@ -169,8 +256,8 @@ describe("UpgradeGate — pass held (D1: never re-sell a pass the org holds)", (
     // "You've used everything the pass gives" and "the pass never gave this"
     // are different sales conversations.
     pathname = "/o/riverside/c/summer-league/d/new";
-    const ceiling = render(<UpgradeGate feature={LIFTABLE} />, { passActive: true });
-    const outside = render(<UpgradeGate feature={NOT_LIFTABLE} />, { passActive: true });
+    const ceiling = render(<UpgradeGate feature={LIFTABLE} />, { passKey: "event_pass" });
+    const outside = render(<UpgradeGate feature={NOT_LIFTABLE} />, { passKey: "event_pass" });
     expect(ceiling).toMatch(/used everything the Event Pass includes/i);
     expect(ceiling).not.toMatch(/not included in the Event Pass/i);
     expect(outside).toMatch(/not included in the Event Pass/i);
@@ -183,7 +270,7 @@ describe("UpgradeGate — pass held (D1: never re-sell a pass the org holds)", (
     // automatically — no second hand-written list to drift.
     pathname = "/o/riverside/c/summer-league/d/new";
     for (const feature of PASS_FEATURES) {
-      const html = render(<UpgradeGate feature={feature} />, { passActive: true });
+      const html = render(<UpgradeGate feature={feature} />, { passKey: "event_pass" });
       expect(html, feature).not.toContain(UPGRADE_HREF);
       expect(html, feature).not.toContain("data-pass-cta");
     }
@@ -195,7 +282,7 @@ describe("UpgradeGate — pass held (D1: never re-sell a pass the org holds)", (
     // card carries a PRO PLUS badge, so a "Go Pro" button underneath it would
     // send them to buy the wrong plan.
     pathname = "/o/riverside/c/summer-league/d/main";
-    const html = render(<UpgradeGate feature="officials.auto" />, { passActive: true });
+    const html = render(<UpgradeGate feature="officials.auto" />, { passKey: "event_pass" });
     expect(html).toContain("Go Pro Plus");
     expect(html).not.toMatch(/Go Pro —/);
   });
@@ -204,7 +291,7 @@ describe("UpgradeGate — pass held (D1: never re-sell a pass the org holds)", (
     // The toolbar pill is one link with no room for two paths; with a pass
     // held it must not be the $29 one.
     pathname = "/o/riverside/c/summer-league/d/main/schedule";
-    const html = render(<UpgradeGate feature={LIFTABLE} compact />, { passActive: true });
+    const html = render(<UpgradeGate feature={LIFTABLE} compact />, { passKey: "event_pass" });
     expect(html).not.toContain(UPGRADE_HREF);
     expect(html).toContain('href="/settings/billing"');
   });
@@ -212,7 +299,7 @@ describe("UpgradeGate — pass held (D1: never re-sell a pass the org holds)", (
   it("honours an explicit href for the Pro path", () => {
     pathname = "/o/riverside/c/summer-league/d/new";
     const html = render(<UpgradeGate feature={LIFTABLE} href="/settings/billing#plans" />, {
-      passActive: true,
+      passKey: "event_pass",
     });
     expect(html).toContain('href="/settings/billing#plans"');
   });
@@ -297,7 +384,7 @@ describe("UpgradeGate — paid plan (D1: any paid plan → Pro path only)", () =
     // gate firing here is the PLAN's ceiling and the pass explains nothing.
     pathname = "/o/riverside/c/summer-league/d/new";
     const html = render(<UpgradeGate feature={LIFTABLE} />, {
-      passActive: true,
+      passKey: "event_pass",
       paidPlan: true,
     });
     expect(html).not.toContain("data-pass-owned");
@@ -321,7 +408,7 @@ describe("UpgradeGate — paid plan (D1: any paid plan → Pro path only)", () =
   it("leaves the pass-held card untouched for a community org", () => {
     // The other control arm: task 17's state must survive this change.
     pathname = "/o/riverside/c/summer-league/d/new";
-    const html = render(<UpgradeGate feature={LIFTABLE} />, { passActive: true });
+    const html = render(<UpgradeGate feature={LIFTABLE} />, { passKey: "event_pass" });
     expect(html).toContain("data-pass-owned");
     expect(html).toMatch(/used everything the Event Pass includes/i);
     expect(html).not.toContain(PASS_PRICE);

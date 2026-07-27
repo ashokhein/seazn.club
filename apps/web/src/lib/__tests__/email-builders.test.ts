@@ -33,6 +33,7 @@ import type { Dict } from "@/lib/i18n";
 import { buildPseudoDictionary } from "@/lib/pseudo";
 // Localized builders take the emails dict; the en namespace is the source text.
 import emailsEn from "@/dictionaries/en/emails.json";
+import { PASS_KEYS, type PassKey } from "@/lib/currency";
 
 const LINK = "https://seazn.club/x?token=abc";
 
@@ -204,7 +205,11 @@ function makeBuilders(
     [
       "pass-revoked",
       passRevokedTemplate(
-        { orgName: "Riverside Racquets", competitionName: "Spring Open 2026" },
+        {
+          orgName: "Riverside Racquets",
+          competitionName: "Spring Open 2026",
+          passKey: "event_pass",
+        },
         dict,
       ),
       "passRevoked.subject",
@@ -487,5 +492,87 @@ describe("email builders compose from the html templates", () => {
     // Zebra alternation over row indices (rows 2 and 3 get opposite fills).
     expect(html).toContain('bgcolor="#faf9fc"');
     expect(html).not.toMatch(/\{\{[A-Z_]+\}\}/);
+  });
+
+  // v17 #294: two Event Pass rungs at different prices. The staff dispute alert
+  // names the disputed product, so the label has to distinguish them — otherwise
+  // a $59 L chargeback is triaged as the $29 M product.
+  it("staff dispute alert names the Event Pass RUNG that was disputed", () => {
+    const alert = (kind: "subscription" | "event_pass" | "event_pass_l") =>
+      staffDisputeAlertTemplate(
+        {
+          kind,
+          orgName: "Riverside Racquets",
+          phase: "closed",
+          status: "lost",
+          amountCents: 5900,
+          currency: "usd",
+          disputeId: "dp_test123",
+        },
+        emailsEn as Dict,
+      );
+
+    expect(alert("event_pass").subject).toContain("Event Pass");
+    expect(alert("event_pass_l").subject).toContain("Event Pass L");
+    // Distinct, and neither is the subscription label.
+    const labels = (["subscription", "event_pass", "event_pass_l"] as const).map(
+      (k) => alert(k).subject,
+    );
+    expect(new Set(labels).size).toBe(3);
+    // A lost dispute on EITHER rung revokes the pass; only a subscription is
+    // downgraded. The outcome branch keys on "is this a subscription", so it must
+    // still take the revoke arm for a rung it has never seen before.
+    expect(alert("event_pass_l").text).toContain("revoked");
+    expect(alert("event_pass_l").text).not.toContain("auto-downgraded");
+    expect(alert("subscription").text).toContain("auto-downgraded");
+
+    // …and the revoke sentence — the one line that says what was taken away —
+    // names the rung too. It hardcoded "the Event Pass" for both, so a lost $59
+    // L chargeback described the $29 product in the sentence a staffer acts on.
+    expect(alert("event_pass_l").text).toContain("the Event Pass L has been revoked");
+    expect(alert("event_pass").text).toContain("the Event Pass has been revoked");
+    expect(alert("event_pass").text).not.toContain("Event Pass L");
+  });
+});
+
+// v17 #294 — the BUYER-facing counterpart of the staff dispute alert above.
+// `passRevokedTemplate` had no rung field at all, so an org refunded on a $59
+// Event Pass L was emailed "Your Event Pass was refunded" — the $29 product's
+// name, in the one message that tells them what they got their money back for.
+describe("pass-revoked names the rung that was refunded", () => {
+  const revoked = (passKey: PassKey) =>
+    passRevokedTemplate(
+      { orgName: "Riverside Racquets", competitionName: "Spring Open 2026", passKey },
+      emailsEn as Dict,
+    );
+
+  it("names the rung in the subject", () => {
+    expect(revoked("event_pass_l").subject).toContain("Event Pass L");
+    expect(revoked("event_pass").subject).toContain("Event Pass M");
+  });
+
+  it("gives the two rungs DIFFERENT subject, body and text", () => {
+    // Both arms and every part: a template that interpolated the rung into the
+    // subject alone would still tell an L buyer, in the body of the mail, that
+    // "the Event Pass" was refunded.
+    const m = revoked("event_pass");
+    const l = revoked("event_pass_l");
+    expect(l.subject).not.toBe(m.subject);
+    expect(l.html).not.toBe(m.html);
+    expect(l.text).not.toBe(m.text);
+  });
+
+  it("never names the other rung", () => {
+    // "contains L" is satisfied by copy that names both. This is not.
+    expect(revoked("event_pass").html).not.toContain("Event Pass L");
+    expect(revoked("event_pass").text).not.toContain("Event Pass L");
+  });
+
+  it("leaves no un-substituted placeholder", () => {
+    for (const key of PASS_KEYS) {
+      const out = revoked(key);
+      expect(out.subject).not.toMatch(/\{\w+\}/);
+      expect(out.text).not.toMatch(/\{\w+\}/);
+    }
   });
 });

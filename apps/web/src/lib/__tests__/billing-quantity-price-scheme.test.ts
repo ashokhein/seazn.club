@@ -97,6 +97,7 @@ describe("Event Pass checkout", () => {
       orgId: "org-1",
       competitionId: "comp-1",
       competitionName: "Spring Cup",
+      passKey: "event_pass",
       returnUrl: "https://seazn.club/return",
       customerEmail: "member@example.com",
     });

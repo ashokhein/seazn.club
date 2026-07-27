@@ -49,6 +49,9 @@ afterEach(() => {
 
 const base = {
   to: "ops@seazn.test",
+  // The pre-#294 shape of this alert, so the existing cases keep meaning what
+  // they meant; the rung-naming cases at the bottom vary it.
+  passKey: "event_pass" as const,
   orgId: "org-123",
   orgName: "Riverside Racquets",
   competitionName: "Spring Open 2026",
@@ -93,5 +96,40 @@ describe("pass credit reversal alert — undetermined", () => {
     const { text } = sent[0]!;
     expect(text.toLowerCase()).not.toContain("blocked");
     expect(text).toContain("written off");
+  });
+});
+
+// v17 #294 — the same defect class as the buyer's refund email, one file over.
+// Every sentence in this alert said "An Event Pass credit for …", so a staff
+// member triaging a $59 Event Pass L reversal went looking for a $29 charge.
+// Ops-only copy, so English is the only version to assert.
+describe("pass credit reversal alert — the rung it names", () => {
+  const send = (passKey: "event_pass" | "event_pass_l", reason: "consumed" | "undetermined") =>
+    sendPassCreditReversalIncompleteAlertEmail({
+      ...base,
+      passKey,
+      reversedMinor: reason === "undetermined" ? 0 : 1000,
+      reason,
+    });
+
+  it("names the rung on BOTH reasons, and never the other rung", async () => {
+    // Both branches build their own sentence, so a fix applied to one of them
+    // leaves the other lying.
+    for (const reason of ["consumed", "undetermined"] as const) {
+      sent = [];
+      await send("event_pass_l", reason);
+      expect(sent[0]!.text, reason).toContain("Event Pass L");
+
+      sent = [];
+      await send("event_pass", reason);
+      expect(sent[0]!.text, reason).toContain("Event Pass M");
+      expect(sent[0]!.text, reason).not.toContain("Event Pass L");
+    }
+  });
+
+  it("carries the rung into the eyebrow the reader sees first", async () => {
+    sent = [];
+    await send("event_pass_l", "undetermined");
+    expect(sent[0]!.html).toContain("Event Pass L");
   });
 });

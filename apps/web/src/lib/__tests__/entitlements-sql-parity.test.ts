@@ -12,7 +12,7 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
-import { hasFeature, invalidateOrgEntitlements } from "@/lib/entitlements";
+import { getLimit, hasFeature, invalidateOrgEntitlements } from "@/lib/entitlements";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
@@ -279,10 +279,17 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
       insert into competition_passes (competition_id, org_id) values (${passedId}, ${orgId})`;
     await invalidateOrgEntitlements(orgId);
 
-    expect(await sqlHasFeature(orgId, key, passedId)).toBe(true);
-    expect(await hasFeature(orgId, key, passedId)).toBe(true);
-
-    await sql`delete from plan_entitlements where feature_key = ${key}`;
+    // try/finally, not a bare trailing delete: this is the only test in the
+    // suite that adds an `event_pass` row, and a failed assertion used to leak
+    // it into the shared DB — where the rung-parity test below would then
+    // report it as a genuine M-only key and fail for a second, misleading
+    // reason on every later run.
+    try {
+      expect(await sqlHasFeature(orgId, key, passedId)).toBe(true);
+      expect(await hasFeature(orgId, key, passedId)).toBe(true);
+    } finally {
+      await sql`delete from plan_entitlements where feature_key = ${key}`;
+    }
   });
 
   // Trial-end backstop (fix/trialing-trial-end-backstop): the resolver never
@@ -384,5 +391,139 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
     await invalidateOrgEntitlements(orgId);
     expect(await hasFeature(orgId, "realtime")).toBe(false);
     expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
+  });
+
+  // v17 #294 — the L rung. Migration V341 derives event_pass_l's WHOLE matrix
+  // from event_pass (INSERT...SELECT), overriding only two keys. This proves
+  // the override landed and everything else really did copy across, using the
+  // SAME probe key (`realtime`) the rest of this file already established.
+  it("the L rung (event_pass_l) overrides entrants and divisions, unlike M", async () => {
+    const compId = await seedCompetition(orgId, "l-rung");
+    await sql`
+      insert into competition_passes (competition_id, org_id, pass_key)
+      values (${compId}, ${orgId}, 'event_pass_l')`;
+    await invalidateOrgEntitlements(orgId);
+
+    // Unlimited (null cap) — diverges from M's 128.
+    expect(await getLimit(orgId, "entrants.per_division.max", compId)).toBeNull();
+    // 20 divisions — diverges from M's 10.
+    expect(await getLimit(orgId, "divisions.per_competition.max", compId)).toBe(20);
+    // Everything else is DERIVED from M unchanged — realtime is the existing
+    // probe key for this file (community false, pro true, event_pass true).
+    expect(await hasFeature(orgId, "realtime", compId)).toBe(true);
+    expect(await sqlHasFeature(orgId, "realtime", compId)).toBe(true);
+  });
+
+  // Both resolvers must drop an L pass on a finished competition exactly like
+  // an M pass — org_has_feature (V328) and isPassLocked never branch on
+  // pass_key, but this pins it directly rather than trusting that by
+  // inspection. Mirrors the existing "both resolvers drop a pass on a
+  // COMPLETED" test above, with pass_key='event_pass_l'.
+  it("both resolvers drop an L pass on a COMPLETED competition, same lock as M", async () => {
+    const compId = await seedCompetition(orgId, "l-completed");
+    await sql`
+      insert into competition_passes (competition_id, org_id, pass_key)
+      values (${compId}, ${orgId}, 'event_pass_l')`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime", compId)).toBe(true);
+    expect(await sqlHasFeature(orgId, "realtime", compId)).toBe(true);
+    // The numeric override lifts too, while live.
+    expect(await getLimit(orgId, "entrants.per_division.max", compId)).toBeNull();
+
+    await sql`update competitions set status = 'completed' where id = ${compId}`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime", compId)).toBe(false);
+    expect(await sqlHasFeature(orgId, "realtime", compId)).toBe(false);
+    // Locked: falls all the way through to the org's actual plan (community —
+    // no paid subscription seeded), whose current entrants cap is 64 (V319).
+    expect(await getLimit(orgId, "entrants.per_division.max", compId)).toBe(64);
+  });
+
+  // THE ENFORCEMENT for V341's drift guarantee. V341 derives event_pass_l's
+  // matrix from event_pass with INSERT...SELECT, but that is a migration-time
+  // SNAPSHOT, not a live constraint. Every historic matrix seed (V283, V292,
+  // V293, V294, V295, V302, V306, V308, V310, V311, V319) wrote 'event_pass'
+  // rows only — so the next feature migration will too, and L will silently
+  // not get the twin.
+  //
+  // The failure mode is silent AND backwards: both resolvers INNER-join
+  // plan_entitlements on cp.pass_key (entitlements.ts:315-316; org_has_feature
+  // since V338), so a key present for M but MISSING for L makes the pass stop
+  // applying for that key — the MORE EXPENSIVE rung falls through to the org's
+  // plan and DENIES a feature the cheaper rung grants. No FK, no error, no
+  // other failing test. Hence a full-outer-join diff: an orphan on EITHER side
+  // is a failure, and the only tolerated divergences are the two documented
+  // overrides.
+  //
+  // Adding a genuinely L-specific entitlement later is fine — it just has to be
+  // added to OVERRIDES here, which is the point: the divergence becomes a
+  // deliberate, reviewed edit instead of an accident.
+  it("keeps the L rung's matrix identical to M's apart from the documented overrides", async () => {
+    const OVERRIDES = ["divisions.per_competition.max", "entrants.per_division.max"];
+
+    // `present` markers rather than `m.feature_key is null`: an explicit
+    // marker, robust to a null-valued row and to a later `ON`-join rewrite. A
+    // real row can hold null in both value columns, so no value column can
+    // stand in for "row absent"; the marker can never be null on a row that
+    // exists, whatever the join is rewritten to.
+    //
+    // (This comment used to justify the marker by claiming feature_key is not
+    // addressable under FULL OUTER JOIN ... USING. That is FALSE — only the
+    // UNQUALIFIED reference is coalesced; qualified `m.feature_key` is still
+    // addressable and is null for right-only rows, so it would have worked.
+    // The marker is still the better code, and a wrong reason for right code
+    // rots into a wrong fix.)
+    const diff = await sql<
+      { feature_key: string; reason: string; m_value: string; l_value: string }[]
+    >`
+      select
+        feature_key,
+        case
+          when m.present is null then 'present for event_pass_l but MISSING for event_pass'
+          when l.present is null then 'present for event_pass but MISSING for event_pass_l'
+          else 'value differs'
+        end as reason,
+        coalesce(m.bool_value::text, '-') || '/' || coalesce(m.int_value::text, 'unlimited') as m_value,
+        coalesce(l.bool_value::text, '-') || '/' || coalesce(l.int_value::text, 'unlimited') as l_value
+      from (
+        select feature_key, bool_value, int_value, true as present
+        from plan_entitlements where plan_key = 'event_pass'
+      ) m
+      full outer join (
+        select feature_key, bool_value, int_value, true as present
+        from plan_entitlements where plan_key = 'event_pass_l'
+      ) l using (feature_key)
+      where m.present is null
+         or l.present is null
+         or m.bool_value is distinct from l.bool_value
+         or m.int_value  is distinct from l.int_value
+      order by feature_key`;
+
+    // Orphans first — this is the drift shape that silently denies, and it must
+    // never be tolerated on either side. Joined into ONE STRING deliberately:
+    // `toEqual([])` on an array serialises to "expected [ Array(1) ] to deeply
+    // equal []" in vitest's JSON reporter, hiding the very key the failure is
+    // about. Comparing strings puts the offending key straight in the message.
+    const orphans = diff
+      .filter((r) => r.reason !== "value differs")
+      .map((r) => `${r.feature_key}: ${r.reason}`);
+    expect(orphans.join(" | ")).toBe("");
+
+    // Every remaining divergence must be a documented override — again as a
+    // string so an unexpected key is named in the failure.
+    expect(diff.map((r) => r.feature_key).join(", ")).toBe(OVERRIDES.join(", "));
+
+    // And the overrides must still hold the values #294 decided, so this test
+    // also fails if someone "fixes" the drift by copying M's caps back over L.
+    expect(await sql`
+      select int_value from plan_entitlements
+      where plan_key = 'event_pass_l' and feature_key = 'entrants.per_division.max'`).toEqual([
+      { int_value: null },
+    ]);
+    expect(await sql`
+      select int_value from plan_entitlements
+      where plan_key = 'event_pass_l' and feature_key = 'divisions.per_competition.max'`).toEqual([
+      { int_value: 20 },
+    ]);
   });
 });

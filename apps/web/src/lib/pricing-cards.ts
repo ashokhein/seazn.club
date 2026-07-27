@@ -1,4 +1,10 @@
-import { formatMinor, passPrice, proPrice, type Currency } from "@/lib/currency";
+import { formatMinor, proPrice, type Currency } from "@/lib/currency";
+// Mutually referential with pass-ladder (it reads PASS_CREDIT_GRANT from here).
+// Safe and deliberate: neither side touches the other at module scope — both
+// references sit inside function bodies — so there is no initialisation order
+// in which either binding is unset. Both modules are pure, with no `server-only`
+// and no module-scope `sql`.
+import { lowestPassRung } from "@/lib/pass-ladder";
 
 // Single source for plan-card bullets — shared by /pricing and the home
 // ticket stubs so the two can never drift (design/v3/12 §4.8).
@@ -24,7 +30,10 @@ export const FREE_FEATURES = [
 // The first four are also the home-page stub (ticketTiers slices them).
 export const PASS_FEATURES = [
   "Upgrades ONE competition, forever",
-  "10 divisions, 128 entrants each",
+  // v17 #294: two rungs, so this line names both ceilings. It led with M's
+  // alone while L existed, which reads as "an Event Pass caps at 128" — the
+  // exact limit an L buyer is paying to remove.
+  "10 divisions, 128 entrants each — 20 & unlimited on L",
   "Advanced formats — double elim, ladders",
   "5% platform fee on entry fees, not 8%",
   "Branded exports & public player cards",
@@ -88,6 +97,11 @@ export const PLUS_COMING_SOON: string[] = [
 export interface TicketTier {
   tier: string;
   price: string;
+  /** Small qualifier rendered BEFORE the price — "from" on a tier that is a
+   *  ladder rather than a single price (v17 #294: the Event Pass sells at two
+   *  rungs, so its cheapest is a floor, not the cost). Absent means the price
+   *  is the price. */
+  prefix?: string;
   period?: string;
   bullets: string[];
   glow?: boolean;
@@ -102,7 +116,15 @@ export function ticketTiers(currency: Currency): TicketTier[] {
     { tier: "Community", price: "Free", bullets: FREE_FEATURES.slice(0, 4) },
     {
       tier: "Event Pass",
-      price: formatMinor(passPrice(currency), currency),
+      // The LOWEST rung, marked as a floor — the stub has no room to compare
+      // two, and "from" hands the reader to /pricing for the difference.
+      //
+      // DERIVED, not named. This read the literal "event_pass", which is honest
+      // only while M is the cheapest rung — precisely the assumption
+      // `lowestPassRung` exists to delete. A discount on L, or a rung added
+      // underneath, now moves this number with it.
+      prefix: "from",
+      price: formatMinor(lowestPassRung(currency).amountMinor, currency),
       period: " once",
       bullets: PASS_FEATURES.slice(0, 4),
       glow: true,

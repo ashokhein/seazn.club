@@ -4,11 +4,16 @@ import Link from "@/components/ui/console-link";
 import { usePathname } from "next/navigation";
 import { featurePlan, featureReason } from "@/lib/feature-copy";
 import { PlanBadge } from "@/components/plan-badge";
-import { usePassGateState } from "@/components/competition-pass-provider";
-import { formatMinor, passPrice, proPlusPrice, proPrice } from "@/lib/currency";
+import {
+  usePassCurrency,
+  usePassGateState,
+  usePassRung,
+} from "@/components/competition-pass-provider";
+import { formatMinor, proPlusPrice, proPrice, type Currency } from "@/lib/currency";
+import { lowestPassRung, passActiveLabel } from "@/lib/pass-ladder";
 import { PASS_FEATURES } from "@/lib/pass-features";
 import { routes } from "@/lib/routes";
-import { useMsg } from "@/components/i18n/dict-provider";
+import { useDict, useMsg } from "@/components/i18n/dict-provider";
 
 /**
  * Feature keys an Event Pass lifts. Only these gates offer the per-event path
@@ -83,11 +88,16 @@ const creditLine = (msg: ReturnType<typeof useMsg>, plan: string) => msg("upgrad
  * covered, and some of those (officials.auto, api.write, domains.custom …)
  * are Pro Plus. Reading the plan from the same helper <PlanBadge> uses keeps
  * the button from saying "Go Pro" directly beneath a PRO PLUS badge.
+ *
+ * `currency` comes from the competition layout via the pass provider, and every
+ * amount on one card must use it: a paywall quoting the pass in £ beside Pro in
+ * $ is worse than the hardcoded usd it replaced. Outside a competition there is
+ * no provider and the default is usd — exactly what this rendered before.
  */
-function paidPlan(feature: string): { name: string; price: string } {
+function paidPlan(feature: string, currency: Currency): { name: string; price: string } {
   const plus = featurePlan(feature) === "pro_plus";
-  const minor = plus ? proPlusPrice("monthly", "usd") : proPrice("monthly", "usd");
-  return { name: plus ? "Pro Plus" : "Pro", price: `${formatMinor(minor, "usd")}/mo` };
+  const minor = plus ? proPlusPrice("monthly", currency) : proPrice("monthly", currency);
+  return { name: plus ? "Pro Plus" : "Pro", price: `${formatMinor(minor, currency)}/mo` };
 }
 
 /**
@@ -108,15 +118,15 @@ function paidPlan(feature: string): { name: string; price: string } {
  * | paid_plan       | either           | Pro only (as before) — pass is moot  |
  *
  * `held` is task 17's fix: a gate rendering for a key the pass DOES lift, while
- * a pass is active, means the buyer has used everything that $29 bought.
+ * a pass is active, means the buyer has used everything their pass bought.
  * Offering it again sells them the same thing twice and leaves them blocked.
  *
  * `paid_plan` is the row that fix left open. A paid org has no pass row, so the
- * old boolean read false and the $29 CTA rendered — selling a DOWNGRADE, since
- * the pass grants 10 AI runs per division against pro's 20, and 64 entrants per
- * division against pro's 256. It renders the plain Pro-only card, byte for byte
- * what an org-level page has always shown: nothing here is a new state, the
- * pass path is simply not on offer.
+ * old boolean read false and the pass CTA rendered — selling a DOWNGRADE, since
+ * Pro's matrix is a strict superset of the pass's at every key the pass lifts.
+ * It renders the plain Pro-only card, byte for byte what an org-level page has
+ * always shown: nothing here is a new state, the pass path is simply not on
+ * offer.
  *
  * It deliberately does NOT render the pass-owned card even when the org does
  * hold a pass — see usePassGateState for why the plan wins.
@@ -125,8 +135,11 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
   const reason = featureReason(feature);
   const pathname = usePathname();
   const msg = useMsg();
+  const dict = useDict();
   // "none" outside a competition (no provider) — org-level gates are untouched.
   const gate = usePassGateState();
+  const heldRung = usePassRung();
+  const currency = usePassCurrency();
   const passOwned = gate === "held";
   const liftable = PASS_FEATURES.has(feature);
   // Only an org that can still BENEFIT from a pass is offered one.
@@ -150,7 +163,7 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
   // The org already holds this competition's pass. One path out, and an
   // acknowledgement that they have already paid us once for this competition.
   if (passOwned) {
-    const plan = paidPlan(feature);
+    const plan = paidPlan(feature, currency);
     return (
       <div
         data-feature={feature}
@@ -159,8 +172,15 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
       >
         {/* The console's floodlit signal for "this is on" (globals.css
             .app-eyebrow: condensed caps, lime tick). Same device as a LIVE
-            fixture — the state is read before the refusal is. */}
-        <p className="app-eyebrow">Event Pass active</p>
+            fixture — the state is read before the refusal is.
+
+            It NAMES the rung (v17 #294). Two sizes sell at different prices and
+            grant different ceilings, and the sentence below explains a refusal
+            in terms of "everything the Event Pass includes here" — which
+            ceiling that is depends entirely on which pass was bought. `gate ===
+            "held"` is derived from the rung being non-null, so the fallback is
+            unreachable; it exists so a rung is never invented. */}
+        <p className="app-eyebrow">{passActiveLabel(dict, heldRung ?? "event_pass")}</p>
         <p className="mt-2 flex items-center gap-2 font-medium">
           <LockIcon />
           <PlanBadge feature={feature} />
@@ -186,8 +206,14 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
   }
 
   if (passHref) {
-    const passLabel = `${formatMinor(passPrice("usd"), "usd")} one-time`;
-    const proLabel = `${formatMinor(proPrice("monthly", "usd"), "usd")}/mo`;
+    // "from", and the FLOOR of the ladder — not M's price under a heading that
+    // names the family. This card is the main inbound link to the upgrade page,
+    // where the buyer meets an M/L choice; quoting one rung's price as *the*
+    // price of a two-rung product is the mis-sale #294 exists to stop. The rung
+    // is derived, never typed, so a discount or a third rung moves this number
+    // with it (lib/pass-ladder.ts).
+    const passLabel = formatMinor(lowestPassRung(currency).amountMinor, currency);
+    const proLabel = `${formatMinor(proPrice("monthly", currency), currency)}/mo`;
     return (
       <div
         data-feature={feature}
@@ -205,7 +231,11 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
             className="btn btn-primary px-4 py-2 text-sm"
             data-pass-cta
           >
-            Upgrade this event — {passLabel}
+            {/* Localised, unlike its neighbours: this string CHANGED for #294
+                (it gained "from"), and a changed string ships in four locales.
+                The rest of this card is hardcoded English and predates the
+                rule — pre-existing, and not this task's to rewrite. */}
+            {msg("pass.gate.buy", { price: passLabel })}
           </Link>
           <Link href={href} className="btn btn-ghost px-4 py-2 text-sm">
             Go Pro — {proLabel}

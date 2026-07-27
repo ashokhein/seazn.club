@@ -2,6 +2,11 @@ import { test, expect, type Page, type APIRequestContext } from "@playwright/tes
 import Stripe from "stripe";
 import { randomBytes } from "node:crypto";
 import { TAG, apiJson, mintLoginPathBySql, orgGroupIdSql } from "./helpers";
+// Type-only (erased at build, so no `@/` alias resolution happens at runtime).
+// The wire test at the foot of this file names the rungs and the currency it
+// prices them in; retyping either union here is how a third rung would end up
+// unwitnessed.
+import type { PassKey } from "../src/lib/currency";
 
 // Event Pass, end to end, through a REAL Stripe test-mode purchase (task 22).
 //
@@ -230,9 +235,21 @@ const upgradeUrl = (rig: Rig, query = "") => `/o/${rig.orgSlug}/c/${rig.compSlug
  * client_secret. The `beforeAll` still HARD-FAILS a genuinely missing/garbage
  * key (a developer who forgot `set -a; . ./.env.local` must see a failure, not a
  * quiet green) — this only skips a *functional* probe that reports Stripe
- * unusable. The pass-checkout idempotency key is org+comp+user scoped, so the
- * session this mints is the SAME one `[data-pass-buy]` later reuses: no double
- * session, no interference with U1's "exactly one pass, one intent" assertion.
+ * unusable.
+ *
+ * The idempotency key is `pass-checkout-{org}-{comp}-{user}-{pass_key}` — the
+ * rung suffix arrived with the L rung (v17 #294; pinned by
+ * billing-pass-duplicate.test.ts). So the session this mints is the same one
+ * `[data-pass-buy]` later reuses ONLY when both name the same rung, which is
+ * why `passKey` is spelled out on both sides rather than left to a default:
+ * probing M and then buying L would mint a second session, and U1's "exactly
+ * one pass, one intent" assertion is what would catch it.
+ *
+ * `passKey` must therefore be the rung the caller INTENDS TO BUY, not simply
+ * the cheapest. Probing M while the UI buys L would turn an unsynced L price —
+ * the ordinary state of any environment where `npm run stripe:sync` has not run
+ * for that rung — from a clean skip into a mid-test failure at the Stripe
+ * iframe.
  *
  * `request` must carry the signed-in owner's session (a `page.request`): the
  * endpoint reads the active-org cookie (getActiveOrgId), so set it first.
@@ -241,10 +258,12 @@ async function passCheckoutProbeStatus(
   request: APIRequestContext,
   orgId: string,
   competitionId: string,
+  passKey: "event_pass" | "event_pass_l" = "event_pass",
 ): Promise<number> {
   await apiJson(request, "/api/orgs/active", "POST", { org_id: orgId });
   const probe = await apiJson(request, "/api/billing/pass-checkout", "POST", {
     competition_id: competitionId,
+    pass_key: passKey,
   });
   return probe.status;
 }
@@ -309,8 +328,10 @@ async function scrollSheetToEnd(page: Page): Promise<void> {
  * `/v1/payment_methods` is never called — verified in the traces of two failed
  * runs — so NOTHING reaches Stripe: no PaymentMethod, no PaymentIntent, no
  * charge. Re-opening from a fresh page load therefore cannot double-charge, and
- * the route's idempotency key (`pass-checkout-{org}-{comp}-{user}`) hands back
- * the SAME checkout session rather than minting a second one. U1 additionally
+ * the route's idempotency key (`pass-checkout-{org}-{comp}-{user}-{pass_key}`,
+ * rung-suffixed since v17 #294) hands back the SAME checkout session rather
+ * than minting a second one — the picker's selection is unchanged across the
+ * reload, so the rung in that key is too. U1 additionally
  * asserts that exactly one pass row and one intent exist afterwards, which is
  * what would catch a retry that did charge twice.
  *
@@ -322,6 +343,9 @@ async function buyPassWithTestCard(page: Page, url: string): Promise<void> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= 3; attempt++) {
     await page.goto(url);
+    // No rung is chosen first: the M/L picker (v17 #294) pre-selects M, so this
+    // single click still goes straight to the Stripe sheet and still buys the
+    // $29 rung these use cases are written against.
     await page.locator("[data-pass-buy]").click();
     await expect(page.locator('iframe[src*="stripe.com"]').first()).toBeVisible({
       timeout: 45_000,
@@ -567,7 +591,11 @@ for (const vp of VIEWPORTS) {
         '[data-pass-owned][data-feature="divisions.per_competition.max"]',
       );
       await expect(owned).toBeVisible({ timeout: 30_000 });
-      await expect(owned).toContainText("Event Pass active");
+      // NAMES the rung since v17 #294: U1 bought M through the real Stripe
+      // sheet, so this card must say M and not the product family. A literal
+      // "Event Pass active" would now be a rung-blind assertion on the one
+      // surface a $59 buyer reads to learn which ceiling stopped them.
+      await expect(owned).toContainText("Event Pass M active");
       // Page-wide, and deliberately so: no gate anywhere on this page may offer
       // the pass a second time to an org that already holds it.
       await expect(page.locator("[data-pass-cta]")).toHaveCount(0);
@@ -674,6 +702,11 @@ for (const vp of VIEWPORTS) {
       // the row renders an amount ONLY when the Stripe invoice read succeeded
       // (a staff grant, or a failed read, renders the date alone).
       await expect(purchases).toContainText("$29");
+      // …and WHICH rung it was (v17 #294). Pinned to the key, not the label:
+      // a rename of `upgrade.rung.m` must not quietly empty this. U1 bought M
+      // through the real Stripe sheet, so nothing here is seeded.
+      await expect(purchases.locator('[data-pass-rung="event_pass"]')).toBeVisible();
+      await expect(purchases.locator('[data-pass-rung="event_pass_l"]')).toHaveCount(0);
       const invoice = purchases.getByRole("link", { name: /invoice/i }).first();
       await expect(invoice).toHaveAttribute("href", /invoice\.stripe\.com/);
     });
@@ -765,8 +798,12 @@ for (const vp of VIEWPORTS) {
       // `stripe_subscription_id` stays pointed at U14's real trialing sub,
       // desyncing the DB from what Stripe actually reports.
       //
-      // On Pro the page must not price anything: Pro's matrix is a strict
-      // superset of the pass, so an offer here would sell a downgrade.
+      // On Pro the page must not price anything: every boolean the pass lifts
+      // is already true on Pro, and Pro's caps sit above the M rung's, so an
+      // offer here would sell a downgrade. (Not a strict superset since v17
+      // #294 — L takes the entrant cap off entirely, above Pro's 256 — which
+      // is why the panel's copy claims features rather than everything, and why
+      // whether Pro may buy L at all is #327 rather than settled here.)
       await page.goto(upgradeUrl(rig));
       await expect(page.locator("[data-plan-covered]")).toBeVisible({ timeout: 20_000 });
       await expect(page.locator("[data-pass-dormant]")).toBeVisible();
@@ -945,4 +982,149 @@ test.describe("checkout sheet vs the cookie banner", () => {
       }
     });
   }
+});
+
+/**
+ * THE WIRE — v17 #294's named live-probe deliverable.
+ *
+ * The buyer's rung has to survive three hops: the picker's React state → the
+ * POST body the browser sends → the Stripe price the route resolves for that
+ * rung. Only the first hop has ever had an automated witness.
+ * `pass-upgrade.test.tsx` drives a fake hook dispatcher and asserts the rung
+ * reaching `fetchPassCheckoutClientSecret`; before it existed, substituting a
+ * literal `"event_pass"` at `pass-upgrade.tsx:298` passed EVERY suite and
+ * `tsc`. What no unit test can see is the network — the body a real browser
+ * actually sends, and the amount Stripe is actually asked to collect for it.
+ *
+ * This asserts both, for both rungs, in one run:
+ *
+ *   • the POST body observed ON THE WIRE carries the rung the buyer picked;
+ *   • the session it opens — fetched back FROM STRIPE by id, not from anything
+ *     this repo computed — is stamped with that rung, built on the SAME price id
+ *     `plans.<rung>.stripe_price_id_onetime` holds, and charges that price's own
+ *     amount in the session's currency.
+ *
+ * Both directions, because a page hardcoded to L would satisfy the L half on
+ * its own — the same anti-vacuity trap the unit witness closed with an M
+ * counterpart.
+ *
+ * The amounts are never written down here: they come from the `plans` row and
+ * the live Stripe price, so this stays correct in every currency and at any
+ * future price point. What the app ADVERTISES for each rung is compared against
+ * what Stripe collects in `pass-checkout-l.live.test.ts`; this file's unique job
+ * is the network hop, which no unit test can reach.
+ *
+ * Nothing is paid: the sheet is opened and the session expired immediately. The
+ * rung's price must be synced (`npm run stripe:sync`) or the route 503s, which
+ * the probe turns into a clean skip rather than a hang at the Stripe iframe.
+ */
+/** The one-time price id the checkout route resolves for a rung — read from the
+ *  same `plans` column the route itself reads, never a literal. */
+async function onetimePriceId(passKey: PassKey): Promise<string | null> {
+  return withDb(async (sql) => {
+    const [row] = await sql<{ price_id: string | null }[]>`
+      select stripe_price_id_onetime as price_id from plans where key = ${passKey}`;
+    return row?.price_id ?? null;
+  });
+}
+
+/** A session opened for `passKey` must be built on THAT rung's price row, and
+ *  charge that price's own amount in the session's currency. Nothing is written
+ *  down, so this survives a repricing and holds in every supported currency. */
+async function expectPricedForTheRung(
+  session: Stripe.Checkout.Session,
+  passKey: PassKey,
+): Promise<void> {
+  const priceId = await onetimePriceId(passKey);
+  expect(priceId, `plans.${passKey} is unsynced — run \`npm run stripe:sync\``).toBeTruthy();
+  const line = session.line_items?.data[0]?.price?.id ?? null;
+  expect(line, `the ${passKey} session was built on a DIFFERENT rung's Stripe price`).toBe(priceId);
+  const price = await stripe.prices.retrieve(priceId!, { expand: ["currency_options"] });
+  const expected = price.currency_options?.[session.currency!]?.unit_amount ?? price.unit_amount;
+  expect(session.amount_total, `${passKey} did not collect its own price point`).toBe(expected);
+}
+
+test.describe("the rung the buyer picks is the rung Stripe is asked for", () => {
+  test("L and M each reach the wire, and Stripe quotes each at its own price", async ({ page }) => {
+    test.setTimeout(180_000);
+    const rig = await seedRig("wire");
+    await signIn(page, rig.ownerEmail);
+
+    // Probe the EXPENSIVE rung. An unsynced L is the ordinary state of any
+    // environment where `stripe:sync` has not run for it, and probing M instead
+    // would turn that into a failure at the Stripe iframe rather than a skip.
+    const probeL = await passCheckoutProbeStatus(page.request, rig.orgId, rig.compId, "event_pass_l");
+    test.skip(probeL >= 500, "Stripe not usable / event_pass_l unsynced — skipping");
+    expect(probeL, "L must not 503 — `npm run stripe:sync` writes its one-time price id").toBe(200);
+
+    // Every pass-checkout POST this page makes, exactly as the browser sent it,
+    // and the client_secret that came back (`<session id>_secret_…`) so the
+    // session can be read from Stripe rather than from our own view of it.
+    const posted: string[] = [];
+    const secrets: string[] = [];
+    page.on("request", (req) => {
+      if (req.method() === "POST" && req.url().includes("/api/billing/pass-checkout")) {
+        posted.push(req.postData() ?? "");
+      }
+    });
+    page.on("response", async (res) => {
+      if (!res.url().includes("/api/billing/pass-checkout")) return;
+      const body = (await res.json().catch(() => null)) as { data?: { client_secret?: string } } | null;
+      if (body?.data?.client_secret) secrets.push(body.data.client_secret);
+    });
+
+    /** Pick `rung` in the ladder, press buy, and return STRIPE's view of the
+     *  session that opened — asserting the wire body on the way through. */
+    async function openThroughTheUi(rung: PassKey): Promise<Stripe.Checkout.Session> {
+      const seen = posted.length;
+      // Both watermarks, not just the request one. The response handler runs an
+      // `await res.json()`, so the secret lands strictly later than its POST —
+      // and on the SECOND call through here a `secrets.length > 0` poll is
+      // already satisfied by the FIRST leg's secret, so a slow body would let
+      // this read the previous rung's session id. Everything downstream then
+      // asserts against the wrong session and reds for the wrong reason.
+      const seenSecrets = secrets.length;
+      await page.goto(upgradeUrl(rig));
+      // M is options[0] and therefore pre-selected. Asserted, not assumed: "L
+      // reached the wire" proves nothing if L was what the page opened on.
+      await expect(page.locator('[data-pass-rung="event_pass"][data-pass-rung-active]')).toBeVisible();
+      if (rung !== "event_pass") await page.locator(`[data-pass-rung="${rung}"]`).click();
+      await expect(page.locator(`[data-pass-rung="${rung}"][data-pass-rung-active]`)).toBeVisible();
+
+      await page.locator("[data-pass-buy]").click();
+      // The sheet mounting at all is the proof the route did not 503 for L.
+      await expect(page.locator('iframe[src*="stripe.com"]').first()).toBeVisible({ timeout: 45_000 });
+      await expect.poll(() => posted.length, { timeout: 15_000 }).toBeGreaterThan(seen);
+      await expect.poll(() => secrets.length, { timeout: 15_000 }).toBeGreaterThan(seenSecrets);
+
+      const body = JSON.parse(posted[posted.length - 1]!) as { pass_key?: string; competition_id?: string };
+      expect(body.competition_id).toBe(rig.compId);
+      expect(body.pass_key, "the browser asked Stripe for a rung the buyer did not pick").toBe(rung);
+
+      // `line_items` is not returned by default, and it is what says WHICH
+      // Stripe price the route actually put in the session.
+      const session = await stripe.checkout.sessions.retrieve(
+        secrets[secrets.length - 1]!.split("_secret_")[0]!,
+        { expand: ["line_items"] },
+      );
+      await stripe.checkout.sessions.expire(session.id).catch(() => undefined);
+      return session;
+    }
+
+    const l = await openThroughTheUi("event_pass_l");
+    expect(l.metadata?.pass_key).toBe("event_pass_l");
+    await expectPricedForTheRung(l, "event_pass_l");
+
+    const m = await openThroughTheUi("event_pass");
+    expect(m.metadata?.pass_key).toBe("event_pass");
+    await expectPricedForTheRung(m, "event_pass");
+
+    // Currency-agnostic backstop: whatever the buyer's currency, L costs more.
+    expect(l.currency).toBe(m.currency);
+    expect(l.amount_total!).toBeGreaterThan(m.amount_total!);
+    // Two rungs, two sessions. A rung-blind idempotency key would hand the
+    // second press the FIRST session, and the two amounts would then agree by
+    // accident rather than because each rung resolved its own price.
+    expect(l.id).not.toBe(m.id);
+  });
 });

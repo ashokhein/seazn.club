@@ -1,9 +1,16 @@
 // The pricing table renders from plan_entitlements (spec 2026-07-18
 // pro-plus-tier §5) — these pin the pivot: ints/∞, bool ticks, pass-column
 // fallback to community (the resolver's fall-through), and the folded
-// entry-fee cell, across all four plans + eight ENTITLEMENT_DOMAINS.
+// entry-fee cell, across all FIVE plan columns + eight ENTITLEMENT_DOMAINS.
+// v17 #294 added the fifth: `event_pass_l`, the L rung, which falls through to
+// community exactly like M does when it has no row of its own.
 import { afterAll, describe, expect, it } from "vitest";
-import { buildPricingSections, type MatrixData } from "@/lib/pricing-matrix";
+import {
+  buildPricingSections,
+  PRICING_PLAN_KEYS,
+  PRICING_COLUMN_LABEL_KEY,
+  type MatrixData,
+} from "@/lib/pricing-matrix";
 import { ENTITLEMENT_DOMAINS } from "@/lib/entitlement-domains";
 import { sql } from "@/lib/db";
 
@@ -35,6 +42,9 @@ const DATA: MatrixData = {
     // V319: community 2 → 4. event_pass 10 already > 4.
     community: cell(4),
     event_pass: cell(10),
+    // V341: L lifts the division headroom to 20 — one of only TWO keys where
+    // L differs from M.
+    event_pass_l: cell(20),
     pro: cell(null),
     pro_plus: cell(null),
   },
@@ -42,6 +52,10 @@ const DATA: MatrixData = {
     // V319: 64 / 128 / 256 / ∞.
     community: cell(64),
     event_pass: cell(128),
+    // V341: L's int_value is NULL — unlimited, the second and last key where
+    // the rungs differ. This ∞ is the whole reason the table needed a fifth
+    // column: an L buyer reading M's "128" is told the cap they paid to remove.
+    event_pass_l: cell(null),
     pro: cell(256),
     pro_plus: cell(null),
   },
@@ -59,18 +73,21 @@ const DATA: MatrixData = {
   "officials.roles_multi": {
     community: cell(null, true),
     event_pass: cell(null, true),
+    event_pass_l: cell(null, true),
     pro: cell(null, true),
     pro_plus: cell(null, true),
   },
   "officials.auto": {
     community: cell(null, false),
     event_pass: cell(null, false),
+    event_pass_l: cell(null, false),
     pro: cell(null, true),
     pro_plus: cell(null, true),
   },
   "officials.marks": {
     community: cell(null, true),
     event_pass: cell(null, true),
+    event_pass_l: cell(null, true),
     pro: cell(null, true),
     pro_plus: cell(null, true),
   },
@@ -79,12 +96,15 @@ const DATA: MatrixData = {
   "registration.paid": {
     community: cell(null, true),
     event_pass: cell(null, true),
+    event_pass_l: cell(null, true),
     pro: cell(null, true),
     pro_plus: cell(null, true),
   },
   "registration.fee_percent": {
     community: cell(8),
     event_pass: cell(5),
+    // Flat across rungs by decision (#294): L buys size, not a cheaper cut.
+    event_pass_l: cell(5),
     pro: cell(2),
     pro_plus: cell(1),
   },
@@ -99,6 +119,7 @@ const DATA: MatrixData = {
   "dashboard.player_profiles": {
     community: cell(null, false),
     event_pass: cell(null, true),
+    event_pass_l: cell(null, true),
     pro: cell(null, true),
     pro_plus: cell(null, true),
   },
@@ -121,15 +142,23 @@ const DATA: MatrixData = {
   "teams.squad_max": {
     community: cell(20, true),
     event_pass: cell(20, true),
+    event_pass_l: cell(20, true),
     pro: cell(null, true),
     pro_plus: cell(null, true),
   },
 };
 
+// Keys with NO event_pass_l row in the fixture above — schedule.checkpoints.max,
+// clubs.max, teams.max, competitions.max_active, stats.player — are deliberate:
+// they exercise L's fall-through to community, the same resolver behaviour the
+// M column has always had. A fifth column that silently rendered "—" for every
+// key L has no row of its own would make L look WORSE than M.
+
 describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
   const sections = buildPricingSections(DATA);
   const allRows = sections.flatMap((s) => s.rows);
   const row = (labelKey: string) => allRows.find((r) => r.labelKey === labelKey)!;
+  const cells = (labelKey: string) => row(labelKey).cells;
 
   it("returns one section per ENTITLEMENT_DOMAINS entry, in domain order", () => {
     expect(sections).toHaveLength(8);
@@ -138,70 +167,95 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
     );
   });
 
-  it("every row has non-empty free/pass/pro/plus cells", () => {
+  // The anti-gap guard. The bug this whole task exists to close was a table
+  // whose shape allowed exactly ONE pass column, so a second rung had nowhere
+  // to render and quietly inherited the first one's numbers. `cells` is keyed
+  // by PRICING_PLAN_KEYS, so a plan added to that tuple without a value here
+  // fails LOUDLY — naming the row and the plan — instead of vanishing.
+  it("gives every row a non-empty cell for every PRICING_PLAN_KEYS column", () => {
     for (const r of allRows) {
-      expect(r.free).toBeTruthy();
-      expect(r.pass).toBeTruthy();
-      expect(r.pro).toBeTruthy();
-      expect(r.plus).toBeTruthy();
+      for (const plan of PRICING_PLAN_KEYS) {
+        expect(r.cells[plan], `${r.labelKey} / ${plan}`).toBeTruthy();
+      }
+      expect(Object.keys(r.cells).sort().join(","), r.labelKey).toBe(
+        [...PRICING_PLAN_KEYS].sort().join(","),
+      );
     }
   });
 
+  // Every column needs a heading, and each must be its own — two plans sharing
+  // a label is how a reader ends up comparing "Event Pass" against
+  // "Event Pass" and concluding the rungs are the same product.
+  it("names a distinct heading key for every column", () => {
+    const labels = PRICING_PLAN_KEYS.map((p) => PRICING_COLUMN_LABEL_KEY[p]);
+    expect(labels.filter(Boolean)).toHaveLength(PRICING_PLAN_KEYS.length);
+    expect(new Set(labels).size).toBe(PRICING_PLAN_KEYS.length);
+  });
+
   it("renders the prose quota row for competitions.max_active", () => {
-    // V319: community free tier now runs big — 10 active competitions.
-    expect(row("pricing.matrix.competitions.max_active")).toMatchObject({
-      free: "10",
-      pass: "pricing.matrix.passedEvent",
+    // V319: community free tier now runs big — 10 active competitions. BOTH
+    // rungs read the prose cell: a pass IS one competition, at either size.
+    expect(cells("pricing.matrix.competitions.max_active")).toMatchObject({
+      community: "10",
+      event_pass: "pricing.matrix.passedEvent",
+      event_pass_l: "pricing.matrix.passedEvent",
       pro: "∞",
-      plus: "∞",
+      pro_plus: "∞",
     });
   });
 
   it("renders ∞ for unlimited ints, never the word Unlimited", () => {
-    // V319 community caps: 4 divisions, 64 entrants.
-    expect(row("pricing.matrix.divisions.per_competition.max")).toMatchObject({
-      free: "4",
-      pass: "10",
+    // V319 community caps: 4 divisions, 64 entrants. V341: L is the only pass
+    // column that reaches 20 / ∞ — the two figures the $59 actually buys.
+    expect(cells("pricing.matrix.divisions.per_competition.max")).toMatchObject({
+      community: "4",
+      event_pass: "10",
+      event_pass_l: "20",
       pro: "∞",
-      plus: "∞",
+      pro_plus: "∞",
     });
-    expect(row("pricing.matrix.entrants.per_division.max")).toMatchObject({
-      free: "64",
-      pass: "128",
+    expect(cells("pricing.matrix.entrants.per_division.max")).toMatchObject({
+      community: "64",
+      event_pass: "128",
+      event_pass_l: "∞",
       pro: "256",
-      plus: "∞",
+      pro_plus: "∞",
     });
   });
 
   it("renders the W1 clubs/teams caps as numbers, ∞ for unlimited (V319 caps)", () => {
-    // V319: community clubs 2 → 5, teams 2 → 8; no event_pass row, so the pass
-    // column falls through to community.
-    expect(row("pricing.matrix.clubs.max")).toMatchObject({
-      free: "5",
-      pass: "5",
+    // V319: community clubs 2 → 5, teams 2 → 8; no event_pass row, so BOTH
+    // pass columns fall through to community.
+    expect(cells("pricing.matrix.clubs.max")).toMatchObject({
+      community: "5",
+      event_pass: "5",
+      event_pass_l: "5",
       pro: "20",
-      plus: "∞",
+      pro_plus: "∞",
     });
-    expect(row("pricing.matrix.teams.max")).toMatchObject({
-      free: "8",
-      pass: "8",
+    expect(cells("pricing.matrix.teams.max")).toMatchObject({
+      community: "8",
+      event_pass: "8",
+      event_pass_l: "8",
       pro: "40",
-      plus: "∞",
+      pro_plus: "∞",
     });
-    expect(row("pricing.matrix.teams.squad_max")).toMatchObject({
-      free: "20",
-      pass: "20",
+    expect(cells("pricing.matrix.teams.squad_max")).toMatchObject({
+      community: "20",
+      event_pass: "20",
+      event_pass_l: "20",
       pro: "∞",
-      plus: "∞",
+      pro_plus: "∞",
     });
   });
 
-  it("falls the pass column through to community when no event_pass row exists", () => {
-    expect(row("pricing.matrix.schedule.checkpoints.max")).toMatchObject({
-      free: "2",
-      pass: "2",
+  it("falls BOTH pass columns through to community when neither rung has a row", () => {
+    expect(cells("pricing.matrix.schedule.checkpoints.max")).toMatchObject({
+      community: "2",
+      event_pass: "2",
+      event_pass_l: "2",
       pro: "5",
-      plus: "∞",
+      pro_plus: "∞",
     });
   });
 
@@ -216,24 +270,17 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
   // must not read as a paywall — roles_multi and marks tick across all four
   // columns; only officials.auto (AI officials) is a Pro/Pro-Plus differentiator.
   it("shows officials as included on every plan, not a paywalled row", () => {
-    expect(row("pricing.matrix.officials.roles_multi")).toMatchObject({
-      free: "✓",
-      pass: "✓",
+    const tick = { community: "✓", event_pass: "✓", event_pass_l: "✓", pro: "✓", pro_plus: "✓" };
+    expect(cells("pricing.matrix.officials.roles_multi")).toMatchObject(tick);
+    expect(cells("pricing.matrix.officials.marks")).toMatchObject(tick);
+    // The AI-officials path is still gated — the honest differentiator. Neither
+    // rung buys it: L is a bigger event, not a cheaper Pro.
+    expect(cells("pricing.matrix.officials.auto")).toMatchObject({
+      community: "—",
+      event_pass: "—",
+      event_pass_l: "—",
       pro: "✓",
-      plus: "✓",
-    });
-    expect(row("pricing.matrix.officials.marks")).toMatchObject({
-      free: "✓",
-      pass: "✓",
-      pro: "✓",
-      plus: "✓",
-    });
-    // The AI-officials path is still gated — the honest differentiator.
-    expect(row("pricing.matrix.officials.auto")).toMatchObject({
-      free: "—",
-      pass: "—",
-      pro: "✓",
-      plus: "✓",
+      pro_plus: "✓",
     });
   });
 
@@ -246,16 +293,21 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
 
   it("folds registration.paid + fee_percent into one entry-fee cell, keyed pricing.matrix.fees", () => {
     // V310: every column charges; the ladder is what differs (8/5/2/1).
-    expect(row("pricing.matrix.fees")).toMatchObject({
-      free: "✓ 8%",
-      pass: "✓ 5%",
+    // #294: the fee is FLAT across rungs — L buys size, not a cheaper cut.
+    // A 5% cell on the L column is the assertion that keeps the ladder honest.
+    expect(cells("pricing.matrix.fees")).toMatchObject({
+      community: "✓ 8%",
+      event_pass: "✓ 5%",
+      event_pass_l: "✓ 5%",
       pro: "✓ 2%",
-      plus: "✓ 1%",
+      pro_plus: "✓ 1%",
     });
   });
 
   it("charges every column — no plan is barred from taking entry fees", () => {
-    expect(row("pricing.matrix.fees").free).not.toBe("—");
+    for (const plan of PRICING_PLAN_KEYS) {
+      expect(cells("pricing.matrix.fees")[plan], plan).not.toBe("—");
+    }
   });
 
   // dashboard.player_profiles is a row the Event Pass lifts that /pricing used
@@ -264,15 +316,21 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
   // used to sit alongside it was retired in v17 Phase 2 Task 5 (V322): the
   // credit wallet meters spend now, not a plan-graded per-division count.
   it("renders public player profiles with the pass lifting them (V307/V308)", () => {
-    expect(row("pricing.matrix.dashboard.player_profiles")).toMatchObject({
-      free: "—",
-      pass: "✓",
+    expect(cells("pricing.matrix.dashboard.player_profiles")).toMatchObject({
+      community: "—",
+      event_pass: "✓",
+      event_pass_l: "✓",
       pro: "✓",
-      plus: "✓",
+      pro_plus: "✓",
     });
-    // …while the stats behind them stay Pro: the pass column differs between
-    // the two adjacent scoring rows, and that is the honest story.
-    expect(row("pricing.matrix.stats.player")).toMatchObject({ free: "—", pass: "—" });
+    // …while the stats behind them stay Pro: the pass columns differ between
+    // the two adjacent scoring rows, and that is the honest story. stats.player
+    // has no row for EITHER rung, so both fall through to community's false.
+    expect(cells("pricing.matrix.stats.player")).toMatchObject({
+      community: "—",
+      event_pass: "—",
+      event_pass_l: "—",
+    });
   });
 
   it("never renders domains.custom or any D9 vestigial key", () => {
@@ -413,5 +471,63 @@ describe.skipIf(!HAS_DB)("V319 scale caps: community 64 entrants, 10 competition
   it("adds no event_pass row for competitions.max_active", async () => {
     const get = await load("competitions.max_active");
     expect(get("event_pass")).toBeUndefined();
+  });
+});
+
+// V341 (v17 #294) — the L rung, rendered. The fixture above proves the pivot
+// handles a fifth column; this proves /pricing's actual query and the LIVE
+// matrix produce the column a buyer sees. Built by replaying the exact read
+// `pricing/page.tsx` performs, so a plan key dropped from PRICING_PLAN_KEYS
+// takes this test down with the page.
+//
+// Real Postgres required; skipped without DATABASE_URL (CI sets it).
+describe.skipIf(!HAS_DB)("V341 L rung: /pricing renders a fifth column from live rows", () => {
+  const liveRows = async () => {
+    const rows = await sql<
+      { plan_key: string; feature_key: string; bool_value: boolean | null; int_value: number | null }[]
+    >`
+      select plan_key, feature_key, bool_value, int_value
+      from plan_entitlements where plan_key = any(${[...PRICING_PLAN_KEYS]})`;
+    const data: MatrixData = {};
+    for (const r of rows) {
+      (data[r.feature_key] ??= {})[r.plan_key] = {
+        bool_value: r.bool_value,
+        int_value: r.int_value,
+      };
+    }
+    return buildPricingSections(data).flatMap((s) => s.rows);
+  };
+
+  it("selects the L rung at all — the column cannot render without the row", () => {
+    expect([...PRICING_PLAN_KEYS]).toContain("event_pass_l");
+  });
+
+  it("quotes L's own caps: 20 divisions and unlimited entrants", async () => {
+    const rows = await liveRows();
+    const cells = (k: string) => rows.find((r) => r.labelKey === k)!.cells;
+    expect(cells("pricing.matrix.divisions.per_competition.max").event_pass_l).toBe("20");
+    expect(cells("pricing.matrix.entrants.per_division.max").event_pass_l).toBe("∞");
+    // …and M keeps its own, so the two columns are genuinely different offers.
+    expect(cells("pricing.matrix.divisions.per_competition.max").event_pass).toBe("10");
+    expect(cells("pricing.matrix.entrants.per_division.max").event_pass).toBe("128");
+  });
+
+  // The two failure modes this table can have, caught by one comparison:
+  //   • L column falls back to M (the pre-#294 shape) -> the list comes back
+  //     EMPTY and the assertion prints the two keys it expected;
+  //   • L column falls through to COMMUNITY on keys M lifts -> extra rows join
+  //     the list and it prints exactly which ones.
+  // Compared as a joined STRING because the JSON reporter elides array
+  // elements and would name neither side.
+  it("differs from M on exactly the two keys V341 overrides, and nowhere else", async () => {
+    const rows = await liveRows();
+    const differing = rows
+      .filter((r) => r.cells.event_pass !== r.cells.event_pass_l)
+      .map((r) => r.labelKey)
+      .sort()
+      .join(", ");
+    expect(differing).toBe(
+      "pricing.matrix.divisions.per_competition.max, pricing.matrix.entrants.per_division.max",
+    );
   });
 });

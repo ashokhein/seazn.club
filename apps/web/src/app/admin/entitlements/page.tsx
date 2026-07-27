@@ -1,9 +1,12 @@
 import { sql } from "@/lib/db";
 import { featureReason } from "@/lib/feature-copy";
-import { groupForAdmin, type AdminEntRow } from "@/lib/entitlement-admin";
+import {
+  ADMIN_PLAN_KEYS,
+  ADMIN_PLAN_LABEL,
+  groupForAdmin,
+  type AdminEntRow,
+} from "@/lib/entitlement-admin";
 import { EntCellEditor } from "@/components/admin/ent-cell-editor";
-
-const PLAN_KEYS = ["community", "event_pass", "pro", "pro_plus"] as const;
 
 export default async function AdminEntitlementsPage() {
   const rows = await sql<AdminEntRow[]>`
@@ -36,10 +39,11 @@ export default async function AdminEntitlementsPage() {
                 <tr>
                   <th className="px-3 py-2 text-left">Feature key</th>
                   <th className="px-3 py-2 text-left">Type</th>
-                  <th className="px-3 py-2 text-center">Community</th>
-                  <th className="px-3 py-2 text-center">Event Pass</th>
-                  <th className="px-3 py-2 text-center">Pro</th>
-                  <th className="px-3 py-2 text-center">Pro Plus</th>
+                  {ADMIN_PLAN_KEYS.map((p) => (
+                    <th key={p} className="px-3 py-2 text-center whitespace-nowrap">
+                      {ADMIN_PLAN_LABEL[p]}
+                    </th>
+                  ))}
                   <th className="px-3 py-2 text-left">What it gates</th>
                   <th className="px-3 py-2 text-right">Overrides</th>
                 </tr>
@@ -49,7 +53,7 @@ export default async function AdminEntitlementsPage() {
                   <tr key={f.feature_key} className="hover:bg-slate-800/50">
                     <td className="px-3 py-2 font-mono text-xs text-purple-300">{f.feature_key}</td>
                     <td className="px-3 py-2 text-xs text-slate-500">{f.type}</td>
-                    {PLAN_KEYS.map((p) => (
+                    {ADMIN_PLAN_KEYS.map((p) => (
                       <td key={p} className="px-3 py-2 text-center text-slate-300">
                         <EntCellEditor
                           planKey={p}

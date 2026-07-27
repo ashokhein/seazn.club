@@ -18,6 +18,8 @@ A **division** is a single draw inside your competition: "Men's A", "U14 Mixed",
 
 **Can I change the format later?** Yes, up until the division starts. After that the structure is locked so results stay fair.
 
-**How many entrants can I add?** Per division: 64 on Community, 128 under an [Event Pass](/help/billing/event-pass), 256 on Pro, unlimited on Pro Plus. A competition also holds 4 divisions on Community, 10 under a pass, and as many as you like on Pro.
+**How many entrants can I add?** Per division: **64** on Community, **256** on Pro, unlimited on Pro Plus. An [Event Pass](/help/billing/event-pass) lifts one competition on its own, and it comes in two sizes — **128** under the **M** size, **no limit at all** under **L**.
+
+**How many divisions can a competition have?** **4** on Community, **10** under an **M** pass, **20** under an **L** pass, and as many as you like on Pro.
 
 Next: [Add entrants](/help/getting-started/add-entrants).

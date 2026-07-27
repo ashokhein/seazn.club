@@ -10,6 +10,7 @@ import { sql } from "@/lib/db";
 import {
   linkStripeCustomerForGroup,
   linkStripeCustomer,
+  passKeyForSession,
   pinBillingCurrency,
   recordPassPurchase,
   refundDuplicatePassPayment,
@@ -24,6 +25,7 @@ import {
   recordPassRefund,
   walletIdFor,
 } from "@/lib/credits";
+import { isPassKey, type PassKey } from "@/lib/currency";
 import { SEAT_ADDON, isSeatAddonItem } from "@/lib/seat-addons";
 import { getSizePack } from "@/lib/size-packs";
 import {
@@ -44,6 +46,7 @@ import {
   sendCreditPackGrantFailedAlertEmail,
   sendSizePackGrantFailedAlertEmail,
 } from "@/lib/email";
+import type { StaffDisputeAlertArgs } from "@/lib/email-templates";
 import {
   handleRegistrationCheckoutCompleted,
   handleRegistrationDispute,
@@ -188,14 +191,20 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     return;
   }
 
-  // Event Pass one-time purchase (v3/07 §3) — reconcile-on-return usually
-  // lands first; recordPassPurchase is idempotent either way.
-  if (session.metadata?.pass_key === "event_pass") {
-    const competitionId = session.metadata.competition_id;
+  // Event Pass one-time purchase (v3/07 §3, rung ladder v17 #294) —
+  // reconcile-on-return usually lands first; recordPassPurchase is idempotent
+  // either way. passKeyForSession owns the gate for BOTH paths: a session with
+  // no pass_key is not a pass session and falls through to the subscription
+  // handling below; an unrecognised rung falls back to M rather than being
+  // dropped. See its doc comment in lib/billing.ts.
+  const passKey = passKeyForSession(session);
+  if (passKey) {
+    const competitionId = session.metadata?.competition_id;
     if (competitionId && session.payment_status === "paid") {
       const res = await recordPassPurchase({
         orgId,
         competitionId,
+        passKey,
         paymentIntent:
           typeof session.payment_intent === "string" ? session.payment_intent : null,
       });
@@ -819,34 +828,51 @@ async function orgOwnerEmail(orgId: string): Promise<string | null> {
 }
 
 /** Event Pass refund (P0-3a): a fully-refunded pass charge — dashboard refunds
- *  included — revokes the pass and emails the org owner. The org + competition
- *  are read BEFORE the revoke deletes the row; the email is fire-and-forget so
- *  a Resend hiccup never blocks the webhook ACK. */
+ *  included — revokes the pass and emails the org owner. The org, competition
+ *  and RUNG are read BEFORE the revoke deletes the row; the email is
+ *  fire-and-forget so a Resend hiccup never blocks the webhook ACK.
+ *
+ *  The read is no longer gated on `charge.refunded` (v17 #294). A PARTIAL refund
+ *  leaves the pass row alone but still runs `reversePassCreditOnRefund` below,
+ *  and that path's staff alert has to name the rung too — which is only knowable
+ *  here, from the row, before it can be deleted. One extra indexed lookup by
+ *  payment intent on partial refunds; the buyer email is still gated on
+ *  `revoked`, so nothing customer-visible changes. */
 async function revokePassForRefundedChargeAndNotify(charge: Stripe.Charge): Promise<void> {
   const intent =
     typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
-  const [ctx] =
-    intent && charge.refunded
-      ? await sql<{ org_id: string; org_name: string; comp_name: string }[]>`
-          select p.org_id, o.name as org_name, c.name as comp_name
-          from competition_passes p
-          join organizations o on o.id = p.org_id
-          join competitions   c on c.id = p.competition_id
-          where p.stripe_payment_intent = ${intent}`
-      : [];
+  const [ctx] = intent
+    ? await sql<{ org_id: string; org_name: string; comp_name: string; pass_key: string }[]>`
+        select p.org_id, o.name as org_name, c.name as comp_name, p.pass_key
+        from competition_passes p
+        join organizations o on o.id = p.org_id
+        join competitions   c on c.id = p.competition_id
+        where p.stripe_payment_intent = ${intent}`
+    : [];
+  // isPassKey, not a cast: the column is `not null default 'event_pass'`, so a
+  // row written before #294 is genuinely M, and a rung this build predates must
+  // still produce a real label rather than a missing dictionary key.
+  const passKey: PassKey | null = ctx
+    ? isPassKey(ctx.pass_key)
+      ? ctx.pass_key
+      : "event_pass"
+    : null;
   const revoked = await revokePassForRefundedCharge(charge);
   // Unconditional — not gated on `revoked`: a partial refund leaves the pass
   // row in place (revokePassForRefundedCharge only deletes on a full refund),
   // but the credit reversal question is about the CHARGE's refund state, not
   // the pass row's survival. `intent` is only undefined for a charge with no
   // payment_intent, which could never have a redemption row to reverse.
-  if (intent) await reversePassCreditOnRefund(intent);
-  if (!revoked || !ctx) return;
+  if (intent) await reversePassCreditOnRefund(intent, passKey);
+  if (!revoked || !ctx || !passKey) return;
   const to = await orgOwnerEmail(ctx.org_id);
   if (!to) return;
-  void sendPassRevokedEmail({ to, orgName: ctx.org_name, competitionName: ctx.comp_name }).catch(
-    () => {},
-  );
+  void sendPassRevokedEmail({
+    to,
+    orgName: ctx.org_name,
+    competitionName: ctx.comp_name,
+    passKey,
+  }).catch(() => {});
 }
 
 /** AI credit-pack refund (v17 SPEC-2 §5, Phase 3 Task 4): a refunded pack
@@ -947,7 +973,7 @@ async function disputeCustomerId(dispute: Stripe.Dispute): Promise<string | null
  *  revoke is the source of truth and must not be undone by an alerting hiccup,
  *  and the email is fire-and-forget. */
 async function notifyStaffDispute(
-  kind: "subscription" | "event_pass",
+  kind: StaffDisputeAlertArgs["kind"],
   orgId: string,
   dispute: Stripe.Dispute,
   phase: "created" | "closed",
@@ -1011,10 +1037,13 @@ async function handlePlatformDispute(
   const intent =
     typeof dispute.payment_intent === "string" ? dispute.payment_intent : dispute.payment_intent?.id;
 
-  // Pass charge? Matched by payment intent — works keyless.
+  // Pass charge? Matched by payment intent — works keyless. `pass_key` comes
+  // along so the staff alert names the RUNG that was actually bought (v17 #294):
+  // a disputed $59 Event Pass L labelled "Event Pass" sends whoever triages it
+  // hunting for a $29 charge that never existed.
   if (intent) {
-    const [pass] = await sql<{ org_id: string }[]>`
-      select org_id from competition_passes where stripe_payment_intent = ${intent}`;
+    const [pass] = await sql<{ org_id: string; pass_key: string }[]>`
+      select org_id, pass_key from competition_passes where stripe_payment_intent = ${intent}`;
     if (pass) {
       if (phase === "closed" && dispute.status === "lost") {
         // Money-safety: claw back the pass's one-time credit grant (keyed on the
@@ -1026,7 +1055,15 @@ async function handlePlatformDispute(
         await sql`delete from competition_passes where stripe_payment_intent = ${intent}`;
         await invalidateOrgEntitlements(pass.org_id);
       }
-      await notifyStaffDispute("event_pass", pass.org_id, dispute, phase);
+      // isPassKey, not a cast: the column is `not null default 'event_pass'` and
+      // a row written before #294 (or by a future rung this build predates) must
+      // still produce a valid label rather than a missing i18n key.
+      await notifyStaffDispute(
+        isPassKey(pass.pass_key) ? pass.pass_key : "event_pass",
+        pass.org_id,
+        dispute,
+        phase,
+      );
       return true;
     }
   }

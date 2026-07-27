@@ -70,10 +70,36 @@ export function extraOrgPrice(
   return amountFor(tier, currency);
 }
 
-/** Event Pass one-time price in minor units for a currency. */
-export function passPrice(currency: Currency): number {
-  const pass = stripePlans.passes?.find((p) => p.key === "event_pass");
-  if (!pass) throw new Error("stripe-plans.json is missing the event_pass");
+/** The Event Pass rungs (v17 #294). Same upgrade, two sizes: `event_pass` is M
+ *  (10 divisions / 128 entrants), `event_pass_l` is L (20 / unlimited). These are
+ *  `plans` keys AND `stripe-plans.json` pass keys — M's is literally `event_pass`,
+ *  never `event_pass_m`. */
+export const PASS_KEYS = ["event_pass", "event_pass_l"] as const;
+export type PassKey = (typeof PASS_KEYS)[number];
+
+/** Is this a rung we know how to sell? The one place that decides — used by the
+ *  checkout route's request validation and by the webhook / reconcile paths that
+ *  read a rung back out of Stripe session metadata (v17 #294). */
+export function isPassKey(value: unknown): value is PassKey {
+  return typeof value === "string" && (PASS_KEYS as readonly string[]).includes(value);
+}
+
+/**
+ * What one Event Pass rung COSTS TO ADVERTISE, in minor units, straight from
+ * stripe-plans.json — the same seed `stripe:sync` pushes to Stripe.
+ *
+ * Display only. The actual charge never comes from here: pass checkout resolves
+ * `plans.stripe_price_id_onetime` by pass key (`api/billing/pass-checkout`) and
+ * Stripe prices from that. So a wrong `passKey` here MISQUOTES — the page says
+ * $29 and the customer is charged $59 — rather than mischarging. That failure
+ * is invisible to every test that does not compare the two, which is why
+ * `passKey` is REQUIRED (v17 #294): with two rungs live there is no longer a
+ * safe default, and making callers name the rung lets `tsc` enumerate every
+ * surface that has to make the choice.
+ */
+export function passPrice(currency: Currency, passKey: PassKey): number {
+  const pass = stripePlans.passes?.find((p) => p.key === passKey);
+  if (!pass) throw new Error(`stripe-plans.json is missing the ${passKey}`);
   return amountFor(pass.price, currency);
 }
 

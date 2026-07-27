@@ -3,10 +3,13 @@ import { requireSuperadmin, logStaffAction } from "@/lib/admin";
 import { handler } from "@/lib/http";
 import { sql } from "@/lib/db";
 import { cacheDelPattern } from "@/lib/cache";
-import type { AdminEntRow } from "@/lib/entitlement-admin";
+import { ADMIN_PLAN_KEYS, type AdminEntRow } from "@/lib/entitlement-admin";
 
 const Body = z.object({
-  plan_key: z.enum(["community", "event_pass", "pro", "pro_plus"]),
+  // Derived from the same list the admin page renders columns from, so an
+  // operator can never be shown a cell whose save this route refuses (v17
+  // #294 — an `event_pass_l` edit 400'd here while the column was invisible).
+  plan_key: z.enum(ADMIN_PLAN_KEYS),
   feature_key: z.string().min(1).max(100),
   bool_value: z.boolean().nullable().optional(),
   int_value: z.number().int().min(0).nullable().optional(),

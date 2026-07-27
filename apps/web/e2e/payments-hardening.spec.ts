@@ -2,6 +2,7 @@ import { test, expect, type APIRequestContext, type Page } from "@playwright/tes
 import Stripe from "stripe";
 import { randomBytes } from "node:crypto";
 import { TAG, apiJson, activeOrg, loginUi } from "./helpers";
+import type { PassKey } from "../src/lib/currency";
 
 // Payments-hardening wave — user-visible contract (owner ask 2026-07-18, Task 17).
 //
@@ -266,11 +267,21 @@ async function submitPublicRegistration(
   );
 }
 
-async function grantPass(compId: string, orgId: string, intent?: string): Promise<void> {
+/** Seed a pass row directly. `passKey` is REQUIRED: `pass_key` is `not null
+ *  default 'event_pass'` (V271:9), so an omitted rung is filed as M with
+ *  nothing red — the landmine this wave closed in `recordPassPurchase`,
+ *  `grantPass` (smoke) and `grantCompetitionPassSql`. Every seed below means
+ *  M and now says so. */
+async function grantPass(
+  compId: string,
+  orgId: string,
+  passKey: PassKey,
+  intent?: string,
+): Promise<void> {
   await withDb(async (sql) => {
     await sql`
-      insert into competition_passes (competition_id, org_id, stripe_payment_intent)
-      values (${compId}, ${orgId}, ${intent ?? null})
+      insert into competition_passes (competition_id, org_id, pass_key, stripe_payment_intent)
+      values (${compId}, ${orgId}, ${passKey}, ${intent ?? null})
       on conflict (competition_id) do nothing`;
   });
 }
@@ -363,7 +374,7 @@ test.describe("T1 · competition delete is blocked while money is on file", () =
       name: `T1 pass ${TAG} ${randomBytes(3).toString("hex")}`,
       visibility: "private",
     });
-    await grantPass(passComp.data!.id, org.id, uid("pi"));
+    await grantPass(passComp.data!.id, org.id, "event_pass", uid("pi"));
     const passDel = await apiJson(page.request, `/api/v1/competitions/${passComp.data!.id}`, "DELETE");
     expect(passDel.status).toBe(409);
     expect(passDel.error?.message ?? "").toContain("Event Pass");
@@ -459,7 +470,7 @@ test.describe("T3 · Event Pass refund revokes the pass", () => {
     // community one. (V310 killed the card-intake-closes proof — see the
     // COMMUNITY_ENTRANT_CAP note; the entrant cap is what the pass still grants.)
     const { divisionId } = await seedStripeDivision(compId, null);
-    await grantPass(compId, org.orgId, intent);
+    await grantPass(compId, org.orgId, "event_pass", intent);
     await fillDivision(divisionId, org.orgId, COMMUNITY_ENTRANT_CAP);
 
     // While the pass is held the cap is 128: entry 65 takes a real spot. A
@@ -507,7 +518,7 @@ test.describe("T4 · duplicate Event Pass payment auto-refunds", () => {
     const dupIntent = uid("pi");
     const org = await seedOrg({ plan: "community" });
     const { compId } = await seedComp(org.orgId, "private");
-    await grantPass(compId, org.orgId, firstIntent); // first payment already recorded
+    await grantPass(compId, org.orgId, "event_pass", firstIntent); // first payment already recorded
 
     // A second owner / tab pays for the already-passed comp.
     const event = stripeEvent("checkout.session.completed", {
@@ -740,7 +751,7 @@ test.describe("T7 · platform disputes truth-up entitlements", () => {
     const { compId, compSlug } = await seedComp(org.orgId);
     // Same entrant-cap proof as T3 (card intake no longer closes on pass loss).
     const { divisionId } = await seedStripeDivision(compId, null);
-    await grantPass(compId, org.orgId, intent);
+    await grantPass(compId, org.orgId, "event_pass", intent);
     await fillDivision(divisionId, org.orgId, COMMUNITY_ENTRANT_CAP);
 
     // Pass held → cap 128 → entry 65 holds a spot (a passless community waitlists).
@@ -929,7 +940,7 @@ test.describe("T10 · a pass lifts the entrant cap on its own comp only", () => 
 
     const passed = await seedComp(org.orgId);
     const passedDiv = await seedStripeDivision(passed.compId, null);
-    await grantPass(passed.compId, org.orgId);
+    await grantPass(passed.compId, org.orgId, "event_pass");
 
     // Both sit exactly ON the community cap; entry 65 is the question.
     await fillDivision(plainDiv.divisionId, org.orgId, COMMUNITY_ENTRANT_CAP);

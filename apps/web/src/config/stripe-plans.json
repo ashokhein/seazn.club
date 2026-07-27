@@ -102,6 +102,7 @@
       }
     }
   ],
+  "$comment_passes": "Event Pass rungs (v17 #294): TWO one-time price points for the same single-competition upgrade, told apart ONLY by size — M ($29) is 10 divisions / 128 entrants per division, L ($59) is 20 divisions / unlimited entrants. Everything else (features, and the flat +25 one-time AI credit grant — PASS_CREDIT_GRANT, never keyed by rung) is identical. `key` matches the `plans` row of the same name (M's key is literally `event_pass`, not `event_pass_m`), and the caps themselves live in plan_entitlements (V341 derives L's whole matrix from M's), never here — this file only owns the price. stripe-sync loops this array by key and writes each price id into plans.stripe_price_id_onetime, so adding a rung needs no sync-script change; lib/currency.ts passPrice(currency, passKey) is the single reader.",
   "passes": [
     {
       "key": "event_pass",
@@ -113,6 +114,18 @@
         "lookup_key": "seazn_event_pass",
         "unit_amount": 2900,
         "currency_options": { "eur": 2900, "gbp": 2500, "inr": 199900, "aud": 4500 }
+      }
+    },
+    {
+      "key": "event_pass_l",
+      "product": {
+        "name": "Seazn Club Event Pass L",
+        "description": "One-time upgrade for a single competition: unlimited entrants per division, up to 20 divisions, advanced formats, a 5% entry-fee rate instead of 8%, branded exports, public player profiles, sponsor tiers and paid packages, realtime, and +25 one-time AI credits — for the event's lifetime."
+      },
+      "price": {
+        "lookup_key": "seazn_event_pass_l",
+        "unit_amount": 5900,
+        "currency_options": { "eur": 5900, "gbp": 4900, "inr": 449900, "aud": 8900 }
       }
     }
   ],

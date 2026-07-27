@@ -81,14 +81,21 @@ async function seedPassBuyer(over?: { currency?: string | null }): Promise<{
   return { orgId, compId };
 }
 
-/** A paid pass checkout session as reconcilePassCheckout retrieves it. */
+/** A paid pass checkout session as reconcilePassCheckout retrieves it.
+ *  `passKey` is a raw string, not `PassKey`: the point of several tests below is
+ *  to feed the gate a value it does NOT recognise. */
 function passSession(
   orgId: string,
   compId: string,
-  over?: Partial<{ customer: string | null; currency: string | null; payment_intent: string }>,
+  over?: Partial<{
+    customer: string | null;
+    currency: string | null;
+    payment_intent: string;
+    passKey: string;
+  }>,
 ): Stripe.Checkout.Session {
   return {
-    metadata: { org_id: orgId, competition_id: compId, pass_key: "event_pass" },
+    metadata: { org_id: orgId, competition_id: compId, pass_key: over?.passKey ?? "event_pass" },
     payment_status: "paid",
     payment_intent: over?.payment_intent ?? "pi_trace_" + uniq(),
     customer: over && "customer" in over ? over.customer : "cus_trace_" + uniq(),
@@ -322,6 +329,7 @@ describe.skipIf(!HAS_DB)("Event Pass grants one-time AI credits", () => {
     const res = await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_grant_" + uniq(),
     });
     expect(res.recorded).toBe(true);
@@ -404,6 +412,7 @@ describe.skipIf(!HAS_DB)("Event Pass grants one-time AI credits", () => {
     const res = await recordPassPurchase({
       orgId: memberOrg,
       competitionId: memberComp,
+      passKey: "event_pass",
       paymentIntent: "pi_grant_group_" + uniq(),
     });
     expect(res.recorded).toBe(true);
@@ -424,7 +433,7 @@ describe.skipIf(!HAS_DB)("Event Pass claws back its credits on refund/dispute", 
     const walletId = await walletIdFor(orgId);
     const intent = "pi_refund_" + uniq();
 
-    expect((await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: intent })).recorded).toBe(true);
+    expect((await recordPassPurchase({ orgId, competitionId: compId, passKey: "event_pass", paymentIntent: intent })).recorded).toBe(true);
     expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
 
     expect(await revokePassForRefundedCharge(refundedCharge(intent))).toBe(true);
@@ -438,7 +447,7 @@ describe.skipIf(!HAS_DB)("Event Pass claws back its credits on refund/dispute", 
     const walletId = await walletIdFor(orgId);
     const intent = "pi_partial_" + uniq();
 
-    await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: intent });
+    await recordPassPurchase({ orgId, competitionId: compId, passKey: "event_pass", paymentIntent: intent });
     // Consume 10 of the 25 (a real AI run's hold from the pack bucket).
     await reserve(walletId, orgId, 10);
     expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT - 10); // 15 left
@@ -455,7 +464,7 @@ describe.skipIf(!HAS_DB)("Event Pass claws back its credits on refund/dispute", 
     const walletId = await walletIdFor(orgId);
     const intent = "pi_dispute_" + uniq();
 
-    await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: intent });
+    await recordPassPurchase({ orgId, competitionId: compId, passKey: "event_pass", paymentIntent: intent });
     expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
 
     await processStripeEvent(disputeClosedEvent(intent, "lost"));
@@ -470,7 +479,7 @@ describe.skipIf(!HAS_DB)("Event Pass claws back its credits on refund/dispute", 
     const walletId = await walletIdFor(orgId);
     const intent = "pi_dbl_" + uniq();
 
-    await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: intent });
+    await recordPassPurchase({ orgId, competitionId: compId, passKey: "event_pass", paymentIntent: intent });
     // First claw-back (refund) takes the wallet to 0.
     await revokePassForRefundedCharge(refundedCharge(intent));
     expect(await balance(walletId)).toBe(0);
@@ -487,7 +496,7 @@ describe.skipIf(!HAS_DB)("Event Pass claws back its credits on refund/dispute", 
     const walletId = await walletIdFor(orgId);
 
     // Buy → refund: the pass row is deleted and its 25 clawed.
-    await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: "pi_first_" + uniq() });
+    await recordPassPurchase({ orgId, competitionId: compId, passKey: "event_pass", paymentIntent: "pi_first_" + uniq() });
     await revokePassForRefundedCharge(refundedCharge((await lastPassIntent(compId)) ?? ""));
     expect(await balance(walletId)).toBe(0);
 
@@ -496,6 +505,7 @@ describe.skipIf(!HAS_DB)("Event Pass claws back its credits on refund/dispute", 
     const second = await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_second_" + uniq(),
     });
     expect(second.recorded).toBe(true);
@@ -518,13 +528,190 @@ describe.skipIf(!HAS_DB)("Event Pass claws back its credits on refund/dispute", 
     const groupWallet = await walletIdFor(memberOrg);
     const intent = "pi_grp_" + uniq();
 
-    await recordPassPurchase({ orgId: memberOrg, competitionId: memberComp, paymentIntent: intent });
+    await recordPassPurchase({ orgId: memberOrg, competitionId: memberComp, passKey: "event_pass", paymentIntent: intent });
     expect(await balance(groupWallet)).toBe(PASS_CREDIT_GRANT);
 
     expect(await revokePassForRefundedCharge(refundedCharge(intent))).toBe(true);
     // Debited from the ONE shared pool, visible from either org's walletId.
     expect(await balance(groupWallet)).toBe(0);
     expect(await balance(await walletIdFor(payerOrg))).toBe(0);
+  });
+});
+
+// v17 #294 — the L rung ($59, 20 divisions / unlimited entrants). The credit and
+// refund machinery never reads pass_key at all (recordPassGrant takes a flat
+// PASS_CREDIT_GRANT; revokePassForRefundedCharge keys purely on
+// stripe_payment_intent), so the tests here that touch money PROVE that rather
+// than exercise anything new. What IS new is the wiring: recordPassPurchase
+// writing the rung it was told, and the webhook / reconcile paths reading it back
+// out of session metadata.
+//
+// The landmine this closes: recordPassPurchase omitted pass_key from its INSERT
+// entirely and V271 declares the column `not null default 'event_pass'`, so an L
+// purchase was stored as M with no FK error, no exception and no failing test —
+// a $59 sale filed as the $29 product, invisible until someone reconciled revenue
+// by hand.
+describe.skipIf(!HAS_DB)("Event Pass L rung (v17 #294) — same money machinery as M", () => {
+  /** The rung recorded against `compId`. */
+  const recordedRung = async (compId: string): Promise<string | undefined> => {
+    const [row] = await sql<{ pass_key: string }[]>`
+      select pass_key from competition_passes where competition_id = ${compId}`;
+    return row?.pass_key;
+  };
+
+  it("records pass_key='event_pass_l' and grants the SAME PASS_CREDIT_GRANT (25)", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    const walletId = await walletIdFor(orgId);
+
+    const res = await recordPassPurchase({
+      orgId,
+      competitionId: compId,
+      paymentIntent: "pi_l_grant_" + uniq(),
+      passKey: "event_pass_l",
+    });
+    expect(res.recorded).toBe(true);
+    // The grant is flat by design (owner decision): L buys a bigger competition,
+    // not more credits. Parametrizing it would be the bug.
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+    expect(await recordedRung(compId)).toBe("event_pass_l");
+  });
+
+  // `passKey` is REQUIRED and has no default, so there is no "caller omitted it"
+  // case left to test at runtime — omitting it does not compile, and
+  // `npm run typecheck` is a CI gate (ci.yml). This is the M half of the same
+  // assertion: naming M explicitly records M, so the L cases above are proving a
+  // routed value rather than a constant.
+  it("records M when M is the rung named", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    const res = await recordPassPurchase({
+      orgId,
+      competitionId: compId,
+      passKey: "event_pass",
+      paymentIntent: "pi_m_explicit_" + uniq(),
+    });
+    expect(res.recorded).toBe(true);
+    expect(await recordedRung(compId)).toBe("event_pass");
+  });
+
+  it("the webhook records an L purchase straight from session metadata", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    await processStripeEvent(
+      passEvent(
+        passSession(orgId, compId, {
+          passKey: "event_pass_l",
+          payment_intent: "pi_l_hook_" + uniq(),
+        }),
+      ),
+    );
+    expect(await recordedRung(compId)).toBe("event_pass_l");
+  });
+
+  it("reconcile-on-return records an L purchase straight from session metadata", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    stripeMock.retrieve.mockResolvedValue(
+      passSession(orgId, compId, {
+        passKey: "event_pass_l",
+        payment_intent: "pi_l_recon_" + uniq(),
+      }),
+    );
+    expect(await reconcilePassCheckout(orgId, "cs_l_recon")).toBe(true);
+    expect(await recordedRung(compId)).toBe("event_pass_l");
+  });
+
+  // Defensive net, not a migration path: every real session has carried
+  // pass_key:'event_pass' since v3/07. An unrecognised value (metadata drift, a
+  // typo in a future rung) must still record a pass — dropping a paid session on
+  // the floor is strictly worse than filing it under the cheaper rung.
+  it("falls back to M on an unrecognised pass_key, on BOTH paths", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    stripeMock.retrieve.mockResolvedValue(
+      passSession(orgId, compId, {
+        passKey: "event_pass_xl_typo",
+        payment_intent: "pi_fallback_" + uniq(),
+      }),
+    );
+    expect(await reconcilePassCheckout(orgId, "cs_fallback")).toBe(true);
+    expect(await recordedRung(compId)).toBe("event_pass");
+
+    const second = await seedPassBuyer();
+    await processStripeEvent(
+      passEvent(
+        passSession(second.orgId, second.compId, {
+          passKey: "event_pass_xl_typo",
+          payment_intent: "pi_fallback_hook_" + uniq(),
+        }),
+      ),
+    );
+    expect(await recordedRung(second.compId)).toBe("event_pass");
+  });
+
+  // The ABSENCE of pass_key is load-bearing: it is precisely how a pass session
+  // is told apart from a subscription / credit-pack / size-pack checkout, none of
+  // which ever set it. Widening the gate must not weaken this.
+  it("still refuses a session with no pass_key at all (not a pass session)", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    stripeMock.retrieve.mockResolvedValue({
+      metadata: { org_id: orgId, competition_id: compId },
+      payment_status: "paid",
+      payment_intent: "pi_not_a_pass_" + uniq(),
+    } as unknown as Stripe.Checkout.Session);
+
+    expect(await reconcilePassCheckout(orgId, "cs_not_a_pass")).toBe(false);
+    expect(await recordedRung(compId)).toBeUndefined();
+  });
+
+  it("the webhook also ignores a session with no pass_key", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    await processStripeEvent(
+      passEvent({
+        metadata: { org_id: orgId, competition_id: compId },
+        payment_status: "paid",
+        payment_intent: "pi_not_a_pass_hook_" + uniq(),
+      } as unknown as Stripe.Checkout.Session),
+    );
+    expect(await recordedRung(compId)).toBeUndefined();
+  });
+
+  it("a fully-refunded L pass claws back the unspent grant to 0, same as M", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    const walletId = await walletIdFor(orgId);
+    const intent = "pi_l_refund_" + uniq();
+
+    expect(
+      (
+        await recordPassPurchase({
+          orgId,
+          competitionId: compId,
+          paymentIntent: intent,
+          passKey: "event_pass_l",
+        })
+      ).recorded,
+    ).toBe(true);
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+
+    // Keyed purely on the payment intent — the claw-back never looks at the rung.
+    expect(await revokePassForRefundedCharge(refundedCharge(intent))).toBe(true);
+    expect(await balance(walletId)).toBe(0);
+    expect(await packBalance(walletId)).toBe(0);
+    expect(await recordedRung(compId)).toBeUndefined();
+  });
+
+  it("a lost dispute revokes an L pass the same way", async () => {
+    const { orgId, compId } = await seedPassBuyer();
+    const walletId = await walletIdFor(orgId);
+    const intent = "pi_l_dispute_" + uniq();
+
+    await recordPassPurchase({
+      orgId,
+      competitionId: compId,
+      paymentIntent: intent,
+      passKey: "event_pass_l",
+    });
+    expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
+
+    await processStripeEvent(disputeClosedEvent(intent, "lost"));
+    expect(await balance(walletId)).toBe(0);
+    expect(await recordedRung(compId)).toBeUndefined();
   });
 });
 

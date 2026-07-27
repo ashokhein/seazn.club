@@ -3,16 +3,15 @@
 //
 // The failure being fixed: `routes.competitionUpgrade` had exactly one inbound
 // link in the whole app — the paywall in <UpgradeGate>. A community organiser
-// could only discover the $29 pass by first being blocked by a limit, which is
-// the worst possible moment to meet a price.
+// could only discover the pass by first being blocked by a limit, which is the
+// worst possible moment to meet a price.
 //
 // The two failures this must NOT reintroduce, both already paid for once:
 //
-//   paid_plan → the $29 pass grants strictly LESS than any paid plan (10 AI
-//               runs per division against pro's 20, 64 entrants per division
-//               against pro's 256). Offering it there sells a downgrade. That
-//               was live in the gate until f70b8e52; a brand-new surface is
-//               exactly where it comes back.
+//   paid_plan → the pass grants strictly LESS than any paid plan: Pro's matrix
+//               is a superset of it at every key the pass lifts. Offering it
+//               there sells a downgrade. That was live in the gate until
+//               f70b8e52; a brand-new surface is exactly where it comes back.
 //   held      → never re-sell a pass the org already owns. Presence is ROW
 //               EXISTENCE, never payment: a staff-granted pass carries a null
 //               `stripe_payment_intent` and is fully active.
@@ -23,19 +22,32 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CompetitionPassProvider } from "@/components/competition-pass-provider";
 import { CompetitionPassEntry } from "@/components/competition-pass-entry";
+import { passActiveLabels } from "@/lib/pass-ladder";
+import type { PassKey } from "@/lib/currency";
+import uiEn from "@/dictionaries/en/ui.json";
 
 const HREF = "/o/riverside/c/summer-league/upgrade";
-const BUY = "Event Pass — $29 one-time";
-const ACTIVE = "Event Pass active";
+// "from" since v17 #294: two rungs are live and $29 is the ladder's FLOOR, not
+// the price. The label the page builds is `pass.entry.buy`.
+const BUY = "Event Pass — from $29 one-time";
+// Built the way the pages build it, so a dictionary change reaches this file
+// rather than a literal here going quietly stale.
+const ACTIVE_LABELS = passActiveLabels(uiEn);
+const ACTIVE = ACTIVE_LABELS.event_pass;
 
 function render({
-  passActive = false,
+  passKey = null,
   paidPlan = false,
   canBuy = true,
-}: { passActive?: boolean; paidPlan?: boolean; canBuy?: boolean } = {}) {
+}: { passKey?: PassKey | null; paidPlan?: boolean; canBuy?: boolean } = {}) {
   return renderToStaticMarkup(
-    <CompetitionPassProvider active={passActive} paidPlan={paidPlan}>
-      <CompetitionPassEntry href={HREF} buyLabel={BUY} activeLabel={ACTIVE} canBuy={canBuy} />
+    <CompetitionPassProvider passKey={passKey} paidPlan={paidPlan}>
+      <CompetitionPassEntry
+        href={HREF}
+        buyLabel={BUY}
+        activeLabels={ACTIVE_LABELS}
+        canBuy={canBuy}
+      />
     </CompetitionPassProvider>,
   );
 }
@@ -55,16 +67,42 @@ describe("CompetitionPassEntry", () => {
   });
 
   it("shows the active signal, and no price, once the org holds the pass", () => {
-    const html = render({ passActive: true });
+    const html = render({ passKey: "event_pass" });
     expect(html).toContain(ACTIVE);
     expect(html).not.toContain(HREF);
     expect(html).not.toContain("$29");
   });
 
+  it("names the RUNG that is held, not the product family", () => {
+    // v17 #294. This eyebrow is the only thing the competition's own chrome
+    // says about its pass, so "Event Pass active" over an `event_pass_l` row
+    // tells a $59 buyer they hold the $29 product. Both arms, because a card
+    // hardcoded the other way would satisfy either one alone.
+    const m = render({ passKey: "event_pass" });
+    expect(m).toContain(ACTIVE_LABELS.event_pass);
+    expect(m).not.toContain(ACTIVE_LABELS.event_pass_l);
+
+    const l = render({ passKey: "event_pass_l" });
+    expect(l).toContain(ACTIVE_LABELS.event_pass_l);
+    expect(l).not.toContain(ACTIVE_LABELS.event_pass);
+  });
+
+  it("carries the rung as an attribute, not only as copy", () => {
+    // Pinned to the KEY so a rename of the label cannot silently empty the
+    // assertions above, and so e2e can assert the rung without matching prose.
+    expect(render({ passKey: "event_pass_l" })).toContain('data-pass-held-rung="event_pass_l"');
+    expect(render({ passKey: "event_pass" })).toContain('data-pass-held-rung="event_pass"');
+  });
+
+  it("leaves no un-substituted placeholder in the held signal", () => {
+    // `t()` renders a forgotten interpolation var as the literal `{rung}`.
+    expect(render({ passKey: "event_pass_l" })).not.toContain("{rung}");
+  });
+
   it("still shows the active signal to a viewer who cannot buy", () => {
     // "This competition has a pass" is a fact about the competition, not an
     // invitation — a scorer looking at a passed competition should see it.
-    const html = render({ passActive: true, canBuy: false });
+    const html = render({ passKey: "event_pass", canBuy: false });
     expect(html).toContain(ACTIVE);
   });
 
@@ -78,7 +116,7 @@ describe("CompetitionPassEntry", () => {
     // Bought a pass, then upgraded: the row survives. The resolver stops
     // consulting it, so advertising it would name the wrong reason anything
     // works. usePassGateState collapses this to paid_plan; so does this.
-    expect(render({ passActive: true, paidPlan: true })).toBe("");
+    expect(render({ passKey: "event_pass", paidPlan: true })).toBe("");
   });
 
   it("offers nothing to a viewer who cannot buy and holds no pass", () => {
@@ -98,7 +136,7 @@ describe("CompetitionPassEntry", () => {
     // Nothing should mount this outside a competition, but if something does,
     // the safe default is today's behaviour, not a crash.
     const html = renderToStaticMarkup(
-      <CompetitionPassEntry href={HREF} buyLabel={BUY} activeLabel={ACTIVE} canBuy />,
+      <CompetitionPassEntry href={HREF} buyLabel={BUY} activeLabels={ACTIVE_LABELS} canBuy />,
     );
     expect(html).toContain(BUY);
   });

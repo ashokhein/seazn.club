@@ -103,6 +103,7 @@ describe.skipIf(!HAS_DB || !HAS_REDIS)("entitlement cache invalidation (real Red
     await recordPassPurchase({
       orgId: auth.orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: `pi_${randomUUID().slice(0, 8)}`,
     });
 
@@ -137,6 +138,7 @@ describe.skipIf(!HAS_DB || !HAS_REDIS)("entitlement cache invalidation (real Red
     const result = await recordPassPurchase({
       orgId: auth.orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: intent,
     });
     expect(result).toEqual({ recorded: false, duplicateIntent: null });
@@ -154,7 +156,7 @@ describe.skipIf(!HAS_DB || !HAS_REDIS)("entitlement cache invalidation (real Red
       values (${auth.orgId}, ${"Refund Cup " + randomUUID().slice(0, 6)},
               ${"refund-cup-" + randomUUID().slice(0, 6)}) returning id`;
     const intent = `pi_${randomUUID().slice(0, 8)}`;
-    await recordPassPurchase({ orgId: auth.orgId, competitionId: compId, paymentIntent: intent });
+    await recordPassPurchase({ orgId: auth.orgId, competitionId: compId, passKey: "event_pass", paymentIntent: intent });
     await invalidateOrgEntitlements(auth.orgId);
 
     // Warm the cache on the granted (true) answer.
@@ -182,7 +184,7 @@ describe.skipIf(!HAS_DB || !HAS_REDIS)("entitlement cache invalidation (real Red
       values (${auth.orgId}, ${"Dispute Cup " + randomUUID().slice(0, 6)},
               ${"dispute-cup-" + randomUUID().slice(0, 6)}) returning id`;
     const intent = `pi_${randomUUID().slice(0, 8)}`;
-    await recordPassPurchase({ orgId: auth.orgId, competitionId: compId, paymentIntent: intent });
+    await recordPassPurchase({ orgId: auth.orgId, competitionId: compId, passKey: "event_pass", paymentIntent: intent });
     await invalidateOrgEntitlements(auth.orgId);
 
     // Warm the cache on the granted (true) answer.

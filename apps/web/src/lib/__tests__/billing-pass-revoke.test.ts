@@ -130,6 +130,27 @@ describe.skipIf(!HAS_DB)("charge.refunded dispatch → revoke + owner email", ()
       to: ownerEmail,
       orgName,
       competitionName: compName,
+      passKey: "event_pass",
+    });
+  });
+
+  it("tells an L buyer which pass was refunded, not the product family", async () => {
+    // v17 #294, and the last surface still telling the CUSTOMER the wrong
+    // thing: `revokePassForRefundedChargeAndNotify` selected the org and the
+    // competition but never `pass_key`, so an org refunded on a $59 Event Pass
+    // L was emailed about the $29 product. The row is read BEFORE the revoke
+    // deletes it, which is the only moment the rung is still available.
+    const { compId, orgName, compName, ownerEmail } = await seedPassOrg();
+    await sql`insert into competition_passes (competition_id, org_id, stripe_payment_intent, pass_key)
+              values (${compId}, (select org_id from competitions where id = ${compId}), 'pi_pass_l1', 'event_pass_l')`;
+
+    await processStripeEvent(chargeRefundedEvent("pi_pass_l1"));
+
+    expect(emailMock.passRevoked).toHaveBeenCalledWith({
+      to: ownerEmail,
+      orgName,
+      competitionName: compName,
+      passKey: "event_pass_l",
     });
   });
 

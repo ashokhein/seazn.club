@@ -18,21 +18,38 @@
 // `competition_passes.stripe_payment_intent` is nullable — a staff-granted pass
 // carries no intent and is fully active. Nothing downstream may filter on it.
 import { createContext, useContext, useMemo, type ReactNode } from "react";
+import type { Currency, PassKey } from "@/lib/currency";
 
 interface PassContext {
-  /** A `competition_passes` row exists for the competition in view. */
-  active: boolean;
+  /**
+   * The RUNG on the `competition_passes` row for the competition in view, or
+   * null when there is no row. Carries the rung and not just a boolean because
+   * two rungs are live (v17 #294) and the surfaces that say "this competition
+   * has a pass" have nothing else on screen to say WHICH one — an org that paid
+   * $59 for L would otherwise read its own competition as holding the $29
+   * product. `usePassActive()` still answers the plain row question.
+   */
+  passKey: PassKey | null;
   /**
    * The org's RESOLVED plan is not community — i.e. `isPaidPlan(orgPlanKey())`
    * as `lib/entitlements.ts` computes it, degradations and all. Derived on the
    * server so no plan-key vocabulary crosses into the client bundle.
    */
   paidPlan: boolean;
+  /**
+   * The currency this org would be CHARGED in — `preferredCurrency(org.id)`,
+   * resolved on the server (a subscription's currency, then the switcher cookie,
+   * then Accept-Language). A client island cannot compute any of that: cookies
+   * and the org's subscription are both server-side, which is why the paywall
+   * quoted a hardcoded "usd" to every reader on earth until v17 #294.
+   */
+  currency: Currency;
 }
 
 const CompetitionPassContext = createContext<PassContext>({
-  active: false,
+  passKey: null,
   paidPlan: false,
+  currency: "usd",
 });
 
 /**
@@ -51,20 +68,34 @@ export type PassGateState = "none" | "held" | "paid_plan";
  * Provide the resolved Event Pass state to a competition subtree. Mounted by
  * `app/o/[orgSlug]/c/[compSlug]/layout.tsx`; nothing else should mount it.
  *
+ * `passKey` is REQUIRED and carries null for "no pass" rather than pairing a
+ * boolean with a rung: two sources for one fact is how a card ends up saying
+ * "Event Pass M active" over a row that reads `event_pass_l`.
+ *
  * `paidPlan` defaults to false — the SAFE default, because it is today's
  * behaviour (offer the pass). Defaulting the other way would silently suppress
  * a real upsell for every community org the moment a caller forgot the prop.
+ *
+ * `currency` defaults to usd for the same reason: it is exactly what every
+ * price under this provider rendered before v17 #294, so an omission degrades
+ * to today rather than to a crash. The one production mount passes the real
+ * `preferredCurrency`, and `pass-entry-points.test.ts` pins that it does.
  */
 export function CompetitionPassProvider({
-  active,
+  passKey,
   paidPlan = false,
+  currency = "usd",
   children,
 }: {
-  active: boolean;
+  passKey: PassKey | null;
   paidPlan?: boolean;
+  currency?: Currency;
   children: ReactNode;
 }) {
-  const value = useMemo(() => ({ active, paidPlan }), [active, paidPlan]);
+  const value = useMemo(
+    () => ({ passKey, paidPlan, currency }),
+    [passKey, paidPlan, currency],
+  );
   return (
     <CompetitionPassContext.Provider value={value}>{children}</CompetitionPassContext.Provider>
   );
@@ -83,7 +114,29 @@ export function CompetitionPassProvider({
  * place for a gate to render, not a wiring mistake.
  */
 export function usePassActive(): boolean {
-  return useContext(CompetitionPassContext).active;
+  return useContext(CompetitionPassContext).passKey !== null;
+}
+
+/**
+ * WHICH rung the competition in view holds — null when it holds no pass.
+ *
+ * Strictly the row's own `pass_key`, with the same "presence, never payment"
+ * semantics as `usePassActive()`. A surface that says a pass is active and
+ * cannot say which one is naming M's product to an L buyer; this is the only
+ * thing on the client that knows the difference.
+ */
+export function usePassRung(): PassKey | null {
+  return useContext(CompetitionPassContext).passKey;
+}
+
+/**
+ * The currency prices under this provider must be quoted in.
+ *
+ * usd outside a competition — no provider, no org, nothing to resolve — which
+ * is what every gate rendered everywhere before v17 #294.
+ */
+export function usePassCurrency(): Currency {
+  return useContext(CompetitionPassContext).currency;
 }
 
 /**
@@ -96,7 +149,7 @@ export function usePassActive(): boolean {
  * and offer a credit against a purchase that may not exist.
  */
 export function usePassGateState(): PassGateState {
-  const { active, paidPlan } = useContext(CompetitionPassContext);
+  const { passKey, paidPlan } = useContext(CompetitionPassContext);
   if (paidPlan) return "paid_plan";
-  return active ? "held" : "none";
+  return passKey !== null ? "held" : "none";
 }

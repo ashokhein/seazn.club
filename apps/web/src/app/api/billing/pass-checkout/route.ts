@@ -7,14 +7,24 @@ import { sql } from "@/lib/db";
 import { baseUrl } from "@/lib/oauth";
 import { buildPassCheckoutParams } from "@/lib/billing";
 import { preferredCurrency } from "@/lib/currency-server";
+import { PASS_KEYS } from "@/lib/currency";
 import { routes } from "@/lib/routes";
 import { isPaidPlan, orgPlanKey } from "@/lib/entitlements";
 
-const schema = z.object({ competition_id: z.string().uuid() }).strict();
+const schema = z
+  .object({
+    competition_id: z.string().uuid(),
+    // v17 #294 — the L rung ships alongside M. Built from PASS_KEYS rather than
+    // a fourth hardcoded list (a stale plan-key enumerator is this wave's whole
+    // failure mode), and defaulted so every pre-#294 client keeps buying M.
+    pass_key: z.enum(PASS_KEYS).default("event_pass"),
+  })
+  .strict();
 
 /** POST /api/billing/pass-checkout — start an EMBEDDED one-time Event Pass
- *  checkout for a single competition (v3/07 §3) and return its client_secret.
- *  Same embedded_page + reconcile-on-return contract as the Pro checkout. */
+ *  checkout for a single competition (v3/07 §3), at either rung (v17 #294), and
+ *  return its client_secret. Same embedded_page + reconcile-on-return contract
+ *  as the Pro checkout. */
 export async function POST(req: Request) {
   return handler(async () => {
     const orgId = await getActiveOrgId();
@@ -22,7 +32,7 @@ export async function POST(req: Request) {
 
     // Only owners may spend the org's money.
     const { user } = await requireOrgRole(orgId, ["owner"]);
-    const { competition_id } = schema.parse(await req.json());
+    const { competition_id, pass_key } = schema.parse(await req.json());
 
     // `name` is the Stripe invoice line description — without it an org that
     // buys three passes sees three identical rows on its billing page.
@@ -30,7 +40,14 @@ export async function POST(req: Request) {
       select slug, name, org_id from competitions where id = ${competition_id}`;
     if (!comp || comp.org_id !== orgId) throw new HttpError(404, "competition not found");
 
-    // A Pro org has nothing to gain from a pass (v3/07 §3 interplay).
+    // A paid org is refused a pass (v3/07 §3 interplay).
+    //
+    // The message says FEATURES, and stops there. It used to say the plan
+    // "covers everything an Event Pass adds", which stopped being true when the
+    // L rung shipped (v17 #294): Pro caps a division at 256 entrants and L caps
+    // it at nothing, so neither is a superset of the other. Whether a paid org
+    // should be ABLE to buy L is a pricing decision (#327) and this gate is
+    // deliberately unchanged — but a refusal may not rest on a falsehood.
     //
     // Judged through the RESOLVER (main), not the raw `plan_key` column: the row
     // keeps saying 'pro' after a comp lapses or a subscription is cancelled,
@@ -47,7 +64,7 @@ export async function POST(req: Request) {
        join organizations o on o.subscription_id = s.id
        where o.id = ${orgId}`;
     if (isPaidPlan(await orgPlanKey(orgId))) {
-      throw new HttpError(400, "Your plan already covers everything an Event Pass adds.");
+      throw new HttpError(400, "Your plan already includes every Event Pass feature.");
     }
 
     // An Event Pass is genuinely ORG-scoped — one competition, one
@@ -68,8 +85,12 @@ export async function POST(req: Request) {
       select competition_id from competition_passes where competition_id = ${competition_id}`;
     if (pass) throw new HttpError(400, "This competition already has an Event Pass.");
 
+    // Priced by RUNG. Each rung's one-time price id is written back by
+    // `stripe:sync` per environment, so a rung that has not been synced here has
+    // a NULL id and 503s — deliberately, rather than falling back to the other
+    // rung's price and charging M's $29 for L's caps.
     const [price] = await sql<{ price_id: string | null }[]>`
-      select stripe_price_id_onetime as price_id from plans where key = 'event_pass'`;
+      select stripe_price_id_onetime as price_id from plans where key = ${pass_key}`;
     if (!price?.price_id) {
       throw new HttpError(503, "Billing is not yet configured. Please contact support.");
     }
@@ -83,6 +104,10 @@ export async function POST(req: Request) {
     const session = await getStripe().checkout.sessions.create(
       buildPassCheckoutParams({
         priceId: price.price_id,
+        // Same rung as the price above, always: the metadata is what the webhook
+        // and reconcile-on-return record, so a mismatch entitles the buyer to a
+        // rung they did not pay for (or vice versa).
+        passKey: pass_key,
         orgId,
         competitionId: competition_id,
         competitionName: comp.name,
@@ -97,7 +122,11 @@ export async function POST(req: Request) {
       // params (per-user customer_email) — an org+comp-only key would collide
       // and 400 on the param mismatch, so each owner mints a DISTINCT session;
       // the losing duplicate is caught by the pass auto-refund (P0-3b).
-      { idempotencyKey: `pass-checkout-${orgId}-${competition_id}-${user.id}` },
+      //
+      // Scoped by RUNG too (v17 #294) for exactly the same reason: one owner who
+      // picks M, backs out and picks L sends different params under the same key
+      // and would be 400'd — stuck on whichever rung they clicked first.
+      { idempotencyKey: `pass-checkout-${orgId}-${competition_id}-${user.id}-${pass_key}` },
     );
 
     return { client_secret: session.client_secret };

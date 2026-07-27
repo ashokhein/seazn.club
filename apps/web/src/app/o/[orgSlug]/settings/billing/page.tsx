@@ -27,7 +27,8 @@ import { type Subscription } from "@/lib/types";
 import { getLimit, isPaidPlan, isPlanLapsed, orgPlanKey } from "@/lib/entitlements";
 import { TrackOnMount } from "@/components/analytics-track-mount";
 import { EVENTS } from "@/lib/analytics-events";
-import { asCurrency, formatMinor, passPrice, proPrice, proPlusPrice, creditPackOptions } from "@/lib/currency";
+import { asCurrency, formatMinor, proPrice, proPlusPrice, creditPackOptions } from "@/lib/currency";
+import { lowestPassRung } from "@/lib/pass-ladder";
 import { preferredCurrency } from "@/lib/currency-server";
 import { planLabel } from "@/lib/plan-label";
 import { BackLink } from "@/components/back-link";
@@ -582,7 +583,9 @@ export default async function BillingPage({
         <BillingPassOffer
           rows={passCandidates}
           orgSlug={orgSlug}
-          price={formatMinor(passPrice(currency), currency)}
+          // "From": the offer names no rung, so it must quote the ladder's
+          // floor rather than one rung's price as the price (v17 #294).
+          price={formatMinor(lowestPassRung(currency).amountMinor, currency)}
           dict={dict}
         />
 

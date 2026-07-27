@@ -7,7 +7,8 @@ import { listDivisions } from "@/server/usecases/divisions";
 import { CompetitionSettings } from "@/components/v2/competition-settings";
 import { ArchivedDivisions } from "@/components/v2/archived-divisions";
 import { CompetitionPassEntry } from "@/components/competition-pass-entry";
-import { formatMinor, passPrice } from "@/lib/currency";
+import { formatMinor } from "@/lib/currency";
+import { lowestPassRung, passActiveLabels } from "@/lib/pass-ladder";
 import { preferredCurrency } from "@/lib/currency-server";
 import { hasFeature } from "@/lib/entitlements";
 import { withTenant } from "@/lib/db";
@@ -84,9 +85,11 @@ export default async function CompetitionSettingsPage({
           <CompetitionPassEntry
             href={routes.competitionUpgrade(orgSlug, compSlug)}
             buyLabel={t(dict, "pass.entry.buy", {
-              price: formatMinor(passPrice(currency), currency),
+              // The ladder's FLOOR, derived — the copy says "from" and this
+              // link leads to the page where the rung is actually chosen.
+              price: formatMinor(lowestPassRung(currency).amountMinor, currency),
             })}
-            activeLabel={t(dict, "pass.entry.active")}
+            activeLabels={passActiveLabels(dict)}
             canBuy={canEdit}
           />
           <h1 className="mt-1 text-xl font-semibold tracking-tight text-slate-900">

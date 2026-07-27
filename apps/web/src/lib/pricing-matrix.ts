@@ -13,16 +13,59 @@ export interface MatrixCell {
 /** feature_key → plan_key → cell, straight from plan_entitlements. */
 export type MatrixData = Record<string, Record<string, MatrixCell>>;
 
+/**
+ * Every column of the comparison table, in render order — and the exact plan
+ * list `/pricing` reads from `plan_entitlements`.
+ *
+ * ONE list, because the table used to have three: a hardcoded `where plan_key
+ * in (…)` in the page's query, a fixed set of named fields on `PricingRow`,
+ * and a hand-written `<th>` row. Adding the L rung (v17 #294) meant a plan
+ * could be in the query and still have nowhere to render — and a plan with
+ * nowhere to render inherits the neighbouring column's numbers, which on this
+ * page means quoting M's 128-entrant ceiling to someone paying to remove it.
+ * Deriving the query, the row shape and the headings from this tuple makes
+ * that class of gap a type error instead.
+ */
+export const PRICING_PLAN_KEYS = [
+  "community",
+  "event_pass",
+  "event_pass_l",
+  "pro",
+  "pro_plus",
+] as const;
+
+export type PricingPlanKey = (typeof PRICING_PLAN_KEYS)[number];
+
+/** Column heading, per plan. A `Record` so a plan added above without a
+ *  heading is a compile error rather than a blank column. */
+export const PRICING_COLUMN_LABEL_KEY: Record<PricingPlanKey, string> = {
+  community: "pricing.table.community",
+  event_pass: "pricing.table.pass",
+  event_pass_l: "pricing.table.passL",
+  pro: "pricing.table.pro",
+  pro_plus: "pricing.table.proPlus",
+};
+
+/** The rungs of the Event Pass ladder — the columns that fall through to
+ *  community, because a pass grants only what it explicitly lifts. */
+const PASS_PLANS: ReadonlySet<string> = new Set<PricingPlanKey>(["event_pass", "event_pass_l"]);
+
 export interface PricingRow {
   labelKey: string;
   /** Optional second line under the label, always a dict KEY. Used where a
    *  bare number would mislead — the orgs row is a price, not an allowance
    *  (billing-groups spec 2026-07-21 §Surfaces to update). */
   noteKey?: string;
-  free: string;
-  pass: string;
-  pro: string;
-  plus: string;
+  /** One rendered value per column, keyed by plan. */
+  cells: Record<PricingPlanKey, string>;
+}
+
+/** Build a row's cells by asking `value` for each column in turn. */
+function cellsFor(value: (plan: PricingPlanKey) => string): Record<PricingPlanKey, string> {
+  return Object.fromEntries(PRICING_PLAN_KEYS.map((p) => [p, value(p)])) as Record<
+    PricingPlanKey,
+    string
+  >;
 }
 
 export interface PricingSection {
@@ -46,17 +89,19 @@ function boolCell(cell: MatrixCell | undefined): string {
 }
 
 /**
- * A pass column key missing from the event_pass matrix falls through to the
- * community plan at resolution time — mirror that here so the table tells
- * the truth about what a passed competition actually gets.
+ * The raw cell a column should render, with the resolver's own fall-through.
+ *
+ * A feature key missing from a PASS rung's matrix falls through to the
+ * community plan at resolution time — mirror that here so the table tells the
+ * truth about what a passed competition actually gets. It applies to BOTH
+ * rungs: V341 derives L from M, so the keys L has no row for are exactly the
+ * keys M has no row for, and rendering "—" there would make the more expensive
+ * rung look like it grants less.
  */
-function passCell(
-  data: MatrixData,
-  feature: string,
-  fmt: (cell: MatrixCell | undefined) => string,
-): string {
-  const cell = data[feature]?.event_pass ?? data[feature]?.community;
-  return fmt(cell);
+function cellAt(data: MatrixData, feature: string, plan: PricingPlanKey): MatrixCell | undefined {
+  const direct = data[feature]?.[plan];
+  if (direct) return direct;
+  return PASS_PLANS.has(plan) ? data[feature]?.community : undefined;
 }
 
 // Quota-style features render a count (∞ for unlimited); every other feature
@@ -86,15 +131,9 @@ function cellFormatter(feature: string): (cell: MatrixCell | undefined) => strin
 }
 
 /** Entry fees fold two keys into one honest cell: enabled + platform cut. */
-function feeCell(data: MatrixData, plan: "community" | "event_pass" | "pro" | "pro_plus"): string {
-  const paid = data["registration.paid"];
-  const pct = data["registration.fee_percent"];
-  const enabled =
-    plan === "event_pass"
-      ? (paid?.event_pass ?? paid?.community)?.bool_value === true
-      : paid?.[plan]?.bool_value === true;
-  if (!enabled) return DASH;
-  const cut = plan === "event_pass" ? (pct?.event_pass ?? pct?.community) : pct?.[plan];
+function feeCell(data: MatrixData, plan: PricingPlanKey): string {
+  if (cellAt(data, "registration.paid", plan)?.bool_value !== true) return DASH;
+  const cut = cellAt(data, "registration.fee_percent", plan);
   return cut?.int_value != null ? `${CHECK} ${cut.int_value}%` : CHECK;
 }
 
@@ -110,20 +149,18 @@ function competitionsRow(data: MatrixData): PricingRow {
   const cell = data["competitions.max_active"];
   return {
     labelKey: "pricing.matrix.competitions.max_active",
-    free: intCell(cell?.community),
-    pass: "pricing.matrix.passedEvent",
-    pro: intCell(cell?.pro),
-    plus: intCell(cell?.pro_plus),
+    // Both rungs read the prose cell: a pass IS one competition, at either
+    // size. What L buys is a bigger event, never more of them.
+    cells: cellsFor((plan) =>
+      PASS_PLANS.has(plan) ? "pricing.matrix.passedEvent" : intCell(cell?.[plan]),
+    ),
   };
 }
 
 function feesRow(data: MatrixData): PricingRow {
   return {
     labelKey: "pricing.matrix.fees",
-    free: feeCell(data, "community"),
-    pass: feeCell(data, "event_pass"),
-    pro: feeCell(data, "pro"),
-    plus: feeCell(data, "pro_plus"),
+    cells: cellsFor((plan) => feeCell(data, plan)),
   };
 }
 
@@ -136,14 +173,10 @@ function feesRow(data: MatrixData): PricingRow {
  * nothing about the ladder is hardcoded here.
  */
 function orgsRow(data: MatrixData): PricingRow {
-  const cell = data["orgs.max_owned"];
   return {
     labelKey: "pricing.matrix.orgs.max_owned",
     noteKey: "pricing.matrix.orgs.max_owned.note",
-    free: intCell(cell?.community),
-    pass: passCell(data, "orgs.max_owned", intCell),
-    pro: intCell(cell?.pro),
-    plus: intCell(cell?.pro_plus),
+    cells: cellsFor((plan) => intCell(cellAt(data, "orgs.max_owned", plan))),
   };
 }
 
@@ -156,10 +189,7 @@ function buildRow(data: MatrixData, feature: string): PricingRow {
   const fmt = cellFormatter(feature);
   return {
     labelKey: `pricing.matrix.${feature}`,
-    free: fmt(data[feature]?.community),
-    pass: passCell(data, feature, fmt),
-    pro: fmt(data[feature]?.pro),
-    plus: fmt(data[feature]?.pro_plus),
+    cells: cellsFor((plan) => fmt(cellAt(data, feature, plan))),
   };
 }
 

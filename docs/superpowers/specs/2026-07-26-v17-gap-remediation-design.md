@@ -72,7 +72,7 @@ One rework of the grant sweep (lib/credits.ts:314-324):
 
 ### W5 — L-rung (#294)
 
-Migration seeds `event_pass_l` into plans + plan_entitlements **derived from the M rung** (differences only: ∞ entrants, ≤20 divisions). $59 price in stripe-plans.json (per-currency). `pass_key` threaded through pass-checkout → session metadata → webhook. Two-option purchase modal leads with the entrant/division difference — no "best value" label. Lock/credit/refund machinery is rung-agnostic already; regression tests prove it (lock fires on L, +25 credit grant, refund clawback).
+Migration seeds `event_pass_l` into plans + plan_entitlements **derived from the M rung** (differences only: ∞ entrants, ≤20 divisions). $59 price in stripe-plans.json (per-currency). `pass_key` threaded through pass-checkout → session metadata → webhook. Two-option purchase picker — an **inline radio pair in the upgrade page's ticket stub**, not a modal — leads with the entrant/division difference, with no "best value" label. (Amended during W5, and posted on #294: this line and the issue's A7 acceptance both said "modal". A modal cannot ship here, because `e2e/event-pass.spec.ts:325,922` click `[data-pass-buy]` straight through to the Stripe iframe and nothing may be inserted between the click and the money path. The substance — two options, led by the size difference, no "best value" — is unchanged.) Lock/credit/refund machinery is rung-agnostic already; regression tests prove it (lock fires on L, +25 credit grant, refund clawback).
 
 ### W6 — extra-org add-on (#293)
 

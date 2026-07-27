@@ -5,11 +5,18 @@ export const dynamic = "force-dynamic";
 // declares force-dynamic; this repeats it because the layout itself does an
 // uncached DB read.
 //
-// TWO facts, not one. "Is there a pass row" alone left an org already on a paid
-// plan reading false, and the gate then offered it the $29 Event Pass — which
-// for a paid org is a DOWNGRADE, not a redundant sale: the pass grants 10 AI
-// runs per division against pro's 20, and 64 entrants per division against
-// pro's 256. So the org's resolved plan rides along in the same read.
+// THREE facts, not one. "Is there a pass row" alone left an org already on a
+// paid plan reading false, and the gate then offered it the Event Pass — which
+// for a paid org is a DOWNGRADE, not a redundant sale: Pro's matrix is a strict
+// superset of the pass's at every key the pass lifts. So the org's resolved plan
+// rides along in the same read.
+//
+// The third is the pass's own RUNG plus the org's CURRENCY (v17 #294). Both
+// exist only on the server — the rung is a column, the currency is a
+// subscription/cookie/header resolution — and both are needed by client islands
+// that were guessing: the paywall priced every reader on earth in hardcoded usd,
+// and the "pass active" signals named the product family while two rungs sell at
+// $29 and $59.
 //
 // Deliberately NOT auth-gated. `requireCompetitionPage` 404s scorers and
 // non-members, but the /o layout lets both through on purpose so an accepted
@@ -24,6 +31,8 @@ export const dynamic = "force-dynamic";
 // pre-empting it.
 import { sql } from "@/lib/db";
 import { isPaidPlan, orgPlanKey } from "@/lib/entitlements";
+import { isPassKey, type Currency, type PassKey } from "@/lib/currency";
+import { preferredCurrency } from "@/lib/currency-server";
 import { orgBySlug, compBySlug } from "@/server/slug-resolve";
 import { CompetitionPassProvider } from "@/components/competition-pass-provider";
 
@@ -46,22 +55,28 @@ export default async function CompetitionLayout({
   params: Promise<{ orgSlug: string; compSlug: string }>;
 }) {
   const { orgSlug, compSlug } = await params;
-  const { active, paidPlan } = await passState(orgSlug, compSlug);
+  const { passKey, paidPlan, currency } = await passState(orgSlug, compSlug);
   return (
-    <CompetitionPassProvider active={active} paidPlan={paidPlan}>
+    <CompetitionPassProvider passKey={passKey} paidPlan={paidPlan} currency={currency}>
       {children}
     </CompetitionPassProvider>
   );
 }
 
 /**
- * Is there a `competition_passes` row for this competition, and is the org on a
- * paid plan?
+ * Which pass rung does this competition hold, is the org on a paid plan, and
+ * what currency does it buy in?
  *
  * The slug lookups go through the React-`cache()`d resolvers, which the org
  * layout and the child page already call with the same arguments — so in the
- * common request the extra work is the two reads below, issued CONCURRENTLY:
- * one round trip in wall-clock terms, and neither depends on the other.
+ * common request the extra work is the three reads below, issued CONCURRENTLY:
+ * one round trip in wall-clock terms, and none depends on another.
+ *
+ * `pass_key` rather than `select 1`: same row, same index, one more column, and
+ * it is the only place a client island can learn the rung (v17 #294).
+ * `isPassKey` guards it rather than a cast — the column is `not null default
+ * 'event_pass'` and a row written by a future rung this build predates must
+ * degrade to a real label, not to a missing dictionary key.
  *
  * `stripe_payment_intent` is NOT consulted: it is nullable by design (V271),
  * and a staff-granted pass with a null intent is fully active.
@@ -78,16 +93,21 @@ export default async function CompetitionLayout({
 async function passState(
   orgSlug: string,
   compSlug: string,
-): Promise<{ active: boolean; paidPlan: boolean }> {
-  const none = { active: false, paidPlan: false };
+): Promise<{ passKey: PassKey | null; paidPlan: boolean; currency: Currency }> {
+  const none = { passKey: null, paidPlan: false, currency: "usd" as Currency };
   const org = await orgBySlug(orgSlug);
   if (!org || "renamedTo" in org) return none;
   const comp = await compBySlug(org.id, compSlug);
   if (!comp || "renamedTo" in comp) return none;
-  const [[pass], planKey] = await Promise.all([
-    sql<{ one: number }[]>`
-      select 1 as one from competition_passes where competition_id = ${comp.id} limit 1`,
+  const [[pass], planKey, currency] = await Promise.all([
+    sql<{ pass_key: string }[]>`
+      select pass_key from competition_passes where competition_id = ${comp.id} limit 1`,
     orgPlanKey(org.id),
+    preferredCurrency(org.id),
   ]);
-  return { active: !!pass, paidPlan: isPaidPlan(planKey) };
+  return {
+    passKey: pass ? (isPassKey(pass.pass_key) ? pass.pass_key : "event_pass") : null,
+    paidPlan: isPaidPlan(planKey),
+    currency,
+  };
 }

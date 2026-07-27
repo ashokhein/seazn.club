@@ -27,7 +27,8 @@ export interface PassCandidate {
  *    invited to spend $29 on strictly less than it holds;
  *  - `rows` excludes competitions that already hold a pass, so nothing here can
  *    re-sell one. Held passes have their own section above
- *    (<BillingPassPurchases>), which is where "Event Pass active" is said.
+ *    (<BillingPassPurchases>), which is where a pass already bought is listed,
+ *    with the rung it was.
  *
  * Renders nothing with no candidates: an org with no competitions has nothing
  * to buy a pass for, and an empty card would be noise.
