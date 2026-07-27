@@ -15,6 +15,16 @@ import { PaymentRequiredError } from "@/lib/errors";
 // cached snapshot carrying a `>= 0` CHECK that makes oversell impossible
 // atomically; `balance()` here reads the authoritative running sum.
 import { sql } from "@/lib/db";
+// #290: resolves the grant sweep's plan via the SAME resolver every other
+// entitlement read uses (orgPlanKey). This creates a deliberate two-file
+// import cycle — entitlements.ts already imports walletIdFor from THIS
+// file — safe because neither module calls the other's export at
+// module-evaluation time, only from inside an async function body, long
+// after both modules have finished loading. Verify with `npm run
+// typecheck` and by actually running credits-monthly-cron.test.ts: a
+// broken cycle here would surface as `orgPlanKey is not a function` at
+// call time, not a compile error.
+import { orgPlanKey } from "@/lib/entitlements";
 
 type Tx = postgres.TransactionSql;
 /** Anything the ledger's tagged-template queries can run against: the shared
@@ -267,62 +277,79 @@ export async function grantMonthly(
 }
 
 /**
- * Cron entry point (Task 6, `api/cron/billing-grant`): grant every LIVE
- * subscription row its monthly allowance for this period.
+ * Cron entry point (Task 6, `api/cron/billing-grant`): grant every wallet
+ * with at least one live org its monthly allowance for this period.
  *
- * Every org — paid or Community — has a `subscriptions` row (a group-of-one
- * when not actually grouped, `lib/auth.ts`'s `createOrgForUser`), so a single
- * scan of `subscriptions` covers both halves of SPEC-2 §11.2 without a
- * separate "orgs with no group" pass: a paid plan grants
- * `ai.credits.monthly(plan) * quantity_paid` (scaled to seats); `community`
- * grants a FLAT 10 regardless of `quantity_paid` — §11.2 is explicit that
- * Community is "never grouped" and never seat-scaled, even though its
- * group-of-one row technically carries a `quantity_paid` column.
+ * **Grants on the RESOLVED plan, not the raw subscription row (#290).** A
+ * prior version filtered `subscriptions.status in ('trialing', 'active',
+ * 'past_due')` before granting anything — so a churned subscription
+ * (`canceled`, `incomplete`, ...) was skipped by the query entirely and its
+ * org got 0 credits forever, even though `orgPlanKey` (entitlements.ts)
+ * already resolves that SAME row to `'community'` for every other
+ * entitlement read (hasFeature, getLimit, the billing page). This sweep now
+ * scans every subscription with a live org — no status filter — and calls
+ * `orgPlanKey` per wallet to learn what it should ACTUALLY be granted, so a
+ * churned org gets its Community 10/mo like any other Community wallet
+ * instead of silently nothing. No retroactive back-grant for months already
+ * missed (v17-gap design decision) — this only fixes the sweep going
+ * forward.
  *
- * The `exists (... organizations ...)` guard skips a group with no live org
- * left in it (an orphan the empty-group cleanup hasn't caught yet, or a
- * community group whose org was soft-deleted) — no wallet left to spend a
- * grant from.
+ * **Which org answers for the group:** `orgPlanKey` takes a single org id,
+ * but a wallet can back several orgs (a billing group). The `rep` lateral
+ * below picks the SAME representative `lib/billing-group.ts`'s
+ * `groupOrgLimit` does — the oldest LIVE org that is not suspended, falling
+ * back to a suspended one only if every org in the group is suspended — so
+ * a single suspended member cannot silently change which plan the whole
+ * group's credits resolve against. Re-implemented as SQL here rather than
+ * imported: `billing-group.ts` imports `lib/entitlements.ts` (for
+ * `getLimit`), which imports `lib/credits.ts` (for `walletIdFor`) — so
+ * `credits.ts` importing FROM `billing-group.ts` would close a second,
+ * avoidable cycle on top of the one this file already takes on for
+ * `orgPlanKey`. Keep this ORDER BY in step with `groupOrgLimit`'s by hand
+ * if that one ever changes.
  *
- * **Anchor (README §7 item 7; Task 6 re-review CRITICAL fix): calendar month
- * for EVERY wallet, paid or Community — never `current_period_end`.** An
- * earlier version of this sweep keyed paid subscriptions off
- * `subscriptions.current_period_end` on the theory that it tracked "the real
- * billing cycle" — but SPEC-2 §5.4's Cadence rule is explicit that the grant
- * is monthly *regardless of billing cadence* (an annual Pro at $159/yr must
- * still get 60/mo × 12, not a single 720 lump). Since `current_period_end`
- * for an annual-interval subscription only advances once a year, that
- * anchor silently collapsed 12 grants into 1 for every annual org — a
- * cadence regression, not an approximation. `grantMonthly`'s own
- * `monthlyPeriod()` (plain `YYYY-MM`, server clock) is now the only anchor
- * this function uses, for both paid and Community wallets alike; every live
- * wallet gets a fresh grant once per calendar month, independent of what
- * Stripe's billing interval or renewal date happen to be.
+ * A representative org that is itself community-suspended (a fully
+ * moderation-suspended group) grants flat Community — a deliberate,
+ * minimal reading of #290 that does NOT special-case that edge the way
+ * `groupOrgLimit` special-cases the ORG CAP; see the plan task that added
+ * this function for the reasoning.
+ *
+ * **Anchor (README §7 item 7): calendar month for EVERY wallet, paid or
+ * Community — never `current_period_end`.** SPEC-2 §5.4's Cadence rule is
+ * explicit that the grant is monthly *regardless of billing cadence* (an
+ * annual Pro at $159/yr must still get 60/mo × 12, not a single 720 lump),
+ * so `grantMonthly`'s own `monthlyPeriod()` (UTC `YYYY-MM`) is the only
+ * anchor this function uses.
  *
  * One wallet's failure (a bad plan_key, a transient DB error) is logged and
  * skipped rather than aborting the whole sweep, matching
  * `reconcileGroupQuantities`'s per-group try/catch — `failed` is returned
- * (mirroring `reconcileGroupQuantities`'s own `{checked, corrected, failed}`
- * shape) so the caller (the cron route, then `billing-grant.yml`) can warn
- * on a persistent per-wallet grant failure instead of it going unnoticed.
+ * so the caller (the cron route, then `billing-grant.yml`) can warn on a
+ * persistent per-wallet grant failure instead of it going unnoticed.
  */
 export async function grantMonthlyForAllWallets(): Promise<{
   wallets: number;
   granted: number;
   failed: number;
 }> {
-  const rows = await sql<{ id: string; plan_key: string; quantity_paid: number }[]>`
-    select s.id, s.plan_key, s.quantity_paid from subscriptions s
-     where s.status in ('trialing', 'active', 'past_due')
-       and exists (
-             select 1 from organizations o
-              where o.subscription_id = s.id and o.deleted_at is null)`;
+  const rows = await sql<
+    { id: string; quantity_paid: number; rep_org_id: string }[]
+  >`
+    select s.id, s.quantity_paid, rep.id as rep_org_id
+      from subscriptions s
+      cross join lateral (
+        select o.id from organizations o
+         where o.subscription_id = s.id and o.deleted_at is null
+         order by (o.status = 'suspended'), o.created_at
+         limit 1
+      ) rep`;
   let granted = 0;
   let failed = 0;
   for (const row of rows) {
     try {
-      const qty = row.plan_key === "community" ? 1 : row.quantity_paid;
-      granted += await grantMonthly(row.id, row.plan_key, qty);
+      const planKey = await orgPlanKey(row.rep_org_id);
+      const qty = planKey === "community" ? 1 : row.quantity_paid;
+      granted += await grantMonthly(row.id, planKey, qty);
     } catch (err) {
       failed++;
       console.error(`[credits] monthly grant failed for wallet ${row.id}`, err);

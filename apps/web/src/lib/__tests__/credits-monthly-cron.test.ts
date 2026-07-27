@@ -87,13 +87,29 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     expect(await balance(subId)).toBe(200);
   });
 
-  it("skips a canceled subscription (not live)", { timeout: CRON_TEST_TIMEOUT }, async () => {
+  it("REGRESSION (#290): grants the resolved Community rate for a canceled (churned) subscription, not zero", { timeout: CRON_TEST_TIMEOUT }, async () => {
     const orgId = await seedOrg();
+    // comped_at stays null (setOrgPlan's default) — orgPlanKey's `canceled`
+    // arm degrades this to community, exactly like any other entitlement
+    // read of this org (hasFeature, getLimit, the billing page).
     const subId = await setOrgPlan(orgId, "pro", "canceled");
 
     await grantMonthlyForAllWallets();
 
-    expect(await balance(subId)).toBe(0);
+    // Before #290 the raw status filter (`status in ('trialing','active',
+    // 'past_due')`) skipped this row entirely — a churned org got 0 credits
+    // forever even though every OTHER entitlement read already resolves it
+    // to Community and expects the Community grant to back that up.
+    expect(await balance(subId)).toBe(10);
+  });
+
+  it("REGRESSION (#290): grants the resolved Community rate for an incomplete (never-paid) subscription", { timeout: CRON_TEST_TIMEOUT }, async () => {
+    const orgId = await seedOrg();
+    const subId = await setOrgPlan(orgId, "pro", "incomplete");
+
+    await grantMonthlyForAllWallets();
+
+    expect(await balance(subId)).toBe(10);
   });
 
   it("expires the prior period's unspent grant balance before granting the new period (D1)", { timeout: CRON_TEST_TIMEOUT }, async () => {
