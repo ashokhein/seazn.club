@@ -306,7 +306,14 @@ export async function grantMonthly(
  * `credits.ts` importing FROM `billing-group.ts` would close a second,
  * avoidable cycle on top of the one this file already takes on for
  * `orgPlanKey`. Keep this ORDER BY in step with `groupOrgLimit`'s by hand
- * if that one ever changes.
+ * if that one ever changes. The `live` lateral's predicate carries a SECOND
+ * hand-sync obligation: `subscription_id = s.id and deleted_at is null` must
+ * stay identical both to the `rep` lateral's filter above (or the
+ * representative could come from outside the set being counted) and to
+ * `syncGroupQuantity`'s own active count (`billing-groups.ts`, the
+ * `count(*) ... where subscription_id = $1 and deleted_at is null` it feeds
+ * to the Stripe item) — that agreement is exactly what makes a trialing
+ * group's grant match the quantity its trial-end invoice will bill.
  *
  * A representative org that is itself community-suspended (a fully
  * moderation-suspended group) grants flat Community — a deliberate,
@@ -320,8 +327,12 @@ export async function grantMonthly(
  * free and raises the ACTIVE org count without moving `quantity_paid` (by
  * design: nothing has been billed yet). Granting on the frozen
  * `quantity_paid` alone would under-grant that org's own seat's worth of
- * credits, so a trialing wallet's quantity is `max(quantity_paid,
- * liveOrgCount)` — never less than what's actually live. #279's own tests
+ * credits, so a trialing PAID wallet's quantity is `max(quantity_paid,
+ * liveOrgCount)` — never less than what's actually live, and never less than
+ * what was actually paid for either (a customer who bought 3 seats and had
+ * orgs leave mid-trial keeps granting on 3). A trialing wallet whose
+ * representative org RESOLVES to community still grants the flat 1: the
+ * `community` arm is checked first, on purpose. #279's own tests
  * (`billing-group-trial-seat.test.ts`) assert `quantity_paid` itself stays
  * frozen — this reads `live_org_count` alongside it rather than touching
  * that column, so both stay true at once.

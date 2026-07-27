@@ -232,4 +232,20 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     // worth of monthly credits.
     expect(await balance(subId)).toBe(60 * 2);
   });
+
+  it("REGRESSION (#291): a trialing group still grants for quantity_paid when it sits ABOVE the live org count", { timeout: CRON_TEST_TIMEOUT }, async () => {
+    const orgId = await seedOrg();
+    const subId = await setOrgPlan(orgId, "pro", "trialing");
+    // The other direction of the max(): this customer PAID for 3 seats before
+    // the trial and orgs have since left (or never been created), so the live
+    // count is 1. The grant must not shrink to what's live — they are still
+    // entitled to the 3 seats' worth they're being billed for. Pins the
+    // `quantity_paid` half of max(); without it, `live_org_count` alone would
+    // satisfy every other test in this file.
+    await sql`update subscriptions set quantity_paid = 3 where id = ${subId}`;
+
+    await grantMonthlyForAllWallets();
+
+    expect(await balance(subId)).toBe(60 * 3);
+  });
 });
