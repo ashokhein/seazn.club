@@ -104,7 +104,7 @@ balance(wallet) = sum(delta)
 
 **Wallet key = billing entity, not org** — see §11. Any org in a billing group spends from the one shared pool; `spent_by_org_id` records who, for per-org reporting. Rows are truth; `balance_after` is a cached snapshot + a `>= 0` guard that makes oversell impossible atomically. **Append-only** — corrections are compensating rows, never UPDATE/DELETE (it's money).
 
-**Credit unit:** **1 credit = 1 AI run.** Run *size* is already capped per tier (entrants/divisions), so COGS is bounded. A size-weight multiplier is a documented future option if a run class blows margin (open question #3).
+**Credit unit:** **1 credit = 1 AI run.** Run *size* is already capped per tier (entrants/divisions), so COGS is bounded. A size-weight multiplier is a documented future option if a run class blows margin (open question #3). Flat, monitored — instrumented 2026-07-26 (#295): `pack_units` stamped on every AI run, a COGS-vs-sold margin panel on `/admin/revenue`, and a 2x-median expensive-run staff alert are live; revisit weighting when the margin data says so.
 
 ### 5.2 Consume — reserve → run → settle
 
