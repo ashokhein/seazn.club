@@ -51,11 +51,25 @@ const NUMERIC_RE = "^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$";
 const INT_RE = "^-?[0-9]+$";
 const UUID_RE = "^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$";
 
+// THESE ARE FUNCTIONS, NOT CONSTANTS — do not "simplify" them back.
+//
+// `sql` (lib/db.ts) is a Proxy whose apply/get traps both call getClient(),
+// which THROWS when DATABASE_URL is unset. So a module-scope tagged template
+// — `const COSTED = sql\`…\`` — opens a database client at IMPORT time, not
+// query time. schedule-ai.ts and officials-ai.ts import this module, and much
+// of the usecase graph imports those, so one eager fragment took ~30 suites
+// down at COLLECTION in CI's unit job, which deliberately runs with no
+// DATABASE_URL so DB suites self-skip (ci.yml). It is invisible locally,
+// where vitest.config.ts loads .env.local and DATABASE_URL is always set.
+//
+// Called inside a query, the fragments compose exactly as before — postgres.js
+// builds the parameterised SQL at call time either way.
+
 /** "This run recorded a readable cost." `coalesce(..., false)` because a NULL
  *  key makes the regex NULL, not false. */
-const COSTED = sql`coalesce(payload->>'cost_usd' ~ ${NUMERIC_RE}, false)`;
+const COSTED = () => sql`coalesce(payload->>'cost_usd' ~ ${NUMERIC_RE}, false)`;
 /** Same predicate against the `e.` alias `listAiRuns` joins under. */
-const COSTED_E = sql`coalesce(e.payload->>'cost_usd' ~ ${NUMERIC_RE}, false)`;
+const COSTED_E = () => sql`coalesce(e.payload->>'cost_usd' ~ ${NUMERIC_RE}, false)`;
 
 export interface AiRunRow {
   id: string;
@@ -90,7 +104,7 @@ export async function listAiRuns(limit: number): Promise<AiRunRow[]> {
                 then (e.payload->'usage'->>'output_tokens')::int end as output_tokens,
            case when e.payload->'usage'->>'repair_rounds' ~ ${INT_RE}
                 then (e.payload->'usage'->>'repair_rounds')::int end as repair_rounds,
-           case when ${COSTED_E}
+           case when ${COSTED_E()}
                 then (e.payload->>'cost_usd')::numeric::float8 end   as cost_usd,
            case
              when e.type = 'schedule.ai_failed' then coalesce(e.payload->>'outcome', 'failed')
@@ -125,7 +139,7 @@ export async function aiRunTotals(days: number): Promise<AiRunTotals> {
                     filter (where payload->'usage'->>'input_tokens' ~ ${INT_RE}), 0)::int  as input_tokens,
            coalesce(sum((payload->'usage'->>'output_tokens')::int)
                     filter (where payload->'usage'->>'output_tokens' ~ ${INT_RE}), 0)::int as output_tokens,
-           sum((payload->>'cost_usd')::numeric) filter (where ${COSTED})::float8 as cost_usd
+           sum((payload->>'cost_usd')::numeric) filter (where ${COSTED()})::float8 as cost_usd
     from competition_events
     where type = any(${AI_RUN_EVENT_TYPES as unknown as string[]})
       and created_at >= now() - make_interval(days => ${days})`;
@@ -180,7 +194,7 @@ export async function medianRunCostUsd(
        -- carrying no usable cost carries no signal either, so it must not help
        -- a thin window reach AI_RUN_MEDIAN_MIN_SAMPLE. Otherwise 19 real runs
        -- plus one corrupt row would start alerting off a baseline of 19.
-       and ${COSTED}
+       and ${COSTED()}
        and created_at >= now() - make_interval(days => ${days})`;
   if (!row || row.n < AI_RUN_MEDIAN_MIN_SAMPLE) return null;
   return row.median != null ? Number(row.median) : null;
@@ -344,7 +358,8 @@ const PHASES: readonly AiRunPhase[] = ["schedule", "officials"];
  *  A plain non-negative integer is the only shape either writer produces
  *  (`movableIds.size` / `pack.fixtures.length`), so `INT_RE`'s leading `-?`
  *  would be too generous here and this uses its own stricter pattern. */
-const SIZED = sql`coalesce(payload->>'pack_units' ~ '^[0-9]+$', false)`;
+// A function for the same import-safety reason as COSTED above — see that note.
+const SIZED = () => sql`coalesce(payload->>'pack_units' ~ '^[0-9]+$', false)`;
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
@@ -428,7 +443,7 @@ export async function aiMarginReport(days: number): Promise<AiMarginReport> {
   const cogsRows = await sql<{ org_id: string | null; cogs_usd: string | null }[]>`
     select org_id,
            coalesce(sum((payload->>'cost_usd')::numeric)
-                    filter (where ${COSTED}), 0)::text as cogs_usd
+                    filter (where ${COSTED()}), 0)::text as cogs_usd
       from competition_events
      where type = any(${AI_RUN_EVENT_TYPES as unknown as string[]})
        and created_at >= now() - make_interval(days => ${days})
@@ -458,17 +473,17 @@ export async function aiMarginReport(days: number): Promise<AiMarginReport> {
              else 'officials'
            end as phase,
            count(*)::int as runs,
-           count(*) filter (where not ${SIZED}) ::int as runs_missing_units,
-           count(*) filter (where not ${COSTED}) ::int as runs_missing_cost,
+           count(*) filter (where not ${SIZED()}) ::int as runs_missing_units,
+           count(*) filter (where not ${COSTED()}) ::int as runs_missing_cost,
            -- units and sized_cogs_usd share ONE filter so they stay a matched
            -- pair: a run missing either half is out of both, and the ratio
            -- below can never divide one set's cost by another set's units.
            coalesce(sum((payload->>'pack_units')::numeric)
-                    filter (where ${SIZED} and ${COSTED}), 0)::text as units,
+                    filter (where ${SIZED()} and ${COSTED()}), 0)::text as units,
            coalesce(sum((payload->>'cost_usd')::numeric)
-                    filter (where ${COSTED}), 0)::text as cogs_usd,
+                    filter (where ${COSTED()}), 0)::text as cogs_usd,
            coalesce(sum((payload->>'cost_usd')::numeric)
-                    filter (where ${SIZED} and ${COSTED}), 0)::text as sized_cogs_usd
+                    filter (where ${SIZED()} and ${COSTED()}), 0)::text as sized_cogs_usd
       from competition_events
      where type = any(${AI_RUN_EVENT_TYPES as unknown as string[]})
        and created_at >= now() - make_interval(days => ${days})
