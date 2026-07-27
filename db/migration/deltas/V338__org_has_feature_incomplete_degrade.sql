@@ -17,13 +17,22 @@
 -- Audit note (#288 "audit ALL Stripe sub statuses in one pass"): Stripe's
 -- other two "never really paid" statuses — `unpaid` and
 -- `incomplete_expired` — do NOT need their own arms here, in SQL or in
--- TS. STATUS_MAP (lib/billing.ts, the ONE writer of subscriptions.status
--- via syncSubscriptionForGroup) collapses them at write time — `unpaid`
--- becomes our `past_due` (so it takes the existing 14-day dunning-grace
--- arm, the same as any other renewal failure) and `incomplete_expired`
--- becomes our `canceled` (so it takes the existing immediate
--- canceled-arm, no grace). Neither literal string can ever reach this
--- function's `s.status` column. Proven in
+-- TS. STATUS_MAP (lib/billing.ts, via syncSubscriptionForGroup — the one
+-- writer of STRIPE-SOURCED status) collapses them at write time —
+-- `unpaid` becomes our `past_due` (so it takes the existing 14-day
+-- dunning-grace arm, the same as any other renewal failure) and
+-- `incomplete_expired` becomes our `canceled` (so it takes the existing
+-- immediate canceled-arm, no grace). STATUS_MAP is not the column's only
+-- writer — but it is the only one that TRANSLATES a Stripe status, and
+-- no other writer can invent one. Every other writer either stamps one
+-- of OUR OWN literals (`active`, `trialing`, `past_due`, `canceled` —
+-- org creation in lib/auth.ts, the staff comp/extend-trial tools in
+-- server/usecases/admin-plan.ts, the webhook handlers in
+-- server/usecases/billing-events.ts, the group cancel/downgrade paths in
+-- lib/billing.ts) or writes back a value it just read off the row (the
+-- comp/trial rollbacks, and cancelGroupIfEmpty's Stripe-cancel rollback
+-- in server/usecases/billing-groups.ts). So neither literal string can
+-- ever reach this function's `s.status` column. Proven in
 -- apps/web/src/lib/__tests__/billing-grace-anchor.test.ts ("#288 audit"
 -- cases) and the suspended-org parity case this migration ships
 -- alongside (apps/web/src/lib/__tests__/entitlements-sql-parity.test.ts).
