@@ -58,7 +58,10 @@ export function PassUpgradeButton({
     setError(null);
     setLoading(true);
     track(EVENTS.CHECKOUT_STARTED, { plan_key: "event_pass" });
-    const result = await fetchPassCheckoutClientSecret(competitionId);
+    // M explicitly. This button predates the L rung (v17 #294) and still buys M
+    // only; T5 replaces it with the M/L picker, at which point the rung comes
+    // from the buyer's choice rather than this literal.
+    const result = await fetchPassCheckoutClientSecret(competitionId, "event_pass");
     setLoading(false);
     if (result.ok) setClientSecret(result.clientSecret);
     else setError(result.error);

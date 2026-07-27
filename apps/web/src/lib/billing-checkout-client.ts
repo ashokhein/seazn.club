@@ -46,23 +46,29 @@ export async function fetchCheckoutClientSecret(
 }
 
 /** POST /api/billing/pass-checkout for a one-time Event Pass (v3/07 §3).
- *  `passKey` selects the RUNG — M (`'event_pass'`, the default, so every
- *  pre-#294 call site keeps buying M) or L (`'event_pass_l'`, v17 #294).
+ *  `passKey` selects the RUNG — M (`'event_pass'`) or L (`'event_pass_l'`,
+ *  v17 #294).
  *
- *  The key is the only thing that picks the price: the route resolves
- *  `plans.stripe_price_id_onetime` by exactly this value and stamps it into the
- *  session metadata that the webhook records, so dropping it does not fail —
- *  it sells the other rung. Typed as `PassKey` rather than a local union so a
- *  third rung added to PASS_KEYS widens this helper instead of silently
- *  routing through an enumerator that has gone stale (this wave's whole bug
- *  class). Type-only import: no runtime dependency reaches the client bundle.
+ *  **Required, deliberately not defaulted.** The key is the only thing that
+ *  picks the PRICE OBJECT: the route resolves `plans.stripe_price_id_onetime`
+ *  by exactly this value and stamps it into the session metadata the webhook
+ *  records. So a forgotten key here does not fail — it MISCHARGES, selling L's
+ *  caps at M's $29 or billing M's caps at L's $59. A default would buy nothing
+ *  (there is one call site) and would permanently disarm `tsc` for every future
+ *  one; same ruling as `passPrice` (T2) and `recordPassPurchase` (T3), and
+ *  stronger here because those only misquote.
+ *
+ *  Typed as `PassKey` rather than a local union so a third rung added to
+ *  PASS_KEYS widens this helper instead of routing through an enumerator that
+ *  has gone stale (this wave's whole bug class). Type-only import: no runtime
+ *  dependency reaches the client bundle.
  *
  *  A rung the server has no synced price for is a 503, and an unknown key a
  *  400 — both arrive as `{ ok: false, error }` carrying the SERVER's message,
  *  which callers should render verbatim. */
 export async function fetchPassCheckoutClientSecret(
   competitionId: string,
-  passKey: PassKey = "event_pass",
+  passKey: PassKey,
   fetchFn: typeof fetch = fetch,
 ): Promise<CheckoutSecretResult> {
   return fetchClientSecret(

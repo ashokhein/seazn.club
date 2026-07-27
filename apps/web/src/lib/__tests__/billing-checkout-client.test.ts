@@ -87,11 +87,19 @@ describe("fetchPassCheckoutClientSecret", () => {
     expect(body).toEqual({ competition_id: "comp-1", pass_key: "event_pass_l" });
   });
 
-  it("defaults to pass_key \"event_pass\" when not told which rung", async () => {
+  // The M half of the same claim. `passKey` is REQUIRED (no default), so
+  // "forgot to say which rung" is a COMPILE error and has no runtime test to
+  // write — naming M gets M, which is what makes the L case above proof of a
+  // ROUTED value rather than of a constant.
+  it("posts pass_key \"event_pass\" when M is the rung named", async () => {
     const fetchFn = vi.fn().mockResolvedValue(
       jsonResponse({ ok: true, data: { client_secret: "cs_test_m" } }),
     );
-    await fetchPassCheckoutClientSecret("comp-1", undefined, fetchFn as unknown as typeof fetch);
+    await fetchPassCheckoutClientSecret(
+      "comp-1",
+      "event_pass",
+      fetchFn as unknown as typeof fetch,
+    );
     // Guarded before the destructure below so a helper that ignores the
     // third-position fetchFn reds as "called 0 times", not as a TypeError.
     expect(fetchFn).toHaveBeenCalledTimes(1);
