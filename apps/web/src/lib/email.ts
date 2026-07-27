@@ -799,6 +799,51 @@ export async function sendPassCreditReversalIncompleteAlertEmail(
   return send({ to: opts.to, transactional: true, subject, html, text });
 }
 
+export interface AiRunCostAlertEmail {
+  to: string;
+  orgId: string;
+  competitionId?: string;
+  phase: "schedule" | "officials";
+  model: string;
+  costUsd: number;
+  medianUsd: number;
+}
+
+/** Internal staff alert (v17 gap #295): a single AI run's cost landed at or
+ *  above AI_RUN_COST_ALERT_MULTIPLE x the trailing 30-day median for its
+ *  phase — the exact trigger SPEC-2 §5.1 named for revisiting the flat
+ *  1-credit-per-run price. Ops-only, no user-facing i18n (mirrors
+ *  sendStuckEventsAlertEmail). Not deduped — a run class that keeps tripping
+ *  this is the point, not a bug to suppress. */
+export async function sendAiRunCostAlertEmail(opts: AiRunCostAlertEmail): Promise<boolean> {
+  const multiple = opts.medianUsd > 0 ? opts.costUsd / opts.medianUsd : null;
+  const subject = `Expensive AI run: $${opts.costUsd.toFixed(4)} (org ${opts.orgId})`;
+  const bodyText =
+    `A ${opts.phase} AI run for org ${opts.orgId}` +
+    `${opts.competitionId ? ` (competition ${opts.competitionId})` : ""} cost $${opts.costUsd.toFixed(4)} on ` +
+    `${opts.model}${multiple ? `, ${multiple.toFixed(1)}x the trailing 30-day ${opts.phase} median ($${opts.medianUsd.toFixed(4)})` : ""}. ` +
+    `Size-weighted credit pricing is deferred until this class of run recurs — see v17 gap #295.`;
+  const html = renderEmail({
+    subject,
+    preheader: `${opts.phase} run — org ${opts.orgId}`,
+    eyebrow: "AI credits · Margin",
+    title: "Expensive AI run",
+    contentHtml:
+      paragraph(escapeHtml(bodyText)) +
+      panel(
+        "Run",
+        `org: ${opts.orgId}${opts.competitionId ? `\ncompetition: ${opts.competitionId}` : ""}\n` +
+          `phase: ${opts.phase}\nmodel: ${opts.model}\ncost: $${opts.costUsd.toFixed(4)}\n` +
+          `median: $${opts.medianUsd.toFixed(4)}`,
+      ),
+    footerNote: "Automated staff alert — AI run cost check (v17 gap #295).",
+  });
+  const text =
+    `${bodyText}\n\norg: ${opts.orgId} · phase: ${opts.phase} · model: ${opts.model} · ` +
+    `cost $${opts.costUsd.toFixed(4)} · median $${opts.medianUsd.toFixed(4)}`;
+  return send({ to: opts.to, transactional: true, subject, html, text });
+}
+
 /** True when Resend is configured. */
 export function emailConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY);
