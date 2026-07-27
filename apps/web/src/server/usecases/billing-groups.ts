@@ -698,12 +698,36 @@ export async function attachOrgToGroup(args: {
     assertWithinGroupCap(Number(heldRow?.n ?? 0), capLimit);
 
     await tx`update organizations set subscription_id = ${subscriptionId} where id = ${orgId}`;
-    // #285: merge whatever AI credits the org's OWN wallet held into the
-    // group's, in the SAME transaction as the move — org.subscription_id
-    // here is still the PRE-move value (read at the top of this function,
-    // before the UPDATE above), i.e. the wallet the org is leaving.
+    // #285: what happens to the wallet the org is leaving — org.subscription_id
+    // here is still the PRE-move value (read at the top of this function, before
+    // the UPDATE above), so it names that wallet.
+    //
+    // THE RULE: merge only when this org is the LAST one on the old wallet.
+    // Merging exists to stop a SOLE org's balance stranding on a subscription
+    // nothing points at any more (dropEmptyGroup can then delete the row
+    // outright). When siblings remain, that wallet is a SHARED pool they are
+    // still spending from, and the leaver takes no share of it — the same
+    // decided default detachOrgFromGroup enforces. Merging there would let one
+    // org walk off with the whole group's grant AND pack balance, which the
+    // dead old group (cancelled, comped or community — the only states the
+    // hasLiveSubscription guard above lets an org move out of) can very much
+    // still be holding, since pack credits never expire.
+    //
+    // The old group is deliberately NOT locked (see the lock comment at the top
+    // of this transaction), so two siblings leaving at the same instant can each
+    // still see the other and both forfeit. That errs in the safe direction —
+    // credits stay put, nobody is paid twice — and the balance remains on the
+    // old wallet, recoverable, rather than being duplicated into two groups.
     const oldWalletId = org.subscription_id ?? orgId;
-    await mergeWalletOnAttach(tx, oldWalletId, subscriptionId);
+    const [siblingRow] = org.subscription_id
+      ? await tx<{ n: string }[]>`
+          select count(*)::text as n from organizations
+           where subscription_id = ${org.subscription_id}
+             and id <> ${orgId} and deleted_at is null`
+      : [];
+    if (Number(siblingRow?.n ?? 0) > 0)
+      await auditWalletForfeitedOnDetach(tx, actorUserId, orgId, oldWalletId, subscriptionId);
+    else await mergeWalletOnAttach(tx, oldWalletId, subscriptionId);
     return { from: org.subscription_id, moved: true };
   });
 
