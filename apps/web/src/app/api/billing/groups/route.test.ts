@@ -44,15 +44,17 @@ interface Seeded {
 async function seedGroup(
   plan: string,
   orgCount: number,
-  over: { quantityPaid?: number } = {},
+  over: { quantityPaid?: number; status?: string; stripeSubId?: string } = {},
 ): Promise<Seeded> {
   const s = uniq();
   const [{ id: payerId }] = await sql<{ id: string }[]>`
     insert into users (email, display_name, email_verified)
     values (${`groups-route-${s}@test.local`}, 'Payer', true) returning id`;
   const [{ id: subId }] = await sql<{ id: string }[]>`
-    insert into subscriptions (owner_user_id, plan_key, status, quantity_paid)
-    values (${payerId}, ${plan}, 'active', ${over.quantityPaid ?? orgCount}) returning id`;
+    insert into subscriptions (owner_user_id, plan_key, status, quantity_paid,
+                               stripe_subscription_id)
+    values (${payerId}, ${plan}, ${over.status ?? "active"}, ${over.quantityPaid ?? orgCount},
+            ${over.stripeSubId ?? null}) returning id`;
   const orgIds: string[] = [];
   for (let i = 0; i < orgCount; i++) {
     const [{ id }] = await sql<{ id: string }[]>`
@@ -72,6 +74,7 @@ type Body = {
     plan_key: string;
     quantity_paid: number;
     max_orgs: number | null;
+    has_live_subscription: boolean;
     orgs: {
       id: string;
       name: string;
@@ -184,6 +187,33 @@ describe.skipIf(!HAS_DB)("GET /api/billing/groups", () => {
     expect(mine).toBeDefined();
     expect(mine!.orgs).toEqual([]);
     expect(mine!.max_orgs).toBeNull();
+  });
+
+  it("calls an 'incomplete' subscription LIVE, the same as hasLiveSubscription does", async () => {
+    // `has_live_subscription` is named after hasLiveSubscription(), which
+    // billing-groups.ts uses to answer this question for the SAME UI — but this
+    // route spelled the status list out by hand and left 'incomplete' out of
+    // it. A never-paid first invoice still owns a real Stripe subscription: it
+    // blocks a second checkout, and a transfer of it is the two-phase card
+    // handover, not a one-step move. Two answers for one group meant the
+    // confirm copy promised something the use case would not do.
+    const g = await seedGroup("pro", 1, { status: "incomplete", stripeSubId: `sub_incomplete_${uniq()}` });
+    caller.id = g.payerId;
+
+    const mine = (await call()).data.find((x) => x.id === g.subId)!;
+    expect(mine.has_live_subscription).toBe(true);
+  });
+
+  it("still calls a cancelled subscription dead, id or no id", async () => {
+    // The other half: interpolating the constant must not turn the column into
+    // "has an id". A departed customer keeps their stripe_subscription_id for
+    // ever, and 'canceled' is deliberately outside LIVE_SUBSCRIPTION_STATUSES
+    // so they can come back.
+    const g = await seedGroup("pro", 1, { status: "canceled", stripeSubId: `sub_gone_${uniq()}` });
+    caller.id = g.payerId;
+
+    const mine = (await call()).data.find((x) => x.id === g.subId)!;
+    expect(mine.has_live_subscription).toBe(false);
   });
 
   it("lists several groups for a payer who has detached one", async () => {

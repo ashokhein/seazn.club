@@ -2,6 +2,7 @@ import { sql } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { handler } from "@/lib/http";
 import { groupOrgLimit } from "@/lib/billing-group";
+import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscription-status";
 
 /**
  * GET /api/billing/groups — the billing groups you PAY for, with the
@@ -56,8 +57,16 @@ export async function GET() {
              -- id for ever. This is what tells the UI whether a transfer is the
              -- two-phase card handover or a one-step move, and the confirm copy
              -- promises different things in each case.
+             --
+             -- The status list is INTERPOLATED from LIVE_SUBSCRIPTION_STATUSES,
+             -- never spelled out here. This column is literally named after
+             -- hasLiveSubscription(), which billing-groups.ts uses to answer the
+             -- same question for the same UI — a hand-written list drifts from
+             -- it the moment the set changes, and it already had: 'incomplete'
+             -- (a never-paid first invoice, live enough to block a second
+             -- checkout) was missing, so the two disagreed about the same group.
              (s.stripe_subscription_id is not null
-              and s.status in ('trialing', 'active', 'past_due')) as has_live_subscription,
+              and s.status in ${sql([...LIVE_SUBSCRIPTION_STATUSES])}) as has_live_subscription,
              coalesce(
                (select json_agg(json_build_object(
                           'id', o.id, 'name', o.name, 'slug', o.slug, 'status', o.status,

@@ -939,6 +939,53 @@ describe.skipIf(!HAS_DB)("detach", () => {
     expect(await hasFeature(orgId, "api.access")).toBe(true);
   });
 
+  it("a FAILED Stripe cancel takes the poisoned cache back with the rollback", async () => {
+    // The cancel claim COMMITS `community`/`canceled` before Stripe is called,
+    // deliberately — holding the row lock across a network round trip is worse.
+    // But that means there is a real window in which the group reads as
+    // cancelled, and an attach queued on the group's lock can land an org in it
+    // during exactly that window. That org resolves its entitlements against
+    // the committed cancellation and the Community answer caches for the full
+    // 300s TTL. Then Stripe refuses, the row rolls back to a PAYING Pro group —
+    // and the cache still says Community.
+    //
+    // The rollback therefore has to bust the cache too. It used to `return
+    // "cancel_failed"` straight out of the catch, jumping over the invalidate
+    // on the success path below it, so a paying group was served Community for
+    // up to five minutes with nothing to correct it.
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const stripeSubId = "sub_cancelfail_" + uniq();
+    const group = await makeGroup(payer, { stripeSubId, periodEndDays: 30 });
+    const leaving = await makeOrg(group, clubOwner);
+    const joiner = await makeLooseOrg(payer);
+
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Stands in for the attach that wins the lock the instant the claim commits.
+    // Doing it inside the Stripe double is what puts it in the real window: the
+    // rollback has not run yet, and it is the only code that will.
+    stripeMock.subscriptionsCancel.mockImplementationOnce(async () => {
+      await sql`update organizations set subscription_id = ${group} where id = ${joiner.orgId}`;
+      // The poisoning read. Denies cache too (the resolver stores `{ v: null }`
+      // precisely so a deny is distinguishable from a miss), so this is a real
+      // 300s entry, not a no-op.
+      expect(await hasFeature(joiner.orgId, "api.access")).toBe(false);
+      throw new Error("stripe refused the cancel");
+    });
+
+    const res = await detachOrgFromGroup({ actorUserId: clubOwner, orgId: leaving });
+
+    // The row is back exactly as it was: live, billable, Pro.
+    expect(res.cancelled_group).toBeNull();
+    const after = await readGroup(group);
+    expect(after.status).toBe("active");
+    expect(after.plan_key).toBe("pro");
+    // And so is the answer the group serves. This is the assertion the missing
+    // invalidate failed.
+    expect(await hasFeature(joiner.orgId, "api.access")).toBe(true);
+    err.mockRestore();
+  });
+
   it("refuses when the org already has a billing group of its own", async () => {
     const owner = await makeUser("solo");
     const loose = await makeLooseOrg(owner);

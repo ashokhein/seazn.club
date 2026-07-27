@@ -533,6 +533,13 @@ async function cancelGroupIfEmpty(
                updated_at = now()
          where id = ${subscriptionId}`;
       console.error("cancelGroupIfEmpty: Stripe cancel failed", subscriptionId, err);
+      // The rollback has to take the CACHE back with it. The claim committed
+      // `community`/`canceled` before Stripe was called, so any resolve in that
+      // window — an org an attach landed in the group while it was in flight —
+      // cached a Community answer, and the row is now a paying Pro group again.
+      // Returning straight from here jumped over the invalidate below and left
+      // that answer standing for the full 300s TTL, with nothing to correct it.
+      await invalidateGroupEntitlements(subscriptionId);
       return "cancel_failed";
     }
   }
