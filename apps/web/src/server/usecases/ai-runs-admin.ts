@@ -92,29 +92,41 @@ export function shouldAlertOnRunCost(
   return costUsd >= medianUsd * multiple;
 }
 
+/** Minimum qualifying rows in the window before a median counts as a baseline
+ *  (v17 gap #295, controller ruling). With one or two runs recorded, "2x the
+ *  median" is noise, not a signal — every slightly-above-average run would
+ *  email staff. Below this floor there is NO baseline, so no alert fires. */
+export const AI_RUN_MEDIAN_MIN_SAMPLE = 20;
+
 /** Trailing-window median `cost_usd` for one phase's SUCCESSFUL runs (v17 gap
  *  #295) — the baseline `maybeAlertExpensiveRun` compares a fresh run
  *  against. Scoped to the phase's own SUCCESS event type
  *  (schedule.ai_generated / schedule.ai_officials_generated), never
  *  schedule.ai_failed, whose cost distribution is a different thing (aborted
- *  / retried runs). `null` when the window has no qualifying row yet — there
- *  is no baseline to compare against. Global across orgs/divisions by
- *  design: SPEC-2 §5.1 frames the trigger as a platform-wide pricing
- *  question, not a per-org one. */
+ *  / retried runs). `null` when the window holds fewer than
+ *  `AI_RUN_MEDIAN_MIN_SAMPLE` qualifying rows — there is no trustworthy
+ *  baseline to compare against. Global across orgs/divisions by design:
+ *  SPEC-2 §5.1 frames the trigger as a platform-wide pricing question, not a
+ *  per-org one. */
 export async function medianRunCostUsd(
   eventType: "schedule.ai_generated" | "schedule.ai_officials_generated",
   days: number,
 ): Promise<number | null> {
-  const [row] = await sql<{ median: number | null }[]>`
-    select percentile_cont(0.5) within group (order by (payload->>'cost_usd')::numeric) as median
+  const [row] = await sql<{ median: number | null; n: number }[]>`
+    select percentile_cont(0.5) within group (order by (payload->>'cost_usd')::numeric) as median,
+           count(*)::int as n
       from competition_events
      where type = ${eventType}
        and payload->>'cost_usd' is not null
        and created_at >= now() - make_interval(days => ${days})`;
-  return row?.median != null ? Number(row.median) : null;
+  if (!row || row.n < AI_RUN_MEDIAN_MIN_SAMPLE) return null;
+  return row.median != null ? Number(row.median) : null;
 }
 
-const MEDIAN_WINDOW_DAYS = 30;
+/** Trailing window the baseline is computed over — the single source for both
+ *  the query and the alert copy (which interpolates it rather than hardcoding
+ *  "30-day"). */
+export const MEDIAN_WINDOW_DAYS = 30;
 
 /** Best-effort staff alert (v17 gap #295): fires when a just-completed run's
  *  cost trips `shouldAlertOnRunCost` against the trailing 30-day median for
@@ -131,20 +143,27 @@ export async function maybeAlertExpensiveRun(opts: {
   costUsd: number | null;
 }): Promise<void> {
   try {
+    // Cheap guards FIRST. `competition_events` is the audit ledger and carries
+    // no index on (type, created_at), so the median query is a scan — running
+    // it before these checks would make every production AI run pay for a
+    // baseline that can never be used (STAFF_ALERT_EMAIL is unset in the
+    // normal case, and a costless run has nothing to compare).
+    const alertTo = process.env.STAFF_ALERT_EMAIL;
+    const costUsd = opts.costUsd;
+    if (!alertTo || costUsd == null) return;
     const eventType =
       opts.phase === "schedule" ? "schedule.ai_generated" : "schedule.ai_officials_generated";
     const median = await medianRunCostUsd(eventType, MEDIAN_WINDOW_DAYS);
-    if (!shouldAlertOnRunCost(opts.costUsd, median)) return;
-    const alertTo = process.env.STAFF_ALERT_EMAIL;
-    if (!alertTo) return;
+    if (median == null || !shouldAlertOnRunCost(costUsd, median)) return;
     await sendAiRunCostAlertEmail({
       to: alertTo,
       orgId: opts.orgId,
       ...(opts.competitionId ? { competitionId: opts.competitionId } : {}),
       phase: opts.phase,
       model: opts.model,
-      costUsd: opts.costUsd as number,
-      medianUsd: median as number,
+      costUsd,
+      medianUsd: median,
+      windowDays: MEDIAN_WINDOW_DAYS,
     });
   } catch (err) {
     console.error(`[ai-runs] expensive-run alert check failed (org ${opts.orgId})`, err);

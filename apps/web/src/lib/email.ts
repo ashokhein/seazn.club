@@ -807,10 +807,13 @@ export interface AiRunCostAlertEmail {
   model: string;
   costUsd: number;
   medianUsd: number;
+  /** Trailing window the median was computed over — supplied by the caller
+   *  (`MEDIAN_WINDOW_DAYS`) so the copy can never drift from the query. */
+  windowDays: number;
 }
 
 /** Internal staff alert (v17 gap #295): a single AI run's cost landed at or
- *  above AI_RUN_COST_ALERT_MULTIPLE x the trailing 30-day median for its
+ *  above AI_RUN_COST_ALERT_MULTIPLE x the trailing median for its
  *  phase — the exact trigger SPEC-2 §5.1 named for revisiting the flat
  *  1-credit-per-run price. Ops-only, no user-facing i18n (mirrors
  *  sendStuckEventsAlertEmail). Not deduped — a run class that keeps tripping
@@ -821,7 +824,7 @@ export async function sendAiRunCostAlertEmail(opts: AiRunCostAlertEmail): Promis
   const bodyText =
     `A ${opts.phase} AI run for org ${opts.orgId}` +
     `${opts.competitionId ? ` (competition ${opts.competitionId})` : ""} cost $${opts.costUsd.toFixed(4)} on ` +
-    `${opts.model}${multiple ? `, ${multiple.toFixed(1)}x the trailing 30-day ${opts.phase} median ($${opts.medianUsd.toFixed(4)})` : ""}. ` +
+    `${opts.model}${multiple ? `, ${multiple.toFixed(1)}x the trailing ${opts.windowDays}-day ${opts.phase} median ($${opts.medianUsd.toFixed(4)})` : ""}. ` +
     `Size-weighted credit pricing is deferred until this class of run recurs — see v17 gap #295.`;
   const html = renderEmail({
     subject,
