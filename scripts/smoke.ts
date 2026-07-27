@@ -4,6 +4,7 @@
 // Teardown: when DATABASE_URL is set (CI, or `node --env-file=.env.local`), the
 // run's own test users + their orgs are purged afterwards (see cleanup). The DB
 // must be the same one the target server uses.
+import { createHmac } from "node:crypto";
 import postgres from "postgres";
 import { startAiFixtureServer, type AiFixtureServer } from "../apps/web/e2e/ai-fixture-server.ts";
 
@@ -741,6 +742,13 @@ async function main() {
   // fresh org; keyless-safe and spends no AI tokens.
   await passGrantsSuite();
 
+  // --- v17 #294: the L rung. Proves the LADDER rather than the grants — a paid
+  // purchase (driven through the real signed webhook) is filed as the rung that
+  // was bought, that rung's ceilings are the ones enforced, the flat +25 credit
+  // grant is not keyed by rung, and a pass stays inert on a paid plan. Own
+  // fresh orgs; the purchase leg skips cleanly without Stripe secrets.
+  await passRungLSuite();
+
   await gapSuite(admin, org.id, org2.id);
 
   // --- design/v7 PROMPT-51: staff-console platform revenue report.
@@ -840,7 +848,7 @@ async function p72Suite(): Promise<void> {
 
   // Guard 1 — Event Pass.
   const passComp = await makeComp("P72 Pass Cup");
-  await grantPass(orgId, passComp.id);
+  await grantPass(orgId, passComp.id, "event_pass");
   const delPass = await v1(owner, `/api/v1/competitions/${passComp.id}`, "DELETE");
   check(
     "p72: delete blocked by an Event Pass (409, 'Event Pass')",
@@ -1463,7 +1471,7 @@ async function smokePlanMatrix(): Promise<void> {
       ...genericDiv,
     }),
   );
-  await grantPass(passOrg, passedComp.id);
+  await grantPass(passOrg, passedComp.id, "event_pass");
 
   // A comp-scoped Pro feature (formats.advanced) resolves TRUE inside the passed
   // comp — an advanced (americano) stage is accepted.
@@ -1604,7 +1612,7 @@ async function passGrantsSuite(): Promise<void> {
 
   const passComp = await mkComp("Grants Passed");
   const plainComp = await mkComp("Grants Plain");
-  await grantPass(orgId, passComp.id);
+  await grantPass(orgId, passComp.id, "event_pass");
   check(
     "pass grants: fixture built — one community org, two competitions, one passed",
     !!passComp.id && !!plainComp.id && passComp.id !== plainComp.id,
@@ -1895,7 +1903,7 @@ async function passGrantsSuite(): Promise<void> {
   // ENTRANT cap (not just a boolean flag): 65 seats past community's 64
   // while live, then the 66th 402s the instant the completing PATCH commits.
   const lockComp = await mkComp("Grants Lock Completed");
-  await grantPass(orgId, lockComp.id);
+  await grantPass(orgId, lockComp.id, "event_pass");
   const lockDiv = await mkDiv(lockComp.id, "Lock Cap");
   const lockPast64 = await v1(s, `/api/v1/divisions/${lockDiv.id}/entrants`, "POST", entrants(65, 1, "L"));
   check(
@@ -1908,6 +1916,298 @@ async function passGrantsSuite(): Promise<void> {
   check(
     "pass grants/lock(completed): once completed the pass stops lifting entrants.per_division.max — the 66th create 402s with no stale-cache window",
     overCap.status === 402 && featureKey(overCap) === "entrants.per_division.max",
+  );
+}
+
+/**
+ * v17 #294 — the Event Pass **L** rung, over real HTTP.
+ *
+ * `passGrantsSuite` above proves WHAT an Event Pass delivers. This proves the
+ * LADDER: that the rung a buyer pays for is the rung the platform stores, and
+ * the rung it then enforces. Three legs, in the order the money travels.
+ *
+ * 1. **A paid purchase is filed as the rung that was bought.** Driven through
+ *    the app's REAL webhook route with a synthetic, correctly-signed
+ *    `checkout.session.completed`, because that handler is the only production
+ *    writer of `competition_passes` and an embedded Stripe checkout cannot be
+ *    completed headlessly. So this leg exercises `recordPassPurchase` itself —
+ *    the pass row, the flat +25 credit grant and the cache bust — rather than
+ *    seeding the effects and admiring them. BOTH rungs are bought, on two
+ *    competitions of one org: "L was stored as L" proves nothing against a
+ *    writer that hardcodes L, and the M arm is what kills that mutation.
+ *    Credits are asserted as a DELTA per purchase, so the grant being flat
+ *    (`PASS_CREDIT_GRANT`, never keyed by rung — L buys a bigger competition,
+ *    not more credits) fails loudly if anyone parametrises it.
+ *
+ * 2. **The stored rung is the enforced rung.** L is unlimited entrants / 20
+ *    divisions where M is 128 / 10, asserted in the same passed-vs-sibling PAIR
+ *    shape `passGrantsSuite` uses — except the sibling is doubled: a PASSLESS
+ *    competition (community's 4) and an M-PASSED one (M's 128/10). A ceiling
+ *    that leaks in either direction therefore fails for the right reason, and
+ *    "seats 200" cannot be satisfied by a plan that simply has no ceiling.
+ *
+ * 3. **The buy route refuses what it cannot honour** — an unrecognised rung
+ *    (400 from the zod enum, before any Stripe call) and a competition that
+ *    already holds a pass (400, ahead of the price lookup). Both keyless.
+ *
+ * Plus the PRO path, which is not a formality here: `resolveFromDb` skips the
+ * Event Pass overlay entirely for a paid plan, so an L pass on a Pro org must
+ * neither CAP Pro's unlimited divisions at L's 20 nor LIFT Pro's 256-entrant
+ * ceiling to L's unlimited. Both directions are wrong and both are asserted.
+ * That org's pass is seeded with `grantPass` — the buy route refuses a paid
+ * plan outright — which also gives the rung column's `not null default
+ * 'event_pass'` landmine a live witness on every run.
+ *
+ * Own fresh orgs. Leg 1 needs the server's `STRIPE_WEBHOOK_SECRET` (and a
+ * `STRIPE_SECRET_KEY`, which the route's verifier constructs a client from) and
+ * skips cleanly without them — the same convention as `paymentMethodSuite`,
+ * with the rungs seeded directly so legs 2 and 3 still run. Everything else is
+ * keyless and spends no AI tokens.
+ */
+async function passRungLSuite(): Promise<void> {
+  const genericDiv = {
+    sport_key: "generic",
+    variant_key: "score",
+    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+  };
+  const featureKey = (r: V1Res) =>
+    (r.json.error as { feature_key?: string } | undefined)?.feature_key;
+  const entrants = (n: number, from: number, label: string) =>
+    Array.from({ length: n }, (_, i) => ({
+      kind: "individual",
+      display_name: `${label}${from + i}`,
+      seed: from + i,
+    }));
+
+  // === the ladder itself ==================================================
+  // Everything below reasons about "the OTHER rung", so smoke's hand-kept
+  // PASS_RUNGS copy has to still be the whole truth. A third rung seeded
+  // without touching this file would leave every pair assertion quietly
+  // incomplete; this is the one check that notices.
+  const rungsInDb = await passRungsInDb();
+  check(
+    `pass L/ladder: plans carries exactly the rungs smoke knows about (${PASS_RUNGS.join(", ")})`,
+    rungsInDb.join(",") === [...PASS_RUNGS].sort().join(","),
+  );
+
+  const s = newSession();
+  const orgId = (await signIn(s, `passl_${tag}@example.com`)).org_id;
+  const mkComp = async (name: string) =>
+    v1data<{ id: string; slug: string }>(
+      await v1(s, "/api/v1/competitions", "POST", {
+        name: `${name} ${tag}`,
+        visibility: "unlisted",
+      }),
+    );
+  const mkDiv = (compId: string, name: string) =>
+    v1(s, `/api/v1/competitions/${compId}/divisions`, "POST", { name, ...genericDiv });
+
+  const lComp = await mkComp("Rung L");
+  const mComp = await mkComp("Rung M");
+  const plainComp = await mkComp("Rung Plain");
+  check(
+    "pass L: fixture built — one community org, three competitions (L, M, passless)",
+    !!lComp.id && !!mComp.id && !!plainComp.id,
+  );
+
+  // === Leg 1 — the money path ==============================================
+  const canSignWebhooks = !!process.env.STRIPE_WEBHOOK_SECRET && !!process.env.STRIPE_SECRET_KEY;
+  if (canSignWebhooks) {
+    const startBalance = await walletBalance(orgId);
+
+    const lIntent = `pi_smoke_${tag}_l`;
+    const lAck = await postPaidPassWebhook({
+      orgId,
+      competitionId: lComp.id,
+      passKey: "event_pass_l",
+      paymentIntent: lIntent,
+    });
+    check("pass L/paid: the signed L checkout.session.completed is accepted (200)", lAck === 200);
+    const lRow = await passRowFor(lComp.id);
+    check(
+      "pass L/paid: the purchase is FILED as the rung that was bought (pass_key event_pass_l, carrying its intent) — the $59 sale is not recorded as the $29 product",
+      lRow?.pass_key === "event_pass_l" && lRow?.stripe_payment_intent === lIntent,
+    );
+    const afterL = await walletBalance(orgId);
+    check(
+      "pass L/paid: the one-time +25 AI credit grant fires on an L purchase",
+      afterL - startBalance === 25,
+    );
+
+    const mIntent = `pi_smoke_${tag}_m`;
+    const mAck = await postPaidPassWebhook({
+      orgId,
+      competitionId: mComp.id,
+      passKey: "event_pass",
+      paymentIntent: mIntent,
+    });
+    const mRow = await passRowFor(mComp.id);
+    check(
+      "pass L/paid: the same writer files an M purchase as event_pass — the rung is read from the session, not hardcoded",
+      mAck === 200 && mRow?.pass_key === "event_pass" && mRow?.stripe_payment_intent === mIntent,
+    );
+    check(
+      "pass L/paid: M grants the same 25 — PASS_CREDIT_GRANT is flat across rungs, never parametrised by one",
+      (await walletBalance(orgId)) - afterL === 25,
+    );
+  } else {
+    await grantPass(orgId, lComp.id, "event_pass_l");
+    await grantPass(orgId, mComp.id, "event_pass");
+    check(
+      "pass L/paid: skipped (no STRIPE_WEBHOOK_SECRET + STRIPE_SECRET_KEY — cannot sign a webhook this server will accept); both rungs seeded directly instead",
+      true,
+    );
+  }
+
+  // === Leg 2 — the stored rung is the enforced rung ========================
+  // entrants.per_division.max — L unlimited, M 128 (V319/V341), community 64.
+  const lCapDiv = v1data<{ id: string }>(await mkDiv(lComp.id, "L Entrant Cap"));
+  const lSeats = await v1(
+    s,
+    `/api/v1/divisions/${lCapDiv.id}/entrants`,
+    "POST",
+    entrants(200, 1, "L"),
+  );
+  check(
+    "pass L/entrants: the L-passed competition seats 200 in one division — past M's 128 (L is unlimited)",
+    lSeats.status === 201,
+  );
+  const mCapDiv = v1data<{ id: string }>(await mkDiv(mComp.id, "M Entrant Cap"));
+  const mSeats = await v1(
+    s,
+    `/api/v1/divisions/${mCapDiv.id}/entrants`,
+    "POST",
+    entrants(128, 1, "M"),
+  );
+  const m129 = await v1(
+    s,
+    `/api/v1/divisions/${mCapDiv.id}/entrants`,
+    "POST",
+    entrants(1, 129, "M"),
+  );
+  check(
+    "pass L/entrants: the M-passed competition still stops at 128 — L's unlimited did not leak to the other rung",
+    mSeats.status === 201 &&
+      m129.status === 402 &&
+      featureKey(m129) === "entrants.per_division.max",
+  );
+
+  // divisions.per_competition.max — L 20, M 10, community 4. Each competition
+  // already holds its entrant-cap division, so the fillers start at 2.
+  let lDivisionsOk = true;
+  for (let i = 2; i <= 20; i++) {
+    if ((await mkDiv(lComp.id, `L Filler ${i}`)).status !== 201) lDivisionsOk = false;
+  }
+  const l21st = await mkDiv(lComp.id, "L Twenty-first");
+  check("pass L/divisions: the L-passed competition takes all 20 (past M's 10)", lDivisionsOk);
+  check(
+    "pass L/divisions: the 21st is refused — the L ceiling is 20, not unlimited",
+    l21st.status === 402 && featureKey(l21st) === "divisions.per_competition.max",
+  );
+
+  let mDivisionsOk = true;
+  for (let i = 2; i <= 10; i++) {
+    if ((await mkDiv(mComp.id, `M Filler ${i}`)).status !== 201) mDivisionsOk = false;
+  }
+  const m11th = await mkDiv(mComp.id, "M Eleventh");
+  check(
+    "pass L/divisions: the M-passed competition still stops at 10 — L's 20 did not leak to the other rung",
+    mDivisionsOk &&
+      m11th.status === 402 &&
+      featureKey(m11th) === "divisions.per_competition.max",
+  );
+
+  let siblingOk = true;
+  for (let i = 1; i <= 4; i++) {
+    if ((await mkDiv(plainComp.id, `Sibling ${i}`)).status !== 201) siblingOk = false;
+  }
+  const sibling5th = await mkDiv(plainComp.id, "Sibling Fifth");
+  check(
+    "pass L/divisions: the passless sibling stays on community's 4 — neither rung leaked org-wide",
+    siblingOk &&
+      sibling5th.status === 402 &&
+      featureKey(sibling5th) === "divisions.per_competition.max",
+  );
+
+  const ent = (await call(s, `/api/orgs/${orgId}/entitlements`)) as {
+    plan_key: string;
+    entitlements: Record<string, { enabled?: boolean; limit?: number | null }>;
+  };
+  check(
+    "pass L/scope: two passes bought and the org still resolves community org-wide (64 entrants, 4 divisions) — a pass is not a plan",
+    ent.plan_key === "community" &&
+      ent.entitlements["entrants.per_division.max"]?.limit === 64 &&
+      ent.entitlements["divisions.per_competition.max"]?.limit === 4,
+  );
+
+  // === Leg 3 — what the buy route refuses (keyless: both answer before Stripe)
+  const badRung = await raw(s, "/api/billing/pass-checkout", "POST", {
+    competition_id: plainComp.id,
+    pass_key: "event_pass_xl",
+  });
+  check(
+    "pass L/checkout: an unrecognised rung is refused (400) — the enum is built from PASS_KEYS, not a hardcoded list",
+    badRung.status === 400,
+  );
+  const alreadyPassed = await raw(s, "/api/billing/pass-checkout", "POST", {
+    competition_id: lComp.id,
+    pass_key: "event_pass_l",
+  });
+  check(
+    "pass L/checkout: a competition that already holds a pass refuses a second one (400)",
+    alreadyPassed.status === 400,
+  );
+
+  // === The pro path — a pass is INERT on a paid plan, in both directions ===
+  const pro = newSession();
+  const proOrgId = (await signIn(pro, `passlpro_${tag}@example.com`)).org_id;
+  await setPlan(proOrgId, "pro", pro);
+  const proComp = v1data<{ id: string }>(
+    await v1(pro, "/api/v1/competitions", "POST", {
+      name: `Rung L Pro ${tag}`,
+      visibility: "unlisted",
+    }),
+  );
+  await grantPass(proOrgId, proComp.id, "event_pass_l");
+  const proPass = await passRowFor(proComp.id);
+  check(
+    "pass L/pro: a directly-seeded L pass is STORED as event_pass_l — an omitted rung is filed as M by the column default (V271) with nothing red",
+    proPass?.pass_key === "event_pass_l",
+  );
+
+  const proDivIds: string[] = [];
+  let proDivisionsOk = true;
+  for (let i = 1; i <= 21; i++) {
+    const r = await v1(pro, `/api/v1/competitions/${proComp.id}/divisions`, "POST", {
+      name: `Pro Div ${i}`,
+      ...genericDiv,
+    });
+    if (r.status !== 201) proDivisionsOk = false;
+    else proDivIds.push(v1data<{ id: string }>(r).id);
+  }
+  check(
+    "pass L/pro: an L pass does not CAP a Pro competition at L's 20 divisions — the 21st still lands (the overlay is skipped for a paid plan)",
+    proDivisionsOk,
+  );
+
+  const proDivId = proDivIds[0]!;
+  const pro256 = await v1(
+    pro,
+    `/api/v1/divisions/${proDivId}/entrants`,
+    "POST",
+    entrants(256, 1, "R"),
+  );
+  const pro257 = await v1(
+    pro,
+    `/api/v1/divisions/${proDivId}/entrants`,
+    "POST",
+    entrants(1, 257, "R"),
+  );
+  check(
+    "pass L/pro: Pro's own 256-entrant ceiling still bites at 257 — L's unlimited did not LIFT a paid plan either",
+    pro256.status === 201 &&
+      pro257.status === 402 &&
+      featureKey(pro257) === "entrants.per_division.max",
   );
 }
 
@@ -3977,10 +4277,40 @@ async function setConnect(
   }
 }
 
-/** Insert an Event Pass row directly (v3/07 §3) — smoke targets a disposable
- *  DB and the one-time Stripe checkout can't run without Stripe; the same
- *  SQL-flip convention as setPlan. */
-async function grantPass(orgId: string, competitionId: string): Promise<void> {
+/**
+ * The Event Pass rungs (v17 #294). A hand-kept mirror of `PASS_KEYS`
+ * (apps/web/src/lib/currency.ts): smoke runs under
+ * `node --experimental-strip-types` and can resolve neither the app's `@/`
+ * alias nor the JSON import `currency.ts` pulls in, so the list cannot be
+ * imported. It is therefore ASSERTED against the `plans` table rather than
+ * trusted — see the ladder check at the top of `passRungLSuite`, which reds the
+ * day a third rung is seeded without this file learning about it.
+ */
+const PASS_RUNGS = ["event_pass", "event_pass_l"] as const;
+type PassRung = (typeof PASS_RUNGS)[number];
+
+/**
+ * Insert an Event Pass row directly (v3/07 §3) — smoke targets a disposable DB
+ * and the one-time Stripe checkout can't run without Stripe; the same SQL-flip
+ * convention as setPlan. Used where the purchase itself is not what is under
+ * test (a competition that just needs to BE passed), and for the states no
+ * purchase can reach — a pass held by a PAID plan, for instance, which the buy
+ * route refuses outright.
+ *
+ * v17 #294: `passKey` is REQUIRED, and deliberately has no default. This insert
+ * used to omit the column entirely while V271 declares it `not null default
+ * 'event_pass'`, so seeding an L pass here stored an M one — no FK error, no
+ * exception, nothing red, and every downstream assertion then measured the
+ * wrong rung's ceilings. That is the same landmine `recordPassPurchase` carried
+ * (lib/billing.ts), and a default here would only relocate it: making callers
+ * name the rung is what lets `tsc` enumerate every seed the day a third rung
+ * appears.
+ */
+async function grantPass(
+  orgId: string,
+  competitionId: string,
+  passKey: PassRung,
+): Promise<void> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is required to grant a pass in smoke");
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
@@ -3992,12 +4322,128 @@ async function grantPass(orgId: string, competitionId: string): Promise<void> {
   });
   try {
     await sql`
-      insert into competition_passes (competition_id, org_id)
-      values (${competitionId}, ${orgId})
+      insert into competition_passes (competition_id, org_id, pass_key)
+      values (${competitionId}, ${orgId}, ${passKey})
       on conflict (competition_id) do nothing`;
   } finally {
     await sql.end();
   }
+}
+
+/** Every Event Pass rung the `plans` table actually carries, sorted. Read with
+ *  a plain `select key` and filtered in JS rather than a `like 'event\_pass%'`
+ *  — the escaped underscore is a needless trap inside a tagged template. */
+async function passRungsInDb(): Promise<string[]> {
+  const sql = smokeDb();
+  try {
+    const rows = await sql<{ key: string }[]>`select key from plans order by key`;
+    return rows.map((r) => r.key).filter((k) => k.startsWith("event_pass"));
+  } catch {
+    return [];
+  } finally {
+    await sql.end();
+  }
+}
+
+/** The Event Pass row a competition actually holds — the rung the resolver will
+ *  enforce and the money trace will name. Read back, never assumed: the whole
+ *  point of the L rung is that storing the wrong one is silent. */
+async function passRowFor(
+  competitionId: string,
+): Promise<{ pass_key: string; stripe_payment_intent: string | null } | null> {
+  const sql = smokeDb();
+  try {
+    const [row] = await sql<{ pass_key: string; stripe_payment_intent: string | null }[]>`
+      select pass_key, stripe_payment_intent from competition_passes
+      where competition_id = ${competitionId}`;
+    return row ?? null;
+  } finally {
+    await sql.end();
+  }
+}
+
+let smokeWebhookSeq = 0;
+
+/**
+ * Deliver a synthetic, correctly-signed Stripe event to the app's OWN webhook
+ * route (`/api/webhooks/stripe`).
+ *
+ * Stripe cannot reach localhost and an embedded checkout cannot be completed
+ * headlessly, so this is the only way smoke can drive the real money path —
+ * `runEvent` → `handleCheckoutCompleted` → `recordPassPurchase` — rather than
+ * re-implementing its effects in SQL and then asserting its own seed. The
+ * signature is a plain HMAC-SHA256 over `${t}.${payload}`, exactly what
+ * `stripe.webhooks.constructEvent` verifies, so nothing here needs the Stripe
+ * SDK or a network call; the SERVER still needs a `STRIPE_SECRET_KEY` (the
+ * route builds a client to verify with) and the SAME `STRIPE_WEBHOOK_SECRET`.
+ * Mirrors `postSignedStripeWebhook` in e2e/event-pass.spec.ts.
+ *
+ * Returns the HTTP status so the caller asserts it rather than this helper
+ * throwing an unlabelled error.
+ */
+async function postSignedStripeWebhook(type: string, object: unknown): Promise<number> {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!secret) throw new Error("STRIPE_WEBHOOK_SECRET is required to sign a smoke webhook");
+  const event = {
+    // `evt_smoke_<tag>_…` is also what teardown deletes by: billing_events has
+    // no org FK, so these rows would otherwise outlive the run's orgs.
+    id: `evt_smoke_${tag}_${++smokeWebhookSeq}`,
+    object: "event",
+    api_version: "2026-06-24.dahlia",
+    created: Math.floor(Date.now() / 1000),
+    livemode: false,
+    pending_webhooks: 0,
+    request: { id: null, idempotency_key: null },
+    type,
+    data: { object },
+  };
+  const payload = JSON.stringify(event);
+  const t = Math.floor(Date.now() / 1000);
+  const signature = createHmac("sha256", secret).update(`${t}.${payload}`).digest("hex");
+  const res = await fetch(`${BASE}/api/webhooks/stripe`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "stripe-signature": `t=${t},v1=${signature}`,
+    },
+    body: payload,
+  });
+  return res.status;
+}
+
+/**
+ * A PAID Event Pass checkout session, in the shape `buildPassCheckoutParams`
+ * stamps and `handleCheckoutCompleted` reads: `metadata.pass_key` is what tells
+ * the handler which rung was bought, and `payment_status: "paid"` is what makes
+ * it record anything at all.
+ *
+ * Deliberately carries NO `amount_total`: nothing in the pass branch reads it,
+ * and writing a price here would plant exactly the kind of stale `2900` literal
+ * this rung ladder exists to stop. `customer` is null so the handler skips
+ * `linkStripeCustomer` — smoke has no Stripe customer to link and does not need
+ * one to prove which rung landed.
+ */
+async function postPaidPassWebhook(args: {
+  orgId: string;
+  competitionId: string;
+  passKey: PassRung;
+  paymentIntent: string;
+}): Promise<number> {
+  return postSignedStripeWebhook("checkout.session.completed", {
+    id: `cs_smoke_${tag}_${args.passKey}_${args.competitionId.slice(0, 8)}`,
+    object: "checkout.session",
+    mode: "payment",
+    status: "complete",
+    payment_status: "paid",
+    currency: "usd",
+    customer: null,
+    payment_intent: args.paymentIntent,
+    metadata: {
+      org_id: args.orgId,
+      competition_id: args.competitionId,
+      pass_key: args.passKey,
+    },
+  });
 }
 
 /** payments-hardening P0-1: seed a PAID registration carrying unrefunded card
@@ -4705,7 +5151,7 @@ async function pricingV3Suite(): Promise<void> {
 
   // Event Pass on comp A lifts ITS per-competition caps — the 5th division it
   // just refused now lands.
-  await grantPass(orgId, compA.id);
+  await grantPass(orgId, compA.id, "event_pass");
   const div5 = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
     name: "Div 5",
     ...genericDivision,
@@ -7401,6 +7847,10 @@ async function cleanup(tag: string): Promise<void> {
     // Task 23 — passGrantsSuite's own org (its two competitions, pass row,
     // sponsors, packages, person and AI ledger rows all cascade with it).
     `passgrant_${tag}@example.com`,
+    // v17 #294 passRungLSuite — the community buyer (three competitions, two
+    // bought passes, the +25 grants) and the Pro org holding an inert L pass.
+    `passl_${tag}@example.com`,
+    `passlpro_${tag}@example.com`,
     // Task 20 — the three extra users seeded per plan org (owner is above).
     ...["community", "pro", "proplus", "pass"].flatMap((k) => [
       `scorer_${k}_${tag}@example.com`,
@@ -7435,6 +7885,11 @@ async function cleanup(tag: string): Promise<void> {
   });
   let teardownError: string | null = null;
   try {
+    // billing_events carries NO org FK (it is the raw Stripe ledger, keyed by
+    // event id), so passRungLSuite's synthetic webhook rows survive the org
+    // purge below. Dropped by the run's own `evt_smoke_<tag>_` prefix, which
+    // cannot touch another run's rows or a real Stripe event.
+    await sql`delete from billing_events where id like ${`evt_smoke_${tag}_%`}`;
     // sponsor_orders are RESTRICT (V299): money rows must go before their org.
     await sql`
       delete from sponsor_orders

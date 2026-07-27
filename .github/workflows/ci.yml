@@ -172,6 +172,14 @@ jobs:
       # exercise real test-mode Stripe instead of skipping (`pm: skipped …`).
       # Withheld from fork PRs (they skip); present on the owner's branch PRs.
       STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+      # Job-scoped so the server under test and scripts/smoke.ts share ONE
+      # value — that is the whole requirement. It is an HMAC secret between two
+      # processes in this container, never a real Stripe endpoint secret, and
+      # the only reader is api/webhooks/stripe. Without it passRungLSuite (v17
+      # #294) cannot sign an event the server will accept and its paid Event
+      # Pass leg skips — which is the one leg proving a bought rung is the rung
+      # stored, credited and enforced. Mirrors e2e's whsec_e2e_payments.
+      STRIPE_WEBHOOK_SECRET: whsec_ci_smoke
 
     steps:
       - uses: actions/checkout@v5
