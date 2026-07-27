@@ -132,12 +132,35 @@ export function isTiered(spec: PriceSpec): boolean {
   return hasScheme;
 }
 
-function currencyOptionsParam(
+/** The non-base currencies every price must SET a point in — the same list
+ *  lib/currency.ts advertises minus the seed's base currency (usd, which is the
+ *  price's own `unit_amount`). Pinned to SUPPORTED_CURRENCIES by
+ *  stripe-sync.test.ts; kept as a literal here because scripts/ is compiled by
+ *  tsconfig.scripts.json and does not resolve apps/web's `@/` alias. */
+export const REQUIRED_CURRENCIES = ["eur", "gbp", "inr", "aud"] as const;
+
+/** Every price must price every currency. A hole does NOT fail at sync time —
+ *  Stripe accepts the price and falls back to ADAPTIVE PRICING, an FX-converted
+ *  amount decided at render time from the buyer's IP — which is precisely what
+ *  this seed's SET price points (v3/07 §4) exist to avoid. Refusing to sync is
+ *  the cheap failure; a silently FX-priced SKU in production is not. */
+function assertCurrencyCoverage(lookupKey: string, present: readonly string[]): void {
+  const missing = REQUIRED_CURRENCIES.filter((c) => !present.includes(c));
+  if (missing.length > 0) {
+    throw new Error(
+      `${lookupKey}: no price point for ${missing.join(", ")}. ` +
+        `Every price must SET all of ${REQUIRED_CURRENCIES.join(", ")} — a missing one does not ` +
+        `fail in Stripe, it silently falls back to adaptive (FX) pricing.`,
+    );
+  }
+}
+
+export function currencyOptionsParam(
   spec: PriceSpec,
 ): Record<string, { unit_amount: number }> | undefined {
-  if (!spec.currency_options) return undefined;
+  assertCurrencyCoverage(spec.lookup_key, Object.keys(spec.currency_options ?? {}));
   return Object.fromEntries(
-    Object.entries(spec.currency_options).map(([c, amount]) => [c, { unit_amount: amount }]),
+    Object.entries(spec.currency_options!).map(([c, amount]) => [c, { unit_amount: amount }]),
   );
 }
 
@@ -152,7 +175,10 @@ export function tieredCurrencyOptionsParam(
 ): Record<string, { tiers: Stripe.PriceCreateParams.CurrencyOptions.Tier[] }> | undefined {
   const tiers = spec.tiers ?? [];
   const currencies = [...new Set(tiers.flatMap((t) => Object.keys(t.currency_options ?? {})))];
-  if (currencies.length === 0) return undefined;
+  // A ladder where EVERY tier agrees on three currencies is self-consistent, so
+  // the per-tier check below can never see the fourth missing — only the
+  // required-set check can.
+  assertCurrencyCoverage(spec.lookup_key, currencies);
   return Object.fromEntries(
     currencies.map((currency) => [
       currency,
@@ -300,6 +326,12 @@ async function createPrice(
   return price.id;
 }
 
+/** The currencies whose TIER ladders have to be expanded to see drift — none on
+ *  a flat price, whose per-currency amounts come back with `currency_options`. */
+function tierCurrencies(spec: PriceSpec): string[] {
+  return isTiered(spec) ? Object.keys(tieredCurrencyOptionsParam(spec) ?? {}) : [];
+}
+
 /** Find a price by lookup_key; if any amount OR the tier structure drifted, mint a
  *  replacement and archive the old price; else create it (and a product if needed).
  *  Omitting `interval` makes it one-time. */
@@ -315,8 +347,19 @@ export async function ensurePrice(
     lookup_keys: [spec.lookup_key],
     limit: 1,
     // `tiers` and `currency_options` are both omitted from the default response;
-    // without them priceHasDrifted is blind to every tiered amount.
-    expand: ["data.product", "data.currency_options", "data.tiers"],
+    // without them priceHasDrifted is blind to every tiered amount. The ladder
+    // INSIDE each currency option needs its own expand, and only the
+    // per-currency form works: `data.currency_options.tiers` is accepted and
+    // silently ignored by the API (verified against a live account, v17 #293).
+    // Without these the sync logged "! <price>: <currency> tiers were not
+    // expanded — skipping its drift check" for every currency of every tiered
+    // price, so a changed eur/gbp/inr/aud tier amount was never re-minted.
+    expand: [
+      "data.product",
+      "data.currency_options",
+      "data.tiers",
+      ...tierCurrencies(spec).map((c) => `data.currency_options.${c}.tiers`),
+    ],
   });
   if (found.data[0]) {
     const p = found.data[0];

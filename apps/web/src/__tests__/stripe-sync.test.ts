@@ -2,12 +2,14 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type Stripe from "stripe";
+import { SUPPORTED_CURRENCIES } from "@/lib/currency";
 import {
   isTiered,
   priceCreateParams,
   priceHasDrifted,
   tieredCurrencyOptionsParam,
   ensurePrice,
+  REQUIRED_CURRENCIES,
   type PriceSpec,
   type Seed,
 } from "../../../../scripts/stripe-sync.ts";
@@ -200,6 +202,41 @@ describe("priceCreateParams — tiered", () => {
   });
 });
 
+// A price that skips a currency does NOT fail at sync time: Stripe accepts it
+// and then falls back to ADAPTIVE PRICING (an FX-converted amount decided at
+// render time from the buyer's IP), which is exactly what the SET price points
+// in this seed exist to avoid. The tiered path already refused a partial
+// ladder; the flat path mapped whatever was there and returned.
+describe("currency coverage", () => {
+  /** The seed's currency map minus one currency — the hole under test. */
+  const without = (options: Record<string, number>, drop: string): Record<string, number> =>
+    Object.fromEntries(Object.entries(options).filter(([c]) => c !== drop));
+
+  it("requires exactly the currencies the app advertises", () => {
+    expect([seed.currency, ...REQUIRED_CURRENCIES].sort()).toEqual([...SUPPORTED_CURRENCIES].sort());
+  });
+
+  it("refuses a FLAT price that skips a currency instead of letting Stripe adaptive-price it", () => {
+    const holed: PriceSpec = {
+      ...eventPass,
+      currency_options: without(eventPass.currency_options!, "aud"),
+    };
+    expect(() => priceCreateParams(holed, "prod_1", "usd", "event_pass")).toThrow(/aud/);
+    const bare: PriceSpec = { ...eventPass, currency_options: undefined };
+    expect(() => priceCreateParams(bare, "prod_1", "usd", "event_pass")).toThrow(/eur/);
+  });
+
+  it("refuses a TIERED price whose whole ladder omits a currency", () => {
+    // Every tier agreeing on three currencies is self-consistent, so the
+    // per-tier check below can never see it — only a required-set check can.
+    const holed: PriceSpec = {
+      ...proMonthly,
+      tiers: proTiers.map((t) => ({ ...t, currency_options: without(t.currency_options!, "inr") })),
+    };
+    expect(() => tieredCurrencyOptionsParam(holed)).toThrow(/inr/);
+  });
+});
+
 describe("priceHasDrifted — tiered", () => {
   it("is false when the live ladder matches", () => {
     expect(priceHasDrifted(liveTieredPro(), proMonthly)).toBe(false);
@@ -314,6 +351,29 @@ describe("ensurePrice — flat → tiered", () => {
     // Drift is invisible unless tiers + currency_options are expanded.
     expect(list.mock.calls[0]![0].expand).toContain("data.tiers");
     expect(list.mock.calls[0]![0].expand).toContain("data.currency_options");
+  });
+
+  // Verified against the live API (v17 #293): `data.currency_options` returns
+  // each currency's option WITHOUT its tier ladder, and `data.currency_options
+  // .tiers` is silently IGNORED — only naming each currency
+  // (`data.currency_options.gbp.tiers`) expands it. Without that, every run
+  // logged "! <price>: <currency> tiers were not expanded — skipping its drift
+  // check" and a changed eur/gbp/inr/aud tier amount was never re-minted.
+  it("expands the tier ladder INSIDE currency_options, naming each currency", async () => {
+    const { stripe, list } = fakeStripe(liveTieredPro());
+    await ensurePrice(stripe, proMonthly, { name: "Pro" }, "pro", "usd", null);
+    const expand = list.mock.calls[0]![0].expand ?? [];
+    for (const currency of Object.keys(proMonthly.currency_options ?? {})) {
+      expect(expand).toContain(`data.currency_options.${currency}.tiers`);
+    }
+  });
+
+  it("asks for no per-currency ladders on a flat price", async () => {
+    const { stripe, list } = fakeStripe(livePrice({ unit_amount: 2900 }));
+    await ensurePrice(stripe, eventPass, { name: "Pass" }, "event_pass", "usd", null);
+    const expand = list.mock.calls[0]![0].expand ?? [];
+    expect(expand.filter((e) => e.startsWith("data.currency_options."))).toEqual([]);
+    expect(expand).toContain("data.currency_options");
   });
 
   it("replaces a price minted in the wrong base currency", async () => {
