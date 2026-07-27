@@ -45,8 +45,10 @@ export interface CreditsTabView {
    *  has grantBalance 0 yet has used nothing, which that formula would misreport as
    *  a full meter. */
   grantUsed: number;
-  /** This period's monthly grant = `ai.credits.monthly(plan) * quantityPaid`
-   *  (Community is flat, never seat-scaled — SPEC-2 §11.2). */
+  /** This period's monthly grant = `ai.credits.monthly(plan) * quantity`, where
+   *  quantity is what `grantMonthlyForAllWallets` grants on: 1 for Community
+   *  (flat, never seat-scaled — SPEC-2 §11.2), `max(quantityPaid, live orgs)`
+   *  while the sub is TRIALING (#291), else `quantityPaid`. */
   grantCap: number;
   /** Whole days until the calendar-month reset `grantMonthly` anchors on. */
   grantResetsInDays: number;
@@ -119,10 +121,12 @@ function actionKey(source: string, delta: number, reason: string | null): string
   }
 }
 
-/** Whole days from now until the first of next calendar month (UTC, matching
- *  `credits.ts`'s `monthlyPeriod()` which slices `toISOString()`). */
-function daysUntilMonthReset(now = new Date()): number {
-  const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+/** Whole days from `now` until the first of next calendar month, derived from
+ *  the SAME `utcMonthStart()` anchor the meter's period window is bounded by
+ *  (#292) — so the days-remaining number and the window can never disagree
+ *  about which month it is. */
+function daysUntilMonthReset(periodStart: Date, now = new Date()): number {
+  const next = Date.UTC(periodStart.getUTCFullYear(), periodStart.getUTCMonth() + 1, 1);
   return Math.max(0, Math.ceil((next - now.getTime()) / 86_400_000));
 }
 
@@ -158,22 +162,21 @@ export async function creditHistory(walletId: string, limit = HISTORY_LIMIT): Pr
 export async function getCreditsTab(orgId: string): Promise<CreditsTabView> {
   const walletId = await walletIdFor(orgId);
 
-  const [plan] = await sql<{ plan_key: string; quantity_paid: number }[]>`
+  const [plan] = await sql<{ plan_key: string; quantity_paid: number; status: string | null }[]>`
     select coalesce(s.plan_key, 'community') as plan_key,
-           coalesce(s.quantity_paid, 1) as quantity_paid
+           coalesce(s.quantity_paid, 1) as quantity_paid,
+           s.status
       from organizations o
       left join subscriptions s on s.id = o.subscription_id
      where o.id = ${orgId}`;
   const planKey = plan?.plan_key ?? "community";
   const quantityPaid = plan?.quantity_paid ?? 1;
+  const trialing = plan?.status === "trialing";
 
   const [entitlement] = await sql<{ int_value: number | null }[]>`
     select int_value from plan_entitlements
      where plan_key = ${planKey} and feature_key = 'ai.credits.monthly'`;
-  // Community is flat (never seat-scaled — SPEC-2 §11.2); everyone else scales
-  // the per-seat grant by the group's paid seats, matching grantMonthly().
   const perSeat = entitlement?.int_value ?? 0;
-  const grantCap = perSeat * (planKey === "community" ? 1 : quantityPaid);
 
   const periodStart = utcMonthStart();
 
@@ -211,15 +214,25 @@ export async function getCreditsTab(orgId: string): Promise<CreditsTabView> {
          and idempotency_key like 'earn:referral:%'`,
     ]);
 
+  const sharedOrgCount = Math.max(1, shared[0]?.n ?? 1);
+  // The cap must be what `grantMonthlyForAllWallets` ACTUALLY granted, not an
+  // independent formula: Community is flat (never seat-scaled — SPEC-2 §11.2),
+  // and a TRIALING paid wallet grants on max(quantity_paid, live orgs) because
+  // syncGroupQuantity freezes quantity_paid for the trial's duration (#291 —
+  // see that function's docstring for the full rule). Reading the frozen count
+  // alone showed a trialing group with a mid-trial rider "70 used / 60".
+  const grantCap =
+    perSeat *
+    (planKey === "community" ? 1 : trialing ? Math.max(quantityPaid, sharedOrgCount) : quantityPaid);
   const grantUsed = Math.max(0, Math.min(grantCap, Number(spent[0]?.used ?? 0)));
 
   return {
     balance: bal,
     grantUsed,
     grantCap,
-    grantResetsInDays: daysUntilMonthReset(),
+    grantResetsInDays: daysUntilMonthReset(periodStart),
     packBalance: packBal,
-    sharedOrgCount: Math.max(1, shared[0]?.n ?? 1),
+    sharedOrgCount,
     history,
     referralCode,
     referredCount: referred[0]?.n ?? 0,

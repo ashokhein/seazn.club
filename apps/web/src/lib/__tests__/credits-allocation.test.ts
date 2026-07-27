@@ -5,7 +5,7 @@
 // set a per-member HARD monthly cap, enforced at spend time INSIDE reserve()'s
 // advisory-lock transaction (derive-then-check-then-write, so it's tight under
 // concurrency). The org's spend-this-period is DERIVED from the ledger (no
-// counter): the sum of its run_spend holds since date_trunc('month', now()),
+// counter): the sum of its run_spend holds since utcMonthStart() (#292),
 // each netted by its refund row (refund.ref = hold.id) so a failed/released run
 // gives its allowance back. A cap hit emits a DISTINCT 402
 // `ai.credits.allocation` (vs the pool-empty `ai.credits`).

@@ -15,6 +15,7 @@ import {
   settle,
   walletIdFor,
 } from "@/lib/credits";
+import { orgGroupId } from "@/lib/__tests__/_billing-group";
 import { seedOrg } from "./_seed";
 import { creditHistory, getCreditsTab } from "../credits-tab";
 
@@ -63,6 +64,31 @@ describe.skipIf(!HAS_DB)("getCreditsTab", () => {
     expect(view.balance).toBe(0);
     expect(view.sharedOrgCount).toBe(1);
     expect(view.history).toHaveLength(0);
+  });
+
+  // v17 gap #291, second call site: `grantMonthlyForAllWallets` grants a
+  // TRIALING wallet on max(quantity_paid, liveOrgCount) because
+  // syncGroupQuantity freezes quantity_paid for the whole trial. The tab's
+  // grantCap divided by the frozen quantity_paid alone, so a trialing group
+  // with a mid-trial rider read "used 70 / 60" — a meter over its own cap.
+  it("scales the trialing grant cap to live orgs, matching what was actually granted", async () => {
+    const { auth } = await seedOrg("pro");
+    const groupId = (await orgGroupId(auth.orgId))!;
+    await sql`update subscriptions set status = 'trialing', quantity_paid = 1 where id = ${groupId}`;
+
+    // A second org rides the trial free: live count 2, quantity_paid still 1.
+    const { auth: rider } = await seedOrg("community");
+    await sql`update organizations set subscription_id = ${groupId} where id = ${rider.orgId}`;
+
+    const walletId = await walletIdFor(auth.orgId);
+    expect(await grantMonthly(walletId, "pro", 2)).toBe(120); // what the sweep grants
+    const hold = await reserve(walletId, auth.orgId, 70);
+    await settle(hold, randomUUID());
+
+    const view = await getCreditsTab(auth.orgId);
+    expect(view.grantCap).toBe(120); // NOT 60 — 70 used must not exceed the cap
+    expect(view.grantUsed).toBe(70);
+    expect(view.sharedOrgCount).toBe(2);
   });
 
   it("REGRESSION (#292): the used-this-month meter excludes a hold recorded 30 minutes before the UTC month boundary", async () => {
