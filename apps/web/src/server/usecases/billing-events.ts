@@ -31,6 +31,8 @@ import {
   ORG_ADDON_FEATURE_KEY,
   ORG_ADDON_DELTA_EACH,
   isOrgAddonItem,
+  orgAddonForPlan,
+  resolveOrgAddonPriceId,
 } from "@/lib/org-addons";
 import { getSizePack } from "@/lib/size-packs";
 import {
@@ -551,6 +553,13 @@ async function handleSubscriptionChanged(stripeSub: Stripe.Subscription) {
   // org_addons UNCACHED (lib/entitlements.addonBonus), so no further entitlement
   // invalidation is needed for a seat change to bite on the next read.
   await syncSeatAddonsForSubscription(stripeSub, resolved.subscriptionId);
+  // The extra-org rider is priced PER TIER ($9 Pro / $19 Pro Plus), so a plan
+  // change makes every existing rider item wrong. This is the only convergence
+  // point that catches all three ways a plan can move (in-app, Stripe
+  // Dashboard, Customer Portal), and it must run BEFORE the row sync so that
+  // sync sees the post-update items rather than the ones we just replaced.
+  // Never throws — see its doc comment.
+  await convergeOrgAddonPrices(stripeSub, resolved.subscriptionId);
   // Extra-ORGANISATION add-ons (v17 gap #293) ride the same subscription as
   // further items, but lift a GROUP-WIDE cap rather than one org's — see
   // syncOrgAddonsForSubscription's own doc comment for why this is a sibling
@@ -680,6 +689,159 @@ export async function syncSeatAddonsForSubscription(
 }
 
 /**
+ * Move this subscription's extra-ORGANISATION items onto the price of the
+ * group's CURRENT plan (v17 gap #293, Task 4b).
+ *
+ * WHY THIS EXISTS. The rider is sold at two rates that depend on the plan
+ * ($9/mo on Pro, $19/mo on Pro Plus). `setExtraOrgs` re-prices on a PURCHASE,
+ * but the common case is not a purchase: a group that upgrades pro -> pro_plus
+ * never calls it, and the row sync below reconciles ROWS only — it never looks
+ * at an item's price. So an upgraded Pro Plus group kept paying $9/rider for
+ * ever (the "Pro + riders undercuts Pro Plus" arbitrage the two rates exist to
+ * close) and a downgraded Pro group kept paying $19 (the overcharge mirror).
+ *
+ * WHY THE WEBHOOK. It is the single convergence point: it fires for an in-app
+ * plan change, a Stripe Dashboard edit and a Customer Portal change alike.
+ * Fixing only the in-app path would leave the other two open.
+ *
+ * COMPARED BY PRICE ID, NOT LOOKUP KEY. After a drift replacement with
+ * `transfer_lookup_key: true` the superseded price object reports
+ * `lookup_key: null`, so a lookup-key comparison cannot tell "wrong tier" from
+ * "right tier, superseded price object". Both want the SAME action — move to
+ * the price the catalog resolves today — and an id comparison gives exactly
+ * that, while being a clean no-op once converged. It also agrees with what
+ * setExtraOrgs's survivor match does with each case, which is the property
+ * that keeps the active and passive halves from fighting.
+ *
+ * IN-PLACE UPDATE, NOT DELETE+CREATE. `subscriptionItems.update(id, { price })`
+ * is Stripe's documented way to replace the price of an item
+ * (billing/subscriptions/change-price, "Update the subscription item"). It
+ * preserves `stripe_item_id`, so every org_addons row keyed on it stays valid,
+ * there is no window in which the group has no rider, and no row is orphaned.
+ * `quantity` is passed EXPLICITLY because that doc is also explicit that
+ * changing a price "automatically reverts the quantity to the default value of
+ * 1" — omitting it would silently cut a 5-rider group to 1 and revoke four
+ * organisations' worth of capacity it is still entitled to.
+ *
+ * PRORATION: the default, stated explicitly. An upgrade mid-cycle should pay
+ * the higher rider rate from the moment of the change and a downgrade should
+ * credit the unused remainder — which is exactly what the plan item itself
+ * does on the same event, and what setExtraOrgs already does for a tier swap.
+ * `create_prorations` books those adjustments onto the next invoice rather than
+ * charging immediately (`always_invoice`), so a webhook can never trigger a
+ * surprise off-session payment.
+ *
+ * CONVERGENCE, NOT A LOOP. This update itself produces another
+ * `customer.subscription.updated`; on that event every id already matches and
+ * nothing is written. The `no write when already correct` tests pin it.
+ *
+ * NEVER THROWS. The reachable failure is an unsynced catalog
+ * (`resolveOrgAddonPriceId` 503). A throw here would fail the whole webhook,
+ * which Stripe then retries for ever and which would block every handler after
+ * it — including the row sync, which is the thing the entitlement resolver
+ * actually reads. So a failure is logged with the group, subscription and item
+ * ids and processing continues: rows still reconcile, only the PRICE stays
+ * stale, and the next plan event (or the next purchase) re-converges.
+ */
+export async function convergeOrgAddonPrices(
+  stripeSub: Stripe.Subscription,
+  subscriptionId: string,
+): Promise<void> {
+  const items = stripeSub.items?.data ?? [];
+  const orgItems = items.filter(isOrgAddonItem);
+  // Nothing to converge: spend NO database read and NO Stripe round trip. This
+  // handler runs on every dunning retry, seat change and plan edit for every
+  // group we bill, and the overwhelming majority carry no rider at all — this
+  // guard is what stops `subscription.updated` becoming a `prices.list`.
+  if (orgItems.length === 0) return;
+  try {
+    // The group's plan AFTER syncSubscriptionForGroup has written this event,
+    // which is why this call sits downstream of it. Read from the row rather
+    // than re-derived from the payload: the row is what the entitlement
+    // resolver uses, and it already encodes syncSubscription's "unknown price
+    // keeps the current plan" rule, so the price we bill for and the plan we
+    // entitle can never disagree.
+    const [row] = await sql<{ plan_key: string }[]>`
+      select plan_key from subscriptions where id = ${subscriptionId}`;
+    const planKey = row?.plan_key ?? "community";
+    // A plan with no rider SKU (community, or a future tier not yet seeded).
+    // Do NOTHING — not a re-price, and deliberately not a cancel either. The
+    // cancel paths own removal (handleSubscriptionDeleted for churn,
+    // setExtraOrgs for a customer choosing to stop), and silently deleting a
+    // paid subscription item from inside a webhook — on a plan reading we may
+    // have inferred from an unknown price — is not a call this function gets
+    // to make. A group that lands here keeps its rider until one of those runs.
+    if (!orgAddonForPlan(planKey)) return;
+
+    const expectedPriceId = await resolveOrgAddonPriceId(planKey);
+    // Stripe will not accept two items on one subscription carrying the same
+    // price, and duplicates ARE reachable (two concurrent creates — see
+    // setExtraOrgs' FILTER-not-find comment). So the target price is claimed at
+    // most once: if some item already holds it, no other item is moved onto it.
+    // Consolidating duplicates is setExtraOrgs' job, not a webhook's — the
+    // webhook's contract here is "the rate is right", not "the shape is tidy".
+    let targetClaimed = orgItems.some((it) => it.price?.id === expectedPriceId);
+    for (const item of orgItems) {
+      // Already on the current plan's price: the converged steady state, and
+      // the reason a second identical event writes nothing.
+      if (item.price?.id === expectedPriceId) continue;
+      const qty = item.quantity ?? 0;
+      // A quantity-0 item is a removal in disguise; the row sync below flips
+      // its row to canceled. Re-pricing it would be paying a Stripe write to
+      // correct the rate of something that is on its way out.
+      if (qty <= 0) continue;
+      if (targetClaimed) {
+        console.error(
+          `[billing] extra-org rider ${item.id} on subscription ${stripeSub.id} (group ` +
+            `${subscriptionId}) is on price ${item.price?.id} but ${expectedPriceId} is already ` +
+            `held by another item — leaving it for setExtraOrgs to consolidate`,
+        );
+        continue;
+      }
+      try {
+        const updated = await getStripe().subscriptionItems.update(item.id, {
+          price: expectedPriceId,
+          // NOT optional — see the doc comment. Stripe resets quantity to 1 on
+          // a price change unless it is restated.
+          quantity: qty,
+          proration_behavior: "create_prorations",
+        });
+        targetClaimed = true;
+        console.warn(
+          `[billing] re-priced extra-org rider ${item.id} (qty ${qty}) from ${item.price?.id} ` +
+            `to ${expectedPriceId} for plan ${planKey} on subscription ${stripeSub.id} ` +
+            `(group ${subscriptionId})`,
+        );
+        // Hand the ROW SYNC the post-update item, not the one this event
+        // arrived with. It keys on `stripe_item_id` and `quantity`, both of
+        // which an in-place update preserves, so this is belt-and-braces
+        // rather than load-bearing today — but the alternative is a caller
+        // reconciling rows from a payload we have knowingly invalidated, which
+        // is exactly the shape of bug that appears the moment someone adds a
+        // field the sync reads.
+        const idx = items.indexOf(item);
+        if (updated && idx >= 0) items[idx] = updated;
+      } catch (err) {
+        console.error(
+          `[billing] could not re-price extra-org rider ${item.id} to ${expectedPriceId} ` +
+            `(plan ${planKey}, subscription ${stripeSub.id}, group ${subscriptionId}) — ` +
+            `the row still reconciles, only the rate stays stale`,
+          err,
+        );
+      }
+    }
+  } catch (err) {
+    // Almost always resolveOrgAddonPriceId's 503: `stripe:sync` has not been
+    // run for this account, so the catalog cannot name a price to move to.
+    console.error(
+      `[billing] could not resolve the extra-org rider price for group ${subscriptionId} ` +
+        `(subscription ${stripeSub.id}) — rows still reconcile, rates stay stale`,
+      err,
+    );
+  }
+}
+
+/**
  * Reflect a subscription's extra-ORGANISATION items into org_addons (v17 gap
  * #293; design/v17-pricing-entitlements SPEC-2 §3, §11.3). The ROUTE
  * (setExtraOrgs) mutates Stripe; THIS is the SINGLE writer of the resulting
@@ -802,8 +964,21 @@ async function handleSubscriptionDeleted(stripeSub: Stripe.Subscription) {
   // for history and for a re-buy.
   //
   // Seats have the same hole (`members.max` add-ons also outlive a cancel).
-  // That is INHERITED, not introduced here, and closing it means deciding what
-  // a re-buy inherits — deliberately out of scope, not overlooked.
+  // That is INHERITED, not introduced here, and is tracked as issue #330.
+  //
+  // The reason recorded here previously — "closing it means deciding what a
+  // re-buy inherits" — was WRONG, and is corrected rather than deleted so the
+  // fix is never weighed against a cost that does not exist. `quantity_paid`
+  // above is the PLAN item's quantity (how many organisations the group bills
+  // for, maintained by syncGroupQuantity); it has nothing to do with the
+  // `members.max` rows in org_addons, so resetting it decides nothing about
+  // seats. And syncSeatAddonsForSubscription is cancel-what-I-do-not-see, so a
+  // stale seat row is swept by the first `subscription.updated` after a re-buy
+  // in any case.
+  //
+  // What actually keeps it out is SCOPE: this change is #293's extra-org
+  // rider, the seat family has its own sweep and its own issue, and widening a
+  // cancel across add-on families is not something to do in passing.
   await sql`
     update org_addons set status = 'canceled'
      where wallet_id = ${subscriptionId} and feature_key = ${ORG_ADDON_FEATURE_KEY}
