@@ -394,6 +394,15 @@ async function main() {
     const org2OldWalletId = org2Group!.id;
     const org2BalanceBeforeAttach = await walletBalance(org2.id);
     const groupBalanceBeforeAttach = await walletBalance(org.id);
+    // Pin the linkage BEFORE the move: org2's balance really does live on the
+    // wallet id we are about to assert is emptied. Without this, the post-attach
+    // "old wallet holds nothing" check passes for the wrong reasons — a wallet
+    // that was always empty, or one whose row was deleted rather than drained.
+    check(
+      "billing-group: the joining org's balance sits on the old group's wallet before the attach (#285)",
+      (await walletBalanceByWalletId(org2OldWalletId)) === org2BalanceBeforeAttach &&
+        org2BalanceBeforeAttach > 0,
+    );
 
     // 3. OPT-IN ATTACH. The payer pulls org2 into their Pro group explicitly —
     // the deliberate step that used to happen automatically. No live Stripe

@@ -717,7 +717,10 @@ export async function attachOrgToGroup(args: {
     // of this transaction), so two siblings leaving at the same instant can each
     // still see the other and both forfeit. That errs in the safe direction —
     // credits stay put, nobody is paid twice — and the balance remains on the
-    // old wallet, recoverable, rather than being duplicated into two groups.
+    // old wallet rather than being duplicated into two groups. It is only
+    // recoverable while that wallet's row survives, though: a group left with
+    // no orgs and no Stripe ids is deleted by dropEmptyGroup below, which puts
+    // the balance out of reach.
     const oldWalletId = org.subscription_id ?? orgId;
     const [siblingRow] = org.subscription_id
       ? await tx<{ n: string }[]>`
@@ -726,7 +729,14 @@ export async function attachOrgToGroup(args: {
              and id <> ${orgId} and deleted_at is null`
       : [];
     if (Number(siblingRow?.n ?? 0) > 0)
-      await auditWalletForfeitedOnDetach(tx, actorUserId, orgId, oldWalletId, subscriptionId);
+      await auditWalletForfeitedOnDetach(
+        tx,
+        actorUserId,
+        orgId,
+        oldWalletId,
+        subscriptionId,
+        "attach",
+      );
     else await mergeWalletOnAttach(tx, oldWalletId, subscriptionId);
     return { from: org.subscription_id, moved: true };
   });
@@ -905,7 +915,7 @@ export async function detachOrgFromGroup(args: {
     // #285: no wallet merge on detach (the departing org takes no share of
     // the group's pool — decided default) — just an audit trail of what was
     // left behind, for accountability.
-    await auditWalletForfeitedOnDetach(tx, actorUserId, orgId, group.id, fresh.id);
+    await auditWalletForfeitedOnDetach(tx, actorUserId, orgId, group.id, fresh.id, "detach");
     // `comped` drives the seat spend below: a seat is only consumed when a comp
     // was actually handed out (ride_out on a paying group), never on a release.
     return {

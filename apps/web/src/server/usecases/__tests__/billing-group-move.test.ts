@@ -545,14 +545,22 @@ describe.skipIf(!HAS_DB)("attach", () => {
       select coalesce(sum(delta),0)::text as bal from ai_credit_ledger where wallet_id = ${target}`;
     expect(Number(newBal.bal)).toBe(0);
 
-    // Forfeiting is audited, exactly as a detach's is.
+    // Forfeiting is audited, exactly as a detach's is — but the row says which
+    // path forfeited, so staff reading the trail can tell an attach-side
+    // forfeit from a detach-side one (both share the action name).
     const [audit] = await sql<
-      { detail: { old_wallet_balance_left_behind?: { grant: number; pack: number } } }[]
+      {
+        detail: {
+          old_wallet_balance_left_behind?: { grant: number; pack: number };
+          via?: string;
+        };
+      }[]
     >`
       select detail from staff_audit_log
        where target_id = ${moving} and action = 'billing_group.detach_wallet_not_carried'
        order by created_at desc limit 1`;
     expect(audit?.detail?.old_wallet_balance_left_behind).toEqual({ grant: 40, pack: 0 });
+    expect(audit?.detail?.via).toBe("attach");
   });
 
   it("lets an org join a TRIALING group and ride the trial, charging nothing today", async () => {
@@ -1035,12 +1043,20 @@ describe.skipIf(!HAS_DB)("detach leaves an audit trail for the wallet it does no
     expect(Number(newBal.bal)).toBe(0);
 
     const [audit] = await sql<
-      { detail: { old_wallet_balance_left_behind?: { grant: number; pack: number } } }[]
+      {
+        detail: {
+          old_wallet_balance_left_behind?: { grant: number; pack: number };
+          via?: string;
+        };
+      }[]
     >`
       select detail from staff_audit_log
        where target_id = ${orgId} and action = 'billing_group.detach_wallet_not_carried'
        order by created_at desc limit 1`;
     expect(audit?.detail?.old_wallet_balance_left_behind).toEqual({ grant: 40, pack: 0 });
+    // The same action name is written by the attach-side forfeit, so the row
+    // has to say which path it came from.
+    expect(audit?.detail?.via).toBe("detach");
   });
 });
 

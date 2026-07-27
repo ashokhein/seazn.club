@@ -860,6 +860,13 @@ export async function mergeWalletOnAttach(
  *
  * Called INSIDE detachOrgFromGroup's own transaction, right after the fresh
  * subscription row is minted, so the snapshot and the move commit together.
+ *
+ * **Also used by the ATTACH path**, which reaches the same forfeit whenever the
+ * old group still holds live sibling orgs (attachOrgToGroup, billing-groups.ts)
+ * — that wallet is a shared pool too, so the joiner takes no share of it and
+ * only a SOLE org's wallet is merged. Both paths write the same action name, so
+ * `via` records which one produced the row; without it the two are
+ * indistinguishable in `staff_audit_log`.
  */
 export async function auditWalletForfeitedOnDetach(
   tx: Tx,
@@ -867,6 +874,7 @@ export async function auditWalletForfeitedOnDetach(
   orgId: string,
   oldWalletId: string,
   newWalletId: string,
+  via: "attach" | "detach",
 ): Promise<void> {
   const grant = Math.max(0, await bucketBalance(tx, oldWalletId, "grant"));
   const pack = Math.max(0, await bucketBalance(tx, oldWalletId, "pack"));
@@ -876,6 +884,7 @@ export async function auditWalletForfeitedOnDetach(
             ${tx.json({
               old_wallet_id: oldWalletId,
               new_wallet_id: newWalletId,
+              via,
               old_wallet_balance_left_behind: { grant, pack },
             } as never)})`;
 }
