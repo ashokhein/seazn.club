@@ -23,7 +23,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 const h = vi.hoisted(() => ({
   role: "owner" as string,
   planKey: "community" as string,
-  passRow: null as { purchased_at: string; stripe_payment_intent: string | null } | null,
+  passRow: null as {
+    purchased_at: string;
+    stripe_payment_intent: string | null;
+    pass_key: string;
+  } | null,
   purchases: [] as unknown[],
   reconciled: [] as string[],
   // The org→group join `groupAlreadyRedeemed(subscriptionId)` needs. Defaults
@@ -34,16 +38,21 @@ const h = vi.hoisted(() => ({
   matrix: [
     { plan_key: "community", feature_key: "divisions.per_competition.max", bool_value: null, int_value: 2 },
     { plan_key: "event_pass", feature_key: "divisions.per_competition.max", bool_value: null, int_value: 10 },
+    { plan_key: "event_pass_l", feature_key: "divisions.per_competition.max", bool_value: null, int_value: 20 },
     { plan_key: "pro", feature_key: "divisions.per_competition.max", bool_value: null, int_value: null },
     { plan_key: "community", feature_key: "entrants.per_division.max", bool_value: null, int_value: 32 },
     { plan_key: "event_pass", feature_key: "entrants.per_division.max", bool_value: null, int_value: 64 },
+    // null = unlimited, which is exactly what L grants (V341).
+    { plan_key: "event_pass_l", feature_key: "entrants.per_division.max", bool_value: null, int_value: null },
     { plan_key: "pro", feature_key: "entrants.per_division.max", bool_value: null, int_value: 256 },
     // scheduling.ai.runs_per_division.max retired (v17 Phase 2 Task 5, V322).
     { plan_key: "community", feature_key: "registration.fee_percent", bool_value: null, int_value: 8 },
     { plan_key: "event_pass", feature_key: "registration.fee_percent", bool_value: null, int_value: 5 },
+    { plan_key: "event_pass_l", feature_key: "registration.fee_percent", bool_value: null, int_value: 5 },
     { plan_key: "pro", feature_key: "registration.fee_percent", bool_value: null, int_value: 2 },
     { plan_key: "community", feature_key: "realtime", bool_value: false, int_value: null },
     { plan_key: "event_pass", feature_key: "realtime", bool_value: true, int_value: null },
+    { plan_key: "event_pass_l", feature_key: "realtime", bool_value: true, int_value: null },
     { plan_key: "pro", feature_key: "realtime", bool_value: true, int_value: null },
   ],
 }));
@@ -88,10 +97,17 @@ vi.mock("@/lib/billing", () => ({
   },
 }));
 vi.mock("@/server/usecases/billing-manage", () => ({ getPassPurchases: async () => h.purchases }));
-// Client islands: the real ones pull Stripe.js and the DictProvider context.
-vi.mock("@/components/pass-upgrade", () => ({
-  PassUpgradeButton: ({ label }: { label: string }) => <button data-pass-buy>{label}</button>,
+// The picker is NOT mocked. Since v17 #294 it owns both prices, the buy
+// button and the owner-only sentence, so a stand-in stub would make every
+// assertion in this file about those things vacuous — the page would "contain
+// $29" only because the stub was told to say so. Only Stripe.js is mocked
+// (same two modules as pass-checkout-parity.test.tsx), which is all the real
+// component actually needs a browser for.
+vi.mock("@stripe/react-stripe-js", () => ({
+  EmbeddedCheckoutProvider: (p: { children?: React.ReactNode }) => <div>{p.children}</div>,
+  EmbeddedCheckout: () => <div data-stripe-embedded-checkout />,
 }));
+vi.mock("@/lib/stripe-browser", () => ({ stripePromise: Promise.resolve(null) }));
 vi.mock("@/components/ui/tip", () => ({ Tip: () => <span data-tip /> }));
 
 import Page from "../page";
@@ -125,10 +141,15 @@ beforeEach(() => {
 });
 
 /** A pass bought `days` ago, paid unless told otherwise. */
-function heldPass({ days = 3, intent = "pi_live_1" as string | null } = {}) {
+function heldPass({
+  days = 3,
+  intent = "pi_live_1" as string | null,
+  passKey = "event_pass",
+} = {}) {
   h.passRow = {
     purchased_at: new Date(Date.now() - days * 86_400_000).toISOString(),
     stripe_payment_intent: intent,
+    pass_key: passKey,
   };
   h.purchases = [{ ...RECEIPT, ...(intent ? {} : { amountMinor: null, currency: null, hostedInvoiceUrl: null }) }];
 }
@@ -140,6 +161,27 @@ describe("not owned — the owner", () => {
     expect(html).toContain("$29");
     expect(html).toContain("data-pass-buy");
     expect(html).toContain("Buy the pass");
+  });
+
+  it("offers BOTH rungs, priced, with M the one that would be bought", async () => {
+    // v17 #294. The default matters beyond taste: event-pass.spec.ts clicks
+    // [data-pass-buy] straight through to Stripe without touching the picker,
+    // so whatever is pre-selected here is what that real-money suite buys.
+    const html = await render();
+    expect(html).toContain("$29");
+    expect(html).toContain("$59");
+    expect(html).toContain('checked="" value="event_pass"');
+    expect(html).not.toContain('checked="" value="event_pass_l"');
+    expect(html).toContain("Buy the pass — M");
+  });
+
+  it("compares both rungs against free and Pro, from the live matrix", async () => {
+    const html = await render();
+    expect(html).toContain("Event Pass M");
+    expect(html).toContain("Event Pass L");
+    // L's own figures, not M's: 20 divisions and a NULL entrant cap.
+    expect(html).toContain(">20<");
+    expect(html).toContain("Unlimited");
   });
 
   it("names the real limits rather than a hardcoded claim", async () => {
@@ -186,6 +228,26 @@ describe("owned", () => {
     // e2e contract, not decoration.
     expect(html).toContain("data-pass-active");
     expect(html).toContain("Event Pass active");
+  });
+
+  it("names the rung that was actually bought", async () => {
+    // A $59 buyer must not be shown the $29 product's name (v17 #294).
+    heldPass({ passKey: "event_pass_l" });
+    const html = await render();
+    expect(html).toContain("Event Pass L");
+    expect(html).not.toContain("Event Pass M");
+  });
+
+  it("drops the other rung's column once a pass is held", async () => {
+    // There is no M->L upgrade path (#294 Q3, deferred), so a second pass
+    // column here would advertise a purchase the product cannot complete —
+    // and it must never price anything on a page where a pass is already held.
+    heldPass();
+    const html = await render();
+    expect(html).toContain("Event Pass M");
+    expect(html).not.toContain("Event Pass L");
+    expect(html).not.toContain("$29");
+    expect(html).not.toContain("$59");
   });
 
   it("links the receipt for the money that was taken", async () => {
