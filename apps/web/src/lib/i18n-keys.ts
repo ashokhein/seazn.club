@@ -131,6 +131,7 @@ export type DictionaryKey =
   | "billing.credits.action.adminRefund"
   | "billing.credits.action.earn"
   | "billing.credits.action.expiry"
+  | "billing.credits.action.groupMerge"
   | "billing.credits.action.monthlyGrant"
   | "billing.credits.action.pack"
   | "billing.credits.action.pass"

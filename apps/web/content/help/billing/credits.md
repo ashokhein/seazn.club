@@ -28,6 +28,10 @@ To buy one, use **Buy credits** on the Credits tab. Pick a pack from the ladder 
 
 Billing is group-level: one subscription can pay for several organisations. When it does, those organisations **share one credit wallet** — buy once, and any organisation in the group can spend from the pool. The monthly grant scales with the number of paid seats. The Credits tab shows a "shared across N organisations" note when your organisation is part of a group, and the run history records which organisation spent each credit.
 
+What happens to the credits you already hold depends on whether they are yours alone. If your organisation is **billed on its own**, they **move with you**: joining a group merges your unspent balance straight into the shared pool — monthly-grant credits stay monthly-grant credits, purchased and earned credits stay in their own never-expiring pool, exactly as before. If you are **already sharing a wallet** with other organisations, that balance **stays with them** — it is the whole group's pool, not your share of it — and you join the new group with a fresh wallet.
+
+Leaving a group works the same way: you take **no share** of the pool with you. Your organisation goes back to its own bill and starts with a fresh, empty wallet, and the credits you were sharing stay with the group.
+
 ## Run history and export
 
 The run history lists each grant, purchase and AI run, newest first, with the credit change for each. Use **Export** to download the full history as a CSV.

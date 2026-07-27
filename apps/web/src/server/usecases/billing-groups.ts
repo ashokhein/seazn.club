@@ -19,6 +19,7 @@ import {
   assertPriceBillsQuantity,
   syncPaymentMethodFlagForSubscription,
 } from "@/lib/billing";
+import { auditWalletForfeitedOnDetach, mergeWalletOnAttach } from "@/lib/credits";
 import {
   invalidateGroupEntitlements,
   invalidateOrgEntitlements,
@@ -697,6 +698,46 @@ export async function attachOrgToGroup(args: {
     assertWithinGroupCap(Number(heldRow?.n ?? 0), capLimit);
 
     await tx`update organizations set subscription_id = ${subscriptionId} where id = ${orgId}`;
+    // #285: what happens to the wallet the org is leaving — org.subscription_id
+    // here is still the PRE-move value (read at the top of this function, before
+    // the UPDATE above), so it names that wallet.
+    //
+    // THE RULE: merge only when this org is the LAST one on the old wallet.
+    // Merging exists to stop a SOLE org's balance stranding on a subscription
+    // nothing points at any more (dropEmptyGroup can then delete the row
+    // outright). When siblings remain, that wallet is a SHARED pool they are
+    // still spending from, and the leaver takes no share of it — the same
+    // decided default detachOrgFromGroup enforces. Merging there would let one
+    // org walk off with the whole group's grant AND pack balance, which the
+    // dead old group (cancelled, comped or community — the only states the
+    // hasLiveSubscription guard above lets an org move out of) can very much
+    // still be holding, since pack credits never expire.
+    //
+    // The old group is deliberately NOT locked (see the lock comment at the top
+    // of this transaction), so two siblings leaving at the same instant can each
+    // still see the other and both forfeit. That errs in the safe direction —
+    // credits stay put, nobody is paid twice — and the balance remains on the
+    // old wallet rather than being duplicated into two groups. It is only
+    // recoverable while that wallet's row survives, though: a group left with
+    // no orgs and no Stripe ids is deleted by dropEmptyGroup below, which puts
+    // the balance out of reach.
+    const oldWalletId = org.subscription_id ?? orgId;
+    const [siblingRow] = org.subscription_id
+      ? await tx<{ n: string }[]>`
+          select count(*)::text as n from organizations
+           where subscription_id = ${org.subscription_id}
+             and id <> ${orgId} and deleted_at is null`
+      : [];
+    if (Number(siblingRow?.n ?? 0) > 0)
+      await auditWalletForfeitedOnDetach(
+        tx,
+        actorUserId,
+        orgId,
+        oldWalletId,
+        subscriptionId,
+        "attach",
+      );
+    else await mergeWalletOnAttach(tx, oldWalletId, subscriptionId);
     return { from: org.subscription_id, moved: true };
   });
 
@@ -871,6 +912,10 @@ export async function detachOrgFromGroup(args: {
               ${compedUntil}, ${group.trial_used_at}, now())
       returning id`;
     await tx`update organizations set subscription_id = ${fresh.id} where id = ${orgId}`;
+    // #285: no wallet merge on detach (the departing org takes no share of
+    // the group's pool — decided default) — just an audit trail of what was
+    // left behind, for accountability.
+    await auditWalletForfeitedOnDetach(tx, actorUserId, orgId, group.id, fresh.id, "detach");
     // `comped` drives the seat spend below: a seat is only consumed when a comp
     // was actually handed out (ride_out on a paying group), never on a release.
     return {

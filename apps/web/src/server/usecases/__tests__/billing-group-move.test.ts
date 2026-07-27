@@ -473,6 +473,96 @@ describe.skipIf(!HAS_DB)("attach", () => {
     expect(stripeMock.subscriptionsUpdate).not.toHaveBeenCalled();
   });
 
+  it("merges the joining org's own wallet balance into the group's, bucket-preserving (#285)", async () => {
+    const payer = await makeUser("payer");
+    const group = await makeGroup(payer, { stripeSubId: "sub_wallet_" + uniq(), quantityPaid: 1 });
+    await makeOrg(group, payer);
+    // The group's own wallet already holds some credits.
+    await sql`insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${group}, 20, 'monthly_grant', 'grant', 20, ${"seed-" + uniq()})`;
+
+    const joiner = await makeLooseOrg(payer);
+    // The joining org's OWN solo wallet (its subscription-of-one) holds
+    // credits of its own, in BOTH buckets.
+    await sql`insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${joiner.subId}, 15, 'monthly_grant', 'grant', 15, ${"seed-" + uniq()})`;
+    await sql`insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${joiner.subId}, 30, 'pack_purchase', 'pack', 45, ${"seed-" + uniq()})`;
+
+    await attachOrgToGroup({ actorUserId: payer, orgId: joiner.orgId, subscriptionId: group });
+
+    // The old wallet (the joiner's solo subscription) is fully drained.
+    const [oldBal] = await sql<{ bal: string }[]>`
+      select coalesce(sum(delta),0)::text as bal from ai_credit_ledger where wallet_id = ${joiner.subId}`;
+    expect(Number(oldBal.bal)).toBe(0);
+
+    // The group's wallet now holds BOTH balances, each in its own bucket.
+    const [grantBal] = await sql<{ bal: string }[]>`
+      select coalesce(sum(delta),0)::text as bal from ai_credit_ledger
+       where wallet_id = ${group} and bucket = 'grant'`;
+    const [packBal] = await sql<{ bal: string }[]>`
+      select coalesce(sum(delta),0)::text as bal from ai_credit_ledger
+       where wallet_id = ${group} and bucket = 'pack'`;
+    expect(Number(grantBal.bal)).toBe(35); // 20 (group's own) + 15 (joiner's)
+    expect(Number(packBal.bal)).toBe(30); // joiner's pack, nothing pooled from grant
+  });
+
+  it("takes NO share of a shared old wallet when other orgs stay behind (#285)", async () => {
+    // The reachable shape: a payer's Pro group is cancelled (its Stripe id
+    // stays on the row forever, so it is not "live" and the attach guard lets
+    // its orgs move) but STILL holds two orgs, and its pooled wallet still
+    // holds a balance the remaining org spends from (pack credits never expire
+    // at all). Moving one org out must not hand that org the whole pool — the
+    // same "leaver takes no wallet share" rule detach enforces.
+    const payer = await makeUser("payer");
+    const shared = await makeGroup(payer, {
+      status: "canceled",
+      stripeSubId: "sub_shared_old_" + uniq(),
+    });
+    const staysBehind = await makeOrg(shared, payer);
+    const moving = await makeOrg(shared, payer);
+    await sql`insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${shared}, 40, 'monthly_grant', 'grant', 40, ${"seed-" + uniq()})`;
+
+    const target = await makeGroup(payer, {
+      stripeSubId: "sub_shared_new_" + uniq(),
+      quantityPaid: 1,
+    });
+    await makeOrg(target, payer);
+
+    await attachOrgToGroup({ actorUserId: payer, orgId: moving, subscriptionId: target });
+
+    // The move really happened (otherwise the balances below are vacuous).
+    expect(await orgGroup(moving)).toBe(target);
+    expect(await orgGroup(staysBehind)).toBe(shared);
+
+    // The old group keeps every credit its remaining org still relies on.
+    const [oldBal] = await sql<{ bal: string }[]>`
+      select coalesce(sum(delta),0)::text as bal from ai_credit_ledger where wallet_id = ${shared}`;
+    expect(Number(oldBal.bal)).toBe(40);
+    // And the new group gained nothing it did not pay for.
+    const [newBal] = await sql<{ bal: string }[]>`
+      select coalesce(sum(delta),0)::text as bal from ai_credit_ledger where wallet_id = ${target}`;
+    expect(Number(newBal.bal)).toBe(0);
+
+    // Forfeiting is audited, exactly as a detach's is — but the row says which
+    // path forfeited, so staff reading the trail can tell an attach-side
+    // forfeit from a detach-side one (both share the action name).
+    const [audit] = await sql<
+      {
+        detail: {
+          old_wallet_balance_left_behind?: { grant: number; pack: number };
+          via?: string;
+        };
+      }[]
+    >`
+      select detail from staff_audit_log
+       where target_id = ${moving} and action = 'billing_group.detach_wallet_not_carried'
+       order by created_at desc limit 1`;
+    expect(audit?.detail?.old_wallet_balance_left_behind).toEqual({ grant: 40, pack: 0 });
+    expect(audit?.detail?.via).toBe("attach");
+  });
+
   it("lets an org join a TRIALING group and ride the trial, charging nothing today", async () => {
     const payer = await makeUser("payer");
     const group = await makeGroup(payer, {
@@ -926,6 +1016,47 @@ describe.skipIf(!HAS_DB)("detach", () => {
     expect(await hasFeature(orgId, "api.access")).toBe(false);
     // The payer keeps the seat they paid for: freed slot, reusable this period.
     expect((await readGroup(group)).quantity_paid).toBe(2);
+  });
+});
+
+describe.skipIf(!HAS_DB)("detach leaves an audit trail for the wallet it does not carry (#285)", () => {
+  it("records the forfeited balance in staff_audit_log without moving any credits", async () => {
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const group = await makeGroup(payer, { stripeSubId: "sub_wallet_det_" + uniq() });
+    await makeOrg(group, payer);
+    const orgId = await makeOrg(group, clubOwner);
+    // The group's shared wallet holds some AI credits.
+    await sql`insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${group}, 40, 'monthly_grant', 'grant', 40, ${"seed-" + uniq()})`;
+
+    const res = await detachOrgFromGroup({ actorUserId: clubOwner, orgId });
+
+    // The wallet balance is untouched — the group keeps every credit
+    // ("leaver takes no wallet share on detach", decided default).
+    const [bal] = await sql<{ bal: string }[]>`
+      select coalesce(sum(delta),0)::text as bal from ai_credit_ledger where wallet_id = ${group}`;
+    expect(Number(bal.bal)).toBe(40);
+    // The departing org starts a fresh, empty wallet — no share carried.
+    const [newBal] = await sql<{ bal: string }[]>`
+      select coalesce(sum(delta),0)::text as bal from ai_credit_ledger where wallet_id = ${res.subscription_id}`;
+    expect(Number(newBal.bal)).toBe(0);
+
+    const [audit] = await sql<
+      {
+        detail: {
+          old_wallet_balance_left_behind?: { grant: number; pack: number };
+          via?: string;
+        };
+      }[]
+    >`
+      select detail from staff_audit_log
+       where target_id = ${orgId} and action = 'billing_group.detach_wallet_not_carried'
+       order by created_at desc limit 1`;
+    expect(audit?.detail?.old_wallet_balance_left_behind).toEqual({ grant: 40, pack: 0 });
+    // The same action name is written by the attach-side forfeit, so the row
+    // has to say which path it came from.
+    expect(audit?.detail?.via).toBe("detach");
   });
 });
 

@@ -686,6 +686,7 @@
   "billing.credits.action.earn": "Créditos ganados",
   "billing.credits.action.refund": "Reembolso",
   "billing.credits.action.expiry": "Reinicio de asignación",
+  "billing.credits.action.groupMerge": "Movidos a esta factura",
   "billing.credits.action.adminGoodwill": "Cortesía de Seazn",
   "billing.credits.action.adminCredit": "Crédito de cuenta",
   "billing.credits.action.adminRefund": "Ajuste de reembolso",

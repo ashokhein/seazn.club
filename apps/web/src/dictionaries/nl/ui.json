@@ -686,6 +686,7 @@
   "billing.credits.action.earn": "Verdiende credits",
   "billing.credits.action.refund": "Terugbetaling",
   "billing.credits.action.expiry": "Toewijzing gereset",
+  "billing.credits.action.groupMerge": "Naar deze factuur verplaatst",
   "billing.credits.action.adminGoodwill": "Seazn-tegemoetkoming",
   "billing.credits.action.adminCredit": "Accountkrediet",
   "billing.credits.action.adminRefund": "Terugbetalingscorrectie",

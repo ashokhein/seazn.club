@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import {
   grantMonthly,
+  mergeWalletOnAttach,
   recordEarnGrant,
   recordPackPurchase,
   reserve,
@@ -15,7 +16,7 @@ import {
   walletIdFor,
 } from "@/lib/credits";
 import { seedOrg } from "./_seed";
-import { getCreditsTab } from "../credits-tab";
+import { creditHistory, getCreditsTab } from "../credits-tab";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -62,6 +63,26 @@ describe.skipIf(!HAS_DB)("getCreditsTab", () => {
     expect(view.balance).toBe(0);
     expect(view.sharedOrgCount).toBe(1);
     expect(view.history).toHaveLength(0);
+  });
+
+  // v17 gap #285: credits that arrive because the org joined a billing group
+  // (mergeWalletOnAttach's `group_merge` rows) must be labelled as their own
+  // thing. The actionKey mapping's `default:` arm returned "adminAdjust", so
+  // the customer — and support reading the same tab — saw a wallet merge as a
+  // staff "Account adjustment", which is a lie about where the money came from.
+  it("labels a wallet merged on billing-group attach as groupMerge, not a staff adjustment", async () => {
+    const { auth } = await seedOrg("community");
+    const walletId = await walletIdFor(auth.orgId);
+    const departing = randomUUID();
+    await recordPackPurchase(departing, 25, `pack-${randomUUID()}`);
+
+    await sql.begin((tx) => mergeWalletOnAttach(tx, departing, walletId));
+
+    const history = await creditHistory(walletId);
+    expect(history).toHaveLength(1);
+    expect(history[0]!.delta).toBe(25);
+    expect(history[0]!.action).toBe("groupMerge");
+    expect(history[0]!.action).not.toBe("adminAdjust");
   });
 
   // #267 (SPEC-5 §2): the Invite & earn card's view fields — a minted,

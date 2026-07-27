@@ -25,7 +25,8 @@
 // reconcile by hand.
 //
 // Idempotent / safe to re-run any number of times:
-//   - a group that already holds a live redemption row is skipped outright
+//   - a group that already holds a redemption row the lifetime cap counts
+//     (live, or reversed-but-undetermined) is skipped outright
 //   - every insert is `on conflict (payment_intent) do nothing`
 //
 // DRY RUN by default: prints every row it would insert (and every anomaly it
@@ -69,6 +70,42 @@ export const BALANCE_TXN_FETCH_CAP = 1000;
  */
 export function isBalanceHistoryTruncated(fetchedCount: number, cap: number): boolean {
   return fetchedCount >= cap;
+}
+
+/**
+ * Does this billing group already hold a redemption that the lifetime cap
+ * counts? If so there is nothing to backfill for it — and nothing to even read
+ * from Stripe.
+ *
+ * The predicate MUST mirror `pass_credit_redemptions_group_cap` exactly
+ * (V335, widened by V337 / #286): `reversed_at is null or
+ * reversal_undetermined_at is not null`. An UNDETERMINED reversal (reversed_at
+ * stamped as the webhook-idempotency marker, but nothing actually clawed back)
+ * still holds the index. Reading it as "free" is wrong in both directions at
+ * once:
+ *   - the group looks un-capped, so the script reconstructs a redemption for a
+ *     group that already has one — a money leak, since the earlier credit was
+ *     never recovered; and
+ *   - the insert below is `on conflict (payment_intent) do nothing`, which only
+ *     absorbs the SAME intent. A DIFFERENT intent for the same subscription
+ *     raises 23505 on the group-cap index, and this loop body is NOT wrapped in
+ *     a try/catch — one such group would abort the entire backfill run.
+ *
+ * Same shape as `groupAlreadyRedeemed` in
+ * apps/web/src/server/usecases/pass-credit.ts; kept as a separate copy because
+ * scripts/ cannot import from apps/web/src/lib (server-only). Exported so the
+ * predicate can be pinned against a real database from apps/web's test suite.
+ */
+export async function groupAlreadyCapped(
+  sql: ReturnType<typeof postgres>,
+  subscriptionId: string,
+): Promise<boolean> {
+  const [row] = await sql<{ one: number }[]>`
+    select 1 as one from pass_credit_redemptions
+    where subscription_id = ${subscriptionId}
+      and (reversed_at is null or reversal_undetermined_at is not null)
+    limit 1`;
+  return !!row;
 }
 
 interface Candidate {
@@ -127,10 +164,7 @@ async function main(): Promise<void> {
     for (const sub of subs) {
       // Already capped — nothing to backfill, and nothing to even look at on
       // Stripe for this group.
-      const [existing] = await sql<{ one: number }[]>`
-        select 1 as one from pass_credit_redemptions
-        where subscription_id = ${sub.id} and reversed_at is null limit 1`;
-      if (existing) {
+      if (await groupAlreadyCapped(sql, sub.id)) {
         alreadyCapped++;
         continue;
       }

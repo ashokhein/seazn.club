@@ -773,6 +773,123 @@ export async function recordPackRefund(
 }
 
 /**
+ * Merge one wallet's balance into another (#285): called INSIDE
+ * attachOrgToGroup's own transaction, immediately after
+ * `organizations.subscription_id` is rewritten, so the credit balance the
+ * departing wallet held moves atomically with the org — otherwise it is
+ * stranded on a subscription id nothing points at any more (and
+ * dropEmptyGroup can delete the row outright).
+ *
+ * Bucket-preserving (SPEC-2 §5.4 / V321): each non-zero bucket gets its OWN
+ * pair of compensating rows — a debit on `oldWalletId`, a credit on
+ * `newWalletId` — so a grant-bucket balance lands back in `grant` and a
+ * pack-bucket balance lands back in `pack`, never pooled into one row.
+ * `recordEarnGrant`'s `LIFETIME_EARN_CAP` sums `source = 'earn_grant'` rows
+ * only (credits.ts:592-596) — a `group_merge` row never carries that source,
+ * so merged earn credits do NOT retroactively count against the new wallet's
+ * earn cap (decided default).
+ *
+ * **Locks both wallets, sorted, to avoid deadlock:** unlike every other write
+ * in this module (one wallet, one lock), this touches two wallets in the
+ * same transaction. Taking the locks in a fixed (lexicographic) order
+ * regardless of which one is "old" or "new" is what stops two concurrent
+ * attaches whose old/new pairs share a wallet from deadlocking each other.
+ *
+ * Transaction-atomic, not idempotency-keyed: this only ever runs once per
+ * successful attach, inside the SAME transaction that rewrites
+ * `organizations.subscription_id` — if anything later in that transaction
+ * fails, the whole thing (org move + merge) rolls back together, and a
+ * caller retrying `attachOrgToGroup` for the same org+group sees it already
+ * moved and skips the merge entirely (attachOrgToGroup's own idempotency
+ * guard, billing-groups.ts:654).
+ *
+ * Returns the credits moved per bucket (0/0 when the old wallet was empty —
+ * the common case for an org that never spun up any AI runs).
+ */
+export async function mergeWalletOnAttach(
+  tx: Tx,
+  oldWalletId: string,
+  newWalletId: string,
+): Promise<{ grant: number; pack: number }> {
+  if (oldWalletId === newWalletId) return { grant: 0, pack: 0 };
+  const [lo, hi] = [oldWalletId, newWalletId].sort();
+  await tx`select pg_advisory_xact_lock(hashtext(${"ai-credit-wallet:" + lo}))`;
+  await tx`select pg_advisory_xact_lock(hashtext(${"ai-credit-wallet:" + hi}))`;
+
+  const moved = { grant: 0, pack: 0 };
+  for (const bucket of ["grant", "pack"] as const) {
+    const amount = Math.max(0, await bucketBalance(tx, oldWalletId, bucket));
+    if (amount <= 0) continue;
+    await appendLedgerRow(tx, {
+      walletId: oldWalletId,
+      delta: -amount,
+      source: "group_merge",
+      bucket,
+      ref: newWalletId,
+      idempotencyKey: null,
+    });
+    await appendLedgerRow(tx, {
+      walletId: newWalletId,
+      delta: amount,
+      source: "group_merge",
+      bucket,
+      ref: oldWalletId,
+      idempotencyKey: null,
+    });
+    moved[bucket] = amount;
+  }
+  return moved;
+}
+
+/**
+ * Record, for accountability, that `orgId` left a shared wallet holding
+ * `oldWalletId`'s balance behind (#285, "leaver takes no wallet share" —
+ * a decided default, not a bug: a shared group wallet has no notion of a
+ * per-org share to carry out, so `detachOrgFromGroup` mints the departing
+ * org a brand-new, empty wallet at `newWalletId` rather than attempting to
+ * split anything off `oldWalletId`).
+ *
+ * Writes to `staff_audit_log` (V103), not the money ledger: no credits
+ * actually move, so there is nothing for `ai_credit_ledger` — append-only
+ * TRUTH about money, SPEC-2 §5.1 — to record. `staff_audit_log` is the only
+ * generic actor+target+detail audit sink the schema has (`db/migration/
+ * deltas/V103__admin.sql`); `actor_id` carries no `is_staff` constraint at
+ * the database level, and every detach (staff-initiated or self-service) is
+ * exactly the kind of money-adjacent event that table exists to leave a
+ * trail for.
+ *
+ * Called INSIDE detachOrgFromGroup's own transaction, right after the fresh
+ * subscription row is minted, so the snapshot and the move commit together.
+ *
+ * **Also used by the ATTACH path**, which reaches the same forfeit whenever the
+ * old group still holds live sibling orgs (attachOrgToGroup, billing-groups.ts)
+ * — that wallet is a shared pool too, so the joiner takes no share of it and
+ * only a SOLE org's wallet is merged. Both paths write the same action name, so
+ * `via` records which one produced the row; without it the two are
+ * indistinguishable in `staff_audit_log`.
+ */
+export async function auditWalletForfeitedOnDetach(
+  tx: Tx,
+  actorUserId: string,
+  orgId: string,
+  oldWalletId: string,
+  newWalletId: string,
+  via: "attach" | "detach",
+): Promise<void> {
+  const grant = Math.max(0, await bucketBalance(tx, oldWalletId, "grant"));
+  const pack = Math.max(0, await bucketBalance(tx, oldWalletId, "pack"));
+  await tx`
+    insert into staff_audit_log (actor_id, action, target_type, target_id, detail)
+    values (${actorUserId}, 'billing_group.detach_wallet_not_carried', 'org', ${orgId},
+            ${tx.json({
+              old_wallet_id: oldWalletId,
+              new_wallet_id: newWalletId,
+              via,
+              old_wallet_balance_left_behind: { grant, pack },
+            } as never)})`;
+}
+
+/**
  * Net credits `orgId` has spent on `walletId` THIS calendar month (SPEC-5 §1) —
  * the derived quantity the operator allocation cap is checked against. There is
  * deliberately NO `spent_this_period` counter: the ledger is the single source

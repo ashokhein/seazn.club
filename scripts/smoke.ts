@@ -383,6 +383,27 @@ async function main() {
       !!org2Group && !!payerGroup && org2Group.id !== payerGroup.id,
     );
 
+    // v17 gap #285: the group wallet a joining org leaves behind must not be
+    // stranded — its balance has to land in the group's shared wallet, not
+    // vanish on a subscription row nothing can resolve to any more.
+    // The +7 is a deliberate top-up on TOP of the community grant org2 was
+    // born with, so the balance under test is not a round plan number that
+    // could coincide with a re-grant: the merge has to carry the org's WHOLE
+    // wallet, grant included, not just the part smoke put there.
+    await topUpWallet(org2.id, 7);
+    const org2OldWalletId = org2Group!.id;
+    const org2BalanceBeforeAttach = await walletBalance(org2.id);
+    const groupBalanceBeforeAttach = await walletBalance(org.id);
+    // Pin the linkage BEFORE the move: org2's balance really does live on the
+    // wallet id we are about to assert is emptied. Without this, the post-attach
+    // "old wallet holds nothing" check passes for the wrong reasons — a wallet
+    // that was always empty, or one whose row was deleted rather than drained.
+    check(
+      "billing-group: the joining org's balance sits on the old group's wallet before the attach (#285)",
+      (await walletBalanceByWalletId(org2OldWalletId)) === org2BalanceBeforeAttach &&
+        org2BalanceBeforeAttach > 0,
+    );
+
     // 3. OPT-IN ATTACH. The payer pulls org2 into their Pro group explicitly —
     // the deliberate step that used to happen automatically. No live Stripe
     // subscription here, so nothing is charged: `charged` is always false, and
@@ -397,6 +418,15 @@ async function main() {
     check(
       "billing-group: attach moves the org into the payer's group",
       attached.subscription_id === payerGroup!.id && attached.charged === false,
+    );
+    check(
+      "billing-group: attach merges the joining org's wallet balance into the group's (#285)",
+      (await walletBalance(org.id)) ===
+        groupBalanceBeforeAttach + org2BalanceBeforeAttach,
+    );
+    check(
+      "billing-group: the joining org's OLD wallet is left holding nothing, not stranded (#285)",
+      (await walletBalanceByWalletId(org2OldWalletId)) === 0,
     );
 
     // 4. ONLY NOW does org2 inherit the group's plan — and through the RESOLVER,
@@ -4009,6 +4039,23 @@ async function walletIdForOrg(orgId: string): Promise<string> {
  *  (mirrors `lib/credits.ts`'s `balance()`). */
 async function walletBalance(orgId: string): Promise<number> {
   const walletId = await walletIdForOrg(orgId);
+  const sql = smokeDb();
+  try {
+    const [row] = await sql<{ bal: string | null }[]>`
+      select coalesce(sum(delta), 0)::text as bal
+        from ai_credit_ledger where wallet_id = ${walletId}`;
+    return Number(row?.bal ?? 0);
+  } finally {
+    await sql.end();
+  }
+}
+
+/** Same as `walletBalance` but takes the wallet id directly — used to prove
+ *  a wallet a billing-group move stepped AWAY from (its old subscription/
+ *  group id, before the attach) is left holding nothing, rather than
+ *  resolving through an org's CURRENT (post-move) wallet like
+ *  `walletBalance` does. */
+async function walletBalanceByWalletId(walletId: string): Promise<number> {
   const sql = smokeDb();
   try {
     const [row] = await sql<{ bal: string | null }[]>`

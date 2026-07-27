@@ -93,6 +93,13 @@ function actionKey(source: string, delta: number, reason: string | null): string
       return "refund";
     case "expiry":
       return "expiry";
+    // #285: credits that moved because the org joined (or left behind) a
+    // billing group — `mergeWalletOnAttach` writes this source on BOTH
+    // wallets, so the label has to read true for a +delta arriving and a
+    // −delta leaving. Without its own case it fell through to `adminAdjust`
+    // and a wallet merge was shown to the org as a staff adjustment.
+    case "group_merge":
+      return "groupMerge";
     case "admin_adjust":
       if (delta < 0) return "adminAdjust";
       switch (reason) {
