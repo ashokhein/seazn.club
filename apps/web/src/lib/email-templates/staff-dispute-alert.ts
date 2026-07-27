@@ -49,7 +49,12 @@ export function staffDisputeAlertTemplate(
             ? "staffDisputeAlert.outcome.downgraded"
             : "staffDisputeAlert.outcome.revoked"
           : "staffDisputeAlert.outcome.closed";
-  const outcome = t(dict, outcomeKey);
+  // `kind` is handed to EVERY outcome, and only `revoked` interpolates it: that
+  // line said a flat "the Event Pass has been revoked" for both rungs, so a lost
+  // $59 L chargeback read as the $29 product in the one sentence that says what
+  // was taken away. The other branches ignore the var. Dictionary-sourced, so
+  // there is nothing to escape.
+  const outcome = t(dict, outcomeKey, { kind: kindLabel });
   const subject = t(dict, "staffDisputeAlert.subject", { orgName: opts.orgName, kind: kindLabel });
   return {
     subject,

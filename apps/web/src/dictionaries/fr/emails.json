@@ -271,7 +271,7 @@
   "staffDisputeAlert.outcome.created": "Signalé — aucun changement de droits pour l'instant. Le paiement est contesté ; rien n'est rétrogradé avant la clôture.",
   "staffDisputeAlert.outcome.won": "Gagné — le signalement a été levé et l'organisation conserve son forfait ou son pass.",
   "staffDisputeAlert.outcome.downgraded": "Perdu — l'organisation a été automatiquement rétrogradée à Community. Aucun transfert à annuler sur un paiement plateforme.",
-  "staffDisputeAlert.outcome.revoked": "Perdu — le Pass Événement a été révoqué et la compétition revient dans le quota du forfait.",
+  "staffDisputeAlert.outcome.revoked": "Perdu — le {kind} a été révoqué et la compétition revient dans le quota du forfait.",
   "staffDisputeAlert.outcome.closed": "Clôturé — examinez le litige dans Stripe.",
   "staffDisputeAlert.footer": "Alerte plateforme automatique de la facturation seazn.club.",
   "staffDisputeAlert.textLine": "Litige plateforme — paiement {kind} pour {orgName}.",

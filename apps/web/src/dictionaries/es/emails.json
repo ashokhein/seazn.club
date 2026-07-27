@@ -271,7 +271,7 @@
   "staffDisputeAlert.outcome.created": "Marcado — sin cambios de derechos por ahora. El cargo está disputado; no se degrada nada hasta que se cierre.",
   "staffDisputeAlert.outcome.won": "Ganada — se ha quitado la marca de disputa y la organización conserva su plan o pase.",
   "staffDisputeAlert.outcome.downgraded": "Perdida — la organización se ha degradado automáticamente a Community. No hay transferencia que revertir en un cargo de plataforma.",
-  "staffDisputeAlert.outcome.revoked": "Perdida — el Pase de Evento se ha revocado y la competición vuelve al cupo del plan.",
+  "staffDisputeAlert.outcome.revoked": "Perdida — el {kind} se ha revocado y la competición vuelve al cupo del plan.",
   "staffDisputeAlert.outcome.closed": "Cerrada — revisa la disputa en Stripe.",
   "staffDisputeAlert.footer": "Alerta de plataforma automática de la facturación de seazn.club.",
   "staffDisputeAlert.textLine": "Disputa de plataforma — cargo {kind} para {orgName}.",

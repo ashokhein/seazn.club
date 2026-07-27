@@ -461,10 +461,18 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
   it("keeps the L rung's matrix identical to M's apart from the documented overrides", async () => {
     const OVERRIDES = ["divisions.per_competition.max", "entrants.per_division.max"];
 
-    // `present` markers rather than `m.feature_key is null`: under FULL OUTER
-    // JOIN ... USING, feature_key is already coalesced, and a real row can hold
-    // null in both value columns, so a literal marker is the only unambiguous
-    // way to tell "row absent" from "row present with null values".
+    // `present` markers rather than `m.feature_key is null`: an explicit
+    // marker, robust to a null-valued row and to a later `ON`-join rewrite. A
+    // real row can hold null in both value columns, so no value column can
+    // stand in for "row absent"; the marker can never be null on a row that
+    // exists, whatever the join is rewritten to.
+    //
+    // (This comment used to justify the marker by claiming feature_key is not
+    // addressable under FULL OUTER JOIN ... USING. That is FALSE — only the
+    // UNQUALIFIED reference is coalesced; qualified `m.feature_key` is still
+    // addressable and is null for right-only rows, so it would have worked.
+    // The marker is still the better code, and a wrong reason for right code
+    // rots into a wrong fix.)
     const diff = await sql<
       { feature_key: string; reason: string; m_value: string; l_value: string }[]
     >`

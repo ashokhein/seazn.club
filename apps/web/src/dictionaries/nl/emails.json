@@ -271,7 +271,7 @@
   "staffDisputeAlert.outcome.created": "Gemarkeerd — nog geen wijziging van rechten. De betaling is betwist; er wordt niets gedegradeerd tot het geschil sluit.",
   "staffDisputeAlert.outcome.won": "Gewonnen — de geschilmarkering is verwijderd en de organisatie behoudt haar abonnement of pass.",
   "staffDisputeAlert.outcome.downgraded": "Verloren — de organisatie is automatisch gedegradeerd naar Community. Bij een platformbetaling is er geen overboeking om terug te draaien.",
-  "staffDisputeAlert.outcome.revoked": "Verloren — de Event Pass is ingetrokken en de competitie telt weer mee voor het abonnement.",
+  "staffDisputeAlert.outcome.revoked": "Verloren — de {kind} is ingetrokken en de competitie telt weer mee voor het abonnement.",
   "staffDisputeAlert.outcome.closed": "Gesloten — bekijk het geschil in Stripe.",
   "staffDisputeAlert.footer": "Automatische platformmelding van seazn.club-facturatie.",
   "staffDisputeAlert.textLine": "Platformgeschil — {kind}-betaling voor {orgName}.",

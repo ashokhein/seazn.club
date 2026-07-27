@@ -2145,17 +2145,24 @@ async function passRungLSuite(): Promise<void> {
     competition_id: plainComp.id,
     pass_key: "event_pass_xl",
   });
+  // Both checks assert the REASON as well as the status. A 400 alone is the
+  // route's answer to half a dozen unrelated refusals and to any body-schema
+  // change — a renamed field would 400 on "competition_id is required" and keep
+  // both of these green while proving nothing about the rung enum or the
+  // one-pass rule. The reasons themselves are pinned in
+  // lib/__tests__/pass-checkout-plan-gate.test.ts; this is the wire version.
   check(
-    "pass L/checkout: an unrecognised rung is refused (400) — the enum is built from PASS_KEYS, not a hardcoded list",
-    badRung.status === 400,
+    "pass L/checkout: an unrecognised rung is refused (400) by the SCHEMA — the enum is built from PASS_KEYS, not a hardcoded list",
+    badRung.status === 400 && badRung.json.error === "Invalid input",
   );
   const alreadyPassed = await raw(s, "/api/billing/pass-checkout", "POST", {
     competition_id: lComp.id,
     pass_key: "event_pass_l",
   });
   check(
-    "pass L/checkout: a competition that already holds a pass refuses a second one (400)",
-    alreadyPassed.status === 400,
+    "pass L/checkout: a competition that already holds a pass refuses a second one (400), and says so",
+    alreadyPassed.status === 400 &&
+      (alreadyPassed.json.error ?? "").includes("already has an Event Pass"),
   );
 
   // === The pro path — a pass is INERT on a paid plan, in both directions ===

@@ -525,6 +525,13 @@ describe("email builders compose from the html templates", () => {
     expect(alert("event_pass_l").text).toContain("revoked");
     expect(alert("event_pass_l").text).not.toContain("auto-downgraded");
     expect(alert("subscription").text).toContain("auto-downgraded");
+
+    // …and the revoke sentence — the one line that says what was taken away —
+    // names the rung too. It hardcoded "the Event Pass" for both, so a lost $59
+    // L chargeback described the $29 product in the sentence a staffer acts on.
+    expect(alert("event_pass_l").text).toContain("the Event Pass L has been revoked");
+    expect(alert("event_pass").text).toContain("the Event Pass has been revoked");
+    expect(alert("event_pass").text).not.toContain("Event Pass L");
   });
 });
 
