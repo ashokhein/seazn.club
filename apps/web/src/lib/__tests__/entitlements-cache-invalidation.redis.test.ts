@@ -14,6 +14,8 @@ import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import { incrWindow } from "@/lib/cache";
 import { hasFeature, invalidateOrgEntitlements } from "@/lib/entitlements";
+import { recordPassPurchase, revokePassForRefundedCharge } from "@/lib/billing";
+import type Stripe from "stripe";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition, patchCompetition } from "@/server/usecases/competitions";
 import { setOrgPlan } from "./_billing-group";
@@ -83,5 +85,48 @@ describe.skipIf(!HAS_DB || !HAS_REDIS)("entitlement cache invalidation (real Red
     // Pre-#287 this reads the 300s-TTL entry warmed above and wrongly stays
     // true for up to 5 minutes even though the competition is now terminal.
     expect(await hasFeature(auth.orgId, "realtime", comp.id)).toBe(false);
+  });
+
+  it("recordPassPurchase busts the cache the instant the pass is granted", async () => {
+    const auth = await seedCommunityOrg();
+    const [{ id: compId }] = await sql<{ id: string }[]>`
+      insert into competitions (org_id, name, slug)
+      values (${auth.orgId}, ${"Grant Cup " + randomUUID().slice(0, 6)},
+              ${"grant-cup-" + randomUUID().slice(0, 6)}) returning id`;
+    await invalidateOrgEntitlements(auth.orgId);
+
+    // Warm the cache on the pre-purchase (deny) answer.
+    expect(await hasFeature(auth.orgId, "realtime", compId)).toBe(false);
+
+    await recordPassPurchase({
+      orgId: auth.orgId,
+      competitionId: compId,
+      paymentIntent: `pi_${randomUUID().slice(0, 8)}`,
+    });
+
+    // recordPassPurchase already calls invalidateOrgEntitlements
+    // (lib/billing.ts:819) — this proves it, doesn't just assert it.
+    expect(await hasFeature(auth.orgId, "realtime", compId)).toBe(true);
+  });
+
+  it("revokePassForRefundedCharge busts the cache the instant a refund revokes the pass", async () => {
+    const auth = await seedCommunityOrg();
+    const [{ id: compId }] = await sql<{ id: string }[]>`
+      insert into competitions (org_id, name, slug)
+      values (${auth.orgId}, ${"Refund Cup " + randomUUID().slice(0, 6)},
+              ${"refund-cup-" + randomUUID().slice(0, 6)}) returning id`;
+    const intent = `pi_${randomUUID().slice(0, 8)}`;
+    await recordPassPurchase({ orgId: auth.orgId, competitionId: compId, paymentIntent: intent });
+    await invalidateOrgEntitlements(auth.orgId);
+
+    // Warm the cache on the granted (true) answer.
+    expect(await hasFeature(auth.orgId, "realtime", compId)).toBe(true);
+
+    const charge = { payment_intent: intent, refunded: true } as unknown as Stripe.Charge;
+    expect(await revokePassForRefundedCharge(charge)).toBe(true);
+
+    // revokePassForRefundedCharge already calls invalidateOrgEntitlements
+    // (lib/billing.ts:881) — this proves it, doesn't just assert it.
+    expect(await hasFeature(auth.orgId, "realtime", compId)).toBe(false);
   });
 });
