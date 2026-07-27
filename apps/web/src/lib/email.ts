@@ -884,6 +884,42 @@ export async function sendAiRunCostAlertEmail(opts: AiRunCostAlertEmail): Promis
   return send({ to: opts.to, transactional: true, subject, html, text });
 }
 
+export interface EarnGrantVolumeAlertEmail {
+  to: string;
+  count: number;
+  threshold: number;
+}
+
+/** Internal staff alert (v17 gap #296 farm-watch): today's earn_grant ledger
+ *  rows (onboarding + referral-welcome + referral + first_paid, pooled
+ *  across every wallet) crossed the daily alert threshold — the backstop
+ *  for the publish-with-division gate, in case the gate itself is being
+ *  worked (many throwaway orgs each publishing one bare competition).
+ *  Ops-only, no user-facing i18n (mirrors sendStuckEventsAlertEmail). Fires
+ *  at most once per cron poll, not deduped across days — a persistent high
+ *  day repeats the alert, which is the point. */
+export async function sendEarnGrantVolumeAlertEmail(opts: EarnGrantVolumeAlertEmail): Promise<boolean> {
+  const subject = `Earn-grant volume alert: ${opts.count} today (threshold ${opts.threshold})`;
+  const bodyText =
+    `${opts.count} earn_grant credit rows have landed today, at or above the alert threshold of ` +
+    `${opts.threshold} (v17 gap #296 farm-watch — onboarding/referral-welcome earn grants gated on a ` +
+    `published competition with a division). Check /admin/revenue for the AI credit margin panel and ` +
+    `recent signups sharing an IP or email domain pattern; farmed accounts spend differently from real ` +
+    `ones (immediately, on large runs, then never again).`;
+  const html = renderEmail({
+    subject,
+    preheader: `${opts.count} earn grants today`,
+    eyebrow: "Credits · Growth loop",
+    title: "Earn-grant volume alert",
+    contentHtml:
+      paragraph(escapeHtml(bodyText)) +
+      panel("Today", `earn_grant rows: ${opts.count}\nthreshold: ${opts.threshold}`),
+    footerNote: "Automated staff alert — daily billing-grant cron (v17 gap #296).",
+  });
+  const text = `${bodyText}\n\nearn_grant rows today: ${opts.count} · threshold: ${opts.threshold}`;
+  return send({ to: opts.to, transactional: true, subject, html, text });
+}
+
 /** True when Resend is configured. */
 export function emailConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY);
