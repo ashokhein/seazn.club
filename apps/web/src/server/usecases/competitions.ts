@@ -384,12 +384,24 @@ export async function patchCompetition(
   // createOrgForUser and api/onboarding/complete/route.ts). Both grants are
   // idempotent per org (tryEarnGrant never throws), so re-publishing, or
   // publishing a second/third competition, is always a safe no-op.
+  //
+  // Best-effort, and the try/catch is load-bearing: this whole block runs
+  // AFTER the tenant transaction has committed. `tryEarnGrant` never throws,
+  // but the `referred_by_org_id` read is a raw query — a transient DB error
+  // there would escape as a 500 for a publish that already succeeded, and the
+  // grant would be lost for good, because the gate only fires on the
+  // TRANSITION into "published" and the row is already published on any
+  // retry. Swallow and log instead; the caller gets its row either way.
   if (shouldFireGrowthEarnGrants(statusChangedTo, publishedDivisionCount)) {
-    await tryEarnGrant(auth.orgId, "onboarding", ONBOARDING_EARN);
-    const [orgRow] = await sql<{ referred_by_org_id: string | null }[]>`
-      select referred_by_org_id from organizations where id = ${auth.orgId}`;
-    if (orgRow?.referred_by_org_id) {
-      await tryEarnGrant(auth.orgId, "referral_welcome", REFERRAL_WELCOME_EARN);
+    try {
+      await tryEarnGrant(auth.orgId, "onboarding", ONBOARDING_EARN);
+      const [orgRow] = await sql<{ referred_by_org_id: string | null }[]>`
+        select referred_by_org_id from organizations where id = ${auth.orgId}`;
+      if (orgRow?.referred_by_org_id) {
+        await tryEarnGrant(auth.orgId, "referral_welcome", REFERRAL_WELCOME_EARN);
+      }
+    } catch (err) {
+      console.error(`[competitions] growth earn grants failed (org ${auth.orgId})`, err);
     }
   }
   return row;

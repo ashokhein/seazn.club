@@ -7,8 +7,37 @@
 // wiring against real Postgres. recordEarnGrant/tryEarnGrant themselves
 // (idempotency, lifetime cap) are unchanged and stay covered by
 // credits-earn.test.ts.
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+
+// The grant block runs POST-COMMIT. Anything that throws there reaches the
+// route as a 500 on a publish that already happened — and because the gate
+// only fires on the TRANSITION into "published", the status is already
+// "published" on any retry, so the grant is lost for good. To prove the
+// try/catch really wraps the raw `referred_by_org_id` select (not just
+// `tryEarnGrant`, which never throws by construction), this mock makes that
+// one query fail on demand. Flag-gated and default-off, so the rest of the
+// file is untouched; a Proxy with only an `apply` trap keeps postgres.js's
+// own properties (`sql.json`, `sql.begin`, …) working for every other call.
+const dbFault = vi.hoisted(() => ({ failReferralSelect: false }));
+vi.mock("@/lib/db", async (importActual) => {
+  const actual = await importActual<typeof import("@/lib/db")>();
+  const sqlProxy = new Proxy(actual.sql, {
+    apply(target, thisArg, args: unknown[]) {
+      const strings = args[0] as TemplateStringsArray | undefined;
+      if (
+        dbFault.failReferralSelect &&
+        Array.isArray(strings) &&
+        strings.join("").includes("referred_by_org_id")
+      ) {
+        return Promise.reject(new Error("transient DB error"));
+      }
+      return Reflect.apply(target as never, thisArg, args);
+    },
+  });
+  return { ...actual, sql: sqlProxy };
+});
+
 import { sql } from "@/lib/db";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition, patchCompetition, shouldFireGrowthEarnGrants } from "../competitions";
@@ -165,6 +194,55 @@ describe.skipIf(!HAS_DB)("publish-with-division earn gate — wiring (v17 gap #2
     // createOrgForUser gives every new org (grant bucket), which is not under
     // test here.
     expect(await packBalance(walletId)).toBe(20);
+  });
+
+  it("a DB failure in the post-commit grant block never fails the publish", async () => {
+    // The publish is ALREADY COMMITTED by the time this block runs. Letting a
+    // transient error escape would hand the caller a 500 for a write that
+    // succeeded — and lose the referral grant permanently, since the gate only
+    // fires on the transition INTO published and the row is already published
+    // on any retry. Best-effort: log and swallow.
+    await seedSportFixtures();
+    const referrerUserId = await seedUser();
+    const referrer = await createOrgForUser(referrerUserId, `RefFail ${uniq()}`);
+    const userId = await seedUser();
+    const org = await createOrgForUser(userId, `ReferredFail ${uniq()}`, {
+      referredByOrgId: referrer.id,
+    });
+    const auth = await authFor(org.id, userId);
+    const comp = await createCompetition(auth, { name: "Cup", visibility: "private", branding: {} });
+    await createDivision(auth, comp.id, {
+      name: "Open",
+      slug: `open-${uniq()}`,
+      sport_key: "generic",
+      variant_key: "score",
+      config: GENERIC_CONFIG,
+      eligibility: [],
+    });
+
+    const rejections: unknown[] = [];
+    const onRejection = (err: unknown) => rejections.push(err);
+    process.on("unhandledRejection", onRejection);
+    dbFault.failReferralSelect = true;
+    try {
+      // Resolves with the updated row — not a rejection.
+      const row = await patchCompetition(auth, comp.id, { status: "published" });
+      expect(row.status).toBe("published");
+    } finally {
+      dbFault.failReferralSelect = false;
+      process.off("unhandledRejection", onRejection);
+    }
+
+    // The write really landed…
+    const [persisted] = await sql<{ status: string }[]>`
+      select status from competitions where id = ${comp.id}`;
+    expect(persisted!.status).toBe("published");
+    // …the grant that ran BEFORE the failing select still stuck (proving the
+    // block was entered and the failure came from the select, not the gate)…
+    const walletId = await walletIdFor(org.id);
+    expect(await packBalance(walletId)).toBe(10); // onboarding only; referral lost
+    // …and nothing was left dangling.
+    expect(rejections).toEqual([]);
   });
 
   it("archiving every division before publish means no grant (0 non-archived divisions)", async () => {
