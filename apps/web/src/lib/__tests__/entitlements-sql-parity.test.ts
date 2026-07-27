@@ -12,7 +12,7 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
-import { hasFeature, invalidateOrgEntitlements } from "@/lib/entitlements";
+import { getLimit, hasFeature, invalidateOrgEntitlements } from "@/lib/entitlements";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
@@ -384,5 +384,51 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
     await invalidateOrgEntitlements(orgId);
     expect(await hasFeature(orgId, "realtime")).toBe(false);
     expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
+  });
+
+  // v17 #294 — the L rung. Migration V341 derives event_pass_l's WHOLE matrix
+  // from event_pass (INSERT...SELECT), overriding only two keys. This proves
+  // the override landed and everything else really did copy across, using the
+  // SAME probe key (`realtime`) the rest of this file already established.
+  it("the L rung (event_pass_l) overrides entrants and divisions, unlike M", async () => {
+    const compId = await seedCompetition(orgId, "l-rung");
+    await sql`
+      insert into competition_passes (competition_id, org_id, pass_key)
+      values (${compId}, ${orgId}, 'event_pass_l')`;
+    await invalidateOrgEntitlements(orgId);
+
+    // Unlimited (null cap) — diverges from M's 128.
+    expect(await getLimit(orgId, "entrants.per_division.max", compId)).toBeNull();
+    // 20 divisions — diverges from M's 10.
+    expect(await getLimit(orgId, "divisions.per_competition.max", compId)).toBe(20);
+    // Everything else is DERIVED from M unchanged — realtime is the existing
+    // probe key for this file (community false, pro true, event_pass true).
+    expect(await hasFeature(orgId, "realtime", compId)).toBe(true);
+    expect(await sqlHasFeature(orgId, "realtime", compId)).toBe(true);
+  });
+
+  // Both resolvers must drop an L pass on a finished competition exactly like
+  // an M pass — org_has_feature (V328) and isPassLocked never branch on
+  // pass_key, but this pins it directly rather than trusting that by
+  // inspection. Mirrors the existing "both resolvers drop a pass on a
+  // COMPLETED" test above, with pass_key='event_pass_l'.
+  it("both resolvers drop an L pass on a COMPLETED competition, same lock as M", async () => {
+    const compId = await seedCompetition(orgId, "l-completed");
+    await sql`
+      insert into competition_passes (competition_id, org_id, pass_key)
+      values (${compId}, ${orgId}, 'event_pass_l')`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime", compId)).toBe(true);
+    expect(await sqlHasFeature(orgId, "realtime", compId)).toBe(true);
+    // The numeric override lifts too, while live.
+    expect(await getLimit(orgId, "entrants.per_division.max", compId)).toBeNull();
+
+    await sql`update competitions set status = 'completed' where id = ${compId}`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime", compId)).toBe(false);
+    expect(await sqlHasFeature(orgId, "realtime", compId)).toBe(false);
+    // Locked: falls all the way through to the org's actual plan (community —
+    // no paid subscription seeded), whose current entrants cap is 64 (V319).
+    expect(await getLimit(orgId, "entrants.per_division.max", compId)).toBe(64);
   });
 });
