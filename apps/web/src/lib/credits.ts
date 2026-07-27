@@ -159,6 +159,16 @@ export function utcMonthStart(now = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 }
 
+/** The current UTC calendar-DAY boundary (00:00 UTC) — same #292 discipline
+ *  as `utcMonthStart` (see its docstring for the full session-TZ story):
+ *  truncate in JS, hand SQL a real `timestamptz` PARAMETER, never
+ *  `date_trunc` in SQL — which truncates in the SESSION timezone
+ *  (Europe/London in prod), so a 23:30 UTC row would be filed under the
+ *  wrong day. */
+export function utcDayStart(now = new Date()): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
 /** Calendar-month period the monthly grant is scoped to (server clock,
  *  `YYYY-MM`) — the ONLY anchor `grantMonthly` uses, for every wallet, paid
  *  or Community (SPEC-2 §5.4 Cadence: "grant is monthly regardless of
@@ -1427,15 +1437,18 @@ export function friendlyAdjustLabel(deltaSign: 1 | -1, reason_code: string): str
 
 /**
  * Daily earn_grant volume — farm-watch backstop for the publish-with-division
- * gate (v17 gap #296). Counts EVERY `earn_grant` ledger row created today
- * (UTC), across every wallet — a farming attempt spreads across many
- * throwaway orgs (each its own wallet), so a per-wallet count would never
- * trip; only the platform-wide daily total catches the pattern.
+ * gate (v17 gap #296). Counts EVERY `earn_grant` ledger row created at or
+ * after `dayStart` (default: the current UTC day boundary via
+ * `utcDayStart()` — a `timestamptz` parameter, NOT SQL `date_trunc('day',
+ * now())`, which truncates in the session TZ; #292 discipline, see
+ * `utcMonthStart`). Across every wallet — a farming attempt spreads across
+ * many throwaway orgs (each its own wallet), so a per-wallet count would
+ * never trip; only the platform-wide daily total catches the pattern.
  */
-export async function earnGrantVolumeToday(): Promise<number> {
+export async function earnGrantVolumeToday(dayStart: Date = utcDayStart()): Promise<number> {
   const [row] = await sql<{ n: string }[]>`
     select count(*)::text as n from ai_credit_ledger
-     where source = 'earn_grant' and created_at >= date_trunc('day', now())`;
+     where source = 'earn_grant' and created_at >= ${dayStart}`;
   return Number(row?.n ?? 0);
 }
 
