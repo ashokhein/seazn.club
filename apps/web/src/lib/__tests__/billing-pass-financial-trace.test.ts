@@ -329,6 +329,7 @@ describe.skipIf(!HAS_DB)("Event Pass grants one-time AI credits", () => {
     const res = await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_grant_" + uniq(),
     });
     expect(res.recorded).toBe(true);
@@ -411,6 +412,7 @@ describe.skipIf(!HAS_DB)("Event Pass grants one-time AI credits", () => {
     const res = await recordPassPurchase({
       orgId: memberOrg,
       competitionId: memberComp,
+      passKey: "event_pass",
       paymentIntent: "pi_grant_group_" + uniq(),
     });
     expect(res.recorded).toBe(true);
@@ -431,7 +433,7 @@ describe.skipIf(!HAS_DB)("Event Pass claws back its credits on refund/dispute", 
     const walletId = await walletIdFor(orgId);
     const intent = "pi_refund_" + uniq();
 
-    expect((await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: intent })).recorded).toBe(true);
+    expect((await recordPassPurchase({ orgId, competitionId: compId, passKey: "event_pass", paymentIntent: intent })).recorded).toBe(true);
     expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
 
     expect(await revokePassForRefundedCharge(refundedCharge(intent))).toBe(true);
@@ -445,7 +447,7 @@ describe.skipIf(!HAS_DB)("Event Pass claws back its credits on refund/dispute", 
     const walletId = await walletIdFor(orgId);
     const intent = "pi_partial_" + uniq();
 
-    await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: intent });
+    await recordPassPurchase({ orgId, competitionId: compId, passKey: "event_pass", paymentIntent: intent });
     // Consume 10 of the 25 (a real AI run's hold from the pack bucket).
     await reserve(walletId, orgId, 10);
     expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT - 10); // 15 left
@@ -462,7 +464,7 @@ describe.skipIf(!HAS_DB)("Event Pass claws back its credits on refund/dispute", 
     const walletId = await walletIdFor(orgId);
     const intent = "pi_dispute_" + uniq();
 
-    await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: intent });
+    await recordPassPurchase({ orgId, competitionId: compId, passKey: "event_pass", paymentIntent: intent });
     expect(await balance(walletId)).toBe(PASS_CREDIT_GRANT);
 
     await processStripeEvent(disputeClosedEvent(intent, "lost"));
@@ -477,7 +479,7 @@ describe.skipIf(!HAS_DB)("Event Pass claws back its credits on refund/dispute", 
     const walletId = await walletIdFor(orgId);
     const intent = "pi_dbl_" + uniq();
 
-    await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: intent });
+    await recordPassPurchase({ orgId, competitionId: compId, passKey: "event_pass", paymentIntent: intent });
     // First claw-back (refund) takes the wallet to 0.
     await revokePassForRefundedCharge(refundedCharge(intent));
     expect(await balance(walletId)).toBe(0);
@@ -494,7 +496,7 @@ describe.skipIf(!HAS_DB)("Event Pass claws back its credits on refund/dispute", 
     const walletId = await walletIdFor(orgId);
 
     // Buy → refund: the pass row is deleted and its 25 clawed.
-    await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: "pi_first_" + uniq() });
+    await recordPassPurchase({ orgId, competitionId: compId, passKey: "event_pass", paymentIntent: "pi_first_" + uniq() });
     await revokePassForRefundedCharge(refundedCharge((await lastPassIntent(compId)) ?? ""));
     expect(await balance(walletId)).toBe(0);
 
@@ -503,6 +505,7 @@ describe.skipIf(!HAS_DB)("Event Pass claws back its credits on refund/dispute", 
     const second = await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_second_" + uniq(),
     });
     expect(second.recorded).toBe(true);
@@ -525,7 +528,7 @@ describe.skipIf(!HAS_DB)("Event Pass claws back its credits on refund/dispute", 
     const groupWallet = await walletIdFor(memberOrg);
     const intent = "pi_grp_" + uniq();
 
-    await recordPassPurchase({ orgId: memberOrg, competitionId: memberComp, paymentIntent: intent });
+    await recordPassPurchase({ orgId: memberOrg, competitionId: memberComp, passKey: "event_pass", paymentIntent: intent });
     expect(await balance(groupWallet)).toBe(PASS_CREDIT_GRANT);
 
     expect(await revokePassForRefundedCharge(refundedCharge(intent))).toBe(true);
@@ -573,12 +576,18 @@ describe.skipIf(!HAS_DB)("Event Pass L rung (v17 #294) — same money machinery 
     expect(await recordedRung(compId)).toBe("event_pass_l");
   });
 
-  it("still records M when no rung is named (every pre-#294 call site)", async () => {
+  // `passKey` is REQUIRED and has no default, so there is no "caller omitted it"
+  // case left to test at runtime — omitting it does not compile, and
+  // `npm run typecheck` is a CI gate (ci.yml). This is the M half of the same
+  // assertion: naming M explicitly records M, so the L cases above are proving a
+  // routed value rather than a constant.
+  it("records M when M is the rung named", async () => {
     const { orgId, compId } = await seedPassBuyer();
     const res = await recordPassPurchase({
       orgId,
       competitionId: compId,
-      paymentIntent: "pi_m_default_" + uniq(),
+      passKey: "event_pass",
+      paymentIntent: "pi_m_explicit_" + uniq(),
     });
     expect(res.recorded).toBe(true);
     expect(await recordedRung(compId)).toBe("event_pass");

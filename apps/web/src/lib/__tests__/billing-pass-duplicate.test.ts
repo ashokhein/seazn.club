@@ -113,18 +113,21 @@ describe.skipIf(!HAS_DB)("recordPassPurchase duplicates", () => {
     const a = await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_a",
     });
     expect(a).toEqual({ recorded: true, duplicateIntent: null });
     const b = await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_b",
     });
     expect(b).toEqual({ recorded: false, duplicateIntent: "pi_b" });
     const same = await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_a",
     });
     expect(same).toEqual({ recorded: false, duplicateIntent: null }); // replay, not duplicate
@@ -135,6 +138,7 @@ describe.skipIf(!HAS_DB)("recordPassPurchase duplicates", () => {
     await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_first",
     });
     // Reconcile-on-return passes null when the session's intent isn't a string;
@@ -142,6 +146,7 @@ describe.skipIf(!HAS_DB)("recordPassPurchase duplicates", () => {
     const res = await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: null,
     });
     expect(res).toEqual({ recorded: false, duplicateIntent: null });
@@ -158,6 +163,7 @@ describe.skipIf(!HAS_DB)("recordPassPurchase duplicates", () => {
         recordPassPurchase({
           orgId,
           competitionId: compId,
+          passKey: "event_pass",
           paymentIntent: intent,
         }).then((r) => ({
           intent,
@@ -181,6 +187,7 @@ describe.skipIf(!HAS_DB)("Event Pass duplicate payment → auto-refund (checkout
     await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_first",
     });
     stripeMock.refundCreate.mockClear();
@@ -204,6 +211,7 @@ describe.skipIf(!HAS_DB)("Event Pass duplicate payment → auto-refund (checkout
     await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_solo",
     });
     stripeMock.refundCreate.mockClear();
@@ -218,6 +226,7 @@ describe.skipIf(!HAS_DB)("Event Pass duplicate payment → auto-refund (checkout
     await recordPassPurchase({
       orgId,
       competitionId: compId,
+      passKey: "event_pass",
       paymentIntent: "pi_keep",
     });
     stripeMock.refundCreate.mockClear();

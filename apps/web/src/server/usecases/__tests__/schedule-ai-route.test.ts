@@ -464,6 +464,7 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, credit-metered v17
     const res = await recordPassPurchase({
       orgId: auth.orgId,
       competitionId: competition_id,
+      passKey: "event_pass",
       paymentIntent: `pi_pass_${randomUUID()}`,
     });
     expect(res.recorded).toBe(true);

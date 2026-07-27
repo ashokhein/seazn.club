@@ -863,13 +863,16 @@ export async function recordPassPurchase(args: {
   orgId: string;
   competitionId: string;
   paymentIntent?: string | null;
-  /** The rung bought. Optional, defaulting to the original M rung, so every
-   *  pre-#294 call site keeps recording exactly what it always has; both
-   *  production callers (the webhook and reconcile-on-return) pass it
-   *  explicitly, resolved from the checkout session's metadata. */
-  passKey?: PassKey;
+  /** The rung bought. REQUIRED, and deliberately without a default: an omitted
+   *  rung is precisely the bug above, and a default here (or a `?? "event_pass"`
+   *  at a call site) only relocates it somewhere quieter. Making callers name the
+   *  rung is what lets `tsc` — the CI typecheck gate — enumerate every writer the
+   *  day a third rung appears. The column's `not null default 'event_pass'`
+   *  (V271) is now doing nothing for this path; it remains only as a schema-level
+   *  backstop for rows this function did not write. */
+  passKey: PassKey;
 }): Promise<{ recorded: boolean; duplicateIntent: string | null }> {
-  const passKey: PassKey = args.passKey ?? "event_pass";
+  const { passKey } = args;
   const grantPassCredits = () =>
     walletIdFor(args.orgId).then((walletId) =>
       recordPassGrant(walletId, PASS_CREDIT_GRANT, args.competitionId, args.paymentIntent),
