@@ -30,6 +30,7 @@ import {
   proPlusPrice,
   proPrice,
   type Currency,
+  PASS_KEYS,
   SUPPORTED_CURRENCIES,
 } from "@/lib/currency";
 import { HttpError } from "@/lib/errors";
@@ -93,6 +94,7 @@ describe("buildEmbeddedCheckoutParams", () => {
         orgId: "org-abc",
         competitionId: "comp-1",
         competitionName: "Riverside Cup",
+        passKey: "event_pass",
         returnUrl: base.returnUrl,
         customerEmail: "a@b.com",
       }).adaptive_pricing,
@@ -169,6 +171,7 @@ describe("buildPassCheckoutParams (v3/07 §3)", () => {
     orgId: "org-abc",
     competitionId: "comp-1",
     competitionName: "Riverside Cup",
+    passKey: "event_pass" as const,
     returnUrl: "https://app.test/o/x/c/y/upgrade?checkout=success&session_id={CHECKOUT_SESSION_ID}",
   };
 
@@ -209,6 +212,34 @@ describe("buildPassCheckoutParams (v3/07 §3)", () => {
     const other = buildPassCheckoutParams({ ...pass, competitionName: "Autumn Open" });
     expect(other.invoice_creation?.invoice_data?.description).toBe("Event Pass — Autumn Open");
   });
+
+  // v17 #294 — the L rung. `pass_key` in the session metadata is the ONLY thing
+  // that tells the webhook / reconcile-on-return path which rung was bought, and
+  // the invoice description is the only thing that tells the BUYER: both rungs
+  // land in the same invoices.list() on the billing page and on PDFs that are
+  // otherwise identical apart from the amount.
+  it("stamps the requested rung into the session metadata", () => {
+    for (const passKey of PASS_KEYS) {
+      expect(buildPassCheckoutParams({ ...pass, passKey }).metadata).toEqual({
+        org_id: "org-abc",
+        competition_id: "comp-1",
+        pass_key: passKey,
+      });
+    }
+  });
+
+  it("names the rung on the invoice line, so a $59 L is not filed as a $29 M", () => {
+    const m = buildPassCheckoutParams({ ...pass, passKey: "event_pass" });
+    const l = buildPassCheckoutParams({ ...pass, passKey: "event_pass_l" });
+    expect(m.invoice_creation?.invoice_data?.description).toBe("Event Pass — Riverside Cup");
+    expect(l.invoice_creation?.invoice_data?.description).toBe("Event Pass L — Riverside Cup");
+    // The competition name still varies independently — the rung label is a
+    // prefix, not a replacement for the per-competition naming above.
+    expect(
+      buildPassCheckoutParams({ ...pass, passKey: "event_pass_l", competitionName: "Autumn Open" })
+        .invoice_creation?.invoice_data?.description,
+    ).toBe("Event Pass L — Autumn Open");
+  });
 });
 
 // Verified against LIVE Stripe test mode 2026-07-21 — see
@@ -223,6 +254,7 @@ describe("customer_update on an existing customer (automatic_tax)", () => {
     orgId: "org-abc",
     competitionId: "comp-1",
     competitionName: "Riverside Cup",
+    passKey: "event_pass" as const,
     returnUrl: base.returnUrl,
   };
 
@@ -264,7 +296,7 @@ describe("checkout branding", () => {
   it("brands the Event Pass checkout identically", () => {
     const p = buildPassCheckoutParams({
       priceId: "price_pass", orgId: "org-abc", competitionId: "comp-1",
-      competitionName: "Riverside Cup",
+      competitionName: "Riverside Cup", passKey: "event_pass",
       returnUrl: base.returnUrl, customerEmail: "a@b.com",
     });
     expect(p.branding_settings).toEqual(

@@ -263,6 +263,7 @@
   "staffDisputeAlert.title": "Cargo de plataforma disputado",
   "staffDisputeAlert.kind.subscription": "suscripción",
   "staffDisputeAlert.kind.pass": "Pase de Evento",
+  "staffDisputeAlert.kind.passL": "Pase de Evento L",
   "staffDisputeAlert.body": "Un cargo {kind} para <strong>{orgName}</strong> ({amount}) tiene un contracargo. Disputa de Stripe {disputeId}, estado: {status}.",
   "staffDisputeAlert.panelTitle": "Medida tomada",
   "staffDisputeAlert.outcome.created": "Marcado — sin cambios de derechos por ahora. El cargo está disputado; no se degrada nada hasta que se cierre.",

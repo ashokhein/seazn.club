@@ -1,10 +1,22 @@
 import { panel, paragraph, renderEmail } from "./compose";
 import { escapeHtml, money } from "./shared";
 import { t, type Dict } from "@/lib/i18n";
+import type { PassKey } from "@/lib/currency";
+import type { DictionaryKey } from "@/lib/i18n-keys";
+
+/** The dict key naming each disputed product. `Record<PassKey, …>` over the pass
+ *  rungs (v17 #294): a new rung in PASS_KEYS without a label here is a compile
+ *  error, not a $59 chargeback triaged as the $29 product. */
+const KIND_LABEL_KEY: Record<"subscription" | PassKey, DictionaryKey> = {
+  subscription: "staffDisputeAlert.kind.subscription",
+  event_pass: "staffDisputeAlert.kind.pass",
+  event_pass_l: "staffDisputeAlert.kind.passL",
+};
 
 export interface StaffDisputeAlertArgs {
-  /** Which platform charge was disputed. */
-  kind: "subscription" | "event_pass";
+  /** Which platform charge was disputed — a subscription, or the Event Pass rung
+   *  that was bought (v17 #294). */
+  kind: "subscription" | PassKey;
   orgName: string;
   phase: "created" | "closed";
   /** Stripe dispute status (needs_response / won / lost / …). */
@@ -26,12 +38,7 @@ export function staffDisputeAlertTemplate(
   dict: Dict,
 ): { subject: string; html: string; text: string } {
   const amount = money(opts.amountCents, opts.currency);
-  const kindLabel = t(
-    dict,
-    opts.kind === "subscription"
-      ? "staffDisputeAlert.kind.subscription"
-      : "staffDisputeAlert.kind.pass",
-  );
+  const kindLabel = t(dict, KIND_LABEL_KEY[opts.kind]);
   const outcomeKey =
     opts.phase === "created"
       ? "staffDisputeAlert.outcome.created"

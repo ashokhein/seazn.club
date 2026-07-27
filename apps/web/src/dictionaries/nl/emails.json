@@ -263,6 +263,7 @@
   "staffDisputeAlert.title": "Platformbetaling betwist",
   "staffDisputeAlert.kind.subscription": "abonnement",
   "staffDisputeAlert.kind.pass": "Event Pass",
+  "staffDisputeAlert.kind.passL": "Event Pass L",
   "staffDisputeAlert.body": "Een {kind}-betaling voor <strong>{orgName}</strong> ({amount}) heeft een terugboeking. Stripe-geschil {disputeId}, status: {status}.",
   "staffDisputeAlert.panelTitle": "Ondernomen actie",
   "staffDisputeAlert.outcome.created": "Gemarkeerd — nog geen wijziging van rechten. De betaling is betwist; er wordt niets gedegradeerd tot het geschil sluit.",

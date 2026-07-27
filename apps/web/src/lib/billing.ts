@@ -11,6 +11,7 @@ import {
 import { requireSubscriptionIdForOrg, subscriptionIdForOrg } from "@/lib/billing-group";
 import { LIVE_SUBSCRIPTION_STATUSES, hasLiveSubscription } from "@/lib/subscription-status";
 import { grantTrialForRow, recordPassGrant, recordPassRefund, walletIdFor } from "@/lib/credits";
+import { isPassKey, type PassKey } from "@/lib/currency";
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
 import { creditPassTowardSubscription } from "@/server/usecases/pass-credit";
 
@@ -263,6 +264,18 @@ export function assertCheckoutAllowed(
 }
 
 /**
+ * How each Event Pass rung is NAMED to the buyer on their Stripe invoice
+ * (v17 #294). `Record<PassKey, …>` deliberately: adding a rung to PASS_KEYS
+ * without naming it here is a compile error, not a $59 line item silently filed
+ * under the $29 product's name. Matches the Stripe product names in
+ * stripe-plans.json ("Seazn Club Event Pass" / "… Event Pass L").
+ */
+const PASS_INVOICE_LABEL: Record<PassKey, string> = {
+  event_pass: "Event Pass",
+  event_pass_l: "Event Pass L",
+};
+
+/**
  * Params for an EMBEDDED one-time Event Pass checkout (v3/07 §3). Same
  * embedded_page/return_url contract as the subscription flow, but
  * mode:"payment" and competition-scoped metadata — the reconcile/webhook path
@@ -272,6 +285,12 @@ export function buildPassCheckoutParams(args: {
   priceId: string;
   orgId: string;
   competitionId: string;
+  /** Which Event Pass rung this session buys (v17 #294). REQUIRED — with two
+   *  rungs live there is no safe default, and `priceId` and `passKey` must move
+   *  together: L's price with M's key charges $59 for M's caps, and the reverse
+   *  charges $29 for L's. Stamped into the metadata, which is the ONLY thing
+   *  telling the webhook / reconcile paths which rung to record. */
+  passKey: PassKey;
   /** Names the invoice line. Required, not optional: an org that buys three
    *  passes would otherwise get three identical rows on its billing page. */
   competitionName: string;
@@ -290,16 +309,23 @@ export function buildPassCheckoutParams(args: {
     // $29 pass used to leave the buyer with no invoice number, no PDF and no
     // hosted URL — and the billing page lists invoices.list({ customer }), so it
     // showed them nothing at all about money they had spent.
+    // The rung is named as well as the competition: both rungs land in the same
+    // invoices.list() on the billing page, and on PDFs that are otherwise
+    // identical apart from the amount, so "Event Pass — Spring Open" on a $59
+    // charge is the one place a buyer would reasonably conclude they were
+    // overcharged.
     invoice_creation: {
       enabled: true,
-      invoice_data: { description: `Event Pass — ${args.competitionName}` },
+      invoice_data: {
+        description: `${PASS_INVOICE_LABEL[args.passKey]} — ${args.competitionName}`,
+      },
     },
     // Both for the same reason as the subscription flow above: state our own
     // currency, and stop Adaptive Pricing re-quoting the pass at render time in
     // whatever currency the buyer's IP suggests.
     currency: args.currency ?? "usd",
     adaptive_pricing: { enabled: false },
-    metadata: { org_id: args.orgId, competition_id: args.competitionId, pass_key: "event_pass" },
+    metadata: { org_id: args.orgId, competition_id: args.competitionId, pass_key: args.passKey },
     line_items: [{ price: args.priceId, quantity: 1 }],
     return_url: args.returnUrl,
     allow_promotion_codes: true,
@@ -824,20 +850,34 @@ export async function syncSubscriptionForGroup(
  * is refunded, not credited) — only for the winning insert and for a same-intent
  * replay (which heals a first attempt that died between the pass insert and the
  * grant).
+ *
+ * v17 #294: the row also records WHICH RUNG was bought. This insert used to omit
+ * `pass_key` entirely while V271 declares the column `not null default
+ * 'event_pass'`, so an L purchase would have been stored as M — no FK error, no
+ * exception, no failing test, just a $59 sale filed as the $29 product and an
+ * L-sized competition capped at M's 10 divisions / 128 entrants. The grant
+ * itself is flat across rungs by design (L buys a bigger competition, not more
+ * credits), so `PASS_CREDIT_GRANT` is deliberately NOT keyed by `passKey`.
  */
 export async function recordPassPurchase(args: {
   orgId: string;
   competitionId: string;
   paymentIntent?: string | null;
+  /** The rung bought. Optional, defaulting to the original M rung, so every
+   *  pre-#294 call site keeps recording exactly what it always has; both
+   *  production callers (the webhook and reconcile-on-return) pass it
+   *  explicitly, resolved from the checkout session's metadata. */
+  passKey?: PassKey;
 }): Promise<{ recorded: boolean; duplicateIntent: string | null }> {
+  const passKey: PassKey = args.passKey ?? "event_pass";
   const grantPassCredits = () =>
     walletIdFor(args.orgId).then((walletId) =>
       recordPassGrant(walletId, PASS_CREDIT_GRANT, args.competitionId, args.paymentIntent),
     );
 
   const [inserted] = await sql<{ competition_id: string }[]>`
-    insert into competition_passes (competition_id, org_id, stripe_payment_intent)
-    values (${args.competitionId}, ${args.orgId}, ${args.paymentIntent ?? null})
+    insert into competition_passes (competition_id, org_id, stripe_payment_intent, pass_key)
+    values (${args.competitionId}, ${args.orgId}, ${args.paymentIntent ?? null}, ${passKey})
     on conflict (competition_id) do nothing
     returning competition_id`;
   if (inserted) {
@@ -944,6 +984,30 @@ function logReconcileFailure(
 }
 
 /**
+ * Which Event Pass rung a checkout session bought, or `null` if the session is
+ * not a pass session at all (v17 #294). The single definition of the pass gate,
+ * shared by reconcile-on-return and the webhook so the two can never disagree
+ * about what a session means.
+ *
+ * Two deliberately different answers to two different questions:
+ *
+ *  - `pass_key` ABSENT → `null`, refuse. Its absence is precisely how a pass
+ *    session is told apart from a subscription / credit-pack / size-pack
+ *    checkout, none of which ever set it. Widening this to "assume pass" would
+ *    make every subscription checkout try to record a competition pass.
+ *  - `pass_key` PRESENT but unrecognised → fall back to M. Every real session
+ *    has carried `event_pass` since v3/07, so this is a robustness net (metadata
+ *    drift, a typo in a future rung), not a migration path: dropping a paid
+ *    session on the floor is strictly worse than filing it under the cheaper
+ *    rung, which at least leaves the buyer entitled and the money traceable.
+ */
+export function passKeyForSession(session: Stripe.Checkout.Session): PassKey | null {
+  const raw = session.metadata?.pass_key;
+  if (!raw) return null;
+  return isPassKey(raw) ? raw : "event_pass";
+}
+
+/**
  * Reconcile a completed Event Pass checkout directly from Stripe (same
  * webhook-optional contract as reconcileCheckout). Returns true once the pass
  * is recorded. Best-effort and idempotent; never throws.
@@ -955,13 +1019,15 @@ export async function reconcilePassCheckout(
   try {
     const session = await getStripe().checkout.sessions.retrieve(sessionId);
     // Only trust a paid, pass-shaped session that belongs to this org.
-    if (session.metadata?.pass_key !== "event_pass") return false;
-    if (session.metadata.org_id !== orgId) return false;
+    const passKey = passKeyForSession(session);
+    if (!passKey) return false;
+    if (session.metadata?.org_id !== orgId) return false;
     const competitionId = session.metadata.competition_id;
     if (!competitionId || session.payment_status !== "paid") return false;
     const res = await recordPassPurchase({
       orgId,
       competitionId,
+      passKey,
       paymentIntent: typeof session.payment_intent === "string" ? session.payment_intent : null,
     });
     // Reconcile-on-return can land a second owner's payment; refund it (the

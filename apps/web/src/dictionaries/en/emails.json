@@ -263,6 +263,7 @@
   "staffDisputeAlert.title": "Platform charge disputed",
   "staffDisputeAlert.kind.subscription": "subscription",
   "staffDisputeAlert.kind.pass": "Event Pass",
+  "staffDisputeAlert.kind.passL": "Event Pass L",
   "staffDisputeAlert.body": "A {kind} charge for <strong>{orgName}</strong> ({amount}) has a chargeback. Stripe dispute {disputeId}, status: {status}.",
   "staffDisputeAlert.panelTitle": "Action taken",
   "staffDisputeAlert.outcome.created": "Flagged — no entitlement change yet. The charge is contested; nothing is downgraded until it closes.",

@@ -3066,6 +3066,7 @@ export type DictionaryKey =
   | "staffDisputeAlert.body"
   | "staffDisputeAlert.footer"
   | "staffDisputeAlert.kind.pass"
+  | "staffDisputeAlert.kind.passL"
   | "staffDisputeAlert.kind.subscription"
   | "staffDisputeAlert.outcome.closed"
   | "staffDisputeAlert.outcome.created"

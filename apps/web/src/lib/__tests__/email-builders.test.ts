@@ -488,4 +488,37 @@ describe("email builders compose from the html templates", () => {
     expect(html).toContain('bgcolor="#faf9fc"');
     expect(html).not.toMatch(/\{\{[A-Z_]+\}\}/);
   });
+
+  // v17 #294: two Event Pass rungs at different prices. The staff dispute alert
+  // names the disputed product, so the label has to distinguish them — otherwise
+  // a $59 L chargeback is triaged as the $29 M product.
+  it("staff dispute alert names the Event Pass RUNG that was disputed", () => {
+    const alert = (kind: "subscription" | "event_pass" | "event_pass_l") =>
+      staffDisputeAlertTemplate(
+        {
+          kind,
+          orgName: "Riverside Racquets",
+          phase: "closed",
+          status: "lost",
+          amountCents: 5900,
+          currency: "usd",
+          disputeId: "dp_test123",
+        },
+        emailsEn as Dict,
+      );
+
+    expect(alert("event_pass").subject).toContain("Event Pass");
+    expect(alert("event_pass_l").subject).toContain("Event Pass L");
+    // Distinct, and neither is the subscription label.
+    const labels = (["subscription", "event_pass", "event_pass_l"] as const).map(
+      (k) => alert(k).subject,
+    );
+    expect(new Set(labels).size).toBe(3);
+    // A lost dispute on EITHER rung revokes the pass; only a subscription is
+    // downgraded. The outcome branch keys on "is this a subscription", so it must
+    // still take the revoke arm for a rung it has never seen before.
+    expect(alert("event_pass_l").text).toContain("revoked");
+    expect(alert("event_pass_l").text).not.toContain("auto-downgraded");
+    expect(alert("subscription").text).toContain("auto-downgraded");
+  });
 });

@@ -39,6 +39,7 @@ vi.mock("@/lib/stripe", () => ({ getStripe: () => stripeMock.stripe }));
 
 import { sql } from "@/lib/db";
 import { hasFeature } from "@/lib/entitlements";
+import type { PassKey } from "@/lib/currency";
 import { processStripeEvent } from "@/server/usecases/billing-events";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -67,8 +68,10 @@ async function seedSubOrg(plan = "pro"): Promise<{ orgId: string; customer: stri
   return { orgId, customer };
 }
 
-// A community org that bought an Event Pass for one competition.
-async function seedPassOrg(): Promise<{
+// A community org that bought an Event Pass for one competition. `passKey`
+// selects the rung (v17 #294) — the staff alert has to name the RIGHT product,
+// or a disputed $59 L purchase reads to staff as the $29 M one.
+async function seedPassOrg(passKey: PassKey = "event_pass"): Promise<{
   orgId: string;
   compId: string;
   intent: string;
@@ -82,8 +85,8 @@ async function seedPassOrg(): Promise<{
     insert into competitions (org_id, name, slug)
     values (${orgId}, ${"Pass Cup " + suffix}, ${"pass-cup-" + suffix}) returning id`;
   await sql`
-    insert into competition_passes (competition_id, org_id, stripe_payment_intent)
-    values (${compId}, ${orgId}, ${intent})`;
+    insert into competition_passes (competition_id, org_id, stripe_payment_intent, pass_key)
+    values (${compId}, ${orgId}, ${intent}, ${passKey})`;
   return { orgId, compId, intent };
 }
 
@@ -363,6 +366,27 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — Event Pass", () => {
     expect(emailMock.staff.mock.calls[0]![0]).toMatchObject({
       kind: "event_pass",
     });
+  });
+
+  // v17 #294: the alert carries the RUNG, not just "a pass". Staff triaging a
+  // chargeback see the product that was actually bought — a $59 Event Pass L
+  // labelled "Event Pass" sends them looking for a $29 charge that never existed.
+  it("names the L rung on the staff alert for a disputed Event Pass L", async () => {
+    vi.stubEnv("STAFF_ALERT_EMAIL", "ops@seazn.club");
+    const { intent } = await seedPassOrg("event_pass_l");
+    await processStripeEvent(passDisputeEvent("closed", intent, "dp_" + uniq(), "lost"));
+    expect(emailMock.staff).toHaveBeenCalledTimes(1);
+    expect(emailMock.staff.mock.calls[0]![0]).toMatchObject({
+      kind: "event_pass_l",
+    });
+  });
+
+  it("revokes a disputed L pass exactly as it revokes an M one", async () => {
+    const { intent } = await seedPassOrg("event_pass_l");
+    await processStripeEvent(passDisputeEvent("closed", intent, "dp_" + uniq(), "lost"));
+    const [row] = await sql`
+      select 1 from competition_passes where stripe_payment_intent = ${intent}`;
+    expect(row).toBeUndefined();
   });
 });
 

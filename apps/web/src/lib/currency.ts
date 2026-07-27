@@ -77,6 +77,13 @@ export function extraOrgPrice(
 export const PASS_KEYS = ["event_pass", "event_pass_l"] as const;
 export type PassKey = (typeof PASS_KEYS)[number];
 
+/** Is this a rung we know how to sell? The one place that decides — used by the
+ *  checkout route's request validation and by the webhook / reconcile paths that
+ *  read a rung back out of Stripe session metadata (v17 #294). */
+export function isPassKey(value: unknown): value is PassKey {
+  return typeof value === "string" && (PASS_KEYS as readonly string[]).includes(value);
+}
+
 /**
  * What one Event Pass rung COSTS TO ADVERTISE, in minor units, straight from
  * stripe-plans.json — the same seed `stripe:sync` pushes to Stripe.

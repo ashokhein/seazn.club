@@ -263,6 +263,7 @@
   "staffDisputeAlert.title": "Paiement plateforme contesté",
   "staffDisputeAlert.kind.subscription": "abonnement",
   "staffDisputeAlert.kind.pass": "Pass Événement",
+  "staffDisputeAlert.kind.passL": "Pass Événement L",
   "staffDisputeAlert.body": "Un paiement {kind} pour <strong>{orgName}</strong> ({amount}) fait l'objet d'un rejet de débit. Litige Stripe {disputeId}, statut : {status}.",
   "staffDisputeAlert.panelTitle": "Mesure prise",
   "staffDisputeAlert.outcome.created": "Signalé — aucun changement de droits pour l'instant. Le paiement est contesté ; rien n'est rétrogradé avant la clôture.",

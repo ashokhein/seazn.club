@@ -10,6 +10,7 @@ import { sql } from "@/lib/db";
 import {
   linkStripeCustomerForGroup,
   linkStripeCustomer,
+  passKeyForSession,
   pinBillingCurrency,
   recordPassPurchase,
   refundDuplicatePassPayment,
@@ -24,6 +25,7 @@ import {
   recordPassRefund,
   walletIdFor,
 } from "@/lib/credits";
+import { isPassKey } from "@/lib/currency";
 import { SEAT_ADDON, isSeatAddonItem } from "@/lib/seat-addons";
 import { getSizePack } from "@/lib/size-packs";
 import {
@@ -44,6 +46,7 @@ import {
   sendCreditPackGrantFailedAlertEmail,
   sendSizePackGrantFailedAlertEmail,
 } from "@/lib/email";
+import type { StaffDisputeAlertArgs } from "@/lib/email-templates";
 import {
   handleRegistrationCheckoutCompleted,
   handleRegistrationDispute,
@@ -188,14 +191,20 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     return;
   }
 
-  // Event Pass one-time purchase (v3/07 §3) — reconcile-on-return usually
-  // lands first; recordPassPurchase is idempotent either way.
-  if (session.metadata?.pass_key === "event_pass") {
-    const competitionId = session.metadata.competition_id;
+  // Event Pass one-time purchase (v3/07 §3, rung ladder v17 #294) —
+  // reconcile-on-return usually lands first; recordPassPurchase is idempotent
+  // either way. passKeyForSession owns the gate for BOTH paths: a session with
+  // no pass_key is not a pass session and falls through to the subscription
+  // handling below; an unrecognised rung falls back to M rather than being
+  // dropped. See its doc comment in lib/billing.ts.
+  const passKey = passKeyForSession(session);
+  if (passKey) {
+    const competitionId = session.metadata?.competition_id;
     if (competitionId && session.payment_status === "paid") {
       const res = await recordPassPurchase({
         orgId,
         competitionId,
+        passKey,
         paymentIntent:
           typeof session.payment_intent === "string" ? session.payment_intent : null,
       });
@@ -947,7 +956,7 @@ async function disputeCustomerId(dispute: Stripe.Dispute): Promise<string | null
  *  revoke is the source of truth and must not be undone by an alerting hiccup,
  *  and the email is fire-and-forget. */
 async function notifyStaffDispute(
-  kind: "subscription" | "event_pass",
+  kind: StaffDisputeAlertArgs["kind"],
   orgId: string,
   dispute: Stripe.Dispute,
   phase: "created" | "closed",
@@ -1011,10 +1020,13 @@ async function handlePlatformDispute(
   const intent =
     typeof dispute.payment_intent === "string" ? dispute.payment_intent : dispute.payment_intent?.id;
 
-  // Pass charge? Matched by payment intent — works keyless.
+  // Pass charge? Matched by payment intent — works keyless. `pass_key` comes
+  // along so the staff alert names the RUNG that was actually bought (v17 #294):
+  // a disputed $59 Event Pass L labelled "Event Pass" sends whoever triages it
+  // hunting for a $29 charge that never existed.
   if (intent) {
-    const [pass] = await sql<{ org_id: string }[]>`
-      select org_id from competition_passes where stripe_payment_intent = ${intent}`;
+    const [pass] = await sql<{ org_id: string; pass_key: string }[]>`
+      select org_id, pass_key from competition_passes where stripe_payment_intent = ${intent}`;
     if (pass) {
       if (phase === "closed" && dispute.status === "lost") {
         // Money-safety: claw back the pass's one-time credit grant (keyed on the
@@ -1026,7 +1038,15 @@ async function handlePlatformDispute(
         await sql`delete from competition_passes where stripe_payment_intent = ${intent}`;
         await invalidateOrgEntitlements(pass.org_id);
       }
-      await notifyStaffDispute("event_pass", pass.org_id, dispute, phase);
+      // isPassKey, not a cast: the column is `not null default 'event_pass'` and
+      // a row written before #294 (or by a future rung this build predates) must
+      // still produce a valid label rather than a missing i18n key.
+      await notifyStaffDispute(
+        isPassKey(pass.pass_key) ? pass.pass_key : "event_pass",
+        pass.org_id,
+        dispute,
+        phase,
+      );
       return true;
     }
   }

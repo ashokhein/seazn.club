@@ -126,6 +126,7 @@ describe.skipIf(!LIVE)("automatic_tax on an existing customer (live Stripe, test
         name: "event pass (mode: payment)",
         withCustomer: buildPassCheckoutParams({
           priceId: PASS_PRICE,
+          passKey: "event_pass",
           orgId: "org-tax-probe",
           competitionId: "comp-tax-probe",
           competitionName: "Tax Probe Cup",
@@ -134,6 +135,7 @@ describe.skipIf(!LIVE)("automatic_tax on an existing customer (live Stripe, test
         }),
         firstPurchase: buildPassCheckoutParams({
           priceId: PASS_PRICE,
+          passKey: "event_pass",
           orgId: "org-tax-probe",
           competitionId: "comp-tax-probe",
           competitionName: "Tax Probe Cup",
@@ -198,6 +200,7 @@ describe.skipIf(!LIVE)("automatic_tax on an existing customer (live Stripe, test
       (await stripe.checkout.sessions.create(
         buildPassCheckoutParams({
           priceId: PASS_PRICE,
+          passKey: "event_pass",
           orgId: "org-tax-probe",
           competitionId: "comp-tax-probe",
           competitionName: "Probe Cup",
@@ -223,6 +226,7 @@ describe.skipIf(!LIVE)("automatic_tax on an existing customer (live Stripe, test
 
     const params = buildPassCheckoutParams({
       priceId: PASS_PRICE,
+      passKey: "event_pass",
       orgId: "org-tax-probe",
       competitionId: "comp-tax-probe",
       competitionName: "Addressed Cup",
