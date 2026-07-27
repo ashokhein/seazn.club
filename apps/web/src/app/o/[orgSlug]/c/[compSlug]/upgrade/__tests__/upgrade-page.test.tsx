@@ -353,9 +353,12 @@ describe("owned, at the pass's ceiling", () => {
 
 describe("already on a paid plan", () => {
   it("offers no pass, at no price, in any form", async () => {
-    // THE regression this state exists to prevent (f70b8e52): the pass grants
-    // 10 AI runs per division against pro's 20 and 64 entrants against 256, so
-    // an offer here sells a customer strictly LESS than they hold.
+    // THE regression this state exists to prevent (f70b8e52): every boolean the
+    // pass lifts is already true on pro, and the M rung's 128 entrants per
+    // division and 10 divisions sit UNDER pro's 256 and its uncapped division
+    // count — so an offer here sells a customer strictly less than they hold.
+    // (The L rung is the one exception, and it is why the paid-plan copy claims
+    // features rather than "everything"; see #327.)
     h.planKey = "pro";
     const html = await render();
     expect(html).not.toContain("data-pass-buy");
@@ -400,7 +403,15 @@ describe("already on a paid plan", () => {
 
   it("still says the pass is moot rather than pretending it is unavailable", async () => {
     h.planKey = "pro";
-    expect(await render()).toContain("already covers everything an Event Pass adds");
+    const html = await render();
+    expect(html).toContain("already includes every Event Pass feature");
+    // …and says it about FEATURES only. Pro is not a superset of the pass any
+    // more (v17 #294): Pro caps a division at 256 entrants, the L rung caps it
+    // at nothing at all, so "covers everything an Event Pass adds" — what this
+    // panel said until this fix — is false to a reader who was about to buy L.
+    // Whether Pro *should* be able to buy L is #327, a pricing decision; what
+    // is not negotiable is that the refusal stops asserting a falsehood.
+    expect(html).not.toMatch(/covers everything/i);
   });
 });
 

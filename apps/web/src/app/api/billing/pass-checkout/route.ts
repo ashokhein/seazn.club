@@ -40,7 +40,14 @@ export async function POST(req: Request) {
       select slug, name, org_id from competitions where id = ${competition_id}`;
     if (!comp || comp.org_id !== orgId) throw new HttpError(404, "competition not found");
 
-    // A Pro org has nothing to gain from a pass (v3/07 §3 interplay).
+    // A paid org is refused a pass (v3/07 §3 interplay).
+    //
+    // The message says FEATURES, and stops there. It used to say the plan
+    // "covers everything an Event Pass adds", which stopped being true when the
+    // L rung shipped (v17 #294): Pro caps a division at 256 entrants and L caps
+    // it at nothing, so neither is a superset of the other. Whether a paid org
+    // should be ABLE to buy L is a pricing decision (#327) and this gate is
+    // deliberately unchanged — but a refusal may not rest on a falsehood.
     //
     // Judged through the RESOLVER (main), not the raw `plan_key` column: the row
     // keeps saying 'pro' after a comp lapses or a subscription is cancelled,
@@ -57,7 +64,7 @@ export async function POST(req: Request) {
        join organizations o on o.subscription_id = s.id
        where o.id = ${orgId}`;
     if (isPaidPlan(await orgPlanKey(orgId))) {
-      throw new HttpError(400, "Your plan already covers everything an Event Pass adds.");
+      throw new HttpError(400, "Your plan already includes every Event Pass feature.");
     }
 
     // An Event Pass is genuinely ORG-scoped — one competition, one

@@ -20,12 +20,18 @@ export const dynamic = "force-dynamic";
 //                     receipt link, and the Pro step the dead end never offered
 //   ceiling           a pass is held and something still blocked them; Pro only,
 //                     with the credit line and the blocked limit picked out
-//   paid_plan         NO TICKET AND NO PRICE ANYWHERE. Pro's matrix is a strict
-//                     superset of the pass (10 AI runs against 20, 64 entrants
-//                     against 256), so an offer here sells a DOWNGRADE — the
-//                     defect f70b8e52 fixed in the paywall. The sales object is
-//                     absent rather than disabled, which is the only version
-//                     that cannot regress into a re-sale.
+//   paid_plan         NO TICKET AND NO PRICE ANYWHERE. Every boolean the pass
+//                     lifts is already true on a paid plan, and Pro raises the
+//                     caps the pass raises (128 entrants per division against
+//                     256, 10 divisions against no ceiling at all), so an offer
+//                     here sells a DOWNGRADE — the defect f70b8e52 fixed in the
+//                     paywall. The sales object is absent rather than disabled,
+//                     which is the only version that cannot regress into a
+//                     re-sale.
+//                     Not a strict superset since v17 #294, mind: the L rung
+//                     takes the entrant cap off entirely, above Pro's 256. The
+//                     copy on this state says "features" for that reason, and
+//                     whether Pro may buy L at all is #327.
 //
 // Every figure in the comparison is read from `plan_entitlements` at render
 // time. See lib/pass-comparison.ts for why nothing is written down.

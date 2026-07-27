@@ -10,8 +10,8 @@
 // reason: once the resolved plan is paid, lib/entitlements.ts stops consulting
 // the pass entirely, so the pass is neither what grants nor what blocks, and a
 // page that led with the pass would name the wrong ceiling — and, in the offer
-// arm, sell a $29 DOWNGRADE (the pass grants 10 AI runs per division against
-// pro's 20, and 64 entrants per division against pro's 256).
+// arm, sell a $29 DOWNGRADE (the M rung grants 128 entrants per division
+// against pro's 256, and 10 divisions against pro's uncapped count).
 import { describe, expect, it } from "vitest";
 import { upgradePageState } from "@/lib/upgrade-page-state";
 

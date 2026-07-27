@@ -240,6 +240,54 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
     expect(article).not.toMatch(/pass(?:'s|es)?\s+64\b/i);
   });
 
+  // The article a buyer opens at the exact moment a cap bites, and the one the
+  // v17 #294 sweep MISSED — it stopped at `content/help/billing/`, so this file
+  // went on stating M's ceilings as *the pass's* ("128 under an Event Pass…
+  // 10 under a pass") for the whole wave. An L buyer read the two numbers they
+  // had just paid $59 to remove.
+  //
+  // Pinned the same way as its billing-section siblings: against the live
+  // matrix, and against the shape of the defect (a ceiling attributed to "a
+  // pass" with no rung beside it).
+  it("the add-a-division article gives BOTH rungs, at their live caps", async () => {
+    const md = readFileSync("content/help/getting-started/add-a-division.md", "utf8");
+    /** One `**Question?**` line — the answers are scoped so a figure that
+     *  belongs to the divisions answer cannot satisfy the entrants one. */
+    const answer = (question: string) =>
+      md.split("\n").find((l) => l.startsWith(`**${question}`)) ?? "";
+
+    const entrants = answer("How many entrants");
+    expect(entrants, "no entrants answer").toBeTruthy();
+    expect(entrants).toContain(`**${await capFor("entrants.per_division.max", "community")}**`);
+    expect(entrants).toContain(`**${await capFor("entrants.per_division.max", "event_pass")}**`);
+    expect(entrants).toContain(`**${await capFor("entrants.per_division.max", "pro")}**`);
+    // L's cap is NULL in the matrix, so the article has to say so in words.
+    expect(await capFor("entrants.per_division.max", "event_pass_l"), "L is unlimited").toBeNull();
+    expect(entrants.toLowerCase()).toContain("no limit at all");
+
+    const divisions = answer("How many divisions");
+    expect(divisions, "no divisions answer").toBeTruthy();
+    expect(divisions).toContain(`**${await capFor("divisions.per_competition.max", "community")}**`);
+    expect(divisions).toContain(
+      `**${await capFor("divisions.per_competition.max", "event_pass")}**`,
+    );
+    expect(divisions).toContain(
+      `**${await capFor("divisions.per_competition.max", "event_pass_l")}**`,
+    );
+
+    // THE defect, in both answers: a ceiling handed to "an Event Pass" / "a
+    // pass" with no size beside it states one rung's limit as the product's.
+    // Requiring both size letters in each answer is what the pre-fix text
+    // fails — it named neither.
+    for (const [name, line] of [
+      ["entrants", entrants],
+      ["divisions", divisions],
+    ] as const) {
+      expect(line, `${name}: names the M rung`).toMatch(/\*\*M\*\*/);
+      expect(line, `${name}: names the L rung`).toMatch(/\*\*L\*\*/);
+    }
+  });
+
   // `content/help/billing/plans.md` was the ONE help article with no test
   // reading it — its sibling `event-pass.md` (which it links to) has been
   // pinned above since T6. That gap is not hypothetical: plans.md is exactly

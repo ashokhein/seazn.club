@@ -1,5 +1,5 @@
-// The pass-checkout route refuses a paid org — "Your plan already covers
-// everything an Event Pass adds." It used to decide that from the raw
+// The pass-checkout route refuses a paid org — "Your plan already includes
+// every Event Pass feature." It used to decide that from the raw
 // `subscriptions.plan_key` column, which keeps saying 'pro' after a comp lapses
 // or a subscription is cancelled. So a lapsed org was told its plan covered the
 // pass when it no longer did, and was blocked from a purchase it was entitled to
