@@ -128,17 +128,46 @@ export async function packBalance(walletId: string): Promise<number> {
   return bucketBalance(sql, walletId, "pack");
 }
 
+/** The current UTC calendar-month boundary (00:00 UTC on the 1st) — the ONE
+ *  anchor `monthlyPeriod()`'s idempotency key and `spentThisPeriodByOrg`'s
+ *  period window both derive from (#292), so the two can never
+ *  independently compute "this month" and disagree.
+ *
+ *  A real `Date`, handed to SQL as a `timestamptz` PARAMETER — comparing a
+ *  `timestamptz` column against a `timestamptz` parameter is an
+ *  absolute-instant comparison, immune to the DB session's `TimeZone` GUC
+ *  (Europe/London in prod). Deliberately NOT computed in SQL:
+ *  `date_trunc('month', now())` truncates in the SESSION timezone, and even
+ *  `date_trunc('month', now() at time zone 'utc')` — which reads as
+ *  UTC-correct — returns a bare `timestamp` (no tz); comparing THAT
+ *  directly against a `timestamptz` column forces Postgres to cast it back
+ *  to `timestamptz` using the session TZ, reintroducing the exact
+ *  divergence this fixes (proven against a live session: under TZ
+ *  Europe/London, `timestamptz '2026-06-30 23:30:00+00' >= date_trunc(
+ *  'month', now() at time zone 'utc')` evaluates TRUE — a June 30 23:30 UTC
+ *  spend wrongly counted as inside July). Only `date_trunc(...) at time
+ *  zone 'utc'` (a SECOND conversion, back to a real timestamptz) is
+ *  TZ-safe in SQL; doing the truncation in JS and passing a `Date`
+ *  sidesteps the whole subtlety, and is what every call site now does. */
+export function utcMonthStart(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+}
+
 /** Calendar-month period the monthly grant is scoped to (server clock,
  *  `YYYY-MM`) — the ONLY anchor `grantMonthly` uses, for every wallet, paid
  *  or Community (SPEC-2 §5.4 Cadence: "grant is monthly regardless of
- *  billing cadence"). Deliberately has no notion of a subscription's Stripe
- *  billing cycle at all — an annual-billed plan's `current_period_end` only
- *  advances once a year, so keying off it (a prior version of this module
- *  did, for paid wallets) collapses 12 monthly grants into a single lump on
- *  the renewal date, which is the exact regression this cadence rule exists
- *  to forbid. */
+ *  billing cadence"). Derives from `utcMonthStart()` (#292) — the SAME
+ *  anchor `spentThisPeriodByOrg` compares against — rather than computing
+ *  its own `new Date().toISOString().slice(0, 7)` independently, so the two
+ *  can never drift apart again. Deliberately has no notion of a
+ *  subscription's Stripe billing cycle at all — an annual-billed plan's
+ *  `current_period_end` only advances once a year, so keying off it (a
+ *  prior version of this module did, for paid wallets) collapses 12
+ *  monthly grants into a single lump on the renewal date, which is the
+ *  exact regression this cadence rule exists to forbid. */
 function monthlyPeriod(): string {
-  return new Date().toISOString().slice(0, 7);
+  return utcMonthStart().toISOString().slice(0, 7);
 }
 
 /**
@@ -963,12 +992,17 @@ export async function auditWalletForfeitedOnDetach(
  * `source='refund'` but `ref` = a payment-intent id, never a `run_spend` row
  * id, so they can't match a hold here.
  *
- * **Period bound** = `date_trunc('month', now())`, the same calendar-month
- * anchor `grantMonthly` resets on — so the cap resets implicitly with the grant
- * cycle. A hold from a prior month is excluded (its refund, if any, is moot —
- * only holds inside the period are summed). Runs inside the caller's executor
- * (`reserve`'s advisory-locked tx) so the check sees this reserve's own prior
- * writes. Returns a non-negative integer.
+ * **Period bound** = `utcMonthStart()` (#292), the same UTC calendar-month
+ * anchor `grantMonthly`'s `monthlyPeriod()` resets on — so the cap resets
+ * implicitly with the grant cycle, and the two can never independently
+ * compute "this month" and disagree (a prior version compared against bare
+ * `date_trunc('month', now())`, truncated in the DB session's TimeZone GUC
+ * — Europe/London in prod — which could disagree with the UTC-anchored
+ * grant cycle by up to an hour around a month boundary). A hold from a
+ * prior month is excluded (its refund, if any, is moot — only holds inside
+ * the period are summed). Runs inside the caller's executor (`reserve`'s
+ * advisory-locked tx) so the check sees this reserve's own prior writes.
+ * Returns a non-negative integer.
  *
  * Exported (Phase 6 Task 2, SPEC-5 §1) so the operator allocation console
  * (`server/usecases/operator-allocation.ts`) reports each member org's burn
@@ -981,6 +1015,7 @@ export async function spentThisPeriodByOrg(
   walletId: string,
   orgId: string,
 ): Promise<number> {
+  const periodStart = utcMonthStart();
   const [row] = await exec<{ spent: string | null }[]>`
     select coalesce(sum(
       -h.delta - coalesce((
@@ -992,7 +1027,7 @@ export async function spentThisPeriodByOrg(
      where h.wallet_id = ${walletId}
        and h.spent_by_org_id = ${orgId}
        and h.source = 'run_spend'
-       and h.created_at >= date_trunc('month', now())`;
+       and h.created_at >= ${periodStart}`;
   return Math.max(0, Number(row?.spent ?? 0));
 }
 
