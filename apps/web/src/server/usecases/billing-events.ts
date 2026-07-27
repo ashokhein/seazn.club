@@ -515,8 +515,10 @@ async function mayWriteGroup(
   return false;
 }
 
-/** Terminal STRIPE statuses. Everything else still owns the subscription (our
- *  STATUS_MAP collapses incomplete/unpaid/paused into past_due, which is live). */
+/** Terminal STRIPE statuses. Everything else still owns the subscription: our
+ *  STATUS_MAP collapses unpaid/paused into past_due and keeps incomplete
+ *  distinct (#206 — it conveys no plan), and every one of those is in
+ *  LIVE_SUBSCRIPTION_STATUSES, so "not terminal" still means "live". */
 function isLiveStripeStatus(status: Stripe.Subscription.Status): boolean {
   return status !== "canceled" && status !== "incomplete_expired";
 }

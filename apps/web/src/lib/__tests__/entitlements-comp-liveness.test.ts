@@ -95,10 +95,15 @@ describe.skipIf(!HAS_DB)("comp-expiry arm derives its status list from billing",
   // it stays as the guard for any future nullable status, since a bare NOT IN
   // over NULL yields NULL rather than true and would kill the arm silently.
 
-  // 'suspended' is written by api/admin/orgs/[id]/suspend and is in no
-  // STATUS_MAP — the column's vocabulary is wider than Stripe's. The arm negates
-  // the live list rather than naming dead statuses precisely so non-Stripe
-  // statuses like this one degrade too; hand-written dead-status SQL would miss it.
+  // 'suspended' is in no STATUS_MAP, and since V314 §2b nothing WRITES it to
+  // this column either — staff suspension moved to organizations.status and
+  // V314 reset the legacy rows. The fixture below therefore seeds a value no
+  // production writer produces, and that is the point: subscriptions.status is
+  // plain text with no CHECK constraint, so the arm negates the live list
+  // instead of naming dead statuses, and any value from outside the Stripe
+  // vocabulary — a legacy row, a hand-edited one — degrades safely. Hand-written
+  // dead-status SQL would miss it. (What suspension does TODAY is a separate,
+  // org-scoped arm: `o.status = 'suspended'` in orgPlanKey.)
   it("a non-Stripe 'suspended' status lets the lapsed comp expire", async () => {
     const orgId = await seedLapsedComp({ status: "suspended" });
     expect(await hasFeature(orgId, "exports.branded")).toBe(false);
