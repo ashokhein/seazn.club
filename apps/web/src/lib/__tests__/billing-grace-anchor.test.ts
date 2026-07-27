@@ -11,6 +11,7 @@ import { sql } from "@/lib/db";
 import { syncSubscription } from "@/lib/billing";
 import { processStripeEvent } from "@/server/usecases/billing-events";
 import { orgPlanKey } from "@/lib/entitlements";
+import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscription-status";
 
 import { setOrgPlan } from "./_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -164,6 +165,9 @@ describe.skipIf(!HAS_DB)("incomplete never-paid grace hole (#206)", () => {
     const orgId = await seedOrg();
     const subId = `sub_inc_${randomUUID().slice(0, 8)}`;
     await syncSubscription(orgId, stripeSub({ id: subId, status: "incomplete" }));
+    // Same caveat as the 'unpaid' row below, and this is the row it bites on:
+    // 'incomplete' is ALSO the `??` fallback, so deleting STATUS_MAP.incomplete
+    // leaves this green. Mutate by flipping the value.
     expect((await readAnchor(orgId)).status).toBe("incomplete");
   });
 
@@ -176,7 +180,48 @@ describe.skipIf(!HAS_DB)("incomplete never-paid grace hole (#206)", () => {
     // degrades it, exactly like any other dunning failure. Neither
     // resolver needs its own 'unpaid' arm because the literal string
     // never reaches subscriptions.status.
+    //
+    // CAVEAT: this pins the observable WRITE, not the map entry. Mutate it by
+    // flipping the VALUE of STATUS_MAP.unpaid, never by reasoning about the
+    // key alone — behind a `?? fallback`, deleting a key is not the same
+    // mutation as changing it, and which of the two this test catches depends
+    // entirely on what the fallback currently is. It happens to catch both
+    // today (Task 8 (e) moved the fallback to 'incomplete', so a deleted
+    // 'unpaid' key now lands somewhere this assertion rejects) — but that is a
+    // property of the fallback, not of this test, and it flips back the moment
+    // the fallback changes. The deletion-blind row is now the `incomplete` one
+    // below, whose expected value IS the fallback.
     expect((await readAnchor(orgId)).status).toBe("past_due");
+  });
+
+  // v17 W2 Task 8 (e). STATUS_MAP is a fixed table against a vocabulary Stripe
+  // can extend at any time, so the `??` fallback is the arm that handles every
+  // status this codebase has never heard of. It used to be `past_due`, which
+  // fails OPEN: an unknown NEVER-PAID status (the likely shape of anything new
+  // in the incomplete family) would inherit the 14-day dunning grace and hand
+  // out Pro, paid for nothing, until someone noticed. `incomplete` is the
+  // fail-SAFE landing — it conveys no plan, and it is still a LIVE status, so
+  // the subscription is not orphaned and a second checkout stays blocked.
+  it("an UNKNOWN future Stripe status lands as incomplete — no plan, no grace", async () => {
+    const orgId = await seedOrg();
+    await sql`update subscriptions set plan_key = 'pro'
+              where id = (select subscription_id from organizations where id = ${orgId})`;
+    const subId = `sub_future_${randomUUID().slice(0, 8)}`;
+    await syncSubscription(
+      orgId,
+      stripeSub({
+        id: subId,
+        // A status no STATUS_MAP key matches — deliberately not a real one.
+        status: "some_future_status" as Stripe.Subscription.Status,
+      }),
+    );
+    // Pre-fix this wrote 'past_due', and the assertion below returned 'pro'
+    // for 14 days on a subscription that had paid nothing.
+    expect((await readAnchor(orgId)).status).toBe("incomplete");
+    expect(await orgPlanKey(orgId)).toBe("community");
+    // Still LIVE, though — the org owns a real Stripe subscription, so it must
+    // not be able to open a second checkout and mint a duplicate.
+    expect(LIVE_SUBSCRIPTION_STATUSES).toContain("incomplete");
   });
 
   it("syncSubscription writes Stripe 'incomplete_expired' as our canceled — degrades immediately, no grace (#288 audit)", async () => {

@@ -708,7 +708,16 @@ export async function syncSubscriptionForGroup(
   // keep the org's current plan instead of silently downgrading every affected
   // customer — the stripe:sync drift is a staff problem, not the customer's.
   if (priceId && !knownPlanKey) console.error("syncSubscription: unknown price", priceId);
-  const status = STATUS_MAP[stripeSub.status] ?? "past_due";
+  // Fallback = the status Stripe invented since this map was written. It must
+  // fail SAFE, and `past_due` (the old fallback) failed OPEN: a never-paid
+  // status we don't recognise — the likely shape of anything new in the
+  // incomplete family — would inherit the 14-day dunning grace in orgPlanKey
+  // and convey full Pro, paid for nothing, until a human noticed. `incomplete`
+  // conveys no plan AND is still in LIVE_SUBSCRIPTION_STATUSES, so the org is
+  // not orphaned and cannot open a second checkout. Anything genuinely paid
+  // that lands here corrects itself on the next webhook once the status is
+  // mapped; the reverse mistake bills nobody and entitles everybody.
+  const status = STATUS_MAP[stripeSub.status] ?? "incomplete";
   // In Stripe v22, current_period_end lives on each subscription item.
   const periodEnd = stripeSub.items.data[0]?.current_period_end ?? null;
   // null = this object cannot answer; see paymentMethodFromStripeSubscription.
