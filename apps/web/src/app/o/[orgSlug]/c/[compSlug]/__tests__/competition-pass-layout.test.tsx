@@ -9,15 +9,30 @@
 // already owns, which is the exact failure this state exists to prevent.
 //
 // Real Postgres required; skipped without DATABASE_URL. Seeds are run-unique.
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { renderToStaticMarkup } from "react-dom/server";
+
+// The layout resolves the org's CURRENCY as well (v17 #294), and
+// `preferredCurrency` reads `cookies()` / `headers()`. In production this runs
+// inside a request; called directly from a test it throws "`cookies` was called
+// outside a request scope". A minimal empty request scope is all it needs — and
+// EMPTY is the case that matters here, because it makes the org's subscription
+// currency the only thing that can decide the answer, which is exactly the
+// precedence the assertions below rely on.
+const requestHeaders = vi.hoisted(() => ({ acceptLanguage: null as string | null }));
+vi.mock("next/headers", () => ({
+  cookies: async () => ({ get: () => undefined }),
+  headers: async () => ({ get: (k: string) => (k === "accept-language" ? requestHeaders.acceptLanguage : null) }),
+}));
 
 import { sql } from "@/lib/db";
 import { invalidateSlugCache } from "@/server/slug-resolve";
 import {
   usePassActive,
+  usePassCurrency,
   usePassGateState,
+  usePassRung,
 } from "@/components/competition-pass-provider";
 import CompetitionLayout from "../layout";
 
@@ -26,7 +41,9 @@ const uniq = () => randomUUID().slice(0, 8);
 
 function Probe() {
   return (
-    <span id="p">{`pass:${usePassActive()} state:${usePassGateState()}`}</span>
+    <span id="p">
+      {`pass:${usePassActive()} state:${usePassGateState()} rung:${usePassRung()} currency:${usePassCurrency()}`}
+    </span>
   );
 }
 
@@ -131,8 +148,8 @@ describe.skipIf(!HAS_DB)("competition layout provides Event Pass state", () => {
 
   it("reports 'paid_plan' for a Pro org, so no gate offers it the $29 pass", async () => {
     // Task 17's deferred row. A Pro org has no pass ROW, so the boolean read
-    // false and the gate sold them a pass granting LESS than they hold (10 AI
-    // runs per division vs Pro's 20; 64 entrants vs 256).
+    // false and the gate sold them a pass granting LESS than they hold: Pro's
+    // matrix is a superset of the pass's at every key the pass lifts.
     const rig = await seed();
     await sql`update subscriptions set plan_key = 'pro', status = 'active'
               where id = (select subscription_id from organizations where id = ${rig.orgId})`;
@@ -217,5 +234,59 @@ describe.skipIf(!HAS_DB)("competition layout provides Event Pass state", () => {
     const html = await renderLayout(rig.orgSlug, "no-such-competition-" + uniq());
     expect(html).toContain("pass:false");
     expect(html).toContain("<span");
+  });
+});
+
+// v17 #294. The layout is the ONLY place that can answer either of these:
+// `pass_key` is a column, and `preferredCurrency` reads the org's subscription,
+// a cookie and a header. Every client island under it was guessing — the
+// paywall in hardcoded usd, the held signals in the product FAMILY's name.
+describe.skipIf(!HAS_DB)("competition layout provides the rung and the currency", () => {
+  it("carries null for a competition with no pass", async () => {
+    const rig = await seed();
+    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("rung:null");
+  });
+
+  it("carries the rung the competition actually holds, both ways round", async () => {
+    // Both arms and two separate competitions: "L reads L" proves nothing if
+    // the layout answers L to everything, and the M arm is what a pre-#294
+    // build would still pass.
+    for (const rung of ["event_pass", "event_pass_l"] as const) {
+      const rig = await seed();
+      await sql`insert into competition_passes (competition_id, org_id, pass_key)
+                values (${rig.compId}, ${rig.orgId}, ${rung})`;
+      expect(await renderLayout(rig.orgSlug, rig.compSlug), rung).toContain(`rung:${rung}`);
+    }
+  });
+
+  it("keeps reporting the rung under a paid plan", async () => {
+    // usePassRung answers the ROW's question, like usePassActive. The
+    // "should we advertise it" precedence stays in usePassGateState.
+    const rig = await seed();
+    await sql`insert into competition_passes (competition_id, org_id, pass_key)
+              values (${rig.compId}, ${rig.orgId}, 'event_pass_l')`;
+    await sql`update subscriptions set plan_key = 'pro', status = 'active'
+              where id = (select subscription_id from organizations where id = ${rig.orgId})`;
+    const html = await renderLayout(rig.orgSlug, rig.compSlug);
+    expect(html).toContain("state:paid_plan");
+    expect(html).toContain("rung:event_pass_l");
+  });
+
+  it("resolves the currency from the org's own subscription", async () => {
+    // The precedence `preferredCurrency` defines: a live subscription currency
+    // beats the switcher cookie and the header guess, because a renewal never
+    // switches currency. With the jar and the header empty, this is the only
+    // input — so a layout that shipped a constant would fail here.
+    const rig = await seed();
+    await sql`update subscriptions set currency = 'gbp'
+              where id = (select subscription_id from organizations where id = ${rig.orgId})`;
+    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("currency:gbp");
+  });
+
+  it("falls back to usd when the org has nothing to resolve from", async () => {
+    // Today's behaviour for every org without a currency on file — and what
+    // the paywall hardcoded for ALL of them before this change.
+    const rig = await seed();
+    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("currency:usd");
   });
 });
