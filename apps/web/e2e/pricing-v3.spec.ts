@@ -159,7 +159,7 @@ test.describe.serial("event pass gate (community org)", () => {
     // Purchase (SQL analogue — test-infra convention), then the gate lifts…
     // The 402 above cached this org's resolved limit server-side, so the
     // grant must also bust the entitlement cache (staging has Redis).
-    await grantCompetitionPassSql(orgId, compId, request);
+    await grantCompetitionPassSql(orgId, compId, "event_pass", request);
     const fifth = await apiJson(request, `/api/v1/competitions/${compId}/divisions`, "POST", {
       name: "Five",
       ...GENERIC,

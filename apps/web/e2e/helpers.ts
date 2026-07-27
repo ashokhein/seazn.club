@@ -1,4 +1,9 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
+// Type-only, so nothing from the app is pulled into the Playwright runtime —
+// the same import event-pass.spec.ts already makes. Naming the rung union here
+// rather than re-declaring it is what keeps a new rung from needing a sixth
+// hand-maintained list.
+import type { PassKey } from "../src/lib/currency";
 
 /**
  * v3/02 §4 viewport gate: the page-level rule is "no horizontal scroll,
@@ -381,16 +386,25 @@ export async function invalidateOrgEntitlements(
 /** Grant an Event Pass (v3/07 §3) directly — the one-time Stripe checkout
  *  can't run in e2e, same SQL-flip convention as plans. Pass `request` when
  *  the org has already resolved entitlements this run (see
- *  invalidateOrgEntitlements — required against staging). */
+ *  invalidateOrgEntitlements — required against staging).
+ *
+ *  `passKey` is REQUIRED, and that is the whole point of it. This INSERT used
+ *  to omit the column; `competition_passes.pass_key` is `not null default
+ *  'event_pass'` (V271:9), so a seed meaning L filed silently as M — no FK
+ *  error, no failing test, and every ceiling this helper exists to lift set to
+ *  the wrong rung's numbers. That landmine has now been closed five times in
+ *  this wave (passPrice, recordPassPurchase, fetchPassCheckoutClientSecret,
+ *  smoke's grantPass, and here); a required parameter is what stops a sixth. */
 export async function grantCompetitionPassSql(
   orgId: string,
   competitionId: string,
+  passKey: PassKey,
   request?: APIRequestContext,
 ): Promise<void> {
   await withDb(async (sql) => {
     await sql`
-      insert into competition_passes (competition_id, org_id)
-      values (${competitionId}, ${orgId})
+      insert into competition_passes (competition_id, org_id, pass_key)
+      values (${competitionId}, ${orgId}, ${passKey})
       on conflict (competition_id) do nothing`;
   });
   if (request) await invalidateOrgEntitlements(request, orgId);
