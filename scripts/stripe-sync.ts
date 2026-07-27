@@ -87,6 +87,19 @@ export interface SizePackSpec {
   product: { name: string; description?: string };
   price: PriceSpec;
 }
+/** The extra-org RECURRING add-on (v17 gap #293). Structurally identical to a
+ *  SeatSpec — one product, one recurring price, `feature_key`/`delta_each`
+ *  OUR fields never sent to Stripe — but ONE ENTRY PER PLAN (`plan_key`)
+ *  because the rate differs by tier ($9 Pro / $19 Pro Plus). No `plans` row:
+ *  lib/org-addons.ts resolves the live price by lookup_key at request time. */
+export interface OrgAddonSpec {
+  key: string;
+  plan_key: string;
+  feature_key: string;
+  delta_each: number;
+  product: { name: string; description?: string };
+  price: PriceSpec;
+}
 export interface Seed {
   currency: string;
   plans: PlanSpec[];
@@ -94,6 +107,7 @@ export interface Seed {
   packs?: PackSpec[];
   seats?: SeatSpec[];
   size_packs?: SizePackSpec[];
+  org_addons?: OrgAddonSpec[];
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -451,6 +465,25 @@ async function main(): Promise<void> {
       );
       console.log(
         `✓ ${sizePack.key}: onetime=${price.priceId} (${sizePack.feature_key} +${sizePack.delta_each})`,
+      );
+    }
+    // Extra-org RECURRING add-on (v17 gap #293): same idempotent ensurePrice as
+    // a seat (the price's `interval` makes it recurring), but ONE PRICE PER
+    // PLAN because the rate differs by tier — lib/org-addons.
+    // resolveOrgAddonPriceId(planKey) resolves the plan-specific live price by
+    // lookup_key at request time, so there is no `plans` row to write back to.
+    for (const orgAddon of seed.org_addons ?? []) {
+      const price = await ensurePrice(
+        stripe,
+        orgAddon.price,
+        orgAddon.product,
+        orgAddon.key,
+        seed.currency,
+        null,
+      );
+      console.log(
+        `✓ ${orgAddon.key}: recurring=${price.priceId} ` +
+          `(${orgAddon.plan_key}, ${orgAddon.feature_key} +${orgAddon.delta_each}/org)`,
       );
     }
     console.log("Stripe sync complete.");
