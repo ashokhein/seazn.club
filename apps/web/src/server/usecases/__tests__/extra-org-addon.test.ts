@@ -1486,9 +1486,10 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
     expect(itemUpdateSpy).not.toHaveBeenCalled();
   });
 
-  it("a plan with no rider SKU does nothing — no write, no throw, rows still sync", async () => {
+  it("a plan with no rider SKU does nothing — no write, no throw, no noise, rows still sync", async () => {
     const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro");
     await setOrgPlan(orgId, "community");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
 
     await processStripeEvent(
       updatedEvent(stripeSubId, walletId, [riderItem("si_rider", proEntry.lookupKey, 1)]),
@@ -1499,6 +1500,12 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
     expect(pricesListSpy).not.toHaveBeenCalled();
     expect(itemUpdateSpy).not.toHaveBeenCalled();
     expect(itemDelSpy).not.toHaveBeenCalled();
+    // Recognised and skipped, NOT tripped over: without the orgAddonForPlan
+    // guard this reaches resolveOrgAddonPriceId, which 400s on a plan with no
+    // SKU, and every community group with a legacy rider logs an error on
+    // every subscription event for the rest of time.
+    expect(logged).not.toHaveBeenCalled();
+    logged.mockRestore();
     const [row] = await sql<{ qty: number; status: string }[]>`
       select qty, status from org_addons
        where wallet_id = ${walletId} and feature_key = 'orgs.max_owned'`;
