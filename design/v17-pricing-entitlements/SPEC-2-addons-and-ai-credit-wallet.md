@@ -220,6 +220,14 @@ monthly_grant(group) = ai.credits.monthly(plan) * quantity_paid
 
 e.g. a Pro Plus group of 3 paid org-seats → 200 * 3 = **600 credits/mo** shared. Fair to big operators, still bounded by seats paid. Resets (D1). A standalone org = *1. Community (never grouped) = flat 10.
 
+**Trial exception (#291, 2026-07-26):** `quantity_paid` is frozen at its pre-trial baseline for the whole trial (#279, `syncGroupQuantity`) — a seat added mid-trial rides free and raises the live org count without moving `quantity_paid`. Granting on the frozen number alone would under-grant that seat's own credits, so while trialing:
+
+```
+monthly_grant(group) = ai.credits.monthly(plan) * max(quantity_paid, live_org_count)
+```
+
+`quantity_paid` itself is never rewritten by the grant — only what it's multiplied by for THIS grant. It converges back to plain `quantity_paid` once the trial converts (`syncGroupQuantity`'s renewal path sets `quantity_paid` to what was actually invoiced).
+
 ### 11.3 Add-on scope follows the resource
 
 | Add-on | Applies | Table shape |

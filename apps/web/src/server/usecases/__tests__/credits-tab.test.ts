@@ -15,6 +15,7 @@ import {
   settle,
   walletIdFor,
 } from "@/lib/credits";
+import { orgGroupId } from "@/lib/__tests__/_billing-group";
 import { seedOrg } from "./_seed";
 import { creditHistory, getCreditsTab } from "../credits-tab";
 
@@ -63,6 +64,86 @@ describe.skipIf(!HAS_DB)("getCreditsTab", () => {
     expect(view.balance).toBe(0);
     expect(view.sharedOrgCount).toBe(1);
     expect(view.history).toHaveLength(0);
+  });
+
+  // v17 gap #291, second call site: `grantMonthlyForAllWallets` grants a
+  // TRIALING wallet on max(quantity_paid, liveOrgCount) because
+  // syncGroupQuantity freezes quantity_paid for the whole trial. The tab's
+  // grantCap divided by the frozen quantity_paid alone, so a trialing group
+  // with a mid-trial rider read "used 70 / 60" — a meter over its own cap.
+  it("scales the trialing grant cap to live orgs, matching what was actually granted", async () => {
+    const { auth } = await seedOrg("pro");
+    const groupId = (await orgGroupId(auth.orgId))!;
+    await sql`update subscriptions set status = 'trialing', quantity_paid = 1 where id = ${groupId}`;
+
+    // A second org rides the trial free: live count 2, quantity_paid still 1.
+    const { auth: rider } = await seedOrg("community");
+    await sql`update organizations set subscription_id = ${groupId} where id = ${rider.orgId}`;
+
+    const walletId = await walletIdFor(auth.orgId);
+    expect(await grantMonthly(walletId, "pro", 2)).toBe(120); // what the sweep grants
+    const hold = await reserve(walletId, auth.orgId, 70);
+    await settle(hold, randomUUID());
+
+    const view = await getCreditsTab(auth.orgId);
+    expect(view.grantCap).toBe(120); // NOT 60 — 70 used must not exceed the cap
+    expect(view.grantUsed).toBe(70);
+    expect(view.sharedOrgCount).toBe(2);
+  });
+
+  // The other side of the same rule: the trial max() must NOT leak into an
+  // ACTIVE sub. Once billing is live, quantity_paid is no longer frozen —
+  // syncGroupQuantity tracks the org count — so an extra live org that is not
+  // yet paid for must not inflate the cap above what was granted.
+  it("does NOT scale an ACTIVE sub's cap to live orgs — quantity_paid is the cap", async () => {
+    const { auth } = await seedOrg("pro");
+    const groupId = (await orgGroupId(auth.orgId))!;
+    await sql`update subscriptions set status = 'active', quantity_paid = 1 where id = ${groupId}`;
+
+    const { auth: extra } = await seedOrg("community");
+    await sql`update organizations set subscription_id = ${groupId} where id = ${extra.orgId}`;
+
+    const walletId = await walletIdFor(auth.orgId);
+    expect(await grantMonthly(walletId, "pro", 1)).toBe(60); // what the sweep grants
+
+    const view = await getCreditsTab(auth.orgId);
+    expect(view.grantCap).toBe(60); // NOT 120 — the trial max() must not apply
+    expect(view.sharedOrgCount).toBe(2);
+  });
+
+  it("REGRESSION (#292): the used-this-month meter excludes a hold recorded 30 minutes before the UTC month boundary", async (ctx) => {
+    const [{ tz }] = await sql<{ tz: string }[]>`select current_setting('TimeZone') as tz`;
+    // getCreditsTab has no tx to force a TZ on (see this task's Testability
+    // note) — this only reproduces under a non-UTC ambient session TimeZone
+    // (Europe/London here and in production). On a UTC-default database (CI's
+    // postgres) this is genuinely unable to run, so SKIP it rather than
+    // early-`return`: a bare return reports PASSED and hides the fact that the
+    // regression went unexercised.
+    ctx.skip(
+      tz === "UTC" || tz === "Etc/UTC",
+      `needs a non-UTC ambient session TimeZone to reproduce (DB TimeZone is ${tz})`,
+    );
+
+    const { auth } = await seedOrg("pro");
+    const walletId = await walletIdFor(auth.orgId);
+    await grantMonthly(walletId, "pro", 1);
+
+    // 23:30 UTC on the last day of the PRIOR month — under the ambient
+    // Europe/London (BST, UTC+1) session TZ this instant reads as "00:30"
+    // on the 1st, an hour INTO the new month locally, so a session-TZ-
+    // anchored boundary wrongly counts it. Computed relative to Postgres's
+    // own clock so this holds on any run date, not hardcoded.
+    await sql`
+      insert into ai_credit_ledger
+        (wallet_id, delta, source, bucket, spent_by_org_id, balance_after,
+         idempotency_key, created_at)
+      values (${walletId}, -7, 'run_spend', 'grant', ${auth.orgId}, 53,
+              ${`edge-${randomUUID()}`},
+              date_trunc('month', now() at time zone 'utc') at time zone 'utc' - interval '30 minutes')`;
+
+    const view = await getCreditsTab(auth.orgId);
+
+    expect(view.grantUsed).toBe(0); // must NOT count toward the current UTC month
   });
 
   // v17 gap #285: credits that arrive because the org joined a billing group

@@ -1,7 +1,9 @@
 // v17 Task 6 (re-review, CRITICAL cadence fix): the daily cron entry point
 // (api/cron/billing-grant) that grants every LIVE wallet its
 // ai.credits.monthly(plan) * quantity_paid allowance — scaled for paid plans,
-// flat for community (SPEC-2 §11.2). Each grant first expires any unspent
+// flat for community (SPEC-2 §11.2); a TRIALING paid wallet scales by
+// max(quantity_paid, live_org_count) instead (#291, see
+// grantMonthlyForAllWallets' docstring). Each grant first expires any unspent
 // grant-bucket leftover from the prior period (D1, use-or-lose, Task 6 review
 // fix) before adding the new allowance. Idempotent per period: EVERY wallet —
 // paid or Community — keys its period off the plain calendar month
@@ -44,13 +46,14 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-// grantMonthlyForAllWallets full-table-scans every LIVE subscription row in
-// the schema on each call. Run in isolation that's instant, but inside the
-// FULL vitest run (thousands of fixture rows accumulated by every other
-// suite in the same session) it can comfortably exceed vitest's default 5s
-// per-test timeout — not a regression in the code path itself, just the cost
-// of "every wallet" scaling with the whole test session's row count. Every
-// test here bumps its timeout accordingly.
+// grantMonthlyForAllWallets full-table-scans every subscription row with a
+// live org in the schema on each call, plus one resolver read per row. Run in
+// isolation that's instant, but inside the FULL vitest run (thousands of
+// fixture rows accumulated by every other suite in the same session) it can
+// comfortably exceed vitest's default 5s per-test timeout — not a regression
+// in the code path itself, just the cost of "every wallet" scaling with the
+// whole test session's row count. Every test here bumps its timeout
+// accordingly.
 const CRON_TEST_TIMEOUT = 20000;
 
 describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () => {
@@ -87,13 +90,29 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     expect(await balance(subId)).toBe(200);
   });
 
-  it("skips a canceled subscription (not live)", { timeout: CRON_TEST_TIMEOUT }, async () => {
+  it("REGRESSION (#290): grants the resolved Community rate for a canceled (churned) subscription, not zero", { timeout: CRON_TEST_TIMEOUT }, async () => {
     const orgId = await seedOrg();
+    // comped_at stays null (setOrgPlan's default) — orgPlanKey's `canceled`
+    // arm degrades this to community, exactly like any other entitlement
+    // read of this org (hasFeature, getLimit, the billing page).
     const subId = await setOrgPlan(orgId, "pro", "canceled");
 
     await grantMonthlyForAllWallets();
 
-    expect(await balance(subId)).toBe(0);
+    // Before #290 the raw status filter (`status in ('trialing','active',
+    // 'past_due')`) skipped this row entirely — a churned org got 0 credits
+    // forever even though every OTHER entitlement read already resolves it
+    // to Community and expects the Community grant to back that up.
+    expect(await balance(subId)).toBe(10);
+  });
+
+  it("REGRESSION (#290): grants the resolved Community rate for an incomplete (never-paid) subscription", { timeout: CRON_TEST_TIMEOUT }, async () => {
+    const orgId = await seedOrg();
+    const subId = await setOrgPlan(orgId, "pro", "incomplete");
+
+    await grantMonthlyForAllWallets();
+
+    expect(await balance(subId)).toBe(10);
   });
 
   it("expires the prior period's unspent grant balance before granting the new period (D1)", { timeout: CRON_TEST_TIMEOUT }, async () => {
@@ -195,5 +214,40 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     await grantMonthlyForAllWallets();
     expect(await grantBalance(subId)).toBe(60);
     expect(await balance(subId)).toBe(60);
+  });
+
+  it("REGRESSION (#291): a trialing group grants for the LIVE org count when quantity_paid is frozen below it", { timeout: CRON_TEST_TIMEOUT }, async () => {
+    const orgId = await seedOrg();
+    const subId = await setOrgPlan(orgId, "pro", "trialing");
+    // #279 (syncGroupQuantity) freezes quantity_paid at its pre-trial
+    // baseline through the whole trial — simulate a second org that rode the
+    // trial for free without quantity_paid ever moving off its default (1).
+    const suffix = randomUUID().slice(0, 8);
+    await sql`
+      insert into organizations (name, slug, subscription_id)
+      values (${"Rider " + suffix}, ${"rider-" + suffix}, ${subId})`;
+
+    await grantMonthlyForAllWallets();
+
+    // max(quantity_paid=1, liveOrgCount=2) — not quantity_paid alone, or the
+    // rider org would spend against a wallet that only ever got 1 seat's
+    // worth of monthly credits.
+    expect(await balance(subId)).toBe(60 * 2);
+  });
+
+  it("REGRESSION (#291): a trialing group still grants for quantity_paid when it sits ABOVE the live org count", { timeout: CRON_TEST_TIMEOUT }, async () => {
+    const orgId = await seedOrg();
+    const subId = await setOrgPlan(orgId, "pro", "trialing");
+    // The other direction of the max(): this customer PAID for 3 seats before
+    // the trial and orgs have since left (or never been created), so the live
+    // count is 1. The grant must not shrink to what's live — they are still
+    // entitled to the 3 seats' worth they're being billed for. Pins the
+    // `quantity_paid` half of max(); without it, `live_org_count` alone would
+    // satisfy every other test in this file.
+    await sql`update subscriptions set quantity_paid = 3 where id = ${subId}`;
+
+    await grantMonthlyForAllWallets();
+
+    expect(await balance(subId)).toBe(60 * 3);
   });
 });

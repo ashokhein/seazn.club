@@ -15,6 +15,16 @@ import { PaymentRequiredError } from "@/lib/errors";
 // cached snapshot carrying a `>= 0` CHECK that makes oversell impossible
 // atomically; `balance()` here reads the authoritative running sum.
 import { sql } from "@/lib/db";
+// #290: resolves the grant sweep's plan via the SAME resolver every other
+// entitlement read uses (orgPlanKey). This creates a deliberate two-file
+// import cycle — entitlements.ts already imports walletIdFor from THIS
+// file — safe because neither module calls the other's export at
+// module-evaluation time, only from inside an async function body, long
+// after both modules have finished loading. Verify with `npm run
+// typecheck` and by actually running credits-monthly-cron.test.ts: a
+// broken cycle here would surface as `orgPlanKey is not a function` at
+// call time, not a compile error.
+import { orgPlanKey } from "@/lib/entitlements";
 
 type Tx = postgres.TransactionSql;
 /** Anything the ledger's tagged-template queries can run against: the shared
@@ -118,17 +128,50 @@ export async function packBalance(walletId: string): Promise<number> {
   return bucketBalance(sql, walletId, "pack");
 }
 
+/** The current UTC calendar-month boundary (00:00 UTC on the 1st) — the ONE
+ *  anchor `monthlyPeriod()`'s idempotency key and `spentThisPeriodByOrg`'s
+ *  period window both derive from (#292), so the two can never
+ *  independently compute "this month" and disagree.
+ *
+ *  A real `Date`, handed to SQL as a `timestamptz` PARAMETER — comparing a
+ *  `timestamptz` column against a `timestamptz` parameter is an
+ *  absolute-instant comparison, immune to the DB session's `TimeZone` GUC
+ *  (Europe/London in prod). Deliberately NOT computed in SQL:
+ *  `date_trunc('month', now())` truncates in the SESSION timezone, and even
+ *  `date_trunc('month', now() at time zone 'utc')` — which reads as
+ *  UTC-correct — returns a bare `timestamp` (no tz); comparing THAT
+ *  directly against a `timestamptz` column forces Postgres to cast it back
+ *  to `timestamptz` using the session TZ, reintroducing the exact
+ *  divergence this fixes (proven against a live session: under TZ
+ *  Europe/London, `timestamptz '2026-06-30 23:30:00+00' >= date_trunc(
+ *  'month', now() at time zone 'utc')` evaluates TRUE — a June 30 23:30 UTC
+ *  spend wrongly counted as inside July). Only `date_trunc(...) at time
+ *  zone 'utc'` (a SECOND conversion, back to a real timestamptz) is
+ *  TZ-safe in SQL; doing the truncation in JS and passing a `Date`
+ *  sidesteps the whole subtlety, and is what every call site now does.
+ *
+ *  `now` defaults to the current instant; pass one explicitly when the caller
+ *  ALSO derives something else from the same clock (the Credits tab derives
+ *  both the period window and the days-until-reset), so a request that
+ *  straddles UTC midnight on the 1st cannot read two different months. */
+export function utcMonthStart(now = new Date()): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+}
+
 /** Calendar-month period the monthly grant is scoped to (server clock,
  *  `YYYY-MM`) — the ONLY anchor `grantMonthly` uses, for every wallet, paid
  *  or Community (SPEC-2 §5.4 Cadence: "grant is monthly regardless of
- *  billing cadence"). Deliberately has no notion of a subscription's Stripe
- *  billing cycle at all — an annual-billed plan's `current_period_end` only
- *  advances once a year, so keying off it (a prior version of this module
- *  did, for paid wallets) collapses 12 monthly grants into a single lump on
- *  the renewal date, which is the exact regression this cadence rule exists
- *  to forbid. */
+ *  billing cadence"). Derives from `utcMonthStart()` (#292) — the SAME
+ *  anchor `spentThisPeriodByOrg` compares against — rather than computing
+ *  its own `new Date().toISOString().slice(0, 7)` independently, so the two
+ *  can never drift apart again. Deliberately has no notion of a
+ *  subscription's Stripe billing cycle at all — an annual-billed plan's
+ *  `current_period_end` only advances once a year, so keying off it (a
+ *  prior version of this module did, for paid wallets) collapses 12
+ *  monthly grants into a single lump on the renewal date, which is the
+ *  exact regression this cadence rule exists to forbid. */
 function monthlyPeriod(): string {
-  return new Date().toISOString().slice(0, 7);
+  return utcMonthStart().toISOString().slice(0, 7);
 }
 
 /**
@@ -267,62 +310,129 @@ export async function grantMonthly(
 }
 
 /**
- * Cron entry point (Task 6, `api/cron/billing-grant`): grant every LIVE
- * subscription row its monthly allowance for this period.
+ * Cron entry point (Task 6, `api/cron/billing-grant`): grant every wallet
+ * with at least one live org its monthly allowance for this period.
  *
- * Every org — paid or Community — has a `subscriptions` row (a group-of-one
- * when not actually grouped, `lib/auth.ts`'s `createOrgForUser`), so a single
- * scan of `subscriptions` covers both halves of SPEC-2 §11.2 without a
- * separate "orgs with no group" pass: a paid plan grants
- * `ai.credits.monthly(plan) * quantity_paid` (scaled to seats); `community`
- * grants a FLAT 10 regardless of `quantity_paid` — §11.2 is explicit that
- * Community is "never grouped" and never seat-scaled, even though its
- * group-of-one row technically carries a `quantity_paid` column.
+ * **Grants on the RESOLVED plan, not the raw subscription row (#290).** A
+ * prior version filtered `subscriptions.status in ('trialing', 'active',
+ * 'past_due')` before granting anything — so a churned subscription
+ * (`canceled`, `incomplete`, ...) was skipped by the query entirely and its
+ * org got 0 credits forever, even though `orgPlanKey` (entitlements.ts)
+ * already resolves that SAME row to `'community'` for every other
+ * entitlement read (hasFeature, getLimit, the billing page). This sweep now
+ * scans every subscription with a live org — no status filter — and calls
+ * `orgPlanKey` per wallet to learn what it should ACTUALLY be granted, so a
+ * churned org gets its Community 10/mo like any other Community wallet
+ * instead of silently nothing. No retroactive back-grant for months already
+ * missed (v17-gap design decision) — this only fixes the sweep going
+ * forward. Two visible deploy-day effects follow from that, both expected:
+ * a wallet ALREADY granted this month (a trialing group, say) is not topped
+ * up to a newly-resolved rate mid-month — `grantMonthly`'s
+ * `monthly:${walletId}:${period}` key short-circuits it to a no-op until the
+ * next period — and conversely the FIRST sweep to reach a previously-skipped
+ * (churned) wallet expires whatever stale grant bucket it was still carrying
+ * before granting the resolved rate, so that wallet's balance visibly DROPS,
+ * one way, to the Community 10; that is the correct outcome of D1's
+ * use-or-lose grant meeting a wallet the old sweep had frozen, not a
+ * regression.
  *
- * The `exists (... organizations ...)` guard skips a group with no live org
- * left in it (an orphan the empty-group cleanup hasn't caught yet, or a
- * community group whose org was soft-deleted) — no wallet left to spend a
- * grant from.
+ * **Why one scan of `subscriptions` reaches every wallet:** every org has a
+ * `subscriptions` row — `lib/auth.ts`'s `createOrgForUser` inserts a
+ * Community group-of-one and stamps `organizations.subscription_id` with it
+ * in the same transaction as the org itself, so an ungrouped org is simply a
+ * group of one — which is why scanning `subscriptions` with the live-org
+ * lateral below covers every wallet in a single pass, with no second scan
+ * over ungrouped orgs. (`countOrgsWithoutGroup`, run daily by the
+ * billing-quantity cron, is the standing alarm on that invariant.)
  *
- * **Anchor (README §7 item 7; Task 6 re-review CRITICAL fix): calendar month
- * for EVERY wallet, paid or Community — never `current_period_end`.** An
- * earlier version of this sweep keyed paid subscriptions off
- * `subscriptions.current_period_end` on the theory that it tracked "the real
- * billing cycle" — but SPEC-2 §5.4's Cadence rule is explicit that the grant
- * is monthly *regardless of billing cadence* (an annual Pro at $159/yr must
- * still get 60/mo × 12, not a single 720 lump). Since `current_period_end`
- * for an annual-interval subscription only advances once a year, that
- * anchor silently collapsed 12 grants into 1 for every annual org — a
- * cadence regression, not an approximation. `grantMonthly`'s own
- * `monthlyPeriod()` (plain `YYYY-MM`, server clock) is now the only anchor
- * this function uses, for both paid and Community wallets alike; every live
- * wallet gets a fresh grant once per calendar month, independent of what
- * Stripe's billing interval or renewal date happen to be.
+ * **Which org answers for the group:** `orgPlanKey` takes a single org id,
+ * but a wallet can back several orgs (a billing group). The `rep` lateral
+ * below picks the SAME representative `lib/billing-group.ts`'s
+ * `groupOrgLimit` does — the oldest LIVE org that is not suspended, falling
+ * back to a suspended one only if every org in the group is suspended — so
+ * a single suspended member cannot silently change which plan the whole
+ * group's credits resolve against. Re-implemented as SQL here rather than
+ * imported: `billing-group.ts` imports `lib/entitlements.ts` (for
+ * `getLimit`), which imports `lib/credits.ts` (for `walletIdFor`) — so
+ * `credits.ts` importing FROM `billing-group.ts` would close a second,
+ * avoidable cycle on top of the one this file already takes on for
+ * `orgPlanKey`. Keep this ORDER BY in step with `groupOrgLimit`'s by hand
+ * if that one ever changes. The `live` lateral's predicate carries a SECOND
+ * hand-sync obligation: `subscription_id = s.id and deleted_at is null` must
+ * stay identical both to the `rep` lateral's filter above (or the
+ * representative could come from outside the set being counted) and to
+ * `syncGroupQuantity`'s own active count (`billing-groups.ts`, the
+ * `count(*) ... where subscription_id = $1 and deleted_at is null` it feeds
+ * to the Stripe item) — that agreement is exactly what makes a trialing
+ * group's grant match the quantity its trial-end invoice will bill.
+ *
+ * A representative org that is itself community-suspended (a fully
+ * moderation-suspended group) grants flat Community — a deliberate,
+ * minimal reading of #290 that does NOT special-case that edge the way
+ * `groupOrgLimit` special-cases the ORG CAP; see the plan task that added
+ * this function for the reasoning.
+ *
+ * **Trial grant scales to live orgs, not the frozen paid count (#291):**
+ * `syncGroupQuantity` (#279) freezes `quantity_paid` at its pre-trial
+ * baseline for the whole trial — a second org that joins mid-trial rides
+ * free and raises the ACTIVE org count without moving `quantity_paid` (by
+ * design: nothing has been billed yet). Granting on the frozen
+ * `quantity_paid` alone would under-grant that org's own seat's worth of
+ * credits, so a trialing PAID wallet's quantity is `max(quantity_paid,
+ * liveOrgCount)` — never less than what's actually live, and never less than
+ * what was actually paid for either (a customer who bought 3 seats and had
+ * orgs leave mid-trial keeps granting on 3). A trialing wallet whose
+ * representative org RESOLVES to community still grants the flat 1: the
+ * `community` arm is checked first, on purpose. #279's own tests
+ * (`billing-group-trial-seat.test.ts`) assert `quantity_paid` itself stays
+ * frozen — this reads `live_org_count` alongside it rather than touching
+ * that column, so both stay true at once.
+ *
+ * **Anchor (README §7 item 7): calendar month for EVERY wallet, paid or
+ * Community — never `current_period_end`.** SPEC-2 §5.4's Cadence rule is
+ * explicit that the grant is monthly *regardless of billing cadence* (an
+ * annual Pro at $159/yr must still get 60/mo × 12, not a single 720 lump),
+ * so `grantMonthly`'s own `monthlyPeriod()` (UTC `YYYY-MM`) is the only
+ * anchor this function uses.
  *
  * One wallet's failure (a bad plan_key, a transient DB error) is logged and
  * skipped rather than aborting the whole sweep, matching
  * `reconcileGroupQuantities`'s per-group try/catch — `failed` is returned
- * (mirroring `reconcileGroupQuantities`'s own `{checked, corrected, failed}`
- * shape) so the caller (the cron route, then `billing-grant.yml`) can warn
- * on a persistent per-wallet grant failure instead of it going unnoticed.
+ * so the caller (the cron route, then `billing-grant.yml`) can warn on a
+ * persistent per-wallet grant failure instead of it going unnoticed.
  */
 export async function grantMonthlyForAllWallets(): Promise<{
   wallets: number;
   granted: number;
   failed: number;
 }> {
-  const rows = await sql<{ id: string; plan_key: string; quantity_paid: number }[]>`
-    select s.id, s.plan_key, s.quantity_paid from subscriptions s
-     where s.status in ('trialing', 'active', 'past_due')
-       and exists (
-             select 1 from organizations o
-              where o.subscription_id = s.id and o.deleted_at is null)`;
+  const rows = await sql<
+    { id: string; status: string; quantity_paid: number; rep_org_id: string; live_org_count: number }[]
+  >`
+    select s.id, s.status, s.quantity_paid, rep.id as rep_org_id, live.n as live_org_count
+      from subscriptions s
+      cross join lateral (
+        select o.id from organizations o
+         where o.subscription_id = s.id and o.deleted_at is null
+         order by (o.status = 'suspended'), o.created_at
+         limit 1
+      ) rep
+      cross join lateral (
+        select count(*)::int as n from organizations o
+         where o.subscription_id = s.id and o.deleted_at is null
+      ) live`;
   let granted = 0;
   let failed = 0;
   for (const row of rows) {
     try {
-      const qty = row.plan_key === "community" ? 1 : row.quantity_paid;
-      granted += await grantMonthly(row.id, row.plan_key, qty);
+      const planKey = await orgPlanKey(row.rep_org_id);
+      const qty =
+        planKey === "community"
+          ? 1
+          : row.status === "trialing"
+            ? Math.max(row.quantity_paid, row.live_org_count)
+            : row.quantity_paid;
+      granted += await grantMonthly(row.id, planKey, qty);
     } catch (err) {
       failed++;
       console.error(`[credits] monthly grant failed for wallet ${row.id}`, err);
@@ -904,12 +1014,17 @@ export async function auditWalletForfeitedOnDetach(
  * `source='refund'` but `ref` = a payment-intent id, never a `run_spend` row
  * id, so they can't match a hold here.
  *
- * **Period bound** = `date_trunc('month', now())`, the same calendar-month
- * anchor `grantMonthly` resets on — so the cap resets implicitly with the grant
- * cycle. A hold from a prior month is excluded (its refund, if any, is moot —
- * only holds inside the period are summed). Runs inside the caller's executor
- * (`reserve`'s advisory-locked tx) so the check sees this reserve's own prior
- * writes. Returns a non-negative integer.
+ * **Period bound** = `utcMonthStart()` (#292), the same UTC calendar-month
+ * anchor `grantMonthly`'s `monthlyPeriod()` resets on — so the cap resets
+ * implicitly with the grant cycle, and the two can never independently
+ * compute "this month" and disagree (a prior version compared against bare
+ * `date_trunc('month', now())`, truncated in the DB session's TimeZone GUC
+ * — Europe/London in prod — which could disagree with the UTC-anchored
+ * grant cycle by up to an hour around a month boundary). A hold from a
+ * prior month is excluded (its refund, if any, is moot — only holds inside
+ * the period are summed). Runs inside the caller's executor (`reserve`'s
+ * advisory-locked tx) so the check sees this reserve's own prior writes.
+ * Returns a non-negative integer.
  *
  * Exported (Phase 6 Task 2, SPEC-5 §1) so the operator allocation console
  * (`server/usecases/operator-allocation.ts`) reports each member org's burn
@@ -922,6 +1037,7 @@ export async function spentThisPeriodByOrg(
   walletId: string,
   orgId: string,
 ): Promise<number> {
+  const periodStart = utcMonthStart();
   const [row] = await exec<{ spent: string | null }[]>`
     select coalesce(sum(
       -h.delta - coalesce((
@@ -933,7 +1049,7 @@ export async function spentThisPeriodByOrg(
      where h.wallet_id = ${walletId}
        and h.spent_by_org_id = ${orgId}
        and h.source = 'run_spend'
-       and h.created_at >= date_trunc('month', now())`;
+       and h.created_at >= ${periodStart}`;
   return Math.max(0, Number(row?.spent ?? 0));
 }
 
