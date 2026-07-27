@@ -148,7 +148,11 @@ export function EntCellEditor(props: {
   );
 
   return (
-    <span className="inline-flex items-center gap-1">
+    // `data-ent-plan` makes the cell addressable by the plan it edits — the
+    // page's own render test asserts every plan gets an editor, which is the
+    // gap v17 #294 closed (the L rung had rows, a resolver that honoured them,
+    // and no column here at all).
+    <span data-ent-plan={props.planKey} className="inline-flex items-center gap-1">
       {showBool && boolToggle}
       {showInt && intControl}
       {error && (

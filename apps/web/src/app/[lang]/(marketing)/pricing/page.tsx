@@ -300,7 +300,11 @@ export default async function PricingPage({
                         <span className="text-sm font-semibold text-slate-900">
                           {formatMinor(o.amountMinor, currency)}
                         </span>
-                        <span className="basis-full text-xs text-slate-500 sm:basis-auto">
+                        {/* Always its own line. `sm:` is a VIEWPORT breakpoint,
+                            not a container one, so letting this sit inline on a
+                            wide screen still wraps it mid-phrase inside a card
+                            this narrow ("128 entrants / each"). */}
+                        <span className="basis-full text-xs text-slate-500">
                           {o.entrants === null
                             ? t(d, "pricing.pass.ladder.capsUnlimited", {
                                 divisions: o.divisions ?? "",
@@ -499,8 +503,17 @@ export default async function PricingPage({
                                 </span>
                               )}
                             </td>
+                            {/* `whitespace-nowrap` because a sixth column
+                                narrows every one of them: at 375px the folded
+                                fee cell broke across two lines as "✓" / "2%".
+                                The region already scrolls horizontally, so a
+                                cell staying on one line costs nothing and a
+                                split percentage is unreadable. */}
                             {PRICING_PLAN_KEYS.map((plan) => (
-                              <td key={plan} className={`text-center ${CELL_TONE[plan]}`}>
+                              <td
+                                key={plan}
+                                className={`whitespace-nowrap text-center ${CELL_TONE[plan]}`}
+                              >
                                 {cellText(r.cells[plan])}
                               </td>
                             ))}
