@@ -218,6 +218,7 @@ export type DictionaryKey =
   | "billing.downgrade.loading"
   | "billing.group.add"
   | "billing.group.atCap"
+  | "billing.group.atCapAddOn"
   | "billing.group.attach.confirmAction"
   | "billing.group.attach.confirmCharge"
   | "billing.group.attach.confirmChargeAmount"

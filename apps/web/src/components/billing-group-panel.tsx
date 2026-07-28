@@ -156,6 +156,7 @@ export function BillingGroupPanel({
     seatsPaid,
     freeSlots,
     atCap,
+    atCapKey,
     hasLive,
     candidates,
     blocked,
@@ -392,7 +393,11 @@ export function BillingGroupPanel({
 
         {atCap ? (
           <p className="text-sm text-slate-500">
-            {msg("billing.group.atCap", { max: String(group.max_orgs) })}
+            {/* The remedy differs by plan (v17 gap #293): Pro and Pro Plus buy a
+                rider from the Add-ons tab, Community must upgrade first. Which
+                sentence that is, is decided in billing-group-view.ts, where it
+                can be tested. */}
+            {msg(atCapKey, { max: String(group.max_orgs) })}
           </p>
         ) : candidates.length === 0 && blocked.length === 0 ? (
           // Not an error and not a dead control: there is simply nothing of

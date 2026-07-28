@@ -583,6 +583,7 @@
   "billing.group.remove": "Quitar de esta factura",
   "billing.group.add": "Añadir una organización",
   "billing.group.atCap": "Este plan cubre {max} organizaciones y todas están ocupadas. Mejora el plan para cubrir más.",
+  "billing.group.atCapAddOn": "Este plan cubre {max} organizaciones y todas están ocupadas. Compra una organización adicional en Configuración → Complementos; se factura cada mes además de tu factura actual.",
   "billing.group.noCandidates": "No tienes otras organizaciones que mover a esta factura. Una organización solo puede unirse desde su propio plan Community.",
   "billing.group.blocked": "{org} paga su propia suscripción, así que todavía no puede unirse a esta factura. Cancela primero su suscripción: una organización solo puede unirse desde Community.",
   "billing.group.error": "No ha funcionado. Inténtalo de nuevo en un momento.",

@@ -136,6 +136,8 @@ Each organisation keeps its own Stripe account, its own verification, its own ba
 
 **Do the group's organisations share limits?** No. Quotas — team members, clubs, active competitions, public dashboards — are per organisation. Three organisations on Pro get three organisations' worth of everything, and that headroom is what the extra half-price rate buys.
 
+**The bill says it's full — do we have to upgrade?** Only on Community, which covers one organisation and sells nothing to raise that. On **Pro and Pro Plus**, a full bill is a purchase rather than a plan change: buy an extra organisation under **Settings → Add-ons** and the limit goes up by one for the whole group. It's a recurring add-on billed every month on top of your current bill, on its own cadence — so an annual group pays for it monthly, and the Add-ons tab shows the exact amount in your currency before you confirm.
+
 **Are team members shared?** No. Membership is per organisation; someone who works on two of them is invited to both. Paying for an organisation doesn't put you inside it, and being inside it doesn't let you see the group's card or invoices. See [inviting your team](/help/getting-started/invite-your-team).
 
 **Can staff comp a single organisation?** Yes — a comp or a raised limit can be applied to one organisation without touching the group's plan or its bill.
