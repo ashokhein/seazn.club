@@ -179,10 +179,36 @@ const PLUS_VALUES = across("marketing", "pricing.faq.proPlus.a");
  */
 const PLUS_CARD_BULLET_KEYS = [1, 2, 3, 4, 5].map((n) => `pricing.plus.f${n}`);
 const PLUS_CARD_KEYS = ["pricing.plus.note", ...PLUS_CARD_BULLET_KEYS];
+
+/** The roadmap under the same card — its label and its eight items. Pinned in
+ *  APPROVED_DICTIONARY_COPY; see the note over those entries for why there is no
+ *  matrix row to check them against. */
+const PLUS_SOON_KEYS = [
+  "pricing.plus.soonLabel",
+  ...Array.from({ length: 8 }, (_, i) => `pricing.plus.soon${i + 1}`),
+];
+
+/**
+ * A MISSING key is a FAULT, not an empty string (fix round 1, minor).
+ *
+ * `?? ""` swallowed a deleted key: the value simply got shorter, the scans below
+ * found no falsehood in it, and the suite went green on a card bullet that no
+ * longer exists. The empty-value case is exactly what `localePassBoundFaults`
+ * calls "empty — nothing to scan, so every rule below passes vacuously", and it
+ * has to reach the fault list here too rather than be silently normalised away.
+ */
+const missingCardKeys: string[] = [];
 const PLUS_CARD_VALUES: LocalisedValue[] = DICTIONARY_LOCALES.map((locale) => ({
   locale,
   key: "pricing.plus.f1-f5",
-  value: PLUS_CARD_BULLET_KEYS.map((key) => load(locale, "marketing")[key] ?? "").join(". "),
+  value: PLUS_CARD_BULLET_KEYS.map((key) => {
+    const value = load(locale, "marketing")[key];
+    if (typeof value !== "string" || value.trim().length === 0) {
+      missingCardKeys.push(`${locale} ${key}: missing or empty in marketing.json`);
+      return "";
+    }
+    return value;
+  }).join(". "),
 }));
 
 /**
@@ -740,6 +766,8 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
   // Anti-vacuity for the whole file: every guard below is `toEqual([])` over a
   // scan, and a scan of nothing returns []. These are the inputs.
   it("actually has copy to scan, in every locale", () => {
+    // A deleted card key must reach this list rather than be normalised to "".
+    expect(missingCardKeys).toEqual([]);
     for (const { locale, key, value } of [...PASS_BOUND_VALUES, ...PLUS_VALUES, ...PLUS_CARD_VALUES]) {
       expect(value, `${locale} ${key} is missing or empty`).toBeTruthy();
       expect(value.length, `${locale} ${key}`).toBeGreaterThan(20);
@@ -783,7 +811,14 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
     for (const key of PLUS_CARD_KEYS) {
       expect(pinned.has(key), `${key} is a Pro Plus card claim but is not pinned`).toBe(true);
     }
-    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(60);
+    // FIX ROUND 1 (I3): the ROADMAP under the same card. Its claim is
+    // availability, which no `plan_entitlements` row records, so the pin is the
+    // only thing between a one-word edit and eight undelivered features being
+    // advertised as live — measured, in whichever locale it is done.
+    for (const key of PLUS_SOON_KEYS) {
+      expect(pinned.has(key), `${key} is a roadmap claim but is not pinned`).toBe(true);
+    }
+    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(96);
     // Every entry must say what it claims and what decides it — a pin with no
     // `why` is a snapshot, and a snapshot teaches the next editor to re-record
     // rather than to re-check.

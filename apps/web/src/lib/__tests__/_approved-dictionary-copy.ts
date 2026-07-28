@@ -217,6 +217,122 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
       nl: "Vanaf {price} eenmalig upgrade je één competitie zolang ze loopt — en een competitie met een pass telt niet meer mee voor je limiet van actieve competities.",
     },
   },
+  // ── The Pro Plus ROADMAP block (fix round 1, I3) ───────────────────────────
+  //
+  // `pricing.plus.soonLabel` + `soon1-8`, under the Pro Plus card. Added because
+  // the block was covered by NOTHING — not by a vocabulary, not by a pin, and
+  // not by the card's own coverage assertion, which listed two arrays and so
+  // codified the omission rather than merely forgetting it.
+  //
+  // Measured: flipping `soonLabel` to "Included now" reclassifies EIGHT
+  // undelivered features as shipped, in whichever locale it is done, and the
+  // whole suite stayed green. That is a direct breach of SPEC-1 §6's ethics
+  // guardrail and it reads in review as a harmless copy tweak.
+  //
+  // There is no row to pin this to: availability is not in plan_entitlements,
+  // and SPEC-1 §9 deliberately seeds `domains.custom` on pro_plus while the DNS
+  // product is unbuilt (`pricing-matrix.ts` never renders that row), so the
+  // matrix would say "shipped" about a feature that is not. This gate is the
+  // guard, which is exactly the case the approved-wording shape exists for.
+  {
+    file: "marketing",
+    key: "pricing.plus.soonLabel",
+    why: "the ROADMAP LABEL under the Pro Plus card, and the single highest-leverage string on /pricing: it is what classifies the eight items below as NOT YET AVAILABLE. Measured in fix round 1 — flipping it to \"Included now\" advertised eight undelivered features as shipped and every test stayed green. SPEC-1 §6 requires the roadmap to read as ambition and never as a paywall; §9 keeps domains.custom seeded-but-unshipped, so plan_entitlements cannot decide this and the pin is the only guard. Re-approving means confirming the block is still a roadmap.",
+    text: {
+      en: "Coming soon",
+      es: "Próximamente",
+      fr: "Bientôt disponible",
+      nl: "Binnenkort",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.plus.soon1",
+    why: "Pro Plus ROADMAP item 1 (SPEC-1 §6) — badged \"coming soon\", NOT purchasable and NOT built. Mirrored in English by PLUS_COMING_SOON[0] in lib/pricing-cards.ts, which pricing-cards.test.ts pins. Re-approving means confirming the feature is still unshipped; shipping it means deleting it from this list and from PLUS_COMING_SOON in the same commit. Nothing in plan_entitlements records shipped-ness — SPEC-1 §9 deliberately seeds domains.custom on pro_plus while the DNS product is unbuilt — so no matrix pin is possible and this gate is the guard.",
+    text: {
+      en: "Multi-org command centre",
+      es: "Centro de mando multiorganización",
+      fr: "Centre de commande multi-organisations",
+      nl: "Commandocentrum voor meerdere organisaties",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.plus.soon2",
+    why: "Pro Plus ROADMAP item 2 (SPEC-1 §6) — badged \"coming soon\", NOT purchasable and NOT built. Mirrored in English by PLUS_COMING_SOON[1] in lib/pricing-cards.ts, which pricing-cards.test.ts pins. Re-approving means confirming the feature is still unshipped; shipping it means deleting it from this list and from PLUS_COMING_SOON in the same commit. Nothing in plan_entitlements records shipped-ness — SPEC-1 §9 deliberately seeds domains.custom on pro_plus while the DNS product is unbuilt — so no matrix pin is possible and this gate is the guard.",
+    text: {
+      en: "Shared templates & branding across orgs",
+      es: "Plantillas y marca compartidas entre organizaciones",
+      fr: "Modèles et identité partagés entre organisations",
+      nl: "Gedeelde sjablonen & branding over organisaties",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.plus.soon3",
+    why: "Pro Plus ROADMAP item 3 (SPEC-1 §6) — badged \"coming soon\", NOT purchasable and NOT built. Mirrored in English by PLUS_COMING_SOON[2] in lib/pricing-cards.ts, which pricing-cards.test.ts pins. Re-approving means confirming the feature is still unshipped; shipping it means deleting it from this list and from PLUS_COMING_SOON in the same commit. Nothing in plan_entitlements records shipped-ness — SPEC-1 §9 deliberately seeds domains.custom on pro_plus while the DNS product is unbuilt — so no matrix pin is possible and this gate is the guard.",
+    text: {
+      en: "Cross-competition analytics",
+      es: "Analíticas entre competiciones",
+      fr: "Analyses inter-compétitions",
+      nl: "Analyses over competities heen",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.plus.soon4",
+    why: "Pro Plus ROADMAP item 4 (SPEC-1 §6) — badged \"coming soon\", NOT purchasable and NOT built. Mirrored in English by PLUS_COMING_SOON[3] in lib/pricing-cards.ts, which pricing-cards.test.ts pins. Re-approving means confirming the feature is still unshipped; shipping it means deleting it from this list and from PLUS_COMING_SOON in the same commit. Nothing in plan_entitlements records shipped-ness — SPEC-1 §9 deliberately seeds domains.custom on pro_plus while the DNS product is unbuilt — so no matrix pin is possible and this gate is the guard.",
+    text: {
+      en: "Custom domain & white-label",
+      es: "Dominio propio y marca blanca",
+      fr: "Domaine personnalisé et marque blanche",
+      nl: "Eigen domein & white-label",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.plus.soon5",
+    why: "Pro Plus ROADMAP item 5 (SPEC-1 §6) — badged \"coming soon\", NOT purchasable and NOT built. Mirrored in English by PLUS_COMING_SOON[4] in lib/pricing-cards.ts, which pricing-cards.test.ts pins. Re-approving means confirming the feature is still unshipped; shipping it means deleting it from this list and from PLUS_COMING_SOON in the same commit. Nothing in plan_entitlements records shipped-ness — SPEC-1 §9 deliberately seeds domains.custom on pro_plus while the DNS product is unbuilt — so no matrix pin is possible and this gate is the guard.",
+    text: {
+      en: "SSO / SAML",
+      es: "SSO / SAML",
+      fr: "SSO / SAML",
+      nl: "SSO / SAML",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.plus.soon6",
+    why: "Pro Plus ROADMAP item 6 (SPEC-1 §6) — badged \"coming soon\", NOT purchasable and NOT built. Mirrored in English by PLUS_COMING_SOON[5] in lib/pricing-cards.ts, which pricing-cards.test.ts pins. Re-approving means confirming the feature is still unshipped; shipping it means deleting it from this list and from PLUS_COMING_SOON in the same commit. Nothing in plan_entitlements records shipped-ness — SPEC-1 §9 deliberately seeds domains.custom on pro_plus while the DNS product is unbuilt — so no matrix pin is possible and this gate is the guard.",
+    text: {
+      en: "SLA & dedicated support",
+      es: "SLA y soporte dedicado",
+      fr: "SLA et support dédié",
+      nl: "SLA & toegewijde ondersteuning",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.plus.soon7",
+    why: "Pro Plus ROADMAP item 7 (SPEC-1 §6) — badged \"coming soon\", NOT purchasable and NOT built. Mirrored in English by PLUS_COMING_SOON[6] in lib/pricing-cards.ts, which pricing-cards.test.ts pins. Re-approving means confirming the feature is still unshipped; shipping it means deleting it from this list and from PLUS_COMING_SOON in the same commit. Nothing in plan_entitlements records shipped-ness — SPEC-1 §9 deliberately seeds domains.custom on pro_plus while the DNS product is unbuilt — so no matrix pin is possible and this gate is the guard.",
+    text: {
+      en: "Data export & warehouse",
+      es: "Exportación de datos y data warehouse",
+      fr: "Export de données et entrepôt de données",
+      nl: "Data-export & datawarehouse",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.plus.soon8",
+    why: "Pro Plus ROADMAP item 8 (SPEC-1 §6) — badged \"coming soon\", NOT purchasable and NOT built. Mirrored in English by PLUS_COMING_SOON[7] in lib/pricing-cards.ts, which pricing-cards.test.ts pins. Re-approving means confirming the feature is still unshipped; shipping it means deleting it from this list and from PLUS_COMING_SOON in the same commit. Nothing in plan_entitlements records shipped-ness — SPEC-1 §9 deliberately seeds domains.custom on pro_plus while the DNS product is unbuilt — so no matrix pin is possible and this gate is the guard.",
+    text: {
+      en: "Bulk & scheduled automation",
+      es: "Automatización masiva y programada",
+      fr: "Automatisation en masse et planifiée",
+      nl: "Bulk- & geplande automatisering",
+    },
+  },
   // ── The extra-organisation TIP (v17 gap wave 7, task 7, #299) ──────────────
   //
   // A FOURTH surface of the half-rate claim, and the one that showed the axis
