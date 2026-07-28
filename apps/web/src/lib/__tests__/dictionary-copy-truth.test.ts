@@ -1322,7 +1322,10 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
     expect(checked, "the polarity table resolved no rows").toBeGreaterThan(8);
 
     // The rule fires: the three rows this round corrected, as they shipped.
-    const flipped = { ...grants, "dashboard.branding": { ...grants["dashboard.branding"], community: true } };
+    const flipped: Record<string, Record<string, boolean | null>> = {
+      ...grants,
+      "dashboard.branding": { ...grants["dashboard.branding"], community: true },
+    };
     const refaults: string[] = [];
     for (const claim of PANEL_CLAIMS.filter((c) => c.key === "billing.community.f6")) {
       for (const feature of claim.features) {
