@@ -777,6 +777,13 @@ async function main() {
   // --- #267 (SPEC-5 §2): referral attribution + the referred org's welcome
   // grant, over the real `ref`-cookie flow. Own fresh orgs; keyless-safe.
   await referralSuite();
+
+  // --- v17 gap #293: the extra-organisation recurring add-on. A Pro Plus
+  // payer at the 10-org cap gets a 402 CARRYING a purchase offer, buying the
+  // rider lifts the cap by one and the same create then succeeds; a community
+  // owner and a NON-PAYER inside that same group are refused the same way and
+  // offered nothing. Own fresh group; keyless-safe.
+  await extraOrgAddonSuite();
 }
 
 /** design/v9 PROMPT-55: the chargeback-liability copy is live on the public
@@ -2492,6 +2499,199 @@ async function referralSuite(): Promise<void> {
     "referral/#296: publish-with-division pays the referred org's +10 welcome grant",
     byKey.get(`earn:referral_welcome:${referredAuth.org_id}`) === 10,
   );
+}
+
+/**
+ * v17 gap #293 — the extra-organisation recurring add-on, end to end at the
+ * wire, on BOTH paths.
+ *
+ * PRO path (the payer): a Pro Plus payer standing on their plan's 10-org cap is
+ * refused a plain "create org #11" with a 402 that CARRIES a purchase offer;
+ * buying the rider lifts the cap by exactly one and the SAME create then
+ * succeeds. The refusal is asserted BEFORE the purchase deliberately — "the
+ * create succeeded" is evidence of a lift only if it was first proven refused.
+ *
+ * FREE path (community): an owner at the community one-org cap is refused on
+ * the same wire path with NO offer. Community has no rider SKU, so the remedy
+ * is an upgrade; offering a purchase there would only relocate the dead end to
+ * the purchase route's 400 one screen later.
+ *
+ * NON-PAYER: an owner of organisations INSIDE the Pro Plus group above, at the
+ * very same cap, who is not that group's `subscriptions.owner_user_id`. Also
+ * refused, also with no offer — the purchase route (setExtraOrgs →
+ * requireBillingOwner) 403s anyone but the payer. Reachable in production:
+ * transferGroup moves the payer and leaves org owners where they are.
+ *
+ * The two absences are worth something only because the payer's arm proves the
+ * offer DOES reach this wire on the byte-identical request; that arm is their
+ * positive discriminator, and the 402 shape asserted is the TOP-LEVEL one
+ * (`lib/http.ts` spreads `extra` next to `feature_key`; the /api/v1 serialiser
+ * deliberately does not, and this route is not a v1 route).
+ *
+ * Nine of the ten organisations are seeded straight into the DB, and the
+ * "purchase" writes the `org_addons` row the real webhook
+ * (billing-events.syncOrgAddonsForSubscription) is the single writer of —
+ * smoke has no live Stripe, exactly as setPlan's own doc comment describes for
+ * plans. The attach HTTP round trip is already proven end to end by the
+ * billing-group block in main(); this suite's job is the cap BOUNDARY, not
+ * attach mechanics. No cache bust is needed after the add-on insert:
+ * `getLimit` is the CACHED plan base plus an UNCACHED `org_addons` sum
+ * (lib/entitlements.ts), unlike a raw `plan_key` write, which is why the plan
+ * flip at the end goes through setPlan and the purchase does not.
+ *
+ * Own fresh group; keyless-safe, no Stripe calls.
+ */
+async function extraOrgAddonSuite(): Promise<void> {
+  // V314: community 1 / pro 5 / pro_plus 10. The two rider RATES ($9 Pro,
+  // $19 Pro Plus) are Stripe's business and are pinned by the BILLING_LIVE
+  // suite; what smoke owns is the CAPACITY those caps bound.
+  const PRO_PLUS_ORG_CAP = 10;
+  const PRO_ORG_CAP = 5;
+
+  interface Refusal {
+    feature_key?: string;
+    reason?: string;
+    offer?: string;
+  }
+  const refusal = (j: unknown) => j as Refusal;
+
+  // Resolved entitlements for an org — the same endpoint the billing tab reads.
+  const orgCap = async (s: Session, orgId: string) =>
+    (
+      (await call(s, `/api/orgs/${orgId}/entitlements`)) as {
+        entitlements: Record<string, { limit?: number | null }>;
+      }
+    ).entitlements["orgs.max_owned"]?.limit;
+
+  const payerEmail = `orgaddon_${tag}@example.com`;
+  const payer = newSession();
+  const auth = await signIn(payer, payerEmail);
+  await setPlan(auth.org_id, "pro_plus", payer); // busts the entitlement cache itself
+
+  const db = smokeDb();
+  try {
+    const [ownerRow] = await db<{ id: string }[]>`
+      select id from users where email = ${payerEmail}`;
+    const [orgRow] = await db<{ wallet_id: string }[]>`
+      select coalesce(subscription_id::text, id::text) as wallet_id
+        from organizations where id = ${auth.org_id}`;
+    const payerUserId = ownerRow!.id;
+    const walletId = orgRow!.wallet_id;
+
+    // Fill the group to the Pro Plus cap of 10 — nine more organisations on the
+    // same subscription, owned by the payer. Both caps must read "at 10": the
+    // PERSON cap (assertMayOwnAnotherOrg, which is what a bare create hits) and
+    // the GROUP cap (attachOrgToGroup, not exercised here).
+    const fillIds: string[] = [];
+    for (let i = 0; i < PRO_PLUS_ORG_CAP - 1; i++) {
+      const [seeded] = await db<{ id: string }[]>`
+        insert into organizations (name, slug, created_by, subscription_id)
+        values (${`Org Addon Fill ${tag} ${i}`}, ${`org-addon-fill-${tag}-${i}`},
+                ${payerUserId}, ${walletId})
+        returning id`;
+      await db`insert into org_members (org_id, user_id, role)
+               values (${seeded!.id}, ${payerUserId}, 'owner')`;
+      fillIds.push(seeded!.id);
+    }
+    const [groupSize] = await db<{ n: number }[]>`
+      select count(*)::int as n from organizations where subscription_id = ${walletId}`;
+    check(
+      `extra-org: fixture built — one Pro Plus bill carrying ${PRO_PLUS_ORG_CAP} organisations, all owned by its payer`,
+      groupSize?.n === PRO_PLUS_ORG_CAP,
+    );
+    check(
+      "extra-org: the resolved cap starts at the Pro Plus base of 10 — nothing bought yet",
+      (await orgCap(payer, auth.org_id)) === PRO_PLUS_ORG_CAP,
+    );
+
+    // --- the refusal, asserted BEFORE anything is bought -----------------
+    const blocked = await raw(payer, "/api/orgs", "POST", { name: `Org 11 ${tag}` });
+    check(
+      "extra-org: organisation #11 is REFUSED at the Pro Plus cap of 10 (402)",
+      blocked.status === 402,
+    );
+    check(
+      "extra-org: the payer's 402 carries the purchase offer at the top level (#293)",
+      refusal(blocked.json).feature_key === "orgs.max_owned" &&
+        refusal(blocked.json).offer === "extra_org",
+    );
+
+    // --- NON-PAYER: same group, same cap, no offer -----------------------
+    // Co-owning the nine seeded organisations puts this user at the same
+    // PERSON cap (it counts organisations they own, on anyone's bill) while the
+    // only group they could actually buy on is their own auto-provisioned
+    // community one. Runs BEFORE the purchase on purpose — a bought rider would
+    // lift this cap to 11 and the refusal would stop being reachable.
+    const nonPayerEmail = `orgaddon_nonpayer_${tag}@example.com`;
+    const nonPayer = newSession();
+    await signIn(nonPayer, nonPayerEmail);
+    const [npRow] = await db<{ id: string }[]>`
+      select id from users where email = ${nonPayerEmail}`;
+    for (const id of fillIds) {
+      await db`insert into org_members (org_id, user_id, role)
+               values (${id}, ${npRow!.id}, 'owner')`;
+    }
+    const npBlocked = await raw(nonPayer, "/api/orgs", "POST", { name: `NP Org ${tag}` });
+    check(
+      "extra-org/non-payer: an owner inside the same Pro Plus group is refused at the same cap (402)",
+      npBlocked.status === 402 && refusal(npBlocked.json).feature_key === "orgs.max_owned",
+    );
+    check(
+      "extra-org/non-payer: ...and is offered NOTHING — only the group's payer may buy the rider (the identical request offered it to the payer above)",
+      refusal(npBlocked.json).offer === undefined,
+    );
+
+    // --- FREE path: community sells no rider -----------------------------
+    const freeEmail = `orgaddon_free_${tag}@example.com`;
+    const free = newSession();
+    await signIn(free, freeEmail);
+    const freeBlocked = await raw(free, "/api/orgs", "POST", { name: `Free Org ${tag}` });
+    check(
+      "extra-org/free: a community owner is refused a second organisation (402, orgs.max_owned)",
+      freeBlocked.status === 402 && refusal(freeBlocked.json).feature_key === "orgs.max_owned",
+    );
+    check(
+      "extra-org/free: ...and is offered NOTHING — community has no rider SKU, so the remedy is an upgrade rather than a purchase",
+      refusal(freeBlocked.json).offer === undefined,
+    );
+
+    // --- buy one extra organisation --------------------------------------
+    // The webhook is the SINGLE writer of these rows in production; this insert
+    // stands in for it exactly as setPlan stands in for a real plan change. The
+    // stripe_item_id is tag-unique on purpose: V324's unique index is on
+    // stripe_item_id ALONE, so a shared literal would silently move another
+    // run's row onto this wallet while every wallet-scoped read still passed.
+    await db`
+      insert into org_addons (wallet_id, target_org_id, feature_key, delta_each, qty,
+                              stripe_item_id, status)
+      values (${walletId}, null, 'orgs.max_owned', 1, 1,
+              ${`si_smoke_orgaddon_${tag}`}, 'active')`;
+    check(
+      "extra-org: the purchased rider lifts the resolved cap by exactly one (10 → 11)",
+      (await orgCap(payer, auth.org_id)) === PRO_PLUS_ORG_CAP + 1,
+    );
+
+    const created = await raw(payer, "/api/orgs", "POST", { name: `Org 11 ${tag}` });
+    check(
+      "extra-org: the SAME create that 402'd above now succeeds — organisation #11 exists",
+      created.status === 200 && !!(created.json.data as { id?: string } | undefined)?.id,
+    );
+
+    // --- a tier change RE-PRICES the rider; it never resizes it -----------
+    // The webhook's convergence (customer.subscription.updated moves the rider
+    // item onto the new plan's price) is a RATE change and needs live Stripe —
+    // it is the BILLING_LIVE suite's job. The half a customer would actually
+    // notice is assertable here with no Stripe at all: after the tier moves,
+    // the rider they are still paying for must still be worth exactly +1
+    // against the NEW plan's base, never the old one and never nothing.
+    await setPlan(auth.org_id, "pro", payer);
+    check(
+      "extra-org: after a Pro Plus → Pro tier change the rider still adds exactly one (5 → 6) — a re-price is never a capacity change",
+      (await orgCap(payer, auth.org_id)) === PRO_ORG_CAP + 1,
+    );
+  } finally {
+    await db.end();
+  }
 }
 
 /** PROMPT-53 player accounts over real HTTP: invite → claim → RSVP →
@@ -7888,6 +8088,12 @@ async function cleanup(tag: string): Promise<void> {
     // trips: by the time it's checked, both rows are already gone together.
     `referrer_${tag}@example.com`,
     `referred_${tag}@example.com`,
+    // #293 extraOrgAddonSuite — the Pro Plus payer (whose nine seeded fill
+    // organisations carry created_by = this user and so go with the purge
+    // below), the non-payer co-owner, and the community owner.
+    `orgaddon_${tag}@example.com`,
+    `orgaddon_nonpayer_${tag}@example.com`,
+    `orgaddon_free_${tag}@example.com`,
   ];
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {
@@ -7903,6 +8109,12 @@ async function cleanup(tag: string): Promise<void> {
     // purge below. Dropped by the run's own `evt_smoke_<tag>_` prefix, which
     // cannot touch another run's rows or a real Stripe event.
     await sql`delete from billing_events where id like ${`evt_smoke_${tag}_%`}`;
+    // org_addons.wallet_id is TEXT with NO foreign key (V323 — a wallet is
+    // coalesce(group_subscription_id, org_id) and so cannot reference one
+    // table), so #293's rider row outlives both its organisation and its
+    // group. Dropped by this run's own stripe_item_id, which cannot match
+    // another run's row nor a real Stripe item.
+    await sql`delete from org_addons where stripe_item_id = ${`si_smoke_orgaddon_${tag}`}`;
     // sponsor_orders are RESTRICT (V299): money rows must go before their org.
     await sql`
       delete from sponsor_orders
