@@ -821,14 +821,22 @@ export async function convergeOrgAddonPrices(
     // this is about what Stripe will accept. They are different questions.
     let targetClaimed = orgItems.some((it) => it.price?.id === expectedPriceId);
     for (const item of orgItems) {
-      // EXACTLY TWO EXITS BELOW LEAVE BEFORE THE LIVE READ, and both are
-      // therefore payload-trust windows: this one and the `qty <= 0` check
-      // under it. Every other exit — already converged, duplicate rider,
-      // quantity emptied, update succeeded, update rejected — happens after the
-      // read and after the publish, so the row sync sees what Stripe holds. If
-      // you add an exit, put it after the publish or extend this list; a
-      // completeness claim that has drifted from the code is how the last three
-      // of these bugs survived review.
+      // EXACTLY TWO EXITS LEAVE BEFORE THE LIVE READ, and both are therefore
+      // payload-trust windows: this one and the `qty <= 0` check under it.
+      //
+      // The other SIX leave after it: already converged, duplicate rider,
+      // quantity emptied, update succeeded, update rejected, and the vanished
+      // item (`isStripeResourceMissing`). Five of those also leave after the
+      // PUBLISH, so the row sync sees what Stripe holds. The exception is the
+      // two catch exits when the RETRIEVE ITSELF threw — `live` is still null,
+      // the publish never ran, and the sync reads the snapshot. That is
+      // unavoidable (there is no live state to publish) and is why the vanished
+      // item deliberately keeps its row: see the `let live` declaration below.
+      //
+      // If you add an exit, put it after the publish AND extend this list. A
+      // completeness claim that has drifted from the code is how four of these
+      // bugs survived review — including one where this very comment said
+      // "two windows" and the code had three.
       //
       // Already on the current plan's price: the converged steady state, and
       // the reason a second identical event writes nothing.

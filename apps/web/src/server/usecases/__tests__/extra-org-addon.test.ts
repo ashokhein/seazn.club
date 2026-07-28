@@ -2188,6 +2188,88 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
     expect(await getLimit(orgId, "orgs.max_owned")).toBe(proPlusBase + 1 + 7);
   });
 
+  // Round 5: the CLAIM itself was uncovered. Every test above drove
+  // `targetClaimed` through the post-update assignment, so the opening scan,
+  // the quantity-0 clause in it, and the converged branch's assignment were all
+  // free to be deleted with the suite green. These three pin them. They need
+  // three fixtures rather than one because the four ways the claim can be taken
+  // have mutually exclusive preconditions — see each test's comment.
+
+  it("an already-correct rider HOLDS the claim, even at quantity 0, so a sibling is never sent into a rejected update", async () => {
+    // Pins the OPENING SCAN and its deliberate inclusion of quantity-0 items.
+    // A is on the target price at qty 0 — which still occupies that price in
+    // Stripe — and takes the steady-state exit, which never sets the claim. So
+    // the scan is the only thing that records it.
+    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    const a = riderItem(dupA, proPlusEntry.lookupKey, 0);
+    const b = riderItem(dupB, proEntry.lookupKey, 2);
+    liveItems[dupB] = { ...(liveItems[dupB] as object), quantity: 9 };
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await processStripeEvent(updatedEvent(stripeSubId, walletId, [a, b]));
+    logged.mockRestore();
+
+    // Without the claim, B is sent into an update onto a price Stripe already
+    // holds; Stripe rejects it, and a well-understood duplicate becomes a
+    // spurious "Stripe rejected the item update" page. Fail-safe, but wrong.
+    expect(itemUpdateSpy).not.toHaveBeenCalled();
+    expect(repriceAlertSpy).toHaveBeenCalledTimes(1);
+    expect(repriceAlertSpy).toHaveBeenCalledWith(expect.objectContaining({ itemId: dupB }));
+    const [row] = await sql<{ qty: number }[]>`
+      select qty from org_addons where stripe_item_id = ${dupB}`;
+    expect(row?.qty).toBe(9);
+  });
+
+  it("a rider Stripe has ALREADY moved onto the target claims it — the claim answers to live state", async () => {
+    // Pins the CONVERGED BRANCH's `targetClaimed = true`. Neither payload names
+    // the target, so the opening scan claims nothing and only the live read can
+    // discover that A is already there. This is the benefit round 4 advertised
+    // in a comment and left unpinned.
+    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    const a = riderItem(dupA, proEntry.lookupKey, 1);
+    const b = riderItem(dupB, proEntry.lookupKey, 3);
+    liveItems[dupA] = {
+      ...(liveItems[dupA] as object),
+      price: { id: livePriceFor(proPlusEntry.lookupKey), lookup_key: proPlusEntry.lookupKey },
+    };
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await processStripeEvent(updatedEvent(stripeSubId, walletId, [a, b]));
+    logged.mockRestore();
+
+    expect(itemUpdateSpy).not.toHaveBeenCalled();
+    expect(repriceAlertSpy).toHaveBeenCalledTimes(1);
+    expect(repriceAlertSpy).toHaveBeenCalledWith(expect.objectContaining({ itemId: dupB }));
+  });
+
+  it("a rider that IS on the target is never alerted as a duplicate, however the claim was taken", async () => {
+    // Pins the ORDER of the converged check against the duplicate check. The
+    // payload claims the target for A, but A has since moved off it and B is
+    // the item Stripe now has on it. A stale claim must not turn B — precisely
+    // the item that is already correct — into a duplicate alert.
+    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    const a = riderItem(dupA, proPlusEntry.lookupKey, 1);
+    const b = riderItem(dupB, proEntry.lookupKey, 4);
+    liveItems[dupA] = {
+      ...(liveItems[dupA] as object),
+      price: { id: "price_a_moved_away", lookup_key: proEntry.lookupKey },
+    };
+    liveItems[dupB] = {
+      ...(liveItems[dupB] as object),
+      price: { id: livePriceFor(proPlusEntry.lookupKey), lookup_key: proPlusEntry.lookupKey },
+    };
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await processStripeEvent(updatedEvent(stripeSubId, walletId, [a, b]));
+    logged.mockRestore();
+
+    expect(itemUpdateSpy).not.toHaveBeenCalled();
+    expect(repriceAlertSpy).not.toHaveBeenCalled();
+    const [row] = await sql<{ qty: number }[]>`
+      select qty from org_addons where stripe_item_id = ${dupB}`;
+    expect(row?.qty).toBe(4);
+  });
+
   it("an item deleted between emission and processing is a benign race, not an alert", async () => {
     const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
     const item = riderItem(riderId, proEntry.lookupKey, 2);
