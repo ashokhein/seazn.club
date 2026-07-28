@@ -970,7 +970,7 @@
   "tips.billing.groups.title": "Un abonnement, plusieurs organisations",
   "tips.billing.groups.body": "Un abonnement peut payer plusieurs organisations. Elles partagent une carte et une facture, mais chacune conserve ses propres limites, sa propre connexion Stripe et ses propres versements.",
   "tips.billing.extra-org.title": "Le coût d'une organisation supplémentaire",
-  "tips.billing.extra-org.body": "Chaque organisation après la première coûte la moitié du tarif de votre formule. Elle passe aussi à la commission d'inscription de votre formule — 2 % sur Pro ou 1 % sur Pro Plus, au lieu des 8 % que paie une organisation gratuite.",
+  "tips.billing.extra-org.body": "Chaque organisation après la première coûte au plus la moitié du tarif de base. Elle passe aussi à la commission d'inscription de votre formule — 2 % sur Pro ou 1 % sur Pro Plus, au lieu des 8 % que paie une organisation gratuite.",
   "tips.billing.addons.extra-org.title": "Achetez au-delà de la limite d'organisations de votre forfait",
   "tips.billing.addons.extra-org.body": "Une organisation supplémentaire augmente d'une unité la limite de cette facture, pour toutes les organisations du groupe. C'est une extension récurrente, facturée chaque mois tant qu'elle est active, indépendamment de la périodicité de votre forfait.",
   "tips.billing.freed-slot.title": "Vous avez une place déjà payée",

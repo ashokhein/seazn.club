@@ -203,3 +203,70 @@ export const APPROVED_PLANS_INVENTORY: string[] = [
   "36cda4bf12f7677b",
   "c75ef841931dc4cd",
 ];
+
+/**
+ * The WHOLE of `content/help/billing/add-ons.md` (v17 gap wave 7, task 7, #299).
+ *
+ * WHY A BRAND-NEW ARTICLE IS GATED FROM DAY ONE, rather than after it has
+ * carried a falsehood the way the two above did. Everything on this page is a
+ * statement about money an organiser is charged — what each add-on costs, on
+ * what cadence, who may buy it, and what happens when it stops — and it makes
+ * the rate claim (`no more than half the base rate`) that this wave has now
+ * spent three rounds correcting on four other surfaces. The two articles above
+ * were pinned only after a lexical rule was measured at 1/12, 0/12, 6/30 and
+ * 1/40 against sets their own authors had not written; there is no reason to
+ * repeat that experiment on a page whose claims are the same shape.
+ *
+ * The tax is real and is the point: an edit here fails until someone reads the
+ * new words against the code named below and updates the digests.
+ *
+ * SOURCES OF TRUTH, by section:
+ *  - the AI credit pack — `config/stripe-plans.json` `packs[]`, and
+ *    `lib/entitlements.ts` `addonBonusForWallet` for the shared wallet.
+ *  - the extra seat — `server/usecases/extra-seats.ts` (payer-gated via
+ *    `requireBillingOwner`, a subscription ITEM on the group's existing
+ *    subscription, `proration_behavior: "none"` on a reduction so there is no
+ *    mid-cycle refund) and `stripe-plans.json` `seats[0]`.
+ *  - the size pack — `server/usecases/size-pack-checkout.ts` (owner-of-the-
+ *    competition's-org gate, the group card only when that owner IS the payer)
+ *    and `stripe-plans.json` `size_packs[0]`; comp-scoped rows never lift an
+ *    org-level cap (`addonBonusForWallet`'s `target_competition_id` predicate).
+ *  - the extra organisation — `server/usecases/extra-orgs.ts`, the monthly-only
+ *    `org_addons[]` prices in the seed, and `plan_entitlements.orgs.max_owned`
+ *    (pro 5, pro_plus 10, set by V314).
+ *  - freeze-not-delete — `lib/entitlements.ts` `COUNTING_ADDON_STATUSES`:
+ *    'canceled' is frozen, not deleted (V323).
+ */
+export const APPROVED_ADD_ONS_INVENTORY: string[] = [
+  "58a683b53e5184b9",
+  "2f6f0a90f146909c",
+  "86f7fbbc9cd26f08",
+  "3b36ef2883a2b0b4",
+  "db4463f2c0674e0e",
+  "1846e20e1f65b1da",
+  "7da87802d9add46e",
+  "3b7b68867760def2",
+  "e45187e5e9d4a709",
+  "696896c6174d0812",
+  "81f45d76b157c68a",
+  "5cbbcf82d4703a2e",
+  "51ec9ed81333165c",
+  "5e186b9ffa850393",
+  "b315422a65436656",
+  "628281436c3b5d97",
+  "57ab4cb8d1c7ae64",
+  "dd3682cfbbbd86eb",
+  "904600a779329e0b",
+  "81ba6ce07303ccdc",
+  "83bf42b10a565f0d",
+  "abb2553e267bfd42",
+  "00df8be3e9bd06ef",
+  "df7321201a99bd2c",
+  "7151ed1350e7f11f",
+  "7d1518387c5c90e4",
+  "d9c4e3493d52e91d",
+  "e455adb0d51bb4b4",
+  "89e6a00cfa216278",
+  "e0bc899381ce86af",
+  "fe061d7659564782",
+];

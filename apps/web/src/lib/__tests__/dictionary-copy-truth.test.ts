@@ -33,6 +33,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import stripePlans from "@/config/stripe-plans.json";
 import { sql } from "@/lib/db";
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
+import { TIPS } from "@/config/tips";
 import * as copyTruth from "@/lib/copy-truth";
 import { APPROVED_DICTIONARY_COPY } from "./_approved-dictionary-copy";
 import {
@@ -195,11 +196,22 @@ const PLUS_CARD_VALUES: LocalisedValue[] = DICTIONARY_LOCALES.map((locale) => ({
  * The pass-permanence axis had been pinned last round. This one had not, and a
  * per-family axis is the only thing that makes "which keys make THIS claim" a
  * decision rather than an oversight.
+ *
+ * Fix round 4 (task 7) added the third key. `tips.billing.extra-org.body` said
+ * "half your plan's rate", bare, in all four locales, through every earlier
+ * round of this wave — the SAME phrase as `pricing.faq.groups.a`, matched by
+ * the SAME pattern, and again nobody had pointed the rule at the key. An axis
+ * is only a decision once every key that makes the claim is on it.
  */
 const HALF_CLAIM_KEYS = ["pricing.faq.proPlus.a", "pricing.faq.groups.a"];
-const HALF_CLAIM_VALUES: LocalisedValue[] = HALF_CLAIM_KEYS.flatMap((key) =>
-  across("marketing", key),
-);
+
+/** …and the same axis in `ui.json`. `across()` takes one file, so the two live
+ *  apart; both are pinned by the gate and both are asserted below. */
+const HALF_CLAIM_UI_KEYS = ["tips.billing.extra-org.body"];
+const HALF_CLAIM_VALUES: LocalisedValue[] = [
+  ...HALF_CLAIM_KEYS.flatMap((key) => across("marketing", key)),
+  ...HALF_CLAIM_UI_KEYS.flatMap((key) => across("ui", key)),
+];
 
 /**
  * Layer 3 — the literal prose this task deleted, from all four files, checked
@@ -762,7 +774,7 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
     for (const [, key] of PASS_BOUND_KEYS) {
       expect(pinned.has(key), `${key} is scanned for pass claims but not pinned`).toBe(true);
     }
-    for (const key of HALF_CLAIM_KEYS) {
+    for (const key of [...HALF_CLAIM_KEYS, ...HALF_CLAIM_UI_KEYS]) {
       expect(pinned.has(key), `${key} makes a half-rate claim but is not pinned`).toBe(true);
     }
     // …and the Pro Plus card: its frame AND every bullet it governs. Pinning the
@@ -771,7 +783,7 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
     for (const key of PLUS_CARD_KEYS) {
       expect(pinned.has(key), `${key} is a Pro Plus card claim but is not pinned`).toBe(true);
     }
-    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(56);
+    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(60);
     // Every entry must say what it claims and what decides it — a pin with no
     // `why` is a snapshot, and a snapshot teaches the next editor to re-record
     // rather than to re-check.
@@ -822,7 +834,94 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
       "atMost",
     );
     expect(localeHalfClaimFaults(HALF_CLAIM_VALUES, shape)).toEqual([]);
-    expect(HALF_CLAIM_VALUES).toHaveLength(HALF_CLAIM_KEYS.length * DICTIONARY_LOCALES.length);
+    expect(HALF_CLAIM_VALUES).toHaveLength(
+      (HALF_CLAIM_KEYS.length + HALF_CLAIM_UI_KEYS.length) * DICTIONARY_LOCALES.length,
+    );
+  });
+
+  /**
+   * `config/tips.ts` IS NOT WHAT RENDERS, and this is the guard that makes that
+   * safe (v17 gap wave 7, task 7).
+   *
+   * `components/ui/tip.tsx` reads `msg("tips.<id>.title")` and
+   * `msg("tips.<id>.body")` from these four dictionaries; the TypeScript
+   * literals in `config/tips.ts` are the source of truth the en dictionary
+   * mirrors, and nothing else. So correcting a falsehood in `tips.ts` alone is
+   * a change no customer ever sees — a whole class of cosmetic fix that reads
+   * as done. It was live here: `tips.billing.extra-org.body` carried "half your
+   * plan's rate" in all four dictionaries while three other surfaces of the
+   * same claim were being corrected.
+   *
+   * Pinned as a MIRROR (assert one equals the other) rather than as two pinned
+   * strings, because that is what makes editing either one insufficient on its
+   * own. `extra-org-price-parity.test.ts` already lists both as "copy that says
+   * half"; this is what stops them drifting apart.
+   */
+  const TIP_MIRROR_EXCEPTIONS: Record<string, string> = {
+    // PRE-EXISTING, and NOT this task's to fix: both sides are stale against
+    // `plan_entitlements.schedule.checkpoints.max` (community 2 since V319, pro
+    // 5, pro_plus unlimited). `tips.ts` says "One save point is free, Pro
+    // includes five, Pro Plus is unlimited" — wrong about Community. The
+    // dictionary says "One save point is free; more need Pro" — wrong about
+    // Community AND silent about Pro Plus. Fixing it is a four-locale copy
+    // change in a different claim family; listing it keeps it visible.
+    "tips.schedule.save-points.body":
+      "both sides stale vs schedule.checkpoints.max (community 2 / pro 5 / pro_plus unlimited)",
+  };
+
+  it("keeps config/tips.ts and the en dictionary identical — a tips.ts-only fix is cosmetic", () => {
+    const en = load("en", "ui");
+    const drift: string[] = [];
+    let compared = 0;
+    for (const [id, tip] of Object.entries(TIPS)) {
+      for (const field of ["title", "body"] as const) {
+        const key = `tips.${id}.${field}`;
+        if (key in TIP_MIRROR_EXCEPTIONS) continue;
+        const onDisk = en[key];
+        if (onDisk === undefined) {
+          drift.push(`${key}: in config/tips.ts but ABSENT from en/ui.json`);
+          continue;
+        }
+        compared += 1;
+        if (onDisk !== tip[field]) {
+          drift.push(
+            [
+              `${key}: config/tips.ts and en/ui.json disagree.`,
+              `  tips.ts:    ${tip[field]}`,
+              `  ui.json:    ${onDisk}`,
+              "  ui.json is what renders (components/ui/tip.tsx). Fix BOTH, and all four locales.",
+            ].join("\n"),
+          );
+        }
+      }
+    }
+    expect(drift).toEqual([]);
+    // ANTI-VACUITY: an exception list that grew to cover everything, or a TIPS
+    // export that got renamed, would leave this comparing nothing.
+    expect(compared, "the mirror compared nothing").toBeGreaterThan(40);
+    for (const key of Object.keys(TIP_MIRROR_EXCEPTIONS)) {
+      expect(key in en, `${key} is excepted but does not exist`).toBe(true);
+    }
+  });
+
+  // …and the mirror really does fire. Absence of drift proves "identical" only
+  // if a difference would have been reported.
+  it("reports a tip whose dictionary value drifts from config/tips.ts", () => {
+    const key = "tips.billing.extra-org.body";
+    expect(load("en", "ui")[key], "the tip moved — re-point this guard").toBe(
+      TIPS["billing.extra-org"].body,
+    );
+    expect(TIPS["billing.extra-org"].body).not.toBe(
+      "Each organisation after the first is half your plan's rate.",
+    );
+    // The half-rate rule is what would have caught the drifted value, had it
+    // ever been pointed at this key. It is now, and it fires on the old wording.
+    expect(
+      localeHalfClaimFaults(
+        [{ locale: "en", key, value: "Each organisation after the first is half your plan's rate." }],
+        "atMost",
+      ),
+    ).not.toEqual([]);
   });
 });
 

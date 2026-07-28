@@ -68,18 +68,33 @@ export const TIPS = {
   "billing.addons.extra-org": {
     title: "Buy past your plan's organisation limit",
     body: "An extra organisation raises this bill's limit by one, for every organisation in the group. It's a recurring add-on, charged every month for as long as it's active — separately from your plan's own billing period.",
-    // NOT "billing/add-ons". That article does not exist yet (W7 writes it), and
-    // an unregistered slug is not the harmless no-op it looks like: helpUrl()
-    // does resolve it to null so the "Learn more" link never renders, but
-    // server/__tests__/help-content.test.ts asserts that EVERY tip's helpSlug
-    // resolves, and reds on a slug pointing at nothing. `billing/groups` is the
-    // article that covers adding organisations to a group today; W7 should
-    // repoint this once the dedicated add-ons article lands.
-    helpSlug: "billing/groups",
+    // Repointed by v17 gap W7 task 7, which wrote content/help/billing/add-ons.md
+    // and registered it in lib/help.ts. It used to say `billing/groups` because
+    // the dedicated article did not exist, and an unregistered slug is not the
+    // harmless no-op it looks like: helpUrl() resolves it to null so the "Learn
+    // more" link never renders, but server/__tests__/help-content.test.ts asserts
+    // that EVERY tip's helpSlug resolves and reds on a slug pointing at nothing.
+    // So the article, its registry entry and this line must move together.
+    helpSlug: "billing/add-ons",
   },
+  // A DIFFERENT article from the one above, deliberately: this tip is the
+  // GRADUATED TIER a group pays for organisations inside its plan's limit, and
+  // `billing/groups` is where "What an added organisation costs" lives. The
+  // rider that RAISES the limit is the add-ons article.
   "billing.extra-org": {
     title: "What another organisation costs",
-    body: "Each organisation after the first is half your plan's rate. It also moves to your plan's entry-fee cut — 2% on Pro or 1% on Pro Plus, instead of the 8% a free organisation pays.",
+    // "half your plan's rate" until v17 gap W7 (#299): the seed derives the
+    // rider as half the base ROUNDED DOWN, so usd Pro is 900/1900 = 47.4% and
+    // usd Pro Plus 1900/3900 = 48.7%, while eur and aud land on exact halves.
+    // Only "no more than half" is true in all twenty plan x interval x currency
+    // combinations — see copy-truth's riderClaimShape, which derives the honest
+    // qualifier from stripe-plans.json rather than restating it.
+    //
+    // THIS STRING IS NOT WHAT RENDERS. `components/ui/tip.tsx` reads
+    // msg(`tips.${id}.body`) from the four dictionaries; this is the source of
+    // truth the en dictionary mirrors, and lib/__tests__/dictionary-copy-truth
+    // asserts the two are identical so a fix here can never be cosmetic.
+    body: "Each organisation after the first costs no more than half the base rate. It also moves to your plan's entry-fee cut — 2% on Pro or 1% on Pro Plus, instead of the 8% a free organisation pays.",
     helpSlug: "billing/groups",
   },
   // Held back when the tips landed, because quantity_paid was written by

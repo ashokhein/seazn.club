@@ -217,4 +217,29 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
       nl: "Vanaf {price} eenmalig upgrade je één competitie zolang ze loopt — en een competitie met een pass telt niet meer mee voor je limiet van actieve competities.",
     },
   },
+  // ── The extra-organisation TIP (v17 gap wave 7, task 7, #299) ──────────────
+  //
+  // A FOURTH surface of the half-rate claim, and the one that showed the axis
+  // was still not closed. `pricing.faq.groups.a` and `pricing.faq.proPlus.a`
+  // were corrected earlier in this wave; this key said "half your plan's rate",
+  // bare, in all four locales the whole time — the same phrase, the same
+  // pattern (`en.halfClaim` spells it out), and again nothing pointed the rule
+  // at the key. Third occurrence of that defect in one wave.
+  //
+  // It is also the key that showed `config/tips.ts` is NOT what renders:
+  // `components/ui/tip.tsx` reads msg(`tips.${id}.body`) from these
+  // dictionaries, so correcting the TypeScript literal alone would have changed
+  // nothing a customer sees. The mirror between the two is asserted in
+  // dictionary-copy-truth.test.ts for exactly that reason.
+  {
+    file: "ui",
+    key: "tips.billing.extra-org.body",
+    why: "the extra-organisation rate, in the ⓘ tip beside the billing-group controls. 'half your plan's rate' unqualified is false — the seed rounds the rider DOWN (usd pro monthly 1900 -> 900 = 47.4%, pro_plus 3900 -> 1900 = 48.7%) while eur and aud land on exact halves, so only 'no more than half' is true in all twenty plan x interval x currency combinations. Source of truth: config/stripe-plans.json graduated tiers, via riderClaimShape. The 2%/1%/8% clause is registration.fee_percent in plan_entitlements and is unchanged.",
+    text: {
+      en: "Each organisation after the first costs no more than half the base rate. It also moves to your plan's entry-fee cut — 2% on Pro or 1% on Pro Plus, instead of the 8% a free organisation pays.",
+      es: "Cada organización después de la primera cuesta no más de la mitad de la tarifa base. También pasa a la comisión de inscripción de tu plan: 2 % en Pro o 1 % en Pro Plus, en lugar del 8 % que paga una organización gratuita.",
+      fr: "Chaque organisation après la première coûte au plus la moitié du tarif de base. Elle passe aussi à la commission d'inscription de votre formule — 2 % sur Pro ou 1 % sur Pro Plus, au lieu des 8 % que paie une organisation gratuite.",
+      nl: "Elke organisatie na de eerste kost hoogstens de helft van het basistarief. Ze gaat ook over op het inschrijfgeldpercentage van je abonnement — 2% op Pro of 1% op Pro Plus, in plaats van de 8% die een gratis organisatie betaalt.",
+    },
+  },
 ];

@@ -970,7 +970,7 @@
   "tips.billing.groups.title": "Una suscripción, varias organizaciones",
   "tips.billing.groups.body": "Una suscripción puede pagar más de una organización. Comparten una tarjeta y una factura, pero cada una mantiene sus propios límites, su propia conexión con Stripe y sus propios pagos.",
   "tips.billing.extra-org.title": "Cuánto cuesta otra organización",
-  "tips.billing.extra-org.body": "Cada organización después de la primera cuesta la mitad de la tarifa de tu plan. También pasa a la comisión de inscripción de tu plan: 2 % en Pro o 1 % en Pro Plus, en lugar del 8 % que paga una organización gratuita.",
+  "tips.billing.extra-org.body": "Cada organización después de la primera cuesta no más de la mitad de la tarifa base. También pasa a la comisión de inscripción de tu plan: 2 % en Pro o 1 % en Pro Plus, en lugar del 8 % que paga una organización gratuita.",
   "tips.billing.addons.extra-org.title": "Compra más allá del límite de organizaciones de tu plan",
   "tips.billing.addons.extra-org.body": "Una organización adicional sube en uno el límite de esta factura, para todas las organizaciones del grupo. Es un complemento recurrente que se cobra cada mes mientras esté activo, aparte del periodo de facturación de tu plan.",
   "tips.billing.freed-slot.title": "Tienes una plaza que ya has pagado",

@@ -31,6 +31,10 @@ import {
   feeLockStatedFaults,
   goldenParagraphFaults,
   inventoryFaults,
+  claimTexts,
+  localeHalfClaimFaults,
+  riderClaimShape,
+  type LocalisedValue,
   unapprovedClaimFaults,
   lockedRateConstantFaults,
   markdownSection,
@@ -45,12 +49,15 @@ import {
   statesFeeLock,
   unqualifiedFeeReversionFaults,
 } from "@/lib/copy-truth";
+import { HELP_ARTICLE_SLUGS, helpUrl } from "@/lib/help";
+import { TIPS } from "@/config/tips";
 import { helpArticle } from "./_help-copy";
 import {
   APPROVED_EVENT_PASS,
   APPROVED_EVENT_PASS_INVENTORY,
   APPROVED_PLANS_PASS,
   APPROVED_PLANS_INVENTORY,
+  APPROVED_ADD_ONS_INVENTORY,
 } from "./_approved-copy";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -911,5 +918,230 @@ describe("every surface a reader sees is covered, not just the paragraphs", () =
     expect(fee.filter(lexicalOnly).length, "lexical fee rate").toBe(4);
     // …and every one of them is caught once the gate is included.
     expect([...duration, ...fee].filter((s) => !detects(`${eventPass}\n\n${s}\n`))).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TASK 7 — `content/help/billing/add-ons.md`, the article the shipped
+// `billing.addons.extra-org` tip used to point around.
+//
+// It is GATED FROM DAY ONE rather than after it has carried a falsehood. See
+// APPROVED_ADD_ONS_INVENTORY's header for the argument; the short version is
+// that every paragraph of it is about money an organiser is charged, and it
+// makes the very rate claim this wave has spent three rounds correcting.
+//
+// The only LEXICAL rule pointed at it is the half-rate one, reused whole from
+// the dictionary guards — no new pattern is added anywhere for this article.
+// That is deliberate: this wave's measured lesson is that a rule which reads
+// the sentence scores on its author's imagination (1/12, 0/12, 6/30, 0/32,
+// 1/40), so the answer to "cover a new page" is a pinned inventory, not another
+// vocabulary. The pass-duration and fee-rate allowlists are deliberately NOT
+// pointed here either: "the credits themselves never expire" is TRUE of a
+// credit pack, and a guard that reds on true prose teaches the next editor to
+// route around it.
+// ─────────────────────────────────────────────────────────────────────────────
+const addOns = helpArticle("add-ons");
+
+/** The seed rows this article quotes. Read from the seed, never restated — the
+ *  claim and the number have to come from different places or the comparison
+ *  proves nothing. */
+const seatAddon = stripePlans.seats.find((s) => s.key === "extra_seat")!;
+const sizePack = stripePlans.size_packs.find((s) => s.key === "size_pack_32")!;
+const orgAddons = stripePlans.org_addons;
+
+/** The article as ONE value for the half-rate rule, joined the way
+ *  `PLUS_CARD_VALUES` joins the Pro Plus bullets: with a full stop, so a
+ *  qualifier cannot reach across two blocks. `claimTexts` covers frontmatter
+ *  and prose (headings are a fragment, and are covered by the gate). */
+const addOnsClaim = (text: string): LocalisedValue[] => [
+  { locale: "en", key: "content/help/billing/add-ons.md", value: claimTexts(text).join(". ") },
+];
+
+describe("the add-ons article says what the billing code actually does", () => {
+  it("is registered, non-empty, and has the surfaces the gate pins", () => {
+    expect(HELP_ARTICLE_SLUGS).toContain("billing/add-ons");
+    // The registry and the disk are gated both ways by
+    // server/__tests__/help-content.test.ts; this asserts the tip that sent a
+    // reader here resolves, which is the reason the article exists at all.
+    expect(helpUrl(TIPS["billing.addons.extra-org"].helpSlug)).toBe("/help/billing/add-ons");
+    expect(claimTexts(addOns).length, "the article scans as nothing").toBeGreaterThan(10);
+    expect(APPROVED_ADD_ONS_INVENTORY.length, "an empty inventory gates nothing").toBeGreaterThan(20);
+  });
+
+  // THE GATE. Same rule, same reasons, as event-pass.md and plans.md above.
+  it("is the copy that was approved, surface for surface", () => {
+    expect(inventoryFaults("add-ons.md", addOns, APPROVED_ADD_ONS_INVENTORY)).toEqual([]);
+  });
+
+  // The extra-organisation rate, from the seed's own tiers. `riderClaimShape`
+  // decides which qualifier is honest today, so if every rider ever became an
+  // exact half a bare "half the base rate" stops being a fault — the guard is
+  // not "always demand 'no more than'".
+  it("quotes the extra-organisation rate in the shape the seed licenses", () => {
+    const shape = riderClaimShape(stripePlans.plans as unknown as PricedPlan[]);
+    expect(shape, "usd riders round DOWN (47.4% / 48.7%) while eur and aud are exact halves").toBe(
+      "atMost",
+    );
+    expect(localeHalfClaimFaults(addOnsClaim(addOns), shape)).toEqual([]);
+  });
+
+  // ANTI-VACUITY for the rule above, both directions. An all-negative check
+  // passes on an article that never mentions the rate at all, and a
+  // presence-only check passes on one that states it wrongly.
+  it("actually examines the rate sentence, rather than passing on silence", () => {
+    const bare = addOns.replace(
+      "costs no more than half the base rate",
+      "costs half the base rate",
+    );
+    expect(bare, "the rate sentence moved — re-point this guard").not.toBe(addOns);
+    expect(localeHalfClaimFaults(addOnsClaim(bare), "atMost")).not.toEqual([]);
+
+    // …and deleting the claim is a fault too, not a way to pass. A buyer with
+    // no idea what a second organisation costs is not better served than one
+    // told the wrong number.
+    const dropped = addOns.replace(/Each organisation after the first costs[^.]*\./, "");
+    expect(dropped, "the rate sentence moved — re-point this guard").not.toBe(addOns);
+    expect(localeHalfClaimFaults(addOnsClaim(dropped), "atMost")).not.toEqual([]);
+  });
+
+  // The three additive deltas, taken from the seed rather than restated. A
+  // catalog edit that changes what a pack grants reds the page that sells it.
+  it("quotes the seed's own add-on deltas", () => {
+    expect(addOns, "the extra seat's delta").toContain(`+${seatAddon.delta_each} each`);
+    expect(addOns, "the size pack's delta").toContain(`+${sizePack.delta_each} each`);
+    expect(sizePack.delta_each, "the prose spells this one out in words too").toBe(32);
+    expect(addOns).toContain(`limit by ${sizePack.delta_each}`);
+    expect(orgAddons.length, "no extra-organisation add-on to describe").toBeGreaterThan(0);
+    for (const addon of orgAddons) {
+      expect(addOns, `${addon.key}'s delta`).toContain(`+${addon.delta_each} each`);
+      // Monthly-only is a CLAIM the article makes ("every month, whatever your
+      // plan's own billing period"), so it is pinned to the seed, not assumed.
+      expect(addon.price.interval, `${addon.key} is no longer monthly`).toBe("month");
+    }
+    expect(seatAddon.price.interval, "the extra seat is no longer monthly").toBe("month");
+    // …and the two one-time add-ons have no interval at all, which is what
+    // makes "one-time" true of them and "every month" true of the other two.
+    expect(sizePack.price).not.toHaveProperty("interval");
+  });
+});
+
+describe.skipIf(!HAS_DB)("the add-ons article quotes the caps the matrix enforces", () => {
+  it("names each plan's own organisation limit", async () => {
+    for (const [plan, label] of [
+      ["pro", "Pro"],
+      ["pro_plus", "Pro Plus"],
+    ] as const) {
+      const [row] = await sql<{ int_value: number | null }[]>`
+        select int_value from plan_entitlements
+        where plan_key = ${plan} and feature_key = 'orgs.max_owned'`;
+      expect(row, `plan_entitlements has no ${plan}/orgs.max_owned row`).toBeDefined();
+      expect(row!.int_value, `${plan} must have a finite org cap for this sentence`).not.toBeNull();
+      expect(addOns, `${label}'s live organisation cap`).toContain(`${label} covers ${row!.int_value}`);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE HONEST RATE, for the add-ons article.
+//
+// Asserted EXACTLY, the way the pass guards pin 1/12 and 4/12 and the
+// dictionary guards pin 1/40: the lexical layer is a SECONDARY net, and any
+// widening of it has to update these numbers deliberately rather than quietly
+// improving a claim nobody re-measures.
+//
+// Two sets. The first is rewordings of the phrases `en.halfClaim` literally
+// spells out — the set the pattern was written for. The second was written
+// AFTER the rules above were final, is about the OTHER things this article
+// claims (cadence, scope, who may buy, what lapsing does), and is what the next
+// editor's mistake will actually look like.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("the add-ons gate catches what the vocabulary cannot", () => {
+  const lexicalOnly = (added: string): boolean =>
+    localeHalfClaimFaults(addOnsClaim(`${addOns}\n\n${added}\n`), "atMost").length > 0;
+
+  const gated = (added: string): boolean =>
+    inventoryFaults("x", `${addOns}\n\n${added}\n`, APPROVED_ADD_ONS_INVENTORY).length > 0;
+
+  /** Rewordings of the exact phrases the half-rate pattern names. */
+  const PATTERNS_OWN_SET = [
+    "Each organisation after the first costs half the base rate.",
+    "Every extra organisation is half your plan's rate.",
+    "Extra slots cost half the base rate each.",
+    "Each one after the first is half the plan's rate.",
+    "Extra organisations are half price.",
+    "An extra organisation costs 50% of your plan's rate.",
+    "Each extra organisation is priced at one half of the base rate.",
+    "You pay half as much for every organisation after the first.",
+    "The second organisation and every one after it costs 50% less.",
+    "Extra organisations come in at half what the first one costs.",
+    "Each organisation past the first is billed at half rate.",
+    "A second organisation costs half of your plan.",
+  ];
+
+  /** Written after the rules were final, about this article's OTHER claims. */
+  const FRESH_SET = [
+    "An extra organisation is billed on the same cycle as your plan, so an annual bill pays for it once a year.",
+    "Cancel an extra seat and any members over the limit are removed from the organisation.",
+    "A size pack lifts your organisation's member limit as well.",
+    "Any member of an organisation can buy an extra seat for it.",
+    "Removing an extra organisation refunds the unused part of the month.",
+    "Credit packs expire at the end of the billing period they were bought in.",
+    "Extra organisations cost the same as your plan's own rate.",
+    "You can drop your extra organisations to zero at any time, whatever the group is using.",
+    "A size pack is charged every month for as long as the competition runs.",
+    "Community organisations can buy extra organisations from Settings → Add-ons.",
+    "Each extra organisation costs half your plan's rate.",
+    "Buying a second size pack for the same competition replaces the first.",
+  ];
+
+  it("scores 4/12 and 1/12 lexically — the gate is doing the work", () => {
+    expect(PATTERNS_OWN_SET.filter(lexicalOnly).length, "the pattern's own set").toBe(4);
+    expect(FRESH_SET.filter(lexicalOnly).length, "a set written after the rules were final").toBe(1);
+  });
+
+  // …and every one of them fails once the gate is included, because the gate is
+  // not reading them. This is the assertion that makes the two numbers above a
+  // measurement rather than a hole.
+  it("catches all 24 once the inventory is included", () => {
+    expect([...PATTERNS_OWN_SET, ...FRESH_SET].filter((s) => !gated(s))).toEqual([]);
+  });
+
+  // Delivered through the two surfaces that were measured at 0/24 and 0/36
+  // before `claimSurfaces` existed. They are pinned here from the first commit.
+  it("catches a falsehood delivered through frontmatter or a heading", () => {
+    for (const description of [
+      "Four ways to buy extra capacity, all of them billed once and none of them expiring.",
+      "Extra organisations are half price on every plan.",
+    ]) {
+      const mutated = addOns.replace(/^description: .*$/m, `description: ${description}`);
+      expect(mutated, "the frontmatter anchor moved").not.toBe(addOns);
+      expect(inventoryFaults("x", mutated, APPROVED_ADD_ONS_INVENTORY), description).not.toEqual([]);
+    }
+    for (const heading of [
+      "Extra seats — buy them yourself in Settings",
+      "Size packs — refundable any time",
+    ]) {
+      const mutated = addOns.replace("## See also", `## ${heading}\n\n## See also`);
+      expect(mutated, "the heading anchor moved").not.toBe(addOns);
+      expect(inventoryFaults("x", mutated, APPROVED_ADD_ONS_INVENTORY), heading).not.toEqual([]);
+    }
+  });
+
+  // The gate is POSITIONAL, and an edit INSIDE a paragraph is the mutation a
+  // set-membership check misses. Both are asserted rather than assumed.
+  it("catches an edit inside a paragraph, a deletion, and a reorder", () => {
+    const edited = addOns.replace("nothing is deleted", "members over the limit are removed");
+    expect(edited, "the anchor moved").not.toBe(addOns);
+    expect(inventoryFaults("x", edited, APPROVED_ADD_ONS_INVENTORY)).not.toEqual([]);
+
+    const deleted = addOns.replace(/\n## Who can buy[\s\S]*?(?=\n## When an add-on)/, "\n");
+    expect(deleted, "the section anchor moved").not.toBe(addOns);
+    expect(inventoryFaults("x", deleted, APPROVED_ADD_ONS_INVENTORY)).not.toEqual([]);
+
+    const rows = /\| Extra seat \|([^\n]*)\n(\| Size pack \|[^\n]*)\n/.exec(addOns);
+    expect(rows, "the table rows moved").not.toBeNull();
+    const swapped = addOns.replace(rows![0], `${rows![2]}\n| Extra seat |${rows![1]}\n`);
+    expect(swapped, "the swap was a no-op").not.toBe(addOns);
+    expect(inventoryFaults("x", swapped, APPROVED_ADD_ONS_INVENTORY)).not.toEqual([]);
   });
 });

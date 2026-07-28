@@ -966,7 +966,7 @@
   "tips.billing.groups.title": "One subscription, several organisations",
   "tips.billing.groups.body": "A subscription can pay for more than one organisation. They share one card and one invoice, but each keeps its own limits, its own Stripe connection and its own payouts.",
   "tips.billing.extra-org.title": "What another organisation costs",
-  "tips.billing.extra-org.body": "Each organisation after the first is half your plan's rate. It also moves to your plan's entry-fee cut — 2% on Pro or 1% on Pro Plus, instead of the 8% a free organisation pays.",
+  "tips.billing.extra-org.body": "Each organisation after the first costs no more than half the base rate. It also moves to your plan's entry-fee cut — 2% on Pro or 1% on Pro Plus, instead of the 8% a free organisation pays.",
   "tips.billing.addons.extra-org.title": "Buy past your plan's organisation limit",
   "tips.billing.addons.extra-org.body": "An extra organisation raises this bill's limit by one, for every organisation in the group. It's a recurring add-on, charged every month for as long as it's active — separately from your plan's own billing period.",
   "tips.billing.freed-slot.title": "You have a slot you have already paid for",
