@@ -176,7 +176,7 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
   {
     file: "marketing",
     key: "pricing.plus.f5",
-    why: "write-scoped API keys and priority support. Source of truth: plan_entitlements api.write and support.priority — both false on community and pro, true on pro_plus. (api.read/api.access is granted on pro, so the WRITE qualifier is load-bearing and must not be dropped in translation.)",
+    why: "write-scoped API keys and priority support. Source of truth: plan_entitlements api.write and support.priority — both false on community and pro, true on pro_plus. (api.access is granted on pro, so the WRITE qualifier is load-bearing and must not be dropped in translation. There is no `api.read` key — it appeared in this note for two rounds and exists nowhere in the migrations or the source.)",
     text: {
       en: "Write API access & priority support",
       es: "Acceso de escritura a la API y soporte prioritario",
@@ -220,7 +220,7 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
   {
     file: "marketing",
     key: "pricing.final.subhead",
-    why: "the closing CTA under the cards, and it makes three claims at once: that signing up needs no card (Community creates no Stripe customer — usecases/orgs.ts mints one only at checkout), that a SINGLE EVENT can be upgraded (the Event Pass, competition-scoped per V328/V334), and that the whole club can be upgraded instead (Pro/Pro Plus, org-scoped). Found by PRICING_KEY_DISPOSITION, which is the point of that rule — nobody had noticed this string made a claim at all.",
+    why: "the closing CTA under the cards, and it makes three claims at once: that signing up needs no card, that a SINGLE EVENT can be upgraded (the Event Pass, competition-scoped per V328/V334), and that the whole club can be upgraded instead (Pro/Pro Plus, org-scoped). Found by PRICING_KEY_DISPOSITION, which is the point of that rule — nobody had noticed this string made a claim at all. NO-CARD source of truth: there is no `customers.create` call anywhere in non-test source (only createTaxId / createBalanceTransaction / customers.update / customers.retrieve), so nothing mints a Stripe customer on sign-up; the customer id arrives on the subscription/session at checkout (lib/billing.ts). Rounds 4-5 cited a usecases/orgs module for this; no such file has ever existed in this repo, so that citation sent every reader nowhere.",
     text: {
       en: "No card required. Upgrade a single event, or the whole club, when it grows.",
       es: "Sin tarjeta. Mejora un solo evento, o todo el club, cuando crezca.",
@@ -299,7 +299,7 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
   {
     file: "marketing",
     key: "pricing.pass.per",
-    why: "the unit beside the Event Pass price. The pass is bought per COMPETITION, once (V328/V334, and usecases/competition-passes.ts mints one row per competition) — not per month and not per org.",
+    why: "the unit beside the Event Pass price. The pass is bought per COMPETITION, once (V328/V334, and lib/billing.ts:884 is the ONLY non-test `insert into competition_passes` — one row per competition) — not per month and not per org. Rounds 4-5 cited a usecases/competition-passes module; no such file has ever existed in this repo.",
     text: {
       en: " / event",
       es: " / evento",
@@ -741,7 +741,7 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
   {
     file: "ui",
     key: "billing.group.attach.confirmCharge",
-    why: "the extra-organisation rate AND the attach charge's TIMING, in the confirmation dialog — the last sentence a payer reads before agreeing, and the only one of these surfaces asserted by e2e (billing-groups.spec.ts, billing-groups-journey.spec.ts), which move with it. RATE: said 'half your plan's rate' bare; source of truth is config/stripe-plans.json's graduated tiers, via riderClaimShape. TIMING: said 'charged now', which is FALSE. attachOrgToGroup bills entirely through syncGroupQuantity, whose only Stripe mutation is subscriptions.update with proration_behavior 'create_prorations' (billing-groups.ts:306-309) — booked onto the NEXT INVOICE, exactly like the add-on paths. No invoices.create, no invoices.pay, no always_invoice, no payment_behavior anywhere in that file; previewAttachCharge uses invoices.createPreview, which is read-only. `charged = raising` is a proration flag, not a statement that money moved. I asserted the opposite here in round 2 on the strength of a stale comment at billing-groups.ts:206-207, which is now corrected — the comment was contradicted by billing-events.ts:738-740 in the same repo.",
+    why: "the extra-organisation rate AND the attach charge's TIMING, in the confirmation dialog — the last sentence a payer reads before agreeing, and the only one of these surfaces asserted by e2e (billing-groups.spec.ts, billing-groups-journey.spec.ts), which move with it. RATE: said 'half your plan's rate' bare; source of truth is config/stripe-plans.json's graduated tiers, via riderClaimShape. TIMING: said 'charged now', which is FALSE. attachOrgToGroup bills entirely through syncGroupQuantity, whose only Stripe mutation is subscriptions.update with proration_behavior 'create_prorations' (billing-groups.ts:327-330) — booked onto the NEXT INVOICE, exactly like the add-on paths. No invoices.create, no invoices.pay, no always_invoice, no payment_behavior anywhere in that file; previewAttachCharge uses invoices.createPreview, which is read-only. `charged = raising` is a proration flag, not a statement that money moved. I asserted the opposite here in round 2 on the strength of a stale comment at billing-groups.ts:215-217, which is now corrected — the comment was contradicted by billing-events.ts:738-740 in the same repo.",
     text: {
       en: "{org} moves onto this plan straight away, and your bill goes up by no more than half the base rate — prorated to the rest of this period and added to your next invoice.",
       es: "{org} pasa a este plan de inmediato y tu factura sube no más de la mitad de la tarifa base, prorrateado al resto de este periodo y añadido a tu próxima factura.",
@@ -752,7 +752,7 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
   {
     file: "ui",
     key: "billing.group.attach.confirmChargeAmount",
-    why: "the SAME dialog when previewAttachCharge returns a figure — billing-group-panel.tsx:227 substitutes this for confirmCharge whenever the preview is non-null, so it is the sentence most payers actually see and it carried the identical 'goes up by {amount} now' falsehood. Timing source of truth: billing-groups.ts:306-309 (create_prorations, next invoice). The AMOUNT itself is Stripe's own proration arithmetic via invoices.createPreview (billing-groups.ts:130), which is read-only and charges nothing.",
+    why: "the SAME dialog when previewAttachCharge returns a figure — billing-group-panel.tsx:233-238 substitutes this for confirmCharge whenever the preview is non-null, so it is the sentence most payers actually see and it carried the identical 'goes up by {amount} now' falsehood. Timing source of truth: billing-groups.ts:327-330 (create_prorations, next invoice). The AMOUNT itself is Stripe's own proration arithmetic via invoices.createPreview (billing-groups.ts:136-142), which is read-only and charges nothing.",
     text: {
       en: "Straight away, and your bill goes up by {amount} — prorated to the rest of this period and added to your next invoice.",
       es: "De inmediato, y tu factura sube {amount}, prorrateado al resto de este periodo y añadido a tu próxima factura.",
@@ -765,7 +765,7 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
   {
     file: "ui",
     key: "billing.group.attach.confirmTrial",
-    why: "the attach dialog on the TRIAL path, which had no body of its own and therefore read the CHARGED one. `attachConfirmKey` selected on `freeSlots` alone, and `freeSlots = max(0, quantity_paid - onBill)` is 0 during a trial because syncGroupQuantity deliberately freezes quantity_paid while trialing (billing-groups.ts:300) — so a trialing payer was told their bill goes up and the amount lands on the next invoice, when `raising` is false (`&& !trialing`, :320), proration_behavior is \"none\", and previewAttachCharge returns null at :123. Nothing is prorated at all. groups.md:43 said the opposite two sections away. Source of truth: billing-groups.ts:123, :300, :320.",
+    why: "the attach dialog on the TRIAL path, which had no body of its own and therefore read the CHARGED one. `attachConfirmKey` selected on `freeSlots` alone, and `freeSlots = max(0, quantity_paid - onBill)` is 0 during a trial because syncGroupQuantity deliberately freezes quantity_paid while trialing (billing-groups.ts:357-362) — so a trialing payer was told their bill goes up and the amount lands on the next invoice, when `raising` is false (`&& !trialing`, :326), proration_behavior is \"none\", and previewAttachCharge returns null at :129. Nothing is prorated at all. groups.md:43 said the opposite two sections away. Source of truth: billing-groups.ts:129, :326, :357-362.",
     text: {
       en: "{org} moves onto this plan straight away and rides your free trial to the same end date — nothing is charged and nothing is added to a bill now. It is first billed when the trial converts.",
       es: "{org} pasa a este plan de inmediato y se acoge a tu prueba gratuita hasta la misma fecha de finalización: no se cobra nada ni se añade nada a ninguna factura ahora. Se factura por primera vez cuando termine la prueba.",
@@ -776,7 +776,7 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
   {
     file: "ui",
     key: "billing.group.attach.confirmFree",
-    why: "the attach dialog when a PAID slot is free. 'there is nothing to pay now' is literally true — no charge, and no proration reaches the next invoice — but it was materially incomplete: syncGroupQuantity still RAISES the Stripe item quantity, so the renewal invoice bills the extra seat at the full rider rate. groups.md:90 already carried the bound ('at no extra charge UNTIL RENEWAL'), as does detach.mode.release.body; this dialog was the only one of the four surfaces that omitted it, and once its sibling started naming the next invoice explicitly the pair read as 'charged -> next invoice / free -> nothing, full stop'. Source of truth: billing-groups.ts:306-309 (the quantity write happens on every path) and the quantity_paid bookkeeping at :325.",
+    why: "the attach dialog when a PAID slot is free. 'there is nothing to pay now' is literally true — no charge, and no proration reaches the next invoice — but it was materially incomplete: syncGroupQuantity still RAISES the Stripe item quantity, so the renewal invoice bills the extra seat at the full rider rate. groups.md:90 already carried the bound ('at no extra charge UNTIL RENEWAL'), as does detach.mode.release.body; this dialog was the only one of the four surfaces that omitted it, and once its sibling started naming the next invoice explicitly the pair read as 'charged -> next invoice / free -> nothing, full stop'. Source of truth: billing-groups.ts:327-330 (the quantity write happens on every path) and the quantity_paid bookkeeping at :355-370.",
     text: {
       en: "{org} moves onto this plan straight away. You have a slot you have already paid for, so there is nothing to pay now — and nothing is added to your next invoice. From your next renewal onwards it is billed like any other organisation on the bill.",
       es: "{org} pasa a este plan de inmediato. Tienes una plaza que ya has pagado, así que no hay nada que pagar ahora ni se añade nada a tu próxima factura. A partir de tu próxima renovación se factura como cualquier otra organización de la cuenta.",

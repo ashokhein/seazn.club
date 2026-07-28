@@ -286,3 +286,128 @@ export function blankedInsideLiteralFaults(
   }
   return faults;
 }
+
+// ── `why` citations ──────────────────────────────────────────────────────────
+
+/**
+ * Every source location a `why` names, checked against the disk.
+ *
+ * A `why` IS LOAD-BEARING CODE. It is what somebody reads at the moment they
+ * decide whether to approve a change to a customer-facing claim — the inventory
+ * gate's entire instruction is "read your new wording against the code named in
+ * the `why`". A `why` that points at a file which does not exist sends that
+ * reader nowhere, and they approve on the strength of a citation instead of on
+ * the strength of a reading.
+ *
+ * This is the SEVENTH round in which the review found `why` defects, and every
+ * previous fix was by hand, one citation at a time. Two of the twenty-one found
+ * this round were files that have never existed in this repo
+ * (`usecases/orgs.ts`, `usecases/competition-passes.ts`) — a class a machine can
+ * settle once and for all, which is what this does.
+ *
+ * WHAT IT CHECKS, AND WHAT IT DELIBERATELY DOES NOT:
+ *  - the file EXISTS (resolved by unique path-suffix against the real tree, so
+ *    `billing-groups.ts` and `usecases/billing-groups.ts` both resolve);
+ *  - a cited line or range is IN RANGE for that file.
+ *
+ * It cannot check that the cited line says what the `why` claims it says — that
+ * is a reading, and eighteen of this round's defects were exactly that (ten
+ * citations into `billing-groups.ts`, all short by the same 21 lines after one
+ * edit moved the function). So this closes the "points nowhere" class and leaves
+ * the "points at the wrong line" class to the reviewer, which is the honest
+ * division rather than a rule that pretends to more than it does.
+ */
+export interface Citation {
+  /** Where the citation was written. */
+  origin: string;
+  /** The path as cited. */
+  path: string;
+  from: number | null;
+  to: number | null;
+}
+
+/** `foo/bar.ts`, `bar.tsx:12`, `baz.md:40-52` — anywhere in a source file.
+ *  `tsx` BEFORE `ts` in the alternation: the other order matches "api-keys.ts"
+ *  out of "api-keys.tsx" and then reports a real file as missing. */
+const CITATION = /(?<![\w./-])((?:[\w.[\]-]+\/)*[\w.[\]-]+\.(?:tsx|ts|json|md|sql))(?::(\d+)(?:-(\d+))?)?/g;
+
+/** Every citation written in `source`, tagged with `origin`. */
+export function citationsIn(origin: string, source: string): Citation[] {
+  const out: Citation[] = [];
+  for (const m of source.matchAll(CITATION)) {
+    out.push({
+      origin,
+      path: m[1]!,
+      from: m[2] ? Number(m[2]) : null,
+      to: m[3] ? Number(m[3]) : m[2] ? Number(m[2]) : null,
+    });
+  }
+  return out;
+}
+
+let repoIndexCache: Map<string, string[]> | null = null;
+
+/** basename -> every repo-relative path with that basename. Walks the whole
+ *  repo, not just `src`, because citations legitimately reach `content/help`,
+ *  `db/migration` and the e2e specs. */
+function repoIndex(): Map<string, string[]> {
+  if (repoIndexCache) return repoIndexCache;
+  const root = join(process.cwd(), "..", "..");
+  const index = new Map<string, string[]>();
+  const skip = new Set(["node_modules", ".git", ".next", "dist", ".claude", "coverage"]);
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (skip.has(entry.name)) continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else {
+        const list = index.get(entry.name) ?? [];
+        list.push(relative(root, full));
+        index.set(entry.name, list);
+      }
+    }
+  };
+  walk(root);
+  repoIndexCache = index;
+  return index;
+}
+
+/**
+ * Faults for every citation that resolves to no file, or names a line the file
+ * does not have.
+ *
+ * `known` is an allowlist of paths that are deliberately not repo files (a
+ * migration named in prose, a doc that lives outside the tree). Each entry must
+ * be USED — an allowlist entry naming a citation nobody writes any more is
+ * itself a fault, or the list becomes the place stale things go to hide.
+ */
+export function citationFaults(citations: Citation[], known: readonly string[] = []): string[] {
+  const index = repoIndex();
+  const faults: string[] = [];
+  const usedKnown = new Set<string>();
+  for (const c of citations) {
+    if (known.includes(c.path)) {
+      usedKnown.add(c.path);
+      continue;
+    }
+    const base = c.path.slice(c.path.lastIndexOf("/") + 1);
+    const matches = (index.get(base) ?? []).filter((p) => p.endsWith(c.path));
+    if (matches.length === 0) {
+      faults.push(`${c.origin}: cites "${c.path}", which is not a file in this repo`);
+      continue;
+    }
+    if (c.from === null) continue;
+    const lines = readFileSync(join(process.cwd(), "..", "..", matches[0]!), "utf8").split("\n").length;
+    if (c.to! > lines) {
+      faults.push(
+        `${c.origin}: cites "${c.path}:${c.from}${c.to === c.from ? "" : `-${c.to}`}", but ${matches[0]} has ${lines} lines`,
+      );
+    }
+  }
+  for (const path of known) {
+    if (!usedKnown.has(path)) {
+      faults.push(`the citation allowlist names "${path}", which no why cites any more — remove it`);
+    }
+  }
+  return faults;
+}

@@ -282,8 +282,9 @@ export const APPROVED_PLANS_INVENTORY: string[] = [
  *    `app/api/orgs/[id]/members/[userId]/role/route.ts:47-54` both count the
  *    quota and throw `PaymentRequiredError` inside the same transaction as the
  *    write. (Both were previously cited at the line that merely RESOLVES the
- *    quota key — `invites.ts:67`, `route.ts:22` — and `route.ts:22`'s own
- *    comment says "before the tx", the opposite of what it was cited for.)
+ *    quota key, six and twenty-five lines earlier respectively — and the
+ *    route's own comment on that line says "before the tx", the opposite of
+ *    what it was cited for.)
  *
  *    ROUND 3'S REPLACEMENT WAS ALSO WRONG about the surface: it said "enforced
  *    on our public API today", but on that API the normal caller is a bearer
@@ -409,7 +410,7 @@ export const APPROVED_ADD_ONS_INVENTORY: string[] = [
  *  - WHEN THE ATTACH CHARGE LANDS. `attachOrgToGroup` bills entirely through
  *    `syncGroupQuantity`, whose only Stripe mutation is
  *    `subscriptions.update` with `create_prorations`
- *    (`billing-groups.ts:306-309`) — the NEXT invoice, not the card, and the
+ *    (`billing-groups.ts:327-330`) — the NEXT invoice, not the card, and the
  *    same behaviour the add-on paths have. Round 2 said "charged now" on six
  *    surfaces here on the strength of a stale comment.
  *  - the dunning window — real, but it is the next INVOICE that can fail;
@@ -417,7 +418,7 @@ export const APPROVED_ADD_ONS_INVENTORY: string[] = [
  *  - "Removing never refunds, and adding never takes money from your card there
  *    and then" (`## No refunds, and the freed slot`). ROUND 5: this said
  *    "adding ALWAYS CHARGES IMMEDIATELY", false three ways — prorations book to
- *    the next invoice (`billing-groups.ts:306-309`), a freed-slot attach raises
+ *    the next invoice (`billing-groups.ts:327-330`), a freed-slot attach raises
  *    no proration at all (`previewAttachCharge:122`, `raising` requires
  *    `active > quantity_paid`), and a trial attach charges nothing (`:123`,
  *    `:320`). It also contradicted line 41 of this same article, which round 3

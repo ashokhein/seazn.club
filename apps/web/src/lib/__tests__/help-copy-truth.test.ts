@@ -60,6 +60,8 @@ import {
   allSourceFiles,
   allStrippedSources,
   blankedInsideLiteralFaults,
+  citationFaults,
+  citationsIn,
   codeOnly,
   stripComments,
   helpArticle,
@@ -784,6 +786,64 @@ describe("an added falsehood fails whatever it says", () => {
     expect(fault, "the on-disk text must be printed, not just its digest").toContain("Something new.");
   });
 
+  /**
+   * …AND THE CITATIONS IN THOSE FIXTURES MUST POINT AT SOMETHING.
+   *
+   * The gate's instruction is "read your new wording against the code named in
+   * the `why`". A `why` naming a file that does not exist sends that reader
+   * nowhere, and they approve on a citation instead of on a reading. Seven
+   * review rounds of this wave have found `why` defects and every fix has been
+   * by hand, one at a time; two of this round's twenty-one were files that have
+   * never existed in this repo (`usecases/orgs.ts`,
+   * `usecases/competition-passes.ts`).
+   *
+   * This settles that class mechanically. It does NOT settle the "cites the
+   * wrong LINE" class — eighteen of this round's defects were that, ten of them
+   * into `billing-groups.ts` and all short by the same 21 lines after one edit
+   * moved the function — because checking that a line says what a sentence
+   * claims is a reading, not a lookup. Claiming otherwise in this comment would
+   * be the very defect the round is about.
+   */
+  it("every file a `why` cites exists, and every line it cites is in range", { timeout: 60_000 }, () => {
+    const sources = [
+      ["_approved-copy.ts", webSource("lib/__tests__/_approved-copy.ts")],
+      ["_approved-dictionary-copy.ts", webSource("lib/__tests__/_approved-dictionary-copy.ts")],
+    ] as const;
+    const citations = sources.flatMap(([origin, src]) => citationsIn(origin, src));
+    expect(citationFaults(citations)).toEqual([]);
+
+    // ANTI-VACUITY. An extractor that found nothing would satisfy the above for
+    // free, and a resolver that resolved everything would too.
+    expect(citations.length, "no citations extracted — the pattern is not matching").toBeGreaterThan(80);
+    expect(
+      citations.some((c) => c.from !== null),
+      "no line-numbered citation extracted",
+    ).toBe(true);
+    // …and it must actually reject. Both fault shapes, on constructed input.
+    expect(
+      citationFaults([{ origin: "probe", path: "usecases/orgs.ts", from: null, to: null }]),
+    ).toEqual(['probe: cites "usecases/orgs.ts", which is not a file in this repo']);
+    expect(
+      citationFaults([
+        { origin: "probe", path: "server/usecases/billing-groups.ts", from: 99_999, to: 99_999 },
+      ]).join(" "),
+    ).toContain("but apps/web/src/server/usecases/billing-groups.ts has");
+    // A real file with a real line is clean, so the rule is not simply "reject".
+    expect(
+      citationFaults([{ origin: "probe", path: "lib/client-v1.ts", from: 23, to: 27 }]),
+    ).toEqual([]);
+    // The `tsx`-before-`ts` alternation, which is what made a first cut report
+    // `components/api-keys.tsx` as the non-existent `components/api-keys.ts`.
+    expect(citationsIn("p", "see components/api-keys.tsx for the shape")[0]!.path).toBe(
+      "components/api-keys.tsx",
+    );
+    // An unused allowlist entry is a fault, so the list cannot become a place
+    // for stale citations to hide.
+    expect(citationFaults([], ["never/cited.ts"])).toEqual([
+      'the citation allowlist names "never/cited.ts", which no why cites any more — remove it',
+    ]);
+  });
+
   // The reviewer's Important-1 set: sentences with no bound at all, which the
   // character-window versions of this rule accepted 5 out of 6 times.
   it("reads none of these as a statement that the pass is bounded", () => {
@@ -1465,7 +1525,7 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
       "components/org-payment-instructions.tsx": "Payments",
     };
     const discovered = allStrippedSources()
-      .filter(([f, src]) => !f.startsWith("app/api/") && !f.includes("__tests__"))
+      .filter(([f]) => !f.startsWith("app/api/") && !f.includes("__tests__"))
       .filter(([, src]) => src.includes("/api/v1/orgs/"))
       .map(([f]) => f)
       .sort();
