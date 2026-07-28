@@ -5513,19 +5513,30 @@ async function pricingV3Suite(): Promise<void> {
   await endCompetition(compA.id);
 
   const upgradeEnded = await html(buyer, `/o/${orgRow.slug}/c/${compA.slug}/upgrade`);
+  // Three separate checks, deliberately. The first version ANDed all three into
+  // one boolean and failed in CI without saying WHICH part failed — the same
+  // "reports less than it knows" defect this wave keeps finding in guards.
   check(
-    "p301: upgrade page shows the pass ENDED, not active, once its competition finished",
-    upgradeEnded.status === 200 &&
-      upgradeEnded.body.includes("data-pass-ended") &&
-      !upgradeEnded.body.includes("data-pass-active"),
+    `p301: the upgrade page still renders for a finished competition (got ${upgradeEnded.status})`,
+    upgradeEnded.status === 200,
+  );
+  check(
+    "p301: upgrade page marks the pass ENDED once its competition finished",
+    upgradeEnded.body.includes("data-pass-ended"),
+  );
+  check(
+    "p301: upgrade page drops the ACTIVE marker once its competition finished",
+    !upgradeEnded.body.includes("data-pass-active"),
   );
 
   const dashboardEnded = await html(buyer, `/o/${orgRow.slug}`);
   check(
-    "p301: dashboard card seal shows ENDED, not held, once its competition finished",
-    dashboardEnded.status === 200 &&
-      dashboardEnded.body.includes("data-pass-ended") &&
-      !dashboardEnded.body.includes("data-pass-held="),
+    "p301: dashboard card seal shows ENDED once its competition finished",
+    dashboardEnded.status === 200 && dashboardEnded.body.includes("data-pass-ended"),
+  );
+  check(
+    "p301: dashboard card seal drops the HELD marker once its competition finished",
+    !dashboardEnded.body.includes("data-pass-held="),
   );
 
   const billingEnded = await html(buyer, `/o/${orgRow.slug}/settings/billing`);
