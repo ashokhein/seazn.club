@@ -1138,6 +1138,81 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
     }
   });
 
+  /**
+   * THE PIN PROVES DELIBERATE; THE SCAN PROVES TRUE — and the matrix note needs
+   * both.
+   *
+   * `pricing.matrix.orgs.max_owned.note` is now pinned AND in HALF_CLAIM_KEYS.
+   * Reverting its copy reds the pin, which is what a probe measures — but a
+   * future editor who re-words it AND re-approves it would sail past the pin.
+   * The scan is what still catches them, and it has to be shown to do so
+   * independently, or "pinned" quietly becomes the only guard on a claim that
+   * was false in eight of ten plan x currency pairs.
+   */
+  it("catches a bare half-rate in the matrix note even when it has been re-approved", () => {
+    const bare: Record<DictionaryLocale, string> = {
+      en: "Each extra organisation costs half the base rate, and takes your plan's entry-fee rate",
+      es: "Cada organización adicional cuesta a mitad de la tarifa base y adopta la comisión de tu plan",
+      fr: "Chaque organisation supplémentaire coûte à moitié du tarif de base et adopte le taux de votre forfait",
+      nl: "Elke extra organisatie kost voor de helft van het basistarief en krijgt het percentage van je abonnement",
+    };
+    const values: LocalisedValue[] = DICTIONARY_LOCALES.map((locale) => ({
+      locale,
+      key: "pricing.matrix.orgs.max_owned.note",
+      value: bare[locale],
+    }));
+    const faults = localeHalfClaimFaults(values, "atMost").join(" | ");
+    for (const locale of DICTIONARY_LOCALES) {
+      expect(faults, `${locale}: a re-approved bare "half" must still red`).toContain(
+        `${locale} pricing.matrix.orgs.max_owned.note`,
+      );
+    }
+    // …and the shipped wording does not.
+    expect(
+      localeHalfClaimFaults(across("marketing", "pricing.matrix.orgs.max_owned.note"), "atMost"),
+    ).toEqual([]);
+  });
+
+  /**
+   * ── THE SAME FIVE CLAIMS, ON THE OTHER SURFACE (fix round 2) ───────────────
+   *
+   * `billing.plus.f1-f5` in ui.json is the IN-APP Pro Plus upgrade panel
+   * (app/o/[orgSlug]/settings/billing/page.tsx renders them as a ✓ list beside
+   * Pro), and `pricing-cards.ts` has always described the two as "the same five
+   * selling points". They were not: this wave corrected `pricing.plus.f3` on
+   * /pricing while `billing.plus.f3` went on saying "AI-assisted scheduling" in
+   * all four locales — the identical falsehood, on the surface a paying
+   * customer actually reads before upgrading, found by a probe written after
+   * the round-2 rules were final.
+   *
+   * Asserting the MIRROR is the structural fix. Two hand-maintained copies of
+   * one claim set will diverge again; one of them being a copy of the other
+   * cannot.
+   */
+  it("the in-app Pro Plus panel says exactly what the /pricing card says", () => {
+    for (const locale of DICTIONARY_LOCALES) {
+      const marketing = load(locale, "marketing");
+      const ui = load(locale, "ui");
+      for (const n of [1, 2, 3, 4, 5]) {
+        expect(ui[`billing.plus.f${n}`], `${locale} billing.plus.f${n}`).toBe(
+          marketing[`pricing.plus.f${n}`],
+        );
+      }
+    }
+  });
+
+  it("the in-app panel claims only differentiators Pro Plus has, and carries no retired prose", () => {
+    const values: LocalisedValue[] = DICTIONARY_LOCALES.map((locale) => ({
+      locale,
+      key: "billing.plus.f1-f5",
+      value: [1, 2, 3, 4, 5].map((n) => load(locale, "ui")[`billing.plus.f${n}`] ?? "").join(". "),
+    }));
+    for (const { locale, value } of values) {
+      expect(value.length, `${locale}: the in-app panel is empty`).toBeGreaterThan(40);
+    }
+    expect(retiredClaimFaults(values, RETIRED_CLAIMS)).toEqual([]);
+  });
+
   it("never sells the Event Pass as permanent, in any language, and says what bounds it", () => {
     expect(localePassBoundFaults(PASS_BOUND_VALUES)).toEqual([]);
   });
