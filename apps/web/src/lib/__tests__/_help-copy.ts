@@ -100,6 +100,30 @@ export function webSource(relativePath: string): string {
  * list and every negative built on it passes.
  */
 export function allSourceFiles(): Array<[string, string]> {
+  if (sourceCache) return sourceCache;
+  sourceCache = walkSourceFiles();
+  return sourceCache;
+}
+
+let sourceCache: Array<[string, string]> | null = null;
+let strippedCache: Array<[string, string]> | null = null;
+
+/**
+ * `allSourceFiles()` with every file's comments already blanked, computed ONCE.
+ *
+ * Parsing ~1,400 files with the TypeScript parser is not free, and three
+ * callers each re-walking the tree and re-parsing it pushed a guard past
+ * vitest's 5s default under full-suite CPU contention — it passed alone and
+ * timed out in the full run, which is the worst way for a guard to fail. Both
+ * layers are memoised: the disk walk and the strip.
+ */
+export function allStrippedSources(): Array<[string, string]> {
+  if (strippedCache) return strippedCache;
+  strippedCache = allSourceFiles().map(([file, source]) => [file, codeOnly(source, file)]);
+  return strippedCache;
+}
+
+function walkSourceFiles(): Array<[string, string]> {
   const root = join(process.cwd(), "src");
   const out: Array<[string, string]> = [];
   const walk = (dir: string): void => {

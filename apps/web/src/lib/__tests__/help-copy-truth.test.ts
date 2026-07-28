@@ -55,7 +55,14 @@ import { HELP_ARTICLE_SLUGS, helpUrl } from "@/lib/help";
 import { allHelpArticles } from "@/server/help-content";
 import { TIPS } from "@/config/tips";
 import { attachConfirmKey } from "@/lib/billing-group-view";
-import { allSourceFiles, codeOnly, helpArticle, helpArticleBySlug, webSource } from "./_help-copy";
+import {
+  allSourceFiles,
+  allStrippedSources,
+  codeOnly,
+  helpArticle,
+  helpArticleBySlug,
+  webSource,
+} from "./_help-copy";
 import {
   APPROVED_EVENT_PASS,
   APPROVED_EVENT_PASS_INVENTORY,
@@ -1246,7 +1253,13 @@ describe("codeOnly strips comments and nothing else", () => {
 describe("the add-ons article's behaviour claims are pinned to the code", () => {
   // CLAIM: "An extra seat freezes members … An extra organisation does not
   // freeze anything." Round 1 said the excess freezes for BOTH.
-  it("freezes exactly the two axes the article says, and orgs.max_owned is not one", () => {
+  // TIMEOUT, deliberately. This walks and TypeScript-parses ~1,400 files. It
+  // passed alone and TIMED OUT at 8.4s in the full parallel run — a guard that
+  // fails only under contention is worse than a slow one, because it reads as
+  // flake and gets retried rather than read. `allStrippedSources()` memoises
+  // both the walk and the parse, so the cost is paid once per file; this
+  // headroom is for the run that pays it under load.
+  it("freezes exactly the two axes the article says, and orgs.max_owned is not one", { timeout: 60_000 }, () => {
     const source = webSource("server/usecases/entitlement-freeze.ts");
     const frozen = [...source.matchAll(/getLimit\(orgId,\s*"([^"]+)"\)/g)].map((m) => m[1]!);
 
@@ -1289,10 +1302,11 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
     // `codeOnly` BLANKS rather than deletes, so length and line count are
     // invariants of a correct strip. Asserting them per file is what makes a
     // swallowed span impossible to miss, whatever swallows it.
+    const raws = new Map(allSourceFiles());
     const mangled: string[] = [];
     const callSites: string[] = [];
-    for (const [file, raw] of allSourceFiles()) {
-      const stripped = codeOnly(raw, file);
+    for (const [file, stripped] of allStrippedSources()) {
+      const raw = raws.get(file)!;
       if (stripped.length !== raw.length) {
         mangled.push(`${file}: ${raw.length} chars in, ${stripped.length} out`);
       } else if (stripped.split("\n").length !== raw.split("\n").length) {
@@ -1305,12 +1319,12 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
       [],
     );
     // …and the specific string that broke it, pinned as a regression.
-    const divisionSettings = allSourceFiles().find(
+    const divisionSettings = allStrippedSources().find(
       ([f]) => f === "components/v2/division-settings.tsx",
     );
     expect(divisionSettings, "the regression fixture moved — re-point it").toBeDefined();
     expect(
-      codeOnly(divisionSettings![1], divisionSettings![0]),
+      divisionSettings![1],
       'a `/*` inside a string literal must not open a comment',
     ).toContain('accept="image/*"');
     expect(callSites, "the freeze reaches further than the article says — re-read it").toEqual([
@@ -1334,8 +1348,8 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
     );
     // The 13 routes that reach `requireOrgAuth`, counted rather than asserted
     // as prose — if the surface grows, the sentence above needs re-reading.
-    const restRoutes = [...allSourceFiles()].filter(
-      ([f, src]) => f.startsWith("app/api/v1/") && codeOnly(src, f).includes("requireOrgAuth"),
+    const restRoutes = allStrippedSources().filter(
+      ([f, src]) => f.startsWith("app/api/v1/") && src.includes("requireOrgAuth"),
     );
     expect(restRoutes.length, "the REST surface changed size — re-read the copy").toBe(13);
 
@@ -1486,7 +1500,7 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
   // sentence on the page: the day somebody builds either control, the article
   // starts telling customers to email support for a button that is on screen.
   // Nothing about the copy can detect that, so this watches the CODE.
-  it("says 'no control in Settings yet' only while that is still true", () => {
+  it("says 'no control in Settings yet' only while that is still true", { timeout: 60_000 }, () => {
     // The purchase entry points. A control means a component or page reaching
     // for one of these — the API routes and the usecases themselves are not
     // evidence of a UI, which is exactly the distinction the sentence makes.
@@ -1494,7 +1508,7 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
       ["extra seats", "/api/billing/extra-seats"],
       ["size packs", "/api/billing/size-pack-checkout"],
     ] as const) {
-      const callers = [...allSourceFiles()]
+      const callers = allStrippedSources()
         .filter(([file]) => file.startsWith("components/") || file.startsWith("app/"))
         .filter(([file, source]) => !file.includes("__tests__") && source.includes(route))
         // The route handler itself lives under app/ and always mentions its own
@@ -1508,7 +1522,7 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
     }
     // KNOWN-POSITIVE on the same read: the routes DO exist, so the walk is
     // looking at a real tree and an empty result means "no UI", not "no files".
-    const files = [...allSourceFiles()];
+    const files = allStrippedSources();
     expect(files.length, "the source walk found nothing").toBeGreaterThan(200);
     expect(
       files.some(([f]) => f === "app/api/billing/extra-seats/route.ts"),
