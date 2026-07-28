@@ -2640,6 +2640,18 @@ async function extraOrgAddonSuite(): Promise<void> {
       "extra-org/non-payer: ...and is offered NOTHING — only the group's payer may buy the rider (the identical request offered it to the payer above)",
       refusal(npBlocked.json).offer === undefined,
     );
+    // WHY the offer is withheld, asserted at the wire rather than argued in a
+    // comment. `requireBillingOwner` reads the ACTIVE-ORG cookie, so point it at
+    // one of the payer's organisations — the one this user genuinely co-owns —
+    // and the route resolves the payer's group and finds someone else's
+    // `owner_user_id`. That refusal lands BEFORE `getStripe()`, which is what
+    // makes it assertable here with no Stripe key at all.
+    nonPayer.cookies["seazn_org"] = fillIds[0]!;
+    const npBuy = await raw(nonPayer, "/api/billing/extra-orgs", "POST", { count: 1 });
+    check(
+      "extra-org/non-payer: the purchase route itself refuses them (403) — the withheld offer is not a dead end, it is the truth",
+      npBuy.status === 403,
+    );
 
     // --- FREE path: community sells no rider -----------------------------
     const freeEmail = `orgaddon_free_${tag}@example.com`;
@@ -2653,6 +2665,14 @@ async function extraOrgAddonSuite(): Promise<void> {
     check(
       "extra-org/free: ...and is offered NOTHING — community has no rider SKU, so the remedy is an upgrade rather than a purchase",
       refusal(freeBlocked.json).offer === undefined,
+    );
+    // Same reasoning as the non-payer arm: the community refusal (409, no live
+    // paid subscription to hang an item on) also lands before `getStripe()`, so
+    // "the route would refuse them anyway" stops being prose.
+    const freeBuy = await raw(free, "/api/billing/extra-orgs", "POST", { count: 1 });
+    check(
+      "extra-org/free: the purchase route refuses a community group outright (409) — nothing to attach a recurring item to",
+      freeBuy.status === 409,
     );
 
     // --- buy one extra organisation --------------------------------------
@@ -2676,6 +2696,26 @@ async function extraOrgAddonSuite(): Promise<void> {
       "extra-org: the SAME create that 402'd above now succeeds — organisation #11 exists",
       created.status === 200 && !!(created.json.data as { id?: string } | undefined)?.id,
     );
+    const org11Id = (created.json.data as { id?: string } | undefined)?.id;
+
+    // --- the customer's ACTUAL next move: put #11 on the bill they bought for
+    // A new organisation is minted on its OWN group, so the story so far ends
+    // one step short of what the payer wanted — capacity on THIS bill. The
+    // attach is governed by the GROUP cap (assertWithinGroupCap → groupOrgLimit)
+    // rather than the PERSON cap the create hit, and that is a second reader of
+    // the rider entirely. 10 held + 1 against a cap of 10 + 1 rider is exactly
+    // at the line, so this passes only while the rider is being counted.
+    const attached11 = await raw(payer, "/api/billing/group/attach", "POST", {
+      org_id: org11Id,
+      subscription_id: walletId,
+    });
+    const [groupAfter] = await db<{ n: number }[]>`
+      select count(*)::int as n from organizations
+       where subscription_id = ${walletId} and deleted_at is null`;
+    check(
+      "extra-org: organisation #11 ATTACHES to the bill the rider was bought on — the GROUP cap counts it too (11 on one bill)",
+      attached11.status === 200 && groupAfter?.n === PRO_PLUS_ORG_CAP + 1,
+    );
 
     // --- a tier change RE-PRICES the rider; it never resizes it -----------
     // The webhook's convergence (customer.subscription.updated moves the rider
@@ -2688,6 +2728,21 @@ async function extraOrgAddonSuite(): Promise<void> {
     check(
       "extra-org: after a Pro Plus → Pro tier change the rider still adds exactly one (5 → 6) — a re-price is never a capacity change",
       (await orgCap(payer, auth.org_id)) === PRO_ORG_CAP + 1,
+    );
+
+    // --- CANCELLING the rider gives the capacity back --------------------
+    // The direction #293 exists to kill, and the one arm of the loop the rest
+    // of this suite does not close: buy, create #11, cancel, keep 11 for ever.
+    // Cancellation is a status flip, never a delete and never qty 0 (V323/V324
+    // freeze-not-delete, and the CHECK forbids qty 0), so the whole question is
+    // whether a 'canceled' row still COUNTS. Widening the counting statuses to
+    // include it leaves every other check in this suite green.
+    await db`
+      update org_addons set status = 'canceled'
+       where wallet_id = ${walletId} and stripe_item_id = ${`si_smoke_orgaddon_${tag}`}`;
+    check(
+      "extra-org: a CANCELED rider stops counting — the cap falls straight back to the plan base (6 → 5)",
+      (await orgCap(payer, auth.org_id)) === PRO_ORG_CAP,
     );
   } finally {
     await db.end();

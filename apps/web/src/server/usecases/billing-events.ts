@@ -815,10 +815,26 @@ export async function convergeOrgAddonPrices(
     // the row sync reads, is). So this scan can be wrong in one direction: it
     // can claim the target from an item that has since moved off it, which makes
     // every other item take the duplicate exit and alert instead of converging.
-    // That fails SAFE — an alert and no write, rather than a write Stripe would
-    // reject for a duplicate price — and it self-corrects on the next event.
-    // Making it live would mean retrieving every rider up front, i.e. paying the
-    // duplicate case's cost on every subscription that has one rider.
+    //
+    // That fails SAFE in the sense that matters most — an alert and no write,
+    // rather than a write Stripe would reject for a duplicate price. It does NOT
+    // self-correct: convergence fires only on a plan change, and #332's sweep
+    // does not exist yet, so an earlier draft of this comment claiming "the next
+    // event fixes it" was claiming the same thing the publish comment below
+    // explicitly says is worth nothing. Until a human or a purchase runs, the
+    // item keeps billing the wrong rate.
+    //
+    // And the alert it sends is MISLEADING in this case specifically: `reason`
+    // reads "another subscription item already holds the target price (duplicate
+    // rider)", which is what a responder will go looking for — on a subscription
+    // that may have no duplicate at all, only a stale payload. The branch below
+    // narrows this by re-checking against LIVE state first, so an item Stripe has
+    // already moved onto the target claims it there rather than being alerted;
+    // what survives is the case where the payload's claimant has moved OFF.
+    //
+    // Making the opening scan live would mean retrieving every rider up front,
+    // i.e. paying the duplicate case's cost on every subscription that has one
+    // rider.
     //
     // Scanned over EVERY org-addon item, including a quantity-0 one. That is
     // deliberate and is why this predicate differs from the `qty <= 0` skip
@@ -833,12 +849,21 @@ export async function convergeOrgAddonPrices(
       //
       // The other SIX leave after it: already converged, duplicate rider,
       // quantity emptied, update succeeded, update rejected, and the vanished
-      // item (`isStripeResourceMissing`). Five of those also leave after the
-      // PUBLISH, so the row sync sees what Stripe holds. The exception is the
-      // two catch exits when the RETRIEVE ITSELF threw — `live` is still null,
-      // the publish never ran, and the sync reads the snapshot. That is
-      // unavoidable (there is no live state to publish) and is why the vanished
-      // item deliberately keeps its row: see the `let live` declaration below.
+      // item (`isStripeResourceMissing`). FOUR of those six ALWAYS leave after
+      // the PUBLISH too, so the row sync sees what Stripe holds: already
+      // converged, duplicate rider, quantity emptied, update succeeded.
+      //
+      // The remaining two are the catch exits (update rejected, vanished item),
+      // and they are CONDITIONAL rather than exceptions: reached from a failed
+      // UPDATE they are after the publish like the rest, because the retrieve
+      // had already run; reached from a failed RETRIEVE they are not — `live` is
+      // still null, the publish never ran, and the sync reads the snapshot. That
+      // second case is unavoidable (there is no live state to publish) and is
+      // why the vanished item deliberately keeps its row: see the `let live`
+      // declaration below.
+      //
+      // Four-plus-two, not five-plus-one. An earlier version of this list said
+      // five, which is exactly the drift the paragraph below warns about.
       //
       // If you add an exit, put it after the publish AND extend this list. A
       // completeness claim that has drifted from the code is how four of these
@@ -895,15 +920,19 @@ export async function convergeOrgAddonPrices(
         // mismatch branch only, which is rare and already spending a round trip.
         live = await getStripe().subscriptionItems.retrieve(item.id);
         // PUBLISH IT IMMEDIATELY, at the read rather than at each exit. From
-        // here on this loop has four ways out — already converged, quantity
-        // gone to zero, the update succeeded, the update was rejected — and
-        // EVERY one of them must leave the row sync looking at what Stripe
-        // actually holds, not at this event's snapshot. Doing it per-exit made
-        // that a rule each future exit has to remember, and two of the four
-        // had already forgotten: a stale payload then wrote the OLD quantity
-        // into org_addons, handing out capacity nobody is paying for (or
-        // withholding capacity that is). Doing it here makes the property
-        // STRUCTURAL — an exit added later inherits it by construction.
+        // here on this loop has SIX ways out — already converged, the duplicate
+        // rider, quantity gone to zero, the update succeeded, the update was
+        // rejected, and the vanished item — and EVERY one of them must leave the
+        // row sync looking at what Stripe actually holds, not at this event's
+        // snapshot. (Keep this list and the exit census above it in step; the
+        // two are the same claim counted from two places, and this one had gone
+        // stale at four while the duplicate and vanished exits were added.)
+        //
+        // Doing it per-exit made that a rule each future exit has to remember,
+        // and two of them had already forgotten: a stale payload then wrote the
+        // OLD quantity into org_addons, handing out capacity nobody is paying
+        // for (or withholding capacity that is). Doing it here makes the
+        // property STRUCTURAL — an exit added later inherits it by construction.
         //
         // "The next event repairs it" is worth nothing here: convergence fires
         // only on a plan change, and #332's sweep does not exist yet.
@@ -974,7 +1003,7 @@ export async function convergeOrgAddonPrices(
         );
         // Upgrade the published item from LIVE to POST-UPDATE. The publish at
         // the read already put a truthful item here; this replaces it with the
-        // newer truth, which is the only one of the four exits that has one.
+        // newer truth, which is the only one of the six exits that has one.
         if (updated && idx >= 0) items[idx] = updated;
       } catch (err) {
         // An item that vanished between this event being emitted and being

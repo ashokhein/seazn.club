@@ -315,12 +315,25 @@ describe.skipIf(!LIVE)("extra-org add-on (live Stripe, test mode)", () => {
       for (const currency of SUPPORTED_CURRENCIES) {
         const opt = price.currency_options?.[currency];
         if (currency === "usd") {
-          // usd is the price's own currency and never appears in the options.
+          // usd is the price's OWN currency, so `unit_amount` is where it is
+          // authoritative and that is what this reads. Not because the options
+          // omit it — measured, the live prices DO carry `currency_options.usd`
+          // (900 and 1900, both readable) even though the seed's
+          // `currency_options` block lists only eur/gbp/inr/aud. That mirror
+          // and `unit_amount` cannot disagree, and reading the canonical field
+          // keeps this branch true whichever way Stripe reports the base.
           expect(price.unit_amount, `${entry.planKey} live usd rate must match the seed`).toBe(
             orgAddonPriceMinor(entry.planKey, currency),
           );
           continue;
         }
+        // No hole was cut for this line, and one cannot be cut safely: making it
+        // fail means hand-editing a price in the SHARED test account, which
+        // other suites' fixtures ride on. Its value is not coverage the
+        // assertion below lacks — that one reds on a missing option too, by
+        // dereferencing undefined. It is MESSAGE QUALITY: this names the
+        // currency that is missing, where the amount comparison would report a
+        // TypeError and leave whoever is on call reading a stack trace.
         expect(opt, `${entry.planKey} rider must define a ${currency} price point`).toBeTruthy();
         expect(opt!.unit_amount, `${entry.planKey} live ${currency} rate must match the seed`).toBe(
           orgAddonPriceMinor(entry.planKey, currency),
@@ -341,9 +354,17 @@ describe.skipIf(!LIVE)("extra-org add-on (live Stripe, test mode)", () => {
     const basePrice = await throwawayPrice({ amount: 1_900 });
     const sub = await throwawaySubscription(basePrice.id);
 
-    // Exactly what setExtraOrgs sends: the catalog price, a quantity, and the
-    // metadata stamp. The stamp is not decoration — test 3 shows the row is
-    // cancelled without it the first time the price is re-minted.
+    // The SHAPE `setExtraOrgs` sends — catalog price, quantity, metadata stamp
+    // — hand-built here rather than produced by it. Worth stating precisely,
+    // because "exactly what setExtraOrgs sends" is the narrative that produced
+    // review finding G1: this test asks what STRIPE does with that shape, and
+    // it would go on passing if the usecase started sending a different one.
+    // What pins the argument object is the mocked suite, which asserts the
+    // exact `subscriptionItems.create` call; the two are complementary and
+    // neither substitutes for the other.
+    //
+    // The stamp is not decoration — test 3 shows the row is cancelled without
+    // it the first time the price is re-minted.
     const item = await stripe.subscriptionItems.create({
       subscription: sub.id,
       price: proPriceId,
