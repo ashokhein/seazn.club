@@ -210,7 +210,12 @@ export const RECURRING_GRANT_PATTERNS = [
  * int-shaped and are checked separately against their caps.
  */
 export const PLUS_DIFFERENTIATOR_VOCAB: Array<[feature: string, claim: RegExp]> = [
-  ["scheduling.ai", /\bAI\b[^,.;]{0,20}\bschedul/i],
+  // Task 4 widened this to BOTH WORD ORDERS. It required "AI" before
+  // "schedul…", so "scheduling with AI built in" — an ordinary way to write the
+  // same claim, and the order every other language uses — returned no fault
+  // (measured). The alternation costs nothing and closes the hole for every
+  // surface that imports this list.
+  ["scheduling.ai", /\bAI\b[^,.;]{0,20}\bschedul|\bschedul\w*\b[^,.;]{0,20}\bAI\b/i],
   ["officials.auto", /\bauto\w*\b[^,.;]{0,20}\bofficials?\b|\bofficials?\b[^,.;]{0,20}\bauto/i],
   ["api.write", /\bwrite\s+API\b/i],
   ["support.priority", /\bpriority\s+support\b/i],
@@ -816,6 +821,547 @@ export function passCreditProseFaults(label: string, passProse: string): string[
   }
   if (stated === 0) {
     faults.push(`${label}: never states the one-time +${PASS_CREDIT_GRANT} AI credit grant`);
+  }
+  return faults;
+}
+
+// ── FOUR-LOCALE DICTIONARY COPY ──────────────────────────────────────────────
+//
+// Everything above this line is an ENGLISH regex pointed at an ENGLISH-ONLY
+// surface: `stripe-plans.json` (one seed, English descriptions) and
+// `content/help/**` (a single English tree — HELP_ROOT has no locale segment).
+// That was correct for tasks 1-3 and it is a TRAP for task 4.
+//
+// `src/dictionaries/*/marketing.json` and `*/ui.json` are FOUR files each. Point
+// `FALSE_PASS_PERMANENCE_PATTERNS` at them and it reds on `en` and passes
+// silently on es/fr/nl — measured, before this task's fix, on the exact strings
+// it was written for:
+//
+//   en pricing.pass.note     "Yours for the event's lifetime."        → 1 hit
+//   es pricing.pass.note     "Tuyo durante toda la vida del evento."  → 0 hits
+//   fr pricing.pass.note     "À vous pour toute la durée de …"        → 0 hits
+//   nl pricing.pass.note     "…voor de hele levensduur van het …"     → 0 hits
+//
+// All four say the same false thing. A guard that reds only on `en` is not a
+// guard on this surface — it is a guard that certifies a falsehood in three
+// languages. So the claim vocabularies below are keyed BY LOCALE, and
+// `localesAreCovered` makes a locale with no vocabulary a FAULT rather than a
+// silent pass. Adding a fifth dictionary directory reds this suite on day one.
+//
+// Three layers, deliberately, because each covers what the others cannot:
+//
+//  1. VOCABULARY, per locale — the general rule. Catches a reworded falsehood
+//     in the language it is written in. Holes are possible (nobody can enumerate
+//     a language), which is why it is not the only layer.
+//  2. THE SAME VOCABULARIES, CROSS-APPLIED to every locale. Free, and it closes
+//     the failure mode wave 6 actually shipped: a Spanish/French/Dutch surface
+//     rendering new ENGLISH prose. An English falsehood pasted into `nl` is
+//     caught by the English list; a French one in `es` by the French list.
+//  3. RETIRED LITERALS — the exact prose this task removed, from all four
+//     files, checked against all four values. This layer CANNOT have a hole,
+//     and it pins fragments the vocabularies deliberately omit: French "pour
+//     toute la durée" is a permanence claim about the pass but a TRUE bound in
+//     other sentences, so it is a retired literal rather than a vocabulary
+//     entry (a guard that rejects true prose teaches its next editor to route
+//     around it).
+//
+// And every absence rule here is paired with a POSITIVE: `bounded` must match,
+// in that locale's own grammar. Absence proves "not false", never "still
+// stated" — deleting the sentence would otherwise be the cheapest way to green.
+
+export const DICTIONARY_LOCALES = ["en", "es", "fr", "nl"] as const;
+export type DictionaryLocale = (typeof DICTIONARY_LOCALES)[number];
+
+/**
+ * `\b` AND `\w` ARE ASCII-ONLY IN JAVASCRIPT, AND THAT SILENTLY VOIDS A GUARD
+ * WRITTEN IN A LANGUAGE WITH ACCENTS.
+ *
+ * There is no word boundary between a space and "à" — both are non-word
+ * characters to `\b` — so `/\bà\s+vie\b/i` does not match "Valable à vie". Nor
+ * does `/\bmoitié\b/i` match "la moitié du tarif": the trailing `\b` sits
+ * between "é" and a space, two non-word characters again. `\w` fails the same
+ * way, so `/asignaci\w*\s+autom/i` cannot reach "asignación automática".
+ *
+ * MEASURED, on the first run of this task's suite: the French permanence list
+ * returned ZERO faults for a value that plainly said "à vie", and the French
+ * "au plus la moitié" qualifier read as absent when it was right there. A guard
+ * that cannot match its own language is worse than no guard — it reports clean.
+ *
+ * So every non-English pattern is built through here: `\b` becomes the Unicode
+ * definition of a word boundary and `\w` a Unicode word character, under the
+ * `u` flag. English patterns keep plain literals; they are ASCII by definition
+ * and are shared with the seed and help guards.
+ */
+const UNICODE_WORD = String.raw`[\p{L}\p{N}_]`;
+const UNICODE_BOUNDARY = `(?:(?<=${UNICODE_WORD})(?!${UNICODE_WORD})|(?<!${UNICODE_WORD})(?=${UNICODE_WORD}))`;
+
+/**
+ * The expansion is ~90 characters per `\b`, which turns a fault label into an
+ * unreadable blob — and an unreadable fault is one nobody acts on. The written
+ * source is kept here and `describeClaim` hands it back for labels.
+ */
+const CLAIM_SOURCE = new WeakMap<RegExp, string>();
+
+export function claim(source: string): RegExp {
+  const compiled = new RegExp(
+    source.replaceAll(String.raw`\w`, UNICODE_WORD).replaceAll(String.raw`\b`, UNICODE_BOUNDARY),
+    "iu",
+  );
+  CLAIM_SOURCE.set(compiled, source);
+  return compiled;
+}
+
+/** What a pattern says, as it was written. */
+export function describeClaim(pattern: RegExp): string {
+  return CLAIM_SOURCE.get(pattern) ?? pattern.source;
+}
+
+/** One language's way of making each claim these dictionaries make. */
+export interface LocaleClaims {
+  /** Unbounded duration. Deliberately EXCLUDES the "unlimited" family
+   *  (`ilimitado`/`illimité`/`onbeperkt`), which is a TRUE claim about the L
+   *  rung's entrant cap in three of these very strings. */
+  permanence: RegExp[];
+  /** A limiting conjunction GOVERNING an activity word — the positive half.
+   *  Same shape and 60-character window as `BOUNDED_SCOPE_GRAMMAR`, for the
+   *  same measured reason: at 30 it rejected true copy. */
+  bounded: RegExp;
+  /** Recurring cadence — the inverse of the pass's one-time credit grant. */
+  recurring: RegExp[];
+  /** A claim that the plan grants X, keyed by `plan_entitlements.feature_key`.
+   *  Both word orders, because Romance languages put the noun first
+   *  ("programación asistida por IA") and Germanic ones the modifier
+   *  ("AI-ondersteunde planning"). */
+  plusClaims: Array<[feature: string, claim: RegExp]>;
+  /** "the largest monthly AI credit grant" — the TRUE differentiator that
+   *  replaced the false AI-scheduling one. Its own regex because it is a
+   *  COMPARATIVE, not a boolean grant. */
+  creditLeadership: RegExp;
+  /** Any claim about half the base rate, qualified or not. */
+  halfClaim: RegExp;
+  /** …and the "no more than" qualifier that makes it true. */
+  atMostHalf: RegExp;
+}
+
+export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
+  en: {
+    // The English half is the SAME list the seed and help guards use. Sharing
+    // it is the point: a pattern added for task 1 or 3 must not have to be
+    // remembered again here.
+    permanence: FALSE_PASS_PERMANENCE_PATTERNS,
+    bounded: BOUNDED_SCOPE_GRAMMAR,
+    recurring: RECURRING_GRANT_PATTERNS,
+    plusClaims: PLUS_DIFFERENTIATOR_VOCAB,
+    creditLeadership: /\b(largest|biggest|highest)\b[^,.;]{0,30}\bcredit/i,
+    halfClaim: /\bhalf\s+the\s+base\s+rate\b|\bhalf\s+(your|the)\s+plan['’]s\s+rate\b/i,
+    atMostHalf: /\b(no\s+more\s+than|at\s+most|up\s+to)\s+half\b/i,
+  },
+  es: {
+    permanence: [
+      String.raw`\bde\s+por\s+vida\b`,
+      String.raw`\bpara\s+siempre\b`,
+      String.raw`\btoda\s+(la|su)\s+vida\b`,
+      String.raw`\bpermanentes?\b|\bpermanentemente\b`,
+      String.raw`\b(indefinidamente|de\s+forma\s+indefinida)\b`,
+      String.raw`\bnunca\s+(caduca|expira|vence|termina|acaba)\b`,
+      String.raw`\bno\s+(caduca|expira|vence)\b`,
+      String.raw`\bsin\s+(fecha\s+de\s+)?caducidad\b`,
+      String.raw`\bsin\s+límite\s+de\s+tiempo\b`,
+      String.raw`\bes\s+tuy[oa]\s+y\s+lo\s+conservas\b`,
+    ].map(claim),
+    bounded: claim(
+      String.raw`\b(mientras|hasta\s+que|durante\s+el\s+tiempo\s+que)\b[^.:;!?]{0,60}\b(activ[ao]s?|en\s+curso|en\s+marcha|abiert[ao]s?|dure|dura|se\s+juegue)\b`,
+    ),
+    recurring: [
+      String.raw`\bmensual(es|mente)?\b`,
+      String.raw`\bal\s+mes\b`,
+      String.raw`\bcada\s+mes\b`,
+      String.raw`\bpor\s+mes\b`,
+      String.raw`\brecurrente\b`,
+    ].map(claim),
+    plusClaims: [
+      [
+        "scheduling.ai",
+        claim(
+          String.raw`\b(programaci|planificaci)\w*[^,.;]{0,30}\b(IA|AI)\b|\b(IA|AI)\b[^,.;]{0,30}\b(programaci|planificaci)`,
+        ),
+      ],
+      [
+        "officials.auto",
+        claim(
+          String.raw`\basignaci\w*\s+autom\w*[^,.;]{0,25}\b(árbitros?|oficiales?)\b|\b(árbitros?|oficiales?)\b[^,.;]{0,25}\bautom`,
+        ),
+      ],
+      ["api.write", claim(String.raw`\bescritura\b[^,.;]{0,25}\bAPI\b|\bAPI\b[^,.;]{0,25}\bescritura\b`)],
+      ["support.priority", claim(String.raw`\bsoporte\s+priorit\w+\b`)],
+    ],
+    creditLeadership: claim(String.raw`\b(mayor|más\s+grande)\b[^,.;]{0,30}\bcréditos?\b`),
+    halfClaim: claim(String.raw`\bmitad\s+de\s+la\s+tarifa\s+base\b|\ba\s+mitad\s+de\s+(precio|tarifa)\b`),
+    atMostHalf: claim(String.raw`\b(no\s+más\s+de|como\s+máximo|a\s+lo\s+sumo|máximo)\s+(la\s+)?mitad\b`),
+  },
+  fr: {
+    permanence: [
+      String.raw`\bà\s+vie\b`,
+      String.raw`\bpour\s+toujours\b`,
+      String.raw`\bà\s+jamais\b`,
+      String.raw`\bdéfinitivement\b`,
+      String.raw`\bpermanent(e|es|s|ement)?\b`,
+      String.raw`\bindéfiniment\b`,
+      String.raw`\bn['’]expire\s+(jamais|pas)\b`,
+      String.raw`\bne\s+(se\s+termine|s['’]arrête)\s+jamais\b`,
+      String.raw`\bsans\s+(date\s+d['’])?expiration\b`,
+      String.raw`\bsans\s+limite\s+de\s+temps\b`,
+    ].map(claim),
+    bounded: claim(
+      String.raw`\b(tant\s+qu|pendant\s+qu|jusqu['’]à\s+ce\s+qu|aussi\s+longtemps\s+qu)\w*\b[^.:;!?]{0,60}\b(activ\w*|en\s+cours|ouvert\w*|se\s+déroule|dure)\b`,
+    ),
+    recurring: [
+      String.raw`\bmensuel(le|s|les)?\b`,
+      String.raw`\bpar\s+mois\b`,
+      String.raw`\bchaque\s+mois\b`,
+      String.raw`\brécurrent(e|s)?\b`,
+    ].map(claim),
+    plusClaims: [
+      [
+        "scheduling.ai",
+        claim(
+          String.raw`\b(planification|ordonnancement)\b[^,.;]{0,30}\b(IA|AI)\b|\b(IA|AI)\b[^,.;]{0,30}\b(planification|ordonnancement)\b`,
+        ),
+      ],
+      [
+        "officials.auto",
+        claim(
+          String.raw`\battribution\s+automatique\b[^,.;]{0,30}\bofficiels?\b|\bofficiels?\b[^,.;]{0,30}\bautomatique\b`,
+        ),
+      ],
+      ["api.write", claim(String.raw`\bAPI\b[^,.;]{0,25}\bécriture\b|\bécriture\b[^,.;]{0,25}\bAPI\b`)],
+      ["support.priority", claim(String.raw`\b(assistance|support)\s+prioritaire\b`)],
+    ],
+    creditLeadership: claim(String.raw`\bplus\s+(grosse|grande|important\w*)\b[^,.;]{0,30}\bcrédits?\b`),
+    halfClaim: claim(String.raw`\bmoitié\s+du\s+tarif\s+de\s+base\b|\bmoitié\s+(du\s+)?prix\b`),
+    atMostHalf: claim(String.raw`\b(au\s+plus|pas\s+plus\s+de|au\s+maximum|maximum)\s+(la\s+)?moitié\b`),
+  },
+  nl: {
+    permanence: [
+      String.raw`\blevensduur\b`,
+      // "voor het hele verloop" — the nl wording of `billing.passOffer.note`,
+      // which reached for a different metaphor than the other three keys. Proof
+      // that a vocabulary written from ONE string per language is not a
+      // vocabulary; the positive `bounded` rule is what actually caught it.
+      String.raw`\b(hele|volledige)\s+(verloop|duur)\b`,
+      String.raw`\bvoor\s+altijd\b`,
+      String.raw`\bvoorgoed\b`,
+      String.raw`\baltijd\s+van\s+jou\b`,
+      String.raw`\bblijft\s+van\s+jou\b`,
+      String.raw`\bpermanent(e)?\b`,
+      String.raw`\bonbeperkt\s+geldig\b`,
+      String.raw`\bnooit\s+(verloopt|vervalt|eindigt|afloopt)\b`,
+      String.raw`\b(verloopt|vervalt|eindigt)\s+nooit\b`,
+      String.raw`\bgeen\s+(vervaldatum|einddatum|tijdslimiet)\b`,
+    ].map(claim),
+    bounded: claim(
+      String.raw`\b(zolang|terwijl|totdat|tot\s+de)\b[^.:;!?]{0,60}\b(loopt|actief|open|bezig|duurt|draait)\b`,
+    ),
+    recurring: [
+      String.raw`\bmaandelijks(e)?\b`,
+      String.raw`\bper\s+maand\b`,
+      String.raw`\b(elke|iedere)\s+maand\b`,
+      String.raw`\bterugkerend(e)?\b`,
+    ].map(claim),
+    plusClaims: [
+      [
+        "scheduling.ai",
+        claim(
+          String.raw`\bAI\b[^,.;]{0,30}\b(planning|inplannen|plannen|scheduling)\b|\b(planning|inplannen|plannen)\b[^,.;]{0,30}\bAI\b`,
+        ),
+      ],
+      [
+        "officials.auto",
+        claim(
+          String.raw`\bautomatische\s+toewijzing\b[^,.;]{0,30}\bofficials?\b|\bofficials?\b[^,.;]{0,30}\bautomatische\b`,
+        ),
+      ],
+      ["api.write", claim(String.raw`\bschrijftoegang\b[^,.;]{0,25}\bAPI\b|\bAPI\b[^,.;]{0,25}\bschrijftoegang\b`)],
+      ["support.priority", claim(String.raw`\bprioritaire\s+onderst\w+\b`)],
+    ],
+    creditLeadership: claim(String.raw`\b(grootste|hoogste)\b[^,.;]{0,30}\bcredit`),
+    halfClaim: claim(String.raw`\bhelft\s+van\s+het\s+basistarief\b|\bhalve\s+(prijs|tarief)\b`),
+    atMostHalf: claim(String.raw`\b(hoogstens|maximaal|ten\s+hoogste|niet\s+meer\s+dan)\s+(de\s+)?helft\b`),
+  },
+};
+
+/**
+ * The structural rule that makes everything above non-optional: the vocabulary
+ * map must cover exactly the locales that EXIST. A dictionary directory with no
+ * entry here is unguarded copy, and it must red rather than pass — that is the
+ * whole difference between "we guard the pricing copy" and "we guard the
+ * English pricing copy and hope".
+ *
+ * Checked in BOTH directions. A stale entry for a deleted locale is a fault too:
+ * it makes the map look like it covers more than it does, and a cross-applied
+ * vocabulary for a language nobody ships is dead weight that hides a real gap.
+ */
+export function localeCoverageFaults(localesOnDisk: string[]): string[] {
+  const faults: string[] = [];
+  const covered = new Set<string>(Object.keys(LOCALE_CLAIMS));
+  for (const locale of localesOnDisk) {
+    if (!covered.has(locale)) {
+      faults.push(
+        `${locale}/: a dictionary locale with no entry in LOCALE_CLAIMS — its copy is scanned by nothing`,
+      );
+    }
+  }
+  for (const locale of covered) {
+    if (!localesOnDisk.includes(locale)) {
+      faults.push(`${locale}: LOCALE_CLAIMS covers a locale that no longer exists on disk`);
+    }
+  }
+  return faults;
+}
+
+/** One dictionary value under scan. */
+export interface LocalisedValue {
+  locale: DictionaryLocale;
+  key: string;
+  value: string;
+}
+
+/**
+ * Layers 1 + 2: every locale's permanence vocabulary against every locale's
+ * value, plus that locale's OWN positive bound.
+ *
+ * Cross-application is what stops "we translated it" from meaning "we guarded
+ * it". The previous wave shipped a Spanish/French/Dutch surface carrying new
+ * English prose; under this rule the English list reds on the Dutch value, and
+ * the fault label names which language's vocabulary fired so the reader knows
+ * whether they are looking at a falsehood or a mistranslation.
+ *
+ * The POSITIVE half is deliberately the locale's OWN grammar and nothing else:
+ * a Dutch value satisfying the English "while … running" would mean the Dutch
+ * page renders English, which is the bug, not the fix.
+ */
+export function localePassBoundFaults(values: LocalisedValue[]): string[] {
+  const faults: string[] = [];
+  for (const { locale, key, value } of values) {
+    if (value.trim().length === 0) {
+      faults.push(`${locale} ${key}: empty — nothing to scan, so every rule below passes vacuously`);
+      continue;
+    }
+    for (const [vocabLocale, claims] of Object.entries(LOCALE_CLAIMS)) {
+      for (const pattern of claims.permanence) {
+        if (pattern.test(value)) {
+          faults.push(
+            `${locale} ${key}: claims the pass has unbounded duration in ${vocabLocale} vocabulary (${describeClaim(pattern)})`,
+          );
+        }
+      }
+    }
+    if (!LOCALE_CLAIMS[locale].bounded.test(value)) {
+      faults.push(
+        `${locale} ${key}: never states, in ${locale}, that the pass is bounded to a running competition`,
+      );
+    }
+  }
+  return faults;
+}
+
+/**
+ * Layer 3. `retired` is the prose this task deleted, per locale; every value is
+ * checked against ALL of it, not just its own language's share.
+ *
+ * Why a literal list is worth keeping next to a vocabulary: the vocabularies
+ * cannot include French "pour toute la durée" (true of a bound, false of the
+ * pass) or Dutch "voor de helft van het basistarief" (true once "hoogstens" is
+ * in front of it). Those are precisely the fragments a translator restores by
+ * accident, and a literal has no hole.
+ */
+export function retiredClaimFaults(values: LocalisedValue[], retired: string[]): string[] {
+  const faults: string[] = [];
+  if (retired.length === 0) {
+    return ["retired-claim registry is empty — this layer would examine nothing"];
+  }
+  for (const { locale, key, value } of values) {
+    const haystack = value.toLowerCase();
+    for (const phrase of retired) {
+      if (haystack.includes(phrase.toLowerCase())) {
+        faults.push(`${locale} ${key}: still carries the retired claim "${phrase}"`);
+      }
+    }
+  }
+  return faults;
+}
+
+/** The one-time credit grant, in a language-independent way: the FIGURE. Digits
+ *  are the same in all four locales, which is what makes this checkable without
+ *  a fourth vocabulary — and it is paired with the recurring-cadence negative so
+ *  "+25 AI credits every month" cannot satisfy it. */
+export function localeCreditGrantFaults(values: LocalisedValue[], grant: number): string[] {
+  const faults: string[] = [];
+  for (const { locale, key, value } of values) {
+    if (!value.includes(`+${grant}`)) {
+      faults.push(`${locale} ${key}: does not state the one-time +${grant} AI credit grant`);
+    }
+    for (const match of value.matchAll(/\+(\d[\d,]*)\b/g)) {
+      const figure = Number(match[1]!.replace(/,/g, ""));
+      if (figure !== grant) {
+        faults.push(`${locale} ${key}: quotes +${figure}, but the pass grants +${grant}`);
+      }
+    }
+    for (const pattern of LOCALE_CLAIMS[locale].recurring) {
+      if (pattern.test(value)) {
+        faults.push(`${locale} ${key}: sells the one-time grant as recurring (${describeClaim(pattern)})`);
+      }
+    }
+  }
+  return faults;
+}
+
+/** `plan_entitlements` boolean rows, as `{ feature: { plan: granted } }`. */
+export type FeatureGrants = Record<string, Record<string, boolean>>;
+
+/**
+ * A Pro Plus differentiator claim is judged against the MATRIX, per locale.
+ *
+ * NOTE THE NEGATIVE CASE, which is the whole reason this reads the grants
+ * instead of banning a phrase: "AI-assisted scheduling" is false TODAY because
+ * `scheduling.ai` is `true` on all five plan keys (community, event_pass,
+ * event_pass_l, pro, pro_plus — measured). If a future migration made it
+ * pro_plus-only, the claim would become TRUE and this guard must fall silent.
+ * A rule that fired unconditionally would satisfy every stated requirement of
+ * this task and be wrong the moment the matrix moved.
+ *
+ * `lowerPlans` are the plans the "Everything in Pro, plus …" frame asserts do
+ * NOT have the feature. Anti-vacuity closes the other side: an answer that
+ * names no recognised differentiator has had this guard examine nothing.
+ */
+export function localePlusDifferentiatorFaults(
+  values: LocalisedValue[],
+  grants: FeatureGrants,
+  lowerPlans: string[],
+): string[] {
+  const faults: string[] = [];
+  for (const { locale, key, value } of values) {
+    let recognised = 0;
+    for (const [feature, claim] of LOCALE_CLAIMS[locale].plusClaims) {
+      if (!claim.test(value)) continue;
+      recognised += 1;
+      const row = grants[feature];
+      if (!row) {
+        faults.push(`${locale} ${key}: claims ${feature}, which has no rows in plan_entitlements`);
+        continue;
+      }
+      for (const plan of lowerPlans) {
+        if (row[plan]) {
+          faults.push(
+            `${locale} ${key}: sells ${feature} as a Pro Plus differentiator, but ${plan} already grants it`,
+          );
+        }
+      }
+      if (!row.pro_plus) {
+        faults.push(`${locale} ${key}: claims ${feature}, but pro_plus does not grant it`);
+      }
+    }
+    if (recognised === 0) {
+      faults.push(
+        `${locale} ${key}: names no recognised differentiator — the ${locale} vocabulary has gone stale and this guard examined nothing`,
+      );
+    }
+  }
+  return faults;
+}
+
+/**
+ * The comparative that REPLACED the false AI-scheduling claim. A boolean-grant
+ * guard cannot judge it: "the largest monthly AI credit grant" is true only
+ * while `ai.credits.monthly` for pro_plus is strictly greater than every other
+ * plan's, so it is checked against the numbers, in every locale.
+ *
+ * Paired both ways, like every presence rule here: the claim must be STATED (an
+ * answer that just deletes it tells a buyer nothing about what they get instead
+ * of the scheduling they were wrongly promised), and it must be TRUE.
+ */
+export function localeCreditLeadershipFaults(
+  values: LocalisedValue[],
+  monthlyGrants: Record<string, number | null>,
+): string[] {
+  const faults: string[] = [];
+  const plus = monthlyGrants.pro_plus;
+  const others = Object.entries(monthlyGrants).filter(([plan]) => plan !== "pro_plus");
+  const leads =
+    typeof plus === "number" &&
+    others.length > 0 &&
+    others.every(([, value]) => typeof value === "number" && value < plus);
+
+  for (const { locale, key, value } of values) {
+    const stated = LOCALE_CLAIMS[locale].creditLeadership.test(value);
+    if (!stated) {
+      faults.push(`${locale} ${key}: never claims the largest monthly AI credit grant`);
+    } else if (!leads) {
+      faults.push(
+        `${locale} ${key}: claims the largest monthly AI credit grant, but pro_plus grants ${plus} against ${others
+          .map(([plan, v]) => `${plan}=${v}`)
+          .join(", ")}`,
+      );
+    }
+  }
+  return faults;
+}
+
+/**
+ * Which comparison the extra-organisation rate ACTUALLY licenses, derived from
+ * the seed rather than asserted.
+ *
+ * "exactly" only if every rider in every plan × interval × currency is exactly
+ * half; otherwise the honest claim is "no more than half". Measured on today's
+ * seed: `seazn_pro_monthly` eur 1800→900 and aud 2800→1400 are exactly 50.0%,
+ * while usd is 47.4% — so a bare "half" is false in usd and "under half" is
+ * false in eur. Only "no more than half" is true in all twenty combinations,
+ * and deriving the shape here is what keeps the copy honest in EITHER direction
+ * if a price moves.
+ */
+export function riderClaimShape(plans: PricedPlan[]): "exactly" | "atMost" {
+  for (const plan of plans) {
+    for (const price of Object.values(plan.prices)) {
+      const base = price.tiers?.find((t) => t.up_to === 1);
+      const rider = price.tiers?.find((t) => t.up_to === "inf");
+      if (!base || !rider) return "atMost";
+      for (const currency of SEED_CURRENCIES) {
+        const baseAmount = amountIn(base, currency);
+        const riderAmount = amountIn(rider, currency);
+        if (baseAmount === undefined || riderAmount === undefined) return "atMost";
+        if (riderAmount !== baseAmount / 2) return "atMost";
+      }
+    }
+  }
+  return "exactly";
+}
+
+/**
+ * The half-rate sentence, four locales, against the shape the seed licenses.
+ *
+ * Paired, again: the claim must be MADE (an answer that drops it leaves a buyer
+ * with no idea what a second organisation costs) and it must carry the
+ * qualifier the arithmetic requires. And note the guard is not "always demand
+ * 'no more than'" — if every rider became an exact half, `riderClaimShape`
+ * returns "exactly" and an unqualified "half the base rate" stops being a
+ * fault, because it stops being false.
+ */
+export function localeHalfClaimFaults(
+  values: LocalisedValue[],
+  shape: "exactly" | "atMost",
+): string[] {
+  const faults: string[] = [];
+  for (const { locale, key, value } of values) {
+    const claims = LOCALE_CLAIMS[locale];
+    if (!claims.halfClaim.test(value)) {
+      faults.push(`${locale} ${key}: makes no statement about the extra-organisation rate`);
+      continue;
+    }
+    if (shape === "atMost" && !claims.atMostHalf.test(value)) {
+      faults.push(
+        `${locale} ${key}: quotes half the base rate with no "no more than" qualifier, but the seed's riders are not all exactly half`,
+      );
+    }
   }
   return faults;
 }
