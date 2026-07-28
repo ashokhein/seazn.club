@@ -640,6 +640,19 @@ describe("ended — the pass is on the record but has stopped applying", () => {
     expect(html).not.toContain(TERMINAL_COPY);
   });
 
+  it("does not wear the console's floodlit 'this is on' eyebrow", async () => {
+    // `.app-eyebrow` is the lime-ticked LIVE-fixture device. On this stub it
+    // would contradict the words inside it, and the badge is read before the
+    // prose. `app-eyebrow justify-center` belongs to exactly one element in
+    // the page — the ACTIVE stub's title — so its absence is specifically
+    // about this stub rather than about the page's other eyebrows.
+    endedPass({ reason: "terminal" });
+    expect(await render()).not.toContain("app-eyebrow justify-center");
+    // …and not vacuous: the active state really does carry it.
+    heldPass();
+    expect(await render()).toContain("app-eyebrow justify-center");
+  });
+
   it("still shows the receipt and the rung — nothing bought is deleted", async () => {
     endedPass({ reason: "terminal" });
     const html = await render();
