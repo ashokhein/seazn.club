@@ -2154,18 +2154,31 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
     const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
     const winner = riderItem(dupA, proEntry.lookupKey, 1);
     const loser = riderItem(dupB, proEntry.lookupKey, 2);
-    // Stripe holds 7 on the loser; the event still remembers 2.
-    liveItems[dupB] = { ...(liveItems[dupB] as object), quantity: 7 };
+    // Stripe holds 7 on the loser, on a price the event has never seen — so the
+    // alert and the log can be checked for WHICH price they report.
+    liveItems[dupB] = {
+      ...(liveItems[dupB] as object),
+      quantity: 7,
+      price: { id: "price_loser_actually_on", lookup_key: proEntry.lookupKey },
+    };
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
 
     await processStripeEvent(updatedEvent(stripeSubId, walletId, [winner, loser]));
+
+    // Both the alert and the log name what Stripe holds, not the payload's
+    // price — this is the field a responder acts on.
+    expect(logged.mock.calls.some((c) => String(c[0]).includes("price_loser_actually_on"))).toBe(
+      true,
+    );
     logged.mockRestore();
 
     // The winner converges; the loser is alerted, not written to Stripe.
     expect(itemUpdateSpy).toHaveBeenCalledTimes(1);
     expect(itemUpdateSpy.mock.calls[0]![0]).toBe(dupA);
     expect(repriceAlertSpy).toHaveBeenCalledTimes(1);
-    expect(repriceAlertSpy).toHaveBeenCalledWith(expect.objectContaining({ itemId: dupB }));
+    expect(repriceAlertSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ itemId: dupB, currentPriceId: "price_loser_actually_on" }),
+    );
 
     // …and the loser's ROW follows Stripe. Writing 2 here would hand the group
     // five organisations of capacity nobody is paying for.
