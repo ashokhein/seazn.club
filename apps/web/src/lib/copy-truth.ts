@@ -133,12 +133,6 @@ export function wholeNumber(n: number): RegExp {
   return new RegExp(`(?<!\\d)${n}(?!\\d)`);
 }
 
-/** `wholeNumber` for a cap that must EXIST. A null `int_value` means unlimited,
- *  and there is no digit to pin against unlimited — so a null here is a caller
- *  bug (it would otherwise silently build `/(?<!\d)null(?!\d)/`). */
-export function quotesWholeNumber(value: string | undefined, n: number): boolean {
-  return typeof value === "string" && wholeNumber(n).test(value);
-}
 
 // ── Claim vocabularies ───────────────────────────────────────────────────────
 

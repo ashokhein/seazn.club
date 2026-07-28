@@ -288,9 +288,9 @@ export const APPROVED_PLANS_INVENTORY: string[] = [
  *
  *    ROUND 3'S REPLACEMENT WAS ALSO WRONG about the surface: it said "enforced
  *    on our public API today", but on that API the normal caller is a bearer
- *    `sc_` key and `auth.ts:204` (`if (token) return apiKeyAuth(...)`) returns
+ *    `sc_` key and `server/api-v1/auth.ts:204` (`if (token) return apiKeyAuth(...)`) returns
  *    BEFORE the check — so API-key clients are not checked either. (Cited as
- *    `auth.ts:210` for two rounds; :210 is a comment.)
+ *    `server/api-v1/auth.ts:210` for two rounds; :210 is a comment.)
  *
  *    AND ROUND 3'S OTHER HALF WAS FALSE OUTRIGHT. It said the freeze reaches
  *    "not the app's own screens". `lib/client-v1.ts:23-27` sends only
@@ -382,8 +382,25 @@ export const APPROVED_ADD_ONS_INVENTORY: string[] = [
   // caller, `assertMemberNotFrozen` (`:123`) — no read model flags a member,
   // unlike competitions, which the module header says ARE flagged. "Treated as
   // read-only", resolved when a write arrives.
-  "937f7bb87a390664",
-  "704faf902d99b14c",
+  //
+  // ROUND 7: the C1 correction was RIGHT IN DIRECTION AND AN ORDER OF MAGNITUDE
+  // SHORT. It named four screens (API keys, News, Sponsors, Payments) because
+  // the guard behind it discovered callers by the single prefix
+  // `/api/v1/orgs/`. But the freeze lives in `requireOrgAuth`, and
+  // `requireResourceAuth` delegates to it — 83 write-scoped route files are
+  // freeze-checked across 17 URL prefixes, and 47 component files write through
+  // them. A frozen admin is blocked across essentially the whole editing
+  // product, not four screens. Re-read against `server/api-v1/auth.ts`
+  // (requireResourceAuth -> requireOrgAuth) and the measured caller walk.
+  "066578c9f729b625",
+  // ROUND 7 (M1's twin). This paragraph said the control "refuses to go below
+  // the number of organisations the group is standing on" — the ORG count,
+  // sixteen lines after the identical error was corrected at surface 23 and in
+  // the same paragraph this article's freeze guard is named after. The floor is
+  // the RIDER count: `ridersInUse` = clamp(liveOrgs - base - grantedBonus, 0,
+  // purchased) (`lib/billing-group.ts:431-437`). Nothing asserted on the floor
+  // at all before this round; both statements of it are now checked.
+  "7e9eaa52377fc2e6",
   "89e6a00cfa216278",
   "e0bc899381ce86af",
   "fe061d7659564782",

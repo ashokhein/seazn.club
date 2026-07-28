@@ -63,6 +63,9 @@ import {
   citationFaults,
   citationsIn,
   codeOnly,
+  freezeCheckedUrlPrefixes,
+  freezeCheckedWriteRoutes,
+  headersObjects,
   stripComments,
   helpArticle,
   helpArticleBySlug,
@@ -1405,6 +1408,51 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
       "the ADMISSION-ONLY note is gone — re-check what an over-cap group can do",
     ).toContain("never re-evaluated against organisations that already exist");
 
+    /*
+     * THE EXTRA-ORGANISATION FLOOR, which nothing asserted at all.
+     *
+     * The article says the control refuses to go below a number, TWICE — once
+     * where the add-on is bought and once in the paragraph this test is named
+     * after. Round 6 corrected the first and left the second saying "the number
+     * of organisations the group is standing on", which is the org count: the
+     * exact quantity its own fix note had just called wrong. Only the inventory
+     * digest covered either, and a digest proves DELIBERATE, never TRUE.
+     *
+     * `ridersInUse` is `clamp(liveOrgs - base - grantedBonus, 0, purchased)`, so
+     * a Pro group with 6 live orgs has a floor of 1 — the RIDER count. Both
+     * sentences now say that, and both are checked, because the fourth
+     * adjacent-surface miss of this wave was a sentence sixteen lines from the
+     * one being fixed.
+     */
+    const floorSource = webSource("lib/billing-group.ts");
+    // KNOWN-POSITIVE: the arithmetic really is rider-shaped. If `ridersInUse`
+    // is renamed or its formula changes, this reds instead of the copy rule
+    // silently guarding nothing.
+    expect(floorSource, "ridersInUse moved — re-read what the floor actually is").toContain(
+      "const standingOnRiders = basis.liveOrgs - basis.base - basis.grantedBonus",
+    );
+    expect(floorSource).toContain("Math.max(0, Math.min(standingOnRiders, purchased))");
+    // The copy must describe the RIDER count, both times it makes the claim…
+    const floorClaims = addOns.match(/refuses to go below[^.:]*|cannot go below[^.:]*/gi) ?? [];
+    expect(floorClaims.length, "the article stopped stating the extra-organisation floor").toBe(2);
+    for (const claim of floorClaims) {
+      expect(
+        claim,
+        `"${claim}" names a count of organisations, but the floor is the number STANDING ON an extra organisation (ridersInUse)`,
+      ).toMatch(/standing\s+on\s+an\s+extra\s+organisation/i);
+    }
+    // …and must never fall back to the bare org-count wording, which is what
+    // both sentences said before and reads as "you cannot go below 6".
+    expect(addOns, "the floor is the rider count, not the organisation count").not.toMatch(
+      /go below the number of organisations (the group is (actually )?(using|standing on)|it (has|holds))/i,
+    );
+    // The product string says it correctly and is the sentence a buyer sees at
+    // the control itself; the article must agree with it rather than drift.
+    expect(
+      JSON.parse(readFileSync("src/dictionaries/en/ui.json", "utf8"))["addOns.extraOrg.floorNote"],
+      "the floorNote moved — the article was written to agree with it",
+    ).toMatch(/standing on an extra organisation/i);
+
     // …and the article says both halves, so neither can be dropped silently.
     expect(addOns, "the seat half").toMatch(/extra seat stops you adding members/i);
     expect(addOns, "the org non-freeze").toMatch(/extra organisation does not freeze anything/i);
@@ -1492,115 +1540,202 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
     // on that API the normal caller is a bearer `sc_` key, and `apiKeyAuth`
     // returns BEFORE the freeze check — so an API-key client is never checked
     // either.
+    // "only" is deliberately gone from this sentence. It was there to mark the
+    // freeze as narrow, and the freeze is not narrow — it reaches 83 write
+    // routes across 17 URL prefixes. What IS exclusive is the API-key exemption,
+    // which is what the clause now carries.
     expect(addOns, "…and must say where it IS enforced").toMatch(
-      /blocks only signed-in admins writing through our REST API, not API-key clients/i,
+      /blocks signed-in admins writing through our REST API, not API-key clients/i,
+    );
+    expect(addOns, "'blocks only …' understates the reach").not.toMatch(
+      /blocks only signed-in admins/i,
     );
 
     /*
-     * WHO CALLS THOSE ROUTES. This is the half that was missing, and it is the
-     * half that matters.
+     * WHO CALLS THOSE ROUTES — AND THAT MEANS *ALL* OF THEM.
      *
-     * Round 3 counted the 13 `app/api/v1/**` routes reaching `requireOrgAuth`
-     * and called that coverage. Counting a surface proves its SIZE and nothing
-     * about its REACH — so the article was free to say the freeze reaches "not
-     * the app's own screens", and this guard pinned that sentence while never
-     * asking whether anything in the app called the routes it had just counted.
-     * It does. `lib/client-v1.ts` sends `Content-Type` and NO `Authorization`,
-     * so an in-app component hitting `/api/v1/orgs/**` takes the SESSION branch
-     * of `requireOrgAuth` and IS freeze-checked. An admin over `members.max`
-     * would have read this article, been told the app was exempt, and then hit
-     * a 402 in Settings → API and the news composer. Setting that expectation
-     * is the paragraph's whole job.
+     * Round 3 counted the 13 `app/api/v1/**` routes using `requireOrgAuth` and
+     * called that coverage. Counting a surface proves its SIZE, never its
+     * REACH, so the article was free to say the freeze reaches "not the app's
+     * own screens" with this guard agreeing.
      *
-     * The rule is now: DISCOVER the in-app callers, require each to be declared
-     * with the surface name the article uses, and require the article to name
-     * every one. A new in-app caller reds until somebody decides which surface
-     * it is and whether the sentence still holds.
+     * Round 6 fixed the direction and got the SCOPE wrong the same way: it
+     * discovered callers by the single URL prefix `/api/v1/orgs/`, found five
+     * screens, and had the article name four. But the freeze lives in
+     * `requireOrgAuth`, and `requireResourceAuth` DELEGATES TO IT
+     * (`server/api-v1/auth.ts` — it resolves the org then calls
+     * `requireOrgAuth(req, orgId, scope)`). Measured: **83 write-scoped route
+     * files are freeze-checked, across 17 URL prefixes, and 47 component files
+     * write through them.** `/api/v1/divisions/[id]` PATCH,
+     * `/api/v1/entrants/[id]` PATCH, `/api/v1/fixtures/[id]` PATCH — the whole
+     * editing product. A component planted on a `requireResourceAuth` route
+     * shipped 285/0 GREEN while the same component on `/api/v1/orgs/...` redded:
+     * the rule worked perfectly inside its slice and was silent on the other 85%.
+     *
+     * So the copy CANNOT be an enumeration, and this guard must not ask for one.
+     * A four-screen list was wrong by an order of magnitude; a 47-file list in
+     * prose would be unreadable and stale within a sprint. The copy states the
+     * SCOPE ("most of the app") with examples marked as examples, and the guard
+     * checks the thing that makes that scope claim true: the caller set is
+     * BROAD, and the exemplars the copy names are really in it.
      */
-    const IN_APP_ORG_CALLERS: Record<string, string> = {
-      "components/api-keys.tsx": "API keys",
-      "components/news/composer.tsx": "News",
-      "components/org-sponsors.tsx": "Sponsors",
-      "components/sponsor-packages.tsx": "Sponsors",
-      "components/org-payment-instructions.tsx": "Payments",
-    };
-    const discovered = allStrippedSources()
-      .filter(([f]) => !f.startsWith("app/api/") && !f.includes("__tests__"))
-      .filter(([, src]) => src.includes("/api/v1/orgs/"))
+    const freezeRoutes = freezeCheckedWriteRoutes();
+    const prefixes = freezeCheckedUrlPrefixes(freezeRoutes);
+    // KNOWN-POSITIVES on the same read. A walk that found nothing would make
+    // every "is broad" assertion below fail loudly rather than pass quietly,
+    // but the floors also say WHICH half broke.
+    expect(freezeRoutes.length, "no freeze-checked write routes found — the walk is broken").toBeGreaterThan(50);
+    expect(
+      freezeRoutes,
+      "the org-scoped write routes moved — re-point this guard",
+    ).toContain("app/api/v1/orgs/[id]/api-keys/route.ts");
+    expect(
+      prefixes,
+      "requireResourceAuth routes are no longer being reached — the freeze looks smaller than it is",
+    ).toEqual(expect.arrayContaining(["/api/v1/orgs/", "/api/v1/divisions/", "/api/v1/entrants/"]));
+    // …and `requireResourceAuth` really does delegate. If it ever stopped, the
+    // 85% would genuinely leave the freeze's reach and the copy would need
+    // re-reading — so the delegation is asserted, not assumed.
+    expect(
+      apiAuth,
+      "requireResourceAuth no longer delegates to requireOrgAuth — the freeze's reach has changed",
+    ).toMatch(/requireResourceAuth[\s\S]{0,400}?return\s+requireOrgAuth\(req,\s*orgId,\s*scope\)/);
+
+    const callers = allStrippedSources()
+      .filter(([f]) => f.startsWith("components/") && !f.includes("__tests__"))
+      .filter(([, src]) => prefixes.some((p) => src.includes(p)))
       .map(([f]) => f)
       .sort();
+    // THE SCOPE CLAIM, checked as a scope claim. "Most of the app" is true while
+    // this set is large; if it ever shrank to a handful the sentence would be an
+    // overstatement and somebody has to re-read it. Floor measured at 47.
     expect(
-      discovered,
-      "an in-app screen writes through /api/v1/orgs/** and is not declared here — it is freeze-checked, and the article has to say so",
-    ).toEqual(Object.keys(IN_APP_ORG_CALLERS).sort());
-    // ANTI-VACUITY: an empty discovery would satisfy nothing above by accident,
-    // but a BROKEN walk would make the equality above trivially wrong rather
-    // than trivially right — so pin the floor on the walk itself too.
-    expect(discovered.length, "no in-app caller found — the walk is not working").toBeGreaterThan(3);
-    // The article must name every distinct surface those callers live on.
-    for (const surface of new Set(Object.values(IN_APP_ORG_CALLERS))) {
+      callers.length,
+      `the freeze now reaches only ${callers.length} component files — the article says "most of the app", and that is no longer obviously true`,
+    ).toBeGreaterThan(30);
+
+    // The copy must not read as a closed enumeration of a few screens…
+    expect(addOns, "the freeze is not a four-screen corner of the product").not.toMatch(
+      /\(API keys, News, Sponsors, Payments\)|not\s+the\s+app['’]s\s+own\s+screens/i,
+    );
+    // …must state the scope positively…
+    expect(addOns, "the article must say how far the freeze actually reaches").toMatch(
+      /blocked\s+across\s+most\s+of\s+the\s+app/i,
+    );
+    // …and every example it names must be a real caller, so the illustration is
+    // not itself a falsehood.
+    for (const [example, file] of [
+      ["schedule board", "components/v2/schedule-board.tsx"],
+      ["entrants", "components/v2/entrants-panel.tsx"],
+      ["officials", "components/v2/officials-panel.tsx"],
+      ["registrations", "components/v2/registrations-panel.tsx"],
+      ["settings", "components/v2/division-settings.tsx"],
+    ] as const) {
+      expect(addOns, `the article stopped naming ${example}`).toContain(example);
       expect(
-        addOns,
-        `the freeze reaches the ${surface} screens, and the article never names them`,
-      ).toContain(surface);
+        callers,
+        `the article names ${example} as an example, but ${file} no longer writes through a freeze-checked route`,
+      ).toContain(file);
     }
-    // …and must NOT still claim the app is exempt.
-    expect(addOns, "the app's own screens ARE freeze-checked").not.toMatch(
-      /not\s+the\s+app['’]s\s+own\s+screens|the\s+app['’]s\s+own\s+screens\s+are\s+(not|never)/i,
-    );
-    expect(addOns, "…and must say the opposite, positively").toMatch(
-      /inside\s+the\s+app\s+it\s+does\s+reach\s+the\s+screens/i,
-    );
 
     /*
      * …and WHY those callers are session-authenticated, read off the code that
      * decides it rather than asserted as prose.
      *
-     * Two of the five go through the shared `@/lib/client-v1` helper; three
-     * hand-roll a `fetch`. What matters in every case is the HEADERS OBJECT: it
-     * carries `Content-Type` and nothing else, so no request can present a
-     * bearer token, so none can take the `apiKeyAuth` branch — which is exactly
-     * what leaves them on the session branch and freeze-checked. Add an
-     * `Authorization` header and the corrected sentence becomes false again, so
-     * its absence is the load-bearing fact and belongs in the guard.
+     * What matters is the HEADERS OBJECT: it carries `Content-Type` and nothing
+     * else, so no request can present a bearer token, so none can take the
+     * `apiKeyAuth` branch — which is exactly what leaves them on the session
+     * branch and freeze-checked. Add an `Authorization` header anywhere in this
+     * set and the corrected sentence becomes false again.
      *
-     * SCOPED TO THE HEADERS OBJECT, not to the file. A first cut scanned whole
-     * sources and red on `api-keys.tsx:255`, which renders the literal text
-     * "Authorization: Bearer sc_…" in a `<code>` block — documentation of how a
-     * customer uses their KEY, the opposite of a header this screen sends. A
-     * guard that rejects true code teaches the next editor to work around it.
+     * READ OFF THE AST (`headersObjects`), because round 6's
+     * `matchAll(/headers:\s*\{([^}]*)/g)` stopped at the FIRST `}` — which in
+     * `lib/client-v1.ts` and `components/api-keys.tsx` is the one inside
+     * `...(rest.headers ?? {})`. Everything after the spread was invisible:
+     * measured, an `Authorization` added AFTER the spread in `api-keys.tsx`
+     * shipped 285/0 GREEN while the same header in `org-sponsors.tsx`'s plain
+     * object redded. The guard was blind at exactly the two files that matter.
+     *
+     * Scanned over EVERY discovered caller, not a hand-listed five — the spread
+     * also means any caller can pass `Authorization` through `options.headers`,
+     * so the caller-side objects are part of the same invariant.
      */
-    const VIA_CLIENT_V1 = ["components/news/composer.tsx", "components/org-payment-instructions.tsx"];
-    const VIA_OWN_FETCH = [
-      "components/api-keys.tsx",
-      "components/org-sponsors.tsx",
-      "components/sponsor-packages.tsx",
-    ];
+    /*
+     * ONE EXEMPTION, AND ITS PREDICATE IS DECIDABLE.
+     *
+     * `device-score-pad.tsx` DOES send `Authorization: Bearer ${token}` — the
+     * widened scan found it on its first run, which is the scan earning its
+     * keep. It is a device-link surface: the token is a device-link token, and
+     * `requireOrgAuth` calls `rejectDeviceLink(req)` FIRST, which throws 403 for
+     * exactly those tokens. So it can never reach the freeze branch, and the
+     * routes it uses (`/api/v1/fixtures/[id]/state`, `/events`) authenticate
+     * through `requireFixtureActor`, not `requireOrgAuth` at all. It matches the
+     * caller walk only because OTHER `/api/v1/fixtures/` routes are
+     * freeze-checked, so the prefix is a false positive for this file.
+     *
+     * The exemption is checked, not asserted: the rejection must still be in
+     * `auth.ts`, the file must still send only a device-link bearer, and an
+     * entry that has stopped sending `Authorization` at all is a FAULT — or the
+     * list becomes the place a real regression hides.
+     */
+    const DEVICE_LINK_CALLERS = ["components/v2/device-score-pad.tsx"];
     expect(
-      [...VIA_CLIENT_V1, ...VIA_OWN_FETCH].sort(),
-      "a caller changed how it issues requests — re-read which branch it lands on",
-    ).toEqual(Object.keys(IN_APP_ORG_CALLERS).sort());
-    for (const file of VIA_CLIENT_V1) {
-      expect(codeOnly(webSource(file), file), `${file} must route through the shared helper`).toMatch(
-        /from\s+"@\/lib\/client-v1"/,
-      );
-    }
-    for (const file of ["lib/client-v1.ts", ...VIA_OWN_FETCH]) {
-      const blocks = [...codeOnly(webSource(file), file).matchAll(/headers:\s*\{([^}]*)/g)].map(
-        (m) => m[1]!,
-      );
-      expect(blocks.length, `${file}: no headers object found — re-point this guard`).toBeGreaterThan(0);
-      // KNOWN-POSITIVE on the same read: the extraction really did capture a
-      // header list, so the negative below is about content and not about an
-      // empty match.
-      expect(blocks.some((b) => /Content-Type/.test(b)), `${file}: headers extraction found no Content-Type`).toBe(true);
-      for (const block of blocks) {
+      apiAuth,
+      "requireOrgAuth no longer rejects device links — a device-link bearer can now reach the freeze branch, and this exemption is void",
+    ).toMatch(/rejectDeviceLink\(req\)/);
+    expect(
+      apiAuth,
+      "rejectDeviceLink no longer throws for a device-link token — re-read the exemption",
+    ).toMatch(/function rejectDeviceLink[\s\S]{0,200}?deviceLinkToken\(req\)[\s\S]{0,200}?throw new HttpError\(\s*403/);
+
+    let headerObjectCount = 0;
+    let sawContentType = false;
+    for (const file of ["lib/client-v1.ts", ...callers]) {
+      const objects = headersObjects(webSource(file), file);
+      const exempt = DEVICE_LINK_CALLERS.includes(file);
+      if (exempt) {
+        const authHeaders = objects.filter((o) => /Authorization/i.test(o));
+        // A STALE EXEMPTION IS A FAULT. If this file stops sending a bearer at
+        // all, it belongs back in the scanned set.
         expect(
-          block,
+          authHeaders.length,
+          `${file} is exempted as a device-link surface but sends no Authorization header any more — remove the exemption`,
+        ).toBeGreaterThan(0);
+        for (const object of authHeaders) {
+          expect(
+            object,
+            `${file}: the exemption covers DEVICE-LINK bearers only — this header is something else, and it would take the caller to the API-key branch`,
+          ).toMatch(/Authorization:\s*`Bearer \$\{token\}`/);
+        }
+        continue;
+      }
+      for (const object of objects) {
+        headerObjectCount += 1;
+        if (/Content-Type/.test(object)) sawContentType = true;
+        expect(
+          object,
           `${file}: an Authorization header would move this caller to the API-key branch, which is NOT freeze-checked — the article's sentence would need re-reading`,
         ).not.toMatch(/Authorization/i);
       }
     }
+    // ANTI-VACUITY on the extraction itself: a walk that parsed nothing would
+    // satisfy every negative above for free.
+    expect(headerObjectCount, "no headers object was extracted — the AST walk is not working").toBeGreaterThan(5);
+    expect(sawContentType, "the extraction found no Content-Type — it is not reading real headers").toBe(true);
+    // The AST must see PAST a spread, which is the hole this replaced.
+    expect(
+      headersObjects(
+        'const r = fetch(u, { headers: { "Content-Type": "application/json", ...(rest.headers ?? {}), Authorization: "x" } });',
+        "probe.ts",
+      ).join(" "),
+      "the extraction stops at the first closing brace again",
+    ).toMatch(/Authorization/);
+    // …and must NOT see JSX documentation text, which is what made a character
+    // window look necessary (`api-keys.tsx` renders "Authorization: Bearer sc_…"
+    // in a <code> block).
+    expect(
+      headersObjects('const El = () => <code>Authorization: Bearer sc_…</code>;', "probe.tsx"),
+    ).toEqual([]);
 
     // The half that IS enforced everywhere is ADMISSION: an invite or a
     // promotion past members.max is refused in the same transaction.

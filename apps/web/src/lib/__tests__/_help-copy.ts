@@ -12,7 +12,7 @@
 // build time, not at test time.
 import type * as TS from "typescript";
 import { createRequire } from "node:module";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { HELP_ROOT } from "@/server/help-content";
 
@@ -347,12 +347,41 @@ export function citationsIn(origin: string, source: string): Citation[] {
 
 let repoIndexCache: Map<string, string[]> | null = null;
 
+/**
+ * The repository root, found by CLIMBING from cwd until a directory contains
+ * both `apps/web` and `package.json` — never by counting `..` segments.
+ *
+ * `join(process.cwd(), "..", "..")` is correct only when cwd is exactly
+ * `apps/web`. Run through `vitest --root apps/web` from the repo root, cwd
+ * stays at the root and `../..` climbs ABOVE the repository — the walk then
+ * indexes some unrelated ancestor directory and the citation check reports
+ * faults for every real file. Measured: 16 phantom failures that way, 0 via
+ * `npm test --workspace apps/web -- run …`.
+ *
+ * Throwing is the point. A guard that silently walks the wrong tree is worse
+ * than one that stops: this one decides whether other people's fixture prose is
+ * trustworthy, and "found nothing, all clear" is the answer nobody should ever
+ * get from it by accident.
+ */
+function repoRoot(): string {
+  let dir = process.cwd();
+  for (let i = 0; i < 8; i += 1) {
+    if (existsSync(join(dir, "apps", "web")) && existsSync(join(dir, "package.json"))) return dir;
+    const parent = join(dir, "..");
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error(
+    `cannot locate the repo root from ${process.cwd()} — run tests from apps/web (or via \`npm test --workspace apps/web\`), not with \`vitest --root apps/web\``,
+  );
+}
+
 /** basename -> every repo-relative path with that basename. Walks the whole
  *  repo, not just `src`, because citations legitimately reach `content/help`,
  *  `db/migration` and the e2e specs. */
 function repoIndex(): Map<string, string[]> {
   if (repoIndexCache) return repoIndexCache;
-  const root = join(process.cwd(), "..", "..");
+  const root = repoRoot();
   const index = new Map<string, string[]>();
   const skip = new Set(["node_modules", ".git", ".next", "dist", ".claude", "coverage"]);
   const walk = (dir: string): void => {
@@ -396,8 +425,21 @@ export function citationFaults(citations: Citation[], known: readonly string[] =
       faults.push(`${c.origin}: cites "${c.path}", which is not a file in this repo`);
       continue;
     }
+    // AMBIGUITY IS A FAULT, not a coin toss. Taking `matches[0]` line-checks
+    // against whichever path the directory walk happened to reach first: bare
+    // `auth.ts` resolves to BOTH `lib/auth.ts` (456 lines) and
+    // `server/api-v1/auth.ts` (347), so `auth.ts:400` validates or fails
+    // depending on walk order — wrong in both directions. Bare `page.tsx`
+    // resolves 107 ways. A reader following an ambiguous citation has the same
+    // problem the checker does, so the fix is the same: qualify the path.
+    if (matches.length > 1) {
+      faults.push(
+        `${c.origin}: cites "${c.path}", which is ambiguous — ${matches.length} files match (${matches.slice(0, 3).join(", ")}${matches.length > 3 ? ", …" : ""}). Qualify the path.`,
+      );
+      continue;
+    }
     if (c.from === null) continue;
-    const lines = readFileSync(join(process.cwd(), "..", "..", matches[0]!), "utf8").split("\n").length;
+    const lines = readFileSync(join(repoRoot(), matches[0]!), "utf8").split("\n").length;
     if (c.to! > lines) {
       faults.push(
         `${c.origin}: cites "${c.path}:${c.from}${c.to === c.from ? "" : `-${c.to}`}", but ${matches[0]} has ${lines} lines`,
@@ -410,4 +452,98 @@ export function citationFaults(citations: Citation[], known: readonly string[] =
     }
   }
   return faults;
+}
+
+// ── The seat freeze's real reach ─────────────────────────────────────────────
+
+/**
+ * Every `headers: { … }` object literal in a source file, as written.
+ *
+ * READ OFF THE AST, not a regex, and this is the twelfth normaliser hole in
+ * this wave. Fix round 6 used `matchAll(/headers:\s*\{([^}]*)/g)`, and `[^}]*`
+ * stops at the FIRST `}` — which in the two files that matter is the one in the
+ * spread:
+ *
+ *     headers: { "Content-Type": "application/json", ...(rest.headers ?? {}) },
+ *
+ * so everything after `?? {` was invisible. Measured: an `Authorization` header
+ * added AFTER the spread in `components/api-keys.tsx` shipped 285/0 GREEN,
+ * while the identical header in `components/org-sponsors.tsx`'s plain object
+ * redded. The guard was blind exactly where the code is interesting.
+ *
+ * The AST also fixes the false-red that made the regex look necessary in the
+ * first place: `api-keys.tsx` renders the literal text "Authorization: Bearer
+ * sc_…" in a `<code>` block as API documentation. That is JSX text, not a
+ * property assignment, so a property-assignment walk never sees it. Scoping by
+ * SYNTAX rather than by character window gets both directions right at once.
+ */
+export function headersObjects(source: string, fileName = "file.tsx"): string[] {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const out: string[] = [];
+  const visit = (node: TS.Node): void => {
+    if (
+      ts.isPropertyAssignment(node) &&
+      (ts.isIdentifier(node.name) || ts.isStringLiteralLike(node.name)) &&
+      node.name.text === "headers"
+    ) {
+      out.push(node.initializer.getText(sourceFile));
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return out;
+}
+
+/**
+ * Every `/api/v1` route file whose handler can reach `assertMemberNotFrozen`
+ * with a WRITE scope — which is what the seat freeze actually blocks.
+ *
+ * BOTH DOORS. `requireOrgAuth` is the one that runs the check, but
+ * `requireResourceAuth(req, kind, id, scope)` resolves the org and then calls
+ * `requireOrgAuth(req, orgId, scope)` — so it is freeze-checked too. Fix round
+ * 6 discovered callers by the single URL prefix `/api/v1/orgs/`, which is the
+ * slice `requireOrgAuth` is used directly on: **13 route files against 88 using
+ * `requireResourceAuth`.** The rule worked perfectly inside its slice and
+ * reported green on the other 85% of the surface, so the article's corrected
+ * sentence named four screens when the true answer is most of the editing
+ * product.
+ *
+ * Returned as paths relative to `src`, so callers can floor the count and see
+ * the walk is looking at a real tree.
+ */
+export function freezeCheckedWriteRoutes(): string[] {
+  return allStrippedSources()
+    .filter(([file]) => file.startsWith("app/api/v1/") && file.endsWith("route.ts"))
+    // `[^)]` already spans newlines, so the `s` flag is unnecessary — and it is
+    // unavailable under this project's ES target (TS1501).
+    .filter(([, src]) => /require(?:Org|Resource)Auth\([^)]*"write"/.test(src))
+    .map(([file]) => file)
+    .sort();
+}
+
+/**
+ * The URL prefixes those routes answer on: everything up to the first dynamic
+ * segment, which is the part an in-app caller writes as a literal before
+ * interpolating an id.
+ *
+ * `app/api/v1/divisions/[id]/route.ts` -> `/api/v1/divisions/`.
+ */
+export function freezeCheckedUrlPrefixes(routes: readonly string[]): string[] {
+  const out = new Set<string>();
+  for (const route of routes) {
+    const segments = route.slice("app/api/v1/".length).split("/").slice(0, -1);
+    const fixed: string[] = [];
+    for (const segment of segments) {
+      if (segment.startsWith("[")) break;
+      fixed.push(segment);
+    }
+    out.add(`/api/v1/${fixed.join("/")}/`);
+  }
+  return [...out].sort();
 }
