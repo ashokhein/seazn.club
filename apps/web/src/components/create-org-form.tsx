@@ -454,7 +454,16 @@ export function CreateOrgForm({
                     <li key={group.id}>
                       <Link
                         href={href}
-                        className="inline-flex rounded-sm px-1 py-1.5 text-xs font-semibold text-purple-700 underline decoration-purple-300 underline-offset-2 hover:text-purple-800 hover:decoration-purple-500"
+                        // This label INTERPOLATES a name, and at 375px a long
+                        // unbroken organisation name runs it ~860px past the
+                        // right edge, where it is CLIPPED rather than scrolled
+                        // — unreadable, and invisible to an overflow check.
+                        // `overflow-wrap: anywhere`, not `break-words`
+                        // (`break-word`): only the former shrinks the element's
+                        // min-content width, which is what an inline-block is
+                        // sized from. Measured both. The row's own link takes
+                        // no name and needs none.
+                        className="inline-block [overflow-wrap:anywhere] rounded-sm px-1 py-1.5 text-xs font-semibold text-purple-700 underline decoration-purple-300 underline-offset-2 hover:text-purple-800 hover:decoration-purple-500"
                       >
                         {msg("orgNew.bill.reasonFullCtaFor", {
                           name: groupLabel(group),
