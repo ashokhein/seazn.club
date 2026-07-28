@@ -811,6 +811,75 @@ export async function sendPassCreditReversalIncompleteAlertEmail(
   return send({ to: opts.to, transactional: true, subject, html, text });
 }
 
+export interface PassRungMismatchAlertEmail {
+  to: string;
+  /** The checkout session that was refused. The whole investigation starts
+   *  here: it names the price, the customer and the payment intent. */
+  sessionId: string;
+  orgId: string;
+  competitionId: string;
+  /** The rung the session's METADATA claimed — what the buyer would have been
+   *  entitled to had this minted. */
+  passKey: PassKey;
+  /** `plans.stripe_price_id_onetime` for that rung: what the session SHOULD
+   *  have been built on. */
+  expectedPriceId: string;
+  /** The price the session's line item actually carries — i.e. what the buyer
+   *  was charged for. Null when the session reported no line item at all. */
+  actualPriceId: string | null;
+  /** The payment intent, so the charge can be found (and refunded) without
+   *  opening the session first. Null on a session with none. */
+  paymentIntent: string | null;
+}
+
+/** Internal staff alert (v17 gap #326): a PAID Event Pass checkout session was
+ *  built on one rung's Stripe price while its metadata named a DIFFERENT rung,
+ *  so the pass was NOT minted — minting it would have entitled the buyer to a
+ *  rung they did not pay for (or charged them for one they will not get).
+ *  Nothing about which side is wrong can be inferred from here, so the mint
+ *  refuses rather than guessing, exactly like the "undetermined" arm of
+ *  `sendPassCreditReversalIncompleteAlertEmail`. A human must decide whether to
+ *  refund the charge or grant the pass by hand, and then fix the desync (a
+ *  stale `stripe:sync`, a price id edited in the Dashboard, a new rung wired to
+ *  the wrong lookup key). The buyer has been charged and holds nothing —
+ *  this is urgent. Ops-only, no user-facing i18n (mirrors
+ *  sendCreditPackGrantFailedAlertEmail). */
+export async function sendPassRungMismatchAlertEmail(
+  opts: PassRungMismatchAlertEmail,
+): Promise<boolean> {
+  const subject = `Event Pass NOT granted — price/rung mismatch: ${opts.sessionId}`;
+  const bodyText =
+    `A paid Event Pass checkout session (${opts.sessionId}, org ${opts.orgId}, competition ` +
+    `${opts.competitionId}) named rung ${opts.passKey} in its metadata, but the session was ` +
+    `built on price ${opts.actualPriceId ?? "(no line item)"} while that rung's configured ` +
+    `one-time price is ${opts.expectedPriceId}. The buyer WAS CHARGED and NO pass was granted ` +
+    `— granting it would have handed out a rung that was not paid for, and there is no safe way ` +
+    `to tell which of the two is the correct one. Decide manually: refund the charge, or record ` +
+    `the pass at the rung actually paid for. Then find the desync — a stale stripe:sync, a price ` +
+    `id changed in the Dashboard, or a rung wired to the wrong lookup key.`;
+  const html = renderEmail({
+    subject,
+    preheader: `Paid Event Pass ungranted — org ${opts.orgId}`,
+    eyebrow: "Billing · Event Pass",
+    title: "Event Pass rung/price mismatch",
+    contentHtml:
+      paragraph(escapeHtml(bodyText)) +
+      panel(
+        "Session",
+        `${opts.sessionId}\norg: ${opts.orgId}\ncompetition: ${opts.competitionId}\n` +
+          `metadata pass_key: ${opts.passKey}\nexpected price: ${opts.expectedPriceId}\n` +
+          `actual price: ${opts.actualPriceId ?? "(no line item)"}\n` +
+          `payment intent: ${opts.paymentIntent ?? "(none)"}`,
+      ),
+    footerNote: "Automated staff alert — Event Pass mint guard (v17 gap #326).",
+  });
+  const text =
+    `${bodyText}\n\nSession: ${opts.sessionId} · org ${opts.orgId} · rung ${opts.passKey} · ` +
+    `expected ${opts.expectedPriceId} · actual ${opts.actualPriceId ?? "(no line item)"} · ` +
+    `payment intent ${opts.paymentIntent ?? "(none)"}`;
+  return send({ to: opts.to, transactional: true, subject, html, text });
+}
+
 export interface AiRunCostAlertEmail {
   to: string;
   orgId: string;

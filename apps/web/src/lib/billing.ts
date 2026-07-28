@@ -14,6 +14,7 @@ import { grantTrialForRow, recordPassGrant, recordPassRefund, walletIdFor } from
 import { isPassKey, type PassKey } from "@/lib/currency";
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
 import { creditPassTowardSubscription } from "@/server/usecases/pass-credit";
+import { sendPassRungMismatchAlertEmail } from "@/lib/email";
 
 /**
  * Checkout branding (verified against API 2026-06-24.dahlia). Kept in code
@@ -1011,6 +1012,143 @@ export function passKeyForSession(session: Stripe.Checkout.Session): PassKey | n
 }
 
 /**
+ * Does the price this session was actually built on agree with the rung its
+ * metadata names? (v17 gap #326.)
+ *
+ * `pass_key` is server-written, so this is not a tampering guard — the risk is
+ * entirely internal. Both mint paths take the rung from metadata and NOTHING
+ * cross-checked it against the price the buyer was charged, so a desync between
+ * the checkout route's price lookup and its metadata stamp — a stale
+ * `stripe:sync`, a price id edited in the Dashboard, a future third rung wired
+ * to the wrong lookup key — produced a customer who paid $29 and held the $59
+ * rung (or the reverse) with no error, no failing test, and nothing in the data
+ * to find it by afterwards. The W5 review reproduced exactly that by making the
+ * checkout route resolve M's price for every rung. The two pre-sale witnesses
+ * that catch it (`e2e/event-pass.spec.ts`, `pass-checkout-l.live.test.ts`) are
+ * both opt-in and neither runs in CI, and after a sale completes nothing looked
+ * again.
+ *
+ * Returns `false` to REFUSE the mint. Refusing (and alerting) rather than
+ * guessing is the posture this codebase already takes for an undetermined pass
+ * credit reversal: nothing here can tell which of the two sides is the wrong
+ * one, so minting either rung is a coin flip with the customer's money, while a
+ * refusal is fully recoverable by a human who can see both numbers.
+ *
+ * **Fail-OPEN wherever the comparison cannot be made**, and each case is a
+ * deliberate choice, not an oversight:
+ *
+ *  - **No `plans` row, or a NULL `stripe_price_id_onetime` for the rung.** This
+ *    is the NORMAL state of every environment `stripe:sync` has not been run
+ *    against, including the test database. It is also not a state a new session
+ *    can be created in: the checkout route reads the same column and 503s on a
+ *    NULL, so the only sessions that can reach here are older than the wipe.
+ *    Checked FIRST, before any Stripe call, so the common unconfigured case
+ *    costs one indexed read and nothing else — the same "cheap guard first"
+ *    discipline as the maybeAlert* wrappers.
+ *  - **The line-item lookup threw, or the session reports no line item.** A
+ *    transient Stripe failure must not convert a good purchase into a
+ *    non-purchase; that would be a far larger blast radius than the internal
+ *    desync this guards. Logged, because unlike the case above it IS anomalous.
+ *
+ * The line items are read with `listLineItems` rather than by re-retrieving the
+ * session with `expand: ["line_items"]`, so there is ONE code path: the webhook
+ * holds a session that came off an event payload (which can carry no expansion
+ * at all) and reconcile-on-return holds one it retrieved itself. Making the
+ * guard depend on the caller having expanded would put a silent hole in
+ * whichever mint path forgot.
+ */
+export async function passSessionRungMatchesPrice(
+  session: Stripe.Checkout.Session,
+  passKey: PassKey,
+  orgId: string,
+): Promise<boolean> {
+  const [row] = await sql<{ price_id: string | null }[]>`
+    select stripe_price_id_onetime as price_id from plans where key = ${passKey}`;
+  const expectedPriceId = row?.price_id ?? null;
+  // Unconfigured, not mismatched — nothing to compare against. See above.
+  if (!expectedPriceId) return true;
+
+  let actualPriceId: string | null;
+  try {
+    // limit 2 rather than 1: a pass session is built with exactly one line item
+    // (buildPassCheckoutParams), and reading two lets a session that somehow
+    // carries more be recognised as not-a-single-rung rather than silently
+    // judged on whichever happened to come first.
+    const items = await getStripe().checkout.sessions.listLineItems(session.id, { limit: 2 });
+    const prices = items.data.map((i) => i.price?.id ?? null);
+    actualPriceId = prices.length === 1 ? prices[0]! : null;
+  } catch (err) {
+    console.error(
+      `[billing] could not read line items for pass session ${session.id} (org ${orgId}) — ` +
+        `minting ${passKey} unverified`,
+      err,
+    );
+    return true;
+  }
+  if (!actualPriceId) {
+    console.error(
+      `[billing] pass session ${session.id} (org ${orgId}) reported no single line-item price — ` +
+        `minting ${passKey} unverified`,
+    );
+    return true;
+  }
+  if (actualPriceId === expectedPriceId) return true;
+
+  console.error(
+    `[billing] pass session ${session.id} (org ${orgId}) names rung ${passKey} ` +
+      `(price ${expectedPriceId}) but was built on price ${actualPriceId} — ` +
+      `REFUSING to mint; the buyer was charged and holds nothing`,
+  );
+  await maybeAlertPassRungMismatch({
+    sessionId: session.id,
+    orgId,
+    competitionId: session.metadata?.competition_id ?? "(unknown)",
+    passKey,
+    expectedPriceId,
+    actualPriceId,
+    paymentIntent: typeof session.payment_intent === "string" ? session.payment_intent : null,
+  });
+  return false;
+}
+
+/**
+ * Best-effort staff alert for the mismatch above (v17 gap #326). NEVER THROWS,
+ * and gated on STAFF_ALERT_EMAIL before anything else — the same shape as
+ * `maybeAlertOrgAllowance` (server/usecases/extra-orgs.ts) and
+ * `maybeAlertOrgRepriceFailed` (server/usecases/billing-events.ts), which this
+ * deliberately mirrors. Ops-only: `sendPassRungMismatchAlertEmail` carries no
+ * i18n, like every other staff alert in lib/email.ts.
+ *
+ * The own try/catch is not redundant with the caller's: it sits on the webhook's
+ * path, where a throw would turn "one pass was not granted" into "this webhook
+ * fails and retries for ever", i.e. the telemetry would be a strictly worse
+ * outcome than the fault it reports.
+ *
+ * Exported so the never-throws contract can be tested DIRECTLY rather than
+ * through a caller's own catch, which would hide a missing wrapper.
+ */
+export async function maybeAlertPassRungMismatch(opts: {
+  sessionId: string;
+  orgId: string;
+  competitionId: string;
+  passKey: PassKey;
+  expectedPriceId: string;
+  actualPriceId: string | null;
+  paymentIntent: string | null;
+}): Promise<void> {
+  try {
+    const alertTo = process.env.STAFF_ALERT_EMAIL;
+    if (!alertTo) return;
+    await sendPassRungMismatchAlertEmail({ to: alertTo, ...opts });
+  } catch (err) {
+    console.error(
+      `[billing] pass rung mismatch alert failed (session ${opts.sessionId})`,
+      err,
+    );
+  }
+}
+
+/**
  * Reconcile a completed Event Pass checkout directly from Stripe (same
  * webhook-optional contract as reconcileCheckout). Returns true once the pass
  * is recorded. Best-effort and idempotent; never throws.
@@ -1027,6 +1165,12 @@ export async function reconcilePassCheckout(
     if (session.metadata?.org_id !== orgId) return false;
     const competitionId = session.metadata.competition_id;
     if (!competitionId || session.payment_status !== "paid") return false;
+    // The rung named in the metadata must agree with the price actually
+    // charged, or nothing is minted (v17 gap #326). Refusing reports `false`,
+    // which this function's contract already means as "nothing to reconcile" —
+    // and it is the truth: the upgrade page renders no pass, which is exactly
+    // what the buyer holds. The staff alert inside is what makes it recoverable.
+    if (!(await passSessionRungMatchesPrice(session, passKey, orgId))) return false;
     const res = await recordPassPurchase({
       orgId,
       competitionId,

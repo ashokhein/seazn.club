@@ -11,6 +11,7 @@ import {
   linkStripeCustomerForGroup,
   linkStripeCustomer,
   passKeyForSession,
+  passSessionRungMatchesPrice,
   pinBillingCurrency,
   recordPassPurchase,
   refundDuplicatePassPayment,
@@ -209,6 +210,12 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   if (passKey) {
     const competitionId = session.metadata?.competition_id;
     if (competitionId && session.payment_status === "paid") {
+      // Same mint guard as reconcile-on-return (v17 gap #326) — the check lives
+      // in ONE place (lib/billing.ts) precisely so the two paths cannot drift on
+      // what a session means, exactly like passKeyForSession above it. ACK the
+      // webhook either way: nothing here is retryable into a better outcome, a
+      // human must decide (the guard has already alerted them).
+      if (!(await passSessionRungMatchesPrice(session, passKey, orgId))) return;
       const res = await recordPassPurchase({
         orgId,
         competitionId,
