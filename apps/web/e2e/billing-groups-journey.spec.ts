@@ -201,7 +201,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     const dialog = dialogOf(page);
     await expect(dialog).toBeVisible();
     // Seats are full, so this move costs money and the dialog has to say so.
-    await expect(dialog).toContainText("your bill goes up by half your plan's rate");
+    await expect(dialog).toContainText("your bill goes up by no more than half the base rate");
     await shot(dialog, "attach-confirm-charged");
   });
 

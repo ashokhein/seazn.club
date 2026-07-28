@@ -256,7 +256,7 @@ test.describe.serial("billing groups", () => {
     await panel.getByRole("button", { name: `Group C ${TAG}` }).click();
     const dialog = page.getByRole("alertdialog");
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText("your bill goes up by half your plan's rate");
+    await expect(dialog).toContainText("your bill goes up by no more than half the base rate");
     await expect(dialog).toContainText("charged now");
     await page.keyboard.press("Escape");
   });

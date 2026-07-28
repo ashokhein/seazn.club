@@ -1,6 +1,6 @@
 ---
 title: One subscription, several organisations
-description: A billing group pays for more than one organisation on a single card and a single invoice — extra organisations are half price, and every one of them runs on the group's plan.
+description: A billing group pays for more than one organisation on a single card and a single invoice — extra organisations cost no more than half the base rate, and every one of them runs on the group's plan.
 order: 4
 ---
 
@@ -10,7 +10,7 @@ A subscription isn't tied to one organisation. It's a **billing group**: one pla
 
 Two things, and the second is usually the bigger one.
 
-**A cheaper bill.** The first organisation pays the plan's normal rate. Every organisation after that is **half** — Pro is $19/month plus $9/month each, Pro Plus is $39/month plus $19/month each. Annually that's $159 plus $79, and $327 plus $163. Eight clubs on Pro Plus annually come to $1,468 for the group, against eight separate Pro subscriptions at $1,272 — and the group buys the 1% entry-fee rate for all eight.
+**A cheaper bill.** The first organisation pays the plan's normal rate. Every organisation after that costs **no more than half the base rate** — Pro is $19/month plus $9/month each, Pro Plus is $39/month plus $19/month each. Annually that's $159 plus $79, and $327 plus $163. Eight clubs on Pro Plus annually come to $1,468 for the group, against eight separate Pro subscriptions at $1,272 — and the group buys the 1% entry-fee rate for all eight.
 
 **A cheaper entry-fee rate.** Every organisation in the group runs on the *group's* plan, so the platform fee on entry fees follows it:
 
@@ -38,7 +38,7 @@ A new organisation starts on its **own** bill — its own plan and invoice. You 
 
 Adding is done by someone who owns **both** the organisation being added and the group it's joining — admins run the competition, not the money.
 
-- The bill goes up by half the plan rate straight away, prorated to the rest of the period.
+- The bill goes up by no more than half the base rate straight away, prorated to the rest of the period.
 - The organisation is on the group's plan **immediately** — limits, features and the entry-fee rate all change the same second. The lower rate applies to competitions that haven't taken a payment yet; one that already has an entrant paid keeps the rate it locked (see [below](#the-entry-fee-rate-locks-when-sales-start)).
 - Added during the group's free trial, it rides the same trial to the same end date and costs nothing now.
 - An organisation that already has its own live subscription can't be added yet. Cancel it, or wait for it to lapse.
@@ -50,8 +50,8 @@ If the extra charge fails, the organisation stays in the group — it doesn't ge
 
 The added organisation becomes an extra **seat on the bill you already have** — never a new, separate subscription. So it inherits your bill's shape:
 
-- **On a monthly bill** it's the half rate per month (Pro **+$9/mo**, Pro Plus **+$19/mo**), prorated for the rest of the current month and charged now.
-- **On an annual bill** it's the half rate per **year** (Pro **+$79/yr**, Pro Plus **+$163/yr**), prorated for the rest of the current year and charged now — it renews on your existing annual date, not a new one. Mid-year, "now" is only the slice of the year that's left; the full half-rate lands at your next renewal.
+- **On a monthly bill** it's no more than half the base rate per month (Pro **+$9/mo**, Pro Plus **+$19/mo**), prorated for the rest of the current month and charged now.
+- **On an annual bill** it's no more than half the base rate per **year** (Pro **+$79/yr**, Pro Plus **+$163/yr**), prorated for the rest of the current year and charged now — it renews on your existing annual date, not a new one. Mid-year, "now" is only the slice of the year that's left; the full amount lands at your next renewal.
 
 You never guess the figure: the "Add to an existing bill" step shows the **exact amount you'll be charged now**, taken live from Stripe, before you confirm.
 
@@ -134,7 +134,7 @@ Each organisation keeps its own Stripe account, its own verification, its own ba
 
 ## Common questions
 
-**Do the group's organisations share limits?** No. Quotas — team members, clubs, active competitions, public dashboards — are per organisation. Three organisations on Pro get three organisations' worth of everything, and that headroom is what the extra half-price rate buys.
+**Do the group's organisations share limits?** No. Quotas — team members, clubs, active competitions, public dashboards — are per organisation. Three organisations on Pro get three organisations' worth of everything, and that headroom is what the extra organisation's rate buys.
 
 **The bill says it's full — do we have to upgrade?** Only on Community, which covers one organisation and sells nothing to raise that. On **Pro and Pro Plus**, a full bill is a purchase rather than a plan change: buy an extra organisation under **Settings → Add-ons** and the limit goes up by one for the whole group. It's a recurring add-on billed every month on top of your current bill, on its own cadence — so an annual group pays for it monthly, and the Add-ons tab shows the exact amount in your currency before you confirm.
 

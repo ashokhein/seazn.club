@@ -525,4 +525,51 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
       nl: "Elke organisatie na de eerste kost hoogstens de helft van het basistarief. Ze gaat ook over op het inschrijfgeldpercentage van je abonnement — 2% op Pro of 1% op Pro Plus, in plaats van de 8% die een gratis organisatie betaalt.",
     },
   },
+  // ── The remaining three half-rate surfaces (v17 gap wave 7, task 7 round 2) ──
+  //
+  // Round 1 reported these as a follow-up and scoped them out. That was the
+  // wrong call and the review ruled them in: leaving the identical falsehood on
+  // surfaces ADJACENT to the ones just corrected is how this claim family has
+  // survived four rounds. With these three the axis is closed — every key in
+  // the repo that states the extra-organisation rate is pinned, which is what
+  // makes `HALF_CLAIM_KEYS` a decision instead of a list somebody stopped
+  // adding to.
+  //
+  // Two of the three were invisible to `en.halfClaim` as it stood ("half
+  // price", "half the plan rate"), so the vocabulary was widened in the same
+  // change. The pin does not depend on that widening — it never did — but the
+  // secondary net should not have a hole this claim has already walked through.
+  {
+    file: "marketing",
+    key: "pricing.matrix.orgs.max_owned.note",
+    why: "the extra-organisation rate, in the /pricing comparison matrix's own footnote on the orgs.max_owned row. Said 'half your plan's rate' bare. Same arithmetic as pricing.faq.groups.a: the seed rounds the rider DOWN (usd pro 1900 -> 900 = 47.4%) while eur/aud are exact halves, so only 'no more than half' is true in all twenty plan x interval x currency combinations. Source of truth: config/stripe-plans.json graduated tiers, via riderClaimShape. The entry-fee half of the sentence is registration.fee_percent and is unchanged.",
+    text: {
+      en: "Each extra organisation costs no more than half the base rate, and takes your plan's entry-fee rate",
+      es: "Cada organización adicional cuesta no más de la mitad de la tarifa base y adopta la comisión de inscripción de tu plan",
+      fr: "Chaque organisation supplémentaire coûte au plus la moitié du tarif de base et adopte le taux de frais d'inscription de votre forfait",
+      nl: "Elke extra organisatie kost hoogstens de helft van het basistarief en krijgt het inschrijfkostenpercentage van je abonnement",
+    },
+  },
+  {
+    file: "ui",
+    key: "orgNew.bill.addToExistingHint",
+    why: "the extra-organisation rate, sitting directly above the create-organisation picker's 'add to an existing bill' control — so it is read as the rate that choice will charge. Said 'half price', which en.halfClaim did not match and nl.halfClaim did not match either ('voor de helft van de prijs' needed the determiner to be optional); both were widened. Source of truth: config/stripe-plans.json graduated tiers, via riderClaimShape.",
+    text: {
+      en: "Every extra organisation costs no more than half the base rate, on the same card and invoice.",
+      es: "Cada organización adicional cuesta no más de la mitad de la tarifa base, en la misma tarjeta y factura.",
+      fr: "Chaque organisation supplémentaire coûte au plus la moitié du tarif de base, sur la même carte et la même facture.",
+      nl: "Elke extra organisatie kost hoogstens de helft van het basistarief, op dezelfde kaart en factuur.",
+    },
+  },
+  {
+    file: "ui",
+    key: "billing.group.attach.confirmCharge",
+    why: "the extra-organisation rate in the ATTACH CONFIRMATION DIALOG — the last sentence a payer reads before agreeing to a charge, and the only one of these surfaces asserted by e2e (billing-groups.spec.ts, billing-groups-journey.spec.ts), which move with it. Said 'half your plan's rate' bare. Source of truth: config/stripe-plans.json graduated tiers, via riderClaimShape. 'charged now, prorated to the rest of this period' is the ATTACH path (syncGroupQuantity), which does invoice immediately — deliberately NOT the add-on path, which prorates onto the next invoice.",
+    text: {
+      en: "{org} moves onto this plan straight away, and your bill goes up by no more than half the base rate — charged now, prorated to the rest of this period.",
+      es: "{org} pasa a este plan de inmediato y tu factura sube no más de la mitad de la tarifa base, con cargo ahora y prorrateado al resto de este periodo.",
+      fr: "{org} passe sur cette formule immédiatement, et votre facture augmente d'au plus la moitié du tarif de base — prélevé maintenant, au prorata du reste de la période.",
+      nl: "{org} gaat meteen over op dit abonnement en je factuur stijgt met hoogstens de helft van het basistarief — nu in rekening gebracht, naar rato van de rest van deze periode.",
+    },
+  },
 ];

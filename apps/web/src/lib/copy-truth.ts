@@ -1396,7 +1396,18 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
     recurring: RECURRING_GRANT_PATTERNS,
     plusClaims: PLUS_DIFFERENTIATOR_VOCAB,
     creditLeadership: /\b(largest|biggest|highest)\b[^,.;]{0,30}\bcredit/i,
-    halfClaim: /\bhalf\s+the\s+base\s+rate\b|\bhalf\s+(your|the)\s+plan['’]s\s+rate\b/i,
+    // WIDENED, fix round 4. The first three alternatives are the phrases the
+    // corrected copy uses; the last two are the ones the SHIPPED copy used and
+    // this pattern could not see — "half price" (`orgNew.bill.addToExistingHint`,
+    // `groups.md`'s frontmatter, "the extra half-price rate" in its Q&A) and a
+    // bare "half the rate" / "half the plan rate"
+    // (`getting-started/create-your-organisation.md`, `groups.md:41`). Four key
+    // families and two whole help articles carried the claim in a shape this
+    // regex did not match, which is why the axis in the suites below is the
+    // primary defence and this is the secondary one. Widening it moves the
+    // committed lexical rates, which are re-measured rather than adjusted.
+    halfClaim:
+      /\bhalf\s+the\s+base\s+rate\b|\bhalf\s+(your|the)\s+plan['’]s\s+rate\b|\bhalf[-\s]price[ds]?\b|\bhalf\s+the\s+(plan\s+)?rate\b/i,
     atMostHalf: /\b(no\s+more\s+than|at\s+most|up\s+to)\s+half\b/i,
     rateSubject: /\b(platform\s+fees?|entry[-\s]fees?|fees?|rates?|percentage|commission)\b|\d+(\.\d+)?\s*%/i,
     passSubject: /\b(pass|passes|upgrade[ds]?|competition|event)\b/i,
@@ -1626,7 +1637,13 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
       ["support.priority", claim(String.raw`\bprioritaire\s+onderst\w+\b`)],
     ],
     creditLeadership: claim(String.raw`\b(grootste|hoogste)\b[^,.;]{0,30}\bcredit`),
-    halfClaim: claim(String.raw`\bhelft\s+van\s+het\s+(basistarief|tarief\s+van\s+je\s+abonnement)\b|\bhalve\s+(prijs|tarief)\b`),
+    // `\bhelft\s+van\s+het\s+…` required "het", so the shipped
+    // `orgNew.bill.addToExistingHint` — "voor de helft van DE prijs" — was
+    // invisible, the Dutch twin of the English "half price" hole. The
+    // determiner is now optional and `prijs` joins the noun list.
+    halfClaim: claim(
+      String.raw`\bhelft\s+van\s+(het|de)\s+(basistarief|prijs|tarief\s+van\s+je\s+abonnement)\b|\bhalve\s+(prijs|tarief)\b`,
+    ),
     atMostHalf: claim(String.raw`\b(hoogstens|maximaal|ten\s+hoogste|niet\s+meer\s+dan)\s+(de\s+)?helft\b`),
     rateSubject: claim(String.raw`\b(kosten|tarief|percentage|commissie)\b|\d+(\.\d+)?\s*%`),
     passSubject: claim(String.raw`\b(pass|passes|upgrade\w*|competitie\w*|evenement\w*)\b`),

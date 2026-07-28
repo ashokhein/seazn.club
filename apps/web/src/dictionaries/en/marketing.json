@@ -132,7 +132,7 @@
   "pricing.matrix.fees": "Platform fee on entry fees",
   "pricing.matrix.competitions.max_active": "Active competitions",
   "pricing.matrix.orgs.max_owned": "Organisations on one bill",
-  "pricing.matrix.orgs.max_owned.note": "Each extra organisation is half your plan's rate, and takes your plan's entry-fee rate",
+  "pricing.matrix.orgs.max_owned.note": "Each extra organisation costs no more than half the base rate, and takes your plan's entry-fee rate",
   "pricing.matrix.divisions.per_competition.max": "Divisions per competition",
   "pricing.matrix.entrants.per_division.max": "Entrants per division",
   "pricing.matrix.members.max": "Team members",

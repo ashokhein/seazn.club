@@ -33,6 +33,7 @@ import {
   goldenParagraphFaults,
   inventoryFaults,
   claimTexts,
+  LOCALE_CLAIMS,
   localeHalfClaimFaults,
   riderClaimShape,
   type LocalisedValue,
@@ -51,8 +52,9 @@ import {
   unqualifiedFeeReversionFaults,
 } from "@/lib/copy-truth";
 import { HELP_ARTICLE_SLUGS, helpUrl } from "@/lib/help";
+import { allHelpArticles } from "@/server/help-content";
 import { TIPS } from "@/config/tips";
-import { helpArticle, webSource } from "./_help-copy";
+import { allSourceFiles, helpArticle, webSource } from "./_help-copy";
 import {
   APPROVED_EVENT_PASS,
   APPROVED_EVENT_PASS_INVENTORY,
@@ -85,6 +87,8 @@ const KNOWN_GAPS = [
   "billing/downgrade.md:28 — 'the rate returns to 8%', same missing V312 qualifier (#303)",
   "scheduling/ai-scheduling.md — retired per-division run-cap table and hourly brake (#303)",
   "lib/pricing-cards.ts + e2e/pro-plus-tier.spec.ts — card bullets pinned verbatim (#303)",
+  "config/tips.ts + dictionaries/*/ui.json — tips.schedule.save-points.body is stale on BOTH sides vs schedule.checkpoints.max (community 2 since V319, pro 5, pro_plus unlimited); documented as the tip-mirror exception in dictionary-copy-truth.test.ts (#303)",
+  "content/help/** link TARGETS are invisible to the inventory gate — claimSurfaces reduces [text](/url) to text, so repointing a URL raises 0 faults (sibling of the link-TITLE hole, #338)",
 ];
 
 const eventPass = helpArticle("event-pass");
@@ -1037,6 +1041,75 @@ describe("the add-ons article says what the billing code actually does", () => {
 // same read before asserting the negative, so a rename reds rather than
 // quietly making the guard vacuous.
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// THE HALF-RATE CLAIM ACROSS THE WHOLE HELP TREE (fix round 2).
+//
+// Round 1 pinned the claim in the dictionaries and left the help tree alone.
+// The review found it live in TWO articles — `billing/groups.md` six times
+// (frontmatter included) and `getting-started/create-your-organisation.md`
+// once, a file nothing in this wave had opened. Neither was scanned by any
+// suite, and neither was in KNOWN_GAPS, so both were oversights rather than
+// decisions.
+//
+// The fix is not "scan those two". It is to compute WHICH ARTICLES MAKE THE
+// CLAIM from the tree itself: a new article that states the rate reds this
+// suite until someone puts it on the axis. That is the same shape as
+// `FAQ_PASS_SCOPED` in the dictionary suite, and it is the only version that
+// survives somebody writing a fifth article.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("every help article stating the extra-organisation rate states it honestly", () => {
+  /** Article slug -> its claim text, for every article whose prose makes a
+   *  half-rate claim in ANY shape the English vocabulary knows. Computed, not
+   *  listed. */
+  const claiming = new Map<string, string>();
+  for (const article of allHelpArticles().values()) {
+    const text = claimTexts(article.markdown).join(". ");
+    if (LOCALE_CLAIMS.en.halfClaim.test(text)) claiming.set(article.slug, text);
+  }
+
+  /** The axis, pinned. Adding an article that states the rate is a decision. */
+  const ON_THE_AXIS = [
+    "billing/add-ons",
+    "billing/groups",
+    "getting-started/create-your-organisation",
+  ];
+
+  it("knows exactly which articles make the claim", () => {
+    expect([...claiming.keys()].sort()).toEqual(ON_THE_AXIS);
+    // ANTI-VACUITY: a vocabulary that drifted narrow would sweep nothing in and
+    // every article below would pass by never being examined.
+    expect(claiming.size, "no article was classified at all").toBeGreaterThan(2);
+  });
+
+  it("states it in the shape the seed licenses, in all of them", () => {
+    const shape = riderClaimShape(stripePlans.plans as unknown as PricedPlan[]);
+    for (const [slug, text] of claiming) {
+      expect(
+        localeHalfClaimFaults([{ locale: "en", key: `content/help/${slug}.md`, value: text }], shape),
+        slug,
+      ).toEqual([]);
+    }
+  });
+
+  // …and the rule really fires on the wording each article actually shipped.
+  // Absence of faults proves "honest" only if the dishonest form would fault.
+  it("faults the exact phrasings these two articles carried", () => {
+    for (const shipped of [
+      "Every organisation after that is half the base rate",       // groups.md:13
+      "extra organisations are half price",                        // groups.md frontmatter
+      "The bill goes up by half the plan rate straight away",      // groups.md:41
+      "that headroom is what the extra half-price rate buys",      // groups.md:137
+      "each one after the first at half the rate",                 // create-your-organisation.md:25
+      "each organisation after the first is half your plan's rate", // the dictionaries
+    ]) {
+      expect(
+        localeHalfClaimFaults([{ locale: "en", key: "x", value: shipped }], "atMost"),
+        shipped,
+      ).not.toEqual([]);
+    }
+  });
+});
+
 describe("the add-ons article's behaviour claims are pinned to the code", () => {
   // CLAIM: "An extra seat freezes members … An extra organisation does not
   // freeze anything." Round 1 said the excess freezes for BOTH.
@@ -1106,6 +1179,42 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
       "You'll pay the difference for the rest of this billing period.",
     );
     expect(prorateUp).not.toMatch(/\bnow\b/i);
+  });
+
+  // CLAIM: "Extra seats have no control in Settings yet" / "Size packs have no
+  // control in Settings yet either." True today and the single most rot-prone
+  // sentence on the page: the day somebody builds either control, the article
+  // starts telling customers to email support for a button that is on screen.
+  // Nothing about the copy can detect that, so this watches the CODE.
+  it("says 'no control in Settings yet' only while that is still true", () => {
+    // The purchase entry points. A control means a component or page reaching
+    // for one of these — the API routes and the usecases themselves are not
+    // evidence of a UI, which is exactly the distinction the sentence makes.
+    for (const [addOn, route] of [
+      ["extra seats", "/api/billing/extra-seats"],
+      ["size packs", "/api/billing/size-pack-checkout"],
+    ] as const) {
+      const callers = [...allSourceFiles()]
+        .filter(([file]) => file.startsWith("components/") || file.startsWith("app/"))
+        .filter(([file, source]) => !file.includes("__tests__") && source.includes(route))
+        // The route handler itself lives under app/ and always mentions its own
+        // path; it is the thing being called, not a caller.
+        .filter(([file]) => !file.startsWith(`app${route}/`))
+        .map(([file]) => file);
+      expect(
+        callers,
+        `${addOn} now has a caller in the UI — content/help/billing/add-ons.md still says there is no control in Settings, and that sentence has to go`,
+      ).toEqual([]);
+    }
+    // KNOWN-POSITIVE on the same read: the routes DO exist, so the walk is
+    // looking at a real tree and an empty result means "no UI", not "no files".
+    const files = [...allSourceFiles()];
+    expect(files.length, "the source walk found nothing").toBeGreaterThan(200);
+    expect(
+      files.some(([f]) => f === "app/api/billing/extra-seats/route.ts"),
+      "the extra-seats route moved — re-point this guard",
+    ).toBe(true);
+    expect(addOns.match(/no control in Settings yet/g) ?? []).toHaveLength(2);
   });
 
   // CLAIM: the rider matches the half rate monthly but NOT annually — "about a
@@ -1229,8 +1338,16 @@ describe("the add-ons gate catches what the vocabulary cannot", () => {
     "Buying a second size pack for the same competition replaces the first.",
   ];
 
-  it("scores 4/12 and 1/12 lexically — the gate is doing the work", () => {
-    expect(PATTERNS_OWN_SET.filter(lexicalOnly).length, "the pattern's own set").toBe(4);
+  // RE-MEASURED after the vocabulary was widened in fix round 2, not adjusted
+  // to keep a number green. `en.halfClaim` gained "half price" and a bare "half
+  // the (plan) rate" — the two shapes the shipped help articles used — so the
+  // pattern's own set moved 4 -> 5 ("Extra organisations are half price" is now
+  // caught) while the fresh set did not move at all. That is the finding, and
+  // it is the same one this wave keeps making: widening a vocabulary improves
+  // it only against the examples the widener was looking at. The gate is
+  // unmoved at 24/24 because it does not read the words.
+  it("scores 5/12 and 1/12 lexically — the gate is doing the work", () => {
+    expect(PATTERNS_OWN_SET.filter(lexicalOnly).length, "the pattern's own set").toBe(5);
     expect(FRESH_SET.filter(lexicalOnly).length, "a set written after the rules were final").toBe(1);
   });
 

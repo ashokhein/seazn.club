@@ -229,11 +229,19 @@ const PLUS_CARD_VALUES: LocalisedValue[] = DICTIONARY_LOCALES.map((locale) => ({
  * the SAME pattern, and again nobody had pointed the rule at the key. An axis
  * is only a decision once every key that makes the claim is on it.
  */
-const HALF_CLAIM_KEYS = ["pricing.faq.proPlus.a", "pricing.faq.groups.a"];
+const HALF_CLAIM_KEYS = [
+  "pricing.faq.proPlus.a",
+  "pricing.faq.groups.a",
+  "pricing.matrix.orgs.max_owned.note",
+];
 
 /** …and the same axis in `ui.json`. `across()` takes one file, so the two live
  *  apart; both are pinned by the gate and both are asserted below. */
-const HALF_CLAIM_UI_KEYS = ["tips.billing.extra-org.body"];
+const HALF_CLAIM_UI_KEYS = [
+  "tips.billing.extra-org.body",
+  "orgNew.bill.addToExistingHint",
+  "billing.group.attach.confirmCharge",
+];
 const HALF_CLAIM_VALUES: LocalisedValue[] = [
   ...HALF_CLAIM_KEYS.flatMap((key) => across("marketing", key)),
   ...HALF_CLAIM_UI_KEYS.flatMap((key) => across("ui", key)),
@@ -818,7 +826,7 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
     for (const key of PLUS_SOON_KEYS) {
       expect(pinned.has(key), `${key} is a roadmap claim but is not pinned`).toBe(true);
     }
-    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(152);
+    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(164);
     // Every entry must say what it claims and what decides it — a pin with no
     // `why` is a snapshot, and a snapshot teaches the next editor to re-record
     // rather than to re-check.
@@ -993,6 +1001,14 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
    * own. `extra-org-price-parity.test.ts` already lists both as "copy that says
    * half"; this is what stops them drifting apart.
    */
+  //
+  // EN-ONLY, DELIBERATELY. `config/tips.ts` holds one English string per tip, so
+  // there is nothing for es/fr/nl to mirror — a Dutch value that equalled the
+  // TypeScript literal would mean the Dutch page renders English. What binds the
+  // other three locales is `i18n:check` (every key present in every locale) plus
+  // the approved-copy gate for the values that make a pinned claim. A tip whose
+  // claim is NOT pinned can still drift in translation; that is the gap, and it
+  // is the same one every unpinned dictionary value has.
   const TIP_MIRROR_EXCEPTIONS: Record<string, string> = {
     // PRE-EXISTING, and NOT this task's to fix: both sides are stale against
     // `plan_entitlements.schedule.checkpoints.max` (community 2 since V319, pro
@@ -1002,7 +1018,7 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
     // Community AND silent about Pro Plus. Fixing it is a four-locale copy
     // change in a different claim family; listing it keeps it visible.
     "tips.schedule.save-points.body":
-      "both sides stale vs schedule.checkpoints.max (community 2 / pro 5 / pro_plus unlimited)",
+      "#303 — both sides stale vs schedule.checkpoints.max (community 2 since V319, pro 5, pro_plus unlimited). tips.ts says 'One save point is free' (V290's 1, not V319's 2); the dictionary says 'more need Pro' and is silent on Pro Plus. A four-locale copy change in a different claim family, tracked with this wave's other out-of-scope copy defects.",
   };
 
   it("keeps config/tips.ts and the en dictionary identical — a tips.ts-only fix is cosmetic", () => {

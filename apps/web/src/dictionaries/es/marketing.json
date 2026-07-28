@@ -132,7 +132,7 @@
   "pricing.matrix.fees": "Comisión de la plataforma sobre las cuotas de inscripción",
   "pricing.matrix.competitions.max_active": "Competiciones activas",
   "pricing.matrix.orgs.max_owned": "Organizaciones en una sola factura",
-  "pricing.matrix.orgs.max_owned.note": "Cada organización adicional cuesta la mitad de la tarifa de tu plan y adopta la comisión de inscripción de tu plan",
+  "pricing.matrix.orgs.max_owned.note": "Cada organización adicional cuesta no más de la mitad de la tarifa base y adopta la comisión de inscripción de tu plan",
   "pricing.matrix.divisions.per_competition.max": "Divisiones por competición",
   "pricing.matrix.entrants.per_division.max": "Participantes por división",
   "pricing.matrix.members.max": "Miembros del equipo",

@@ -10,8 +10,8 @@
 // `src/lib` proper gains a `node:fs` import: that module is one careless
 // `import` away from a client component, and `fs` in a client bundle fails at
 // build time, not at test time.
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { HELP_ROOT } from "@/server/help-content";
 
 /** Taken from `HELP_ROOT`, never re-derived: a second copy of the path is a
@@ -54,4 +54,36 @@ export function webSource(relativePath: string): string {
   const text = readFileSync(join(process.cwd(), "src", relativePath), "utf8");
   if (text.trim().length === 0) throw new Error(`src/${relativePath} is empty`);
   return text;
+}
+
+/**
+ * Every `.ts`/`.tsx` under `apps/web/src`, as `[pathRelativeToSrc, source]`.
+ *
+ * For the guards that assert a piece of prose is still true of the UI — most
+ * of them NEGATIVE ("there is no control for this yet"), which no unit test can
+ * demonstrate by calling something. A walk is used rather than a hand-written
+ * list precisely because the thing being watched for is a file nobody has
+ * written yet.
+ *
+ * Callers must assert a known-positive against the same result (a file they
+ * know exists, a floor on the count), or a wrong root silently returns an empty
+ * list and every negative built on it passes.
+ */
+export function allSourceFiles(): Array<[string, string]> {
+  const root = join(process.cwd(), "src");
+  const out: Array<[string, string]> = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules" || entry.name === "dictionaries") continue;
+        walk(full);
+      } else if (/\.tsx?$/.test(entry.name)) {
+        out.push([relative(root, full), readFileSync(full, "utf8")]);
+      }
+    }
+  };
+  walk(root);
+  if (out.length === 0) throw new Error("no source files found under src/ — wrong cwd?");
+  return out;
 }
