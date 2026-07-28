@@ -1259,6 +1259,97 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
     nl: claim(String.raw`\b(binnenkort|gepland|in\s+ontwikkeling|routekaart|komt\s+eraan|op\s+komst)\b`),
   };
 
+  /**
+   * ── A ROW THAT MEANS "NOT YET" MUST NOT READ AS "INCLUDED" ────────────────
+   *
+   * Two surfaces make a NEGATIVE claim purely by WHERE they sit: the eight
+   * roadmap items under the "Coming soon" label, and the ✗ rows of the in-app
+   * Community panel. Nothing in the string itself says "not yet", so a reword
+   * inverts the meaning while every structural guard stays green — the label is
+   * still futurity, the polarity table still points at the same denied feature.
+   *
+   * Both misses on the strict copy-addition axis were this shape:
+   *   soon4  -> "Custom domain & white-label — included forever, on every plan"
+   *   f6     -> "Theme colour & badge removal, included"
+   *
+   * Guarded two ways, because either alone is escapable:
+   *  1. SHAPE — a roadmap item is a bare label. Every one of the 32 shipped
+   *     strings is a noun phrase with no clause break, so a sentence smuggled in
+   *     beside it reds without anyone having to predict its words.
+   *  2. VOCABULARY — availability and permanence wording, per locale, for the
+   *     rewordings that stay short.
+   */
+  const AVAILABILITY_CLAIM: Record<DictionaryLocale, RegExp> = {
+    en: claim(String.raw`\b(included|includes|available\s+now|live\s+now|already|on\s+every\s+plan|every\s+plan)\b`),
+    es: claim(String.raw`\b(incluid[oa]s?|disponible\s+ya|ya\s+disponible|ya\s+incluid|en\s+todos\s+los\s+planes)\b`),
+    fr: claim(String.raw`\b(inclus(e|es)?|d[ée]j[àa]\s+disponible|disponible\s+d[ée]s\s+maintenant|sur\s+tous\s+les\s+forfaits)\b`),
+    nl: claim(String.raw`\b(inbegrepen|nu\s+beschikbaar|al\s+beschikbaar|bij\s+elk\s+abonnement)\b`),
+  };
+
+  /** A bare label: no clause break, no sentence. */
+  const CLAUSE_BREAK_IN_LABEL = /[—–:;.]|,\s/;
+
+  it("keeps every 'not yet' row reading as 'not yet', in all four locales", () => {
+    const rows: Array<{ key: string; file: "marketing" | "ui"; shape: boolean }> = [
+      ...Array.from({ length: 8 }, (_, i) => ({
+        key: `pricing.plus.soon${i + 1}`,
+        file: "marketing" as const,
+        shape: true,
+      })),
+      // The ✗ column of the in-app Community panel — same negative-by-position
+      // claim, different surface.
+      { key: "billing.community.f5", file: "ui", shape: false },
+      { key: "billing.community.f6", file: "ui", shape: false },
+      { key: "billing.community.f7", file: "ui", shape: false },
+    ];
+    const faults: string[] = [];
+    let scanned = 0;
+    for (const row of rows) {
+      for (const locale of DICTIONARY_LOCALES) {
+        const value = load(locale, row.file)[row.key];
+        if (typeof value !== "string" || value.length === 0) {
+          faults.push(`${locale} ${row.key}: missing`);
+          continue;
+        }
+        scanned += 1;
+        if (AVAILABILITY_CLAIM[locale].test(value)) {
+          faults.push(`${locale} ${row.key}: "${value}" reads as already included`);
+        }
+        if (LOCALE_CLAIMS[locale].permanence.some((p) => p.test(value))) {
+          faults.push(`${locale} ${row.key}: "${value}" makes a permanence claim`);
+        }
+        if (row.shape && CLAUSE_BREAK_IN_LABEL.test(value)) {
+          faults.push(`${locale} ${row.key}: "${value}" is a sentence, not a roadmap label`);
+        }
+      }
+    }
+    expect(faults).toEqual([]);
+    expect(scanned, "nothing scanned").toBe(rows.length * DICTIONARY_LOCALES.length);
+
+    // ── THE TWO PROBES THAT DEFEATED THE ROUND-2 GUARDS ────────────────────
+    const reds = (locale: DictionaryLocale, value: string, shape: boolean) =>
+      AVAILABILITY_CLAIM[locale].test(value) ||
+      LOCALE_CLAIMS[locale].permanence.some((p) => p.test(value)) ||
+      (shape && CLAUSE_BREAK_IN_LABEL.test(value));
+
+    for (const [locale, value] of [
+      ["en", "Custom domain & white-label — included forever, on every plan"],
+      ["es", "Dominio propio y marca blanca: incluido para siempre en todos los planes"],
+      ["fr", "Domaine personnalisé et marque blanche — inclus pour toujours, sur tous les forfaits"],
+      ["nl", "Eigen domein & white-label — voor altijd inbegrepen, bij elk abonnement"],
+    ] as Array<[DictionaryLocale, string]>) {
+      expect(reds(locale, value, true), `${locale}: roadmap item re-approved as shipped`).toBe(true);
+    }
+    for (const [locale, value] of [
+      ["en", "Theme colour & badge removal, included"],
+      ["es", "Color del tema y quitar la insignia, incluido"],
+      ["fr", "Couleur du thème et retrait du badge, inclus"],
+      ["nl", "Themakleur & badge verwijderen, inbegrepen"],
+    ] as Array<[DictionaryLocale, string]>) {
+      expect(reds(locale, value, false), `${locale}: denial row reworded as included`).toBe(true);
+    }
+  });
+
   it("states futurity in every language, not just English", () => {
     for (const locale of DICTIONARY_LOCALES) {
       const label = load(locale, "marketing")["pricing.plus.soonLabel"]!;
