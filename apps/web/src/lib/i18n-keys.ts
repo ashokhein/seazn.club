@@ -2164,6 +2164,7 @@ export type DictionaryKey =
   | "pass.entry.active"
   | "pass.entry.buy"
   | "pass.entry.ended"
+  | "pass.entry.ended.nextBody"
   | "pass.entry.ended.nextEdition"
   | "pass.entry.ended.reasonPastEnds"
   | "pass.entry.ended.reasonTerminal"
