@@ -186,10 +186,59 @@ describe("the competition layout resolves what its islands cannot", () => {
     // layout have nothing else on screen naming the size, so an L holder read
     // "Event Pass active" — M's product.
     const src = code(...LAYOUT);
-    expect(src).toMatch(/select pass_key\s+from competition_passes/);
+    expect(src).toMatch(/select\s+cp\.pass_key\b/);
+    expect(src).toMatch(/from\s+competition_passes\b/);
+    // The literal that made it wrong, pinned negatively: `select 1` is the
+    // shape a future edit falls back to, and the assertions above would still
+    // pass beside it if the query grew a second statement.
+    expect(src).not.toMatch(/select\s+1\b/);
     // Guarded, never cast: the column is `not null default 'event_pass'`, so a
     // row written by a rung this build predates must degrade to a real label.
     expect(src).toContain("isPassKey(");
+  });
+
+  // v17 gap #301. The same read has to answer whether the pass STILL APPLIES,
+  // and it has to answer it HERE: `lib/entitlements.ts` is a server module (it
+  // imports lib/db and lib/cache), so a client island cannot call
+  // `passLockReason` even if it wanted to — a VALUE import of it from anything
+  // marked "use client" drags postgres and ioredis into the browser graph.
+  it("resolves the pass's lock reason on the server and hands it down as a prop", () => {
+    const src = code(...LAYOUT);
+    // Joined, not a second query: the two columns the rule needs come back
+    // with the pass row itself.
+    expect(src).toMatch(/join\s+competitions\b/);
+    expect(src).toMatch(/c\.status/);
+    expect(src).toMatch(/c\.ends_on/);
+    expect(src).toContain("passLockReason(");
+    expect(src).toMatch(/lockReason=\{lockReason\}/);
+  });
+
+  it("never re-derives the lock rule — no status list, no grace arithmetic", () => {
+    // The whole point of the wave: ONE place decides whether a pass still
+    // applies. Six surfaces inherited this bug because the layout answered a
+    // question it had not actually asked; six copies of the answer would be
+    // the same defect wearing a different hat. The TS resolver, the
+    // `org_has_feature` SQL (V338) and the UI must agree exactly, and they can
+    // only do that by not each holding an opinion.
+    const src = code(...LAYOUT);
+    expect(src).not.toMatch(/["']archived["']/);
+    expect(src).not.toMatch(/["']completed["']/);
+    expect(src).not.toMatch(/PASS_END_GRACE_DAYS/);
+    expect(src).not.toMatch(/86_?400_?000/);
+  });
+
+  it("keeps the client provider free of a VALUE import from lib/entitlements", () => {
+    // A type-only import is erased at compile time and is the correct shape; a
+    // plain import of the same symbol is not, and it fails at build time as an
+    // unresolvable node builtin — loud, but a long way from the line that
+    // caused it.
+    const provider = code("components", "competition-pass-provider.tsx");
+    expect(provider).toContain('"use client"');
+    const imports = provider.match(/^import\s+(?:type\s+)?[^;]*from "@\/lib\/entitlements";$/gm) ?? [];
+    // Guards the premise: if the provider stops importing the type at all,
+    // this case must fail rather than pass vacuously.
+    expect(imports.length).toBeGreaterThan(0);
+    for (const line of imports) expect(line).toMatch(/^import type /);
   });
 
   it("resolves the org's currency on the server and hands it to the client", () => {
