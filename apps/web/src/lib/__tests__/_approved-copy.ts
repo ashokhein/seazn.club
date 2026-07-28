@@ -113,6 +113,14 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   "219ccaea5a3878ae",
   "6feca5577c55cf2b",
   "170d10914abdbfe5",
+  "32654b5a563aabb6",
+  "d90e342a66f0ff56",
+  "f1006b950ce393b1",
+  "f39d96b7fbbbfc13",
+  "665584fd0671d579",
+  "3f3be96ac6e6be4e",
+  "a28f1eacfd464458",
+  "9a68888ef2d9aa1a",
   "c42978cab6965d56",
   "331525dbff809017",
   "32654b5a563aabb6",
@@ -139,8 +147,8 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   "9c62d251033d27b5",
   "c503ebdc56e74a10",
   "157334bc6c0df3e8",
-  "9e1079e896d70264",
-  "5bc994f6cd963522",
+  "78319f205df27524",
+  "18fd7e5ef00dfe2a",
 ];
 
 /**
