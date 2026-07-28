@@ -213,18 +213,74 @@ describe("the competition layout resolves what its islands cannot", () => {
     expect(src).toMatch(/lockReason=\{lockReason\}/);
   });
 
-  it("never re-derives the lock rule — no status list, no grace arithmetic", () => {
-    // The whole point of the wave: ONE place decides whether a pass still
-    // applies. Six surfaces inherited this bug because the layout answered a
-    // question it had not actually asked; six copies of the answer would be
-    // the same defect wearing a different hat. The TS resolver, the
-    // `org_has_feature` SQL (V338) and the UI must agree exactly, and they can
-    // only do that by not each holding an opinion.
-    const src = code(...LAYOUT);
-    expect(src).not.toMatch(/["']archived["']/);
-    expect(src).not.toMatch(/["']completed["']/);
-    expect(src).not.toMatch(/PASS_END_GRACE_DAYS/);
-    expect(src).not.toMatch(/86_?400_?000/);
+  // THE WHOLE POINT OF THE WAVE: one place decides whether a pass still
+  // applies. Six surfaces inherited #301 because the layout answered a question
+  // it had not actually asked; six copies of the answer would be the same defect
+  // wearing a different hat. The TS resolver, the `org_has_feature` SQL (V338)
+  // and the UI must agree exactly, and they can only do that by not each holding
+  // an opinion.
+  //
+  // SCANNED PER FILE, and that list is the fix to this guard's own first draft
+  // (W8 task 2 review): it read `code(...LAYOUT)` alone while advertising
+  // "provider, layout or any component", so planting
+  // `const TERMINAL_STATUSES = ["archived", "completed"]` into
+  // competition-pass-provider.tsx left all three cases GREEN. The files below are
+  // every one this wave puts the lock reason through — the ones actually at risk
+  // of growing a second copy, because they are the ones that now have to branch
+  // on it.
+  const LOCK_AWARE_FILES: Array<[string, string[]]> = [
+    ["the competition layout", LAYOUT],
+    ["the pass provider", ["components", "competition-pass-provider.tsx"]],
+    ["the in-competition entry point", ["components", "competition-pass-entry.tsx"]],
+    ["the paywall", ["components", "upgrade-gate.tsx"]],
+    ["the upgrade page's state", ["lib", "upgrade-page-state.ts"]],
+    ["the billing purchase list", ["components", "billing-pass-purchases.tsx"]],
+  ];
+
+  // The blocklist, named once so the anti-vacuity case below scans the SAME
+  // patterns the files are scanned with.
+  const RE_DERIVATION: Array<[string, RegExp]> = [
+    ["a terminal-status literal", /["'](?:archived|completed)["']/],
+    ["the grace constant", /PASS_END_GRACE_DAYS/],
+    ["grace arithmetic in ms", /86_?400_?000/],
+  ];
+
+  it.each(LOCK_AWARE_FILES)(
+    "%s never re-derives the lock rule — no status list, no grace arithmetic",
+    (_name, parts) => {
+      const src = code(...parts);
+      for (const [what, pattern] of RE_DERIVATION) {
+        expect(src, `${parts.join("/")} carries ${what}`).not.toMatch(pattern);
+      }
+    },
+  );
+
+  // …and the blocklist can actually fire. Every case above is a NEGATIVE
+  // assertion, which a typo in a pattern would satisfy on every file forever.
+  it("the re-derivation patterns match the code they exist to forbid", () => {
+    const planted = `const TERMINAL_STATUSES = ["archived", "completed"];
+      const graceEnd = endsOn.getTime() + PASS_END_GRACE_DAYS * 86_400_000;`;
+    for (const [what, pattern] of RE_DERIVATION) {
+      expect(pattern.test(planted), `${what} is not detected`).toBe(true);
+    }
+    // Known limits, recorded rather than papered over: this is a LITERAL
+    // blocklist, so `7 * 24 * 3600 * 1000` evades it, and so does an arm added
+    // in FRONT of a surviving `passLockReason(` call. It narrows the ways the
+    // rule gets copied; it is not proof that it has not been.
+    expect(RE_DERIVATION.length).toBeGreaterThanOrEqual(3);
+    expect(LOCK_AWARE_FILES.length).toBeGreaterThanOrEqual(6);
+  });
+
+  // The entry point does not merely avoid re-deriving — it has to RENDER the
+  // verdict. Between task 2 and task 3 this file knew only paid_plan/held/none,
+  // so an ended pass fell through to the BUY link: a $29 offer the checkout
+  // route refuses outright (an existing `competition_passes` row is a total
+  // refusal — the PK is competition_id alone). Neither of the two states it did
+  // handle was wrong; the missing third was.
+  it("the in-competition entry point renders the ended state, not a fall-through", () => {
+    const src = code("components", "competition-pass-entry.tsx");
+    expect(src).toContain('gate === "ended"');
+    expect(src).toContain("usePassLockReason");
   });
 
   it("keeps the client provider free of a VALUE import from lib/entitlements", () => {
