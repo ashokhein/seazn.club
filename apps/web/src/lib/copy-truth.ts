@@ -84,6 +84,38 @@ export function describedSections(seed: Record<string, unknown>): string[] {
   return Object.keys(seed).filter((k) => !NON_SECTION_KEY.test(k));
 }
 
+// ── Numeric pins ─────────────────────────────────────────────────────────────
+
+/**
+ * A number matched as a WHOLE TOKEN — the only correct shape for pinning copy
+ * against a matrix figure.
+ *
+ * `expect(copy).toContain(String(n))` is a SUBSTRING test, so it is satisfied by
+ * any figure that merely contains the digits: `"10"` by `"100"`, `"5"` by
+ * `"50"`, `"128"` by `"1280"`, `"20"` by `"200"`. Every one of those is a live
+ * 10x overclaim of a paid entitlement that ships green.
+ *
+ * This lives HERE, in the shared module, and not as a local const in one suite,
+ * because that is exactly how the defect spread: the whole-token form was
+ * written for `f3` in one round and left on its neighbours twelve lines below,
+ * then left again on five more sites in two other suites. One helper, imported
+ * by every caller, is what makes "fixed" a property of the repo rather than of
+ * a line.
+ *
+ * Lookbehind/lookahead rather than `\b`: a digit's neighbours are the only
+ * thing that can widen it, and `\b` would reject a legitimate "$29" or "+25".
+ */
+export function wholeNumber(n: number): RegExp {
+  return new RegExp(`(?<!\\d)${n}(?!\\d)`);
+}
+
+/** `wholeNumber` for a cap that must EXIST. A null `int_value` means unlimited,
+ *  and there is no digit to pin against unlimited — so a null here is a caller
+ *  bug (it would otherwise silently build `/(?<!\d)null(?!\d)/`). */
+export function quotesWholeNumber(value: string | undefined, n: number): boolean {
+  return typeof value === "string" && wholeNumber(n).test(value);
+}
+
 // ── Claim vocabularies ───────────────────────────────────────────────────────
 
 /**

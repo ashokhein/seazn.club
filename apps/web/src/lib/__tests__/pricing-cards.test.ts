@@ -18,6 +18,7 @@ import {
   PLUS_DIFFERENTIATOR_VOCAB,
   localeCreditLeadershipFaults,
   localePlusDifferentiatorFaults,
+  wholeNumber,
 } from "@/lib/copy-truth";
 import { sql } from "@/lib/db";
 
@@ -1493,12 +1494,22 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
    * `f2` also carries the DIVISION cap, which nothing asserted at all while its
    * `why` claimed "both digits are asserted against those rows". Added here, so
    * the sentence and the check agree.
+   *
+   * FIX ROUND 6. …and I left it on FIVE MORE sites in this file and two in
+   * `dictionary-copy-truth.test.ts`, because round 5 fixed the rows it had in
+   * front of it and never grepped. Three were demonstrably live: the /pricing
+   * FAQ claiming 50/100 organisations against a live 5/10, the Event Pass tip
+   * claiming 1280 entrants against 128, and the same FAQ taking a competition
+   * to 200 divisions against 20. Every remaining `toContain(String(n))` in this
+   * file now routes through here, and the regex itself moved to
+   * `@/lib/copy-truth`'s `wholeNumber` so there is ONE definition for both
+   * suites instead of a form that has to be re-remembered per call site.
    */
   const quotesCap = (value: string | undefined, cap: number | null, label: string) => {
     expect(cap, `${label}: the matrix has no finite value to pin`).not.toBeNull();
     // A WHOLE TOKEN. `(?<!\d)n(?!\d)` is the form; a bare `toContain` reads a
     // ten-times-larger figure as a match.
-    expect(value, label).toMatch(new RegExp(`(?<!\\d)${cap}(?!\\d)`));
+    expect(value, label).toMatch(wholeNumber(cap!));
   };
 
   it("billing.community.f1/f2 carry the live caps, as whole numbers, in all four locales", async () => {
@@ -1560,7 +1571,8 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
     for (const locale of LOCALES) {
       const answer = marketing(locale)["pricing.faq.eventPass.a"];
       expect(answer, `${locale}: no answer`).toBeTruthy();
-      expect(answer, `${locale}: L's division cap`).toContain(String(divisions));
+      // Whole token: `toContain("20")` was satisfied by "200 divisions".
+      quotesCap(answer, divisions, `${locale}: L's division cap`);
       // The price must be INTERPOLATED, never written down: `{passL}` is
       // substituted with the switched currency at render time, so a hardcoded
       // "$59" here would show dollars to a GBP visitor — the exact bug #191
@@ -1581,8 +1593,9 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
     for (const locale of LOCALES) {
       const body = dict(locale)["tips.billing.event-pass.body"];
       expect(body, `${locale}: no tip body`).toBeTruthy();
-      expect(body, `${locale}: M entrant cap`).toContain(String(mEntrants));
-      expect(body, `${locale}: L division cap`).toContain(String(lDivisions));
+      // Whole tokens: `toContain("128")` was satisfied by "1280 entrants".
+      quotesCap(body, mEntrants, `${locale}: M entrant cap`);
+      quotesCap(body, lDivisions, `${locale}: L division cap`);
       // The bug itself: the tip must never quote COMMUNITY's cap as the
       // pass's. The tip describes only what the pass grants, so this figure
       // has no legitimate reason to appear in it.
@@ -1727,7 +1740,7 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
       const md = article();
       for (const plan of ["community", "pro", "pro_plus"]) {
         const credits = await capFor("ai.credits.monthly", plan);
-        expect(md, `${plan} credits`).toContain(String(credits));
+        quotesCap(md, credits, `${plan} credits`);
       }
     });
 
@@ -2223,7 +2236,11 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
     const mDivisions = await capFor("divisions.per_competition.max", "event_pass");
     const lDivisions = await capFor("divisions.per_competition.max", "event_pass_l");
     const bullets = PASS_FEATURES.join(" | ");
-    expect(bullets).toContain(`${mDivisions} divisions`);
-    expect(bullets, "L's ceiling is what the second rung sells").toContain(String(lDivisions));
+    // Both whole tokens. "10 divisions" is also a substring of "110 divisions",
+    // so the unit noun does not save the left boundary.
+    expect(bullets, "M's division cap, as a whole number").toMatch(
+      new RegExp(`${wholeNumber(mDivisions!).source}\\s+divisions`),
+    );
+    quotesCap(bullets, lDivisions, "L's ceiling is what the second rung sells");
   });
 });

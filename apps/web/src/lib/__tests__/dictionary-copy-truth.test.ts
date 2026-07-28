@@ -61,6 +61,7 @@ import {
   retiredClaimFaults,
   valueClauses,
   riderClaimShape,
+  wholeNumber,
 } from "@/lib/copy-truth";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -1999,9 +2000,13 @@ describe.skipIf(!HAS_DB)("the four-locale dictionaries match plan_entitlements",
     }
     for (const { locale, value } of PLUS_VALUES) {
       // Numerals are identical across these four locales, so the digits are
-      // checkable without reading the prose around them.
-      expect(value, `${locale}: pro's live org cap`).toContain(String(caps.pro));
-      expect(value, `${locale}: pro_plus's live org cap`).toContain(String(caps.pro_plus));
+      // checkable without reading the prose around them — but as WHOLE TOKENS.
+      // `toContain("5")` was satisfied by the "5" inside any figure the answer
+      // carried, so "up to 50 organisations … and Pro Plus up to 100" shipped
+      // green against a live 5/10: a 10x overclaim of a paid entitlement, in
+      // the FAQ directly under the pricing cards. See `wholeNumber`.
+      expect(value, `${locale}: pro's live org cap`).toMatch(wholeNumber(caps.pro!));
+      expect(value, `${locale}: pro_plus's live org cap`).toMatch(wholeNumber(caps.pro_plus!));
     }
   });
 
