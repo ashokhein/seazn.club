@@ -8,7 +8,7 @@ import { CompetitionSettings } from "@/components/v2/competition-settings";
 import { ArchivedDivisions } from "@/components/v2/archived-divisions";
 import { CompetitionPassEntry } from "@/components/competition-pass-entry";
 import { formatMinor } from "@/lib/currency";
-import { lowestPassRung, passActiveLabels } from "@/lib/pass-ladder";
+import { lowestPassRung, passActiveLabels, passEndedReasons } from "@/lib/pass-ladder";
 import { preferredCurrency } from "@/lib/currency-server";
 import { hasFeature } from "@/lib/entitlements";
 import { withTenant } from "@/lib/db";
@@ -90,6 +90,12 @@ export default async function CompetitionSettingsPage({
               price: formatMinor(lowestPassRung(currency).amountMinor, currency),
             })}
             activeLabels={passActiveLabels(dict)}
+            endedLabel={t(dict, "pass.entry.ended")}
+            endedReasons={passEndedReasons(dict)}
+            nextEditionHref={routes.competitionNew(orgSlug)}
+            nextEditionLabel={t(dict, "pass.entry.ended.nextEdition")}
+            goProHref={routes.billing(orgSlug)}
+            goProLabel={t(dict, "upgrade.proCard.cta")}
             canBuy={canEdit}
           />
           <h1 className="mt-1 text-xl font-semibold tracking-tight text-slate-900">

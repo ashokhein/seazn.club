@@ -12,6 +12,11 @@ import { PASS_KEYS, passPrice, type Currency, type PassKey } from "@/lib/currenc
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
 import type { Dict } from "@/lib/i18n-constants";
 import type { DictionaryKey } from "@/lib/i18n-keys";
+// TYPE-ONLY, and it has to stay that way: `@/lib/entitlements` pulls in postgres
+// and ioredis, and this module is imported by client islands (upgrade-gate,
+// pass-upgrade). A type import is erased; a value import would put the database
+// in the browser bundle.
+import type { PassLockReason } from "@/lib/entitlements";
 import { t } from "@/lib/i18n-runtime";
 
 export interface PassRungOption {
@@ -123,6 +128,50 @@ export function passActiveLabels(dict: Dict): Record<PassKey, string> {
   return {
     event_pass: passActiveLabel(dict, "event_pass"),
     event_pass_l: passActiveLabel(dict, "event_pass_l"),
+  };
+}
+
+/**
+ * WHY a held pass has stopped applying, as a dictionary key (v17 gap #301).
+ *
+ * A `Record<PassLockReason, DictionaryKey>` keyed off the union, and that is the
+ * whole point: `PASS_LOCK_REASONS` is the one place the reason set is written
+ * down, and a third reason added there must be a COMPILE ERROR here rather than
+ * a card that silently shows the wrong sentence — or none. A chain of
+ * `=== "terminal" ? … : …` (which is what every surface reached for first) gets
+ * no such protection: it keeps compiling and quietly files the new reason under
+ * "ran past its end date".
+ *
+ * The two sentences differ because the two situations do. A competition that
+ * reached a terminal status is DONE and the organiser's next move is next
+ * season; one that merely ran past `ends_on` is often still being played, and
+ * the end date is the thing to fix. Collapsing them shows an apologetic "your
+ * pass has ended" to someone whose only problem is a stale date.
+ */
+export const PASS_LOCK_REASON_KEY: Record<PassLockReason, DictionaryKey> = {
+  terminal: "pass.entry.ended.reasonTerminal",
+  past_ends_on: "pass.entry.ended.reasonPastEnds",
+};
+
+/**
+ * Every lock reason's sentence, finished — `passActiveLabels` for the ended
+ * state, and here for the same reason.
+ *
+ * The pages that mount `<CompetitionPassEntry>` hold the dictionary but not the
+ * reason: `passLockReason` is judged once by the competition LAYOUT (it lives in
+ * a server module, so a client island cannot call it at all) and reaches the
+ * island through `CompetitionPassProvider`. So the page hands over every
+ * sentence and the island picks the one it knows about.
+ *
+ * An explicit object literal rather than `Object.fromEntries(PASS_LOCK_REASONS
+ * .map(…))`, exactly as `passActiveLabels` is: the `fromEntries` form types as a
+ * complete Record whatever it actually contains, so a missing arm would resolve
+ * to `undefined` and render an empty explanation under "Event Pass ended".
+ */
+export function passEndedReasons(dict: Dict): Record<PassLockReason, string> {
+  return {
+    terminal: t(dict, PASS_LOCK_REASON_KEY.terminal),
+    past_ends_on: t(dict, PASS_LOCK_REASON_KEY.past_ends_on),
   };
 }
 

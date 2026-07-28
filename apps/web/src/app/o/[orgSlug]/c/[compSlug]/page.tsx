@@ -15,7 +15,7 @@ import { divisionAccent, monogram } from "@/lib/division-hue";
 import { resolveLogoUrl } from "@/server/public-site/data";
 import { CompetitionPassEntry } from "@/components/competition-pass-entry";
 import { formatMinor } from "@/lib/currency";
-import { lowestPassRung, passActiveLabels } from "@/lib/pass-ladder";
+import { lowestPassRung, passActiveLabels, passEndedReasons } from "@/lib/pass-ladder";
 import { preferredCurrency } from "@/lib/currency-server";
 import { routes } from "@/lib/routes";
 import { resolveLocale } from "@/lib/resolve-locale";
@@ -50,7 +50,10 @@ export default async function CompetitionPage({
           <div className="min-w-0">
             {/* Entry point 1 of 4 (task 19): the pass, offered in the
                 competition's own header instead of only at a paywall. Renders
-                itself away for a paid org — Pro already exceeds it. */}
+                itself away for a paid org — Pro already exceeds it, and shows
+                the ENDED card instead of the offer once the pass has stopped
+                applying (v17 gap #301): the layout judges that, this page only
+                supplies every sentence it might need. */}
             <CompetitionPassEntry
               href={routes.competitionUpgrade(orgSlug, compSlug)}
               buyLabel={t(dict, "pass.entry.buy", {
@@ -59,6 +62,12 @@ export default async function CompetitionPage({
                 price: formatMinor(lowestPassRung(currency).amountMinor, currency),
               })}
               activeLabels={passActiveLabels(dict)}
+              endedLabel={t(dict, "pass.entry.ended")}
+              endedReasons={passEndedReasons(dict)}
+              nextEditionHref={routes.competitionNew(orgSlug)}
+              nextEditionLabel={t(dict, "pass.entry.ended.nextEdition")}
+              goProHref={routes.billing(orgSlug)}
+              goProLabel={t(dict, "upgrade.proCard.cta")}
               canBuy={canEdit}
             />
             <h1 className="page-title mt-1 truncate">
