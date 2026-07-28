@@ -1,9 +1,17 @@
 // LIVE verification for the extra-organisation recurring add-on (v17 gap
 // #293) — NOT a unit test. Every other test in this wave mocks Stripe; this
 // asks a real (test-mode) Stripe account to actually add the item to a
-// subscription, then runs the REAL webhook writer
-// (syncOrgAddonsForSubscription) against a scratch DB row, proving the whole
-// pipeline: catalog -> Stripe item -> webhook -> org_addons -> resolver.
+// subscription, then runs the REAL WRITER (syncOrgAddonsForSubscription /
+// convergeOrgAddonPrices) against a scratch DB row: catalog -> Stripe item ->
+// writer -> org_addons -> resolver.
+//
+// "The writer", NOT "the pipeline": no `customer.subscription.updated` event is
+// ever processed here. The writers are invoked directly, and the order
+// production calls them in (converge, then sync, on ONE subscription object) is
+// hand-written below rather than observed. That order is unit-pinned in
+// billing-events' own suite; what THIS file adds is that each writer does the
+// right thing when the object it is handed came from Stripe rather than from a
+// fixture.
 //
 // It exists because THREE premises this wave is built on were modelled rather
 // than observed. Each has its own `it` below, named for the premise:
@@ -24,9 +32,9 @@
 //      mixed item intervals under `billing_mode: flexible`, and the buyer copy
 //      now promises "billed monthly on top of your current bill".
 //
-// Skipped unless BILLING_LIVE=1 AND a TEST-mode key AND DATABASE_URL. Under
-// BILLING_LIVE=1, apps/web/vitest.config.ts keeps STRIPE_SECRET_KEY from the
-// repo-root .env.local (it strips it otherwise). Everything created here is
+// Skipped unless BILLING_LIVE=1 AND a TEST-mode Stripe key AND a TEST database.
+// Under BILLING_LIVE=1, apps/web/vitest.config.ts keeps STRIPE_SECRET_KEY from
+// the repo-root .env.local (it strips it otherwise). Everything created here is
 // cleaned up in reverse order of creation; no real money moves. Run:
 //
 //   BILLING_LIVE=1 DATABASE_URL=postgres://postgres@127.0.0.1:54329/seazn_test \
@@ -40,13 +48,14 @@
 // live suite that mints its own catalog cannot tell you the live catalog is
 // wrong, and the two rider rates ($9 Pro / $19 Pro Plus) are exactly the thing
 // that must not drift.
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import Stripe from "stripe";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import { createOrgForUser } from "@/lib/auth";
 import { walletIdFor } from "@/lib/credits";
 import { getLimit } from "@/lib/entitlements";
+import { SUPPORTED_CURRENCIES } from "@/lib/currency";
 import {
   ORG_ADDONS,
   ORG_ADDON_DELTA_EACH,
@@ -55,6 +64,18 @@ import {
   resolveOrgAddonPriceId,
 } from "@/lib/org-addons";
 import { convergeOrgAddonPrices, syncOrgAddonsForSubscription } from "../billing-events";
+import { setExtraOrgs } from "../extra-orgs";
+
+// The ONLY thing faked in this file, and only because a session cookie cannot
+// exist outside a request. `requireBillingOwner` is the payer gate; everything
+// downstream of it in setExtraOrgs — the catalog resolve, the Stripe writes,
+// the metadata stamp — runs for real against the live account. `importOriginal`
+// keeps the rest of billing-manage intact rather than replacing the module.
+const requireBillingOwnerMock = vi.hoisted(() => vi.fn());
+vi.mock("@/server/usecases/billing-manage", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/usecases/billing-manage")>()),
+  requireBillingOwner: requireBillingOwnerMock,
+}));
 
 const KEY = process.env.STRIPE_SECRET_KEY ?? "";
 const TEST_KEY = KEY.startsWith("sk_test") || KEY.startsWith("rk_test");
@@ -67,41 +88,75 @@ if (process.env.BILLING_LIVE === "1" && KEY && !TEST_KEY) {
       "This suite creates real Stripe objects.",
   );
 }
-const LIVE = process.env.BILLING_LIVE === "1" && TEST_KEY && !!process.env.DATABASE_URL;
+
+// The DATABASE deserves the same refusal as the Stripe key, and this is the one
+// live suite that calls createOrgForUser — it INSERTS users, organizations and
+// subscriptions rows. `!!DATABASE_URL` is not a gate: vitest.config.ts loads the
+// repo-root .env.local, whose DATABASE_URL is the DEV database with DB_SCHEMA
+// unset, so this file's own documented invocation MINUS its DATABASE_URL line
+// would seed dev. Require a `*_test` database AND an explicit DB_SCHEMA, and
+// stop the run rather than skip when asked to go live against anything else.
+const DB = process.env.DATABASE_URL ?? "";
+const TEST_DB = /\/[A-Za-z0-9_]*_test(\?|$)/.test(DB) && !!process.env.DB_SCHEMA;
+if (process.env.BILLING_LIVE === "1" && DB && !TEST_DB) {
+  throw new Error(
+    "extra-org-addon.live: BILLING_LIVE=1 against a database that is not a *_test database with " +
+      "an explicit DB_SCHEMA — refusing to run. This suite inserts users, organizations and " +
+      "subscriptions rows.",
+  );
+}
+
+const LIVE = process.env.BILLING_LIVE === "1" && TEST_KEY && TEST_DB;
 
 /** LIFO — a price cannot be archived while its product still needs it, and a
  *  product cannot be archived while it has an active price. Registering in
- *  creation order and unwinding backwards gets both right without thought. */
-const cleanup: Array<() => Promise<unknown>> = [];
+ *  creation order and unwinding backwards gets both right without thought.
+ *  Each entry names the object it disposes of, so a partial teardown can say
+ *  WHAT it left behind. */
+const cleanup: Array<{ what: string; run: () => Promise<unknown> }> = [];
 const seededOrgIds: string[] = [];
 const seededUserIds: string[] = [];
 
 afterAll(async () => {
-  for (const fn of cleanup.reverse()) await fn().catch(() => undefined);
+  // A teardown step that fails must not be silent. Every step here used to be
+  // `.catch(() => undefined)`, so the stranding incident documented below would
+  // have left NO signal at all — just objects sitting in an account several
+  // tasks share. Ids are not secrets; print them so a sweep is possible.
+  const stranded: string[] = [];
+  for (const { what, run } of cleanup.reverse()) {
+    await run().catch((err) => {
+      stranded.push(`${what} (${err instanceof Error ? err.message : String(err)})`);
+    });
+  }
   if (LIVE) {
-    await sql`delete from org_addons where wallet_id = any(${seededOrgIds})`.catch(() => undefined);
     const groups = await sql<{ subscription_id: string }[]>`
       select subscription_id from organizations
        where id = any(${seededOrgIds}) and subscription_id is not null`.catch(() => []);
     await sql`delete from organizations where id = any(${seededOrgIds})`.catch(() => undefined);
     if (groups.length) {
-      await sql`delete from org_addons where wallet_id = any(${groups.map((g) => g.subscription_id)})`.catch(
-        () => undefined,
-      );
-      await sql`delete from subscriptions where id = any(${groups.map((g) => g.subscription_id)})`.catch(
-        () => undefined,
-      );
+      const walletIds = groups.map((g) => g.subscription_id);
+      // The ONLY org_addons delete that does anything: walletIdFor is
+      // `coalesce(subscription_id, id)` and createOrgForUser always writes a
+      // subscriptions row, so a wallet id is never an org id.
+      await sql`delete from org_addons where wallet_id = any(${walletIds})`.catch(() => undefined);
+      await sql`delete from subscriptions where id = any(${walletIds})`.catch(() => undefined);
     }
     await sql`delete from users where id = any(${seededUserIds})`.catch(() => undefined);
   }
   await sql.end({ timeout: 5 }).catch(() => undefined);
+  if (stranded.length) {
+    console.warn(
+      `[extra-org-addon.live] ${stranded.length} of ${cleanup.length} teardown steps FAILED — ` +
+        `these objects are stranded in the shared test account:\n  ${stranded.join("\n  ")}`,
+    );
+  }
   // ~40 sequential Stripe round trips. Vitest's DEFAULT hook timeout is 10s and
-  // a hook that blows it fails the SUITE while every test still reports as
-  // passed — `success: false` with `numFailedTests: 0`, which reads exactly
-  // like a clean pass in any summary that only counts tests. Worse, the
-  // teardown is abandoned mid-way, so throwaway customers and subscriptions are
-  // stranded in an account other tasks share. Observed 2026-07-28 the moment a
-  // sixth test pushed the unwind past 10s.
+  // is NOT covered by --testTimeout; a hook that blows it fails the SUITE while
+  // every test still reports as passed — `success: false` with
+  // `numFailedTests: 0`, which reads exactly like a clean pass in any summary
+  // that only counts tests. Worse, the teardown is abandoned mid-way, so
+  // throwaway customers and subscriptions are stranded. Observed 2026-07-28 the
+  // moment a sixth test pushed the unwind past 10s.
 }, 180_000);
 
 describe.skipIf(!LIVE)("extra-org add-on (live Stripe, test mode)", () => {
@@ -132,8 +187,13 @@ describe.skipIf(!LIVE)("extra-org add-on (live Stripe, test mode)", () => {
   }): Promise<Stripe.Price> {
     let productId = opts.product;
     if (!productId) {
-      const product = await stripe.products.create({ name: `t8-org-addon-probe-${uniq()}` });
-      cleanup.push(() => stripe.products.update(product.id, { active: false }));
+      const product = await stripe.products.create({
+        name: `t8-org-addon-probe-${uniq()}`,
+      });
+      cleanup.push({
+        what: `product ${product.id}`,
+        run: () => stripe.products.update(product.id, { active: false }),
+      });
       productId = product.id;
     }
     const price = await stripe.prices.create({
@@ -142,10 +202,16 @@ describe.skipIf(!LIVE)("extra-org add-on (live Stripe, test mode)", () => {
       unit_amount: opts.amount,
       recurring: { interval: opts.interval ?? "month" },
       ...(opts.lookupKey
-        ? { lookup_key: opts.lookupKey, ...(opts.transfer ? { transfer_lookup_key: true } : {}) }
+        ? {
+            lookup_key: opts.lookupKey,
+            ...(opts.transfer ? { transfer_lookup_key: true } : {}),
+          }
         : {}),
     });
-    cleanup.push(() => stripe.prices.update(price.id, { active: false }));
+    cleanup.push({
+      what: `price ${price.id}`,
+      run: () => stripe.prices.update(price.id, { active: false }),
+    });
     return price;
   }
 
@@ -156,19 +222,30 @@ describe.skipIf(!LIVE)("extra-org add-on (live Stripe, test mode)", () => {
       payment_method: "pm_card_visa",
       invoice_settings: { default_payment_method: "pm_card_visa" },
     });
-    cleanup.push(() => stripe.customers.del(customer.id));
+    cleanup.push({
+      what: `customer ${customer.id}`,
+      run: () => stripe.customers.del(customer.id),
+    });
     const sub = await stripe.subscriptions.create({
       customer: customer.id,
       items: [{ price: basePrice, quantity: 1 }],
     });
-    cleanup.push(() => stripe.subscriptions.cancel(sub.id));
+    cleanup.push({
+      what: `subscription ${sub.id}`,
+      run: () => stripe.subscriptions.cancel(sub.id),
+    });
     return sub;
   }
 
   /** A real billing group in the scratch schema: user -> org -> subscriptions
    *  row, pinned to `planKey`/active. Returns the WALLET id, which is what
-   *  syncOrgAddonsForSubscription writes rows against. */
-  async function scratchGroup(planKey = "pro"): Promise<{ orgId: string; walletId: string }> {
+   *  syncOrgAddonsForSubscription writes rows against. Pass `stripeSubId` when
+   *  the group must be reachable by `setExtraOrgs`, which resolves its Stripe
+   *  subscription from this row. */
+  async function scratchGroup(
+    planKey = "pro",
+    stripeSubId?: string,
+  ): Promise<{ orgId: string; walletId: string }> {
     const [owner] = await sql<{ id: string }[]>`
       insert into users (email, display_name, email_verified)
       values (${`t8-org-addon-probe-${randomUUID()}@test.local`}, 'T8 Probe Owner', true)
@@ -178,7 +255,10 @@ describe.skipIf(!LIVE)("extra-org add-on (live Stripe, test mode)", () => {
     seededOrgIds.push(org.id);
     const walletId = await walletIdFor(org.id);
     await sql`
-      update subscriptions set plan_key = ${planKey}, status = 'active' where id = ${walletId}`;
+      update subscriptions
+         set plan_key = ${planKey}, status = 'active',
+             stripe_subscription_id = coalesce(${stripeSubId ?? null}, stripe_subscription_id)
+       where id = ${walletId}`;
     return { orgId: org.id, walletId };
   }
 
@@ -207,7 +287,13 @@ describe.skipIf(!LIVE)("extra-org add-on (live Stripe, test mode)", () => {
     const rates: Record<string, number> = {};
     for (const entry of ORG_ADDONS) {
       const priceId = await resolveOrgAddonPriceId(entry.planKey);
-      const price = await stripe.prices.retrieve(priceId);
+      // `currency_options` is NOT returned unless expanded. The org-addon
+      // prices are FLAT per_unit, so the plain path is enough here — the
+      // per-currency `data.currency_options.<cur>.tiers` form that
+      // stripe-sync.ts needs only matters for graduated ladders.
+      const price = await stripe.prices.retrieve(priceId, {
+        expand: ["currency_options"],
+      });
       expect(price.lookup_key, `${entry.planKey} rider resolved by lookup_key`).toBe(
         entry.lookupKey,
       );
@@ -217,11 +303,29 @@ describe.skipIf(!LIVE)("extra-org add-on (live Stripe, test mode)", () => {
       expect(price.recurring?.interval, `${entry.planKey} rider must bill MONTHLY`).toBe("month");
       expect(price.recurring?.usage_type).toBe("licensed");
       expect(price.currency).toBe("usd");
-      // Live vs seed. A drift replacement mints a NEW price id but the same
-      // amount; a hand-edit in the Dashboard is what this catches.
-      expect(price.unit_amount, `${entry.planKey} live rate must match the seed`).toBe(
-        orgAddonPriceMinor(entry.planKey, "usd"),
-      );
+
+      // EVERY currency, not just the base one. `stripe-sync`'s drift check only
+      // CORRECTS a price when someone runs the sync; nothing detects a
+      // Dashboard hand-edit in gbp, and a price missing a currency silently
+      // falls back to Stripe's adaptive (IP-based) pricing — the #191 failure
+      // the seeded price points exist to prevent. This is the instrument for
+      // both. Note `orgAddonPriceMinor` deliberately returns the usd amount for
+      // an absent currency, so comparing against it would PASS on a missing
+      // currency_option: assert presence separately.
+      for (const currency of SUPPORTED_CURRENCIES) {
+        const opt = price.currency_options?.[currency];
+        if (currency === "usd") {
+          // usd is the price's own currency and never appears in the options.
+          expect(price.unit_amount, `${entry.planKey} live usd rate must match the seed`).toBe(
+            orgAddonPriceMinor(entry.planKey, currency),
+          );
+          continue;
+        }
+        expect(opt, `${entry.planKey} rider must define a ${currency} price point`).toBeTruthy();
+        expect(opt!.unit_amount, `${entry.planKey} live ${currency} rate must match the seed`).toBe(
+          orgAddonPriceMinor(entry.planKey, currency),
+        );
+      }
       rates[entry.planKey] = price.unit_amount!;
     }
 
@@ -287,7 +391,11 @@ describe.skipIf(!LIVE)("extra-org add-on (live Stripe, test mode)", () => {
 
     expect(await getLimit(orgId, ORG_ADDON_FEATURE_KEY)).toBe(base ?? 0);
     const [frozen] = await addonRows(walletId);
-    expect(frozen).toMatchObject({ stripe_item_id: item.id, status: "canceled", qty: 2 });
+    expect(frozen).toMatchObject({
+      stripe_item_id: item.id,
+      status: "canceled",
+      qty: 2,
+    });
   }, 60_000);
 
   it("PREMISE 1: a re-minted price nulls the LIVE item's lookup_key, and only the metadata stamp saves the row", async () => {
@@ -304,19 +412,75 @@ describe.skipIf(!LIVE)("extra-org add-on (live Stripe, test mode)", () => {
     // sharing this test account.
     const keyStamped = `seazn-t8-stamped-${uniq()}`;
     const keyBare = `seazn-t8-bare-${uniq()}`;
-    const oldStamped = await throwawayPrice({ amount: 900, lookupKey: keyStamped });
-    const oldBare = await throwawayPrice({ amount: 900, lookupKey: keyBare });
     const basePrice = await throwawayPrice({ amount: 1_900 });
     const sub = await throwawaySubscription(basePrice.id);
 
-    // Two riders: one created the way setExtraOrgs creates them (stamped), one
-    // the way a Dashboard edit or a pre-stamp code path would (bare).
-    const stamped = await stripe.subscriptionItems.create({
-      subscription: sub.id,
+    // ---- The stamped rider is created by PRODUCTION, not by this test ----
+    // Hand-building the item with `metadata: { feature_key }` under a comment
+    // saying "exactly what setExtraOrgs sends" proves nothing about
+    // setExtraOrgs: delete the stamp from extra-orgs.ts and a hand-built item
+    // still carries it. Since the whole point of this test is that an UNSTAMPED
+    // rider is silently cancelled, the stamp has to come from the code that
+    // ships it.
+    const { orgId, walletId } = await scratchGroup("pro", sub.id);
+    requireBillingOwnerMock.mockResolvedValue({
+      orgId,
+      subscriptionId: walletId,
+    });
+    const purchase = await setExtraOrgs(3);
+    expect(purchase).toMatchObject({ subscriptionId: walletId, extraOrgs: 3 });
+
+    const purchased = await stripe.subscriptions.retrieve(sub.id);
+    expect(
+      purchased.items.data,
+      "one plan item + one rider, never a second subscription",
+    ).toHaveLength(2);
+    const stamped = purchased.items.data.find((i) => i.price.id !== basePrice.id)!;
+    expect(stamped.quantity).toBe(3);
+    // PRODUCTION STAMPED IT. This is the assertion that binds the premise below
+    // to the line it is about (extra-orgs.ts, the `metadata` argument of
+    // subscriptionItems.create).
+    expect(stamped.metadata?.feature_key, "setExtraOrgs must stamp the item").toBe(
+      ORG_ADDON_FEATURE_KEY,
+    );
+    // …and it bought at the catalog price for the group's plan.
+    expect(stamped.price.lookup_key).toBe(ORG_ADDONS.find((e) => e.planKey === "pro")!.lookupKey);
+
+    // The rider's row, written the ordinary way, so its survival below is a
+    // REVOCATION of something the group is paying for rather than a failure to
+    // create something new.
+    await syncOrgAddonsForSubscription(purchased, walletId);
+    expect((await addonRows(walletId))[0]).toMatchObject({
+      stripe_item_id: stamped.id,
+      qty: 3,
+      status: "active",
+    });
+
+    // Now relocate that SAME item — production's item, with production's stamp
+    // and production's id — onto a price this suite owns. This is the one
+    // concession to sharing the account: a drift replacement would re-mint the
+    // CATALOG price and move `seazn_extra_org_pro_monthly` onto the
+    // replacement, which would leave the catalog price keyless for every other
+    // task. Relocating reaches the identical end state (a live item whose
+    // price's key is about to be transferred away) without touching the
+    // catalog. Quantity is restated because of PREMISE 2, below.
+    const oldStamped = await throwawayPrice({
+      amount: 900,
+      lookupKey: keyStamped,
+    });
+    const moved = await stripe.subscriptionItems.update(stamped.id, {
       price: oldStamped.id,
       quantity: 3,
-      metadata: { feature_key: ORG_ADDON_FEATURE_KEY },
+      proration_behavior: "none",
     });
+    expect(moved.id, "relocation must not change the id org_addons is keyed on").toBe(stamped.id);
+    // A price update does not touch metadata — asserted, not assumed, because
+    // everything below depends on the stamp still being production's.
+    expect(moved.metadata?.feature_key).toBe(ORG_ADDON_FEATURE_KEY);
+
+    // The unstamped rider: what a Dashboard edit, or a pre-stamp code path,
+    // leaves on a subscription.
+    const oldBare = await throwawayPrice({ amount: 900, lookupKey: keyBare });
     const bare = await stripe.subscriptionItems.create({
       subscription: sub.id,
       price: oldBare.id,
@@ -363,36 +527,34 @@ describe.skipIf(!LIVE)("extra-org add-on (live Stripe, test mode)", () => {
     expect(liveStamped.price.lookup_key).toBeNull();
     expect(liveBare.price.lookup_key).toBeNull();
 
-    // …which is why isOrgAddonItem falls back to the metadata stamp. Neither
-    // item's key is a catalog key, so before the swap both were unrecognised;
-    // after it, the stamped one is recognised and the bare one is not.
-    const { walletId } = await scratchGroup("pro");
-    // Both riders already have live rows — this is a group that has been
-    // paying for them, which is what makes the next assertion a REVOCATION
-    // rather than a failure to create.
-    for (const [itemId, qty] of [
-      [stamped.id, 3],
-      [bare.id, 1],
-    ] as const) {
-      await sql`
-        insert into org_addons
-          (wallet_id, target_org_id, target_competition_id, feature_key, delta_each, qty,
-           stripe_item_id, status)
-        values (${walletId}, null, null, ${ORG_ADDON_FEATURE_KEY}, ${ORG_ADDON_DELTA_EACH},
-                ${qty}, ${itemId}, 'active')`;
-    }
+    // …which is why isOrgAddonItem falls back to the metadata stamp: after the
+    // swap the stamped rider is still recognised and the bare one is not.
+    //
+    // The bare rider gets its row by hand — no code path creates an unstamped
+    // item, which is the point. It stands for a rider the group IS being billed
+    // for, so that the sweep below is a revocation rather than a no-op. The
+    // stamped rider's row was written by the real sync, above.
+    await sql`
+      insert into org_addons
+        (wallet_id, target_org_id, target_competition_id, feature_key, delta_each, qty,
+         stripe_item_id, status)
+      values (${walletId}, null, null, ${ORG_ADDON_FEATURE_KEY}, ${ORG_ADDON_DELTA_EACH},
+              1, ${bare.id}, 'active')`;
 
     await syncOrgAddonsForSubscription(after, walletId);
 
     const rows = Object.fromEntries((await addonRows(walletId)).map((r) => [r.stripe_item_id, r]));
-    // The stamped rider survives its price being re-minted…
+    // The rider PRODUCTION created survives its price being re-minted, because
+    // production stamped it…
     expect(rows[stamped.id]).toMatchObject({ status: "active", qty: 3 });
     // …and the UNSTAMPED one is cancelled by the reconcile sweep while the
     // customer is still being billed for it. That is the production hazard the
     // stamp exists to close, and it is only reachable once the lookup_key has
     // gone null — i.e. it depends on exactly the premise above.
     expect(rows[bare.id]).toMatchObject({ status: "canceled" });
-  }, 90_000);
+    // The capacity follows: 3 riders still standing on the pro base of 5.
+    expect(await getLimit(orgId, ORG_ADDON_FEATURE_KEY)).toBe(8);
+  }, 120_000);
 
   it("PREMISE 2: re-pricing an item reverts quantity to 1 unless quantity is restated", async () => {
     // convergeOrgAddonPrices passes `quantity` explicitly on the strength of
@@ -447,7 +609,11 @@ describe.skipIf(!LIVE)("extra-org add-on (live Stripe, test mode)", () => {
     const damaged = await stripe.subscriptions.retrieve(sub.id);
     await syncOrgAddonsForSubscription(damaged, walletId);
     const [row] = await addonRows(walletId);
-    expect(row).toMatchObject({ stripe_item_id: item.id, qty: 1, status: "active" });
+    expect(row).toMatchObject({
+      stripe_item_id: item.id,
+      qty: 1,
+      status: "active",
+    });
     expect(await getLimit(orgId, ORG_ADDON_FEATURE_KEY)).toBe(6); // 5 + 1, not 5 + 5
   }, 90_000);
 
@@ -485,11 +651,26 @@ describe.skipIf(!LIVE)("extra-org add-on (live Stripe, test mode)", () => {
     // The whole point. Stripe silently resets this to 1 unless it is restated.
     expect(reprice.quantity, "convergence must not revoke paid capacity").toBe(5);
 
-    // Production runs these back to back on the same object (handleSubscription
-    // Updated), so the row sync must see the POST-convergence item.
+    // Production runs these back to back on the SAME object
+    // (handleSubscriptionUpdated), so convergence must PUBLISH the post-update
+    // item back into `live.items.data` — the array the row sync reads. Assert
+    // that on the payload itself, BEFORE the sync: without it, `live` still
+    // reports quantity 5 on the pro price, the row still records 5 and getLimit
+    // is still 15, so every assertion below stays green while the publish is
+    // gone. Task 4b spent three fix rounds on exactly this property; this is
+    // the line that pins it.
+    expect(
+      live.items.data.find((i) => i.id === item.id)!.price.id,
+      "convergence must publish the live item back into the payload the row sync reads",
+    ).toBe(plusPriceId);
+
     await syncOrgAddonsForSubscription(live, walletId);
     const [row] = await addonRows(walletId);
-    expect(row).toMatchObject({ stripe_item_id: item.id, qty: 5, status: "active" });
+    expect(row).toMatchObject({
+      stripe_item_id: item.id,
+      qty: 5,
+      status: "active",
+    });
     expect(await getLimit(orgId, ORG_ADDON_FEATURE_KEY)).toBe(15); // pro_plus base 10 + 5
   }, 90_000);
 
@@ -499,7 +680,10 @@ describe.skipIf(!LIVE)("extra-org add-on (live Stripe, test mode)", () => {
     // Stripe permits mixed item intervals on one subscription only under
     // `billing_mode: flexible`; nothing asserted that this account — or a
     // freshly created subscription on it — actually is.
-    const annualBase = await throwawayPrice({ amount: 12_500, interval: "year" });
+    const annualBase = await throwawayPrice({
+      amount: 12_500,
+      interval: "year",
+    });
     const sub = await throwawaySubscription(annualBase.id);
     expect(
       (sub as unknown as { billing_mode?: { type?: string } }).billing_mode?.type,
