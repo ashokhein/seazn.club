@@ -247,8 +247,13 @@ export function groupView(args: {
  * `trialing` is therefore checked FIRST and independently of `freeSlots`.
  * Ordering matters: a trialing group with a freed slot is still on the trial
  * path, and the trial is the more specific truth.
+ *
+ * `trialing` is REQUIRED, deliberately. A default of `false` puts a caller who
+ * forgets it back on the CHARGED body — the most expensive of the three, and
+ * the exact bug this parameter exists to fix — silently and at runtime. Required
+ * means that caller fails to compile instead.
  */
-export function attachConfirmKey(freeSlots: number, trialing = false): MessageKey {
+export function attachConfirmKey(freeSlots: number, trialing: boolean): MessageKey {
   if (trialing) return "billing.group.attach.confirmTrial";
   return freeSlots > 0
     ? "billing.group.attach.confirmFree"

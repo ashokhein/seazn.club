@@ -374,6 +374,21 @@ export const APPROVED_ADD_ONS_INVENTORY: string[] = [
  *    surfaces here on the strength of a stale comment.
  *  - the dunning window — real, but it is the next INVOICE that can fail;
  *    nothing is attempted against the card at attach.
+ *  - "Removing never refunds, and adding never takes money from your card there
+ *    and then" (`## No refunds, and the freed slot`). ROUND 5: this said
+ *    "adding ALWAYS CHARGES IMMEDIATELY", false three ways — prorations book to
+ *    the next invoice (`billing-groups.ts:306-309`), a freed-slot attach raises
+ *    no proration at all (`previewAttachCharge:122`, `raising` requires
+ *    `active > quantity_paid`), and a trial attach charges nothing (`:123`,
+ *    `:320`). It also contradicted line 41 of this same article, which round 3
+ *    had corrected.
+ *
+ *    THE GATE FROZE IT FAITHFULLY FOR TWO ROUNDS. That is not a failure of the
+ *    gate; it is the gate's contract, and this wave's thesis in one line: an
+ *    inventory proves a wording was DELIBERATE, never that it was TRUE. Only
+ *    reading the sentence against `billing-groups.ts` found it, which is the
+ *    step the fixture exists to force and which nobody had performed on this
+ *    paragraph.
  *  - the freed slot, the fee lock, payouts, the detach modes — see the
  *    per-section notes in `server/usecases/billing-groups.ts`.
  */
@@ -427,7 +442,7 @@ export const APPROVED_GROUPS_INVENTORY: string[] = [
   "7104f26a03ffde1e",
   "537d992c53d3e378",
   "cc5546e9475093dd",
-  "5d34611e1654c2fa",
+  "68ae3680386824c4",
   "1687f37c2560ab80",
   "2a82d5d161253e15",
   "79756849efc57255",

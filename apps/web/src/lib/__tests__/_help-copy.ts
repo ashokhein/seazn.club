@@ -106,7 +106,7 @@ export function allSourceFiles(): Array<[string, string]> {
 }
 
 let sourceCache: Array<[string, string]> | null = null;
-let strippedCache: Array<[string, string]> | null = null;
+let strippedCache: Array<[string, StrippedSource]> | null = null;
 
 /**
  * `allSourceFiles()` with every file's comments already blanked, computed ONCE.
@@ -118,8 +118,14 @@ let strippedCache: Array<[string, string]> | null = null;
  * layers are memoised: the disk walk and the strip.
  */
 export function allStrippedSources(): Array<[string, string]> {
+  return allAuditedSources().map(([file, s]) => [file, s.code]);
+}
+
+/** The same walk, keeping each file's literal spans so the strip can be
+ *  audited per file rather than trusted. */
+export function allAuditedSources(): Array<[string, StrippedSource]> {
   if (strippedCache) return strippedCache;
-  strippedCache = allSourceFiles().map(([file, source]) => [file, codeOnly(source, file)]);
+  strippedCache = allSourceFiles().map(([file, source]) => [file, stripComments(source, file)]);
   return strippedCache;
 }
 
@@ -144,7 +150,8 @@ function walkSourceFiles(): Array<[string, string]> {
 
 /**
  * A source file with its comments BLANKED — same length, same line numbering,
- * every comment replaced by spaces.
+ * every comment replaced by spaces — plus the spans of every STRING-shaped
+ * literal it contains, so a caller can audit what was blanked.
  *
  * A guard that asserts an idiom is ABSENT must not read prose, or it fires on
  * the comment explaining why the idiom is absent — which is what happened when
@@ -153,10 +160,10 @@ function walkSourceFiles(): Array<[string, string]> {
  * its own explanation.
  *
  * ── WHY THIS USES THE TYPESCRIPT PARSER ──────────────────────────────────────
- * The first version was a hand-rolled scanner that ran `/\/\*[\s\S]*?\*\//g`
- * over the whole file BEFORE tracking strings, so a `/*` inside a string
- * literal opened a phantom comment that swallowed everything up to the next
- * `*` + `/`. That was not hypothetical: `components/v2/division-settings.tsx`
+ * The first version was a hand-rolled scanner that ran a block-comment regex
+ * over the whole file BEFORE tracking strings, so a comment-opener inside a
+ * string literal opened a phantom comment that swallowed everything up to the
+ * next closer. That was not hypothetical: `components/v2/division-settings.tsx`
  * contains `accept="image/*"`, and the regex ate 11,384 characters — 198 lines
  * — of live production code. A planted call inside that span was invisible to
  * the call-site walk while the suite stayed green.
@@ -168,8 +175,19 @@ function walkSourceFiles(): Array<[string, string]> {
  * them, and the transformation is BLANKING rather than deletion so that
  * offsets and line numbers still match the original — a fault message quoting
  * a line number stays true.
+ *
+ * `literals` is returned rather than derived by the caller because it comes off
+ * the SAME parse: one walk, and the audit below can then ask the question that
+ * actually matters — did anything outside a comment get blanked? — without
+ * re-deriving comment ranges, which would make the check circular.
  */
-export function codeOnly(source: string, fileName = "file.tsx"): string {
+export interface StrippedSource {
+  code: string;
+  /** `[start, end)` of every string, template and regex literal. */
+  literals: Array<[number, number]>;
+}
+
+export function stripComments(source: string, fileName = "file.tsx"): StrippedSource {
   const sourceFile = ts.createSourceFile(
     fileName,
     source,
@@ -178,6 +196,7 @@ export function codeOnly(source: string, fileName = "file.tsx"): string {
     fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
   const out = source.split("");
+  const literals: Array<[number, number]> = [];
   const blank = (from: number, to: number): void => {
     for (let i = from; i < to && i < out.length; i += 1) {
       if (out[i] !== "\n" && out[i] !== "\r") out[i] = " ";
@@ -195,11 +214,75 @@ export function codeOnly(source: string, fileName = "file.tsx"): string {
   const visit = (node: TS.Node): void => {
     take(ts.getLeadingCommentRanges(source, node.getFullStart()));
     take(ts.getTrailingCommentRanges(source, node.getEnd()));
+    // The literal PARTS only. `isTemplateExpression` spans the whole template
+    // INCLUDING its `${…}` expressions, and a comment inside one of those is a
+    // real comment that must be blanked — pointing the audit at the wide span
+    // reported two false faults in `server/usecases/schedule-ai.ts` the first
+    // time it ran. Head/middle/tail are the inert text between the holes.
+    if (
+      ts.isStringLiteralLike(node) ||
+      ts.isRegularExpressionLiteral(node) ||
+      ts.isTemplateHead(node) ||
+      ts.isTemplateMiddle(node) ||
+      ts.isTemplateTail(node) ||
+      ts.isJsxText(node)
+    ) {
+      literals.push([node.getStart(sourceFile), node.getEnd()]);
+    }
     node.forEachChild(visit);
   };
   visit(sourceFile);
   // The file's own leading block, which belongs to no node's full start when
   // the file begins with trivia.
   take(ts.getLeadingCommentRanges(source, 0));
-  return out.join("");
+  return { code: out.join(""), literals };
+}
+
+/** Just the code, for the many callers that do not audit. */
+export function codeOnly(source: string, fileName = "file.tsx"): string {
+  return stripComments(source, fileName).code;
+}
+
+/**
+ * THE RECURRENCE GUARD, and the reason the previous one was worthless.
+ *
+ * Round 4 replaced the swallowing bug with a per-file check that
+ * `stripped.length === raw.length` and the line count matched. Both are TRUE
+ * FOR EVERY INPUT — `stripComments` blanks into `source.split("")`, so it
+ * cannot change either. It was a guard that examined nothing while its comment
+ * claimed it made a swallowed span "impossible to miss", which is the sixth
+ * time this wave has produced exactly that shape, and the first time I produced
+ * it while fixing an instance of it.
+ *
+ * This asks the question that actually distinguishes a correct strip from the
+ * bug: **every character that changed must lie inside a comment, and therefore
+ * OUTSIDE every string-shaped literal.** The literal spans come from the AST,
+ * not from the comment ranges, so the check is independent of the decision it
+ * is checking rather than a restatement of it. The historical bug blanked from
+ * a `/*` sitting inside `"image/*"` — squarely inside a literal — so it fails
+ * this loudly, and so does any future variant that eats code.
+ *
+ * Returns readable faults rather than a boolean so a failure names the file and
+ * the text that was destroyed.
+ */
+export function blankedInsideLiteralFaults(
+  file: string,
+  raw: string,
+  stripped: StrippedSource,
+): string[] {
+  if (stripped.code.length !== raw.length) {
+    return [`${file}: strip changed the length (${raw.length} -> ${stripped.code.length})`];
+  }
+  const faults: string[] = [];
+  for (const [start, end] of stripped.literals) {
+    for (let i = start; i < end; i += 1) {
+      if (stripped.code[i] === raw[i]) continue;
+      faults.push(
+        `${file}: characters inside a string/regex/JSX literal at offset ${start}-${end} were blanked — ` +
+          `the strip is eating code, not comments. Destroyed: ${JSON.stringify(raw.slice(start, Math.min(end, start + 80)))}`,
+      );
+      break;
+    }
+  }
+  return faults;
 }

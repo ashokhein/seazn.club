@@ -56,9 +56,12 @@ import { allHelpArticles } from "@/server/help-content";
 import { TIPS } from "@/config/tips";
 import { attachConfirmKey } from "@/lib/billing-group-view";
 import {
+  allAuditedSources,
   allSourceFiles,
   allStrippedSources,
+  blankedInsideLiteralFaults,
   codeOnly,
+  stripComments,
   helpArticle,
   helpArticleBySlug,
   webSource,
@@ -104,6 +107,7 @@ const KNOWN_GAPS = [
   // ── Round 4 bookkeeping: the residuals, named rather than left implicit ────
   "THE AXIS IS CIRCULAR. `claiming` is computed by running `en.halfClaim` over the tree, so an article only joins the half-rate axis — and therefore only earns a gate — if that vocabulary already matches it. The vocabulary has been measured at 0/12 and 0/24, so an article stating the rate in an unseen shape is invisible to the axis AND ungated. The axis narrows the ungated set; it does not close it (#303)",
   "THE FOURTH ARTICLE. `billing/plans.md` states the plan org caps and the fee ladder and is inventory-gated, but `billing/downgrade.md`, `billing/credits.md`, `billing/operator.md` and every non-billing article are ungated and unscanned. They are defended only by the vocabulary above (#303)",
+  "JSX EXPRESSION COMMENTS SURVIVE `codeOnly`. `{/* … */}` is trivia of the closing `}` TOKEN and `forEachChild` never visits tokens, so it is not blanked. Direction is FAIL-SAFE — a negative scan can red on a JSX comment that mentions a banned idiom, but can never miss real code — which is why it is recorded rather than fixed. `.tsx` is the dominant file type in this tree and `{/* … */}` is its own idiom (#303)",
   "FRONTMATTER PARSER DIVERGENCE, STILL LIVE. `server/help-content.ts`'s parseFrontmatter splits on `indexOf(\":\")` and is last-wins, so an indented `  description:` or a spaced `description :` is still RENDERED as the article's description while `copy-truth.ts`'s claimSurfaces regex (`^([A-Za-z_][\\w-]*):`) does not match it — the field scores 0 gate faults and is invisible to every rule. A falsehood delivered that way ships green (#303)",
 ];
 
@@ -1248,6 +1252,52 @@ describe("codeOnly strips comments and nothing else", () => {
       expect(source.includes(drop), `${name}: the fixture never contained "${drop}"`).toBe(true);
     }
   });
+
+  /**
+   * THE AUDIT ITSELF MUST FIRE. `blankedInsideLiteralFaults` is the per-file
+   * recurrence guard, and the thing it replaced was vacuous by construction —
+   * so it is exercised here against a deliberately BAD strip rather than only
+   * against the real one, which is correct and therefore proves nothing.
+   */
+  it("faults a strip that blanks inside a literal, and passes the real one", () => {
+    const source = 'const a = <input accept="image/*" />;\nconst b = "keep me";\n';
+    const good = stripComments(source, "case.tsx");
+    expect(blankedInsideLiteralFaults("case.tsx", source, good), "the real strip").toEqual([]);
+    expect(good.literals.length, "no literals were found to audit").toBeGreaterThan(1);
+
+    // The historical bug, reproduced: blank from the `/*` inside the string to
+    // somewhere later, exactly as the old regex did — length-preserving, so the
+    // round-4 invariant would still have called this clean.
+    const from = source.indexOf("image/") + "image/".length;
+    const to = source.indexOf("keep me");
+    const chars = source.split("");
+    for (let i = from; i < to; i += 1) if (chars[i] !== "\n") chars[i] = " ";
+    const bad = { code: chars.join(""), literals: good.literals };
+    expect(bad.code.length, "the bad strip must be length-preserving, like the real bug").toBe(
+      source.length,
+    );
+    expect(bad.code.split("\n").length).toBe(source.split("\n").length);
+
+    const faults = blankedInsideLiteralFaults("case.tsx", source, bad);
+    expect(faults.length, "the audit did not notice code being eaten").toBeGreaterThan(0);
+    expect(faults[0]).toContain("eating code");
+  });
+
+  // JSX COMMENTS ARE NOT BLANKED, and this records it rather than implying
+  // otherwise. `{/* … */}` is trivia attached to the closing `}` TOKEN, and
+  // `forEachChild` never visits tokens — so it survives the strip. The
+  // direction is FAIL-SAFE (a negative scan may red on a JSX comment that
+  // mentions the idiom; it can never miss real code), which is why it is
+  // recorded in KNOWN_GAPS rather than fixed. `.tsx` is the dominant file type
+  // here and `{/* … */}` is this repo's own idiom, so the gap is worth naming.
+  it("does NOT strip a JSX expression comment — recorded, fail-safe", () => {
+    const source = "const x = <div>{/* jsxcomment */}<b>keep</b></div>;\n";
+    const stripped = codeOnly(source, "case.tsx");
+    expect(stripped, "code must survive regardless").toContain("<b>keep</b>");
+    expect(stripped, "if this now strips, update KNOWN_GAPS and this test").toContain(
+      "jsxcomment",
+    );
+  });
 });
 
 describe("the add-ons article's behaviour claims are pinned to the code", () => {
@@ -1302,30 +1352,46 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
     // `codeOnly` BLANKS rather than deletes, so length and line count are
     // invariants of a correct strip. Asserting them per file is what makes a
     // swallowed span impossible to miss, whatever swallows it.
+    // PER-FILE AUDIT, and it is content-based this time. Round 4's version
+    // asserted `stripped.length === raw.length` and an equal line count —
+    // BOTH TRUE FOR EVERY INPUT, because `stripComments` blanks into
+    // `source.split("")` and cannot change either. It examined nothing while
+    // its comment claimed it made a swallowed span "impossible to miss": the
+    // sixth instance of that shape in this wave, and the first I wrote while
+    // fixing an instance of it.
+    //
+    // `blankedInsideLiteralFaults` asks the question that actually separates a
+    // correct strip from the bug — did any character INSIDE a string, regex or
+    // JSX literal change? The literal spans come from the AST, not from the
+    // comment ranges, so this is independent of the decision it audits. The
+    // historical bug blanked from a `/*` sitting inside `"image/*"`, squarely
+    // inside a literal, and fails it loudly.
     const raws = new Map(allSourceFiles());
     const mangled: string[] = [];
     const callSites: string[] = [];
-    for (const [file, stripped] of allStrippedSources()) {
-      const raw = raws.get(file)!;
-      if (stripped.length !== raw.length) {
-        mangled.push(`${file}: ${raw.length} chars in, ${stripped.length} out`);
-      } else if (stripped.split("\n").length !== raw.split("\n").length) {
-        mangled.push(`${file}: line count changed`);
-      }
+    for (const [file, stripped] of allAuditedSources()) {
+      mangled.push(...blankedInsideLiteralFaults(file, raws.get(file)!, stripped));
       if (file.includes("__tests__") || file === "server/usecases/entitlement-freeze.ts") continue;
-      if (stripped.includes("assertMemberNotFrozen")) callSites.push(file);
+      if (stripped.code.includes("assertMemberNotFrozen")) callSites.push(file);
     }
-    expect(mangled, "codeOnly mangled these files — every negative scan over them is unsound").toEqual(
-      [],
+    expect(
+      mangled,
+      "the comment strip is eating code — every negative scan over these files is unsound",
+    ).toEqual([]);
+    // ANTI-VACUITY: the audit must have had literals to look at. A parse that
+    // silently produced none would pass the loop above on every file.
+    const literalCount = allAuditedSources().reduce((n, [, s]) => n + s.literals.length, 0);
+    expect(literalCount, "no literals were found in the whole tree — the parse is not working").toBeGreaterThan(
+      5_000,
     );
     // …and the specific string that broke it, pinned as a regression.
-    const divisionSettings = allStrippedSources().find(
+    const divisionSettings = allAuditedSources().find(
       ([f]) => f === "components/v2/division-settings.tsx",
     );
     expect(divisionSettings, "the regression fixture moved — re-point it").toBeDefined();
     expect(
-      divisionSettings![1],
-      'a `/*` inside a string literal must not open a comment',
+      divisionSettings![1].code,
+      "a comment-opener inside a string literal must not open a comment",
     ).toContain('accept="image/*"');
     expect(callSites, "the freeze reaches further than the article says — re-read it").toEqual([
       "server/api-v1/auth.ts",
@@ -1514,8 +1580,33 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
     expect(bodies.trial, "the e2e negative would now fail on true copy").not.toContain(
       DISCRIMINATOR,
     );
+    // `confirmChargeAmount` substitutes for `confirmCharge` whenever a preview
+    // returns a figure, so it is the body most payers see and must carry the
+    // discriminator too — otherwise the e2e positive passes on one rendering
+    // and not the other.
+    expect(ui["billing.group.attach.confirmChargeAmount"]).toContain(DISCRIMINATOR);
+
     // …and all three really are distinct sentences, so no pair can be confused.
     expect(new Set(Object.values(bodies)).size, "two attach bodies are identical").toBe(3);
+
+    // ALL FOUR LOCALES, not just en. The e2e specs run in English, so the
+    // discriminator only has to be exclusive there — but a translator merging
+    // two of these bodies into one sentence would make the DIALOG ambiguous for
+    // that locale's payers, which is the thing the exclusivity is protecting.
+    for (const locale of ["en", "es", "fr", "nl"] as const) {
+      const dict = JSON.parse(
+        readFileSync(`src/dictionaries/${locale}/ui.json`, "utf8"),
+      ) as Record<string, string>;
+      const three = [
+        dict["billing.group.attach.confirmCharge"],
+        dict["billing.group.attach.confirmFree"],
+        dict["billing.group.attach.confirmTrial"],
+      ];
+      expect(three.every((v) => typeof v === "string" && v.length > 0), `${locale}: a body is missing`).toBe(
+        true,
+      );
+      expect(new Set(three).size, `${locale}: two attach bodies are identical`).toBe(3);
+    }
   });
 
   // CLAIM: "Extra seats have no control in Settings yet" / "Size packs have no

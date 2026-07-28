@@ -88,7 +88,7 @@ describe("the two counts", () => {
   it("treats a never-synced group as having no free slots, not free capacity", () => {
     const v = view([group({ quantity_paid: 0, orgs: [org({ id: "a" })] })])!;
     expect(v.freeSlots).toBe(0);
-    expect(attachConfirmKey(v.freeSlots)).toBe("billing.group.attach.confirmCharge");
+    expect(attachConfirmKey(v.freeSlots, false)).toBe("billing.group.attach.confirmCharge");
   });
 
   // An EMPTY group with seats still paid for: every org detached mid-period.
@@ -98,7 +98,7 @@ describe("the two counts", () => {
     const v = view([group({ quantity_paid: 3, orgs: [] })])!;
     expect(v.onBill).toBe(0);
     expect(v.freeSlots).toBe(3);
-    expect(attachConfirmKey(v.freeSlots)).toBe("billing.group.attach.confirmFree");
+    expect(attachConfirmKey(v.freeSlots, false)).toBe("billing.group.attach.confirmFree");
   });
 
   // Drift the other way: more live orgs than Stripe has been told about, which
@@ -110,7 +110,7 @@ describe("the two counts", () => {
       group({ quantity_paid: 1, orgs: [org({ id: "a" }), org({ id: "b" }), org({ id: "c" })] }),
     ])!;
     expect(v.freeSlots).toBe(0);
-    expect(attachConfirmKey(v.freeSlots)).toBe("billing.group.attach.confirmCharge");
+    expect(attachConfirmKey(v.freeSlots, false)).toBe("billing.group.attach.confirmCharge");
   });
 });
 
@@ -594,8 +594,8 @@ describe("when the panel hides itself", () => {
 
 describe("what the confirm dialog promises", () => {
   it("says an attach is free only when a paid slot is actually free", () => {
-    expect(attachConfirmKey(1)).toBe("billing.group.attach.confirmFree");
-    expect(attachConfirmKey(0)).toBe("billing.group.attach.confirmCharge");
+    expect(attachConfirmKey(1, false)).toBe("billing.group.attach.confirmFree");
+    expect(attachConfirmKey(0, false)).toBe("billing.group.attach.confirmCharge");
     // THE TRIAL PATH, which `freeSlots` cannot see (v17 gap #299 round 4).
     // syncGroupQuantity freezes quantity_paid while trialing, so freeSlots is 0
     // and the two-way version handed a trialing payer the CHARGED body while

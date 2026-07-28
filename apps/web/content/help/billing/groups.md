@@ -85,7 +85,7 @@ Whoever didn't do it gets an email. If the payer removes an organisation, that o
 
 ## No refunds, and the freed slot
 
-Removing never refunds, and adding always charges immediately — we don't call Stripe to move money mid-period either way. The two removal choices differ only in **who keeps the value of the seat you already paid for**: the departing organisation, which rides out the period on its plan, or you, as a freed slot to reuse.
+Removing never refunds, and adding never takes money from your card there and then — nothing moves mid-period in either direction. Adding is prorated onto your next invoice, and not even that if you are filling a slot you have already paid for or you are still on your free trial. The two removal choices differ only in **who keeps the value of the seat you already paid for**: the departing organisation, which rides out the period on its plan, or you, as a freed slot to reuse.
 
 If you chose **Free up the seat now**, that slot can be filled by another organisation **at no extra charge** until renewal, and nothing changes at all if you add an organisation back into it. If you chose **Keep its plan until the period ends**, the seat left with the organisation, so the next organisation you add is a fresh seat and is charged as one. Either way the count is trued up at renewal.
 
