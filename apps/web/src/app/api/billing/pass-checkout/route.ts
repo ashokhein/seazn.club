@@ -5,7 +5,7 @@ import { HttpError } from "@/lib/errors";
 import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { baseUrl } from "@/lib/oauth";
-import { buildPassCheckoutParams } from "@/lib/billing";
+import { buildPassCheckoutParams, competitionHasRefusedPassPayment } from "@/lib/billing";
 import { preferredCurrency } from "@/lib/currency-server";
 import { PASS_KEYS } from "@/lib/currency";
 import { routes } from "@/lib/routes";
@@ -84,6 +84,30 @@ export async function POST(req: Request) {
     const [pass] = await sql<{ competition_id: string }[]>`
       select competition_id from competition_passes where competition_id = ${competition_id}`;
     if (pass) throw new HttpError(400, "This competition already has an Event Pass.");
+
+    // A previous purchase for this competition was PAID and then refused by the
+    // mint guard (v17 gap #326, V342). The check above cannot see it — a refusal
+    // deliberately writes no `competition_passes` row — so without this the
+    // buyer whose money was just taken lands back on the upgrade page looking at
+    // a live buy button, and can be charged again, once per attempt, for ever.
+    //
+    // Its own status (409) rather than joining the 400 above, because the two
+    // have opposite remedies and `passCheckoutErrorKey` maps status to the
+    // sentence the buyer reads: "you already have one" is resolved by reloading,
+    // this one cannot be resolved by the buyer at all. Clears itself the moment
+    // staff stamp `resolved_at`.
+    //
+    // DELIBERATELY UNWRAPPED, unlike the same read on the upgrade page (#326
+    // review round 3). This one is a brake on TAKING MONEY: if it cannot be
+    // evaluated, the only safe answer is "do not charge". A `catch → false` here
+    // would resume charging a buyer whose refusal row happens to be unreadable —
+    // exactly the defect the row was added to fix — so a 500 on this POST is the
+    // correct failure and the page's catch is the one that keeps the surface
+    // usable. Note the deploy consequence: shipped ahead of V342 this 500s EVERY
+    // pass checkout, not only refused ones. Migration first.
+    if (await competitionHasRefusedPassPayment(competition_id)) {
+      throw new HttpError(409, "A payment for this competition is under review.");
+    }
 
     // Priced by RUNG. Each rung's one-time price id is written back by
     // `stripe:sync` per environment, so a rung that has not been synced here has

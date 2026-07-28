@@ -136,6 +136,8 @@ Each organisation keeps its own Stripe account, its own verification, its own ba
 
 **Do the group's organisations share limits?** No. Quotas — team members, clubs, active competitions, public dashboards — are per organisation. Three organisations on Pro get three organisations' worth of everything, and that headroom is what the extra half-price rate buys.
 
+**The bill says it's full — do we have to upgrade?** Only on Community, which covers one organisation and sells nothing to raise that. On **Pro and Pro Plus**, a full bill is a purchase rather than a plan change: buy an extra organisation under **Settings → Add-ons** and the limit goes up by one for the whole group. It's a recurring add-on billed every month on top of your current bill, on its own cadence — so an annual group pays for it monthly, and the Add-ons tab shows the exact amount in your currency before you confirm.
+
 **Are team members shared?** No. Membership is per organisation; someone who works on two of them is invited to both. Paying for an organisation doesn't put you inside it, and being inside it doesn't let you see the group's card or invoices. See [inviting your team](/help/getting-started/invite-your-team).
 
 **Can staff comp a single organisation?** Yes — a comp or a raised limit can be applied to one organisation without touching the group's plan or its bill.
@@ -144,7 +146,7 @@ Each organisation keeps its own Stripe account, its own verification, its own ba
 
 **What currency does the group bill in?** One, fixed at the group's first checkout — organisations that join later are billed in it too, whatever their own entry fees are charged in.
 
-**One organisation was suspended by our team. Do we stop paying for it?** No. Suspension is a moderation action, not a billing one — the slot stays yours and the other organisations in the group are unaffected.
+**One organisation was suspended by our team. Do we stop paying for it?** No. Suspension is a moderation action, not a billing one — the slot stays yours and the other organisations in the group are unaffected. One exception, and only while *every* organisation in the group is suspended at once: a limit our team raised by hand for a single organisation stops applying until that same organisation is back — a different one returning first restores nothing, because the raised limit belongs to the organisation it was granted to — so the group falls to what its plan and its add-ons cover, and the extra organisations you've bought still count, exactly as they always do. If the group is already at that limit, it can't add another until that organisation is back. **Settings → Add-ons** says so while that's true, and nothing is charged differently.
 
 **We bought an Event Pass for one of our organisations — does it credit the group?** Only if that same organisation is the one whose checkout starts the group's subscription. The credit checks that one organisation's own pass, not a shared pool across the group — a pass held by a different organisation, even one that joined the group earlier, earns nothing. If you want the pass to count, buy it for the organisation that will actually run the upgrade. See [Event Pass](/help/billing/event-pass).
 

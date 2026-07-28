@@ -811,6 +811,99 @@ export async function sendPassCreditReversalIncompleteAlertEmail(
   return send({ to: opts.to, transactional: true, subject, html, text });
 }
 
+export interface PassRungMismatchAlertEmail {
+  to: string;
+  /** The checkout session that was refused. The whole investigation starts
+   *  here: it names the price, the customer and the payment intent. */
+  sessionId: string;
+  orgId: string;
+  competitionId: string;
+  /** The rung the session's METADATA claimed — what the buyer would have been
+   *  entitled to had this minted. */
+  passKey: PassKey;
+  /** Which check refused. `"price_mismatch"` — both price ids were known and
+   *  disagreed. `"line_items"` — the session did not report exactly one
+   *  line-item price, i.e. it does not have the shape the checkout builder
+   *  produces at all, so there is nothing to compare and nothing to trust. */
+  reason: "price_mismatch" | "line_items";
+  /** `plans.stripe_price_id_onetime` for that rung: what the session SHOULD
+   *  have been built on. */
+  expectedPriceId: string;
+  /** The price the session's line item actually carries — i.e. what the buyer
+   *  was charged for. Null when the session reported no single line item, which
+   *  is the `"line_items"` reason above. */
+  actualPriceId: string | null;
+  /** The payment intent, so the charge can be found (and refunded) without
+   *  opening the session first. Null on a session with none. */
+  paymentIntent: string | null;
+}
+
+/** Internal staff alert (v17 gap #326): a PAID Event Pass checkout session did
+ *  not agree with itself about which rung was bought, so the pass was NOT
+ *  minted — minting it would have entitled the buyer to a rung they did not pay
+ *  for (or charged them for one they will not get). Nothing about which side is
+ *  wrong can be inferred from here, so the mint refuses rather than guessing,
+ *  exactly like the "undetermined" arm of
+ *  `sendPassCreditReversalIncompleteAlertEmail`. A human must decide whether to
+ *  refund the charge or grant the pass by hand, and then fix the desync (a
+ *  stale `stripe:sync`, a price id edited in the Dashboard, a new rung wired to
+ *  the wrong lookup key). The buyer has been charged and holds nothing —
+ *  this is urgent. Ops-only, no user-facing i18n (mirrors
+ *  sendCreditPackGrantFailedAlertEmail). */
+export async function sendPassRungMismatchAlertEmail(
+  opts: PassRungMismatchAlertEmail,
+): Promise<boolean> {
+  const subject = `Event Pass NOT granted — price/rung mismatch: ${opts.sessionId}`;
+  const what =
+    opts.reason === "line_items"
+      ? `the session did not report exactly one line-item price, so it does not have the shape ` +
+        `our checkout builder produces at all (that rung's configured one-time price is ` +
+        `${opts.expectedPriceId})`
+      : `the session was built on price ${opts.actualPriceId ?? "(unknown)"} while that rung's ` +
+        `configured one-time price is ${opts.expectedPriceId}`;
+  const bodyText =
+    `A paid Event Pass checkout session (${opts.sessionId}, org ${opts.orgId}, competition ` +
+    `${opts.competitionId}) named rung ${opts.passKey} in its metadata, but ${what}. The buyer ` +
+    `WAS CHARGED and NO pass was granted — granting it would have handed out a rung that was ` +
+    `not paid for, and there is no safe way to tell which of the two is the correct one. ` +
+    `Decide manually: refund the charge, or record the pass at the rung actually paid for, then ` +
+    `stamp pass_mint_refusals.resolved_at. Then find the desync — a stale stripe:sync, a price ` +
+    `id changed in the Dashboard, or a rung wired to the wrong lookup key.`;
+  // Two consequences a responder will otherwise discover the hard way. Both are
+  // deliberate behaviour, not further bugs, but neither is guessable from the
+  // paragraph above.
+  const consequences =
+    `Until pass_mint_refusals.resolved_at is stamped, this competition CANNOT be sold another ` +
+    `Event Pass — the checkout route refuses it, which is what stops the buyer paying a second ` +
+    `time for the same failure. And because the mint was refused before the money trace ran, ` +
+    `this org's subscriptions.stripe_customer_id may still be NULL: if it is, link the Stripe ` +
+    `customer from the session before expecting an invoice to appear on its billing page.`;
+  const html = renderEmail({
+    subject,
+    preheader: `Paid Event Pass ungranted — org ${opts.orgId}`,
+    eyebrow: "Billing · Event Pass",
+    title: "Event Pass rung/price mismatch",
+    contentHtml:
+      paragraph(escapeHtml(bodyText)) +
+      paragraph(escapeHtml(consequences)) +
+      panel(
+        "Session",
+        `${opts.sessionId}\norg: ${opts.orgId}\ncompetition: ${opts.competitionId}\n` +
+          `metadata pass_key: ${opts.passKey}\nrefused because: ${opts.reason}\n` +
+          `expected price: ${opts.expectedPriceId}\n` +
+          `actual price: ${opts.actualPriceId ?? "(no single line item)"}\n` +
+          `payment intent: ${opts.paymentIntent ?? "(none)"}`,
+      ),
+    footerNote: "Automated staff alert — Event Pass mint guard (v17 gap #326).",
+  });
+  const text =
+    `${bodyText}\n\n${consequences}\n\nSession: ${opts.sessionId} · org ${opts.orgId} · ` +
+    `rung ${opts.passKey} · refused because ${opts.reason} · expected ${opts.expectedPriceId} · ` +
+    `actual ${opts.actualPriceId ?? "(no single line item)"} · ` +
+    `payment intent ${opts.paymentIntent ?? "(none)"}`;
+  return send({ to: opts.to, transactional: true, subject, html, text });
+}
+
 export interface AiRunCostAlertEmail {
   to: string;
   orgId: string;
@@ -926,6 +1019,138 @@ export async function sendEarnGrantVolumeAlertEmail(opts: EarnGrantVolumeAlertEm
     footerNote: "Automated staff alert — daily billing-grant cron (v17 gap #296).",
   });
   const text = `${bodyText}\n\nearn_grant rows today: ${opts.count} · threshold: ${opts.threshold}`;
+  return send({ to: opts.to, transactional: true, subject, html, text });
+}
+
+export interface ExtraOrgAllowanceAlertEmail {
+  to: string;
+  /** The billing GROUP (subscriptions.id) — the thing that holds the orgs. */
+  subscriptionId: string;
+  /** The org whose payer made the purchase; the entry point for a sales
+   *  conversation, not the scope of the allowance (which is group-wide). */
+  orgId: string;
+  planKey: string;
+  /** The plan's own `orgs.max_owned` from plan_entitlements (pro 5 /
+   *  pro_plus 10 today) — READ, never assumed, so the copy cannot drift from
+   *  the seed. */
+  baseCap: number;
+  extraOrgs: number;
+  previousExtraOrgs: number;
+  /** baseCap + extraOrgs — what actually crossed the threshold. */
+  totalAllowance: number;
+  threshold: number;
+}
+
+/** Internal staff alert (v17 gap #293): a billing group just BOUGHT its way to
+ *  `threshold` or more total organisations. Deliberately not a block — the
+ *  self-serve cap (MAX_EXTRA_ORGS) is far higher and stays an abuse bound, not
+ *  a sales signal. V314's `orgs.max_owned` seed recorded the intent that a
+ *  group at this size "becomes an enterprise conversation rather than a silent
+ *  reseller"; this is that conversation being started while the customer is
+ *  actively expanding, instead of a sweep noticing weeks later.
+ *  Ops-only, no user-facing i18n (mirrors sendEarnGrantVolumeAlertEmail). Not
+ *  deduped: a group that keeps adding organisations is exactly the one to keep
+ *  hearing about. */
+export async function sendExtraOrgAllowanceAlertEmail(
+  opts: ExtraOrgAllowanceAlertEmail,
+): Promise<boolean> {
+  const subject = `Large billing group: ${opts.totalAllowance} organisations (group ${opts.subscriptionId})`;
+  const bodyText =
+    `A ${opts.planKey} billing group just raised its extra-organisation add-on from ` +
+    `${opts.previousExtraOrgs} to ${opts.extraOrgs}, taking its total organisation allowance to ` +
+    `${opts.totalAllowance} (plan base ${opts.baseCap} + ${opts.extraOrgs} purchased), at or above the ` +
+    `alert threshold of ${opts.threshold}. The purchase was NOT blocked — this is a sales prompt, not a ` +
+    `guard. A group this size is an enterprise conversation: check whether a negotiated plan serves them ` +
+    `better than a growing per-organisation rider, and whether the organisations look like one federation ` +
+    `or like resale.`;
+  const html = renderEmail({
+    subject,
+    preheader: `${opts.totalAllowance} organisations · ${opts.planKey}`,
+    eyebrow: "Billing · Growth",
+    title: "Large billing group",
+    contentHtml:
+      paragraph(escapeHtml(bodyText)) +
+      panel(
+        "Group",
+        `billing group: ${opts.subscriptionId}\norg (purchaser's active): ${opts.orgId}\n` +
+          `plan: ${opts.planKey}\nplan base cap: ${opts.baseCap}\n` +
+          `extra organisations: ${opts.previousExtraOrgs} -> ${opts.extraOrgs}\n` +
+          `total allowance: ${opts.totalAllowance}\nthreshold: ${opts.threshold}`,
+      ),
+    footerNote: "Automated staff alert — extra-organisation purchase (v17 gap #293).",
+  });
+  const text =
+    `${bodyText}\n\nbilling group: ${opts.subscriptionId} · plan: ${opts.planKey} · ` +
+    `base ${opts.baseCap} + ${opts.extraOrgs} extra = ${opts.totalAllowance} (threshold ${opts.threshold})`;
+  return send({ to: opts.to, transactional: true, subject, html, text });
+}
+
+export interface ExtraOrgRepriceFailedAlertEmail {
+  to: string;
+  /** The billing GROUP (subscriptions.id) — what a human looks up first. */
+  subscriptionId: string;
+  /** The Stripe subscription the rider rides, so the item is reachable in the
+   *  Dashboard without a second lookup. */
+  stripeSubscriptionId: string;
+  planKey: string;
+  /** The subscription ITEM that is on the wrong price. Null when the failure
+   *  happened before any item could be named (catalog resolution). */
+  itemId: string | null;
+  /** What it is on now vs what the group's plan says it should be — the whole
+   *  point of the alert, and what a manual fix has to change. */
+  currentPriceId: string | null;
+  expectedPriceId: string | null;
+  reason: string;
+}
+
+/**
+ * Internal staff alert (v17 gap #293, Task 4b): the webhook could not move an
+ * extra-organisation rider onto the price its group's CURRENT plan charges, so
+ * that group is billing the WRONG RATE — $9 on a Pro Plus plan (the arbitrage
+ * the two rates exist to close) or $19 on Pro (an overcharge).
+ *
+ * This alert exists because the convergence has no other backstop. It is driven
+ * only by `customer.subscription.updated`, so a group that never changes plan
+ * again never re-converges: without this, a failure is silent and permanent. A
+ * daily reconciliation sweep and an /admin mismatch list are tracked as #332;
+ * until they land, THIS is the entire safety net.
+ *
+ * Never blocks and never retries — the webhook has already ACKed by design.
+ * Ops-only, no user-facing i18n (mirrors sendExtraOrgAllowanceAlertEmail).
+ */
+export async function sendExtraOrgRepriceFailedAlertEmail(
+  opts: ExtraOrgRepriceFailedAlertEmail,
+): Promise<boolean> {
+  const subject = `Extra-org rider stuck on the wrong price (group ${opts.subscriptionId})`;
+  const bodyText =
+    `The extra-organisation add-on for a ${opts.planKey} billing group could not be moved onto that ` +
+    `plan's rider price, so the group is being billed at the WRONG RATE until someone acts. The two ` +
+    `rates ($9 Pro / $19 Pro Plus) are load-bearing: left on the Pro price, a Pro Plus group undercuts ` +
+    `the tier ladder; left on the Pro Plus price, a Pro group is overcharged. Reason: ${opts.reason}. ` +
+    `Fix it in the Stripe Dashboard by changing the item's price (restate the quantity — Stripe resets ` +
+    `it to 1 on a price change), or re-run stripe:sync if the catalog is the problem and then touch the ` +
+    `subscription so a fresh customer.subscription.updated re-converges it. Nothing retries this on its ` +
+    `own (#332 tracks the reconciliation sweep).`;
+  const html = renderEmail({
+    subject,
+    preheader: `${opts.planKey} group on the wrong rider rate`,
+    eyebrow: "Billing · Pricing integrity",
+    title: "Extra-org rider on the wrong price",
+    contentHtml:
+      paragraph(escapeHtml(bodyText)) +
+      panel(
+        "Group",
+        `billing group: ${opts.subscriptionId}\nstripe subscription: ${opts.stripeSubscriptionId}\n` +
+          `plan: ${opts.planKey}\nsubscription item: ${opts.itemId ?? "(none named)"}\n` +
+          `price now: ${opts.currentPriceId ?? "(unknown)"}\n` +
+          `price expected: ${opts.expectedPriceId ?? "(unresolved)"}\nreason: ${opts.reason}`,
+      ),
+    footerNote: "Automated staff alert — extra-organisation re-price failure (v17 gap #293).",
+  });
+  const text =
+    `${bodyText}\n\nbilling group: ${opts.subscriptionId} · stripe sub: ${opts.stripeSubscriptionId} · ` +
+    `plan: ${opts.planKey} · item: ${opts.itemId ?? "(none)"} · ` +
+    `price ${opts.currentPriceId ?? "(unknown)"} -> ${opts.expectedPriceId ?? "(unresolved)"}`;
   return send({ to: opts.to, transactional: true, subject, html, text });
 }
 

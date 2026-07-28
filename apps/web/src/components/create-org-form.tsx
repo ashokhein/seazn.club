@@ -2,9 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "@/components/ui/console-link";
 import { api } from "@/lib/client";
 import { useMsg } from "@/components/i18n/dict-provider";
 import { asCurrency, formatMinor } from "@/lib/currency";
+import { planSellsExtraOrg } from "@/lib/org-addon-plans";
+import { routes } from "@/lib/routes";
 import type { MessageKey } from "@/lib/messages";
 
 /** A billing group the creator pays for, as returned by GET /api/billing/groups
@@ -16,7 +19,7 @@ export interface CreateOrgGroup {
   cancel_at_period_end: boolean;
   has_live_subscription: boolean;
   max_orgs: number | null;
-  orgs: { id: string; name?: string | null }[];
+  orgs: { id: string; name?: string | null; slug?: string | null }[];
 }
 
 type BillChoice = "separate" | "add";
@@ -33,7 +36,8 @@ type Msg = (key: MessageKey, vars?: Record<string, string | number>) => string;
 export function eligibility(
   g: CreateOrgGroup,
   msg: Msg,
-): { eligible: boolean; reason?: string } {
+  memberOrgIds: readonly string[] = [],
+): { eligible: boolean; reason?: string; addOnsHref?: string } {
   if (g.status === "past_due")
     return { eligible: false, reason: msg("orgNew.bill.reasonPastDue") };
   if (g.cancel_at_period_end)
@@ -41,8 +45,52 @@ export function eligibility(
   if (g.status !== "active" && g.status !== "trialing")
     return { eligible: false, reason: msg("orgNew.bill.reasonInactive") };
   if (g.max_orgs !== null && g.orgs.length >= g.max_orgs)
-    return { eligible: false, reason: msg("orgNew.bill.reasonFull") };
+    return {
+      eligible: false,
+      reason: msg("orgNew.bill.reasonFull"),
+      // Only the FULL refusal offers a purchase. The three above are ordered
+      // above it deliberately: a declining card or a bill winding down is not
+      // fixed by buying more capacity on it, and offering that would be a
+      // charge the customer cannot use.
+      addOnsHref: addOnsHrefFor(g, memberOrgIds),
+    };
   return { eligible: true };
+}
+
+/**
+ * Where a payer whose bill is FULL goes to buy another organisation slot: the
+ * Add-ons tab of an organisation ON THAT BILL (v17 gap #293) — never whichever
+ * organisation the browser happens to have active. `POST /api/billing/extra-orgs`
+ * resolves the group through `requireBillingOwner()`, i.e. the active-org
+ * cookie, so a payer with two bills who was offered the purchase against one
+ * would otherwise be sold capacity on the other. Landing on an /o page of the
+ * refused group is what re-points that cookie (`ActiveOrgSync`).
+ *
+ * `undefined` — no link at all — whenever the Add-ons tab could only answer
+ * with a notice. The three cases below are exactly the tab's own refusals
+ * (`app/o/[orgSlug]/settings/add-ons/page.tsx`), and each is REACHABLE from
+ * this picker rather than theoretical:
+ *
+ *  · the plan sells no rider. A Community group is `max_orgs: 1` holding one
+ *    organisation, so it is permanently "Full" — it is the most likely group
+ *    in this list to reach this line, not an impossible one. Exceeding it is
+ *    an upgrade, not a purchase.
+ *  · no live paid subscription for a recurring item to ride (a comped or
+ *    never-paid group can be `active` with no Stripe subscription).
+ *  · no organisation on the bill this user is a MEMBER of. Every /o page is
+ *    member-gated — `requireOrgPage` 404s a non-member — and paying for an
+ *    organisation does not make you one, which is the normal shape after a
+ *    bill transfer. Sending them to a 404 would be a worse dead end than the
+ *    plain "Full" pill this link exists to replace.
+ */
+function addOnsHrefFor(
+  g: CreateOrgGroup,
+  memberOrgIds: readonly string[],
+): string | undefined {
+  if (!planSellsExtraOrg(g.plan_key)) return undefined;
+  if (!g.has_live_subscription) return undefined;
+  const reachable = g.orgs.find((o) => !!o.slug && memberOrgIds.includes(o.id));
+  return reachable?.slug ? routes.addOns(reachable.slug) : undefined;
 }
 
 /**
@@ -65,11 +113,34 @@ export function submitLabel(args: {
   return msg("orgNew.createAndAddFree");
 }
 
-/** A recognisable name for a bill in the picker: the organisations already on
- *  it, falling back to the plan when an org has lost its name. */
-function groupLabel(g: CreateOrgGroup): string {
-  const names = g.orgs.map((o) => o.name).filter(Boolean);
-  return names.length > 0 ? names.join(", ") : g.plan_key;
+/**
+ * A recognisable name for a bill in the picker: the FIRST organisation on it
+ * plus a count of the rest — never the whole join.
+ *
+ * Joining every name is unbounded in a place that has to fit. The archetypal
+ * customer for this entire feature is a 5/5 Pro bill, and five real names join
+ * to ~119 characters — three wrapped lines at 375px once the offer interpolates
+ * the label into a sentence. The picker ROW has always capped with `truncate`;
+ * the offer's sentence cannot, so the cap belongs in the label itself and both
+ * surfaces get it.
+ *
+ * Falls back to the plan when every organisation has lost its name.
+ */
+function groupLabel(g: CreateOrgGroup, msg: Msg): string {
+  const names = g.orgs.map((o) => o.name).filter((n): n is string => Boolean(n));
+  if (names.length === 0) return g.plan_key;
+  const rest = names.length - 1;
+  if (rest === 0) return names[0];
+  // Not `usePlural`: it throws outside a `DictProvider`, and this island is
+  // rendered without one. That is safe here rather than a shortcut — `rest` is
+  // never 0 on this branch, and all four shipped locales (en/es/fr/nl) put the
+  // one/other boundary at exactly 1, so the ternary IS the plural rule for
+  // every locale this product has. A locale with a dual/paucal form would need
+  // the real `Intl.PluralRules` path.
+  return msg(rest === 1 ? "orgNew.bill.andMore.one" : "orgNew.bill.andMore.other", {
+    name: names[0],
+    count: rest,
+  });
 }
 
 /** Plan name for a bill's subline in the picker (e.g. "Pro Plus", "Pro"). */
@@ -78,8 +149,131 @@ function planLabel(plan: string): string {
   return plan.charAt(0).toUpperCase() + plan.slice(1);
 }
 
+/**
+ * The bills that are full and CAN be bought out of, for the state where the
+ * picker itself is unreachable (v17 gap #293 review).
+ *
+ * The picker's rows only render under `choice === "add"`, and the toggle that
+ * sets it is disabled while no bill has an open slot. So the payer this whole
+ * feature is for — ONE Pro bill at 5/5 — could never open the list the link
+ * lives in, and met "No eligible bills" with no way forward. When nothing is
+ * eligible the offer therefore has to be made next to that sentence instead.
+ *
+ * Empty whenever at least one bill IS eligible: the rows are reachable then and
+ * carry their own links, and offering the same purchase twice on one screen
+ * would read as two different things to buy.
+ */
+export function fullBillOffers(
+  groups: CreateOrgGroup[],
+  msg: Msg,
+  memberOrgIds: readonly string[],
+): { group: CreateOrgGroup; href: string }[] {
+  if (groups.some((g) => eligibility(g, msg, memberOrgIds).eligible)) return [];
+  return groups.flatMap((g) => {
+    const { addOnsHref } = eligibility(g, msg, memberOrgIds);
+    return addOnsHref ? [{ group: g, href: addOnsHref }] : [];
+  });
+}
+
+/**
+ * One bill in the picker: the selectable card, plus — when the bill is full and
+ * the payer can actually buy their way out of it — a link to the Add-ons tab.
+ *
+ * Hookless and exported so the RENDERED branch is testable. The form itself
+ * only draws this list after an effect fetches the groups, which the node-env
+ * test environment never runs; without this seam the link's condition would be
+ * pinned by nothing, and rendering it unconditionally (on a Community bill, on
+ * an overdue one) would pass every suite.
+ *
+ * The link sits OUTSIDE the row button, not next to the reason pill inside it,
+ * for two reasons that both make it dead on arrival otherwise: an anchor inside
+ * a button is not valid HTML, and a `disabled` button — which every row
+ * carrying this link is — swallows pointer events for its whole subtree.
+ */
+export function BillRow({
+  g,
+  msg,
+  selectedId,
+  memberOrgIds,
+  onPick,
+}: {
+  g: CreateOrgGroup;
+  msg: Msg;
+  selectedId: string;
+  memberOrgIds: readonly string[];
+  onPick: (id: string) => void;
+}) {
+  const { eligible, reason, addOnsHref } = eligibility(g, msg, memberOrgIds);
+  const on = eligible && selectedId === g.id;
+  return (
+    <li className="space-y-0.5">
+      <button
+        type="button"
+        onClick={() => onPick(g.id)}
+        disabled={!eligible}
+        aria-pressed={on}
+        className={`flex w-full items-center gap-3 rounded-2xl border p-3.5 text-left transition disabled:cursor-not-allowed ${
+          on
+            ? "border-purple-300 bg-purple-50/70 ring-1 ring-purple-200"
+            : eligible
+              ? "border-slate-200 hover:border-purple-200"
+              : "border-slate-200 opacity-60"
+        }`}
+      >
+        <span
+          className={`grid h-4 w-4 flex-none place-items-center rounded-full border ${
+            on ? "border-purple-600" : "border-slate-300"
+          }`}
+        >
+          {on && <span className="h-2 w-2 rounded-full bg-purple-600" />}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span
+            id={`bill-name-${g.id}`}
+            className="block truncate text-sm font-medium text-slate-900"
+          >
+            {groupLabel(g, msg)}
+          </span>
+          <span className="block text-xs text-slate-500">
+            {planLabel(g.plan_key)} · {g.orgs.length}/{g.max_orgs ?? "∞"}
+          </span>
+        </span>
+        {!eligible && (
+          <span className="flex-none rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">
+            {reason}
+          </span>
+        )}
+      </button>
+      {/* Indented to the row's text column so it reads as this bill's way out,
+          and at full opacity — the card is dimmed because it cannot be picked,
+          but this is the one live action on it. */}
+      {addOnsHref && (
+        <Link
+          href={addOnsHref}
+          // Several full bills would otherwise put several identically-named
+          // links on one page. The bill's own name describes each without a
+          // second sentence to translate.
+          aria-describedby={`bill-name-${g.id}`}
+          className="inline-flex rounded-sm py-1.5 pl-[2.625rem] text-xs font-semibold text-purple-700 underline decoration-purple-300 underline-offset-2 hover:text-purple-800 hover:decoration-purple-500"
+        >
+          {msg("orgNew.bill.reasonFullCta")}
+        </Link>
+      )}
+    </li>
+  );
+}
+
 /** Create an organization; the creator becomes its owner. Slug is automatic. */
-export function CreateOrgForm() {
+export function CreateOrgForm({
+  memberOrgIds,
+}: {
+  /** Ids of the organisations this user can actually OPEN — their memberships,
+   *  minus scorer roles, which `requireOrgPage` bounces to /my-matches. Passed
+   *  from the page (which already loads them) because the payer-gated group
+   *  payload this form fetches names organisations the payer may not belong
+   *  to, and a link into one of those is a 404. */
+  memberOrgIds: readonly string[];
+}) {
   const msg = useMsg();
   const router = useRouter();
   const [name, setName] = useState("");
@@ -118,6 +312,7 @@ export function CreateOrgForm() {
   }, []);
 
   const eligibleGroups = (groups ?? []).filter((g) => eligibility(g, msg).eligible);
+  const offers = fullBillOffers(groups ?? [], msg, memberOrgIds);
   const selectedGroup = (groups ?? []).find((g) => g.id === selectedId) ?? null;
   const attaching = choice === "add" && !!selectedGroup;
 
@@ -268,9 +463,40 @@ export function CreateOrgForm() {
           )}
 
           {eligibleGroups.length === 0 && (
-            <p className="px-1 text-xs text-slate-400">
-              {msg("orgNew.bill.noneEligible")}
-            </p>
+            <div className="space-y-1.5">
+              <p className="px-1 text-xs text-slate-400">
+                {msg("orgNew.bill.noneEligible")}
+              </p>
+              {/* The picker below cannot be opened in this state, so this is the
+                  only place the way out can be offered. Each link NAMES its
+                  bill: with no rows on screen there is nothing else to say
+                  which one it would raise. */}
+              {offers.length > 0 && (
+                <ul className="space-y-0.5">
+                  {offers.map(({ group, href }) => (
+                    <li key={group.id}>
+                      <Link
+                        href={href}
+                        // This label INTERPOLATES a name, and at 375px a long
+                        // unbroken organisation name runs it ~860px past the
+                        // right edge, where it is CLIPPED rather than scrolled
+                        // — unreadable, and invisible to an overflow check.
+                        // `overflow-wrap: anywhere`, not `break-words`
+                        // (`break-word`): only the former shrinks the element's
+                        // min-content width, which is what an inline-block is
+                        // sized from. Measured both. The row's own link takes
+                        // no name and needs none.
+                        className="inline-block [overflow-wrap:anywhere] rounded-sm px-1 py-1.5 text-xs font-semibold text-purple-700 underline decoration-purple-300 underline-offset-2 hover:text-purple-800 hover:decoration-purple-500"
+                      >
+                        {msg("orgNew.bill.reasonFullCtaFor", {
+                          name: groupLabel(group, msg),
+                        })}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
 
           {choice === "add" && (
@@ -279,48 +505,16 @@ export function CreateOrgForm() {
                 {msg("orgNew.bill.addToExistingHint")}
               </p>
               <ul className="space-y-2">
-                {(groups ?? []).map((g) => {
-                  const { eligible, reason } = eligibility(g, msg);
-                  const on = eligible && selectedId === g.id;
-                  return (
-                    <li key={g.id}>
-                      <button
-                        type="button"
-                        onClick={() => pickGroup(g.id)}
-                        disabled={!eligible}
-                        aria-pressed={on}
-                        className={`flex w-full items-center gap-3 rounded-2xl border p-3.5 text-left transition disabled:cursor-not-allowed ${
-                          on
-                            ? "border-purple-300 bg-purple-50/70 ring-1 ring-purple-200"
-                            : eligible
-                              ? "border-slate-200 hover:border-purple-200"
-                              : "border-slate-200 opacity-60"
-                        }`}
-                      >
-                        <span
-                          className={`grid h-4 w-4 flex-none place-items-center rounded-full border ${
-                            on ? "border-purple-600" : "border-slate-300"
-                          }`}
-                        >
-                          {on && <span className="h-2 w-2 rounded-full bg-purple-600" />}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium text-slate-900">
-                            {groupLabel(g)}
-                          </span>
-                          <span className="block text-xs text-slate-500">
-                            {planLabel(g.plan_key)} · {g.orgs.length}/{g.max_orgs ?? "∞"}
-                          </span>
-                        </span>
-                        {!eligible && (
-                          <span className="flex-none rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">
-                            {reason}
-                          </span>
-                        )}
-                      </button>
-                    </li>
-                  );
-                })}
+                {(groups ?? []).map((g) => (
+                  <BillRow
+                    key={g.id}
+                    g={g}
+                    msg={msg}
+                    selectedId={selectedId}
+                    memberOrgIds={memberOrgIds}
+                    onPick={pickGroup}
+                  />
+                ))}
               </ul>
 
               {attaching && preview && (

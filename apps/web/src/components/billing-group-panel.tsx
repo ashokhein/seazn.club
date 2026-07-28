@@ -17,10 +17,18 @@ import { Tip } from "@/components/ui/tip";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { useMsg } from "@/components/i18n/dict-provider";
 import { asCurrency, formatMinor } from "@/lib/currency";
-// The decisions live in a pure module so they can be tested. This component's
-// data arrives in an effect and the vitest environment here is `node` with no
-// jsdom, so a render test would assert against the null returned before the
-// fetch lands — see lib/billing-group-view.ts.
+// The decisions live in a pure module so they can be tested — see
+// lib/billing-group-view.ts, which owns the WHY.
+//
+// This comment used to go on to say a render test was impossible here ("would
+// assert against the null returned before the fetch lands"). That was true when
+// it was written and is not any more: `components/__tests__/_hook-harness.tsx`
+// supplies React's hook dispatcher, so the island can be driven with its state,
+// its mount effect and a stubbed fetch, and
+// `components/__tests__/billing-group-at-cap.test.tsx` does exactly that. Both
+// layers are worth having and they answer different questions — the pure module
+// pins WHICH message key each state chooses, the render test pins the
+// interpolated sentence a payer actually reads — so keep writing both.
 import {
   attachConfirmKey,
   groupView,
@@ -156,6 +164,7 @@ export function BillingGroupPanel({
     seatsPaid,
     freeSlots,
     atCap,
+    atCapKey,
     hasLive,
     candidates,
     blocked,
@@ -392,7 +401,11 @@ export function BillingGroupPanel({
 
         {atCap ? (
           <p className="text-sm text-slate-500">
-            {msg("billing.group.atCap", { max: String(group.max_orgs) })}
+            {/* The remedy differs by plan (v17 gap #293): Pro and Pro Plus buy a
+                rider from the Add-ons tab, Community must upgrade first. Which
+                sentence that is, is decided in billing-group-view.ts, where it
+                can be tested. */}
+            {msg(atCapKey, { max: String(group.max_orgs) })}
           </p>
         ) : candidates.length === 0 && blocked.length === 0 ? (
           // Not an error and not a dead control: there is simply nothing of

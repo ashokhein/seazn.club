@@ -37,7 +37,8 @@ export const dynamic = "force-dynamic";
 // time. See lib/pass-comparison.ts for why nothing is written down.
 import Link from "@/components/ui/console-link";
 import { sql } from "@/lib/db";
-import { reconcilePassCheckout } from "@/lib/billing";
+import { competitionHasRefusedPassPayment, reconcilePassCheckout } from "@/lib/billing";
+import { captureError } from "@/lib/sentry";
 import { requireCompetitionPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";
 import { PassUpgradeButton } from "@/components/pass-upgrade";
@@ -101,7 +102,7 @@ export default async function CompetitionUpgradePage({
     await reconcilePassCheckout(orgId, sp.session_id);
   }
 
-  const [[pass], planKey, currency, locale, [subRow]] = await Promise.all([
+  const [[pass], planKey, currency, locale, [subRow], passUnderReview] = await Promise.all([
     // Presence is ROW EXISTENCE. `stripe_payment_intent` is nullable (V271) and
     // a staff-granted pass is fully active; it is selected only to tell a
     // PURCHASE from a GRANT further down, where the difference decides whether
@@ -129,6 +130,57 @@ export default async function CompetitionUpgradePage({
     sql<{ id: string }[]>`
       select s.id from organizations o join subscriptions s on s.id = o.subscription_id
       where o.id = ${orgId}`,
+    // A payment for THIS competition was taken and then refused by the mint
+    // guard (v17 gap #326, V342). Read here rather than inferred from the
+    // reconcile above, because the reconcile only runs on the return from
+    // checkout and this state has to survive every later visit — including the
+    // webhook-only case, where the buyer never came back through the return URL
+    // at all. Without it the page renders its ordinary offer, buy button and
+    // all, to someone whose money we are already holding.
+    //
+    // WRAPPED, defaulting to FALSE — and both halves of that are deliberate.
+    //
+    // WRAPPED (#326 review round 3), because this page is a READ surface with no
+    // money-moving side effect that never touched `pass_mint_refusals` before
+    // this feature. Deployed ahead of V342 an unwrapped read 500s the whole
+    // upgrade page: "the table does not exist yet" is not the same fact as "a
+    // refusal exists", and the query cannot tell them apart.
+    //
+    // FALSE, not true (#326 review round 4) — this reverses the default this
+    // catch shipped with, for the reason the `!pass` conjunct above exists.
+    // `upgrade.passUnderReview` says "Your payment for this competition went
+    // through … please don't pay again". On a read failure we do not know WHO
+    // that is true for, and defaulting true renders it to every viewer of every
+    // pass-less competition — including everyone during the very
+    // deploy-ahead-of-V342 window this catch was added for. That is the same
+    // false statement about someone's money that round 2 removed, arrived at
+    // through a different door, and at far greater scale.
+    //
+    // Defaulting false claims nothing it cannot verify. The cost is that ONE
+    // genuinely refused buyer sees a buy button — and clicking it is safe,
+    // because `POST /api/billing/pass-checkout` reads the same table WITHOUT a
+    // catch and refuses. So the trade is "a confusing dead click for one person
+    // who cannot be charged" against "a false money claim shown to everyone",
+    // and the route being the authority is what makes the first one survivable.
+    // `pass-checkout-plan-gate.test.ts` pins that the route read stays unwrapped
+    // precisely because this default now leans on it.
+    //
+    // Not silent: logged AND sent to Sentry. `console.error` alone reaches no
+    // pager here (no `captureConsoleIntegration` is registered), so wrapping had
+    // traded a loud failure for an invisible one.
+    competitionHasRefusedPassPayment(compId).catch((err) => {
+      console.error(
+        `[billing] could not read pass_mint_refusals for competition ${compId} — ` +
+          `rendering the ordinary page and leaving the refusal to the checkout route`,
+        err,
+      );
+      captureError(err, {
+        orgId,
+        route: "upgrade/page",
+        extra: { competitionId: compId, read: "pass_mint_refusals" },
+      });
+      return false;
+    }),
   ]);
   const dict = await getDictionary(locale, "ui");
 
@@ -215,6 +267,33 @@ export default async function CompetitionUpgradePage({
   return (
     <main className="mx-auto max-w-3xl px-4 py-10">
       <h1 className="page-title">{title}</h1>
+
+      {/* Said BEFORE the ticket: the buy control below is refused server-side
+          (409) while this is true, and a control that fails after the click is
+          exactly the dead end this sentence exists to remove. Amber rather than
+          red — nothing the reader did is wrong, and their money is not lost.
+
+          `&& !pass` is NOT belt-and-braces, and the state it excludes is the one
+          the alert email's own remedy walks staff into (#326 review round 2).
+          The alert says "record the pass at the rung actually paid for", and
+          stamping `pass_mint_refusals.resolved_at` is a SEPARATE manual step
+          with no UI — so "pass granted, refusal not yet resolved" is not just
+          reachable, it is the expected intermediate state of the documented
+          fix. Without this conjunct the page tells a customer who has just been
+          made whole that we are holding their money and will refund them,
+          directly above their active pass ticket: a false statement about
+          someone's money, which is worse than the silence this banner replaced.
+
+          Ordered `passUnderReview && !pass` rather than the reverse only so the
+          rare flag short-circuits first; both are already in hand. */}
+      {passUnderReview && !pass && (
+        <p
+          role="status"
+          className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          {t(dict, "upgrade.passUnderReview")}
+        </p>
+      )}
 
       {state.kind === "paid_plan" ? (
         <PlanPanel

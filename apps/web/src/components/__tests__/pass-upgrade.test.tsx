@@ -28,8 +28,11 @@
 // harness below. See its comment for why that is not as reckless as it reads.
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
-import * as ReactRuntime from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+// The useState dispatcher shim + tree walkers live in one place now (v17 gap
+// #293 needed the same harness for the Add-ons control); see that file's
+// comment for why this is not as reckless as it reads.
+import { propsOf, renderIsland, walk } from "./_hook-harness";
 import {
   PassRungLadder,
   PassUpgradeButton,
@@ -56,20 +59,6 @@ const OPTIONS: PassRungOption[] = [
   { key: "event_pass", amountMinor: 2900, entrants: 128, divisions: 10, credits: 25 },
   { key: "event_pass_l", amountMinor: 5900, entrants: null, divisions: 20, credits: 25 },
 ];
-
-/** Every element in a returned tree, so handlers can be found and invoked. */
-function walk(node: ReactNode, out: ReactElement[] = []): ReactElement[] {
-  if (Array.isArray(node)) {
-    for (const child of node) walk(child, out);
-    return out;
-  }
-  if (!isValidElement(node)) return out;
-  out.push(node);
-  return walk((node.props as { children?: ReactNode }).children, out);
-}
-
-type Props = Record<string, unknown>;
-const propsOf = (el: ReactElement): Props => el.props as Props;
 
 function ladder(overrides: Partial<Parameters<typeof PassRungLadder>[0]> = {}) {
   const props = {
@@ -294,84 +283,9 @@ describe("PassRungLadder — failed checkouts", () => {
 // left to a manual browser check. A manual check is not a regression test: the
 // mis-sale can be reintroduced by one token and nothing in CI would say so.
 //
-// So this harness supplies React's hook dispatcher itself. `useState` is one
-// slot of `internals.H`; a component that uses ONLY `useState` needs a cursor,
-// an array of cells, and a re-render on `set`. That is the whole thing. It is
-// deliberately NOT a general React renderer — it renders one function component
-// one level deep and returns the element tree, which is all a click needs.
-//
-// Why this rather than adding jsdom: jsdom is a dependency for every suite in
-// the workspace and a build-time cost forever, to cover two lines. This is 30
-// test-only lines that touch nothing else.
-//
-// How it fails when React changes: `react` is pinned to an exact version here
-// (package.json "react": "19.2.4", no caret). If a future upgrade moves the
-// dispatcher slot, the guard below throws with a message naming this comment,
-// and every test in this describe reds — loudly, not silently.
-type Cell = unknown;
-interface HookDispatcher {
-  useState: (initial: Cell) => [Cell, (next: Cell) => void];
-}
-
-function hookDispatcherSlot(): { H: HookDispatcher | null } {
-  const slot = (
-    ReactRuntime as unknown as {
-      __CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE?: {
-        H: HookDispatcher | null;
-      };
-    }
-  ).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
-  if (!slot) {
-    throw new Error(
-      "React's hook dispatcher slot has moved — the useState harness in " +
-        "pass-upgrade.test.tsx needs updating (see the comment above it).",
-    );
-  }
-  return slot;
-}
-
-/**
- * Render a `useState`-only function component and keep re-rendering it as its
- * state changes, so its handlers can be invoked the way a browser would.
- */
-function renderIsland<P>(Component: (props: P) => ReactNode, props: P) {
-  const slot = hookDispatcherSlot();
-  const cells: Cell[] = [];
-  let cursor = 0;
-  let output: ReactNode = null;
-
-  const dispatcher: HookDispatcher = {
-    useState(initial) {
-      const index = cursor++;
-      if (index >= cells.length) {
-        cells.push(typeof initial === "function" ? (initial as () => Cell)() : initial);
-      }
-      const set = (next: Cell) => {
-        cells[index] =
-          typeof next === "function" ? (next as (previous: Cell) => Cell)(cells[index]) : next;
-        run();
-      };
-      return [cells[index], set];
-    },
-  };
-
-  function run() {
-    cursor = 0;
-    const previous = slot.H;
-    slot.H = dispatcher;
-    try {
-      output = Component(props);
-    } finally {
-      slot.H = previous;
-    }
-  }
-
-  run();
-  // A function, not a value: every interaction re-renders, and reading a stale
-  // tree would let the assertions pass against markup the buyer never saw.
-  return { tree: () => expandTree(output) };
-}
-
+// `renderIsland` (./_hook-harness) supplies React's hook dispatcher so that
+// join can be driven here. See that file for how it works and how it fails
+// loudly on a React upgrade.
 /**
  * `walk` plus one deliberate step further: a `PassRungLadder` element is
  * EXPANDED into what it renders, because that is where the radios and the buy
@@ -403,13 +317,20 @@ describe("PassUpgradeButton — the buyer's selection reaches checkout", () => {
   });
 
   function mount() {
-    return renderIsland(PassUpgradeButton, {
-      competitionId: "comp-1",
-      options: OPTIONS,
-      currency: "usd" as const,
-      dict,
-      canBuy: true,
-    });
+    // `expandTree`, not the default walk: the radios and the buy button live
+    // inside the (hookless) ladder, and the harness has no renderer to reach
+    // them.
+    return renderIsland(
+      PassUpgradeButton,
+      {
+        competitionId: "comp-1",
+        options: OPTIONS,
+        currency: "usd" as const,
+        dict,
+        canBuy: true,
+      },
+      (node) => expandTree(node),
+    );
   }
 
   const pick = (island: ReturnType<typeof mount>, key: string) => {

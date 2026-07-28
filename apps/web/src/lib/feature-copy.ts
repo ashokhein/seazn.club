@@ -11,9 +11,24 @@ const FEATURE_REASONS: Record<string, string> = {
   // Fires for BOTH caps: the per-USER limit (creating one org too many for your
   // plan — Community allows 1) and the per-GROUP limit (a shared bill that is
   // full). Worded to make sense for either, and to name the upgrade path and the
-  // half-price extra-org rule rather than the raw key.
+  // half-price extra-org rule rather than the raw key. v17 gap #293: the way
+  // past the cap on a PAID plan is now a purchase (the recurring extra-org
+  // rider), not an upgrade — the 402 carries { offer: "extra_org" } alongside
+  // this sentence, so the copy has to name the same remedy the machine hint
+  // does. `feature-copy.test.ts` pins that pairing.
+  //
+  // MAKES NO RATE CLAIM, deliberately. There are TWO different prices for "an
+  // extra organisation" and they only agree monthly: the plan price's second
+  // graduated tier (what the orgs already on the bill cost — 900/1900 a month,
+  // but 7900/16300 a YEAR) and the rider SKU this offer sells, which is
+  // monthly-only at 900/1900. So "the same rate as the ones already on your
+  // bill" is true for a monthly group and ~37% wrong for an annual one, and
+  // "half your plan's rate" is a claim about the tier, not about this. The
+  // figure belongs to the Add-ons page (Task 6), which knows the currency and
+  // reads it from the rider SKU; this sentence names only the CADENCE, which is
+  // true on every plan and in every currency.
   "orgs.max_owned":
-    "Your current plan covers the most organisations it allows (Community 1, Pro 5, Pro Plus 10). Upgrade in Settings → Billing to create more — each extra organisation is half your plan's rate, on one shared bill.",
+    "Your current plan covers the most organisations it allows (Community 1, Pro 5, Pro Plus 10). On Pro or Pro Plus, buy an extra organisation from Settings → Add-ons; it's billed monthly on top of your current bill. Community upgrades to Pro first.",
   "members.max": "You've reached your plan's team-member seats.",
   "scorers.max": "You've reached your plan's scorer seats.",
   "competitions.max_active": "Your plan's active-competition limit is reached.",

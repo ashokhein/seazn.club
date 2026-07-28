@@ -218,5 +218,40 @@
         "currency_options": { "eur": 900, "gbp": 800, "inr": 79900, "aud": 1500 }
       }
     }
+  ],
+  "$comment_org_addons": "Extra-organisation RECURRING add-on (v17 gap remediation #293, design/v17-pricing-entitlements SPEC-2 §3/§7): exceeding the group's plan cap (orgs.max_owned) is a PURCHASE, not an upgrade wall — both Pro and Pro Plus can buy. Priced identically to the plan's own graduated tier-2 rate (extraOrgPrice() in lib/currency.ts reads the SAME plans[].prices.monthly.tiers[up_to=inf] numbers this seed copies) — org-addon-catalog-parity.test.ts pins the two together so a tier change and a forgotten add-on price can never drift apart. Like extra_seat this rides the group's EXISTING subscription as an extra RECURRING item (never a second subscription, never annual — always $/month regardless of the group's own billing interval, mirroring extra_seat's shape exactly). ONE ENTRY PER PLAN because the rate differs by plan, and that difference is LOAD-BEARING: pricing a Pro Plus extra at $19 rather than $9 is what stops 'Pro + extras' undercutting Pro Plus. `plan_key`/`feature_key`/`delta_each` are OUR fields (never sent to Stripe) — the customer.subscription.updated webhook (billing-events.syncOrgAddonsForSubscription) is the SINGLE writer of the resulting org_addons(feature_key='orgs.max_owned', target_org_id=null) row, group-wide (not scoped to one org, unlike a seat). Flat per_unit prices (quantity = extra orgs bought), not a graduated ladder: the plan price already carries the group ladder.",
+  "org_addons": [
+    {
+      "key": "extra_org_pro",
+      "plan_key": "pro",
+      "feature_key": "orgs.max_owned",
+      "delta_each": 1,
+      "product": {
+        "name": "Seazn Club Extra Organisation — Pro",
+        "description": "One additional organisation on your Pro bill, beyond your plan's included limit, billed monthly for as long as it is active."
+      },
+      "price": {
+        "lookup_key": "seazn_extra_org_pro_monthly",
+        "unit_amount": 900,
+        "interval": "month",
+        "currency_options": { "eur": 900, "gbp": 700, "inr": 69900, "aud": 1400 }
+      }
+    },
+    {
+      "key": "extra_org_pro_plus",
+      "plan_key": "pro_plus",
+      "feature_key": "orgs.max_owned",
+      "delta_each": 1,
+      "product": {
+        "name": "Seazn Club Extra Organisation — Pro Plus",
+        "description": "One additional organisation on your Pro Plus bill, beyond your plan's included limit, billed monthly for as long as it is active."
+      },
+      "price": {
+        "lookup_key": "seazn_extra_org_pro_plus_monthly",
+        "unit_amount": 1900,
+        "interval": "month",
+        "currency_options": { "eur": 1800, "gbp": 1600, "inr": 149900, "aud": 2900 }
+      }
+    }
   ]
 }

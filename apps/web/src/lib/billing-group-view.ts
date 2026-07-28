@@ -16,6 +16,12 @@
 // The key functions return MessageKey rather than string, so a typo fails the
 // build instead of rendering a raw dotted key into a confirm dialog.
 import type { MessageKey } from "@/lib/messages";
+// The SAME predicate the create-org picker's "buy another slot" link is gated
+// on, deliberately not a second `["pro", "pro_plus"]` written into this file:
+// two copies of "which plans sell a rider" drift, and the drift is invisible
+// because each side is individually correct. Client-safe (it reads the shared
+// stripe-plans.json seed), unlike `lib/org-addons.ts` which imports server-only.
+import { planSellsExtraOrg } from "@/lib/org-addon-plans";
 
 export interface ViewGroupOrg {
   id: string;
@@ -66,6 +72,29 @@ export interface GroupView {
    *  organisation genuinely costs nothing. */
   freeSlots: number;
   atCap: boolean;
+  /**
+   * Which sentence a FULL bill reads — and the remedy it names is not the same
+   * one for everybody (v17 gap #293).
+   *
+   * "Upgrade to cover more" was true before the extra-organisation rider
+   * shipped. On Pro and Pro Plus it is now wrong: the remedy is a $9/$19
+   * monthly rider bought from Settings → Add-ons, and sending a paying customer
+   * to change their plan when they need an add-on is a worse dead end than
+   * saying nothing. Community genuinely must upgrade first — it sells no rider
+   * — so this SPLITS rather than trying to be one sentence that is right for
+   * nobody in particular.
+   *
+   * Gated on `has_live_subscription` too, mirroring the create-org picker's
+   * link: a recurring rider needs an existing subscription to ride, so a comped
+   * or never-paid group on a Pro plan would be sent to an Add-ons tab that can
+   * only answer with a notice.
+   *
+   * Neither string states a RATE. The plan's per-organisation tier and the
+   * rider SKU agree monthly and diverge annually (~37%), so any figure here
+   * would be wrong for annual groups; the Add-ons page, which knows the
+   * currency and reads the SKU, is the one place that quotes it.
+   */
+  atCapKey: MessageKey;
   hasLive: boolean;
   /** Organisations in the payer's OTHER groups that can actually move onto this
    *  bill. Carries the group each came from. */
@@ -184,6 +213,10 @@ export function groupView(args: {
     seatsPaid,
     freeSlots,
     atCap,
+    atCapKey:
+      planSellsExtraOrg(group.plan_key) && group.has_live_subscription
+        ? "billing.group.atCapAddOn"
+        : "billing.group.atCap",
     hasLive: group.has_live_subscription,
     candidates,
     blocked,

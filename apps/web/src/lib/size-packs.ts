@@ -11,21 +11,45 @@ import { HttpError } from "@/lib/errors";
 type Exec = postgres.TransactionSql | typeof sql;
 import { CHECKOUT_BRANDING, CUSTOMER_UPDATE_FOR_TAX } from "@/lib/billing";
 import { SEAT_ADDON } from "@/lib/seat-addons";
+import { ORG_ADDON_FEATURE_KEY } from "@/lib/org-addons";
 
-/** A size-pack may lift any additive cap EXCEPT the seat-managed one. The
- *  extra-seat webhook reconcile (syncSeatAddonsForSubscription) cancels every
- *  active `members.max` org_addons row on the wallet whose Stripe item it no
- *  longer sees; a size-pack's one-time payment_intent id is never in that
- *  seen-set, so a size-pack pointed at `members.max` would be silently canceled
- *  by the next seat `subscription.updated` on the same group. `feature_key` is
- *  admin-configurable (owner intent) for every OTHER cap — forbid only this one
- *  collision at write time (single source of truth: SEAT_ADDON.featureKey). */
-function assertNotSeatManaged(featureKey: string | undefined): void {
-  if (featureKey === SEAT_ADDON.featureKey) {
+/** Caps whose `org_addons` rows are owned by a RECURRING WEBHOOK SWEEP. Each of
+ *  these has a `customer.subscription.updated` handler that cancels every
+ *  active row on the wallet for its feature key whose Stripe subscription ITEM
+ *  it no longer sees:
+ *
+ *   - `members.max`     -> syncSeatAddonsForSubscription (extra seats)
+ *   - `orgs.max_owned`  -> syncOrgAddonsForSubscription  (extra organisations,
+ *                          v17 gap #293 — the same sweep, added by W6)
+ *
+ *  Read from the two catalogs rather than restated, so a key that moves moves
+ *  here too. */
+const SWEEP_MANAGED_FEATURE_KEYS: readonly string[] = [
+  SEAT_ADDON.featureKey,
+  ORG_ADDON_FEATURE_KEY,
+];
+
+/** A size-pack may lift any additive cap EXCEPT one that a subscription sweep
+ *  manages. A size-pack is a ONE-TIME purchase: `grantSizePackAddon` writes an
+ *  org_addons row on the buyer's wallet with a non-null `stripe_item_id` (the
+ *  payment_intent id) and status 'active' — precisely the shape both sweeps
+ *  cancel — and a one-time id is never in either sweep's seen-set, which only
+ *  ever contains live subscription item ids. So a size-pack pointed at one of
+ *  these caps is silently canceled by the very next `subscription.updated` on
+ *  the same group, after the customer has paid.
+ *
+ *  `feature_key` is admin-configurable (owner intent) for every OTHER cap, and
+ *  admin-editable is exactly why this is enforced at write time rather than
+ *  documented: it is reachable today through the staff catalog CRUD. Forbid
+ *  only these collisions, from the single source of truth for each key. */
+function assertNotSweepManaged(featureKey: string | undefined): void {
+  // An unset feature_key (a PATCH that does not touch it) needs no separate
+  // guard — it simply matches nothing.
+  if (SWEEP_MANAGED_FEATURE_KEYS.some((k) => k === featureKey)) {
     throw new HttpError(
       400,
-      `A size-pack cannot lift '${SEAT_ADDON.featureKey}' — that cap is managed by the ` +
-        `extra-seat add-on and would be canceled by its next subscription sync.`,
+      `A size-pack cannot lift '${featureKey}' — that cap is managed by a recurring add-on ` +
+        `and would be canceled by its next subscription sync.`,
     );
   }
 }
@@ -94,7 +118,7 @@ export async function createSizePack(
   },
   exec: Exec = sql,
 ): Promise<SizePackCatalogRow> {
-  assertNotSeatManaged(input.feature_key);
+  assertNotSweepManaged(input.feature_key);
   const [row] = await exec<SizePackCatalogRow[]>`
     insert into size_pack_catalog (key, label, feature_key, delta_each, stripe_lookup_key, active)
     values (${input.key}, ${input.label}, ${input.feature_key}, ${input.delta_each},
@@ -118,7 +142,7 @@ export async function updateSizePack(
   }>,
   exec: Exec = sql,
 ): Promise<SizePackCatalogRow | null> {
-  assertNotSeatManaged(patch.feature_key);
+  assertNotSweepManaged(patch.feature_key);
   const [row] = await exec<SizePackCatalogRow[]>`
     update size_pack_catalog set
       label             = coalesce(${patch.label ?? null}, label),

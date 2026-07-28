@@ -3,6 +3,8 @@
 // subscription away, so every branch is pinned here rather than left to a
 // screenshot someone remembers to look at.
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   attachConfirmKey,
   groupView,
@@ -12,6 +14,16 @@ import {
   type ViewGroupOrg,
   type ViewOffer,
 } from "@/lib/billing-group-view";
+import { planSellsExtraOrg } from "@/lib/org-addon-plans";
+import uiEn from "@/dictionaries/en/ui.json";
+import uiEs from "@/dictionaries/es/ui.json";
+import uiFr from "@/dictionaries/fr/ui.json";
+import uiNl from "@/dictionaries/nl/ui.json";
+
+/** All four locales, so a rate claim cannot creep into one of them alone —
+ *  which is exactly how a translation gets it wrong (the flat dotted-key dicts
+ *  make this a plain lookup). */
+const DICTS = { en: uiEn, es: uiEs, fr: uiFr, nl: uiNl };
 
 const ME = "user-me";
 
@@ -147,6 +159,108 @@ describe("the cap", () => {
     ])!;
     expect(v.atCap).toBe(true);
     expect(v.freeSlots).toBe(3);
+  });
+});
+
+// WHICH remedy a full bill is told to take (v17 gap #293). One sentence used to
+// serve every plan — "Upgrade to cover more" — and the extra-organisation rider
+// made it wrong for the two plans that sell one: it sends a paying customer to
+// change their plan when what they need is a $9/$19 monthly add-on.
+describe("the cap's remedy", () => {
+  const atCapOn = (over: Partial<ViewGroup>) =>
+    view([group({ max_orgs: 1, orgs: [org()], ...over })])!;
+
+  it("points Pro and Pro Plus at the Add-ons tab, not at an upgrade", () => {
+    for (const plan of ["pro", "pro_plus"]) {
+      const v = atCapOn({ plan_key: plan });
+      expect(v.atCap, plan).toBe(true);
+      expect(v.atCapKey, plan).toBe("billing.group.atCapAddOn");
+    }
+  });
+
+  // The discriminator. Without a plan that still reads "upgrade", a function
+  // that returned the add-on key unconditionally would pass the test above —
+  // and Community would be told to buy a rider it cannot buy.
+  it("still tells Community to upgrade, because it sells no rider", () => {
+    const v = atCapOn({ plan_key: "community", has_live_subscription: false });
+    expect(v.atCap).toBe(true);
+    expect(v.atCapKey).toBe("billing.group.atCap");
+  });
+
+  // A Pro group with nothing for a recurring item to ride (comped, or a
+  // never-paid first invoice) would land on an Add-ons tab that can only answer
+  // with `addOns.noLiveSubscription`. Same withholding as the create-org
+  // picker's link, for the same reason: an offer that dead-ends one screen later
+  // is worse than no offer.
+  it("withholds the add-on remedy from a paid plan with no live subscription", () => {
+    const v = atCapOn({ plan_key: "pro", has_live_subscription: false });
+    expect(v.atCapKey).toBe("billing.group.atCap");
+  });
+
+  // Pinned against the catalog rather than against the literal ["pro",
+  // "pro_plus"]: the day a tier gains or loses its SKU, this decision must move
+  // with it and not with a list written in a test.
+  it("agrees with the org-addon catalog on every plan it knows", () => {
+    for (const plan of ["community", "pro", "pro_plus"]) {
+      expect(atCapOn({ plan_key: plan }).atCapKey, plan).toBe(
+        planSellsExtraOrg(plan) ? "billing.group.atCapAddOn" : "billing.group.atCap",
+      );
+    }
+  });
+});
+
+// Neither sentence may state a RATE. The plan's per-organisation tier and the
+// rider SKU agree monthly and diverge ~37% annually, so any figure here is
+// false for somebody — the Add-ons page, which knows the currency and reads the
+// SKU, is the only surface that quotes one. (extra-org-price-parity.test.ts
+// keeps the registry of copy that DOES state the rate; this must stay off it.)
+describe("the cap copy quotes no price", () => {
+  it("names the remedy and the cadence, and no rate", () => {
+    for (const locale of ["en", "es", "fr", "nl"] as const) {
+      const dict = DICTS[locale] as Record<string, string>;
+      for (const key of ["billing.group.atCap", "billing.group.atCapAddOn"]) {
+        const copy = dict[key]!;
+        expect(copy, `${locale}/${key}`).toBeTruthy();
+        expect(copy, `${locale}/${key} must not quote a figure`).not.toMatch(
+          /[$£€]\s?\d|\d+\s?(?:%|USD|EUR|GBP)|half|mitad|moitié|helft/i,
+        );
+      }
+      // ...and the add-on sentence must actually SAY monthly, which is the one
+      // claim that is true in every (plan × currency) cell.
+      expect(dict["billing.group.atCapAddOn"], locale).toMatch(
+        /monthly|mes\b|mois|mensuel|maandelijks/i,
+      );
+    }
+  });
+
+  // Two e2e specs (billing-groups.spec.ts and billing-groups-journey.spec.ts)
+  // assert the FULL-bill line by this clause, on a Pro fixture that now renders
+  // the add-on variant. Both English strings therefore have to keep it, or a
+  // copy edit here reds a Playwright run nobody is watching at the time.
+  // A nav rename would otherwise turn this sentence into a wrong direction in
+  // one locale and nobody would notice: the copy names a destination, and the
+  // destination's label lives in two other keys. Pinned per locale, because
+  // that is where they can drift apart (es says "Configuración", not the
+  // "Ajustes" the org menu uses).
+  it("names the Add-ons tab exactly as each locale's nav labels it", () => {
+    for (const locale of ["en", "es", "fr", "nl"] as const) {
+      const dict = DICTS[locale] as Record<string, string>;
+      const copy = dict["billing.group.atCapAddOn"]!;
+      expect(copy, `${locale} settings label`).toContain(dict["settings.nav.title"]!);
+      expect(copy, `${locale} add-ons label`).toContain(dict["settings.nav.addOns"]!);
+      // Both, in that order, as one destination rather than two mentions.
+      expect(copy, `${locale} path`).toContain(
+        `${dict["settings.nav.title"]} \u2192 ${dict["settings.nav.addOns"]}`,
+      );
+    }
+  });
+
+  it("keeps the clause the e2e specs match, in BOTH English variants", () => {
+    for (const key of ["billing.group.atCap", "billing.group.atCapAddOn"]) {
+      expect((uiEn as Record<string, string>)[key], key).toContain(
+        "organisations, and they are all in use",
+      );
+    }
   });
 });
 
@@ -507,5 +621,30 @@ describe("what the confirm dialog promises", () => {
       const immediateBody = transferConfirmKey(hasLive).endsWith("Immediate");
       expect(immediateExplainer).toBe(immediateBody);
     }
+  });
+});
+
+// A source scan, kept alongside the RENDER test in
+// `components/__tests__/billing-group-at-cap.test.tsx` rather than instead of
+// it. This one earns its place by pinning the SHAPE — no message key named in
+// the markup — so a future branch that reintroduces a literal for some other
+// state is caught even where no render test covers that state. Same idiom as
+// `app/__tests__/pass-entry-points.test.ts`.
+describe("the panel renders the key this module chose", () => {
+  const panel = () =>
+    readFileSync(
+      join(import.meta.dirname, "..", "..", "components", "billing-group-panel.tsx"),
+      "utf8",
+    );
+
+  it("passes atCapKey through instead of naming a message key itself", () => {
+    const src = panel();
+    expect(src).toContain("atCapKey");
+    expect(src).toMatch(/msg\(atCapKey,\s*\{\s*max:/);
+    // The literal is what would make the split cosmetic: a hardcoded
+    // "billing.group.atCap" renders the upgrade sentence to a Pro payer no
+    // matter what groupView decided. Comments are exempt (the panel explains
+    // the split in one), so only a QUOTED occurrence counts.
+    expect(src).not.toMatch(/["'`]billing\.group\.atCap/);
   });
 });

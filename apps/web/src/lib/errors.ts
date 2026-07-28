@@ -17,9 +17,15 @@ export class HttpError extends Error {
   }
 }
 
-/** Thrown by entitlement gates; maps to HTTP 402. */
+/** Thrown by entitlement gates; maps to HTTP 402. `extra` merges into the
+ *  error body the same way HttpError's does — e.g. a purchase OFFER next to
+ *  the refusal (v17 gap #293: `{ offer: "extra_org" }` on orgs.max_owned when
+ *  the refused plan can buy its way past the cap). */
 export class PaymentRequiredError extends HttpError {
-  constructor(public readonly featureKey: string) {
-    super(402, `Plan upgrade required: ${featureKey}`);
+  constructor(
+    public readonly featureKey: string,
+    extra?: Record<string, unknown>,
+  ) {
+    super(402, `Plan upgrade required: ${featureKey}`, undefined, extra);
   }
 }

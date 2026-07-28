@@ -344,17 +344,46 @@ async function resolveFromDb(
   // a boolean and never reads int_value, so nothing here can drift from SQL.
   //
   // Expired overrides are dead (v3/08 §1 admin expiry) — ignored here; the
-  // admin panel shows and sweeps them.
-  const [ov] = await sql<Resolved[]>`
-    select bool_value, int_value
-    from org_entitlement_overrides
-    where org_id = ${orgId} and feature_key = ${featureKey}
-      and (expires_at is null or expires_at > now())`;
+  // admin panel shows and sweeps them. The statement itself lives in
+  // `overrideRow` below, because `capacityBasis` needs the identical read.
+  const ov = await overrideRow(orgId, featureKey);
   if (!ov) return base;
   return {
     bool_value: ov.bool_value ?? base?.bool_value ?? null,
     int_value: ov.int_value,
   };
+}
+
+/**
+ * THE live `org_entitlement_overrides` read — one statement, two callers.
+ *
+ * `resolve()` above overlays it on the plan row; `capacityBasis`
+ * (lib/billing-group.ts) reads the same row DIRECTLY, because a display of
+ * purchased capacity must not inherit the resolver's read-time degradations.
+ * Two callers, two files, and until now two hand-written copies of the same
+ * SELECT — the drift class `entitlements-duplicate-resolvers.test.ts` exists
+ * for, and one the second copy had already stepped in once.
+ *
+ * The predicate that most matters is the liveness one: an EXPIRED override is
+ * dead, and a copy that forgets `expires_at` keeps honouring a comp that ended.
+ *
+ * Returns null when the org carries no live override for the key — which is
+ * distinct from an override present with a null `int_value` (staff-granted
+ * UNLIMITED). Both callers depend on telling those apart, which is why this
+ * hands back the ROW rather than an int: an `overrideIntValue(): number | null`
+ * cannot express "absent", and cannot carry the `bool_value` `resolve()` needs
+ * to coalesce, so only one of the two callers could ever have used it.
+ */
+export async function overrideRow(
+  orgId: string,
+  featureKey: string,
+): Promise<Resolved | null> {
+  const [ov] = await sql<Resolved[]>`
+    select bool_value, int_value
+    from org_entitlement_overrides
+    where org_id = ${orgId} and feature_key = ${featureKey}
+      and (expires_at is null or expires_at > now())`;
+  return ov ?? null;
 }
 
 /** Returns true if the org has a boolean feature enabled. */
@@ -423,22 +452,82 @@ export async function hasFeatureOnAnyPass(orgId: string, featureKey: string): Pr
  * the cap on the very next check, and a just-canceled one must drop it, without
  * waiting out the 300s entitlement TTL — which is exactly why the caller
  * (`getLimit`) sums this after `resolve()` returns, not inside it.
+ *
+ * This is the WALLET-keyed core (v17 gap #293), exported for callers that
+ * already KNOW the wallet and have no org to resolve one through. The only such
+ * caller today is `groupOrgLimit`'s every-org-suspended branch
+ * (lib/billing-group.ts): the subscription id it is asked about IS the wallet,
+ * and every live org in the group is suspended, so the org-keyed `addonBonus`
+ * below cannot reach that case at all.
+ *
+ * Omitting `orgId` narrows the sum to GROUP-WIDE rows only (`target_org_id is
+ * null`) — correct for a cap like orgs.max_owned, which is a property of the
+ * group and is never meaningfully scoped to one member org.
  */
+export async function addonBonusForWallet(
+  walletId: string,
+  featureKey: string,
+  orgId?: string,
+  competitionId?: string,
+): Promise<number> {
+  return addonBonusForWalletByStatus(
+    walletId,
+    featureKey,
+    COUNTING_ADDON_STATUSES,
+    orgId,
+    competitionId,
+  );
+}
+
+/** The statuses that COUNT toward a cap. 'canceled' is frozen-not-deleted
+ *  (V323) and never counts. */
+const COUNTING_ADDON_STATUSES = ["active", "granted"] as const;
+
+/**
+ * `addonBonusForWallet`, narrowed to a subset of statuses — the SAME statement,
+ * so the scope predicates cannot drift.
+ *
+ * It exists for one caller: `extraOrgsInUse` (server/usecases/extra-orgs.ts),
+ * which must subtract only the ADMIN-GRANTED half of the bonus. Capacity a
+ * group was GIVEN is not capacity it is renting, so a comped organisation must
+ * never make the customer look like they are standing on a purchased rider.
+ *
+ * It is parameterised rather than copied because the copy was already made
+ * once and already lost the `target_org_id` / `target_competition_id`
+ * predicates — a silent divergence from the very function it was inverting. A
+ * shared statement makes that class of bug unrepresentable; see
+ * `entitlements-duplicate-resolvers.test.ts` for why this codebase is strict
+ * about it.
+ */
+export async function addonBonusForWalletByStatus(
+  walletId: string,
+  featureKey: string,
+  statuses: readonly string[],
+  orgId?: string,
+  competitionId?: string,
+): Promise<number> {
+  // `in ()` is a syntax error, not an empty set — refuse to build one.
+  if (statuses.length === 0) return 0;
+  const [r] = await sql<{ bonus: number }[]>`
+    select coalesce(sum(delta_each * qty), 0)::int as bonus
+      from org_addons
+     where wallet_id = ${walletId}
+       and feature_key = ${featureKey}
+       and status in ${sql([...statuses])}
+       and (target_org_id is null or target_org_id = ${orgId ?? null})
+       and (target_competition_id is null or target_competition_id = ${competitionId ?? null})`;
+  return r?.bonus ?? 0;
+}
+
+/** The org-keyed entry point: resolve the org's wallet, then sum. Rows targeted
+ *  AT this org count as well as the group-wide ones. */
 async function addonBonus(
   orgId: string,
   featureKey: string,
   competitionId?: string,
 ): Promise<number> {
   const walletId = await walletIdFor(orgId);
-  const [r] = await sql<{ bonus: number }[]>`
-    select coalesce(sum(delta_each * qty), 0)::int as bonus
-      from org_addons
-     where wallet_id = ${walletId}
-       and feature_key = ${featureKey}
-       and status in ('active', 'granted')
-       and (target_org_id is null or target_org_id = ${orgId})
-       and (target_competition_id is null or target_competition_id = ${competitionId ?? null})`;
-  return r?.bonus ?? 0;
+  return addonBonusForWallet(walletId, featureKey, orgId, competitionId);
 }
 
 /**

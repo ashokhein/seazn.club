@@ -35,6 +35,11 @@ const h = vi.hoisted(() => ({
   // case keeps meaning what it meant.
   subscriptionId: "sub-1" as string | null,
   groupRedeemed: false as boolean,
+  // v17 gap #326: an unresolved `pass_mint_refusals` row for this competition.
+  passUnderReview: false as boolean,
+  // ...and the read itself failing, which is what a deploy that runs ahead of
+  // V342 looks like from here.
+  passUnderReviewThrows: false as boolean,
   matrix: [
     { plan_key: "community", feature_key: "divisions.per_competition.max", bool_value: null, int_value: 2 },
     { plan_key: "event_pass", feature_key: "divisions.per_competition.max", bool_value: null, int_value: 10 },
@@ -89,11 +94,25 @@ vi.mock("@/lib/entitlements", async (orig) => ({
   ...(await orig<typeof import("@/lib/entitlements")>()),
   orgPlanKey: async () => h.planKey,
 }));
+// `console.error` reaches no pager here — none of the sentry.*.config.ts files
+// registers `captureConsoleIntegration` — so wrapping the refusal read would
+// otherwise have traded a loud failure for an invisible one. Spied so that line
+// is a behaviour rather than a decoration.
+const sentryMock = vi.hoisted(() => ({ captureError: vi.fn() }));
+vi.mock("@/lib/sentry", () => ({ captureError: sentryMock.captureError }));
 vi.mock("@/lib/currency-server", () => ({ preferredCurrency: async () => "usd" }));
 vi.mock("@/lib/resolve-locale", () => ({ resolveLocale: async () => "en" }));
 vi.mock("@/lib/billing", () => ({
   reconcilePassCheckout: async (_org: string, session: string) => {
     h.reconciled.push(session);
+  },
+  // v17 gap #326: a payment for this competition was taken and then refused by
+  // the mint guard. Driven from the harness rather than through the `sql`
+  // double, because the whole point of the row is that it is NOT a
+  // `competition_passes` row and the double keys on table names.
+  competitionHasRefusedPassPayment: async () => {
+    if (h.passUnderReviewThrows) throw new Error("relation \"pass_mint_refusals\" does not exist");
+    return h.passUnderReview;
   },
 }));
 vi.mock("@/server/usecases/billing-manage", () => ({ getPassPurchases: async () => h.purchases }));
@@ -141,6 +160,9 @@ beforeEach(() => {
   h.reconciled = [];
   h.subscriptionId = "sub-1";
   h.groupRedeemed = false;
+  h.passUnderReview = false;
+  h.passUnderReviewThrows = false;
+  sentryMock.captureError.mockClear();
 });
 
 /** A pass bought `days` ago, paid unless told otherwise. */
@@ -439,5 +461,111 @@ describe("returning from checkout", () => {
   it("does not reconcile without a session id", async () => {
     await render({ checkout: "success" });
     expect(h.reconciled).toEqual([]);
+  });
+
+  // v17 gap #326: the mint guard took the money and refused to issue the pass.
+  // Before this the page said NOTHING — it rendered its ordinary offer, buy
+  // button and all, to someone we were already holding money from, and the
+  // route's 409 only arrived after they had clicked and agreed to pay again.
+  it("tells a buyer whose payment was refused what happened to their money", async () => {
+    h.passUnderReview = true;
+    const html = await render();
+    expect(html).toContain("Your payment for this competition went through");
+    // Apostrophe-free substrings on purpose: renderToStaticMarkup escapes `'`
+    // to `&#x27;`, so asserting on "don't pay again" would fail for the
+    // encoding rather than for the copy.
+    expect(html).toContain("will refund you or issue the right pass");
+  });
+
+  it("says none of that on an ordinary offer", async () => {
+    // The discriminator. A banner rendered unconditionally would tell every
+    // browsing owner that we were holding money we had never taken.
+    const html = await render();
+    expect(html).not.toContain("Your payment for this competition went through");
+  });
+
+  // It must survive the WEBHOOK-only case too: a buyer who closed the tab never
+  // comes back through `?checkout=success`, so a notice driven off the reconcile
+  // return value alone would never be shown to them.
+  it("shows it on a plain visit, not only on the return from checkout", async () => {
+    h.passUnderReview = true;
+    const html = await render();
+    expect(h.reconciled).toEqual([]);
+    expect(html).toContain("Your payment for this competition went through");
+  });
+
+  // The state the alert email's OWN remedy walks staff into (#326 review round
+  // 2). It says "record the pass at the rung actually paid for", and clearing
+  // `pass_mint_refusals.resolved_at` is a separate manual step with no UI — so
+  // "pass granted, refusal still open" is the expected intermediate state of the
+  // documented fix, not an exotic one. Ungated, the page would tell a customer
+  // who has just been made whole that we are holding their money and will refund
+  // them, printed directly above their live pass ticket.
+  it("stops saying it the moment the pass exists, even with the refusal unresolved", async () => {
+    h.passUnderReview = true;
+    heldPass();
+    const html = await render();
+    expect(html).not.toContain("Your payment for this competition went through");
+    expect(html).not.toContain("will refund you or issue the right pass");
+    // ...and the assertion is not vacuous because the page really is in the
+    // owned state: the ticket it renders instead is the one that says so.
+    expect(html).toContain("Event Pass active");
+  });
+
+  // The page is a READ surface that never touched this table before, so a
+  // deploy landing ahead of V342 would 500 it outright — hence the catch. It
+  // defaults to FALSE: on a read failure we do not know WHO an unresolved
+  // refusal belongs to, and `upgrade.passUnderReview` is a claim about a
+  // specific person's money. Showing it to everyone is the same defect the
+  // `!pass` conjunct removed, at greater scale — and the window this catch
+  // exists for (a deploy ahead of V342) is exactly when it would fire for every
+  // viewer of every competition.
+  it("claims nothing about anyone's money when the refusal read fails", async () => {
+    h.passUnderReviewThrows = true;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const html = await render();
+      expect(html).not.toContain("Your payment for this competition went through");
+      // ...and the page still RENDERS rather than 500ing, which is what the
+      // catch is for. Not vacuous: the ordinary offer is on screen.
+      expect(html).toContain("Buy the pass");
+      // Never silent — an unreadable brake is an incident of its own, and with
+      // the banner gone this is the ONLY signal that it happened. The log alone
+      // pages nobody (no captureConsoleIntegration is registered), so Sentry has
+      // to be told explicitly.
+      expect(errors).toHaveBeenCalled();
+      expect(sentryMock.captureError).toHaveBeenCalledTimes(1);
+      expect(sentryMock.captureError.mock.calls[0]![1]).toMatchObject({
+        route: "upgrade/page",
+        extra: { read: "pass_mint_refusals" },
+      });
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("still shows the notice when the read SUCCEEDS and says there is a refusal", async () => {
+    // The discriminator for the default above: returning a constant `false`
+    // would pass that test while never warning the one buyer who needs it.
+    h.passUnderReview = true;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const html = await render();
+      expect(html).toContain("Your payment for this competition went through");
+      expect(errors).not.toHaveBeenCalled();
+      // ...and a successful read is not an incident.
+      expect(sentryMock.captureError).not.toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("still says it when the refusal is open and NO pass exists", async () => {
+    // The discriminator for the conjunct above: without this, gating the banner
+    // on something permanently false would pass that test.
+    h.passUnderReview = true;
+    h.passRow = null;
+    const html = await render();
+    expect(html).toContain("Your payment for this competition went through");
   });
 });

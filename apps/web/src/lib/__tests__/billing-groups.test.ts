@@ -42,10 +42,12 @@ import {
 import {
   activeOrgCount,
   assertGroupMayHoldAnotherOrg,
+  assertWithinGroupCap,
   groupIdsOwnedBy,
   groupOrgLimit,
 } from "@/lib/billing-group";
 import { PaymentRequiredError } from "@/lib/errors";
+import { featureReason } from "@/lib/feature-copy";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
@@ -103,6 +105,68 @@ afterAll(async () => {
   const client = g._sql;
   g._sql = undefined;
   await client?.end();
+});
+
+// Pure — no DB, deliberately NOT skipIf(!HAS_DB), so CI's no-database unit job
+// runs the offer contract too.
+describe("assertWithinGroupCap — purchase offer (v17 gap #293)", () => {
+  it("carries { offer: 'extra_org' } when the caller says the plan can buy one", () => {
+    let caught: unknown;
+    try {
+      assertWithinGroupCap(5, 5, true);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(PaymentRequiredError);
+    expect((caught as InstanceType<typeof PaymentRequiredError>).extra).toEqual({ offer: "extra_org" });
+  });
+
+  it("carries no offer when the plan cannot buy one", () => {
+    let caught: unknown;
+    try {
+      assertWithinGroupCap(1, 1, false);
+    } catch (err) {
+      caught = err;
+    }
+    // The absence is only meaningful next to a positive discriminator: the
+    // refusal itself must still be the SAME 402 on the SAME key, or "no offer"
+    // could just as well mean "no refusal happened at all".
+    expect(caught).toBeInstanceOf(PaymentRequiredError);
+    expect((caught as InstanceType<typeof PaymentRequiredError>).featureKey).toBe("orgs.max_owned");
+    expect((caught as InstanceType<typeof PaymentRequiredError>).extra).toBeUndefined();
+  });
+
+  it("defaults to no offer when the third argument is omitted (back-compat)", () => {
+    let caught: unknown;
+    try {
+      assertWithinGroupCap(5, 5);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(PaymentRequiredError);
+    expect((caught as InstanceType<typeof PaymentRequiredError>).featureKey).toBe("orgs.max_owned");
+    expect((caught as InstanceType<typeof PaymentRequiredError>).extra).toBeUndefined();
+  });
+
+  it("still admits a count under the cap, offer flag or not", () => {
+    expect(() => assertWithinGroupCap(4, 5, true)).not.toThrow();
+    expect(() => assertWithinGroupCap(99, null, true)).not.toThrow();
+  });
+
+  it("the offer it stamps and the reason shipped beside it name ONE remedy", () => {
+    // Both halves of the 402 body come from different files, and only a comment
+    // held them together. This is the machine-checked half of that pairing —
+    // feature-copy.test.ts pins the sentence's own contract.
+    let caught: unknown;
+    try {
+      assertWithinGroupCap(5, 5, true);
+    } catch (err) {
+      caught = err;
+    }
+    const err = caught as InstanceType<typeof PaymentRequiredError>;
+    expect((err.extra as { offer?: string }).offer).toBe("extra_org");
+    expect(featureReason(err.featureKey)).toMatch(/extra organisation/i);
+  });
 });
 
 describe.skipIf(!HAS_DB)("a billing group of three orgs", () => {
@@ -238,6 +302,125 @@ describe.skipIf(!HAS_DB)("the per-user cap and the per-group cap are different g
       PaymentRequiredError,
     );
   });
+
+  it("the person-cap refusal offers a purchase when an owned org's plan can buy one (v17 gap #293)", async () => {
+    const s = uniq();
+    const [{ id: userId }] = await sql<{ id: string }[]>`
+      insert into users (email, display_name, email_verified)
+      values (${`personcap-${s}@test.local`}, 'Person Cap', true) returning id`;
+    const [{ id: subId }] = await sql<{ id: string }[]>`
+      insert into subscriptions (owner_user_id, plan_key, status, quantity_paid)
+      values (${userId}, 'pro', 'active', 5) returning id`;
+    for (let i = 0; i < 5; i++) {
+      const [{ id: orgId }] = await sql<{ id: string }[]>`
+        insert into organizations (name, slug, created_by, subscription_id)
+        values (${`Cap ${s} ${i}`}, ${`cap-${s}-${i}`}, ${userId}, ${subId}) returning id`;
+      await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${userId}, 'owner')`;
+    }
+
+    const { assertMayOwnAnotherOrg } = await import("@/lib/auth");
+    const err = await assertMayOwnAnotherOrg(userId).then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(PaymentRequiredError);
+    expect((err as InstanceType<typeof PaymentRequiredError>).extra).toEqual({ offer: "extra_org" });
+  });
+
+  it("carries no offer for a community-only spread (nothing to buy)", async () => {
+    const s = uniq();
+    const [{ id: userId }] = await sql<{ id: string }[]>`
+      insert into users (email, display_name, email_verified)
+      values (${`personcap-comm-${s}@test.local`}, 'Person Cap Comm', true) returning id`;
+    const [{ id: subId }] = await sql<{ id: string }[]>`
+      insert into subscriptions (owner_user_id, plan_key, status)
+      values (${userId}, 'community', 'active') returning id`;
+    const [{ id: orgId }] = await sql<{ id: string }[]>`
+      insert into organizations (name, slug, created_by, subscription_id)
+      values (${`CommCap ${s}`}, ${`comm-cap-${s}`}, ${userId}, ${subId}) returning id`;
+    await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${userId}, 'owner')`;
+
+    const { assertMayOwnAnotherOrg } = await import("@/lib/auth");
+    const err = await assertMayOwnAnotherOrg(userId).then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(PaymentRequiredError);
+    // Same discriminator rule as the pure tests: the refusal must still be the
+    // orgs.max_owned 402, so "no offer" cannot be satisfied by "no refusal".
+    expect((err as InstanceType<typeof PaymentRequiredError>).featureKey).toBe("orgs.max_owned");
+    expect((err as InstanceType<typeof PaymentRequiredError>).extra).toBeUndefined();
+  });
+
+  it("carries no offer to an org owner who is not the group's PAYER (v17 gap #293)", async () => {
+    // Reachable via transferGroup, which moves subscriptions.owner_user_id and
+    // leaves org_members alone: A owns five organisations on a Pro group that B
+    // now pays for. The cap still bites A (it bounds a PERSON), but the
+    // purchase route would 403 A — requireBillingOwner tests owner_user_id, not
+    // org ownership — so offering A the rider just moves the dead end one
+    // screen later. The plan here is a perfectly buyable 'pro': the ONLY thing
+    // withholding the offer is who pays.
+    const s = uniq();
+    const [{ id: ownerId }] = await sql<{ id: string }[]>`
+      insert into users (email, display_name, email_verified)
+      values (${`orgowner-${s}@test.local`}, 'Org Owner', true) returning id`;
+    const [{ id: payerId }] = await sql<{ id: string }[]>`
+      insert into users (email, display_name, email_verified)
+      values (${`grouppayer-${s}@test.local`}, 'Group Payer', true) returning id`;
+    const [{ id: subId }] = await sql<{ id: string }[]>`
+      insert into subscriptions (owner_user_id, plan_key, status, quantity_paid)
+      values (${payerId}, 'pro', 'active', 5) returning id`;
+    for (let i = 0; i < 5; i++) {
+      const [{ id: orgId }] = await sql<{ id: string }[]>`
+        insert into organizations (name, slug, created_by, subscription_id)
+        values (${`Xfer ${s} ${i}`}, ${`xfer-${s}-${i}`}, ${ownerId}, ${subId}) returning id`;
+      await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${ownerId}, 'owner')`;
+    }
+
+    const { assertMayOwnAnotherOrg } = await import("@/lib/auth");
+    const err = await assertMayOwnAnotherOrg(ownerId).then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(PaymentRequiredError);
+    expect((err as InstanceType<typeof PaymentRequiredError>).featureKey).toBe("orgs.max_owned");
+    expect((err as InstanceType<typeof PaymentRequiredError>).extra).toBeUndefined();
+
+    // The payer, on the SAME group, IS offered one — so the assertion above is
+    // pinning the payer gate and not merely a fixture that offers nobody.
+    await sql`insert into org_members (org_id, user_id, role)
+              select id, ${payerId}, 'owner' from organizations
+               where subscription_id = ${subId}`;
+    const payerErr = await assertMayOwnAnotherOrg(payerId).then(() => null, (e) => e);
+    expect(payerErr).toBeInstanceOf(PaymentRequiredError);
+    expect((payerErr as InstanceType<typeof PaymentRequiredError>).extra).toEqual({
+      offer: "extra_org",
+    });
+  });
+
+  it("carries no offer on a plan that has DEGRADED past its grace (v17 gap #293)", async () => {
+    // The payer of a Pro group whose dunning ran out 20 days ago. plan_key is
+    // still the literal 'pro', so a raw plan_key read would offer a rider the
+    // subscription cannot carry; orgPlanKey applies the 14-day past_due grace
+    // and answers 'community'. This is what pins the choice of resolver — the
+    // rest of the suite never exercises a degraded plan at the cap.
+    const s = uniq();
+    const [{ id: userId }] = await sql<{ id: string }[]>`
+      insert into users (email, display_name, email_verified)
+      values (${`lapsed-${s}@test.local`}, 'Lapsed Payer', true) returning id`;
+    const [{ id: subId }] = await sql<{ id: string }[]>`
+      insert into subscriptions
+        (owner_user_id, plan_key, status, quantity_paid, status_changed_at)
+      values (${userId}, 'pro', 'past_due', 5, now() - interval '20 days') returning id`;
+    for (let i = 0; i < 5; i++) {
+      const [{ id: orgId }] = await sql<{ id: string }[]>`
+        insert into organizations (name, slug, created_by, subscription_id)
+        values (${`Lapsed ${s} ${i}`}, ${`lapsed-${s}-${i}`}, ${userId}, ${subId}) returning id`;
+      await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${userId}, 'owner')`;
+    }
+    // Sanity: the plan row still SAYS pro. Without this the test could pass
+    // against a fixture that was never Pro in the first place.
+    const [row] = await sql<{ plan_key: string }[]>`
+      select plan_key from subscriptions where id = ${subId}`;
+    expect(row.plan_key).toBe("pro");
+
+    const { assertMayOwnAnotherOrg } = await import("@/lib/auth");
+    const err = await assertMayOwnAnotherOrg(userId).then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(PaymentRequiredError);
+    expect((err as InstanceType<typeof PaymentRequiredError>).featureKey).toBe("orgs.max_owned");
+    expect((err as InstanceType<typeof PaymentRequiredError>).extra).toBeUndefined();
+  });
 });
 
 describe.skipIf(!HAS_DB)("individual-per-org is the default (#212)", () => {
@@ -303,6 +486,32 @@ describe.skipIf(!HAS_DB)("suspension is org-scoped, billing is group-scoped", ()
       await sql`update organizations set status = 'suspended' where id = ${id}`;
       await invalidateOrgEntitlements(id);
     }
+    expect(await groupOrgLimit(subId)).toBe(5);
+  });
+
+  it("the degenerate (every-org-suspended) branch also honours a purchased add-on (v17 gap #293)", async () => {
+    // The NORMAL branch resolves through getLimit, which sums org_addons on top
+    // of the plan base. The every-org-suspended branch read plan_entitlements
+    // straight and never asked the add-on table at all, so a group that had
+    // bought extra organisations reported the bare plan cap the moment its last
+    // un-suspended org was suspended. Moderation state must not hide capacity
+    // the group is already paying for.
+    const { subId, orgIds } = await seedGroup("pro", 2);
+    for (const id of orgIds) {
+      await sql`update organizations set status = 'suspended' where id = ${id}`;
+      await invalidateOrgEntitlements(id);
+    }
+    expect(await groupOrgLimit(subId)).toBe(5); // pro base, no add-on yet
+
+    await sql`
+      insert into org_addons (wallet_id, target_org_id, feature_key, delta_each, qty, status)
+      values (${subId}, null, 'orgs.max_owned', 1, 2, 'active')`;
+
+    expect(await groupOrgLimit(subId)).toBe(7);
+
+    // Frozen-not-deleted: a canceled row lifts nothing, exactly as the resolver
+    // treats it on the normal branch.
+    await sql`update org_addons set status = 'canceled' where wallet_id = ${subId}`;
     expect(await groupOrgLimit(subId)).toBe(5);
   });
 

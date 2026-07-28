@@ -31,6 +31,11 @@ export type BreadcrumbT = (key: MessageKey, vars?: Record<string, string | numbe
 const SETTINGS_CHILDREN: Record<string, MessageKey> = {
   billing: "breadcrumb.billing",
   connect: "breadcrumb.connect",
+  // Listed because humanize() gets this one WRONG rather than merely plain:
+  // "add-ons" → "Add ons", an unhyphenated English string on a page that ships
+  // in four locales. Reuses the nav's own label so the sidebar and the trail
+  // can never disagree about what this tab is called (v17 gap #293).
+  "add-ons": "settings.nav.addOns",
 };
 
 /** Fallback when a slug is missing from the map (e.g. created after the

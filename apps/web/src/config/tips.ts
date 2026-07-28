@@ -61,6 +61,22 @@ export const TIPS = {
     body: "A subscription can pay for more than one organisation. They share one card and one invoice, but each keeps its own limits, its own Stripe connection and its own payouts.",
     helpSlug: "billing/groups",
   },
+  // A DIFFERENT concept from "billing.extra-org" below, and the two must not be
+  // merged: that one is the graduated tier a group pays for organisations
+  // WITHIN its plan's limit; this one is the recurring rider that RAISES the
+  // limit. They are separate Stripe prices on separate cadences (v17 gap #293).
+  "billing.addons.extra-org": {
+    title: "Buy past your plan's organisation limit",
+    body: "An extra organisation raises this bill's limit by one, for every organisation in the group. It's a recurring add-on, charged every month for as long as it's active — separately from your plan's own billing period.",
+    // NOT "billing/add-ons". That article does not exist yet (W7 writes it), and
+    // an unregistered slug is not the harmless no-op it looks like: helpUrl()
+    // does resolve it to null so the "Learn more" link never renders, but
+    // server/__tests__/help-content.test.ts asserts that EVERY tip's helpSlug
+    // resolves, and reds on a slug pointing at nothing. `billing/groups` is the
+    // article that covers adding organisations to a group today; W7 should
+    // repoint this once the dedicated add-ons article lands.
+    helpSlug: "billing/groups",
+  },
   "billing.extra-org": {
     title: "What another organisation costs",
     body: "Each organisation after the first is half your plan's rate. It also moves to your plan's entry-fee cut — 2% on Pro or 1% on Pro Plus, instead of the 8% a free organisation pays.",

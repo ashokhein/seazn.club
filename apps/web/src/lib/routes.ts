@@ -14,6 +14,12 @@ export const routes = {
   billing: (org: Slug) => `/o/${org}/settings/billing`,
   /** AI-credit wallet home — its own Settings tab (moved off the billing page). */
   credits: (org: Slug) => `/o/${org}/settings/credits`,
+  /** Purchasable add-ons — extra organisations today (SPEC-6 §A5, v17 gap
+   *  #293). Plural so the seat and size-pack rows, which have no UI yet, can
+   *  land here without a rename. `lib/feature-copy.ts`'s 402 offer names this
+   *  route in prose as "Settings → Add-ons" in all four locales: renaming the
+   *  path means rewriting that sentence too. */
+  addOns: (org: Slug) => `/o/${org}/settings/add-ons`,
   /** Entry-fee collection: Stripe Connect + offline instructions (spec 2026-07-12).
    *  Renamed from /settings/payments (2026-07-18); the old path redirects. */
   connect: (org: Slug) => `/o/${org}/settings/connect`,

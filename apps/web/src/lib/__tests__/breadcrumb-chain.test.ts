@@ -58,6 +58,17 @@ describe("buildCrumbs", () => {
       .toEqual(["Acme Sports", "Settings", "Api keys"]);
   });
 
+  it("labels the Add-ons tab from the nav's own key, not a humanized slug", () => {
+    const labels = buildCrumbs({ ...base, pathname: "/o/acme/settings/add-ons" }).map(
+      (c) => c.label,
+    );
+    expect(labels).toEqual(["Acme Sports", "Settings", "Add-ons"]);
+    // The specific thing being pinned: humanize() renders "add-ons" as
+    // "Add ons" — an unhyphenated, untranslated English string on a page that
+    // ships in four locales, and a name the sidebar does not use.
+    expect(labels[2]).not.toBe("Add ons");
+  });
+
   it("covers settings, billing and create pages", () => {
     expect(buildCrumbs({ ...base, pathname: "/o/acme/settings/billing" }).map((c) => c.label))
       .toEqual(["Acme Sports", "Settings", "Plan & Billing"]);

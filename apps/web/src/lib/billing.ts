@@ -11,9 +11,11 @@ import {
 import { requireSubscriptionIdForOrg, subscriptionIdForOrg } from "@/lib/billing-group";
 import { LIVE_SUBSCRIPTION_STATUSES, hasLiveSubscription } from "@/lib/subscription-status";
 import { grantTrialForRow, recordPassGrant, recordPassRefund, walletIdFor } from "@/lib/credits";
-import { isPassKey, type PassKey } from "@/lib/currency";
+import { PASS_KEYS, isPassKey, type PassKey } from "@/lib/currency";
+import stripePlans from "@/config/stripe-plans.json";
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
 import { creditPassTowardSubscription } from "@/server/usecases/pass-credit";
+import { sendPassRungMismatchAlertEmail } from "@/lib/email";
 
 /**
  * Checkout branding (verified against API 2026-06-24.dahlia). Kept in code
@@ -1003,11 +1005,345 @@ function logReconcileFailure(
  *    drift, a typo in a future rung), not a migration path: dropping a paid
  *    session on the floor is strictly worse than filing it under the cheaper
  *    rung, which at least leaves the buyer entitled and the money traceable.
+ *
+ * That fallback is now CHECKED rather than trusted, and the distinction matters
+ * because the two policies read as contradictory otherwise (v17 gap #326 review
+ * finding 3). `passSessionRungMatchesPrice` runs on the answer this returns, so:
+ *
+ *   · an unrecognised rung on a session actually built on **M's price** still
+ *     mints as M — the robustness net works exactly as described above;
+ *   · an unrecognised rung on a session built on **anything else** is refused,
+ *     recorded and alerted, because filing a $59 charge under the $29 rung is
+ *     not "leaving the buyer entitled", it is quietly under-delivering a product
+ *     they paid for. The refusal is recoverable by a human who can see both
+ *     numbers; the silent mis-filing was not recoverable at all, because nothing
+ *     in the data said it had happened.
+ *   · and where the price cannot be compared at all (an unconfigured rung), the
+ *     old behaviour survives untouched.
+ *
+ * So the net is narrowed, not defeated. `pass-checkout-plan-gate.test.ts` drives
+ * an unrecognised `pass_key` through the guard both ways so the two halves of
+ * this policy cannot drift apart again.
  */
 export function passKeyForSession(session: Stripe.Checkout.Session): PassKey | null {
   const raw = session.metadata?.pass_key;
   if (!raw) return null;
   return isPassKey(raw) ? raw : "event_pass";
+}
+
+/** Why a paid pass session was refused. Two values because they need two
+ *  different sentences in the alert AND two different searches afterwards, and
+ *  because the durable row is what a historical sweep will group by. */
+export type PassMintRefusalReason = "price_mismatch" | "line_items";
+
+/**
+ * Does the price this session was actually built on agree with the rung its
+ * metadata names? (v17 gap #326.)
+ *
+ * `pass_key` is server-written, so this is not a tampering guard — the risk is
+ * entirely internal. Both mint paths take the rung from metadata and NOTHING
+ * cross-checked it against the price the buyer was charged, so a desync between
+ * the checkout route's price lookup and its metadata stamp — a stale
+ * `stripe:sync`, a price id edited in the Dashboard, a future third rung wired
+ * to the wrong lookup key — produced a customer who paid $29 and held the $59
+ * rung (or the reverse) with no error, no failing test, and nothing in the data
+ * to find it by afterwards. The W5 review reproduced exactly that by making the
+ * checkout route resolve M's price for every rung. The two pre-sale witnesses
+ * that catch it (`e2e/event-pass.spec.ts`, `pass-checkout-l.live.test.ts`) are
+ * both opt-in and neither runs in CI, and after a sale completes nothing looked
+ * again.
+ *
+ * Returns `false` to REFUSE the mint. Refusing rather than guessing is the
+ * posture this codebase already takes for an undetermined pass credit reversal:
+ * nothing here can tell which of the two sides is the wrong one, so minting
+ * either rung is a coin flip with the customer's money. Every refusal WRITES A
+ * ROW (`pass_mint_refusals`, V342) and then alerts, in that order — the row is
+ * the record, the email is only the notification, and a bounced email must not
+ * be the difference between a traceable incident and none. That row is also the
+ * brake: `POST /api/billing/pass-checkout` refuses a repeat purchase for a
+ * competition that has an unresolved one, because without it a refused buyer
+ * lands back on the upgrade page looking at a live buy button.
+ *
+ * **Fail-OPEN wherever the comparison cannot be made**, and each case is a
+ * deliberate choice, not an oversight:
+ *
+ *  - **No `plans` row, or a NULL `stripe_price_id_onetime` for the rung.** This
+ *    is the NORMAL state of every environment `stripe:sync` has not been run
+ *    against, including the test database. It is also not a state a new session
+ *    can be created in: the checkout route reads the same column and 503s on a
+ *    NULL, so the only sessions that can reach here are older than the wipe.
+ *    Checked FIRST, before any Stripe call, so the common unconfigured case
+ *    costs one indexed read and nothing else — the same "cheap guard first"
+ *    discipline as the maybeAlert* wrappers.
+ *  - **The line-item lookup threw.** A transient Stripe failure must not convert
+ *    a good purchase into a non-purchase; that blast radius dwarfs the internal
+ *    desync being guarded. Logged, because unlike the case above it IS
+ *    anomalous — but log-only, because it says nothing about the SESSION.
+ *
+ * A session reporting no single line item is NOT in that list. It is not
+ * transient noise: it means the session does not have the shape
+ * `buildPassCheckoutParams` produces, which is the same desync class this guard
+ * exists for. It refuses, records and alerts like a mismatch.
+ *
+ * **LOOKUP KEY BEATS PRICE ID, and this is the interesting part.** The route
+ * resolves the price at session-CREATE time and this runs at MINT time, so a
+ * `stripe:sync` that re-mints a rung's one-time price in between would refuse
+ * every session still in flight — charging those buyers and minting nothing,
+ * the precise outcome this guard exists to prevent, triggered by a routine
+ * deploy step (and this wave ships a new rung, so that sync WILL run). Stripe's
+ * `transfer_lookup_key` moves `seazn_event_pass{,_l}` onto the replacement
+ * price, so the lookup key is the rung's DURABLE identity where the price id is
+ * only its current one — exactly the reasoning `isOrgAddonItem` already applies
+ * to subscription items. So a price whose `lookup_key` still names this rung is
+ * accepted even when the id has moved. The id comparison stays as the primary
+ * check because the seed could one day ship a rung with no lookup key at all.
+ *
+ * Line items are read from `session.line_items` when the caller already expanded
+ * them (reconcile-on-return does, at no extra cost, and that path re-runs on
+ * every render of the bookmarkable `?checkout=success&session_id=` URL), and
+ * fetched otherwise — the webhook holds a session off an event payload, which
+ * can carry no expansion at all. The fallback is what stops a mint path that
+ * forgets to expand from silently skipping the check.
+ */
+export async function passSessionRungMatchesPrice(
+  session: Stripe.Checkout.Session,
+  passKey: PassKey,
+  orgId: string,
+): Promise<boolean> {
+  const [row] = await sql<{ price_id: string | null }[]>`
+    select stripe_price_id_onetime as price_id from plans where key = ${passKey}`;
+  const expectedPriceId = row?.price_id ?? null;
+  // Unconfigured, not mismatched — nothing to compare against. See above.
+  if (!expectedPriceId) return true;
+
+  let items: Stripe.LineItem[];
+  try {
+    // limit 2 rather than 1: a pass session is built with exactly one line item
+    // (buildPassCheckoutParams), and reading two lets a session that somehow
+    // carries more be recognised as not-a-single-rung rather than silently
+    // judged on whichever happened to come first.
+    items =
+      session.line_items?.data ??
+      (await getStripe().checkout.sessions.listLineItems(session.id, { limit: 2 })).data;
+  } catch (err) {
+    console.error(
+      `[billing] could not read line items for pass session ${session.id} (org ${orgId}) — ` +
+        `minting ${passKey} unverified`,
+      err,
+    );
+    return true;
+  }
+
+  const only = items.length === 1 ? items[0] : undefined;
+  const actualPriceId = only?.price?.id ?? null;
+  if (!only || !actualPriceId) {
+    return refusePassMint(session, passKey, orgId, "line_items", expectedPriceId, actualPriceId);
+  }
+  if (actualPriceId === expectedPriceId) return true;
+  // The price id moved but the rung's durable identity did not — a `stripe:sync`
+  // replacement, not a desync. See the doc comment.
+  if (only.price?.lookup_key && only.price.lookup_key === PASS_LOOKUP_KEYS[passKey]) {
+    console.warn(
+      `[billing] pass session ${session.id} (org ${orgId}) carries price ${actualPriceId}, ` +
+        `not the ${passKey} row's ${expectedPriceId} — accepted on lookup_key ` +
+        `${only.price.lookup_key}; the plans row is stale, re-run stripe:sync`,
+    );
+    return true;
+  }
+  return refusePassMint(session, passKey, orgId, "price_mismatch", expectedPriceId, actualPriceId);
+}
+
+/** The rung's DURABLE Stripe identity, read from the same seed `stripe:sync`
+ *  pushes — never restated as a literal here, or a renamed key would silently
+ *  turn the lookup-key acceptance above into dead code. Undefined for a rung the
+ *  seed ships without one, which simply means the acceptance cannot apply. */
+const PASS_LOOKUP_KEYS: Record<PassKey, string | undefined> = Object.fromEntries(
+  PASS_KEYS.map((k) => [k, stripePlans.passes?.find((p) => p.key === k)?.price.lookup_key]),
+) as Record<PassKey, string | undefined>;
+
+/**
+ * Record the refusal, then tell staff, then refuse. Always in that order (v17
+ * gap #326 review): the row is the durable evidence and the brake the checkout
+ * route reads, so an email that never arrives must not be the difference between
+ * a traceable incident and none.
+ *
+ * Returns `false` unconditionally, so every refusal path in the guard above is
+ * one `return refusePassMint(...)` and none of them can forget a step.
+ */
+async function refusePassMint(
+  session: Stripe.Checkout.Session,
+  passKey: PassKey,
+  orgId: string,
+  reason: PassMintRefusalReason,
+  expectedPriceId: string,
+  actualPriceId: string | null,
+): Promise<false> {
+  const competitionId = session.metadata?.competition_id ?? null;
+  const paymentIntent =
+    typeof session.payment_intent === "string" ? session.payment_intent : null;
+  console.error(
+    `[billing] pass session ${session.id} (org ${orgId}) names rung ${passKey} ` +
+      `(price ${expectedPriceId}) but ${
+        reason === "line_items"
+          ? "did not report exactly one line-item price"
+          : `was built on price ${actualPriceId}`
+      } — REFUSING to mint; the buyer was charged and holds nothing`,
+  );
+  const { inserted, writeFailed } = await recordPassMintRefusal({
+    // The payment intent is the durable "which charge paid for this" reference;
+    // the session id is the fallback for a session that completed without one
+    // (never expected for mode:"payment", but still a unique anchor) — the same
+    // rule the credit-pack grant applies.
+    stripeRef: paymentIntent ?? session.id,
+    sessionId: session.id,
+    orgId,
+    competitionId,
+    passKey,
+    reason,
+    expectedPriceId,
+    actualPriceId,
+  });
+  // THE ROW IS THE DEDUPE, and the alert has to ride it (#326 review round 3).
+  // Measured before this: five visits to the return URL produced one row and
+  // FIVE emails. That is not a theoretical loop — reconcile-on-return re-runs on
+  // every render of a bookmarkable `?checkout=success&session_id=` URL, and the
+  // buyer is sitting on a page that has just told them something is wrong, which
+  // is an invitation to refresh. Staff would then be paged once per refresh for
+  // one incident, which is how an alert channel stops being read.
+  //
+  // `writeFailed` still alerts, deliberately: that is the documented "degrades to
+  // alert-only" path, where the email is the ONLY record of the incident and
+  // suppressing it would lose the incident entirely. So the rule is "alert when
+  // this call produced new information", which is true for a first insert and for
+  // a failure to insert, and false for a conflict.
+  if (inserted || writeFailed) {
+    await maybeAlertPassRungMismatch({
+      sessionId: session.id,
+      orgId,
+      competitionId: competitionId ?? "(unknown)",
+      passKey,
+      reason,
+      expectedPriceId,
+      actualPriceId,
+      paymentIntent,
+    });
+  }
+  return false;
+}
+
+/**
+ * Write the durable refusal row (V342). NEVER THROWS — it sits on the webhook's
+ * path, where a throw would turn "one pass was not granted" into a webhook that
+ * 500s and retries for ever, and the refusal itself has already been decided by
+ * the time this runs. A failure here degrades to "alert only", which is what the
+ * guard did before this row existed; it is logged loudly because it also removes
+ * the repeat-purchase brake.
+ *
+ * `on conflict do nothing`: the webhook and reconcile-on-return both reach here
+ * for the same charge, and reconcile re-runs on every render of the bookmarkable
+ * return URL. First writer wins; `refused_at` should say when it first happened.
+ *
+ * `returning stripe_ref` is what makes the row the DEDUPE for the staff alert as
+ * well as the record — `inserted` is true only for the writer that actually
+ * created the row, so N reconciles of one refused charge send exactly one email
+ * (#326 review round 3). Two concurrent writers cannot both see it: Postgres
+ * returns no row to the loser of `on conflict do nothing`.
+ *
+ * `writeFailed` is reported separately rather than folded into `!inserted`,
+ * because the two mean opposite things to the caller: a conflict says "already
+ * known, stay quiet", a failure says "there is now NO durable record, so the
+ * email is the only one there will be".
+ *
+ * A NON-UUID competition id from session metadata is caught here rather than
+ * pre-validated: the insert fails its cast, this logs, and the alert still goes
+ * out naming the session. Refusing to refuse because the metadata was malformed
+ * would be the wrong trade.
+ */
+async function recordPassMintRefusal(args: {
+  stripeRef: string;
+  sessionId: string;
+  orgId: string;
+  competitionId: string | null;
+  passKey: PassKey;
+  reason: PassMintRefusalReason;
+  expectedPriceId: string;
+  actualPriceId: string | null;
+}): Promise<{ inserted: boolean; writeFailed: boolean }> {
+  try {
+    if (!args.competitionId) throw new Error("session metadata carried no competition_id");
+    const [row] = await sql<{ stripe_ref: string }[]>`
+      insert into pass_mint_refusals
+        (stripe_ref, session_id, org_id, competition_id, pass_key, reason,
+         expected_price_id, actual_price_id)
+      values (${args.stripeRef}, ${args.sessionId}, ${args.orgId}, ${args.competitionId},
+              ${args.passKey}, ${args.reason}, ${args.expectedPriceId}, ${args.actualPriceId})
+      on conflict (stripe_ref) do nothing
+      returning stripe_ref`;
+    return { inserted: !!row, writeFailed: false };
+  } catch (err) {
+    console.error(
+      `[billing] could not record the pass mint refusal for session ${args.sessionId} ` +
+        `(org ${args.orgId}) — the staff alert is now the ONLY record, and the buyer is ` +
+        `not blocked from paying again`,
+      err,
+    );
+    return { inserted: false, writeFailed: true };
+  }
+}
+
+/**
+ * Is there an unresolved refused pass payment against this competition? (v17 gap
+ * #326 review.) The checkout route's brake: a refusal writes no
+ * `competition_passes` row, so its "already has an Event Pass" guard cannot see
+ * one, and without this the upgrade page would keep offering the buy button to
+ * someone whose money has already been taken — once per attempt, for ever.
+ *
+ * Reads only UNRESOLVED rows (the V342 partial index): once staff have refunded
+ * or granted, the competition is for sale again with no code change.
+ */
+export async function competitionHasRefusedPassPayment(competitionId: string): Promise<boolean> {
+  const [row] = await sql<{ stripe_ref: string }[]>`
+    select stripe_ref from pass_mint_refusals
+     where competition_id = ${competitionId} and resolved_at is null limit 1`;
+  return !!row;
+}
+
+/**
+ * Best-effort staff alert for a refused mint (v17 gap #326). NEVER THROWS,
+ * and gated on STAFF_ALERT_EMAIL before anything else — the same shape as
+ * `maybeAlertOrgAllowance` (server/usecases/extra-orgs.ts) and
+ * `maybeAlertOrgRepriceFailed` (server/usecases/billing-events.ts), which this
+ * deliberately mirrors. Ops-only: `sendPassRungMismatchAlertEmail` carries no
+ * i18n, like every other staff alert in lib/email.ts.
+ *
+ * The own try/catch is not redundant with the caller's: it sits on the webhook's
+ * path, where a throw would turn "one pass was not granted" into "this webhook
+ * fails and retries for ever", i.e. the telemetry would be a strictly worse
+ * outcome than the fault it reports.
+ *
+ * Exported so the never-throws contract can be tested DIRECTLY rather than
+ * through a caller's own catch, which would hide a missing wrapper.
+ */
+export async function maybeAlertPassRungMismatch(opts: {
+  sessionId: string;
+  orgId: string;
+  competitionId: string;
+  passKey: PassKey;
+  reason: PassMintRefusalReason;
+  expectedPriceId: string;
+  actualPriceId: string | null;
+  paymentIntent: string | null;
+}): Promise<void> {
+  try {
+    const alertTo = process.env.STAFF_ALERT_EMAIL;
+    if (!alertTo) return;
+    await sendPassRungMismatchAlertEmail({ to: alertTo, ...opts });
+  } catch (err) {
+    console.error(
+      `[billing] pass rung mismatch alert failed (session ${opts.sessionId})`,
+      err,
+    );
+  }
 }
 
 /**
@@ -1020,13 +1356,27 @@ export async function reconcilePassCheckout(
   sessionId: string,
 ): Promise<boolean> {
   try {
-    const session = await getStripe().checkout.sessions.retrieve(sessionId);
+    // `line_items` expanded so the mint guard below costs NO extra round trip on
+    // the buyer's return render — and this page re-renders on every visit to the
+    // bookmarkable `?checkout=success&session_id=` URL, so a second Stripe call
+    // here is not paid once per sale, it is paid once per visit. The webhook
+    // cannot expand (its session comes off an event payload) and falls back to
+    // fetching, which is why the guard accepts both.
+    const session = await getStripe().checkout.sessions.retrieve(sessionId, {
+      expand: ["line_items"],
+    });
     // Only trust a paid, pass-shaped session that belongs to this org.
     const passKey = passKeyForSession(session);
     if (!passKey) return false;
     if (session.metadata?.org_id !== orgId) return false;
     const competitionId = session.metadata.competition_id;
     if (!competitionId || session.payment_status !== "paid") return false;
+    // The rung named in the metadata must agree with the price actually
+    // charged, or nothing is minted (v17 gap #326). Refusing reports `false`,
+    // which this function's contract already means as "nothing to reconcile" —
+    // and it is the truth: the upgrade page renders no pass, which is exactly
+    // what the buyer holds. The staff alert inside is what makes it recoverable.
+    if (!(await passSessionRungMatchesPrice(session, passKey, orgId))) return false;
     const res = await recordPassPurchase({
       orgId,
       competitionId,

@@ -187,8 +187,17 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
 
   it("both resolvers drop a pass on a competition ended beyond the grace window", async () => {
     const compId = await seedCompetition(orgId, "ended");
+    // Seeded from the UTC calendar date, NOT bare `current_date`. `current_date`
+    // is the session's TimeZone GUC (Europe/London locally and in production),
+    // and `isPassLocked` compares on the UTC date — so between 00:00 and 01:00
+    // BST the two differ by a day, "8 days ago" lands inside the 7-day grace on
+    // the TS side, and this test goes red for an hour a night with nothing
+    // wrong. That is the exact V334 divergence the NEXT test pins deliberately;
+    // this one is about the grace window, so it must not also depend on it.
     await sql`
-      update competitions set ends_on = (current_date - 8)::date where id = ${compId}`;
+      update competitions
+         set ends_on = ((now() at time zone 'utc')::date - 8)::date
+       where id = ${compId}`;
     await sql`
       insert into competition_passes (competition_id, org_id) values (${compId}, ${orgId})`;
     await invalidateOrgEntitlements(orgId);
