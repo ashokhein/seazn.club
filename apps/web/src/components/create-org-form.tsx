@@ -157,7 +157,7 @@ export function BillRow({
   const { eligible, reason, addOnsHref } = eligibility(g, msg, memberOrgIds);
   const on = eligible && selectedId === g.id;
   return (
-    <li className="space-y-1">
+    <li className="space-y-0.5">
       <button
         type="button"
         onClick={() => onPick(g.id)}
@@ -179,7 +179,10 @@ export function BillRow({
           {on && <span className="h-2 w-2 rounded-full bg-purple-600" />}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-slate-900">
+          <span
+            id={`bill-name-${g.id}`}
+            className="block truncate text-sm font-medium text-slate-900"
+          >
             {groupLabel(g)}
           </span>
           <span className="block text-xs text-slate-500">
@@ -198,7 +201,11 @@ export function BillRow({
       {addOnsHref && (
         <Link
           href={addOnsHref}
-          className="inline-flex rounded-sm py-1 pl-[2.625rem] text-xs font-semibold text-purple-700 underline decoration-purple-300 underline-offset-2 hover:text-purple-800 hover:decoration-purple-500"
+          // Several full bills would otherwise put several identically-named
+          // links on one page. The bill's own name describes each without a
+          // second sentence to translate.
+          aria-describedby={`bill-name-${g.id}`}
+          className="inline-flex rounded-sm py-1.5 pl-[2.625rem] text-xs font-semibold text-purple-700 underline decoration-purple-300 underline-offset-2 hover:text-purple-800 hover:decoration-purple-500"
         >
           {msg("orgNew.bill.reasonFullCta")}
         </Link>
