@@ -1303,12 +1303,17 @@ describe("codeOnly strips comments and nothing else", () => {
 describe("the add-ons article's behaviour claims are pinned to the code", () => {
   // CLAIM: "An extra seat freezes members … An extra organisation does not
   // freeze anything." Round 1 said the excess freezes for BOTH.
-  // TIMEOUT, deliberately. This walks and TypeScript-parses ~1,400 files. It
-  // passed alone and TIMED OUT at 8.4s in the full parallel run — a guard that
-  // fails only under contention is worse than a slow one, because it reads as
-  // flake and gets retried rather than read. `allStrippedSources()` memoises
-  // both the walk and the parse, so the cost is paid once per file; this
-  // headroom is for the run that pays it under load.
+  // TIMEOUT, deliberately, and THE TIMEOUT IS WHAT KEEPS THIS GREEN — not the
+  // memoisation. This walks and TypeScript-parses ~1,400 files. It passed alone
+  // and TIMED OUT at 8.4s against the 5s default in the full parallel run; a
+  // guard that fails only under contention is worse than a slow one, because it
+  // reads as flake and gets retried rather than read.
+  //
+  // `allAuditedSources()` memoises walk and parse so later consumers are ~3ms,
+  // but the FIRST consumer still pays the whole cost: measured 1.65s alone and
+  // 9.3s in the full run (file total 10.5s). Quoting the isolated figure would
+  // be the same kind of optimism this wave keeps correcting elsewhere, so both
+  // are here. The 60s is real headroom for a loaded machine, not decoration.
   it("freezes exactly the two axes the article says, and orgs.max_owned is not one", { timeout: 60_000 }, () => {
     const source = webSource("server/usecases/entitlement-freeze.ts");
     const frozen = [...source.matchAll(/getLimit\(orgId,\s*"([^"]+)"\)/g)].map((m) => m[1]!);
