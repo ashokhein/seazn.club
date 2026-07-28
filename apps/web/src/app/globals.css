@@ -274,6 +274,31 @@ body {
   .competition-prose table {
     @apply my-4 w-full border-collapse text-sm;
   }
+  /* A prose table that does not fit SCROLLS; it never clips (v17 gap #299).
+     `html, body { overflow-x: clip }` means an over-wide table has no
+     scrollbar of its own and its right-hand columns are simply cut off the
+     page — measured at 375px on /help/billing/add-ons, where a four-column
+     table wanted 396px inside a 343px container and the last column was lost
+     with nothing on screen to say so.
+
+     `display: block` is what gives the TABLE its own scroll box (a
+     `table` box ignores `overflow`). `width: max-content` then lets it size to
+     its content instead of being squeezed by `w-full`, `min-width: 100%` keeps
+     the narrow tables on plans.md and groups.md full-bleed exactly as before,
+     and `max-width: 100%` is what bounds the box so the PAGE never scrolls.
+     The combination cannot overflow its container by construction, whatever a
+     future article puts in a cell.
+
+     `tabindex` would make the scroll box keyboard-reachable, but the HTML is
+     generated from Markdown by `renderHelpMarkdown` and its sanitiser drops
+     the attribute — tracked with the other help-render gaps. */
+  .competition-prose table {
+    display: block;
+    width: max-content;
+    min-width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+  }
   .competition-prose th {
     @apply border-b-2 border-purple-100 px-3 py-2 text-left font-semibold text-slate-800;
   }

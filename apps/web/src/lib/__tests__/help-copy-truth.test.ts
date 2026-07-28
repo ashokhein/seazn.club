@@ -16,6 +16,7 @@
 // KNOWN_GAPS below. Each is a real defect with a real issue, and listing them
 // as data rather than leaving them silently unscanned is the point.
 import { afterAll, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import stripePlans from "@/config/stripe-plans.json";
 import { sql } from "@/lib/db";
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
@@ -51,7 +52,7 @@ import {
 } from "@/lib/copy-truth";
 import { HELP_ARTICLE_SLUGS, helpUrl } from "@/lib/help";
 import { TIPS } from "@/config/tips";
-import { helpArticle } from "./_help-copy";
+import { helpArticle, webSource } from "./_help-copy";
 import {
   APPROVED_EVENT_PASS,
   APPROVED_EVENT_PASS_INVENTORY,
@@ -1025,6 +1026,140 @@ describe("the add-ons article says what the billing code actually does", () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE THREE CLAIMS ROUND 1 GOT WRONG — pinned to the code, not to the gate.
+//
+// A GATE PROVES DELIBERATE, NEVER TRUE. Round 1 of this article was
+// inventory-approved and shipped three false money claims; the fixture's own
+// `why` notes named the files that contradicted them. Approving a digest
+// records that somebody CHOSE these words — nothing more. So each of the three
+// now has a rule that reads the code, and each asserts a known-positive on the
+// same read before asserting the negative, so a rename reds rather than
+// quietly making the guard vacuous.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("the add-ons article's behaviour claims are pinned to the code", () => {
+  // CLAIM: "An extra seat freezes members … An extra organisation does not
+  // freeze anything." Round 1 said the excess freezes for BOTH.
+  it("freezes exactly the two axes the article says, and orgs.max_owned is not one", () => {
+    const source = webSource("server/usecases/entitlement-freeze.ts");
+    const frozen = [...source.matchAll(/getLimit\(orgId,\s*"([^"]+)"\)/g)].map((m) => m[1]!);
+
+    // KNOWN-POSITIVE FIRST: if `getLimit(orgId, "...")` is ever spelled another
+    // way, this reds instead of the negative below passing on an empty list.
+    expect(frozen.sort(), "the freeze axes changed — re-read the article").toEqual([
+      "competitions.max_active",
+      "members.max",
+    ]);
+
+    // THE NEGATIVE the prose depends on. `lib/billing-group.ts` states the org
+    // cap is ADMISSION-ONLY (`count + 1 > limit` on the way IN, never
+    // re-evaluated), so there is no freeze for an extra organisation to cause.
+    expect(frozen, "orgs.max_owned is now a freeze axis — the article says it is not").not.toContain(
+      "orgs.max_owned",
+    );
+    expect(
+      webSource("lib/billing-group.ts"),
+      "the ADMISSION-ONLY note is gone — re-check what an over-cap group can do",
+    ).toContain("never re-evaluated against organisations that already exist");
+
+    // …and the article says both halves, so neither can be dropped silently.
+    expect(addOns, "the seat freeze").toMatch(/extra seat freezes members/i);
+    expect(addOns, "the org non-freeze").toMatch(/extra organisation does not freeze anything/i);
+    // The owner exemption is real (`frozenMemberIds` filters role === "owner").
+    expect(source).toContain('r.role === "owner"');
+    expect(addOns).toMatch(/Owners are never frozen/i);
+  });
+
+  // CLAIM: "added to your next invoice rather than charged on the spot."
+  // Round 1 said "charged pro rata straight away" / "charges the difference now".
+  it("raises with create_prorations, which bills next invoice — never always_invoice", () => {
+    for (const file of ["server/usecases/extra-seats.ts", "server/usecases/extra-orgs.ts"]) {
+      const source = webSource(file);
+      // KNOWN-POSITIVE: the raise path really does set a proration behaviour.
+      expect(source, `${file} sets no proration behaviour at all`).toContain(
+        'proration_behavior: "create_prorations"',
+      );
+      // THE NEGATIVE: `always_invoice` is what would charge immediately.
+      expect(source, `${file} now invoices immediately — the article says it does not`).not.toContain(
+        "always_invoice",
+      );
+    }
+    // Stated where the behaviour is documented, so the article and the comment
+    // cannot drift apart.
+    expect(webSource("server/usecases/billing-events.ts")).toContain(
+      "books those adjustments onto the next invoice rather than",
+    );
+    // BOTH raise paths say it. One would leave the other free to drift back to
+    // "now" — which is exactly the shape round 1 shipped.
+    expect(
+      addOns.match(/\*\*added to your next invoice\*\* rather than charged on the spot/g) ?? [],
+      "both raise paths must state the timing",
+    ).toHaveLength(2);
+    expect(addOns).not.toMatch(/charged pro rata straight away|the difference[^.]*\bnow\b/i);
+
+    // The product's own UI copy already avoided "now" on this exact claim; the
+    // article contradicting it was the tell. Pinned so they move together.
+    const prorateUp = JSON.parse(
+      readFileSync("src/dictionaries/en/ui.json", "utf8"),
+    )["addOns.extraOrg.prorateUp"] as string;
+    expect(prorateUp, "the UI copy that got this right").toBe(
+      "You'll pay the difference for the rest of this billing period.",
+    );
+    expect(prorateUp).not.toMatch(/\bnow\b/i);
+  });
+
+  // CLAIM: the rider matches the half rate monthly but NOT annually — "about a
+  // third more over a year". Round 1 said "charged at exactly that same rate".
+  it("says the annual rider costs more, and by the factor the seed actually charges", () => {
+    const ratios: string[] = [];
+    for (const addon of orgAddons) {
+      const plan = stripePlans.plans.find((p) => p.key === addon.plan_key)!;
+      const annualRider = plan.prices.annual.tiers!.find((t) => t.up_to === "inf")!;
+      for (const currency of ["usd", "eur", "gbp", "inr", "aud"] as const) {
+        const perMonth =
+          currency === "usd"
+            ? addon.price.unit_amount
+            : (addon.price.currency_options as Record<string, number>)[currency]!;
+        const inPlanPerYear =
+          currency === "usd"
+            ? annualRider.unit_amount
+            : (annualRider.currency_options as Record<string, number>)![currency]!;
+        const ratio = (perMonth * 12) / inPlanPerYear;
+        // The add-on must be DEARER annually — that is the whole claim. If a
+        // price move ever made them equal, "and on an annual bill it does not"
+        // becomes false and the sentence has to change.
+        if (ratio <= 1.001) ratios.push(`${addon.key} ${currency}: ratio ${ratio.toFixed(3)} — no longer dearer`);
+        // "AT LEAST a third more" is a FLOOR, and it is a floor because the
+        // gap is not one number: measured across the seed it runs 1.355 (gbp)
+        // to 1.472 (inr). The review that caught the original "exactly that
+        // same rate" quoted usd alone (+36.7% / +39.9%), and a sentence tuned
+        // to usd would have been false in eur and inr by the same mechanism
+        // that made "half the base rate" false — the third time this wave has
+        // met a comparative that only holds in one currency. So the claim is
+        // the LOWER bound over all ten combinations, and this is what keeps it
+        // honest if a price moves.
+        if (ratio < 4 / 3)
+          ratios.push(
+            `${addon.key} ${currency}: ratio ${ratio.toFixed(3)} is below a third more — "at least a third more over a year" is now false`,
+          );
+        // …and a floor that has drifted absurdly far below the truth is also a
+        // defect: it under-warns a customer the sentence exists to warn.
+        if (ratio > 1.8)
+          ratios.push(
+            `${addon.key} ${currency}: ratio ${ratio.toFixed(3)} — the floor is now so far below the real gap that the wording under-warns`,
+          );
+      }
+    }
+    expect(ratios).toEqual([]);
+    expect(addOns, "the annual divergence is stated").toMatch(
+      /on a monthly bill it matches that half rate exactly, and on an annual bill it does not/i,
+    );
+    expect(addOns).toMatch(/at least a third more over a year/i);
+    // …and the false round-1 clause cannot come back.
+    expect(addOns).not.toMatch(/charged at exactly that same rate/i);
+  });
+});
+
 describe.skipIf(!HAS_DB)("the add-ons article quotes the caps the matrix enforces", () => {
   it("names each plan's own organisation limit", async () => {
     for (const [plan, label] of [
@@ -1130,7 +1265,7 @@ describe("the add-ons gate catches what the vocabulary cannot", () => {
   // The gate is POSITIONAL, and an edit INSIDE a paragraph is the mutation a
   // set-membership check misses. Both are asserted rather than assumed.
   it("catches an edit inside a paragraph, a deletion, and a reorder", () => {
-    const edited = addOns.replace("nothing is deleted", "members over the limit are removed");
+    const edited = addOns.replace("Nothing is ever deleted", "Members over the limit are removed");
     expect(edited, "the anchor moved").not.toBe(addOns);
     expect(inventoryFaults("x", edited, APPROVED_ADD_ONS_INVENTORY)).not.toEqual([]);
 

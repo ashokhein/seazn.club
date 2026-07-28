@@ -212,30 +212,86 @@ export const APPROVED_PLANS_INVENTORY: string[] = [
  * statement about money an organiser is charged — what each add-on costs, on
  * what cadence, who may buy it, and what happens when it stops — and it makes
  * the rate claim (`no more than half the base rate`) that this wave has now
- * spent three rounds correcting on four other surfaces. The two articles above
- * were pinned only after a lexical rule was measured at 1/12, 0/12, 6/30 and
- * 1/40 against sets their own authors had not written; there is no reason to
- * repeat that experiment on a page whose claims are the same shape.
+ * spent four rounds correcting on other surfaces. The two articles above were
+ * pinned only after a lexical rule was measured at 1/12, 0/12, 6/30 and 1/40
+ * against sets their own authors had not written; there is no reason to repeat
+ * that experiment on a page whose claims are the same shape.
  *
- * The tax is real and is the point: an edit here fails until someone reads the
- * new words against the code named below and updates the digests.
+ * ── A GATE PROVES DELIBERATE, NEVER TRUE ─────────────────────────────────────
+ * Round 1 of this article was inventory-approved and shipped THREE false money
+ * claims, and the `why` notes below named the very files that contradicted
+ * them. That is not a defect in the gate; it is the gate's contract. Approving
+ * a digest records that somebody chose these words — it cannot record that they
+ * checked them. So each bullet below now states WHAT IS ASSERTED, in the words
+ * the article uses, next to the code that decides it. Re-approving means
+ * reading the file and confirming the assertion still holds, not re-recording
+ * a hash.
  *
- * SOURCES OF TRUTH, by section:
- *  - the AI credit pack — `config/stripe-plans.json` `packs[]`, and
- *    `lib/entitlements.ts` `addonBonusForWallet` for the shared wallet.
- *  - the extra seat — `server/usecases/extra-seats.ts` (payer-gated via
- *    `requireBillingOwner`, a subscription ITEM on the group's existing
- *    subscription, `proration_behavior: "none"` on a reduction so there is no
- *    mid-cycle refund) and `stripe-plans.json` `seats[0]`.
- *  - the size pack — `server/usecases/size-pack-checkout.ts` (owner-of-the-
- *    competition's-org gate, the group card only when that owner IS the payer)
- *    and `stripe-plans.json` `size_packs[0]`; comp-scoped rows never lift an
- *    org-level cap (`addonBonusForWallet`'s `target_competition_id` predicate).
- *  - the extra organisation — `server/usecases/extra-orgs.ts`, the monthly-only
- *    `org_addons[]` prices in the seed, and `plan_entitlements.orgs.max_owned`
- *    (pro 5, pro_plus 10, set by V314).
- *  - freeze-not-delete — `lib/entitlements.ts` `COUNTING_ADDON_STATUSES`:
- *    'canceled' is frozen, not deleted (V323).
+ * WHAT THE ARTICLE ASSERTS, AND WHAT DECIDES IT:
+ *
+ *  - "the credits themselves never expire", one-time, whole-wallet.
+ *    `config/stripe-plans.json` `packs[]` (no `interval`), and
+ *    `lib/entitlements.ts` `addonBonusForWallet` keying the sum on
+ *    `coalesce(group_subscription_id, org_id)`.
+ *
+ *  - "raises ONE organisation's member limit by one", monthly, payer-only, and
+ *    "added to your next invoice rather than charged on the spot".
+ *    `server/usecases/extra-seats.ts` — `requireBillingOwner` (payer gate), a
+ *    subscription ITEM on the group's existing subscription (`:79`), and
+ *    `proration_behavior: "create_prorations"` on create/raise (`:75`, `:83`)
+ *    against `"none"` on removal (`:64`). ROUND 1 SAID "charged pro rata
+ *    straight away" AND WAS WRONG: `create_prorations` books the adjustment
+ *    onto the NEXT INVOICE rather than charging immediately — stated in
+ *    `server/usecases/billing-events.ts:738-740`, and the product's own UI copy
+ *    already had it right (`en/ui.json` `addOns.extraOrg.prorateUp`, which
+ *    deliberately does not say "now").
+ *
+ *  - "raises ONE competition's limit by 32", permanent, stacking, owner-gated,
+ *    "never lifts an organisation-wide limit".
+ *    `server/usecases/size-pack-checkout.ts` (owner-of-the-competition's-org
+ *    gate; the group card only when that owner IS the payer; a 30s idempotency
+ *    bucket that does NOT block a genuine second pack) and
+ *    `stripe-plans.json` `size_packs[0]`. The scope claim is
+ *    `addonBonusForWallet`'s `target_competition_id` predicate: a comp-scoped
+ *    row cannot match an org-level cap read.
+ *
+ *  - "Pro covers 5 and Pro Plus covers 10" — `plan_entitlements.orgs.max_owned`,
+ *    set by V314. Asserted against the LIVE matrix, not restated here.
+ *
+ *  - "no more than half the base rate" for a slot INSIDE the plan, and "on a
+ *    monthly bill it matches that half rate exactly, and on an annual bill it
+ *    does not … about a third more over a year".
+ *    `lib/org-addons.ts:95-107` names this exact trap: the rider is a MONTHLY
+ *    price on every plan, so an annual Pro group pays 900/month (~10800/year)
+ *    for a rider against 7900/year for an in-plan slot. Measured from the seed:
+ *    Pro $108/yr vs $79/yr (+36.7%), Pro Plus $228/yr vs $163/yr (+39.9%).
+ *    ROUND 1 SAID "charged at exactly that same rate" AND WAS WRONG — an
+ *    unqualified comparative price claim one clause after the one it had just
+ *    qualified.
+ *
+ *  - "An extra seat freezes members … Owners are never frozen."
+ *    `server/usecases/entitlement-freeze.ts` `frozenMemberIds` (`:103`) reads
+ *    `getLimit(orgId, "members.max")`, which SUMS the add-on bonus, and exempts
+ *    owners explicitly (`:113-116`).
+ *
+ *  - "An extra organisation does not freeze anything … what it loses is the
+ *    ability to add another."
+ *    `orgs.max_owned` IS NOT A FREEZE AXIS. `entitlement-freeze.ts` freezes
+ *    exactly two things — `competitions.max_active` (`:64`) and `members.max`
+ *    (`:104`) — and `lib/billing-group.ts:411-414` states the cap is
+ *    ADMISSION-ONLY: `assertWithinGroupCap` checks `count + 1 > limit` on the
+ *    way IN and "is never re-evaluated against organisations that already
+ *    exist". ROUND 1 CLAIMED THE EXCESS FREEZES AND WAS WRONG. The companion
+ *    claim — that you cannot cancel your way over the line — is the 423 usage
+ *    floor in `server/usecases/extra-orgs.ts:144-166`.
+ *
+ *  - "nothing is deleted" — `lib/entitlements.ts` `COUNTING_ADDON_STATUSES`:
+ *    'canceled' is frozen-not-deleted (V323).
+ *
+ * NOT PINNED BY THIS INVENTORY, and therefore free to rot: link TARGETS.
+ * `claimSurfaces` reduces `[text](/url)` to `text`, so repointing a `mailto:`
+ * or a help URL raises zero faults here. (Distinct from the link-TITLE hole,
+ * filed as #338.)
  */
 export const APPROVED_ADD_ONS_INVENTORY: string[] = [
   "58a683b53e5184b9",
@@ -251,21 +307,24 @@ export const APPROVED_ADD_ONS_INVENTORY: string[] = [
   "81f45d76b157c68a",
   "5cbbcf82d4703a2e",
   "51ec9ed81333165c",
-  "5e186b9ffa850393",
+  "05b585e71c12137b",
   "b315422a65436656",
   "628281436c3b5d97",
   "57ab4cb8d1c7ae64",
   "dd3682cfbbbd86eb",
   "904600a779329e0b",
   "81ba6ce07303ccdc",
-  "83bf42b10a565f0d",
-  "abb2553e267bfd42",
+  "88ce7e8f444d70eb",
+  "122c884440848810",
+  "e0ff162b4d324107",
   "00df8be3e9bd06ef",
   "df7321201a99bd2c",
   "7151ed1350e7f11f",
   "7d1518387c5c90e4",
-  "d9c4e3493d52e91d",
-  "e455adb0d51bb4b4",
+  "d1d87a9a3dbdeb8e",
+  "b50fa0d68d469172",
+  "2a1276c7fbee0c93",
+  "704faf902d99b14c",
   "89e6a00cfa216278",
   "e0bc899381ce86af",
   "fe061d7659564782",
