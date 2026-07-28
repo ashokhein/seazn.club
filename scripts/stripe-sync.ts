@@ -332,9 +332,24 @@ function tierCurrencies(spec: PriceSpec): string[] {
   return isTiered(spec) ? Object.keys(tieredCurrencyOptionsParam(spec) ?? {}) : [];
 }
 
+/** The live product behind a price, but only when the response actually carries
+ *  its copy: `ensurePrice` expands `data.product`, so this is normally the whole
+ *  object — a bare id (unexpanded response) or a deleted product has no
+ *  name/description to compare the seed against, and writing to either blind
+ *  would rewrite every product on every run. */
+function liveProductCopy(
+  product: Stripe.Price["product"],
+): { name: string; description: string } | null {
+  if (typeof product === "string") return null;
+  if ((product as Stripe.DeletedProduct).deleted === true) return null;
+  const live = product as Stripe.Product;
+  return { name: live.name, description: live.description ?? "" };
+}
+
 /** Find a price by lookup_key; if any amount OR the tier structure drifted, mint a
  *  replacement and archive the old price; else create it (and a product if needed).
- *  Omitting `interval` makes it one-time. */
+ *  Product name/description are synced separately — they are mutable, so they
+ *  never need a replacement price. Omitting `interval` makes it one-time. */
 export async function ensurePrice(
   stripe: Stripe,
   spec: PriceSpec,
@@ -364,6 +379,23 @@ export async function ensurePrice(
   if (found.data[0]) {
     const p = found.data[0];
     const prod = typeof p.product === "string" ? p.product : p.product.id;
+    // Product name/description are MUTABLE, unlike every price field below, and
+    // they are the part of the seed a BUYER reads — Checkout renders the
+    // product's name and description on the payment page. So sync them here, on
+    // every run, independent of whether the price drifted: without this a
+    // copy-only stripe-plans.json edit (a corrected claim, say) reached Stripe
+    // never, because the matched-price path returned a few lines down and
+    // `products.create` — the script's only other Products call — fires solely
+    // when no price exists at all.
+    const live = liveProductCopy(p.product);
+    // Stripe unsets a string field with the EMPTY STRING: `description:
+    // undefined` is dropped from the request body, leaves the stale copy live,
+    // and would re-fire this same update on every subsequent run.
+    const wantDescription = product.description ?? "";
+    if (live && (live.name !== product.name || live.description !== wantDescription)) {
+      await stripe.products.update(prod, { name: product.name, description: wantDescription });
+      console.log(`  ↳ ${spec.lookup_key}: product copy updated (${prod})`);
+    }
     // The base currency is immutable too, and a price minted under the wrong one
     // charges every group in the wrong money — cheap to check here, where the
     // seed's currency is in scope (priceHasDrifted only sees the spec).
