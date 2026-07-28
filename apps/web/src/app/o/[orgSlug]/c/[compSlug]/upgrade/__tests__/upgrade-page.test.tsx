@@ -479,4 +479,31 @@ describe("returning from checkout", () => {
     expect(h.reconciled).toEqual([]);
     expect(html).toContain("Your payment for this competition went through");
   });
+
+  // The state the alert email's OWN remedy walks staff into (#326 review round
+  // 2). It says "record the pass at the rung actually paid for", and clearing
+  // `pass_mint_refusals.resolved_at` is a separate manual step with no UI — so
+  // "pass granted, refusal still open" is the expected intermediate state of the
+  // documented fix, not an exotic one. Ungated, the page would tell a customer
+  // who has just been made whole that we are holding their money and will refund
+  // them, printed directly above their live pass ticket.
+  it("stops saying it the moment the pass exists, even with the refusal unresolved", async () => {
+    h.passUnderReview = true;
+    heldPass();
+    const html = await render();
+    expect(html).not.toContain("Your payment for this competition went through");
+    expect(html).not.toContain("will refund you or issue the right pass");
+    // ...and the assertion is not vacuous because the page really is in the
+    // owned state: the ticket it renders instead is the one that says so.
+    expect(html).toContain("Event Pass active");
+  });
+
+  it("still says it when the refusal is open and NO pass exists", async () => {
+    // The discriminator for the conjunct above: without this, gating the banner
+    // on something permanently false would pass that test.
+    h.passUnderReview = true;
+    h.passRow = null;
+    const html = await render();
+    expect(html).toContain("Your payment for this competition went through");
+  });
 });

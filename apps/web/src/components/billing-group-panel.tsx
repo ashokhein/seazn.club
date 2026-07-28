@@ -17,10 +17,18 @@ import { Tip } from "@/components/ui/tip";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { useMsg } from "@/components/i18n/dict-provider";
 import { asCurrency, formatMinor } from "@/lib/currency";
-// The decisions live in a pure module so they can be tested. This component's
-// data arrives in an effect and the vitest environment here is `node` with no
-// jsdom, so a render test would assert against the null returned before the
-// fetch lands — see lib/billing-group-view.ts.
+// The decisions live in a pure module so they can be tested — see
+// lib/billing-group-view.ts, which owns the WHY.
+//
+// This comment used to go on to say a render test was impossible here ("would
+// assert against the null returned before the fetch lands"). That was true when
+// it was written and is not any more: `components/__tests__/_hook-harness.tsx`
+// supplies React's hook dispatcher, so the island can be driven with its state,
+// its mount effect and a stubbed fetch, and
+// `components/__tests__/billing-group-at-cap.test.tsx` does exactly that. Both
+// layers are worth having and they answer different questions — the pure module
+// pins WHICH message key each state chooses, the render test pins the
+// interpolated sentence a payer actually reads — so keep writing both.
 import {
   attachConfirmKey,
   groupView,

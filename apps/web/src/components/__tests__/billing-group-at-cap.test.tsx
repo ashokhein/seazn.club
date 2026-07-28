@@ -3,9 +3,7 @@
 //
 // `lib/__tests__/billing-group-view.test.ts` pins which KEY `groupView` picks,
 // and a source scan pins that the panel passes it through. Neither reads the
-// sentence a payer actually sees, and this panel's own header used to say it
-// could not be render-tested — true when it was written, false since
-// `_hook-harness.tsx` landed this wave. So this drives the real island: state,
+// sentence a payer actually sees. So this drives the real island: state,
 // effect, fetch, English catalog, output tree.
 //
 // What that adds over the two pins: the interpolated `{max}` (a key that

@@ -626,12 +626,9 @@ describe("what the confirm dialog promises", () => {
 
 // A source scan, kept alongside the RENDER test in
 // `components/__tests__/billing-group-at-cap.test.tsx` rather than instead of
-// it. (The panel's own header says it cannot be render-tested; that stopped
-// being true when `_hook-harness.tsx` landed this wave, and the render test is
-// what reads the interpolated sentence a payer actually sees.) This one still
-// earns its place: it pins the SHAPE — no message key named in the markup — so
-// a future branch that reintroduces a literal for some other state is caught
-// even where no render test covers that state. Same idiom as
+// it. This one earns its place by pinning the SHAPE — no message key named in
+// the markup — so a future branch that reintroduces a literal for some other
+// state is caught even where no render test covers that state. Same idiom as
 // `app/__tests__/pass-entry-points.test.ts`.
 describe("the panel renders the key this module chose", () => {
   const panel = () =>

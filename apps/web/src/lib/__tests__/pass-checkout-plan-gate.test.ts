@@ -755,6 +755,51 @@ describe.skipIf(!HAS_DB)("Event Pass mint refuses a rung/price desync (v17 gap #
     }
   });
 
+  it("mints unverified when the line-item READ fails, and catches it on the next good read", async () => {
+    // The one arm that still fails open silently: a Stripe read that THREW says
+    // nothing about the session, and converting a transient outage into a
+    // non-purchase is a far bigger harm than the internal desync being guarded.
+    //
+    // It is not "silent for ever", though, and that is what makes leaving it
+    // alone defensible rather than lazy: the guard runs BEFORE recordPassPurchase
+    // on BOTH mint paths and is not skipped once a pass exists, so the first
+    // successful read afterwards — the buyer revisiting the bookmarkable return
+    // URL, or the webhook landing — does the comparison and records it. This
+    // test is that whole sequence, because "it self-corrects" is a claim about
+    // behaviour and belongs in a test rather than in a comment.
+    const { orgId, compId } = await seedMintBuyer();
+    await priceBothRungs();
+    withAlertAddress();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // No expanded items, and the fetch fails.
+      const session = paidSession(orgId, compId, "event_pass_l");
+      stripeMock.retrieve.mockResolvedValue(session);
+      stripeMock.listLineItems.mockRejectedValueOnce(new Error("stripe is down"));
+
+      expect(await reconcilePassCheckout(orgId, session.id)).toBe(true);
+      expect(await passKeyHeld(compId)).toBe("event_pass_l");
+      // Logged, but nothing durable and nobody alerted — the deliberate gap.
+      expect(errors).toHaveBeenCalled();
+      expect(await refusalFor(compId)).toBeNull();
+      expect(emailMock.sendPassRungMismatchAlertEmail).not.toHaveBeenCalled();
+
+      // Stripe comes back. The SAME session is re-read on the next visit to the
+      // return URL, the comparison finally happens, and the desync is recorded
+      // and alerted even though the pass is already minted.
+      builtOn("price_test_pass");
+      expect(await reconcilePassCheckout(orgId, session.id)).toBe(false);
+      expect(await refusalFor(compId)).toMatchObject({ reason: "price_mismatch" });
+      expect(emailMock.sendPassRungMismatchAlertEmail).toHaveBeenCalledTimes(1);
+      // The pass STAYS — it is already live and the buyer is entitled to
+      // whatever was minted; this second pass is a detector, not a revoker.
+      expect(await passKeyHeld(compId)).toBe("event_pass_l");
+    } finally {
+      errors.mockRestore();
+      restoreAlertAddress();
+    }
+  });
+
   it("the alert is gated on STAFF_ALERT_EMAIL and can never throw at its caller", async () => {
     // The contract every maybeAlert* in this codebase carries, tested DIRECTLY
     // rather than through a caller's catch — which would hide a missing wrapper.

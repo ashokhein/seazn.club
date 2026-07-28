@@ -224,12 +224,25 @@ export default async function CompetitionUpgradePage({
     <main className="mx-auto max-w-3xl px-4 py-10">
       <h1 className="page-title">{title}</h1>
 
-      {/* Said BEFORE the ticket, and never suppressed by state: the buy control
-          below is refused server-side (409) while this is true, and a control
-          that fails after the click is exactly the dead end this sentence
-          exists to remove. Amber rather than red — nothing the reader did is
-          wrong, and their money is not lost. */}
-      {passUnderReview && (
+      {/* Said BEFORE the ticket: the buy control below is refused server-side
+          (409) while this is true, and a control that fails after the click is
+          exactly the dead end this sentence exists to remove. Amber rather than
+          red — nothing the reader did is wrong, and their money is not lost.
+
+          `&& !pass` is NOT belt-and-braces, and the state it excludes is the one
+          the alert email's own remedy walks staff into (#326 review round 2).
+          The alert says "record the pass at the rung actually paid for", and
+          stamping `pass_mint_refusals.resolved_at` is a SEPARATE manual step
+          with no UI — so "pass granted, refusal not yet resolved" is not just
+          reachable, it is the expected intermediate state of the documented
+          fix. Without this conjunct the page tells a customer who has just been
+          made whole that we are holding their money and will refund them,
+          directly above their active pass ticket: a false statement about
+          someone's money, which is worse than the silence this banner replaced.
+
+          Ordered `passUnderReview && !pass` rather than the reverse only so the
+          rare flag short-circuits first; both are already in hand. */}
+      {passUnderReview && !pass && (
         <p
           role="status"
           className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900"
