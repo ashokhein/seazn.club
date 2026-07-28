@@ -107,7 +107,8 @@ const KNOWN_GAPS = [
   // ── Round 4 bookkeeping: the residuals, named rather than left implicit ────
   "THE AXIS IS CIRCULAR. `claiming` is computed by running `en.halfClaim` over the tree, so an article only joins the half-rate axis — and therefore only earns a gate — if that vocabulary already matches it. The vocabulary has been measured at 0/12 and 0/24, so an article stating the rate in an unseen shape is invisible to the axis AND ungated. The axis narrows the ungated set; it does not close it (#303)",
   "THE FOURTH ARTICLE. `billing/plans.md` states the plan org caps and the fee ladder and is inventory-gated, but `billing/downgrade.md`, `billing/credits.md`, `billing/operator.md` and every non-billing article are ungated and unscanned. They are defended only by the vocabulary above (#303)",
-  "JSX EXPRESSION COMMENTS SURVIVE `codeOnly`. `{/* … */}` is trivia of the closing `}` TOKEN and `forEachChild` never visits tokens, so it is not blanked. Direction is FAIL-SAFE — a negative scan can red on a JSX comment that mentions a banned idiom, but can never miss real code — which is why it is recorded rather than fixed. `.tsx` is the dominant file type in this tree and `{/* … */}` is its own idiom (#303)",
+  "COMMENTS OWNED BY A CLOSING TOKEN SURVIVE `codeOnly` — NOT just the JSX idiom. `forEachChild` never visits TOKENS, so any comment whose nearest owner is a closing token is never blanked: `{/* … */}`, but equally an end-of-block comment on its own line, a comment in an empty block, the last call argument, the last array element, the last object property, the end of an interface body, a `switch`, or an `if`. Only an end-of-file comment is blanked. Measured tree-wide: 569 comment lines / 32,229 chars across 168 of 1,460 files. Direction is FAIL-SAFE — a negative scan can red on a comment that mentions a banned idiom, but can never miss real code — which is why it is recorded rather than fixed. Recorded as .tsx-only in round 5; that scoping was wrong and would have left the next reader hunting a JSX bug (#338)",
+  "LITERAL-FREE SPANS ARE UNAUDITED, AND THIS ONE IS FAIL-OPEN. `blankedInsideLiteralFaults` proves every changed character lies OUTSIDE every string/regex/template-part/JSX literal, which closes the historical family (a `/*` inside a string ate 193 lines of division-settings.tsx) — proven by a length-preserving blank across every file raising 14,857 faults. It does NOT audit a stripper that eats a span containing NO literal at all. Constructed and it PASSES: blanking the largest literal-free span per file ships 79/79 green while destroying 1,061,443 chars across 1,341 of 1,460 files, largest single span 11,831 chars in server/usecases/billing-events.ts — LARGER than the 11,384 the historical bug actually ate. So this is not a corner case, it is most of the tree. THE COST ESTIMATE IN THE TASK 7 REPORT IS WRONG and that is the part that matters: closing this does NOT need a re-parse-and-compare 'doubling the walk'. It is a string check on the CHANGED CHARACTERS ONLY — take each maximal run of changed offsets, extend across neighbouring changed/space chars, require that span's raw text to be comments and whitespace only. O(changed chars), no re-parse, sub-millisecond per file. A wrong cost estimate is what stops a thing ever being closed (#338)",
   "FRONTMATTER PARSER DIVERGENCE, STILL LIVE. `server/help-content.ts`'s parseFrontmatter splits on `indexOf(\":\")` and is last-wins, so an indented `  description:` or a spaced `description :` is still RENDERED as the article's description while `copy-truth.ts`'s claimSurfaces regex (`^([A-Za-z_][\\w-]*):`) does not match it — the field scores 0 gate faults and is invisible to every rule. A falsehood delivered that way ships green (#303)",
 ];
 
@@ -1283,14 +1284,22 @@ describe("codeOnly strips comments and nothing else", () => {
     expect(faults[0]).toContain("eating code");
   });
 
-  // JSX COMMENTS ARE NOT BLANKED, and this records it rather than implying
-  // otherwise. `{/* … */}` is trivia attached to the closing `}` TOKEN, and
-  // `forEachChild` never visits tokens — so it survives the strip. The
-  // direction is FAIL-SAFE (a negative scan may red on a JSX comment that
+  // COMMENTS OWNED BY A CLOSING TOKEN ARE NOT BLANKED, and this records it
+  // rather than implying otherwise. `forEachChild` never visits TOKENS, so a
+  // comment whose nearest owner is a closing token survives the strip. This
+  // case uses `{/* … */}` because it is the shortest reproduction, but the
+  // mechanism is GENERAL — end-of-block comments, empty blocks, last call
+  // arguments, last array elements, last object properties, ends of interface
+  // bodies, `switch` and `if` blocks all survive too, in plain `.ts` as much as
+  // in `.tsx`. Only an end-of-file comment is blanked. Measured tree-wide: 569
+  // comment lines / 32,229 chars across 168 of 1,460 files.
+  //
+  // The direction is FAIL-SAFE (a negative scan may red on a comment that
   // mentions the idiom; it can never miss real code), which is why it is
-  // recorded in KNOWN_GAPS rather than fixed. `.tsx` is the dominant file type
-  // here and `{/* … */}` is this repo's own idiom, so the gap is worth naming.
-  it("does NOT strip a JSX expression comment — recorded, fail-safe", () => {
+  // recorded in KNOWN_GAPS rather than fixed. Round 5 recorded it as a `.tsx`
+  // idiom problem; that scoping was wrong, and it is corrected here and in
+  // KNOWN_GAPS — see also the FAIL-OPEN literal-free-span gap listed beside it.
+  it("does NOT strip a comment owned by a closing token — recorded, fail-safe", () => {
     const source = "const x = <div>{/* jsxcomment */}<b>keep</b></div>;\n";
     const stripped = codeOnly(source, "case.tsx");
     expect(stripped, "code must survive regardless").toContain("<b>keep</b>");
