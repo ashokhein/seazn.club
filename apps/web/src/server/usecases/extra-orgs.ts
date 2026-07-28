@@ -5,8 +5,7 @@ import { deferred } from "@/lib/deferred";
 import { HttpError } from "@/lib/errors";
 import { sendExtraOrgAllowanceAlertEmail } from "@/lib/email";
 import { hasLiveSubscription } from "@/lib/subscription-status";
-import { addonBonusForWalletByStatus } from "@/lib/entitlements";
-import { groupCapResolvingOrg } from "@/lib/billing-group";
+import { capacityBasis, ridersInUse } from "@/lib/billing-group";
 import { requireBillingOwner } from "@/server/usecases/billing-manage";
 import {
   ORG_ADDON_FEATURE_KEY,
@@ -271,151 +270,44 @@ export async function setExtraOrgs(
  * How many PURCHASED extra organisations this group is actually standing on —
  * the lowest `count` a reduction may go to.
  *
- * `live orgs in the GROUP` − `the capacity the group holds WITHOUT purchased
- * riders`, floored at 0.
+ * A thin wrapper over `capacityBasis` + `ridersInUse` (lib/billing-group.ts),
+ * where the whole rule and its rationale now live: the base is the live
+ * `org_entitlement_overrides` row else the plan row, read DIRECTLY rather than
+ * through `resolve()`/`groupOrgLimit`, because the resolver's read-time
+ * degradations (dunning, a never-paid first invoice, an expired trial, a
+ * suspended org) would invent riders the customer never bought; admin comps are
+ * subtracted; and the result is clamped to what is actually billed.
  *
- * That second term is **not** `plan_entitlements` alone. A staff
- * `org_entitlement_overrides` row REPLACES the plan base outright
- * (`resolve()`, entitlements.ts — `int_value: ov.int_value`, not a coalesce),
- * so an override IS the group's effective base. Reading the plan table instead
- * would tell a staff-comped group of 20 orgs on an override of 50 that it is
- * "using" 15 riders it does not need, and refuse to let it cancel them — a
- * TRAP, and one aimed squarely at the >= 25 population this feature exists to
- * court, where an override is the natural staff remedy.
- *
- * BUT IT IS ALSO NOT `groupOrgLimit`, AND THAT IS THE WHOLE POINT OF THIS
- * FUNCTION'S SHAPE. Deriving the base from the resolver inherits every
- * READ-TIME DEGRADATION the resolver applies, and re-creates the same trap one
- * layer down. `hasLiveSubscription` admits `past_due` and `incomplete`
- * (lib/subscription-status.ts), so both reach this code — while `resolve()`
- * collapses `past_due` beyond 14 days, `incomplete`, an expired `trialing` and
- * a `suspended` ORG to `community` (lib/entitlements.ts). Measured on a Pro
- * group with 5 live organisations and 2 purchased riders: healthy,
- * `groupOrgLimit` is 7 and the floor is 0; in dunning it is 3 and the floor
- * became FOUR — four riders the customer never bought. A customer who can no
- * longer afford the rider was refused 423 and told to move an organisation out,
- * when the real remedy is to pay the invoice.
- *
- * So the base is read DIRECTLY and narrowly: the live override row for the
- * representative org if there is one, else the plan row. One scoped read of one
- * row for one feature key — not a second resolver. Subscription STATUS cannot
- * reach it, which is correct: a rider's price is not in dispute during dunning,
- * and moderation state must not set a billing floor either.
- *
- * A worthwhile side effect: `resolve()` is Redis-cached for 300 seconds, so a
- * staff override written to rescue an enterprise group used to leave the floor
- * wrong for five more minutes. Reading the override directly lifts it at once.
- * A REFUSAL that outlives its cause is worse than a stale admission, so the
- * direct read is the better trade on both counts.
- *
- * The representative org itself still comes from `groupCapResolvingOrg`
- * (lib/billing-group.ts) — the same pick `groupOrgLimit` uses, shared rather
- * than copied, so the floor and the admission cap can never disagree about
- * which override applies.
- *
- * Algebraically, with `base` = override-or-plan:
- *
- *     floor = liveOrgs − base − granted,   clamped to [0, purchasedExtraOrgs]
- *
- * Counts organisations in the **billing group**, not organisations a user
- * owns, because the only exit is `detachOrgFromGroup` — there is no org
- * deletion anywhere in the product (no `deleteOrg`; `/api/orgs/[id]` has PATCH
- * only). Counting the wrong set would leave a customer paying for ever with no
- * way out, which is a far worse failure than the leak this closes.
- *
- * Soft-deleted orgs are excluded, matching `syncGroupQuantity`'s billed count
- * and `liveOrgIdsInGroup` — a deleted org bills nothing and holds no quota, so
- * it must not hold a rider hostage either.
- *
- * Admin comps (`status='granted'`, SPEC-3) are SUBTRACTED: they are capacity
- * the group was GIVEN, so a group whose eleventh org stands on a comp is using
- * no purchased rider and must never be told to buy one to keep what it was
- * given. That sum goes through `addonBonusForWalletByStatus` — the same
- * statement `addonBonusForWallet` runs, narrowed to `granted` — so it carries
- * the identical `target_org_id` / `target_competition_id` scope predicates. An
- * earlier hand-written copy dropped both, and an add-on granted to a DIFFERENT
- * organisation silently lowered this group's floor.
- *
- * THE CLAMP IS AN INVARIANT, NOT A SAFETY NET. You cannot stand on more riders
- * than you purchased, so a floor above `purchasedExtraOrgs` is incoherent by
- * construction and a 423 must never quote one. It is reachable without anything
- * being broken: caps are ADMISSION-ONLY, so a plan downgrade (or a comp
- * expiring) leaves a group holding more organisations than its total capacity,
- * and the raw arithmetic then attributes the whole overhang to riders. Task 6
- * renders this number as the control's lower bound, so an incoherent value here
- * becomes incoherent UI.
- *
- * TWO SEPARATE ZERO-RETURNS, and only one of them is a trade-off:
- *  - **unlimited** (a null `int_value` on the override or the plan row, or no
- *    member org to resolve through): 0 is CORRECT BY DEFINITION. An unlimited
- *    cap means riders carry no capacity at all, so none can be in use. Not a
- *    compromise; do not "tighten" it.
- *  - **no `plan_entitlements` row for the key at all** (and no override): 0 is
- *    a deliberate FAIL-OPEN. `getLimit` reports a missing row as base 0, which
- *    would make the floor the entire org count and trap every group on that
- *    plan. Refusing on a cap we cannot read is the one unrecoverable outcome
- *    here; leaking a rider is recoverable. This branch is the judgement call.
+ * Counts organisations in the **billing group**, not organisations a user owns,
+ * because the only exit is `detachOrgFromGroup` — there is no org deletion
+ * anywhere in the product (no `deleteOrg`; `/api/orgs/[id]` has PATCH only).
+ * Counting the wrong set would leave a customer paying for ever with no way
+ * out, which is a far worse failure than the leak this closes.
  *
  * @param purchasedExtraOrgs the riders the group is ACTUALLY billed for — from
  *   Stripe in `setExtraOrgs`, because Stripe is the source of truth for what is
  *   charged and the webhook may be lagging. Required, not optional: an optional
  *   clamp is a clamp somebody forgets.
  *
- * Exported so a server component can compute the control's lower bound and
- * make the 423 a backstop rather than the primary UX (Task 6).
+ * Kept here (rather than moved wholesale) so `setExtraOrgs` reads as one story.
+ * The Add-ons tab does NOT call it: `getAddOnsTab` already holds the basis for
+ * the capacity it renders, so it calls `ridersInUse` on that same basis instead
+ * of paying for the read twice.
  */
 export async function extraOrgsInUse(
   subscriptionId: string,
   planKey: string,
   purchasedExtraOrgs: number,
 ): Promise<number> {
-  // Same pick groupOrgLimit uses, shared rather than copied. No member org
-  // means no organisation can be standing on a rider.
-  const rep = await groupCapResolvingOrg(subscriptionId);
-  if (!rep) return 0;
-
-  // The base, read DIRECTLY rather than through resolve()/groupOrgLimit — see
-  // the doc comment: the resolver degrades `past_due`, `incomplete`, an expired
-  // trial and a suspended org to `community`, and a degraded base invents
-  // riders the customer never bought.
-  //
-  // An override REPLACES the plan base (resolve() returns `int_value:
-  // ov.int_value`, not a coalesce), including when that value is NULL, which
-  // means UNLIMITED rather than "no answer". The expiry predicate matches
-  // resolve()'s exactly: an expired override is dead and must not count.
-  const [override] = await sql<{ int_value: number | null }[]>`
-    select int_value from org_entitlement_overrides
-     where org_id = ${rep.id} and feature_key = ${ORG_ADDON_FEATURE_KEY}
-       and (expires_at is null or expires_at > now())`;
-
-  let base: number | null;
-  if (override) {
-    base = override.int_value;
-  } else {
-    const [planRow] = await sql<{ int_value: number | null }[]>`
-      select int_value from plan_entitlements
-       where plan_key = ${planKey} and feature_key = ${ORG_ADDON_FEATURE_KEY}`;
-    if (!planRow) return 0; // fail-open; the judgement call named above
-    base = planRow.int_value;
-  }
-  if (base === null) return 0; // unlimited: riders carry no capacity
-
-  const [orgs] = await sql<{ n: number }[]>`
-    select count(*)::int as n from organizations
-     where subscription_id = ${subscriptionId} and deleted_at is null`;
-
-  // Comped capacity only. Scoped through the SAME statement addonBonusForWallet
-  // runs, so a grant aimed at another org or at one competition cannot leak in.
-  const granted = await addonBonusForWalletByStatus(
-    subscriptionId,
-    ORG_ADDON_FEATURE_KEY,
-    ["granted"],
-    rep.id,
-  );
-
-  const standingOnRiders = (orgs?.n ?? 0) - base - granted;
-  // Clamped BOTH ways: never negative, and never more riders than are billed.
-  return Math.max(0, Math.min(standingOnRiders, purchasedExtraOrgs));
+  // The read AND the arithmetic both live in lib/billing-group.ts now (Task 6),
+  // because the Add-ons tab renders this floor as a control's lower bound and
+  // renders `purchasedCapacity(basis)` beside it. Two hand-written copies of
+  // "the base, without the resolver" is precisely the drift
+  // entitlements-duplicate-resolvers.test.ts was written about; every rule
+  // documented above is now documented on `ridersInUse` and enforced in one
+  // place for both callers.
+  const basis = await capacityBasis(subscriptionId, planKey, ORG_ADDON_FEATURE_KEY);
+  return ridersInUse(basis, purchasedExtraOrgs);
 }
 
 /**

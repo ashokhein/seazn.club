@@ -2,6 +2,7 @@ import "server-only";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { HttpError } from "@/lib/errors";
+import type { Currency } from "@/lib/currency";
 import stripePlans from "@/config/stripe-plans.json";
 
 // Extra-organisation recurring add-on (v17 gap #293, design/v17-pricing-
@@ -85,6 +86,44 @@ export function isOrgAddonItem(item: Stripe.SubscriptionItem): boolean {
  *  (community: exceeding a free org is an upgrade, not a purchase). */
 export function orgAddonForPlan(planKey: string): OrgAddonCatalogEntry | undefined {
   return ORG_ADDONS.find((e) => e.planKey === planKey);
+}
+
+/**
+ * What ONE extra-organisation rider costs PER MONTH on this plan, in the
+ * currency's minor units — read from the `org_addons` SKU that Stripe actually
+ * bills (v17 gap #293, Task 6).
+ *
+ * NOT `extraOrgPrice()` (lib/currency.ts), and the difference is a wrong number
+ * rather than a stylistic one. That helper reads the PLAN's graduated `up_to:
+ * "inf"` tier — what one more organisation costs INSIDE the plan's cap, on the
+ * plan's own interval. The two agree monthly and diverge annually: an annual
+ * Pro group's existing extra organisations cost 7900/year each, while this
+ * rider is 900/MONTH (~10800/year, about 37% more) on a separate monthly
+ * cadence. Quoting the tier to an annual group would understate the rider by a
+ * third and imply a yearly charge that will arrive monthly.
+ *
+ * So the interval is not a parameter: the rider is a monthly recurring price on
+ * every plan (`org-addon-catalog-parity.test.ts` pins `interval: "month"` for
+ * every entry), and any surface rendering this number must SAY monthly.
+ *
+ * Keyed on the group's CURRENT `plan_key`, never on what the customer last
+ * paid: a tier change re-prices the rider (`setExtraOrgs` swaps the item onto
+ * the new plan's lookup_key), so the old rate is not what they will be billed.
+ *
+ * Returns null when the plan has no rider SKU (community) — the caller has
+ * nothing to sell and must not render a price at all.
+ */
+export function orgAddonPriceMinor(planKey: string, currency: Currency): number | null {
+  const seed = orgAddonSeed.find((e) => e.plan_key === planKey);
+  if (!seed) return null;
+  if (currency === "usd") return seed.price.unit_amount;
+  // Same fallback shape as lib/currency.ts's `amountFor`: a currency absent
+  // from currency_options bills at the usd amount, because that is what Stripe
+  // does with a price whose currency_options omit it.
+  return (
+    (seed.price.currency_options as Record<string, number> | undefined)?.[currency] ??
+    seed.price.unit_amount
+  );
 }
 
 /**

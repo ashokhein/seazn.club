@@ -4,7 +4,7 @@ import {
   Building2, Users, CreditCard, UserCircle,
   Pencil, Image as ImageIcon, Palette,
   User, Mail, Download, ShieldOff, KeyRound, Compass, Banknote, BookOpen, Cookie, Handshake,
-  Clock, Newspaper, Sparkles,
+  Clock, Newspaper, Sparkles, PackagePlus,
   type LucideIcon,
 } from "lucide-react";
 import { getUserOrgs } from "@/lib/auth";
@@ -109,6 +109,9 @@ const CONNECT_NAV = { labelKey: "payments.title", icon: Banknote } as const;
 // AI Credits — its own route (the wallet moved off the billing page). Member-
 // visible like Billing/Connect; the page itself is not payer-gated.
 const CREDITS_NAV = { labelKey: "settings.nav.credits", icon: Sparkles } as const;
+// Purchasable add-ons (v17 gap #293) — extra organisations today. Member-
+// visible like the three above; the purchase control inside is payer-gated.
+const ADDONS_NAV = { labelKey: "settings.nav.addOns", icon: PackagePlus } as const;
 
 export default async function SettingsPage({
   params,
@@ -285,6 +288,13 @@ export default async function SettingsPage({
               >
                 <CREDITS_NAV.icon className="h-4 w-4 shrink-0 text-slate-500" strokeWidth={1.75} />
                 {t(dict, CREDITS_NAV.labelKey)}
+              </Link>
+              <Link
+                href={routes.addOns(orgSlug)}
+                className="flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-600 transition hover:bg-purple-50 hover:text-purple-700"
+              >
+                <ADDONS_NAV.icon className="h-4 w-4 shrink-0 text-slate-500" strokeWidth={1.75} />
+                {t(dict, ADDONS_NAV.labelKey)}
               </Link>
             </nav>
             <div className="my-4 hidden border-t border-purple-100 md:block" />

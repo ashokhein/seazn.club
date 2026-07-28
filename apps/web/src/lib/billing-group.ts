@@ -11,7 +11,7 @@ import "server-only";
 // arithmetic only, so it can be imported from either side without a cycle.
 import { sql } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
-import { addonBonusForWallet, getLimit } from "@/lib/entitlements";
+import { addonBonusForWallet, addonBonusForWalletByStatus, getLimit } from "@/lib/entitlements";
 
 /** The group an org bills through, or null if it has none. */
 export async function subscriptionIdForOrg(orgId: string): Promise<string | null> {
@@ -213,6 +213,200 @@ export async function groupOrgLimit(subscriptionId: string): Promise<number | nu
   //    that divergence must close only THIS half.
   if (pe?.int_value == null) return null;
   return pe.int_value + (await addonBonusForWallet(subscriptionId, "orgs.max_owned"));
+}
+
+/**
+ * The raw ingredients of a group's capacity for ONE cap, read WITHOUT the
+ * entitlement resolver (v17 gap #293, Task 6).
+ *
+ * Lifted out of `extraOrgsInUse` (server/usecases/extra-orgs.ts) so the
+ * purchase refusal and the Add-ons tab compute from ONE read instead of two
+ * hand-written copies — `entitlements-duplicate-resolvers.test.ts` exists
+ * because three places once re-implemented resolution in raw SQL and drifted.
+ * It lives here rather than in the usecase because a usecase that reaches
+ * Stripe has no business being imported for a number; everything below is
+ * `sql` and arithmetic, which is exactly what this module is for.
+ *
+ * WHY NOT `resolve()` / `getLimit` / `groupOrgLimit`. The resolver applies
+ * READ-TIME DEGRADATIONS that have nothing to do with what was bought: it
+ * collapses `past_due` beyond 14 days, `incomplete`, an expired `trialing` and
+ * a `suspended` ORG to the community plan (lib/entitlements.ts), while
+ * `hasLiveSubscription` admits `past_due` and `incomplete`
+ * (lib/subscription-status.ts) — so both reach this code. Measured on a Pro
+ * group with 5 live organisations and 2 purchased riders: healthy,
+ * `groupOrgLimit` is 7; in dunning it is 1. A cap that governs ADMISSION may
+ * degrade, because admission is forward-looking. A statement about what the
+ * customer ALREADY BOUGHT must not, or the tab reads "using 5 of 1
+ * organisations" while the customer's stepper sits at 2, and a reduction is
+ * refused with a floor of riders they never purchased.
+ *
+ * A worthwhile side effect: `resolve()` is Redis-cached for 300 seconds and
+ * the add-on sums deliberately are not, so a staff override written to rescue
+ * a group takes effect here at once. A refusal that outlives its cause is
+ * worse than a stale admission.
+ */
+export interface CapacityBasis {
+  /** The org the cap resolves through (`groupCapResolvingOrg`), or null when
+   *  the group holds no live organisation at all. */
+  repOrgId: string | null;
+  /** The live override's value if there is one, else the plan row's. An
+   *  override REPLACES the plan base (`resolve()` returns `int_value:
+   *  ov.int_value`, deliberately not a coalesce), including when that value is
+   *  NULL — which means UNLIMITED, not "no answer". */
+  base: number | null;
+  /** No override AND no `plan_entitlements` row: the cap cannot be read. */
+  baseUnknown: boolean;
+  /** Capacity the group was GIVEN (`status = 'granted'`, SPEC-3) — comps, not
+   *  purchases. */
+  grantedBonus: number;
+  /** Every add-on that COUNTS toward the cap (`active` + `granted`) — the same
+   *  sum `getLimit` adds on top of the plan base. */
+  totalBonus: number;
+  /** Live (not soft-deleted) organisations billing through this group. */
+  liveOrgs: number;
+}
+
+/**
+ * Read a group's capacity ingredients for `featureKey`, bypassing the resolver.
+ *
+ * Every sum goes through `addonBonusForWallet*`, so the `target_org_id` /
+ * `target_competition_id` scope predicates cannot drift from the resolver's —
+ * an earlier hand-written copy dropped both, and an add-on granted to a
+ * DIFFERENT organisation silently lowered a floor.
+ */
+export async function capacityBasis(
+  subscriptionId: string,
+  planKey: string,
+  featureKey: string,
+): Promise<CapacityBasis> {
+  let repOrgId = (await groupCapResolvingOrg(subscriptionId))?.id ?? null;
+  let liveOrgs: number;
+
+  if (repOrgId) {
+    const [orgs] = await sql<{ n: number }[]>`
+      select count(*)::int as n from organizations
+       where subscription_id = ${subscriptionId} and deleted_at is null`;
+    liveOrgs = orgs?.n ?? 0;
+  } else {
+    // A GROUP OF ONE whose `organizations.subscription_id` is still null: its
+    // wallet id IS its org id (`walletIdFor` = coalesce(subscription_id, id)),
+    // so nothing "bills through" it and the lookup above finds no member. The
+    // organisation is nonetheless real and on a plan, and answering "no basis"
+    // would render its cap as unlimited on a surface whose whole job is to say
+    // how many organisations the bill covers. `subscription_id` is a uuid FK to
+    // `subscriptions(id)`, so an org id can never collide with a group id and
+    // this second lookup is unambiguous.
+    const [self] = await sql<{ id: string }[]>`
+      select id from organizations where id = ${subscriptionId} and deleted_at is null`;
+    repOrgId = self?.id ?? null;
+    liveOrgs = self ? 1 : 0;
+  }
+
+  // Genuinely nothing to resolve through — a group whose every organisation has
+  // been soft-deleted. Nothing can be standing on a rider, and there is no org
+  // to carry an override. Same answer groupOrgLimit gives (null).
+  if (!repOrgId) {
+    return {
+      repOrgId: null,
+      base: null,
+      baseUnknown: false,
+      grantedBonus: 0,
+      totalBonus: 0,
+      liveOrgs: 0,
+    };
+  }
+
+  // The expiry predicate matches resolve()'s exactly: an expired override is
+  // dead and must not count.
+  const [override] = await sql<{ int_value: number | null }[]>`
+    select int_value from org_entitlement_overrides
+     where org_id = ${repOrgId} and feature_key = ${featureKey}
+       and (expires_at is null or expires_at > now())`;
+
+  let base: number | null = null;
+  let baseUnknown = false;
+  if (override) {
+    base = override.int_value;
+  } else {
+    const [planRow] = await sql<{ int_value: number | null }[]>`
+      select int_value from plan_entitlements
+       where plan_key = ${planKey} and feature_key = ${featureKey}`;
+    if (planRow) base = planRow.int_value;
+    else baseUnknown = true;
+  }
+
+  const [grantedBonus, totalBonus] = await Promise.all([
+    addonBonusForWalletByStatus(subscriptionId, featureKey, ["granted"], repOrgId),
+    addonBonusForWallet(subscriptionId, featureKey, repOrgId),
+  ]);
+
+  return { repOrgId, base, baseUnknown, grantedBonus, totalBonus, liveOrgs };
+}
+
+/**
+ * The capacity the group ACTUALLY HOLDS: plan-or-override base plus every
+ * counting add-on. `getLimit`'s arithmetic with the degradations left out, so
+ * it agrees with `groupOrgLimit` for every healthy group and disagrees only
+ * where the resolver has degraded one (dunning, a never-paid first invoice, an
+ * expired trial, a suspended org). That disagreement is the signal a surface
+ * should surface as "you cannot add more right now", never as a smaller number.
+ *
+ * null is UNLIMITED — or that there is no organisation to resolve through,
+ * matching `groupOrgLimit`'s own null.
+ *
+ * Pure: takes a basis, does no I/O, so the rule is testable without a database.
+ */
+export function purchasedCapacity(basis: CapacityBasis): number | null {
+  if (!basis.repOrgId) return null;
+  // An unreadable base is 0 here, matching getLimit ("Returns 0 if the feature
+  // key is not in the plan's entitlement matrix") rather than groupOrgLimit's
+  // degenerate suspended-only branch, which answers unlimited. A DISPLAY must
+  // not invent capacity; a REFUSAL must not invent usage — which is why
+  // `ridersInUse` reads the same field the other way.
+  if (basis.baseUnknown) return basis.totalBonus;
+  if (basis.base === null) return null;
+  return basis.base + basis.totalBonus;
+}
+
+/**
+ * How many PURCHASED riders the group is actually standing on — the lowest
+ * count a reduction may go to.
+ *
+ *     liveOrgs − base − granted,   clamped to [0, purchased]
+ *
+ * Admin comps are SUBTRACTED: capacity the group was GIVEN is not capacity it
+ * is renting, so a group whose eleventh organisation stands on a comp is using
+ * no purchased rider and must never be told to buy one to keep what it was
+ * given.
+ *
+ * THE UPPER CLAMP IS AN INVARIANT, NOT A SAFETY NET. You cannot stand on more
+ * riders than you purchased, so a floor above `purchased` is incoherent by
+ * construction. It is reachable without anything being broken: caps here are
+ * ADMISSION-ONLY (`assertWithinGroupCap` checks `count + 1 > limit` on the way
+ * IN and is never re-evaluated against organisations that already exist), so a
+ * plan downgrade or an expiring comp leaves a group holding more organisations
+ * than its total capacity, and the raw arithmetic then attributes the whole
+ * overhang to riders. Task 6 renders this number as a control's lower bound, so
+ * an incoherent value here becomes incoherent UI.
+ *
+ * TWO SEPARATE ZERO-RETURNS, and only one of them is a trade-off:
+ *  - **unlimited** (`base === null`, or no member org): 0 is CORRECT BY
+ *    DEFINITION — an unlimited cap means riders carry no capacity, so none can
+ *    be in use. Not a compromise; do not "tighten" it.
+ *  - **`baseUnknown`**: 0 is a deliberate FAIL-OPEN. Treating a missing row as
+ *    base 0 would make the floor the entire organisation count and trap every
+ *    group on that plan. Refusing on a cap we cannot read is the one
+ *    unrecoverable outcome here; leaking a rider is recoverable.
+ *
+ * @param purchased riders the group is ACTUALLY billed for. Required, not
+ *   optional: an optional clamp is a clamp somebody forgets.
+ */
+export function ridersInUse(basis: CapacityBasis, purchased: number): number {
+  if (!basis.repOrgId) return 0;
+  if (basis.baseUnknown) return 0;
+  if (basis.base === null) return 0;
+  const standingOnRiders = basis.liveOrgs - basis.base - basis.grantedBonus;
+  return Math.max(0, Math.min(standingOnRiders, purchased));
 }
 
 /** Apply a limit resolved by groupOrgLimit to a count read under the lock.
