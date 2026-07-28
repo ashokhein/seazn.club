@@ -877,7 +877,7 @@
   "pass.entry.ended.reasonTerminal": "No se ha eliminado nada — esta competición está finalizada o archivada, así que su pase de evento ha dejado de ampliar sus límites.",
   "pass.entry.ended.reasonPastEnds": "No se ha eliminado nada — esta competición ha superado su fecha de fin, así que su pase de evento ha dejado de ampliar sus límites. Actualiza la fecha de fin si sigue en marcha.",
   "pass.entry.ended.nextEdition": "Crear la edición del próximo año",
-  "pass.entry.ended.nextBody": "El pase y su recibo se quedan en esta competición. Pro amplía los mismos límites en todas las competiciones de {org}, y los sigue ampliando la próxima temporada.",
+  "pass.entry.ended.nextBody": "El pase y su recibo se quedan en esta competición. Pro mejora todas las competiciones de {org}, no solo esta, y las sigue mejorando la próxima temporada.",
   "pass.menu.buy": "Pase de evento — desde {price}",
   "me.console": "Consola",
   "me.tbd": "Por determinar",
