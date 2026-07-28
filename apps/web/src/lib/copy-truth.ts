@@ -112,6 +112,15 @@ export const RETIRED_AI_RUN_CAP_PATTERNS = [
   // catches the three measured misses, which put words between the two.
   /\b(AI|scheduling)\b[^.;]{0,40}\b(runs?|generations?|invocations?|jobs?)\b[^.;]{0,20}\b(per|for\s+each|each|a)\s+(division|competition|event)\b/i,
   /\bper[-\s](division|competition|event)\s+(AI\s+)?(schedule\s+)?(runs?|generations?)\b/i,
+  // Fix round 2 (task 3): the same claim with the UNIT NOUN FIRST — "each
+  // division gets its own AI schedule generations" put the per-unit phrase
+  // ahead of the run noun, so none of the four patterns above could reach it.
+  // Deliberately excludes a bare "a" (as in "a competition"), which reads as an
+  // article rather than a distributive here and would match ordinary prose.
+  // The window is 60, not the 20 the other direction uses: prose puts the
+  // allowance between the two ("every competition comes with its own allowance
+  // of scheduling runs" — 43 characters, measured green at 40).
+  /\b(per|for\s+each|each|every)\s+(division|competition|event)\b[^.;]{0,60}\b(runs?|generations?|invocations?|jobs?)\b/i,
   // A counted allowance, digits or words.
   /\b\d+\s+(AI|scheduling)\s+(schedule\s+)?(runs?|generations?)\b/i,
   /\b(one|two|three|four|five|six|seven|eight|nine|ten|twelve|twenty)\s+(AI\s+)?(schedule\s+)?runs?\b/i,
@@ -142,7 +151,10 @@ export const FALSE_PASS_PERMANENCE_PATTERNS = [
   /\blifetime\b/i,
   /\bforever\b/i,
   /\bpermanentl?y?\b/i,
-  /\bnever\s+(expires?|lapses?|ends?)\b/i,
+  // Fix round 2 (task 3): the separator was a required literal space, so the
+  // hyphenated "never-ending" — the most natural way an editor writes this —
+  // walked straight through. The participles are covered for the same reason.
+  /\bnever[-\s](expir(es?|ing)|laps(es?|ing)|end(s|ing)?)\b/i,
   /\bdoes\s+not\s+(expire|lapse|end)\b/i,
   /\bindefinitely\b/i,
   /\bfor\s+good\b/i,
@@ -153,6 +165,27 @@ export const FALSE_PASS_PERMANENCE_PATTERNS = [
   /\bas\s+long\s+as\s+you\s+(want|like|wish|need|choose)\b/i,
   /\b(even|keeps?\s+working)\s+(after|once)\s+(it|the\s+(competition|event))\b/i,
 ];
+
+/**
+ * The POSITIVE half of the duration claim: a limiting conjunction that GOVERNS
+ * an activity word. "while it's active" binds the pass to a condition; "active
+ * immediately" is a claim of immediate start and NO end, and must not satisfy a
+ * rule meant to assert a bound.
+ *
+ * The window is 60 characters, not 30. At 30 it FALSE-POSITIVED on truthful
+ * copy: "until the competition is archived or no longer active" is 41 characters
+ * between the conjunction and the activity word and read as "never states the
+ * pass is bounded", and the committed seed fixture sat one word from the same
+ * edge. It fails closed, so nothing shipped wrong — but a guard that rejects
+ * true prose teaches its next editor to work around it.
+ *
+ * `runs`/`running` are activity words because that is how the help articles
+ * phrase the same bound ("upgrades one competition while it runs"). The
+ * conjunction is still required, so widening the activity list cannot let an
+ * unbounded claim through.
+ */
+export const BOUNDED_SCOPE_GRAMMAR =
+  /\b(while|for\s+as\s+long\s+as|as\s+long\s+as|until|during)\b[^.:;!?]{0,60}\b(active|running|runs|open|live|under\s*way)\b/i;
 
 /** The INVERSE of the pass's one-time credit grant: the pass tops the wallet up
  *  ONCE (`PASS_CREDIT_GRANT`; neither rung has an `ai.credits.monthly` row), so
@@ -233,11 +266,9 @@ export function passDurationFaults(rungs: Rung[]): string[] {
       );
       continue;
     }
-    // A limiting conjunction that GOVERNS the activity word. "while it's
-    // active" binds the pass to a condition; "active immediately" does not.
-    if (!/\b(while|for\s+as\s+long\s+as|until|during)\b[^:]{0,30}\b(active|running|open|live)\b/i.test(
-      description.slice(0, colon),
-    )) {
+    // A limiting conjunction that GOVERNS the activity word — see
+    // BOUNDED_SCOPE_GRAMMAR for why the window is 60 and not 30.
+    if (!BOUNDED_SCOPE_GRAMMAR.test(description.slice(0, colon))) {
       faults.push(`${key}: opening clause never states the pass is bounded to an active competition`);
     }
   }
@@ -489,6 +520,356 @@ export function riderRateFaults(plans: PricedPlan[]): string[] {
         }
       }
     }
+  }
+  return faults;
+}
+
+/** A standalone extra-organisation add-on price, as `org_addons` holds it. */
+export interface OrgAddon {
+  key: string;
+  plan_key: string;
+  price: { lookup_key: string; unit_amount: number; currency_options?: Record<string, number> };
+}
+
+/**
+ * `riderRateFaults` pins the "no more than half" claim to the GRADUATED TIERS
+ * only. The same money is also charged through `org_addons` (v17 #293 — buy a
+ * slot instead of changing plan), and nothing pinned the two together: all ten
+ * amounts agree today, so the copy holds, but an add-on price could drift over
+ * half the base with that guard still green and the sentence still on the page.
+ *
+ * Parity is the right rule rather than a second half-the-base comparison: the
+ * add-on and the rider are two ways of billing one thing, so they must be the
+ * same number, and equality then carries `riderRateFaults`'s ≤-half verdict
+ * across to the add-on for free.
+ *
+ * Checked in BOTH directions. A missing add-on for a plan that has a rider is a
+ * fault too — otherwise deleting the `org_addons` section would make this guard
+ * examine nothing and report clean, which is exactly how #293 escaped the
+ * sibling seed guard's hand-written section list for a whole wave.
+ */
+export function orgAddonRiderFaults(plans: PricedPlan[], addons: OrgAddon[]): string[] {
+  const faults: string[] = [];
+  const byKey = new Map(plans.map((p) => [p.key, p]));
+  const pinned = new Set<string>();
+
+  for (const addon of addons) {
+    const plan = byKey.get(addon.plan_key);
+    if (!plan) {
+      faults.push(`${addon.key}: plan_key "${addon.plan_key}" matches no plan in the seed`);
+      continue;
+    }
+    const monthly = plan.prices.monthly;
+    const rider = monthly?.tiers?.find((t) => t.up_to === "inf");
+    if (!monthly || !rider) {
+      faults.push(`${addon.key}: ${addon.plan_key} has no graduated monthly rider to compare against`);
+      continue;
+    }
+    pinned.add(plan.key);
+    for (const currency of SEED_CURRENCIES) {
+      const addonAmount = amountIn(addon.price, currency);
+      const riderAmount = amountIn(rider, currency);
+      if (addonAmount === undefined || riderAmount === undefined) {
+        faults.push(
+          `${addon.key} ${currency}: no price point on ${addonAmount === undefined ? "the add-on" : `${monthly.lookup_key}'s rider`}`,
+        );
+        continue;
+      }
+      if (addonAmount !== riderAmount) {
+        faults.push(
+          `${addon.key} ${currency}: add-on charges ${addonAmount} but ${monthly.lookup_key}'s rider is ${riderAmount} — the "no more than half" copy is pinned to the rider only`,
+        );
+      }
+    }
+  }
+
+  for (const plan of plans) {
+    if (plan.prices.monthly?.tiers?.some((t) => t.up_to === "inf") && !pinned.has(plan.key)) {
+      faults.push(
+        `${plan.key}: charges a graduated extra-organisation rider but no org_addons entry pins it to the copy`,
+      );
+    }
+  }
+  return faults;
+}
+
+// ── Help-article prose ───────────────────────────────────────────────────────
+//
+// The same falsehoods this module was written for are also on the help pages,
+// and prose needs shaping before a claim vocabulary can be pointed at it:
+//
+//  - FRONTMATTER IS NOT BODY COPY. `plans.md`'s `description:` covers all four
+//    plans at once and truthfully says Community is "free forever" — scanning it
+//    as pass copy would red on a true sentence. It is stripped, deliberately, so
+//    a frontmatter claim is out of scope here rather than silently covered.
+//  - LINK TARGETS ARE NOT PROSE. `#the-platform-fee-on-entry-fees` reads as a
+//    sentence about fees to any regex; links are reduced to their text.
+//  - EMPHASIS BREAKS SENTENCES. `**…first paid entry** the fee is **locked**`
+//    splits wrongly on `.` inside `**`, which matters because the fee-lock rule
+//    below is deliberately SENTENCE-scoped.
+//
+// These regexes are English-only. That is correct today — `content/help/**` is a
+// single English tree (`HELP_ROOT`, no locale segment, and /help is not nested
+// under /[lang]) — but it is an assumption, not a property: if the help tree
+// ever gains locales, every rule here silently stops covering them.
+
+/** Strip YAML frontmatter. See the note above on why it is out of scope. */
+export function stripFrontmatter(markdown: string): string {
+  return markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
+}
+
+/** Markdown reduced to the words a reader actually reads. */
+export function plainProse(markdown: string): string {
+  return markdown.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*_`]+/g, "");
+}
+
+/**
+ * The article split at the granularity a claim is made and qualified at: a
+ * paragraph, a list item, or a table row.
+ *
+ * Blank lines alone are too coarse — `event-pass.md`'s fine print is one block
+ * of eleven bullets, and a qualifier in bullet 3 would then answer for the claim
+ * in bullet 8. That is the "wrong clause in the same sentence" defeat one level
+ * up, and it is why every rule below scopes to a block rather than the file.
+ */
+export function proseBlocks(markdown: string): string[] {
+  return stripFrontmatter(markdown)
+    .split(/\n{2,}/)
+    .flatMap((block) => block.split(/\n(?=\s*(?:[-*+]\s|\|))/))
+    .map((block) => plainProse(block).replace(/\s+/g, " ").trim())
+    .filter((block) => block.length > 0 && !/^#{1,6}\s/.test(block));
+}
+
+/** Sentences of a block, after `plainProse` has made `.` mean what it says. */
+export function sentences(block: string): string[] {
+  return block.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 0);
+}
+
+/** A `## Heading` section's body, or null if the heading is gone. Null is a
+ *  fault at the call site, never a silent empty scan. */
+export function markdownSection(markdown: string, heading: RegExp): string | null {
+  const lines = stripFrontmatter(markdown).split("\n");
+  const start = lines.findIndex((l) => /^##\s/.test(l) && heading.test(l));
+  if (start === -1) return null;
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((l) => /^##\s/.test(l));
+  return (end === -1 ? rest : rest.slice(0, end)).join("\n");
+}
+
+// ── The entry-fee rate lock (V312, db/migration/deltas/V316__competition_fee_lock.sql)
+//
+// `effectiveFeePercentFor` (server/usecases/registrations.ts) reads
+// `competitions.fee_percent ?? feePercentFor(org)`: once a competition has taken
+// a paid entry its rate is STAMPED and every later entry pays that same rate,
+// immune to a plan change, a group detach, a downgrade — or an Event Pass
+// expiring. The help tree said the opposite, twice, in the two places a reader
+// looks when their pass is ending.
+//
+// Note the fee's own vocabulary is bounded by sentence punctuation on both
+// sides: "…entry fees? No — every plan can charge entry fees" is two claims, not
+// one, and a window that crossed the `?` would read them as one.
+
+// A bare percentage is a fee subject here: "Community's 8% applies again to
+// every later entrant" makes the whole claim without using the word "fee", and
+// was measured green before this alternative existed. Precision comes from the
+// reversion VERB, which no honest sentence in these articles pairs with a rate.
+const FEE_SUBJECT = String.raw`(?:platform\s+fee|entry[-\s]fee\s+rate|fee\s+rate|fee\s+percentage|\bfee\b|\d+(?:\.\d+)?\s*%)`;
+const FEE_REVERSION_VERB = String.raw`(?:returns?|reverts?|goes?\s+back|went\s+back|drops?\s+back|falls?\s+back|switch(?:es)?\s+back|rises?|climbs?|jumps?|resets?|moves?|applies\s+again|is\s+restored)`;
+
+/** "…and the platform fee returns to your plan's rate" — the claim, not the
+ *  sentence, in either word order. */
+export const FEE_REVERSION_PATTERNS = [
+  new RegExp(`${FEE_SUBJECT}[^.;:!?]{0,80}\\b${FEE_REVERSION_VERB}\\b`, "i"),
+  new RegExp(`\\b${FEE_REVERSION_VERB}\\b[^.;:!?]{0,80}${FEE_SUBJECT}`, "i"),
+];
+
+const FEE_LOCK_WORD = String.raw`(?:locked|locks|lock|fixed|frozen|pinned|stays?\s+at|does\s+not\s+(?:rise|change|move))`;
+const PAID_ENTRY_TRIGGER = String.raw`(?:first\s+(?:paid\s+)?(?:entry|entrant|registration|payment|payer)|(?:already\s+)?(?:taken|took|had|has\s+had)\s+(?:a|its|the)\s+(?:first\s+)?paid\s+(?:entry|registration)|no\s+paid\s+(?:entry|entrant)|never\s+took\s+a\s+paid\s+(?:entry|entrant))`;
+
+/**
+ * Does this block state the lock — a fee subject, a lock word AND the trigger
+ * that fires it, all in ONE SENTENCE?
+ *
+ * All three, together, because each pair alone is satisfiable by the wrong
+ * clause: "your refund lock date" plus "every paid entry" two sentences apart
+ * would otherwise read as a statement about the platform fee, and a lock with no
+ * trigger tells a reader nothing about whether their own competition is locked.
+ */
+export function statesFeeLock(block: string): boolean {
+  const subject = new RegExp(FEE_SUBJECT, "i");
+  const lock = new RegExp(FEE_LOCK_WORD, "i");
+  const trigger = new RegExp(PAID_ENTRY_TRIGGER, "i");
+  return sentences(block).some((s) => subject.test(s) && lock.test(s) && trigger.test(s));
+}
+
+/**
+ * NEGATIVE half: no block may say the entry-fee rate goes back to the plan's
+ * rate without qualifying it, IN THAT SAME BLOCK, with the lock.
+ *
+ * A reversion claim is not false by itself — it is true of a competition that
+ * never took a paid entry — so this cannot be a plain denylist. What makes it
+ * false is being stated unconditionally, which is precisely what "the claim and
+ * its qualifier must share a block" tests.
+ */
+export function unqualifiedFeeReversionFaults(label: string, markdown: string): string[] {
+  const faults: string[] = [];
+  for (const block of proseBlocks(markdown)) {
+    if (!FEE_REVERSION_PATTERNS.some((p) => p.test(block))) continue;
+    if (statesFeeLock(block)) continue;
+    faults.push(
+      `${label}: "${block.slice(0, 64)}…" says the entry-fee rate goes back to the plan's rate, unqualified by the first-paid-entry lock (V312)`,
+    );
+  }
+  return faults;
+}
+
+/**
+ * POSITIVE half, and the reason the negative above is not enough on its own:
+ * deleting every mention of the fee would satisfy it perfectly while telling an
+ * organiser nothing about the rate their entrants will be charged after the pass
+ * ends. Absence proves "not false", never "still stated".
+ */
+export function feeLockStatedFaults(label: string, markdown: string): string[] {
+  return proseBlocks(markdown).some(statesFeeLock)
+    ? []
+    : [`${label}: never states that the entry-fee rate locks at the first paid entry (V312)`];
+}
+
+// ── The pass's duration and credit grant, in prose ───────────────────────────
+
+/**
+ * The prose counterpart of `passDurationFaults`. Same two halves — no unbounded
+ * vocabulary, and the bound actually stated — but scoped to the pass's own
+ * copy, and positioned at the OPENING PARAGRAPH rather than a pre-colon clause,
+ * because that is where an article makes its scope statement.
+ *
+ * SCOPING IS LOAD-BEARING, and measured: `plans.md` truthfully says Community is
+ * "free forever" and `credits.md` truthfully says pack credits "never expire".
+ * Both are `FALSE_PASS_PERMANENCE_PATTERNS` hits and both are correct — this
+ * list is only a falsehood about the PASS. Pass it pass copy, nothing else.
+ */
+export function passBoundProseFaults(label: string, passProse: string): string[] {
+  const faults: string[] = [];
+  const text = plainProse(stripFrontmatter(passProse));
+  for (const pattern of FALSE_PASS_PERMANENCE_PATTERNS) {
+    if (pattern.test(text)) {
+      faults.push(`${label}: claims the pass has unbounded duration (${pattern.source})`);
+    }
+  }
+  const [opening] = proseBlocks(passProse);
+  if (opening === undefined) {
+    faults.push(`${label}: no prose to scan — the section is empty or its heading moved`);
+  } else if (!BOUNDED_SCOPE_GRAMMAR.test(opening)) {
+    faults.push(
+      `${label}: the opening paragraph never states the pass is bounded to a running competition`,
+    );
+  }
+  return faults;
+}
+
+/**
+ * Every AI-credit figure in the pass's own copy, against `PASS_CREDIT_GRANT`.
+ *
+ * Two directions, because a table writes the figure on the other side of the
+ * noun ("| AI credits | +25, one-time |") and a sentence writes it in front
+ * ("a one-time top-up of 25 AI credits"). A guard that only read one of them
+ * would leave the comparison table — the first thing a buyer looks at —
+ * unchecked.
+ *
+ * Paired with the positive: SOME block must actually state the grant, and every
+ * block that states it must say it is one-time. The recurring vocabulary is the
+ * inverse claim, and a block that quotes the right number monthly is worse than
+ * one that quotes nothing.
+ */
+export function passCreditProseFaults(label: string, passProse: string): string[] {
+  const faults: string[] = [];
+  let stated = 0;
+  for (const block of proseBlocks(passProse)) {
+    const figures = [
+      ...block.matchAll(/(?:\+\s*)?(\d[\d,]*)\s+AI\s+credits?\b/gi),
+      // The number-after form needs a SEPARATOR, not merely proximity: a free
+      // window of a few characters read "…25 AI credits, and a 5% platform fee"
+      // as a claim of 5 AI credits (measured). A table cell or a colon is what
+      // actually puts a figure after the label.
+      ...block.matchAll(/\bAI\s+credits?\b\s*[:|]\s*\+?\s*(\d[\d,]*)\b/gi),
+    ].map((m) => Number(m[1].replace(/,/g, "")));
+    if (figures.length === 0) continue;
+
+    const snippet = block.slice(0, 48);
+    for (const figure of figures) {
+      if (figure !== PASS_CREDIT_GRANT) {
+        faults.push(
+          `${label}: "${snippet}…" quotes ${figure} AI credits, but the pass grants ${PASS_CREDIT_GRANT}`,
+        );
+      }
+    }
+    if (!/\b(one[-\s]time|once|single\s+top[-\s]?up)\b/i.test(block)) {
+      faults.push(`${label}: "${snippet}…" states the credit grant without saying it is one-time`);
+    } else if (figures.includes(PASS_CREDIT_GRANT)) {
+      stated += 1;
+    }
+    for (const pattern of RECURRING_GRANT_PATTERNS) {
+      if (pattern.test(block)) {
+        faults.push(`${label}: "${snippet}…" sells the one-time grant as recurring (${pattern.source})`);
+      }
+    }
+  }
+  if (stated === 0) {
+    faults.push(`${label}: never states the one-time +${PASS_CREDIT_GRANT} AI credit grant`);
+  }
+  return faults;
+}
+
+// ── The fee ladder table, against the matrix ─────────────────────────────────
+
+/** Which `plan_entitlements.plan_key`s a fee-ladder row is a claim about. The
+ *  Event Pass row is a claim about BOTH rungs — they share the 5% rate, and a
+ *  rung whose rate moved would otherwise be invisible in this table. */
+export const FEE_LADDER_PLAN_KEYS: Record<string, string[]> = {
+  Community: ["community"],
+  "Event Pass": ["event_pass", "event_pass_l"],
+  Pro: ["pro"],
+  "Pro Plus": ["pro_plus"],
+};
+
+/** `| Community | 8% |` rows, from a markdown fee table. */
+export function feeLadderRows(section: string): Array<{ plan: string; percent: number }> {
+  const rows: Array<{ plan: string; percent: number }> = [];
+  for (const line of section.split("\n")) {
+    const match = /^\|\s*([^|]+?)\s*\|\s*(\d+(?:\.\d+)?)\s*%\s*\|/.exec(plainProse(line));
+    if (match) rows.push({ plan: match[1]!, percent: Number(match[2]) });
+  }
+  return rows;
+}
+
+/**
+ * The published fee ladder against `registration.fee_percent`, both ways: a row
+ * quoting a rate we do not charge, and a plan we charge that the table has
+ * stopped listing. The second matters as much — the table is the page a reader
+ * is sent to from four other articles, and a silently dropped row reads as "that
+ * plan has no platform fee".
+ */
+export function feeLadderFaults(
+  rows: Array<{ plan: string; percent: number }>,
+  live: Record<string, number | null>,
+): string[] {
+  const faults: string[] = [];
+  const seen = new Set<string>();
+  for (const { plan, percent } of rows) {
+    const keys = FEE_LADDER_PLAN_KEYS[plan];
+    if (!keys) {
+      faults.push(`fee ladder: row "${plan}" matches no plan key`);
+      continue;
+    }
+    seen.add(plan);
+    for (const key of keys) {
+      if (live[key] !== percent) {
+        faults.push(`fee ladder: "${plan}" quotes ${percent}%, but ${key} enforces ${live[key]}%`);
+      }
+    }
+  }
+  for (const plan of Object.keys(FEE_LADDER_PLAN_KEYS)) {
+    if (!seen.has(plan)) faults.push(`fee ladder: no row for ${plan}`);
   }
   return faults;
 }

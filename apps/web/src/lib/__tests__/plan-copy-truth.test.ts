@@ -18,6 +18,7 @@ import stripePlans from "@/config/stripe-plans.json";
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
 import { sql } from "@/lib/db";
 import {
+  type OrgAddon,
   PLUS_DIFFERENTIATOR_VOCAB,
   type PricedPlan,
   type Rung,
@@ -25,6 +26,7 @@ import {
   capClaimFaults,
   describedEntries,
   describedSections,
+  orgAddonRiderFaults,
   passCreditGrantFaults,
   passDurationFaults,
   plusDifferentiatorFaults,
@@ -119,6 +121,19 @@ describe("stripe-plans.json names no retired feature and no false pass permanenc
   // about it. No DB — both halves are in the seed.
   it("charges no more for an extra organisation than the copy claims", () => {
     expect(riderRateFaults(stripePlans.plans as unknown as PricedPlan[])).toEqual([]);
+  });
+
+  // …and the same money charged the other way. The rate claim above is pinned
+  // to the GRADUATED TIERS only, so an `org_addons` price could drift over half
+  // the base with that guard green and the sentence still on the page. Parity
+  // carries the ≤-half verdict across.
+  it("charges the same for an extra organisation whichever way it is bought", () => {
+    expect(
+      orgAddonRiderFaults(
+        stripePlans.plans as unknown as PricedPlan[],
+        stripePlans.org_addons as unknown as OrgAddon[],
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -487,6 +502,71 @@ describe("the guards survive a rewording, not just a revert", () => {
     // Saying nothing about the rate at all is a fault, not a pass.
     expect(riderRateFaults(priced("Covers up to 5 organisations.", 1900, 900))).toEqual([
       "pro: makes no statement about the extra-organisation rate",
+    ]);
+  });
+
+  // The org_addons half of the same claim, proved by HOLING the clone: the only
+  // way an add-on drift can be caught is if the guard compares every currency,
+  // and the only way a DELETED add-on can be caught is if the guard also walks
+  // the plans. Both directions are asserted.
+  it("catches an extra-organisation add-on that drifts off its rider", () => {
+    const points = (amount: number) => ({ eur: amount, gbp: amount, inr: amount, aud: amount });
+    const plans: PricedPlan[] = [
+      {
+        key: "pro",
+        product: { description: "each extra organisation costs no more than half the base rate." },
+        prices: {
+          monthly: {
+            lookup_key: "seazn_pro_monthly",
+            unit_amount: 1900,
+            currency_options: points(1900),
+            tiers: [
+              { up_to: 1, unit_amount: 1900, currency_options: points(1900) },
+              { up_to: "inf", unit_amount: 900, currency_options: points(900) },
+            ],
+          },
+        },
+      },
+    ];
+    const addon = (
+      amount: number,
+      currencies: Record<string, number> = points(amount),
+    ): OrgAddon => ({
+      key: "extra_org_pro",
+      plan_key: "pro",
+      price: {
+        lookup_key: "seazn_extra_org_pro_monthly",
+        unit_amount: amount,
+        currency_options: currencies,
+      },
+    });
+
+    expect(orgAddonRiderFaults(plans, [addon(900)])).toEqual([]);
+
+    // A drift in usd alone…
+    expect(orgAddonRiderFaults(plans, [addon(1000, points(900))]).join(" ")).toContain(
+      "extra_org_pro usd: add-on charges 1000 but seazn_pro_monthly's rider is 900",
+    );
+    // …and in one non-usd currency alone, which `unit_amount` cannot see.
+    expect(
+      orgAddonRiderFaults(plans, [addon(900, { ...points(900), gbp: 1200 })]).join(" "),
+    ).toContain("extra_org_pro gbp: add-on charges 1200");
+    // A missing currency point is its own fault, not a skipped comparison.
+    expect(orgAddonRiderFaults(plans, [addon(900, { eur: 900 })]).join(" ")).toContain(
+      "extra_org_pro gbp: no price point on the add-on",
+    );
+    // An add-on pointed at a plan that no longer exists. Two faults, not one:
+    // the add-on charges for nothing AND `pro`'s rider is left unpinned — a
+    // renamed plan_key silently un-covers the plan it used to cover.
+    expect(orgAddonRiderFaults(plans, [{ ...addon(900), plan_key: "starter" }])).toEqual([
+      'extra_org_pro: plan_key "starter" matches no plan in the seed',
+      "pro: charges a graduated extra-organisation rider but no org_addons entry pins it to the copy",
+    ]);
+    // …and the inverse: deleting the add-on must not make the guard scan
+    // nothing and report clean. This is exactly how org_addons escaped the
+    // sibling seed guard's hand-written section list for a whole wave (#293).
+    expect(orgAddonRiderFaults(plans, [])).toEqual([
+      "pro: charges a graduated extra-organisation rider but no org_addons entry pins it to the copy",
     ]);
   });
 });
