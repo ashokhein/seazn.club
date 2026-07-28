@@ -115,20 +115,37 @@ export function isPlanLapsed(
 }
 
 /** Grace period (days) an Event Pass keeps applying AFTER its competition's
- *  ends_on date, before the ended-competition lock (arm B) fires. SPEC-4 §7.2. */
+ *  ends_on date, before the `past_ends_on` lock fires. SPEC-4 §7.2. */
 export const PASS_END_GRACE_DAYS = 7;
 
-/** Why an Event Pass has stopped applying (v17 gap #301) — named so a UI can
- *  tell "this competition finished" from "this competition simply ran past
- *  its end date" instead of collapsing both into a bare boolean. `null` means
- *  still applying. This is the ONE place the arms live; `isPassLocked` below
- *  is a thin boolean wrapper so every existing call site is untouched. */
-export type PassLockReason = "terminal" | "past_ends_on";
+/** Every reason an Event Pass can be locked, and the single place the set is
+ *  written down — `PassLockReason` is derived from it, so a third reason is one
+ *  edit here.
+ *
+ *  Exhaustiveness insurance for the six surfaces that consume this (v17 gap
+ *  #301): a surface that keys a `Record<PassLockReason, …>` off the union, or
+ *  iterates this array, STOPS COMPILING until it handles a newly added reason.
+ *  A surface that merely compares `=== "terminal"` gets no such protection — the
+ *  compiler cannot force an `if`/`===` chain to grow. Prefer the Record or this
+ *  array over ad-hoc comparisons; W8 Task 2 shipped a real regression past `tsc`
+ *  exactly because its added `PassGateState` member was only ever `===`-compared. */
+export const PASS_LOCK_REASONS = ["terminal", "past_ends_on"] as const;
+
+/** Why an Event Pass has stopped applying (v17 gap #301) — see
+ *  {@link passLockReason}, which is the ONE place the arms live. `null` (absent
+ *  from this union) means the pass is still applying. */
+export type PassLockReason = (typeof PASS_LOCK_REASONS)[number];
 
 /**
  * Why is an Event Pass no longer eligible to apply because its competition is
  * over? (v17 SPEC-4 §7, the "hybrid" lifecycle rule, mapped to the real
  * competition status vocabulary.)
+ *
+ * Named so a UI can tell "this competition finished" from "this competition
+ * simply ran past its end date" instead of collapsing both into a bare boolean.
+ * `null` means still applying. This is the ONE place the arms live;
+ * `isPassLocked` below is a thin boolean wrapper, so every existing call site is
+ * untouched.
  *
  * Compute-at-read (SPEC §13.1): NO column on competition_passes, no status
  * write-back, no auto-archiving — the answer is derived from the competition's
@@ -165,10 +182,19 @@ export function passLockReason(
   // getters give a stable day-number for either shape.
   const end = endsOn instanceof Date ? endsOn : new Date(endsOn);
   const endMs = end.getTime();
+  // FAIL OPEN on an unparseable date: an unreadable ends_on must not silently
+  // revoke a pass the org paid for. Unreachable from production today —
+  // competitions.ends_on is a `date` column and both call sites hand us the
+  // driver's `Date | null` — so the cost is zero now; it is a future JSON/API
+  // boundary caller that would hit it. Pinned by entitlements-pass-lock.
   if (Number.isNaN(endMs)) return null;
   const graceEndMs = endMs + PASS_END_GRACE_DAYS * 86_400_000;
   const now = new Date();
   const todayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  // STRICTLY less: ends_on + grace landing exactly ON today is still applying.
+  // The `<` is load-bearing and the tests that pin it MUST pass ends_on as a
+  // 'YYYY-MM-DD' string — a `new Date()`-derived Date carries a time of day and
+  // lands hours off this boundary, where `<` and `<=` are indistinguishable.
   return graceEndMs < todayMs ? "past_ends_on" : null;
 }
 
