@@ -22,17 +22,19 @@ import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
 import {
   BOUNDED_SCOPE_GRAMMAR,
   FEE_LADDER_PLAN_KEYS,
-  FEE_REVERSION_PATTERNS,
+  mentionsRateAfterPass,
   feeLadderFaults,
   feeLadderRows,
   feeLockStatedFaults,
+  lockedRateConstantFaults,
   markdownSection,
   plainProse,
   passBoundProseFaults,
   passCreditProseFaults,
   type PricedPlan,
   proseBlocks,
-  retiredRunCapFaults,
+  sentences,
+  retiredRunCapProseFaults,
   riderRateFaults,
   statesFeeLock,
   unqualifiedFeeReversionFaults,
@@ -92,8 +94,8 @@ describe("billing help articles say what the resolver enforces", () => {
   });
 
   it("quotes no retired per-division AI-run cap", () => {
-    expect(retiredRunCapFaults(eventPass), "event-pass.md").toEqual([]);
-    expect(retiredRunCapFaults(plans), "plans.md").toEqual([]);
+    expect(retiredRunCapProseFaults("event-pass.md", eventPass)).toEqual([]);
+    expect(retiredRunCapProseFaults("plans.md", plans)).toEqual([]);
   });
 
   it("sells the Event Pass as bounded, and says what bounds it", () => {
@@ -142,6 +144,15 @@ describe("billing help articles say what the resolver enforces", () => {
     }
   });
 
+  // Fix round 1, critical 2: round 1 shipped "a late entrant pays the same 5%
+  // as the first one". The lock records what the FIRST PAID CARD ENTRY was
+  // charged, so a competition that took one before its pass was bought is
+  // locked at the pre-pass rate and the pass cannot lower it.
+  it("never names a constant percentage as the locked rate", () => {
+    expect(lockedRateConstantFaults("event-pass.md", eventPass)).toEqual([]);
+    expect(lockedRateConstantFaults("plans.md#event-pass", plansPassSection!)).toEqual([]);
+  });
+
   it("states the lock, rather than merely omitting the false claim", () => {
     expect(feeLockStatedFaults("event-pass.md", eventPass)).toEqual([]);
 
@@ -150,9 +161,9 @@ describe("billing help articles say what the resolver enforces", () => {
     // one above it would pass because there was nothing left to qualify. So a
     // block must still make the reversion claim AND carry its qualifier — that
     // is the paragraph a reader with an ending pass actually needs.
-    const qualified = proseBlocks(eventPass).filter(
-      (block) => FEE_REVERSION_PATTERNS.some((p) => p.test(block)) && statesFeeLock(block),
-    );
+    const qualified = proseBlocks(eventPass)
+      .flatMap((block) => sentences(block))
+      .filter((sentence) => mentionsRateAfterPass(sentence) && statesFeeLock(sentence));
     expect(
       qualified.length,
       "no block both states what happens to the rate and qualifies it — the guards above are passing on silence",
@@ -246,6 +257,94 @@ describe("the help-prose guards survive a rewording, not just a revert", () => {
   const LOCKED =
     "Once a competition has taken its first paid entry the platform fee it charges is locked for the rest of that competition.";
 
+  // ── FIX ROUND 1: the mutations that beat the round-1 guards ───────────────
+  // Both were made by ADDING a false sentence and KEEPING every true one, so
+  // the positive halves stayed satisfied and only the negative had to fail —
+  // which it did, because a list of falsehoods is an open set. These two are
+  // the reviewer's own; the ten below are new ones neither guard was written
+  // against.
+  it("catches a false sentence ADDED beside the true one — fee", () => {
+    const added =
+      "After the event closes, later entrants are charged 8% again, and the 5% you were enjoying no longer applies.";
+    expect(unqualifiedFeeReversionFaults("x", added), "the reviewer's mutation").not.toEqual([]);
+    // …and in situ: appended to the real article, with every true sentence left
+    // in place, exactly as it was mutated.
+    expect(unqualifiedFeeReversionFaults("event-pass.md", `${eventPass}\n\n${added}\n`)).not.toEqual(
+      [],
+    );
+  });
+
+  it("catches a false sentence ADDED beside the true one — duration", () => {
+    const added = "The pass has no end date and applies for the life of the event.";
+    expect(passBoundProseFaults("x", `An Event Pass upgrades one competition while it runs.\n\n${added}`))
+      .not.toEqual([]);
+    expect(
+      passBoundProseFaults("plans.md#event-pass", `${plansPassSection!}\n\n${added}\n`),
+    ).not.toEqual([]);
+  });
+
+  // Five NEW rewordings of each falsehood, written to defeat the rule rather
+  // than to confirm it. None appears in any pattern list.
+  it("catches five fee rewordings the rule was not written against", () => {
+    for (const reworded of [
+      "Once the competition is over, entrants pay whatever your plan charges.",
+      "When your pass lapses the cheaper rate stops and Community pricing takes over.",
+      "After the pass expires we keep our usual 8% on every remaining entry.",
+      "Refunding the pass puts the competition back on its plan pricing, fee included.",
+      "The discount on entry fees only lasts while the pass does; after that it is gone.",
+    ]) {
+      expect(unqualifiedFeeReversionFaults("x", reworded), reworded).not.toEqual([]);
+    }
+  });
+
+  it("catches five duration rewordings the rule was not written against", () => {
+    for (const reworded of [
+      "An Event Pass upgrades one competition while it runs. Once bought there is no cut-off date.",
+      "An Event Pass upgrades one competition while it runs. The upgrade cannot expire.",
+      "An Event Pass upgrades one competition while it runs. It stays in force even after the final.",
+      "An Event Pass upgrades one competition while it runs. The pass applies for its whole life.",
+      "An Event Pass upgrades one competition while it runs. Your competition keeps it in perpetuity.",
+    ]) {
+      expect(passBoundProseFaults("x", reworded), reworded).not.toEqual([]);
+    }
+  });
+
+  // Critical 2's guard, proved the same way.
+  it("catches a constant percentage sold as the locked rate", () => {
+    for (const reworded of [
+      // The exact sentence round 1 shipped.
+      "Once a competition has taken its first paid entry, the platform fee is locked for the rest of it — a late entrant pays the same 5% as the first one.",
+      "Your competition's fee is fixed at 5% for good once entries open.",
+      "The locked rate is 5%, whatever happens to your plan.",
+      "Buy a pass and the 5% stays locked in for every entry after it.",
+      "Its platform fee is frozen at 5% from the first payment onwards.",
+    ]) {
+      expect(lockedRateConstantFaults("x", reworded), reworded).not.toEqual([]);
+    }
+    // …while attributing the locked rate to its SOURCE, with no number, passes.
+    expect(
+      lockedRateConstantFaults(
+        "x",
+        "Its platform fee stays locked at the rate the first payer was charged.",
+      ),
+    ).toEqual([]);
+  });
+
+  // The Minor: an accurate DENIAL of the retired cap must be writable.
+  it("lets prose say the retired cap is gone, but not quote one", () => {
+    expect(
+      retiredRunCapProseFaults("x", "There is no per-division run cap any more."),
+      "a true denial",
+    ).toEqual([]);
+    expect(
+      retiredRunCapProseFaults("x", "There is no per-division run cap beyond 20 runs a division."),
+      "a denial with a number in it is still a cap",
+    ).not.toEqual([]);
+    expect(
+      retiredRunCapProseFaults("x", "Community gets 5 AI schedule runs per division."),
+    ).not.toEqual([]);
+  });
+
   it("catches the fee-reversion claim however it is phrased", () => {
     for (const reworded of [
       // The two sentences this task removed…
@@ -263,26 +362,32 @@ describe("the help-prose guards survive a rewording, not just a revert", () => {
     }
   });
 
-  it("accepts the same claim once it carries the lock, in the same block", () => {
+  // FIX ROUND 1 (Minor): the claim was matched block-wide while the excuse was
+  // matched sentence-wide, so a true qualifier ANYWHERE in the block excused a
+  // false claim beside it. Both are sentence-scoped now, and this is the test
+  // that says so: the same two sentences pass or fail on whether the ONE
+  // sentence making the claim also carries the lock.
+  it("requires the lock in the SAME SENTENCE as the claim, not merely nearby", () => {
     const claim = "When the pass ends the entry-fee rate goes back to your plan's rate.";
     expect(unqualifiedFeeReversionFaults("x", claim), "unqualified").not.toEqual([]);
-    expect(unqualifiedFeeReversionFaults("x", `${claim} ${LOCKED}`), "qualified").toEqual([]);
-  });
-
-  // The scoping that makes the rule mean anything: a qualifier in a DIFFERENT
-  // bullet does not qualify this bullet's claim. Without block scoping,
-  // `event-pass.md`'s eleven-bullet fine print would let one lock sentence
-  // license a false claim eight bullets away.
-  it("is not satisfied by the lock sitting in a different block", () => {
-    const article = `- ${LOCKED}\n- When the pass ends the platform fee returns to your plan's rate.`;
-    expect(unqualifiedFeeReversionFaults("x", article)).not.toEqual([]);
-    // …and the two halves in ONE bullet is the shape that passes.
+    // The lock in the next sentence of the same paragraph does NOT excuse it —
+    // this exact shape passed in round 1.
+    expect(unqualifiedFeeReversionFaults("x", `${claim} ${LOCKED}`), "next sentence").not.toEqual(
+      [],
+    );
+    // Only the claim and its qualifier in one sentence passes.
     expect(
       unqualifiedFeeReversionFaults(
         "x",
-        `- When the pass ends the platform fee returns to your plan's rate. ${LOCKED}`,
+        "When the pass ends, a competition that has taken its first paid card entry keeps the platform fee locked at what that entrant was charged.",
       ),
+      "one sentence",
     ).toEqual([]);
+  });
+
+  it("is not satisfied by the lock sitting in a different block either", () => {
+    const article = `- ${LOCKED}\n- When the pass ends the platform fee returns to your plan's rate.`;
+    expect(unqualifiedFeeReversionFaults("x", article)).not.toEqual([]);
   });
 
   // The other half. An absence-shaped rule is happiest when the claim is
@@ -310,12 +415,13 @@ describe("the help-prose guards survive a rewording, not just a revert", () => {
 
   it("catches the retired AI-run cap in prose, including the unit-noun-first form", () => {
     for (const reworded of [
-      "AI Schedule runs on every plan. There is no per-division run cap any more.",
       "Community gets 5 AI schedule runs per division.",
       "each division gets its own AI schedule generations", // fix round 2
       "every competition comes with its own allowance of scheduling runs", // fix round 2
+      "5 schedule runs for every division", // fix round 1: `every` was missing
+      "the AI console allows 20 generations for each competition",
     ]) {
-      expect(retiredRunCapFaults(reworded), reworded).not.toEqual([]);
+      expect(retiredRunCapProseFaults("x", reworded), reworded).not.toEqual([]);
     }
     // The live, credit-metered story, and the ordinary prose around it, are not
     // false positives. Every one of these is a real sentence in the two articles.
@@ -327,7 +433,7 @@ describe("the help-prose guards survive a rewording, not just a revert", () => {
       "For the competition it covers, and every division inside it",
       "your organisation gets 10 AI credits a month to spend on AI scheduling and officials",
     ]) {
-      expect(retiredRunCapFaults(honest), honest).toEqual([]);
+      expect(retiredRunCapProseFaults("x", honest), honest).toEqual([]);
     }
   });
 
@@ -365,17 +471,59 @@ describe("the help-prose guards survive a rewording, not just a revert", () => {
   // fix round 2: the bound's window was 30 characters and rejected TRUE copy.
   // Both of these are sentences an editor writes; both read as "never states the
   // pass is bounded" before the widening.
-  it("does not reject a true bound that spends a few more words saying it", () => {
+  // FIX ROUND 1: the rule was `conjunction … {0,N} … activity word`, and both
+  // values of N shipped a bug — 30 rejected true copy, 60 accepted copy with no
+  // bound at all (3 of 3, measured). A distance cannot tell GOVERNING from
+  // ADJACENT. The relation is now clause membership, and this table is the
+  // evidence: seven true bounds and seven sentences where the two words are
+  // near each other and the conjunction governs nothing.
+  //
+  // This is a SHARED dependency — task 4's four locale `bounded` rules are
+  // built from the same `boundedScopeGrammarSource`, so a regression here is a
+  // regression in es/fr/nl too.
+  it("distinguishes a governing conjunction from a merely adjacent one", () => {
     for (const bounded of [
       "The pass lifts the plan until the competition is archived or no longer active: more entrants.",
       "One-time upgrade, for as long as the competition it covers is still open: more entrants.",
+      "while it's active",
+      "while that competition is still running",
+      "An Event Pass upgrades one competition while it runs",
+      "One-time upgrade, until the competition is no longer active",
+      "the pass applies while the event is still open",
     ]) {
-      expect(BOUNDED_SCOPE_GRAMMAR.test(bounded), bounded).toBe(true);
+      expect(BOUNDED_SCOPE_GRAMMAR.test(bounded), `false red: ${bounded}`).toBe(true);
     }
-    // …while the conjunction must still GOVERN the activity word.
+    for (const unbounded of [
+      // A new subject after a coordinator starts a new clause: the conjunction
+      // is not governing "active" at all. All of these passed at {0,60}.
+      "Buy it during the summer and your competition stays active.",
+      "During checkout your card is charged and the pass is active",
+      "You can buy while browsing the pricing page; your competition becomes active at once",
+      "while you wait, the competition is not yet active",
+      "Buy it during checkout. Your competitions stay active.",
+      // …and no conjunction at all is still no bound.
+      "One-time upgrade for a single competition, active immediately",
+      "One-time upgrade for an active competition",
+    ]) {
+      expect(BOUNDED_SCOPE_GRAMMAR.test(unbounded), `false green: ${unbounded}`).toBe(false);
+    }
+  });
+
+  // ANTI-VACUITY for rule 3. Rule 1 (the extent forms) would carry almost every
+  // fixture above on its own, so a dead rule 3 would go unnoticed — and did:
+  // a stray control character left `DURATION_CLAIM` matching nothing while this
+  // suite stayed green. This asserts rule 3 fires where NO extent form does.
+  it("faults an unbounded duration claim that matches no extent form", () => {
+    const opening = "An Event Pass upgrades one competition while it runs.";
+    const faults = passBoundProseFaults("x", `${opening} It applies for the entire duration and beyond.`);
     expect(
-      BOUNDED_SCOPE_GRAMMAR.test("Buy it during checkout. Your competitions stay active."),
-    ).toBe(false);
+      faults.filter((f) => f.includes("without bounding it")),
+      "rule 3 did nothing — DURATION_CLAIM may be dead",
+    ).not.toEqual([]);
+    expect(
+      faults.filter((f) => f.includes("unbounded extent")),
+      "an extent form fired, so this fixture proves nothing about rule 3",
+    ).toEqual([]);
   });
 
   it("catches a drifted, missing or recurring credit grant in prose", () => {

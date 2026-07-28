@@ -12,11 +12,15 @@
 // build time, not at test time.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { HELP_ROOT } from "@/server/help-content";
 
-/** Matches `HELP_ROOT` in `@/server/help-content` — the help tree is a single
- *  English Markdown tree with no locale segment, so there is one file per slug
- *  and no four-locale fan-out to scan. */
-export const HELP_BILLING_DIR = join(process.cwd(), "content", "help", "billing");
+/** Taken from `HELP_ROOT`, never re-derived: a second copy of the path is a
+ *  second thing to keep in step, and a wrong one reads as "no faults found".
+ *  (`lib/help.ts` holds only the client-safe slug registry; the filesystem root
+ *  lives in the server module.) The help tree is a single English Markdown tree
+ *  with no locale segment, so there is one file per slug and no four-locale
+ *  fan-out to scan. */
+export const HELP_BILLING_DIR = join(HELP_ROOT, "billing");
 
 /** One billing help article's raw Markdown, frontmatter included. Throws on a
  *  missing file rather than returning "" — an empty string would scan clean and

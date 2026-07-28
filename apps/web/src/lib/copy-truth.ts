@@ -107,10 +107,12 @@ export const RETIRED_AI_RUN_CAP_PATTERNS = [
   // The historical phrasing, kept for traceability.
   /\d+\s+AI\s+schedule\s+runs/i,
   // "<n> runs per division", "runs a competition", "runs for each event".
-  /\b(runs?|generations?|invocations?|jobs?)\b[^.;]{0,20}\b(per|for\s+each|each|a)\s+(division|competition|event)\b/i,
+  // Fix round 2: `every` was missing from the distributive list, so
+  // "5 schedule runs for every division" returned no fault (measured).
+  /\b(runs?|generations?|invocations?|jobs?)\b[^.;]{0,20}\b(per|for\s+each|for\s+every|each|every|a)\s+(division|competition|event)\b/i,
   // An AI/scheduling subject, then a run noun, then the per-unit allotment —
   // catches the three measured misses, which put words between the two.
-  /\b(AI|scheduling)\b[^.;]{0,40}\b(runs?|generations?|invocations?|jobs?)\b[^.;]{0,20}\b(per|for\s+each|each|a)\s+(division|competition|event)\b/i,
+  /\b(AI|scheduling)\b[^.;]{0,40}\b(runs?|generations?|invocations?|jobs?)\b[^.;]{0,20}\b(per|for\s+each|for\s+every|each|every|a)\s+(division|competition|event)\b/i,
   /\bper[-\s](division|competition|event)\s+(AI\s+)?(schedule\s+)?(runs?|generations?)\b/i,
   // Fix round 2 (task 3): the same claim with the UNIT NOUN FIRST — "each
   // division gets its own AI schedule generations" put the per-unit phrase
@@ -172,20 +174,76 @@ export const FALSE_PASS_PERMANENCE_PATTERNS = [
  * immediately" is a claim of immediate start and NO end, and must not satisfy a
  * rule meant to assert a bound.
  *
- * The window is 60 characters, not 30. At 30 it FALSE-POSITIVED on truthful
- * copy: "until the competition is archived or no longer active" is 41 characters
- * between the conjunction and the activity word and read as "never states the
- * pass is bounded", and the committed seed fixture sat one word from the same
- * edge. It fails closed, so nothing shipped wrong — but a guard that rejects
- * true prose teaches its next editor to work around it.
+ * ── WHY THIS IS A GRAMMATICAL RELATION AND NOT A CHARACTER DISTANCE ──────────
+ * Two rounds of this rule were written as `conjunction … {0,N} … activity word`
+ * and BOTH were wrong, in opposite directions:
  *
+ *   N=30  rejected TRUE copy — "until the competition is archived or no longer
+ *         active" is 41 characters, and read as "never states the bound".
+ *   N=60  accepted FALSE copy — "Buy it during the summer and your competition
+ *         stays active" has no bound at all, but the two words are close
+ *         enough. Measured: 3 of 3 no-bound sentences passed at 60.
+ *
+ * A distance cannot tell governing from adjacent, so neither number was ever
+ * going to be right. What actually distinguishes them is CLAUSE MEMBERSHIP: in
+ * the true sentence the activity word is the predicate of the clause the
+ * conjunction introduces; in the false one a NEW SUBJECT ("and your
+ * competition") has started a new clause and the conjunction governs nothing.
+ *
+ * So the relation is expressed directly: from the conjunction to the activity
+ * word there may be no clause boundary — no sentence punctuation, no comma, and
+ * no coordinator followed by a determiner (which is a new subject, i.e. a new
+ * clause). Distance is unbounded, because a long clause is still one clause.
+ *
+ * Note "or no longer active" survives this: `or` is followed by an adverb, not
+ * a determiner, so it coordinates a predicate rather than starting a clause.
+ * That is exactly the distinction the character windows could not draw.
+ */
+const CLAUSE_BREAK: Record<string, string> = {
+  en: String.raw`(?:\b(?:and|or|but|so|then|yet)\s+(?:the|a|an|your|our|my|its|their|this|that|these|those|it|we|you|they)\b)`,
+  es: String.raw`(?:\b(?:y|e|o|u|pero|así\s+que)\s+(?:el|la|los|las|un|una|tu|tus|su|sus|este|esta|ese|esa)\b)`,
+  fr: String.raw`(?:\b(?:et|ou|mais|donc)\s+(?:le|la|les|un|une|ton|ta|tes|votre|vos|son|sa|ses|ce|cette|ces)\b)`,
+  nl: String.raw`(?:\b(?:en|of|maar|dus)\s+(?:de|het|een|je|jouw|uw|zijn|haar|dit|dat|deze|die)\b)`,
+};
+
+/**
+ * Build the bounded-scope rule for one language from its own vocabulary.
+ *
+ * A BUILDER, not four copies: the four locale rules in `LOCALE_CLAIMS` and the
+ * English rule below are the SAME grammatical claim in different words, and the
+ * previous shape had each of them carrying its own `{0,60}`. When the window
+ * turned out to be wrong it was wrong in five places. Now the relation lives
+ * here and a language supplies only nouns and conjunctions.
+ */
+export function boundedScopeGrammarSource(
+  conjunctions: string[],
+  activity: string[],
+  locale: keyof typeof CLAUSE_BREAK = "en",
+): string {
+  return (
+    String.raw`\b(?:${conjunctions.join("|")})\b` +
+    String.raw`(?:(?!${CLAUSE_BREAK[locale]})[^.:;!?,])*?` +
+    String.raw`\b(?:${activity.join("|")})\b`
+  );
+}
+
+/**
  * `runs`/`running` are activity words because that is how the help articles
  * phrase the same bound ("upgrades one competition while it runs"). The
  * conjunction is still required, so widening the activity list cannot let an
  * unbounded claim through.
+ *
+ * The source is exported separately from the compiled pattern because the four
+ * locale rules must compile the SAME source through `claim()` (Unicode `\b`,
+ * for the accented-character bug task 4 measured) while this one is only ever
+ * tested against English values, and `claim` is defined further down the file.
  */
-export const BOUNDED_SCOPE_GRAMMAR =
-  /\b(while|for\s+as\s+long\s+as|as\s+long\s+as|until|during)\b[^.:;!?]{0,60}\b(active|running|runs|open|live|under\s*way)\b/i;
+export const BOUNDED_SCOPE_GRAMMAR_SOURCE = boundedScopeGrammarSource(
+  ["while", String.raw`for\s+as\s+long\s+as`, String.raw`as\s+long\s+as`, "until", "during"],
+  ["active", "running", "runs", "open", "live", String.raw`under\s*way`],
+);
+
+export const BOUNDED_SCOPE_GRAMMAR = new RegExp(BOUNDED_SCOPE_GRAMMAR_SOURCE, "i");
 
 /** The INVERSE of the pass's one-time credit grant: the pass tops the wallet up
  *  ONCE (`PASS_CREDIT_GRANT`; neither rung has an `ai.credits.monthly` row), so
@@ -678,7 +736,7 @@ export function markdownSection(markdown: string, heading: RegExp): string | nul
 // every later entrant" makes the whole claim without using the word "fee", and
 // was measured green before this alternative existed. Precision comes from the
 // reversion VERB, which no honest sentence in these articles pairs with a rate.
-const FEE_SUBJECT = String.raw`(?:platform\s+fee|entry[-\s]fee\s+rate|fee\s+rate|fee\s+percentage|\bfee\b|\d+(?:\.\d+)?\s*%)`;
+const FEE_SUBJECT = String.raw`(?:platform\s+fees?|entry[-\s]fee\s+rate|fee\s+rate|fee\s+percentage|\bfees?\b|(?:plan|we|platform)\s+charges?\b|\bcharged\b|\bpricing\b|\d+(?:\.\d+)?\s*%)`;
 const FEE_REVERSION_VERB = String.raw`(?:returns?|reverts?|goes?\s+back|went\s+back|drops?\s+back|falls?\s+back|switch(?:es)?\s+back|rises?|climbs?|jumps?|resets?|moves?|applies\s+again|is\s+restored)`;
 
 /** "…and the platform fee returns to your plan's rate" — the claim, not the
@@ -689,7 +747,11 @@ export const FEE_REVERSION_PATTERNS = [
 ];
 
 const FEE_LOCK_WORD = String.raw`(?:locked|locks|lock|fixed|frozen|pinned|stays?\s+at|does\s+not\s+(?:rise|change|move))`;
-const PAID_ENTRY_TRIGGER = String.raw`(?:first\s+(?:paid\s+)?(?:entry|entrant|registration|payment|payer)|(?:already\s+)?(?:taken|took|had|has\s+had)\s+(?:a|its|the)\s+(?:first\s+)?paid\s+(?:entry|registration)|no\s+paid\s+(?:entry|entrant)|never\s+took\s+a\s+paid\s+(?:entry|entrant))`;
+// `card` is optional-but-recognised throughout: the trigger is the first paid
+// CARD entry (an offline entry carries no rate and leaves the competition
+// unlocked — see the comment above the stamp in registrations.ts), so copy that
+// says so precisely must satisfy this, not fall through it.
+const PAID_ENTRY_TRIGGER = String.raw`(?:first\s+(?:paid\s+)?(?:card\s+)?(?:entry|entrant|registration|payment|payer)|(?:already\s+)?(?:taken|took|had|has\s+had)\s+(?:a|its|the)\s+(?:first\s+)?paid\s+(?:card\s+)?(?:entry|registration)|no\s+paid\s+(?:card\s+)?(?:entry|entrant)|never\s+took\s+a\s+paid\s+(?:card\s+)?(?:entry|entrant))`;
 
 /**
  * Does this block state the lock — a fee subject, a lock word AND the trigger
@@ -708,22 +770,95 @@ export function statesFeeLock(block: string): boolean {
 }
 
 /**
- * NEGATIVE half: no block may say the entry-fee rate goes back to the plan's
- * rate without qualifying it, IN THAT SAME BLOCK, with the lock.
+ * ── THE SHAPE FIX (fix round 1) ──────────────────────────────────────────────
  *
- * A reversion claim is not false by itself — it is true of a competition that
- * never took a paid entry — so this cannot be a plain denylist. What makes it
- * false is being stated unconditionally, which is precisely what "the claim and
- * its qualifier must share a block" tests.
+ * Round 1 of this rule detected the CLAIM by its verb — "the fee RETURNS to your
+ * plan's rate" — and required the qualifier somewhere in the same block. Both
+ * halves were defeated at once by a reviewer who simply ADDED a false sentence
+ * and kept the true one:
+ *
+ *   "After the event closes, later entrants are charged 8% again, and the 5%
+ *    you were enjoying no longer applies."
+ *
+ * The verb list had no "charged … again" and no "no longer applies", so the
+ * claim was never detected; and even had it been, the true sentence elsewhere in
+ * the block would have excused it. Measured detection rate: 1 in 12 rewordings.
+ *
+ * A verb list is an open set — there is no end to the ways English says "goes
+ * back up" — so this now detects the TOPIC instead, which is closed: a sentence
+ * is about the rate after the pass if it names a RATE and names the pass ENDING.
+ * You cannot make the false claim without doing both. Whatever such a sentence
+ * says, it must carry the lock ITSELF.
+ *
+ * Two granularity rules follow from the same defeat:
+ *  - the claim and its excuse must be the SAME SENTENCE. A true qualifier
+ *    elsewhere in the block excused a false claim beside it (measured).
+ *  - `feeLockStatedFaults` stays, because a topic rule is vacuous on an article
+ *    that never raises the topic.
+ */
+const RATE_MENTION = new RegExp(FEE_SUBJECT, "i");
+const PASS_ENDING_MENTION =
+  /\b(after|once|when)\b[^.;:!?]*\b(ends?|ended|ending|closes?|closed|finish\w*|over|expir\w*|stops?|stopped|lapses?|archiv\w*|completed?)\b|(?:\b(?:revok\w+|refund\w*|chargeback)\b[^.;:!?]*\bpass\b|\bpass\b[^.;:!?]*\b(?:revok\w+|refund\w*|chargeback)\b)|\b(no\s+longer|later\s+entrants?|downgrad\w+|when\s+the\s+pass|after\s+the\s+pass|after\s+(?:that|then|it)|pass\s+(?:ends?|stops?|expires?|lapses?|does))\b/i;
+
+/** Is this sentence about the entry-fee rate once the pass is no longer in
+ *  force? Either by TOPIC (a rate plus an ending) or by the round-1 verb list,
+ *  which still catches "the platform fee returns to your plan's rate" in a
+ *  clause with no ending word of its own. Union, not replacement: the verb list
+ *  was too narrow to be the only detector, not wrong. */
+export function mentionsRateAfterPass(sentence: string): boolean {
+  if (FEE_REVERSION_PATTERNS.some((p) => p.test(sentence))) return true;
+  return RATE_MENTION.test(sentence) && PASS_ENDING_MENTION.test(sentence);
+}
+
+/**
+ * Every sentence about the entry-fee rate AFTER a pass ends must state the lock.
+ *
+ * The topic is deliberately high-recall and the requirement precise — the
+ * inverse of round 1, which had a precise claim detector and a loose excuse.
  */
 export function unqualifiedFeeReversionFaults(label: string, markdown: string): string[] {
   const faults: string[] = [];
   for (const block of proseBlocks(markdown)) {
-    if (!FEE_REVERSION_PATTERNS.some((p) => p.test(block))) continue;
-    if (statesFeeLock(block)) continue;
-    faults.push(
-      `${label}: "${block.slice(0, 64)}…" says the entry-fee rate goes back to the plan's rate, unqualified by the first-paid-entry lock (V312)`,
-    );
+    for (const sentence of sentences(block)) {
+      if (!mentionsRateAfterPass(sentence)) continue;
+      if (statesFeeLock(sentence)) continue;
+      faults.push(
+        `${label}: "${sentence.slice(0, 72)}…" talks about the entry-fee rate after the pass ends without stating the first-paid-entry lock (V312)`,
+      );
+    }
+  }
+  return faults;
+}
+
+/**
+ * CRITICAL 2, fix round 1 — a falsehood this task's own round-1 copy shipped.
+ *
+ * The locked rate is NOT a constant. `registrations.ts` is the only writer of
+ * `competitions.fee_percent`, its `where … and fee_percent is null` makes it
+ * first-wins, and `lockRate = chargedFeePercent ?? reg.fee_percent` records what
+ * the first paid CARD entry was actually billed (offline entries carry no rate
+ * and leave the competition unlocked). So a competition that took a paid entry
+ * BEFORE its pass was bought is locked at the pre-pass rate, and the pass cannot
+ * lower it. Round 1 wrote "a late entrant pays the same 5% as the first one",
+ * which is true only of the case it happened to have in mind.
+ *
+ * The rule is therefore about the SHAPE of the claim, not its wording: naming a
+ * literal percentage as the locked rate is the error, whatever percentage it is.
+ * Copy must attribute the locked rate to its source — what the first payer was
+ * charged — and let the number follow from that.
+ */
+export function lockedRateConstantFaults(label: string, passProse: string): string[] {
+  const faults: string[] = [];
+  const lock = new RegExp(FEE_LOCK_WORD, "i");
+  for (const block of proseBlocks(passProse)) {
+    for (const sentence of sentences(block)) {
+      if (!lock.test(sentence) || !RATE_MENTION.test(sentence)) continue;
+      const percent = /(\d+(?:\.\d+)?)\s*%/.exec(sentence);
+      if (!percent) continue;
+      faults.push(
+        `${label}: "${sentence.slice(0, 72)}…" names ${percent[1]}% as the locked rate — the lock records whatever the FIRST PAID CARD ENTRY was charged, which is the pre-pass rate for a competition that already had one`,
+      );
+    }
   }
   return faults;
 }
@@ -740,28 +875,159 @@ export function feeLockStatedFaults(label: string, markdown: string): string[] {
     : [`${label}: never states that the entry-fee rate locks at the first paid entry (V312)`];
 }
 
+/**
+ * The retired-cap scan, sentence by sentence, with one exemption the seed does
+ * not need: prose is allowed to say the cap is GONE.
+ *
+ * `retiredRunCapFaults` bans the vocabulary outright, which is right for a
+ * product description — nothing there ever needs to mention a dead feature. An
+ * article does: "there is no per-division run cap any more" is an accurate,
+ * useful sentence for a reader who remembers the old limits, and round 1 forced
+ * it out of `plans.md`. A guard that bans true sentences gets worked around.
+ *
+ * The exemption is deliberately narrow: the denial must be in the SAME sentence
+ * and the sentence must quote NO NUMBER. "There is no per-division run cap; each
+ * division gets 5" is two sentences and reds on the second, and "no cap beyond
+ * 20 runs a division" reds on its own digit.
+ */
+export function retiredRunCapProseFaults(label: string, markdown: string): string[] {
+  const faults: string[] = [];
+  const denial = /\b(no|not|never|without|isn'?t|aren'?t|dropped|retired|removed|gone|scrapped)\b/i;
+  for (const block of proseBlocks(markdown)) {
+    for (const sentence of sentences(block)) {
+      const hits = retiredRunCapFaults(sentence);
+      if (hits.length === 0) continue;
+      if (denial.test(sentence) && !/\d/.test(sentence)) continue;
+      faults.push(...hits.map((h) => `${label}: "${sentence.slice(0, 72)}…" ${h}`));
+    }
+  }
+  return faults;
+}
+
 // ── The pass's duration and credit grant, in prose ───────────────────────────
 
 /**
- * The prose counterpart of `passDurationFaults`. Same two halves — no unbounded
- * vocabulary, and the bound actually stated — but scoped to the pass's own
- * copy, and positioned at the OPENING PARAGRAPH rather than a pre-colon clause,
- * because that is where an article makes its scope statement.
+ * ── THE SHAPE FIX, second half (fix round 1) ─────────────────────────────────
+ *
+ * Round 1 ran `FALSE_PASS_PERMANENCE_PATTERNS` — a list of FALSEHOODS — over the
+ * pass copy. A reviewer beat it in one line by writing a falsehood that was not
+ * on the list, while leaving the true sentence in place so the positive half
+ * stayed satisfied:
+ *
+ *   "The pass has no end date and applies for the life of the event."
+ *
+ * "no end date" and "life of" were both absent. Measured detection: 1 in 11.
+ * That is inherent: the falsehoods are an OPEN set, so enumerating them is a
+ * race the editor always wins.
+ *
+ * What is CLOSED is the set of grammatical forms English uses to state how long
+ * something applies. There are only so many ways: a negated limit, a negated
+ * stop, a maximal extent, a bare permanence adverb, a possessive, an open
+ * personal extent, a concessive survival. Each form below is UNBOUNDED BY
+ * CONSTRUCTION — none of them has a bounded reading in pass copy — so a new
+ * falsehood has to be written in one of them to be a duration claim at all.
+ *
+ * The bounded ways of saying it are the other list: `BOUNDED_SCOPE_GRAMMAR`,
+ * where a limiting conjunction governs an activity word. That is the sentence a
+ * true pass description writes, and it is required, not merely permitted.
+ */
+export const DURATION_EXTENT_FORMS: Array<[form: string, pattern: RegExp]> = [
+  ["a negated limit", /\bno\s+(end\s*(?:date)?|expiry|expiration|time\s+limit|deadline|cut[-\s]?off|final\s+date|last\s+day)\b/i],
+  [
+    "a negated stop",
+    // NOT `switch off`: "a grace window, so the pass doesn't switch off
+    // mid-finals" is true copy about the 7-day grace, and banning it was a
+    // measured false positive. The absolute form is kept below.
+    /\b(never|does\s+not|doesn'?t|will\s+not|won'?t|cannot|can'?t)\s+(expire|end|lapse|stop|run\s+out|finish|be\s+removed)\w*/i,
+  ],
+  ["a hyphenated permanence", /\bnever[-\s](expir|laps|end)\w*\b/i],
+  ["an absolute non-stop", /\bnever\s+(switch(?:es)?\s+off|goes?\s+away|comes?\s+off)\b/i],
+  [
+    "a maximal extent",
+    /\bfor\s+(?:the\s+|its\s+|your\s+)?(life|lifetime|whole\s+life|entire\s+life|rest\s+of\s+time|all\s+time)\b|\blifetime\b/i,
+  ],
+  [
+    "an unqualified permanence",
+    /\b(forever|for\s+ever|for\s+good|permanentl?y?|in\s+perpetuity|indefinitely|open[-\s]ended|everlasting|always\s+applies)\b/i,
+  ],
+  ["a possessive permanence", /\b(yours\s+to\s+keep|(stays?|remains?)\s+yours)\b/i],
+  ["an open personal extent", /\bas\s+long\s+as\s+you\s+(want|like|wish|need|choose)\b/i],
+  [
+    "a concessive survival",
+    /\b(keeps?\s+(working|applying|going)|still\s+applies|stays?\s+in\s+force|carries\s+on)\b[^.;:!?]*\b(even\s+)?(after|once|beyond)\b|\b(even|keeps?\s+working)\s+(after|once)\s+(it|the\s+(competition|event))\b/i,
+  ],
+];
+
+/**
+ * "This sentence says how long the pass applies." High recall on purpose — it
+ * only decides whether a sentence must be BOUNDED, and every bounded phrasing
+ * satisfies that requirement trivially.
+ */
+const DURATION_CLAIM = new RegExp(
+  [
+    // A duration ADVERBIAL — "for <a stretch of time>". Round 1 used
+    // "<verb> … for", which matched "bought outright FOR THAT EVENT" and three
+    // other true sentences: any preposition near any verb is not a claim about
+    // duration. The object has to BE a time.
+    String.raw`\bfor\s+(?:the\s+|its\s+|your\s+|that\s+|this\s+)?(?:life|lifetime|duration|rest|remainder|whole|entire|ever|good|as\s+long\s+as|\d+\s+(?:day|week|month|year)s?)\b`,
+    // NOT a bare "while"/"until"/"during". It was here on the theory that a
+    // bounded form is a duration claim which then satisfies the rule trivially
+    // — but the theory is circular, and it red-flagged a true sentence whose
+    // "while" is CONDITIONAL, not temporal: "So while you're on a paid plan,
+    // upgrade prompts don't offer the pass at all" says nothing about how long
+    // anything lasts. A genuinely bounded sentence passes on its own merits.
+    // Explicitly asking or answering "how long".
+    String.raw`\b(?:no\s+end|expiry|expiration|how\s+long|life\s+of|lifetime|forever|permanent|in\s+perpetuity|indefinitely)\w*`,
+  ].join("|"),
+  "i",
+);
+
+/**
+ * The pass's duration, in prose. Three rules, and the third is the one round 1
+ * was missing:
+ *
+ *  1. NEGATIVE — no unbounded extent form anywhere in the pass's copy.
+ *  2. POSITIVE — the opening paragraph must state the bound in its own words,
+ *     so deleting the true sentence fails.
+ *  3. PER-SENTENCE — every sentence that makes a duration claim at all must be
+ *     a bounded one. This is what makes ADDING a false sentence fail: rule 1
+ *     needs the falsehood to be on a list, rule 2 is satisfied by the surviving
+ *     true sentence, but rule 3 judges the new sentence on its own.
  *
  * SCOPING IS LOAD-BEARING, and measured: `plans.md` truthfully says Community is
  * "free forever" and `credits.md` truthfully says pack credits "never expire".
- * Both are `FALSE_PASS_PERMANENCE_PATTERNS` hits and both are correct — this
- * list is only a falsehood about the PASS. Pass it pass copy, nothing else.
+ * Both are extent-form hits and both are correct — these forms are falsehoods
+ * only about the PASS. Pass it pass copy, nothing else.
  */
 export function passBoundProseFaults(label: string, passProse: string): string[] {
   const faults: string[] = [];
-  const text = plainProse(stripFrontmatter(passProse));
-  for (const pattern of FALSE_PASS_PERMANENCE_PATTERNS) {
-    if (pattern.test(text)) {
-      faults.push(`${label}: claims the pass has unbounded duration (${pattern.source})`);
+  const blocks = proseBlocks(passProse);
+
+  for (const block of blocks) {
+    for (const sentence of sentences(block)) {
+      const bounded = BOUNDED_SCOPE_GRAMMAR.test(sentence);
+      for (const [form, pattern] of DURATION_EXTENT_FORMS) {
+        if (!pattern.test(sentence)) continue;
+        faults.push(
+          `${label}: "${sentence.slice(0, 72)}…" states the pass's duration as ${form} — an unbounded extent`,
+        );
+      }
+      // A sentence may name a stop condition instead of a conjunction; that is
+      // the OTHER true way to bound the pass, and `event-pass.md` uses it
+      // ("It stops once that competition is over").
+      const namesStop =
+        /\b(stops?|ends?|switch(?:es)?\s+off|no\s+longer\s+applies|expires?)\b[^.;:!?]*\b(once|when|after|if)\b|\b(once|when|after)\b[^.;:!?]*\b(completed|archived|over|end\s+date|finished)\b/i.test(
+          sentence,
+        );
+      if (DURATION_CLAIM.test(sentence) && !bounded && !namesStop) {
+        faults.push(
+          `${label}: "${sentence.slice(0, 72)}…" says how long the pass applies without bounding it to a running competition`,
+        );
+      }
     }
   }
-  const [opening] = proseBlocks(passProse);
+
+  const [opening] = blocks;
   if (opening === undefined) {
     faults.push(`${label}: no prose to scan — the section is empty or its heading moved`);
   } else if (!BOUNDED_SCOPE_GRAMMAR.test(opening)) {
@@ -970,7 +1236,11 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
       String.raw`\bes\s+tuy[oa]\s+y\s+lo\s+conservas\b`,
     ].map(claim),
     bounded: claim(
-      String.raw`\b(mientras|hasta\s+que|durante\s+el\s+tiempo\s+que)\b[^.:;!?]{0,60}\b(activ[ao]s?|en\s+curso|en\s+marcha|abiert[ao]s?|dure|dura|se\s+juegue)\b`,
+      boundedScopeGrammarSource(
+        ["mientras", String.raw`hasta\s+que`, String.raw`durante\s+el\s+tiempo\s+que`],
+        ["activ[ao]s?", String.raw`en\s+curso`, String.raw`en\s+marcha`, "abiert[ao]s?", "dure", "dura", String.raw`se\s+juegue`],
+        "es",
+      ),
     ),
     recurring: [
       String.raw`\bmensual(es|mente)?\b`,
@@ -1013,7 +1283,16 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
       String.raw`\bsans\s+limite\s+de\s+temps\b`,
     ].map(claim),
     bounded: claim(
-      String.raw`\b(tant\s+qu|pendant\s+qu|jusqu['’]à\s+ce\s+qu|aussi\s+longtemps\s+qu)\w*\b[^.:;!?]{0,60}\b(activ\w*|en\s+cours|ouvert\w*|se\s+déroule|dure)\b`,
+      boundedScopeGrammarSource(
+        [
+          String.raw`tant\s+qu\w*`,
+          String.raw`pendant\s+qu\w*`,
+          String.raw`jusqu['’]à\s+ce\s+qu\w*`,
+          String.raw`aussi\s+longtemps\s+qu\w*`,
+        ],
+        [String.raw`activ\w*`, String.raw`en\s+cours`, String.raw`ouvert\w*`, String.raw`se\s+déroule`, "dure"],
+        "fr",
+      ),
     ),
     recurring: [
       String.raw`\bmensuel(le|s|les)?\b`,
@@ -1060,7 +1339,11 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
       String.raw`\bgeen\s+(vervaldatum|einddatum|tijdslimiet)\b`,
     ].map(claim),
     bounded: claim(
-      String.raw`\b(zolang|terwijl|totdat|tot\s+de)\b[^.:;!?]{0,60}\b(loopt|actief|open|bezig|duurt|draait)\b`,
+      boundedScopeGrammarSource(
+        ["zolang", "terwijl", "totdat", String.raw`tot\s+de`],
+        ["loopt", "actief", "open", "bezig", "duurt", "draait"],
+        "nl",
+      ),
     ),
     recurring: [
       String.raw`\bmaandelijks(e)?\b`,
