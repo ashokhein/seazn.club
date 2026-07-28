@@ -94,6 +94,12 @@ vi.mock("@/lib/entitlements", async (orig) => ({
   ...(await orig<typeof import("@/lib/entitlements")>()),
   orgPlanKey: async () => h.planKey,
 }));
+// `console.error` reaches no pager here — none of the sentry.*.config.ts files
+// registers `captureConsoleIntegration` — so wrapping the refusal read would
+// otherwise have traded a loud failure for an invisible one. Spied so that line
+// is a behaviour rather than a decoration.
+const sentryMock = vi.hoisted(() => ({ captureError: vi.fn() }));
+vi.mock("@/lib/sentry", () => ({ captureError: sentryMock.captureError }));
 vi.mock("@/lib/currency-server", () => ({ preferredCurrency: async () => "usd" }));
 vi.mock("@/lib/resolve-locale", () => ({ resolveLocale: async () => "en" }));
 vi.mock("@/lib/billing", () => ({
@@ -156,6 +162,7 @@ beforeEach(() => {
   h.groupRedeemed = false;
   h.passUnderReview = false;
   h.passUnderReviewThrows = false;
+  sentryMock.captureError.mockClear();
 });
 
 /** A pass bought `days` ago, paid unless told otherwise. */
@@ -506,32 +513,48 @@ describe("returning from checkout", () => {
   });
 
   // The page is a READ surface that never touched this table before, so a
-  // deploy landing ahead of V342 would 500 it outright. Wrapped, defaulting to
-  // TRUE — see the comment on the call. The checkout route deliberately does NOT
-  // wrap the same read: it is the authority on whether money moves, and it
-  // refusing to charge is the only safe answer there.
-  it("shows the notice rather than dying when the refusal read fails", async () => {
+  // deploy landing ahead of V342 would 500 it outright — hence the catch. It
+  // defaults to FALSE: on a read failure we do not know WHO an unresolved
+  // refusal belongs to, and `upgrade.passUnderReview` is a claim about a
+  // specific person's money. Showing it to everyone is the same defect the
+  // `!pass` conjunct removed, at greater scale — and the window this catch
+  // exists for (a deploy ahead of V342) is exactly when it would fire for every
+  // viewer of every competition.
+  it("claims nothing about anyone's money when the refusal read fails", async () => {
     h.passUnderReviewThrows = true;
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const html = await render();
-      expect(html).toContain("Your payment for this competition went through");
-      // Not silently swallowed: an unreadable brake is an incident of its own.
+      expect(html).not.toContain("Your payment for this competition went through");
+      // ...and the page still RENDERS rather than 500ing, which is what the
+      // catch is for. Not vacuous: the ordinary offer is on screen.
+      expect(html).toContain("Buy the pass");
+      // Never silent — an unreadable brake is an incident of its own, and with
+      // the banner gone this is the ONLY signal that it happened. The log alone
+      // pages nobody (no captureConsoleIntegration is registered), so Sentry has
+      // to be told explicitly.
       expect(errors).toHaveBeenCalled();
+      expect(sentryMock.captureError).toHaveBeenCalledTimes(1);
+      expect(sentryMock.captureError.mock.calls[0]![1]).toMatchObject({
+        route: "upgrade/page",
+        extra: { read: "pass_mint_refusals" },
+      });
     } finally {
       errors.mockRestore();
     }
   });
 
-  it("renders the ordinary offer when the read succeeds and says no", async () => {
-    // The discriminator for the catch above: a default of `true` that was never
-    // conditional would pass it while telling every browsing owner we were
-    // holding money we never took.
+  it("still shows the notice when the read SUCCEEDS and says there is a refusal", async () => {
+    // The discriminator for the default above: returning a constant `false`
+    // would pass that test while never warning the one buyer who needs it.
+    h.passUnderReview = true;
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const html = await render();
-      expect(html).not.toContain("Your payment for this competition went through");
+      expect(html).toContain("Your payment for this competition went through");
       expect(errors).not.toHaveBeenCalled();
+      // ...and a successful read is not an incident.
+      expect(sentryMock.captureError).not.toHaveBeenCalled();
     } finally {
       errors.mockRestore();
     }

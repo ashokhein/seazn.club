@@ -57,6 +57,24 @@ const authState = vi.hoisted(() => ({
     locale: null as string | null,
   },
 }));
+// The ONE export intercepted, and only while the flag is on: every other export
+// stays REAL, so the mint-guard suite below still exercises the production
+// `reconcilePassCheckout` / `passSessionRungMatchesPrice`. A full replacement
+// would make that whole describe vacuous.
+const billingState = vi.hoisted(() => ({ refusalReadThrows: false }));
+vi.mock("@/lib/billing", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/billing")>();
+  return {
+    ...actual,
+    competitionHasRefusedPassPayment: async (competitionId: string) => {
+      if (billingState.refusalReadThrows) {
+        throw new Error('relation "pass_mint_refusals" does not exist');
+      }
+      return actual.competitionHasRefusedPassPayment(competitionId);
+    },
+  };
+});
+
 vi.mock("@/lib/auth", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/auth")>()),
   getActiveOrgId: vi.fn(async () => authState.orgId),
@@ -119,6 +137,7 @@ beforeEach(() => {
   stripeMock.retrieve.mockClear();
   stripeMock.refundCreate.mockClear();
   emailMock.sendPassRungMismatchAlertEmail.mockClear();
+  billingState.refusalReadThrows = false;
 });
 
 /** Stub M's one-time price id, capturing the real one first. `price_test_pass`
@@ -832,6 +851,37 @@ describe.skipIf(!HAS_DB)("Event Pass mint refuses a rung/price desync (v17 gap #
       errors.mockRestore();
       restoreAlertAddress();
     }
+  });
+
+  it("does NOT sell when the refusal brake cannot be read at all", async () => {
+    // The route's read of `pass_mint_refusals` is deliberately UNWRAPPED, and
+    // until now that was prose in a comment: wrapping it `.catch(() => false)`
+    // left every suite in the repo green, because only two files reference the
+    // function at all. That mutation re-opens the round-1 defect verbatim — a
+    // buyer whose refusal row is merely UNREADABLE becomes chargeable again.
+    //
+    // Pinned BEHAVIOURALLY rather than by scanning the source for `.catch`,
+    // because the contract is "an unreadable brake must not sell", not "this
+    // expression has no catch". A source scan would red on a future
+    // `catch → throw 409`, which is a BETTER implementation of the same
+    // contract, and would stay green if someone moved the check after
+    // `sessions.create` — passing for the shape while the behaviour was broken.
+    const { orgId, compId } = await seedMintBuyer();
+    await priceBothRungs();
+    authState.orgId = orgId;
+
+    // Baseline first: this competition is genuinely sellable, so the refusal
+    // below is what changes the answer — not a fixture that could never buy.
+    expect((await passCheckoutPOST(req(compId))).status).toBe(200);
+    expect(stripeMock.checkoutCreate).toHaveBeenCalledTimes(1);
+    stripeMock.checkoutCreate.mockClear();
+
+    billingState.refusalReadThrows = true;
+    const res = await passCheckoutPOST(req(compId));
+    // The status is not the point and is not pinned to 500 — a future
+    // `catch → 409` would be fine. What must hold is that no charge is opened.
+    expect(res.status).not.toBe(200);
+    expect(stripeMock.checkoutCreate).not.toHaveBeenCalled();
   });
 
   it("emails staff ONCE however many times the buyer reloads the return URL", async () => {

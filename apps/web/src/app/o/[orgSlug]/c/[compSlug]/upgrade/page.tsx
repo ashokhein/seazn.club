@@ -38,6 +38,7 @@ export const dynamic = "force-dynamic";
 import Link from "@/components/ui/console-link";
 import { sql } from "@/lib/db";
 import { competitionHasRefusedPassPayment, reconcilePassCheckout } from "@/lib/billing";
+import { captureError } from "@/lib/sentry";
 import { requireCompetitionPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";
 import { PassUpgradeButton } from "@/components/pass-upgrade";
@@ -137,31 +138,48 @@ export default async function CompetitionUpgradePage({
     // at all. Without it the page renders its ordinary offer, buy button and
     // all, to someone whose money we are already holding.
     //
-    // WRAPPED, defaulting to TRUE — and the asymmetry with the checkout route,
-    // which leaves the same read unwrapped, is deliberate (#326 review round 3):
+    // WRAPPED, defaulting to FALSE — and both halves of that are deliberate.
     //
-    //  · This page is a READ surface with no money-moving side effect, and it
-    //    never touched `pass_mint_refusals` before this feature. Deployed ahead
-    //    of V342 an unwrapped read 500s the whole upgrade page — a table that
-    //    does not exist yet is not the same fact as "a refusal exists", and the
-    //    query cannot tell them apart.
-    //  · `true` is the SAFE default here, not the convenient one: it shows the
-    //    "we are looking into your payment" notice and hides nothing the buyer
-    //    needs. Defaulting false would put a live buy button in front of someone
-    //    whose refusal row is merely unreadable.
-    //  · This catch cannot cause a wrong charge, because the ROUTE is the
-    //    authority and its read stays unwrapped: if the brake cannot be
-    //    evaluated there, the only safe answer is to refuse the charge, and a
-    //    500 on the buy POST is the right failure. The page catch degrades a
-    //    dead page into an over-cautious one; it cannot degrade a refusal into a
-    //    sale.
+    // WRAPPED (#326 review round 3), because this page is a READ surface with no
+    // money-moving side effect that never touched `pass_mint_refusals` before
+    // this feature. Deployed ahead of V342 an unwrapped read 500s the whole
+    // upgrade page: "the table does not exist yet" is not the same fact as "a
+    // refusal exists", and the query cannot tell them apart.
+    //
+    // FALSE, not true (#326 review round 4) — this reverses the default this
+    // catch shipped with, for the reason the `!pass` conjunct above exists.
+    // `upgrade.passUnderReview` says "Your payment for this competition went
+    // through … please don't pay again". On a read failure we do not know WHO
+    // that is true for, and defaulting true renders it to every viewer of every
+    // pass-less competition — including everyone during the very
+    // deploy-ahead-of-V342 window this catch was added for. That is the same
+    // false statement about someone's money that round 2 removed, arrived at
+    // through a different door, and at far greater scale.
+    //
+    // Defaulting false claims nothing it cannot verify. The cost is that ONE
+    // genuinely refused buyer sees a buy button — and clicking it is safe,
+    // because `POST /api/billing/pass-checkout` reads the same table WITHOUT a
+    // catch and refuses. So the trade is "a confusing dead click for one person
+    // who cannot be charged" against "a false money claim shown to everyone",
+    // and the route being the authority is what makes the first one survivable.
+    // `pass-checkout-plan-gate.test.ts` pins that the route read stays unwrapped
+    // precisely because this default now leans on it.
+    //
+    // Not silent: logged AND sent to Sentry. `console.error` alone reaches no
+    // pager here (no `captureConsoleIntegration` is registered), so wrapping had
+    // traded a loud failure for an invisible one.
     competitionHasRefusedPassPayment(compId).catch((err) => {
       console.error(
         `[billing] could not read pass_mint_refusals for competition ${compId} — ` +
-          `showing the under-review notice rather than a buy button`,
+          `rendering the ordinary page and leaving the refusal to the checkout route`,
         err,
       );
-      return true;
+      captureError(err, {
+        orgId,
+        route: "upgrade/page",
+        extra: { competitionId: compId, read: "pass_mint_refusals" },
+      });
+      return false;
     }),
   ]);
   const dict = await getDictionary(locale, "ui");
