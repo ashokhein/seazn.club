@@ -594,4 +594,28 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
       nl: "Meteen, en je factuur stijgt met {amount} — naar rato van de rest van deze periode en toegevoegd aan je volgende factuur.",
     },
   },
+  // ── The attach dialog's THIRD body, and the bound its second was missing ──
+  // (v17 gap wave 7, task 7, round 4)
+  {
+    file: "ui",
+    key: "billing.group.attach.confirmTrial",
+    why: "the attach dialog on the TRIAL path, which had no body of its own and therefore read the CHARGED one. `attachConfirmKey` selected on `freeSlots` alone, and `freeSlots = max(0, quantity_paid - onBill)` is 0 during a trial because syncGroupQuantity deliberately freezes quantity_paid while trialing (billing-groups.ts:300) — so a trialing payer was told their bill goes up and the amount lands on the next invoice, when `raising` is false (`&& !trialing`, :320), proration_behavior is \"none\", and previewAttachCharge returns null at :123. Nothing is prorated at all. groups.md:43 said the opposite two sections away. Source of truth: billing-groups.ts:123, :300, :320.",
+    text: {
+      en: "{org} moves onto this plan straight away and rides your free trial to the same end date — nothing is charged and nothing is added to a bill now. It is first billed when the trial converts.",
+      es: "{org} pasa a este plan de inmediato y se acoge a tu prueba gratuita hasta la misma fecha de finalización: no se cobra nada ni se añade nada a ninguna factura ahora. Se factura por primera vez cuando termine la prueba.",
+      fr: "{org} passe sur cette formule immédiatement et suit votre essai gratuit jusqu'à la même date de fin — rien n'est prélevé et rien n'est ajouté à une facture maintenant. La première facturation intervient à la conversion de l'essai.",
+      nl: "{org} gaat meteen over op dit abonnement en loopt mee met je gratis proefperiode tot dezelfde einddatum — er wordt nu niets in rekening gebracht en niets aan een factuur toegevoegd. De eerste facturatie volgt wanneer de proefperiode overgaat.",
+    },
+  },
+  {
+    file: "ui",
+    key: "billing.group.attach.confirmFree",
+    why: "the attach dialog when a PAID slot is free. 'there is nothing to pay now' is literally true — no charge, and no proration reaches the next invoice — but it was materially incomplete: syncGroupQuantity still RAISES the Stripe item quantity, so the renewal invoice bills the extra seat at the full rider rate. groups.md:90 already carried the bound ('at no extra charge UNTIL RENEWAL'), as does detach.mode.release.body; this dialog was the only one of the four surfaces that omitted it, and once its sibling started naming the next invoice explicitly the pair read as 'charged -> next invoice / free -> nothing, full stop'. Source of truth: billing-groups.ts:306-309 (the quantity write happens on every path) and the quantity_paid bookkeeping at :325.",
+    text: {
+      en: "{org} moves onto this plan straight away. You have a slot you have already paid for, so there is nothing to pay now — and nothing is added to your next invoice. From your next renewal onwards it is billed like any other organisation on the bill.",
+      es: "{org} pasa a este plan de inmediato. Tienes una plaza que ya has pagado, así que no hay nada que pagar ahora ni se añade nada a tu próxima factura. A partir de tu próxima renovación se factura como cualquier otra organización de la cuenta.",
+      fr: "{org} passe sur cette formule immédiatement. Vous avez une place déjà payée : il n'y a donc rien à payer maintenant, et rien n'est ajouté à votre prochaine facture. À partir de votre prochain renouvellement, elle est facturée comme toute autre organisation de la facture.",
+      nl: "{org} gaat meteen over op dit abonnement. Je hebt een plek die je al betaald hebt, dus er is nu niets te betalen en er wordt niets aan je volgende factuur toegevoegd. Vanaf je volgende verlenging wordt ze gefactureerd als elke andere organisatie op de rekening.",
+    },
+  },
 ];

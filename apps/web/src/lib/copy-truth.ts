@@ -2713,9 +2713,60 @@ export function inventoryFaults(label: string, markdown: string, approved: strin
   // delivered, which is the exact defect this wave exists to remove. Order is
   // part of the approved copy: "It stops once that competition is over:" means
   // something different two paragraphs away from its bullets.
-  blocks.forEach((block, i) => {
-    if (actual[i] === approved[i]) return;
+  // A PURE POSITIONAL SHIFT IS ONE FAULT, NOT SEVENTY-FIVE.
+  //
+  // Inserting a single heading into an 86-surface article used to produce 50
+  // fault messages — every surface after it reported as "MOVED here from
+  // position n-1". That is technically accurate and practically corrosive:
+  // fifty near-identical failures push an editor to regenerate the digest array
+  // wholesale, which is exactly the "re-record rather than re-check" behaviour
+  // the gate exists to prevent. The noise was arguing against the gate's own
+  // purpose.
+  //
+  // So the run of surfaces whose digest equals the approved digest `delta`
+  // positions earlier is collapsed into one message naming the range and the
+  // offset. Anything that is NOT a clean shift — a changed surface, one that is
+  // in no inventory at all — still reports individually, because that is the
+  // thing the reader has to read.
+  let i = 0;
+  while (i < blocks.length) {
+    if (actual[i] === approved[i]) {
+      i += 1;
+      continue;
+    }
     const movedFrom = approved.indexOf(actual[i]!);
+    const delta = movedFrom === -1 ? null : movedFrom - i;
+    if (delta !== null && delta !== 0) {
+      // How far this constant offset holds. A shift that ends is a shift.
+      let end = i;
+      while (
+        end < blocks.length &&
+        actual[end] !== approved[end] &&
+        approved.indexOf(actual[end]!) === end + delta
+      ) {
+        end += 1;
+      }
+      if (end - i > 1) {
+        const moved = delta < 0 ? "LATER" : "EARLIER";
+        faults.push(
+          [
+            `${label}: surfaces ${i + 1}-${end} of ${blocks.length} are approved copy that has SHIFTED ${Math.abs(delta)} position(s) ${moved}.`,
+            "",
+            "  This is a pure move, not an edit: every one of these surfaces still",
+            "  says exactly what was approved. Something was INSERTED or REMOVED",
+            "  above them — look for the individually-reported fault(s) elsewhere in",
+            "  this list, fix that, and these resolve with it.",
+            "",
+            "  DO NOT regenerate the whole inventory to silence this. The array is",
+            "  ordered, so a wholesale regeneration also re-approves whatever real",
+            "  change caused the shift, unread — which is the failure this gate exists",
+            "  to prevent.",
+          ].join("\n"),
+        );
+        i = end;
+        continue;
+      }
+    }
     const detail =
       movedFrom === -1
         ? `is NOT in the approved inventory`
@@ -2727,10 +2778,11 @@ export function inventoryFaults(label: string, markdown: string, approved: strin
         GATE_PREAMBLE,
         "",
         `  digest: "${actual[i]}"`,
-        `  text:   ${block}`,
+        `  text:   ${blocks[i]}`,
       ].join("\n"),
     );
-  });
+    i += 1;
+  }
 
   for (const digest of approved) {
     if (actualSet.has(digest)) continue;

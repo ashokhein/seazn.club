@@ -54,6 +54,7 @@ import {
 import { HELP_ARTICLE_SLUGS, helpUrl } from "@/lib/help";
 import { allHelpArticles } from "@/server/help-content";
 import { TIPS } from "@/config/tips";
+import { attachConfirmKey } from "@/lib/billing-group-view";
 import { allSourceFiles, codeOnly, helpArticle, helpArticleBySlug, webSource } from "./_help-copy";
 import {
   APPROVED_EVENT_PASS,
@@ -93,6 +94,10 @@ const KNOWN_GAPS = [
   "content/help/** link TARGETS are invisible to the inventory gate — claimSurfaces reduces [text](/url) to text, so repointing a URL raises 0 faults (sibling of the link-TITLE hole, #338)",
   "app/globals.css .competition-prose table — the horizontal scroll box added for #299 is NOT keyboard-reachable: it needs tabindex=0, and renderHelpMarkdown's sanitiser (server/help-content.ts) drops the attribute, so it cannot be set from Markdown. Needs a rehype step or a wrapper element (#303)",
   "app/globals.css .competition-prose table — `display: block` is what gives that scroll box its overflow, and it drops the implicit table role in some assistive tech (row/column relationships stop being announced). Mitigation is an explicit role=\"table\"/rowgroup set, which the same sanitiser strips (#303)",
+  // ── Round 4 bookkeeping: the residuals, named rather than left implicit ────
+  "THE AXIS IS CIRCULAR. `claiming` is computed by running `en.halfClaim` over the tree, so an article only joins the half-rate axis — and therefore only earns a gate — if that vocabulary already matches it. The vocabulary has been measured at 0/12 and 0/24, so an article stating the rate in an unseen shape is invisible to the axis AND ungated. The axis narrows the ungated set; it does not close it (#303)",
+  "THE FOURTH ARTICLE. `billing/plans.md` states the plan org caps and the fee ladder and is inventory-gated, but `billing/downgrade.md`, `billing/credits.md`, `billing/operator.md` and every non-billing article are ungated and unscanned. They are defended only by the vocabulary above (#303)",
+  "FRONTMATTER PARSER DIVERGENCE, STILL LIVE. `server/help-content.ts`'s parseFrontmatter splits on `indexOf(\":\")` and is last-wins, so an indented `  description:` or a spaced `description :` is still RENDERED as the article's description while `copy-truth.ts`'s claimSurfaces regex (`^([A-Za-z_][\\w-]*):`) does not match it — the field scores 0 gate faults and is invisible to every rule. A falsehood delivered that way ships green (#303)",
 ];
 
 const eventPass = helpArticle("event-pass");
@@ -1183,6 +1188,61 @@ describe("every help article stating the extra-organisation rate states it hones
   });
 });
 
+describe("codeOnly strips comments and nothing else", () => {
+  // Written against the shapes that defeated the hand-rolled version. Each one
+  // is a real idiom in this repo, not a synthetic curiosity.
+  const CASES: Array<[name: string, source: string, mustKeep: string, mustDrop: string]> = [
+    [
+      "a `/*` inside a string literal (the live defect)",
+      'const a = <input accept="image/*" />;\n// gone\nconst b = 1;',
+      'accept="image/*"',
+      "gone",
+    ],
+    [
+      "a `//` inside a regex literal",
+      "const url = /https?:\\/\\//; // gone\nconst keep = 2;",
+      "const keep = 2;",
+      "gone",
+    ],
+    [
+      "a `/*` inside a template literal spanning lines",
+      "const t = `line one /* not a comment\nline two`; /* gone */\nconst keep = 3;",
+      "line two`",
+      "gone",
+    ],
+    [
+      "an apostrophe in a block comment",
+      "/* it's fine */\nconst keep = 4;",
+      "const keep = 4;",
+      "it's fine",
+    ],
+    [
+      "a block comment containing a quote character",
+      'const keep = 5; /* say "hello" */\nconst also = 6;',
+      "const also = 6;",
+      "hello",
+    ],
+  ];
+
+  it.each(CASES)("keeps the code and drops the comment: %s", (_name, source, keep, drop) => {
+    const stripped = codeOnly(source, "case.tsx");
+    expect(stripped, "code was lost").toContain(keep);
+    expect(stripped, "a comment survived").not.toContain(drop);
+    // BLANKING, not deleting: offsets and line numbers must still line up, or a
+    // fault message quoting a line number starts lying.
+    expect(stripped.length).toBe(source.length);
+    expect(stripped.split("\n").length).toBe(source.split("\n").length);
+  });
+
+  // ANTI-VACUITY: the cases must actually exercise the failure. Each `mustDrop`
+  // has to be present before stripping, or "not.toContain" proves nothing.
+  it("every case really contains what it claims to drop", () => {
+    for (const [name, source, , drop] of CASES) {
+      expect(source.includes(drop), `${name}: the fixture never contained "${drop}"`).toBe(true);
+    }
+  });
+});
+
 describe("the add-ons article's behaviour claims are pinned to the code", () => {
   // CLAIM: "An extra seat freezes members … An extra organisation does not
   // freeze anything." Round 1 said the excess freezes for BOTH.
@@ -1218,11 +1278,41 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
     // HOW FAR THE SEAT FREEZE ACTUALLY REACHES. Round 2 said the limit is
     // "re-checked on every write". It is not: `assertMemberNotFrozen` has ONE
     // production call site, and it is gated three ways.
-    const apiAuth = codeOnly(webSource("server/api-v1/auth.ts"));
-    const callSites = [...allSourceFiles()]
-      .filter(([f]) => !f.includes("__tests__") && f !== "server/usecases/entitlement-freeze.ts")
-      .filter(([, src]) => codeOnly(src).includes("assertMemberNotFrozen"))
-      .map(([f]) => f);
+    const apiAuth = codeOnly(webSource("server/api-v1/auth.ts"), "auth.ts");
+    // PER-FILE KNOWN-POSITIVE, not one global fixture. A walk over ~1,400
+    // files with a single count assertion cannot notice that ONE file was
+    // silently skipped — and one was: `codeOnly`'s first implementation ate
+    // 198 lines of `components/v2/division-settings.tsx` because
+    // `accept="image/*"` opened a phantom block comment, and a call planted
+    // inside that span was invisible while the suite stayed green.
+    //
+    // `codeOnly` BLANKS rather than deletes, so length and line count are
+    // invariants of a correct strip. Asserting them per file is what makes a
+    // swallowed span impossible to miss, whatever swallows it.
+    const mangled: string[] = [];
+    const callSites: string[] = [];
+    for (const [file, raw] of allSourceFiles()) {
+      const stripped = codeOnly(raw, file);
+      if (stripped.length !== raw.length) {
+        mangled.push(`${file}: ${raw.length} chars in, ${stripped.length} out`);
+      } else if (stripped.split("\n").length !== raw.split("\n").length) {
+        mangled.push(`${file}: line count changed`);
+      }
+      if (file.includes("__tests__") || file === "server/usecases/entitlement-freeze.ts") continue;
+      if (stripped.includes("assertMemberNotFrozen")) callSites.push(file);
+    }
+    expect(mangled, "codeOnly mangled these files — every negative scan over them is unsound").toEqual(
+      [],
+    );
+    // …and the specific string that broke it, pinned as a regression.
+    const divisionSettings = allSourceFiles().find(
+      ([f]) => f === "components/v2/division-settings.tsx",
+    );
+    expect(divisionSettings, "the regression fixture moved — re-point it").toBeDefined();
+    expect(
+      codeOnly(divisionSettings![1], divisionSettings![0]),
+      'a `/*` inside a string literal must not open a comment',
+    ).toContain('accept="image/*"');
     expect(callSites, "the freeze reaches further than the article says — re-read it").toEqual([
       "server/api-v1/auth.ts",
     ]);
@@ -1234,14 +1324,27 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
     expect(addOns, "the article must not over-promise enforcement").not.toMatch(
       /re-?checked on every write/i,
     );
-    expect(addOns, "…and must say where it IS enforced").toMatch(/enforced on our public API today/i);
+    // …and it must name the RIGHT surface. "our public API" was still wrong:
+    // on that API the normal caller is a bearer `sc_` key, and `auth.ts:210`
+    // returns from `apiKeyAuth` BEFORE the freeze check — so an API-key client
+    // is never checked either. The only callers that are: signed-in admins
+    // writing through the REST routes.
+    expect(addOns, "…and must say where it IS enforced").toMatch(
+      /blocks only signed-in admins writing through our REST API, not API-key clients/i,
+    );
+    // The 13 routes that reach `requireOrgAuth`, counted rather than asserted
+    // as prose — if the surface grows, the sentence above needs re-reading.
+    const restRoutes = [...allSourceFiles()].filter(
+      ([f, src]) => f.startsWith("app/api/v1/") && codeOnly(src, f).includes("requireOrgAuth"),
+    );
+    expect(restRoutes.length, "the REST surface changed size — re-read the copy").toBe(13);
 
     // The half that IS enforced everywhere is ADMISSION: an invite or a
     // promotion past members.max is refused in the same transaction.
-    expect(codeOnly(webSource("lib/invites.ts"))).toContain('"members.max"');
-    expect(codeOnly(webSource("app/api/orgs/[id]/members/[userId]/role/route.ts"))).toContain(
-      '"members.max"',
-    );
+    expect(codeOnly(webSource("lib/invites.ts"), "invites.ts")).toContain('"members.max"');
+    expect(
+      codeOnly(webSource("app/api/orgs/[id]/members/[userId]/role/route.ts"), "route.ts"),
+    ).toContain('"members.max"');
     expect(addOns).toMatch(/invitation or a promotion that would take you past the limit is refused/i);
   });
 
@@ -1294,7 +1397,7 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
   it("attaches with create_prorations too — nothing charges a card at attach", () => {
     // CODE ONLY. The comment correcting this very defect names `always_invoice`,
     // so a raw scan would fire on its own explanation.
-    const source = codeOnly(webSource("server/usecases/billing-groups.ts"));
+    const source = codeOnly(webSource("server/usecases/billing-groups.ts"), "billing-groups.ts");
     const withComments = webSource("server/usecases/billing-groups.ts");
 
     // KNOWN-POSITIVE: the quantity write really is here and really does set a
@@ -1315,7 +1418,7 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
     }
     // …and the distinction is real: the plan-change path DOES invoice at once.
     expect(
-      codeOnly(webSource("lib/billing-manage.ts")),
+      codeOnly(webSource("lib/billing-manage.ts"), "billing-manage.ts"),
       "the always_invoice idiom vanished — re-check what still charges immediately",
     ).toContain('proration_behavior: "always_invoice"');
 
@@ -1336,6 +1439,46 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
       expect(ui[key], key).toMatch(/added to your next invoice/);
       expect(ui[key], key).not.toMatch(/\bnow\b/);
     }
+  });
+
+  // CLAIM (the attach dialog, round 4): the TRIAL path prorates nothing, so it
+  // gets its own body rather than the charged one.
+  it("gives the trial path its own confirm body, because freeSlots cannot see it", () => {
+    const source = codeOnly(webSource("server/usecases/billing-groups.ts"), "billing-groups.ts");
+
+    // KNOWN-POSITIVES: the three lines the claim rests on.
+    expect(source, "the trial early-return in previewAttachCharge moved").toContain(
+      'if (group.status === "trialing") return null;',
+    );
+    expect(source, "`raising` no longer excludes trialing").toContain("&& !trialing");
+    expect(source, "the trialing flag moved").toContain('const trialing = group.status === "trialing";');
+
+    // THE SELECTION. `freeSlots` is 0 during a trial (quantity_paid is frozen),
+    // so the two-way version handed a trialing payer the CHARGED body.
+    expect(attachConfirmKey(0, true)).toBe("billing.group.attach.confirmTrial");
+    expect(attachConfirmKey(3, true), "the trial is the more specific truth").toBe(
+      "billing.group.attach.confirmTrial",
+    );
+    expect(attachConfirmKey(0, false)).toBe("billing.group.attach.confirmCharge");
+    expect(attachConfirmKey(1, false)).toBe("billing.group.attach.confirmFree");
+    // …and the default must not silently reintroduce the bug for a caller that
+    // forgets the argument — it is the CHARGED path that is wrong on a trial,
+    // so the panel passing `trialing` explicitly is asserted too.
+    expect(
+      codeOnly(webSource("components/billing-group-panel.tsx"), "billing-group-panel.tsx"),
+      "the panel stopped passing trialing",
+    ).toContain("attachConfirmKey(freeSlots, trialing)");
+
+    const ui = JSON.parse(readFileSync("src/dictionaries/en/ui.json", "utf8")) as Record<string, string>;
+    // The trial body must not promise an invoice line, and the charged one must.
+    expect(ui["billing.group.attach.confirmTrial"]).toMatch(/nothing is added to a bill now/i);
+    expect(ui["billing.group.attach.confirmTrial"]).not.toMatch(/added to your next invoice/i);
+    expect(ui["billing.group.attach.confirmCharge"]).toMatch(/added to your next invoice/i);
+    // …and the FREE body carries the renewal bound it was missing (N3): the
+    // item quantity still rises, so the renewal invoice bills the seat.
+    expect(ui["billing.group.attach.confirmFree"]).toMatch(/from your next renewal onwards/i);
+    // groups.md already said the trial thing; the two must agree.
+    expect(groups).toMatch(/rides the same trial to the same end date and costs nothing now/i);
   });
 
   // CLAIM: "Extra seats have no control in Settings yet" / "Size packs have no

@@ -229,11 +229,27 @@ export function groupView(args: {
 
 /**
  * Which confirm body an ATTACH shows. The price is stated before the click,
- * always: attaching charges immediately unless a paid slot is free, and a
- * control that spends money without saying so is the one thing this panel must
- * not be.
+ * always — a control that spends money without saying so is the one thing this
+ * panel must not be.
+ *
+ * THREE bodies, not two (v17 gap #299 round 4). `freeSlots` alone cannot tell
+ * the trial case from the charged one, and it fails CLOSED-WRONG:
+ * `syncGroupQuantity` deliberately freezes `quantity_paid` while trialing, so
+ * `freeSlots = max(0, quantity_paid - onBill)` is **0** during a trial and the
+ * two-way version handed a trialing payer the CHARGED body. On that path
+ * `raising` is false (`&& !trialing`), `proration_behavior` is `"none"` and
+ * `previewAttachCharge` returns null at `:123` — nothing is prorated at all, so
+ * "added to your next invoice" was as false as the "charged now" it replaced.
+ * `groups.md` said the opposite two sections away, which is how it surfaced:
+ * two surfaces of one product contradicting each other on the first thing a new
+ * group does.
+ *
+ * `trialing` is therefore checked FIRST and independently of `freeSlots`.
+ * Ordering matters: a trialing group with a freed slot is still on the trial
+ * path, and the trial is the more specific truth.
  */
-export function attachConfirmKey(freeSlots: number): MessageKey {
+export function attachConfirmKey(freeSlots: number, trialing = false): MessageKey {
+  if (trialing) return "billing.group.attach.confirmTrial";
   return freeSlots > 0
     ? "billing.group.attach.confirmFree"
     : "billing.group.attach.confirmCharge";

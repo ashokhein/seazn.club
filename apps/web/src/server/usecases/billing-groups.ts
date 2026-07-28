@@ -103,8 +103,14 @@ async function subscriptionItem(
  *
  * Read-only: `invoices.createPreview` computes an invoice without issuing one,
  * so calling this on every dialog open charges nobody. The confirm dialog turns
- * the amount into "£X.XX now" — the price stated before the irreversible click,
- * as an exact figure rather than "half your plan's rate".
+ * the amount into an exact figure rather than a rate — the price stated before
+ * the irreversible click.
+ *
+ * NOT "£X.XX now", which is what this line said until v17 gap #299 round 4 —
+ * the same stale-comment defect as `:206-207` above, three lines from the code
+ * it describes, and left behind when that one was corrected. Nothing here or in
+ * `syncGroupQuantity` charges a card: `create_prorations` books the adjustment
+ * onto the NEXT invoice. `billing.group.attach.confirmChargeAmount` says so.
  *
  * The amount is Stripe's own arithmetic on a real subscription; the fixture used
  * in tests returns what it is told, so the NUMBER is only ever verified against

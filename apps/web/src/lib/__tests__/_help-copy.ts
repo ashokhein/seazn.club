@@ -10,9 +10,22 @@
 // `src/lib` proper gains a `node:fs` import: that module is one careless
 // `import` away from a client component, and `fs` in a client bundle fails at
 // build time, not at test time.
+import type * as TS from "typescript";
+import { createRequire } from "node:module";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { HELP_ROOT } from "@/server/help-content";
+
+/**
+ * `typescript` is loaded through `createRequire`, NOT a static import.
+ *
+ * Vite transforms every statically imported module, and `typescript.js` is a
+ * ~10 MB CommonJS bundle it refuses outright ("Failed to parse source for
+ * import analysis"), which fails the whole suite at COLLECTION — a zero-test
+ * run, not a red test. A runtime require is invisible to the transform
+ * pipeline and loads the same module Node would.
+ */
+const ts: typeof TS = createRequire(import.meta.url)("typescript");
 
 /** Taken from `HELP_ROOT`, never re-derived: a second copy of the path is a
  *  second thing to keep in step, and a wrong one reads as "no faults found".
@@ -106,38 +119,63 @@ export function allSourceFiles(): Array<[string, string]> {
 }
 
 /**
- * A source file with its comments removed.
+ * A source file with its comments BLANKED — same length, same line numbering,
+ * every comment replaced by spaces.
  *
  * A guard that asserts an idiom is ABSENT must not read prose, or it fires on
- * the comment explaining why the idiom is absent — which is exactly what
- * happened here: correcting `billing-groups.ts`'s stale "charged immediately"
- * note meant naming `always_invoice` in the correction, and the negative scan
- * then failed on its own explanation.
+ * the comment explaining why the idiom is absent — which is what happened when
+ * `billing-groups.ts`'s stale "charged immediately" note was corrected: the
+ * correction has to name `always_invoice`, and the negative scan then failed on
+ * its own explanation.
  *
- * Deliberately crude — block comments, line comments, and the string/regex
- * literals that could contain a `//`. It is not a parser and does not need to
- * be: every caller pairs it with a known-positive on the same read, so a
- * mangled result reds rather than passing.
+ * ── WHY THIS USES THE TYPESCRIPT PARSER ──────────────────────────────────────
+ * The first version was a hand-rolled scanner that ran `/\/\*[\s\S]*?\*\//g`
+ * over the whole file BEFORE tracking strings, so a `/*` inside a string
+ * literal opened a phantom comment that swallowed everything up to the next
+ * `*` + `/`. That was not hypothetical: `components/v2/division-settings.tsx`
+ * contains `accept="image/*"`, and the regex ate 11,384 characters — 198 lines
+ * — of live production code. A planted call inside that span was invisible to
+ * the call-site walk while the suite stayed green.
+ *
+ * Every hand-rolled alternative has the same shape of hole: a regex literal
+ * containing `//` (`/https?:\/\//`) truncates a line, a template literal
+ * spanning lines desynchronises the quote state, JSX text is neither. So the
+ * comment ranges come from the compiler that already has to be right about
+ * them, and the transformation is BLANKING rather than deletion so that
+ * offsets and line numbers still match the original — a fault message quoting
+ * a line number stays true.
  */
-export function codeOnly(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .split("\n")
-    .map((line) => {
-      // Drop a `//` only when it is not inside a quoted string on that line.
-      let quote: string | null = null;
-      for (let i = 0; i < line.length; i += 1) {
-        const ch = line[i]!;
-        if (quote) {
-          if (ch === "\\") i += 1;
-          else if (ch === quote) quote = null;
-        } else if (ch === '"' || ch === "'" || ch === "`") {
-          quote = ch;
-        } else if (ch === "/" && line[i + 1] === "/") {
-          return line.slice(0, i);
-        }
-      }
-      return line;
-    })
-    .join("\n");
+export function codeOnly(source: string, fileName = "file.tsx"): string {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const out = source.split("");
+  const blank = (from: number, to: number): void => {
+    for (let i = from; i < to && i < out.length; i += 1) {
+      if (out[i] !== "\n" && out[i] !== "\r") out[i] = " ";
+    }
+  };
+  const done = new Set<string>();
+  const take = (ranges: readonly TS.CommentRange[] | undefined): void => {
+    for (const range of ranges ?? []) {
+      const key = `${range.pos}:${range.end}`;
+      if (done.has(key)) continue;
+      done.add(key);
+      blank(range.pos, range.end);
+    }
+  };
+  const visit = (node: TS.Node): void => {
+    take(ts.getLeadingCommentRanges(source, node.getFullStart()));
+    take(ts.getTrailingCommentRanges(source, node.getEnd()));
+    node.forEachChild(visit);
+  };
+  visit(sourceFile);
+  // The file's own leading block, which belongs to no node's full start when
+  // the file begins with trivia.
+  take(ts.getLeadingCommentRanges(source, 0));
+  return out.join("");
 }

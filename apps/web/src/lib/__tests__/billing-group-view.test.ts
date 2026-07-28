@@ -596,6 +596,14 @@ describe("what the confirm dialog promises", () => {
   it("says an attach is free only when a paid slot is actually free", () => {
     expect(attachConfirmKey(1)).toBe("billing.group.attach.confirmFree");
     expect(attachConfirmKey(0)).toBe("billing.group.attach.confirmCharge");
+    // THE TRIAL PATH, which `freeSlots` cannot see (v17 gap #299 round 4).
+    // syncGroupQuantity freezes quantity_paid while trialing, so freeSlots is 0
+    // and the two-way version handed a trialing payer the CHARGED body while
+    // nothing was being prorated at all.
+    expect(attachConfirmKey(0, true)).toBe("billing.group.attach.confirmTrial");
+    // …and a trialing group that also has a freed slot is still on the trial
+    // path: the trial is the more specific truth, so it is checked first.
+    expect(attachConfirmKey(2, true)).toBe("billing.group.attach.confirmTrial");
   });
 
   // This pair has been wrong once. With no live subscription there is nothing

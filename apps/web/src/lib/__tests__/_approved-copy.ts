@@ -280,9 +280,17 @@ export const APPROVED_PLANS_INVENTORY: string[] = [
  *    `apiKeyAuth` first, so API-KEY writes are never freeze-checked, and no
  *    in-app screen calls it at all. What IS enforced everywhere is ADMISSION:
  *    `lib/invites.ts:67` and `app/api/orgs/[id]/members/[userId]/role/route.ts:22`
- *    both count the quota in the same transaction as the write. The copy now
- *    claims the admission half outright and describes the read-only mark as a
- *    signal rather than a lock.
+ *    both count the quota in the same transaction as the write. The copy claims
+ *    the admission half outright and describes the read-only mark as a signal
+ *    rather than a lock.
+ *
+ *    ROUND 3'S REPLACEMENT WAS ALSO WRONG about the surface: it said "enforced
+ *    on our public API today", but on that API the normal caller is a bearer
+ *    `sc_` key and `auth.ts:210` returns from `apiKeyAuth` BEFORE the check —
+ *    so API-key clients are not checked either. It reaches exactly one caller
+ *    shape: a signed-in admin writing through the 13 `app/api/v1/**` routes
+ *    that use `requireOrgAuth`. The copy now says that, and the guard counts
+ *    the routes so a growing surface forces a re-read.
  *
  *  - "An extra organisation does not freeze anything … what it loses is the
  *    ability to add another."
@@ -333,7 +341,7 @@ export const APPROVED_ADD_ONS_INVENTORY: string[] = [
   "7d1518387c5c90e4",
   "d1d87a9a3dbdeb8e",
   "b50fa0d68d469172",
-  "53cc38c0e056c7b4",
+  "f6c73f36a60de8ba",
   "704faf902d99b14c",
   "89e6a00cfa216278",
   "e0bc899381ce86af",
