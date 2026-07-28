@@ -242,12 +242,35 @@ export async function assertMayOwnAnotherOrg(userId: string): Promise<void> {
   // already >= 1, so owned.length + 1 exceeds 0 and 1 alike.
   const limit = Math.max(...(limits as number[]));
   if (owned.length + 1 > limit) {
-    // v17 gap #293: does ANY owned org's plan support the extra-org add-on?
-    // Resolved through the SAME plan the limit itself came from (orgPlanKey),
-    // so a lapsed/degraded plan never offers a purchase it cannot complete.
-    // Only ever runs on the refusal path, so the extra reads cost nothing on
-    // the hot "you may create one" answer.
-    const plans = await Promise.all(owned.map((o) => orgPlanKey(o.org_id)));
+    // v17 gap #293: does ANY owned org's plan support the extra-org add-on —
+    // and is THIS user the person who could actually buy it?
+    //
+    // Two independent gates, because failing either one turns the offer back
+    // into the dead end this exists to remove, one screen later:
+    //
+    //  1. PAYER. The purchase route (setExtraOrgs → requireBillingOwner) 403s
+    //     anyone who is not the group's `subscriptions.owner_user_id`, and
+    //     org ownership is a different thing: transferGroup moves
+    //     owner_user_id alone and leaves org owners in place, so "A owns five
+    //     organisations in a group B pays for" is reachable. The cap above
+    //     still counts EVERY org A owns (it bounds a person), but the offer is
+    //     scoped to the groups A pays for — which is also the only place a
+    //     rider would lift A's own cap. Under-offering is the correct failure
+    //     direction.
+    //  2. PLAN. Resolved through the SAME resolver the limit came from
+    //     (orgPlanKey), so a lapsed comp, a past_due past its 14-day grace or a
+    //     suspended org reads `community` and offers nothing, rather than
+    //     offering a purchase the plan cannot carry.
+    //
+    // Cold path only: this runs after the cap has already been exceeded, so the
+    // common "yes, you may create one" answer costs exactly what it did.
+    const payable = await sql<{ org_id: string }[]>`
+      select m.org_id from org_members m
+        join organizations o on o.id = m.org_id
+        join subscriptions s on s.id = o.subscription_id
+       where m.user_id = ${userId} and m.role = 'owner'
+         and s.owner_user_id = ${userId}`;
+    const plans = await Promise.all(payable.map((o) => orgPlanKey(o.org_id)));
     const addonAvailable = plans.some((p) => !!orgAddonForPlan(p));
     throw new PaymentRequiredError(
       "orgs.max_owned",

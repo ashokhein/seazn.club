@@ -27,6 +27,24 @@ describe("feature-copy V290", () => {
     // officials.assignment was deleted (D5) — falls back to the generic line.
     expect(featureReason("officials.assignment")).toBe("This feature needs a plan upgrade.");
   });
+  it("orgs.max_owned names the same remedy the 402's machine hint does (v17 gap #293)", () => {
+    // The refusal ships TWO halves of one message: `{ offer: "extra_org" }` in
+    // the body and this sentence next to it. If the copy drifts back to
+    // "upgrade in Settings → Billing", the paywall tells the payer to do one
+    // thing while the payload offers another, and nothing else notices.
+    const reason = featureReason("orgs.max_owned");
+    expect(reason).toMatch(/extra organisation/i);
+    expect(reason).toMatch(/Add-ons/);
+    // The rider is MONTHLY-ONLY, so it must not claim to cost what an org
+    // already on the bill costs: the plan price's second graduated tier is
+    // 900/1900 a month but 7900/16300 a YEAR, so any rate equivalence is ~37%
+    // wrong for an annual group. The figure belongs to the Add-ons page, which
+    // knows the currency and reads it from the rider SKU. Absence assertion,
+    // so it sits next to the positive ones above deliberately: the sentence
+    // must still NAME the purchase, it just must not PRICE it.
+    expect(reason).not.toMatch(/half/i);
+    expect(reason).not.toMatch(/same rate/i);
+  });
   it("has copy for the v16 league-ops entitlements (V293/V294/V295, T84)", () => {
     expect(featureReason("discipline.enforced")).toBe(
       "Automatic suspension tracking is a Pro feature.",

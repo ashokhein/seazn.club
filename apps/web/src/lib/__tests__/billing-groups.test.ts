@@ -47,6 +47,7 @@ import {
   groupOrgLimit,
 } from "@/lib/billing-group";
 import { PaymentRequiredError } from "@/lib/errors";
+import { featureReason } from "@/lib/feature-copy";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
@@ -150,6 +151,21 @@ describe("assertWithinGroupCap — purchase offer (v17 gap #293)", () => {
   it("still admits a count under the cap, offer flag or not", () => {
     expect(() => assertWithinGroupCap(4, 5, true)).not.toThrow();
     expect(() => assertWithinGroupCap(99, null, true)).not.toThrow();
+  });
+
+  it("the offer it stamps and the reason shipped beside it name ONE remedy", () => {
+    // Both halves of the 402 body come from different files, and only a comment
+    // held them together. This is the machine-checked half of that pairing —
+    // feature-copy.test.ts pins the sentence's own contract.
+    let caught: unknown;
+    try {
+      assertWithinGroupCap(5, 5, true);
+    } catch (err) {
+      caught = err;
+    }
+    const err = caught as InstanceType<typeof PaymentRequiredError>;
+    expect((err.extra as { offer?: string }).offer).toBe("extra_org");
+    expect(featureReason(err.featureKey)).toMatch(/extra organisation/i);
   });
 });
 
@@ -326,6 +342,82 @@ describe.skipIf(!HAS_DB)("the per-user cap and the per-group cap are different g
     expect(err).toBeInstanceOf(PaymentRequiredError);
     // Same discriminator rule as the pure tests: the refusal must still be the
     // orgs.max_owned 402, so "no offer" cannot be satisfied by "no refusal".
+    expect((err as InstanceType<typeof PaymentRequiredError>).featureKey).toBe("orgs.max_owned");
+    expect((err as InstanceType<typeof PaymentRequiredError>).extra).toBeUndefined();
+  });
+
+  it("carries no offer to an org owner who is not the group's PAYER (v17 gap #293)", async () => {
+    // Reachable via transferGroup, which moves subscriptions.owner_user_id and
+    // leaves org_members alone: A owns five organisations on a Pro group that B
+    // now pays for. The cap still bites A (it bounds a PERSON), but the
+    // purchase route would 403 A — requireBillingOwner tests owner_user_id, not
+    // org ownership — so offering A the rider just moves the dead end one
+    // screen later. The plan here is a perfectly buyable 'pro': the ONLY thing
+    // withholding the offer is who pays.
+    const s = uniq();
+    const [{ id: ownerId }] = await sql<{ id: string }[]>`
+      insert into users (email, display_name, email_verified)
+      values (${`orgowner-${s}@test.local`}, 'Org Owner', true) returning id`;
+    const [{ id: payerId }] = await sql<{ id: string }[]>`
+      insert into users (email, display_name, email_verified)
+      values (${`grouppayer-${s}@test.local`}, 'Group Payer', true) returning id`;
+    const [{ id: subId }] = await sql<{ id: string }[]>`
+      insert into subscriptions (owner_user_id, plan_key, status, quantity_paid)
+      values (${payerId}, 'pro', 'active', 5) returning id`;
+    for (let i = 0; i < 5; i++) {
+      const [{ id: orgId }] = await sql<{ id: string }[]>`
+        insert into organizations (name, slug, created_by, subscription_id)
+        values (${`Xfer ${s} ${i}`}, ${`xfer-${s}-${i}`}, ${ownerId}, ${subId}) returning id`;
+      await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${ownerId}, 'owner')`;
+    }
+
+    const { assertMayOwnAnotherOrg } = await import("@/lib/auth");
+    const err = await assertMayOwnAnotherOrg(ownerId).then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(PaymentRequiredError);
+    expect((err as InstanceType<typeof PaymentRequiredError>).featureKey).toBe("orgs.max_owned");
+    expect((err as InstanceType<typeof PaymentRequiredError>).extra).toBeUndefined();
+
+    // The payer, on the SAME group, IS offered one — so the assertion above is
+    // pinning the payer gate and not merely a fixture that offers nobody.
+    await sql`insert into org_members (org_id, user_id, role)
+              select id, ${payerId}, 'owner' from organizations
+               where subscription_id = ${subId}`;
+    const payerErr = await assertMayOwnAnotherOrg(payerId).then(() => null, (e) => e);
+    expect(payerErr).toBeInstanceOf(PaymentRequiredError);
+    expect((payerErr as InstanceType<typeof PaymentRequiredError>).extra).toEqual({
+      offer: "extra_org",
+    });
+  });
+
+  it("carries no offer on a plan that has DEGRADED past its grace (v17 gap #293)", async () => {
+    // The payer of a Pro group whose dunning ran out 20 days ago. plan_key is
+    // still the literal 'pro', so a raw plan_key read would offer a rider the
+    // subscription cannot carry; orgPlanKey applies the 14-day past_due grace
+    // and answers 'community'. This is what pins the choice of resolver — the
+    // rest of the suite never exercises a degraded plan at the cap.
+    const s = uniq();
+    const [{ id: userId }] = await sql<{ id: string }[]>`
+      insert into users (email, display_name, email_verified)
+      values (${`lapsed-${s}@test.local`}, 'Lapsed Payer', true) returning id`;
+    const [{ id: subId }] = await sql<{ id: string }[]>`
+      insert into subscriptions
+        (owner_user_id, plan_key, status, quantity_paid, status_changed_at)
+      values (${userId}, 'pro', 'past_due', 5, now() - interval '20 days') returning id`;
+    for (let i = 0; i < 5; i++) {
+      const [{ id: orgId }] = await sql<{ id: string }[]>`
+        insert into organizations (name, slug, created_by, subscription_id)
+        values (${`Lapsed ${s} ${i}`}, ${`lapsed-${s}-${i}`}, ${userId}, ${subId}) returning id`;
+      await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${userId}, 'owner')`;
+    }
+    // Sanity: the plan row still SAYS pro. Without this the test could pass
+    // against a fixture that was never Pro in the first place.
+    const [row] = await sql<{ plan_key: string }[]>`
+      select plan_key from subscriptions where id = ${subId}`;
+    expect(row.plan_key).toBe("pro");
+
+    const { assertMayOwnAnotherOrg } = await import("@/lib/auth");
+    const err = await assertMayOwnAnotherOrg(userId).then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(PaymentRequiredError);
     expect((err as InstanceType<typeof PaymentRequiredError>).featureKey).toBe("orgs.max_owned");
     expect((err as InstanceType<typeof PaymentRequiredError>).extra).toBeUndefined();
   });

@@ -15,10 +15,20 @@ const FEATURE_REASONS: Record<string, string> = {
   // past the cap on a PAID plan is now a purchase (the recurring extra-org
   // rider), not an upgrade — the 402 carries { offer: "extra_org" } alongside
   // this sentence, so the copy has to name the same remedy the machine hint
-  // does. The rate matches the plan price's second graduated tier ($9 on Pro,
-  // $19 on Pro Plus), i.e. exactly what the orgs already on the bill cost.
+  // does. `feature-copy.test.ts` pins that pairing.
+  //
+  // MAKES NO RATE CLAIM, deliberately. There are TWO different prices for "an
+  // extra organisation" and they only agree monthly: the plan price's second
+  // graduated tier (what the orgs already on the bill cost — 900/1900 a month,
+  // but 7900/16300 a YEAR) and the rider SKU this offer sells, which is
+  // monthly-only at 900/1900. So "the same rate as the ones already on your
+  // bill" is true for a monthly group and ~37% wrong for an annual one, and
+  // "half your plan's rate" is a claim about the tier, not about this. The
+  // figure belongs to the Add-ons page (Task 6), which knows the currency and
+  // reads it from the rider SKU; this sentence names only the CADENCE, which is
+  // true on every plan and in every currency.
   "orgs.max_owned":
-    "Your current plan covers the most organisations it allows (Community 1, Pro 5, Pro Plus 10). On Pro or Pro Plus, buy an extra organisation from Settings → Add-ons for the same rate as the ones already on your bill; Community upgrades to Pro first.",
+    "Your current plan covers the most organisations it allows (Community 1, Pro 5, Pro Plus 10). On Pro or Pro Plus, buy an extra organisation from Settings → Add-ons; it's billed monthly on top of your current bill. Community upgrades to Pro first.",
   "members.max": "You've reached your plan's team-member seats.",
   "scorers.max": "You've reached your plan's scorer seats.",
   "competitions.max_active": "Your plan's active-competition limit is reached.",

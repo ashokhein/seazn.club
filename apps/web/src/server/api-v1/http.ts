@@ -148,11 +148,15 @@ async function v1Inner<T>(
     if (err instanceof PaymentRequiredError) {
       // Upgrade-moment contract (doc 10 §3): feature_key drives the contextual
       // paywall (<UpgradeGate>), reason is the human sentence. `feature` kept
-      // for pre-PROMPT-13 clients.
+      // for pre-PROMPT-13 clients. `extra` carries machine-readable hints on
+      // top — e.g. { offer: "extra_org" } (v17 gap #293) — matching what
+      // lib/http.ts's 402 branch forwards, so a refusal does not lose its way
+      // out purely by which envelope happened to serialise it.
       return errorResponse(requestId, 402, "PAYMENT_REQUIRED", err.message, {
         feature: err.featureKey,
         feature_key: err.featureKey,
         reason: featureReason(err.featureKey),
+        ...err.extra,
       });
     }
     if (err instanceof AuthError) {
