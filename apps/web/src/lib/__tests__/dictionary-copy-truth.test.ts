@@ -1810,6 +1810,69 @@ describe.skipIf(!HAS_DB)("the four-locale dictionaries say what the resolver enf
   });
 
   /**
+   * THE KEY AXIS FOR THIS CLAIM FAMILY — the half that the length assertion
+   * above cannot give it.
+   *
+   * `HALF_CLAIM_VALUES` is DERIVED from the two key lists, so
+   * `toHaveLength((KEYS + UI_KEYS) * LOCALES)` compares a number with itself:
+   * delete a key and both sides shrink together. Its sibling `PASS_BOUND_KEYS`
+   * has had a floor since fix round 1 (`toBeGreaterThanOrEqual(6)`); this one
+   * never got one.
+   *
+   * Worse, a deleted key falls out of BOTH rules. The exempt-side re-scan skips
+   * anything in `HALF_CLAIM_KEYS` *and* anything pinned in
+   * `_approved-dictionary-copy.ts` — and every half-claim key is pinned, so
+   * removing it from the axis does not hand it back to the exempt scan; it
+   * hands it to nothing.
+   *
+   * Probe H1, measured at 216 passed / 0 failed: drop `pricing.faq.groups.a`
+   * from the list, revert its value to the bare "costs half your plan's rate"
+   * in all four locales, re-approve it in the inventory. That is the exact
+   * claim that is false in 8 of 10 plan x currency pairs, and the key that had
+   * already survived two rounds of this wave.
+   *
+   * TWO rules, because each covers what the other cannot:
+   *  - a FLOOR on each list. Circular or not, a list cannot shrink to nothing.
+   *  - DERIVATION: run each locale's own `halfClaim` vocabulary over every
+   *    `pricing.*` key and every `ui` key, and require the set it finds to be
+   *    exactly the set declared. This closes the DELETION direction — the value
+   *    still says "half", so the derived set still contains the key even after
+   *    the list forgets it. It is circular in the OTHER direction (#338): a
+   *    reword out of the vocabulary disappears from both sides at once, which
+   *    is what `localeHalfClaimFaults` and the inventory are for.
+   *
+   * Derived across ALL FOUR locales, not `en` alone: an es/fr/nl value that
+   * gains a rate claim on a key nobody declared is exactly the failure the
+   * four-locale rules exist for. Measured — all four locales agree on all six
+   * keys today, so the union costs nothing and reds if one drifts.
+   */
+  it("declares every key that actually makes the half-rate claim, and cannot shrink", () => {
+    // FLOORS. Not derived from the lists — restated deliberately, because a
+    // floor computed from the thing it bounds is not a floor.
+    expect(HALF_CLAIM_KEYS.length, "the marketing half of the axis has been emptied").toBeGreaterThanOrEqual(3);
+    expect(HALF_CLAIM_UI_KEYS.length, "the ui half of the axis has been emptied").toBeGreaterThanOrEqual(3);
+
+    // DERIVATION, per file, over every locale's own vocabulary.
+    for (const [file, declared] of [
+      ["marketing", HALF_CLAIM_KEYS],
+      ["ui", HALF_CLAIM_UI_KEYS],
+    ] as const) {
+      const derived = new Set<string>();
+      for (const locale of DICTIONARY_LOCALES) {
+        const dict = load(locale, file);
+        const halfClaim = LOCALE_CLAIMS[locale].halfClaim;
+        for (const [key, value] of Object.entries(dict)) {
+          if (halfClaim.test(value)) derived.add(key);
+        }
+      }
+      expect(
+        [...derived].sort(),
+        `${file}: a key whose copy makes the half-rate claim is not on the axis (or one on the axis no longer makes it)`,
+      ).toEqual([...declared].sort());
+    }
+  });
+
+  /**
    * `config/tips.ts` IS NOT WHAT RENDERS, and this is the guard that makes that
    * safe (v17 gap wave 7, task 7).
    *
