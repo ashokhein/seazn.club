@@ -379,8 +379,21 @@ interface CardClaim {
    * that Pro is capped. Moving `members.max` on PRO to null makes the Plus
    * card's bullet stop differentiating anything, with every string on both
    * cards still word-for-word true (fresh probe G6).
+   *
+   * `containmentFaults` reads the SAME list in the other direction — see there
+   * for why one field has to serve both.
    */
   exclusiveAgainst?: string[];
+  /**
+   * Which way is BETTER for the buyer. Default "higher" — an allowance.
+   *
+   * `registration.fee_percent` is the exception and the containment rule found
+   * it on its first run: pro is 2% and pro_plus is 1%, so a naive "the higher
+   * plan's number must be at least the lower plan's" reported the true
+   * arrangement as a broken containment claim. A rate is a COST; containing it
+   * means charging no MORE.
+   */
+  betterWhen?: "higher" | "lower";
 }
 
 /**
@@ -486,7 +499,11 @@ const CARD_SURFACES: CardSurface[] = [
     claims: [
       { feature: "divisions.per_competition.max", plan: "event_pass", says: (n) => new RegExp(`\\b${n}\\s+divisions\\b`, "i") },
       { feature: "entrants.per_division.max", plan: "event_pass", says: (n) => new RegExp(`\\b${n}\\s+entrants\\s+each\\b`, "i") },
-      { feature: "registration.fee_percent", plan: "event_pass", says: (n) => new RegExp(`\\b${n}%\\s+platform\\s+fee\\b`, "i") },
+      { feature: "registration.fee_percent", plan: "event_pass", betterWhen: "lower", says: (n) => new RegExp(`\\b${n}%\\s+platform\\s+fee\\b`, "i") },
+      // BOTH RUNGS share this one bullet, so both must charge what it quotes.
+      // Fix round 2: L's fee was card-guarded by nothing — moving it 5 -> 8 red
+      // only the help article, never the card selling it.
+      { feature: "registration.fee_percent", plan: "event_pass_l", betterWhen: "lower", says: (n) => new RegExp(`\\b${n}%\\s+platform\\s+fee\\b`, "i") },
       // The comparator the same bullet makes: "…not 8%". It is a claim about
       // COMMUNITY's rate sitting on the pass card, and it goes stale the moment
       // community's fee moves — which is exactly what F5 of the battery did.
@@ -536,7 +553,7 @@ const CARD_SURFACES: CardSurface[] = [
         unlimited: /\bunlimited\s+competitions\s*&\s*divisions\b/i,
       },
       { feature: "entrants.per_division.max", plan: "pro", says: (n) => new RegExp(`\\b${n}\\s+entrants\\s+per\\s+division\\b`, "i") },
-      { feature: "registration.fee_percent", plan: "pro", says: (n) => new RegExp(`\\b${n}%\\s+platform\\s+fee\\b`, "i") },
+      { feature: "registration.fee_percent", plan: "pro", betterWhen: "lower", says: (n) => new RegExp(`\\b${n}%\\s+platform\\s+fee\\b`, "i") },
     ],
     booleans: [
       { feature: "scoring.ball_by_ball", plans: ["pro"], says: /\bball-by-ball\b/i },
@@ -566,7 +583,18 @@ const CARD_SURFACES: CardSurface[] = [
       { feature: "members.max", plan: "pro_plus", exclusiveAgainst: ["pro"], says: (n) => new RegExp(`\\b${n}\\b[^.]{0,40}\\bmembers\\b`, "i"), unlimited: /\bunlimited\b[^.]{0,40}\bmembers\b/i },
       { feature: "teams.max", plan: "pro_plus", exclusiveAgainst: ["pro"], says: (n) => new RegExp(`\\b${n}\\b[^.]{0,40}\\bteams\\b`, "i"), unlimited: /\bunlimited\b[^.]{0,40}\bteams\b/i },
       { feature: "clubs.max", plan: "pro_plus", exclusiveAgainst: ["pro"], says: (n) => new RegExp(`\\b${n}\\b[^.]{0,40}\\bclubs\\b`, "i"), unlimited: /\bunlimited\b[^.]{0,40}\bclubs\b/i },
-      { feature: "registration.fee_percent", plan: "pro_plus", says: (n) => new RegExp(`\\b${n}%\\s+platform\\s+fee\\b`, "i") },
+      { feature: "registration.fee_percent", plan: "pro_plus", betterWhen: "lower", says: (n) => new RegExp(`\\b${n}%\\s+platform\\s+fee\\b`, "i") },
+      // The Plus card quotes no entrant number — it inherits Pro's via the
+      // "Everything in Pro, plus…" frame, which `containmentFaults` enforces.
+      // Declared here so the frame's promise is anchored to a row rather than
+      // to nobody: pro_plus's cap is null, and if it ever became a number the
+      // containment rule reds against Pro's 256.
+      {
+        feature: "entrants.per_division.max",
+        plan: "pro_plus",
+        says: (n) => new RegExp(`\\b${n}\\s+entrants\\b`, "i"),
+        unlimited: /\bunlimited\b[^.]{0,40}\b(members|teams|clubs)\b/i,
+      },
     ],
     booleans: [
       { feature: "officials.auto", plans: ["pro_plus"], says: /\bauto officials assignment\b/i },
@@ -884,6 +912,100 @@ function cardBulletAttributionFaults(
       );
     }
   }
+  return faults;
+}
+
+/**
+ * ── "EVERYTHING IN PRO, PLUS…" IS A CONTAINMENT CLAIM (fix round 2, blocking 4) ──
+ *
+ * `pricing.plus.note` asserts pro_plus ⊇ pro. `exclusiveAgainst` guarded only
+ * the direction where a LOWER plan catches up; the direction where the HIGHER
+ * plan loses something was unguarded entirely. Measured 0/3: dropping
+ * `competitions.max_active`, `divisions.per_competition.max` or
+ * `dashboard.branding` on pro_plus leaves the PRO CARD, one column to the left,
+ * still promising them — and the frame above the Plus card still claiming Pro
+ * Plus has everything Pro does.
+ *
+ * Judged against the rows in both shapes:
+ *  - an INT allowance: `null` (unlimited) contains everything, otherwise the
+ *    higher plan's number must be at least the lower plan's;
+ *  - a BOOLEAN grant: if the lower plan has it, the higher plan must too.
+ *
+ * Derived from what the lower card actually CLAIMS, not from the whole matrix —
+ * the frame promises "everything in Pro", and Pro is what the Pro card sells.
+ */
+function containmentFaults(
+  surfaces: CardSurface[],
+  matrix: Matrix,
+  rows: RowsByFeature,
+  frame: { higher: string; lower: string },
+): string[] {
+  const faults: string[] = [];
+  const lowerSurface = surfaces.find((s) => s.plan === frame.lower);
+  if (!lowerSurface) {
+    return [`no card sells ${frame.lower} — the containment frame is scoped to nothing`];
+  }
+  let checked = 0;
+
+  for (const claim of lowerSurface.claims) {
+    if (claim.plan !== frame.lower) continue;
+    const lower = matrix[claim.feature]?.[frame.lower];
+    const higher = matrix[claim.feature]?.[frame.higher];
+    if (lower === undefined || higher === undefined) {
+      faults.push(
+        `${claim.feature}: the Pro card claims it but ${lower === undefined ? frame.lower : frame.higher} has no row — containment cannot be judged`,
+      );
+      continue;
+    }
+    checked += 1;
+    // A COST contains the lower plan's by being no greater; an ALLOWANCE by
+    // being no smaller. Getting this wrong reported pro 2% / pro_plus 1% — the
+    // correct arrangement — as a broken containment claim.
+    if (claim.betterWhen === "lower") {
+      if (lower !== null && higher !== null && higher > lower) {
+        faults.push(
+          `"Everything in ${frame.lower}, plus…" is false: ${frame.lower} charges ${lower} ${claim.feature} but ${frame.higher} charges ${higher}`,
+        );
+      }
+      continue;
+    }
+    if (higher === null) continue; // unlimited contains everything
+    if (lower === null) {
+      faults.push(
+        `"Everything in ${frame.lower}, plus…" is false: ${frame.lower} has unlimited ${claim.feature} but ${frame.higher} caps it at ${higher}`,
+      );
+    } else if (higher < lower) {
+      faults.push(
+        `"Everything in ${frame.lower}, plus…" is false: ${frame.lower} allows ${lower} ${claim.feature} but ${frame.higher} allows only ${higher}`,
+      );
+    }
+  }
+
+  for (const claim of lowerSurface.booleans ?? []) {
+    if (!claim.plans.includes(frame.lower)) continue;
+    const lower = rows[claim.feature]?.[frame.lower];
+    const higher = rows[claim.feature]?.[frame.higher];
+    if (!lower || !higher) {
+      faults.push(`${claim.feature}: no row on ${!lower ? frame.lower : frame.higher} — containment cannot be judged`);
+      continue;
+    }
+    checked += 1;
+    if (claim.atLeast !== undefined) {
+      if (higher.int !== null && (lower.int === null || higher.int < lower.int)) {
+        faults.push(
+          `"Everything in ${frame.lower}, plus…" is false: ${frame.lower} allows ${lower.int ?? "unlimited"} ${claim.feature} but ${frame.higher} allows only ${higher.int}`,
+        );
+      }
+      continue;
+    }
+    if (lower.bool === true && higher.bool !== true) {
+      faults.push(
+        `"Everything in ${frame.lower}, plus…" is false: the ${frame.lower} card promises ${claim.feature} and ${frame.higher} does not grant it`,
+      );
+    }
+  }
+
+  if (checked === 0) faults.push("no claim on the lower card resolved a row — containment examined nothing");
   return faults;
 }
 
@@ -1830,6 +1952,65 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
       s.array === "FREE_FEATURES" ? { ...s, unclaimed: { ...s.unclaimed, "Live standings": "n/a" } } : s,
     );
     expect(faults(LIVE_CARD_BULLETS, empty)).toContain("has an empty exemption reason");
+  });
+
+  /**
+   * The frame above the Pro Plus card, judged in the direction nobody guarded.
+   *
+   * "Everything in Pro, plus…" asserts pro_plus ⊇ pro. `exclusiveAgainst` only
+   * ever checked a lower plan catching UP; a higher plan losing something left
+   * the Pro card one column left still promising it. Measured 0/3.
+   */
+  it("Pro Plus really does contain everything the Pro card promises", async () => {
+    const matrix = await cardMatrix();
+    const rows = await capabilityRows();
+    const frame = { higher: "pro_plus", lower: "pro" };
+    expect(containmentFaults(CARD_SURFACES, matrix, rows, frame)).toEqual([]);
+
+    // The frame it is scoped to must actually be on the page, or this rule is
+    // asserting containment nothing claims.
+    const en: Record<string, string> = JSON.parse(
+      readFileSync("src/dictionaries/en/marketing.json", "utf8"),
+    );
+    expect(en["pricing.plus.note"]).toMatch(/Everything\s+in\s+Pro,\s*plus/i);
+
+    // THE REVIEWER'S THREE, each dropping something on pro_plus while the Pro
+    // card goes on promising it.
+    const drop = (feature: string, value: number | null): Matrix => ({
+      ...matrix,
+      [feature]: { ...matrix[feature], pro_plus: value },
+    });
+    expect(
+      containmentFaults(CARD_SURFACES, drop("competitions.max_active", 3), rows, frame).join(" | "),
+    ).toContain("pro has unlimited competitions.max_active but pro_plus caps it at 3");
+    expect(
+      containmentFaults(CARD_SURFACES, drop("divisions.per_competition.max", 4), rows, frame).join(" | "),
+    ).toContain("pro has unlimited divisions.per_competition.max but pro_plus caps it at 4");
+    expect(
+      containmentFaults(CARD_SURFACES, drop("entrants.per_division.max", 64), rows, frame).join(" | "),
+    ).toContain("pro allows 256 entrants.per_division.max but pro_plus allows only 64");
+    // …and the COST direction, which must red when the higher plan charges more.
+    expect(
+      containmentFaults(CARD_SURFACES, drop("registration.fee_percent", 5), rows, frame).join(" | "),
+    ).toContain("pro charges 2 registration.fee_percent but pro_plus charges 5");
+
+    // …and the boolean shape: dashboard.branding is the badge bullet on the Pro
+    // card, and it is the row SPEC-1 §5 once ticked for the pass in error.
+    const revoked: RowsByFeature = {
+      ...rows,
+      "dashboard.branding": { ...rows["dashboard.branding"], pro_plus: { bool: false, int: null } },
+    };
+    expect(containmentFaults(CARD_SURFACES, matrix, revoked, frame).join(" | ")).toContain(
+      "the pro card promises dashboard.branding and pro_plus does not grant it",
+    );
+
+    // Anti-vacuity, both ways.
+    expect(containmentFaults(CARD_SURFACES, {}, {}, frame).join(" | ")).toContain(
+      "containment cannot be judged",
+    );
+    expect(containmentFaults([], matrix, rows, frame)).toEqual([
+      "no card sells pro — the containment frame is scoped to nothing",
+    ]);
   });
 
   it("no card claims a feature its own plan does not grant", async () => {
