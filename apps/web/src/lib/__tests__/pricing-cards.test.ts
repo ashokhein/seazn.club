@@ -86,6 +86,28 @@ describe("pricing cards", () => {
     expect(differing.length, "every currency matched usd — the seed lost its price points").toBeGreaterThan(2);
   });
 
+  /**
+   * THE HOME STUB MUST STILL STATE THE BOUND (fix round 2, fresh probe H1).
+   *
+   * `ticketTiers` slices the first four bullets, and bullet 1 is the only place
+   * either surface says when the pass stops. Changing the slice to 1..5 drops it
+   * from the home page entirely — no string edited, no pin disturbed, and the
+   * home page then sells a one-off upgrade with no duration at all. Every guard
+   * was green.
+   *
+   * Asserted as the PROPERTY rather than the slice indices: whatever the stub
+   * carries, it must still make the bounded claim.
+   */
+  it("the home Event Pass stub still says what bounds the pass", () => {
+    const [, pass] = ticketTiers("usd");
+    expect(pass!.bullets.some((b) => BOUNDED_SCOPE_GRAMMAR.test(b)), pass!.bullets.join(" | ")).toBe(
+      true,
+    );
+    // …and the rule is not vacuous: a stub built from the same array MINUS the
+    // duration bullet must fail it.
+    expect(PASS_FEATURES.slice(1, 5).some((b) => BOUNDED_SCOPE_GRAMMAR.test(b))).toBe(false);
+  });
+
   it("only the Event Pass glows", () => {
     expect(ticketTiers("usd").map((t) => Boolean(t.glow))).toEqual([false, true, false]);
   });
