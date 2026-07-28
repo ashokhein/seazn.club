@@ -168,8 +168,16 @@ describe("no entry point can re-sell a pass the org already holds", () => {
     // `competitions` and asks `passLockReason`: the SAME predicate, not a
     // second copy of the terminal-status list.
     const src = code(...COMPETITION_LIST);
-    expect(src).toContain("passLockReason");
+    // The CALL, with the row's own columns — not the bare identifier. Asserting
+    // `toContain("passLockReason")` is satisfied by the IMPORT LINE alone, so
+    // replacing the whole call with `null` shipped green (found by mutation,
+    // not by reading). This is the same shape of hole as the two the task 3
+    // review found, and it survives an unused import only if you ask for the
+    // arguments too.
+    expect(src).toMatch(/passLockReason\(\s*r\.status\s*,\s*r\.ends_on\s*\)/);
     expect(src).toMatch(/join competitions/i);
+    // …and the verdict has to reach the seal, or it is derived and discarded.
+    expect(src).toContain("data-pass-ended");
   });
 
   it("the billing purchase list RENDERS the ended flag it is already given", () => {
