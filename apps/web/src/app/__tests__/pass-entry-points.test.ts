@@ -25,11 +25,33 @@
 // whether a paid org may buy L at all is #327.)
 // ===========================================================================
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 
 const SRC = join(import.meta.dirname, "..", "..");
 const read = (...parts: string[]) => readFileSync(join(SRC, ...parts), "utf8");
+
+/**
+ * Every .ts/.tsx file under src/, as a path relative to SRC with posix
+ * separators — so a guard can define its own scope by asking a question of the
+ * tree rather than by naming files it happens to remember.
+ *
+ * Skips __tests__ (a test may legitimately import anything) and the generated
+ * dictionaries.
+ */
+function walkSrc(dir: string = SRC): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === "__tests__" || entry.name === "dictionaries" || entry.name === "node_modules") continue;
+      out.push(...walkSrc(full));
+    } else if (/\.tsx?$/.test(entry.name)) {
+      out.push(relative(SRC, full).split(sep).join("/"));
+    }
+  }
+  return out;
+}
 
 /**
  * Source with comments removed.
@@ -235,6 +257,17 @@ describe("the competition layout resolves what its islands cannot", () => {
     ["the paywall", ["components", "upgrade-gate.tsx"]],
     ["the upgrade page's state", ["lib", "upgrade-page-state.ts"]],
     ["the billing purchase list", ["components", "billing-pass-purchases.tsx"]],
+    // The second widening (W8 task 3 review, I-2). The six above were the files
+    // that BRANCH on the reason; these four sit on the same lock path and were
+    // all blocklist-clean at the time they were added, which is exactly when a
+    // guard should acquire a file — adding one only after it has grown a copy
+    // is closing the stable door. The upgrade page and the checkout route reach
+    // for `passLockReason` directly, and the two list surfaces render a pass
+    // state per competition.
+    ["the upgrade page", ["app", "o", "[orgSlug]", "c", "[compSlug]", "upgrade", "page.tsx"]],
+    ["the pass checkout route", ["app", "api", "billing", "pass-checkout", "route.ts"]],
+    ["the competition list", COMPETITION_LIST],
+    ["the competition header", COMPETITION_HEADER],
   ];
 
   // The blocklist, named once so the anti-vacuity case below scans the SAME
@@ -268,7 +301,7 @@ describe("the competition layout resolves what its islands cannot", () => {
     // in FRONT of a surviving `passLockReason(` call. It narrows the ways the
     // rule gets copied; it is not proof that it has not been.
     expect(RE_DERIVATION.length).toBeGreaterThanOrEqual(3);
-    expect(LOCK_AWARE_FILES.length).toBeGreaterThanOrEqual(6);
+    expect(LOCK_AWARE_FILES.length).toBeGreaterThanOrEqual(10);
   });
 
   // The entry point does not merely avoid re-deriving — it has to RENDER the
@@ -283,16 +316,44 @@ describe("the competition layout resolves what its islands cannot", () => {
     expect(src).toContain("usePassLockReason");
   });
 
-  it("keeps the client provider free of a VALUE import from lib/entitlements", () => {
+  it("keeps every client island free of a VALUE import from lib/entitlements", () => {
     // A type-only import is erased at compile time and is the correct shape; a
     // plain import of the same symbol is not, and it fails at build time as an
     // unresolvable node builtin — loud, but a long way from the line that
     // caused it.
-    const provider = code("components", "competition-pass-provider.tsx");
-    expect(provider).toContain('"use client"');
-    const imports = provider.match(/^import\s+(?:type\s+)?[^;]*from "@\/lib\/entitlements";$/gm) ?? [];
-    // Guards the premise: if the provider stops importing the type at all,
-    // this case must fail rather than pass vacuously.
+    //
+    // DISCOVERED, not listed (W8 task 3 review, M-1). The first draft scanned
+    // `competition-pass-provider.tsx` alone, and by task 3 two more files were
+    // importing the module — one of them a `"use client"` island. A list of
+    // client files that touch the resolver is a list that goes stale the moment
+    // someone adds the next one, which is the same failure this guard's sibling
+    // above has now had twice. So walk the tree instead and let the set define
+    // itself.
+    const clientImporters = walkSrc().filter((rel) => {
+      const src = code(rel);
+      return src.includes('"use client"') && src.includes('from "@/lib/entitlements"');
+    });
+
+    // Guards the premise. If this ever finds nothing, the walk or the module
+    // path is wrong and every assertion below would pass vacuously — which is
+    // precisely how a guard ends up examining nothing while staying green.
+    expect(clientImporters.length).toBeGreaterThan(0);
+    expect(clientImporters).toContain("components/competition-pass-provider.tsx");
+
+    for (const rel of clientImporters) {
+      const imports = code(rel).match(/^import\s+(?:type\s+)?[^;]*from "@\/lib\/entitlements";$/gm) ?? [];
+      expect(imports.length, `${rel} matched no import line`).toBeGreaterThan(0);
+      for (const line of imports) expect(line, `${rel}: ${line}`).toMatch(/^import type /);
+    }
+  });
+
+  it("keeps lib/pass-ladder free of one too — two islands import it", () => {
+    // Not a `"use client"` file itself, so the walk above cannot see it, but
+    // `upgrade-gate.tsx` and `competition-pass-entry.tsx` both import it: a
+    // value import here reaches the client bundle transitively, by the same
+    // route and with the same build failure.
+    const imports =
+      code("lib", "pass-ladder.ts").match(/^import\s+(?:type\s+)?[^;]*from "@\/lib\/entitlements";$/gm) ?? [];
     expect(imports.length).toBeGreaterThan(0);
     for (const line of imports) expect(line).toMatch(/^import type /);
   });
