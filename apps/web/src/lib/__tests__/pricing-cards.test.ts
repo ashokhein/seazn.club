@@ -823,6 +823,19 @@ const CLAIM_TOKEN_STOPWORDS = new Set([
   "per", "max", "min", "value", "enabled", "monthly", "percent", "hierarchy", "public", "listed",
 ]);
 
+/**
+ * A lexicon token matches a residue word if either is a PREFIX of the other.
+ *
+ * `\b${token}` alone was prefix-match in ONE direction, so the lexicon's
+ * `credits` never matched the copy's `credit` — "Largest monthly AI credit
+ * grant" appended to PRO_FEATURES was green (measured). Stemming both ways
+ * costs nothing and covers singular/plural in either position.
+ */
+function tokenMatchesResidue(token: string, residue: string): boolean {
+  const stem = token.slice(0, Math.max(4, token.length - 1));
+  return new RegExp(`\\b${stem}`, "i").test(residue);
+}
+
 function claimTokens(allFeatureKeys: string[]): string[] {
   // EVERY feature key in plan_entitlements, not merely the ones a card happens
   // to declare. Deriving the lexicon from the declared subset made the rule
@@ -924,14 +937,32 @@ function cardBulletAttributionFaults(
         }
       }
       const residue = [...bullet].map((ch, i) => (covered[i] ? " " : ch)).join("");
+      const matchedSomething = covered.some(Boolean);
 
-      const leftover = tokens.filter((token) =>
-        new RegExp(`\\b${token}`, "i").test(residue),
-      );
-      if (leftover.length === 0) continue;
-      faults.push(
-        `${surface.array}: "${bullet}" makes an unattributed claim about ${leftover.join(", ")} — the words "${residue.replace(/\s+/g, " ").trim()}" are matched by no declared claim and by no recorded exemption`,
-      );
+      // ── CONJOIN, DO NOT REPLACE (fix round 3, blocking 1) ─────────────────
+      // Round 2 replaced "any unattributed bullet is a fault" with "a residue
+      // carrying a known token is a fault". That was a NET REGRESSION, proved
+      // at the parent commit: seven probes redded before the change and were
+      // green after it — "Run as many events at once as you like" on Community
+      // (which caps at 10 two bullets above), "Round-the-clock phone helpline"
+      // and "Your own dedicated success manager" on Pro, and four more. Each
+      // makes a plan claim in words no feature key happens to contain, so the
+      // lexicon sees nothing and the residue rule shrugs.
+      //
+      // The lexicon catches a claim about a feature we HAVE. The completeness
+      // rule catches a claim about anything else. Both, always.
+      const leftover = tokens.filter((token) => tokenMatchesResidue(token, residue));
+      if (leftover.length > 0) {
+        faults.push(
+          `${surface.array}: "${bullet}" makes an unattributed claim about ${leftover.join(", ")} — the words "${residue.replace(/\s+/g, " ").trim()}" are matched by no declared claim and by no recorded exemption`,
+        );
+        continue;
+      }
+      if (!matchedSomething) {
+        faults.push(
+          `${surface.array}: "${bullet}" is attributed to no matrix row and is not exempted — every bullet must be a claim someone checked or a decision someone recorded`,
+        );
+      }
     }
   }
   return faults;
@@ -1959,6 +1990,36 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
       faults({ ...LIVE_CARD_BULLETS, FREE_FEATURES: [...FREE_FEATURES, "64 entrants per division, with unlimited clubs & teams"] }),
       "clubs.max on community is 5; says(64) used to attribute the whole bullet",
     ).toContain('"64 entrants per division, with unlimited clubs & teams" makes an unattributed claim');
+
+    // ── THE SEVEN THAT THE ROUND-2 REWRITE LET THROUGH ────────────────────
+    //
+    // Every one of these redded under the old "any unattributed bullet is a
+    // fault" rule and went GREEN under the residue rule that replaced it,
+    // because each makes a plan claim in words no `plan_entitlements` feature
+    // key happens to contain. Measured by the reviewer in worktrees at the
+    // parent commit and at mine. They are the reason the two rules are now
+    // conjoined rather than swapped.
+    for (const [array, bullet, why] of [
+      ["FREE_FEATURES", "Run as many events at once as you like", "community caps competitions.max_active at 10, two bullets above"],
+      ["FREE_FEATURES", "Remove the Powered by Seazn badge", "dashboard.branding is false on community"],
+      ["PRO_FEATURES", "Round-the-clock phone helpline", "no support entitlement of any kind on pro"],
+      ["PRO_FEATURES", "Your own dedicated success manager", "same — support.priority is pro_plus-only"],
+      ["PRO_FEATURES", "White-glove onboarding for your first season", "no row grants this on any plan"],
+      ["PRO_FEATURES", "Ship data straight to your warehouse nightly", "the warehouse export is coming-soon, not shipped"],
+      ["PRO_FEATURES", "Your own web address, fully white-labelled", "domains.custom is pro_plus-only and unshipped"],
+    ] as Array<[string, string, string]>) {
+      expect(
+        faults({ ...LIVE_CARD_BULLETS, [array]: [...(LIVE_CARD_BULLETS[array] ?? []), bullet] }),
+        `${array}: "${bullet}" — ${why}`,
+      ).toContain(`"${bullet}"`);
+    }
+
+    // …and the prefix-match hole beside them: the lexicon holds `credits` while
+    // the copy says `credit`, so a one-directional `\b${token}` never fired.
+    expect(
+      faults({ ...LIVE_CARD_BULLETS, PRO_FEATURES: [...PRO_FEATURES, "Largest monthly AI credit grant"] }),
+      "the Plus card's own bullet, moved to Pro, where it is false",
+    ).toContain('"Largest monthly AI credit grant"');
 
     // A stale exemption: the phrase it names is gone, so it covers nothing and
     // hides whatever replaced it.
