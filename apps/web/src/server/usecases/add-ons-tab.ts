@@ -135,11 +135,17 @@ export async function getAddOnsTab(
     orgCap,
     // A null ADMISSION cap is unlimited — the resolver being more generous than
     // the receipt, which is not a reduction. A null PURCHASED cap is unlimited
-    // too, and a finite admission cap below it IS a reduction: today no plan
-    // grants unlimited `orgs.max_owned`, so `orgCap === null` only happens
-    // alongside an unlimited override that survives degradation and the two
-    // agree anyway — but nothing pins that, and this ordering stays correct if
-    // an unlimited plan ever ships.
+    // too, and a finite admission cap below it IS a reduction.
+    //
+    // That second arm is REACHABLE TODAY, not merely future-proofing (measured;
+    // both directions are pinned in add-ons-tab.test.ts). No plan grants
+    // unlimited `orgs.max_owned`, so `orgCap === null` means a staff override
+    // with a null `int_value` — and while that override outranks the plan row
+    // in `resolve()` and therefore SURVIVES dunning (both caps stay unlimited,
+    // nothing to report), `groupOrgLimit`'s every-org-suspended branch reads
+    // `plan_entitlements` directly and explicitly loses per-org overrides. A
+    // suspended group with an unlimited comp therefore has an unlimited receipt
+    // and a finite admission cap, which is exactly what this arm is for.
     capReduced: admissionCap !== null && (orgCap === null || admissionCap < orgCap),
     liveOrgCount: basis.liveOrgs,
     extraOrgCount,

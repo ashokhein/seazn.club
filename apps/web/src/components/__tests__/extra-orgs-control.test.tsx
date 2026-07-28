@@ -157,6 +157,41 @@ describe("ExtraOrgsControl — the server's floor bounds the control", () => {
     expect(propsOf(plus(island)).disabled).toBe(false);
   });
 
+  it("EXPLAINS the disabled − button, and only when there is a floor to explain", () => {
+    // The PREVENTIVE half of the 423 remedy, and the only thing a customer is
+    // told about a − button that does nothing. Blanking `floorNote` left the
+    // suite green: everything else here asserts the button's `disabled`, which
+    // is the symptom, not the sentence.
+    const floored = mount({ initialCount: 2, min: 2 });
+    expect(propsOf(minus(floored)).disabled).toBe(true);
+    expect(floored.text()).toContain(
+      "You can't go below 2 — that many organisations in this group are standing " +
+        "on an extra organisation. Move one out of the group first.",
+    );
+
+    // The negative half: a group with no floor must not be told it has one, or
+    // the sentence reads as a refusal nobody issued.
+    const free = mount({ initialCount: 2, min: 0 });
+    expect(propsOf(minus(free)).disabled).toBe(false);
+    expect(free.text()).not.toContain("You can't go below");
+  });
+
+  it("stops the + button at the ceiling, and says why a typed one is refused", () => {
+    // Degrades to an enabled no-op rather than a wrong charge, so it is the
+    // mildest failure here — but an enabled control that ignores the click is
+    // still a control the customer cannot tell is at its limit.
+    const atMax = mount({ initialCount: 50, min: 0, max: 50 });
+    expect(propsOf(plus(atMax)).disabled).toBe(true);
+    click(plus(atMax));
+    expect(propsOf(input(atMax)).value).toBe("50");
+
+    // Discriminator: one below the ceiling the same button is live and moves.
+    const belowMax = mount({ initialCount: 49, min: 0, max: 50 });
+    expect(propsOf(plus(belowMax)).disabled).toBe(false);
+    click(plus(belowMax));
+    expect(propsOf(input(belowMax)).value).toBe("50");
+  });
+
   it("still allows a raise from the floor — the bound is one-directional", () => {
     // Discriminator for the two absences above: a control that never offers
     // Save would pass both of them.

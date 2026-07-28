@@ -34,15 +34,25 @@ vi.mock("@/lib/currency-server", () => ({ preferredCurrency: vi.fn(async () => "
 vi.mock("@/lib/resolve-locale", () => ({ resolveLocale: vi.fn(async () => "en") }));
 vi.mock("@/lib/i18n", async () => {
   // The real `t`, so interpolation and misses behave exactly as they do in
-  // production; only the server-only dictionary LOADER is stubbed.
+  // production; only the server-only dictionary LOADER is stubbed. It HONOURS
+  // the locale it is handed — a loader that always answered English would make
+  // the locale test below vacuous, since the page could ignore `locale`
+  // entirely and still be handed the right dictionary.
   const runtime = await vi.importActual<typeof import("@/lib/i18n-runtime")>(
     "@/lib/i18n-runtime",
   );
-  const ui = (await import("@/dictionaries/en/ui.json")).default;
-  return { getDictionary: async () => ui, t: runtime.t };
+  const en = (await import("@/dictionaries/en/ui.json")).default;
+  const fr = (await import("@/dictionaries/fr/ui.json")).default;
+  return {
+    getDictionary: async (locale: string) => (locale === "fr" ? fr : en),
+    t: runtime.t,
+  };
 });
 
 import { getAddOnsTab } from "@/server/usecases/add-ons-tab";
+import { resolveLocale } from "@/lib/resolve-locale";
+import frUi from "@/dictionaries/fr/ui.json";
+import type { Dict } from "@/lib/i18n-constants";
 import AddOnsSettingsPage from "../page";
 
 const view = vi.mocked(getAddOnsTab);
@@ -80,7 +90,11 @@ const COMMUNITY = "Add-ons are available on Pro and Pro Plus.";
 const NO_LIVE = "Extra organisations need an active paid subscription.";
 const PAUSED = "Adding organisations is paused until this bill is up to date.";
 
-beforeEach(() => view.mockReset());
+beforeEach(() => {
+  view.mockReset();
+  // English unless a test says otherwise — `mockResolvedValue` persists.
+  vi.mocked(resolveLocale).mockResolvedValue("en");
+});
 
 describe("Add-ons page — who is offered the purchase", () => {
   it("gives the PAYER of a live paid group the control", async () => {
@@ -165,6 +179,25 @@ describe("Add-ons page — the numbers it hands the control", () => {
     expect(p.max).toBe(50);
     expect(p.priceMinor).toBe(1900);
     expect(p.currency).toBe("usd");
+  });
+
+  it("hands the island the VIEWER's locale and dictionary, not English", async () => {
+    // `dict` and `locale` were passed and asserted nowhere. `locale` is what
+    // formats the money INSIDE the island (`formatMinor(…, locale)`), so a
+    // hardcoded "en" quotes a French buyer en-US currency with every other
+    // assertion in this file still green — the same class as the price-source
+    // bug this page already shipped once.
+    vi.mocked(resolveLocale).mockResolvedValue("fr");
+    const { control, text } = await render();
+    const p = propsOf(control!);
+
+    expect(p.locale).toBe("fr");
+    // And the dictionary has to be that locale's too, or the island renders
+    // French-formatted money under English labels.
+    expect((p.dict as Dict)["addOns.extraOrg.label"]).toBe(frUi["addOns.extraOrg.label"]);
+    // Discriminator: the PAGE around it is French as well, so this is a locale
+    // that really was resolved rather than one prop set in isolation.
+    expect(text).toContain(frUi["addOns.intro"]);
   });
 
   it("states the capacity the customer BOUGHT", async () => {

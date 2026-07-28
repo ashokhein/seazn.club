@@ -214,6 +214,71 @@ describe.skipIf(!HAS_DB)("getAddOnsTab", () => {
     expect(view.minExtraOrgs).toBeLessThanOrEqual(view.extraOrgCount);
   });
 
+  // ── the `capReduced` ordering: an UNLIMITED purchased cap ────────────────
+  //
+  // `capReduced` asks `admissionCap !== null && (orgCap === null || admissionCap
+  // < orgCap)`. The null arm is the whole reorder, and the naive ordering
+  // (`orgCap !== null && …`) answers false for it while every healthy fixture
+  // above stays green.
+  //
+  // Reaching it needs a group whose PURCHASED cap is unlimited while its
+  // ADMISSION cap is finite. A null `int_value` override is unlimited
+  // (lib/auth.ts, and the admin route writes `int_value ?? null` for exactly
+  // that grant), and it SURVIVES the resolver's dunning degradation — so a
+  // past_due group is not that state, and the pair of tests below says so in
+  // both directions rather than asserting one and hoping.
+
+  it("flags the reduction when the purchased cap is UNLIMITED and admission is not", async () => {
+    const { auth } = await seedOrg("pro");
+    const walletId = await walletIdFor(auth.orgId);
+    // Staff-written UNLIMITED, on the org that resolves the group's cap.
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, int_value)
+      values (${auth.orgId}, 'orgs.max_owned', null)`;
+    // Every live organisation suspended. `groupOrgLimit`'s degenerate branch
+    // then reads `plan_entitlements` straight — it documents that per-org
+    // overrides are LOST there — so admission falls back to the Pro base of 5
+    // while the receipt still says unlimited. That divergence is the state, and
+    // moderation reaching it is not exotic.
+    await sql`update organizations set status = 'suspended' where subscription_id = ${walletId}`;
+    await sql`
+      update subscriptions set stripe_subscription_id = ${"sub_" + randomUUID()}
+       where id = ${walletId}`;
+    await invalidateOrgEntitlements(auth.orgId);
+
+    const view = await getAddOnsTab(auth.orgId, auth.userId, "usd");
+
+    // FIRST, so the fixture cannot pass un-degraded: the purchased cap really
+    // is unlimited, and admission really is finite and below it.
+    expect(view.orgCap).toBeNull();
+    expect(await groupOrgLimit(walletId)).toBe(5);
+    expect(view.capReduced).toBe(true);
+  });
+
+  it("does NOT flag it when an unlimited override survives the degradation", async () => {
+    // The negative half, and the reason `capReduced` is not simply
+    // `orgCap === null`. Dunning degrades the PLAN, but the override outranks
+    // the plan row in `resolve()`, so both caps stay unlimited and the two
+    // agree — there is nothing to tell the customer.
+    const { auth } = await seedOrg("pro");
+    const walletId = await walletIdFor(auth.orgId);
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, int_value)
+      values (${auth.orgId}, 'orgs.max_owned', null)`;
+    await sql`
+      update subscriptions
+         set status = 'past_due', status_changed_at = now() - interval '20 days',
+             stripe_subscription_id = ${"sub_" + randomUUID()}
+       where id = ${walletId}`;
+    await invalidateOrgEntitlements(auth.orgId);
+
+    const view = await getAddOnsTab(auth.orgId, auth.userId, "usd");
+
+    expect(view.orgCap).toBeNull();
+    expect(await groupOrgLimit(walletId)).toBeNull();
+    expect(view.capReduced).toBe(false);
+  });
+
   it("reads a staff override as the base, not the plan row", async () => {
     // An override REPLACES the plan base, and the >= 25 population this feature
     // courts is exactly where staff write one. Reading `plan_entitlements`

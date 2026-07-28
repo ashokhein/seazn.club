@@ -1,6 +1,18 @@
 import { describe, it, expect } from "vitest";
 import { featurePlan, featureReason } from "@/lib/feature-copy";
 
+/**
+ * The vocabulary a price claim has to reach for. The ruling on the
+ * `orgs.max_owned` refusal (v17 gap #293) is "name the purchase, never price
+ * it" — a rule about what the sentence CLAIMS, which a denylist of specific
+ * phrasings cannot express.
+ *
+ * Deliberately NOT a no-digits rule: the sentence's job is to state the caps
+ * ("Community 1, Pro 5, Pro Plus 10"), so digits are the thing it must keep.
+ */
+const PRICES_THE_RIDER =
+  /[$£€]|\b(rates?|prices?|priced|pricing|costs?|fees?|half|double|cheaper|discount)\b/i;
+
 describe("feature-copy V290", () => {
   it("maps Plus features to pro_plus", () => {
     for (const k of ["api.write", "scorers.max", "officials.auto", "domains.custom", "support.priority"]) {
@@ -35,15 +47,46 @@ describe("feature-copy V290", () => {
     const reason = featureReason("orgs.max_owned");
     expect(reason).toMatch(/extra organisation/i);
     expect(reason).toMatch(/Add-ons/);
-    // The rider is MONTHLY-ONLY, so it must not claim to cost what an org
-    // already on the bill costs: the plan price's second graduated tier is
-    // 900/1900 a month but 7900/16300 a YEAR, so any rate equivalence is ~37%
-    // wrong for an annual group. The figure belongs to the Add-ons page, which
-    // knows the currency and reads it from the rider SKU. Absence assertion,
-    // so it sits next to the positive ones above deliberately: the sentence
-    // must still NAME the purchase, it just must not PRICE it.
-    expect(reason).not.toMatch(/half/i);
-    expect(reason).not.toMatch(/same rate/i);
+    // The CADENCE is the one commercial fact this sentence may state: it is
+    // true on every plan and in every currency. Positive, and it pairs with
+    // the absence below — the sentence must still NAME the purchase and its
+    // rhythm, it just must not PRICE it.
+    expect(reason).toMatch(/monthly/i);
+    expect(reason).not.toMatch(PRICES_THE_RIDER);
+  });
+
+  it("the no-price rule survives a REWORD — it pins vocabulary, not two phrasings", () => {
+    // The rule used to be `not.toMatch(/half/i)` + `not.toMatch(/same rate/i)`,
+    // which is a denylist of two sentences rather than the ruling. Putting the
+    // exact falsehood back in different words passed.
+    //
+    // Every claim below is plausible and every one is ~37% wrong for an ANNUAL
+    // group: the plan price's second graduated tier (what the organisations
+    // already on the bill cost) is 900/1900 a month but 7900/16300 a YEAR,
+    // while the rider SKU sold here is monthly-only at 900/1900. The figure
+    // belongs to the Add-ons page, which knows the currency and reads it from
+    // the rider SKU.
+    for (const reworded of [
+      "buy an extra organisation at half your plan's rate",
+      "buy an extra organisation at the same rate as the ones already on your bill",
+      "buy an extra organisation at the same monthly cost as the ones on your bill",
+      "buy an extra organisation for $9",
+      "buy an extra organisation for £9 a month",
+      "buy an extra organisation — €19 on Pro Plus",
+      "an extra organisation is priced per month",
+      "extra organisations are cheaper than a second bill",
+      "there is no extra fee beyond your plan",
+    ]) {
+      expect(reworded).toMatch(PRICES_THE_RIDER);
+    }
+
+    // Discriminators, so the rule is not simply "reject every sentence": the
+    // shipped copy passes, and so does the ONE set of numbers it must keep.
+    // A no-digits rule would have been WRONG for exactly this reason — the
+    // caps themselves are what the refusal is about.
+    expect(featureReason("orgs.max_owned")).not.toMatch(PRICES_THE_RIDER);
+    expect("Community 1, Pro 5, Pro Plus 10").not.toMatch(PRICES_THE_RIDER);
+    expect("it's billed monthly on top of your current bill").not.toMatch(PRICES_THE_RIDER);
   });
   it("has copy for the v16 league-ops entitlements (V293/V294/V295, T84)", () => {
     expect(featureReason("discipline.enforced")).toBe(
