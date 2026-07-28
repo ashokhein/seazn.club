@@ -4625,6 +4625,28 @@ async function endCompetition(competitionId: string): Promise<void> {
   }
 }
 
+/**
+ * True when `name` is a REAL rendered HTML attribute — not merely a prop name
+ * that survived into the RSC flight payload Next embeds in the same body.
+ *
+ * React does NOT drop an omitted prop when it serialises a server-rendered
+ * element; it encodes the `undefined` so the client can tell "absent" from
+ * "never sent". Rendering `<div data-pass-active={held || undefined}>` with
+ * `held` false produces, verbatim:
+ *
+ *   0:["$","div",null,{"data-pass-active":"$undefined","data-pass-ended":true},…]
+ *
+ * So `body.includes("data-pass-active")` is TRUE for an attribute the browser
+ * never sees, and the string is present in BOTH states. A bare-name check is
+ * therefore vacuous in the positive direction and IMPOSSIBLE to satisfy in the
+ * negative one — the p301 upgrade checks hit both halves of that at once.
+ * Anchoring on `="` keys off the serialised attribute, which only real markup
+ * carries.
+ */
+function renderedAttr(body: string, name: string): boolean {
+  return body.includes(`${name}="`);
+}
+
 /** Every Event Pass rung the `plans` table actually carries, sorted. Read with
  *  a plain `select key` and filtered in JS rather than a `like 'event\_pass%'`
  *  — the escaped underscore is a needless trap inside a tagged template. */
@@ -5501,7 +5523,7 @@ async function pricingV3Suite(): Promise<void> {
   const upgradePage = await html(buyer, `/o/${orgRow.slug}/c/${compA.slug}/upgrade`);
   check(
     "p36: upgrade page shows pass active",
-    upgradePage.status === 200 && upgradePage.body.includes("data-pass-active"),
+    upgradePage.status === 200 && renderedAttr(upgradePage.body, "data-pass-active"),
   );
 
   // v17 gap #301: finish compA's competition and prove every surface stops
@@ -5516,27 +5538,31 @@ async function pricingV3Suite(): Promise<void> {
   // Three separate checks, deliberately. The first version ANDed all three into
   // one boolean and failed in CI without saying WHICH part failed — the same
   // "reports less than it knows" defect this wave keeps finding in guards.
+  //
+  // All marker checks go through `renderedAttr`, never `body.includes(name)`:
+  // the flight payload carries the prop NAME in both states (see its doc), so a
+  // bare-name check passed here in the wrong state and failed in the right one.
   check(
     `p301: the upgrade page still renders for a finished competition (got ${upgradeEnded.status})`,
     upgradeEnded.status === 200,
   );
   check(
     "p301: upgrade page marks the pass ENDED once its competition finished",
-    upgradeEnded.body.includes("data-pass-ended"),
+    renderedAttr(upgradeEnded.body, "data-pass-ended"),
   );
   check(
     "p301: upgrade page drops the ACTIVE marker once its competition finished",
-    !upgradeEnded.body.includes("data-pass-active"),
+    !renderedAttr(upgradeEnded.body, "data-pass-active"),
   );
 
   const dashboardEnded = await html(buyer, `/o/${orgRow.slug}`);
   check(
     "p301: dashboard card seal shows ENDED once its competition finished",
-    dashboardEnded.status === 200 && dashboardEnded.body.includes("data-pass-ended"),
+    dashboardEnded.status === 200 && renderedAttr(dashboardEnded.body, "data-pass-ended"),
   );
   check(
     "p301: dashboard card seal drops the HELD marker once its competition finished",
-    !dashboardEnded.body.includes("data-pass-held="),
+    !renderedAttr(dashboardEnded.body, "data-pass-held"),
   );
 
   const billingEnded = await html(buyer, `/o/${orgRow.slug}/settings/billing`);
