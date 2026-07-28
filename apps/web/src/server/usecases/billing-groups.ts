@@ -25,6 +25,7 @@ import {
   invalidateOrgEntitlements,
 } from "@/lib/entitlements";
 import { activeOrgCount, assertWithinGroupCap, groupOrgLimit } from "@/lib/billing-group";
+import { orgAddonForPlan } from "@/lib/org-addons";
 import { hasLiveSubscription } from "@/lib/subscription-status";
 import { intervalForPrice } from "@/lib/billing-manage";
 import { toLocale, type Locale } from "@/lib/i18n-constants";
@@ -702,7 +703,15 @@ export async function attachOrgToGroup(args: {
       select count(*)::text as n from organizations
        where subscription_id = ${subscriptionId} and deleted_at is null`;
     // Counted under the lock, compared against a limit resolved outside it.
-    assertWithinGroupCap(Number(heldRow?.n ?? 0), capLimit);
+    // v17 gap #293: `target.plan_key` is the group's own plan (read by groupRow
+    // before the transaction), so the refusal offers the extra-org rider only
+    // where one is actually sellable — never on community, where the way past
+    // the cap is an upgrade.
+    assertWithinGroupCap(
+      Number(heldRow?.n ?? 0),
+      capLimit,
+      !!orgAddonForPlan(target.plan_key),
+    );
 
     await tx`update organizations set subscription_id = ${subscriptionId} where id = ${orgId}`;
     // #285: what happens to the wallet the org is leaving — org.subscription_id

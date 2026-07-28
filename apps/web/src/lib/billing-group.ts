@@ -216,10 +216,27 @@ export async function groupOrgLimit(subscriptionId: string): Promise<number | nu
 }
 
 /** Apply a limit resolved by groupOrgLimit to a count read under the lock.
- *  Pure, so it is safe to call from inside a transaction. */
-export function assertWithinGroupCap(currentOrgCount: number, limit: number | null): void {
+ *  Pure, so it is safe to call from inside a transaction.
+ *
+ *  `addonAvailable` (v17 gap #293): can the refused plan buy its way past the
+ *  cap? Resolved by the caller BEFORE the transaction — same reason `limit`
+ *  itself is — so the refusal can point at a real purchase instead of a
+ *  dead-end "upgrade". Keeping it a plain argument is what keeps this function
+ *  pure and transaction-safe; do not turn it into a lookup here. Defaults to
+ *  false (no offer) for the one caller that cannot cheaply know
+ *  (assertGroupMayHoldAnotherOrg, which has no production caller left). */
+export function assertWithinGroupCap(
+  currentOrgCount: number,
+  limit: number | null,
+  addonAvailable = false,
+): void {
   // null is UNLIMITED; 0 means the plan has no row for the key at all, and both
   // that and a real 1 correctly refuse a group that already holds one org.
   if (limit === null) return;
-  if (currentOrgCount + 1 > limit) throw new PaymentRequiredError("orgs.max_owned");
+  if (currentOrgCount + 1 > limit) {
+    throw new PaymentRequiredError(
+      "orgs.max_owned",
+      addonAvailable ? { offer: "extra_org" } : undefined,
+    );
+  }
 }

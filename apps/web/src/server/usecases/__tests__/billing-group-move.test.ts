@@ -428,6 +428,42 @@ describe.skipIf(!HAS_DB)("attach", () => {
     ).rejects.toBeInstanceOf(PaymentRequiredError);
   });
 
+  it("the org-cap refusal carries a purchase offer for pro (v17 gap #293)", async () => {
+    const payer = await makeUser("payer");
+    const group = await makeGroup(payer, { plan: "pro", stripeSubId: "sub_cap_offer_" + uniq() });
+    for (let i = 0; i < 5; i++) await makeOrg(group, payer);
+    const joiner = await makeLooseOrg(payer);
+
+    const err = await attachOrgToGroup({
+      actorUserId: payer,
+      orgId: joiner.orgId,
+      subscriptionId: group,
+    }).then(() => null, (e) => e);
+
+    expect(err).toBeInstanceOf(PaymentRequiredError);
+    expect((err as InstanceType<typeof PaymentRequiredError>).extra).toEqual({ offer: "extra_org" });
+  });
+
+  it("a full COMMUNITY group's org-cap refusal carries no offer (v17 gap #293)", async () => {
+    // The discriminator for the test above: same code path, same 402, same key —
+    // only the group's plan differs, and community has no rider to sell. Without
+    // this, an implementation that stamped the offer unconditionally would pass.
+    const payer = await makeUser("payer");
+    const group = await makeGroup(payer, { plan: "community" });
+    await makeOrg(group, payer); // community holds 1
+    const joiner = await makeLooseOrg(payer);
+
+    const err = await attachOrgToGroup({
+      actorUserId: payer,
+      orgId: joiner.orgId,
+      subscriptionId: group,
+    }).then(() => null, (e) => e);
+
+    expect(err).toBeInstanceOf(PaymentRequiredError);
+    expect((err as InstanceType<typeof PaymentRequiredError>).featureKey).toBe("orgs.max_owned");
+    expect((err as InstanceType<typeof PaymentRequiredError>).extra).toBeUndefined();
+  });
+
   it("refuses to raise quantity on a legacy flat price rather than overcharge", async () => {
     // A per_unit price bills quantity x base: a two-org Pro group would pay $38
     // where it owes $28. Fail closed, and BEFORE the org is moved.

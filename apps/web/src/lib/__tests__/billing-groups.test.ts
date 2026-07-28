@@ -42,6 +42,7 @@ import {
 import {
   activeOrgCount,
   assertGroupMayHoldAnotherOrg,
+  assertWithinGroupCap,
   groupIdsOwnedBy,
   groupOrgLimit,
 } from "@/lib/billing-group";
@@ -103,6 +104,53 @@ afterAll(async () => {
   const client = g._sql;
   g._sql = undefined;
   await client?.end();
+});
+
+// Pure — no DB, deliberately NOT skipIf(!HAS_DB), so CI's no-database unit job
+// runs the offer contract too.
+describe("assertWithinGroupCap — purchase offer (v17 gap #293)", () => {
+  it("carries { offer: 'extra_org' } when the caller says the plan can buy one", () => {
+    let caught: unknown;
+    try {
+      assertWithinGroupCap(5, 5, true);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(PaymentRequiredError);
+    expect((caught as InstanceType<typeof PaymentRequiredError>).extra).toEqual({ offer: "extra_org" });
+  });
+
+  it("carries no offer when the plan cannot buy one", () => {
+    let caught: unknown;
+    try {
+      assertWithinGroupCap(1, 1, false);
+    } catch (err) {
+      caught = err;
+    }
+    // The absence is only meaningful next to a positive discriminator: the
+    // refusal itself must still be the SAME 402 on the SAME key, or "no offer"
+    // could just as well mean "no refusal happened at all".
+    expect(caught).toBeInstanceOf(PaymentRequiredError);
+    expect((caught as InstanceType<typeof PaymentRequiredError>).featureKey).toBe("orgs.max_owned");
+    expect((caught as InstanceType<typeof PaymentRequiredError>).extra).toBeUndefined();
+  });
+
+  it("defaults to no offer when the third argument is omitted (back-compat)", () => {
+    let caught: unknown;
+    try {
+      assertWithinGroupCap(5, 5);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(PaymentRequiredError);
+    expect((caught as InstanceType<typeof PaymentRequiredError>).featureKey).toBe("orgs.max_owned");
+    expect((caught as InstanceType<typeof PaymentRequiredError>).extra).toBeUndefined();
+  });
+
+  it("still admits a count under the cap, offer flag or not", () => {
+    expect(() => assertWithinGroupCap(4, 5, true)).not.toThrow();
+    expect(() => assertWithinGroupCap(99, null, true)).not.toThrow();
+  });
 });
 
 describe.skipIf(!HAS_DB)("a billing group of three orgs", () => {
@@ -237,6 +285,49 @@ describe.skipIf(!HAS_DB)("the per-user cap and the per-group cap are different g
     await expect(createOrgForUser(userId, `Third ${s}`)).rejects.toBeInstanceOf(
       PaymentRequiredError,
     );
+  });
+
+  it("the person-cap refusal offers a purchase when an owned org's plan can buy one (v17 gap #293)", async () => {
+    const s = uniq();
+    const [{ id: userId }] = await sql<{ id: string }[]>`
+      insert into users (email, display_name, email_verified)
+      values (${`personcap-${s}@test.local`}, 'Person Cap', true) returning id`;
+    const [{ id: subId }] = await sql<{ id: string }[]>`
+      insert into subscriptions (owner_user_id, plan_key, status, quantity_paid)
+      values (${userId}, 'pro', 'active', 5) returning id`;
+    for (let i = 0; i < 5; i++) {
+      const [{ id: orgId }] = await sql<{ id: string }[]>`
+        insert into organizations (name, slug, created_by, subscription_id)
+        values (${`Cap ${s} ${i}`}, ${`cap-${s}-${i}`}, ${userId}, ${subId}) returning id`;
+      await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${userId}, 'owner')`;
+    }
+
+    const { assertMayOwnAnotherOrg } = await import("@/lib/auth");
+    const err = await assertMayOwnAnotherOrg(userId).then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(PaymentRequiredError);
+    expect((err as InstanceType<typeof PaymentRequiredError>).extra).toEqual({ offer: "extra_org" });
+  });
+
+  it("carries no offer for a community-only spread (nothing to buy)", async () => {
+    const s = uniq();
+    const [{ id: userId }] = await sql<{ id: string }[]>`
+      insert into users (email, display_name, email_verified)
+      values (${`personcap-comm-${s}@test.local`}, 'Person Cap Comm', true) returning id`;
+    const [{ id: subId }] = await sql<{ id: string }[]>`
+      insert into subscriptions (owner_user_id, plan_key, status)
+      values (${userId}, 'community', 'active') returning id`;
+    const [{ id: orgId }] = await sql<{ id: string }[]>`
+      insert into organizations (name, slug, created_by, subscription_id)
+      values (${`CommCap ${s}`}, ${`comm-cap-${s}`}, ${userId}, ${subId}) returning id`;
+    await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${userId}, 'owner')`;
+
+    const { assertMayOwnAnotherOrg } = await import("@/lib/auth");
+    const err = await assertMayOwnAnotherOrg(userId).then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(PaymentRequiredError);
+    // Same discriminator rule as the pure tests: the refusal must still be the
+    // orgs.max_owned 402, so "no offer" cannot be satisfied by "no refusal".
+    expect((err as InstanceType<typeof PaymentRequiredError>).featureKey).toBe("orgs.max_owned");
+    expect((err as InstanceType<typeof PaymentRequiredError>).extra).toBeUndefined();
   });
 });
 

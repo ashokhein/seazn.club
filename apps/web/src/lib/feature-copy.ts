@@ -11,9 +11,14 @@ const FEATURE_REASONS: Record<string, string> = {
   // Fires for BOTH caps: the per-USER limit (creating one org too many for your
   // plan — Community allows 1) and the per-GROUP limit (a shared bill that is
   // full). Worded to make sense for either, and to name the upgrade path and the
-  // half-price extra-org rule rather than the raw key.
+  // half-price extra-org rule rather than the raw key. v17 gap #293: the way
+  // past the cap on a PAID plan is now a purchase (the recurring extra-org
+  // rider), not an upgrade — the 402 carries { offer: "extra_org" } alongside
+  // this sentence, so the copy has to name the same remedy the machine hint
+  // does. The rate matches the plan price's second graduated tier ($9 on Pro,
+  // $19 on Pro Plus), i.e. exactly what the orgs already on the bill cost.
   "orgs.max_owned":
-    "Your current plan covers the most organisations it allows (Community 1, Pro 5, Pro Plus 10). Upgrade in Settings → Billing to create more — each extra organisation is half your plan's rate, on one shared bill.",
+    "Your current plan covers the most organisations it allows (Community 1, Pro 5, Pro Plus 10). On Pro or Pro Plus, buy an extra organisation from Settings → Add-ons for the same rate as the ones already on your bill; Community upgrades to Pro first.",
   "members.max": "You've reached your plan's team-member seats.",
   "scorers.max": "You've reached your plan's scorer seats.",
   "competitions.max_active": "Your plan's active-competition limit is reached.",

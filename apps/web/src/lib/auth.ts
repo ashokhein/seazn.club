@@ -6,7 +6,8 @@ import { sql } from "@/lib/db";
 import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import type { Organization, OrgMembership, OrgRole, User } from "@/lib/types";
 import { AuthError, PaymentRequiredError } from "@/lib/errors";
-import { getLimit } from "@/lib/entitlements";
+import { getLimit, orgPlanKey } from "@/lib/entitlements";
+import { orgAddonForPlan } from "@/lib/org-addons";
 import { grantMonthly, walletIdFor } from "@/lib/credits";
 import { isReservedSlug } from "@/lib/public-site";
 import { consumeReferralCookie } from "@/lib/referral";
@@ -240,7 +241,19 @@ export async function assertMayOwnAnotherOrg(userId: string): Promise<void> {
   // old code defaulted to the community 1. Both refuse here: owned.length is
   // already >= 1, so owned.length + 1 exceeds 0 and 1 alike.
   const limit = Math.max(...(limits as number[]));
-  if (owned.length + 1 > limit) throw new PaymentRequiredError("orgs.max_owned");
+  if (owned.length + 1 > limit) {
+    // v17 gap #293: does ANY owned org's plan support the extra-org add-on?
+    // Resolved through the SAME plan the limit itself came from (orgPlanKey),
+    // so a lapsed/degraded plan never offers a purchase it cannot complete.
+    // Only ever runs on the refusal path, so the extra reads cost nothing on
+    // the hot "you may create one" answer.
+    const plans = await Promise.all(owned.map((o) => orgPlanKey(o.org_id)));
+    const addonAvailable = plans.some((p) => !!orgAddonForPlan(p));
+    throw new PaymentRequiredError(
+      "orgs.max_owned",
+      addonAvailable ? { offer: "extra_org" } : undefined,
+    );
+  }
 }
 
 /**
