@@ -396,3 +396,193 @@ describe("ensurePrice — flat → tiered", () => {
     expect(update).not.toHaveBeenCalled();
   });
 });
+
+// Prices are immutable, so the block above is all about REPLACING them. Product
+// name/description are the opposite — mutable, and the only part of the seed a
+// buyer actually reads (Checkout renders the product's name and description).
+// ensurePrice used to return the moment the price matched, so a copy-only edit
+// to stripe-plans.json reached Stripe never: `products.create` was the script's
+// one and only Products call, and it only fires when no price exists at all.
+describe("ensurePrice — product copy sync", () => {
+  function fakeProduct(over: Partial<Stripe.Product>): Stripe.Product {
+    return {
+      id: "prod_1",
+      object: "product",
+      name: "old name",
+      description: "old description",
+      ...over,
+    } as Stripe.Product;
+  }
+
+  /** A live FLAT price matching the Event Pass seed exactly (so nothing but the
+   *  copy can be the reason for a write), carrying `product` as given. */
+  function fakeStripeWithProduct(product: Stripe.Price["product"], spec: PriceSpec = eventPass) {
+    const price = livePrice({
+      unit_amount: spec.unit_amount,
+      billing_scheme: "per_unit",
+      currency_options: Object.fromEntries(
+        Object.entries(spec.currency_options ?? {}).map(([c, a]) => [
+          c,
+          liveCurrencyOption({ unit_amount: a }),
+        ]),
+      ),
+      product,
+    });
+    const list = vi.fn<(p: Stripe.PriceListParams) => Promise<Stripe.ApiList<Stripe.Price>>>(
+      async () => ({ data: [price] }) as Stripe.ApiList<Stripe.Price>,
+    );
+    const priceUpdate = vi.fn<(id: string, p: Stripe.PriceUpdateParams) => Promise<Stripe.Price>>(
+      async () => price,
+    );
+    const priceCreate = vi.fn<(p: Stripe.PriceCreateParams) => Promise<Stripe.Price>>(
+      async () => ({ id: "price_new" }) as Stripe.Price,
+    );
+    const productsUpdate = vi.fn<
+      (id: string, p: Stripe.ProductUpdateParams) => Promise<Stripe.Product>
+    >(async () => fakeProduct({}));
+    const productsCreate = vi.fn<(p: Stripe.ProductCreateParams) => Promise<Stripe.Product>>(
+      async () => fakeProduct({}),
+    );
+    return {
+      stripe: {
+        prices: { list, create: priceCreate, update: priceUpdate },
+        products: { create: productsCreate, update: productsUpdate },
+      } as unknown as Stripe,
+      priceUpdate,
+      priceCreate,
+      productsUpdate,
+      productsCreate,
+    };
+  }
+
+  it("updates the live product when the seed's copy changed but the price did not", async () => {
+    const { stripe, productsUpdate, priceUpdate, priceCreate } = fakeStripeWithProduct(
+      fakeProduct({ name: "Seazn Club Event Pass", description: "old description" }),
+    );
+    const out = await ensurePrice(
+      stripe,
+      eventPass,
+      { name: "Seazn Club Event Pass", description: "new description" },
+      "event_pass",
+      "usd",
+      null,
+    );
+    expect(out.priceId).toBe("price_old"); // the price itself is untouched
+    expect(out.productId).toBe("prod_1");
+    expect(productsUpdate).toHaveBeenCalledTimes(1);
+    expect(productsUpdate).toHaveBeenCalledWith("prod_1", {
+      name: "Seazn Club Event Pass",
+      description: "new description",
+    });
+    expect(priceUpdate).not.toHaveBeenCalled();
+    expect(priceCreate).not.toHaveBeenCalled();
+  });
+
+  it("updates the live product on a NAME-only change too", async () => {
+    const { stripe, productsUpdate } = fakeStripeWithProduct(
+      fakeProduct({ name: "Seazn Club Event Pass", description: "Same description" }),
+    );
+    await ensurePrice(
+      stripe,
+      eventPass,
+      { name: "Seazn Club Event Pass L", description: "Same description" },
+      "event_pass",
+      "usd",
+      null,
+    );
+    expect(productsUpdate).toHaveBeenCalledTimes(1);
+    expect(productsUpdate.mock.calls[0]![1].name).toBe("Seazn Club Event Pass L");
+  });
+
+  // The negative case is the whole point: an unconditional update would satisfy
+  // the two tests above while rewriting every product on every sync run —
+  // pointless writes, and a `product.updated` webhook event for each.
+  it("does not call products.update when name and description already match", async () => {
+    const { stripe, productsUpdate } = fakeStripeWithProduct(
+      fakeProduct({ name: "Seazn Club Event Pass", description: "Same description" }),
+    );
+    await ensurePrice(
+      stripe,
+      eventPass,
+      { name: "Seazn Club Event Pass", description: "Same description" },
+      "event_pass",
+      "usd",
+      null,
+    );
+    expect(productsUpdate).not.toHaveBeenCalled();
+  });
+
+  // A seed with no description against a live product that has none either:
+  // the two spellings of "nothing" (undefined vs null) must not read as drift,
+  // or every run rewrites the product forever.
+  it("treats an absent seed description and a null live description as the same", async () => {
+    const { stripe, productsUpdate } = fakeStripeWithProduct(
+      fakeProduct({ name: "Pass", description: null }),
+    );
+    await ensurePrice(stripe, eventPass, { name: "Pass" }, "event_pass", "usd", null);
+    expect(productsUpdate).not.toHaveBeenCalled();
+  });
+
+  // Stripe unsets a string field with the EMPTY STRING; `description: undefined`
+  // is dropped from the request body and leaves the old copy live — which would
+  // re-fire this same update on every subsequent run, forever.
+  it("clears a stale live description with an empty string, not undefined", async () => {
+    const { stripe, productsUpdate } = fakeStripeWithProduct(
+      fakeProduct({ name: "Pass", description: "stale copy" }),
+    );
+    await ensurePrice(stripe, eventPass, { name: "Pass" }, "event_pass", "usd", null);
+    expect(productsUpdate).toHaveBeenCalledWith("prod_1", { name: "Pass", description: "" });
+  });
+
+  // `expand: ["data.product"]` normally hands us the whole product, but an
+  // unexpanded response carries a bare id — there is nothing to compare, so the
+  // sync must not write blind (that would rewrite every product every run).
+  it("does not write when the response carries a bare product id", async () => {
+    const { stripe, productsUpdate } = fakeStripeWithProduct("prod_1");
+    const out = await ensurePrice(
+      stripe,
+      eventPass,
+      { name: "Whatever", description: "different" },
+      "event_pass",
+      "usd",
+      null,
+    );
+    expect(out.productId).toBe("prod_1");
+    expect(productsUpdate).not.toHaveBeenCalled();
+  });
+
+  it("does not write to a deleted product", async () => {
+    const deleted = { id: "prod_1", object: "product", deleted: true } as Stripe.DeletedProduct;
+    const { stripe, productsUpdate } = fakeStripeWithProduct(deleted);
+    await ensurePrice(
+      stripe,
+      eventPass,
+      { name: "Whatever", description: "different" },
+      "event_pass",
+      "usd",
+      null,
+    );
+    expect(productsUpdate).not.toHaveBeenCalled();
+  });
+
+  // Copy sync must not live BEHIND the drift check's early return, nor be
+  // skipped by the replace-and-archive path: both edits ship in the same run.
+  it("syncs the copy even when the price itself drifted and is being replaced", async () => {
+    const { stripe, productsUpdate, priceCreate, priceUpdate } = fakeStripeWithProduct(
+      fakeProduct({ name: "Pass", description: "old description" }),
+      { ...eventPass, unit_amount: eventPass.unit_amount + 100 },
+    );
+    const out = await ensurePrice(
+      stripe,
+      eventPass,
+      { name: "Pass", description: "new description" },
+      "event_pass",
+      "usd",
+      null,
+    );
+    expect(out.priceId).toBe("price_new"); // price was replaced…
+    expect(priceCreate).toHaveBeenCalledTimes(1);
+    expect(priceUpdate).toHaveBeenCalledWith("price_old", { active: false });
+    expect(productsUpdate).toHaveBeenCalledTimes(1); // …and the copy still shipped
+  });
+});

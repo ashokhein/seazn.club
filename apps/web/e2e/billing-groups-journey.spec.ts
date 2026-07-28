@@ -201,7 +201,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     const dialog = dialogOf(page);
     await expect(dialog).toBeVisible();
     // Seats are full, so this move costs money and the dialog has to say so.
-    await expect(dialog).toContainText("your bill goes up by half your plan's rate");
+    await expect(dialog).toContainText("your bill goes up by no more than half the base rate");
     await shot(dialog, "attach-confirm-charged");
   });
 
@@ -324,7 +324,13 @@ test.describe.serial("billing groups — visual workflow", () => {
     const dialog = dialogOf(page);
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("there is nothing to pay now");
-    await expect(dialog).not.toContainText("charged now");
+    // Negative asserted against the phrase that is unique to the CHARGED body.
+    // NOT "added to your next invoice": the free body now says "nothing is
+    // added to your next invoice" (the renewal bound, #299 round 4), which
+    // CONTAINS that substring — the negative would have failed on true copy.
+    // "your bill goes up by" appears in the charged body and in neither of the
+    // other two, so it is what actually discriminates.
+    await expect(dialog).not.toContainText("your bill goes up by");
     await shot(dialog, "attach-confirm-free");
 
     await confirmDialog(page, "Move it onto this bill");

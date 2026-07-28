@@ -22,7 +22,7 @@ The welcome tour walks you through this next, right after naming your organisati
 
 ## Common questions
 
-**Can I run more than one organisation?** On a paid plan, yes — switch between them from the organisation menu. Each keeps its own competitions, team and Stripe payouts, but they don't need separate subscriptions: one plan covers up to 5 organisations on Pro or 10 on Pro Plus, with each one after the first at half the rate. Community covers one organisation. See [one subscription, several organisations](/help/billing/groups).
+**Can I run more than one organisation?** On a paid plan, yes — switch between them from the organisation menu. Each keeps its own competitions, team and Stripe payouts, but they don't need separate subscriptions: one plan covers up to 5 organisations on Pro or 10 on Pro Plus, with each one after the first at no more than half the base rate. Community covers one organisation. See [one subscription, several organisations](/help/billing/groups).
 
 **Who can see my organisation?** Only what you explicitly share. Competitions start Private; your public page at `/shared/your-org` lists only competitions you make Public.
 

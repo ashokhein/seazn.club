@@ -10,7 +10,7 @@ Run real competitions, free: 10 active competitions, 4 divisions in each, 5 team
 
 ## Event Pass — from $29 one-time
 
-One-time upgrade for a single competition, for that event's lifetime, without a subscription. It comes in **two sizes**, and the only difference between them is how big that one event may get:
+One-time upgrade for a single competition, while that competition is still running, without a subscription. It comes in **two sizes**, and the only difference between them is how big that one event may get:
 
 - **M — $29**: **128 entrants** per division, up to **10 divisions**.
 - **L — $59**: **unlimited entrants**, up to **20 divisions**.
@@ -48,7 +48,7 @@ Stripe's own processing fee is separate and set by Stripe. The whole money journ
 
 ## One subscription can cover several organisations
 
-A subscription is a **billing group**: one card and one invoice for up to 5 organisations on Pro, or 10 on Pro Plus. The first is the plan's normal price and each one after that is half — $9/month on Pro, $19/month on Pro Plus. Every organisation in the group runs on the group's plan, so its entry-fee rate follows too. Community holds one organisation. See [one subscription, several organisations](/help/billing/groups).
+A subscription is a **billing group**: one card and one invoice for up to 5 organisations on Pro, or 10 on Pro Plus. The first is the plan's normal price and each one after that is **no more than half** — $9/month on Pro, $19/month on Pro Plus. Every organisation in the group runs on the group's plan, so its entry-fee rate follows too. Community holds one organisation. See [one subscription, several organisations](/help/billing/groups).
 
 ## Changing plan or billing period mid-cycle
 
@@ -69,7 +69,7 @@ Switch plan — up or down — or flip between monthly and yearly, and we don't 
 
 **Does a passed competition use up an active-competition slot?** No — a competition covered by an [Event Pass](/help/billing/event-pass) doesn't count against your plan's active-competition limit, so a Community org running its annual tournament on a pass still has all 10 free slots.
 
-**Is AI Schedule a paid feature?** No — AI Schedule runs on every plan, including Community. There is no per-division run cap any more: runs are paid for out of your organisation's **AI credit wallet**, which every plan tops up monthly (10 / 60 / 200) and an Event Pass adds 25 to, once. Automatic *officials* assignment is separate and Pro Plus. See [AI Schedule](/help/scheduling/ai-scheduling).
+**Is AI Schedule a paid feature?** No — AI Schedule runs on every plan, including Community. What it spends is your organisation's **AI credit wallet**: each plan's monthly grant is listed with the plan above, an Event Pass adds a one-time top-up, and you can buy packs on top. Automatic *officials* assignment is separate and Pro Plus. See [AI Schedule](/help/scheduling/ai-scheduling) and [AI credits](/help/billing/credits).
 
 **What happens to my data if I stop paying?** Nothing is deleted, ever — see [downgrading](/help/billing/downgrade).
 

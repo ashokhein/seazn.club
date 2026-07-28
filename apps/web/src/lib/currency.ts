@@ -153,6 +153,27 @@ export function creditPackOptions(currency: Currency): CreditPackOption[] {
 }
 
 /**
+ * The CHEAPEST credit pack in a currency, for the "AI credits from …" line.
+ *
+ * v17 gap wave 7, fix round 2: `pricing.addons.credits` hardcoded "$10" in all
+ * four locales and rendered statically, on a page where every other price goes
+ * through `formatMinor(…, currency)` behind the `CurrencySwitcher`. The seed's
+ * cheapest pack is eur 900 / gbp 800 / aud 1500 / inr 79900, so the literal was
+ * false in FOUR of the five supported currencies — the same defect #191 was
+ * filed for, which is why the FAQ answers interpolate their prices.
+ *
+ * DERIVED, not named: the smallest AMOUNT in the switched currency, so adding a
+ * cheaper pack (or discounting one) moves the advertised floor with it rather
+ * than leaving a stale "from". Mirrors `lowestPassRung`'s reasoning for the
+ * Event Pass ladder.
+ */
+export function lowestCreditPackAmount(currency: Currency): number {
+  const options = creditPackOptions(currency);
+  if (options.length === 0) throw new Error("stripe-plans.json has no credit packs");
+  return Math.min(...options.map((o) => o.amountMinor));
+}
+
+/**
  * Format minor units in a currency for marketing surfaces: whole amounts drop
  * the decimals ("$19", "₹1,399"), fractional ones keep them ("$13.25").
  */

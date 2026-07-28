@@ -103,8 +103,14 @@ async function subscriptionItem(
  *
  * Read-only: `invoices.createPreview` computes an invoice without issuing one,
  * so calling this on every dialog open charges nobody. The confirm dialog turns
- * the amount into "£X.XX now" — the price stated before the irreversible click,
- * as an exact figure rather than "half your plan's rate".
+ * the amount into an exact figure rather than a rate — the price stated before
+ * the irreversible click.
+ *
+ * NOT "£X.XX now", which is what this line said until v17 gap #299 round 4 —
+ * the same stale-comment defect as `:206-207` above, three lines from the code
+ * it describes, and left behind when that one was corrected. Nothing here or in
+ * `syncGroupQuantity` charges a card: `create_prorations` books the adjustment
+ * onto the NEXT invoice. `billing.group.attach.confirmChargeAmount` says so.
  *
  * The amount is Stripe's own arithmetic on a real subscription; the fixture used
  * in tests returns what it is told, so the NUMBER is only ever verified against
@@ -204,7 +210,22 @@ async function assertGroupCanBillSeats(group: GroupRow, quantity: number): Promi
  * directions are prorated differently:
  *
  *  - UP past what has already been paid for: `create_prorations`, so the extra
- *    seat is charged immediately, and `quantity_paid` rises to match.
+ *    seat is PRORATED and `quantity_paid` rises to match.
+ *
+ *    NOT "charged immediately", which is what this line said until v17 gap #299
+ *    and which is contradicted by `billing-events.ts:738-740` in this same
+ *    repo: `create_prorations` books the adjustment onto the NEXT INVOICE.
+ *    Nothing in this file charges a card — the only Stripe mutations here are
+ *    `subscriptions.update/cancel`, a read-only `invoices.createPreview`,
+ *    `setupIntents.create` and `customers.update`. The idiom that WOULD charge
+ *    on the spot is `proration_behavior: "always_invoice"` (see
+ *    `lib/billing-manage.ts:81`, the plan-change path), and it is deliberately
+ *    not used here.
+ *
+ *    The comment mattered: four customer-facing surfaces said "charged now" on
+ *    the strength of it, including the confirmation dialog a payer reads
+ *    immediately before agreeing. `charged` below is a PRORATION FLAG
+ *    (`charged = raising`), not a statement that money moved.
  *  - DOWN, or back UP into a slot already paid for: `proration_behavior: "none"`.
  *    No credit on the way down (no refunds, nothing to farm by cycling orgs) and
  *    no charge on the way back up — but the item moves either way, so the NEXT

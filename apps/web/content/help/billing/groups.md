@@ -1,6 +1,6 @@
 ---
 title: One subscription, several organisations
-description: A billing group pays for more than one organisation on a single card and a single invoice — extra organisations are half price, and every one of them runs on the group's plan.
+description: A billing group pays for more than one organisation on a single card and a single invoice — extra organisations cost no more than half the base rate, and every one of them runs on the group's plan.
 order: 4
 ---
 
@@ -10,7 +10,7 @@ A subscription isn't tied to one organisation. It's a **billing group**: one pla
 
 Two things, and the second is usually the bigger one.
 
-**A cheaper bill.** The first organisation pays the plan's normal rate. Every organisation after that is **half** — Pro is $19/month plus $9/month each, Pro Plus is $39/month plus $19/month each. Annually that's $159 plus $79, and $327 plus $163. Eight clubs on Pro Plus annually come to $1,468 for the group, against eight separate Pro subscriptions at $1,272 — and the group buys the 1% entry-fee rate for all eight.
+**A cheaper bill.** The first organisation pays the plan's normal rate. Every organisation after that costs **no more than half the base rate** — Pro is $19/month plus $9/month each, Pro Plus is $39/month plus $19/month each. Annually that's $159 plus $79, and $327 plus $163. Eight clubs on Pro Plus annually come to $1,468 for the group, against eight separate Pro subscriptions at $1,272 — and the group buys the 1% entry-fee rate for all eight.
 
 **A cheaper entry-fee rate.** Every organisation in the group runs on the *group's* plan, so the platform fee on entry fees follows it:
 
@@ -38,27 +38,27 @@ A new organisation starts on its **own** bill — its own plan and invoice. You 
 
 Adding is done by someone who owns **both** the organisation being added and the group it's joining — admins run the competition, not the money.
 
-- The bill goes up by half the plan rate straight away, prorated to the rest of the period.
+- The bill goes up by no more than half the base rate, prorated to the rest of the period — added to your next invoice, not charged to your card there and then.
 - The organisation is on the group's plan **immediately** — limits, features and the entry-fee rate all change the same second. The lower rate applies to competitions that haven't taken a payment yet; one that already has an entrant paid keeps the rate it locked (see [below](#the-entry-fee-rate-locks-when-sales-start)).
 - Added during the group's free trial, it rides the same trial to the same end date and costs nothing now.
 - An organisation that already has its own live subscription can't be added yet. Cancel it, or wait for it to lapse.
 - A group can't take on a new organisation while its own payment is overdue or while it's set to cancel at the end of the period. Settle the invoice, or resume the subscription, and then add.
 
-If the extra charge fails, the organisation stays in the group — it doesn't get thrown back out. The group enters the normal 14-day [dunning](/help/billing/downgrade) window instead, and if it runs out, every organisation in the group drops to Community limits together.
+If that invoice later fails, the organisation stays in the group — it doesn't get thrown back out. The group enters the normal 14-day [dunning](/help/billing/downgrade) window instead, and if it runs out, every organisation in the group drops to Community limits together. Nothing is attempted against your card at the moment you add, so adding an organisation cannot itself fail a payment.
 
 ### What an added organisation costs
 
 The added organisation becomes an extra **seat on the bill you already have** — never a new, separate subscription. So it inherits your bill's shape:
 
-- **On a monthly bill** it's the half rate per month (Pro **+$9/mo**, Pro Plus **+$19/mo**), prorated for the rest of the current month and charged now.
-- **On an annual bill** it's the half rate per **year** (Pro **+$79/yr**, Pro Plus **+$163/yr**), prorated for the rest of the current year and charged now — it renews on your existing annual date, not a new one. Mid-year, "now" is only the slice of the year that's left; the full half-rate lands at your next renewal.
+- **On a monthly bill** it's no more than half the base rate per month (Pro **+$9/mo**, Pro Plus **+$19/mo**), prorated for the rest of the current month and added to your next invoice.
+- **On an annual bill** it's no more than half the base rate per **year** (Pro **+$79/yr**, Pro Plus **+$163/yr**), prorated for the rest of the current year and added to your next invoice — it renews on your existing annual date, not a new one. Mid-year, the proration covers only the slice of the year that's left; the full amount lands at your next renewal.
 
-You never guess the figure: the "Add to an existing bill" step shows the **exact amount you'll be charged now**, taken live from Stripe, before you confirm.
+You never guess the figure: the "Add to an existing bill" step shows the **exact amount that will be added to your bill**, taken live from Stripe, before you confirm.
 
 **With a discount on the bill**, what the added organisation gets depends on the coupon's *type*:
 
-- A **percentage** discount that's still running (a *forever* code, or a *repeating* one inside its window) comes off the added organisation too — both the amount charged now and its share of every future renewal. A 60%-off Pro bill adds an extra org at 60% off.
-- A **one-time** code (applies *once*, already spent on your first invoice) does **not** discount a mid-cycle add — that charge is separate from the invoice the code was used on.
+- A **percentage** discount that's still running (a *forever* code, or a *repeating* one inside its window) comes off the added organisation too — both the prorated amount and its share of every future renewal. A 60%-off Pro bill adds an extra org at 60% off.
+- A **one-time** code (applies *once*, already spent on your first invoice) does **not** discount a mid-cycle add — that proration is separate from the invoice the code was used on.
 - A **fixed-amount** code (e.g. £20 off) comes off the *invoice total*, not each seat, so on a mid-cycle add it may cover little or none of the extra. Percentage, longer-duration codes are the ones that follow the whole group — which is why they're usually the right choice for a group that will grow.
 
 Whatever the code, the amount shown before you confirm is the real, post-discount figure.
@@ -85,7 +85,7 @@ Whoever didn't do it gets an email. If the payer removes an organisation, that o
 
 ## No refunds, and the freed slot
 
-Removing never refunds, and adding always charges immediately — we don't call Stripe to move money mid-period either way. The two removal choices differ only in **who keeps the value of the seat you already paid for**: the departing organisation, which rides out the period on its plan, or you, as a freed slot to reuse.
+Removing never refunds, and adding never takes money from your card there and then — nothing moves mid-period in either direction. Adding is prorated onto your next invoice, and not even that if you are filling a slot you have already paid for or you are still on your free trial. The two removal choices differ only in **who keeps the value of the seat you already paid for**: the departing organisation, which rides out the period on its plan, or you, as a freed slot to reuse.
 
 If you chose **Free up the seat now**, that slot can be filled by another organisation **at no extra charge** until renewal, and nothing changes at all if you add an organisation back into it. If you chose **Keep its plan until the period ends**, the seat left with the organisation, so the next organisation you add is a fresh seat and is charged as one. Either way the count is trued up at renewal.
 
@@ -134,7 +134,7 @@ Each organisation keeps its own Stripe account, its own verification, its own ba
 
 ## Common questions
 
-**Do the group's organisations share limits?** No. Quotas — team members, clubs, active competitions, public dashboards — are per organisation. Three organisations on Pro get three organisations' worth of everything, and that headroom is what the extra half-price rate buys.
+**Do the group's organisations share limits?** No. Quotas — team members, clubs, active competitions, public dashboards — are per organisation. Three organisations on Pro get three organisations' worth of everything, and that headroom is what the extra organisation's rate buys.
 
 **The bill says it's full — do we have to upgrade?** Only on Community, which covers one organisation and sells nothing to raise that. On **Pro and Pro Plus**, a full bill is a purchase rather than a plan change: buy an extra organisation under **Settings → Add-ons** and the limit goes up by one for the whole group. It's a recurring add-on billed every month on top of your current bill, on its own cadence — so an annual group pays for it monthly, and the Add-ons tab shows the exact amount in your currency before you confirm.
 
@@ -148,7 +148,7 @@ Each organisation keeps its own Stripe account, its own verification, its own ba
 
 **One organisation was suspended by our team. Do we stop paying for it?** No. Suspension is a moderation action, not a billing one — the slot stays yours and the other organisations in the group are unaffected. One exception, and only while *every* organisation in the group is suspended at once: a limit our team raised by hand for a single organisation stops applying until that same organisation is back — a different one returning first restores nothing, because the raised limit belongs to the organisation it was granted to — so the group falls to what its plan and its add-ons cover, and the extra organisations you've bought still count, exactly as they always do. If the group is already at that limit, it can't add another until that organisation is back. **Settings → Add-ons** says so while that's true, and nothing is charged differently.
 
-**We bought an Event Pass for one of our organisations — does it credit the group?** Only if that same organisation is the one whose checkout starts the group's subscription. The credit checks that one organisation's own pass, not a shared pool across the group — a pass held by a different organisation, even one that joined the group earlier, earns nothing. If you want the pass to count, buy it for the organisation that will actually run the upgrade. See [Event Pass](/help/billing/event-pass).
+**We bought an Event Pass for one of our organisations — does it credit the group?** Only if that same organisation is the one whose checkout starts the group's subscription, and only **once, ever** — a billing group earns this credit a single time in its lifetime, however many organisations it holds and however many passes they buy afterwards. The credit checks that one organisation's own pass, not a shared pool across the group — a pass held by a different organisation, even one that joined the group earlier, earns nothing. If you want the pass to count, buy it for the organisation that will actually run the upgrade, before the group's one credit is spent. See [Event Pass](/help/billing/event-pass).
 
 **I handed the group over — where did my old invoices go?** Nowhere. They stay with you: your invoices from when you were the payer remain visible, read-only, under **Settings → Billing** on any organisation still in the group. The new payer can't see them — an invoice carries the billing name and address of whoever paid it, so we only ever show each person their own. See [what happens to your invoices](#what-happens-to-your-invoices-when-the-bill-changes-hands).
 

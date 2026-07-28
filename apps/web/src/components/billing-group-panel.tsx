@@ -209,10 +209,15 @@ export function BillingGroupPanel({
 
   async function attach(org: GroupOrg & { from: Group }) {
     // The EXACT prorated cost, previewed before the click, so the dialog states
-    // a figure ("£9.00 now") rather than "half your plan's rate". Best-effort: a
-    // preview that fails or is null (a free move) falls back to the rate copy,
-    // never blocking the attach.
-    let priceLine = msg(attachConfirmKey(freeSlots), { org: org.name });
+    // a figure rather than "no more than half the base rate". Best-effort: a
+    // preview that fails or is null (a free move, or a trial) falls back to the
+    // rate copy, never blocking the attach.
+    //
+    // `trialing` is passed EXPLICITLY. `freeSlots` cannot stand in for it —
+    // quantity_paid is frozen during a trial, so freeSlots is 0 and a trialing
+    // payer was reading the CHARGED body while nothing was being prorated at
+    // all (v17 gap #299 round 4).
+    let priceLine = msg(attachConfirmKey(freeSlots, trialing), { org: org.name });
     try {
       const res = await fetch("/api/billing/group/attach/preview", {
         method: "POST",
@@ -223,6 +228,8 @@ export function BillingGroupPanel({
         data?: { preview?: { amount_minor: number; currency: string } | null };
       };
       const preview = json.data?.preview;
+      // Null while trialing (previewAttachCharge returns early), so the trial
+      // body below is never overwritten by an amount that was not charged.
       if (preview) {
         priceLine = msg("billing.group.attach.confirmChargeAmount", {
           org: org.name,

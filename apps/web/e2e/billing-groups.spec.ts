@@ -256,8 +256,10 @@ test.describe.serial("billing groups", () => {
     await panel.getByRole("button", { name: `Group C ${TAG}` }).click();
     const dialog = page.getByRole("alertdialog");
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText("your bill goes up by half your plan's rate");
-    await expect(dialog).toContainText("charged now");
+    await expect(dialog).toContainText("your bill goes up by no more than half the base rate");
+    // The TIMING, not "charged now" — attach prorates onto the next invoice
+    // (syncGroupQuantity's create_prorations); nothing hits the card here.
+    await expect(dialog).toContainText("added to your next invoice");
     await page.keyboard.press("Escape");
   });
 
@@ -273,9 +275,14 @@ test.describe.serial("billing groups", () => {
     const dialog = page.getByRole("alertdialog");
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("there is nothing to pay now");
-    // The two attach bodies must never be confusable — this is the pair the
-    // customer reads immediately before spending money.
-    await expect(dialog).not.toContainText("charged now");
+    // The attach bodies must never be confusable — this is the pair the
+    // customer reads immediately before spending money. Asserted against the
+    // phrase unique to the CHARGED body. NOT "added to your next invoice":
+    // the free body now says "nothing is added to your next invoice" (the
+    // renewal bound, #299 round 4) and CONTAINS that substring, so the
+    // negative would have failed on true copy. And not "charged now", which
+    // left the product entirely and made the negative vacuous.
+    await expect(dialog).not.toContainText("your bill goes up by");
     await page.keyboard.press("Escape");
   });
 

@@ -7,7 +7,7 @@
       "key": "pro",
       "product": {
         "name": "Seazn Club Pro",
-        "description": "Unlimited competitions, multi-division, online registration + entry fees, realtime scoreboard, custom branding, CSV/PDF exports. Covers up to 5 organisations on one bill — each extra organisation is half the base rate."
+        "description": "Unlimited competitions, multi-division, online registration + entry fees, realtime scoreboard, custom branding, CSV/PDF exports. Covers up to 5 organisations on one bill — each extra organisation costs no more than half the base rate."
       },
       "prices": {
         "monthly": {
@@ -56,7 +56,7 @@
       "key": "pro_plus",
       "product": {
         "name": "Seazn Club Pro Plus",
-        "description": "Everything in Pro, plus unlimited members, teams and clubs inside every organisation, a 1% platform fee on entry fees, AI-assisted scheduling, auto officials assignment, write API access and priority support. Covers up to 10 organisations on one bill — each extra organisation is half the base rate."
+        "description": "Everything in Pro, plus unlimited members, teams and clubs inside every organisation, a 1% platform fee on entry fees, automatic officials assignment, write API access, priority support and the largest monthly AI credit grant. Covers up to 10 organisations on one bill — each extra organisation costs no more than half the base rate."
       },
       "prices": {
         "monthly": {
@@ -108,7 +108,7 @@
       "key": "event_pass",
       "product": {
         "name": "Seazn Club Event Pass",
-        "description": "One-time upgrade for a single competition: 10 divisions, 128 entrants per division, advanced formats, a 5% entry-fee rate instead of 8%, branded exports, public player profiles, sponsor tiers and paid packages, realtime and 10 AI schedule runs per division — for the event's lifetime."
+        "description": "One-time upgrade for a single competition, while it's active: 10 divisions, 128 entrants per division, advanced formats, a 5% entry-fee rate instead of 8%, branded exports, public player profiles, sponsor tiers and paid packages, realtime scoreboard, and a one-time +25 AI credits added to your wallet."
       },
       "price": {
         "lookup_key": "seazn_event_pass",
@@ -120,7 +120,7 @@
       "key": "event_pass_l",
       "product": {
         "name": "Seazn Club Event Pass L",
-        "description": "One-time upgrade for a single competition: unlimited entrants per division, up to 20 divisions, advanced formats, a 5% entry-fee rate instead of 8%, branded exports, public player profiles, sponsor tiers and paid packages, realtime, and +25 one-time AI credits — for the event's lifetime."
+        "description": "One-time upgrade for a single competition, while it's active: 20 divisions, unlimited entrants per division, advanced formats, a 5% entry-fee rate instead of 8%, branded exports, public player profiles, sponsor tiers and paid packages, realtime scoreboard, and a one-time +25 AI credits added to your wallet."
       },
       "price": {
         "lookup_key": "seazn_event_pass_l",

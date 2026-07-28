@@ -13,26 +13,59 @@
 import { describe, expect, it } from "vitest";
 import stripePlans from "@/config/stripe-plans.json";
 import { extraOrgPrice, proPrice, proPlusPrice, SUPPORTED_CURRENCIES } from "@/lib/currency";
+import { APPROVED_DICTIONARY_COPY } from "./_approved-dictionary-copy";
 
 const PLANS = ["pro", "pro_plus"] as const;
 const INTERVALS = ["monthly", "annual"] as const;
 
-/** Every string that states the half-price rule in prose. If the seed stops
- *  being half, these are what must be rewritten — in all four locales. */
+/**
+ * Every surface that states the extra-organisation rate. If the seed stops
+ * being at-most-half, these are what must be rewritten — in all four locales
+ * for the dictionary keys, once each for the help articles.
+ *
+ * IT WAS STALE AND NOTHING ASSERTED IT (v17 gap wave 7, #299). The list named
+ * six surfaces; there were nine, and three of the six carried a falsehood for
+ * four rounds of this wave while this file's own message pointed at them. A
+ * list that only ever appears inside a failure string is documentation, and
+ * documentation drifts — so the dictionary half of it is now checked against
+ * the approved-copy inventory below, and the help half against the computed
+ * axis in `help-copy-truth.test.ts`.
+ */
+const HALF_RATE_DICTIONARY_KEYS = [
+  "pricing.matrix.orgs.max_owned.note",
+  "pricing.faq.groups.a",
+  "pricing.faq.proPlus.a",
+  "tips.billing.extra-org.body",
+  "orgNew.bill.addToExistingHint",
+  "billing.group.attach.confirmCharge",
+];
+
 const COPY_THAT_SAYS_HALF = [
-  "dictionaries/<locale>/marketing.json: pricing.matrix.orgs.max_owned.note",
-  "dictionaries/<locale>/marketing.json: pricing.faq.groups.a",
-  "dictionaries/<locale>/marketing.json: pricing.faq.proPlus.a",
-  "dictionaries/<locale>/ui.json: tips.billing.extra-org.body",
-  // Sits directly above the create-org picker's "buy another slot" link
-  // (v17 gap #293), so it is read as the rate that purchase will charge.
-  "dictionaries/<locale>/ui.json: orgNew.bill.addToExistingHint",
-  "config/tips.ts: billing.extra-org body (the fallback copy)",
+  ...HALF_RATE_DICTIONARY_KEYS.map((k) => `dictionaries/<locale>/*.json: ${k}`),
+  "config/tips.ts: billing.extra-org body (the source of truth the en dictionary mirrors)",
   "config/stripe-plans.json: both plans' product.description",
-  "content/help/billing/groups.md: 'What the group buys' and 'Adding an organisation'",
+  "content/help/billing/add-ons.md: 'Extra organisations'",
+  "content/help/billing/groups.md: frontmatter, 'What the group buys', 'Adding an organisation', 'What an added organisation costs', 'Common questions'",
+  "content/help/getting-started/create-your-organisation.md: 'Can I run more than one organisation?'",
+  "e2e/billing-groups.spec.ts + e2e/billing-groups-journey.spec.ts: the attach-dialog assertion",
 ].join("\n  - ");
 
 describe("extra-organisation price", () => {
+  // The list above is only as good as its agreement with what is actually
+  // pinned. Without this it is a comment, and it spent four rounds being one.
+  it("names every dictionary key the approved-copy gate pins for this claim", () => {
+    const pinned = new Set(APPROVED_DICTIONARY_COPY.map((e) => e.key));
+    for (const key of HALF_RATE_DICTIONARY_KEYS) {
+      expect(pinned.has(key), `${key} is listed here but not pinned by the gate`).toBe(true);
+    }
+    // …and the other direction, so a key pinned FOR THIS CLAIM cannot drop off
+    // the list. Matched on the `why` note, which names the claim it decides.
+    const pinnedForThisClaim = APPROVED_DICTIONARY_COPY.filter((e) =>
+      /extra-organisation rate/i.test(e.why),
+    ).map((e) => e.key);
+    expect(pinnedForThisClaim.sort()).toEqual([...HALF_RATE_DICTIONARY_KEYS].sort());
+  });
+
   it("is read from the tier Stripe bills, in every currency", () => {
     for (const plan of PLANS) {
       for (const interval of INTERVALS) {

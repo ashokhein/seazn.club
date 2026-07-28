@@ -224,6 +224,7 @@ export type DictionaryKey =
   | "billing.group.attach.confirmChargeAmount"
   | "billing.group.attach.confirmFree"
   | "billing.group.attach.confirmTitle"
+  | "billing.group.attach.confirmTrial"
   | "billing.group.attach.effects.connect"
   | "billing.group.attach.effects.feeLock"
   | "billing.group.attach.effects.plan"
