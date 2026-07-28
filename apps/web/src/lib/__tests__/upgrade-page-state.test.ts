@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 import { upgradePageState } from "@/lib/upgrade-page-state";
 
 const state = (over: Partial<Parameters<typeof upgradePageState>[0]> = {}) =>
-  upgradePageState({ paidPlan: false, hasPass: false, isOwner: true, ...over });
+  upgradePageState({ paidPlan: false, hasPass: false, lockReason: null, isOwner: true, ...over });
 
 describe("upgradePageState", () => {
   it("offers the pass to a community owner with no pass", () => {
@@ -79,6 +79,65 @@ describe("upgradePageState", () => {
     expect(state({ paidPlan: true, hasPass: true })).toEqual({ kind: "paid_plan" });
     expect(state({ paidPlan: true, hasPass: true, feature: "entrants.per_division.max" })).toEqual({
       kind: "paid_plan",
+    });
+  });
+
+  // v17 gap #301. `hasPass` is row existence, and the row outlives the pass's
+  // usefulness: the resolver stops honouring it at a terminal status or a week
+  // past `ends_on`, while the row sits there unchanged forever. Every state
+  // below this line was therefore reachable with a pass that lifts nothing.
+  describe("ended — a held pass that has stopped applying", () => {
+    it("shows ended once a held pass has stopped applying", () => {
+      expect(state({ hasPass: true, lockReason: "terminal" })).toEqual({
+        kind: "ended",
+        reason: "terminal",
+      });
+      expect(state({ hasPass: true, lockReason: "past_ends_on" })).toEqual({
+        kind: "ended",
+        reason: "past_ends_on",
+      });
+    });
+
+    it("carries the reason through, rather than collapsing the two", () => {
+      // The two arms want different sentences AND different next steps: one
+      // competition is over, the other is probably still being played with a
+      // stale date. A boolean here would force the page to pick one apology
+      // for both.
+      const a = state({ hasPass: true, lockReason: "terminal" });
+      const b = state({ hasPass: true, lockReason: "past_ends_on" });
+      expect(a).not.toEqual(b);
+    });
+
+    it("ended beats the ceiling — the real reason is expiry, not a usage ceiling", () => {
+      // Arriving from a gate with `?feature=` used to mean "you have used
+      // everything the pass includes". With a locked pass that is false: the
+      // pass is lifting nothing, so nothing has been used up.
+      expect(
+        state({ hasPass: true, lockReason: "terminal", feature: "entrants.per_division.max" }),
+      ).toEqual({ kind: "ended", reason: "terminal" });
+    });
+
+    it("paid_plan still beats an ended pass", () => {
+      expect(state({ paidPlan: true, hasPass: true, lockReason: "terminal" })).toEqual({
+        kind: "paid_plan",
+      });
+    });
+
+    it("a pass with no lock reason is unaffected — existing owned/ceiling behaviour", () => {
+      expect(state({ hasPass: true, lockReason: null })).toEqual({ kind: "owned" });
+      expect(
+        state({ hasPass: true, lockReason: null, feature: "entrants.per_division.max" }),
+      ).toEqual({ kind: "ceiling", feature: "entrants.per_division.max", liftable: true });
+    });
+
+    it("a lock reason with NO pass row is still the ordinary offer", () => {
+      // Row existence is checked first on purpose: a reason without a row must
+      // not invent an ended pass for a competition that never had one, and
+      // that org can genuinely still buy.
+      expect(state({ hasPass: false, lockReason: "terminal" })).toEqual({
+        kind: "offer",
+        canBuy: true,
+      });
     });
   });
 });

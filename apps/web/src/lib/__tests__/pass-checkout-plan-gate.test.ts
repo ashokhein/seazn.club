@@ -981,3 +981,74 @@ describe.skipIf(!HAS_DB)("Event Pass mint refuses a rung/price desync (v17 gap #
     }
   });
 });
+
+describe.skipIf(!HAS_DB)("pass-checkout refuses a re-buy truthfully, locked or not", () => {
+  // v17 gap #301. The refusal said "This competition already HAS an Event
+  // Pass." — present tense, and false the moment the pass locks. A buyer whose
+  // competition had finished was told by the checkout that they hold something
+  // the upgrade page had just told them had ended, with no way to square the
+  // two. The rule itself never changes (decision #248 Q4: one pass per
+  // competition, forever), so the sentence is now true in BOTH states rather
+  // than branching — and these two cases pin exactly that.
+  async function seedCommunityOrgWithComp() {
+    const { orgId, compId } = await seedOrgWithComp();
+    await sql`with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
+      insert into subscriptions (owner_user_id, plan_key, status, currency)
+      select coalesce(o.created_by, (select id from _owner)), 'community', 'active', 'usd' from organizations o where o.id = ${orgId}
+      returning id
+    )
+    update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
+    authState.orgId = orgId;
+    return { orgId, compId };
+  }
+
+  it("refuses a re-buy on an ACTIVE pass, without claiming present-tense possession", async () => {
+    const { compId, orgId } = await seedCommunityOrgWithComp();
+    await givePrice();
+    await sql`insert into competition_passes (competition_id, org_id) values (${compId}, ${orgId})`;
+
+    const res = await passCheckoutPOST(req(compId));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/on file/i);
+    expect(body.error).toMatch(/one-time/i);
+    // The exact sentence this replaced, pinned so a revert is loud.
+    expect(body.error).not.toBe("This competition already has an Event Pass.");
+  });
+
+  it("refuses a re-buy on an ENDED pass with the very same sentence", async () => {
+    // A completed competition: `passLockReason` returns "terminal" and every
+    // display surface now says the pass has ended. The checkout must still
+    // refuse — and must not start describing the pass differently from the
+    // page the buyer just came from.
+    const { compId, orgId } = await seedCommunityOrgWithComp();
+    await givePrice();
+    await sql`update competitions set status = 'completed' where id = ${compId}`;
+    await sql`insert into competition_passes (competition_id, org_id) values (${compId}, ${orgId})`;
+
+    const res = await passCheckoutPOST(req(compId));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/on file/i);
+    expect(body.error).toMatch(/one-time/i);
+  });
+
+  it("gives the two states the identical refusal, not two different stories", async () => {
+    const live = await seedCommunityOrgWithComp();
+    await givePrice();
+    await sql`insert into competition_passes (competition_id, org_id) values (${live.compId}, ${live.orgId})`;
+    const liveBody = await (await passCheckoutPOST(req(live.compId))).json();
+
+    const ended = await seedCommunityOrgWithComp();
+    await sql`update competitions set status = 'completed' where id = ${ended.compId}`;
+    await sql`insert into competition_passes (competition_id, org_id) values (${ended.compId}, ${ended.orgId})`;
+    const endedBody = await (await passCheckoutPOST(req(ended.compId))).json();
+
+    expect(endedBody.error).toBe(liveBody.error);
+  });
+});

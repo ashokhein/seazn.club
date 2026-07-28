@@ -83,7 +83,22 @@ export async function POST(req: Request) {
 
     const [pass] = await sql<{ competition_id: string }[]>`
       select competition_id from competition_passes where competition_id = ${competition_id}`;
-    if (pass) throw new HttpError(400, "This competition already has an Event Pass.");
+    if (pass) {
+      // v17 gap #301. "already HAS an Event Pass" is present tense, and stops
+      // being true the moment the pass locks — leaving a buyer told they hold
+      // something every other surface has just told them has ended, with no way
+      // to reconcile the two.
+      //
+      // Deliberately does NOT branch on lock status. The refusal itself never
+      // changes (decision #248 Q4: one pass per competition, forever, no re-buy
+      // even once it stops applying), so one sentence true in BOTH states beats
+      // two that each describe half the rule — and it cannot drift out of step
+      // with `passLockReason` because it never asks it anything.
+      throw new HttpError(
+        400,
+        "This competition already has an Event Pass on file. Passes are one-time and can't be bought again for the same competition.",
+      );
+    }
 
     // A previous purchase for this competition was PAID and then refused by the
     // mint guard (v17 gap #326, V342). The check above cannot see it — a refusal

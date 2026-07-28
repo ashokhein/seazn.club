@@ -23,10 +23,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 const h = vi.hoisted(() => ({
   role: "owner" as string,
   planKey: "community" as string,
+  // The page joins `competitions` for `status`/`ends_on` (v17 gap #301) —
+  // together they decide whether the pass is still APPLYING. The sql double
+  // returns this row verbatim whatever the query selects, so only the fixture
+  // shape changes.
   passRow: null as {
     purchased_at: string;
     stripe_payment_intent: string | null;
     pass_key: string;
+    status: string;
+    ends_on: string | null;
   } | null,
   purchases: [] as unknown[],
   reconciled: [] as string[],
@@ -133,6 +139,9 @@ import Page from "../page";
 // Pure module (no db, no server-only) — the real rung list, so the paid-plan
 // guard below covers every rung that exists rather than a copy of the list.
 import { PASS_KEYS } from "@/lib/currency";
+import { PASS_LOCK_REASON_KEY } from "@/lib/pass-ladder";
+import { t } from "@/lib/i18n-runtime";
+import uiEn from "@/dictionaries/en/ui.json";
 
 const RECEIPT = {
   competitionId: "comp-1",
@@ -165,7 +174,15 @@ beforeEach(() => {
   sentryMock.captureError.mockClear();
 });
 
-/** A pass bought `days` ago, paid unless told otherwise. */
+/**
+ * A pass bought `days` ago, paid unless told otherwise, on a competition that
+ * is genuinely still running.
+ *
+ * `status`/`ends_on` are stated rather than left undefined: every case below
+ * asserts the ACTIVE story, and a fixture that omitted them would keep passing
+ * because `passLockReason` happens to fail open on a missing status — passing
+ * for a reason unrelated to the one the case is about.
+ */
 function heldPass({
   days = 3,
   intent = "pi_live_1" as string | null,
@@ -175,6 +192,8 @@ function heldPass({
     purchased_at: new Date(Date.now() - days * 86_400_000).toISOString(),
     stripe_payment_intent: intent,
     pass_key: passKey,
+    status: "live",
+    ends_on: null,
   };
   h.purchases = [{ ...RECEIPT, ...(intent ? {} : { amountMinor: null, currency: null, hostedInvoiceUrl: null }) }];
 }
@@ -567,5 +586,99 @@ describe("returning from checkout", () => {
     h.passRow = null;
     const html = await render();
     expect(html).toContain("Your payment for this competition went through");
+  });
+});
+
+describe("ended — the pass is on the record but has stopped applying", () => {
+  // v17 gap #301. `competition_passes` has no lifecycle of its own: the row is
+  // written once and never touched again. The resolver stops honouring it when
+  // the COMPETITION reaches a terminal status or runs a week past `ends_on`
+  // (V338) — and until this task the page kept showing the floodlit "active"
+  // stub forever, on a pass that was lifting nothing.
+  const TERMINAL_COPY = t(uiEn, PASS_LOCK_REASON_KEY.terminal);
+  const PAST_ENDS_COPY = t(uiEn, PASS_LOCK_REASON_KEY.past_ends_on);
+
+  /** A pass on a competition that has stopped applying. */
+  function endedPass({ reason = "terminal" as "terminal" | "past_ends_on", days = 20 } = {}) {
+    h.passRow = {
+      purchased_at: new Date(Date.now() - days * 86_400_000).toISOString(),
+      stripe_payment_intent: "pi_live_1",
+      pass_key: "event_pass",
+      status: reason === "terminal" ? "completed" : "live",
+      ends_on:
+        reason === "terminal"
+          ? null
+          : new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10),
+    };
+    h.purchases = [RECEIPT];
+  }
+
+  it("shows the ended marker instead of active, and never re-sells the pass", async () => {
+    endedPass({ reason: "terminal" });
+    const html = await render();
+    expect(html).toContain("data-pass-ended");
+    expect(html).not.toContain("data-pass-active");
+    expect(html).not.toContain("data-pass-buy");
+    expect(html).not.toContain("$29");
+    expect(html).not.toContain("Event Pass active");
+  });
+
+  it("names the terminal reason, and not the other one", async () => {
+    // Against the dictionary rather than a re-typed sentence: this then catches
+    // a hardcoded literal, a typo'd key AND a reworded string, where a copy of
+    // today's English would catch only the last.
+    endedPass({ reason: "terminal" });
+    const html = await render();
+    expect(html).toContain(TERMINAL_COPY);
+    expect(html).not.toContain(PAST_ENDS_COPY);
+  });
+
+  it("names the past-ends-on reason distinctly", async () => {
+    endedPass({ reason: "past_ends_on" });
+    const html = await render();
+    expect(html).toContain(PAST_ENDS_COPY);
+    expect(html).not.toContain(TERMINAL_COPY);
+  });
+
+  it("still shows the receipt and the rung — nothing bought is deleted", async () => {
+    endedPass({ reason: "terminal" });
+    const html = await render();
+    expect(html).toContain("data-pass-receipt");
+    expect(html).toContain('data-pass-held-rung="event_pass"');
+  });
+
+  it("offers Create next year's edition alongside Go Pro", async () => {
+    // The pass cannot be bought again for THIS competition, but next season's
+    // edition is a different competition and can have its own. It is the only
+    // honest yes left on the page.
+    endedPass({ reason: "terminal" });
+    const html = await render();
+    expect(html).toContain("data-pass-next-edition");
+    expect(html).toContain("/o/riverside/c/new");
+  });
+
+  it("takes precedence over the ceiling — the real reason is expiry, not a usage ceiling", async () => {
+    endedPass({ reason: "terminal" });
+    const html = await render({ feature: "entrants.per_division.max" });
+    expect(html).toContain("data-pass-ended");
+    expect(html).toContain(TERMINAL_COPY);
+    expect(html).not.toContain(t(uiEn, "upgrade.ceiling.title"));
+  });
+
+  it("respects the grace week — a competition just past its end date is still active", async () => {
+    // The pass does not die on `ends_on`. V338 gives a week, because a
+    // competition that overruns by a day has not finished. Rendering "ended"
+    // here would strip an org of something it still holds.
+    h.passRow = {
+      purchased_at: new Date(Date.now() - 20 * 86_400_000).toISOString(),
+      stripe_payment_intent: "pi_live_1",
+      pass_key: "event_pass",
+      status: "live",
+      ends_on: new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10),
+    };
+    h.purchases = [RECEIPT];
+    const html = await render();
+    expect(html).toContain("data-pass-active");
+    expect(html).not.toContain("data-pass-ended");
   });
 });
