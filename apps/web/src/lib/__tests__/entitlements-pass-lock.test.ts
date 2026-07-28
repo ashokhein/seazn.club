@@ -17,6 +17,7 @@ import {
   hasFeature,
   invalidateOrgEntitlements,
   isPassLocked,
+  passLockReason,
   PASS_END_GRACE_DAYS,
 } from "@/lib/entitlements";
 
@@ -68,6 +69,58 @@ describe("isPassLocked", () => {
     expect(isPassLocked("live", past)).toBe(true);
     const future = daysFromToday(30).toISOString().slice(0, 10);
     expect(isPassLocked("live", future)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 1b. passLockReason — the reason isPassLocked collapses to a boolean.
+//     v17 gap #301: the UI needs to NAME why a pass stopped applying (a
+//     finished competition vs one that simply ran past its end date), and
+//     that reason must come from the SAME arms isPassLocked already computes,
+//     never a second hand-written copy.
+// ---------------------------------------------------------------------------
+describe("passLockReason", () => {
+  it("names a terminal status regardless of ends_on", () => {
+    expect(passLockReason("archived", null)).toBe("terminal");
+    expect(passLockReason("archived", daysFromToday(30))).toBe("terminal");
+    expect(passLockReason("completed", null)).toBe("terminal");
+    expect(passLockReason("completed", daysFromToday(30))).toBe("terminal");
+  });
+
+  it("names past_ends_on once an active competition is beyond the grace window", () => {
+    expect(passLockReason("live", daysFromToday(-(PASS_END_GRACE_DAYS + 1)))).toBe(
+      "past_ends_on",
+    );
+  });
+
+  it("is null while active and not past the grace window", () => {
+    for (const status of ["draft", "published", "live"]) {
+      expect(passLockReason(status, null)).toBeNull();
+      expect(passLockReason(status, daysFromToday(30))).toBeNull();
+    }
+    expect(passLockReason("live", daysFromToday(-3))).toBeNull();
+    // Exactly grace days ago: not yet past the boundary.
+    expect(passLockReason("live", daysFromToday(-PASS_END_GRACE_DAYS))).toBeNull();
+  });
+
+  it("accepts a YYYY-MM-DD string, matching isPassLocked", () => {
+    const past = daysFromToday(-(PASS_END_GRACE_DAYS + 1)).toISOString().slice(0, 10);
+    expect(passLockReason("live", past)).toBe("past_ends_on");
+  });
+
+  it("is the single source isPassLocked wraps — boolean and reason never disagree", () => {
+    const cases: [string, number | null][] = [
+      ["archived", null],
+      ["completed", 10],
+      ["live", -(PASS_END_GRACE_DAYS + 1)],
+      ["live", -3],
+      ["live", 30],
+      ["draft", null],
+    ];
+    for (const [status, days] of cases) {
+      const endsOn = days === null ? null : daysFromToday(days);
+      expect(isPassLocked(status, endsOn)).toBe(passLockReason(status, endsOn) !== null);
+    }
   });
 });
 

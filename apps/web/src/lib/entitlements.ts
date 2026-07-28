@@ -118,25 +118,33 @@ export function isPlanLapsed(
  *  ends_on date, before the ended-competition lock (arm B) fires. SPEC-4 §7.2. */
 export const PASS_END_GRACE_DAYS = 7;
 
+/** Why an Event Pass has stopped applying (v17 gap #301) — named so a UI can
+ *  tell "this competition finished" from "this competition simply ran past
+ *  its end date" instead of collapsing both into a bare boolean. `null` means
+ *  still applying. This is the ONE place the arms live; `isPassLocked` below
+ *  is a thin boolean wrapper so every existing call site is untouched. */
+export type PassLockReason = "terminal" | "past_ends_on";
+
 /**
- * Is an Event Pass no longer eligible to apply because its competition is over?
- * (v17 SPEC-4 §7, the "hybrid" lifecycle rule, mapped to the real competition
- * status vocabulary.)
+ * Why is an Event Pass no longer eligible to apply because its competition is
+ * over? (v17 SPEC-4 §7, the "hybrid" lifecycle rule, mapped to the real
+ * competition status vocabulary.)
  *
  * Compute-at-read (SPEC §13.1): NO column on competition_passes, no status
  * write-back, no auto-archiving — the answer is derived from the competition's
  * live `status` and `ends_on` every time. The pass ROW is never deleted; this is
  * runtime eligibility only.
  *
- *   A (terminal):  status in {completed, archived} — SPEC §7's terminal set, and
- *                  both are reachable: a finished competition is set to
- *                  'completed' (usecases/competitions.ts) and archived to
- *                  'archived'. The active set is {draft, published, live} (V270).
- *   B (long-ended): ends_on is set AND ends_on + PASS_END_GRACE_DAYS < today.
- *                   A date-only comparison (ends_on is a DATE), grace 7 days.
+ *   "terminal":      status in {completed, archived} — SPEC §7's terminal set, and
+ *                    both are reachable: a finished competition is set to
+ *                    'completed' (usecases/competitions.ts) and archived to
+ *                    'archived'. The active set is {draft, published, live} (V270).
+ *   "past_ends_on":  ends_on is set AND ends_on + PASS_END_GRACE_DAYS < today.
+ *                    A date-only comparison (ends_on is a DATE), grace 7 days.
  *
  * Kept exactly in step with the SQL resolver's pass arm (org_has_feature, V328,
- * grace boundary moved to UTC in V334):
+ * grace boundary moved to UTC in V334, function last redefined in V338 with the
+ * pass arm unchanged):
  * `not (c.status in ('archived','completed') or (c.ends_on is not null and
  * c.ends_on + interval '7 days' < (now() at time zone 'utc')::date))`. Both
  * sides now compare against the UTC calendar date — the SQL used to compare
@@ -144,22 +152,34 @@ export const PASS_END_GRACE_DAYS = 7;
  * production), which could disagree with this function's UTC computation for
  * an up-to-1h window around UTC midnight; V334 aligned SQL to this function's
  * basis rather than the other way round. The entitlements-sql-parity suite is
- * the tie. Exported so the OFFER side can reuse it later; this task wires no
- * other call site.
+ * the tie.
  */
-export function isPassLocked(status: string, endsOn: Date | string | null): boolean {
-  if (status === "archived" || status === "completed") return true;
-  if (endsOn == null) return false;
+export function passLockReason(
+  status: string,
+  endsOn: Date | string | null,
+): PassLockReason | null {
+  if (status === "archived" || status === "completed") return "terminal";
+  if (endsOn == null) return null;
   // ends_on is a DATE; the postgres driver hands it back as a Date at UTC
   // midnight, and `new Date('YYYY-MM-DD')` also parses to UTC midnight, so UTC
   // getters give a stable day-number for either shape.
   const end = endsOn instanceof Date ? endsOn : new Date(endsOn);
   const endMs = end.getTime();
-  if (Number.isNaN(endMs)) return false;
+  if (Number.isNaN(endMs)) return null;
   const graceEndMs = endMs + PASS_END_GRACE_DAYS * 86_400_000;
   const now = new Date();
   const todayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  return graceEndMs < todayMs;
+  return graceEndMs < todayMs ? "past_ends_on" : null;
+}
+
+/**
+ * Is an Event Pass no longer eligible to apply because its competition is
+ * over? Thin wrapper over `passLockReason` — see it for the arms. Exported so
+ * the OFFER side can reuse it; `billing-manage.ts` (the pass list's `ended`
+ * badge) is the one existing call site outside the resolver itself.
+ */
+export function isPassLocked(status: string, endsOn: Date | string | null): boolean {
+  return passLockReason(status, endsOn) !== null;
 }
 
 /**
