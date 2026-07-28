@@ -50,7 +50,7 @@ import {
   APPROVED_EVENT_PASS,
   APPROVED_EVENT_PASS_INVENTORY,
   APPROVED_PLANS_PASS,
-  APPROVED_PLANS_PASS_INVENTORY,
+  APPROVED_PLANS_INVENTORY,
 } from "./_approved-copy";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -123,7 +123,7 @@ describe("billing help articles say what the resolver enforces", () => {
   it("the pass's copy is the copy that was approved, paragraph for paragraph", () => {
     expect(inventoryFaults("event-pass.md", eventPass, APPROVED_EVENT_PASS_INVENTORY)).toEqual([]);
     expect(
-      inventoryFaults("plans.md#event-pass", plansPassSection!, APPROVED_PLANS_PASS_INVENTORY),
+      inventoryFaults("plans.md", plans, APPROVED_PLANS_INVENTORY),
     ).toEqual([]);
   });
 
@@ -740,7 +740,11 @@ describe("an added falsehood fails whatever it says", () => {
   // The gate must fail LOUDLY. A hex digest with no prose is a gate people route
   // around, and this one will fire on every legitimate copy edit.
   it("explains itself when it fires", () => {
-    const [fault] = inventoryFaults("event-pass.md", `${eventPass}\n\nSomething new.\n`, APPROVED_EVENT_PASS_INVENTORY);
+    const [fault] = inventoryFaults(
+      "event-pass.md",
+      `${eventPass}\n\nSomething new.\n`,
+      APPROVED_EVENT_PASS_INVENTORY,
+    );
     expect(fault).toContain("THIS TEST IS A GATE, NOT A BUG");
     expect(fault).toContain("_approved-copy.ts");
     expect(fault).toContain("registrations.ts");
@@ -788,5 +792,124 @@ describe("an added falsehood fails whatever it says", () => {
     ]) {
       expect(lockedRateConstantFaults("x", named), named).not.toEqual([]);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX ROUND 3 — the surfaces the gate did not reach, and the honest rate.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("every surface a reader sees is covered, not just the paragraphs", () => {
+  const GATE_INPUTS = APPROVED_EVENT_PASS.map((p) => p.text);
+  const detects = (mutated: string): boolean =>
+    inventoryFaults("x", mutated, APPROVED_EVENT_PASS_INVENTORY).length > 0 ||
+    goldenParagraphFaults("x", mutated, APPROVED_EVENT_PASS).length > 0 ||
+    unapprovedClaimFaults("x", mutated, DURATION_ALLOWLIST, GATE_INPUTS).length > 0 ||
+    unapprovedClaimFaults("x", mutated, FEE_RATE_ALLOWLIST, GATE_INPUTS).length > 0 ||
+    passBoundProseFaults("x", mutated).length > 0 ||
+    unqualifiedFeeReversionFaults("x", mutated).length > 0 ||
+    lockedRateConstantFaults("x", mutated).length > 0;
+
+  // `description` is rendered as the lead paragraph under the title
+  // (app/help/[...slug]/page.tsx), emitted as page metadata, and shown as the
+  // search-result snippet (help-search.tsx). It was unscanned by every rule in
+  // the module: measured 0/24 before this, 12/12 after.
+  it("catches a falsehood delivered through frontmatter", () => {
+    for (const description of [
+      "Buy once and the upgrade is yours for the lifetime of the event, with every entrant held at the cheaper rate.",
+      "A one-time upgrade that never expires.",
+      "Entry fees go back to 8% as soon as the event is archived.",
+      "The Event Pass rate applies to every entry, whenever it arrives.",
+    ]) {
+      const mutated = eventPass.replace(/^description: .*$/m, `description: ${description}`);
+      expect(mutated, "the frontmatter anchor moved").not.toBe(eventPass);
+      expect(detects(mutated), description).toBe(true);
+    }
+  });
+
+  // Headings were filtered by `proseBlocks` and therefore unscanned too:
+  // measured 0/36 before, 12/12 after.
+  it("catches a falsehood delivered through a heading", () => {
+    for (const heading of [
+      "Yours forever — the pass never expires and later entrants stay at 5%",
+      "Buy once, covered for good",
+      "Entry costs return to normal once the trophy is handed out",
+      "An upgrade with no shelf life",
+    ]) {
+      const mutated = eventPass.replace("## The fine print", `## ${heading}\n\n## The fine print`);
+      expect(mutated, "the heading anchor moved").not.toBe(eventPass);
+      expect(detects(mutated), heading).toBe(true);
+    }
+  });
+
+  // The gate is POSITIONAL. Set membership raised zero faults when two real
+  // paragraphs were swapped, while its own message claimed to catch reordering.
+  it("catches two approved paragraphs being swapped", () => {
+    const first = "- The pass covers **that competition only**, while it runs.";
+    const second =
+      "- It does **not** carry to next season's edition — a new edition is a new competition, so a new pass (or the moment Pro starts making sense).";
+    expect(eventPass.includes(`${first}\n${second}`), "the anchors moved").toBe(true);
+    const swapped = eventPass.replace(`${first}\n${second}`, `${second}\n${first}`);
+    expect(inventoryFaults("x", swapped, APPROVED_EVENT_PASS_INVENTORY)).not.toEqual([]);
+  });
+
+  // plans.md is pinned WHOLE, not by section: the same falsehood pasted into a
+  // sibling section used to raise zero faults.
+  it("covers plans.md outside the Event Pass section", () => {
+    const mutated = plans.replace(
+      "## Pro — $19/month",
+      "The pass has no end date and applies for the life of the event.\n\n## Pro — $19/month",
+    );
+    expect(mutated, "the section anchor moved").not.toBe(plans);
+    expect(inventoryFaults("x", mutated, APPROVED_PLANS_INVENTORY)).not.toEqual([]);
+  });
+
+  // ── THE HONEST RATE ───────────────────────────────────────────────────────
+  // Asserted EXACTLY, the way task 4 pinned its vocabulary at 1/40: the lexical
+  // layer is a secondary net, and any widening of it must update these numbers
+  // deliberately rather than quietly improving a claim nobody re-measures.
+  // An independent reviewer measured 1/12 and 0/12 on its own sets.
+  it("scores 1/12 and 4/12 on its own — the gate is doing the work", () => {
+    const lexicalOnly = (added: string): boolean => {
+      const m = `${eventPass}\n\n${added}\n`;
+      return (
+        unapprovedClaimFaults("x", m, DURATION_ALLOWLIST, GATE_INPUTS).length > 0 ||
+        unapprovedClaimFaults("x", m, FEE_RATE_ALLOWLIST, GATE_INPUTS).length > 0 ||
+        passBoundProseFaults("x", m).length > 0 ||
+        unqualifiedFeeReversionFaults("x", m).length > 0 ||
+        lockedRateConstantFaults("x", m).length > 0
+      );
+    };
+    const duration = [
+      "Once bought, the upgrade is yours from then on and your competition never loses it.",
+      "The upgrade outlives the event.",
+      "A passed competition is passed for keeps.",
+      "Whatever the season does, the upgrade abides.",
+      "Consider the upgrade banked.",
+      "No calendar governs an Event Pass.",
+      "Your pass sticks with the competition no matter what.",
+      "The pass has no shelf life.",
+      "Nobody can take the upgrade off a competition after checkout.",
+      "Treat it as a one-off purchase that simply does not wear out.",
+      "The upgrade will be there whenever you come back to the event.",
+      "Buy it and the competition is covered from that day onward.",
+    ];
+    const fee = [
+      "Once the trophy is handed out, entry costs return to normal and later entrants cost you more per head.",
+      "Sign-ups arriving after the closing whistle are charged the plan's percentage.",
+      "Once the fixtures are done we go back to taking a bigger share of each entry.",
+      "Later sign-ups are billed at Community's percentage.",
+      "Entrants who sign up after the final pay the full platform fee.",
+      "The moment a competition is archived we take 8% again.",
+      "Your take-home per entry shrinks once the pass is spent.",
+      "Post-tournament entries carry the standard commission.",
+      "When the event wraps up, your entrants go back to the standard 8%.",
+      "The five per cent deal only covers entries taken before the event ends.",
+      "Entry fees revert to the usual cut when the tournament finishes.",
+      "Once the pass has done its job the cheaper rate is over.",
+    ];
+    expect(duration.filter(lexicalOnly).length, "lexical duration rate").toBe(1);
+    expect(fee.filter(lexicalOnly).length, "lexical fee rate").toBe(4);
+    // …and every one of them is caught once the gate is included.
+    expect([...duration, ...fee].filter((s) => !detects(`${eventPass}\n\n${s}\n`))).toEqual([]);
   });
 });

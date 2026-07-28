@@ -763,11 +763,87 @@ export function plainProse(markdown: string): string {
  * up, and it is why every rule below scopes to a block rather than the file.
  */
 export function proseBlocks(markdown: string): string[] {
-  return stripFrontmatter(markdown)
-    .split(/\n{2,}/)
-    .flatMap((block) => block.split(/\n(?=\s*(?:[-*+]\s|\|))/))
-    .map((block) => plainProse(block).replace(/\s+/g, " ").trim())
-    .filter((block) => block.length > 0 && !/^#{1,6}\s/.test(block));
+  return claimSurfaces(markdown)
+    .filter((surface) => surface.kind === "prose")
+    .map((surface) => surface.text);
+}
+
+/** Where in an article a claim can be made. */
+export type ClaimSurfaceKind = "frontmatter" | "heading" | "prose";
+
+export interface ClaimSurface {
+  kind: ClaimSurfaceKind;
+  /** The frontmatter key, for a `frontmatter` surface. */
+  field?: string;
+  /** The words a reader actually reads, normalised like a prose block. */
+  text: string;
+}
+
+/**
+ * EVERY user-visible surface of an article, not just its paragraphs.
+ *
+ * ── WHY THIS EXISTS (fix round 3) ────────────────────────────────────────────
+ * `proseBlocks` strips frontmatter and filters headings, so until now EVERY rule
+ * in this module was blind to both — while `_approved-copy.ts` claimed to pin
+ * "the WHOLE article". A reviewer put the wave's two flagship falsehoods into a
+ * heading and into `description:` and the suite stayed 42/0. Measured delivery
+ * rates: 0/36 through a heading, 0/24 through frontmatter, against 12/12 for the
+ * same sentences as paragraphs.
+ *
+ * Neither surface is decorative. `app/help/[...slug]/page.tsx` renders
+ * `description` as the LEAD PARAGRAPH under the title and emits it as page
+ * metadata, and `help-search.tsx` shows it as the search-result snippet — so a
+ * false `description` is the first sentence a reader sees and the one they see
+ * before they even open the page. Headings are read by everyone who skims.
+ *
+ * `proseBlocks` keeps its old contract (prose only) by being DERIVED from this,
+ * so the two cannot drift apart the way the comment and the code just did.
+ *
+ * Frontmatter fields are included unless their value is purely numeric (`order:
+ * 3`), which is deliberately inclusive: a field added later is covered by
+ * default, and covering it costs one deliberate re-approval rather than a silent
+ * hole.
+ */
+export function claimSurfaces(markdown: string): ClaimSurface[] {
+  const surfaces: ClaimSurface[] = [];
+  const normalise = (text: string): string => plainProse(text).replace(/\s+/g, " ").trim();
+
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(markdown);
+  if (frontmatter) {
+    for (const line of frontmatter[1]!.split(/\r?\n/)) {
+      const field = /^([A-Za-z_][\w-]*):\s*(.*)$/.exec(line);
+      if (!field) continue;
+      const value = field[2]!.trim().replace(/^["']|["']$/g, "");
+      if (value.length === 0 || /^\d+(?:\.\d+)?$/.test(value)) continue;
+      surfaces.push({ kind: "frontmatter", field: field[1]!, text: normalise(value) });
+    }
+  }
+
+  for (const block of stripFrontmatter(markdown).split(/\n{2,}/)) {
+    for (const piece of block
+      .split(/\n(?=\s*#{1,6}\s)/)
+      .flatMap((part) => part.split(/\n(?=\s*(?:[-*+]\s|\|))/))) {
+      const heading = /^\s*#{1,6}\s+(.*)$/.exec(piece);
+      const text = normalise(heading ? heading[1]! : piece);
+      if (text.length === 0) continue;
+      surfaces.push({ kind: heading ? "heading" : "prose", text });
+    }
+  }
+  return surfaces;
+}
+
+/**
+ * The surfaces the SENTENCE-level rules read: prose and frontmatter.
+ *
+ * Headings are deliberately NOT here, and this is a limit rather than an
+ * oversight: a heading is a fragment, so sentence-shaped rules mis-read it
+ * ("When a pass stops applying" is a true heading that no approved form fits).
+ * Headings are covered by the inventory gate, which does not read them.
+ */
+export function claimTexts(markdown: string): string[] {
+  return claimSurfaces(markdown)
+    .filter((surface) => surface.kind !== "heading")
+    .map((surface) => surface.text);
 }
 
 /** Sentences of a block, after `plainProse` has made `.` mean what it says. */
@@ -885,7 +961,7 @@ export function mentionsRateAfterPass(sentence: string): boolean {
  */
 export function unqualifiedFeeReversionFaults(label: string, markdown: string): string[] {
   const faults: string[] = [];
-  for (const block of proseBlocks(markdown)) {
+  for (const block of claimTexts(markdown)) {
     for (const sentence of sentences(block)) {
       if (!mentionsRateAfterPass(sentence)) continue;
       if (statesFeeLock(sentence)) continue;
@@ -942,7 +1018,7 @@ export function lockedRateConstantFaults(label: string, passProse: string): stri
   // own rate is the one locked in.
   const condition =
     /\bfirst\s+(?:paid\s+)?(?:card\s+)?(?:entry|entrant|payment)\b[^.;:!?]*\b(?:while|before|after|during)\b[^.;:!?]*\bpass\b/i;
-  for (const block of proseBlocks(passProse)) {
+  for (const block of claimTexts(passProse)) {
     for (const sentence of sentences(block)) {
       if (!NAMES_A_PARTICULAR_RATE.test(sentence)) continue;
       if (!lock.test(sentence) && !persists.test(sentence)) continue;
@@ -962,7 +1038,7 @@ export function lockedRateConstantFaults(label: string, passProse: string): stri
  * ends. Absence proves "not false", never "still stated".
  */
 export function feeLockStatedFaults(label: string, markdown: string): string[] {
-  return proseBlocks(markdown).some(statesFeeLock)
+  return claimTexts(markdown).some(statesFeeLock)
     ? []
     : [`${label}: never states that the entry-fee rate locks at the first paid entry (V312)`];
 }
@@ -985,7 +1061,7 @@ export function feeLockStatedFaults(label: string, markdown: string): string[] {
 export function retiredRunCapProseFaults(label: string, markdown: string): string[] {
   const faults: string[] = [];
   const denial = /\b(no|not|never|without|isn'?t|aren'?t|dropped|retired|removed|gone|scrapped)\b/i;
-  for (const block of proseBlocks(markdown)) {
+  for (const block of claimTexts(markdown)) {
     for (const sentence of sentences(block)) {
       const hits = retiredRunCapFaults(sentence);
       if (hits.length === 0) continue;
@@ -1093,7 +1169,10 @@ export const DURATION_CLAIM = new RegExp(
  */
 export function passBoundProseFaults(label: string, passProse: string): string[] {
   const faults: string[] = [];
-  const blocks = proseBlocks(passProse);
+  // Scanned over prose AND frontmatter; the opening-paragraph rule below still
+  // reads the first PROSE block, because a `description:` is not the article's
+  // scope statement even though it is the first thing rendered.
+  const blocks = claimTexts(passProse);
 
   for (const block of blocks) {
     for (const sentence of sentences(block)) {
@@ -1119,7 +1198,7 @@ export function passBoundProseFaults(label: string, passProse: string): string[]
     }
   }
 
-  const [opening] = blocks;
+  const [opening] = proseBlocks(passProse);
   if (opening === undefined) {
     faults.push(`${label}: no prose to scan — the section is empty or its heading moved`);
   } else if (!BOUNDED_SCOPE_GRAMMAR.test(opening)) {
@@ -1147,7 +1226,7 @@ export function passBoundProseFaults(label: string, passProse: string): string[]
 export function passCreditProseFaults(label: string, passProse: string): string[] {
   const faults: string[] = [];
   let stated = 0;
-  for (const block of proseBlocks(passProse)) {
+  for (const block of claimTexts(passProse)) {
     const figures = [
       ...block.matchAll(/(?:\+\s*)?(\d[\d,]*)\s+AI\s+credits?\b/gi),
       // The number-after form needs a SEPARATOR, not merely proximity: a free
@@ -2229,13 +2308,25 @@ export function feeLadderFaults(
 // THE SPACE OF FALSE PHRASINGS IS OPEN. THE SPACE OF APPROVED COPY IS CLOSED.
 //
 // So the verdict flips. A sentence that makes one of these claims must MATCH AN
-// APPROVED FORM. A new falsehood matches none and fails — which is precisely the
-// case (a false sentence ADDED beside the true ones) that all three denylist
-// rounds missed, and it fails without anyone having predicted its wording.
+// APPROVED FORM, and a wording nobody predicted fails by default.
+//
+// ── WHAT THIS LAYER ACTUALLY DELIVERS, MEASURED ──────────────────────────────
+// Do not read the paragraph above as a claim that this catches these families.
+// It does not. Against a committed set of twelve rewordings per family, with the
+// inventory gate excluded, this layer scores:
+//
+//     duration   1/12        fee reversion   4/12
+//
+// (`help-copy-truth.test.ts` asserts both numbers EXACTLY, so widening this
+// layer has to update them deliberately. An independent reviewer measured 1/12
+// and 0/12 on its own sets — the agreement is the point.)
+//
+// THE INVENTORY GATE IS DOING THE WORK. This layer is a secondary net: it gives
+// a specific, actionable failure where it does fire, and it covers articles the
+// gate does not pin. It is not the reason a falsehood cannot ship.
 //
 // The cost is friction: a genuinely new true sentence also fails until someone
-// approves a form for it. On billing copy that has shipped a falsehood three
-// times, that is the feature.
+// approves a form for it.
 
 /** A claim we police, as "how to spot one" plus "the ways we accept it". */
 export interface ClaimAllowlist {
@@ -2271,7 +2362,7 @@ export function unapprovedClaimFaults(
   gatedParagraphs: string[] = [],
 ): string[] {
   const faults: string[] = [];
-  for (const block of proseBlocks(prose)) {
+  for (const block of claimTexts(prose)) {
     if (gatedParagraphs.includes(block)) continue;
     for (const sentence of sentences(block)) {
       if (!allowlist.classifies.some((p) => p.test(sentence))) continue;
@@ -2290,7 +2381,7 @@ export function unapprovedClaimFaults(
  *  nothing — the exact failure this wave has now hit three times. */
 export function approvedFormsExercised(prose: string, allowlist: ClaimAllowlist): string[] {
   const fired = new Set<string>();
-  for (const block of proseBlocks(prose)) {
+  for (const block of claimTexts(prose)) {
     for (const sentence of sentences(block)) {
       if (!allowlist.classifies.some((p) => p.test(sentence))) continue;
       for (const [form, pattern] of allowlist.approved) {
@@ -2542,8 +2633,10 @@ export function goldenParagraphFaults(
  * Not cryptographic and does not need to be: the thing being detected is an
  * edit, not a forgery. Hand-rolled so this module keeps its zero-import surface
  * (`node:crypto` here would be one careless import away from a client bundle),
- * and in plain numbers rather than BigInt because `tsconfig.scripts.json`
- * targets below ES2020 and rejects BigInt literals outright.
+ * and in plain numbers rather than BigInt because `apps/web/tsconfig.json`
+ * targets ES2017, which rejects BigInt literals outright (TS2737). An earlier
+ * version of this comment blamed `tsconfig.scripts.json`, which in fact targets
+ * es2022 — a false comment, in the module this wave exists to make truthful.
  */
 function fnv1a(text: string, offsetBasis: number): number {
   let hash = offsetBasis;
@@ -2586,20 +2679,33 @@ const GATE_PREAMBLE = [
  * is a gate people route around.
  */
 export function inventoryFaults(label: string, markdown: string, approved: string[]): string[] {
-  const blocks = proseBlocks(markdown);
+  const surfaces = claimSurfaces(markdown);
+  const blocks = surfaces.map((surface) =>
+    surface.kind === "frontmatter" ? `${surface.field}: ${surface.text}` : surface.text,
+  );
   const actual = blocks.map(blockDigest);
   if (approved.length === 0) {
     return [`${label}: the approved inventory is EMPTY, so this gate is checking nothing.`];
   }
   const faults: string[] = [];
-  const approvedSet = new Set(approved);
   const actualSet = new Set(actual);
 
+  // POSITIONAL, not set-membership (fix round 3). The set version raised ZERO
+  // faults when two real paragraphs were SWAPPED, while its own message claimed
+  // to catch "duplicated or reordered" — a comment promising more than the code
+  // delivered, which is the exact defect this wave exists to remove. Order is
+  // part of the approved copy: "It stops once that competition is over:" means
+  // something different two paragraphs away from its bullets.
   blocks.forEach((block, i) => {
-    if (approvedSet.has(actual[i]!)) return;
+    if (actual[i] === approved[i]) return;
+    const movedFrom = approved.indexOf(actual[i]!);
+    const detail =
+      movedFrom === -1
+        ? `is NOT in the approved inventory`
+        : `is approved copy, but MOVED here from position ${movedFrom + 1}`;
     faults.push(
       [
-        `${label}: paragraph ${i + 1} is NOT in the approved inventory.`,
+        `${label}: surface ${i + 1} of ${blocks.length} (${surfaces[i]!.kind}) ${detail}.`,
         "",
         GATE_PREAMBLE,
         "",
@@ -2613,7 +2719,7 @@ export function inventoryFaults(label: string, markdown: string, approved: strin
     if (actualSet.has(digest)) continue;
     faults.push(
       [
-        `${label}: an approved paragraph (digest "${digest}") is GONE from the article.`,
+        `${label}: an approved surface (digest "${digest}") is GONE from the article.`,
         "",
         GATE_PREAMBLE,
       ].join("\n"),
@@ -2622,7 +2728,7 @@ export function inventoryFaults(label: string, markdown: string, approved: strin
 
   if (faults.length === 0 && actual.length !== approved.length) {
     faults.push(
-      `${label}: the article has ${actual.length} paragraphs and the inventory has ${approved.length} — a paragraph was duplicated or reordered.`,
+      `${label}: the article has ${actual.length} surfaces and the inventory has ${approved.length}.`,
     );
   }
   return faults;
