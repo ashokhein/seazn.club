@@ -1692,6 +1692,54 @@ describe("the add-ons gate catches what the vocabulary cannot", () => {
     "A group that goes over its organisation limit has its newest organisations switched off.",
   ];
 
+  /**
+   * ROUND 4, measured after round 4's rules were final. Twelve claims about
+   * what round 4 fixed — the trial path's timing, the freed slot's renewal
+   * bound, how far the seat freeze reaches — plus rate shapes the widened
+   * vocabulary still has not seen.
+   *
+   * Lexical 0/12 again; gate 12/12 against each of the three gated articles,
+   * 36/36 in total. That is the FIFTH independent set to land at ~0 lexical /
+   * 100% gate (5/12 on the pattern's own phrases, 1/12, 0/12, a reviewer's
+   * 0/24, and this). The conclusion is settled: stop widening vocabulary.
+   */
+  const ROUND_4_FRESH = [
+    "Adding an organisation during your trial still prorates onto the next invoice.",
+    "A trial group is billed for the extra organisation the moment the trial starts.",
+    "Moving into a slot you already paid for keeps it free at every future renewal.",
+    "A freed slot never costs you anything again.",
+    "An over-limit member is blocked from the app until you buy the seat back.",
+    "API keys stop working once you are over your member limit.",
+    "Every extra organisation is billed at fifty per cent of what you already pay.",
+    "The second organisation onwards costs one half of the headline price.",
+    "Cancelling an extra organisation switches off your newest organisation.",
+    "Your extra organisations renew on their own separate date.",
+    "A size pack raises the entrant limit for every competition you run.",
+    "Credit packs run out at the end of the year you bought them.",
+  ];
+
+  it("scores 0/12 lexically on round 4's set, and 36/36 through the gate", () => {
+    const caughtLexically = ROUND_4_FRESH.filter(
+      (claim) =>
+        LOCALE_CLAIMS.en.halfClaim.test(claim) &&
+        localeHalfClaimFaults([{ locale: "en", key: "x", value: claim }], "atMost").length > 0,
+    );
+    expect(caughtLexically, "the vocabulary now catches some of these — re-measure").toEqual([]);
+
+    const escaped: string[] = [];
+    for (const claim of ROUND_4_FRESH) {
+      for (const [slug, approved] of Object.entries(GATED_ARTICLES)) {
+        const mutated = `${helpArticleBySlug(slug)}\n\n${claim}\n`;
+        if (inventoryFaults("x", mutated, approved).length === 0) escaped.push(`${slug} <- ${claim}`);
+      }
+    }
+    expect(escaped).toEqual([]);
+    expect(
+      ROUND_4_FRESH.length * Object.keys(GATED_ARTICLES).length,
+      "36 = 12 claims x 3 gated articles",
+    ).toBe(36);
+  });
+
   it("scores 0/12 lexically on round 3's set, and 12/12 through the gate", () => {
     const caughtLexically = ROUND_3_FRESH.filter(
       (claim) =>
