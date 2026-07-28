@@ -41,10 +41,24 @@ import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
 
 // ── Surfaces ─────────────────────────────────────────────────────────────────
 
-/** One customer-facing description in the Stripe seed. */
+/** One customer-facing product in the Stripe seed.
+ *
+ *  BOTH customer-facing fields, deliberately. `name` is not metadata: Checkout
+ *  renders the PRODUCT'S NAME as the line-item label (`lib/credit-packs.ts`
+ *  and `lib/size-packs.ts` both pass `line_items: [{ price }]`, so Stripe reads
+ *  the label off the product), and `scripts/stripe-sync.ts` syncs name and
+ *  description together on every run — including against the shared test-mode
+ *  account on every PR (ci.yml). So the name is what the buyer reads on the
+ *  payment page, and until fix round 6 NOTHING read it: a probe carrying
+ *  "Event Pass — yours forever, never expires", "Event Pass L — 10 AI schedule
+ *  runs per division", "AI Credits — 4000" (seed: 40) and "Size Pack — +320
+ *  entrants" (delta_each: 32) shipped 216 passed / 0 failed. Both flagship
+ *  falsehoods of this wave, plus a 100x credit claim, all green. */
 export interface DescribedEntry {
   section: string;
   key: string;
+  /** `product.name` — the Checkout line-item label. */
+  name: string;
   description: string;
 }
 
@@ -52,25 +66,35 @@ export interface DescribedEntry {
 export const NON_SECTION_KEY = /^\$comment|^currency$/;
 
 /**
- * Every `product.description` in the seed, found by WALKING it.
+ * Every `product.name` AND `product.description` in the seed, found by WALKING
+ * it.
  *
  * Deliberately NOT a hand-written list of sections. The sibling seed guard kept
  * one and v17 #293 found `org_addons` had escaped it for a whole wave — a list
  * is itself the thing that must be remembered. `describedSections` below lets a
  * test assert the walk reaches every non-comment key, so a new section is
  * covered the day it is written.
+ *
+ * FIX ROUND 6: the same failure one field over. The walk was general about
+ * SECTIONS and hardcoded about FIELDS — it read `description` and nothing read
+ * `name` at all, so every rule built on this output was blind to the string
+ * Checkout actually shows the buyer. A missing `name` is a FAULT, not a skip:
+ * stripe-sync sends it on every run, so an entry without one is a product with
+ * no label rather than a product this walk may ignore.
  */
 export function describedEntries(seed: Record<string, unknown>): DescribedEntry[] {
   const out: DescribedEntry[] = [];
   for (const [section, value] of Object.entries(seed)) {
     if (!Array.isArray(value)) continue;
     for (const entry of value) {
-      const record = entry as { key?: unknown; product?: { description?: unknown } };
+      const record = entry as { key?: unknown; product?: { name?: unknown; description?: unknown } };
       const description = record.product?.description;
       if (typeof description !== "string") continue;
+      const name = record.product?.name;
       out.push({
         section,
         key: typeof record.key === "string" ? record.key : "(unkeyed)",
+        name: typeof name === "string" ? name : "",
         description,
       });
     }
@@ -387,11 +411,23 @@ export function retiredRunCapFaults(text: string): string[] {
   );
 }
 
-/** A pass rung's key and the copy that sells it. */
+/** A pass rung's key and the copy that sells it — BOTH customer-facing strings.
+ *
+ *  `name` is optional only so the rewording proofs below can stay one-liners;
+ *  the real seed always has one, and `describedNameFaults` makes a missing name
+ *  a fault in its own right. Where a rule has a negative half and a positive
+ *  half, the NEGATIVE half reads `rungText()` (name + description — a falsehood
+ *  is a falsehood in either) and the POSITIVE half stays on the description,
+ *  which is the only one of the two with room to state a bound. */
 export interface Rung {
   key: string;
+  name?: string;
   description: string;
 }
+
+/** What a buyer actually reads for a rung: the Checkout line-item label and the
+ *  product description, scanned as one body of copy. */
+export const rungText = (r: Rung): string => (r.name ? `${r.name} | ${r.description}` : r.description);
 
 /**
  * The pass's DURATION claim, both halves at once:
@@ -415,9 +451,15 @@ export interface Rung {
  */
 export function passDurationFaults(rungs: Rung[]): string[] {
   const faults: string[] = [];
-  for (const { key, description } of rungs) {
+  for (const rung of rungs) {
+    const { key, description } = rung;
+    // NEGATIVE half over name AND description. "Seazn Club Event Pass — yours
+    // forever, never expires" is the wave's flagship falsehood written into the
+    // Checkout line-item label, and it shipped green while this scanned the
+    // description alone.
+    const text = rungText(rung);
     for (const pattern of FALSE_PASS_PERMANENCE_PATTERNS) {
-      if (pattern.test(description)) {
+      if (pattern.test(text)) {
         faults.push(`${key}: claims unbounded duration (${pattern.source})`);
       }
     }
@@ -449,17 +491,21 @@ export function passDurationFaults(rungs: Rung[]): string[] {
  */
 export function passCreditGrantFaults(rungs: Rung[]): string[] {
   const faults: string[] = [];
-  for (const { key, description } of rungs) {
+  for (const rung of rungs) {
+    const { key, description } = rung;
+    const text = rungText(rung);
+    // POSITIVE half: only the description has room to state the grant.
     if (!description.includes(`+${PASS_CREDIT_GRANT} AI credits`)) {
       faults.push(`${key}: does not state the +${PASS_CREDIT_GRANT} AI credit grant`);
     }
-    for (const match of description.matchAll(/(\d+)\s*AI\s+credits?/gi)) {
+    // NEGATIVE halves over name AND description.
+    for (const match of text.matchAll(/(\d+)\s*AI\s+credits?/gi)) {
       if (Number(match[1]) !== PASS_CREDIT_GRANT) {
         faults.push(`${key}: quotes ${match[1]} AI credits, but the grant is ${PASS_CREDIT_GRANT}`);
       }
     }
     for (const pattern of RECURRING_GRANT_PATTERNS) {
-      if (pattern.test(description)) {
+      if (pattern.test(text)) {
         faults.push(`${key}: sells the one-time grant as recurring (${pattern.source})`);
       }
     }
@@ -487,7 +533,12 @@ export function capClaimFaults(rungs: Rung[], caps: RungCaps[]): string[] {
   const faults: string[] = [];
   const capsFor = (key: string) => caps.find((c) => c.key === key);
 
-  for (const { key, description } of rungs) {
+  for (const rung of rungs) {
+    const { key, description } = rung;
+    // NEGATIVE halves (a figure that is wrong, or another rung's) read name AND
+    // description; POSITIVE halves ("must quote its own cap") stay on the
+    // description, which is where the seed states caps.
+    const text = rungText(rung);
     const own = capsFor(key);
     if (!own) {
       faults.push(`${key}: no live caps resolved for this rung`);
@@ -498,7 +549,7 @@ export function capClaimFaults(rungs: Rung[], caps: RungCaps[]): string[] {
       if (!/\bunlimited\s+entrants\b/i.test(description)) {
         faults.push(`${key}: entrant cap is unlimited but the copy never says so`);
       }
-      for (const match of description.matchAll(/(\d[\d,]*)\s+entrants\b/gi)) {
+      for (const match of text.matchAll(/(\d[\d,]*)\s+entrants\b/gi)) {
         faults.push(`${key}: quotes "${match[1]} entrants" for an unlimited cap`);
       }
     } else if (!description.includes(`${own.entrants} entrants`)) {
@@ -518,12 +569,12 @@ export function capClaimFaults(rungs: Rung[], caps: RungCaps[]): string[] {
     for (const other of caps) {
       if (other.key === key) continue;
       if (other.entrants !== null && other.entrants !== own.entrants) {
-        if (description.includes(`${other.entrants} entrants`)) {
+        if (text.includes(`${other.entrants} entrants`)) {
           faults.push(`${key}: quotes ${other.key}'s entrant cap (${other.entrants})`);
         }
       }
       if (other.divisions !== null && other.divisions !== own.divisions) {
-        if (description.includes(`${other.divisions} divisions`)) {
+        if (text.includes(`${other.divisions} divisions`)) {
           faults.push(`${key}: quotes ${other.key}'s division cap (${other.divisions})`);
         }
       }
@@ -597,8 +648,24 @@ export interface TieredPrice {
 
 export interface PricedPlan {
   key: string;
-  product: { description: string };
+  product: { name?: string; description: string };
   prices: Record<string, TieredPrice>;
+}
+
+/** Which comparison a piece of rider copy LICENSES, or null if it makes no
+ *  statement about the rate at all. Checked most-specific first, because "no
+ *  more than half the base rate" also contains "half the base rate".
+ *
+ *  Extracted in fix round 6 so the plan descriptions, the `org_addons` product
+ *  NAMES and the add-on descriptions are all judged by one detector. The probe
+ *  that motivated it put "Seazn Club Extra Organisation — Pro, half the base
+ *  rate" — the unqualified claim, on the Checkout line-item label — into the
+ *  seed, and nothing read it. */
+export function riderClaimIn(text: string): "under" | "atMost" | "exactly" | null {
+  if (/\b(a\s+little\s+|just\s+)?under\s+half\b/i.test(text)) return "under";
+  if (/\b(no\s+more\s+than|at\s+most|up\s+to)\s+half\b/i.test(text)) return "atMost";
+  if (/\bhalf\s+the\s+base\s+rate\b/i.test(text)) return "exactly";
+  return null;
 }
 
 /** usd rides `unit_amount`; the rest are SET points in `currency_options`. */
@@ -635,15 +702,11 @@ export function riderRateFaults(plans: PricedPlan[]): string[] {
   for (const plan of plans) {
     const description = plan.product.description;
 
-    // Which comparison the COPY licenses. Checked most-specific first, because
-    // "no more than half the base rate" also contains "half the base rate".
-    const claim = /\b(a\s+little\s+|just\s+)?under\s+half\b/i.test(description)
-      ? ("under" as const)
-      : /\b(no\s+more\s+than|at\s+most|up\s+to)\s+half\b/i.test(description)
-        ? ("atMost" as const)
-        : /\bhalf\s+the\s+base\s+rate\b/i.test(description)
-          ? ("exactly" as const)
-          : null;
+    // Which comparison the COPY licenses — read over the NAME as well as the
+    // description, because both are customer-facing and stripe-sync writes both.
+    const claim = riderClaimIn(
+      plan.product.name ? `${plan.product.name} | ${description}` : description,
+    );
 
     if (claim === null) {
       faults.push(`${plan.key}: makes no statement about the extra-organisation rate`);
@@ -690,6 +753,7 @@ export function riderRateFaults(plans: PricedPlan[]): string[] {
 export interface OrgAddon {
   key: string;
   plan_key: string;
+  product?: { name?: string; description?: string };
   price: { lookup_key: string; unit_amount: number; currency_options?: Record<string, number> };
 }
 
@@ -743,6 +807,22 @@ export function orgAddonRiderFaults(plans: PricedPlan[], addons: OrgAddon[]): st
         );
       }
     }
+
+    // …and the add-on's OWN customer-facing strings must not make the rate
+    // claim the arithmetic does not support. The seed rounds the rider DOWN in
+    // usd (1900 -> 900 = 47.4%) while eur/aud land on exact halves, so "half
+    // the base rate" UNQUALIFIED is false in most currencies — only "no more
+    // than half" holds everywhere. Nothing read these strings until fix round
+    // 6, and a probe that put exactly that claim in the Checkout line-item
+    // label ("Seazn Club Extra Organisation — Pro, half the base rate") shipped
+    // 216 passed / 0 failed.
+    const addonText = [addon.product?.name, addon.product?.description].filter(Boolean).join(" | ");
+    const addonClaim = riderClaimIn(addonText);
+    if (addonClaim === "exactly" || addonClaim === "under") {
+      faults.push(
+        `${addon.key}: its product copy claims the rider is ${addonClaim === "under" ? "UNDER" : "exactly"} half the base rate, but only "no more than half" is true in every currency`,
+      );
+    }
   }
 
   for (const plan of plans) {
@@ -753,6 +833,71 @@ export function orgAddonRiderFaults(plans: PricedPlan[], addons: OrgAddon[]): st
     }
   }
   return faults;
+}
+
+// ── Quantities written into a product NAME ───────────────────────────────────
+
+/**
+ * A seed product whose NAME quotes a quantity the seed itself holds one field
+ * away — "Seazn Club AI Credits — 40" beside `credits: 40`, "Seazn Club Size
+ * Pack — +32 entrants" beside `delta_each: 32`.
+ */
+export interface QuantifiedProduct {
+  key: string;
+  name: string;
+  /** the seed field the figure is supposed to be, named for the fault label. */
+  field: string;
+  quantity: number;
+}
+
+/**
+ * A quantity in a product NAME must be the seed's own quantity.
+ *
+ * These names are not decoration. Checkout renders the product's name as the
+ * line-item label (`credit-packs.ts` / `size-packs.ts` both send
+ * `line_items: [{ price }]`, so the label comes off the product), so "AI
+ * Credits — 4000" beside a `credits: 40` grant is a 100x claim on the payment
+ * page itself — and `stripe-sync.ts` pushes it to the shared test-mode account
+ * on every PR. Nothing read a product name before fix round 6.
+ *
+ * TWO rules, because either alone has an obvious hole:
+ *  - the seed's own figure must be there as a WHOLE TOKEN (`toContain("40")` is
+ *    satisfied by "4000" — see `wholeNumber`);
+ *  - and NO OTHER figure may be, or the honest number can simply be joined by a
+ *    fictional one ("AI Credits — 40 (4000 with Pro)").
+ *
+ * ANTI-VACUITY is the caller's job in one respect this function cannot cover —
+ * an empty `products` array returns `[]` — so `describedNameFaults` below pairs
+ * with it: it makes a MISSING name a fault, so a section cannot quietly stop
+ * being scanned by losing the field this rule reads.
+ */
+export function productNameQuantityFaults(products: QuantifiedProduct[]): string[] {
+  const faults: string[] = [];
+  for (const { key, name, field, quantity } of products) {
+    if (!wholeNumber(quantity).test(name)) {
+      faults.push(`${key}: product name "${name}" does not quote its ${field} (${quantity})`);
+    }
+    for (const match of name.matchAll(/\d[\d,]*/g)) {
+      const found = Number(match[0].replace(/,/g, ""));
+      if (found !== quantity) {
+        faults.push(`${key}: product name quotes ${found}, but ${field} is ${quantity}`);
+      }
+    }
+  }
+  return faults;
+}
+
+/** Every seed entry that carries a description must carry a NAME too.
+ *
+ *  `stripe-sync.ts` sends `name` on every run, so an entry without one is a
+ *  product with no Checkout label — and, more to the point here, an entry that
+ *  every name-reading rule above would silently skip. Making absence a fault is
+ *  what stops "the guard covers this section" decaying into "the guard finds
+ *  nothing to look at in this section". */
+export function describedNameFaults(entries: DescribedEntry[]): string[] {
+  return entries
+    .filter((e) => e.name.trim().length === 0)
+    .map((e) => `${e.section}/${e.key}: has a product.description but no product.name`);
 }
 
 // ── Help-article prose ───────────────────────────────────────────────────────

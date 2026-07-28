@@ -23,13 +23,16 @@ import {
   type PricedPlan,
   type Rung,
   type RungCaps,
+  type QuantifiedProduct,
   capClaimFaults,
   describedEntries,
+  describedNameFaults,
   describedSections,
   orgAddonRiderFaults,
   passCreditGrantFaults,
   passDurationFaults,
   plusDifferentiatorFaults,
+  productNameQuantityFaults,
   retiredRunCapFaults,
   riderRateFaults,
 } from "@/lib/copy-truth";
@@ -67,15 +70,52 @@ const grants = async (feature: string, plan: string): Promise<boolean> => {
 
 const seed = stripePlans as unknown as Record<string, unknown>;
 const entries = describedEntries(seed);
-const stripeRenderedText = entries.map((e) => e.description).join(" | ");
+
+/**
+ * Everything a buyer reads that comes out of this seed — NAMES AS WELL AS
+ * DESCRIPTIONS (fix round 6).
+ *
+ * The name is not metadata. Checkout renders the PRODUCT'S name as the
+ * line-item label (`lib/credit-packs.ts:112` and `lib/size-packs.ts:231` both
+ * send `line_items: [{ price }]`, so Stripe reads the label off the product),
+ * `scripts/stripe-sync.ts` syncs name and description together on every run,
+ * and `ci.yml` runs `stripe:sync` against the shared test-mode account on every
+ * PR. Until this line changed, NOTHING in the repo read `product.name`: a probe
+ * carrying "Event Pass — yours forever, never expires", "Event Pass L — 10 AI
+ * schedule runs per division", "AI Credits — 4000" (seed: 40), "Size Pack —
+ * +320 entrants" (delta_each: 32) and "Extra Organisation — Pro, half the base
+ * rate" shipped 216 passed / 0 failed. Both flagship falsehoods of this wave,
+ * on the payment page.
+ */
+const stripeRenderedText = entries.map((e) => `${e.name} | ${e.description}`).join(" | ");
 
 /** The Event Pass rungs. EVERY guard iterates this rather than naming
  *  `event_pass`: v17 #294 added a second rung, and a guard hardcoded to the
- *  first key silently stops covering the product the moment a rung is added. */
+ *  first key silently stops covering the product the moment a rung is added.
+ *  Carries the NAME too — see `rungText` for which half of each rule reads it. */
 const passRungs: Rung[] = stripePlans.passes.map((p) => ({
   key: p.key,
+  name: p.product.name,
   description: p.product.description,
 }));
+
+/** The seed figures that are written into a product NAME, paired with the field
+ *  they are supposed to equal. Built from the seed itself — never restated — so
+ *  changing `credits` or `delta_each` and forgetting the label is a red. */
+const quantifiedProducts: QuantifiedProduct[] = [
+  ...stripePlans.packs.map((p) => ({
+    key: p.key,
+    name: p.product.name,
+    field: "credits",
+    quantity: p.credits,
+  })),
+  ...stripePlans.size_packs.map((p) => ({
+    key: p.key,
+    name: p.product.name,
+    field: "delta_each",
+    quantity: p.delta_each,
+  })),
+];
 
 const plusDescription = stripePlans.plans.find((p) => p.key === "pro_plus")!.product.description;
 
@@ -91,6 +131,29 @@ describe("stripe-plans.json names no retired feature and no false pass permanenc
     const walked = new Set(entries.map((e) => e.section));
     expect([...walked].sort()).toEqual(describedSections(seed).sort());
     expect(entries.length).toBeGreaterThan(10);
+  });
+
+  // …and every field a buyer reads, not just the one the walk happened to
+  // start with. The walk was general about SECTIONS and hardcoded about
+  // FIELDS, which is the same failure one field over.
+  it("collects the product NAME of every entry, so nothing is scanned blind", () => {
+    expect(describedNameFaults(entries)).toEqual([]);
+    // ANTI-VACUITY: names must actually be reaching the scan. An empty string
+    // per entry would satisfy every negative rule above for free.
+    expect(stripeRenderedText).toContain("Seazn Club Event Pass");
+    expect(entries.every((e) => e.name.length > 0)).toBe(true);
+  });
+
+  // A figure in a Checkout line-item label, pinned to the seed field it is
+  // supposed to be. `credits: 40/105/220/460` and `delta_each: 32` had no
+  // check of any kind — "AI Credits — 4000" and "Size Pack — +320 entrants"
+  // were both green.
+  it("every quantity in a product name is the seed's own figure", () => {
+    expect(productNameQuantityFaults(quantifiedProducts)).toEqual([]);
+    // The rule must have had products to look at, and each must carry a digit —
+    // a name with no number satisfies "quotes no OTHER number" vacuously.
+    expect(quantifiedProducts.length).toBeGreaterThanOrEqual(5);
+    expect(quantifiedProducts.every((p) => /\d/.test(p.name))).toBe(true);
   });
 
   it("quotes no retired per-division AI-run cap, in any section", () => {
@@ -364,6 +427,126 @@ describe("the guards survive a rewording, not just a revert", () => {
         { key: M, description: "…and +25 AI credits every month while it runs." },
       ]).join(" "),
     ).toContain("recurring");
+  });
+
+  // ── The product NAME (fix round 6) ─────────────────────────────────────────
+  //
+  // Probe P5's five falsehoods, each in the field Checkout renders as the
+  // line-item label. All five shipped 216 passed / 0 failed before this round.
+
+  it("catches a falsehood written into the pass's NAME, not its description", () => {
+    const bounded = "One-time upgrade for a single competition, while it's active: 10 divisions";
+    // Same description, honest name — clean.
+    expect(
+      passDurationFaults([{ key: M, name: "Seazn Club Event Pass", description: bounded }]),
+    ).toEqual([]);
+    // …and the probe's name, with that same honest description beside it.
+    for (const name of [
+      "Seazn Club Event Pass — yours forever, never expires",
+      "Seazn Club Event Pass — a permanent upgrade",
+      "Seazn Club Event Pass — yours to keep",
+    ]) {
+      const faults = passDurationFaults([{ key: M, name, description: bounded }]);
+      expect(faults, name).not.toEqual([]);
+      expect(faults.join(" "), name).toContain("unbounded duration");
+    }
+  });
+
+  it("catches a retired AI-run cap written into a NAME", () => {
+    // P5 put this on the L rung's label. `stripeRenderedText` is what feeds
+    // this rule, and it now carries names.
+    expect(
+      retiredRunCapFaults(
+        "Seazn Club Event Pass L — 10 AI schedule runs per division, forever | One-time upgrade",
+      ),
+    ).not.toEqual([]);
+  });
+
+  it("catches a credit grant misquoted in a NAME", () => {
+    const honest = "…and a one-time +25 AI credits added to your wallet.";
+    expect(
+      passCreditGrantFaults([
+        { key: M, name: "Seazn Club Event Pass — 250 AI credits", description: honest },
+      ]).join(" "),
+    ).toContain("quotes 250 AI credits");
+  });
+
+  it("catches a quantity in a name that is not the seed's own figure", () => {
+    const honest: QuantifiedProduct[] = [
+      { key: "credits_10", name: "Seazn Club AI Credits — 40", field: "credits", quantity: 40 },
+      {
+        key: "size_pack_32",
+        name: "Seazn Club Size Pack — +32 entrants",
+        field: "delta_each",
+        quantity: 32,
+      },
+    ];
+    expect(productNameQuantityFaults(honest)).toEqual([]);
+
+    // The 100x claim, and the 10x one. A substring rule would have passed both.
+    expect(
+      productNameQuantityFaults([
+        { key: "credits_10", name: "Seazn Club AI Credits — 4000", field: "credits", quantity: 40 },
+      ]),
+    ).toEqual([
+      'credits_10: product name "Seazn Club AI Credits — 4000" does not quote its credits (40)',
+      "credits_10: product name quotes 4000, but credits is 40",
+    ]);
+    expect(
+      productNameQuantityFaults([
+        {
+          key: "size_pack_32",
+          name: "Seazn Club Size Pack — +320 entrants",
+          field: "delta_each",
+          quantity: 32,
+        },
+      ]).join(" "),
+    ).toContain("quotes 320, but delta_each is 32");
+
+    // Both halves matter: keeping the honest number and ADDING a fictional one
+    // defeats a presence-only rule.
+    expect(
+      productNameQuantityFaults([
+        {
+          key: "credits_10",
+          name: "Seazn Club AI Credits — 40 (4000 on Pro)",
+          field: "credits",
+          quantity: 40,
+        },
+      ]),
+    ).toEqual(["credits_10: product name quotes 4000, but credits is 40"]);
+
+    // …and DELETING the figure is a fault too, not a clean escape.
+    expect(
+      productNameQuantityFaults([
+        { key: "credits_10", name: "Seazn Club AI Credits", field: "credits", quantity: 40 },
+      ]),
+    ).toEqual([
+      'credits_10: product name "Seazn Club AI Credits" does not quote its credits (40)',
+    ]);
+  });
+
+  it("catches an unqualified rider rate claim in an add-on's NAME", () => {
+    const plans = stripePlans.plans as unknown as PricedPlan[];
+    const addons = stripePlans.org_addons as unknown as OrgAddon[];
+    // The live seed is clean…
+    expect(orgAddonRiderFaults(plans, addons)).toEqual([]);
+    // …and P5's label is not. "half the base rate" bare is false in usd (47.4%)
+    // and would OVERCHARGE the moment a price moved the other way.
+    const holed = addons.map((a) =>
+      a.key === "extra_org_pro"
+        ? { ...a, product: { ...a.product, name: "Seazn Club Extra Organisation — Pro, half the base rate" } }
+        : a,
+    );
+    expect(orgAddonRiderFaults(plans, holed).join(" ")).toContain(
+      "claims the rider is exactly half the base rate",
+    );
+  });
+
+  it("makes a MISSING product name a fault, so a section cannot go unscanned", () => {
+    expect(
+      describedNameFaults([{ section: "packs", key: "credits_10", name: "", description: "x" }]),
+    ).toEqual(["packs/credits_10: has a product.description but no product.name"]);
   });
 
   it("catches one rung wearing the other's caps", () => {
