@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+  BillRow,
   CreateOrgForm,
   eligibility,
   submitLabel,
@@ -56,6 +57,84 @@ describe("create-org-form billing decisions", () => {
     const full = eligibility(fullGroup, msg);
     expect(full.eligible).toBe(false);
     expect(full.reason).toBe("Full");
+  });
+
+  it("(v17 gap #293) a full pro/pro_plus group's reason carries an Add-ons link when the org has a slug", () => {
+    const fullWithSlug = {
+      ...fullGroup,
+      orgs: [{ id: "o2", name: "Northside", slug: "northside" }],
+    };
+    const full = eligibility(fullWithSlug, msg, ["o2"]);
+    expect(full.addOnsHref).toBe("/o/northside/settings/add-ons");
+  });
+
+  it("omits the Add-ons link when the group has no org to hang a slug off", () => {
+    expect(eligibility(fullGroup, msg).addOnsHref).toBeUndefined();
+  });
+
+  it("an ELIGIBLE group never carries an addOnsHref (nothing to buy)", () => {
+    expect(eligibility(proGroup, msg)).toEqual({ eligible: true });
+  });
+
+  // The link's job is to end a dead end. Each case below would REPLACE it with
+  // a different dead end — a page that can only answer with a notice, or a
+  // 404 — so each must keep the plain "Full" pill instead. The pill is
+  // asserted alongside every one of them: an addOnsHref that is undefined
+  // because the FULL branch was never reached would prove nothing.
+  it("offers nothing on a Community bill — permanently full, and nothing to sell", () => {
+    const community = {
+      ...fullGroup,
+      plan_key: "community",
+      orgs: [{ id: "o2", name: "Northside", slug: "northside" }],
+    };
+    const seen = eligibility(community, msg, ["o2"]);
+    expect(seen.reason).toBe("Full");
+    expect(seen.addOnsHref).toBeUndefined();
+  });
+
+  it("offers nothing when the bill has no live subscription to ride", () => {
+    const comped = {
+      ...fullGroup,
+      has_live_subscription: false,
+      orgs: [{ id: "o2", name: "Northside", slug: "northside" }],
+    };
+    const seen = eligibility(comped, msg, ["o2"]);
+    expect(seen.reason).toBe("Full");
+    expect(seen.addOnsHref).toBeUndefined();
+  });
+
+  it("links the org the payer is a MEMBER of, not simply the first on the bill", () => {
+    // A payer need not belong to what they pay for (the shape after a bill
+    // transfer), and every /o page 404s a non-member — so the first org is the
+    // wrong answer whenever it is not one of theirs.
+    const mixed = {
+      ...fullGroup,
+      max_orgs: 2,
+      orgs: [
+        { id: "theirs", name: "Northside", slug: "northside" },
+        { id: "mine", name: "Riverside", slug: "riverside" },
+      ],
+    };
+    expect(eligibility(mixed, msg, ["mine"]).addOnsHref).toBe(
+      "/o/riverside/settings/add-ons",
+    );
+
+    const stranger = eligibility(mixed, msg, ["unrelated-org"]);
+    expect(stranger.reason).toBe("Full");
+    expect(stranger.addOnsHref).toBeUndefined();
+  });
+
+  it("a full bill that is ALSO overdue offers the overdue reason and no purchase", () => {
+    // Buying capacity on a bill whose card is declining is not the remedy, and
+    // the charge would fail anyway.
+    const overdue = {
+      ...fullGroup,
+      status: "past_due",
+      orgs: [{ id: "o2", name: "Northside", slug: "northside" }],
+    };
+    const seen = eligibility(overdue, msg, ["o2"]);
+    expect(seen.reason).toBe("Payment overdue");
+    expect(seen.addOnsHref).toBeUndefined();
   });
 
   it("reads each ineligibility reason from the catalog", () => {
@@ -121,11 +200,70 @@ describe("create-org-form billing decisions", () => {
   });
 });
 
+// The decisions above are only half of it: `eligibility` could return a
+// perfect addOnsHref that no markup ever reads, or markup could render the link
+// for every row regardless. These render the row a customer actually sees.
+describe("BillRow (v17 gap #293 — the rendered picker row)", () => {
+  const renderRow = (g: CreateOrgGroup, memberOrgIds: string[]) =>
+    renderToStaticMarkup(
+      <ul>
+        <BillRow
+          g={g}
+          msg={msg}
+          selectedId=""
+          memberOrgIds={memberOrgIds}
+          onPick={() => {}}
+        />
+      </ul>,
+    );
+
+  const fullPro: CreateOrgGroup = {
+    ...fullGroup,
+    orgs: [{ id: "o2", name: "Northside", slug: "northside" }],
+  };
+
+  it("draws the Add-ons link, in English, next to the Full pill", () => {
+    const html = renderRow(fullPro, ["o2"]);
+    expect(html).toContain("Full");
+    expect(html).toContain('href="/o/northside/settings/add-ons"');
+    // The sentence, not the key — this is the copy that ships.
+    expect(html).toContain("Buy another slot");
+  });
+
+  it("keeps the link OUTSIDE the row button, which is disabled and inert", () => {
+    // An anchor inside a button is invalid HTML, and a disabled button
+    // swallows pointer events for its entire subtree — a link nested there
+    // renders perfectly and cannot be clicked.
+    const html = renderRow(fullPro, ["o2"]);
+    expect(html).toContain("disabled=");
+    const buttonClose = html.indexOf("</button>");
+    expect(buttonClose).toBeGreaterThan(-1);
+    expect(html.indexOf("<a ")).toBeGreaterThan(buttonClose);
+  });
+
+  it("draws the Full pill but NO link when there is nothing to sell", () => {
+    // Positive discriminator: the row still renders and still says Full, so
+    // this is the link's absence and not an unrendered row.
+    const html = renderRow({ ...fullPro, plan_key: "community" }, ["o2"]);
+    expect(html).toContain("Full");
+    expect(html).not.toContain("<a ");
+    expect(html).not.toContain("Buy another slot");
+  });
+
+  it("draws neither pill nor link on a bill with room", () => {
+    const html = renderRow(proGroup, ["o1"]);
+    expect(html).toContain("Riverside");
+    expect(html).not.toContain("Full");
+    expect(html).not.toContain("<a ");
+    expect(html).not.toContain("disabled=");
+  });
+});
+
 describe("CreateOrgForm (SSR baseline)", () => {
   it("renders the name-only form before any billing group loads", () => {
     const html = renderToStaticMarkup(
       <DictProvider dict={enDict} locale="en">
-        <CreateOrgForm />
+        <CreateOrgForm memberOrgIds={[]} />
       </DictProvider>,
     );
     expect(html).toContain("Organization name");

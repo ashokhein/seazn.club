@@ -12,6 +12,7 @@ import {
   isOrgAddonItem,
   orgAddonForPlan,
 } from "@/lib/org-addons";
+import { ORG_ADDON_PLAN_KEYS, planSellsExtraOrg } from "@/lib/org-addon-plans";
 
 describe("extra-organisation add-on catalog (v17 gap #293)", () => {
   it("has exactly one recurring price per paid plan", () => {
@@ -35,6 +36,18 @@ describe("extra-organisation add-on catalog (v17 gap #293)", () => {
       ORG_ADDONS.find((e) => e.planKey === "pro_plus")!.lookupKey,
     );
     expect(orgAddonForPlan("community")).toBeUndefined();
+  });
+
+  it("the CLIENT-safe plan list is the same catalog, not a second opinion", () => {
+    // `lib/org-addons.ts` is server-only, so a client surface deciding whether
+    // to offer the purchase reads `lib/org-addon-plans.ts` instead. Two
+    // derivations of one catalog is exactly how a "buy another slot" link ends
+    // up on a tier that sells nothing.
+    expect([...ORG_ADDON_PLAN_KEYS]).toEqual(ORG_ADDONS.map((e) => e.planKey));
+    for (const planKey of ["pro", "pro_plus", "community", "unknown_plan"]) {
+      expect(planSellsExtraOrg(planKey), planKey).toBe(!!orgAddonForPlan(planKey));
+    }
+    expect(planSellsExtraOrg("community")).toBe(false);
   });
 
   it("prices each tier at EXACTLY what extraOrgPrice() advertises — same as tier-2, #293", () => {

@@ -29,7 +29,13 @@ export default async function NewOrgPage() {
             {t(ui, "orgNew.subtitle")}
           </p>
         </div>
-        <CreateOrgForm />
+        {/* The bill picker links a FULL bill to its Add-ons tab (v17 gap #293),
+            and every /o page is member-gated — so it needs to know which of the
+            organisations on a bill this user can open. Scorers are excluded:
+            requireOrgPage bounces them to /my-matches. */}
+        <CreateOrgForm
+          memberOrgIds={orgs.filter((o) => o.role !== "scorer").map((o) => o.id)}
+        />
         {orgs.length > 0 && (
           <p className="mt-4 text-center text-sm text-slate-500">
             {t(ui, "orgNew.alreadyHave")}{" "}

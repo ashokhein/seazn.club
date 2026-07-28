@@ -1179,6 +1179,7 @@
   "orgNew.bill.reasonCancelling": "Gepland om te annuleren",
   "orgNew.bill.reasonInactive": "Niet actief",
   "orgNew.bill.reasonFull": "Vol",
+  "orgNew.bill.reasonFullCta": "Nog een plek kopen →",
   "orgNew.bill.chargeNow": "{amount} nu",
   "orgNew.bill.thenPerExtra": "daarna gefactureerd volgens het abonnement van de groep",
   "orgNew.createAndAdd": "Aanmaken en toevoegen — {amount} nu",

@@ -1977,6 +1977,7 @@ export type DictionaryKey =
   | "orgNew.bill.noneEligible"
   | "orgNew.bill.reasonCancelling"
   | "orgNew.bill.reasonFull"
+  | "orgNew.bill.reasonFullCta"
   | "orgNew.bill.reasonInactive"
   | "orgNew.bill.reasonPastDue"
   | "orgNew.bill.separate"

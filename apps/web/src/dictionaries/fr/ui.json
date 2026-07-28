@@ -1179,6 +1179,7 @@
   "orgNew.bill.reasonCancelling": "Annulation programmée",
   "orgNew.bill.reasonInactive": "Inactive",
   "orgNew.bill.reasonFull": "Complète",
+  "orgNew.bill.reasonFullCta": "Acheter une place supplémentaire →",
   "orgNew.bill.chargeNow": "{amount} maintenant",
   "orgNew.bill.thenPerExtra": "puis facturé selon le forfait du groupe",
   "orgNew.createAndAdd": "Créer et ajouter — {amount} maintenant",
