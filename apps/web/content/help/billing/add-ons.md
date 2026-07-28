@@ -6,12 +6,12 @@ order: 7
 
 An add-on buys **more of one specific thing** without moving you to a different plan. There are four of them, and they do not behave the same way:
 
-| Add-on | What it lifts | Scope | Billing | Where to buy |
-| --- | --- | --- | --- | --- |
-| AI credit pack | Credit balance | The billing group's shared wallet | One-time | Settings → Credits |
-| Extra seat | Members in one organisation, +1 each | One organisation | Monthly | No control yet |
-| Size pack | Entrants per division, +32 each | One competition | One-time | No control yet |
-| Extra organisation | Organisations the bill covers, +1 each | The whole billing group | Monthly | Settings → Add-ons |
+| Add-on | What it lifts | Scope | Billing |
+| --- | --- | --- | --- |
+| AI credit pack | Credit balance | The shared wallet | One-time |
+| Extra seat | Members, +1 each | One organisation | Monthly |
+| Size pack | Entrants per division, +32 each | One competition | One-time |
+| Extra organisation | Organisations on the bill, +1 each | The billing group | Monthly |
 
 ## AI credit packs
 
