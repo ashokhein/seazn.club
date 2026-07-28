@@ -216,6 +216,23 @@ export async function groupOrgLimit(subscriptionId: string): Promise<number | nu
 }
 
 /**
+ * Self-serve bound on the extra-organisation RIDER (v17 gap #293). The group's
+ * own plan cap (10 on Pro Plus today) is far smaller than this; a request for
+ * hundreds is a bug or abuse, not a real purchase. Deliberately NOT the point
+ * at which a human gets involved — that is `ORG_ALLOWANCE_ALERT_THRESHOLD`
+ * (server/usecases/extra-orgs.ts), which alerts without ever refusing. This one
+ * refuses.
+ *
+ * It lives HERE, beside the capacity arithmetic, rather than in the usecase
+ * that enforces it: the Add-ons tab renders it as the control's `max`, and
+ * importing it from `server/usecases/extra-orgs` dragged that module's Stripe
+ * client and email sender into a view model's graph for the sake of one
+ * integer. `setExtraOrgs` re-exports it, so its existing importers are
+ * unaffected.
+ */
+export const MAX_EXTRA_ORGS = 50;
+
+/**
  * The raw ingredients of a group's capacity for ONE cap, read WITHOUT the
  * entitlement resolver (v17 gap #293, Task 6).
  *

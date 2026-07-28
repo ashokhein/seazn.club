@@ -484,7 +484,7 @@
   "addOns.extraOrg.decrease": "Decrease extra organisations",
   "addOns.extraOrg.increase": "Increase extra organisations",
   "addOns.extraOrg.priceEach": "{price} each per month",
-  "addOns.extraOrg.newTotal": "New total: {total} per month",
+  "addOns.extraOrg.newTotal": "New total for extra organisations: {total} per month",
   "addOns.extraOrg.prorateUp": "You'll pay the difference for the rest of this billing period.",
   "addOns.extraOrg.prorateDown": "Takes effect now. There's no refund for the rest of this billing period.",
   "addOns.extraOrg.floorNote": "You can't go below {min} — that many organisations in this group are standing on an extra organisation. Move one out of the group first.",

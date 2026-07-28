@@ -1,10 +1,15 @@
 import "server-only";
 import { sql } from "@/lib/db";
 import { walletIdFor } from "@/lib/credits";
-import { capacityBasis, groupOrgLimit, purchasedCapacity, ridersInUse } from "@/lib/billing-group";
+import {
+  capacityBasis,
+  groupOrgLimit,
+  MAX_EXTRA_ORGS,
+  purchasedCapacity,
+  ridersInUse,
+} from "@/lib/billing-group";
 import { hasLiveSubscription } from "@/lib/subscription-status";
 import { ORG_ADDON_FEATURE_KEY, orgAddonForPlan, orgAddonPriceMinor } from "@/lib/org-addons";
-import { MAX_EXTRA_ORGS } from "@/server/usecases/extra-orgs";
 import type { Currency } from "@/lib/currency";
 
 /**
@@ -128,10 +133,14 @@ export async function getAddOnsTab(
     ),
     addonAvailable: !!orgAddonForPlan(planKey),
     orgCap,
-    // Both null (unlimited) means nothing is reduced; a null admission cap
-    // against a finite purchased one is the resolver being MORE generous, not
-    // less, so it is not a reduction either.
-    capReduced: orgCap !== null && admissionCap !== null && admissionCap < orgCap,
+    // A null ADMISSION cap is unlimited — the resolver being more generous than
+    // the receipt, which is not a reduction. A null PURCHASED cap is unlimited
+    // too, and a finite admission cap below it IS a reduction: today no plan
+    // grants unlimited `orgs.max_owned`, so `orgCap === null` only happens
+    // alongside an unlimited override that survives degradation and the two
+    // agree anyway — but nothing pins that, and this ordering stays correct if
+    // an unlimited plan ever ships.
+    capReduced: admissionCap !== null && (orgCap === null || admissionCap < orgCap),
     liveOrgCount: basis.liveOrgs,
     extraOrgCount,
     minExtraOrgs: ridersInUse(basis, extraOrgCount),

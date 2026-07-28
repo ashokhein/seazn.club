@@ -484,7 +484,7 @@
   "addOns.extraOrg.decrease": "Reducir organizaciones adicionales",
   "addOns.extraOrg.increase": "Aumentar organizaciones adicionales",
   "addOns.extraOrg.priceEach": "{price} cada una al mes",
-  "addOns.extraOrg.newTotal": "Nuevo total: {total} al mes",
+  "addOns.extraOrg.newTotal": "Nuevo total de organizaciones adicionales: {total} al mes",
   "addOns.extraOrg.prorateUp": "Pagarás la diferencia por el resto de este periodo de facturación.",
   "addOns.extraOrg.prorateDown": "Se aplica ahora. No hay reembolso por el resto de este periodo de facturación.",
   "addOns.extraOrg.floorNote": "No puedes bajar de {min}: ese número de organizaciones del grupo se apoya en una organización adicional. Saca primero una del grupo.",

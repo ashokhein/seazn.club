@@ -484,7 +484,7 @@
   "addOns.extraOrg.decrease": "Extra organisaties verminderen",
   "addOns.extraOrg.increase": "Extra organisaties verhogen",
   "addOns.extraOrg.priceEach": "{price} per stuk per maand",
-  "addOns.extraOrg.newTotal": "Nieuw totaal: {total} per maand",
+  "addOns.extraOrg.newTotal": "Nieuw totaal voor extra organisaties: {total} per maand",
   "addOns.extraOrg.prorateUp": "Je betaalt het verschil voor de rest van deze facturatieperiode.",
   "addOns.extraOrg.prorateDown": "Gaat nu in. Er volgt geen terugbetaling voor de rest van deze facturatieperiode.",
   "addOns.extraOrg.floorNote": "Je kunt niet onder {min} komen: zoveel organisaties in deze groep steunen op een extra organisatie. Haal er eerst één uit de groep.",

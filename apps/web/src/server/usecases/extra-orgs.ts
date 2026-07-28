@@ -5,7 +5,7 @@ import { deferred } from "@/lib/deferred";
 import { HttpError } from "@/lib/errors";
 import { sendExtraOrgAllowanceAlertEmail } from "@/lib/email";
 import { hasLiveSubscription } from "@/lib/subscription-status";
-import { capacityBasis, ridersInUse } from "@/lib/billing-group";
+import { capacityBasis, MAX_EXTRA_ORGS, ridersInUse } from "@/lib/billing-group";
 import { requireBillingOwner } from "@/server/usecases/billing-manage";
 import {
   ORG_ADDON_FEATURE_KEY,
@@ -14,12 +14,14 @@ import {
   isOrgAddonItem,
 } from "@/lib/org-addons";
 
-/** Self-serve bound on the RIDER, not on the business. The group's own plan cap
- *  (10 on Pro Plus today) is far smaller than this; a request for hundreds is a
- *  bug or abuse, not a real purchase. Deliberately NOT the point at which a
- *  human gets involved — that is ORG_ALLOWANCE_ALERT_THRESHOLD below, which
- *  alerts without ever refusing. This one refuses. */
-export const MAX_EXTRA_ORGS = 50;
+/** Re-exported, not defined here: the bound moved to `lib/billing-group.ts`
+ *  beside the capacity arithmetic so the Add-ons tab can render it as the
+ *  control's `max` without pulling this module's Stripe client and email sender
+ *  into a view model's graph. Existing importers are unaffected — and one
+ *  definition means the control's ceiling and the route's refusal cannot
+ *  drift. See that declaration for why this refuses where the >= 25 alert does
+ *  not. */
+export { MAX_EXTRA_ORGS };
 
 /** Total organisations (plan base + purchased extras) at which a purchase
  *  starts a sales conversation (v17 gap #293 Q2, owner decision 2026-07-27).
