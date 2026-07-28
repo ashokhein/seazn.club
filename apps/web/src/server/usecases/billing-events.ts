@@ -803,6 +803,16 @@ export async function convergeOrgAddonPrices(
     // most once: if some item already holds it, no other item is moved onto it.
     // Consolidating duplicates is setExtraOrgs' job, not a webhook's — the
     // webhook's contract here is "the rate is right", not "the shape is tidy".
+    // The OPENING claim, read from PAYLOAD prices — `orgItems` holds the event's
+    // objects and is NOT rewritten by the publish below (only `items`, the array
+    // the row sync reads, is). So this scan can be wrong in one direction: it
+    // can claim the target from an item that has since moved off it, which makes
+    // every other item take the duplicate exit and alert instead of converging.
+    // That fails SAFE — an alert and no write, rather than a write Stripe would
+    // reject for a duplicate price — and it self-corrects on the next event.
+    // Making it live would mean retrieving every rider up front, i.e. paying the
+    // duplicate case's cost on every subscription that has one rider.
+    //
     // Scanned over EVERY org-addon item, including a quantity-0 one. That is
     // deliberate and is why this predicate differs from the `qty <= 0` skip
     // below: a zero-quantity subscription item still EXISTS in Stripe and still
@@ -811,53 +821,41 @@ export async function convergeOrgAddonPrices(
     // this is about what Stripe will accept. They are different questions.
     let targetClaimed = orgItems.some((it) => it.price?.id === expectedPriceId);
     for (const item of orgItems) {
+      // EXACTLY TWO EXITS BELOW LEAVE BEFORE THE LIVE READ, and both are
+      // therefore payload-trust windows: this one and the `qty <= 0` check
+      // under it. Every other exit — already converged, duplicate rider,
+      // quantity emptied, update succeeded, update rejected — happens after the
+      // read and after the publish, so the row sync sees what Stripe holds. If
+      // you add an exit, put it after the publish or extend this list; a
+      // completeness claim that has drifted from the code is how the last three
+      // of these bugs survived review.
+      //
       // Already on the current plan's price: the converged steady state, and
       // the reason a second identical event writes nothing.
       //
-      // THE COMMON PAYLOAD-TRUST WINDOW, and it is deliberately open. This exit
-      // never reads live state at all, so a payload whose PRICE is right but
-      // whose QUANTITY is stale passes straight through to the row sync. It is
-      // by far the most reachable of the two windows here, because it is the
-      // steady state — every group that has already converged takes it on every
-      // event. Closing it means a `subscriptionItems.retrieve` for every rider
-      // on every `subscription.updated`, which is exactly the per-event round
-      // trip the early return at the top of this function exists to avoid. That
-      // trade belongs to #332's scheduled reconciliation, which pays it once a
-      // day for every group instead of once an event for each.
+      // THE COMMON WINDOW of the two, and deliberately open. It never reads live
+      // state at all, so a payload whose PRICE is right but whose QUANTITY is
+      // stale passes straight through to the row sync. It is by far the more
+      // reachable, because it IS the steady state — every converged group takes
+      // it on every event. Closing it means a `subscriptionItems.retrieve` for
+      // every rider on every `subscription.updated`, which is exactly the
+      // per-event round trip the early return at the top of this function exists
+      // to avoid. That trade belongs to #332's scheduled reconciliation, which
+      // pays it once a day per group instead of once an event per rider.
       if (item.price?.id === expectedPriceId) continue;
       // A quantity-0 item is a removal in disguise; the row sync below flips
       // its row to canceled. Re-pricing it would be paying a Stripe write to
       // correct the rate of something that is on its way out.
       //
-      // ONE OF THE REMAINING PAYLOAD-TRUST WINDOWS, and the rarer one. This
-      // check reads the EVENT and sits before the live re-read below, so a
-      // payload saying qty 0 while Stripe holds a re-bought rider skips
-      // convergence and the row sync then cancels a row the customer is paying
-      // for. Much less reachable than the steady-state exit above: no app path
-      // produces a qty-0 rider item at all — setExtraOrgs removes via
-      // `subscriptionItems.del` — so it takes a Dashboard edit AND an
-      // out-of-order delivery. Same remedy, same owner: #332.
+      // THE RARER of the two windows. This check reads the EVENT and sits
+      // before the live re-read below, so a payload saying qty 0 while Stripe
+      // holds a re-bought rider skips convergence and the row sync then cancels
+      // a row the customer is paying for. Much less reachable than the
+      // steady-state exit above: no app path produces a qty-0 rider item at all
+      // — setExtraOrgs removes via `subscriptionItems.del` — so it takes a
+      // Dashboard edit AND an out-of-order delivery. Same remedy, same owner:
+      // #332.
       if ((item.quantity ?? 0) <= 0) continue;
-      if (targetClaimed) {
-        console.error(
-          `[billing] extra-org rider ${item.id} on subscription ${stripeSub.id} (group ` +
-            `${subscriptionId}) is on price ${item.price?.id} but ${expectedPriceId} is already ` +
-            `held by another item — leaving it for setExtraOrgs to consolidate`,
-        );
-        // Alerted, not just logged: this group bills the wrong rate on this
-        // item until a human or a purchase consolidates the duplicate, and
-        // nothing here will try again.
-        await maybeAlertOrgRepriceFailed({
-          subscriptionId,
-          stripeSubscriptionId: stripeSub.id,
-          planKey,
-          itemId: item.id,
-          currentPriceId: item.price?.id ?? null,
-          expectedPriceId,
-          reason: "another subscription item already holds the target price (duplicate rider)",
-        });
-        continue;
-      }
       // Hoisted so the catch below can report the price Stripe ACTUALLY holds
       // rather than the payload's, which may be superseded. Null only if the
       // read itself is what threw, which is exactly when the payload is the
@@ -901,6 +899,47 @@ export async function convergeOrgAddonPrices(
         // convergence. No Stripe write to make, and the price is now claimed.
         if (live?.price?.id === expectedPriceId) {
           targetClaimed = true;
+          continue;
+        }
+        // The duplicate-rider exit. Stripe will not hold two items on one
+        // subscription at the same price, and duplicates ARE reachable (two
+        // concurrent creates — see setExtraOrgs' FILTER-not-find comment), so
+        // the target price is claimed at most once and the losers are left for
+        // setExtraOrgs to consolidate: the webhook's contract here is "the rate
+        // is right", not "the shape is tidy".
+        //
+        // Deliberately sited AFTER the read and the publish, not before them.
+        // It used to sit with the payload-trust skips above, which meant the
+        // LOSER's row was written from the event snapshot — the same leak as
+        // the two exits closed in round 3, and reachable the same way. The
+        // usual argument for tolerating a pre-read exit (a retrieve on every
+        // event is a hot-path cost) does not apply: this branch runs only for
+        // duplicates, is already inside the round trips, and already sends a
+        // staff alert. Moving it is a relocation, not a new cost.
+        //
+        // It also makes the claim answer to LIVE state: an item whose payload
+        // price looked stale but which Stripe already has on the target now
+        // claims it at the branch above, so a genuine duplicate is alerted
+        // instead of being sent into an update Stripe would reject.
+        if (targetClaimed) {
+          console.error(
+            `[billing] extra-org rider ${item.id} on subscription ${stripeSub.id} (group ` +
+              `${subscriptionId}) is on price ${live?.price?.id ?? item.price?.id} but ` +
+              `${expectedPriceId} is already held by another item — leaving it for ` +
+              `setExtraOrgs to consolidate`,
+          );
+          // Alerted, not just logged: this group bills the wrong rate on this
+          // item until a human or a purchase consolidates the duplicate, and
+          // nothing here will try again.
+          await maybeAlertOrgRepriceFailed({
+            subscriptionId,
+            stripeSubscriptionId: stripeSub.id,
+            planKey,
+            itemId: item.id,
+            currentPriceId: live?.price?.id ?? item.price?.id ?? null,
+            expectedPriceId,
+            reason: "another subscription item already holds the target price (duplicate rider)",
+          });
           continue;
         }
         const qty = live?.quantity ?? item.quantity ?? 0;

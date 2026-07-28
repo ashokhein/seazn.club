@@ -2014,10 +2014,25 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
     const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
     // E1: the upgrade event, emitted when the group held 2 riders.
     const stale = riderItem(riderId, proEntry.lookupKey, 2);
-    // E2 already happened: the customer bought 3 more, so Stripe holds 5.
-    liveItems[riderId] = { ...(liveItems[riderId] as object), quantity: 5 };
+    // E2 already happened: the customer bought 3 more, so Stripe holds 5 — and
+    // on a price the event has never seen, which is what lets the success log
+    // below be checked for WHICH price it reports.
+    liveItems[riderId] = {
+      ...(liveItems[riderId] as object),
+      quantity: 5,
+      price: { id: "price_stripe_actually_holds", lookup_key: proEntry.lookupKey },
+    };
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     await processStripeEvent(updatedEvent(stripeSubId, walletId, [stale]));
+
+    // The success log names the price STRIPE held, not the payload's, for the
+    // same reason the failure alert does: a responder reading "re-priced from
+    // X" must be able to trust X.
+    expect(warned.mock.calls.some((c) => String(c[0]).includes("price_stripe_actually_holds"))).toBe(
+      true,
+    );
+    warned.mockRestore();
 
     expect(itemRetrieveSpy).toHaveBeenCalledWith(riderId);
     // 5, never the payload's 2. Sending 2 would revoke three organisations of
@@ -2127,6 +2142,37 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
       select qty, status from org_addons where stripe_item_id = ${riderId}`;
     expect(row?.status).toBe("canceled");
     expect(await getLimit(orgId, "orgs.max_owned")).toBe(proPlusBase);
+  });
+
+  it("STALE EVENT: the DUPLICATE that loses the claim still gets its row from Stripe", async () => {
+    // Round 4: the third pre-read exit. The duplicate check used to sit with the
+    // payload-trust skips, so the loser `continue`d before the live read and its
+    // row was written from the event snapshot — the same leak as the two exits
+    // closed in round 3. It now sits after the read and the publish, which costs
+    // nothing extra: this branch only runs for duplicates, is already inside the
+    // round trips, and already alerts.
+    const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    const winner = riderItem(dupA, proEntry.lookupKey, 1);
+    const loser = riderItem(dupB, proEntry.lookupKey, 2);
+    // Stripe holds 7 on the loser; the event still remembers 2.
+    liveItems[dupB] = { ...(liveItems[dupB] as object), quantity: 7 };
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await processStripeEvent(updatedEvent(stripeSubId, walletId, [winner, loser]));
+    logged.mockRestore();
+
+    // The winner converges; the loser is alerted, not written to Stripe.
+    expect(itemUpdateSpy).toHaveBeenCalledTimes(1);
+    expect(itemUpdateSpy.mock.calls[0]![0]).toBe(dupA);
+    expect(repriceAlertSpy).toHaveBeenCalledTimes(1);
+    expect(repriceAlertSpy).toHaveBeenCalledWith(expect.objectContaining({ itemId: dupB }));
+
+    // …and the loser's ROW follows Stripe. Writing 2 here would hand the group
+    // five organisations of capacity nobody is paying for.
+    const [row] = await sql<{ qty: number }[]>`
+      select qty from org_addons where stripe_item_id = ${dupB}`;
+    expect(row?.qty).toBe(7);
+    expect(await getLimit(orgId, "orgs.max_owned")).toBe(proPlusBase + 1 + 7);
   });
 
   it("an item deleted between emission and processing is a benign race, not an alert", async () => {
