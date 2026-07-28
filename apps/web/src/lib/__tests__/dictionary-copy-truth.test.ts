@@ -1638,15 +1638,30 @@ describe.skipIf(!HAS_DB)("the four-locale dictionaries say what the resolver enf
    */
   it("classifies every panel row the page renders, or exempts it with a reason", () => {
     const declared = new Set(PANEL_CLAIMS.map((c) => c.key));
+    /**
+     * Rows exempted from the polarity table because they make a QUANTITY claim
+     * rather than a grant/deny one. Every reason names the test that pins it,
+     * and the reasons are now checked rather than merely written — see below.
+     */
     const numeric: Record<string, string> = {
-      "billing.community.f1": "a CAP, not a grant — pinned numerically against competitions.max_active",
-      "billing.community.f2": "caps — pinned against divisions.per_competition.max and entrants.per_division.max",
-      "billing.community.f3": "a cap — pinned against dashboard.public.max",
-      "billing.pro.f1": "unlimited caps — pinned against competitions.max_active / divisions.per_competition.max",
-      "billing.pro.f2": "a cap — pinned against entrants.per_division.max",
-      "billing.pro.f3": "a rate — pinned against registration.fee_percent",
+      "billing.community.f1": "a CAP, not a grant — pinned as a whole token against competitions.max_active by pricing-cards.test.ts 'billing.community.f1/f2 carry the live caps'",
+      "billing.community.f2": "two caps — divisions.per_competition.max AND entrants.per_division.max, both pinned as whole tokens by the same test (the divisions digit was asserted by nothing until fix round 5)",
+      "billing.community.f3": "a cap — pinned as a whole token against dashboard.public.max",
+      "billing.pro.f2": "a cap — pinned as a whole token against entrants.per_division.max",
+      "billing.pro.f3": "a rate — pinned against registration.fee_percent, plus the inverse that it must not quote the other plan's rate",
     };
-    const unclassified = PANEL_KEYS.filter((k) => !declared.has(k) && !(k in numeric));
+    /**
+     * …and the OTHER quantity shape: a row whose claim is the WORD "unlimited"
+     * because the rows behind it are null. Split out of `numeric` because the
+     * predicate is the exact inverse — this one must quote NO number — and
+     * folding the two together is what made the exemption uncheckable.
+     */
+    const unlimited: Record<string, string> = {
+      "billing.pro.f1": "BOTH competitions.max_active and divisions.per_competition.max are null on pro, so the claim is the WORD and not a number. Pinned by 'billing.pro.f1 says unlimited only while both rows are unlimited', which fails if either row gains a cap OR if a digit appears in the copy. Nothing asserted this until fix round 5, and the reason written here in round 4 said it was pinned when it was not.",
+    };
+    const unclassified = PANEL_KEYS.filter(
+      (k) => !declared.has(k) && !(k in numeric) && !(k in unlimited),
+    );
     expect(unclassified, "panel rows in neither PANEL_CLAIMS nor the numeric list").toEqual([]);
     // …and the inverse: a declared row the page no longer renders is a rule
     // pointing at nothing.
@@ -1654,10 +1669,70 @@ describe.skipIf(!HAS_DB)("the four-locale dictionaries say what the resolver enf
       PANEL_CLAIMS.map((c) => c.key).filter((k) => !PANEL_KEYS.includes(k)),
       "declared rows the page does not render",
     ).toEqual([]);
+    /**
+     * ── THE EXEMPTION NEEDS A CHECKABLE PREDICATE (fix round 5) ────────────
+     *
+     * Its only validation was `why.length > 20`, which is a written judgement,
+     * not a checked one — the same shape as the FAQ_EXEMPT hole (#338 item 1).
+     * Measured: deleting the BOOLEAN row `billing.community.f7` from
+     * PANEL_CLAIMS, exempting it here with a 52-character reason, and flipping
+     * `realtime` true on community shipped a false denial, 112/112 green.
+     *
+     * So the class is checked: a row exempted as "numeric" must actually quote
+     * a number, in English, in the shipped copy. `f7` ("Realtime scoreboard")
+     * contains no digit, so it cannot be laundered through this list.
+     *
+     * And the set is FROZEN by count, so growing it is a deliberate edit rather
+     * than a quiet one.
+     */
+    const en = load("en", "ui");
     for (const [key, why] of Object.entries(numeric)) {
       expect(PANEL_KEYS, `${key} is classified but not rendered`).toContain(key);
       expect(why.length, `${key} has no reason`).toBeGreaterThan(20);
+      const value = en[key];
+      expect(value, `${key}: exempted as numeric but absent from en/ui.json`).toBeTruthy();
+      expect(
+        /\d/.test(value!),
+        `${key}: exempted as NUMERIC but its copy ("${value}") quotes no number — a boolean row cannot be laundered through this list`,
+      ).toBe(true);
     }
+    // …and the inverse predicate for the unlimited rows: they must quote NO
+    // number, and must say so in their own language.
+    const UNLIMITED_WORD: Record<DictionaryLocale, RegExp> = {
+      en: /\bunlimited\b/i,
+      es: /\bilimitad/i,
+      fr: /\billimit/i,
+      nl: /\bonbeperkt/i,
+    };
+    for (const [key, why] of Object.entries(unlimited)) {
+      expect(PANEL_KEYS, `${key} is classified but not rendered`).toContain(key);
+      expect(why.length, `${key} has no reason`).toBeGreaterThan(20);
+      for (const locale of DICTIONARY_LOCALES) {
+        const value = load(locale, "ui")[key];
+        expect(value, `${locale} ${key}: exempted as unlimited but absent`).toBeTruthy();
+        expect(
+          UNLIMITED_WORD[locale].test(value!),
+          `${locale} ${key}: exempted as UNLIMITED but does not say so`,
+        ).toBe(true);
+        expect(/\d/.test(value!), `${locale} ${key}: quotes a number while claiming unlimited`).toBe(
+          false,
+        );
+      }
+    }
+
+    // Both sets FROZEN by content, so growing either is a deliberate edit
+    // rather than a quiet one — the laundering route the reviewer measured.
+    expect(
+      [...Object.keys(numeric), ...Object.keys(unlimited)].sort(),
+      "the exemption sets are frozen — adding a row must be deliberate",
+    ).toEqual([
+      "billing.community.f1",
+      "billing.community.f2",
+      "billing.community.f3",
+      "billing.pro.f1",
+      "billing.pro.f2",
+      "billing.pro.f3",
+    ]);
     expect(PANEL_KEYS.length, "the page renders no panel rows — the regex broke").toBeGreaterThan(12);
   });
 

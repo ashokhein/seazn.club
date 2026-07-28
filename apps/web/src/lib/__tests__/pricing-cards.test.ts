@@ -1483,20 +1483,67 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
     }
   });
 
-  it("billing.community.f1/f2 carry the same numbers in all four locales", async () => {
+  /**
+   * FIX ROUND 5. These three used `toContain(String(n))`, which is a SUBSTRING
+   * test: re-approved edits 10 -> "100 active competitions", 64 -> "640
+   * entrants" and 256 -> "2560 entrants" all shipped green. I fixed exactly
+   * this for `f3` last round and left it on its neighbours — the whole-token
+   * form was already written twelve lines above.
+   *
+   * `f2` also carries the DIVISION cap, which nothing asserted at all while its
+   * `why` claimed "both digits are asserted against those rows". Added here, so
+   * the sentence and the check agree.
+   */
+  const quotesCap = (value: string | undefined, cap: number | null, label: string) => {
+    expect(cap, `${label}: the matrix has no finite value to pin`).not.toBeNull();
+    // A WHOLE TOKEN. `(?<!\d)n(?!\d)` is the form; a bare `toContain` reads a
+    // ten-times-larger figure as a match.
+    expect(value, label).toMatch(new RegExp(`(?<!\\d)${cap}(?!\\d)`));
+  };
+
+  it("billing.community.f1/f2 carry the live caps, as whole numbers, in all four locales", async () => {
     const entrants = await capFor("entrants.per_division.max", "community");
     const comps = await capFor("competitions.max_active", "community");
+    const divisions = await capFor("divisions.per_competition.max", "community");
     for (const locale of LOCALES) {
       const d = dict(locale);
-      expect(d["billing.community.f1"], `${locale} f1`).toContain(String(comps));
-      expect(d["billing.community.f2"], `${locale} f2`).toContain(String(entrants));
+      quotesCap(d["billing.community.f1"], comps, `${locale} f1 competitions.max_active`);
+      quotesCap(d["billing.community.f2"], divisions, `${locale} f2 divisions.per_competition.max`);
+      quotesCap(d["billing.community.f2"], entrants, `${locale} f2 entrants.per_division.max`);
     }
   });
 
   it("billing.pro.f2 carries the live pro entrant cap in all four locales", async () => {
     const entrants = await capFor("entrants.per_division.max", "pro");
     for (const locale of LOCALES) {
-      expect(dict(locale)["billing.pro.f2"], `${locale}`).toContain(String(entrants));
+      quotesCap(dict(locale)["billing.pro.f2"], entrants, `${locale} billing.pro.f2`);
+    }
+  });
+
+  /**
+   * …and `billing.pro.f1`, whose exemption reason claimed it was "pinned against
+   * competitions.max_active / divisions.per_competition.max". Nothing asserted
+   * it: null -> 10 redded no panel rule, and "500 competitions & divisions" was
+   * green. Both rows are NULL on pro, so the claim is the WORD, not a number —
+   * and a number appearing at all is the defect.
+   */
+  it("billing.pro.f1 says unlimited only while both rows are unlimited", async () => {
+    const comps = await capFor("competitions.max_active", "pro");
+    const divisions = await capFor("divisions.per_competition.max", "pro");
+    expect(comps, "pro competitions.max_active").toBeNull();
+    expect(divisions, "pro divisions.per_competition.max").toBeNull();
+    const UNLIMITED: Record<string, RegExp> = {
+      en: /\bunlimited\b/i,
+      es: /\bilimitad/i,
+      fr: /\billimit/i,
+      nl: /\bonbeperkt/i,
+    };
+    for (const locale of LOCALES) {
+      const value = dict(locale)["billing.pro.f1"]!;
+      expect(value, `${locale} f1: must say unlimited`).toMatch(UNLIMITED[locale]!);
+      // A cap that has arrived shows up as a digit. Both rows being null is what
+      // licenses the word, so any number here contradicts it.
+      expect(value, `${locale} f1: quotes a number while both rows are unlimited`).not.toMatch(/\d/);
     }
   });
 

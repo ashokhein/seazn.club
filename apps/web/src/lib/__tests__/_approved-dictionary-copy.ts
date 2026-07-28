@@ -421,7 +421,7 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
   {
     file: "ui",
     key: "billing.community.f2",
-    why: "Community’s division and entrant caps, same panel, ✓ row. Source of truth: plan_entitlements divisions.per_competition.max and entrants.per_division.max on community; both digits are asserted against those rows in all four locales.",
+    why: "Community’s division and entrant caps, same panel, ✓ row. Source of truth: plan_entitlements divisions.per_competition.max and entrants.per_division.max on community. Both digits are asserted against those rows, as WHOLE TOKENS, in all four locales — but only since fix round 5: the divisions digit was asserted by nothing while this sentence already claimed it was, and the entrants digit used toContain, which passed “640 entrants” for a cap of 64. If you are re-approving this row, the check behind it is pricing-cards.test.ts ‘billing.community.f1/f2 carry the live caps’.",
     text: {
       en: "4 divisions, 64 entrants each",
       es: "4 divisiones, 64 participantes cada una",
