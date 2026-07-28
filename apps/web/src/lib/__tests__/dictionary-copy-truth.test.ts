@@ -33,6 +33,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import stripePlans from "@/config/stripe-plans.json";
 import { sql } from "@/lib/db";
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
+import { passPrice, proPrice } from "@/lib/currency";
 import { TIPS } from "@/config/tips";
 import * as copyTruth from "@/lib/copy-truth";
 import { APPROVED_DICTIONARY_COPY } from "./_approved-dictionary-copy";
@@ -870,9 +871,20 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
       why: "answers are classified individually by FAQ_PASS_SCOPED / FAQ_EXEMPT above, and the claim-bearing ones are pinned there; questions make no claim",
     },
     {
+      // FIX ROUND 2. This key is a whole SENTENCE quoting the extra-organisation
+      // rate, not a label — and the "row labels" rule below formally certified
+      // it exempt while it still said "half", bare, in all four locales. Its
+      // three siblings had already been corrected. The rule written to make
+      // every key a decision made the wrong decision about this one, which is
+      // why the exempt side is now vocabulary-scanned as well as classified.
+      match: /^pricing\.matrix\.orgs\.max_owned\.note$/,
+      pinned: true,
+      why: "a full sentence in the matrix quoting the extra-organisation rate — pinned by task 7 and scanned by HALF_CLAIM_KEYS; it is emphatically not a row label",
+    },
+    {
       match: /^pricing\.(matrix|table)\./,
       pinned: false,
-      why: "row labels and column headers of the comparison table. Every VALUE in that table is rendered live from plan_entitlements by lib/pricing-matrix.ts, so the labels name features rather than asserting anything about them",
+      why: "row labels and column headers of the comparison table. Every VALUE in that table is rendered live from plan_entitlements by lib/pricing-matrix.ts, so the labels name features rather than asserting anything about them. This rule once swallowed pricing.matrix.orgs.max_owned.note, a full sentence quoting a rate, so the exempt side is now scanned by the claim vocabularies too",
     },
     {
       match: /^pricing\.final\.subhead$/,
@@ -934,6 +946,80 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
         PRICING_KEY_DISPOSITION.some((rule) => rule.match.test(k)),
       ),
     ).toEqual([]);
+  });
+
+  /**
+   * FIX ROUND 2 — no /pricing string may hardcode a currency.
+   *
+   * `pricing.addons.credits` said "$10" in all four locales (es "desde 10 $",
+   * fr "à partir de 10 $", nl "vanaf $10") and rendered statically, while every
+   * other price on the page is interpolated behind the CurrencySwitcher. The
+   * seed's cheapest pack is eur 900 / gbp 800 / aud 1500 / inr 79900, so it was
+   * false in four of five currencies.
+   *
+   * Scanned as a CLASS rather than as that one key: any pricing value carrying a
+   * currency symbol or an ISO code is the same defect (#191), whoever writes it
+   * next. Amounts belong in a placeholder.
+   */
+  it("hardcodes no currency anywhere in the pricing copy", () => {
+    // A symbol, or an amount with an ISO code. Deliberately not a bare digit:
+    // caps, percentages and credit counts are locale-agnostic DATA and belong in
+    // the copy.
+    const CURRENCY = /[$£€₹]|\b\d[\d.,]*\s?(?:USD|EUR|GBP|INR|AUD)\b|\b(?:USD|EUR|GBP|INR|AUD)\s?\d/i;
+    // SEO METADATA IS THE ONE HONEST EXCEPTION, and it is pinned rather than
+    // waved through (below). A description is a SINGLE cached document served to
+    // every visitor and to crawlers — there is no per-visitor currency to switch
+    // to, unlike the page body, which does switch. Every other pricing string is
+    // rendered per request and has no excuse.
+    const METADATA_EXEMPT = new Set(["pricing.meta.description", "pricing.meta.title"]);
+    const faults: string[] = [];
+    for (const locale of DICTIONARY_LOCALES) {
+      const dict = load(locale, "marketing");
+      for (const [key, value] of Object.entries(dict)) {
+        if (!key.startsWith("pricing.") || METADATA_EXEMPT.has(key)) continue;
+        if (typeof value !== "string" || !CURRENCY.test(value)) continue;
+        faults.push(`${locale} ${key}: hardcodes a currency ("${value}") — interpolate it instead`);
+      }
+    }
+    expect(faults).toEqual([]);
+    // …and the rule fires on the exact string this round removed, so it is not
+    // passing because the pattern can never match.
+    expect(CURRENCY.test("AI credits from $10"), "en, pre-fix").toBe(true);
+    expect(CURRENCY.test("Créditos de IA desde 10 $"), "es, pre-fix").toBe(true);
+    expect(CURRENCY.test("Crédits IA à partir de 10 $"), "fr, pre-fix").toBe(true);
+    expect(CURRENCY.test("AI-credits vanaf $10"), "nl, pre-fix").toBe(true);
+    expect(CURRENCY.test("Up to 20 divisions, unlimited entrants"), "a true cap line").toBe(false);
+    // The replacement must actually interpolate, in every locale — otherwise
+    // deleting the amount would satisfy the absence rule above.
+    for (const locale of DICTIONARY_LOCALES) {
+      expect(load(locale, "marketing")["pricing.addons.credits"], `${locale}`).toContain("{price}");
+    }
+  });
+
+  /**
+   * …and the exemption is a PIN, not a hole.
+   *
+   * `pricing.meta.description` quotes $29 and $19/month in all four locales and
+   * cannot be currency-switched (one cached document, served to crawlers). That
+   * makes it the one place a hardcoded amount is defensible — and therefore the
+   * one place a stale amount would never be noticed. So the figures are checked
+   * against the seed the page itself renders from: move a price and the meta
+   * description reds instead of quietly advertising last quarter's.
+   */
+  it("pins the metadata's hardcoded amounts to the seed that sets them", () => {
+    const pass = passPrice("usd", "event_pass") / 100;
+    const pro = proPrice("monthly", "usd") / 100;
+    expect(pass, "the seed's M-rung list price").toBe(29);
+    expect(pro, "the seed's Pro monthly list price").toBe(19);
+    for (const locale of DICTIONARY_LOCALES) {
+      const description = load(locale, "marketing")["pricing.meta.description"]!;
+      expect(description, `${locale}: the pass price`).toMatch(
+        new RegExp(`\\$\\s?${pass}\\b|\\b${pass}\\s?\\$`),
+      );
+      expect(description, `${locale}: Pro's monthly price`).toMatch(
+        new RegExp(`\\$\\s?${pro}\\b|\\b${pro}\\s?\\$`),
+      );
+    }
   });
 
   it("never sells the Event Pass as permanent, in any language, and says what bounds it", () => {

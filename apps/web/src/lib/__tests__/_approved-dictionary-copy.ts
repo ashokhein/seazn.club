@@ -321,12 +321,12 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
   {
     file: "marketing",
     key: "pricing.addons.credits",
-    why: "the credit-pack add-on price. $10 is the cheapest pack in config/stripe-plans.json (credit_packs); \"from\" is load-bearing because larger packs cost more. Packs never expire (D2), which is why no duration qualifier belongs here.",
+    why: "the credit-pack add-on line. FIX ROUND 2: this hardcoded \"$10\" in all four locales and rendered statically, while every other price on /pricing goes through formatMinor(…, currency) behind the CurrencySwitcher — and config/stripe-plans.json `packs` prices the cheapest pack at eur 900 / gbp 800 / aud 1500 / inr 79900, so the literal was false in FOUR of the five supported currencies (#191's defect). The amount is now interpolated as {price} from lib/currency.ts lowestCreditPackAmount(), so what is pinned here is the WORDING around it: \"from\" is load-bearing because larger packs cost more. Packs never expire (D2), which is why no duration qualifier belongs here. NOTE the previous version of this note asserted the claim was true and named `credit_packs`, an identifier that does not exist — the JSON key is `packs`.",
     text: {
-      en: "AI credits from $10",
-      es: "Créditos de IA desde 10 $",
-      fr: "Crédits IA à partir de 10 $",
-      nl: "AI-credits vanaf $10",
+      en: "AI credits from {price}",
+      es: "Créditos de IA desde {price}",
+      fr: "Crédits IA à partir de {price}",
+      nl: "AI-credits vanaf {price}",
     },
   },
   {

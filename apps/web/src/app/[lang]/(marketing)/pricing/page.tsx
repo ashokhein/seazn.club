@@ -22,7 +22,14 @@ import {
   PLUS_COMING_SOON,
   PASS_CREDIT_GRANT,
 } from "@/lib/pricing-cards";
-import { formatMinor, passPrice, proPrice, proPlusPrice, type Currency } from "@/lib/currency";
+import {
+  formatMinor,
+  lowestCreditPackAmount,
+  passPrice,
+  proPrice,
+  proPlusPrice,
+  type Currency,
+} from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { pickActiveOrg } from "@/lib/active-org";
@@ -442,7 +449,14 @@ export default async function PricingPage({
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span aria-hidden>⚡</span>
-                  {t(d, "pricing.addons.credits")}
+                  {/* fix round 2: this line hardcoded "$10" in all four
+                      locales while every other price on the page honours the
+                      CurrencySwitcher. The seed's cheapest pack is eur 900 /
+                      gbp 800 / aud 1500 / inr 79900, so the literal was false
+                      in four of five currencies — #191's defect, again. */}
+                  {t(d, "pricing.addons.credits", {
+                    price: formatMinor(lowestCreditPackAmount(currency), currency),
+                  })}
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span aria-hidden>＋</span>

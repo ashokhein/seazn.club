@@ -102,7 +102,7 @@
   "pricing.credits.passGrant": "+{count} crédits IA, une seule fois",
   "pricing.credits.perMonthOperator": "{count} crédits IA / mois · portefeuille opérateur",
   "pricing.addons.label": "Options",
-  "pricing.addons.credits": "Crédits IA à partir de 10 $",
+  "pricing.addons.credits": "Crédits IA à partir de {price}",
   "pricing.addons.seat": "Siège supplémentaire",
   "pricing.addons.org": "Organisation supplémentaire",
   "pricing.addons.sizePack": "Pack de taille",

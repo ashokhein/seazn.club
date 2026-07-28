@@ -102,7 +102,7 @@
   "pricing.credits.passGrant": "+{count} AI-credits, eenmalig",
   "pricing.credits.perMonthOperator": "{count} AI-credits / maand · operator-portemonnee",
   "pricing.addons.label": "Add-ons",
-  "pricing.addons.credits": "AI-credits vanaf $10",
+  "pricing.addons.credits": "AI-credits vanaf {price}",
   "pricing.addons.seat": "Extra plaats",
   "pricing.addons.org": "Extra organisatie",
   "pricing.addons.sizePack": "Size-pack",

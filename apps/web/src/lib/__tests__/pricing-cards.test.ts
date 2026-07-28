@@ -9,7 +9,8 @@ import {
   PASS_CREDIT_GRANT,
   ticketTiers,
 } from "../pricing-cards";
-import { SUPPORTED_CURRENCIES, passPrice } from "../currency";
+import { SUPPORTED_CURRENCIES, lowestCreditPackAmount, passPrice } from "../currency";
+import stripePlans from "@/config/stripe-plans.json";
 import {
   BOUNDED_SCOPE_GRAMMAR,
   FALSE_PASS_PERMANENCE_PATTERNS,
@@ -55,6 +56,34 @@ describe("pricing cards", () => {
     expect(pass!.prefix, "the pass is a ladder, so its price is a 'from'").toBeTruthy();
     expect(community!.prefix).toBeUndefined();
     expect(pro!.prefix).toBeUndefined();
+  });
+
+  /**
+   * FIX ROUND 2 — the add-on line quoted a HARDCODED "$10" in all four locales
+   * while every other price on /pricing goes through `formatMinor(…, currency)`
+   * behind the CurrencySwitcher. The seed's cheapest pack is eur 900 / gbp 800 /
+   * aud 1500 / inr 79900, so the literal was false in FOUR of five currencies —
+   * exactly the defect #191 was filed for on the pass copy.
+   *
+   * Pinned to the SEED, not to a number: the floor is the smallest amount in the
+   * switched currency, so adding a cheaper pack moves the advertised "from".
+   */
+  it("the credit-pack floor is the seed's cheapest pack, in every currency", () => {
+    const packs = (stripePlans as { packs?: Array<{ price: { unit_amount: number; currency_options?: Record<string, number> } }> }).packs ?? [];
+    expect(packs.length, "the seed has no credit packs to advertise").toBeGreaterThan(1);
+    for (const currency of SUPPORTED_CURRENCIES) {
+      const amounts = packs.map((p) =>
+        currency === "usd" ? p.price.unit_amount : p.price.currency_options?.[currency],
+      );
+      expect(amounts.every((a) => typeof a === "number"), `${currency}: a pack has no price point`).toBe(true);
+      expect(lowestCreditPackAmount(currency), currency).toBe(Math.min(...(amounts as number[])));
+    }
+    // The defect itself: the non-usd currencies must NOT resolve to usd's floor,
+    // or a hardcoded "$10" would have been accidentally right and this guard
+    // would prove nothing.
+    const usd = lowestCreditPackAmount("usd");
+    const differing = SUPPORTED_CURRENCIES.filter((c) => c !== "usd" && lowestCreditPackAmount(c) !== usd);
+    expect(differing.length, "every currency matched usd — the seed lost its price points").toBeGreaterThan(2);
   });
 
   it("only the Event Pass glows", () => {
