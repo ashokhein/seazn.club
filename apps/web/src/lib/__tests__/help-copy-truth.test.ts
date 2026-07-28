@@ -1350,7 +1350,17 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
     expect(addOns, "the org non-freeze").toMatch(/extra organisation does not freeze anything/i);
     // The owner exemption is real (`frozenMemberIds` filters role === "owner").
     expect(source).toContain('r.role === "owner"');
-    expect(addOns).toMatch(/owners are never marked/i);
+    expect(addOns).toMatch(/owners\s+never\s+are/i);
+    // …and NOTHING renders a mark (fix round 6, M2). `frozenMemberIds` has one
+    // production caller, `assertMemberNotFrozen`; no read model flags a member.
+    // Competitions ARE flagged in read models, which is the contrast the module
+    // header draws and the reason "marked" read as a UI promise it never kept.
+    expect(addOns, "the article must not promise a badge nobody renders").not.toMatch(
+      /(are|is)\s+marked\s+read-only|that\s+mark\s+is/i,
+    );
+    expect(addOns, "…and must say how it actually behaves").toMatch(
+      /treated\s+as\s+read-only/i,
+    );
 
     // HOW FAR THE SEAT FREEZE ACTUALLY REACHES. Round 2 said the limit is
     // "re-checked on every write". It is not: `assertMemberNotFrozen` has ONE
@@ -1419,19 +1429,118 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
       /re-?checked on every write/i,
     );
     // …and it must name the RIGHT surface. "our public API" was still wrong:
-    // on that API the normal caller is a bearer `sc_` key, and `auth.ts:210`
-    // returns from `apiKeyAuth` BEFORE the freeze check — so an API-key client
-    // is never checked either. The only callers that are: signed-in admins
-    // writing through the REST routes.
+    // on that API the normal caller is a bearer `sc_` key, and `apiKeyAuth`
+    // returns BEFORE the freeze check — so an API-key client is never checked
+    // either.
     expect(addOns, "…and must say where it IS enforced").toMatch(
       /blocks only signed-in admins writing through our REST API, not API-key clients/i,
     );
-    // The 13 routes that reach `requireOrgAuth`, counted rather than asserted
-    // as prose — if the surface grows, the sentence above needs re-reading.
-    const restRoutes = allStrippedSources().filter(
-      ([f, src]) => f.startsWith("app/api/v1/") && src.includes("requireOrgAuth"),
+
+    /*
+     * WHO CALLS THOSE ROUTES. This is the half that was missing, and it is the
+     * half that matters.
+     *
+     * Round 3 counted the 13 `app/api/v1/**` routes reaching `requireOrgAuth`
+     * and called that coverage. Counting a surface proves its SIZE and nothing
+     * about its REACH — so the article was free to say the freeze reaches "not
+     * the app's own screens", and this guard pinned that sentence while never
+     * asking whether anything in the app called the routes it had just counted.
+     * It does. `lib/client-v1.ts` sends `Content-Type` and NO `Authorization`,
+     * so an in-app component hitting `/api/v1/orgs/**` takes the SESSION branch
+     * of `requireOrgAuth` and IS freeze-checked. An admin over `members.max`
+     * would have read this article, been told the app was exempt, and then hit
+     * a 402 in Settings → API and the news composer. Setting that expectation
+     * is the paragraph's whole job.
+     *
+     * The rule is now: DISCOVER the in-app callers, require each to be declared
+     * with the surface name the article uses, and require the article to name
+     * every one. A new in-app caller reds until somebody decides which surface
+     * it is and whether the sentence still holds.
+     */
+    const IN_APP_ORG_CALLERS: Record<string, string> = {
+      "components/api-keys.tsx": "API keys",
+      "components/news/composer.tsx": "News",
+      "components/org-sponsors.tsx": "Sponsors",
+      "components/sponsor-packages.tsx": "Sponsors",
+      "components/org-payment-instructions.tsx": "Payments",
+    };
+    const discovered = allStrippedSources()
+      .filter(([f, src]) => !f.startsWith("app/api/") && !f.includes("__tests__"))
+      .filter(([, src]) => src.includes("/api/v1/orgs/"))
+      .map(([f]) => f)
+      .sort();
+    expect(
+      discovered,
+      "an in-app screen writes through /api/v1/orgs/** and is not declared here — it is freeze-checked, and the article has to say so",
+    ).toEqual(Object.keys(IN_APP_ORG_CALLERS).sort());
+    // ANTI-VACUITY: an empty discovery would satisfy nothing above by accident,
+    // but a BROKEN walk would make the equality above trivially wrong rather
+    // than trivially right — so pin the floor on the walk itself too.
+    expect(discovered.length, "no in-app caller found — the walk is not working").toBeGreaterThan(3);
+    // The article must name every distinct surface those callers live on.
+    for (const surface of new Set(Object.values(IN_APP_ORG_CALLERS))) {
+      expect(
+        addOns,
+        `the freeze reaches the ${surface} screens, and the article never names them`,
+      ).toContain(surface);
+    }
+    // …and must NOT still claim the app is exempt.
+    expect(addOns, "the app's own screens ARE freeze-checked").not.toMatch(
+      /not\s+the\s+app['’]s\s+own\s+screens|the\s+app['’]s\s+own\s+screens\s+are\s+(not|never)/i,
     );
-    expect(restRoutes.length, "the REST surface changed size — re-read the copy").toBe(13);
+    expect(addOns, "…and must say the opposite, positively").toMatch(
+      /inside\s+the\s+app\s+it\s+does\s+reach\s+the\s+screens/i,
+    );
+
+    /*
+     * …and WHY those callers are session-authenticated, read off the code that
+     * decides it rather than asserted as prose.
+     *
+     * Two of the five go through the shared `@/lib/client-v1` helper; three
+     * hand-roll a `fetch`. What matters in every case is the HEADERS OBJECT: it
+     * carries `Content-Type` and nothing else, so no request can present a
+     * bearer token, so none can take the `apiKeyAuth` branch — which is exactly
+     * what leaves them on the session branch and freeze-checked. Add an
+     * `Authorization` header and the corrected sentence becomes false again, so
+     * its absence is the load-bearing fact and belongs in the guard.
+     *
+     * SCOPED TO THE HEADERS OBJECT, not to the file. A first cut scanned whole
+     * sources and red on `api-keys.tsx:255`, which renders the literal text
+     * "Authorization: Bearer sc_…" in a `<code>` block — documentation of how a
+     * customer uses their KEY, the opposite of a header this screen sends. A
+     * guard that rejects true code teaches the next editor to work around it.
+     */
+    const VIA_CLIENT_V1 = ["components/news/composer.tsx", "components/org-payment-instructions.tsx"];
+    const VIA_OWN_FETCH = [
+      "components/api-keys.tsx",
+      "components/org-sponsors.tsx",
+      "components/sponsor-packages.tsx",
+    ];
+    expect(
+      [...VIA_CLIENT_V1, ...VIA_OWN_FETCH].sort(),
+      "a caller changed how it issues requests — re-read which branch it lands on",
+    ).toEqual(Object.keys(IN_APP_ORG_CALLERS).sort());
+    for (const file of VIA_CLIENT_V1) {
+      expect(codeOnly(webSource(file), file), `${file} must route through the shared helper`).toMatch(
+        /from\s+"@\/lib\/client-v1"/,
+      );
+    }
+    for (const file of ["lib/client-v1.ts", ...VIA_OWN_FETCH]) {
+      const blocks = [...codeOnly(webSource(file), file).matchAll(/headers:\s*\{([^}]*)/g)].map(
+        (m) => m[1]!,
+      );
+      expect(blocks.length, `${file}: no headers object found — re-point this guard`).toBeGreaterThan(0);
+      // KNOWN-POSITIVE on the same read: the extraction really did capture a
+      // header list, so the negative below is about content and not about an
+      // empty match.
+      expect(blocks.some((b) => /Content-Type/.test(b)), `${file}: headers extraction found no Content-Type`).toBe(true);
+      for (const block of blocks) {
+        expect(
+          block,
+          `${file}: an Authorization header would move this caller to the API-key branch, which is NOT freeze-checked — the article's sentence would need re-reading`,
+        ).not.toMatch(/Authorization/i);
+      }
+    }
 
     // The half that IS enforced everywhere is ADMISSION: an invite or a
     // promotion past members.max is refused in the same transaction.

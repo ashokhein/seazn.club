@@ -269,28 +269,46 @@ export const APPROVED_PLANS_INVENTORY: string[] = [
  *    unqualified comparative price claim one clause after the one it had just
  *    qualified.
  *
- *  - "An extra seat stops you adding members, and marks the ones over the
- *    limit … owners are never marked … enforced on our public API today."
+ *  - "An extra seat stops you adding members, and makes the ones over the
+ *    limit read-only … owners never are."
  *    `frozenMemberIds` (`entitlement-freeze.ts:103`) reads
  *    `getLimit(orgId, "members.max")`, which SUMS the add-on bonus, and exempts
  *    owners explicitly. ROUND 2 SAID "re-checked on every write" AND OVERSTATED
  *    IT: `assertMemberNotFrozen` has exactly ONE production call site,
  *    `server/api-v1/auth.ts:213-214`, gated on `via: session` AND
  *    `scope === "write"` AND `role === "admin"` — a bearer token returns from
- *    `apiKeyAuth` first, so API-KEY writes are never freeze-checked, and no
- *    in-app screen calls it at all. What IS enforced everywhere is ADMISSION:
- *    `lib/invites.ts:67` and `app/api/orgs/[id]/members/[userId]/role/route.ts:22`
- *    both count the quota in the same transaction as the write. The copy claims
- *    the admission half outright and describes the read-only mark as a signal
- *    rather than a lock.
+ *    `apiKeyAuth` first, so API-KEY writes are never freeze-checked. What IS
+ *    enforced everywhere is ADMISSION: `lib/invites.ts:72-79` and
+ *    `app/api/orgs/[id]/members/[userId]/role/route.ts:47-54` both count the
+ *    quota and throw `PaymentRequiredError` inside the same transaction as the
+ *    write. (Both were previously cited at the line that merely RESOLVES the
+ *    quota key — `invites.ts:67`, `route.ts:22` — and `route.ts:22`'s own
+ *    comment says "before the tx", the opposite of what it was cited for.)
  *
  *    ROUND 3'S REPLACEMENT WAS ALSO WRONG about the surface: it said "enforced
  *    on our public API today", but on that API the normal caller is a bearer
- *    `sc_` key and `auth.ts:210` returns from `apiKeyAuth` BEFORE the check —
- *    so API-key clients are not checked either. It reaches exactly one caller
- *    shape: a signed-in admin writing through the 13 `app/api/v1/**` routes
- *    that use `requireOrgAuth`. The copy now says that, and the guard counts
- *    the routes so a growing surface forces a re-read.
+ *    `sc_` key and `auth.ts:204` (`if (token) return apiKeyAuth(...)`) returns
+ *    BEFORE the check — so API-key clients are not checked either. (Cited as
+ *    `auth.ts:210` for two rounds; :210 is a comment.)
+ *
+ *    AND ROUND 3'S OTHER HALF WAS FALSE OUTRIGHT. It said the freeze reaches
+ *    "not the app's own screens". `lib/client-v1.ts:23-27` sends only
+ *    `Content-Type` — no `Authorization` — so an in-app component hitting
+ *    `/api/v1/orgs/**` takes the SESSION branch of `requireOrgAuth` and IS
+ *    freeze-checked. Five screens write through it: `components/api-keys.tsx`
+ *    (Settings → API), `components/news/composer.tsx`,
+ *    `components/org-sponsors.tsx`, `components/sponsor-packages.tsx` and
+ *    `components/org-payment-instructions.tsx`. An admin over `members.max`
+ *    would have read this article, been told the app was exempt, and then hit a
+ *    402 in Settings → API and the news composer.
+ *
+ *    THE GUARD PINNED THAT FALSEHOOD, and the reason generalises: it counted
+ *    the 13 `app/api/v1/**` routes reaching `requireOrgAuth` and never asked
+ *    WHO CALLS THEM. Counting a surface proves its SIZE, never its REACH. It
+ *    now discovers the in-app callers, requires each to be declared with the
+ *    surface name the copy uses, requires the copy to name every one, and
+ *    asserts no caller sends an `Authorization` header — which is the fact that
+ *    makes them session-authenticated and therefore freeze-checked.
  *
  *  - "An extra organisation does not freeze anything … what it loses is the
  *    ability to add another."
@@ -334,14 +352,36 @@ export const APPROVED_ADD_ONS_INVENTORY: string[] = [
   "81ba6ce07303ccdc",
   "88ce7e8f444d70eb",
   "122c884440848810",
-  "e0ff162b4d324107",
+  // FIX ROUND 6 (M1). Was "the number of organisations the group is actually
+  // using", which names the wrong quantity: the floor is on the RIDER count,
+  // not the org count. `ridersInUse` (`lib/billing-group.ts:431-437`) is
+  // `clamp(liveOrgs - base - grantedBonus, 0, purchased)`, so a Pro group with
+  // 6 live orgs has a floor of 1, not 6. Re-read against that function and
+  // against `addOns.extraOrg.floorNote`, which already said it correctly.
+  "80ea0dd21adfd486",
   "00df8be3e9bd06ef",
   "df7321201a99bd2c",
   "7151ed1350e7f11f",
   "7d1518387c5c90e4",
   "d1d87a9a3dbdeb8e",
   "b50fa0d68d469172",
-  "f6c73f36a60de8ba",
+  // FIX ROUND 6 (C1 + M2). Was "…not API-key clients and not the app's own
+  // screens", and "Members already over the limit are MARKED read-only".
+  //
+  // C1: the app-screens half was FALSE. `lib/client-v1.ts:23-27` sends only
+  // `Content-Type`, so in-app components hitting `/api/v1/orgs/**` take the
+  // SESSION branch of `requireOrgAuth` (`server/api-v1/auth.ts:204` returns
+  // from `apiKeyAuth` only when a bearer token is present) and ARE
+  // freeze-checked. Five screens write through it — api-keys.tsx,
+  // news/composer.tsx, org-sponsors.tsx, sponsor-packages.tsx,
+  // org-payment-instructions.tsx.
+  //
+  // M2: nothing renders a MARK. `frozenMemberIds`
+  // (`server/usecases/entitlement-freeze.ts:103`) has exactly one production
+  // caller, `assertMemberNotFrozen` (`:123`) — no read model flags a member,
+  // unlike competitions, which the module header says ARE flagged. "Treated as
+  // read-only", resolved when a write arrives.
+  "937f7bb87a390664",
   "704faf902d99b14c",
   "89e6a00cfa216278",
   "e0bc899381ce86af",
