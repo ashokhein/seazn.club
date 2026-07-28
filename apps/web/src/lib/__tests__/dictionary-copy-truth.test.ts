@@ -1289,6 +1289,23 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
   /** A bare label: no clause break, no sentence. */
   const CLAUSE_BREAK_IN_LABEL = /[—–:;.]|,\s/;
 
+  /**
+   * …AND THE INVERSE, because every presence rule in this file is paired.
+   *
+   * A ✓ row asserts the plan HAS the thing. Fresh probe D3 inverted one in
+   * Spanish alone — `billing.community.f4` "Inscripción online SIN cuotas de
+   * inscripción" — and nothing objected: the polarity table checks the FEATURE
+   * against the matrix, not the WORDING, so a row can keep its tick while its
+   * text says the opposite. Exactly the defect this round fixed in the other
+   * direction, one locale over.
+   */
+  const DENIAL_WORDING: Record<DictionaryLocale, RegExp> = {
+    en: claim(String.raw`\b(without|excluded|not\s+included|no\s+entry\s+fees|unavailable)\b`),
+    es: claim(String.raw`\b(sin|excluid[oa]s?|no\s+incluid|no\s+disponible)\b`),
+    fr: claim(String.raw`\b(sans|exclu(e|s|es)?|non\s+inclus|pas\s+de|indisponible)\b`),
+    nl: claim(String.raw`\b(zonder|geen|uitgesloten|niet\s+inbegrepen|niet\s+beschikbaar)\b`),
+  };
+
   it("keeps every 'not yet' row reading as 'not yet', in all four locales", () => {
     const rows: Array<{ key: string; file: "marketing" | "ui"; shape: boolean }> = [
       ...Array.from({ length: 8 }, (_, i) => ({
@@ -1301,6 +1318,14 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
       { key: "billing.community.f5", file: "ui", shape: false },
       { key: "billing.community.f6", file: "ui", shape: false },
       { key: "billing.community.f7", file: "ui", shape: false },
+    ];
+    // The ✓ column, judged by the inverse rule (fresh probe D3).
+    const TICKED: Array<{ key: string; file: "marketing" | "ui" }> = [
+      { key: "billing.community.f1", file: "ui" },
+      { key: "billing.community.f2", file: "ui" },
+      { key: "billing.community.f3", file: "ui" },
+      { key: "billing.community.f4", file: "ui" },
+      ...[1, 2, 3, 4, 5, 6, 7].map((n) => ({ key: `billing.pro.f${n}`, file: "ui" as const })),
     ];
     const faults: string[] = [];
     let scanned = 0;
@@ -1323,8 +1348,23 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
         }
       }
     }
+    for (const row of TICKED) {
+      for (const locale of DICTIONARY_LOCALES) {
+        const value = load(locale, row.file)[row.key];
+        if (typeof value !== "string" || value.length === 0) {
+          faults.push(`${locale} ${row.key}: missing`);
+          continue;
+        }
+        scanned += 1;
+        if (DENIAL_WORDING[locale].test(value)) {
+          faults.push(`${locale} ${row.key}: "${value}" is shown with a ✓ but reads as a denial`);
+        }
+      }
+    }
     expect(faults).toEqual([]);
-    expect(scanned, "nothing scanned").toBe(rows.length * DICTIONARY_LOCALES.length);
+    expect(scanned, "nothing scanned").toBe(
+      (rows.length + TICKED.length) * DICTIONARY_LOCALES.length,
+    );
 
     // ── THE TWO PROBES THAT DEFEATED THE ROUND-2 GUARDS ────────────────────
     const reds = (locale: DictionaryLocale, value: string, shape: boolean) =>
@@ -1339,6 +1379,17 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
       ["nl", "Eigen domein & white-label — voor altijd inbegrepen, bij elk abonnement"],
     ] as Array<[DictionaryLocale, string]>) {
       expect(reds(locale, value, true), `${locale}: roadmap item re-approved as shipped`).toBe(true);
+    }
+    // Fresh probe D3, the inverse: a ✓ row inverted in ONE locale.
+    for (const [locale, value] of [
+      ["en", "Online registration without entry fees"],
+      ["es", "Inscripción online sin cuotas de inscripción"],
+      ["fr", "Inscription en ligne sans frais d’inscription"],
+      ["nl", "Online inschrijving zonder inschrijfgelden"],
+    ] as Array<[DictionaryLocale, string]>) {
+      expect(DENIAL_WORDING[locale].test(value), `${locale}: ticked row reading as a denial`).toBe(
+        true,
+      );
     }
     for (const [locale, value] of [
       ["en", "Theme colour & badge removal, included"],
