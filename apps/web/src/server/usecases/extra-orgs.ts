@@ -291,6 +291,19 @@ export async function setExtraOrgs(
  *   charged and the webhook may be lagging. Required, not optional: an optional
  *   clamp is a clamp somebody forgets.
  *
+ *   The clamp is therefore only as good as that retrieve — and a retrieve that
+ *   UNDER-reports is not the safe direction here, whatever the general instinct
+ *   says. It lowers the floor, and a lower floor lets a reduction through. This
+ *   guard's entire job is to refuse a reduction, so permissiveness IS the
+ *   failure it defends against: the silent reseller keeps org #11 and stops
+ *   paying the rider. (Over-reporting is the recoverable direction — it refuses
+ *   a cancellation the customer is entitled to, loudly, with support as the
+ *   exit.) What contains it is that `setExtraOrgs` reads the live subscription
+ *   ONCE and derives both `previousExtraOrgs` and this argument from that same
+ *   read, so the floor cannot disagree with the number being reduced from; a
+ *   retrieve that is wrong is wrong about the whole operation, not just about
+ *   the clamp.
+ *
  * Kept here (rather than moved wholesale) so `setExtraOrgs` reads as one story.
  * The Add-ons tab does NOT call it: `getAddOnsTab` already holds the basis for
  * the capacity it renders, so it calls `ridersInUse` on that same basis instead

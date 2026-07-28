@@ -821,13 +821,38 @@ describe.skipIf(!HAS_DB)("extra-org usage floor — you cannot cancel what you a
   });
 
   /** A pro_plus group holding `total` live orgs, with `extras` purchased
-   *  riders already on its Stripe subscription. Pro Plus (base 10) keeps the
-   *  fixture small: 11 orgs is one over the base. */
+   *  riders already on its Stripe subscription AND in `org_addons`. Pro Plus
+   *  (base 10) keeps the fixture small: 11 orgs is one over the base.
+   *
+   *  The DB row is not decoration. The floor is
+   *  `totalBonus - grantedBonus` — purchased capacity, with admin comps taken
+   *  out — and with no ACTIVE row on the wallet both terms are 0 whatever the
+   *  status sets say. Widening the granted set to `["granted", "active"]`
+   *  (which subtracts the very riders the floor measures, and reopens the
+   *  silent-reseller leak this whole guard exists to close) left the suite
+   *  fully green until this row existed.
+   *
+   *  Column for column what the webhook writes — the single writer of
+   *  Stripe-paid rows (billing-events.ts, `ORG_ADDON_FEATURE_KEY` /
+   *  `ORG_ADDON_DELTA_EACH`, `target_org_id` null, status 'active'). */
   async function groupInUse(total: number, extras: number) {
     const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
     await addFillerOrgs(walletId, total - 1);
+    // V324's unique index is on `stripe_item_id` ALONE, so a literal reused
+    // across tests does not collide loudly — it MOVES the previous test's row
+    // onto this wallet. Unique per fixture call, and the same id in Stripe and
+    // in the database, which is the pairing production maintains.
+    const addonItemId = `si_addon_${uniq()}`;
+    if (extras > 0) {
+      await sql`
+        insert into org_addons
+          (wallet_id, target_org_id, target_competition_id, feature_key, delta_each, qty,
+           stripe_item_id, status)
+        values (${walletId}, null, null, 'orgs.max_owned', 1, ${extras},
+                ${addonItemId}, 'active')`;
+    }
     const addonItem = {
-      id: "si_addon",
+      id: addonItemId,
       quantity: extras,
       price: { id: "price_addon", lookup_key: proPlusEntry.lookupKey },
     };
@@ -846,11 +871,12 @@ describe.skipIf(!HAS_DB)("extra-org usage floor — you cannot cancel what you a
         ],
       },
     });
-    return { orgId, walletId, stripeSubId };
+    return { orgId, walletId, stripeSubId, addonItemId };
   }
 
   it("refuses to reduce below the organisations the group is actually using", async () => {
-    // 11 live orgs on a base of 10: exactly one org is standing on the rider.
+    // 11 live orgs on a base of 10: exactly one org is standing on the rider,
+    // and that rider is an ACTIVE org_addons row, as it is in production.
     const { walletId } = await groupInUse(proPlusBase + 1, 1);
     expect(await extraOrgsInUse(walletId, "pro_plus", 1)).toBe(1);
 
@@ -862,31 +888,45 @@ describe.skipIf(!HAS_DB)("extra-org usage floor — you cannot cancel what you a
     expect(itemCreateSpy).not.toHaveBeenCalled();
   });
 
+  it("counts a PURCHASED rider as capacity in use, not as capacity granted", async () => {
+    // The arithmetic the floor is: purchased = totalBonus - grantedBonus. The
+    // sibling comp test proves a 'granted' row lowers the floor; this proves an
+    // 'active' one does NOT. Without both, widening the granted status set to
+    // include 'active' subtracts every purchased rider, the floor collapses to
+    // 0, and "buy, create org #11, cancel, keep it for ever" is back.
+    const { walletId } = await groupInUse(proPlusBase + 1, 1);
+    const [row] = await sql<{ qty: number; status: string }[]>`
+      select qty, status from org_addons
+       where wallet_id = ${walletId} and feature_key = 'orgs.max_owned'`;
+    expect(row).toMatchObject({ qty: 1, status: "active" });
+    expect(await extraOrgsInUse(walletId, "pro_plus", 1)).toBe(1);
+  });
+
   it("allows a reduction to exactly what is in use (the boundary, not one past it)", async () => {
-    const { walletId } = await groupInUse(proPlusBase + 1, 2);
+    const { walletId, addonItemId } = await groupInUse(proPlusBase + 1, 2);
     expect(await extraOrgsInUse(walletId, "pro_plus", 2)).toBe(1);
 
     const result = await setExtraOrgs(1);
 
     expect(result.extraOrgs).toBe(1);
-    expect(itemUpdateSpy).toHaveBeenCalledWith("si_addon", {
+    expect(itemUpdateSpy).toHaveBeenCalledWith(addonItemId, {
       quantity: 1,
       proration_behavior: "none",
     });
   });
 
   it("increases are never refused, however many organisations the group holds", async () => {
-    await groupInUse(proPlusBase + 1, 1);
+    const { addonItemId } = await groupInUse(proPlusBase + 1, 1);
 
     await expect(setExtraOrgs(5)).resolves.toMatchObject({ extraOrgs: 5 });
-    expect(itemUpdateSpy).toHaveBeenCalledWith("si_addon", {
+    expect(itemUpdateSpy).toHaveBeenCalledWith(addonItemId, {
       quantity: 5,
       proration_behavior: "create_prorations",
     });
   });
 
   it("DETACH THEN REDUCE: the real exit works, so nobody is trapped paying for ever", async () => {
-    const { walletId, stripeSubId } = await groupInUse(proPlusBase, 1);
+    const { walletId, stripeSubId, addonItemId } = await groupInUse(proPlusBase, 1);
     // A twelfth… eleventh org, owned by a real user so it can be detached
     // (filler orgs have no owner member and detach refuses those on purpose).
     const leaverOwner = await makeUser();
@@ -910,20 +950,20 @@ describe.skipIf(!HAS_DB)("extra-org usage floor — you cannot cancel what you a
             quantity: proPlusBase,
             price: { id: "price_plan", billing_scheme: "tiered", lookup_key: "seazn_pro_plus_monthly" },
           },
-          { id: "si_addon", quantity: 1, price: { id: "price_addon", lookup_key: proPlusEntry.lookupKey } },
+          { id: addonItemId, quantity: 1, price: { id: "price_addon", lookup_key: proPlusEntry.lookupKey } },
         ],
       },
     });
 
     await expect(setExtraOrgs(0)).resolves.toMatchObject({ extraOrgs: 0 });
-    expect(itemDelSpy).toHaveBeenCalledWith("si_addon", { proration_behavior: "none" });
+    expect(itemDelSpy).toHaveBeenCalledWith(addonItemId, { proration_behavior: "none" });
   });
 
   it("an ADMIN-COMPED rider is not counted as usage — a comped group is never forced to buy", async () => {
     // 11 orgs on a base of 10, ONE purchased rider and one staff comp. The
     // purchased rider matters: with none, the clamp would answer 0 whatever the
     // comp arithmetic did, and this test would prove nothing.
-    const { walletId } = await groupInUse(proPlusBase + 1, 1);
+    const { walletId, addonItemId } = await groupInUse(proPlusBase + 1, 1);
     // SPEC-3 staff comp: status='granted', no stripe_item_id. It is what is
     // holding org #11 up, so it must lower the floor, or this group is told to
     // buy a rider for capacity it was given.
@@ -934,7 +974,7 @@ describe.skipIf(!HAS_DB)("extra-org usage floor — you cannot cancel what you a
     // Without the comp this is 1; the comp is the only reason it is 0.
     expect(await extraOrgsInUse(walletId, "pro_plus", 1)).toBe(0);
     await expect(setExtraOrgs(0)).resolves.toMatchObject({ extraOrgs: 0 });
-    expect(itemDelSpy).toHaveBeenCalledWith("si_addon", { proration_behavior: "none" });
+    expect(itemDelSpy).toHaveBeenCalledWith(addonItemId, { proration_behavior: "none" });
   });
 
   it("never traps a group whose plan has no orgs.max_owned row at all", async () => {

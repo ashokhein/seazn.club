@@ -11,7 +11,12 @@ import "server-only";
 // arithmetic only, so it can be imported from either side without a cycle.
 import { sql } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
-import { addonBonusForWallet, addonBonusForWalletByStatus, getLimit } from "@/lib/entitlements";
+import {
+  addonBonusForWallet,
+  addonBonusForWalletByStatus,
+  getLimit,
+  overrideRow,
+} from "@/lib/entitlements";
 
 /** The group an org bills through, or null if it has none. */
 export async function subscriptionIdForOrg(orgId: string): Promise<string | null> {
@@ -333,12 +338,11 @@ export async function capacityBasis(
     };
   }
 
-  // The expiry predicate matches resolve()'s exactly: an expired override is
-  // dead and must not count.
-  const [override] = await sql<{ int_value: number | null }[]>`
-    select int_value from org_entitlement_overrides
-     where org_id = ${repOrgId} and feature_key = ${featureKey}
-       and (expires_at is null or expires_at > now())`;
+  // The SAME statement `resolve()` runs, not a copy of it — including the
+  // expiry predicate, without which a comp that ended keeps setting the base.
+  // This read used to be hand-copied here and the copy is what made the drift
+  // possible; `overrideRow` is now the single place it is written.
+  const override = await overrideRow(repOrgId, featureKey);
 
   let base: number | null = null;
   let baseUnknown = false;

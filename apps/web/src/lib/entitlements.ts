@@ -344,17 +344,46 @@ async function resolveFromDb(
   // a boolean and never reads int_value, so nothing here can drift from SQL.
   //
   // Expired overrides are dead (v3/08 §1 admin expiry) — ignored here; the
-  // admin panel shows and sweeps them.
-  const [ov] = await sql<Resolved[]>`
-    select bool_value, int_value
-    from org_entitlement_overrides
-    where org_id = ${orgId} and feature_key = ${featureKey}
-      and (expires_at is null or expires_at > now())`;
+  // admin panel shows and sweeps them. The statement itself lives in
+  // `overrideRow` below, because `capacityBasis` needs the identical read.
+  const ov = await overrideRow(orgId, featureKey);
   if (!ov) return base;
   return {
     bool_value: ov.bool_value ?? base?.bool_value ?? null,
     int_value: ov.int_value,
   };
+}
+
+/**
+ * THE live `org_entitlement_overrides` read — one statement, two callers.
+ *
+ * `resolve()` above overlays it on the plan row; `capacityBasis`
+ * (lib/billing-group.ts) reads the same row DIRECTLY, because a display of
+ * purchased capacity must not inherit the resolver's read-time degradations.
+ * Two callers, two files, and until now two hand-written copies of the same
+ * SELECT — the drift class `entitlements-duplicate-resolvers.test.ts` exists
+ * for, and one the second copy had already stepped in once.
+ *
+ * The predicate that most matters is the liveness one: an EXPIRED override is
+ * dead, and a copy that forgets `expires_at` keeps honouring a comp that ended.
+ *
+ * Returns null when the org carries no live override for the key — which is
+ * distinct from an override present with a null `int_value` (staff-granted
+ * UNLIMITED). Both callers depend on telling those apart, which is why this
+ * hands back the ROW rather than an int: an `overrideIntValue(): number | null`
+ * cannot express "absent", and cannot carry the `bool_value` `resolve()` needs
+ * to coalesce, so only one of the two callers could ever have used it.
+ */
+export async function overrideRow(
+  orgId: string,
+  featureKey: string,
+): Promise<Resolved | null> {
+  const [ov] = await sql<Resolved[]>`
+    select bool_value, int_value
+    from org_entitlement_overrides
+    where org_id = ${orgId} and feature_key = ${featureKey}
+      and (expires_at is null or expires_at > now())`;
+  return ov ?? null;
 }
 
 /** Returns true if the org has a boolean feature enabled. */
