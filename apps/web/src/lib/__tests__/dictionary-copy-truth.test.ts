@@ -402,6 +402,19 @@ const KNOWN_POSITIVES: string[] = [
   "every competition comes with its own allowance of scheduling runs",
   "5 AI runs",
   "two schedule runs",
+  "AI scheduling is limited to 5 attempts per division",
+  "Each division may be scheduled by AI up to 20 times.",
+  // ── Task 3's APPROVED FORMS (the help-tree allowlist) ──
+  // These are positives in the opposite sense to everything else here: they are
+  // the shapes the help copy is ALLOWED to use, so each one is a real sentence
+  // from content/help/billing/event-pass.md. A form that matches nothing is a
+  // form no copy can satisfy, which would make the allowlist unusable rather
+  // than merely inert — the same failure, from the other side.
+  "Its end date passed more than 7 days ago, so the pass has stopped applying",
+  "It does not carry to next season's edition — a new edition is a new competition",
+  "the pass is bought outright for that event and survives a downgrade",
+  "the pass is bound to the competition itself, not its name",
+  "if the first card entry was taken while the pass was live, the pass's cheaper rate rides on",
   // ── Pro Plus differentiators, four languages ──
   "AI-assisted scheduling",
   "scheduling powered by AI",

@@ -109,7 +109,12 @@ export const RETIRED_AI_RUN_CAP_PATTERNS = [
   // "<n> runs per division", "runs a competition", "runs for each event".
   // Fix round 2: `every` was missing from the distributive list, so
   // "5 schedule runs for every division" returned no fault (measured).
-  /\b(runs?|generations?|invocations?|jobs?)\b[^.;]{0,20}\b(per|for\s+each|for\s+every|each|every|a)\s+(division|competition|event)\b/i,
+  // Fix round 2: `attempts` was not a unit noun, so "AI scheduling is limited to
+  // 5 attempts per division" scanned clean.
+  /\b(runs?|generations?|invocations?|jobs?|attempts?|tries|uses?|calls?)\b[^.;]{0,20}\b(per|for\s+each|for\s+every|each|every|a)\s+(division|competition|event)\b/i,
+  // Fix round 2: the allowance stated with NO unit noun at all — "Each division
+  // may be scheduled by AI up to 20 times." A count of "times" is the unit.
+  /\b(per|for\s+each|each|every)\s+(division|competition|event)\b[^.;]{0,60}\b(?:up\s+to\s+)?\d+\s+times?\b/i,
   // An AI/scheduling subject, then a run noun, then the per-unit allotment —
   // catches the three measured misses, which put words between the two.
   /\b(AI|scheduling)\b[^.;]{0,40}\b(runs?|generations?|invocations?|jobs?)\b[^.;]{0,20}\b(per|for\s+each|for\s+every|each|every|a)\s+(division|competition|event)\b/i,
@@ -245,9 +250,13 @@ export function boundedScopeGrammarSource(
   conjunctions: string[],
   activity: string[],
   locale: keyof typeof CLAUSE_BREAK = "en",
+  forbiddenComplement: string[] = [],
 ): string {
+  const guard =
+    forbiddenComplement.length === 0 ? "" : String.raw`(?!\s*(?:${forbiddenComplement.join("|")}))`;
   return (
     String.raw`\b(?:${conjunctions.join("|")})\b` +
+    guard +
     String.raw`(?:(?!${CLAUSE_BREAK[locale]})[^.:;!?,])*?` +
     String.raw`\b(?:${activity.join("|")})\b`
   );
@@ -263,10 +272,32 @@ export function boundedScopeGrammarSource(
  * locale rules must compile the SAME source through `claim()` (Unicode `\b`,
  * for the accented-character bug task 4 measured) while this one is only ever
  * tested against English values, and `claim` is defined further down the file.
+ *
+ * FIX ROUND 2 — three more ways a conjunction failed to govern, all measured by
+ * the reviewer against copy stating no bound at all:
+ *
+ *  - `during` takes a NOUN PHRASE, never a clause, so "During checkout your
+ *    Event Pass becomes active" put the activity word in a different clause with
+ *    nothing joining them. It survives only with a competition-shaped
+ *    complement, which is the one reading that IS a temporal bound ("during the
+ *    event the pass runs").
+ *  - "Until NOW nobody could keep a competition active without Pro" is a
+ *    statement about the past, not a bound.
+ *  - "While BROWSING the pricing page you can keep every competition active" —
+ *    a gerund complement has no subject, so the clause the conjunction
+ *    introduces is not about the competition at all.
  */
 export const BOUNDED_SCOPE_GRAMMAR_SOURCE = boundedScopeGrammarSource(
-  ["while", String.raw`for\s+as\s+long\s+as`, String.raw`as\s+long\s+as`, "until", "during"],
+  [
+    "while",
+    String.raw`for\s+as\s+long\s+as`,
+    String.raw`as\s+long\s+as`,
+    "until",
+    String.raw`during\s+(?:the\s+|that\s+|this\s+|its\s+|your\s+)?(?:competition|event|season|tournament|pass)`,
+  ],
   ["active", "running", "runs", "open", "live", String.raw`under\s*way`],
+  "en",
+  [String.raw`now\b`, String.raw`\w+ing\b`],
 );
 
 export const BOUNDED_SCOPE_GRAMMAR = new RegExp(BOUNDED_SCOPE_GRAMMAR_SOURCE, "i");
@@ -868,21 +899,46 @@ export function unqualifiedFeeReversionFaults(label: string, markdown: string): 
  * lower it. Round 1 wrote "a late entrant pays the same 5% as the first one",
  * which is true only of the case it happened to have in mind.
  *
- * The rule is therefore about the SHAPE of the claim, not its wording: naming a
- * literal percentage as the locked rate is the error, whatever percentage it is.
- * Copy must attribute the locked rate to its source — what the first payer was
- * charged — and let the number follow from that.
+ * FIX ROUND 2 — the rule fired only on a literal `\d+\s*%`, which is one way of
+ * naming a rate out of several. Measured misses: "drops to THE PASS RATE for
+ * every remaining entry" and "stays at THE EVENT PASS RATE" name it by brand,
+ * and "five per cent" spells it out. All three make exactly the claim the digit
+ * version makes.
+ *
+ * So the detector is now "names a PARTICULAR rate" — a figure, a spelled-out
+ * figure, or a branded one — and the verdict flips to an allowlist: a sentence
+ * that says a particular rate persists must ALSO name the condition that decides
+ * it, the first paid card entry. That condition is the whole content of the
+ * rule; a sentence without it is asserting the rate is a constant, which it is
+ * not.
  */
+// NOTE the missing `\b` after `%`: a word boundary needs a word character on
+// one side, and `% ` has none — `/\b5\s*%\b/` can never match "5% as". That is
+// how the first draft of this rule returned no fault for the very sentence it
+// was written against.
+const NAMES_A_PARTICULAR_RATE =
+  /\b\d+(?:\.\d+)?\s*%|\b\d+(?:\.\d+)?\s*per\s*cent\b|\b\d+(?:\.\d+)?\s*percent\b|\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+per\s*cent\b|\b(?:the\s+)?(?:Event\s+)?pass(?:'s|’s)?\s+(?:own\s+|cheaper\s+|discounted\s+)?(?:rate|fee|percentage)\b|\b(?:cheaper|discounted)\s+rate\b/i;
+
 export function lockedRateConstantFaults(label: string, passProse: string): string[] {
   const faults: string[] = [];
   const lock = new RegExp(FEE_LOCK_WORD, "i");
+  const persists =
+    /\b(stays?|remains?|keeps?|rides?|goes?\s+on|carries?\s+on|drops?\s+to|falls?\s+to|pays?|charged|applies)\b/i;
+  // NOT merely "a first paid entry is mentioned": round 1's falsehood said
+  // "Once a competition has taken its first paid entry … a late entrant pays the
+  // same 5% as the first one" — it named the trigger and still asserted a
+  // constant. What licenses naming a rate is the condition that the first entry
+  // was taken WHILE THE PASS WAS LIVE, which is the only case where the pass's
+  // own rate is the one locked in.
+  const condition =
+    /\bfirst\s+(?:paid\s+)?(?:card\s+)?(?:entry|entrant|payment)\b[^.;:!?]*\b(?:while|before|after|during)\b[^.;:!?]*\bpass\b/i;
   for (const block of proseBlocks(passProse)) {
     for (const sentence of sentences(block)) {
-      if (!lock.test(sentence) || !RATE_MENTION.test(sentence)) continue;
-      const percent = /(\d+(?:\.\d+)?)\s*%/.exec(sentence);
-      if (!percent) continue;
+      if (!NAMES_A_PARTICULAR_RATE.test(sentence)) continue;
+      if (!lock.test(sentence) && !persists.test(sentence)) continue;
+      if (condition.test(sentence)) continue;
       faults.push(
-        `${label}: "${sentence.slice(0, 72)}…" names ${percent[1]}% as the locked rate — the lock records whatever the FIRST PAID CARD ENTRY was charged, which is the pre-pass rate for a competition that already had one`,
+        `${label}: "${sentence.slice(0, 88)}" says a particular rate carries on without naming what decides it. The locked rate is whatever the FIRST PAID CARD ENTRY was charged — for a competition that already had one, that is the PRE-PASS rate, and the pass cannot lower it.`,
       );
     }
   }
@@ -1038,14 +1094,14 @@ export function passBoundProseFaults(label: string, passProse: string): string[]
           `${label}: "${sentence.slice(0, 72)}…" states the pass's duration as ${form} — an unbounded extent`,
         );
       }
-      // A sentence may name a stop condition instead of a conjunction; that is
-      // the OTHER true way to bound the pass, and `event-pass.md` uses it
-      // ("It stops once that competition is over").
-      const namesStop =
-        /\b(stops?|ends?|switch(?:es)?\s+off|no\s+longer\s+applies|expires?)\b[^.;:!?]*\b(once|when|after|if)\b|\b(once|when|after)\b[^.;:!?]*\b(completed|archived|over|end\s+date|finished)\b/i.test(
-          sentence,
-        );
-      if (DURATION_CLAIM.test(sentence) && !bounded && !namesStop) {
+      // FIX ROUND 2: the `namesStop` exemption that used to sit here is GONE.
+      // It was a false-green widener with ZERO coverage — rule 3 flagged no
+      // sentence of either real article, so nothing exercised it, yet it was
+      // reachable and exempted "It applies for the whole duration, and stops
+      // once that competition is over." Naming a stop condition is now an
+      // APPROVED FORM in `DURATION_ALLOWLIST`, where it is exercised, rather
+      // than an escape hatch here.
+      if (DURATION_CLAIM.test(sentence) && !bounded) {
         faults.push(
           `${label}: "${sentence.slice(0, 72)}…" says how long the pass applies without bounding it to a running competition`,
         );
@@ -1940,6 +1996,426 @@ export function feeLadderFaults(
   }
   for (const plan of Object.keys(FEE_LADDER_PLAN_KEYS)) {
     if (!seen.has(plan)) faults.push(`fee ladder: no row for ${plan}`);
+  }
+  return faults;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ALLOWLIST — APPROVED FORMS, NOT BANNED ONES  (fix round 2)
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// Three rounds of this wave widened the NEGATIVE side and lost three times. The
+// measurements, all by someone other than the pattern's author:
+//
+//   round 0  the seed guards          defeated by a reword
+//   round 1  topic + verb vocabulary  fee 1/12, permanence 1/11
+//   round 2  "closed set of forms"    fee 0/12, permanence 0/12, constant 0/4
+//
+// Round 2's diagnosis is the one that matters, and it is correct: the forms were
+// not closed. "A negated limit" was a word list — end|expiry|deadline|cut-off —
+// so the same FORM with a different word walked straight through. It was a
+// denylist wearing grammar's clothes. Every author scores well against their own
+// rewordings and badly against a stranger's, because a denylist can only ever
+// contain what its author thought of.
+//
+// THE SPACE OF FALSE PHRASINGS IS OPEN. THE SPACE OF APPROVED COPY IS CLOSED.
+//
+// So the verdict flips. A sentence that makes one of these claims must MATCH AN
+// APPROVED FORM. A new falsehood matches none and fails — which is precisely the
+// case (a false sentence ADDED beside the true ones) that all three denylist
+// rounds missed, and it fails without anyone having predicted its wording.
+//
+// The cost is friction: a genuinely new true sentence also fails until someone
+// approves a form for it. On billing copy that has shipped a falsehood three
+// times, that is the feature.
+
+/** A claim we police, as "how to spot one" plus "the ways we accept it". */
+export interface ClaimAllowlist {
+  /** What the claim is about, for the fault label. */
+  kind: string;
+  /** Broad, deliberately over-inclusive: does this sentence make such a claim?
+   *  Recall matters here and precision does not, because the verdict is decided
+   *  by `approved` below — a sentence swept in wrongly is one an approved form
+   *  then accepts. */
+  classifies: RegExp[];
+  /** Narrow: the shapes this claim may take. Each is a SHAPE, and the fault
+   *  label names which one matched so an editor can see what is on offer. */
+  approved: Array<[form: string, pattern: RegExp]>;
+  /** What to do about a fault, printed in the label. */
+  guidance: string;
+}
+
+/**
+ * Every sentence making the claim must match an approved form.
+ *
+ * Returns the sentence AND the list of forms on offer, because the failure an
+ * editor meets must be actionable: "this is not one of the four ways we say
+ * this" is useless without the four ways.
+ */
+export function unapprovedClaimFaults(
+  label: string,
+  prose: string,
+  allowlist: ClaimAllowlist,
+  /** Paragraphs already pinned word-for-word by `goldenParagraphFaults`. They
+   *  are excluded because the gate is STRICTER than any allowlist — it permits
+   *  exactly one wording — so re-judging them here only adds forms that exist to
+   *  describe sentences the generalising rules were never meant to cover. */
+  gatedParagraphs: string[] = [],
+): string[] {
+  const faults: string[] = [];
+  for (const block of proseBlocks(prose)) {
+    if (gatedParagraphs.includes(block)) continue;
+    for (const sentence of sentences(block)) {
+      if (!allowlist.classifies.some((p) => p.test(sentence))) continue;
+      if (allowlist.approved.some(([, p]) => p.test(sentence))) continue;
+      faults.push(
+        `${label}: "${sentence.slice(0, 96)}" makes a ${allowlist.kind} claim in no approved form. ${allowlist.guidance} Approved forms: ${allowlist.approved.map(([form]) => form).join("; ")}.`,
+      );
+    }
+  }
+  return faults;
+}
+
+/** Which approved forms actually fired on this prose. The anti-vacuity backstop
+ *  for an allowlist: a `classifies` list that has drifted narrow sweeps nothing
+ *  in, every sentence passes, and the rule reports clean while examining
+ *  nothing — the exact failure this wave has now hit three times. */
+export function approvedFormsExercised(prose: string, allowlist: ClaimAllowlist): string[] {
+  const fired = new Set<string>();
+  for (const block of proseBlocks(prose)) {
+    for (const sentence of sentences(block)) {
+      if (!allowlist.classifies.some((p) => p.test(sentence))) continue;
+      for (const [form, pattern] of allowlist.approved) {
+        if (pattern.test(sentence)) fired.add(form);
+      }
+    }
+  }
+  return [...fired];
+}
+
+// ── The pass's duration ──────────────────────────────────────────────────────
+
+/**
+ * Does this sentence say anything about how long the pass holds? Cast wide:
+ * persistence, termination and extent vocabulary, in any combination. The two
+ * rewordings that beat round 2 are both caught here — "the upgrade is yours
+ * from then on and your competition never loses it" on `yours`/`never`/`loses`,
+ * and "it applies for the entire duration" on the extent phrase — and then fail
+ * because no approved form fits them.
+ *
+ * MEASURED AND NARROWED. The first draft used bare verbs — `stays`, `ends`,
+ * `never`, `while`, `switch off` — and swept in seventeen true sentences that
+ * make no duration claim at all ("your brand colour STAYS a Pro feature", "the
+ * checkout quotes YOURS", "a competition is NEVER billed twice", "SO WHILE
+ * you're on a paid plan"). An allowlist whose classifier over-fires forces
+ * approved forms to be invented for sentences the rule was never about, and
+ * those forms are then holes. So each entry below requires the predicate to be
+ * about DURATION specifically, and several require the pass to be its subject.
+ */
+export const DURATION_CLAIM_CLASSIFIERS = [
+  // An extent, named.
+  /\bfor\s+(?:the\s+|its\s+|your\s+|that\s+|this\s+)?(?:life|lifetime|duration|rest|remainder|whole|entire)\b/i,
+  /\b(?:from\s+(?:then|now)\s+on|for\s*ever|forever|for\s+good|in\s+perpetuity|indefinitely|open[-\s]ended|how\s+long|always\s+(?:applies|works|holds))\b/i,
+  /\bpermanent\w*\b/i,
+  // A bound, stated temporally — "while it runs", not "while you're on Pro".
+  /\bwhile\b[^.;:!?]*\b(?:runs?|running|active|live|open|under\s*way)\b/i,
+  /\b(?:until|for\s+as\s+long\s+as|as\s+long\s+as)\b[^.;:!?]*\b(?:runs?|running|active|live|open|over|archived?|completed?)\b/i,
+  // A stop, or its denial, with the PASS as its subject.
+  /\b(?:pass|upgrade)\b[^.;:!?]*\b(?:expires?|lapses?|runs?\s+out|stops?\s+(?:applying|working)|switch(?:es)?\s+off)\b|\b(?:expires?|lapses?|runs?\s+out|stops?\s+applying|switch(?:es)?\s+off)\b[^.;:!?]*\b(?:pass|upgrade)\b/i,
+  /\bno\s+(?:end\s*date|expiry|expiration|time\s+limit|deadline|cut[-\s]?off|last\s+day)\b/i,
+  /\bnever\s+(?:loses?|lose|expires?|ends?|lapses?|stops?|switch\w*|goes?\s+away|comes?\s+off|runs?\s+out)\b/i,
+  /\bend\s*date\b/i,
+  // Persistence, as a claim rather than as an ordinary verb.
+  /\b(?:stays?|remains?|is)\s+yours\b|\byours\s+(?:to\s+keep|from)\b|\bto\s+keep\b/i,
+  /\b(?:stays?|remains?)\s+in\s+force\b|\bkeeps?\s+(?:working|applying)\b|\bstill\s+applies\b|\bcarries?\s+on\b|\brides?\s+(?:on|along)\b|\bsurvives?\b/i,
+];
+
+/**
+ * The ways this product's duration may truthfully be stated. Four, because the
+ * behaviour has four parts: it is bounded to a running competition; it stops on
+ * a named condition; it does not transfer to the next edition; and it outlives a
+ * subscription lapse because it was bought outright.
+ *
+ * Each is anchored on the CONDITION, not on adjectives — that is what stops a
+ * new falsehood slipping in as a variant. "Once bought, the upgrade is yours
+ * from then on" matches none of the four, and cannot be made to without stating
+ * a condition that is not true.
+ */
+export const APPROVED_DURATION_FORMS: Array<[form: string, pattern: RegExp]> = [
+  ["bounded to a running competition (`while it runs`)", BOUNDED_SCOPE_GRAMMAR],
+  [
+    "stops on a named condition (`stops once the competition is completed or archived`)",
+    /\bend\s*date\b[^.;:!?]*\bpassed\b|\bcompleted\s+or\s+archived\b|\b(stops?|ends?|switch(?:es)?\s+off|no\s+longer\s+applies|lifts?\s+off|drops?\s+back)\b[^.;:!?]*\b(once|when|after)\b[^.;:!?]*\b(completed?|archived?|over|finished?|end\s*date|\d+\s+days?)\b|\b(once|when|after)\b[^.;:!?]*\b(completed?|archived?|over|finished?|end\s*date|\d+\s+days?)\b[^.;:!?]*\b(stops?|ends?|switch(?:es)?\s+off|no\s+longer|drops?\s+back)\b/i,
+  ],
+  [
+    "does not transfer to a new competition (`a new edition needs its own pass`)",
+    /\b(does\s+not|doesn'?t|won'?t|never)\b[^.;:!?]*\bcarr(?:y|ies)\b[^.;:!?]*\b(next|new|another|season|edition|year)\b|\b(new|next|another)\b[^.;:!?]*\b(competition|edition|event)\b[^.;:!?]*\b(needs?|is)\b[^.;:!?]*\b(own\s+pass|new\s+pass|a\s+new\s+purchase)\b/i,
+  ],
+  [
+    "outlives a subscription lapse, because it was bought outright for that event",
+    /\bbought\s+outright\b|\bsurvives?\s+a\s+downgrade\b/i,
+  ],
+  [
+    "bound to the competition itself, not to its name (`rename it freely`)",
+    /\bbound\s+to\s+the\s+competition\b/i,
+  ],
+];
+
+export const DURATION_ALLOWLIST: ClaimAllowlist = {
+  kind: "pass-duration",
+  classifies: DURATION_CLAIM_CLASSIFIERS,
+  approved: APPROVED_DURATION_FORMS,
+  guidance:
+    "Rewrite it as one of the approved forms, or — if the product genuinely behaves a new way — add a form here and say why in the commit.",
+};
+
+// ── The entry-fee rate ───────────────────────────────────────────────────────
+
+/**
+ * A claim about what an entrant is charged, once the pass is no longer in force.
+ *
+ * Both halves are needed. Rate vocabulary alone sweeps in every true sentence
+ * that merely quotes the 5% (there are nine), and the transition alone sweeps in
+ * every sentence about the pass ending that says nothing about money. The
+ * INTERSECTION is where the falsehood has to live, because the claim cannot be
+ * made without naming both.
+ *
+ * Note the rate vocabulary is about a RATE, not about money in general: "only
+ * the first charge sticks — the duplicate is refunded automatically" is a
+ * statement about a duplicate payment, and was a measured false positive when
+ * `charge` was in this list on its own.
+ */
+const RATE_VOCABULARY =
+  /\b(platform\s+fees?|entry[-\s]fees?|fee\s+rate|rates?|fees?|per\s*cent|percent|pricing|entry\s+costs?|costs?\s+you\s+more|cheaper|dearer|commission|\d+(?:\.\d+)?\s*%)\b/i;
+
+const PASS_TRANSITION_VOCABULARY =
+  /\b(after|once|when)\b[^.;:!?]*\b(ends?|ended|ending|closes?|closed|finish\w*|over|expir\w*|stops?|stopped|lapses?|archiv\w*|completed?|handed\s+out|trophy)\b|\b(no\s+longer|later\s+(?:entrants?|entries|entry|payers?)|back\s+to|goes?\s+back|returns?\s+to|again|revert\w*|normal|standard|downgrad\w+|after\s+(?:that|then|it)|when\s+the\s+pass|after\s+the\s+pass|pass\s+(?:ends?|stops?|expires?|lapses?|does))\b|(?:\b(?:revok\w+|refund\w*|chargeback)\b[^.;:!?]*\bpass\b|\bpass\b[^.;:!?]*\b(?:revok\w+|refund\w*|chargeback)\b)/i;
+
+// `(?=A)(?=B)` requires BOTH to match at the SAME index, which is almost never
+// true of two different vocabularies — measured: it classified nothing at all,
+// and the rule built on it reported clean over the whole article. The `.*`
+// prefixes are what make each lookahead mean "somewhere in this sentence".
+// (Caught by `approvedFormsExercised`, which exists for exactly this.)
+export const FEE_RATE_CLAIM_CLASSIFIERS = [
+  new RegExp(`(?=.*(?:${RATE_VOCABULARY.source}))(?=.*(?:${PASS_TRANSITION_VOCABULARY.source}))`, "i"),
+];
+
+/**
+ * The three true things there are to say about the rate after a pass ends, all
+ * of them anchored on the FIRST PAID CARD ENTRY, because that is the only thing
+ * that decides the answer (`registrations.ts` is the sole writer of
+ * `competitions.fee_percent`, and its `where … and fee_percent is null` makes it
+ * first-wins).
+ *
+ * There is deliberately no form for "the rate goes back up", because there is no
+ * true sentence of that shape: a competition that has taken a paid card entry
+ * keeps its rate, and one that has not was never on the pass rate to begin with.
+ */
+export const APPROVED_FEE_RATE_FORMS: Array<[form: string, pattern: RegExp]> = [
+  [
+    "the lock (`the platform fee stays locked at what the first paid card entry was charged`)",
+    new RegExp(`(?=.*${FEE_SUBJECT})(?=.*${FEE_LOCK_WORD})(?=.*${PAID_ENTRY_TRIGGER})`, "i"),
+  ],
+  [
+    "the unlocked case (`a competition with no paid card entry yet follows your plan's rate`)",
+    /\bno\s+paid\s+(?:card\s+)?(?:entry|entrant|registration)\b[^.;:!?]*\b(plan|live|standard)\b|\b(plan|live|standard)\b[^.;:!?]*\bno\s+paid\s+(?:card\s+)?(?:entry|entrant|registration)\b/i,
+  ],
+  [
+    "the pass rate riding on, conditioned on when the first entry was taken",
+    /\bfirst\s+(?:paid\s+)?(?:card\s+)?(?:entry|entrant|payment)\b[^.;:!?]*\b(while|before|after|during)\b[^.;:!?]*\bpass\b/i,
+  ],
+];
+
+export const FEE_RATE_ALLOWLIST: ClaimAllowlist = {
+  kind: "entry-fee-rate-after-the-pass",
+  classifies: FEE_RATE_CLAIM_CLASSIFIERS,
+  approved: APPROVED_FEE_RATE_FORMS,
+  guidance:
+    "The rate is decided by the FIRST PAID CARD ENTRY and nothing else — check registrations.ts before rewording.",
+};
+
+// ── A golden fixture over the two paragraphs that keep regressing ────────────
+
+/** One paragraph whose exact wording has been read against the code and
+ *  approved. `find` locates it; `text` is what it must say. */
+export interface ApprovedParagraph {
+  id: string;
+  find: RegExp;
+  text: string;
+  why: string;
+}
+
+/**
+ * The two paragraphs that carry this product's two most-regressed claims, pinned
+ * WORD FOR WORD.
+ *
+ * Every rule above generalises, and generalising is how all three previous
+ * rounds were beaten. This one does not generalise: it compares the paragraph to
+ * an approved string. There is no phrasing that evades it, because it is not
+ * looking at phrasing.
+ *
+ * The friction is deliberate and is the whole point. These paragraphs describe
+ * money an organiser is charged, they have carried a falsehood in three
+ * consecutive rounds, and the cost of changing them is now one deliberate
+ * re-approval — which is a person reading the new words against
+ * `registrations.ts` and `org_has_feature`, exactly the step that was skipped
+ * each time.
+ */
+export function goldenParagraphFaults(
+  label: string,
+  markdown: string,
+  approved: ApprovedParagraph[],
+): string[] {
+  const faults: string[] = [];
+  const blocks = proseBlocks(markdown);
+  for (const paragraph of approved) {
+    const matches = blocks.filter((block) => paragraph.find.test(block));
+    if (matches.length === 0) {
+      faults.push(
+        `${label}: the approved paragraph "${paragraph.id}" is GONE — renamed, split or deleted. It stated: ${paragraph.why} If that is intended, update the fixture; if not, this is the regression.`,
+      );
+      continue;
+    }
+    if (matches.length > 1) {
+      faults.push(
+        `${label}: "${paragraph.id}" matches ${matches.length} paragraphs, so this fixture is pinning an ambiguous target — tighten its \`find\`.`,
+      );
+      continue;
+    }
+    const actual = matches[0]!;
+    if (actual === paragraph.text) continue;
+    faults.push(
+      [
+        `${label}: the approved paragraph "${paragraph.id}" CHANGED.`,
+        "",
+        "  THIS TEST IS A GATE, NOT A BUG. This paragraph states " + paragraph.why,
+        "  It has shipped a falsehood in three consecutive rounds of this wave, so",
+        "  its wording is pinned and changing it requires a deliberate re-approval:",
+        "  read the new text against server/usecases/registrations.ts (the fee lock)",
+        "  and lib/entitlements.ts (the pass window), then paste it into",
+        "  src/lib/__tests__/_approved-copy.ts.",
+        "",
+        `  approved: ${paragraph.text}`,
+        `  on disk:  ${actual}`,
+      ].join("\n"),
+    );
+  }
+  return faults;
+}
+
+// ── THE INVENTORY GATE ───────────────────────────────────────────────────────
+//
+// Measured, after the allowlist above was final: a fresh adversarial set scored
+// 6/30, while the reviewer's own set — which the rules had been tuned against —
+// scored 12/12. Same author, same rules, twice the effort, and the gap is the
+// whole story: EVERY LEXICAL RULE SCORES WELL AGAINST THE EXAMPLES IT WAS
+// WRITTEN FOR AND BADLY AGAINST THE NEXT ONES. Four rounds of this wave have now
+// demonstrated it (1/12, 0/12, 12/12-then-6/30). It is not a tuning problem.
+//
+// So the primary defence stops being about words. This pins the INVENTORY of the
+// pass's own copy: a digest per paragraph, in order. A sentence added anywhere
+// in it — in a new paragraph or inside an existing one — changes the inventory
+// and fails, whatever it says, because nothing here is reading it.
+//
+// The cost is that every legitimate edit to this copy also fails until someone
+// updates the fixture. That is the accepted trade: this article describes money
+// an organiser is charged, it has carried a falsehood in three consecutive
+// rounds, and the one step that would have caught all three — a person reading
+// the new words against the code — is exactly what the fixture forces.
+//
+// Digests rather than the prose itself, so the fixture does not become a second
+// copy of the article that reviewers must diff twice. The text is printed from
+// disk when a check fails, so the failure is still actionable.
+
+/**
+ * FNV-1a, run twice from different offset bases and concatenated — 64 bits of
+ * separation out of 32-bit integer arithmetic.
+ *
+ * Not cryptographic and does not need to be: the thing being detected is an
+ * edit, not a forgery. Hand-rolled so this module keeps its zero-import surface
+ * (`node:crypto` here would be one careless import away from a client bundle),
+ * and in plain numbers rather than BigInt because `tsconfig.scripts.json`
+ * targets below ES2020 and rejects BigInt literals outright.
+ */
+function fnv1a(text: string, offsetBasis: number): number {
+  let hash = offsetBasis;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+export function blockDigest(text: string): string {
+  const low = fnv1a(text, 0x811c9dc5);
+  const high = fnv1a(text, 0x9e3779b9);
+  return high.toString(16).padStart(8, "0") + low.toString(16).padStart(8, "0");
+}
+
+/** The digest of every prose block, in order. */
+export function blockDigests(markdown: string): string[] {
+  return proseBlocks(markdown).map(blockDigest);
+}
+
+const GATE_PREAMBLE = [
+  "  THIS TEST IS A GATE, NOT A BUG.",
+  "  The pass's copy is inventory-pinned. Four rounds of vocabulary rules failed",
+  "  to catch a falsehood ADDED beside true sentences (measured 1/12, 0/12, and",
+  "  6/30 against a fresh set), so what is checked here is that the copy is the",
+  "  copy that was approved — not that it avoids any particular wording.",
+  "",
+  "  To make this pass: read your new text against the code it describes —",
+  "  server/usecases/registrations.ts for the entry-fee lock, lib/entitlements.ts",
+  "  for the pass window — then update the digests in",
+  "  src/lib/__tests__/_approved-copy.ts and say in the commit what you checked.",
+].join("\n");
+
+/**
+ * The pass's copy, paragraph by paragraph, against the approved inventory.
+ *
+ * Reports ADDED, REMOVED and CHANGED blocks separately, with the on-disk text
+ * and the digest to paste, because a gate whose failure message is a hex string
+ * is a gate people route around.
+ */
+export function inventoryFaults(label: string, markdown: string, approved: string[]): string[] {
+  const blocks = proseBlocks(markdown);
+  const actual = blocks.map(blockDigest);
+  if (approved.length === 0) {
+    return [`${label}: the approved inventory is EMPTY, so this gate is checking nothing.`];
+  }
+  const faults: string[] = [];
+  const approvedSet = new Set(approved);
+  const actualSet = new Set(actual);
+
+  blocks.forEach((block, i) => {
+    if (approvedSet.has(actual[i]!)) return;
+    faults.push(
+      [
+        `${label}: paragraph ${i + 1} is NOT in the approved inventory.`,
+        "",
+        GATE_PREAMBLE,
+        "",
+        `  digest: "${actual[i]}"`,
+        `  text:   ${block}`,
+      ].join("\n"),
+    );
+  });
+
+  for (const digest of approved) {
+    if (actualSet.has(digest)) continue;
+    faults.push(
+      [
+        `${label}: an approved paragraph (digest "${digest}") is GONE from the article.`,
+        "",
+        GATE_PREAMBLE,
+      ].join("\n"),
+    );
+  }
+
+  if (faults.length === 0 && actual.length !== approved.length) {
+    faults.push(
+      `${label}: the article has ${actual.length} paragraphs and the inventory has ${approved.length} — a paragraph was duplicated or reordered.`,
+    );
   }
   return faults;
 }

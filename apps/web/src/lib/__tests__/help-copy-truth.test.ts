@@ -25,7 +25,13 @@ import {
   mentionsRateAfterPass,
   feeLadderFaults,
   feeLadderRows,
+  DURATION_ALLOWLIST,
+  FEE_RATE_ALLOWLIST,
+  approvedFormsExercised,
   feeLockStatedFaults,
+  goldenParagraphFaults,
+  inventoryFaults,
+  unapprovedClaimFaults,
   lockedRateConstantFaults,
   markdownSection,
   plainProse,
@@ -40,6 +46,12 @@ import {
   unqualifiedFeeReversionFaults,
 } from "@/lib/copy-truth";
 import { helpArticle } from "./_help-copy";
+import {
+  APPROVED_EVENT_PASS,
+  APPROVED_EVENT_PASS_INVENTORY,
+  APPROVED_PLANS_PASS,
+  APPROVED_PLANS_PASS_INVENTORY,
+} from "./_approved-copy";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -77,6 +89,10 @@ const plansPassSection = markdownSection(plans, /Event Pass/);
 const feeLadderSection = markdownSection(plans, /platform fee/i);
 const groupsSection = markdownSection(plans, /several organisations/i);
 
+/** The paragraphs the GATE pins word for word. The allowlists skip them: the
+ *  gate permits exactly one wording, which is stricter than any set of forms. */
+const GATED = [...APPROVED_EVENT_PASS, ...APPROVED_PLANS_PASS].map((p) => p.text);
+
 describe("billing help articles say what the resolver enforces", () => {
   it("names the gaps it does not cover, so an unscanned article is a decision", () => {
     expect(KNOWN_GAPS.length).toBeGreaterThan(0);
@@ -91,6 +107,59 @@ describe("billing help articles say what the resolver enforces", () => {
     expect(groupsSection, "plans.md has no billing-group heading").not.toBeNull();
     expect(proseBlocks(eventPass).length).toBeGreaterThan(20);
     expect(proseBlocks(plansPassSection!).length).toBeGreaterThan(2);
+  });
+
+  // ── THE GATE (fix round 2) ────────────────────────────────────────────────
+  // Every generalising rule in this file has now been beaten by a reword — three
+  // rounds, three denylists, measured 1/12 then 0/12 by people who did not write
+  // them. These four paragraphs are pinned word for word instead. There is no
+  // phrasing that evades this, because it is not looking at phrasing.
+  // The PRIMARY gate. Measured, after the allowlist below was final: a fresh
+  // adversarial set scored 6/30 while the reviewer's own set — which the rules
+  // had been tuned against — scored 12/12. Four rounds of lexical rules, four
+  // demonstrations that they score well only on the examples they were written
+  // for. This one does not read the words at all: the pass's copy either is the
+  // copy that was approved, or it is not.
+  it("the pass's copy is the copy that was approved, paragraph for paragraph", () => {
+    expect(inventoryFaults("event-pass.md", eventPass, APPROVED_EVENT_PASS_INVENTORY)).toEqual([]);
+    expect(
+      inventoryFaults("plans.md#event-pass", plansPassSection!, APPROVED_PLANS_PASS_INVENTORY),
+    ).toEqual([]);
+  });
+
+  it("the approved paragraphs still say exactly what was approved", () => {
+    expect(goldenParagraphFaults("event-pass.md", eventPass, APPROVED_EVENT_PASS)).toEqual([]);
+    expect(
+      goldenParagraphFaults("plans.md#event-pass", plansPassSection!, APPROVED_PLANS_PASS),
+    ).toEqual([]);
+  });
+
+  // ── THE ALLOWLIST (fix round 2) ───────────────────────────────────────────
+  // The gate covers four paragraphs; this covers every OTHER sentence in the
+  // pass's copy, which is where a new falsehood gets added. A sentence making
+  // either claim must match an approved FORM — so a wording nobody predicted
+  // fails by default instead of passing by default.
+  it("makes every pass-duration claim in an approved form", () => {
+    expect(unapprovedClaimFaults("event-pass.md", eventPass, DURATION_ALLOWLIST, GATED)).toEqual([]);
+    expect(
+      unapprovedClaimFaults("plans.md#event-pass", plansPassSection!, DURATION_ALLOWLIST, GATED),
+    ).toEqual([]);
+  });
+
+  it("makes every entry-fee-rate claim in an approved form", () => {
+    expect(unapprovedClaimFaults("event-pass.md", eventPass, FEE_RATE_ALLOWLIST, GATED)).toEqual([]);
+    expect(unapprovedClaimFaults("plans.md", plans, FEE_RATE_ALLOWLIST, GATED)).toEqual([]);
+  });
+
+  // ANTI-VACUITY for the allowlists. A `classifies` list that drifts narrow
+  // sweeps nothing in, every sentence passes, and the rule reports clean while
+  // examining nothing — this wave's most repeated failure. If the real articles
+  // stop exercising an approved form, either the copy or the form is dead.
+  it("exercises the approved forms it offers, rather than sweeping nothing in", () => {
+    const duration = approvedFormsExercised(eventPass, DURATION_ALLOWLIST);
+    const fee = approvedFormsExercised(eventPass, FEE_RATE_ALLOWLIST);
+    expect(duration.length, "no duration sentence was classified at all").toBeGreaterThan(1);
+    expect(fee.length, "no fee-rate sentence was classified at all").toBeGreaterThan(0);
   });
 
   it("quotes no retired per-division AI-run cap", () => {
@@ -580,5 +649,144 @@ describe("the help-prose guards survive a rewording, not just a revert", () => {
     expect(feeLadderFaults(feeLadderRows("no table here"), live)).toHaveLength(
       Object.keys(FEE_LADDER_PLAN_KEYS).length,
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE REGRESSION SET, AND WHY THE GATE EXISTS.
+//
+// Four rounds of this wave defended this copy with lexical rules. Every round
+// scored well against the examples it was written for and badly against the
+// next ones — measured, each time by someone who did not write the rules:
+//
+//   round 1   topic + verb vocabulary      fee 1/12, permanence 1/11
+//   round 2   "closed set of forms"        fee 0/12, permanence 0/12, rate 0/4
+//   round 3   allowlist of approved forms  reviewer's set 12/12, fresh set 6/30
+//
+// That last pair is the whole argument. Same author, same day, same rules: 12/12
+// on the set the rules had been tuned against and 6/30 on a set written
+// afterwards. Tuning is not convergence.
+//
+// The inventory gate takes the rates to 30/30 and 15/15 on those same two sets,
+// because it does not read the sentence. Everything below is kept as a
+// regression set so the lexical layer cannot silently rot, but the gate is what
+// is actually load-bearing.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("an added falsehood fails whatever it says", () => {
+  const GATE_INPUTS = [...APPROVED_EVENT_PASS.map((p) => p.text)];
+
+  /** Every guard, over the real article with one sentence ADDED — the shape all
+   *  four lexical rounds missed. */
+  const detects = (added: string): boolean => {
+    const mutated = `${eventPass}\n\n${added}\n`;
+    return (
+      inventoryFaults("x", mutated, APPROVED_EVENT_PASS_INVENTORY).length > 0 ||
+      goldenParagraphFaults("x", mutated, APPROVED_EVENT_PASS).length > 0 ||
+      unapprovedClaimFaults("x", mutated, DURATION_ALLOWLIST, GATE_INPUTS).length > 0 ||
+      unapprovedClaimFaults("x", mutated, FEE_RATE_ALLOWLIST, GATE_INPUTS).length > 0 ||
+      passBoundProseFaults("x", mutated).length > 0 ||
+      unqualifiedFeeReversionFaults("x", mutated).length > 0 ||
+      lockedRateConstantFaults("x", mutated).length > 0
+    );
+  };
+
+  // The reviewer's own rewordings, which beat round 3's allowlist.
+  it("catches the two sentences that beat the previous round", () => {
+    for (const added of [
+      "Once bought, the upgrade is yours from then on and your competition never loses it.",
+      "Once the trophy is handed out, entry costs return to normal and later entrants cost you more per head.",
+    ]) {
+      expect(detects(added), added).toBe(true);
+    }
+  });
+
+  // A sample of the two fresh adversarial sets, chosen because NONE of them
+  // shares vocabulary with any rule in this module — which is exactly why they
+  // scored 6/30 before the gate and 30/30 after it.
+  it("catches rewordings that share no vocabulary with any rule here", () => {
+    for (const added of [
+      "The upgrade outlives the event.",
+      "A passed competition is passed for keeps.",
+      "Whatever the season does, the upgrade abides.",
+      "Sign-ups arriving after the closing whistle are charged the plan's percentage.",
+      "Once the fixtures are done we go back to taking a bigger share of each entry.",
+      "The competition is billed at the pass's number for every single entrant.",
+      "Consider the upgrade banked.",
+      "No calendar governs an Event Pass.",
+    ]) {
+      expect(detects(added), added).toBe(true);
+    }
+  });
+
+  // …and the other two ways copy goes wrong, which a per-paragraph fixture alone
+  // would miss: a falsehood edited INTO an existing paragraph, and a true
+  // paragraph quietly deleted.
+  it("catches an edit inside an existing paragraph, and a deletion", () => {
+    const edited = eventPass.replace(
+      "It does **not** carry to next season's edition",
+      "It **does** carry to next season's edition",
+    );
+    expect(edited, "the anchor moved — re-point this test").not.toBe(eventPass);
+    expect(inventoryFaults("x", edited, APPROVED_EVENT_PASS_INVENTORY)).not.toEqual([]);
+
+    const deleted = eventPass.replace(
+      "- The pass covers **that competition only**, while it runs.\n",
+      "",
+    );
+    expect(deleted).not.toBe(eventPass);
+    expect(inventoryFaults("x", deleted, APPROVED_EVENT_PASS_INVENTORY)).not.toEqual([]);
+  });
+
+  // The gate must fail LOUDLY. A hex digest with no prose is a gate people route
+  // around, and this one will fire on every legitimate copy edit.
+  it("explains itself when it fires", () => {
+    const [fault] = inventoryFaults("event-pass.md", `${eventPass}\n\nSomething new.\n`, APPROVED_EVENT_PASS_INVENTORY);
+    expect(fault).toContain("THIS TEST IS A GATE, NOT A BUG");
+    expect(fault).toContain("_approved-copy.ts");
+    expect(fault).toContain("registrations.ts");
+    expect(fault, "the on-disk text must be printed, not just its digest").toContain("Something new.");
+  });
+
+  // The reviewer's Important-1 set: sentences with no bound at all, which the
+  // character-window versions of this rule accepted 5 out of 6 times.
+  it("reads none of these as a statement that the pass is bounded", () => {
+    for (const unbounded of [
+      "During checkout your Event Pass becomes active.",
+      "Until now nobody could keep a competition active without Pro.",
+      "While browsing the pricing page you can keep every competition active.",
+      "During the summer your competition stays open.",
+      "Buy during checkout to make your competition live.",
+    ]) {
+      expect(BOUNDED_SCOPE_GRAMMAR.test(unbounded), unbounded).toBe(false);
+    }
+    // …so an article whose only candidate bound is one of them states no bound.
+    expect(
+      passBoundProseFaults(
+        "x",
+        "During checkout your Event Pass becomes active. It is a one-time upgrade for a single competition.",
+      ),
+    ).not.toEqual([]);
+  });
+
+  // Important 2's residual.
+  it("catches the two run-cap phrasings that were still missing", () => {
+    for (const quoted of [
+      "AI scheduling is limited to 5 attempts per division.",
+      "Each division may be scheduled by AI up to 20 times.",
+    ]) {
+      expect(retiredRunCapProseFaults("x", quoted), quoted).not.toEqual([]);
+    }
+  });
+
+  // …and the locked-rate rule, no longer keyed on a literal `%`.
+  it("catches a rate named by brand or spelled out, not just as a figure", () => {
+    for (const named of [
+      "Its platform fee drops to the pass rate for every remaining entry.",
+      "After that it stays at the Event Pass rate.",
+      "The locked rate is five per cent, whatever happens to your plan.",
+      "Your competition is pinned to the pass's cheaper rate.",
+    ]) {
+      expect(lockedRateConstantFaults("x", named), named).not.toEqual([]);
+    }
   });
 });
