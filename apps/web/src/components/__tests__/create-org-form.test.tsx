@@ -262,6 +262,53 @@ describe("BillRow (v17 gap #293 — the rendered picker row)", () => {
     expect(html).not.toContain("disabled=");
   });
 
+  it("names the FIRST org and counts the rest — never the whole join", () => {
+    // The archetypal customer for this feature is a 5/5 Pro bill, and joining
+    // every name ran ~119 characters / three wrapped lines at 375px once the
+    // offer interpolates the label into a sentence.
+    const fiveUp: CreateOrgGroup = {
+      ...proGroup,
+      max_orgs: 5,
+      orgs: [
+        { id: "o1", name: "Riverside Netball Club", slug: "riverside" },
+        { id: "o2", name: "Northside Netball Club" },
+        { id: "o3", name: "Eastside Netball Club" },
+        { id: "o4", name: "Westside Netball Club" },
+        { id: "o5", name: "Southside Netball Club" },
+      ],
+    };
+    const html = renderRow(fiveUp, ["o1"]);
+    expect(html).toContain("Riverside Netball Club +4 more");
+    // The discriminator that makes the count real rather than a coincidence:
+    // the four other names are NOT on screen.
+    expect(html).not.toContain("Northside");
+    expect(html).not.toContain("Southside");
+  });
+
+  it("uses the singular form for exactly one other bill member", () => {
+    // en reads the same either way; fr does not ("autre" / "autres"), and the
+    // key pair is what carries that. Picking `.other` for a count of 1 would
+    // be invisible in English for ever.
+    const twoUp: CreateOrgGroup = {
+      ...proGroup,
+      orgs: [
+        { id: "o1", name: "Riverside", slug: "riverside" },
+        { id: "o2", name: "Northside" },
+      ],
+    };
+    expect(msg("orgNew.bill.andMore.one", { name: "Riverside", count: 1 })).toBe(
+      "Riverside +1 more",
+    );
+    expect(renderRow(twoUp, ["o1"])).toContain("Riverside +1 more");
+  });
+
+  it("names a lone bill member with no suffix at all", () => {
+    // The common case must not read "Riverside +0 more".
+    const html = renderRow(proGroup, ["o1"]);
+    expect(html).toContain("Riverside");
+    expect(html).not.toContain("more");
+  });
+
   it("describes the link by its bill's name — several full bills, several links", () => {
     // Without this, two full bills put two links reading "Buy another slot"
     // on one page with nothing to tell them apart.
@@ -362,6 +409,36 @@ describe("CreateOrgForm island (v17 gap #293 — the wiring, end to end)", () =>
     expect(textOf(links[0])).toBe("Buy another slot for Northside Netball →");
   });
 
+  // The clipping fix IS the CSS, and nothing else in this wave can see it. The
+  // app sets `overflow-x: clip`, so a label that runs past the right edge is
+  // CUT rather than scrolled: `scrollWidth === clientWidth` reads clean and the
+  // standing 375px overflow check is STRUCTURALLY BLIND to it. Measured in a
+  // prod build at 375px wide, this element went 1238px -> 334px. Both classes
+  // were verified by swapping them out one at a time, so neither is decoration.
+  it("keeps the interpolated name breakable — these two classes ARE the fix", async () => {
+    const longName = "Wellingborough" + "andDistrictNetballAssociation".repeat(3);
+    const island = mount(
+      [{ ...fullGroup, orgs: [{ id: "o2", name: longName, slug: "northside" }] }],
+      ["o2"],
+    );
+    await flush();
+
+    const links = linksIn(island.tree());
+    // Positive discriminator: the offer IS rendered and IS carrying the long
+    // name, so the class assertions below cannot pass against an absent link.
+    expect(textOf(links[0])).toContain(longName);
+
+    const className = String(propsOf(links[0]).className);
+    // `overflow-wrap: anywhere`, NOT `break-words` (`overflow-wrap: break-word`):
+    // only `anywhere` shrinks the element's min-content width. Swapping to
+    // `break-words` leaves the label 1238px wide and clipped.
+    expect(className).toContain("[overflow-wrap:anywhere]");
+    // `inline-block`, NOT `inline`: an inline box is not sized from its
+    // min-content width at all, so the wrap rule above would have no box to
+    // act on and the label clips again.
+    expect(className).toMatch(/\binline-block\b/);
+  });
+
   it("makes no offer for a bill the payer is not a member of", async () => {
     // Same shut picker, same full bill — only the membership differs, so an
     // absence here cannot be an unrendered form.
@@ -383,6 +460,33 @@ describe("CreateOrgForm island (v17 gap #293 — the wiring, end to end)", () =>
     const links = linksIn(island.tree());
     expect(links.map((l) => propsOf(l).href)).toEqual(["/o/northside/settings/add-ons"]);
     expect(textOf(links[0])).toBe("Buy another slot →");
+  });
+
+  // `fullBillOffers` returning two entries is pinned at the function level, but
+  // the island renders them through a `.map` that nothing else drives. A `[0]`
+  // where the map belongs would leave every function-level test green and sell
+  // the second payer nothing.
+  it("renders one named offer per full bill when SEVERAL are full", async () => {
+    const fullPlus: CreateOrgGroup = {
+      ...fullGroup,
+      id: "sub_full_2",
+      plan_key: "pro_plus",
+      orgs: [{ id: "o3", name: "Eastside Hockey", slug: "eastside" }],
+    };
+    const island = mount([fullPro, fullPlus], ["o2", "o3"]);
+    await flush();
+
+    const links = linksIn(island.tree());
+    expect(links.map((l) => propsOf(l).href)).toEqual([
+      "/o/northside/settings/add-ons",
+      "/o/eastside/settings/add-ons",
+    ]);
+    // Two links reading the same sentence would be two indistinguishable
+    // things to buy — each has to name the bill it would raise.
+    expect(links.map((l) => textOf(l))).toEqual([
+      "Buy another slot for Northside Netball →",
+      "Buy another slot for Eastside Hockey →",
+    ]);
   });
 
   it("renders no row link when the form is handed an empty membership", async () => {

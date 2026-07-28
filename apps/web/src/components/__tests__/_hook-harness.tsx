@@ -42,7 +42,12 @@ interface HookDispatcher {
    *  org form's billing groups) renders an empty shell without this, and every
    *  assertion about what it draws afterwards would be vacuous. */
   useEffect: (create: () => void | (() => void), deps: Deps) => void;
-  /** Straight through: `useMemo` is a cache, never a behaviour. */
+  /** Memoised by `deps`, exactly like `useEffect` below — NOT straight through.
+   *  "A cache, never a behaviour" is false the moment a memo result becomes a
+   *  `useEffect` dependency, which is the ordinary React idiom: recomputing it
+   *  every render hands the effect a new identity every render, so the effect
+   *  re-runs every render — and if it sets state, that is an infinite loop.
+   *  A harness that re-runs what production runs once is not a harness. */
   useMemo: (create: () => Cell, deps: Deps) => Cell;
   /** The context's DEFAULT value — there is no provider tree here. That is the
    *  production path for the copy hooks (`useMsg` falls back to the English
@@ -89,6 +94,18 @@ export function textOf(node: ReactNode): string {
   return out.join(" ");
 }
 
+/**
+ * React's own dependency rule, shared by `useEffect` and `useMemo` so the two
+ * cannot drift: no previous record re-runs; an absent `deps` on either side
+ * re-runs every render; otherwise a positional `Object.is` over the array.
+ */
+function depsChanged(before: { deps: Deps } | undefined, deps: Deps): boolean {
+  if (!before) return true;
+  if (deps === undefined || before.deps === undefined) return true;
+  if (deps.length !== before.deps.length) return true;
+  return deps.some((d, i) => !Object.is(d, (before.deps as unknown[])[i]));
+}
+
 function hookDispatcherSlot(): { H: HookDispatcher | null } {
   const slot = (
     ReactRuntime as unknown as {
@@ -131,6 +148,10 @@ export function renderIsland<P>(
   const effects: { deps: Deps; cleanup: void | (() => void) }[] = [];
   let effectCursor = 0;
   let pending: { index: number; create: () => void | (() => void) }[] = [];
+  // Memo cells, keyed by call order like every other hook — see `useMemo` on
+  // HookDispatcher for why this is not a straight-through call.
+  const memos: { deps: Deps; value: Cell }[] = [];
+  let memoCursor = 0;
 
   const dispatcher: HookDispatcher = {
     useState(initial) {
@@ -148,18 +169,16 @@ export function renderIsland<P>(
     useEffect(create, deps) {
       const index = effectCursor++;
       const before = effects[index];
-      const changed =
-        !before ||
-        deps === undefined ||
-        before.deps === undefined ||
-        deps.length !== before.deps.length ||
-        deps.some((d, i) => !Object.is(d, (before.deps as unknown[])[i]));
+      const changed = depsChanged(before, deps);
       if (!before) effects[index] = { deps, cleanup: undefined };
       else effects[index] = { deps, cleanup: before.cleanup };
       if (changed) pending.push({ index, create });
     },
-    useMemo(create) {
-      return create();
+    useMemo(create, deps) {
+      const index = memoCursor++;
+      const before = memos[index];
+      if (depsChanged(before, deps)) memos[index] = { deps, value: create() };
+      return memos[index]!.value;
     },
     useContext(context) {
       return context._currentValue;
@@ -169,6 +188,7 @@ export function renderIsland<P>(
   function run() {
     cursor = 0;
     effectCursor = 0;
+    memoCursor = 0;
     pending = [];
     const previous = slot.H;
     slot.H = dispatcher;

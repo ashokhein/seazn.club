@@ -113,11 +113,34 @@ export function submitLabel(args: {
   return msg("orgNew.createAndAddFree");
 }
 
-/** A recognisable name for a bill in the picker: the organisations already on
- *  it, falling back to the plan when an org has lost its name. */
-function groupLabel(g: CreateOrgGroup): string {
-  const names = g.orgs.map((o) => o.name).filter(Boolean);
-  return names.length > 0 ? names.join(", ") : g.plan_key;
+/**
+ * A recognisable name for a bill in the picker: the FIRST organisation on it
+ * plus a count of the rest — never the whole join.
+ *
+ * Joining every name is unbounded in a place that has to fit. The archetypal
+ * customer for this entire feature is a 5/5 Pro bill, and five real names join
+ * to ~119 characters — three wrapped lines at 375px once the offer interpolates
+ * the label into a sentence. The picker ROW has always capped with `truncate`;
+ * the offer's sentence cannot, so the cap belongs in the label itself and both
+ * surfaces get it.
+ *
+ * Falls back to the plan when every organisation has lost its name.
+ */
+function groupLabel(g: CreateOrgGroup, msg: Msg): string {
+  const names = g.orgs.map((o) => o.name).filter((n): n is string => Boolean(n));
+  if (names.length === 0) return g.plan_key;
+  const rest = names.length - 1;
+  if (rest === 0) return names[0];
+  // Not `usePlural`: it throws outside a `DictProvider`, and this island is
+  // rendered without one. That is safe here rather than a shortcut — `rest` is
+  // never 0 on this branch, and all four shipped locales (en/es/fr/nl) put the
+  // one/other boundary at exactly 1, so the ternary IS the plural rule for
+  // every locale this product has. A locale with a dual/paucal form would need
+  // the real `Intl.PluralRules` path.
+  return msg(rest === 1 ? "orgNew.bill.andMore.one" : "orgNew.bill.andMore.other", {
+    name: names[0],
+    count: rest,
+  });
 }
 
 /** Plan name for a bill's subline in the picker (e.g. "Pro Plus", "Pro"). */
@@ -209,7 +232,7 @@ export function BillRow({
             id={`bill-name-${g.id}`}
             className="block truncate text-sm font-medium text-slate-900"
           >
-            {groupLabel(g)}
+            {groupLabel(g, msg)}
           </span>
           <span className="block text-xs text-slate-500">
             {planLabel(g.plan_key)} · {g.orgs.length}/{g.max_orgs ?? "∞"}
@@ -466,7 +489,7 @@ export function CreateOrgForm({
                         className="inline-block [overflow-wrap:anywhere] rounded-sm px-1 py-1.5 text-xs font-semibold text-purple-700 underline decoration-purple-300 underline-offset-2 hover:text-purple-800 hover:decoration-purple-500"
                       >
                         {msg("orgNew.bill.reasonFullCtaFor", {
-                          name: groupLabel(group),
+                          name: groupLabel(group, msg),
                         })}
                       </Link>
                     </li>

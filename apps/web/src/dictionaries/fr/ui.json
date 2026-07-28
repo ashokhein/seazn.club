@@ -1182,6 +1182,8 @@
   "orgNew.bill.reasonFull": "Complète",
   "orgNew.bill.reasonFullCta": "Acheter une place supplémentaire →",
   "orgNew.bill.reasonFullCtaFor": "Acheter une place supplémentaire pour {name} →",
+  "orgNew.bill.andMore.one": "{name} +{count} autre",
+  "orgNew.bill.andMore.other": "{name} +{count} autres",
   "orgNew.bill.chargeNow": "{amount} maintenant",
   "orgNew.bill.thenPerExtra": "puis facturé selon le forfait du groupe",
   "orgNew.createAndAdd": "Créer et ajouter — {amount} maintenant",

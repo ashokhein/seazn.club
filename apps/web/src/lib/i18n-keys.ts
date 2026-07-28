@@ -1973,6 +1973,8 @@ export type DictionaryKey =
   | "orgNew.attachFailed"
   | "orgNew.bill.addToExisting"
   | "orgNew.bill.addToExistingHint"
+  | "orgNew.bill.andMore.one"
+  | "orgNew.bill.andMore.other"
   | "orgNew.bill.chargeNow"
   | "orgNew.bill.legend"
   | "orgNew.bill.noneEligible"

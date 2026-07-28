@@ -1182,6 +1182,8 @@
   "orgNew.bill.reasonFull": "Vol",
   "orgNew.bill.reasonFullCta": "Nog een plek kopen →",
   "orgNew.bill.reasonFullCtaFor": "Nog een plek kopen voor {name} →",
+  "orgNew.bill.andMore.one": "{name} +{count} andere",
+  "orgNew.bill.andMore.other": "{name} +{count} andere",
   "orgNew.bill.chargeNow": "{amount} nu",
   "orgNew.bill.thenPerExtra": "daarna gefactureerd volgens het abonnement van de groep",
   "orgNew.createAndAdd": "Aanmaken en toevoegen — {amount} nu",
