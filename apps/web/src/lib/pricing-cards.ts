@@ -29,7 +29,14 @@ export const FREE_FEATURES = [
 // theme colour — stays denied to the pass. The real grant is `exports.branded`.
 // The first four are also the home-page stub (ticketTiers slices them).
 export const PASS_FEATURES = [
-  "Upgrades ONE competition, forever",
+  // v17 gap wave 7 (#298): "forever" was false. V328/V334 (`org_has_feature`)
+  // bind the pass to the competition's OWN lifecycle — the pass arm drops out
+  // once the competition is archived or completed, or more than 7 days past its
+  // end date. This is the same bound `pricing.pass.note` and `upgrade.intro`
+  // state in all four dictionaries; the bullets on this card are hardcoded
+  // English (the pass/Community/Pro cards render these arrays directly), so the
+  // sentence has to be corrected HERE as well as there.
+  "Upgrades ONE competition while it runs",
   // v17 #294: two rungs, so this line names both ceilings. It led with M's
   // alone while L existed, which reads as "an Event Pass caps at 128" — the
   // exact limit an L buyer is paying to remove.
@@ -72,10 +79,24 @@ export const PRO_FEATURES = [
 // in marketing tone. Mirrored as dict keys pricing.plus.f1-f5 for i18n.
 // #244: "scorers" retired from marketing — the seat is dormant legacy; the card
 // leads with members/teams/clubs instead.
+//
+// THIS ARRAY IS THE ENGLISH MIRROR, NOT THE RENDERED TEXT. `/pricing` reads
+// `pricing.plus.f{1..5}` out of the dictionaries and uses this array only for
+// the count and the order (page.tsx:402), so every edit here is an edit in FOUR
+// files. `pricing-cards.test.ts` pins the two together.
+//
+// v17 gap wave 7 (#299): f3 was "AI-assisted scheduling", sold under the
+// "Everything in Pro, plus…" frame — i.e. as something the lower plans lack.
+// `scheduling.ai` is `true` on ALL FIVE plan keys (community, event_pass,
+// event_pass_l, pro, pro_plus), so it differentiated nothing. Its replacement
+// is the one AI claim the matrix does back: `ai.credits.monthly` is 10 on
+// community, 60 on pro and 200 on pro_plus, so Pro Plus really does carry the
+// largest monthly grant. Pinned against those rows by pricing-cards.test.ts and
+// by dictionary-copy-truth.test.ts (all four locales).
 export const PLUS_CARD_FEATURES = [
   "Unlimited members, teams & clubs",
   "1% platform fee on entry fees",
-  "AI-assisted scheduling",
+  "Largest monthly AI credit grant",
   "Auto officials assignment",
   "Write API access & priority support",
 ];

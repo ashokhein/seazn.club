@@ -158,6 +158,33 @@ const PASS_CREDIT_VALUES = across("marketing", "pricing.faq.eventPass.a");
 const PLUS_VALUES = across("marketing", "pricing.faq.proPlus.a");
 
 /**
+ * THE PRO PLUS CARD — a THIRD key axis, and the reason it now exists.
+ *
+ * `PLUS_VALUES` above is the FAQ answer, three cards down the /pricing page.
+ * The card itself is six other keys, and nothing scanned them: task 4 removed
+ * "AI-assisted scheduling" from the answer while the card two screens above
+ * went on selling it, in all four locales. A page disagreeing with itself is
+ * worse than either fixing both or fixing neither — and the axis, not the
+ * vocabulary, is what was missing. The pattern for this falsehood already
+ * existed (`LOCALE_CLAIMS[*].plusClaims["scheduling.ai"]`); nothing pointed it
+ * at these keys.
+ *
+ * The five bullets are scanned as ONE value per locale because that is how a
+ * reader reads them — under the `pricing.plus.note` frame, each one asserting
+ * the lower plans lack it. Joined with ". " so a claim cannot reach ACROSS two
+ * bullets: every window in these vocabularies is bounded by sentence
+ * punctuation, and wrong-clause satisfaction has already appeared three times
+ * in this wave.
+ */
+const PLUS_CARD_BULLET_KEYS = [1, 2, 3, 4, 5].map((n) => `pricing.plus.f${n}`);
+const PLUS_CARD_KEYS = ["pricing.plus.note", ...PLUS_CARD_BULLET_KEYS];
+const PLUS_CARD_VALUES: LocalisedValue[] = DICTIONARY_LOCALES.map((locale) => ({
+  locale,
+  key: "pricing.plus.f1-f5",
+  value: PLUS_CARD_BULLET_KEYS.map((key) => load(locale, "marketing")[key] ?? "").join(". "),
+}));
+
+/**
  * THE HALF-RATE CLAIM HAS ITS OWN KEY AXIS, and this is why.
  *
  * `localeHalfClaimFaults` was only ever called with `PLUS_VALUES`, so
@@ -245,7 +272,11 @@ const RETIRED_CLAIMS = [
  * rediscovery.
  */
 const KNOWN_GAPS = [
-  "dictionaries/*/marketing.json pricing.plus.f3 — 'AI-assisted scheduling' on the Pro Plus CARD, in all four locales, carrying the SAME falsehood this file removes from pricing.faq.proPlus.a. Pinned by lib/pricing-cards.ts PLUS_CARD_FEATURES and asserted verbatim by e2e/pro-plus-tier.spec.ts:397; both are out of scope for this wave (#303).",
+  // CLOSED by task 5: `pricing.plus.f3` (the Pro Plus CARD's third bullet) is
+  // now covered by PLUS_CARD_VALUES below and pinned in
+  // APPROVED_DICTIONARY_COPY, together with the frame and the other four
+  // bullets. lib/pricing-cards.ts PLUS_CARD_FEATURES and
+  // e2e/pro-plus-tier.spec.ts moved with it, in the same commit.
   "config/tips.ts:82 — 'half your plan's rate', bare. Hardcoded English with no dictionary lookup, so it is a four-locale gap of its own class; routed to task 7, which is already editing that tip.",
   "content/help/scheduling/ai-scheduling.md, content/help/billing/downgrade.md — task 3's gaps, still open (#303).",
   "BOUNDED_SCOPE_GRAMMAR (and therefore all four `bounded` rules, which share its shape) decides a bound by PROXIMITY inside one sentence, not grammar: a coordinated clause such as 'buy during checkout and your competitions stay active' satisfies it. Task 3's review has this queued for a fix round; the locale rules deliberately delegate to it rather than fork it, so they inherit the repair.",
@@ -697,7 +728,7 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
   // Anti-vacuity for the whole file: every guard below is `toEqual([])` over a
   // scan, and a scan of nothing returns []. These are the inputs.
   it("actually has copy to scan, in every locale", () => {
-    for (const { locale, key, value } of [...PASS_BOUND_VALUES, ...PLUS_VALUES]) {
+    for (const { locale, key, value } of [...PASS_BOUND_VALUES, ...PLUS_VALUES, ...PLUS_CARD_VALUES]) {
       expect(value, `${locale} ${key} is missing or empty`).toBeTruthy();
       expect(value.length, `${locale} ${key}`).toBeGreaterThan(20);
     }
@@ -734,7 +765,13 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
     for (const key of HALF_CLAIM_KEYS) {
       expect(pinned.has(key), `${key} makes a half-rate claim but is not pinned`).toBe(true);
     }
-    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(32);
+    // …and the Pro Plus card: its frame AND every bullet it governs. Pinning the
+    // bullets without the frame would leave a reword free to delete the thing
+    // that makes them exclusivity claims at all.
+    for (const key of PLUS_CARD_KEYS) {
+      expect(pinned.has(key), `${key} is a Pro Plus card claim but is not pinned`).toBe(true);
+    }
+    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(56);
     // Every entry must say what it claims and what decides it — a pin with no
     // `why` is a snapshot, and a snapshot teaches the next editor to re-record
     // rather than to re-check.
@@ -750,6 +787,26 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
   it("carries none of the retired prose, in any locale", () => {
     expect(retiredClaimFaults(PASS_BOUND_VALUES, RETIRED_CLAIMS)).toEqual([]);
     expect(retiredClaimFaults(PLUS_VALUES, RETIRED_CLAIMS)).toEqual([]);
+    // The Pro Plus CARD, which carried the four AI-scheduling literals in
+    // RETIRED_CLAIMS for a whole round after the FAQ answer had dropped them.
+    expect(retiredClaimFaults(PLUS_CARD_VALUES, RETIRED_CLAIMS)).toEqual([]);
+  });
+
+  // …and the registry really does hold the card's own retired wording, in every
+  // locale. Without this the test above is satisfied by a registry that never
+  // covered these four strings — absence proving "not false", never "scanned".
+  it("holds the card's retired AI-scheduling wording, in all four locales", () => {
+    for (const [locale, retired] of [
+      ["en", "AI-assisted scheduling"],
+      ["es", "Programación asistida por IA"],
+      ["fr", "Planification assistée par IA"],
+      ["nl", "AI-ondersteunde planning"],
+    ] as Array<[DictionaryLocale, string]>) {
+      expect(
+        retiredClaimFaults([{ locale, key: "pricing.plus.f3", value: retired }], RETIRED_CLAIMS),
+        `${locale}: ${retired}`,
+      ).not.toEqual([]);
+    }
   });
 
   it("quotes the one-time credit grant at its live size, not as a recurring one", () => {
@@ -820,6 +877,56 @@ describe.skipIf(!HAS_DB)("the four-locale dictionaries match plan_entitlements",
     expect(credits.pro).toBe(60);
     expect(credits.pro_plus).toBe(200);
     expect(localeCreditLeadershipFaults(PLUS_VALUES, credits)).toEqual([]);
+  });
+
+  // ── The Pro Plus CARD, the surface the FAQ answer above had left behind ────
+
+  it("the card claims only differentiators Pro Plus actually has, in all four locales", async () => {
+    const grants = await grantsFor([
+      "scheduling.ai",
+      "officials.auto",
+      "api.write",
+      "support.priority",
+    ]);
+    expect(localePlusDifferentiatorFaults(PLUS_CARD_VALUES, grants, ["community", "pro"])).toEqual([]);
+    // …and the PRE-FIX bullet, in its own language, so this fails without the
+    // copy change rather than merely passing beside it.
+    const preFix: LocalisedValue[] = (
+      [
+        ["en", "AI-assisted scheduling. Auto officials assignment"],
+        ["es", "Programación asistida por IA. Asignación automática de árbitros"],
+        ["fr", "Planification assistée par IA. Attribution automatique des officiels"],
+        ["nl", "AI-ondersteunde planning. Automatische toewijzing van officials"],
+      ] as Array<[DictionaryLocale, string]>
+    ).map(([locale, value]) => ({ locale, key: "pre-fix", value }));
+    const faults = localePlusDifferentiatorFaults(preFix, grants, ["community", "pro"]).join(" | ");
+    for (const locale of DICTIONARY_LOCALES) {
+      expect(faults, `${locale}: the pre-fix bullet must red`).toContain(
+        `${locale} pre-fix: sells scheduling.ai as a Pro Plus differentiator`,
+      );
+    }
+  });
+
+  it("the card's AI claim is the comparative the credit rows back, in all four locales", async () => {
+    const credits = await monthlyCredits();
+    expect(localeCreditLeadershipFaults(PLUS_CARD_VALUES, credits)).toEqual([]);
+    // Paired both ways: DELETING the replacement claim must red too, or the card
+    // could simply stop saying anything about AI and pass — which is what an
+    // absence-shaped rule is happiest with. Proved per locale, because the
+    // comparative is the one claim with a different regex in each language.
+    for (const locale of DICTIONARY_LOCALES) {
+      expect(
+        localeCreditLeadershipFaults(
+          [{ locale, key: "no-claim", value: load(locale, "marketing")["pricing.plus.f4"]! }],
+          credits,
+        ),
+        locale,
+      ).toEqual([`${locale} no-claim: never claims the largest monthly AI credit grant`]);
+    }
+    // …and it must stop being true the day the matrix moves.
+    expect(
+      localeCreditLeadershipFaults(PLUS_CARD_VALUES, { ...credits, pro: 500 }).join(" "),
+    ).toContain("but pro_plus grants 200");
   });
 });
 

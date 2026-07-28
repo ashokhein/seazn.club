@@ -105,6 +105,85 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
       nl: "Alles van Pro, plus onbeperkt leden, teams en clubs binnen elke organisatie, 1% platformkosten, het grootste maandelijkse AI-credittegoed, automatische toewijzing van officials, schrijftoegang tot de API en prioritaire ondersteuning. Pro is {pro}/maand; Pro Plus is {plus}/maand of {plusAnnual}/jaar. Pro dekt tot 5 organisaties op één factuur en Pro Plus tot 10, elke extra organisatie voor hoogstens de helft van het basistarief.",
     },
   },
+  // ── The Pro Plus CARD (v17 gap wave 7, #299) ───────────────────────────────
+  //
+  // `pricing.faq.proPlus.a` above is the ANSWER three cards down the page. These
+  // six keys are the CARD itself — the frame plus its five bullets — and until
+  // this task they were the only Pro Plus surface nothing pinned. The result was
+  // a page that disagreed with itself: the FAQ had dropped "AI-assisted
+  // scheduling" as a differentiator while the card two screens above still sold
+  // it. Pinned as its own claim family, the way the pass-permanence and
+  // half-rate families already are.
+  //
+  // The frame is pinned WITH the bullets deliberately: "Everything in Pro,
+  // plus…" is what makes each bullet an assertion of exclusivity, so a reword
+  // that drops it would leave the differentiator rules with nothing to scope to.
+  {
+    file: "marketing",
+    key: "pricing.plus.note",
+    why: "the frame the five Pro Plus card bullets are read under. It is what turns each bullet into a claim of EXCLUSIVITY, so dropping it silently changes what f1-f5 mean. Source of truth: app/[lang]/(marketing)/pricing/page.tsx renders it directly above the f1-f5 list.",
+    text: {
+      en: "Everything in Pro, plus…",
+      es: "Todo lo de Pro, más…",
+      fr: "Tout ce qu'offre Pro, plus…",
+      nl: "Alles van Pro, plus…",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.plus.f1",
+    why: "unlimited members, teams and clubs. Source of truth: plan_entitlements members.max / teams.max / clubs.max — all null (unlimited) on pro_plus, and capped on pro (15 / 40 / 20), so the claim is both true and a genuine differentiator.",
+    text: {
+      en: "Unlimited members, teams & clubs",
+      es: "Miembros, equipos y clubes ilimitados",
+      fr: "Membres, équipes et clubs illimités",
+      nl: "Onbeperkt aantal leden, teams & clubs",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.plus.f2",
+    why: "the entry-fee platform rate on Pro Plus. Source of truth: plan_entitlements registration.fee_percent — 1 on pro_plus against 2 on pro and 8 on community.",
+    text: {
+      en: "1% platform fee on entry fees",
+      es: "Comisión de plataforma del 1% en las cuotas de inscripción",
+      fr: "Frais de plateforme de 1 % sur les frais d'inscription",
+      nl: "1% platformkosten op inschrijfgelden",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.plus.f3",
+    why: "THE BULLET THIS TASK FIXED. It read 'AI-assisted scheduling' (four locales) under the 'Everything in Pro, plus…' frame while plan_entitlements grants scheduling.ai on ALL FIVE plan keys — community, event_pass, event_pass_l, pro and pro_plus — so it differentiated nothing. The replacement is the one AI claim the matrix does back: ai.credits.monthly is 10 / 60 / 200, so pro_plus really does carry the largest monthly grant. It is a COMPARATIVE, judged by localeCreditLeadershipFaults against those numbers, not by a boolean grant. Mirrored in English by PLUS_CARD_FEATURES[2] in lib/pricing-cards.ts.",
+    text: {
+      en: "Largest monthly AI credit grant",
+      es: "Mayor dotación mensual de créditos de IA",
+      fr: "La plus grosse dotation mensuelle de crédits IA",
+      nl: "Grootste maandelijkse AI-credittegoed",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.plus.f4",
+    why: "automatic officials assignment. Source of truth: plan_entitlements officials.auto — false on community and pro, true on pro_plus, so it is a real differentiator under the frame.",
+    text: {
+      en: "Auto officials assignment",
+      es: "Asignación automática de árbitros",
+      fr: "Attribution automatique des officiels",
+      nl: "Automatische toewijzing van officials",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.plus.f5",
+    why: "write-scoped API keys and priority support. Source of truth: plan_entitlements api.write and support.priority — both false on community and pro, true on pro_plus. (api.read/api.access is granted on pro, so the WRITE qualifier is load-bearing and must not be dropped in translation.)",
+    text: {
+      en: "Write API access & priority support",
+      es: "Acceso de escritura a la API y soporte prioritario",
+      fr: "Accès API en écriture et assistance prioritaire",
+      nl: "Schrijftoegang tot de API & prioritaire ondersteuning",
+    },
+  },
   {
     file: "ui",
     key: "upgrade.intro",

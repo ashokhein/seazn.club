@@ -67,11 +67,11 @@ Owns the re-organized quota + feature matrix across the 4 tiers. See [`README.md
 
 ## 5. Feature ownership (bool flags)
 
-| Feature key | Comm | Pass | Pro | Pro Plus |
+| Feature key | Comm | Pass⁴ | Pro | Pro Plus |
 |---|:-:|:-:|:-:|:-:|
 | `branding` (logo) | ✅ | ✅ | ✅ | ✅ |
 | `officials.*` (assign / multi-role / marks) | ✅ | ✅ | ✅ | ✅ |
-| `dashboard.branding` (theme colour) + badge removal | — | ✅⁴ | ✅ | ✅ |
+| `dashboard.branding` (theme colour) + badge removal | — | — | ✅ | ✅ |
 | `formats.advanced` (double-elim, swiss+) | — | ✅ | ✅ | ✅ |
 | `scoreboard.realtime` | — | ✅ | ✅ | ✅ |
 | `exports.branded` | — | ✅ | ✅ | ✅ |
@@ -87,7 +87,7 @@ Owns the re-organized quota + feature matrix across the 4 tiers. See [`README.md
 | `support.priority` | — | — | — | ✅ |
 | `ai.officials.auto` | credit-metered on **any** tier (SPEC-2) | | | |
 
-⁴ Pass unlocks polish for **that one competition** only (resolver's pass arm is competition-scoped).
+⁴ Pass unlocks polish for **that one competition** only (resolver's pass arm is competition-scoped) — except `dashboard.branding` (the org's theme colour) and badge removal, which stay Pro-only: the pass carries your logo, not your palette. This row was ticked for the pass in error; the migration has always denied it (`V270__pricing_v3_matrix.sql:35`, `('event_pass', 'dashboard.branding', false, null)`, and `event_pass_l` inherits the same `false` — verified against a live schema), and `pricing-cards.ts`'s `PASS_FEATURES` comment says the same.
 
 ## 6. Pro vs Pro Plus — the axis + coming-soon
 

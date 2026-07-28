@@ -394,7 +394,12 @@ test.describe("Pro Plus · disclosure + admin matrix", () => {
       const plusCard = page.locator("[data-plus-card]");
       await expect(plusCard).toBeVisible();
       // The features this wave moved onto Pro Plus are its headline offer.
-      await expect(plusCard).toContainText("AI-assisted scheduling");
+      // v17 gap wave 7 (#299): the third bullet used to read "AI-assisted
+      // scheduling", which `plan_entitlements` grants on every plan key —
+      // `ai.credits.monthly` (10 / 60 / 200) is the AI claim Pro Plus actually
+      // leads on. See lib/pricing-cards.ts PLUS_CARD_FEATURES.
+      await expect(plusCard).toContainText("Largest monthly AI credit grant");
+      await expect(plusCard).not.toContainText("AI-assisted scheduling");
       await expect(plusCard).toContainText("Auto officials assignment");
       await expect(plusCard).toContainText("Write API access");
     } finally {
