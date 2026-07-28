@@ -770,6 +770,13 @@ export async function convergeOrgAddonPrices(
   // rather than spend a round trip, fail, and alert staff about a group that is
   // leaving anyway. handleSubscriptionDeleted owns what happens next.
   if (!isLiveStripeStatus(stripeSub.status)) return;
+  // Declared OUT here so the failure alert can name it. The overwhelmingly
+  // common failure below is resolveOrgAddonPriceId's 503, which throws AFTER
+  // this has been read — so scoping it to the try would make the alert say
+  // "unknown" for the one case it was written for, and a responder could not
+  // tell whether to expect the $9 or the $19 SKU. It stays "unknown" only when
+  // the plan read itself is what failed, which is what the default is for.
+  let planKey = "unknown";
   try {
     // The group's plan AFTER syncSubscriptionForGroup has written this event,
     // which is why this call sits downstream of it. Read from the row rather
@@ -779,7 +786,7 @@ export async function convergeOrgAddonPrices(
     // entitle can never disagree.
     const [row] = await sql<{ plan_key: string }[]>`
       select plan_key from subscriptions where id = ${subscriptionId}`;
-    const planKey = row?.plan_key ?? "community";
+    planKey = row?.plan_key ?? "community";
     // A plan with no rider SKU (community, or a future tier not yet seeded).
     // Do NOTHING — not a re-price, and deliberately not a cancel either. The
     // cancel paths own removal (handleSubscriptionDeleted for churn,
@@ -810,6 +817,18 @@ export async function convergeOrgAddonPrices(
       // A quantity-0 item is a removal in disguise; the row sync below flips
       // its row to canceled. Re-pricing it would be paying a Stripe write to
       // correct the rate of something that is on its way out.
+      //
+      // THE REMAINING PAYLOAD-TRUST WINDOW, deliberately left open. This test
+      // reads the EVENT, and it sits before the live re-read below — so a
+      // payload saying qty 0 while Stripe holds a re-bought rider (an
+      // out-of-order delivery) skips convergence entirely, and the row sync
+      // then cancels a row the customer is paying for. Closing it means a
+      // `subscriptionItems.retrieve` on every removal, which is what this path
+      // normally is, to catch a race that needs a removal and a re-buy to
+      // cross. It is pre-existing payload-trust rather than something this
+      // convergence introduced — every other reader of this payload trusts it
+      // the same way — and #332's reconciliation sweep is where it gets closed
+      // for the whole family rather than one branch at a time.
       if ((item.quantity ?? 0) <= 0) continue;
       if (targetClaimed) {
         console.error(
@@ -831,6 +850,11 @@ export async function convergeOrgAddonPrices(
         });
         continue;
       }
+      // Hoisted so the catch below can report the price Stripe ACTUALLY holds
+      // rather than the payload's, which may be superseded. Null only if the
+      // read itself is what threw, which is exactly when the payload is the
+      // best we have.
+      let live: Stripe.SubscriptionItem | null = null;
       try {
         // RE-READ THE ITEM LIVE before mutating it. The quantity we are about
         // to send back to Stripe must not come from this event's snapshot:
@@ -848,12 +872,23 @@ export async function convergeOrgAddonPrices(
         // Every sibling that mutates a subscription re-reads first for the same
         // reason (syncGroupQuantity, setExtraOrgs, setExtraSeats); this is the
         // mismatch branch only, which is rare and already spending a round trip.
-        const live = await getStripe().subscriptionItems.retrieve(item.id);
-        // Someone got there first — a purchase (setExtraOrgs re-prices too) or
-        // an earlier delivery of this same convergence. Nothing to do, and the
-        // price is now claimed.
+        live = await getStripe().subscriptionItems.retrieve(item.id);
+        // Someone got there first — a purchase (setExtraOrgs re-prices AND
+        // changes quantity in one go) or an earlier delivery of this same
+        // convergence. No Stripe write to make, and the price is now claimed.
+        //
+        // But the ROW SYNC still has to be told, for exactly the reason the
+        // mutate branch below rewrites the payload: this event's snapshot is
+        // stale, and handing it on unchanged makes the sync write the OLD
+        // quantity into org_addons — a group paying Stripe for 5 riders
+        // entitled to 2. "The next event repairs it" is worth nothing here,
+        // because convergence only fires on a plan change and #332's sweep
+        // does not exist yet. So publish the live item and let the sync
+        // reconcile from the truth, whichever branch we leave by.
         if (live?.price?.id === expectedPriceId) {
           targetClaimed = true;
+          const idx = items.indexOf(item);
+          if (idx >= 0) items[idx] = live;
           continue;
         }
         const qty = live?.quantity ?? item.quantity ?? 0;
@@ -901,7 +936,9 @@ export async function convergeOrgAddonPrices(
           stripeSubscriptionId: stripeSub.id,
           planKey,
           itemId: item.id,
-          currentPriceId: item.price?.id ?? null,
+          // What Stripe HOLDS, not what the event said — this is the field a
+          // responder acts on, and the payload's may be superseded.
+          currentPriceId: live?.price?.id ?? item.price?.id ?? null,
           expectedPriceId,
           reason: `Stripe rejected the item update: ${errText(err)}`,
         });
@@ -918,8 +955,9 @@ export async function convergeOrgAddonPrices(
     await maybeAlertOrgRepriceFailed({
       subscriptionId,
       stripeSubscriptionId: stripeSub.id,
-      // The plan read may itself be what failed, so nothing here is assumed.
-      planKey: "unknown",
+      // Real whenever the plan read got that far — which is the 503 case, i.e.
+      // nearly always. "unknown" survives only if the read itself threw.
+      planKey,
       itemId: null,
       currentPriceId: null,
       expectedPriceId: null,

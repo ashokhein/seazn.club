@@ -2035,21 +2035,35 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
     expect(await getLimit(orgId, "orgs.max_owned")).toBe(proPlusBase + 5);
   });
 
-  it("STALE EVENT: a rider already converged by a newer delivery is left alone", async () => {
-    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+  it("STALE EVENT: a rider already converged by a newer delivery is left alone — AND the row follows Stripe", async () => {
+    // Driven through processStripeEvent, not convergeOrgAddonPrices directly:
+    // calling converge alone never runs the row sync, and the row is exactly
+    // where this branch used to go wrong. `setExtraOrgs` sells AND re-prices in
+    // one go (Task 3), so "someone got there first" means Stripe holds a NEW
+    // quantity as well as the new price — and the event still says the old one.
+    const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
     const stale = riderItem(riderId, proEntry.lookupKey, 2);
-    // Stripe already holds the pro_plus price — an earlier delivery of this
-    // same convergence, or a purchase, got there first.
     liveItems[riderId] = {
       ...(liveItems[riderId] as object),
+      quantity: 5,
       price: { id: livePriceFor(proPlusEntry.lookupKey), lookup_key: proPlusEntry.lookupKey },
     };
 
-    await convergeOrgAddonPrices(subFor(stripeSubId, [planItem, stale]), walletId);
+    await processStripeEvent(updatedEvent(stripeSubId, walletId, [stale]));
 
+    // Nothing to write to Stripe: the price is already right.
     expect(itemRetrieveSpy).toHaveBeenCalledWith(riderId);
     expect(itemUpdateSpy).not.toHaveBeenCalled();
     expect(repriceAlertSpy).not.toHaveBeenCalled();
+
+    // But the ROW must follow Stripe, not the stale event. Writing 2 here bills
+    // the customer for 5 riders and entitles them to 2 — and nothing repairs
+    // it, because convergence only fires on a plan change and #332's sweep does
+    // not exist yet.
+    const [row] = await sql<{ qty: number }[]>`
+      select qty from org_addons where stripe_item_id = ${riderId}`;
+    expect(row?.qty).toBe(5);
+    expect(await getLimit(orgId, "orgs.max_owned")).toBe(proPlusBase + 5);
   });
 
   it("an item deleted between emission and processing is a benign race, not an alert", async () => {
@@ -2093,7 +2107,33 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
         to: "ops@test.local",
         subscriptionId: walletId,
         stripeSubscriptionId: stripeSubId,
+        // The plan is KNOWN here — resolveOrgAddonPriceId throws after the plan
+        // row has been read — and it is what tells a responder whether to
+        // expect the $9 or the $19 SKU. "unknown" is reserved for the case
+        // where the plan read itself is what failed.
+        planKey: "pro_plus",
       }),
+    );
+  });
+
+  it("the alert reports the price STRIPE holds, not the stale event's", async () => {
+    // An out-of-order delivery names a price the item has since left. The
+    // payload is a snapshot; `live` is the truth, and `currentPriceId` is the
+    // field a responder acts on.
+    const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    const stale = riderItem(riderId, proEntry.lookupKey, 2, "price_the_event_remembers");
+    liveItems[riderId] = {
+      ...(liveItems[riderId] as object),
+      price: { id: "price_stripe_actually_holds", lookup_key: proEntry.lookupKey },
+    };
+    itemUpdateSpy.mockRejectedValue(new Error("nope"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await convergeOrgAddonPrices(subFor(stripeSubId, [planItem, stale]), walletId);
+    logged.mockRestore();
+
+    expect(repriceAlertSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ currentPriceId: "price_stripe_actually_holds" }),
     );
   });
 
