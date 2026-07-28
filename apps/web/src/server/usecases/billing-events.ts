@@ -753,8 +753,9 @@ export async function syncSeatAddonsForSubscription(
  * rows still reconcile, only the PRICE stays stale.
  *
  * A FAILURE IS OBSERVABLE, NOT REPAIRED. There is no retry and no sweep: this
- * runs only on `customer.subscription.updated`, so "the next plan event
- * re-converges it" is worth nothing for a group that never changes plan again.
+ * runs only when a `customer.subscription.created`/`.updated` event arrives, so
+ * "the next event re-converges it" is worth nothing for a group Stripe has no
+ * reason to emit another event about.
  * That group bills the wrong rate indefinitely, which is why every failure path
  * raises a staff alert rather than only a log. The daily reconciliation sweep
  * and the /admin mismatch list that would actually REPAIR it are tracked as
@@ -817,12 +818,15 @@ export async function convergeOrgAddonPrices(
     // every other item take the duplicate exit and alert instead of converging.
     //
     // That fails SAFE in the sense that matters most — an alert and no write,
-    // rather than a write Stripe would reject for a duplicate price. It does NOT
-    // self-correct: convergence fires only on a plan change, and #332's sweep
-    // does not exist yet, so an earlier draft of this comment claiming "the next
-    // event fixes it" was claiming the same thing the publish comment below
-    // explicitly says is worth nothing. Until a human or a purchase runs, the
-    // item keeps billing the wrong rate.
+    // rather than a write Stripe would reject for a duplicate price. And it is
+    // not sticky: `handleSubscriptionChanged` calls this on EVERY
+    // `customer.subscription.created`/`.updated` delivery, not only on a plan
+    // change, and each one carries a fresh payload — so the next subscription
+    // event of any kind (a dunning retry, a seat purchase, a plan edit) re-reads
+    // the claim and converges the item then. What does not exist is anything
+    // that SCHEDULES such an event: no retry, and #332's sweep is unbuilt, which
+    // is the header's point. A group nothing else touches keeps billing the
+    // wrong rate until something touches it.
     //
     // And the alert it sends is MISLEADING in this case specifically: `reason`
     // reads "another subscription item already holds the target price (duplicate

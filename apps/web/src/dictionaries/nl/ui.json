@@ -475,7 +475,7 @@
   "addOns.intro": "Wat je bovenop je abonnement aan deze rekening kunt toevoegen. Add-ons gelden voor elke organisatie in de factureringsgroep.",
   "addOns.cap.summary": "{count} van {cap} organisaties in gebruik op deze rekening.",
   "addOns.cap.summaryUnlimited": "{count} organisaties in gebruik op deze rekening — je abonnement kent geen limiet.",
-  "addOns.capReduced": "Organisaties toevoegen is gepauzeerd totdat deze rekening bij is. Regel dat op het tabblad Facturering. Je kunt de extra organisaties hieronder nog steeds wijzigen of verwijderen.",
+  "addOns.capReduced": "Organisaties toevoegen is op dit moment gepauzeerd: deze rekening vraagt om aandacht, of een organisatie op deze rekening is geschorst. Bekijk het tabblad Facturering en neem contact op met support als daar alles in orde is. Je kunt de extra organisaties hieronder nog steeds wijzigen of verwijderen.",
   "addOns.communityNotice": "Add-ons zijn beschikbaar bij Pro en Pro Plus. Upgrade om voorbij de Community-limiet te gaan.",
   "addOns.noLiveSubscription": "Extra organisaties vereisen een actief betaald abonnement. Rond eerst het afrekenen af op het tabblad Facturering.",
   "addOns.guestNotice": "Alleen degene die voor deze factureringsgroep betaalt, kan add-ons kopen.",

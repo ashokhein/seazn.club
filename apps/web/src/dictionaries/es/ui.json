@@ -475,7 +475,7 @@
   "addOns.intro": "Lo que puedes añadir a esta factura además de tu plan. Los complementos se aplican a todas las organizaciones del grupo de facturación.",
   "addOns.cap.summary": "Usando {count} de {cap} organizaciones en esta factura.",
   "addOns.cap.summaryUnlimited": "Usando {count} organizaciones en esta factura: tu plan no tiene límite.",
-  "addOns.capReduced": "No puedes añadir organizaciones hasta que esta factura esté al día. Resuélvelo en la pestaña Facturación. Aún puedes cambiar o quitar las organizaciones adicionales de abajo.",
+  "addOns.capReduced": "No puedes añadir organizaciones ahora mismo: o esta factura necesita atención, o una de sus organizaciones está suspendida. Revisa la pestaña Facturación y escribe a soporte si allí todo está en orden. Aún puedes cambiar o quitar las organizaciones adicionales de abajo.",
   "addOns.communityNotice": "Los complementos están disponibles en Pro y Pro Plus. Mejora tu plan para superar el límite de Community.",
   "addOns.noLiveSubscription": "Las organizaciones adicionales requieren una suscripción de pago activa. Completa el pago primero en la pestaña Facturación.",
   "addOns.guestNotice": "Solo la persona que paga este grupo de facturación puede comprar complementos.",

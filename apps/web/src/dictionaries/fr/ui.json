@@ -475,7 +475,7 @@
   "addOns.intro": "Ce que vous pouvez ajouter à cette facture en plus de votre forfait. Les extensions s'appliquent à toutes les organisations du groupe de facturation.",
   "addOns.cap.summary": "{count} organisations utilisées sur {cap} pour cette facture.",
   "addOns.cap.summaryUnlimited": "{count} organisations utilisées pour cette facture — votre forfait n'impose aucune limite.",
-  "addOns.capReduced": "L'ajout d'organisations est suspendu tant que cette facture n'est pas à jour. Réglez cela dans l'onglet Facturation. Vous pouvez toujours modifier ou retirer les organisations supplémentaires ci-dessous.",
+  "addOns.capReduced": "L'ajout d'organisations est en pause pour le moment : soit cette facture demande une action, soit une organisation qui y figure est suspendue. Consultez l'onglet Facturation, et contactez le support si tout y semble normal. Vous pouvez toujours modifier ou retirer les organisations supplémentaires ci-dessous.",
   "addOns.communityNotice": "Les extensions sont disponibles avec Pro et Pro Plus. Passez à un forfait supérieur pour dépasser la limite Community.",
   "addOns.noLiveSubscription": "Les organisations supplémentaires nécessitent un abonnement payant actif. Terminez d'abord le paiement dans l'onglet Facturation.",
   "addOns.guestNotice": "Seule la personne qui paie ce groupe de facturation peut acheter des extensions.",

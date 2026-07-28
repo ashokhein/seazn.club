@@ -475,7 +475,7 @@
   "addOns.intro": "What you can add to this bill on top of your plan. Add-ons apply to every organisation in the billing group.",
   "addOns.cap.summary": "Using {count} of {cap} organisations on this bill.",
   "addOns.cap.summaryUnlimited": "Using {count} organisations on this bill — your plan sets no limit.",
-  "addOns.capReduced": "Adding organisations is paused until this bill is up to date. Sort that out on the Billing tab. You can still change or remove the extra organisations below.",
+  "addOns.capReduced": "Adding organisations is paused right now — either this bill needs attention or an organisation on it is suspended. Check the Billing tab, and contact support if everything there looks fine. You can still change or remove the extra organisations below.",
   "addOns.communityNotice": "Add-ons are available on Pro and Pro Plus. Upgrade to buy past the Community limit.",
   "addOns.noLiveSubscription": "Extra organisations need an active paid subscription. Complete checkout on the Billing tab first.",
   "addOns.guestNotice": "Only the person who pays for this billing group can buy add-ons.",

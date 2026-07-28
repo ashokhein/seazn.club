@@ -51,7 +51,10 @@ vi.mock("@/lib/i18n", async () => {
 
 import { getAddOnsTab } from "@/server/usecases/add-ons-tab";
 import { resolveLocale } from "@/lib/resolve-locale";
+import enUi from "@/dictionaries/en/ui.json";
+import esUi from "@/dictionaries/es/ui.json";
 import frUi from "@/dictionaries/fr/ui.json";
+import nlUi from "@/dictionaries/nl/ui.json";
 import type { Dict } from "@/lib/i18n-constants";
 import AddOnsSettingsPage from "../page";
 
@@ -88,7 +91,8 @@ async function render(overrides: Partial<AddOnsTabView> = {}) {
 const GUEST = "Only the person who pays for this billing group can buy add-ons.";
 const COMMUNITY = "Add-ons are available on Pro and Pro Plus.";
 const NO_LIVE = "Extra organisations need an active paid subscription.";
-const PAUSED = "Adding organisations is paused until this bill is up to date.";
+const PAUSED =
+  "Adding organisations is paused right now — either this bill needs attention or an organisation on it is suspended.";
 
 beforeEach(() => {
   view.mockReset();
@@ -141,7 +145,7 @@ describe("Add-ons page — who is offered the purchase", () => {
   });
 });
 
-describe("Add-ons page — the dunning notice", () => {
+describe("Add-ons page — the cap-reduced notice", () => {
   it("warns when the resolver's cap is reduced, and STILL shows the control", async () => {
     const { control, text } = await render({ capReduced: true, minExtraOrgs: 2 });
     expect(text).toContain(PAUSED);
@@ -161,6 +165,59 @@ describe("Add-ons page — the dunning notice", () => {
     expect(text).toContain(PAUSED);
     expect(text).toContain(GUEST);
   });
+});
+
+// ONE boolean, MORE THAN ONE state — and they do not share a remedy:
+//
+//   · a resolver degradation the payer can act on: dunning past its 14-day
+//     grace, a never-paid first invoice, an expired trial. Reachable and
+//     MEASURED — add-ons-tab.test.ts pins a past_due Pro group at admission 3
+//     against a purchased 7.
+//   · every organisation suspended while the group holds an unlimited staff
+//     comp (`groupOrgLimit`'s degenerate branch drops per-org overrides).
+//     Moderation, on a bill that is perfectly up to date. Also pinned there.
+//
+// The shipped sentence named only the first — "until this bill is up to date,
+// sort that out on the Billing tab" — which told the second group to fix a bill
+// that was fine and sent them to a tab with nothing to do on it. Until the arm
+// is SPLIT (which needs the usecase to report a cause, not just a boolean), the
+// sentence has to be true for both, and that is a property of all four shipped
+// locales rather than of the one the page renders above.
+const DICTS: Record<string, Record<string, string>> = {
+  en: enUi,
+  es: esUi,
+  fr: frUi,
+  nl: nlUi,
+};
+// The VOCABULARY of each cause, not a table of the phrasings we happen to ship
+// — a denylist of sentences is defeated by the next reword.
+const NAMES_SUSPENSION: Record<string, RegExp> = {
+  en: /\bsuspended\b/i,
+  es: /suspendid/i,
+  fr: /suspendue/i,
+  nl: /geschorst/i,
+};
+const NAMES_BILLING_TAB: Record<string, RegExp> = {
+  en: /\bBilling\b/,
+  es: /Facturación/,
+  fr: /Facturation/,
+  nl: /Facturering/,
+};
+
+describe("addOns.capReduced — true for EVERY state that reaches it", () => {
+  for (const [locale, dict] of Object.entries(DICTS)) {
+    it(`${locale} names the suspension cause as well as the bill`, () => {
+      const sentence = dict["addOns.capReduced"];
+      expect(sentence).toBeTruthy();
+      // The billing half is what the OLD copy already said, so it is the
+      // discriminator: it proves the string is the notice and not an empty
+      // lookup, and it stops a fix for one cause deleting the other.
+      expect(sentence).toMatch(NAMES_BILLING_TAB[locale]);
+      // The half nothing pinned. Every locale shipped a sentence that denied
+      // this state existed.
+      expect(sentence).toMatch(NAMES_SUSPENSION[locale]);
+    });
+  }
 });
 
 describe("Add-ons page — the numbers it hands the control", () => {

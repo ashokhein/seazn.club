@@ -342,6 +342,12 @@ export async function capacityBasis(
   // expiry predicate, without which a comp that ended keeps setting the base.
   // This read used to be hand-copied here and the copy is what made the drift
   // possible; `overrideRow` is now the single place it is written.
+  //
+  // It also selects `bool_value`, and this caller DISCARDS it — deliberately.
+  // That column is the on/off half of an entitlement (`hasFeature`), and every
+  // cap here is the `int_value` half; a numeric cap has no boolean to read. It
+  // is on the row only because `resolve()`, the other caller, coalesces it. Do
+  // not wire it into the arithmetic below on the strength of it being fetched.
   const override = await overrideRow(repOrgId, featureKey);
 
   let base: number | null = null;

@@ -309,6 +309,23 @@ describe("BillRow (v17 gap #293 — the rendered picker row)", () => {
     expect(html).not.toContain("more");
   });
 
+  it("falls back to the plan when every organisation on the bill has lost its name", () => {
+    // `name` is optional on the payer-gated payload, so a bill of nameless
+    // organisations is representable. Blanking this fallback leaves the picker
+    // with an unlabelled row and the offer sentence reading "Buy another slot
+    // for  →", and every other test in this file stays green.
+    const nameless: CreateOrgGroup = {
+      ...proGroup,
+      orgs: [{ id: "o1", name: null }, { id: "o2" }],
+    };
+    const html = renderRow(nameless, ["o1"]);
+    // Read out of the NAME span specifically: the subline renders "Pro" from
+    // `planLabel`, so a bare `toContain` would pass against an empty label.
+    const [, label] =
+      new RegExp(`id="bill-name-${nameless.id}"[^>]*>([^<]*)<`).exec(html) ?? [];
+    expect(label).toBe("pro");
+  });
+
   it("describes the link by its bill's name — several full bills, several links", () => {
     // Without this, two full bills put two links reading "Buy another slot"
     // on one page with nothing to tell them apart.
@@ -437,6 +454,38 @@ describe("CreateOrgForm island (v17 gap #293 — the wiring, end to end)", () =>
     // min-content width at all, so the wrap rule above would have no box to
     // act on and the label clips again.
     expect(className).toMatch(/\binline-block\b/);
+  });
+
+  // The cap on `groupLabel` was measured HERE and nowhere else: this sentence
+  // interpolates the label, and it is the one surface that cannot truncate. The
+  // picker ROW has always capped independently (`truncate` on its own span), so
+  // every row-level test of the cap passes with the full join restored — the
+  // 119-character, three-wrapped-line label at 375px comes back and nothing
+  // reds. This is the assertion that stops that.
+  it("caps the interpolated bill name in the OFFER sentence, not just the row", async () => {
+    const fiveUp: CreateOrgGroup = {
+      ...fullGroup,
+      max_orgs: 5,
+      orgs: [
+        { id: "o1", name: "Riverside Netball Club", slug: "riverside" },
+        { id: "o2", name: "Northside Netball Club" },
+        { id: "o3", name: "Eastside Netball Club" },
+        { id: "o4", name: "Westside Netball Club" },
+        { id: "o5", name: "Southside Netball Club" },
+      ],
+    };
+    const island = mount([fiveUp], ["o1"]);
+    await flush();
+
+    // The discriminator: the picker really is shut, so this is the offer
+    // sentence and not a row that happens to be on screen.
+    expect(island.text()).toContain("No eligible bills");
+
+    const links = linksIn(island.tree());
+    expect(textOf(links[0])).toBe("Buy another slot for Riverside Netball Club +4 more →");
+    // And the four other names are NOT in the sentence — the half that fails
+    // the moment the label goes back to joining every name.
+    expect(textOf(links[0])).not.toContain("Northside");
   });
 
   it("makes no offer for a bill the payer is not a member of", async () => {
