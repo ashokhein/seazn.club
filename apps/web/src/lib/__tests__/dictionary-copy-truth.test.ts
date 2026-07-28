@@ -726,7 +726,13 @@ const KNOWN_POSITIVES: string[] = [
   "een pass zonder einde",
 ];
 
-describe("the four-locale dictionaries say what the resolver enforces", () => {
+// FIX ROUND 4, CI BLOCKER. Round 3 added an `it` that calls `sql` inside this
+// block while it was a bare `describe`, so a DB-less run threw
+// "DATABASE_URL is not set" — and ci.yml's unit job has no DATABASE_URL, which
+// means this PR redded that job on every push. Measured DB-less before the fix:
+// 75 pass / 1 fail / 33 pending. The Postgres job selects `src/server src/lib`,
+// so the gated half still runs there.
+describe.skipIf(!HAS_DB)("the four-locale dictionaries say what the resolver enforces", () => {
   it("names the gaps it does not cover, so an unscanned string is a decision", () => {
     expect(KNOWN_GAPS.length).toBeGreaterThan(0);
   });
