@@ -217,6 +217,173 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
       nl: "Vanaf {price} eenmalig upgrade je één competitie zolang ze loopt — en een competitie met een pass telt niet meer mee voor je limiet van actieve competities.",
     },
   },
+  {
+    file: "marketing",
+    key: "pricing.final.subhead",
+    why: "the closing CTA under the cards, and it makes three claims at once: that signing up needs no card (Community creates no Stripe customer — usecases/orgs.ts mints one only at checkout), that a SINGLE EVENT can be upgraded (the Event Pass, competition-scoped per V328/V334), and that the whole club can be upgraded instead (Pro/Pro Plus, org-scoped). Found by PRICING_KEY_DISPOSITION, which is the point of that rule — nobody had noticed this string made a claim at all.",
+    text: {
+      en: "No card required. Upgrade a single event, or the whole club, when it grows.",
+      es: "Sin tarjeta. Mejora un solo evento, o todo el club, cuando crezca.",
+      fr: "Aucune carte requise. Améliorez un seul événement, ou tout le club, lorsqu'il grandit.",
+      nl: "Geen kaart nodig. Upgrade één evenement of de hele club wanneer die groeit.",
+    },
+  },
+  // ── Every /pricing string that quotes MONEY or an ALLOWANCE (fix round 1) ──
+  //
+  // Added after a fresh probe set — written once the card rules were final —
+  // found two of this class open and invisible: `pricing.plus.per` flipped from
+  // "/month" to "/year" beside a monthly figure, and the Pro Plus credit chip
+  // re-sold a monthly allowance as a one-time top-up. Both are one-word edits,
+  // both make a money claim false, and neither touched a card array.
+  //
+  // Most of these interpolate their NUMBER from the matrix or the seed, which is
+  // exactly why the words around it need pinning: the figure stays right while
+  // the sentence stops meaning what it meant. `PRICING_KEY_DISPOSITION` in
+  // dictionary-copy-truth.test.ts now makes every `pricing.*` key either pinned
+  // here or exempt with a reason, so this list cannot quietly stop growing.
+  {
+    file: "marketing",
+    key: "pricing.credits.perMonth",
+    why: "the Community and Pro credit chips. The COUNT is interpolated live from ai.credits.monthly, so the pin guards the CADENCE around it — \"/ month\" is the claim, and re-wording it to a one-time top-up (or vice versa) makes the chip false while the number stays right. Source of truth: plan_entitlements ai.credits.monthly, rendered by pricing/page.tsx.",
+    text: {
+      en: "{count} AI credits / month",
+      es: "{count} créditos de IA / mes",
+      fr: "{count} crédits IA / mois",
+      nl: "{count} AI-credits / maand",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.credits.passGrant",
+    why: "the Event Pass credit chip. The pass has NO ai.credits.monthly row — the grant is the one-time PASS_CREDIT_GRANT in lib/pricing-cards.ts — so \"one-time\" is the load-bearing word and a recurring re-wording is the exact inverse claim RECURRING_GRANT_PATTERNS exists for.",
+    text: {
+      en: "+{count} AI credits, one-time",
+      es: "+{count} créditos de IA, una sola vez",
+      fr: "+{count} crédits IA, une seule fois",
+      nl: "+{count} AI-credits, eenmalig",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.credits.perMonthOperator",
+    why: "the Pro Plus credit chip. Same cadence claim as pricing.credits.perMonth, plus \"operator wallet\" (SPEC-2 §11: the wallet is org-scoped and shared across a billing group). Measured as a gap — re-selling this monthly allowance as a one-time top-up was invisible to every rule.",
+    text: {
+      en: "{count} AI credits / month · operator wallet",
+      es: "{count} créditos de IA / mes · monedero de operador",
+      fr: "{count} crédits IA / mois · portefeuille opérateur",
+      nl: "{count} AI-credits / maand · operator-portemonnee",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.plus.per",
+    why: "the billing period beside Pro Plus’s headline price. page.tsx renders the MONTHLY amount here (plusMonthly), so \"/month\" is a claim about what the number means; \"/year\" beside a monthly figure understates the price by 12x. Source of truth: config/stripe-plans.json seazn_pro_plus_monthly.",
+    text: {
+      en: "/month",
+      es: "/mes",
+      fr: "/mois",
+      nl: "/maand",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.pass.per",
+    why: "the unit beside the Event Pass price. The pass is bought per COMPETITION, once (V328/V334, and usecases/competition-passes.ts mints one row per competition) — not per month and not per org.",
+    text: {
+      en: " / event",
+      es: " / evento",
+      fr: " / événement",
+      nl: " / evenement",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.pass.from",
+    why: "the qualifier marking the pass price as a FLOOR. v17 #294 put two rungs on sale, so the quoted figure is the cheapest of two; ticketTiers sets this prefix and pricing-cards.test.ts asserts only the pass carries it. Dropping the word states M’s price as the product’s.",
+    text: {
+      en: "from",
+      es: "desde",
+      fr: "à partir de",
+      nl: "vanaf",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.community.price",
+    why: "Community’s headline price. It is genuinely free — no plans row, no Stripe price, and config/stripe-plans.json has no community product — so this is the one card where a price word is a claim about the absence of a charge.",
+    text: {
+      en: "Free",
+      es: "Gratis",
+      fr: "Gratuit",
+      nl: "Gratis",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.addons.credits",
+    why: "the credit-pack add-on price. $10 is the cheapest pack in config/stripe-plans.json (credit_packs); \"from\" is load-bearing because larger packs cost more. Packs never expire (D2), which is why no duration qualifier belongs here.",
+    text: {
+      en: "AI credits from $10",
+      es: "Créditos de IA desde 10 $",
+      fr: "Crédits IA à partir de 10 $",
+      nl: "AI-credits vanaf $10",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.addons.seat",
+    why: "the extra-seat add-on label. Priced and delta-ed in config/stripe-plans.json (seat add-on, monthly interval, +1 each) and described in content/help/billing/add-ons.md, which task 7 pins against the seed.",
+    text: {
+      en: "Extra seat",
+      es: "Plaza adicional",
+      fr: "Siège supplémentaire",
+      nl: "Extra plaats",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.addons.org",
+    why: "the extra-organisation add-on label. Its RATE is the “no more than half the base rate” claim pinned on pricing.faq.groups.a and pricing.faq.proPlus.a and verified against the seed’s graduated tiers by riderClaimShape.",
+    text: {
+      en: "Extra org",
+      es: "Organización adicional",
+      fr: "Organisation supplémentaire",
+      nl: "Extra organisatie",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.addons.sizePack",
+    why: "the size-pack add-on label. Raises the entrant limit by a fixed delta (config/stripe-plans.json, +32 each) and is a ONE-OFF, not a subscription — the seed price carries no interval, which task 7’s guard asserts.",
+    text: {
+      en: "Size pack",
+      es: "Paquete de tamaño",
+      fr: "Pack de taille",
+      nl: "Size-pack",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.pass.ladder.caps",
+    why: "the M rung’s caps in the ladder list. Both numbers are interpolated live from plan_entitlements (divisions.per_competition.max / entrants.per_division.max on event_pass), so the pin guards the words around them — “Up to” is what makes them ceilings rather than allocations.",
+    text: {
+      en: "Up to {divisions} divisions, {entrants} entrants each",
+      es: "Hasta {divisions} divisiones, {entrants} participantes cada una",
+      fr: "Jusqu’à {divisions} divisions, {entrants} participants chacune",
+      nl: "Tot {divisions} divisies, {entrants} deelnemers per divisie",
+    },
+  },
+  {
+    file: "marketing",
+    key: "pricing.pass.ladder.capsUnlimited",
+    why: "the L rung’s caps. entrants.per_division.max is NULL on event_pass_l, so this variant must SAY unlimited rather than print a number — quoting M’s 128 here is the exact defect v17 #294 was filed for.",
+    text: {
+      en: "Up to {divisions} divisions, unlimited entrants",
+      es: "Hasta {divisions} divisiones, participantes ilimitados",
+      fr: "Jusqu’à {divisions} divisions, participants illimités",
+      nl: "Tot {divisions} divisies, onbeperkt deelnemers",
+    },
+  },
   // ── The Pro Plus ROADMAP block (fix round 1, I3) ───────────────────────────
   //
   // `pricing.plus.soonLabel` + `soon1-8`, under the Pro Plus card. Added because

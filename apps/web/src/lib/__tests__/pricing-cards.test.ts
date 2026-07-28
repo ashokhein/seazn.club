@@ -342,6 +342,16 @@ interface CardClaim {
   /** How they must render a NULL (unlimited) value. Absent means the card has no
    *  approved wording for "unlimited", so a null value is itself a fault. */
   unlimited?: RegExp;
+  /**
+   * Plans this claim asserts do NOT have the same allowance.
+   *
+   * Only meaningful under the "Everything in Pro, plus…" frame: "Unlimited
+   * members, teams & clubs" is not merely a fact about pro_plus, it is a claim
+   * that Pro is capped. Moving `members.max` on PRO to null makes the Plus
+   * card's bullet stop differentiating anything, with every string on both
+   * cards still word-for-word true (fresh probe G6).
+   */
+  exclusiveAgainst?: string[];
 }
 
 /**
@@ -356,11 +366,27 @@ interface CardClaim {
  */
 interface CardBooleanClaim {
   feature: string;
-  plan: string;
+  /** EVERY plan the card sells. The Event Pass card sells two rungs out of one
+   *  bullet list, and naming only `event_pass` let `formats.advanced` go false
+   *  on `event_pass_l` with the card still promising advanced formats to an L
+   *  buyer (measured — fresh probe G1). */
+  plans: string[];
   /** The bullet that asserts it. Required to MATCH the shipped copy — see
    *  `cardBooleanFaults` for why that is the positive half and not a formality. */
   says: RegExp;
+  /** For INT-shaped capabilities: the bullet is true while the row is null
+   *  (unlimited) or at least this. `dashboard.public.max` going 1 -> 0 makes
+   *  "Live standings & public dashboard" false without any boolean moving. */
+  atLeast?: number;
 }
+
+/** One `plan_entitlements` row, both columns, because a capability can be
+ *  expressed either way and the card cannot tell which. */
+interface EntitlementRow {
+  bool: boolean | null;
+  int: number | null;
+}
+type RowsByFeature = Record<string, Record<string, EntitlementRow>>;
 
 interface CardSurface {
   array: string;
@@ -372,7 +398,30 @@ interface CardSurface {
   /** Required when `claims` is empty: why this surface quotes no matrix value.
    *  An undocumented empty table is the omission that hid the roadmap block. */
   noMatrixClaims?: string;
+  /**
+   * Bullets attributed to NO matrix row, each with its reason.
+   *
+   * ── WHY THIS FIELD EXISTS ────────────────────────────────────────────────
+   * Everything above is a HAND-WRITTEN LIST, and a hand-written list is the
+   * thing that silently stops covering something — v17 #293 lost `org_addons`
+   * from the seed guard's section list for a whole wave exactly this way.
+   *
+   * Measured here: once the numeric and capability pins were final, a FRESH
+   * probe set scored 1/10, and five of the misses were simply bullets nobody
+   * had thought to enumerate (`exports` on Pro, `registration.enabled` and
+   * `dashboard.public.max` on Community, `clubs.hierarchy` on Pro Plus, and the
+   * L rung on the Pass card). No additional pattern fixes that. Only making the
+   * ENUMERATION ITSELF checkable does.
+   *
+   * `cardBulletAttributionFaults` therefore requires every bullet to be claimed
+   * by some rule or listed here: forgetting one is a red, and exempting one is a
+   * decision with a reason attached.
+   */
+  unclaimed?: Record<string, string>;
 }
+
+/** Every rung the Event Pass card sells out of ONE bullet list. */
+const PASS_RUNGS = ["event_pass", "event_pass_l"];
 
 const CARD_SURFACES: CardSurface[] = [
   {
@@ -385,9 +434,17 @@ const CARD_SURFACES: CardSurface[] = [
       { feature: "registration.fee_percent", plan: "community", says: (n) => new RegExp(`\\(${n}%\\s+fee\\)`, "i") },
     ],
     booleans: [
-      { feature: "registration.paid", plan: "community", says: /\bonline registration & entry fees\b/i },
-      { feature: "discovery.listed", plan: "community", says: /\blisted on the seazn\.club showcase\b/i },
+      { feature: "registration.paid", plans: ["community"], says: /\bonline registration & entry fees\b/i },
+      { feature: "registration.enabled", plans: ["community"], says: /\bonline registration\b/i },
+      { feature: "discovery.listed", plans: ["community"], says: /\blisted on the seazn\.club showcase\b/i },
+      // INT-shaped: "public dashboard" is true while the org may publish at
+      // least one. 1 -> 0 makes the bullet false with no boolean moving.
+      { feature: "dashboard.public.max", plans: ["community"], says: /\bpublic dashboard\b/i, atLeast: 1 },
     ],
+    unclaimed: {
+      "League, groups + knockout & swiss formats":
+        "the base formats are the engine's own repertoire (packages/engine), not a plan_entitlements row — `formats.advanced` and `formats.double_elim` are the GATED ones and are claimed on the Pass card. Nothing here is plan-conditional.",
+    },
   },
   {
     array: "PASS_FEATURES",
@@ -411,15 +468,22 @@ const CARD_SURFACES: CardSurface[] = [
         unlimited: /\bunlimited\s+on\s+L\b/i,
       },
     ],
+    // BOTH RUNGS. This card sells M and L out of one bullet list, so a
+    // capability that goes false on `event_pass_l` alone still misleads an L
+    // buyer — fresh probe G1, missed when these named `event_pass` only.
     booleans: [
-      { feature: "formats.advanced", plan: "event_pass", says: /\badvanced formats\b/i },
-      { feature: "formats.double_elim", plan: "event_pass", says: /\bdouble elim\b/i },
-      { feature: "exports.branded", plan: "event_pass", says: /\bbranded exports\b/i },
-      { feature: "dashboard.player_profiles", plan: "event_pass", says: /\bpublic player cards\b/i },
-      { feature: "sponsors.tiers", plan: "event_pass", says: /\bsponsor tiers\b/i },
-      { feature: "sponsors.monetize", plan: "event_pass", says: /\bpaid sponsorship packages\b/i },
-      { feature: "realtime", plan: "event_pass", says: /\brealtime scoreboard\b/i },
+      { feature: "formats.advanced", plans: PASS_RUNGS, says: /\badvanced formats\b/i },
+      { feature: "formats.double_elim", plans: PASS_RUNGS, says: /\bdouble elim\b/i },
+      { feature: "exports.branded", plans: PASS_RUNGS, says: /\bbranded exports\b/i },
+      { feature: "dashboard.player_profiles", plans: PASS_RUNGS, says: /\bpublic player cards\b/i },
+      { feature: "sponsors.tiers", plans: PASS_RUNGS, says: /\bsponsor tiers\b/i },
+      { feature: "sponsors.monetize", plans: PASS_RUNGS, says: /\bpaid sponsorship packages\b/i },
+      { feature: "realtime", plans: PASS_RUNGS, says: /\brealtime scoreboard\b/i },
     ],
+    unclaimed: {
+      "Upgrades ONE competition while it runs":
+        "the pass's DURATION, not a feature grant. V328/V334 `org_has_feature` decide it and `passBulletDurationFaults` asserts both halves of it — the permanence vocabulary and the required bound.",
+    },
   },
   {
     array: "PRO_FEATURES",
@@ -441,17 +505,21 @@ const CARD_SURFACES: CardSurface[] = [
       { feature: "registration.fee_percent", plan: "pro", says: (n) => new RegExp(`\\b${n}%\\s+platform\\s+fee\\b`, "i") },
     ],
     booleans: [
-      { feature: "scoring.ball_by_ball", plan: "pro", says: /\bball-by-ball\b/i },
-      { feature: "scoring.rally_by_rally", plan: "pro", says: /\brally scoring\b/i },
-      { feature: "stats.player", plan: "pro", says: /\bplayer stats\b/i },
-      { feature: "api.access", plan: "pro", says: /\bAPI keys\b/i },
-      { feature: "scoring.device_links", plan: "pro", says: /\bdevice links\b/i },
+      { feature: "scoring.ball_by_ball", plans: ["pro"], says: /\bball-by-ball\b/i },
+      { feature: "scoring.rally_by_rally", plans: ["pro"], says: /\brally scoring\b/i },
+      { feature: "stats.player", plans: ["pro"], says: /\bplayer stats\b/i },
+      { feature: "api.access", plans: ["pro"], says: /\bAPI keys\b/i },
+      { feature: "scoring.device_links", plans: ["pro"], says: /\bdevice links\b/i },
+      // The same bullet names four things; each is its own row, and `exports`
+      // and `officials.marks` were missed when only two of the four were pinned.
+      { feature: "exports", plans: ["pro"], says: /\bofficials, exports\b/i },
+      { feature: "officials.marks", plans: ["pro"], says: /\bofficials, exports\b/i },
       // The badge bullet IS `dashboard.branding` — the same row SPEC-1 §5 ticked
       // for the pass in error. Pro has it; the pass does not.
-      { feature: "dashboard.branding", plan: "pro", says: /\bremove the “powered by seazn” badge\b/i },
-      { feature: "discipline.enforced", plan: "pro", says: /\bsuspensions & discipline tracking\b/i },
-      { feature: "officials.marks", plan: "pro", says: /\brate your match officials\b/i },
-      { feature: "news.auto", plan: "pro", says: /\bauto-drafted result posts\b/i },
+      { feature: "dashboard.branding", plans: ["pro"], says: /\bremove the “powered by seazn” badge\b/i },
+      { feature: "discipline.enforced", plans: ["pro"], says: /\bsuspensions & discipline tracking\b/i },
+      { feature: "officials.marks", plans: ["pro"], says: /\brate your match officials\b/i },
+      { feature: "news.auto", plans: ["pro"], says: /\bauto-drafted result posts\b/i },
     ],
   },
   {
@@ -461,16 +529,24 @@ const CARD_SURFACES: CardSurface[] = [
       // Three separate rows behind one bullet. Pinned one by one, because
       // "Unlimited members, teams & clubs" is three claims and any one of them
       // can go false on its own.
-      { feature: "members.max", plan: "pro_plus", says: (n) => new RegExp(`\\b${n}\\b[^.]{0,40}\\bmembers\\b`, "i"), unlimited: /\bunlimited\b[^.]{0,40}\bmembers\b/i },
-      { feature: "teams.max", plan: "pro_plus", says: (n) => new RegExp(`\\b${n}\\b[^.]{0,40}\\bteams\\b`, "i"), unlimited: /\bunlimited\b[^.]{0,40}\bteams\b/i },
-      { feature: "clubs.max", plan: "pro_plus", says: (n) => new RegExp(`\\b${n}\\b[^.]{0,40}\\bclubs\\b`, "i"), unlimited: /\bunlimited\b[^.]{0,40}\bclubs\b/i },
+      { feature: "members.max", plan: "pro_plus", exclusiveAgainst: ["pro"], says: (n) => new RegExp(`\\b${n}\\b[^.]{0,40}\\bmembers\\b`, "i"), unlimited: /\bunlimited\b[^.]{0,40}\bmembers\b/i },
+      { feature: "teams.max", plan: "pro_plus", exclusiveAgainst: ["pro"], says: (n) => new RegExp(`\\b${n}\\b[^.]{0,40}\\bteams\\b`, "i"), unlimited: /\bunlimited\b[^.]{0,40}\bteams\b/i },
+      { feature: "clubs.max", plan: "pro_plus", exclusiveAgainst: ["pro"], says: (n) => new RegExp(`\\b${n}\\b[^.]{0,40}\\bclubs\\b`, "i"), unlimited: /\bunlimited\b[^.]{0,40}\bclubs\b/i },
       { feature: "registration.fee_percent", plan: "pro_plus", says: (n) => new RegExp(`\\b${n}%\\s+platform\\s+fee\\b`, "i") },
     ],
     booleans: [
-      { feature: "officials.auto", plan: "pro_plus", says: /\bauto officials assignment\b/i },
-      { feature: "api.write", plan: "pro_plus", says: /\bwrite API access\b/i },
-      { feature: "support.priority", plan: "pro_plus", says: /\bpriority support\b/i },
+      { feature: "officials.auto", plans: ["pro_plus"], says: /\bauto officials assignment\b/i },
+      { feature: "api.write", plans: ["pro_plus"], says: /\bwrite API access\b/i },
+      { feature: "support.priority", plans: ["pro_plus"], says: /\bpriority support\b/i },
+      // The "clubs" in "Unlimited members, teams & clubs" is a capability as
+      // well as a cap: `clubs.max` being null means nothing if `clubs.hierarchy`
+      // is off (fresh probe G5).
+      { feature: "clubs.hierarchy", plans: ["pro_plus"], says: /\bclubs\b/i },
     ],
+    unclaimed: {
+      "Largest monthly AI credit grant":
+        "a COMPARATIVE over `ai.credits.monthly` (10 / 60 / 200), not a grant this card either has or lacks. Asserted by localeCreditLeadershipFaults against the numbers, in all four locales, which is the only rule shape that can judge 'largest'.",
+    },
   },
   {
     array: "PLUS_COMING_SOON",
@@ -538,6 +614,16 @@ function cardMatrixFaults(
             `${surface.array}: ${claim.plan}/${claim.feature} is unlimited but the card never says so`,
           );
         }
+        // …and, under an exclusivity frame, that the lower plans are NOT also
+        // unlimited. Without this the bullet can quietly stop differentiating
+        // anything while every string on both cards stays true.
+        for (const lower of claim.exclusiveAgainst ?? []) {
+          if (claim.plan in row && lower in row && row[lower] === null) {
+            faults.push(
+              `${surface.array}: sells unlimited ${claim.feature} as a differentiator, but ${lower} is unlimited too`,
+            );
+          }
+        }
         continue;
       }
       if (claim.unlimited?.test(joined)) {
@@ -575,7 +661,7 @@ function cardMatrixFaults(
 function cardBooleanFaults(
   surfaces: CardSurface[],
   live: Record<string, readonly string[]>,
-  grants: FeatureGrants,
+  rows: RowsByFeature,
 ): string[] {
   const faults: string[] = [];
   let checked = 0;
@@ -584,29 +670,105 @@ function cardBooleanFaults(
     if (!bullets || !surface.booleans) continue;
     const joined = bullets.join(". ");
     for (const claim of surface.booleans) {
-      const row = grants[claim.feature];
-      if (!row || !(claim.plan in row)) {
-        faults.push(
-          `${surface.array}: plan_entitlements has no ${claim.plan}/${claim.feature} row — the bullet is pinned to nothing`,
-        );
-        continue;
-      }
       if (!claim.says.test(joined)) {
         faults.push(
           `${surface.array}: no bullet matches ${claim.says.source} — the copy this ${claim.feature} pin describes is gone, so the pin examines nothing`,
         );
         continue;
       }
-      checked += 1;
-      if (!row[claim.plan]) {
-        faults.push(
-          `${surface.array}: promises ${claim.feature}, but ${claim.plan} does not grant it`,
-        );
+      for (const plan of claim.plans) {
+        const row = rows[claim.feature]?.[plan];
+        if (!row) {
+          faults.push(
+            `${surface.array}: plan_entitlements has no ${plan}/${claim.feature} row — the bullet is pinned to nothing`,
+          );
+          continue;
+        }
+        checked += 1;
+        // INT-shaped capability: null is unlimited, otherwise it must clear the
+        // floor the bullet implies.
+        if (claim.atLeast !== undefined) {
+          if (row.int !== null && row.int < claim.atLeast) {
+            faults.push(
+              `${surface.array}: promises ${claim.feature}, but ${plan} allows only ${row.int}`,
+            );
+          }
+          continue;
+        }
+        if (row.bool !== true) {
+          faults.push(
+            `${surface.array}: promises ${claim.feature}, but ${plan} does not grant it`,
+          );
+        }
       }
     }
   }
   if (checked === 0) {
     faults.push("no capability claim matched a bullet — this rule examined nothing");
+  }
+  return faults;
+}
+
+/**
+ * ── THE RULE THAT MAKES THE OTHER RULES CHECKABLE ────────────────────────────
+ *
+ * Every bullet on every card must be ATTRIBUTED: matched by a numeric claim, a
+ * capability claim, the duration grammar, or the differentiator vocabulary — or
+ * else listed in `unclaimed` with a reason.
+ *
+ * This exists because everything above is a hand-written list, and the measured
+ * failure of a hand-written list is not that its rules are weak but that it
+ * silently stops covering something. A fresh probe set written after the
+ * numeric and capability pins were final scored 1/10, and five of the nine
+ * misses were bullets nobody had enumerated. Adding five more entries fixes
+ * those five; making the enumeration self-checking fixes the class.
+ *
+ * A STALE exemption is a fault too: an `unclaimed` key naming a bullet that no
+ * longer exists is an exemption doing nothing, which is how a list rots back
+ * into silence.
+ */
+function cardBulletAttributionFaults(
+  surfaces: CardSurface[],
+  live: Record<string, readonly string[]>,
+  matrix: Matrix,
+): string[] {
+  const faults: string[] = [];
+  for (const surface of surfaces) {
+    const bullets = live[surface.array];
+    if (!bullets) continue;
+    const exemptions = surface.unclaimed ?? {};
+
+    for (const [bullet, why] of Object.entries(exemptions)) {
+      if (!bullets.includes(bullet)) {
+        faults.push(
+          `${surface.array}: "${bullet}" is exempted but is no longer a bullet — a stale exemption covers nothing`,
+        );
+      }
+      if (why.length <= 20) {
+        faults.push(`${surface.array}: "${bullet}" has an empty exemption reason`);
+      }
+    }
+    // A surface that quotes no matrix value at all (the roadmap) is exempt
+    // wholesale, with the reason recorded on `noMatrixClaims`.
+    if (surface.claims.length === 0 && surface.noMatrixClaims) continue;
+
+    for (const bullet of bullets) {
+      if (bullet in exemptions) continue;
+      const byNumber = surface.claims.some((claim) => {
+        const value = matrix[claim.feature]?.[claim.plan];
+        if (value === undefined) return false;
+        return value === null
+          ? Boolean(claim.unlimited?.test(bullet))
+          : claim.says(value).test(bullet) || Boolean(claim.unlimited?.test(bullet));
+      });
+      const byCapability = (surface.booleans ?? []).some((claim) => claim.says.test(bullet));
+      const byVocabulary = PLUS_DIFFERENTIATOR_VOCAB.some(([, claim]) => claim.test(bullet));
+      const byDuration = BOUNDED_SCOPE_GRAMMAR.test(bullet);
+      if (byNumber || byCapability || byVocabulary || byDuration) continue;
+      faults.push(
+        `${surface.array}: "${bullet}" is attributed to no matrix row and is not exempted — every bullet must be a claim someone checked or a decision someone recorded`,
+      );
+    }
   }
   return faults;
 }
@@ -685,8 +847,8 @@ describe("the /pricing card bullets say what plan_entitlements enforces", () => 
    * decides whether it makes a claim.
    */
   it("pins every card array pricing-cards.ts exports", async () => {
-    const module: Record<string, unknown> = await import("../pricing-cards");
-    const exportedArrays = Object.entries(module)
+    const cards: Record<string, unknown> = await import("../pricing-cards");
+    const exportedArrays = Object.entries(cards)
       .filter(([, v]) => Array.isArray(v) && v.every((x) => typeof x === "string"))
       .map(([k]) => k)
       .sort();
@@ -1350,6 +1512,10 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
       ["pro entrants 256 -> 64", moved("entrants.per_division.max", "pro", 64), "does not quote the live pro/entrants.per_division.max (64)"],
       ["L's entrant cap stops being unlimited", moved("entrants.per_division.max", "event_pass_l", 300), "card claims UNLIMITED entrants.per_division.max, but the matrix caps event_pass_l at 300"],
       ["teams.max null -> 40", moved("teams.max", "pro_plus", 40), "card claims UNLIMITED teams.max, but the matrix caps pro_plus at 40"],
+      // Fresh probe G6, from the OTHER side: the lower plan catches up, so the
+      // bullet stops differentiating while every string stays true.
+      ["pro members.max 15 -> unlimited", moved("members.max", "pro", null), "sells unlimited members.max as a differentiator, but pro is unlimited too"],
+      ["pro teams.max 40 -> unlimited", moved("teams.max", "pro", null), "sells unlimited teams.max as a differentiator, but pro is unlimited too"],
       ["clubs.max null -> 20", moved("clubs.max", "pro_plus", 20), "card claims UNLIMITED clubs.max, but the matrix caps pro_plus at 20"],
     ];
     for (const [label, matrix, expected] of cases) {
@@ -1359,7 +1525,8 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
     }
     // A DELETED row must be a fault, not "unlimited". `?? null` would have read
     // a vanished feature key as an unlimited allowance and certified the card.
-    const { "members.max": _dropped, ...withoutMembers } = live;
+    const withoutMembers = { ...live };
+    delete withoutMembers["members.max"];
     expect(cardMatrixFaults(CARD_SURFACES, LIVE_CARD_BULLETS, withoutMembers).join(" | ")).toContain(
       "plan_entitlements has no pro_plus/members.max row",
     );
@@ -1391,31 +1558,65 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
    * the Pass card still sells a realtime scoreboard. Same falsehood class as a
    * moved cap, invisible to a rule that only reads `int_value`.
    */
-  it("promises no capability its plan does not grant, on any card", async () => {
+  /** Both columns of every row the capability claims name. A capability can be
+   *  boolean or int-shaped and the card cannot tell which, so the guard reads
+   *  the row rather than a column. */
+  const capabilityRows = async (): Promise<RowsByFeature> => {
     const features = [
       ...new Set(CARD_SURFACES.flatMap((s) => (s.booleans ?? []).map((c) => c.feature))),
     ];
     expect(features.length, "no capability claims declared").toBeGreaterThan(15);
-    const grants = await boolGrants(features);
-    expect(cardBooleanFaults(CARD_SURFACES, LIVE_CARD_BULLETS, grants)).toEqual([]);
+    const rows = await sql<
+      { feature_key: string; plan_key: string; bool_value: boolean | null; int_value: number | null }[]
+    >`select feature_key, plan_key, bool_value, int_value from plan_entitlements
+      where feature_key = any(${features})`;
+    expect(rows.length, "plan_entitlements returned no capability rows").toBeGreaterThan(0);
+    const out: RowsByFeature = {};
+    for (const row of rows) {
+      (out[row.feature_key] ??= {})[row.plan_key] = { bool: row.bool_value, int: row.int_value };
+    }
+    return out;
+  };
+
+  /**
+   * The capability bullets, against the rows.
+   *
+   * This rule exists because of a fresh probe set written after the numeric
+   * pins were final: 10 falsehoods, 1 caught, every miss a capability bullet.
+   * `dashboard.branding` going false on pro while the Pro card still promises
+   * to remove the badge is the same falsehood class as a moved cap, invisible
+   * to a rule that only reads `int_value`.
+   */
+  it("promises no capability its plan does not grant, on any card", async () => {
+    const rows = await capabilityRows();
+    expect(cardBooleanFaults(CARD_SURFACES, LIVE_CARD_BULLETS, rows)).toEqual([]);
 
     // …and it is a check, not a restatement. Each of these revokes a grant and
     // leaves the bullet promising it word for word.
-    for (const [feature, plan, expected] of [
-      ["dashboard.branding", "pro", "PRO_FEATURES: promises dashboard.branding, but pro does not grant it"],
-      ["realtime", "event_pass", "PASS_FEATURES: promises realtime, but event_pass does not grant it"],
-      ["api.access", "pro", "PRO_FEATURES: promises api.access, but pro does not grant it"],
-      ["discovery.listed", "community", "FREE_FEATURES: promises discovery.listed, but community does not grant it"],
-      ["registration.paid", "community", "FREE_FEATURES: promises registration.paid, but community does not grant it"],
-      ["sponsors.tiers", "event_pass", "PASS_FEATURES: promises sponsors.tiers, but event_pass does not grant it"],
-      ["exports.branded", "event_pass", "PASS_FEATURES: promises exports.branded, but event_pass does not grant it"],
-      ["formats.advanced", "event_pass", "PASS_FEATURES: promises formats.advanced, but event_pass does not grant it"],
-      ["news.auto", "pro", "PRO_FEATURES: promises news.auto, but pro does not grant it"],
-      ["support.priority", "pro_plus", "PLUS_CARD_FEATURES: promises support.priority, but pro_plus does not grant it"],
-    ] as Array<[string, string, string]>) {
-      const revoked: FeatureGrants = { ...grants, [feature]: { ...grants[feature], [plan]: false } };
+    const revoke = (feature: string, plan: string, patch: Partial<EntitlementRow>): RowsByFeature => ({
+      ...rows,
+      [feature]: { ...rows[feature], [plan]: { ...rows[feature]![plan]!, ...patch } },
+    });
+    for (const [feature, plan, patch, expected] of [
+      ["dashboard.branding", "pro", { bool: false }, "PRO_FEATURES: promises dashboard.branding, but pro does not grant it"],
+      ["realtime", "event_pass", { bool: false }, "PASS_FEATURES: promises realtime, but event_pass does not grant it"],
+      // THE L RUNG — fresh probe G1. The card sells both rungs from one list, so
+      // a capability lost on L alone still misleads an L buyer.
+      ["formats.advanced", "event_pass_l", { bool: false }, "PASS_FEATURES: promises formats.advanced, but event_pass_l does not grant it"],
+      ["sponsors.monetize", "event_pass_l", { bool: false }, "PASS_FEATURES: promises sponsors.monetize, but event_pass_l does not grant it"],
+      ["api.access", "pro", { bool: false }, "PRO_FEATURES: promises api.access, but pro does not grant it"],
+      // Fresh probes G2 / G4 / G5 — bullets that were simply not enumerated.
+      ["exports", "pro", { bool: false }, "PRO_FEATURES: promises exports, but pro does not grant it"],
+      ["registration.enabled", "community", { bool: false }, "FREE_FEATURES: promises registration.enabled, but community does not grant it"],
+      ["clubs.hierarchy", "pro_plus", { bool: false }, "PLUS_CARD_FEATURES: promises clubs.hierarchy, but pro_plus does not grant it"],
+      ["discovery.listed", "community", { bool: false }, "FREE_FEATURES: promises discovery.listed, but community does not grant it"],
+      ["news.auto", "pro", { bool: false }, "PRO_FEATURES: promises news.auto, but pro does not grant it"],
+      ["support.priority", "pro_plus", { bool: false }, "PLUS_CARD_FEATURES: promises support.priority, but pro_plus does not grant it"],
+      // Fresh probe G3 — an INT-shaped capability. No boolean moves at all.
+      ["dashboard.public.max", "community", { int: 0 }, "FREE_FEATURES: promises dashboard.public.max, but community allows only 0"],
+    ] as Array<[string, string, Partial<EntitlementRow>, string]>) {
       expect(
-        cardBooleanFaults(CARD_SURFACES, LIVE_CARD_BULLETS, revoked).join(" | "),
+        cardBooleanFaults(CARD_SURFACES, LIVE_CARD_BULLETS, revoke(feature, plan, patch)).join(" | "),
         `${plan}/${feature}`,
       ).toContain(expected);
     }
@@ -1427,16 +1628,63 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
       cardBooleanFaults(
         CARD_SURFACES,
         { ...LIVE_CARD_BULLETS, PRO_FEATURES: PRO_FEATURES.filter((b) => !/badge/i.test(b)) },
-        grants,
+        rows,
       ).join(" | "),
     ).toContain("the copy this dashboard.branding pin describes is gone");
     // …and a deleted row is a fault, not a pass.
-    const { "news.auto": _gone, ...withoutNews } = grants;
+    const withoutNews = { ...rows };
+    delete withoutNews["news.auto"];
     expect(cardBooleanFaults(CARD_SURFACES, LIVE_CARD_BULLETS, withoutNews).join(" | ")).toContain(
       "plan_entitlements has no pro/news.auto row",
     );
-    expect(cardBooleanFaults(CARD_SURFACES, LIVE_CARD_BULLETS, {})).toContain(
-      "no capability claim matched a bullet — this rule examined nothing",
+    expect(cardBooleanFaults(CARD_SURFACES, LIVE_CARD_BULLETS, {}).join(" | ")).toContain(
+      "this rule examined nothing",
+    );
+  });
+
+  /**
+   * …AND THE RULE THAT MAKES THE ENUMERATION ITSELF CHECKABLE.
+   *
+   * Every bullet claimed by something, or exempted with a reason. This is the
+   * structural answer to a fresh set scoring 1/10 while the tuned set scored
+   * 10/10: the rules were not weak, the LIST was incomplete, and nothing could
+   * tell the difference.
+   */
+  it("attributes every bullet on every card to a row or a recorded decision", async () => {
+    expect(cardBulletAttributionFaults(CARD_SURFACES, LIVE_CARD_BULLETS, await cardMatrix())).toEqual(
+      [],
+    );
+  });
+
+  it("reds on a bullet nobody attributed, and on an exemption that covers nothing", async () => {
+    const matrix = await cardMatrix();
+    // A new capability bullet, added without a claim — the shape of every miss
+    // in the fresh set.
+    expect(
+      cardBulletAttributionFaults(
+        CARD_SURFACES,
+        { ...LIVE_CARD_BULLETS, PRO_FEATURES: [...PRO_FEATURES, "Custom domain & white-label"] },
+        matrix,
+      ).join(" | "),
+    ).toContain('"Custom domain & white-label" is attributed to no matrix row and is not exempted');
+    // A stale exemption: the bullet it names has been reworded away, so the
+    // exemption now covers nothing and hides the replacement.
+    const stale: CardSurface[] = CARD_SURFACES.map((s) =>
+      s.array === "PASS_FEATURES"
+        ? { ...s, unclaimed: { ...s.unclaimed, "Upgrades ONE competition, forever": "the old wording" } }
+        : s,
+    );
+    expect(cardBulletAttributionFaults(stale, LIVE_CARD_BULLETS, matrix).join(" | ")).toContain(
+      "is exempted but is no longer a bullet",
+    );
+    // …and an exemption with no real reason is not an exemption.
+    const empty: CardSurface[] = CARD_SURFACES.map((s) =>
+      s.array === "FREE_FEATURES"
+        ? { ...s, unclaimed: { "League, groups + knockout & swiss formats": "n/a" } }
+        : s,
+    );
+    expect(cardBulletAttributionFaults(empty, LIVE_CARD_BULLETS, matrix).join(" | ")).toContain(
+      "has an empty exemption reason",
     );
   });
 

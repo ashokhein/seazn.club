@@ -818,13 +818,114 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
     for (const key of PLUS_SOON_KEYS) {
       expect(pinned.has(key), `${key} is a roadmap claim but is not pinned`).toBe(true);
     }
-    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(96);
+    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(152);
     // Every entry must say what it claims and what decides it — a pin with no
     // `why` is a snapshot, and a snapshot teaches the next editor to re-record
     // rather than to re-check.
     for (const entry of APPROVED_DICTIONARY_COPY) {
       expect(entry.why.length, `${entry.key} has no source-of-truth note`).toBeGreaterThan(40);
     }
+  });
+
+  /**
+   * ── EVERY `pricing.*` KEY IS A DECISION ──────────────────────────────────
+   *
+   * The structural version of this file's oldest lesson, applied to the whole
+   * page instead of one claim family. `FAQ_EXEMPT` already forces every
+   * `pricing.faq.*.a` answer to be classified; this forces every OTHER pricing
+   * key to be classified too.
+   *
+   * It exists because a fresh probe set, written after the card rules were
+   * final, found two live holes of the same shape — `pricing.plus.per` and
+   * `pricing.credits.perMonthOperator`, both money claims, both one word from
+   * false, both scanned by nothing. Neither was exotic; nobody had asked the
+   * question "which pricing keys make a claim?" as DATA.
+   *
+   * A key matching no rule is a fault, so a string added to /pricing tomorrow
+   * reds until someone decides which side it falls on. A rule matching no key is
+   * a fault too — that is how a disposition list rots into decoration.
+   */
+  const PRICING_KEY_DISPOSITION: Array<{ match: RegExp; pinned: boolean; why: string }> = [
+    {
+      match: /^pricing\.(plus\.(note|f\d|soonLabel|soon\d)|pass\.note)$/,
+      pinned: true,
+      why: "the Pro Plus card, its roadmap, and the pass card's duration note — claim-bearing copy, pinned verbatim",
+    },
+    {
+      match: /^pricing\.(credits\.\w+|addons\.(credits|seat|org|sizePack)|plus\.per|pass\.(per|from|ladder\.caps\w*)|community\.price)$/,
+      pinned: true,
+      why: "quotes money or an allowance — the number is interpolated live, so the words around it are the claim",
+    },
+    {
+      match: /^pricing\.faq\./,
+      pinned: false,
+      why: "answers are classified individually by FAQ_PASS_SCOPED / FAQ_EXEMPT above, and the claim-bearing ones are pinned there; questions make no claim",
+    },
+    {
+      match: /^pricing\.(matrix|table)\./,
+      pinned: false,
+      why: "row labels and column headers of the comparison table. Every VALUE in that table is rendered live from plan_entitlements by lib/pricing-matrix.ts, so the labels name features rather than asserting anything about them",
+    },
+    {
+      match: /^pricing\.final\.subhead$/,
+      pinned: true,
+      why: "the closing CTA claims no card is required and names both upgrade paths — three claims in one sentence, and the key this rule found on its first run",
+    },
+    {
+      match: /^pricing\.(meta\.\w+|eyebrow|title|subhead|final\.title)$/,
+      pinned: false,
+      why: "page chrome, SEO metadata and CTA headings — they set the scene rather than describing what any plan grants",
+    },
+    {
+      match: /^pricing\.enterprise\.(text|link)$/,
+      pinned: false,
+      why: "the 'talk to us' prompt. It NAMES SSO, which is on the coming-soon roadmap, but asks whether the reader needs it rather than stating we ship it — an availability claim here would have to be pinned like soonLabel",
+    },
+    {
+      match: /^pricing\.\w+\.(name|cta|ctaSignedIn|included|popular|label)$/,
+      pinned: false,
+      why: "tier names, button labels and state text — they identify a card, they do not describe what it grants",
+    },
+    {
+      match: /^pricing\.(community\.note|pass\.(rung\.\w|ladderNote)|addons\.label)$/,
+      pinned: false,
+      why: "sub-labels: the rung letters (M / L), the ladder's own explanatory note and the add-ons heading. The claims they introduce are pinned on the keys that make them",
+    },
+  ];
+
+  it("classifies every pricing.* key as pinned or exempt, with a reason", () => {
+    const keys = Object.keys(load("en", "marketing")).filter((k) => k.startsWith("pricing."));
+    expect(keys.length, "no pricing keys found — the key shape changed").toBeGreaterThan(100);
+    const pinned = new Set(APPROVED_DICTIONARY_COPY.map((e) => e.key));
+    const unclassified: string[] = [];
+    const unpinned: string[] = [];
+    const used = new Set<number>();
+    for (const key of keys) {
+      const index = PRICING_KEY_DISPOSITION.findIndex((rule) => rule.match.test(key));
+      if (index === -1) {
+        unclassified.push(key);
+        continue;
+      }
+      used.add(index);
+      if (PRICING_KEY_DISPOSITION[index]!.pinned && !pinned.has(key)) unpinned.push(key);
+    }
+    expect(unclassified, "pricing keys matching no disposition rule").toEqual([]);
+    expect(unpinned, "classified as pinned but absent from APPROVED_DICTIONARY_COPY").toEqual([]);
+    // …and the inverse: a rule that matches nothing is decoration, and every
+    // reason must be a real one.
+    expect(
+      PRICING_KEY_DISPOSITION.map((r, i) => (used.has(i) ? null : r.match.source)).filter(Boolean),
+      "disposition rules matching no key",
+    ).toEqual([]);
+    for (const rule of PRICING_KEY_DISPOSITION) {
+      expect(rule.why.length, rule.match.source).toBeGreaterThan(30);
+    }
+    // The rule itself must red on a new key nobody classified — the whole point.
+    expect(
+      ["pricing.plus.newBadge", "pricing.somethingElse"].filter((k) =>
+        PRICING_KEY_DISPOSITION.some((rule) => rule.match.test(k)),
+      ),
+    ).toEqual([]);
   });
 
   it("never sells the Event Pass as permanent, in any language, and says what bounds it", () => {
@@ -1038,6 +1139,28 @@ describe.skipIf(!HAS_DB)("the four-locale dictionaries match plan_entitlements",
       expect(faults, `${locale}: the pre-fix bullet must red`).toContain(
         `${locale} pre-fix: sells scheduling.ai as a Pro Plus differentiator`,
       );
+    }
+  });
+
+  // FRESH PROBE G8: the FAQ directly under the cards names each plan's
+  // organisation cap ("Pro covers up to 5 organisations on one bill and Pro Plus
+  // up to 10"). It was PINNED as copy and pinned to nothing else, so moving
+  // `orgs.max_owned` left the sentence green and false — the same copy-copy
+  // failure the card numbers had. Task 7 pins the add-ons article's version of
+  // this sentence the same way; this is its /pricing sibling.
+  it("the FAQ quotes each plan's live organisation cap, in all four locales", async () => {
+    const rows = await sql<{ plan_key: string; int_value: number | null }[]>`
+      select plan_key, int_value from plan_entitlements where feature_key = 'orgs.max_owned'`;
+    const caps = Object.fromEntries(rows.map((r) => [r.plan_key, r.int_value]));
+    for (const plan of ["pro", "pro_plus"]) {
+      expect(caps[plan], `plan_entitlements has no ${plan}/orgs.max_owned row`).toBeDefined();
+      expect(caps[plan], `${plan} must have a finite org cap for this sentence`).not.toBeNull();
+    }
+    for (const { locale, value } of PLUS_VALUES) {
+      // Numerals are identical across these four locales, so the digits are
+      // checkable without reading the prose around them.
+      expect(value, `${locale}: pro's live org cap`).toContain(String(caps.pro));
+      expect(value, `${locale}: pro_plus's live org cap`).toContain(String(caps.pro_plus));
     }
   });
 
