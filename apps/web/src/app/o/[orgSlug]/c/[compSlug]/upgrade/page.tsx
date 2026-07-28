@@ -136,7 +136,33 @@ export default async function CompetitionUpgradePage({
     // webhook-only case, where the buyer never came back through the return URL
     // at all. Without it the page renders its ordinary offer, buy button and
     // all, to someone whose money we are already holding.
-    competitionHasRefusedPassPayment(compId),
+    //
+    // WRAPPED, defaulting to TRUE — and the asymmetry with the checkout route,
+    // which leaves the same read unwrapped, is deliberate (#326 review round 3):
+    //
+    //  · This page is a READ surface with no money-moving side effect, and it
+    //    never touched `pass_mint_refusals` before this feature. Deployed ahead
+    //    of V342 an unwrapped read 500s the whole upgrade page — a table that
+    //    does not exist yet is not the same fact as "a refusal exists", and the
+    //    query cannot tell them apart.
+    //  · `true` is the SAFE default here, not the convenient one: it shows the
+    //    "we are looking into your payment" notice and hides nothing the buyer
+    //    needs. Defaulting false would put a live buy button in front of someone
+    //    whose refusal row is merely unreadable.
+    //  · This catch cannot cause a wrong charge, because the ROUTE is the
+    //    authority and its read stays unwrapped: if the brake cannot be
+    //    evaluated there, the only safe answer is to refuse the charge, and a
+    //    500 on the buy POST is the right failure. The page catch degrades a
+    //    dead page into an over-cautious one; it cannot degrade a refusal into a
+    //    sale.
+    competitionHasRefusedPassPayment(compId).catch((err) => {
+      console.error(
+        `[billing] could not read pass_mint_refusals for competition ${compId} — ` +
+          `showing the under-review notice rather than a buy button`,
+        err,
+      );
+      return true;
+    }),
   ]);
   const dict = await getDictionary(locale, "ui");
 

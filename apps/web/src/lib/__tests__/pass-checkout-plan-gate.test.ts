@@ -800,6 +800,101 @@ describe.skipIf(!HAS_DB)("Event Pass mint refuses a rung/price desync (v17 gap #
     }
   });
 
+  it("the WEBHOOK self-corrects the same way, which is the half that matters", async () => {
+    // The load-bearing half (#326 review round 3). In the scenario the
+    // fail-open exists for — a buyer who never returns to the bookmarkable URL —
+    // reconcile never runs again, so the webhook is the ONLY path that can ever
+    // do the comparison. An "already minted, skip the Stripe call" fast path in
+    // front of the guard is exactly the plausible future optimisation that would
+    // silently kill it, and it would leave the reconcile-side test green.
+    await priceBothRungs();
+    withAlertAddress();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { orgId, compId } = await seedMintBuyer();
+      const session = paidSession(orgId, compId, "event_pass_l");
+      // Delivery 1: Stripe read fails, so the rung cannot be verified.
+      stripeMock.listLineItems.mockRejectedValueOnce(new Error("stripe is down"));
+      await processStripeEvent(passEvent(session));
+      expect(await passKeyHeld(compId)).toBe("event_pass_l");
+      expect(await refusalFor(compId)).toBeNull();
+      expect(emailMock.sendPassRungMismatchAlertEmail).not.toHaveBeenCalled();
+
+      // Delivery 2 (a redelivery, or the next event carrying this session):
+      // Stripe answers, the guard finally compares, and the desync is recorded.
+      builtOn("price_test_pass");
+      await expect(processStripeEvent(passEvent(session))).resolves.toBeUndefined();
+      expect(await refusalFor(compId)).toMatchObject({ reason: "price_mismatch" });
+      expect(emailMock.sendPassRungMismatchAlertEmail).toHaveBeenCalledTimes(1);
+      // Detector, not revoker — same rule as the reconcile path above.
+      expect(await passKeyHeld(compId)).toBe("event_pass_l");
+    } finally {
+      errors.mockRestore();
+      restoreAlertAddress();
+    }
+  });
+
+  it("emails staff ONCE however many times the buyer reloads the return URL", async () => {
+    // Measured before the fix: five reconciles produced one row and FIVE emails.
+    // The return URL is bookmarkable and re-runs reconcile on every render, and
+    // the buyer is looking at a banner that has just told them something is
+    // wrong — which is an invitation to refresh. One incident must page staff
+    // once, or the channel stops being read.
+    const { orgId, compId } = await seedMintBuyer();
+    await priceBothRungs();
+    withAlertAddress();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const session = paidSession(orgId, compId, "event_pass_l", {
+        lineItems: [lineItem("price_test_pass")],
+      });
+      stripeMock.retrieve.mockResolvedValue(session);
+
+      for (let i = 0; i < 5; i++) {
+        expect(await reconcilePassCheckout(orgId, session.id), `visit ${i}`).toBe(false);
+      }
+      // The row was always deduped; the alert is what was not.
+      const rows = await sql<{ n: string }[]>`
+        select count(*)::text as n from pass_mint_refusals where competition_id = ${compId}`;
+      expect(rows[0]!.n).toBe("1");
+      expect(emailMock.sendPassRungMismatchAlertEmail).toHaveBeenCalledTimes(1);
+      // ...and the refusal itself is unchanged on every visit — the dedupe must
+      // quieten the email, not weaken the guard.
+      expect(await passKeyHeld(compId)).toBeNull();
+    } finally {
+      errors.mockRestore();
+      restoreAlertAddress();
+    }
+  });
+
+  it("still alerts EVERY time when the row could not be written", async () => {
+    // The documented "degrades to alert-only" path, and the discriminator for
+    // the dedupe above: gating the alert on `inserted` alone would silence the
+    // one case where the email is the only record that will ever exist. A
+    // non-uuid competition id in the metadata fails the insert's cast — caught,
+    // logged, and the incident still has to reach a human.
+    const { orgId } = await seedMintBuyer();
+    await priceBothRungs();
+    withAlertAddress();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const session = paidSession(orgId, "not-a-uuid", "event_pass_l", {
+        lineItems: [lineItem("price_test_pass")],
+      });
+      stripeMock.retrieve.mockResolvedValue(session);
+
+      expect(await reconcilePassCheckout(orgId, session.id)).toBe(false);
+      expect(await reconcilePassCheckout(orgId, session.id)).toBe(false);
+      expect(emailMock.sendPassRungMismatchAlertEmail).toHaveBeenCalledTimes(2);
+      expect(emailMock.sendPassRungMismatchAlertEmail.mock.calls[0]![0]).toMatchObject({
+        competitionId: "not-a-uuid",
+      });
+    } finally {
+      errors.mockRestore();
+      restoreAlertAddress();
+    }
+  });
+
   it("the alert is gated on STAFF_ALERT_EMAIL and can never throw at its caller", async () => {
     // The contract every maybeAlert* in this codebase carries, tested DIRECTLY
     // rather than through a caller's catch — which would hide a missing wrapper.

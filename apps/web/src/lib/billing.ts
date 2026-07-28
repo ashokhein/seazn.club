@@ -1189,7 +1189,7 @@ async function refusePassMint(
           : `was built on price ${actualPriceId}`
       } — REFUSING to mint; the buyer was charged and holds nothing`,
   );
-  await recordPassMintRefusal({
+  const { inserted, writeFailed } = await recordPassMintRefusal({
     // The payment intent is the durable "which charge paid for this" reference;
     // the session id is the fallback for a session that completed without one
     // (never expected for mode:"payment", but still a unique anchor) — the same
@@ -1203,16 +1203,31 @@ async function refusePassMint(
     expectedPriceId,
     actualPriceId,
   });
-  await maybeAlertPassRungMismatch({
-    sessionId: session.id,
-    orgId,
-    competitionId: competitionId ?? "(unknown)",
-    passKey,
-    reason,
-    expectedPriceId,
-    actualPriceId,
-    paymentIntent,
-  });
+  // THE ROW IS THE DEDUPE, and the alert has to ride it (#326 review round 3).
+  // Measured before this: five visits to the return URL produced one row and
+  // FIVE emails. That is not a theoretical loop — reconcile-on-return re-runs on
+  // every render of a bookmarkable `?checkout=success&session_id=` URL, and the
+  // buyer is sitting on a page that has just told them something is wrong, which
+  // is an invitation to refresh. Staff would then be paged once per refresh for
+  // one incident, which is how an alert channel stops being read.
+  //
+  // `writeFailed` still alerts, deliberately: that is the documented "degrades to
+  // alert-only" path, where the email is the ONLY record of the incident and
+  // suppressing it would lose the incident entirely. So the rule is "alert when
+  // this call produced new information", which is true for a first insert and for
+  // a failure to insert, and false for a conflict.
+  if (inserted || writeFailed) {
+    await maybeAlertPassRungMismatch({
+      sessionId: session.id,
+      orgId,
+      competitionId: competitionId ?? "(unknown)",
+      passKey,
+      reason,
+      expectedPriceId,
+      actualPriceId,
+      paymentIntent,
+    });
+  }
   return false;
 }
 
@@ -1228,6 +1243,17 @@ async function refusePassMint(
  * for the same charge, and reconcile re-runs on every render of the bookmarkable
  * return URL. First writer wins; `refused_at` should say when it first happened.
  *
+ * `returning stripe_ref` is what makes the row the DEDUPE for the staff alert as
+ * well as the record — `inserted` is true only for the writer that actually
+ * created the row, so N reconciles of one refused charge send exactly one email
+ * (#326 review round 3). Two concurrent writers cannot both see it: Postgres
+ * returns no row to the loser of `on conflict do nothing`.
+ *
+ * `writeFailed` is reported separately rather than folded into `!inserted`,
+ * because the two mean opposite things to the caller: a conflict says "already
+ * known, stay quiet", a failure says "there is now NO durable record, so the
+ * email is the only one there will be".
+ *
  * A NON-UUID competition id from session metadata is caught here rather than
  * pre-validated: the insert fails its cast, this logs, and the alert still goes
  * out naming the session. Refusing to refuse because the metadata was malformed
@@ -1242,16 +1268,18 @@ async function recordPassMintRefusal(args: {
   reason: PassMintRefusalReason;
   expectedPriceId: string;
   actualPriceId: string | null;
-}): Promise<void> {
+}): Promise<{ inserted: boolean; writeFailed: boolean }> {
   try {
     if (!args.competitionId) throw new Error("session metadata carried no competition_id");
-    await sql`
+    const [row] = await sql<{ stripe_ref: string }[]>`
       insert into pass_mint_refusals
         (stripe_ref, session_id, org_id, competition_id, pass_key, reason,
          expected_price_id, actual_price_id)
       values (${args.stripeRef}, ${args.sessionId}, ${args.orgId}, ${args.competitionId},
               ${args.passKey}, ${args.reason}, ${args.expectedPriceId}, ${args.actualPriceId})
-      on conflict (stripe_ref) do nothing`;
+      on conflict (stripe_ref) do nothing
+      returning stripe_ref`;
+    return { inserted: !!row, writeFailed: false };
   } catch (err) {
     console.error(
       `[billing] could not record the pass mint refusal for session ${args.sessionId} ` +
@@ -1259,6 +1287,7 @@ async function recordPassMintRefusal(args: {
         `not blocked from paying again`,
       err,
     );
+    return { inserted: false, writeFailed: true };
   }
 }
 

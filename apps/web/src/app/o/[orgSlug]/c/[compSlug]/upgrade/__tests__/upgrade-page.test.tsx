@@ -37,6 +37,9 @@ const h = vi.hoisted(() => ({
   groupRedeemed: false as boolean,
   // v17 gap #326: an unresolved `pass_mint_refusals` row for this competition.
   passUnderReview: false as boolean,
+  // ...and the read itself failing, which is what a deploy that runs ahead of
+  // V342 looks like from here.
+  passUnderReviewThrows: false as boolean,
   matrix: [
     { plan_key: "community", feature_key: "divisions.per_competition.max", bool_value: null, int_value: 2 },
     { plan_key: "event_pass", feature_key: "divisions.per_competition.max", bool_value: null, int_value: 10 },
@@ -101,7 +104,10 @@ vi.mock("@/lib/billing", () => ({
   // the mint guard. Driven from the harness rather than through the `sql`
   // double, because the whole point of the row is that it is NOT a
   // `competition_passes` row and the double keys on table names.
-  competitionHasRefusedPassPayment: async () => h.passUnderReview,
+  competitionHasRefusedPassPayment: async () => {
+    if (h.passUnderReviewThrows) throw new Error("relation \"pass_mint_refusals\" does not exist");
+    return h.passUnderReview;
+  },
 }));
 vi.mock("@/server/usecases/billing-manage", () => ({ getPassPurchases: async () => h.purchases }));
 // The picker is NOT mocked. Since v17 #294 it owns both prices, the buy
@@ -149,6 +155,7 @@ beforeEach(() => {
   h.subscriptionId = "sub-1";
   h.groupRedeemed = false;
   h.passUnderReview = false;
+  h.passUnderReviewThrows = false;
 });
 
 /** A pass bought `days` ago, paid unless told otherwise. */
@@ -496,6 +503,38 @@ describe("returning from checkout", () => {
     // ...and the assertion is not vacuous because the page really is in the
     // owned state: the ticket it renders instead is the one that says so.
     expect(html).toContain("Event Pass active");
+  });
+
+  // The page is a READ surface that never touched this table before, so a
+  // deploy landing ahead of V342 would 500 it outright. Wrapped, defaulting to
+  // TRUE — see the comment on the call. The checkout route deliberately does NOT
+  // wrap the same read: it is the authority on whether money moves, and it
+  // refusing to charge is the only safe answer there.
+  it("shows the notice rather than dying when the refusal read fails", async () => {
+    h.passUnderReviewThrows = true;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const html = await render();
+      expect(html).toContain("Your payment for this competition went through");
+      // Not silently swallowed: an unreadable brake is an incident of its own.
+      expect(errors).toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("renders the ordinary offer when the read succeeds and says no", async () => {
+    // The discriminator for the catch above: a default of `true` that was never
+    // conditional would pass it while telling every browsing owner we were
+    // holding money we never took.
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const html = await render();
+      expect(html).not.toContain("Your payment for this competition went through");
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+    }
   });
 
   it("still says it when the refusal is open and NO pass exists", async () => {

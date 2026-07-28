@@ -96,6 +96,15 @@ export async function POST(req: Request) {
     // sentence the buyer reads: "you already have one" is resolved by reloading,
     // this one cannot be resolved by the buyer at all. Clears itself the moment
     // staff stamp `resolved_at`.
+    //
+    // DELIBERATELY UNWRAPPED, unlike the same read on the upgrade page (#326
+    // review round 3). This one is a brake on TAKING MONEY: if it cannot be
+    // evaluated, the only safe answer is "do not charge". A `catch → false` here
+    // would resume charging a buyer whose refusal row happens to be unreadable —
+    // exactly the defect the row was added to fix — so a 500 on this POST is the
+    // correct failure and the page's catch is the one that keeps the surface
+    // usable. Note the deploy consequence: shipped ahead of V342 this 500s EVERY
+    // pass checkout, not only refused ones. Migration first.
     if (await competitionHasRefusedPassPayment(competition_id)) {
       throw new HttpError(409, "A payment for this competition is under review.");
     }
