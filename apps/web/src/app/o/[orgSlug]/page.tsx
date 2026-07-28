@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 // Org home — competitions as match-day cards (v3/03 §2). Nav comes from the
 // /o layout; auth comes from the URL (PROMPT-30).
 import Link from "@/components/ui/console-link";
-import { Ticket, Trophy } from "lucide-react";
+import { Trophy } from "lucide-react";
 import { BillingBanner } from "@/components/billing-banner";
 import { requireOrgPage } from "@/server/page-auth";
 import { listCompetitions } from "@/server/usecases/competitions";
@@ -16,7 +16,8 @@ import { StatusChip, competitionChipState, CHIP_SORT } from "@/components/ui/sta
 import { sql } from "@/lib/db";
 import { isPaidPlan, orgPlanKey, passLockReason } from "@/lib/entitlements";
 import { formatMinor, isPassKey } from "@/lib/currency";
-import { lowestPassRung, passActiveLabels } from "@/lib/pass-ladder";
+import { lowestPassRung } from "@/lib/pass-ladder";
+import { PassSeal } from "@/components/pass-seal";
 import { preferredCurrency } from "@/lib/currency-server";
 import { routes } from "@/lib/routes";
 import { resolveLocale } from "@/lib/resolve-locale";
@@ -69,7 +70,18 @@ export default async function OrgHomePage({
         // that row. Joined rather than read separately so the row and the
         // verdict about it cannot come from two different moments.
         sql<
-          { competition_id: string; pass_key: string; status: string; ends_on: string | null }[]
+          // `Date | string | null`, matching the four other sites that feed this
+          // predicate: `ends_on` is a `date` column and the driver hands back a
+          // Date. Declaring it `string` here contradicted `passLockReason`'s own
+          // note that production never passes it a string — the reason its NaN
+          // arm is considered unreachable — and invited a `.slice(0, 10)` that
+          // would throw.
+          {
+            competition_id: string;
+            pass_key: string;
+            status: string;
+            ends_on: Date | string | null;
+          }[]
         >`
           select cp.competition_id, cp.pass_key, c.status, c.ends_on
           from competition_passes cp
@@ -89,8 +101,6 @@ export default async function OrgHomePage({
   const passLock = new Map(
     passRows.map((r) => [r.competition_id, passLockReason(r.status, r.ends_on)] as const),
   );
-  const heldLabels = passActiveLabels(dict);
-  const endedLabel = t(dict, "pass.entry.ended");
   // The card menu's "Event Pass — from {price}" quotes the ladder FLOOR: the
   // menu item offers no choice of rung, and the choice itself lives on the
   // upgrade page it links to (v17 #294).
@@ -177,35 +187,19 @@ export default async function OrgHomePage({
                           "Spring S…". The status chip already owns the card's
                           word; this says the pass is on and gets out of the
                           way, carrying its label on the element itself. */}
-                      {heldRung &&
-                        (() => {
-                          // v17 gap #301. Same seal, floodlight off: lime means
-                          // "this is on" across the console, so a locked pass
-                          // wearing it is the page telling an organiser their
-                          // limits are lifted when they are not. The label goes
-                          // on the element itself because the seal has no room
-                          // for a word — and it is the ONLY thing this card
-                          // says about the pass, so it has to be the true one.
-                          const ended = passLock.get(c.id) != null;
-                          const label = ended ? endedLabel : heldLabels[heldRung];
-                          return (
-                            <span
-                              data-pass-held={!ended || undefined}
-                              data-pass-ended={ended || undefined}
-                              data-pass-held-rung={heldRung}
-                              role="img"
-                              aria-label={label}
-                              title={label}
-                              className={`grid h-5 w-5 shrink-0 place-items-center rounded-full ring-1 ring-inset ${
-                                ended
-                                  ? "bg-slate-100 text-slate-500 ring-slate-300"
-                                  : "bg-lime-100 text-lime-800 ring-lime-300"
-                              }`}
-                            >
-                              <Ticket className="h-3 w-3" strokeWidth={2.25} aria-hidden />
-                            </span>
-                          );
-                        })()}
+                      {/* v17 gap #301. Lime means "this is on" across the
+                          console, so a locked pass wearing it is the page
+                          telling an organiser their limits are lifted when they
+                          are not. The whole decision lives in <PassSeal>, which
+                          RENDERS in a test — inline here it was three green
+                          mutations (task 6 review, I-1). */}
+                      {heldRung && (
+                        <PassSeal
+                          dict={dict}
+                          rung={heldRung}
+                          lockReason={passLock.get(c.id) ?? null}
+                        />
+                      )}
                     </span>
                   }
                   meta={

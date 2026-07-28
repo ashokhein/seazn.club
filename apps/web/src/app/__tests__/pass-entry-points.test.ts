@@ -174,10 +174,24 @@ describe("no entry point can re-sell a pass the org already holds", () => {
     // not by reading). This is the same shape of hole as the two the task 3
     // review found, and it survives an unused import only if you ask for the
     // arguments too.
-    expect(src).toMatch(/passLockReason\(\s*r\.status\s*,\s*r\.ends_on\s*\)/);
+    //
+    // `\w+` for the lambda parameter, not a literal `r` (task 6 review): a
+    // rename to `row` is behaviour-identical and arguably cleaner, and pinning
+    // the identifier redded on it while adding no teeth — the teeth are the
+    // `.status`/`.ends_on` arguments.
+    expect(src).toMatch(/passLockReason\(\s*\w+\.status\s*,\s*\w+\.ends_on\s*\)/);
     expect(src).toMatch(/join competitions/i);
     // …and the verdict has to reach the seal, or it is derived and discarded.
-    expect(src).toContain("data-pass-ended");
+    //
+    // WHAT the seal then does with it is pinned by a RENDER test
+    // (`components/__tests__/pass-seal.test.tsx`), not here. That split is the
+    // task 6 review's I-1: while the decision sat inline in this page, a source
+    // scan was the only tool available, and a source scan pins syntax rather
+    // than meaning — `passLock.get(c.id) === "terminal"` satisfied every
+    // assertion in this block while re-shipping #301 for the whole
+    // `past_ends_on` arm. Moving the decision into a component moved it
+    // somewhere a test can watch it behave.
+    expect(src).toMatch(/lockReason=\{\s*passLock\.get\(/);
   });
 
   it("the billing purchase list RENDERS the ended flag it is already given", () => {
@@ -296,6 +310,14 @@ describe("the competition layout resolves what its islands cannot", () => {
     ["the pass checkout route", ["app", "api", "billing", "pass-checkout", "route.ts"]],
     ["the competition list", COMPETITION_LIST],
     ["the competition header", COMPETITION_HEADER],
+    // The third widening (W8 task 4/5 review, M-2, and task 6 review). Two more
+    // files on the lock path, both blocklist-clean the day they were added —
+    // which, per the note above, is exactly when a guard should acquire a file.
+    // `billing-manage.ts` was the ONE remaining `isPassLocked` call site outside
+    // this list (`:425`, the `ended` field the billing list renders), and
+    // `pass-seal.tsx` now holds the dashboard seal's whole decision.
+    ["the billing pass purchases read", ["server", "usecases", "billing-manage.ts"]],
+    ["the dashboard seal", ["components", "pass-seal.tsx"]],
   ];
 
   // The blocklist, named once so the anti-vacuity case below scans the SAME
@@ -329,7 +351,7 @@ describe("the competition layout resolves what its islands cannot", () => {
     // in FRONT of a surviving `passLockReason(` call. It narrows the ways the
     // rule gets copied; it is not proof that it has not been.
     expect(RE_DERIVATION.length).toBeGreaterThanOrEqual(3);
-    expect(LOCK_AWARE_FILES.length).toBeGreaterThanOrEqual(10);
+    expect(LOCK_AWARE_FILES.length).toBeGreaterThanOrEqual(12);
   });
 
   // The entry point does not merely avoid re-deriving — it has to RENDER the
