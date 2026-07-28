@@ -55,6 +55,23 @@ jobs:
           npm run openapi:gen
           git diff --exit-code openapi/v1.json || {
             echo "openapi/v1.json is stale — run 'npm run openapi:gen' and commit."; exit 1; }
+      # i18n gates (v17 gap W8 review). NEITHER of these ran in CI before, and
+      # gen-keys.ts's own header claimed one of them did — so the two failure
+      # modes below were both invisible on a PR:
+      #
+      #  * `i18n:check` compares the locales to EACH OTHER, so a key missing
+      #    from every locale is parity-clean.
+      #  * the generated union is the only thing that knows which keys EXIST,
+      #    and `t()` cannot enforce it: `TKey = DictionaryKey | (string & {})`
+      #    accepts any string and renders the key name at runtime. W8 shipped
+      #    `pass.entry.ended.nextBody` three commits before the union caught up,
+      #    with tsc, i18n:check and the full suite green throughout.
+      - name: i18n key union drift + locale parity
+        run: |
+          npm run i18n:check
+          npm run i18n:gen-keys
+          git diff --exit-code apps/web/src/lib/i18n-keys.ts || {
+            echo "i18n-keys.ts is stale — run 'npm run i18n:gen-keys' and commit."; exit 1; }
       - run: npm test --workspace apps/web
       # Live-Stripe tier probe (sk_test, test-mode): confirms our plan/tier
       # amounts still round-trip real Stripe. Self-contained (no stripe:sync /
