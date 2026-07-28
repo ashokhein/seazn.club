@@ -471,6 +471,11 @@ const CARD_SURFACES: CardSurface[] = [
       { feature: "dashboard.public.max", plans: ["community"], says: /\bpublic dashboard\b/i, atLeast: 1 },
     ],
     unclaimed: {
+      // Found by the residue check the moment attribution became per-claim:
+      // "public dashboard" was covered by dashboard.public.max while "Live
+      // standings" beside it was covered by nothing.
+      "Live standings":
+        "the standings table is core engine output (packages/engine), produced on every plan and gated by no row. The GATED standings features are `standings.carry_over` and `standings.custom_points`, both Pro-only, and neither is claimed on this card.",
       "League, groups + knockout & swiss formats":
         "the base formats are the engine's own repertoire (packages/engine), not a plan_entitlements row — `formats.advanced` and `formats.double_elim` are the GATED ones and are claimed on the Pass card. Nothing here is plan-conditional.",
     },
@@ -756,25 +761,79 @@ function cardBooleanFaults(
  * longer exists is an exemption doing nothing, which is how a list rots back
  * into silence.
  */
+/**
+ * The vocabulary a CLAIM is made in, derived from the feature keys themselves.
+ *
+ * Not a hand-written noun list: the tokens are the `plan_entitlements`
+ * feature_key segments the cards actually declare, so a new feature brings its
+ * own word with it. Stopwords are the structural halves of a key (`per`, `max`,
+ * `enabled`) that carry no marketing meaning.
+ */
+const CLAIM_TOKEN_STOPWORDS = new Set([
+  "per", "max", "min", "value", "enabled", "monthly", "percent", "hierarchy", "public", "listed",
+]);
+
+function claimTokens(allFeatureKeys: string[]): string[] {
+  // EVERY feature key in plan_entitlements, not merely the ones a card happens
+  // to declare. Deriving the lexicon from the declared subset made the rule
+  // circular: a bullet naming a feature nobody had declared contained no
+  // recognised token and sailed through, which is the exact hole this rule
+  // exists to close ("Custom domain & white-label" on the Pro card).
+  const fromFeatures = allFeatureKeys
+    .flatMap((feature) => feature.split(/[._]/))
+    .filter((word) => word.length >= 4 && !CLAIM_TOKEN_STOPWORDS.has(word));
+  // Quantity words are claims in their own right and belong to no feature key.
+  return [...new Set([...fromFeatures, "unlimited"])];
+}
+
+/**
+ * ── ATTRIBUTION, PER CLAIM RATHER THAN PER BULLET (fix round 2, blocking 3) ──
+ *
+ * Round 1 accepted a bullet the moment ANY declared claim matched a FRAGMENT of
+ * it, so a second claim could ride along inside the same bullet untouched.
+ * Measured 0/3 by the reviewer, and every miss is a sentence a marketer would
+ * plausibly write:
+ *
+ *   Pro card       "Unlimited entrants while your competition runs"
+ *                  — attributed by BOUNDED_SCOPE_GRAMMAR; pro caps at 256.
+ *   Community card "Branded exports on your public dashboard"
+ *                  — attributed by the dashboard.public.max regex;
+ *                    `exports.branded` is FALSE on community.
+ *   Community card "64 entrants per division, with unlimited clubs & teams"
+ *                  — attributed by says(64); `clubs.max` on community is 5.
+ *
+ * The fix is a RESIDUE check. Blank out every span a declared claim (or a
+ * recorded exemption) actually matches, then require the leftovers to contain no
+ * claim vocabulary. A claim cannot hide behind its neighbour, because its own
+ * words are still sitting in the residue.
+ *
+ * `BOUNDED_SCOPE_GRAMMAR` and `PLUS_DIFFERENTIATOR_VOCAB` are NO LONGER blanket
+ * attributors — they attributed whole bullets while proving nothing about the
+ * numbers in them, which is how the first two misses passed.
+ */
 function cardBulletAttributionFaults(
   surfaces: CardSurface[],
   live: Record<string, readonly string[]>,
   matrix: Matrix,
+  allFeatureKeys: string[],
 ): string[] {
   const faults: string[] = [];
+  const tokens = claimTokens(allFeatureKeys);
+  if (tokens.length < 10) return ["the claim vocabulary is nearly empty — this rule examines nothing"];
+
   for (const surface of surfaces) {
     const bullets = live[surface.array];
     if (!bullets) continue;
     const exemptions = surface.unclaimed ?? {};
 
-    for (const [bullet, why] of Object.entries(exemptions)) {
-      if (!bullets.includes(bullet)) {
+    for (const [phrase, why] of Object.entries(exemptions)) {
+      if (!bullets.some((b) => b.includes(phrase))) {
         faults.push(
-          `${surface.array}: "${bullet}" is exempted but is no longer a bullet — a stale exemption covers nothing`,
+          `${surface.array}: "${phrase}" is exempted but appears in no bullet — a stale exemption covers nothing`,
         );
       }
       if (why.length <= 20) {
-        faults.push(`${surface.array}: "${bullet}" has an empty exemption reason`);
+        faults.push(`${surface.array}: "${phrase}" has an empty exemption reason`);
       }
     }
     // A surface that quotes no matrix value at all (the roadmap) is exempt
@@ -782,20 +841,46 @@ function cardBulletAttributionFaults(
     if (surface.claims.length === 0 && surface.noMatrixClaims) continue;
 
     for (const bullet of bullets) {
-      if (bullet in exemptions) continue;
-      const byNumber = surface.claims.some((claim) => {
+      // Every pattern that genuinely matches THIS bullet, blanked out of it.
+      const patterns: RegExp[] = [];
+      for (const claim of surface.claims) {
         const value = matrix[claim.feature]?.[claim.plan];
-        if (value === undefined) return false;
-        return value === null
-          ? Boolean(claim.unlimited?.test(bullet))
-          : claim.says(value).test(bullet) || Boolean(claim.unlimited?.test(bullet));
-      });
-      const byCapability = (surface.booleans ?? []).some((claim) => claim.says.test(bullet));
-      const byVocabulary = PLUS_DIFFERENTIATOR_VOCAB.some(([, claim]) => claim.test(bullet));
-      const byDuration = BOUNDED_SCOPE_GRAMMAR.test(bullet);
-      if (byNumber || byCapability || byVocabulary || byDuration) continue;
+        if (value === undefined) continue;
+        if (value !== null) patterns.push(claim.says(value));
+        if (claim.unlimited) patterns.push(claim.unlimited);
+      }
+      for (const claim of surface.booleans ?? []) patterns.push(claim.says);
+
+      // Spans are collected against the ORIGINAL bullet and blanked afterwards.
+      // Blanking sequentially made the rule ORDER-DEPENDENT: `competitions`'
+      // "Unlimited competitions" erased the prefix that `divisions`' own
+      // "Unlimited competitions & divisions" needed, so a correctly declared
+      // claim reported as unattributed. Overlapping claims are normal — three
+      // rows sit behind "Unlimited members, teams & clubs".
+      const covered: boolean[] = new Array(bullet.length).fill(false);
+      const mark = (pattern: RegExp) => {
+        const global = new RegExp(pattern.source, pattern.flags.replace("g", "") + "g");
+        for (const match of bullet.matchAll(global)) {
+          const at = match.index ?? 0;
+          for (let i = at; i < at + match[0].length; i += 1) covered[i] = true;
+        }
+      };
+      for (const pattern of patterns) mark(pattern);
+      for (const phrase of Object.keys(exemptions)) {
+        let at = bullet.indexOf(phrase);
+        while (at !== -1) {
+          for (let i = at; i < at + phrase.length; i += 1) covered[i] = true;
+          at = bullet.indexOf(phrase, at + 1);
+        }
+      }
+      const residue = [...bullet].map((ch, i) => (covered[i] ? " " : ch)).join("");
+
+      const leftover = tokens.filter((token) =>
+        new RegExp(`\\b${token}`, "i").test(residue),
+      );
+      if (leftover.length === 0) continue;
       faults.push(
-        `${surface.array}: "${bullet}" is attributed to no matrix row and is not exempted — every bullet must be a claim someone checked or a decision someone recorded`,
+        `${surface.array}: "${bullet}" makes an unattributed claim about ${leftover.join(", ")} — the words "${residue.replace(/\s+/g, " ").trim()}" are matched by no declared claim and by no recorded exemption`,
       );
     }
   }
@@ -1679,42 +1764,72 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
    * 10/10: the rules were not weak, the LIST was incomplete, and nothing could
    * tell the difference.
    */
+  /** EVERY feature key the matrix holds — the attribution lexicon is derived
+   *  from these, so a bullet naming a feature no card declared is still
+   *  recognised as making a claim. */
+  const allFeatureKeys = async (): Promise<string[]> => {
+    const rows = await sql<{ feature_key: string }[]>`
+      select distinct feature_key from plan_entitlements`;
+    expect(rows.length, "plan_entitlements has no features").toBeGreaterThan(30);
+    return rows.map((r) => r.feature_key);
+  };
+
   it("attributes every bullet on every card to a row or a recorded decision", async () => {
-    expect(cardBulletAttributionFaults(CARD_SURFACES, LIVE_CARD_BULLETS, await cardMatrix())).toEqual(
-      [],
-    );
+    expect(
+      cardBulletAttributionFaults(
+        CARD_SURFACES,
+        LIVE_CARD_BULLETS,
+        await cardMatrix(),
+        await allFeatureKeys(),
+      ),
+    ).toEqual([]);
   });
 
   it("reds on a bullet nobody attributed, and on an exemption that covers nothing", async () => {
     const matrix = await cardMatrix();
-    // A new capability bullet, added without a claim — the shape of every miss
-    // in the fresh set.
+    const features = await allFeatureKeys();
+    const faults = (live: Record<string, readonly string[]>, surfaces = CARD_SURFACES) =>
+      cardBulletAttributionFaults(surfaces, live, matrix, features).join(" | ");
+
+    // A bullet naming a feature NO card declared. The lexicon is built from the
+    // whole matrix precisely so this is still recognised as a claim.
     expect(
-      cardBulletAttributionFaults(
-        CARD_SURFACES,
-        { ...LIVE_CARD_BULLETS, PRO_FEATURES: [...PRO_FEATURES, "Custom domain & white-label"] },
-        matrix,
-      ).join(" | "),
-    ).toContain('"Custom domain & white-label" is attributed to no matrix row and is not exempted');
-    // A stale exemption: the bullet it names has been reworded away, so the
-    // exemption now covers nothing and hides the replacement.
+      faults({ ...LIVE_CARD_BULLETS, PRO_FEATURES: [...PRO_FEATURES, "Custom domain & white-label"] }),
+      // Reported via `custom` (from `domains.custom`) rather than `domain` —
+      // the lexicon holds the key's own segments, and singular/plural need not
+      // match for the bullet to be flagged.
+    ).toContain('"Custom domain & white-label" makes an unattributed claim');
+
+    // ── THE REVIEWER'S THREE, each a second claim riding inside a bullet whose
+    //    first claim IS declared. All three were green under per-bullet
+    //    attribution; the residue check is what sees them.
+    expect(
+      faults({ ...LIVE_CARD_BULLETS, PRO_FEATURES: [...PRO_FEATURES, "Unlimited entrants while your competition runs"] }),
+      "Pro caps entrants at 256, and the duration grammar used to attribute this whole bullet",
+    ).toContain('"Unlimited entrants while your competition runs" makes an unattributed claim');
+    expect(
+      faults({ ...LIVE_CARD_BULLETS, FREE_FEATURES: [...FREE_FEATURES, "Branded exports on your public dashboard"] }),
+      "exports.branded is FALSE on community; the dashboard regex used to cover the whole bullet",
+    ).toContain('"Branded exports on your public dashboard" makes an unattributed claim');
+    expect(
+      faults({ ...LIVE_CARD_BULLETS, FREE_FEATURES: [...FREE_FEATURES, "64 entrants per division, with unlimited clubs & teams"] }),
+      "clubs.max on community is 5; says(64) used to attribute the whole bullet",
+    ).toContain('"64 entrants per division, with unlimited clubs & teams" makes an unattributed claim');
+
+    // A stale exemption: the phrase it names is gone, so it covers nothing and
+    // hides whatever replaced it.
     const stale: CardSurface[] = CARD_SURFACES.map((s) =>
       s.array === "PASS_FEATURES"
         ? { ...s, unclaimed: { ...s.unclaimed, "Upgrades ONE competition, forever": "the old wording" } }
         : s,
     );
-    expect(cardBulletAttributionFaults(stale, LIVE_CARD_BULLETS, matrix).join(" | ")).toContain(
-      "is exempted but is no longer a bullet",
-    );
+    expect(faults(LIVE_CARD_BULLETS, stale)).toContain("is exempted but appears in no bullet");
+
     // …and an exemption with no real reason is not an exemption.
     const empty: CardSurface[] = CARD_SURFACES.map((s) =>
-      s.array === "FREE_FEATURES"
-        ? { ...s, unclaimed: { "League, groups + knockout & swiss formats": "n/a" } }
-        : s,
+      s.array === "FREE_FEATURES" ? { ...s, unclaimed: { ...s.unclaimed, "Live standings": "n/a" } } : s,
     );
-    expect(cardBulletAttributionFaults(empty, LIVE_CARD_BULLETS, matrix).join(" | ")).toContain(
-      "has an empty exemption reason",
-    );
+    expect(faults(LIVE_CARD_BULLETS, empty)).toContain("has an empty exemption reason");
   });
 
   it("no card claims a feature its own plan does not grant", async () => {

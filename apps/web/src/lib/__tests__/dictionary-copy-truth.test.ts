@@ -58,6 +58,7 @@ import {
   localePassBoundFaults,
   localePlusDifferentiatorFaults,
   retiredClaimFaults,
+  valueClauses,
   riderClaimShape,
 } from "@/lib/copy-truth";
 
@@ -827,7 +828,7 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
     for (const key of PLUS_SOON_KEYS) {
       expect(pinned.has(key), `${key} is a roadmap claim but is not pinned`).toBe(true);
     }
-    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(164);
+    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(168);
     // Every entry must say what it claims and what decides it — a pin with no
     // `why` is a snapshot, and a snapshot teaches the next editor to re-record
     // rather than to re-check.
@@ -871,6 +872,16 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
       why: "answers are classified individually by FAQ_PASS_SCOPED / FAQ_EXEMPT above, and the claim-bearing ones are pinned there; questions make no claim",
     },
     {
+      // MINOR, fix round 2. "Your plan already includes everything here" was
+      // exempted by a rule whose stated reason is "they identify a card, they do
+      // not describe what it grants" — it plainly described what a plan grants,
+      // and it was FALSE against Event Pass L (unlimited entrants against pro's
+      // 256, #337). Rewritten to the resolver-backed reason and pinned.
+      match: /^pricing\.pass\.included$/,
+      pinned: true,
+      why: "explains why a paid org is not offered a pass. It asserted Pro superset-of-pass, which #337 records as untrue for the L rung; it now states the V338 dormancy rule instead",
+    },
+    {
       // FIX ROUND 2. This key is a whole SENTENCE quoting the extra-organisation
       // rate, not a label — and the "row labels" rule below formally certified
       // it exempt while it still said "half", bare, in all four locales. Its
@@ -882,7 +893,7 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
       why: "a full sentence in the matrix quoting the extra-organisation rate — pinned by task 7 and scanned by HALF_CLAIM_KEYS; it is emphatically not a row label",
     },
     {
-      match: /^pricing\.(matrix|table)\./,
+      match: /^pricing\.(?!matrix\.orgs\.max_owned\.note$)(matrix|table)\./,
       pinned: false,
       why: "row labels and column headers of the comparison table. Every VALUE in that table is rendered live from plan_entitlements by lib/pricing-matrix.ts, so the labels name features rather than asserting anything about them. This rule once swallowed pricing.matrix.orgs.max_owned.note, a full sentence quoting a rate, so the exempt side is now scanned by the claim vocabularies too",
     },
@@ -902,7 +913,7 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
       why: "the 'talk to us' prompt. It NAMES SSO, which is on the coming-soon roadmap, but asks whether the reader needs it rather than stating we ship it — an availability claim here would have to be pinned like soonLabel",
     },
     {
-      match: /^pricing\.\w+\.(name|cta|ctaSignedIn|included|popular|label)$/,
+      match: /^pricing\.(?!addons\.label$)\w+\.(name|cta|ctaSignedIn|popular|label)$/,
       pinned: false,
       why: "tier names, button labels and state text — they identify a card, they do not describe what it grants",
     },
@@ -918,18 +929,32 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
     expect(keys.length, "no pricing keys found — the key shape changed").toBeGreaterThan(100);
     const pinned = new Set(APPROVED_DICTIONARY_COPY.map((e) => e.key));
     const unclassified: string[] = [];
+    const ambiguous: string[] = [];
     const unpinned: string[] = [];
     const used = new Set<number>();
     for (const key of keys) {
-      const index = PRICING_KEY_DISPOSITION.findIndex((rule) => rule.match.test(key));
-      if (index === -1) {
+      // EVERY match, not the first. `findIndex` made "exactly one rule" a claim
+      // the test never checked: a broad early exempt rule silently swallowed
+      // later keys, which is how the matrix note came to be certified a "row
+      // label" while it quoted a rate.
+      const matches = PRICING_KEY_DISPOSITION.map((rule, i) => (rule.match.test(key) ? i : -1)).filter(
+        (i) => i !== -1,
+      );
+      if (matches.length === 0) {
         unclassified.push(key);
         continue;
       }
-      used.add(index);
-      if (PRICING_KEY_DISPOSITION[index]!.pinned && !pinned.has(key)) unpinned.push(key);
+      if (matches.length > 1) {
+        ambiguous.push(
+          `${key}: matched by ${matches.map((i) => PRICING_KEY_DISPOSITION[i]!.match.source).join(" AND ")}`,
+        );
+        continue;
+      }
+      used.add(matches[0]!);
+      if (PRICING_KEY_DISPOSITION[matches[0]!]!.pinned && !pinned.has(key)) unpinned.push(key);
     }
     expect(unclassified, "pricing keys matching no disposition rule").toEqual([]);
+    expect(ambiguous, "pricing keys matched by more than one rule — the classification is not a decision").toEqual([]);
     expect(unpinned, "classified as pinned but absent from APPROVED_DICTIONARY_COPY").toEqual([]);
     // …and the inverse: a rule that matches nothing is decoration, and every
     // reason must be a real one.
@@ -945,6 +970,97 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
       ["pricing.plus.newBadge", "pricing.somethingElse"].filter((k) =>
         PRICING_KEY_DISPOSITION.some((rule) => rule.match.test(k)),
       ),
+    ).toEqual([]);
+  });
+
+  /**
+   * ── AND THE EXEMPT SIDE IS SCANNED, NOT TRUSTED (fix round 2, blocking 3) ──
+   *
+   * Classifying a key exempt records a decision about what it says TODAY. It
+   * does nothing about what it says next month. Measured 0/2 in all four
+   * locales: a permanence falsehood dropped into `pricing.community.note` and a
+   * free-forever claim into `pricing.matrix.orgs.max_owned.note` were both
+   * green, because "exempt" was the end of the conversation.
+   *
+   * So every exempt key is run through the SAME per-locale vocabularies the
+   * pinned keys face. An exemption that stops being true now reds — which is the
+   * fix already prescribed for `FAQ_EXEMPT` on #338, applied here at the same
+   * time so the two sides of this file do not drift apart again.
+   *
+   * Scoped to the claim families that are FALSE of the subjects on this page:
+   * pass permanence and the bare half-rate. Community's "free forever" is TRUE,
+   * so the permanence scan is pointed at values that mention the pass or an
+   * upgrade rather than at every string — the measured lesson from the
+   * repo-wide sweep that found 18 hits of which 17 were true.
+   */
+  it("re-scans every exempt pricing key, so an exemption that stops being true reds", () => {
+    const pinned = new Set(APPROVED_DICTIONARY_COPY.map((e) => e.key));
+    const exemptKeys = Object.keys(load("en", "marketing")).filter(
+      (k) =>
+        k.startsWith("pricing.") &&
+        !pinned.has(k) &&
+        !FAQ_PASS_SCOPED.includes(k) &&
+        !HALF_CLAIM_KEYS.includes(k),
+    );
+    expect(exemptKeys.length, "no exempt keys to re-scan — this rule examines nothing").toBeGreaterThan(50);
+
+    const values: LocalisedValue[] = exemptKeys.flatMap((key) => across("marketing", key));
+    const faults: string[] = [];
+    for (const { locale, key, value } of values) {
+      if (value.length === 0) continue;
+      const claims = LOCALE_CLAIMS[locale];
+      // The half-rate claim is false BARE on every surface, whoever writes it.
+      if (claims.halfClaim.test(value) && !claims.atMostHalf.test(value)) {
+        faults.push(`${locale} ${key}: quotes half the base rate with no "no more than" qualifier`);
+      }
+      // Pass permanence, attributed CLAUSE BY CLAUSE. A value-level subject test
+      // was measured wrong on the first run: `pricing.meta.description` says
+      // "Free forever for small clubs" (Community — TRUE) in the same paragraph
+      // as "Upgrade a single event from $29", so the pass subject in one clause
+      // vouched for a permanence hit in another, and all four locales redded on
+      // honest copy. That is the 18-hits-17-true false-positive class, and a
+      // guard that rejects true prose teaches its next editor to route around it.
+      for (const clause of valueClauses(value)) {
+        if (!claims.passSubject.test(clause)) continue;
+        if (!claims.permanence.some((p) => p.test(clause))) continue;
+        faults.push(
+          `${locale} ${key}: exempt, but "${clause.slice(0, 60)}" now claims the pass has unbounded duration`,
+        );
+        break;
+      }
+    }
+    expect(faults).toEqual([]);
+
+    // …and the scan FIRES. Both reviewer probes, in every locale, against the
+    // real exempt keys they were dropped into.
+    const probe = (key: string, add: Record<DictionaryLocale, string>) =>
+      DICTIONARY_LOCALES.flatMap((locale) => {
+        const value = `${load(locale, "marketing")[key] ?? ""} ${add[locale]}`;
+        const claims = LOCALE_CLAIMS[locale];
+        const half = claims.halfClaim.test(value) && !claims.atMostHalf.test(value);
+        const permanence = valueClauses(value).some(
+          (clause) =>
+            claims.passSubject.test(clause) && claims.permanence.some((p) => p.test(clause)),
+        );
+        return half || permanence ? [] : [`${locale} ${key}`];
+      });
+    expect(
+      probe("pricing.community.note", {
+        en: "Your Event Pass upgrade lasts forever.",
+        es: "La mejora del pase dura para siempre.",
+        fr: "L’amélioration du pass dure pour toujours.",
+        nl: "De pass-upgrade blijft voor altijd van jou.",
+      }),
+      "a permanence falsehood in an exempt key must red, in every locale",
+    ).toEqual([]);
+    expect(
+      probe("pricing.addons.label", {
+        en: "Each extra organisation is half the base rate.",
+        es: "Cada organización adicional cuesta a mitad de la tarifa base.",
+        fr: "Chaque organisation supplémentaire coûte à moitié du tarif de base.",
+        nl: "Elke extra organisatie kost voor de helft van het basistarief.",
+      }),
+      "a bare half-rate claim in an exempt key must red, in every locale",
     ).toEqual([]);
   });
 

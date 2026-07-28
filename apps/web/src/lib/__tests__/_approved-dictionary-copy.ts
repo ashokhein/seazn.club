@@ -228,6 +228,17 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
       nl: "Geen kaart nodig. Upgrade één evenement of de hele club wanneer die groeit.",
     },
   },
+  {
+    file: "marketing",
+    key: "pricing.pass.included",
+    why: "the Event Pass column when a PAID org views it (pass-cta.ts `included`). It said \"Your plan already includes everything here\", which asserts Pro superset-of-pass — the same claim #337 records as INTENDED BUT NOT TRUE TODAY: entrants.per_division.max is null (unlimited) on event_pass_l against 256 on pro, so an L pass really would lift a Pro org’s entrant cap. pricing.faq.upgraded.a was already rewritten in this wave to assert neither; this string was the last surface still asserting it, and PRICING_KEY_DISPOSITION exempted it as a button label whose stated reason was “they identify a card, they do not describe what it grants”. Replaced with the reason that IS true and resolver-backed: V338 org_has_feature requires the resolved plan to be ‘community’ for the pass arm to apply, so a pass held by a paid org sits dormant — the same wording pricing.faq.upgraded.a uses.",
+    text: {
+      en: "Your plan applies across the whole organisation, so a pass would sit dormant.",
+      es: "Tu plan se aplica a toda la organización, así que un pase quedaría inactivo.",
+      fr: "Votre formule s’applique à toute l’organisation : un pass resterait en veille.",
+      nl: "Je abonnement geldt voor de hele organisatie, dus een pass zou slapend blijven.",
+    },
+  },
   // ── Every /pricing string that quotes MONEY or an ALLOWANCE (fix round 1) ──
   //
   // Added after a fresh probe set — written once the card rules were final —
