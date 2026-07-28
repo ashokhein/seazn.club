@@ -275,11 +275,14 @@ test.describe.serial("billing groups", () => {
     const dialog = page.getByRole("alertdialog");
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("there is nothing to pay now");
-    // The two attach bodies must never be confusable — this is the pair the
+    // The attach bodies must never be confusable — this is the pair the
     // customer reads immediately before spending money. Asserted against the
-    // wording the CHARGED body actually uses: "charged now" no longer appears
-    // anywhere, so a negative on it passed whatever the dialog said.
-    await expect(dialog).not.toContainText("added to your next invoice");
+    // phrase unique to the CHARGED body. NOT "added to your next invoice":
+    // the free body now says "nothing is added to your next invoice" (the
+    // renewal bound, #299 round 4) and CONTAINS that substring, so the
+    // negative would have failed on true copy. And not "charged now", which
+    // left the product entirely and made the negative vacuous.
+    await expect(dialog).not.toContainText("your bill goes up by");
     await page.keyboard.press("Escape");
   });
 

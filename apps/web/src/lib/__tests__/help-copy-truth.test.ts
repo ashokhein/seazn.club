@@ -1493,6 +1493,29 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
     expect(ui["billing.group.attach.confirmFree"]).toMatch(/from your next renewal onwards/i);
     // groups.md already said the trial thing; the two must agree.
     expect(groups).toMatch(/rides the same trial to the same end date and costs nothing now/i);
+
+    // THE THREE BODIES MUST STAY DISCRIMINABLE, and the e2e negatives assert
+    // that by string. This is where those strings are kept honest.
+    //
+    // Twice now a negative here has been written against a phrase that stopped
+    // discriminating: `not.toContainText("charged now")` went vacuous when the
+    // phrase left the product, and `not.toContainText("added to your next
+    // invoice")` would have failed on TRUE copy the moment the free body
+    // gained "nothing is added to your next invoice". A substring negative is
+    // only as good as its exclusivity, so exclusivity is asserted.
+    const bodies = {
+      charge: ui["billing.group.attach.confirmCharge"]!,
+      free: ui["billing.group.attach.confirmFree"]!,
+      trial: ui["billing.group.attach.confirmTrial"]!,
+    };
+    const DISCRIMINATOR = "your bill goes up by";
+    expect(bodies.charge, "the e2e discriminator left the charged body").toContain(DISCRIMINATOR);
+    expect(bodies.free, "the e2e negative would now fail on true copy").not.toContain(DISCRIMINATOR);
+    expect(bodies.trial, "the e2e negative would now fail on true copy").not.toContain(
+      DISCRIMINATOR,
+    );
+    // …and all three really are distinct sentences, so no pair can be confused.
+    expect(new Set(Object.values(bodies)).size, "two attach bodies are identical").toBe(3);
   });
 
   // CLAIM: "Extra seats have no control in Settings yet" / "Size packs have no
