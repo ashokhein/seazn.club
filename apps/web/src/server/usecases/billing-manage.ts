@@ -332,9 +332,17 @@ export interface PassPurchaseRow {
    * SPEC-4 §9: the pass has stopped lifting the plan (its competition is
    * completed/archived, or its end date passed the 7-day grace). Computed from
    * `isPassLocked` — the ONE place the lock rule lives (entitlements.ts, T1) —
-   * so the Active/Ended badge the billing page renders can never disagree with
-   * what the resolver actually enforces. Finished events stay readable; the
+   * so the Active/Ended badge the billing page renders cannot disagree with the
+   * resolver about the RULE. Finished events stay readable; the
    * paid-for-running lifts are what switch off.
+   *
+   * "Cannot disagree" was written here as unqualified, and it is not: this is
+   * computed uncached per request while `resolve()` caches for
+   * ENT_TTL_SECONDS = 300, so for up to five minutes after a competition ends
+   * the badge can read Ended while the resolver still grants. Bounded,
+   * self-correcting, and in the SAFE direction — the badge is ahead of the
+   * grant, never behind it, which is the opposite of #301. Naming the bound
+   * beats a comment that overstates its own guarantee on a page about money.
    */
   ended: boolean;
 }
