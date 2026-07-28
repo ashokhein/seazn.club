@@ -34,7 +34,11 @@ import stripePlans from "@/config/stripe-plans.json";
 import { sql } from "@/lib/db";
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
 import * as copyTruth from "@/lib/copy-truth";
+import { APPROVED_DICTIONARY_COPY } from "./_approved-dictionary-copy";
 import {
+  approvedDictionaryFaults,
+  sourceControlCharacterFaults,
+  unexportedPatternFaults,
   DICTIONARY_LOCALES,
   type DictionaryLocale,
   type FeatureGrants,
@@ -135,7 +139,8 @@ const FAQ_EXEMPT: Record<string, string> = {
   "pricing.faq.card.a": "about payment details; its 'free forever' is Community's, and true",
   "pricing.faq.trialEnd.a": "about the trial ending; makes no pass-duration claim",
   "pricing.faq.fees.a": "about the fee ladder; a rate claim, guarded by the help-tree fee-lock rules",
-  "pricing.faq.groups.a": "about billing groups",
+  "pricing.faq.groups.a":
+    "about billing groups — makes no pass-duration claim, but IS scanned for the half-rate claim via HALF_CLAIM_KEYS (its bare 'half your plan's rate' was live for two rounds)",
   "pricing.faq.currencies.a": "about currency pinning",
   "pricing.faq.annual.a": "about annual billing",
   "pricing.faq.cancel.a": "about cancelling Pro; no pass claim",
@@ -151,6 +156,23 @@ const PASS_CREDIT_VALUES = across("marketing", "pricing.faq.eventPass.a");
  *  red on honest copy. (Measured: it carries no permanence hit in any locale
  *  today, in any of the four vocabularies.) */
 const PLUS_VALUES = across("marketing", "pricing.faq.proPlus.a");
+
+/**
+ * THE HALF-RATE CLAIM HAS ITS OWN KEY AXIS, and this is why.
+ *
+ * `localeHalfClaimFaults` was only ever called with `PLUS_VALUES`, so
+ * `pricing.faq.groups.a` — which says "half your plan's rate", bare, in all four
+ * locales, three FAQ cards away — was never scanned. `en.halfClaim` literally
+ * spells that phrase out; the pattern existed and nothing pointed it at the key.
+ *
+ * The pass-permanence axis had been pinned last round. This one had not, and a
+ * per-family axis is the only thing that makes "which keys make THIS claim" a
+ * decision rather than an oversight.
+ */
+const HALF_CLAIM_KEYS = ["pricing.faq.proPlus.a", "pricing.faq.groups.a"];
+const HALF_CLAIM_VALUES: LocalisedValue[] = HALF_CLAIM_KEYS.flatMap((key) =>
+  across("marketing", key),
+);
 
 /**
  * Layer 3 — the literal prose this task deleted, from all four files, checked
@@ -311,6 +333,63 @@ const REWORDINGS: Record<DictionaryLocale, string[]> = {
   ],
 };
 
+/**
+ * A FRESH adversarial set, written AFTER this round's rules were final —
+ * ordinary editorial prose, including the five phrasings the reviewer cited.
+ * No rule was adjusted to accommodate any of it. See the two tests that
+ * measure against it: the vocabulary catches 1, the approved-wording gate 40.
+ */
+const FRESH: Record<DictionaryLocale, string[]> = {
+  en: [
+    "You will never lose it.",
+    "There is no use-by date on a pass.",
+    "Buy it once and it is settled.",
+    "The upgrade is not time-boxed.",
+    "Nothing takes it away later.",
+    "It is a one-and-done purchase that stands.",
+    "The pass will still be there next season.",
+    "We do not claw the upgrade back.",
+    "It outlives the event itself.",
+    "Consider it yours from then on.",
+  ],
+  es: [
+    "El pase no tiene fecha de caducidad.",
+    "Nunca lo vas a perder.",
+    "Cómpralo una vez y asunto resuelto.",
+    "La mejora no está limitada en el tiempo.",
+    "Nada te lo quita después.",
+    "El pase seguirá ahí la próxima temporada.",
+    "No retiramos la mejora.",
+    "Sobrevive al propio evento.",
+    "Considéralo tuyo a partir de entonces.",
+    "La mejora no se retira jamás.",
+  ],
+  fr: [
+    "Le pass ne s'éteint pas.",
+    "Vous ne le perdrez jamais.",
+    "Achetez-le une fois et c'est réglé.",
+    "L'amélioration n'est pas limitée dans le temps.",
+    "Rien ne vous le retire ensuite.",
+    "Le pass sera encore là la saison prochaine.",
+    "Nous ne reprenons pas l'amélioration.",
+    "Il survit à l'événement lui-même.",
+    "Considérez-le comme acquis dès lors.",
+    "Le pass n'a pas de date de péremption.",
+  ],
+  nl: [
+    "De pass wordt nooit ingetrokken.",
+    "Je raakt hem nooit kwijt.",
+    "Koop hem één keer en het is geregeld.",
+    "De upgrade is niet in tijd beperkt.",
+    "Niets neemt hem later weg.",
+    "De pass staat er volgend seizoen nog.",
+    "Wij halen de upgrade niet terug.",
+    "Hij overleeft het evenement zelf.",
+    "Beschouw hem vanaf dan als de jouwe.",
+    "De pass heeft geen houdbaarheidsdatum.",
+  ],
+};
+
 const ADVERSARIAL: Record<DictionaryLocale, string[]> = {
   en: [
     "The pass has no end.",
@@ -467,6 +546,15 @@ const KNOWN_POSITIVES: string[] = [
   "credits per month",
   "25 credits a month",
   "a recurring top-up",
+  // M4: the recurring family beyond monthly — a yearly or weekly repeat is the
+  // same falsehood about a one-time grant.
+  "25 AI credits annually",
+  "an annual credit grant",
+  "25 credits a year",
+  "credits weekly",
+  "credits every week",
+  "the grant renews",
+  "credits each billing period",
   "créditos mensuales",
   "créditos al mes",
   "créditos cada mes",
@@ -517,6 +605,10 @@ const KNOWN_POSITIVES: string[] = [
   "dat tarief staat permanent vast",
   // ── Fee ladder rows ──
   "| Community | 8% |",
+  // ── Seed STRUCTURE, not copy: NON_SECTION_KEY names the seed keys that are
+  //    developer notes or scalars rather than product lists. ──
+  "$comment_tiers",
+  "currency",
   // ── Permanence vocabulary whose exemplars this wave DELETED from the copy ──
   //
   // These are the reason the corpus exists rather than being derived from the
@@ -616,6 +708,41 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
     }
   });
 
+  /**
+   * THE GATE. Every rule below it reads a sentence and decides whether it is
+   * false; this one asks only whether the sentence is the approved sentence.
+   *
+   * It is first because it is the rule that does not depend on anyone having
+   * imagined the right falsehood — and because the falsehood that survived two
+   * rounds of vocabulary widening (`pricing.faq.groups.a`) had a pattern
+   * written for it already. Nothing had pointed the pattern at that key; a
+   * pinned string needs no one to remember.
+   */
+  it("matches the approved wording, in every locale", () => {
+    expect(
+      approvedDictionaryFaults(APPROVED_DICTIONARY_COPY, (file, locale) => load(locale, file)),
+    ).toEqual([]);
+  });
+
+  // …and the gate covers the keys that make the claims. An inventory that has
+  // quietly stopped including a key is the failure this whole round was about.
+  it("pins every key that makes a pass or rate claim", () => {
+    const pinned = new Set(APPROVED_DICTIONARY_COPY.map((e) => e.key));
+    for (const [, key] of PASS_BOUND_KEYS) {
+      expect(pinned.has(key), `${key} is scanned for pass claims but not pinned`).toBe(true);
+    }
+    for (const key of HALF_CLAIM_KEYS) {
+      expect(pinned.has(key), `${key} makes a half-rate claim but is not pinned`).toBe(true);
+    }
+    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(32);
+    // Every entry must say what it claims and what decides it — a pin with no
+    // `why` is a snapshot, and a snapshot teaches the next editor to re-record
+    // rather than to re-check.
+    for (const entry of APPROVED_DICTIONARY_COPY) {
+      expect(entry.why.length, `${entry.key} has no source-of-truth note`).toBeGreaterThan(40);
+    }
+  });
+
   it("never sells the Event Pass as permanent, in any language, and says what bounds it", () => {
     expect(localePassBoundFaults(PASS_BOUND_VALUES)).toEqual([]);
   });
@@ -637,7 +764,8 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
     expect(shape, "eur/aud land on exact halves while usd is 47.4% — only 'no more than half' is true").toBe(
       "atMost",
     );
-    expect(localeHalfClaimFaults(PLUS_VALUES, shape)).toEqual([]);
+    expect(localeHalfClaimFaults(HALF_CLAIM_VALUES, shape)).toEqual([]);
+    expect(HALF_CLAIM_VALUES).toHaveLength(HALF_CLAIM_KEYS.length * DICTIONARY_LOCALES.length);
   });
 });
 
@@ -764,6 +892,66 @@ describe("the dictionary guards survive a rewording, in every locale", () => {
    * generalise; "caduca" does not.
    */
 
+  /**
+   * THE HONEST NUMBER, and the reason this suite's primary rule is now a pinned
+   * string rather than a vocabulary.
+   *
+   * Written AFTER the rules were final for this round — ordinary editorial
+   * prose, including the five phrasings the reviewer cited. No rule was
+   * adjusted to accommodate any of it. Measured: **1 of 40**, with en, es and
+   * fr at zero.
+   *
+   * That is not a bug to be fixed by widening. It is the third and fourth
+   * independent measurement of the same property: a rule that reads the
+   * sentence scores on the examples its author imagined. Task 3 went 12/12 to
+   * 6/30, task 4 went 16/16 to 0/32 to 1/40. Every round of widening has moved
+   * the tuned number and left the fresh one on the floor.
+   *
+   * The rate is asserted so that it stays VISIBLE. If someone widens the
+   * vocabulary the number rises and they must update it deliberately — which is
+   * the only way an improvement here is distinguishable from a coincidence.
+   */
+  it("records what the vocabulary actually catches on prose it has never seen", () => {
+    const detected = Object.entries(FRESH).flatMap(([locale, lines]) =>
+      lines.filter(
+        (s) =>
+          localePassBoundFaults(v(locale as DictionaryLocale, `${BOUNDED[locale as DictionaryLocale]} ${s}`))
+            .length > 0,
+      ),
+    );
+    const total = Object.values(FRESH).flat().length;
+    expect(total).toBe(40);
+    expect(
+      detected.length,
+      "the vocabulary's measured recall on unseen prose — update deliberately, and say why",
+    ).toBe(1);
+  });
+
+  /**
+   * …AND WHAT ACTUALLY PROTECTS THE SHIPPED COPY.
+   *
+   * The same 40 sentences, appended to the real approved values: the
+   * approved-wording gate reds on **40 of 40**, because it does not care how
+   * the falsehood is phrased. This is the whole argument for the architecture,
+   * made as a measurement rather than an assertion.
+   */
+  it("the approved-wording gate catches all 40, where the vocabulary caught 1", () => {
+    const entry = APPROVED_DICTIONARY_COPY.find((e) => e.key === "pricing.faq.eventPass.a")!;
+    const missed: string[] = [];
+    for (const [locale, lines] of Object.entries(FRESH) as Array<[DictionaryLocale, string[]]>) {
+      for (const line of lines) {
+        const tampered = `${entry.text[locale]} ${line}`;
+        const faults = approvedDictionaryFaults([entry], (file, l) =>
+          l === locale
+            ? { ...load(l, file), [entry.key]: tampered }
+            : load(l, file),
+        );
+        if (faults.length === 0) missed.push(`${locale}: ${line}`);
+      }
+    }
+    expect(missed, `the gate missed: ${missed.join(" | ")}`).toEqual([]);
+  });
+
   it("detects permanence claims written to DEFEAT the vocabulary, not to match it", () => {
     const scores: string[] = [];
     for (const locale of DICTIONARY_LOCALES) {
@@ -802,6 +990,34 @@ describe("the dictionary guards survive a rewording, in every locale", () => {
   });
 
   /**
+   * NEW-2, the regression fix round 1 introduced and this round removes.
+   *
+   * Round 1 answered "is this claim about the rate?" by DROPPING any clause
+   * that named a rate and not the pass. Pass copy quotes percentages
+   * constantly — `pricing.faq.eventPass.a` carries 5% in every locale — so the
+   * exemption sat exactly on the surface it was guarding, and these nine went
+   * GREEN (they had all redded before round 1). The repair narrows the MATCH
+   * instead: a permanence hit is attributed to the rate only when no
+   * coordinator and no pass noun intervene.
+   */
+  it("attributes a permanence claim to the pass even when the clause quotes a rate", () => {
+    const missed = (
+      [
+        ["en", "It is a one-off at the 5% rate and it lasts forever."],
+        ["en", "Your 5% fee and the bigger limits it brings never end."],
+        ["en", "The 5% rate applies and it is yours to keep."],
+        ["es", "Es un pago único al 5% de comisión y dura para siempre."],
+        ["es", "Tu comisión del 5% y los límites que trae no caducan nunca."],
+        ["fr", "C'est un paiement unique à 5 % de frais et cela dure pour toujours."],
+        ["fr", "Vos 5 % de frais et les limites qu’il apporte ne se terminent jamais."],
+        ["nl", "Jouw 5% kosten en de ruimere limieten kennen geen einde."],
+        ["nl", "Het 5% tarief geldt en het blijft voor altijd van jou."],
+      ] as Array<[DictionaryLocale, string]>
+    ).filter(([locale, s]) => localePassBoundFaults(v(locale, `${BOUNDED[locale]} ${s}`)).length === 0);
+    expect(missed, `still exempted: ${missed.map(([, s]) => s).join(" | ")}`).toEqual([]);
+  });
+
+  /**
    * "THE PASS NEVER ENDS" IS FALSE; "THE LOCKED RATE NEVER CHANGES" IS TRUE.
    *
    * The permanence vocabulary contains `for good`, `permanentemente`,
@@ -813,6 +1029,10 @@ describe("the dictionary guards survive a rewording, in every locale", () => {
   it("allows a permanence claim about the LOCKED RATE, whose subject is not the pass", () => {
     for (const [locale, rateClause] of [
       ["en", "once the first paid entry lands, that 5% rate is locked for good"],
+      // No percentage anywhere in this one. All three round-1 fixtures happened
+      // to carry a literal 5%, which hid en.rateSubject having no bare `fee`.
+      ["en", "Its fee stays locked for good once a first entry is paid"],
+      ["en", "The platform fee is fixed permanently after the first paid entry"],
       ["es", "tras la primera inscripción de pago, esa comisión del 5% queda fijada permanentemente"],
       ["fr", "dès la première inscription payante, ce taux de 5 % est verrouillé définitivement"],
       ["nl", "na de eerste betaalde inschrijving staat dat tarief van 5% permanent vast"],
@@ -1171,6 +1391,7 @@ describe("the dictionary guards survive a rewording, in every locale", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe("every pattern in @/lib/copy-truth does something", () => {
   const patterns = collectPatterns(copyTruth as unknown as Record<string, unknown>);
+  const MODULE_SOURCE = readFileSync("src/lib/copy-truth.ts", "utf8");
 
   it("finds patterns everywhere they are declared, not just at the top level", () => {
     expect(patterns.length, "the walk found almost nothing — its shape assumption broke").toBeGreaterThan(
@@ -1195,6 +1416,22 @@ describe("every pattern in @/lib/copy-truth does something", () => {
   // it matches, which is the cheapest possible proof that it does something.
   it("fires on at least one known-positive fixture, every one of them", () => {
     expect(inertPatternFaults(patterns, KNOWN_POSITIVES)).toEqual([]);
+  });
+
+  // NEW-1: `collectPatterns` walks module EXPORTS, so a top-level pattern that is
+  // not exported is invisible to every rule above. Seven were — including
+  // DURATION_CLAIM, which this check cites as its own reason for existing.
+  // Measured: a literal U+0001 in DURATION_CLAIM left this suite 36/36 green,
+  // while the same byte in an exported pattern redded three tests.
+  it("exports every top-level pattern, so none is exempt from the checks above", () => {
+    expect(unexportedPatternFaults(MODULE_SOURCE)).toEqual([]);
+  });
+
+  // …and the control-character scan run over the RAW SOURCE, which reaches what
+  // the compiled-pattern scan cannot: non-exported consts, String.raw fragments
+  // that are only ever composed into other patterns, and ordinary prose.
+  it("has no literal control character anywhere in its source", () => {
+    expect(sourceControlCharacterFaults(MODULE_SOURCE)).toEqual([]);
   });
 
   // …and the corpus itself must not rot into a list nothing reads: if a fixture

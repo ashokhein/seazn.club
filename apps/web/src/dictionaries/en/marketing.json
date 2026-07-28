@@ -198,7 +198,7 @@
   "pricing.faq.fees.q": "Can I charge entry fees?",
   "pricing.faq.fees.a": "Yes, on every plan — Community included. What your plan buys is a cheaper cut: the platform fee is 8% on Community, 5% on a competition with an Event Pass, 2% on Pro and 1% on Pro Plus. Connect your club's Stripe account and fees from online registration are paid out directly to the club.",
   "pricing.faq.groups.q": "Can one subscription cover more than one organisation?",
-  "pricing.faq.groups.a": "Yes. A subscription is a billing group: it can hold several organisations under one card and one invoice, and each organisation after the first costs half your plan’s rate. Every organisation in the group runs on the group’s plan, so joining a Pro Plus group takes an organisation’s entry-fee rate from 8% to 1%. Payouts are untouched — each organisation keeps its own Stripe account and its own bank details.",
+  "pricing.faq.groups.a": "Yes. A subscription is a billing group: it can hold several organisations under one card and one invoice, and each organisation after the first costs no more than half your plan’s rate. Every organisation in the group runs on the group’s plan, so joining a Pro Plus group takes an organisation’s entry-fee rate from 8% to 1%. Payouts are untouched — each organisation keeps its own Stripe account and its own bank details.",
   "pricing.faq.currencies.q": "Which currencies can I pay in?",
   "pricing.faq.currencies.a": "USD, EUR, GBP, INR and AUD — use the switcher above. Your first checkout pins the currency for future renewals.",
   "pricing.faq.annual.q": "Is there an annual discount?",

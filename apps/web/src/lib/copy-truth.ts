@@ -49,7 +49,7 @@ export interface DescribedEntry {
 }
 
 /** Keys of the seed that are developer notes or scalars, never a product list. */
-const NON_SECTION_KEY = /^\$comment|^currency$/;
+export const NON_SECTION_KEY = /^\$comment|^currency$/;
 
 /**
  * Every `product.description` in the seed, found by WALKING it.
@@ -312,6 +312,16 @@ export const RECURRING_GRANT_PATTERNS = [
   /\bper\s+month\b/i,
   /\ba\s+month\b/i,
   /\brecurring\b/i,
+  // Fix round 2 (M4): the list was MONTHLY-ONLY, but the claim being guarded is
+  // "the grant repeats" — a yearly or weekly framing is the same falsehood, and
+  // the pass grants once. Verified against all 12 seed descriptions: none of
+  // these fire on true copy today.
+  /\b(annual|annually|yearly)\b/i,
+  /\b(a|per|every|each)\s+year\b/i,
+  /\b(weekly|quarterly|daily)\b/i,
+  /\b(a|per|every|each)\s+(week|quarter|day)\b/i,
+  /\b(renews?|renewing|renewal|tops?\s+up\s+again|again\s+each)\b/i,
+  /\b(per|each|every)\s+billing\s+(period|cycle)\b/i,
 ];
 
 /**
@@ -853,8 +863,8 @@ export function statesFeeLock(block: string): boolean {
  *  - `feeLockStatedFaults` stays, because a topic rule is vacuous on an article
  *    that never raises the topic.
  */
-const RATE_MENTION = new RegExp(FEE_SUBJECT, "i");
-const PASS_ENDING_MENTION =
+export const RATE_MENTION = new RegExp(FEE_SUBJECT, "i");
+export const PASS_ENDING_MENTION =
   /\b(after|once|when)\b[^.;:!?]*\b(ends?|ended|ending|closes?|closed|finish\w*|over|expir\w*|stops?|stopped|lapses?|archiv\w*|completed?)\b|(?:\b(?:revok\w+|refund\w*|chargeback)\b[^.;:!?]*\bpass\b|\bpass\b[^.;:!?]*\b(?:revok\w+|refund\w*|chargeback)\b)|\b(no\s+longer|later\s+entrants?|downgrad\w+|when\s+the\s+pass|after\s+the\s+pass|after\s+(?:that|then|it)|pass\s+(?:ends?|stops?|expires?|lapses?|does))\b/i;
 
 /** Is this sentence about the entry-fee rate once the pass is no longer in
@@ -916,7 +926,7 @@ export function unqualifiedFeeReversionFaults(label: string, markdown: string): 
 // one side, and `% ` has none — `/\b5\s*%\b/` can never match "5% as". That is
 // how the first draft of this rule returned no fault for the very sentence it
 // was written against.
-const NAMES_A_PARTICULAR_RATE =
+export const NAMES_A_PARTICULAR_RATE =
   /\b\d+(?:\.\d+)?\s*%|\b\d+(?:\.\d+)?\s*per\s*cent\b|\b\d+(?:\.\d+)?\s*percent\b|\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+per\s*cent\b|\b(?:the\s+)?(?:Event\s+)?pass(?:'s|’s)?\s+(?:own\s+|cheaper\s+|discounted\s+)?(?:rate|fee|percentage)\b|\b(?:cheaper|discounted)\s+rate\b/i;
 
 export function lockedRateConstantFaults(label: string, passProse: string): string[] {
@@ -1045,7 +1055,7 @@ export const DURATION_EXTENT_FORMS: Array<[form: string, pattern: RegExp]> = [
  * only decides whether a sentence must be BOUNDED, and every bounded phrasing
  * satisfies that requirement trivially.
  */
-const DURATION_CLAIM = new RegExp(
+export const DURATION_CLAIM = new RegExp(
   [
     // A duration ADVERBIAL — "for <a stretch of time>". Round 1 used
     // "<verb> … for", which matched "bought outright FOR THAT EVENT" and three
@@ -1309,7 +1319,7 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
     creditLeadership: /\b(largest|biggest|highest)\b[^,.;]{0,30}\bcredit/i,
     halfClaim: /\bhalf\s+the\s+base\s+rate\b|\bhalf\s+(your|the)\s+plan['’]s\s+rate\b/i,
     atMostHalf: /\b(no\s+more\s+than|at\s+most|up\s+to)\s+half\b/i,
-    rateSubject: /\b(platform\s+fee|entry[-\s]fee|fee\s+rate|the\s+fee|rate)\b|\d+(\.\d+)?\s*%/i,
+    rateSubject: /\b(platform\s+fees?|entry[-\s]fees?|fees?|rates?|percentage|commission)\b|\d+(\.\d+)?\s*%/i,
     passSubject: /\b(pass|passes|upgrade[ds]?|competition|event)\b/i,
   },
   es: {
@@ -1383,7 +1393,7 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
       ["support.priority", claim(String.raw`\bsoporte\s+priorit\w+\b`)],
     ],
     creditLeadership: claim(String.raw`\b(mayor|más\s+grande)\b[^,.;]{0,30}\bcréditos?\b`),
-    halfClaim: claim(String.raw`\bmitad\s+de\s+la\s+tarifa\s+base\b|\ba\s+mitad\s+de\s+(precio|tarifa)\b`),
+    halfClaim: claim(String.raw`\bmitad\s+de\s+(la\s+tarifa\s+base|la\s+tarifa\s+de\s+tu\s+plan|precio|tarifa)\b`),
     atMostHalf: claim(String.raw`\b(no\s+más\s+de|como\s+máximo|a\s+lo\s+sumo|máximo)\s+(la\s+)?mitad\b`),
     rateSubject: claim(String.raw`\b(comisi\w*|tarifa|tasa|porcentaje)\b|\d+(\.\d+)?\s*%`),
     passSubject: claim(String.raw`\b(pase|pases|mejora\w*|competici\w*|evento)\b`),
@@ -1460,8 +1470,8 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
       ["api.write", claim(String.raw`\bAPI\b[^,.;]{0,25}\bécriture\b|\bécriture\b[^,.;]{0,25}\bAPI\b`)],
       ["support.priority", claim(String.raw`\b(assistance|support)\s+prioritaire\b`)],
     ],
-    creditLeadership: claim(String.raw`\bplus\s+(grosse|grande|important\w*)\b[^,.;]{0,30}\bcrédits?\b`),
-    halfClaim: claim(String.raw`\bmoitié\s+du\s+tarif\s+de\s+base\b|\bmoitié\s+(du\s+)?prix\b`),
+    creditLeadership: claim(String.raw`\bplus\s+(grosse|grande|élevée|important\w*)\b[^,.;]{0,30}\bcrédits?\b|\bcrédits?\b[^,.;]{0,30}\bla\s+plus\s+(élevée|grande|grosse|important\w*)\b`),
+    halfClaim: claim(String.raw`\bmoitié\s+du\s+(tarif\s+de\s+base|tarif\s+de\s+votre\s+forfait|prix)\b|\bmoitié\s+prix\b`),
     atMostHalf: claim(String.raw`\b(au\s+plus|pas\s+plus\s+de|au\s+maximum|maximum)\s+(la\s+)?moitié\b`),
     rateSubject: claim(String.raw`\b(frais|commission|taux|pourcentage)\b|\d+(\.\d+)?\s*%`),
     passSubject: claim(String.raw`\b(pass|am\u00e9lioration\w*|comp\u00e9tition\w*|\u00e9v\u00e9nement\w*)\b`),
@@ -1474,7 +1484,7 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
     // neither is a prefix of the other and a single stem silently covers half
     // the paradigm.
     permanence: [
-      String.raw`\blevensduur\b`,
+      String.raw`\blevensduur\b(?!\s+van\s+(de|het)\s+competitie)`,  // M2: a lifetime OF THE COMPETITION is a bound, not a permanence claim
       // "voor het hele verloop" — the nl wording of `billing.passOffer.note`,
       // which reached for a different metaphor than the other three keys. Proof
       // that a vocabulary written from ONE string per language is not a
@@ -1537,7 +1547,7 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
       ["support.priority", claim(String.raw`\bprioritaire\s+onderst\w+\b`)],
     ],
     creditLeadership: claim(String.raw`\b(grootste|hoogste)\b[^,.;]{0,30}\bcredit`),
-    halfClaim: claim(String.raw`\bhelft\s+van\s+het\s+basistarief\b|\bhalve\s+(prijs|tarief)\b`),
+    halfClaim: claim(String.raw`\bhelft\s+van\s+het\s+(basistarief|tarief\s+van\s+je\s+abonnement)\b|\bhalve\s+(prijs|tarief)\b`),
     atMostHalf: claim(String.raw`\b(hoogstens|maximaal|ten\s+hoogste|niet\s+meer\s+dan)\s+(de\s+)?helft\b`),
     rateSubject: claim(String.raw`\b(kosten|tarief|percentage|commissie)\b|\d+(\.\d+)?\s*%`),
     passSubject: claim(String.raw`\b(pass|passes|upgrade\w*|competitie\w*|evenement\w*)\b`),
@@ -1621,9 +1631,81 @@ export function valueClauses(value: string): string[] {
  * exemption becoming a hole — "a 5% platform fee, and the pass lasts forever"
  * mentions the fee, but it also mentions the pass, so it still reds.
  */
-function isRateClause(locale: DictionaryLocale, clause: string): boolean {
+/**
+ * A NEW SUBJECT, for the purpose of asking what a permanence claim is about.
+ *
+ * This is `CLAUSE_BREAK` plus pronouns. The bounded-scope rule can ignore
+ * pronouns because it looks for a conjunction governing an activity word; this
+ * rule cannot, because "the 5% rate AND IT lasts forever" is precisely the
+ * shape where the rate stops being the subject.
+ */
+/**
+ * THE COORDINATOR ALONE IS THE BREAK — deliberately coarser than
+ * `CLAUSE_BREAK`, which requires a following determiner.
+ *
+ * A first cut required coordinator + determiner/pronoun and scored 8/9: it
+ * missed Spanish "…al 5% de comisión y dura para siempre", because Spanish is
+ * PRO-DROP. "y dura" starts a new predicate with no pronoun to detect, and no
+ * regex is going to reliably tell a verb from a noun across four languages.
+ *
+ * So attribution stops at any coordinator. The cost is a true sentence like
+ * "the fee is locked and stays locked for good", which now reds. That trade is
+ * deliberate and it is the right way round HERE, because this rule is the
+ * SECONDARY net: `approvedDictionaryFaults` pins the copy that actually ships,
+ * so a false positive costs one reword on unpinned copy, while a false negative
+ * is how this wave shipped the same falsehood four times.
+ *
+ * Note the difference from `CLAUSE_BREAK`, which must stay precise: it decides
+ * whether a bound was STATED, where rejecting true prose would be the expensive
+ * error.
+ */
+const SUBJECT_BREAK: Record<DictionaryLocale, string> = {
+  en: String.raw`\b(?:and|or|but|so|then|yet|while|whereas)\b`,
+  es: String.raw`\b(?:y|e|o|u|pero|aunque|mientras)\b`,
+  fr: String.raw`\b(?:et|ou|mais|donc|alors|tandis)\b`,
+  nl: String.raw`\b(?:en|of|maar|dus|terwijl)\b`,
+};
+
+/**
+ * IS THIS PERMANENCE CLAIM ABOUT THE RATE, OR ABOUT THE PASS?
+ *
+ * Fix round 1 answered this by DROPPING any clause where a rate was mentioned
+ * and the pass was not — and that opened a percentage-shaped hole in the rule
+ * it was repairing. Measured 0/9: "It is a one-off at the 5% rate and it lasts
+ * forever" went green, because the clause names a rate and the pass only ever
+ * appears as the pronoun "it". Pass copy quotes percentages constantly, so the
+ * exemption sat exactly on the surface it was guarding.
+ *
+ * The repair is to narrow the MATCH, not to remove text from the scan. A
+ * permanence hit is exempt only when the rate is the noun that hit actually
+ * governs, which requires all three:
+ *   1. a rate word appears BEFORE the permanence match (the nearest one wins);
+ *   2. no NEW SUBJECT intervenes — "and it", "et cela", "en de" start a new
+ *      clause, so the rate is no longer the subject;
+ *   3. the pass is not named in between, which would make the claim about it.
+ *
+ * Everything else is scanned. The rule fails closed: an unattributable claim
+ * ("It lasts forever") is treated as a claim about the pass.
+ */
+function permanenceHitIsAboutRate(
+  locale: DictionaryLocale,
+  clause: string,
+  matchIndex: number,
+): boolean {
   const { rateSubject, passSubject } = LOCALE_CLAIMS[locale];
-  return rateSubject.test(clause) && !passSubject.test(clause);
+  const before = clause.slice(0, matchIndex);
+
+  // The NEAREST preceding rate word — a rate mentioned earlier, with a new
+  // subject after it, is not the subject of this claim.
+  const rate = new RegExp(rateSubject.source, rateSubject.flags.includes("g") ? rateSubject.flags : `${rateSubject.flags}g`);
+  let lastRateEnd = -1;
+  for (const m of before.matchAll(rate)) lastRateEnd = m.index! + m[0].length;
+  if (lastRateEnd === -1) return false;
+
+  const between = clause.slice(lastRateEnd, matchIndex);
+  if (new RegExp(SUBJECT_BREAK[locale], "iu").test(between)) return false;
+  if (passSubject.test(between)) return false;
+  return true;
 }
 
 export function localePassBoundFaults(values: LocalisedValue[]): string[] {
@@ -1633,12 +1715,19 @@ export function localePassBoundFaults(values: LocalisedValue[]): string[] {
       faults.push(`${locale} ${key}: empty — nothing to scan, so every rule below passes vacuously`);
       continue;
     }
-    // Clause-scoped, so a true statement about the LOCKED RATE cannot be read
-    // as a false statement about the pass — and vice versa.
-    const scannable = valueClauses(value).filter((c) => !isRateClause(locale, c));
+    // EVERY clause is scanned. What varies is whether an individual hit is
+    // attributed to the rate (true, the V312 lock) or to the pass (false) —
+    // see `permanenceHitIsAboutRate`. Fix round 1 dropped whole clauses here
+    // and that was a regression: a clause quoting a percentage stopped being
+    // scanned at all.
+    const clauses = valueClauses(value);
     for (const [vocabLocale, claims] of Object.entries(LOCALE_CLAIMS)) {
       for (const pattern of claims.permanence) {
-        if (scannable.some((c) => pattern.test(c))) {
+        const hit = clauses.some((clause) => {
+          const found = pattern.exec(clause);
+          return found !== null && !permanenceHitIsAboutRate(locale, clause, found.index);
+        });
+        if (hit) {
           faults.push(
             `${locale} ${key}: claims the pass has unbounded duration in ${vocabLocale} vocabulary (${describeClaim(pattern)})`,
           );
@@ -1865,6 +1954,75 @@ export function localeHalfClaimFaults(
   return faults;
 }
 
+// ── THE APPROVED-WORDING GATE, for four-locale dictionary values ─────────────
+//
+// The positive half of this file's guards, and the one that does not depend on
+// anyone having imagined the right falsehood.
+//
+// Every rule above reads a sentence and decides whether it is false. Four
+// independent measurements in this wave say that shape scores on the examples
+// its author imagined and collapses on anyone else's — task 3 went 12/12 to
+// 6/30, task 4 went 16/16 to 0/32, and a percentage-shaped rate clause scored
+// 0/9 against a rule written specifically about rate clauses. Worse, the
+// falsehood that survived two rounds of widening (`pricing.faq.groups.a`, "half
+// your plan's rate", four locales) had a pattern written for it ALREADY; nobody
+// had pointed the rule at that key.
+//
+// A pinned string has neither failure mode. It does not generalise, so no
+// rewording evades it, and it needs no claim-family coverage — the value either
+// is the approved value or it is not. The vocabulary rules stay as the
+// SECONDARY net, for copy that is not yet pinned.
+
+/** One approved dictionary value, in every locale. See `_approved-dictionary-copy.ts`. */
+export interface ApprovedValue {
+  file: "marketing" | "ui";
+  key: string;
+  why: string;
+  text: Record<DictionaryLocale, string>;
+}
+
+/**
+ * The gate. `read(file, locale)` returns the flat dictionary — flat dotted keys,
+ * never nested traversal.
+ *
+ * The fault carries the on-disk string verbatim so the reviewer's step is to
+ * read it against `why` and paste it in, not to retype it. A missing key is a
+ * fault of its own: an approved entry pointing at nothing is a rule that has
+ * quietly stopped covering anything.
+ */
+export function approvedDictionaryFaults(
+  approved: ApprovedValue[],
+  read: (file: "marketing" | "ui", locale: DictionaryLocale) => Record<string, string>,
+): string[] {
+  const faults: string[] = [];
+  if (approved.length === 0) return ["the approved-copy inventory is empty — this gate examines nothing"];
+  for (const entry of approved) {
+    for (const locale of DICTIONARY_LOCALES) {
+      const onDisk = read(entry.file, locale)[entry.key];
+      if (typeof onDisk !== "string") {
+        faults.push(`${locale} ${entry.key}: approved but ABSENT from ${entry.file}.json`);
+        continue;
+      }
+      const want = entry.text[locale];
+      if (want === undefined) {
+        faults.push(`${entry.key}: no approved ${locale} wording — every locale must be approved together`);
+        continue;
+      }
+      if (onDisk !== want) {
+        faults.push(
+          [
+            `${locale} ${entry.key}: wording changed and has not been re-approved.`,
+            `  what it claims: ${entry.why}`,
+            `  approved: ${want}`,
+            `  on disk:  ${onDisk}`,
+          ].join("\n"),
+        );
+      }
+    }
+  }
+  return faults;
+}
+
 // ── MODULE-WIDE ANTI-VACUITY ─────────────────────────────────────────────────
 //
 // TWICE IN THIS WAVE A GUARD HAS PASSED WHILE EXAMINING NOTHING, and neither
@@ -1933,6 +2091,56 @@ export function controlCharacterFaults(patterns: LocatedPattern[]): string[] {
           .toString(16)
           .padStart(4, "0")}) — almost certainly a mangled escape`,
     );
+}
+
+/**
+ * `collectPatterns` walks module EXPORTS, so a top-level pattern that is not
+ * exported is invisible to it — and seven were, including `DURATION_CLAIM`,
+ * which this very check names as reason #2 for existing. Measured: a literal
+ * U+0001 in `DURATION_CLAIM` left the suite 36/36 green, while the identical
+ * byte in an exported pattern redded three tests.
+ *
+ * So the reachability is enforced at the SOURCE level rather than trusted: any
+ * top-level `const NAME = <pattern>` that is not exported is a fault, because
+ * nothing downstream can see it. `CONTROL_CHARACTER` is the one legitimate
+ * exception — it is the checker, not a claim, and demanding it match a
+ * known-positive fixture would mean putting a control character in the corpus.
+ */
+const PATTERN_SHAPED = /=\s*(\/|new RegExp\b|claim\()/;
+export const UNEXPORTED_PATTERN_ALLOWLIST = ["CONTROL_CHARACTER", "PATTERN_SHAPED"];
+
+export function unexportedPatternFaults(moduleSource: string): string[] {
+  const faults: string[] = [];
+  for (const line of moduleSource.split("\n")) {
+    const match = /^const ([A-Z][A-Z0-9_]*)\s*(?::[^=]+)?=/.exec(line);
+    if (!match || !PATTERN_SHAPED.test(line)) continue;
+    const name = match[1]!;
+    if (UNEXPORTED_PATTERN_ALLOWLIST.includes(name)) continue;
+    faults.push(
+      `${name}: a top-level pattern that is not exported — collectPatterns cannot see it, so it is exempt from every anti-vacuity rule below. Add \`export\`.`,
+    );
+  }
+  return faults;
+}
+
+/**
+ * The control-character scan, run over the module's RAW SOURCE rather than over
+ * compiled patterns. Belt and braces: it catches a mangled escape anywhere in
+ * the file — in a non-exported const, in a `String.raw` fragment that is only
+ * ever composed into another pattern, or in ordinary prose — none of which the
+ * compiled-pattern scan can reach. Tabs and newlines are legitimate source.
+ */
+export function sourceControlCharacterFaults(moduleSource: string): string[] {
+  const faults: string[] = [];
+  moduleSource.split("\n").forEach((line, i) => {
+    const found = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.exec(line);
+    if (found) {
+      faults.push(
+        `line ${i + 1}: literal control character U+${found[0]!.charCodeAt(0).toString(16).padStart(4, "0").toUpperCase()} in the source — almost certainly a mangled escape`,
+      );
+    }
+  });
+  return faults;
 }
 
 /** Every pattern must fire on SOMETHING. One that matches nothing in the corpus
@@ -2185,10 +2393,10 @@ export const DURATION_ALLOWLIST: ClaimAllowlist = {
  * statement about a duplicate payment, and was a measured false positive when
  * `charge` was in this list on its own.
  */
-const RATE_VOCABULARY =
+export const RATE_VOCABULARY =
   /\b(platform\s+fees?|entry[-\s]fees?|fee\s+rate|rates?|fees?|per\s*cent|percent|pricing|entry\s+costs?|costs?\s+you\s+more|cheaper|dearer|commission|\d+(?:\.\d+)?\s*%)\b/i;
 
-const PASS_TRANSITION_VOCABULARY =
+export const PASS_TRANSITION_VOCABULARY =
   /\b(after|once|when)\b[^.;:!?]*\b(ends?|ended|ending|closes?|closed|finish\w*|over|expir\w*|stops?|stopped|lapses?|archiv\w*|completed?|handed\s+out|trophy)\b|\b(no\s+longer|later\s+(?:entrants?|entries|entry|payers?)|back\s+to|goes?\s+back|returns?\s+to|again|revert\w*|normal|standard|downgrad\w+|after\s+(?:that|then|it)|when\s+the\s+pass|after\s+the\s+pass|pass\s+(?:ends?|stops?|expires?|lapses?|does))\b|(?:\b(?:revok\w+|refund\w*|chargeback)\b[^.;:!?]*\bpass\b|\bpass\b[^.;:!?]*\b(?:revok\w+|refund\w*|chargeback)\b)/i;
 
 // `(?=A)(?=B)` requires BOTH to match at the SAME index, which is almost never
