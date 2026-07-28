@@ -186,6 +186,22 @@ const PLUS_CARD_KEYS = ["pricing.plus.note", ...PLUS_CARD_BULLET_KEYS];
 /** The roadmap under the same card — its label and its eight items. Pinned in
  *  APPROVED_DICTIONARY_COPY; see the note over those entries for why there is no
  *  matrix row to check them against. */
+/**
+ * ── THE PANEL'S ROW SET, DERIVED FROM THE PAGE (fix round 4) ────────────────
+ *
+ * Read out of `settings/billing/page.tsx` rather than typed here, so a NEW row
+ * is covered the day it is written. A hand-written list was the gap: adding
+ * `<li>✓ {t(dict,"billing.community.f8")}</li>` claiming "Unlimited AI schedule
+ * credits", with the key in all four dictionaries, scored ZERO faults — the same
+ * completeness hole the cards had two rounds ago, on a surface I had just built.
+ */
+const BILLING_PAGE = readFileSync("src/app/o/[orgSlug]/settings/billing/page.tsx", "utf8");
+const PANEL_KEYS: string[] = [
+  ...new Set(
+    [...BILLING_PAGE.matchAll(/"(billing\.(?:community|pro)\.f\d+)"/g)].map((m) => m[1]!),
+  ),
+].sort();
+
 const PLUS_SOON_KEYS = [
   "pricing.plus.soonLabel",
   ...Array.from({ length: 8 }, (_, i) => `pricing.plus.soon${i + 1}`),
@@ -835,7 +851,13 @@ describe.skipIf(!HAS_DB)("the four-locale dictionaries say what the resolver enf
     for (const key of PLUS_SOON_KEYS) {
       expect(pinned.has(key), `${key} is a roadmap claim but is not pinned`).toBe(true);
     }
-    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(180);
+    // FIX ROUND 4: the in-app comparison panel. Polarity never reads the string,
+    // so without these the original f5 defect could be restored verbatim and
+    // ship green — measured, 109/109.
+    for (const key of PANEL_KEYS) {
+      expect(pinned.has(key), `${key} is an in-app panel claim but is not pinned`).toBe(true);
+    }
+    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(236);
     // Every entry must say what it claims and what decides it — a pin with no
     // `why` is a snapshot, and a snapshot teaches the next editor to re-record
     // rather than to re-check.
@@ -1312,6 +1334,56 @@ describe.skipIf(!HAS_DB)("the four-locale dictionaries say what the resolver enf
     nl: claim(String.raw`\b(zonder|geen|uitgesloten|niet\s+inbegrepen|niet\s+beschikbaar)\b`),
   };
 
+  /**
+   * ── THE THREE NEW MAPS, UNDER THE MODULE-WIDE ANTI-VACUITY RULES ──────────
+   *
+   * `FUTURITY_FORMS`, `AVAILABILITY_CLAIM` and `DENIAL_WORDING` live in this
+   * FILE, not in `@/lib/copy-truth`, so `collectPatterns` — which walks the
+   * module's exports — cannot see them. That is the known container-shape hole,
+   * and a control character planted in any of the three escapes every existing
+   * anti-vacuity rule while the suite stays green (two guards shipped inert in
+   * this wave exactly that way, and a third was a NON-EXPORTED pattern).
+   *
+   * So they are walked here, by the same two rules: no control character in the
+   * source, and every pattern must fire on a known-positive fixture.
+   */
+  it("keeps its own claim maps live, not merely compiled", () => {
+    const maps: Array<[string, Record<DictionaryLocale, RegExp>]> = [
+      ["FUTURITY_FORMS", FUTURITY_FORMS],
+      ["AVAILABILITY_CLAIM", AVAILABILITY_CLAIM],
+      ["DENIAL_WORDING", DENIAL_WORDING],
+    ];
+    const positives: Record<string, Record<DictionaryLocale, string>> = {
+      FUTURITY_FORMS: { en: "Coming soon", es: "Próximamente", fr: "Bientôt disponible", nl: "Binnenkort" },
+      AVAILABILITY_CLAIM: { en: "included", es: "ya incluido", fr: "déjà disponible", nl: "inbegrepen" },
+      DENIAL_WORDING: { en: "without", es: "sin", fr: "sans", nl: "zonder" },
+    };
+    const faults: string[] = [];
+    let fired = 0;
+    for (const [name, map] of maps) {
+      const locales = Object.keys(map).sort();
+      // A map that has quietly stopped covering a locale is the failure
+      // `localeCoverageFaults` exists for, applied to this file's own maps.
+      expect(locales, `${name} does not cover every locale`).toEqual([...DICTIONARY_LOCALES].sort());
+      for (const locale of DICTIONARY_LOCALES) {
+        const pattern = map[locale];
+        if (/[\x00-\x1F\x7F]/.test(pattern.source)) {
+          faults.push(`${name}.${locale}: control character in the pattern source`);
+          continue;
+        }
+        if (!pattern.test(positives[name]![locale])) {
+          faults.push(`${name}.${locale}: fires on nothing — inert`);
+          continue;
+        }
+        fired += 1;
+      }
+    }
+    expect(faults).toEqual([]);
+    expect(fired, "no pattern fired").toBe(maps.length * DICTIONARY_LOCALES.length);
+    // …and the check itself is not vacuous: a planted control character reds.
+    expect(/[\x00-\x1F\x7F]/.test(new RegExp("coming\u0001soon").source)).toBe(true);
+  });
+
   it("keeps every 'not yet' row reading as 'not yet', in all four locales", () => {
     const rows: Array<{ key: string; file: "marketing" | "ui"; shape: boolean }> = [
       ...Array.from({ length: 8 }, (_, i) => ({
@@ -1415,16 +1487,36 @@ describe.skipIf(!HAS_DB)("the four-locale dictionaries say what the resolver enf
         FUTURITY_FORMS[locale].test(label),
         `${locale}: "${label}" is not a recognised way of saying "not yet" — eight undelivered features sit under it`,
       ).toBe(true);
+      // …AND it must not ALSO claim availability. The allowlist matched
+      // anywhere, so "Now included, more soon" and "On the roadmap, and already
+      // live" shipped green — 1 of 3. A label that says both says the wrong one.
+      expect(
+        AVAILABILITY_CLAIM[locale].test(label),
+        `${locale}: "${label}" claims availability as well as futurity`,
+      ).toBe(false);
+      // A roadmap LABEL is a label, not a sentence — the same shape rule its
+      // items carry, and what actually kills the "X, and already live" form.
+      expect(CLAUSE_BREAK_IN_LABEL.test(label), `${locale}: "${label}" is a sentence`).toBe(false);
     }
     // The reviewer's probe: a plausible availability claim in each language must
     // NOT satisfy the rule, however it is re-approved.
+    const labelReds = (locale: DictionaryLocale, value: string) =>
+      !FUTURITY_FORMS[locale].test(value) ||
+      AVAILABILITY_CLAIM[locale].test(value) ||
+      CLAUSE_BREAK_IN_LABEL.test(value);
     for (const [locale, shipped] of [
       ["en", "Included now"],
       ["es", "Ya incluido"],
       ["fr", "Déjà inclus"],
       ["nl", "Nu inbegrepen"],
+      // The two that defeated the round-3 allowlist by saying BOTH.
+      ["en", "Now included, more soon"],
+      ["en", "On the roadmap, and already live"],
+      ["es", "Ya incluido, y más próximamente"],
+      ["fr", "Déjà inclus, et bientôt plus"],
+      ["nl", "Nu inbegrepen, binnenkort meer"],
     ] as Array<[DictionaryLocale, string]>) {
-      expect(FUTURITY_FORMS[locale].test(shipped), `${locale}: "${shipped}"`).toBe(false);
+      expect(labelReds(locale, shipped), `${locale}: "${shipped}"`).toBe(true);
     }
     // …and the rule is not vacuous in the other direction: each locale's real
     // label is a positive fixture for its own pattern (asserted above), and a
@@ -1435,7 +1527,7 @@ describe.skipIf(!HAS_DB)("the four-locale dictionaries say what the resolver enf
       ["fr", "À venir"],
       ["nl", "In ontwikkeling"],
     ] as Array<[DictionaryLocale, string]>) {
-      expect(FUTURITY_FORMS[locale].test(alt), `${locale}: "${alt}" is honest and must pass`).toBe(true);
+      expect(labelReds(locale, alt), `${locale}: "${alt}" is honest and must pass`).toBe(false);
     }
   });
 
@@ -1485,19 +1577,90 @@ describe.skipIf(!HAS_DB)("the four-locale dictionaries say what the resolver enf
     expect(refaults, "a ✗ row whose feature is granted must red").not.toEqual([]);
   });
 
-  // …and the polarity declared above must be the polarity page.tsx renders. The
-  // ✓/✗ is positional there, so a re-ordered <li> would silently invert a row.
+  /**
+   * ── READ THE POLARITY FROM THE RENDERED STRUCTURE, NOT FROM A LINE ────────
+   *
+   * NINTH NORMALISER HOLE, and it failed in BOTH directions. Round 3 did
+   * `page.split("\n").find(l => l.includes('"key"'))` then `line.includes("✗")`.
+   * Wrap the `<li>` the way prettier does — `✗{" "}` and `{t(dict, key)}` on
+   * separate lines — and the key's line carries no marker at all:
+   *   a GRANTED row rendered with a ✗  -> green (Blocking 2's exact shape, back)
+   *   an honest DENIED row, rewrapped  -> false RED
+   *
+   * So the parser now takes the whole `<li>…</li>` element the key sits in and
+   * asks whether a denial marker appears anywhere inside it. Swapping ✗ for an
+   * em dash was already caught; this closes the wrap.
+   */
+  const liFor = (key: string): string | null => {
+    const at = BILLING_PAGE.indexOf(`"${key}"`);
+    if (at === -1) return null;
+    const open = BILLING_PAGE.lastIndexOf("<li", at);
+    const close = BILLING_PAGE.indexOf("</li>", at);
+    if (open === -1 || close === -1) return null;
+    return BILLING_PAGE.slice(open, close);
+  };
+  /** Any way the page marks a row as NOT granted. */
+  const DENIAL_MARKER = /[✗✘×✕]|\bline-through\b/;
+
   it("declares the polarity the billing page actually renders", () => {
-    const page = readFileSync("src/app/o/[orgSlug]/settings/billing/page.tsx", "utf8");
+    let read = 0;
     for (const claim of PANEL_CLAIMS) {
-      const line = page
-        .split("\n")
-        .find((l) => l.includes(`"${claim.key}"`));
-      expect(line, `${claim.key} is not rendered by the billing page`).toBeTruthy();
-      const rendered = line!.includes("✗") ? "denied" : "granted";
+      const li = liFor(claim.key);
+      expect(li, `${claim.key} is not rendered inside an <li> by the billing page`).toBeTruthy();
+      read += 1;
+      const rendered = DENIAL_MARKER.test(li!) ? "denied" : "granted";
       expect(rendered, `${claim.key}: page.tsx renders ${rendered}`).toBe(claim.polarity);
     }
+    expect(read, "no rows read from the page").toBe(PANEL_CLAIMS.length);
+
+    // The parser must survive a prettier rewrap — the defect above.
+    const wrapped = [
+      '<li className="text-slate-300">',
+      '  ✗{" "}',
+      '  {t(dict, "billing.community.f6")}',
+      "</li>",
+    ].join("\n");
+    expect(DENIAL_MARKER.test(wrapped), "a rewrapped denial row must still read as denied").toBe(
+      true,
+    );
+    const wrappedTick = ['<li>', '  ✓{" "}', '  {t(dict, "billing.pro.f5")}', "</li>"].join("\n");
+    expect(DENIAL_MARKER.test(wrappedTick), "a rewrapped tick row must not read as denied").toBe(
+      false,
+    );
   });
+
+  /**
+   * …AND EVERY ROW THE PAGE RENDERS MUST BE IN THE TABLE.
+   *
+   * The completeness rule the cards have had since fix round 1, which I did not
+   * give this table when I built it. Adding an eighth `<li>` claiming "Unlimited
+   * AI schedule credits" scored zero faults.
+   */
+  it("classifies every panel row the page renders, or exempts it with a reason", () => {
+    const declared = new Set(PANEL_CLAIMS.map((c) => c.key));
+    const numeric: Record<string, string> = {
+      "billing.community.f1": "a CAP, not a grant — pinned numerically against competitions.max_active",
+      "billing.community.f2": "caps — pinned against divisions.per_competition.max and entrants.per_division.max",
+      "billing.community.f3": "a cap — pinned against dashboard.public.max",
+      "billing.pro.f1": "unlimited caps — pinned against competitions.max_active / divisions.per_competition.max",
+      "billing.pro.f2": "a cap — pinned against entrants.per_division.max",
+      "billing.pro.f3": "a rate — pinned against registration.fee_percent",
+    };
+    const unclassified = PANEL_KEYS.filter((k) => !declared.has(k) && !(k in numeric));
+    expect(unclassified, "panel rows in neither PANEL_CLAIMS nor the numeric list").toEqual([]);
+    // …and the inverse: a declared row the page no longer renders is a rule
+    // pointing at nothing.
+    expect(
+      PANEL_CLAIMS.map((c) => c.key).filter((k) => !PANEL_KEYS.includes(k)),
+      "declared rows the page does not render",
+    ).toEqual([]);
+    for (const [key, why] of Object.entries(numeric)) {
+      expect(PANEL_KEYS, `${key} is classified but not rendered`).toContain(key);
+      expect(why.length, `${key} has no reason`).toBeGreaterThan(20);
+    }
+    expect(PANEL_KEYS.length, "the page renders no panel rows — the regex broke").toBeGreaterThan(12);
+  });
+
 
   it("the in-app Pro Plus panel says exactly what the /pricing card says", () => {
     for (const locale of DICTIONARY_LOCALES) {

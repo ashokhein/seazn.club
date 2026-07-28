@@ -395,6 +395,172 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
       nl: "Tot {divisions} divisies, onbeperkt deelnemers",
     },
   },
+  // ── THE IN-APP COMPARISON PANEL (fix round 4) ─────────────────────────────
+  //
+  // `billing.community.f1-f7` and `billing.pro.f1-f7`, rendered in Settings →
+  // Billing. Added because round 3 argued that polarity-against-the-matrix was
+  // "strictly stronger" than a pin, and that was MEASURABLY FALSE: polarity
+  // checks the hand-written key→feature mapping and NEVER READS THE STRING, so
+  // restoring the original defect verbatim — f5 "Entry fees (Stripe payouts)"
+  // under a ✗ — shipped 109/109 green. Measured rate on copy mutations: 2/11.
+  //
+  // The two are COMPLEMENTS, not substitutes. Polarity fails when the MATRIX
+  // moves under fixed copy; the pin fails when the COPY moves under a fixed
+  // matrix. Neither sees the other's defect.
+  {
+    file: "ui",
+    key: "billing.community.f1",
+    why: "Community’s active-competition cap, in the in-app Settings → Billing panel (rendered with a ✓). Source of truth: plan_entitlements competitions.max_active on community. Pinned numerically against that row by pricing-cards.test.ts.",
+    text: {
+      en: "10 active competitions",
+      es: "10 competiciones activas",
+      fr: "10 compétitions actives",
+      nl: "10 actieve competities",
+    },
+  },
+  {
+    file: "ui",
+    key: "billing.community.f2",
+    why: "Community’s division and entrant caps, same panel, ✓ row. Source of truth: plan_entitlements divisions.per_competition.max and entrants.per_division.max on community; both digits are asserted against those rows in all four locales.",
+    text: {
+      en: "4 divisions, 64 entrants each",
+      es: "4 divisiones, 64 participantes cada una",
+      fr: "4 divisions, 64 participants chacune",
+      nl: "4 divisies, elk 64 deelnemers",
+    },
+  },
+  {
+    file: "ui",
+    key: "billing.community.f3",
+    why: "Community’s public-dashboard cap, ✓ row. Source of truth: plan_entitlements dashboard.public.max on community. The number is asserted as a whole token, not a substring — a `toContain(\"1\")` would have passed “10 public dashboards”.",
+    text: {
+      en: "1 public dashboard",
+      es: "1 panel público",
+      fr: "1 tableau de bord public",
+      nl: "1 openbaar dashboard",
+    },
+  },
+  {
+    file: "ui",
+    key: "billing.community.f4",
+    why: "that Community can take online registrations AND card entry fees, ✓ row, at the 8% platform cut. Source of truth: plan_entitlements registration.enabled / registration.paid (both true on community) and registration.fee_percent (8). THIS ROW WAS FALSE until fix round 3: it read “Free-event registration”, the exact framing pricing-cards.ts records the public card being corrected away from, while f5 separately denied entry fees outright.",
+    text: {
+      en: "Online registration & entry fees (8%)",
+      es: "Inscripción online y cuotas de inscripción (8%)",
+      fr: "Inscription en ligne et frais d’inscription (8 %)",
+      nl: "Online inschrijving & inschrijfgelden (8%)",
+    },
+  },
+  {
+    file: "ui",
+    key: "billing.community.f5",
+    why: "what Community does NOT get — rendered with a ✗. Source of truth: plan_entitlements exports.branded and dashboard.player_profiles, both false on community. THIS ROW WAS FALSE until fix round 3: it read “Entry fees (Stripe payouts)” with a ✗ while registration.paid is TRUE on community, i.e. it told a Community org it could not take money.",
+    text: {
+      en: "Branded exports & player cards",
+      es: "Exportaciones con tu marca y fichas de jugador",
+      fr: "Exports à votre image et fiches joueur",
+      nl: "Exports met je eigen merk & spelerskaarten",
+    },
+  },
+  {
+    file: "ui",
+    key: "billing.community.f6",
+    why: "the org theme colour and badge removal, ✗ row. Source of truth: plan_entitlements dashboard.branding, false on community. THIS ROW WAS FALSE until fix round 3: it read “Branding & exports” with a ✗ while `branding` AND `exports` are both TRUE on community (V310) — only dashboard.branding and exports.branded are denied.",
+    text: {
+      en: "Theme colour & badge removal",
+      es: "Color del tema y quitar la insignia",
+      fr: "Couleur du thème et retrait du badge",
+      nl: "Themakleur & badge verwijderen",
+    },
+  },
+  {
+    file: "ui",
+    key: "billing.community.f7",
+    why: "realtime scoring, ✗ row. Source of truth: plan_entitlements realtime, false on community.",
+    text: {
+      en: "Realtime scoreboard",
+      es: "Marcador en tiempo real",
+      fr: "Tableau des scores en temps réel",
+      nl: "Realtime scorebord",
+    },
+  },
+  {
+    file: "ui",
+    key: "billing.pro.f1",
+    why: "Pro’s unlimited competitions and divisions, ✓ row. Source of truth: plan_entitlements competitions.max_active and divisions.per_competition.max, both null (unlimited) on pro.",
+    text: {
+      en: "Unlimited competitions & divisions",
+      es: "Competiciones y divisiones ilimitadas",
+      fr: "Compétitions et divisions illimitées",
+      nl: "Onbeperkt aantal competities & divisies",
+    },
+  },
+  {
+    file: "ui",
+    key: "billing.pro.f2",
+    why: "Pro’s entrant cap, ✓ row. Source of truth: plan_entitlements entrants.per_division.max on pro; the digit is asserted against that row in all four locales.",
+    text: {
+      en: "256 entrants per division",
+      es: "256 participantes por división",
+      fr: "256 participants par division",
+      nl: "256 deelnemers per divisie",
+    },
+  },
+  {
+    file: "ui",
+    key: "billing.pro.f3",
+    why: "that Pro takes online registrations and entry fees at its own platform cut. Source of truth: plan_entitlements registration.enabled / registration.paid and registration.fee_percent (2) on pro; the percentage is asserted against that row.",
+    text: {
+      en: "Online registration + entry fees (2%)",
+      es: "Inscripción en línea + cuotas de inscripción (2%)",
+      fr: "Inscription en ligne + frais d'inscription (2 %)",
+      nl: "Online inschrijving + inschrijfgelden (2%)",
+    },
+  },
+  {
+    file: "ui",
+    key: "billing.pro.f4",
+    why: "ball-by-ball and rally scoring, ✓ row. Source of truth: plan_entitlements scoring.ball_by_ball and scoring.rally_by_rally, both true on pro.",
+    text: {
+      en: "Ball-by-ball & rally scoring",
+      es: "Puntuación bola a bola y por punto",
+      fr: "Score balle par balle et par échange",
+      nl: "Bal-voor-bal & rally-scoring",
+    },
+  },
+  {
+    file: "ui",
+    key: "billing.pro.f5",
+    why: "the org theme colour, ✓ row — the same dashboard.branding row Community’s f6 denies, and the row SPEC-1 §5 once ticked for the Event Pass in error. Source of truth: plan_entitlements dashboard.branding, true on pro.",
+    text: {
+      en: "Custom branding",
+      es: "Marca personalizada",
+      fr: "Personnalisation de la marque",
+      nl: "Aangepaste branding",
+    },
+  },
+  {
+    file: "ui",
+    key: "billing.pro.f6",
+    why: "exports, ✓ row. Source of truth: plan_entitlements `exports`, true on pro — note it is ALSO true on community, so this row is honest but is not a differentiator; the differentiator is exports.branded.",
+    text: {
+      en: "CSV / PDF exports",
+      es: "Exportaciones CSV / PDF",
+      fr: "Exports CSV / PDF",
+      nl: "CSV / PDF-exports",
+    },
+  },
+  {
+    file: "ui",
+    key: "billing.pro.f7",
+    why: "realtime scoring, ✓ row. Source of truth: plan_entitlements realtime, true on pro.",
+    text: {
+      en: "Realtime scoreboard",
+      es: "Marcador en tiempo real",
+      fr: "Tableau des scores en temps réel",
+      nl: "Realtime scorebord",
+    },
+  },
   // ── The Pro Plus ROADMAP block (fix round 1, I3) ───────────────────────────
   //
   // `pricing.plus.soonLabel` + `soon1-8`, under the Pro Plus card. Added because

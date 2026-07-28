@@ -1451,7 +1451,35 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
     const dashboards = await capFor("dashboard.public.max", "community");
     expect(dashboards, "community must have a finite public-dashboard cap").not.toBeNull();
     for (const locale of LOCALES) {
-      expect(dict(locale)["billing.community.f3"], `${locale} f3`).toContain(String(dashboards));
+      // A WHOLE TOKEN, not a substring. `toContain("1")` passed "10 public
+      // dashboards" — the pin read as green on a value ten times the cap.
+      expect(dict(locale)["billing.community.f3"], `${locale} f3`).toMatch(
+        new RegExp(`(?<!\\d)${dashboards}(?!\\d)`),
+      );
+    }
+  });
+
+  // FIX ROUND 4: the two percentages in this panel were pinned by nothing, while
+  // `registration.fee_percent` sits in the matrix at 8 and 2. The 8% is the one
+  // fix round 3 introduced into f4 — a number I added and did not pin.
+  it("the panel's platform-fee percentages are the matrix's, in all four locales", async () => {
+    for (const [key, plan] of [
+      ["billing.community.f4", "community"],
+      ["billing.pro.f3", "pro"],
+    ] as Array<[string, string]>) {
+      const pct = await capFor("registration.fee_percent", plan);
+      expect(pct, `${plan} must have a finite fee`).not.toBeNull();
+      for (const locale of LOCALES) {
+        expect(dict(locale)[key], `${locale} ${key}: the live ${plan} fee`).toMatch(
+          new RegExp(`(?<!\\d)${pct}\\s?%`),
+        );
+        // …and it must not quote the OTHER plan's rate, which is how a panel row
+        // comes to describe the wrong column.
+        const other = await capFor("registration.fee_percent", plan === "pro" ? "community" : "pro");
+        expect(dict(locale)[key], `${locale} ${key}: must not quote ${other}%`).not.toMatch(
+          new RegExp(`(?<!\\d)${other}\\s?%`),
+        );
+      }
     }
   });
 
