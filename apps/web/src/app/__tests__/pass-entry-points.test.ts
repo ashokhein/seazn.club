@@ -160,6 +160,26 @@ describe("no entry point can re-sell a pass the org already holds", () => {
     expect(src).toMatch(/not exists[\s\S]{0,200}competition_passes/);
     expect(src).not.toContain("stripe_payment_intent");
   });
+
+  it("the competition list reads status/ends_on to tell an ended pass from an active one", () => {
+    // v17 gap #301: the dashboard seal read row EXISTENCE only, so it kept
+    // saying "Event Pass active" on a competition that finished months ago —
+    // long after the resolver stopped honouring that row. It now joins
+    // `competitions` and asks `passLockReason`: the SAME predicate, not a
+    // second copy of the terminal-status list.
+    const src = code(...COMPETITION_LIST);
+    expect(src).toContain("passLockReason");
+    expect(src).toMatch(/join competitions/i);
+  });
+
+  it("the billing purchase list RENDERS the ended flag it is already given", () => {
+    // `getPassPurchases` has set `row.ended` correctly since SPEC-4; for two
+    // waves nothing read it. A computed-but-unrendered field is invisible to
+    // every other guard here, because the data layer looks perfectly correct.
+    const src = code("components", "billing-pass-purchases.tsx");
+    expect(src).toContain("row.ended");
+    expect(src).toContain("data-pass-status");
+  });
 });
 
 // ===========================================================================

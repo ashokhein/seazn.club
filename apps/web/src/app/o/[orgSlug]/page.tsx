@@ -14,7 +14,7 @@ import { CardMenu } from "@/components/ui/card-menu";
 import { ViewToggleContainer } from "@/components/ui/view-toggle";
 import { StatusChip, competitionChipState, CHIP_SORT } from "@/components/ui/status-chip";
 import { sql } from "@/lib/db";
-import { isPaidPlan, orgPlanKey } from "@/lib/entitlements";
+import { isPaidPlan, orgPlanKey, passLockReason } from "@/lib/entitlements";
 import { formatMinor, isPassKey } from "@/lib/currency";
 import { lowestPassRung, passActiveLabels } from "@/lib/pass-ladder";
 import { preferredCurrency } from "@/lib/currency-server";
@@ -62,8 +62,19 @@ export default async function OrgHomePage({
         // `pass_key` rides along (v17 #294): the seal on a passed card is the
         // ONLY thing this page says about the pass, and with M and L both live
         // "Event Pass active" names the $29 product to an org that paid $59.
-        sql<{ competition_id: string; pass_key: string }[]>`
-          select competition_id, pass_key from competition_passes where org_id = ${org.id}`,
+        //
+        // status/ends_on ride along too (v17 gap #301). The seal read row
+        // EXISTENCE alone, so it kept saying "active" on a competition that had
+        // finished months ago — the resolver had long since stopped honouring
+        // that row. Joined rather than read separately so the row and the
+        // verdict about it cannot come from two different moments.
+        sql<
+          { competition_id: string; pass_key: string; status: string; ends_on: string | null }[]
+        >`
+          select cp.competition_id, cp.pass_key, c.status, c.ends_on
+          from competition_passes cp
+          join competitions c on c.id = cp.competition_id
+          where cp.org_id = ${org.id}`,
     preferredCurrency(org.id),
   ]);
   // isPassKey, not a cast: the column is `not null default 'event_pass'` and a
@@ -72,7 +83,14 @@ export default async function OrgHomePage({
   const passed = new Map(
     passRows.map((r) => [r.competition_id, isPassKey(r.pass_key) ? r.pass_key : "event_pass"] as const),
   );
+  // WHY each held pass has stopped applying, or null while it still does. The
+  // arms stay in `passLockReason` — a second copy here is exactly how the badge
+  // and the resolver drift apart again.
+  const passLock = new Map(
+    passRows.map((r) => [r.competition_id, passLockReason(r.status, r.ends_on)] as const),
+  );
   const heldLabels = passActiveLabels(dict);
+  const endedLabel = t(dict, "pass.entry.ended");
   // The card menu's "Event Pass — from {price}" quotes the ladder FLOOR: the
   // menu item offers no choice of rung, and the choice itself lives on the
   // upgrade page it links to (v17 #294).
@@ -159,18 +177,35 @@ export default async function OrgHomePage({
                           "Spring S…". The status chip already owns the card's
                           word; this says the pass is on and gets out of the
                           way, carrying its label on the element itself. */}
-                      {heldRung && (
-                        <span
-                          data-pass-held
-                          data-pass-held-rung={heldRung}
-                          role="img"
-                          aria-label={heldLabels[heldRung]}
-                          title={heldLabels[heldRung]}
-                          className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-lime-100 text-lime-800 ring-1 ring-inset ring-lime-300"
-                        >
-                          <Ticket className="h-3 w-3" strokeWidth={2.25} aria-hidden />
-                        </span>
-                      )}
+                      {heldRung &&
+                        (() => {
+                          // v17 gap #301. Same seal, floodlight off: lime means
+                          // "this is on" across the console, so a locked pass
+                          // wearing it is the page telling an organiser their
+                          // limits are lifted when they are not. The label goes
+                          // on the element itself because the seal has no room
+                          // for a word — and it is the ONLY thing this card
+                          // says about the pass, so it has to be the true one.
+                          const ended = passLock.get(c.id) != null;
+                          const label = ended ? endedLabel : heldLabels[heldRung];
+                          return (
+                            <span
+                              data-pass-held={!ended || undefined}
+                              data-pass-ended={ended || undefined}
+                              data-pass-held-rung={heldRung}
+                              role="img"
+                              aria-label={label}
+                              title={label}
+                              className={`grid h-5 w-5 shrink-0 place-items-center rounded-full ring-1 ring-inset ${
+                                ended
+                                  ? "bg-slate-100 text-slate-500 ring-slate-300"
+                                  : "bg-lime-100 text-lime-800 ring-lime-300"
+                              }`}
+                            >
+                              <Ticket className="h-3 w-3" strokeWidth={2.25} aria-hidden />
+                            </span>
+                          );
+                        })()}
                     </span>
                   }
                   meta={
