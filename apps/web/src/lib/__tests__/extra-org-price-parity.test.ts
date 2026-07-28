@@ -24,6 +24,9 @@ const COPY_THAT_SAYS_HALF = [
   "dictionaries/<locale>/marketing.json: pricing.faq.groups.a",
   "dictionaries/<locale>/marketing.json: pricing.faq.proPlus.a",
   "dictionaries/<locale>/ui.json: tips.billing.extra-org.body",
+  // Sits directly above the create-org picker's "buy another slot" link
+  // (v17 gap #293), so it is read as the rate that purchase will charge.
+  "dictionaries/<locale>/ui.json: orgNew.bill.addToExistingHint",
   "config/tips.ts: billing.extra-org body (the fallback copy)",
   "config/stripe-plans.json: both plans' product.description",
   "content/help/billing/groups.md: 'What the group buys' and 'Adding an organisation'",

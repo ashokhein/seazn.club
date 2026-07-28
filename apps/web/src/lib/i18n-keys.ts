@@ -1978,6 +1978,7 @@ export type DictionaryKey =
   | "orgNew.bill.reasonCancelling"
   | "orgNew.bill.reasonFull"
   | "orgNew.bill.reasonFullCta"
+  | "orgNew.bill.reasonFullCtaFor"
   | "orgNew.bill.reasonInactive"
   | "orgNew.bill.reasonPastDue"
   | "orgNew.bill.separate"

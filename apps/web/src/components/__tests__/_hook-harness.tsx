@@ -8,10 +8,13 @@
 // passes every suite AND `tsc`, and only a human clicking would notice.
 //
 // So this supplies React's hook dispatcher itself. `useState` is one slot of
-// `internals.H`; a component that uses ONLY `useState` needs a cursor, an array
-// of cells, and a re-render on `set`. That is the whole thing. It is
-// deliberately NOT a general React renderer — it renders one function component
-// one level deep and returns the element tree, which is all a click needs.
+// `internals.H`; it needs a cursor, an array of cells, and a re-render on `set`.
+// `useEffect`, `useMemo` and `useContext` are here too — an island that FETCHES
+// its data on mount (the create-org form's billing groups) renders an empty
+// shell without effects, so every assertion about what it draws would be
+// vacuous, and `useMsg` reads a context to find its copy. It is deliberately
+// NOT a general React renderer — it renders one function component one level
+// deep and returns the element tree, which is all a click needs.
 //
 // Why this rather than adding jsdom: jsdom is a dependency for every suite in
 // the workspace and a build-time cost forever, to cover a handful of lines.
@@ -30,9 +33,22 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import * as ReactRuntime from "react";
 
 type Cell = unknown;
+type Deps = unknown[] | undefined;
 
 interface HookDispatcher {
   useState: (initial: Cell) => [Cell, (next: Cell) => void];
+  /** Mount/update effects. Collected during render and run after it, exactly
+   *  as React does — a component that LOADS its data in an effect (the create-
+   *  org form's billing groups) renders an empty shell without this, and every
+   *  assertion about what it draws afterwards would be vacuous. */
+  useEffect: (create: () => void | (() => void), deps: Deps) => void;
+  /** Straight through: `useMemo` is a cache, never a behaviour. */
+  useMemo: (create: () => Cell, deps: Deps) => Cell;
+  /** The context's DEFAULT value — there is no provider tree here. That is the
+   *  production path for the copy hooks (`useMsg` falls back to the English
+   *  catalog outside a `DictProvider`), so the sentences a test reads are the
+   *  shipped English ones. */
+  useContext: (context: { _currentValue: Cell }) => Cell;
 }
 
 export type Props = Record<string, unknown>;
@@ -108,6 +124,13 @@ export function renderIsland<P>(
   const cells: Cell[] = [];
   let cursor = 0;
   let output: ReactNode = null;
+  // Effects are keyed by call order like every other hook. `deps` is the
+  // PREVIOUS render's array, so an effect re-runs only when its dependencies
+  // change — `[]` runs once. Re-running everything on every render would put a
+  // component that sets state from an effect into an infinite loop.
+  const effects: { deps: Deps; cleanup: void | (() => void) }[] = [];
+  let effectCursor = 0;
+  let pending: { index: number; create: () => void | (() => void) }[] = [];
 
   const dispatcher: HookDispatcher = {
     useState(initial) {
@@ -122,16 +145,47 @@ export function renderIsland<P>(
       };
       return [cells[index], set];
     },
+    useEffect(create, deps) {
+      const index = effectCursor++;
+      const before = effects[index];
+      const changed =
+        !before ||
+        deps === undefined ||
+        before.deps === undefined ||
+        deps.length !== before.deps.length ||
+        deps.some((d, i) => !Object.is(d, (before.deps as unknown[])[i]));
+      if (!before) effects[index] = { deps, cleanup: undefined };
+      else effects[index] = { deps, cleanup: before.cleanup };
+      if (changed) pending.push({ index, create });
+    },
+    useMemo(create) {
+      return create();
+    },
+    useContext(context) {
+      return context._currentValue;
+    },
   };
 
   function run() {
     cursor = 0;
+    effectCursor = 0;
+    pending = [];
     const previous = slot.H;
     slot.H = dispatcher;
     try {
       output = Component(props);
     } finally {
       slot.H = previous;
+    }
+    // After the render, like React's commit phase — and OUTSIDE the dispatcher,
+    // so an effect that calls setState re-renders through the normal path.
+    const queued = pending;
+    pending = [];
+    for (const { index, create } of queued) {
+      effects[index]?.cleanup?.();
+      const cleanup = create();
+      const slotEntry = effects[index];
+      if (slotEntry) slotEntry.cleanup = cleanup;
     }
   }
 

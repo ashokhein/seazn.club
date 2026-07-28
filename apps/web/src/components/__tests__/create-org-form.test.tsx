@@ -1,12 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { ReactElement, ReactNode } from "react";
 import {
   BillRow,
   CreateOrgForm,
   eligibility,
+  fullBillOffers,
   submitLabel,
   type CreateOrgGroup,
 } from "../create-org-form";
+import { propsOf, renderIsland, textOf, walk } from "./_hook-harness";
+import ConsoleLink from "@/components/ui/console-link";
 import { DictProvider } from "@/components/i18n/dict-provider";
 import { t } from "@/lib/i18n-runtime";
 import uiEn from "@/dictionaries/en/ui.json";
@@ -256,6 +260,140 @@ describe("BillRow (v17 gap #293 — the rendered picker row)", () => {
     expect(html).not.toContain("Full");
     expect(html).not.toContain("<a ");
     expect(html).not.toContain("disabled=");
+  });
+
+  it("describes the link by its bill's name — several full bills, several links", () => {
+    // Without this, two full bills put two links reading "Buy another slot"
+    // on one page with nothing to tell them apart.
+    const html = renderRow(fullPro, ["o2"]);
+    const [, id] = /id="(bill-name-[^"]+)"/.exec(html) ?? [];
+    expect(id).toBe(`bill-name-${fullPro.id}`);
+    expect(html).toContain(`aria-describedby="${id}"`);
+  });
+});
+
+// Every bill full is the archetypal state for this feature — one Pro bill at
+// 5/5 — and it is the one state where the picker CANNOT be opened: its toggle
+// is disabled while nothing is eligible, so the rows (and their links) never
+// render. The offer has to be made beside the "no eligible bills" note instead.
+describe("fullBillOffers (v17 gap #293 — the picker cannot be opened)", () => {
+  const fullPro: CreateOrgGroup = {
+    ...fullGroup,
+    orgs: [{ id: "o2", name: "Northside", slug: "northside" }],
+  };
+
+  it("offers every full bill that can be bought out of, when none is eligible", () => {
+    expect(fullBillOffers([fullPro], msg, ["o2"])).toEqual([
+      { group: fullPro, href: "/o/northside/settings/add-ons" },
+    ]);
+  });
+
+  it("offers nothing while ANY bill is eligible — the rows are reachable then", () => {
+    // Otherwise the same purchase is offered twice on one screen, and the two
+    // read as two different things to buy.
+    expect(fullBillOffers([proGroup, fullPro], msg, ["o1", "o2"])).toEqual([]);
+  });
+
+  it("skips the full bills with nothing to sell, and keeps the rest", () => {
+    const community = { ...fullPro, id: "sub_comm", plan_key: "community" };
+    expect(fullBillOffers([community, fullPro], msg, ["o2"])).toEqual([
+      { group: fullPro, href: "/o/northside/settings/add-ons" },
+    ]);
+  });
+});
+
+// The join nothing else witnesses: page -> `memberOrgIds` -> row -> href.
+// Replacing the prop with `[]` at either end leaves every test above green and
+// the link rendered for nobody, so this drives the real island with its data
+// arriving the way it does in a browser — through the effect.
+describe("CreateOrgForm island (v17 gap #293 — the wiring, end to end)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  /** BillRow is hookless, so the harness can expand it — which is the only way
+   *  the row's own link is visible from the form's tree. */
+  const expandRows = (node: ReactNode): ReactElement[] => {
+    const top = walk(node);
+    const rows = top.filter((el) => el.type === BillRow);
+    return [
+      ...top,
+      ...rows.flatMap((el) => walk(BillRow(propsOf(el) as Parameters<typeof BillRow>[0]))),
+    ];
+  };
+
+  function mount(groups: CreateOrgGroup[], memberOrgIds: string[]) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        json: async () =>
+          String(url).includes("/api/billing/groups")
+            ? { ok: true, data: groups }
+            : { ok: true, data: { preview: null } },
+      })),
+    );
+    return renderIsland(CreateOrgForm, { memberOrgIds }, expandRows);
+  }
+
+  const linksIn = (tree: ReactElement[]) => tree.filter((el) => el.type === ConsoleLink);
+  const buttonNamed = (tree: ReactElement[], label: string) =>
+    tree.find((el) => el.type === "button" && textOf(el) === label);
+
+  const fullPro: CreateOrgGroup = {
+    ...fullGroup,
+    orgs: [{ id: "o2", name: "Northside Netball", slug: "northside" }],
+  };
+
+  it("offers the purchase when the ONE bill is full and the picker is shut", async () => {
+    const island = mount([fullPro], ["o2"]);
+    await flush();
+
+    // The discriminator: this is genuinely the unreachable state, not a row
+    // that happens to be on screen.
+    const toggle = buttonNamed(island.tree(), "Add to an existing bill");
+    expect(propsOf(toggle!).disabled).toBe(true);
+    expect(island.text()).toContain(
+      "No eligible bills — each needs an open slot on Pro or Pro Plus.",
+    );
+
+    const links = linksIn(island.tree());
+    expect(links.map((l) => propsOf(l).href)).toEqual(["/o/northside/settings/add-ons"]);
+    expect(textOf(links[0])).toBe("Buy another slot for Northside Netball →");
+  });
+
+  it("makes no offer for a bill the payer is not a member of", async () => {
+    // Same shut picker, same full bill — only the membership differs, so an
+    // absence here cannot be an unrendered form.
+    const island = mount([fullPro], ["someone-elses-org"]);
+    await flush();
+    expect(island.text()).toContain("No eligible bills");
+    expect(linksIn(island.tree())).toEqual([]);
+  });
+
+  it("carries the prop into the row's link once the picker IS opened", async () => {
+    const island = mount([proGroup, fullPro], ["o1", "o2"]);
+    await flush();
+    // Nothing yet: the default is "bill this separately", so no rows render.
+    expect(linksIn(island.tree())).toEqual([]);
+
+    (propsOf(buttonNamed(island.tree(), "Add to an existing bill")!).onClick as () => void)();
+    await flush();
+
+    const links = linksIn(island.tree());
+    expect(links.map((l) => propsOf(l).href)).toEqual(["/o/northside/settings/add-ons"]);
+    expect(textOf(links[0])).toBe("Buy another slot →");
+  });
+
+  it("renders no row link when the form is handed an empty membership", async () => {
+    const island = mount([proGroup, fullPro], []);
+    await flush();
+    (propsOf(buttonNamed(island.tree(), "Add to an existing bill")!).onClick as () => void)();
+    await flush();
+    // The rows ARE on screen — both bills are named — so this is the link's
+    // absence, not the picker's.
+    expect(island.tree().some((el) => textOf(el).includes("Northside Netball"))).toBe(true);
+    expect(linksIn(island.tree())).toEqual([]);
   });
 });
 

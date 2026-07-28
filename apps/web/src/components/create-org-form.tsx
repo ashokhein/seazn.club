@@ -127,6 +127,32 @@ function planLabel(plan: string): string {
 }
 
 /**
+ * The bills that are full and CAN be bought out of, for the state where the
+ * picker itself is unreachable (v17 gap #293 review).
+ *
+ * The picker's rows only render under `choice === "add"`, and the toggle that
+ * sets it is disabled while no bill has an open slot. So the payer this whole
+ * feature is for — ONE Pro bill at 5/5 — could never open the list the link
+ * lives in, and met "No eligible bills" with no way forward. When nothing is
+ * eligible the offer therefore has to be made next to that sentence instead.
+ *
+ * Empty whenever at least one bill IS eligible: the rows are reachable then and
+ * carry their own links, and offering the same purchase twice on one screen
+ * would read as two different things to buy.
+ */
+export function fullBillOffers(
+  groups: CreateOrgGroup[],
+  msg: Msg,
+  memberOrgIds: readonly string[],
+): { group: CreateOrgGroup; href: string }[] {
+  if (groups.some((g) => eligibility(g, msg, memberOrgIds).eligible)) return [];
+  return groups.flatMap((g) => {
+    const { addOnsHref } = eligibility(g, msg, memberOrgIds);
+    return addOnsHref ? [{ group: g, href: addOnsHref }] : [];
+  });
+}
+
+/**
  * One bill in the picker: the selectable card, plus — when the bill is full and
  * the payer can actually buy their way out of it — a link to the Add-ons tab.
  *
@@ -263,6 +289,7 @@ export function CreateOrgForm({
   }, []);
 
   const eligibleGroups = (groups ?? []).filter((g) => eligibility(g, msg).eligible);
+  const offers = fullBillOffers(groups ?? [], msg, memberOrgIds);
   const selectedGroup = (groups ?? []).find((g) => g.id === selectedId) ?? null;
   const attaching = choice === "add" && !!selectedGroup;
 
@@ -413,9 +440,31 @@ export function CreateOrgForm({
           )}
 
           {eligibleGroups.length === 0 && (
-            <p className="px-1 text-xs text-slate-400">
-              {msg("orgNew.bill.noneEligible")}
-            </p>
+            <div className="space-y-1.5">
+              <p className="px-1 text-xs text-slate-400">
+                {msg("orgNew.bill.noneEligible")}
+              </p>
+              {/* The picker below cannot be opened in this state, so this is the
+                  only place the way out can be offered. Each link NAMES its
+                  bill: with no rows on screen there is nothing else to say
+                  which one it would raise. */}
+              {offers.length > 0 && (
+                <ul className="space-y-0.5">
+                  {offers.map(({ group, href }) => (
+                    <li key={group.id}>
+                      <Link
+                        href={href}
+                        className="inline-flex rounded-sm px-1 py-1.5 text-xs font-semibold text-purple-700 underline decoration-purple-300 underline-offset-2 hover:text-purple-800 hover:decoration-purple-500"
+                      >
+                        {msg("orgNew.bill.reasonFullCtaFor", {
+                          name: groupLabel(group),
+                        })}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
 
           {choice === "add" && (

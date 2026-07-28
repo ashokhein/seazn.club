@@ -1180,6 +1180,7 @@
   "orgNew.bill.reasonInactive": "No activa",
   "orgNew.bill.reasonFull": "Completa",
   "orgNew.bill.reasonFullCta": "Comprar otra plaza →",
+  "orgNew.bill.reasonFullCtaFor": "Comprar otra plaza para {name} →",
   "orgNew.bill.chargeNow": "{amount} ahora",
   "orgNew.bill.thenPerExtra": "luego se factura según el plan del grupo",
   "orgNew.createAndAdd": "Crear y añadir — {amount} ahora",
