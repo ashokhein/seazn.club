@@ -37,7 +37,7 @@ export const dynamic = "force-dynamic";
 // time. See lib/pass-comparison.ts for why nothing is written down.
 import Link from "@/components/ui/console-link";
 import { sql } from "@/lib/db";
-import { reconcilePassCheckout } from "@/lib/billing";
+import { competitionHasRefusedPassPayment, reconcilePassCheckout } from "@/lib/billing";
 import { requireCompetitionPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";
 import { PassUpgradeButton } from "@/components/pass-upgrade";
@@ -101,7 +101,7 @@ export default async function CompetitionUpgradePage({
     await reconcilePassCheckout(orgId, sp.session_id);
   }
 
-  const [[pass], planKey, currency, locale, [subRow]] = await Promise.all([
+  const [[pass], planKey, currency, locale, [subRow], passUnderReview] = await Promise.all([
     // Presence is ROW EXISTENCE. `stripe_payment_intent` is nullable (V271) and
     // a staff-granted pass is fully active; it is selected only to tell a
     // PURCHASE from a GRANT further down, where the difference decides whether
@@ -129,6 +129,14 @@ export default async function CompetitionUpgradePage({
     sql<{ id: string }[]>`
       select s.id from organizations o join subscriptions s on s.id = o.subscription_id
       where o.id = ${orgId}`,
+    // A payment for THIS competition was taken and then refused by the mint
+    // guard (v17 gap #326, V342). Read here rather than inferred from the
+    // reconcile above, because the reconcile only runs on the return from
+    // checkout and this state has to survive every later visit — including the
+    // webhook-only case, where the buyer never came back through the return URL
+    // at all. Without it the page renders its ordinary offer, buy button and
+    // all, to someone whose money we are already holding.
+    competitionHasRefusedPassPayment(compId),
   ]);
   const dict = await getDictionary(locale, "ui");
 
@@ -215,6 +223,20 @@ export default async function CompetitionUpgradePage({
   return (
     <main className="mx-auto max-w-3xl px-4 py-10">
       <h1 className="page-title">{title}</h1>
+
+      {/* Said BEFORE the ticket, and never suppressed by state: the buy control
+          below is refused server-side (409) while this is true, and a control
+          that fails after the click is exactly the dead end this sentence
+          exists to remove. Amber rather than red — nothing the reader did is
+          wrong, and their money is not lost. */}
+      {passUnderReview && (
+        <p
+          role="status"
+          className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          {t(dict, "upgrade.passUnderReview")}
+        </p>
+      )}
 
       {state.kind === "paid_plan" ? (
         <PlanPanel

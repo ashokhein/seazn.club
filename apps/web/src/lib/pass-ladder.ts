@@ -177,8 +177,16 @@ export const PASS_RUNG_MARKETING_KEY: Record<PassKey, DictionaryKey> = {
  * is one unhandled throw away from being rendered to a buyer as purchase
  * advice. Mapping on status makes that structurally impossible.
  *
- * Three buckets, and the middle one is deliberately NOT narrowed to "bad rung":
+ * Four buckets, and the 4xx one is deliberately NOT narrowed to "bad rung":
  *
+ *   409  a previous payment for this competition was taken and then REFUSED by
+ *        the mint guard (v17 gap #326), so the sale is frozen until staff
+ *        resolve it. Split out of the 4xx bucket because that bucket's whole
+ *        premise — "the page is out of date, reload and try again" — is a
+ *        confident lie here: reloading changes nothing, and the person reading
+ *        it has already been charged. It is the one refusal on this route the
+ *        buyer cannot clear by any action at all, so the copy says what
+ *        happened to their money instead of asking them to retry.
  *   503  the only thing this route 503s for is a rung whose one-time price has
  *        not been `stripe:sync`'d in this environment. Unambiguous as a CAUSE,
  *        so the copy names the rung — but it says "try the other size" rather
@@ -195,6 +203,7 @@ export const PASS_RUNG_MARKETING_KEY: Record<PassKey, DictionaryKey> = {
  *        say so, and invite a retry.
  */
 export function passCheckoutErrorKey(status: number | null): DictionaryKey {
+  if (status === 409) return "upgrade.buyError.underReview";
   if (status === 503) return "upgrade.buyError.rung";
   if (status !== null && status >= 400 && status < 500) return "upgrade.buyError.stale";
   return "upgrade.buyError.generic";

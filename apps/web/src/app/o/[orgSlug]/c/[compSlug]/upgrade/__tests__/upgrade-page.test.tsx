@@ -35,6 +35,8 @@ const h = vi.hoisted(() => ({
   // case keeps meaning what it meant.
   subscriptionId: "sub-1" as string | null,
   groupRedeemed: false as boolean,
+  // v17 gap #326: an unresolved `pass_mint_refusals` row for this competition.
+  passUnderReview: false as boolean,
   matrix: [
     { plan_key: "community", feature_key: "divisions.per_competition.max", bool_value: null, int_value: 2 },
     { plan_key: "event_pass", feature_key: "divisions.per_competition.max", bool_value: null, int_value: 10 },
@@ -95,6 +97,11 @@ vi.mock("@/lib/billing", () => ({
   reconcilePassCheckout: async (_org: string, session: string) => {
     h.reconciled.push(session);
   },
+  // v17 gap #326: a payment for this competition was taken and then refused by
+  // the mint guard. Driven from the harness rather than through the `sql`
+  // double, because the whole point of the row is that it is NOT a
+  // `competition_passes` row and the double keys on table names.
+  competitionHasRefusedPassPayment: async () => h.passUnderReview,
 }));
 vi.mock("@/server/usecases/billing-manage", () => ({ getPassPurchases: async () => h.purchases }));
 // The picker is NOT mocked. Since v17 #294 it owns both prices, the buy
@@ -141,6 +148,7 @@ beforeEach(() => {
   h.reconciled = [];
   h.subscriptionId = "sub-1";
   h.groupRedeemed = false;
+  h.passUnderReview = false;
 });
 
 /** A pass bought `days` ago, paid unless told otherwise. */
@@ -439,5 +447,36 @@ describe("returning from checkout", () => {
   it("does not reconcile without a session id", async () => {
     await render({ checkout: "success" });
     expect(h.reconciled).toEqual([]);
+  });
+
+  // v17 gap #326: the mint guard took the money and refused to issue the pass.
+  // Before this the page said NOTHING — it rendered its ordinary offer, buy
+  // button and all, to someone we were already holding money from, and the
+  // route's 409 only arrived after they had clicked and agreed to pay again.
+  it("tells a buyer whose payment was refused what happened to their money", async () => {
+    h.passUnderReview = true;
+    const html = await render();
+    expect(html).toContain("Your payment for this competition went through");
+    // Apostrophe-free substrings on purpose: renderToStaticMarkup escapes `'`
+    // to `&#x27;`, so asserting on "don't pay again" would fail for the
+    // encoding rather than for the copy.
+    expect(html).toContain("will refund you or issue the right pass");
+  });
+
+  it("says none of that on an ordinary offer", async () => {
+    // The discriminator. A banner rendered unconditionally would tell every
+    // browsing owner that we were holding money we had never taken.
+    const html = await render();
+    expect(html).not.toContain("Your payment for this competition went through");
+  });
+
+  // It must survive the WEBHOOK-only case too: a buyer who closed the tab never
+  // comes back through `?checkout=success`, so a notice driven off the reconcile
+  // return value alone would never be shown to them.
+  it("shows it on a plain visit, not only on the return from checkout", async () => {
+    h.passUnderReview = true;
+    const html = await render();
+    expect(h.reconciled).toEqual([]);
+    expect(html).toContain("Your payment for this competition went through");
   });
 });

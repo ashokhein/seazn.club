@@ -821,23 +821,29 @@ export interface PassRungMismatchAlertEmail {
   /** The rung the session's METADATA claimed — what the buyer would have been
    *  entitled to had this minted. */
   passKey: PassKey;
+  /** Which check refused. `"price_mismatch"` — both price ids were known and
+   *  disagreed. `"line_items"` — the session did not report exactly one
+   *  line-item price, i.e. it does not have the shape the checkout builder
+   *  produces at all, so there is nothing to compare and nothing to trust. */
+  reason: "price_mismatch" | "line_items";
   /** `plans.stripe_price_id_onetime` for that rung: what the session SHOULD
    *  have been built on. */
   expectedPriceId: string;
   /** The price the session's line item actually carries — i.e. what the buyer
-   *  was charged for. Null when the session reported no line item at all. */
+   *  was charged for. Null when the session reported no single line item, which
+   *  is the `"line_items"` reason above. */
   actualPriceId: string | null;
   /** The payment intent, so the charge can be found (and refunded) without
    *  opening the session first. Null on a session with none. */
   paymentIntent: string | null;
 }
 
-/** Internal staff alert (v17 gap #326): a PAID Event Pass checkout session was
- *  built on one rung's Stripe price while its metadata named a DIFFERENT rung,
- *  so the pass was NOT minted — minting it would have entitled the buyer to a
- *  rung they did not pay for (or charged them for one they will not get).
- *  Nothing about which side is wrong can be inferred from here, so the mint
- *  refuses rather than guessing, exactly like the "undetermined" arm of
+/** Internal staff alert (v17 gap #326): a PAID Event Pass checkout session did
+ *  not agree with itself about which rung was bought, so the pass was NOT
+ *  minted — minting it would have entitled the buyer to a rung they did not pay
+ *  for (or charged them for one they will not get). Nothing about which side is
+ *  wrong can be inferred from here, so the mint refuses rather than guessing,
+ *  exactly like the "undetermined" arm of
  *  `sendPassCreditReversalIncompleteAlertEmail`. A human must decide whether to
  *  refund the charge or grant the pass by hand, and then fix the desync (a
  *  stale `stripe:sync`, a price id edited in the Dashboard, a new rung wired to
@@ -848,15 +854,30 @@ export async function sendPassRungMismatchAlertEmail(
   opts: PassRungMismatchAlertEmail,
 ): Promise<boolean> {
   const subject = `Event Pass NOT granted — price/rung mismatch: ${opts.sessionId}`;
+  const what =
+    opts.reason === "line_items"
+      ? `the session did not report exactly one line-item price, so it does not have the shape ` +
+        `our checkout builder produces at all (that rung's configured one-time price is ` +
+        `${opts.expectedPriceId})`
+      : `the session was built on price ${opts.actualPriceId ?? "(unknown)"} while that rung's ` +
+        `configured one-time price is ${opts.expectedPriceId}`;
   const bodyText =
     `A paid Event Pass checkout session (${opts.sessionId}, org ${opts.orgId}, competition ` +
-    `${opts.competitionId}) named rung ${opts.passKey} in its metadata, but the session was ` +
-    `built on price ${opts.actualPriceId ?? "(no line item)"} while that rung's configured ` +
-    `one-time price is ${opts.expectedPriceId}. The buyer WAS CHARGED and NO pass was granted ` +
-    `— granting it would have handed out a rung that was not paid for, and there is no safe way ` +
-    `to tell which of the two is the correct one. Decide manually: refund the charge, or record ` +
-    `the pass at the rung actually paid for. Then find the desync — a stale stripe:sync, a price ` +
+    `${opts.competitionId}) named rung ${opts.passKey} in its metadata, but ${what}. The buyer ` +
+    `WAS CHARGED and NO pass was granted — granting it would have handed out a rung that was ` +
+    `not paid for, and there is no safe way to tell which of the two is the correct one. ` +
+    `Decide manually: refund the charge, or record the pass at the rung actually paid for, then ` +
+    `stamp pass_mint_refusals.resolved_at. Then find the desync — a stale stripe:sync, a price ` +
     `id changed in the Dashboard, or a rung wired to the wrong lookup key.`;
+  // Two consequences a responder will otherwise discover the hard way. Both are
+  // deliberate behaviour, not further bugs, but neither is guessable from the
+  // paragraph above.
+  const consequences =
+    `Until pass_mint_refusals.resolved_at is stamped, this competition CANNOT be sold another ` +
+    `Event Pass — the checkout route refuses it, which is what stops the buyer paying a second ` +
+    `time for the same failure. And because the mint was refused before the money trace ran, ` +
+    `this org's subscriptions.stripe_customer_id may still be NULL: if it is, link the Stripe ` +
+    `customer from the session before expecting an invoice to appear on its billing page.`;
   const html = renderEmail({
     subject,
     preheader: `Paid Event Pass ungranted — org ${opts.orgId}`,
@@ -864,18 +885,21 @@ export async function sendPassRungMismatchAlertEmail(
     title: "Event Pass rung/price mismatch",
     contentHtml:
       paragraph(escapeHtml(bodyText)) +
+      paragraph(escapeHtml(consequences)) +
       panel(
         "Session",
         `${opts.sessionId}\norg: ${opts.orgId}\ncompetition: ${opts.competitionId}\n` +
-          `metadata pass_key: ${opts.passKey}\nexpected price: ${opts.expectedPriceId}\n` +
-          `actual price: ${opts.actualPriceId ?? "(no line item)"}\n` +
+          `metadata pass_key: ${opts.passKey}\nrefused because: ${opts.reason}\n` +
+          `expected price: ${opts.expectedPriceId}\n` +
+          `actual price: ${opts.actualPriceId ?? "(no single line item)"}\n` +
           `payment intent: ${opts.paymentIntent ?? "(none)"}`,
       ),
     footerNote: "Automated staff alert — Event Pass mint guard (v17 gap #326).",
   });
   const text =
-    `${bodyText}\n\nSession: ${opts.sessionId} · org ${opts.orgId} · rung ${opts.passKey} · ` +
-    `expected ${opts.expectedPriceId} · actual ${opts.actualPriceId ?? "(no line item)"} · ` +
+    `${bodyText}\n\n${consequences}\n\nSession: ${opts.sessionId} · org ${opts.orgId} · ` +
+    `rung ${opts.passKey} · refused because ${opts.reason} · expected ${opts.expectedPriceId} · ` +
+    `actual ${opts.actualPriceId ?? "(no single line item)"} · ` +
     `payment intent ${opts.paymentIntent ?? "(none)"}`;
   return send({ to: opts.to, transactional: true, subject, html, text });
 }

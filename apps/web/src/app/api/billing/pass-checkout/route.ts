@@ -5,7 +5,7 @@ import { HttpError } from "@/lib/errors";
 import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { baseUrl } from "@/lib/oauth";
-import { buildPassCheckoutParams } from "@/lib/billing";
+import { buildPassCheckoutParams, competitionHasRefusedPassPayment } from "@/lib/billing";
 import { preferredCurrency } from "@/lib/currency-server";
 import { PASS_KEYS } from "@/lib/currency";
 import { routes } from "@/lib/routes";
@@ -84,6 +84,21 @@ export async function POST(req: Request) {
     const [pass] = await sql<{ competition_id: string }[]>`
       select competition_id from competition_passes where competition_id = ${competition_id}`;
     if (pass) throw new HttpError(400, "This competition already has an Event Pass.");
+
+    // A previous purchase for this competition was PAID and then refused by the
+    // mint guard (v17 gap #326, V342). The check above cannot see it — a refusal
+    // deliberately writes no `competition_passes` row — so without this the
+    // buyer whose money was just taken lands back on the upgrade page looking at
+    // a live buy button, and can be charged again, once per attempt, for ever.
+    //
+    // Its own status (409) rather than joining the 400 above, because the two
+    // have opposite remedies and `passCheckoutErrorKey` maps status to the
+    // sentence the buyer reads: "you already have one" is resolved by reloading,
+    // this one cannot be resolved by the buyer at all. Clears itself the moment
+    // staff stamp `resolved_at`.
+    if (await competitionHasRefusedPassPayment(competition_id)) {
+      throw new HttpError(409, "A payment for this competition is under review.");
+    }
 
     // Priced by RUNG. Each rung's one-time price id is written back by
     // `stripe:sync` per environment, so a rung that has not been synced here has

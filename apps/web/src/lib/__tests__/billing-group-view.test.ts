@@ -237,6 +237,24 @@ describe("the cap copy quotes no price", () => {
   // assert the FULL-bill line by this clause, on a Pro fixture that now renders
   // the add-on variant. Both English strings therefore have to keep it, or a
   // copy edit here reds a Playwright run nobody is watching at the time.
+  // A nav rename would otherwise turn this sentence into a wrong direction in
+  // one locale and nobody would notice: the copy names a destination, and the
+  // destination's label lives in two other keys. Pinned per locale, because
+  // that is where they can drift apart (es says "Configuración", not the
+  // "Ajustes" the org menu uses).
+  it("names the Add-ons tab exactly as each locale's nav labels it", () => {
+    for (const locale of ["en", "es", "fr", "nl"] as const) {
+      const dict = DICTS[locale] as Record<string, string>;
+      const copy = dict["billing.group.atCapAddOn"]!;
+      expect(copy, `${locale} settings label`).toContain(dict["settings.nav.title"]!);
+      expect(copy, `${locale} add-ons label`).toContain(dict["settings.nav.addOns"]!);
+      // Both, in that order, as one destination rather than two mentions.
+      expect(copy, `${locale} path`).toContain(
+        `${dict["settings.nav.title"]} \u2192 ${dict["settings.nav.addOns"]}`,
+      );
+    }
+  });
+
   it("keeps the clause the e2e specs match, in BOTH English variants", () => {
     for (const key of ["billing.group.atCap", "billing.group.atCapAddOn"]) {
       expect((uiEn as Record<string, string>)[key], key).toContain(
@@ -606,12 +624,15 @@ describe("what the confirm dialog promises", () => {
   });
 });
 
-// The panel itself is not render-tested here (its data arrives in an effect and
-// this vitest environment is `node` with no jsdom — see the module header), so
-// the decisions above could all be correct while the markup still hardcoded the
-// old key. This is the cheapest thing that closes that gap: a source scan, the
-// same shape `app/__tests__/pass-entry-points.test.ts` uses for the server
-// pages it cannot render.
+// A source scan, kept alongside the RENDER test in
+// `components/__tests__/billing-group-at-cap.test.tsx` rather than instead of
+// it. (The panel's own header says it cannot be render-tested; that stopped
+// being true when `_hook-harness.tsx` landed this wave, and the render test is
+// what reads the interpolated sentence a payer actually sees.) This one still
+// earns its place: it pins the SHAPE — no message key named in the markup — so
+// a future branch that reintroduces a literal for some other state is caught
+// even where no render test covers that state. Same idiom as
+// `app/__tests__/pass-entry-points.test.ts`.
 describe("the panel renders the key this module chose", () => {
   const panel = () =>
     readFileSync(

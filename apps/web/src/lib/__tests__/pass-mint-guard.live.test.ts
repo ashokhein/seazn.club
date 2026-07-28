@@ -67,6 +67,12 @@ if (process.env.BILLING_LIVE === "1" && DB && !TEST_DB) {
 
 const LIVE = process.env.BILLING_LIVE === "1" && TEST_KEY && TEST_DB;
 const MARKER = `t8a-mint-guard-${randomUUID().slice(0, 8)}`;
+// Real uuids: a refusal now WRITES a `pass_mint_refusals` row (V342), whose
+// org/competition columns are uuid. Placeholder strings would fail the cast, be
+// swallowed by that writer's own catch, and quietly turn the refusal test back
+// into an assertion about the return value alone.
+const PROBE_ORG = randomUUID();
+const PROBE_COMP = randomUUID();
 
 /** LIFO: a price cannot be archived while its product still needs it, and a
  *  product cannot be archived while it has an active price. */
@@ -143,6 +149,9 @@ afterAll(async () => {
     await sql`update plans set stripe_price_id_onetime = ${priorOnetime}
               where key = 'event_pass'`.catch(() => undefined);
   }
+  await sql`delete from pass_mint_refusals where competition_id = ${PROBE_COMP}`.catch(
+    () => undefined,
+  );
   await sql.end({ timeout: 5 }).catch(() => undefined);
   if (stranded.length) {
     console.warn(
@@ -157,8 +166,10 @@ afterAll(async () => {
 const asSession = () =>
   ({
     id: sessionId,
-    metadata: { org_id: "org-probe", competition_id: "comp-probe", pass_key: "event_pass" },
+    metadata: { org_id: PROBE_ORG, competition_id: PROBE_COMP, pass_key: "event_pass" },
     payment_status: "paid",
+    // Null on purpose: `refusePassMint` must fall back to the session id as the
+    // durable key, and that fallback is asserted below.
     payment_intent: null,
   }) as unknown as Stripe.Checkout.Session;
 
@@ -177,20 +188,32 @@ describe.skipIf(!LIVE)("Event Pass mint guard, against the real Stripe API", () 
     // The positive discriminator: without it, a guard that refused everything
     // would pass the negative test below.
     await sql`update plans set stripe_price_id_onetime = ${priceId} where key = 'event_pass'`;
-    expect(await passSessionRungMatchesPrice(asSession(), "event_pass", "org-probe")).toBe(true);
+    expect(await passSessionRungMatchesPrice(asSession(), "event_pass", PROBE_ORG)).toBe(true);
   });
 
-  it("REFUSES when the plans row names a different price", async () => {
+  it("REFUSES when the plans row names a different price, and records it durably", async () => {
     await sql`update plans set stripe_price_id_onetime = 'price_not_this_one'
               where key = 'event_pass'`;
     // STAFF_ALERT_EMAIL is left unset by this suite, so the alert wrapper
-    // returns before touching an inbox — the refusal itself is what is asserted.
-    expect(await passSessionRungMatchesPrice(asSession(), "event_pass", "org-probe")).toBe(false);
+    // returns before touching an inbox — the refusal and its ROW are what is
+    // asserted, and the row is the one that survives a lost email.
+    expect(await passSessionRungMatchesPrice(asSession(), "event_pass", PROBE_ORG)).toBe(false);
+    const [row] = await sql<{ stripe_ref: string; reason: string; actual_price_id: string }[]>`
+      select stripe_ref, reason, actual_price_id from pass_mint_refusals
+       where competition_id = ${PROBE_COMP}`;
+    // The session id, because this fixture carries no payment intent — the
+    // documented fallback, exercised against a real session rather than asserted
+    // about one.
+    expect(row).toMatchObject({
+      stripe_ref: sessionId,
+      reason: "price_mismatch",
+      actual_price_id: priceId,
+    });
   });
 
   it("MINTS unverified when the rung has no configured price, without asking Stripe", async () => {
     // The fail-open arm, live: an unsynced environment must keep selling passes.
     await sql`update plans set stripe_price_id_onetime = null where key = 'event_pass'`;
-    expect(await passSessionRungMatchesPrice(asSession(), "event_pass", "org-probe")).toBe(true);
+    expect(await passSessionRungMatchesPrice(asSession(), "event_pass", PROBE_ORG)).toBe(true);
   });
 });

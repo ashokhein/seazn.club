@@ -187,9 +187,21 @@ describe("passCheckoutErrorKey", () => {
     // The route 400s for five different reasons — already holds a pass, plan
     // now covers it, no active org, competition gone, rung not in PASS_KEYS —
     // and 401/404 add two more. They differ in cause and NOT in remedy.
-    for (const status of [400, 401, 402, 404, 409, 429]) {
+    //
+    // 409 is deliberately NOT in this list any more (v17 gap #326): see below.
+    for (const status of [400, 401, 402, 404, 429]) {
       expect(passCheckoutErrorKey(status)).toBe("upgrade.buyError.stale");
     }
+  });
+
+  it("does NOT tell an already-charged buyer to reload and try again (409)", () => {
+    // The mint guard refused a payment that was taken, so the route freezes the
+    // sale until staff resolve it. The 4xx bucket's whole premise — "the page is
+    // out of date, reload" — is a confident lie to this reader: reloading
+    // changes nothing and their money has already gone. Split out with its own
+    // sentence for that reason, not for tidiness.
+    expect(passCheckoutErrorKey(409)).toBe("upgrade.buyError.underReview");
+    expect(passCheckoutErrorKey(409)).not.toBe(passCheckoutErrorKey(400));
   });
 
   it("says nothing it does not know for a 5xx, a rejected fetch or a missing secret", () => {

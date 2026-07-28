@@ -833,6 +833,8 @@
   "upgrade.ladder.entrantsUnlimited": "Participants illimités",
   "upgrade.ladder.preparing": "Préparation du paiement…",
   "upgrade.buyError.rung": "Cette taille de pass n’est pas en vente pour le moment. Essayez l’autre taille ou contactez le support.",
+  "upgrade.buyError.underReview": "Un paiement pour cette compétition a déjà été encaissé et doit être vérifié avant que le pass puisse être émis. Nous nous en occupons : ne payez pas une seconde fois et contactez le support si vous restez sans nouvelles.",
+  "upgrade.passUnderReview": "Votre paiement pour cette compétition a bien été encaissé, mais il ne correspondait pas à la taille de pass enregistrée : nous avons donc suspendu le pass plutôt que d'émettre le mauvais. Notre équipe est prévenue et vous remboursera ou émettra le bon pass. Ne payez pas une seconde fois.",
   "upgrade.buyError.stale": "Cet achat ne peut pas aboutir — la page n’est peut-être plus à jour. Rechargez et réessayez.",
   "upgrade.buyError.generic": "Le paiement est indisponible pour le moment. Veuillez réessayer.",
   "upgrade.slotNote": "Une compétition dotée d’un pass ne compte plus dans vos créneaux de compétition gratuits.",

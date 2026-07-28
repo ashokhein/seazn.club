@@ -833,6 +833,8 @@
   "upgrade.ladder.entrantsUnlimited": "Onbeperkt deelnemers",
   "upgrade.ladder.preparing": "Afrekenen voorbereiden…",
   "upgrade.buyError.rung": "Dit passformaat is nu niet te koop. Probeer het andere formaat of neem contact op met support.",
+  "upgrade.buyError.underReview": "We hebben al een betaling voor deze competitie ontvangen en die moet gecontroleerd worden voordat de pass kan worden uitgegeven. We zijn ermee bezig — betaal niet opnieuw en neem contact op met support als je niets hoort.",
+  "upgrade.passUnderReview": "Je betaling voor deze competitie is gelukt, maar kwam niet overeen met de pass-grootte die wij hadden vastgelegd. Daarom houden we de pass vast in plaats van de verkeerde uit te geven. Ons team is gewaarschuwd en zal je terugbetalen of de juiste pass uitgeven. Betaal niet opnieuw.",
   "upgrade.buyError.stale": "Deze aankoop kan niet doorgaan — de pagina is mogelijk verouderd. Herlaad en probeer het opnieuw.",
   "upgrade.buyError.generic": "Afrekenen is nu niet beschikbaar. Probeer het opnieuw.",
   "upgrade.slotNote": "Een competitie met een pass telt niet meer mee voor je gratis competitieplekken.",
