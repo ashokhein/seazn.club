@@ -2066,6 +2066,69 @@ describe.skipIf(!HAS_DB)("extra-org rider prices converge on a PLAN change (webh
     expect(await getLimit(orgId, "orgs.max_owned")).toBe(proPlusBase + 5);
   });
 
+  // Round 3: the publish moved to the READ, so EVERY exit after it leaves the
+  // row sync looking at live Stripe state. These two pin the exits that were
+  // still handing on the stale payload after round 2 — the property is now
+  // structural, and an exit added later inherits it rather than having to
+  // remember it.
+
+  it("STALE EVENT: a REJECTED update still leaves the row on the live quantity", async () => {
+    const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    const stale = riderItem(riderId, proEntry.lookupKey, 2);
+    liveItems[riderId] = { ...(liveItems[riderId] as object), quantity: 5 };
+    // The currency class this suite already covers: Stripe refuses the swap.
+    itemUpdateSpy.mockRejectedValue(
+      Object.assign(new Error("subscription is in currency usd"), {
+        code: "price_currency_mismatch",
+      }),
+    );
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await processStripeEvent(updatedEvent(stripeSubId, walletId, [stale]));
+    logged.mockRestore();
+
+    // The RATE stays wrong — that is what the alert is for. The CAP must not
+    // also go wrong: `live` was in hand (it is three lines from the alert's own
+    // currentPriceId) and was being dropped for `quantity`, so the row was
+    // written 2 against Stripe's 5 — the identical failure round 2 fixed on the
+    // converged exit, surviving here.
+    expect(repriceAlertSpy).toHaveBeenCalledTimes(1);
+    const [row] = await sql<{ qty: number }[]>`
+      select qty from org_addons where stripe_item_id = ${riderId}`;
+    expect(row?.qty).toBe(5);
+    expect(await getLimit(orgId, "orgs.max_owned")).toBe(proPlusBase + 5);
+  });
+
+  it("STALE EVENT: a rider Stripe has already emptied is CANCELED, not left billing a cap", async () => {
+    const { orgId, walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
+    // Two events, because freeze-not-delete needs a row to freeze. First the
+    // rider exists and is correctly priced, so the row is written the ordinary
+    // way and the cap goes up.
+    await processStripeEvent(
+      updatedEvent(stripeSubId, walletId, [riderItem(riderId, proPlusEntry.lookupKey, 2)]),
+    );
+    expect(await getLimit(orgId, "orgs.max_owned")).toBe(proPlusBase + 2);
+
+    // Now a STALE delivery: the event still remembers 2 riders on the old Pro
+    // price, but Stripe has since been emptied to 0. The mismatched price is
+    // what carries it past the steady-state exit and into the live read.
+    vi.clearAllMocks();
+    const stale = riderItem(riderId, proEntry.lookupKey, 2);
+    liveItems[riderId] = { ...(liveItems[riderId] as object), quantity: 0 };
+
+    await processStripeEvent(updatedEvent(stripeSubId, walletId, [stale]));
+
+    // Nothing to re-price on the way out…
+    expect(itemUpdateSpy).not.toHaveBeenCalled();
+    // …but the row must follow Stripe to zero. Trusting the payload kept it
+    // { qty: 2, active } and left the group holding two organisations of
+    // capacity nobody is paying for — this issue's own leak direction.
+    const [row] = await sql<{ qty: number; status: string }[]>`
+      select qty, status from org_addons where stripe_item_id = ${riderId}`;
+    expect(row?.status).toBe("canceled");
+    expect(await getLimit(orgId, "orgs.max_owned")).toBe(proPlusBase);
+  });
+
   it("an item deleted between emission and processing is a benign race, not an alert", async () => {
     const { walletId, stripeSubId } = await makeBilledGroupOrg("pro_plus");
     const item = riderItem(riderId, proEntry.lookupKey, 2);

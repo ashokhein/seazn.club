@@ -813,22 +813,30 @@ export async function convergeOrgAddonPrices(
     for (const item of orgItems) {
       // Already on the current plan's price: the converged steady state, and
       // the reason a second identical event writes nothing.
+      //
+      // THE COMMON PAYLOAD-TRUST WINDOW, and it is deliberately open. This exit
+      // never reads live state at all, so a payload whose PRICE is right but
+      // whose QUANTITY is stale passes straight through to the row sync. It is
+      // by far the most reachable of the two windows here, because it is the
+      // steady state — every group that has already converged takes it on every
+      // event. Closing it means a `subscriptionItems.retrieve` for every rider
+      // on every `subscription.updated`, which is exactly the per-event round
+      // trip the early return at the top of this function exists to avoid. That
+      // trade belongs to #332's scheduled reconciliation, which pays it once a
+      // day for every group instead of once an event for each.
       if (item.price?.id === expectedPriceId) continue;
       // A quantity-0 item is a removal in disguise; the row sync below flips
       // its row to canceled. Re-pricing it would be paying a Stripe write to
       // correct the rate of something that is on its way out.
       //
-      // THE REMAINING PAYLOAD-TRUST WINDOW, deliberately left open. This test
-      // reads the EVENT, and it sits before the live re-read below — so a
-      // payload saying qty 0 while Stripe holds a re-bought rider (an
-      // out-of-order delivery) skips convergence entirely, and the row sync
-      // then cancels a row the customer is paying for. Closing it means a
-      // `subscriptionItems.retrieve` on every removal, which is what this path
-      // normally is, to catch a race that needs a removal and a re-buy to
-      // cross. It is pre-existing payload-trust rather than something this
-      // convergence introduced — every other reader of this payload trusts it
-      // the same way — and #332's reconciliation sweep is where it gets closed
-      // for the whole family rather than one branch at a time.
+      // ONE OF THE REMAINING PAYLOAD-TRUST WINDOWS, and the rarer one. This
+      // check reads the EVENT and sits before the live re-read below, so a
+      // payload saying qty 0 while Stripe holds a re-bought rider skips
+      // convergence and the row sync then cancels a row the customer is paying
+      // for. Much less reachable than the steady-state exit above: no app path
+      // produces a qty-0 rider item at all — setExtraOrgs removes via
+      // `subscriptionItems.del` — so it takes a Dashboard edit AND an
+      // out-of-order delivery. Same remedy, same owner: #332.
       if ((item.quantity ?? 0) <= 0) continue;
       if (targetClaimed) {
         console.error(
@@ -873,22 +881,26 @@ export async function convergeOrgAddonPrices(
         // reason (syncGroupQuantity, setExtraOrgs, setExtraSeats); this is the
         // mismatch branch only, which is rare and already spending a round trip.
         live = await getStripe().subscriptionItems.retrieve(item.id);
+        // PUBLISH IT IMMEDIATELY, at the read rather than at each exit. From
+        // here on this loop has four ways out — already converged, quantity
+        // gone to zero, the update succeeded, the update was rejected — and
+        // EVERY one of them must leave the row sync looking at what Stripe
+        // actually holds, not at this event's snapshot. Doing it per-exit made
+        // that a rule each future exit has to remember, and two of the four
+        // had already forgotten: a stale payload then wrote the OLD quantity
+        // into org_addons, handing out capacity nobody is paying for (or
+        // withholding capacity that is). Doing it here makes the property
+        // STRUCTURAL — an exit added later inherits it by construction.
+        //
+        // "The next event repairs it" is worth nothing here: convergence fires
+        // only on a plan change, and #332's sweep does not exist yet.
+        const idx = items.indexOf(item);
+        if (idx >= 0) items[idx] = live;
         // Someone got there first — a purchase (setExtraOrgs re-prices AND
         // changes quantity in one go) or an earlier delivery of this same
         // convergence. No Stripe write to make, and the price is now claimed.
-        //
-        // But the ROW SYNC still has to be told, for exactly the reason the
-        // mutate branch below rewrites the payload: this event's snapshot is
-        // stale, and handing it on unchanged makes the sync write the OLD
-        // quantity into org_addons — a group paying Stripe for 5 riders
-        // entitled to 2. "The next event repairs it" is worth nothing here,
-        // because convergence only fires on a plan change and #332's sweep
-        // does not exist yet. So publish the live item and let the sync
-        // reconcile from the truth, whichever branch we leave by.
         if (live?.price?.id === expectedPriceId) {
           targetClaimed = true;
-          const idx = items.indexOf(item);
-          if (idx >= 0) items[idx] = live;
           continue;
         }
         const qty = live?.quantity ?? item.quantity ?? 0;
@@ -902,17 +914,13 @@ export async function convergeOrgAddonPrices(
         });
         targetClaimed = true;
         console.warn(
-          `[billing] re-priced extra-org rider ${item.id} (qty ${qty}) from ${item.price?.id} ` +
-            `to ${expectedPriceId} for plan ${planKey} on subscription ${stripeSub.id} ` +
-            `(group ${subscriptionId})`,
+          `[billing] re-priced extra-org rider ${item.id} (qty ${qty}) from ` +
+            `${live?.price?.id ?? item.price?.id} to ${expectedPriceId} for plan ${planKey} ` +
+            `on subscription ${stripeSub.id} (group ${subscriptionId})`,
         );
-        // Hand the ROW SYNC the post-update item, not the one this event
-        // arrived with. It keys on `stripe_item_id` and `quantity`, and the
-        // live quantity above may legitimately differ from the payload's, so
-        // this is load-bearing rather than belt-and-braces: without it the sync
-        // would write the STALE quantity into org_addons and hand the group a
-        // cap it is no longer paying for (or withhold one it is).
-        const idx = items.indexOf(item);
+        // Upgrade the published item from LIVE to POST-UPDATE. The publish at
+        // the read already put a truthful item here; this replaces it with the
+        // newer truth, which is the only one of the four exits that has one.
         if (updated && idx >= 0) items[idx] = updated;
       } catch (err) {
         // An item that vanished between this event being emitted and being
