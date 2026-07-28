@@ -820,10 +820,13 @@ export async function convergeOrgAddonPrices(
     // That fails SAFE in the sense that matters most — an alert and no write,
     // rather than a write Stripe would reject for a duplicate price. And it is
     // not sticky: `handleSubscriptionChanged` calls this on EVERY
-    // `customer.subscription.created`/`.updated` delivery, not only on a plan
-    // change, and each one carries a fresh payload — so the next subscription
-    // event of any kind (a dunning retry, a seat purchase, a plan edit) re-reads
-    // the claim and converges the item then. What does not exist is anything
+    // `customer.subscription.created`/`.updated` delivery THIS GROUP IS WRITTEN
+    // FOR (two gates stand in front of it: a subscription that resolves to no
+    // group, and an out-of-order delivery `mayWriteGroup` refuses), not only on
+    // a plan change, and each one carries a fresh payload — so the next
+    // subscription event of any kind (a dunning retry, a seat purchase, a plan
+    // edit) that clears those gates re-reads the claim and converges the item
+    // then. What does not exist is anything
     // that SCHEDULES such an event: no retry, and #332's sweep is unbuilt, which
     // is the header's point. A group nothing else touches keeps billing the
     // wrong rate until something touches it.

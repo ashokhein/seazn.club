@@ -203,6 +203,23 @@ const NAMES_BILLING_TAB: Record<string, RegExp> = {
   fr: /Facturation/,
   nl: /Facturering/,
 };
+// The SECOND remedy, pinned separately because it is the ONLY actionable one
+// for half the states that reach this notice: a group suspended by moderation
+// has a bill in perfect order, so "check the Billing tab" sends it to a tab
+// with nothing on it and contacting us is all that is left. A reword that
+// tightened the sentence by dropping this clause would have kept both pins
+// above green while leaving that group told to do nothing that helps.
+//
+// Vocabulary again, not a sentence — and NOT a cognate guess: Spanish ships
+// "soporte" where French and Dutch ship the English "support", so a single
+// shared regex would have been wrong for exactly one locale. The alternates
+// are the words a rewrite would plausibly reach for instead.
+const NAMES_SUPPORT: Record<string, RegExp> = {
+  en: /\b(support|help ?desk)\b/i,
+  es: /\b(soporte|asistencia)\b/i,
+  fr: /\b(support|assistance)\b/i,
+  nl: /\b(support|ondersteuning|klantenservice)\b/i,
+};
 
 describe("addOns.capReduced — true for EVERY state that reaches it", () => {
   for (const [locale, dict] of Object.entries(DICTS)) {
@@ -216,6 +233,21 @@ describe("addOns.capReduced — true for EVERY state that reaches it", () => {
       // The half nothing pinned. Every locale shipped a sentence that denied
       // this state existed.
       expect(sentence).toMatch(NAMES_SUSPENSION[locale]);
+    });
+
+    it(`${locale} still offers the contact-support remedy`, () => {
+      // Its OWN test rather than a fourth assertion above: vitest stops a test
+      // at its first failing expect, so a reword that dropped the support
+      // clause would be reported as whichever earlier assertion happened to
+      // break first, or not at all.
+      const sentence = dict["addOns.capReduced"];
+      expect(sentence).toBeTruthy();
+      // Discriminator: the notice really is the string we looked up (the
+      // suspension half is the one this wave added, so it cannot be inherited
+      // from an older copy) — without it an empty or renamed key would make
+      // the support assertion fail for the wrong reason.
+      expect(sentence).toMatch(NAMES_SUSPENSION[locale]);
+      expect(sentence).toMatch(NAMES_SUPPORT[locale]);
     });
   }
 });
