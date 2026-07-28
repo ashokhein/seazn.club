@@ -33,6 +33,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import stripePlans from "@/config/stripe-plans.json";
 import { sql } from "@/lib/db";
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
+import * as copyTruth from "@/lib/copy-truth";
 import {
   DICTIONARY_LOCALES,
   type DictionaryLocale,
@@ -40,6 +41,10 @@ import {
   LOCALE_CLAIMS,
   type LocalisedValue,
   type PricedPlan,
+  collectPatterns,
+  controlCharacterFaults,
+  inertPatternFaults,
+  riderRateFaults,
   localeCoverageFaults,
   localeCreditGrantFaults,
   localeCreditLeadershipFaults,
@@ -91,13 +96,51 @@ const across = (file: "marketing" | "ui", key: string): LocalisedValue[] =>
 // `usecases/competitions.ts:88` and `usecases/entitlement-freeze.ts:69` both
 // count with `not exists (select 1 from competition_passes …)`. Fixing a false
 // clause is not a licence to quietly drop a true one.
-const PASS_BOUND_VALUES: LocalisedValue[] = [
-  ...across("marketing", "pricing.pass.note"),
-  ...across("marketing", "pricing.faq.eventPass.a"),
-  ...across("ui", "upgrade.intro"),
-  ...across("ui", "upgrade.active.body"),
-  ...across("ui", "billing.passOffer.note"),
-];
+/**
+ * THE KEY AXIS IS AN INVENTORY, PINNED. Fix round 1 added
+ * `pricing.faq.upgraded.a`, which sat on the SAME PAGE saying "passes never
+ * expire" while the key two cards above it had already been corrected — and it
+ * was invisible because deleting a key from this list left the suite green
+ * while deleting a *locale* correctly reds. An axis that is not asserted is not
+ * covered, and the asymmetry is what hid a live falsehood for a whole round.
+ */
+const PASS_BOUND_KEYS = [
+  ["marketing", "pricing.pass.note"],
+  ["marketing", "pricing.faq.eventPass.a"],
+  ["marketing", "pricing.faq.upgraded.a"],
+  ["ui", "upgrade.intro"],
+  ["ui", "upgrade.active.body"],
+  ["ui", "billing.passOffer.note"],
+] as const;
+
+const PASS_BOUND_VALUES: LocalisedValue[] = PASS_BOUND_KEYS.flatMap(([file, key]) =>
+  across(file, key),
+);
+
+/**
+ * Every `pricing.faq.*.a` answer, classified. The /pricing FAQ is where the
+ * missed key lived, so the question "which answers make a pass-duration claim"
+ * is answered as DATA, computed from the dictionary — a NEW faq key reds this
+ * suite until someone decides which side it falls on.
+ *
+ * A blanket permanence scan over all FAQ answers is the wrong tool and was
+ * measured as such: `pricing.faq.card.a` truthfully says Community is "free
+ * forever", and a repo-wide sweep found 18 keys with permanence hits of which
+ * 17 are TRUE claims about other subjects (permanent deletion, credit packs
+ * that genuinely never expire, the Community plan). Scoping is not laziness
+ * here; it is the only way the rule stays honest.
+ */
+const FAQ_PASS_SCOPED = ["pricing.faq.eventPass.a", "pricing.faq.upgraded.a"];
+const FAQ_EXEMPT: Record<string, string> = {
+  "pricing.faq.card.a": "about payment details; its 'free forever' is Community's, and true",
+  "pricing.faq.trialEnd.a": "about the trial ending; makes no pass-duration claim",
+  "pricing.faq.fees.a": "about the fee ladder; a rate claim, guarded by the help-tree fee-lock rules",
+  "pricing.faq.groups.a": "about billing groups",
+  "pricing.faq.currencies.a": "about currency pinning",
+  "pricing.faq.annual.a": "about annual billing",
+  "pricing.faq.cancel.a": "about cancelling Pro; no pass claim",
+  "pricing.faq.proPlus.a": "scanned, but for differentiators and the rider rate — not pass permanence",
+};
 
 /** The one pass string that quantifies the credit grant. */
 const PASS_CREDIT_VALUES = across("marketing", "pricing.faq.eventPass.a");
@@ -159,6 +202,18 @@ const RETIRED_CLAIMS = [
   "voor altijd",
   "AI-ondersteunde planning",
   "organisatie voor de helft van het basistarief",
+  // Fix round 1 — `pricing.faq.upgraded.a`. Two claims per locale: the
+  // permanence one, and the "Pro covers everything the pass does" over-claim,
+  // which is false for the L rung (event_pass_l allows unlimited entrants per
+  // division; pro allows 256).
+  "passes never expire",
+  "covers everything the pass does",
+  "nunca caducan",
+  "cubre todo lo que hace el pase",
+  "expirent jamais",
+  "couvre tout ce que fait le pass",
+  "verlopen nooit",
+  "dekt alles wat de pass doet",
 ];
 
 /**
@@ -172,6 +227,318 @@ const KNOWN_GAPS = [
   "config/tips.ts:82 — 'half your plan's rate', bare. Hardcoded English with no dictionary lookup, so it is a four-locale gap of its own class; routed to task 7, which is already editing that tip.",
   "content/help/scheduling/ai-scheduling.md, content/help/billing/downgrade.md — task 3's gaps, still open (#303).",
   "BOUNDED_SCOPE_GRAMMAR (and therefore all four `bounded` rules, which share its shape) decides a bound by PROXIMITY inside one sentence, not grammar: a coordinated clause such as 'buy during checkout and your competitions stay active' satisfies it. Task 3's review has this queued for a fix round; the locale rules deliberately delegate to it rather than fork it, so they inherit the repair.",
+];
+
+const BOUNDED: Record<DictionaryLocale, string> = {
+  en: "One payment upgrades this competition while it's running — bigger limits and a cheaper fee.",
+  es: "Un solo pago mejora esta competición mientras está en curso — límites mayores y menos comisión.",
+  fr: "Un seul paiement améliore cette compétition tant qu’elle est en cours — des limites plus élevées.",
+  nl: "Eén betaling upgradet deze competitie zolang ze loopt — ruimere limieten en lagere kosten.",
+};
+
+const REWORDINGS: Record<DictionaryLocale, string[]> = {
+  en: [
+    "The upgrade never expires.",
+    "Passes never expire.",
+    "The pass does not expire.",
+    "These passes don't expire.",
+    "It is yours for life.",
+    "The upgrade runs in perpetuity.",
+    "There is no end date.",
+    "The pass never runs out.",
+    "It will not lapse.",
+    "The upgrade stays yours.",
+    "Bought once, it is yours to keep.",
+    "The pass is permanent.",
+    "It lasts forever.",
+    "The upgrade holds for good.",
+    "It never stops.",
+    "The pass lasts indefinitely.",
+  ],
+  es: [
+    "La mejora nunca caduca.",
+    "Los pases nunca caducan.",
+    "El pase no caduca.",
+    "Los pases no caducan.",
+    "Las mejoras nunca expiran.",
+    "El pase nunca vence.",
+    "Los pases nunca vencen.",
+    "Es tuyo de por vida.",
+    "La mejora es permanente.",
+    "Las mejoras son permanentes.",
+    "El pase dura indefinidamente.",
+    "Sin fecha de caducidad.",
+    "Sin vencimiento.",
+    "La mejora se conserva para siempre.",
+    "El pase se mantiene de forma indefinida.",
+    "Los pases caducan nunca.",
+  ],
+  fr: [
+    "L'amélioration n'expire jamais.",
+    "Les pass n'expirent jamais.",
+    "Le pass n'expire pas.",
+    "Les pass expirent jamais.",
+    "L'amélioration ne se termine jamais.",
+    "Les améliorations ne se terminent jamais.",
+    "C'est à vous à vie.",
+    "L'amélioration est permanente.",
+    "Les pass sont permanents.",
+    "Le pass dure indéfiniment.",
+    "Sans date d'expiration.",
+    "Sans échéance.",
+    "L'amélioration vaut pour toujours.",
+    "Le pass est acquis définitivement.",
+    "Sans limite de durée.",
+    "Le pass tient pour de bon.",
+  ],
+  nl: [
+    "De upgrade verloopt nooit.",
+    "Passes verlopen nooit.",
+    "De pass vervalt nooit.",
+    "Passes vervallen nooit.",
+    "De upgrade eindigt nooit.",
+    "De pass stopt nooit.",
+    "Het is voorgoed van jou.",
+    "De upgrade is permanent.",
+    "De passes zijn permanent.",
+    "Geen vervaldatum.",
+    "Geen einddatum.",
+    "De pass is onbeperkt geldig.",
+    "De upgrade geldt voor onbepaalde tijd.",
+    "De pass blijft altijd geldig.",
+    "Het blijft eeuwig staan.",
+    "De pass verloopt niet.",
+  ],
+};
+
+const ADVERSARIAL: Record<DictionaryLocale, string[]> = {
+  en: [
+    "The pass has no end.",
+    "Once bought, it is yours for the rest of time.",
+    "The upgrade carries on without limit.",
+    "There is no cut-off.",
+    "It sticks around no matter what.",
+    "The pass endures.",
+    "You keep it always.",
+    "It remains in force whatever happens.",
+  ],
+  es: [
+    "El pase no tiene fin.",
+    "No hay fecha límite.",
+    "La mejora perdura.",
+    "El pase te acompaña siempre.",
+    "El pase sigue activo siempre.",
+    "Lo conservas sin límite de tiempo.",
+    "La mejora queda ahí para el resto del tiempo.",
+    "El pase permanece.",
+  ],
+  fr: [
+    "Le pass ne prend jamais fin.",
+    "Aucune date limite.",
+    "Le pass demeure valable.",
+    "Une fois acheté, c’est pour la vie.",
+    "L’amélioration subsiste.",
+    "Vous le gardez toujours.",
+    "Le pass tient sans limite de durée.",
+    "Il n’y a pas de terme.",
+  ],
+  nl: [
+    "De pass kent geen einde.",
+    "De pass blijft bestaan.",
+    "De pass houdt niet op.",
+    "Je houdt hem altijd.",
+    "Er is geen afkapdatum.",
+    "De upgrade blijft staan wat er ook gebeurt.",
+    "De pass duurt onbeperkt.",
+    "Het blijft je hele leven gelden.",
+  ],
+};
+
+/**
+ * The known-positive corpus for the module-wide anti-vacuity check.
+ *
+ * Every exported pattern in `@/lib/copy-truth` must match at least one line
+ * here. It is assembled from the fixture sets this suite already maintains plus
+ * a supplementary list for the rules owned by tasks 1 and 3 (the Stripe seed and
+ * the help tree), so the check covers the WHOLE module — the point being that a
+ * pattern which can never fire is invisible to the suite that owns it, as this
+ * wave has now demonstrated twice.
+ *
+ * Adding a pattern therefore means adding a string it matches. That is the
+ * cheapest possible proof that it does something, and it is enforced in both
+ * directions: an unused fixture is a fault too.
+ */
+const KNOWN_POSITIVES: string[] = [
+  ...Object.values(REWORDINGS).flat(),
+  ...Object.values(ADVERSARIAL).flat(),
+  ...Object.values(BOUNDED),
+  // ── The bound, in each language, and the activity words it can govern ──
+  "the pass applies while the competition is open",
+  "valid until the competition is live",
+  "during the event the pass runs",
+  "for as long as the competition is under way",
+  "el pase se aplica mientras la competición está activa",
+  "válido hasta que la competición esté abierta",
+  "mientras dure la competición",
+  "durante el tiempo que la competición esté en marcha",
+  "mientras se juegue la competición",
+  "hasta que dura la competición",
+  "le pass s'applique tant que la compétition est ouverte",
+  "pendant que la compétition est active",
+  "jusqu'à ce que la compétition se déroule",
+  "aussi longtemps que la compétition dure",
+  "de pass geldt zolang de competitie actief is",
+  "terwijl de competitie open is",
+  "totdat de competitie bezig is",
+  "tot de competitie draait",
+  "zolang de competitie duurt",
+  // ── Retired AI-run cap (task 1/3) ──
+  "10 AI schedule runs per division",
+  "three runs a division",
+  "an allowance of AI schedule runs for each division",
+  "a monthly quota of AI schedule generations per division",
+  "per-division AI schedule runs",
+  "each division gets its own AI schedule generations",
+  "every competition comes with its own allowance of scheduling runs",
+  "5 AI runs",
+  "two schedule runs",
+  // ── Pro Plus differentiators, four languages ──
+  "AI-assisted scheduling",
+  "scheduling powered by AI",
+  "auto officials assignment",
+  "officials assigned automatically",
+  "write API access",
+  "priority support",
+  "the largest monthly AI credit grant",
+  "programación asistida por IA",
+  "IA para la planificación",
+  "asignación automática de árbitros",
+  "los árbitros se asignan automáticamente",
+  "acceso de escritura a la API",
+  "la API con permisos de escritura",
+  "soporte prioritario",
+  "la mayor asignación mensual de créditos de IA",
+  "une planification assistée par IA",
+  "l'IA de planification",
+  "attribution automatique des officiels",
+  "les officiels sont assignés de façon automatique",
+  "accès API en écriture",
+  "l'écriture via API",
+  "assistance prioritaire",
+  "la plus grosse dotation mensuelle de crédits IA",
+  "AI-ondersteunde planning",
+  "planning met AI",
+  "automatische toewijzing van officials",
+  "officials automatische toewijzing",
+  "schrijftoegang tot de API",
+  "de API schrijftoegang",
+  "prioritaire ondersteuning",
+  "de grootste maandelijkse AI-credittoekenning",
+  // ── The rider rate, four languages ──
+  "each extra one at half the base rate",
+  "at no more than half the base rate",
+  "half your plan's rate",
+  "cada una adicional a mitad de la tarifa base",
+  "a mitad de precio",
+  "por no más de la mitad de la tarifa base",
+  "à moitié du tarif de base",
+  "à moitié prix",
+  "pour au plus la moitié du tarif de base",
+  "voor de helft van het basistarief",
+  "tegen halve prijs",
+  "voor hoogstens de helft van het basistarief",
+  // ── Recurring cadence (the inverse of the one-time grant) ──
+  "25 AI credits monthly",
+  "credits every month",
+  "credits each month",
+  "credits per month",
+  "25 credits a month",
+  "a recurring top-up",
+  "créditos mensuales",
+  "créditos al mes",
+  "créditos cada mes",
+  "créditos por mes",
+  "un abono recurrente",
+  "des crédits mensuels",
+  "des crédits par mois",
+  "des crédits chaque mois",
+  "un crédit récurrent",
+  "maandelijkse credits",
+  "credits per maand",
+  "elke maand credits",
+  "iedere maand credits",
+  "een terugkerende bijboeking",
+  // ── The V312 fee lock and its reversion claim (task 3) ──
+  "the platform fee returns to your plan's rate",
+  "the fee reverts to whatever your plan charges",
+  "Community's 8% applies again to every later entrant",
+  "the rate goes back to 8%",
+  "the fee will rise once the event closes",
+  "the 5% resets to the plan rate",
+  "the fee rate moves to your plan's own rate",
+  "the fee went back up",
+  "the entry-fee rate drops back to the plan rate",
+  "the fee falls back to your plan's rate",
+  "the rate switches back after the pass ends",
+  "the fee climbs to Community's rate",
+  "the fee jumps to 8%",
+  "the platform fee is restored to your plan's rate",
+  "Once a competition has taken its first paid entry the platform fee it charges is locked for the rest of that competition.",
+  "the fee is fixed after the first paid entry",
+  "the rate is frozen once you have taken a paid registration",
+  "the fee is pinned at the first paid entrant",
+  "the rate stays at 5% after the first paid payment",
+  "the fee does not rise once the competition has had its first paid entry",
+  "the fee does not change after the first paid entry",
+  "the fee does not move once the first paid entry lands",
+  "a competition that never took a paid entrant keeps its plan rate",
+  "no paid entry means the rate still follows your plan",
+  "the competition has already taken a paid registration, so its fee is locked",
+  "it took its first paid entry last week and the rate is locked",
+  "the competition had a paid entry, so the fee is fixed",
+  "the competition has had a paid registration and the rate is frozen",
+  // ── The permanence claim about a RATE, which is TRUE and must be matchable ──
+  "that 5% rate is locked for good",
+  "esa comisión queda fijada permanentemente",
+  "ce taux est verrouillé définitivement",
+  "dat tarief staat permanent vast",
+  // ── Fee ladder rows ──
+  "| Community | 8% |",
+  // ── Permanence vocabulary whose exemplars this wave DELETED from the copy ──
+  //
+  // These are the reason the corpus exists rather than being derived from the
+  // shipped strings: a pattern written to catch a falsehood has, by the time the
+  // fix lands, nothing left in the repo to match. Without a fixture it becomes
+  // indistinguishable from a pattern that never worked.
+  "yours for the event's lifetime",
+  "the pass has no expiry",
+  "there is no time limit",
+  "keep it as long as you want",
+  "it keeps working after the competition ends",
+  "the upgrade never switches off",
+  "no limit on how long it lasts",
+  "the upgrade holds without end",
+  "tuyo durante toda la vida del evento",
+  "el pase vale por tiempo indefinido",
+  "el pase es siempre tuyo",
+  "el pase es tuyo para siempre",
+  "la mejora sigue siendo tuya",
+  "un pase sin fin",
+  "el pase sigue vigente",
+  "le pass est à vous à jamais",
+  "le pass vaut de manière permanente",
+  "un pass à durée illimitée",
+  "le pass ne se termine jamais",
+  "le pass reste valable à vie",
+  "aucune limite de durée",
+  "un pass sans fin",
+  "van jou voor de hele levensduur van het evenement",
+  "de pass geldt voor het hele verloop",
+  "de pass is voor altijd van jou",
+  "de pass verloopt nooit meer",
+  "de pass gaat nooit verlopen",
+  "de upgrade is altijd van jou",
+  "een pass zonder einde",
 ];
 
 describe("the four-locale dictionaries say what the resolver enforces", () => {
@@ -189,6 +556,37 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
     expect(localeCoverageFaults([...localesOnDisk, "de"])).toEqual([
       "de/: a dictionary locale with no entry in LOCALE_CLAIMS — its copy is scanned by nothing",
     ]);
+  });
+
+  // THE KEY AXIS, asserted the way the locale axis already was. Deleting a key
+  // from PASS_BOUND_KEYS must red — before fix round 1 it did not, and that is
+  // precisely how `pricing.faq.upgraded.a` stayed invisible.
+  it("scans every key it claims to, so dropping one reds", () => {
+    expect(PASS_BOUND_VALUES).toHaveLength(PASS_BOUND_KEYS.length * DICTIONARY_LOCALES.length);
+    expect([...new Set(PASS_BOUND_VALUES.map((v) => v.key))].sort()).toEqual(
+      [...new Set(PASS_BOUND_KEYS.map(([, k]) => k))].sort(),
+    );
+    expect(PASS_BOUND_KEYS.length).toBeGreaterThanOrEqual(6);
+  });
+
+  // …and the discovery rule that would have caught it: every FAQ answer on the
+  // pricing page is either pass-scoped or exempt WITH A REASON. A new one is a
+  // decision, not an omission.
+  it("classifies every pricing FAQ answer as pass-scoped or exempt", () => {
+    const en = load("en", "marketing");
+    const answers = Object.keys(en)
+      .filter((k) => /^pricing\.faq\..+\.a$/.test(k))
+      .sort();
+    expect(answers.length, "no FAQ answers found — the key shape changed").toBeGreaterThan(5);
+    expect(answers).toEqual([...FAQ_PASS_SCOPED, ...Object.keys(FAQ_EXEMPT)].sort());
+    // Every pass-scoped FAQ answer must actually be in the guarded set.
+    for (const key of FAQ_PASS_SCOPED) {
+      expect(PASS_BOUND_KEYS.some(([, k]) => k === key), `${key} classified pass-scoped but unguarded`).toBe(true);
+    }
+    // …and no exemption may be blank, so "exempt" always carries a why.
+    for (const [key, why] of Object.entries(FAQ_EXEMPT)) {
+      expect(why.length, `${key} has an empty exemption reason`).toBeGreaterThan(10);
+    }
   });
 
   // Anti-vacuity for the whole file: every guard below is `toEqual([])` over a
@@ -303,17 +701,130 @@ describe("the dictionary guards survive a rewording, in every locale", () => {
   // The bound, said correctly, in each language. These are the fixtures the
   // negatives below are built on top of — if one of these ever reds, the guard
   // has started rejecting true copy.
-  const BOUNDED: Record<DictionaryLocale, string> = {
-    en: "One payment upgrades this competition while it's running — bigger limits and a cheaper fee.",
-    es: "Un solo pago mejora esta competición mientras está en curso — límites mayores y menos comisión.",
-    fr: "Un seul paiement améliore cette compétition tant qu’elle est en cours — des limites plus élevées.",
-    nl: "Eén betaling upgradet deze competitie zolang ze loopt — ruimere limieten en lagere kosten.",
-  };
 
   it("accepts a correctly bounded sentence in each language", () => {
     for (const locale of DICTIONARY_LOCALES) {
       expect(localePassBoundFaults(v(locale, BOUNDED[locale])), locale).toEqual([]);
     }
+  });
+
+  // ── DETECTION RATE, MEASURED ───────────────────────────────────────────────
+  //
+  // Fix round 1's central finding: the es/fr/nl vocabularies were
+  // SINGULAR-VERB-ONLY, so the architecture above was carrying nothing. Review
+  // measured 2 of 16 rewordings detected, with fr and nl at ZERO.
+  //
+  // This is the measurement itself, committed. Each fixture is the permanence
+  // claim appended to that locale's CORRECT bounded sentence, so the value
+  // still satisfies the positive rule and ONLY the vocabulary can catch it —
+  // the "keep the true copy, add the false claim" shape, which is how a
+  // translator actually reintroduces one. None of these strings is the retired
+  // literal, and the list deliberately includes inflections, tenses and
+  // periphrases the rules were not written against one-for-one.
+
+  it("detects the permanence claim in EVERY locale, at a measured rate", () => {
+    const scores: string[] = [];
+    for (const locale of DICTIONARY_LOCALES) {
+      const fixtures = REWORDINGS[locale];
+      const missed = fixtures.filter(
+        (reworded) => localePassBoundFaults(v(locale, `${BOUNDED[locale]} ${reworded}`)).length === 0,
+      );
+      scores.push(`${locale} ${fixtures.length - missed.length}/${fixtures.length}`);
+      expect(missed, `${locale} missed: ${missed.join(" | ")}`).toEqual([]);
+    }
+    // Recorded so a regression reads as a number, not a boolean.
+    expect(scores).toEqual(["en 16/16", "es 16/16", "fr 16/16", "nl 16/16"]);
+  });
+
+  /**
+   * …and the honest version of the same measurement.
+   *
+   * The fixtures above were written alongside the rules, so 16/16 partly
+   * measures my own memory. THESE were written to defeat them: permanence
+   * claims phrased the way a speaker phrases them, deliberately avoiding the
+   * verb stems and adverbials the vocabulary enumerates. On the first run of
+   * fix round 1's rebuilt vocabulary they scored **0/32 — including 0/8 in
+   * English**, which is what a word-list buys you: it catches the words in it.
+   *
+   * What closed the gap was not more words but three CLAIM FAMILIES — absence
+   * of an end, endurance verbs, and "always" bound to a retention word. Those
+   * generalise; "caduca" does not.
+   */
+
+  it("detects permanence claims written to DEFEAT the vocabulary, not to match it", () => {
+    const scores: string[] = [];
+    for (const locale of DICTIONARY_LOCALES) {
+      const fixtures = ADVERSARIAL[locale];
+      const missed = fixtures.filter(
+        (reworded) => localePassBoundFaults(v(locale, `${BOUNDED[locale]} ${reworded}`)).length === 0,
+      );
+      scores.push(`${locale} ${fixtures.length - missed.length}/${fixtures.length}`);
+      expect(missed, `${locale} missed: ${missed.join(" | ")}`).toEqual([]);
+    }
+    expect(scores).toEqual(["en 8/8", "es 8/8", "fr 8/8", "nl 8/8"]);
+  });
+
+  /**
+   * The other direction, and the reason the no-limit family is scoped to TIME.
+   *
+   * A bare "limit" noun is about whatever it limits. The first cut of the
+   * family banned "aucune limite", which reds French `pricing.faq.eventPass.a`
+   * — "sans aucune limite de participants" is a TRUE statement of the L rung's
+   * unlimited entrant cap (measured; it was the only false positive across all
+   * twenty-four shipped values). A guard that rejects true prose teaches its
+   * next editor to route around it.
+   */
+  it("does not read an unlimited ENTRANT cap as an unlimited DURATION", () => {
+    for (const [locale, honest] of [
+      ["en", "the L pass takes it to 20 divisions and no entrant limit at all"],
+      ["es", "el pase L lleva la misma competición a 20 divisiones y sin ningún límite de participantes"],
+      ["fr", "le pass L porte la même compétition à 20 divisions et sans aucune limite de participants"],
+      ["nl", "de L-pass tilt dezelfde competitie naar 20 divisies en helemaal geen deelnemerslimiet"],
+    ] as Array<[DictionaryLocale, string]>) {
+      expect(
+        localePassBoundFaults(v(locale, `${BOUNDED[locale]} ${honest}`)),
+        `${locale}: ${honest}`,
+      ).toEqual([]);
+    }
+  });
+
+  /**
+   * "THE PASS NEVER ENDS" IS FALSE; "THE LOCKED RATE NEVER CHANGES" IS TRUE.
+   *
+   * The permanence vocabulary contains `for good`, `permanentemente`,
+   * `définitivement` and `permanent` — all of which are legitimate ways to say
+   * the V312 fee lock holds. Task 3 has just rewritten the fee-lock prose, so
+   * without a subject test this fires on true copy the moment that wording
+   * reaches a guarded value.
+   */
+  it("allows a permanence claim about the LOCKED RATE, whose subject is not the pass", () => {
+    for (const [locale, rateClause] of [
+      ["en", "once the first paid entry lands, that 5% rate is locked for good"],
+      ["es", "tras la primera inscripción de pago, esa comisión del 5% queda fijada permanentemente"],
+      ["fr", "dès la première inscription payante, ce taux de 5 % est verrouillé définitivement"],
+      ["nl", "na de eerste betaalde inschrijving staat dat tarief van 5% permanent vast"],
+    ] as Array<[DictionaryLocale, string]>) {
+      expect(
+        localePassBoundFaults(v(locale, `${BOUNDED[locale]} — ${rateClause}.`)),
+        `${locale}: ${rateClause}`,
+      ).toEqual([]);
+    }
+  });
+
+  // …and the exemption is not a hiding place: a clause that names the RATE but
+  // also names the PASS is still scanned, so "a 5% fee, and the pass lasts
+  // forever" cannot smuggle the falsehood in behind a percentage.
+  it("still reds when a rate clause also makes the claim about the pass", () => {
+    expect(
+      localePassBoundFaults(
+        v("en", `${BOUNDED.en} — the 5% platform fee applies and the pass lasts forever.`),
+      ).join(" "),
+    ).toContain("unbounded duration");
+    expect(
+      localePassBoundFaults(v("fr", `${BOUNDED.fr} — ce taux de 5 % et le pass sont permanents.`)).join(
+        " ",
+      ),
+    ).toContain("unbounded duration");
   });
 
   // THE POINT OF THE WHOLE TASK. Each of these is the permanence claim written
@@ -561,6 +1072,23 @@ describe("the dictionary guards survive a rewording, in every locale", () => {
     }
   });
 
+  // WRONG-CLAUSE SATISFACTION, the third occurrence of that defect in this
+  // wave. The rule was value-scoped, so a bare "half the base rate" appended to
+  // a corrected value stayed green: `atMostHalf` was satisfied by the EARLIER,
+  // correct clause. A qualifier in another clause qualifies nothing.
+  it("requires the qualifier in the clause that makes the claim, not merely somewhere", () => {
+    const corrected = "Pro Plus covers up to 10, each extra one at no more than half the base rate";
+    expect(localeHalfClaimFaults(v("en", corrected), "atMost"), "the corrected value").toEqual([]);
+    // …and the same value with a second, unqualified claim appended.
+    expect(
+      localeHalfClaimFaults(
+        v("en", `${corrected}. Extra organisations are billed at half the base rate.`),
+        "atMost",
+      ).join(" "),
+      "an unqualified second clause must not be covered by the first",
+    ).toContain('quotes half the base rate with no "no more than" qualifier');
+  });
+
   // THE OTHER NEGATIVE CASE. "no more than half" is required because the seed's
   // riders are not all exact halves. If a price move made them all exact, a bare
   // "half" would become true and this guard must stop demanding the qualifier.
@@ -587,5 +1115,79 @@ describe("the dictionary guards survive a rewording, in every locale", () => {
     // One odd currency is enough to make a bare "half" false again.
     exact[0]!.prices.monthly!.tiers![1]!.currency_options!.inr = 999;
     expect(riderClaimShape(exact)).toBe("atMost");
+  });
+
+  // `riderClaimShape` and `riderRateFaults` compute the same thing two ways and
+  // were unpinned to each other. They must agree: whenever the shape is
+  // "atMost", a description claiming a bare "half the base rate" has to be a
+  // fault by the seed guard too, or the dictionary rule and the Stripe rule are
+  // enforcing different arithmetic on the same number.
+  it("agrees with the seed guard about what the riders actually charge", () => {
+    const plans = stripePlans.plans as unknown as PricedPlan[];
+    const shape = riderClaimShape(plans);
+    const bare = plans.map((p) => ({
+      ...p,
+      product: { description: "Extra organisations are billed at half the base rate." },
+    }));
+    const qualified = plans.map((p) => ({
+      ...p,
+      product: { description: "Extra organisations are billed at no more than half the base rate." },
+    }));
+    if (shape === "atMost") {
+      expect(riderRateFaults(bare), "shape says atMost, so a bare 'half' must fault").not.toEqual([]);
+      expect(riderRateFaults(qualified), "…and the qualified claim must not").toEqual([]);
+    } else {
+      expect(riderRateFaults(bare), "shape says exactly, so a bare 'half' is true").toEqual([]);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODULE-WIDE ANTI-VACUITY.
+//
+// Twice in this wave a guard has passed while examining nothing: the French
+// permanence list could not match its own language (ASCII `\b`), and task 3's
+// `DURATION_CLAIM` matched NOTHING AT ALL after a stray control character
+// replaced a `\b` — with the suite green both times, carried by sibling rules.
+//
+// A pattern that compiles but can never fire makes every assertion resting on
+// it report clean, so this check belongs to the whole module rather than to the
+// rule that happened to break. It walks every exported RegExp — including ones
+// nested in arrays, in LOCALE_CLAIMS, and in [feature, RegExp] tuples — and
+// demands each one fire on something.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("every pattern in @/lib/copy-truth does something", () => {
+  const patterns = collectPatterns(copyTruth as unknown as Record<string, unknown>);
+
+  it("finds patterns everywhere they are declared, not just at the top level", () => {
+    expect(patterns.length, "the walk found almost nothing — its shape assumption broke").toBeGreaterThan(
+      80,
+    );
+    // Proof the walk actually descends: these three live at three different
+    // depths (bare export, array element, and inside a tuple in a record).
+    const paths = patterns.map((p) => p.path);
+    expect(paths).toContain("BOUNDED_SCOPE_GRAMMAR");
+    expect(paths.some((p) => /^FALSE_PASS_PERMANENCE_PATTERNS\[\d+\]$/.test(p))).toBe(true);
+    expect(paths.some((p) => /^LOCALE_CLAIMS\.fr\.plusClaims\[\d+\]\[1\]$/.test(p))).toBe(true);
+  });
+
+  // Defect 2's signature: a mangled escape leaves a raw control character in the
+  // source, and the pattern quietly stops matching.
+  it("contains no control character in any pattern source", () => {
+    expect(controlCharacterFaults(patterns)).toEqual([]);
+  });
+
+  // Defect 1's signature: a pattern that cannot fire. Every pattern must match
+  // at least one line of the corpus — so adding a pattern means adding a string
+  // it matches, which is the cheapest possible proof that it does something.
+  it("fires on at least one known-positive fixture, every one of them", () => {
+    expect(inertPatternFaults(patterns, KNOWN_POSITIVES)).toEqual([]);
+  });
+
+  // …and the corpus itself must not rot into a list nothing reads: if a fixture
+  // matches no pattern at all, it is dead weight that hides the next gap.
+  it("keeps no fixture that no pattern matches", () => {
+    const unused = KNOWN_POSITIVES.filter((text) => !patterns.some(({ pattern }) => pattern.test(text)));
+    expect(unused, "corpus lines matched by nothing").toEqual([]);
   });
 });

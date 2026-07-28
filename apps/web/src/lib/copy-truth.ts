@@ -166,6 +166,32 @@ export const FALSE_PASS_PERMANENCE_PATTERNS = [
   /\b(stays?|remains?)\s+yours\b/i,
   /\bas\s+long\s+as\s+you\s+(want|like|wish|need|choose)\b/i,
   /\b(even|keeps?\s+working)\s+(after|once)\s+(it|the\s+(competition|event))\b/i,
+  // Fix round 1 (task 4): forms of the same claim that the list above could not
+  // reach. `never expire` was covered only because the plural verb happens to
+  // share a stem with the singular; the negated-auxiliary and the
+  // lifetime-adverbial forms had no entry at all.
+  /\b(do|does|will)\s+not\s+(expire|lapse|end|stop|run\s+out)\b/i,
+  /\b(don['’]t|doesn['’]t|won['’]t)\s+(expire|lapse|end|stop|run\s+out)\b/i,
+  /\bnever\s+(?:ever\s+)?(stops?|stop|runs?\s+out)\b/i,
+  /\bfor\s+life\b/i,
+  /\bin\s+perpetuity\b/i,
+  /\bno\s+end\s+date\b/i,
+  // Fix round 1, second pass. An ADVERSARIAL set — permanence claims written
+  // the way a speaker writes them rather than the way the rules above were
+  // written — scored 0/8 in English and 0/32 across the four locales. Every
+  // pattern above names a specific WORD; none names the CLAIM FAMILY. These
+  // three families are what generalise:
+  //   1. absence-of-an-end nouns,
+  //   2. endurance verbs,
+  //   3. "always" bound to a retention word (bare "always" is far too common
+  //      in true copy to ban, so it is only a fault when it governs keeping).
+  /\bno\s+(end|cut[-\s]?off|expiry|expiration|deadline)\b/i,
+  /\bno\s+limit\s+on\s+(how\s+long|time|duration)\b/i,
+  /\bwithout\s+(end|expiry|expiration)\b/i,
+  /\b(endures?|persists?|carries\s+on|sticks\s+around|remains?\s+in\s+force)\b/i,
+  /\bfor\s+the\s+rest\s+of\s+(time|your\s+life)\b/i,
+  /\b(keeps?|yours|stays?|remains?)\b[^.;,]{0,24}\balways\b|\balways\b[^.;,]{0,24}\b(yours|keep|keeps|stays?|remains?)\b/i,
+  /\b(no\s+matter\s+what|whatever\s+happens)\b/i,
 ];
 
 /**
@@ -1207,6 +1233,12 @@ export interface LocaleClaims {
   halfClaim: RegExp;
   /** …and the "no more than" qualifier that makes it true. */
   atMostHalf: RegExp;
+  /** The entry-fee/rate subject. A permanence claim about THIS is the V312 fee
+   *  lock, which is true — see `isRateClause`. */
+  rateSubject: RegExp;
+  /** The pass/upgrade subject. Its presence in a clause overrides the rate
+   *  exemption, so the exemption cannot become a hiding place. */
+  passSubject: RegExp;
 }
 
 export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
@@ -1221,19 +1253,48 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
     creditLeadership: /\b(largest|biggest|highest)\b[^,.;]{0,30}\bcredit/i,
     halfClaim: /\bhalf\s+the\s+base\s+rate\b|\bhalf\s+(your|the)\s+plan['’]s\s+rate\b/i,
     atMostHalf: /\b(no\s+more\s+than|at\s+most|up\s+to)\s+half\b/i,
+    rateSubject: /\b(platform\s+fee|entry[-\s]fee|fee\s+rate|the\s+fee|rate)\b|\d+(\.\d+)?\s*%/i,
+    passSubject: /\b(pass|passes|upgrade[ds]?|competition|event)\b/i,
   },
   es: {
+    // Fix round 1: this list was SINGULAR-VERB-ONLY and therefore inert. Every
+    // verb below was spelled out in one inflection ("nunca caduca"), so the
+    // plural the shipped copy actually used — "los pases nunca caducan" — went
+    // undetected, in the key this round had to fix. The verbs are now STEMS
+    // with `\w*`, which covers number, person and tense at once, and each form
+    // of the claim is listed rather than each sentence that makes it.
     permanence: [
+      // A — lifetime adverbials.
       String.raw`\bde\s+por\s+vida\b`,
       String.raw`\bpara\s+siempre\b`,
       String.raw`\btoda\s+(la|su)\s+vida\b`,
-      String.raw`\bpermanentes?\b|\bpermanentemente\b`,
-      String.raw`\b(indefinidamente|de\s+forma\s+indefinida)\b`,
-      String.raw`\bnunca\s+(caduca|expira|vence|termina|acaba)\b`,
-      String.raw`\bno\s+(caduca|expira|vence)\b`,
-      String.raw`\bsin\s+(fecha\s+de\s+)?caducidad\b`,
+      String.raw`\bde\s+(manera|forma)\s+(permanente|indefinida)\b`,
+      String.raw`\bindefinidamente\b`,
+      String.raw`\bpor\s+tiempo\s+(ilimitado|indefinido)\b`,
+      String.raw`\bsiempre\s+(tuy[oa]s?|activ[oa]s?|válid[oa]s?)\b`,
+      // B — negated termination, BOTH ORDERS, verb inflected. `nunca`/`jamás`
+      // take the full stem list; a bare `no` takes only the unambiguous expiry
+      // verbs, because "la competición no termina hasta el domingo" is ordinary
+      // true prose and must not red.
+      String.raw`\b(nunca|jamás)\s+(?:se\s+)?(caduc|expir|venc|termin|acab|finaliz|prescrib)\w*`,
+      String.raw`\bno\s+(?:se\s+)?(caduc|expir|venc|prescrib)\w*`,
+      String.raw`\b(caduc|expir|venc|termin|acab|finaliz|prescrib)\w*\s+(nunca|jamás)\b`,
+      // C — absence of a limit.
+      String.raw`\bsin\s+(fecha\s+de\s+)?(caducidad|vencimiento|expiración)\b`,
       String.raw`\bsin\s+límite\s+de\s+tiempo\b`,
-      String.raw`\bes\s+tuy[oa]\s+y\s+lo\s+conservas\b`,
+      // D — permanence adjectives/adverbs, inflected.
+      String.raw`\bpermanente(s|mente)?\b`,
+      // E — retention.
+      String.raw`\bes\s+tuy[oa]s?\s+(para\s+siempre|y\s+lo\s+conservas)\b`,
+      String.raw`\b(sigue|siguen|seguirá|seguirán)\s+siendo\s+tuy[oa]s?\b`,
+      // F — absence of an end, endurance verbs, and guarded "siempre".
+      String.raw`\bno\s+(tiene|tienen)\s+fin\b`,
+      String.raw`\bno\s+hay\s+(fecha\s+límite|fin|caducidad|vencimiento)\b`,
+      String.raw`\bsin\s+(fin|fecha\s+límite|plazo)\b`,
+      String.raw`\b(perdur|permanec|subsist)\w*`,
+      String.raw`\bsigue\w*\s+vigente\b`,
+      String.raw`\bpara\s+el\s+resto\s+del\s+tiempo\b`,
+      String.raw`\bsiempre\b[^.;,]{0,24}\b(tuy|activ|válid|acompañ|conserv|dispon)\w*|\b(tuy|activ|válid|acompañ|conserv)\w*[^.;,]{0,24}\bsiempre\b`,
     ].map(claim),
     bounded: claim(
       boundedScopeGrammarSource(
@@ -1268,19 +1329,46 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
     creditLeadership: claim(String.raw`\b(mayor|más\s+grande)\b[^,.;]{0,30}\bcréditos?\b`),
     halfClaim: claim(String.raw`\bmitad\s+de\s+la\s+tarifa\s+base\b|\ba\s+mitad\s+de\s+(precio|tarifa)\b`),
     atMostHalf: claim(String.raw`\b(no\s+más\s+de|como\s+máximo|a\s+lo\s+sumo|máximo)\s+(la\s+)?mitad\b`),
+    rateSubject: claim(String.raw`\b(comisi\w*|tarifa|tasa|porcentaje)\b|\d+(\.\d+)?\s*%`),
+    passSubject: claim(String.raw`\b(pase|pases|mejora\w*|competici\w*|evento)\b`),
   },
   fr: {
+    // Fix round 1: same defect as es. `n['’]expire\s+(jamais|pas)` pinned the
+    // THIRD-PERSON SINGULAR, so the shipped plural "les pass n'expirent jamais"
+    // was invisible. Stems and `\w*` now carry the inflection, and the
+    // verb-then-`jamais` order is matched without requiring the negator, since
+    // that is where the plural actually broke.
     permanence: [
+      // A — lifetime adverbials.
       String.raw`\bà\s+vie\b`,
       String.raw`\bpour\s+toujours\b`,
       String.raw`\bà\s+jamais\b`,
       String.raw`\bdéfinitivement\b`,
-      String.raw`\bpermanent(e|es|s|ement)?\b`,
       String.raw`\bindéfiniment\b`,
-      String.raw`\bn['’]expire\s+(jamais|pas)\b`,
-      String.raw`\bne\s+(se\s+termine|s['’]arrête)\s+jamais\b`,
-      String.raw`\bsans\s+(date\s+d['’])?expiration\b`,
-      String.raw`\bsans\s+limite\s+de\s+temps\b`,
+      String.raw`\bde\s+(manière|façon)\s+(permanente|définitive)\b`,
+      String.raw`\bà\s+durée\s+(illimitée|indéterminée)\b`,
+      String.raw`\bpour\s+de\s+bon\b`,
+      // B — negated termination: circumfix `ne … jamais`, elided `n'…`, and the
+      // bare verb-then-`jamais` order.
+      String.raw`\bn['’](expir|arrêt|achèv|termin|fini)\w*\s+(jamais|pas)\b`,
+      String.raw`\bne\s+(?:s['’]|se\s+)?(expir|arrêt|achèv|termin|fini)\w*\s+(jamais|pas)\b`,
+      String.raw`\b(expir|arrêt|achèv|termin)\w*\s+jamais\b`,
+      // C — absence of a limit.
+      String.raw`\bsans\s+(date\s+d['’])?(expiration|échéance)\b`,
+      String.raw`\bsans\s+limite\s+de\s+(temps|durée)\b`,
+      // D — permanence adjectives/adverbs, inflected.
+      String.raw`\bpermanent\w*\b`,
+      // E — retention.
+      String.raw`\brest\w*\s+(valable|acquis|actif|active)s?\s+(à\s+vie|indéfiniment|pour\s+toujours)\b`,
+      // F — absence of an end, endurance verbs, and guarded "toujours".
+      String.raw`\bjamais\s+fin\b`,
+      String.raw`\baucun(e)?\s+(date\s+limite|échéance|fin|terme)\b`,
+      String.raw`\baucune\s+limite\s+de\s+(temps|durée)\b`,
+      String.raw`\bsans\s+(fin|terme)\b`,
+      String.raw`\bpas\s+de\s+(terme|fin|limite|date\s+limite)\b`,
+      String.raw`\b(demeur|subsist|perdur)\w*`,
+      String.raw`\bpour\s+la\s+vie\b`,
+      String.raw`\btoujours\b[^.;,]{0,24}\b(vôtre|gard|valable|actif|active|conserv)\w*|\b(gard|valable|actif|active|conserv)\w*[^.;,]{0,24}\btoujours\b`,
     ].map(claim),
     bounded: claim(
       boundedScopeGrammarSource(
@@ -1319,8 +1407,16 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
     creditLeadership: claim(String.raw`\bplus\s+(grosse|grande|important\w*)\b[^,.;]{0,30}\bcrédits?\b`),
     halfClaim: claim(String.raw`\bmoitié\s+du\s+tarif\s+de\s+base\b|\bmoitié\s+(du\s+)?prix\b`),
     atMostHalf: claim(String.raw`\b(au\s+plus|pas\s+plus\s+de|au\s+maximum|maximum)\s+(la\s+)?moitié\b`),
+    rateSubject: claim(String.raw`\b(frais|commission|taux|pourcentage)\b|\d+(\.\d+)?\s*%`),
+    passSubject: claim(String.raw`\b(pass|am\u00e9lioration\w*|comp\u00e9tition\w*|\u00e9v\u00e9nement\w*)\b`),
   },
   nl: {
+    // Fix round 1: same defect again — the verbs were enumerated as finite
+    // singular forms (`verloopt|vervalt|eindigt`), so the shipped plural
+    // "passes verlopen nooit" matched nothing. Note Dutch needs BOTH `verloop`
+    // and `verlop` as stems: "verloopt" has two o's and "verlopen" has one, so
+    // neither is a prefix of the other and a single stem silently covers half
+    // the paradigm.
     permanence: [
       String.raw`\blevensduur\b`,
       // "voor het hele verloop" — the nl wording of `billing.passOffer.note`,
@@ -1328,15 +1424,32 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
       // that a vocabulary written from ONE string per language is not a
       // vocabulary; the positive `bounded` rule is what actually caught it.
       String.raw`\b(hele|volledige)\s+(verloop|duur)\b`,
+      // A — lifetime adverbials.
       String.raw`\bvoor\s+altijd\b`,
       String.raw`\bvoorgoed\b`,
+      String.raw`\beeuwig\w*\b`,
+      String.raw`\bvoor\s+onbepaalde\s+tijd\b`,
+      String.raw`\bonbeperkt\s+(geldig|houdbaar)\b`,
+      String.raw`\b(altijd|permanent)\s+(geldig|actief)\b`,
+      // B — negated termination, both orders, verb inflected.
+      String.raw`\bnooit\s+(?:meer\s+)?(verloop|verlop|verval|eindig|stop|afloop|aflop)\w*`,
+      String.raw`\b(verloop|verlop|verval|eindig|stop|afloop|aflop)\w*\s+(nooit|niet)\b`,
+      // C — absence of a limit.
+      String.raw`\bgeen\s+(vervaldatum|einddatum|tijdslimiet|houdbaarheidsdatum|verloopdatum|vervaltermijn)\b`,
+      // D — permanence adjectives, inflected.
+      String.raw`\bpermanent\w*\b`,
+      // E — retention.
       String.raw`\baltijd\s+van\s+jou\b`,
-      String.raw`\bblijft\s+van\s+jou\b`,
-      String.raw`\bpermanent(e)?\b`,
-      String.raw`\bonbeperkt\s+geldig\b`,
-      String.raw`\bnooit\s+(verloopt|vervalt|eindigt|afloopt)\b`,
-      String.raw`\b(verloopt|vervalt|eindigt)\s+nooit\b`,
-      String.raw`\bgeen\s+(vervaldatum|einddatum|tijdslimiet)\b`,
+      String.raw`\b(blijft|blijven)\s+(altijd\s+)?(geldig|actief|van\s+jou)\b`,
+      // F — absence of an end, endurance verbs, and guarded "altijd".
+      String.raw`\bgeen\s+(einde|afkapdatum|termijn)\b`,
+      String.raw`\bzonder\s+(einde|termijn)\b`,
+      String.raw`\bkent\s+geen\s+einde\b`,
+      String.raw`\b(blijft|blijven)\s+(bestaan|staan|gelden)\b`,
+      String.raw`\bhoudt?\s+niet\s+op\b`,
+      String.raw`\b(duurt|geldt|loopt)\s+onbeperkt\b`,
+      String.raw`\bhele\s+leven\b`,
+      String.raw`\baltijd\b[^.;,]{0,24}\b(van\s+jou|houdt?|geldig|actief|bewaar)\w*|\b(houdt?|geldig|actief)\w*[^.;,]{0,24}\baltijd\b`,
     ].map(claim),
     bounded: claim(
       boundedScopeGrammarSource(
@@ -1370,6 +1483,8 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
     creditLeadership: claim(String.raw`\b(grootste|hoogste)\b[^,.;]{0,30}\bcredit`),
     halfClaim: claim(String.raw`\bhelft\s+van\s+het\s+basistarief\b|\bhalve\s+(prijs|tarief)\b`),
     atMostHalf: claim(String.raw`\b(hoogstens|maximaal|ten\s+hoogste|niet\s+meer\s+dan)\s+(de\s+)?helft\b`),
+    rateSubject: claim(String.raw`\b(kosten|tarief|percentage|commissie)\b|\d+(\.\d+)?\s*%`),
+    passSubject: claim(String.raw`\b(pass|passes|upgrade\w*|competitie\w*|evenement\w*)\b`),
   },
 };
 
@@ -1423,6 +1538,38 @@ export interface LocalisedValue {
  * a Dutch value satisfying the English "while … running" would mean the Dutch
  * page renders English, which is the bug, not the fix.
  */
+/**
+ * A dictionary value split at the boundaries a claim's SUBJECT can change:
+ * sentence punctuation, commas, and the dashes/colons this copy uses to join
+ * two statements. One clause, one subject — which is what makes it possible to
+ * ask "what is this permanence claim ABOUT".
+ */
+export function valueClauses(value: string): string[] {
+  return value
+    .split(/[.:;!?]+|\s+[—–-]\s+|,/)
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0);
+}
+
+/**
+ * "THE PASS NEVER ENDS" IS FALSE. "THE LOCKED RATE NEVER CHANGES" IS TRUE.
+ * The permanence vocabulary cannot tell them apart on its own — `for good`,
+ * `permanentemente`, `définitivement` and `permanent` are all in it, and the
+ * V312 fee lock is a genuine forever-claim about a different subject. Task 3
+ * has just rewritten the fee-lock prose, so this would have started firing on
+ * true copy the moment that wording reached a guarded dictionary value.
+ *
+ * The discriminator is the SUBJECT OF THE CLAUSE, not the words in it: a
+ * permanence hit is a pass falsehood unless its clause is about the rate AND
+ * says nothing about the pass. Requiring both halves is what stops the
+ * exemption becoming a hole — "a 5% platform fee, and the pass lasts forever"
+ * mentions the fee, but it also mentions the pass, so it still reds.
+ */
+function isRateClause(locale: DictionaryLocale, clause: string): boolean {
+  const { rateSubject, passSubject } = LOCALE_CLAIMS[locale];
+  return rateSubject.test(clause) && !passSubject.test(clause);
+}
+
 export function localePassBoundFaults(values: LocalisedValue[]): string[] {
   const faults: string[] = [];
   for (const { locale, key, value } of values) {
@@ -1430,9 +1577,12 @@ export function localePassBoundFaults(values: LocalisedValue[]): string[] {
       faults.push(`${locale} ${key}: empty — nothing to scan, so every rule below passes vacuously`);
       continue;
     }
+    // Clause-scoped, so a true statement about the LOCKED RATE cannot be read
+    // as a false statement about the pass — and vice versa.
+    const scannable = valueClauses(value).filter((c) => !isRateClause(locale, c));
     for (const [vocabLocale, claims] of Object.entries(LOCALE_CLAIMS)) {
       for (const pattern of claims.permanence) {
-        if (pattern.test(value)) {
+        if (scannable.some((c) => pattern.test(c))) {
           faults.push(
             `${locale} ${key}: claims the pass has unbounded duration in ${vocabLocale} vocabulary (${describeClaim(pattern)})`,
           );
@@ -1636,17 +1786,108 @@ export function localeHalfClaimFaults(
   const faults: string[] = [];
   for (const { locale, key, value } of values) {
     const claims = LOCALE_CLAIMS[locale];
-    if (!claims.halfClaim.test(value)) {
+    // CLAUSE-SCOPED, not value-scoped. Value-scoped was wrong-clause
+    // satisfaction — the third occurrence of that defect in this wave: append
+    // a bare "each extra one at half the base rate" to a value whose EARLIER
+    // clause already said "no more than half", and the qualifier from the first
+    // clause answered for the second. The qualifier has to be in the clause
+    // that makes the claim, or it qualifies nothing.
+    const claiming = valueClauses(value).filter((c) => claims.halfClaim.test(c));
+    if (claiming.length === 0) {
       faults.push(`${locale} ${key}: makes no statement about the extra-organisation rate`);
       continue;
     }
-    if (shape === "atMost" && !claims.atMostHalf.test(value)) {
-      faults.push(
-        `${locale} ${key}: quotes half the base rate with no "no more than" qualifier, but the seed's riders are not all exactly half`,
-      );
+    if (shape !== "atMost") continue;
+    for (const clause of claiming) {
+      if (!claims.atMostHalf.test(clause)) {
+        faults.push(
+          `${locale} ${key}: "${clause.slice(0, 56)}" quotes half the base rate with no "no more than" qualifier, but the seed's riders are not all exactly half`,
+        );
+      }
     }
   }
   return faults;
+}
+
+// ── MODULE-WIDE ANTI-VACUITY ─────────────────────────────────────────────────
+//
+// TWICE IN THIS WAVE A GUARD HAS PASSED WHILE EXAMINING NOTHING, and neither
+// was caught by the suite that owned it:
+//
+//  1. the French permanence list could not match its own language, because JS
+//     `\b` is ASCII-only and `/\bà\s+vie\b/` never fires (task 4 found it);
+//  2. `DURATION_CLAIM` matched NOTHING AT ALL — a stray control character where
+//     `\b` belonged, introduced by tooling — and the suite stayed green because
+//     a sibling rule happened to cover the same fixtures (task 3 found it).
+//
+// Both are the same class: a pattern that is *syntactically* valid, compiles
+// without error, and silently matches nothing. Every assertion built on it then
+// reports clean. This makes every other guard in the file untrustworthy, so the
+// check belongs to the MODULE rather than to any one rule.
+//
+// `collectPatterns` walks the module's exported values — including patterns
+// nested in arrays, in `LOCALE_CLAIMS`, and in the `[feature, RegExp]` tuples —
+// so a pattern cannot escape by being somewhere new. A caller then asserts:
+//   - no pattern source contains a CONTROL CHARACTER (defect 2's signature);
+//   - every pattern matches at least one string in a known-positive corpus
+//     (defect 1's signature: a pattern that can never fire).
+// Adding a pattern therefore requires adding a fixture it matches, which is the
+// cheapest possible proof that the pattern does something.
+
+/** One regex found anywhere in the module's exports, with the path to it. */
+export interface LocatedPattern {
+  path: string;
+  pattern: RegExp;
+}
+
+export function collectPatterns(module: Record<string, unknown>): LocatedPattern[] {
+  const found: LocatedPattern[] = [];
+  const seen = new Set<unknown>();
+  const walk = (node: unknown, path: string): void => {
+    if (node instanceof RegExp) {
+      found.push({ path, pattern: node });
+      return;
+    }
+    if (node === null || typeof node !== "object") return;
+    if (seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      node.forEach((child, i) => walk(child, `${path}[${i}]`));
+      return;
+    }
+    for (const [key, child] of Object.entries(node)) walk(child, `${path}.${key}`);
+  };
+  for (const [name, value] of Object.entries(module)) walk(value, name);
+  return found;
+}
+
+/** Control characters are never intentional in a hand-written pattern; they are
+ *  what a broken edit leaves behind where an escape belonged. */
+const CONTROL_CHARACTER = /[\x00-\x1F\x7F]/;
+
+export function controlCharacterFaults(patterns: LocatedPattern[]): string[] {
+  return patterns
+    .filter(({ pattern }) => CONTROL_CHARACTER.test(pattern.source))
+    .map(
+      ({ path, pattern }) =>
+        `${path}: pattern source contains a control character (U+${pattern.source
+          .split("")
+          .find((c) => CONTROL_CHARACTER.test(c))!
+          .charCodeAt(0)
+          .toString(16)
+          .padStart(4, "0")}) — almost certainly a mangled escape`,
+    );
+}
+
+/** Every pattern must fire on SOMETHING. One that matches nothing in the corpus
+ *  is either dead or untested, and the two are indistinguishable from here. */
+export function inertPatternFaults(patterns: LocatedPattern[], corpus: string[]): string[] {
+  return patterns
+    .filter(({ pattern }) => !corpus.some((text) => pattern.test(text)))
+    .map(
+      ({ path, pattern }) =>
+        `${path}: matches nothing in the known-positive corpus (${describeClaim(pattern)}) — it is inert, and every assertion resting on it reports clean`,
+    );
 }
 
 // ── The fee ladder table, against the matrix ─────────────────────────────────

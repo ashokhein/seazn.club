@@ -192,7 +192,7 @@
   "pricing.faq.eventPass.q": "What exactly does an Event Pass cover?",
   "pricing.faq.eventPass.a": "One competition, for as long as it’s running. The M pass ({pass}) gives that competition 10 divisions and 128 entrants per division; the L pass ({passL}) takes the same competition to 20 divisions and no entrant limit at all. Either way you get advanced formats, exports and realtime, the same one-time +25 AI credits added to your wallet, and a 5% platform fee on its entry fees instead of Community’s 8% — and it stops counting against your free active-competition slot. Pick the size at checkout; a competition holds one pass and keeps it. Your club logo and card entry fees work on every plan already, pass or no pass. Other competitions in your org stay on Community limits.",
   "pricing.faq.upgraded.q": "I bought an Event Pass and later went Pro — what happens?",
-  "pricing.faq.upgraded.a": "Pro covers everything the pass does, org-wide, so the pass sits dormant. If you ever cancel Pro, passed competitions stay upgraded — passes never expire.",
+  "pricing.faq.upgraded.a": "While you're on Pro, Pro's own limits apply across the whole organisation, so the pass sits dormant. If you ever cancel Pro the pass applies again, for as long as that competition is still running — a pass is tied to the competition it was bought for and stops with it.",
   "pricing.faq.trialEnd.q": "What happens when my Pro trial or subscription ends?",
   "pricing.faq.trialEnd.a": "Your org drops back to Community limits automatically. Nothing is deleted — competitions over the limit become read-only until you archive down to quota or upgrade again.",
   "pricing.faq.fees.q": "Can I charge entry fees?",
