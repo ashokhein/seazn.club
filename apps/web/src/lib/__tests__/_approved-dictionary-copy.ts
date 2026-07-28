@@ -575,12 +575,23 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
   {
     file: "ui",
     key: "billing.group.attach.confirmCharge",
-    why: "the extra-organisation rate in the ATTACH CONFIRMATION DIALOG — the last sentence a payer reads before agreeing to a charge, and the only one of these surfaces asserted by e2e (billing-groups.spec.ts, billing-groups-journey.spec.ts), which move with it. Said 'half your plan's rate' bare. Source of truth: config/stripe-plans.json graduated tiers, via riderClaimShape. 'charged now, prorated to the rest of this period' is the ATTACH path (syncGroupQuantity), which does invoice immediately — deliberately NOT the add-on path, which prorates onto the next invoice.",
+    why: "the extra-organisation rate AND the attach charge's TIMING, in the confirmation dialog — the last sentence a payer reads before agreeing, and the only one of these surfaces asserted by e2e (billing-groups.spec.ts, billing-groups-journey.spec.ts), which move with it. RATE: said 'half your plan's rate' bare; source of truth is config/stripe-plans.json's graduated tiers, via riderClaimShape. TIMING: said 'charged now', which is FALSE. attachOrgToGroup bills entirely through syncGroupQuantity, whose only Stripe mutation is subscriptions.update with proration_behavior 'create_prorations' (billing-groups.ts:306-309) — booked onto the NEXT INVOICE, exactly like the add-on paths. No invoices.create, no invoices.pay, no always_invoice, no payment_behavior anywhere in that file; previewAttachCharge uses invoices.createPreview, which is read-only. `charged = raising` is a proration flag, not a statement that money moved. I asserted the opposite here in round 2 on the strength of a stale comment at billing-groups.ts:206-207, which is now corrected — the comment was contradicted by billing-events.ts:738-740 in the same repo.",
     text: {
-      en: "{org} moves onto this plan straight away, and your bill goes up by no more than half the base rate — charged now, prorated to the rest of this period.",
-      es: "{org} pasa a este plan de inmediato y tu factura sube no más de la mitad de la tarifa base, con cargo ahora y prorrateado al resto de este periodo.",
-      fr: "{org} passe sur cette formule immédiatement, et votre facture augmente d'au plus la moitié du tarif de base — prélevé maintenant, au prorata du reste de la période.",
-      nl: "{org} gaat meteen over op dit abonnement en je factuur stijgt met hoogstens de helft van het basistarief — nu in rekening gebracht, naar rato van de rest van deze periode.",
+      en: "{org} moves onto this plan straight away, and your bill goes up by no more than half the base rate — prorated to the rest of this period and added to your next invoice.",
+      es: "{org} pasa a este plan de inmediato y tu factura sube no más de la mitad de la tarifa base, prorrateado al resto de este periodo y añadido a tu próxima factura.",
+      fr: "{org} passe sur cette formule immédiatement, et votre facture augmente d'au plus la moitié du tarif de base — au prorata du reste de la période et ajouté à votre prochaine facture.",
+      nl: "{org} gaat meteen over op dit abonnement en je factuur stijgt met hoogstens de helft van het basistarief — naar rato van de rest van deze periode en toegevoegd aan je volgende factuur.",
+    },
+  },
+  {
+    file: "ui",
+    key: "billing.group.attach.confirmChargeAmount",
+    why: "the SAME dialog when previewAttachCharge returns a figure — billing-group-panel.tsx:227 substitutes this for confirmCharge whenever the preview is non-null, so it is the sentence most payers actually see and it carried the identical 'goes up by {amount} now' falsehood. Timing source of truth: billing-groups.ts:306-309 (create_prorations, next invoice). The AMOUNT itself is Stripe's own proration arithmetic via invoices.createPreview (billing-groups.ts:130), which is read-only and charges nothing.",
+    text: {
+      en: "Straight away, and your bill goes up by {amount} — prorated to the rest of this period and added to your next invoice.",
+      es: "De inmediato, y tu factura sube {amount}, prorrateado al resto de este periodo y añadido a tu próxima factura.",
+      fr: "Immédiatement, et votre facture augmente de {amount} — au prorata du reste de la période et ajouté à votre prochaine facture.",
+      nl: "Meteen, en je factuur stijgt met {amount} — naar rato van de rest van deze periode en toegevoegd aan je volgende factuur.",
     },
   },
 ];

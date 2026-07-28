@@ -828,7 +828,7 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
     for (const key of PLUS_SOON_KEYS) {
       expect(pinned.has(key), `${key} is a roadmap claim but is not pinned`).toBe(true);
     }
-    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(168);
+    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(172);
     // Every entry must say what it claims and what decides it — a pin with no
     // `why` is a snapshot, and a snapshot teaches the next editor to re-record
     // rather than to re-check.

@@ -54,13 +54,15 @@ import {
 import { HELP_ARTICLE_SLUGS, helpUrl } from "@/lib/help";
 import { allHelpArticles } from "@/server/help-content";
 import { TIPS } from "@/config/tips";
-import { allSourceFiles, helpArticle, webSource } from "./_help-copy";
+import { allSourceFiles, codeOnly, helpArticle, helpArticleBySlug, webSource } from "./_help-copy";
 import {
   APPROVED_EVENT_PASS,
   APPROVED_EVENT_PASS_INVENTORY,
   APPROVED_PLANS_PASS,
   APPROVED_PLANS_INVENTORY,
   APPROVED_ADD_ONS_INVENTORY,
+  APPROVED_GROUPS_INVENTORY,
+  APPROVED_CREATE_ORG_INVENTORY,
 } from "./_approved-copy";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -89,6 +91,8 @@ const KNOWN_GAPS = [
   "lib/pricing-cards.ts + e2e/pro-plus-tier.spec.ts — card bullets pinned verbatim (#303)",
   "config/tips.ts + dictionaries/*/ui.json — tips.schedule.save-points.body is stale on BOTH sides vs schedule.checkpoints.max (community 2 since V319, pro 5, pro_plus unlimited); documented as the tip-mirror exception in dictionary-copy-truth.test.ts (#303)",
   "content/help/** link TARGETS are invisible to the inventory gate — claimSurfaces reduces [text](/url) to text, so repointing a URL raises 0 faults (sibling of the link-TITLE hole, #338)",
+  "app/globals.css .competition-prose table — the horizontal scroll box added for #299 is NOT keyboard-reachable: it needs tabindex=0, and renderHelpMarkdown's sanitiser (server/help-content.ts) drops the attribute, so it cannot be set from Markdown. Needs a rehype step or a wrapper element (#303)",
+  "app/globals.css .competition-prose table — `display: block` is what gives that scroll box its overflow, and it drops the implicit table role in some assistive tech (row/column relationships stop being announced). Mitigation is an explicit role=\"table\"/rowgroup set, which the same sanitiser strips (#303)",
 ];
 
 const eventPass = helpArticle("event-pass");
@@ -946,6 +950,15 @@ describe("every surface a reader sees is covered, not just the paragraphs", () =
 // route around it.
 // ─────────────────────────────────────────────────────────────────────────────
 const addOns = helpArticle("add-ons");
+const groups = helpArticle("groups");
+
+/** Every inventory-gated help article, by slug. Shared by the axis describe and
+ *  the rate measurements below so the two cannot disagree about what is gated. */
+const GATED_ARTICLES: Record<string, string[]> = {
+  "billing/add-ons": APPROVED_ADD_ONS_INVENTORY,
+  "billing/groups": APPROVED_GROUPS_INVENTORY,
+  "getting-started/create-your-organisation": APPROVED_CREATE_ORG_INVENTORY,
+};
 
 /** The seed rows this article quotes. Read from the seed, never restated — the
  *  claim and the number have to come from different places or the comparison
@@ -1063,7 +1076,11 @@ describe("every help article stating the extra-organisation rate states it hones
    *  listed. */
   const claiming = new Map<string, string>();
   for (const article of allHelpArticles().values()) {
-    const text = claimTexts(article.markdown).join(". ");
+    // RAW, not `article.markdown`: `allHelpArticles` has already stripped the
+    // frontmatter, and `groups.md` carried this very claim in its
+    // `description:` — which is the lead paragraph, the page metadata and the
+    // search snippet.
+    const text = claimTexts(helpArticleBySlug(article.slug)).join(". ");
     if (LOCALE_CLAIMS.en.halfClaim.test(text)) claiming.set(article.slug, text);
   }
 
@@ -1074,11 +1091,67 @@ describe("every help article stating the extra-organisation rate states it hones
     "getting-started/create-your-organisation",
   ];
 
+  /** Every article on the axis is INVENTORY-GATED. Shared, so "what is gated"
+   *  has one definition. */
+  const GATES = GATED_ARTICLES;
+
   it("knows exactly which articles make the claim", () => {
     expect([...claiming.keys()].sort()).toEqual(ON_THE_AXIS);
     // ANTI-VACUITY: a vocabulary that drifted narrow would sweep nothing in and
     // every article below would pass by never being examined.
     expect(claiming.size, "no article was classified at all").toBeGreaterThan(2);
+  });
+
+  /**
+   * ON THE AXIS MEANS GATED. Measured: off-vocabulary false rate claims pasted
+   * into groups.md and create-your-organisation.md shipped 119/119 GREEN, and
+   * so did a whole new help article; the same edit to the gated add-ons.md
+   * redded at once. The vocabulary scored 0/24 on the reviewer's set.
+   *
+   * That number bites the axis itself, because the axis is computed THROUGH
+   * `en.halfClaim`: membership was being decided by a regex that catches
+   * almost nothing. So the axis is not the defence — the gate is — and this
+   * assertion is what stops an article joining the axis without one.
+   */
+  it("gates every article on the axis, because the vocabulary cannot defend them", () => {
+    for (const slug of ON_THE_AXIS) {
+      expect(GATES[slug], `${slug} is on the half-rate axis but has no inventory`).toBeDefined();
+      expect(GATES[slug]!.length, `${slug}'s inventory is empty`).toBeGreaterThan(8);
+    }
+    expect(Object.keys(GATES).sort(), "a gate exists for an article not on the axis").toEqual(
+      ON_THE_AXIS,
+    );
+  });
+
+  it("is the copy that was approved, surface for surface, in all of them", () => {
+    for (const [slug, approved] of Object.entries(GATES)) {
+      expect(allHelpArticles().has(slug), `${slug} is gated but not on disk`).toBe(true);
+      expect(inventoryFaults(`${slug}.md`, helpArticleBySlug(slug), approved), slug).toEqual([]);
+    }
+  });
+
+  // …and the gate catches what the vocabulary provably does not: the reviewer's
+  // own off-vocabulary set, which shipped green against these two files.
+  it("catches the off-vocabulary claims that scored 0/24 on the vocabulary", () => {
+    const OFF_VOCABULARY = [
+      "Each extra organisation costs 50% of the base rate.",
+      "Every organisation after the first costs half as much as the first.",
+      "An extra organisation is half of what the plan costs.",
+      "Extra organisations come in at fifty percent of the base rate.",
+    ];
+    for (const slug of ON_THE_AXIS) {
+      const markdown = helpArticleBySlug(slug);
+      for (const added of OFF_VOCABULARY) {
+        const mutated = `${markdown}\n\n${added}\n`;
+        // The vocabulary: this is the 0/24 result, asserted rather than described.
+        expect(
+          LOCALE_CLAIMS.en.halfClaim.test(added),
+          `${added} — if the vocabulary now catches this, re-measure the rate below`,
+        ).toBe(false);
+        // The gate: catches every one, because it is not reading them.
+        expect(inventoryFaults("x", mutated, GATES[slug]!), `${slug} <- ${added}`).not.toEqual([]);
+      }
+    }
   });
 
   it("states it in the shape the seed licenses, in all of them", () => {
@@ -1136,11 +1209,40 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
     ).toContain("never re-evaluated against organisations that already exist");
 
     // …and the article says both halves, so neither can be dropped silently.
-    expect(addOns, "the seat freeze").toMatch(/extra seat freezes members/i);
+    expect(addOns, "the seat half").toMatch(/extra seat stops you adding members/i);
     expect(addOns, "the org non-freeze").toMatch(/extra organisation does not freeze anything/i);
     // The owner exemption is real (`frozenMemberIds` filters role === "owner").
     expect(source).toContain('r.role === "owner"');
-    expect(addOns).toMatch(/Owners are never frozen/i);
+    expect(addOns).toMatch(/owners are never marked/i);
+
+    // HOW FAR THE SEAT FREEZE ACTUALLY REACHES. Round 2 said the limit is
+    // "re-checked on every write". It is not: `assertMemberNotFrozen` has ONE
+    // production call site, and it is gated three ways.
+    const apiAuth = codeOnly(webSource("server/api-v1/auth.ts"));
+    const callSites = [...allSourceFiles()]
+      .filter(([f]) => !f.includes("__tests__") && f !== "server/usecases/entitlement-freeze.ts")
+      .filter(([, src]) => codeOnly(src).includes("assertMemberNotFrozen"))
+      .map(([f]) => f);
+    expect(callSites, "the freeze reaches further than the article says — re-read it").toEqual([
+      "server/api-v1/auth.ts",
+    ]);
+    // …and that one site is admin-only, write-only, session-only: a bearer
+    // token returns from `apiKeyAuth` before ever reaching it, so API-KEY
+    // writes are never freeze-checked at all.
+    expect(apiAuth).toContain('if (scope === "write" && role === "admin")');
+    expect(apiAuth).toContain("if (token) return apiKeyAuth(req, token, orgId);");
+    expect(addOns, "the article must not over-promise enforcement").not.toMatch(
+      /re-?checked on every write/i,
+    );
+    expect(addOns, "…and must say where it IS enforced").toMatch(/enforced on our public API today/i);
+
+    // The half that IS enforced everywhere is ADMISSION: an invite or a
+    // promotion past members.max is refused in the same transaction.
+    expect(codeOnly(webSource("lib/invites.ts"))).toContain('"members.max"');
+    expect(codeOnly(webSource("app/api/orgs/[id]/members/[userId]/role/route.ts"))).toContain(
+      '"members.max"',
+    );
+    expect(addOns).toMatch(/invitation or a promotion that would take you past the limit is refused/i);
   });
 
   // CLAIM: "added to your next invoice rather than charged on the spot."
@@ -1179,6 +1281,61 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
       "You'll pay the difference for the rest of this billing period.",
     );
     expect(prorateUp).not.toMatch(/\bnow\b/i);
+  });
+
+  // CLAIM (groups.md + the attach dialog): the added organisation is prorated
+  // onto the NEXT invoice, and nothing is charged at the moment of attach.
+  //
+  // ROUND 2 ASSERTED THE OPPOSITE, in this file's sibling fixture, on the
+  // strength of a COMMENT (billing-groups.ts:206-207, "charged immediately")
+  // that the code contradicted — the same defect this wave exists to remove,
+  // committed while fixing it. The comment is corrected; this is what stops it
+  // mattering again.
+  it("attaches with create_prorations too — nothing charges a card at attach", () => {
+    // CODE ONLY. The comment correcting this very defect names `always_invoice`,
+    // so a raw scan would fire on its own explanation.
+    const source = codeOnly(webSource("server/usecases/billing-groups.ts"));
+    const withComments = webSource("server/usecases/billing-groups.ts");
+
+    // KNOWN-POSITIVE: the quantity write really is here and really does set a
+    // proration behaviour. Without this, a refactor that moved the call would
+    // leave every negative below passing on a file that no longer bills.
+    expect(source, "syncGroupQuantity's proration write moved").toContain(
+      'proration_behavior: raising ? "create_prorations" : "none"',
+    );
+
+    // THE NEGATIVES the copy depends on. `always_invoice` is the idiom that
+    // charges on the spot — it exists in this repo (lib/billing-manage.ts, the
+    // PLAN-CHANGE path), so its absence here is a real distinction, not a
+    // vacuous one.
+    for (const immediate of ["always_invoice", "invoices.create(", "invoices.pay", "payment_behavior", "billing_cycle_anchor"]) {
+      expect(source, `billing-groups.ts now uses ${immediate} — the attach copy says nothing is charged at attach`).not.toContain(
+        immediate,
+      );
+    }
+    // …and the distinction is real: the plan-change path DOES invoice at once.
+    expect(
+      codeOnly(webSource("lib/billing-manage.ts")),
+      "the always_invoice idiom vanished — re-check what still charges immediately",
+    ).toContain('proration_behavior: "always_invoice"');
+
+    // The preview is read-only. It is the only `invoices.*` call in the file,
+    // and the dialog's figure comes from it.
+    expect(source).toContain("invoices.createPreview");
+
+    // The corrected comment, so the next reader is not caught the way I was.
+    expect(withComments, "the stale 'charged immediately' comment is back").not.toContain(
+      "seat is charged immediately",
+    );
+
+    // …and the copy says the true thing, in both the article and the dialog.
+    expect(groups).toMatch(/added to your next invoice, not charged to your card there and then/i);
+    expect(groups).not.toMatch(/and charged now/i);
+    const ui = JSON.parse(readFileSync("src/dictionaries/en/ui.json", "utf8")) as Record<string, string>;
+    for (const key of ["billing.group.attach.confirmCharge", "billing.group.attach.confirmChargeAmount"]) {
+      expect(ui[key], key).toMatch(/added to your next invoice/);
+      expect(ui[key], key).not.toMatch(/\bnow\b/);
+    }
   });
 
   // CLAIM: "Extra seats have no control in Settings yet" / "Size packs have no
@@ -1238,6 +1395,14 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
         // price move ever made them equal, "and on an annual bill it does not"
         // becomes false and the sentence has to change.
         if (ratio <= 1.001) ratios.push(`${addon.key} ${currency}: ratio ${ratio.toFixed(3)} — no longer dearer`);
+        // THE FLOOR IS CHOSEN, THE RATIOS ARE DERIVED. `4/3` is a constant
+        // picked to match the wording, not a number computed from the seed —
+        // an earlier report described it as "derived from the seed" and that
+        // was wrong. What the seed decides is every `ratio` above; this line
+        // only asks whether the sentence pinned three lines down is still a
+        // true description of them. Changing the wording means changing this
+        // constant, deliberately, in the same edit.
+        //
         // "AT LEAST a third more" is a FLOOR, and it is a floor because the
         // gap is not one number: measured across the seed it runs 1.355 (gbp)
         // to 1.472 (inr). The review that caught the original "exactly that
@@ -1354,6 +1519,55 @@ describe("the add-ons gate catches what the vocabulary cannot", () => {
   // …and every one of them fails once the gate is included, because the gate is
   // not reading them. This is the assertion that makes the two numbers above a
   // measurement rather than a hole.
+  /**
+   * ROUND 3, measured after these rules were final — and the number that
+   * settles the argument.
+   *
+   * Twelve claims about what round 3 actually fixed: when the attach charge
+   * lands, how far the seat freeze reaches, and rate shapes the WIDENED
+   * vocabulary still has not seen. The vocabulary scores ZERO. It scored 5/12
+   * on the set that was written around its own phrases, 1/12 on round 2's
+   * fresh set, and 0/12 here; an independent reviewer measured 0/24 on a set
+   * of their own. Four measurements, one conclusion.
+   *
+   * The gate scores 12/12 against all three gated articles, because it is not
+   * reading them. This is the whole reason `groups.md` and
+   * `create-your-organisation.md` are now gated rather than merely corrected.
+   */
+  const ROUND_3_FRESH = [
+    "Adding an organisation takes the money off your card the moment you confirm.",
+    "The proration for a new organisation is billed on the spot.",
+    "You will see the charge on your statement within minutes of adding.",
+    "A failed card at the moment you add will bounce the organisation back out of the group.",
+    "Every extra organisation is billed at fifty per cent of what you already pay.",
+    "The second organisation onwards costs one half of the headline price.",
+    "Cancel a seat and everyone over the limit loses write access across the whole app.",
+    "An over-limit member cannot use the API or the app until you buy the seat back.",
+    "Owners are frozen along with everyone else once you are over the seat limit.",
+    "Adding an organisation mid-year on an annual plan bills you a full extra year today.",
+    "Your extra organisations renew on their own separate date.",
+    "A group that goes over its organisation limit has its newest organisations switched off.",
+  ];
+
+  it("scores 0/12 lexically on round 3's set, and 12/12 through the gate", () => {
+    const caughtLexically = ROUND_3_FRESH.filter(
+      (claim) =>
+        LOCALE_CLAIMS.en.halfClaim.test(claim) &&
+        localeHalfClaimFaults([{ locale: "en", key: "x", value: claim }], "atMost").length > 0,
+    );
+    expect(caughtLexically, "the vocabulary now catches some of these — re-measure").toEqual([]);
+
+    // …and every one of them reds against every gated article.
+    const escaped: string[] = [];
+    for (const claim of ROUND_3_FRESH) {
+      for (const [slug, approved] of Object.entries(GATED_ARTICLES)) {
+        const mutated = `${helpArticleBySlug(slug)}\n\n${claim}\n`;
+        if (inventoryFaults("x", mutated, approved).length === 0) escaped.push(`${slug} <- ${claim}`);
+      }
+    }
+    expect(escaped).toEqual([]);
+  });
+
   it("catches all 24 once the inventory is included", () => {
     expect([...PATTERNS_OWN_SET, ...FRESH_SET].filter((s) => !gated(s))).toEqual([]);
   });

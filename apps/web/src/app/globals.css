@@ -289,9 +289,16 @@ body {
      The combination cannot overflow its container by construction, whatever a
      future article puts in a cell.
 
-     `tabindex` would make the scroll box keyboard-reachable, but the HTML is
-     generated from Markdown by `renderHelpMarkdown` and its sanitiser drops
-     the attribute — tracked with the other help-render gaps. */
+     TWO KNOWN A11Y COSTS, both recorded as KNOWN_GAPS entries in
+     src/lib/__tests__/help-copy-truth.test.ts (#303) rather than merely
+     mentioned here — an earlier version of this comment claimed they were
+     "tracked" when they were in no gap list at all:
+       1. the scroll box is not keyboard-reachable (it needs `tabindex="0"`,
+          and `renderHelpMarkdown`'s sanitiser drops the attribute, so it
+          cannot come from the Markdown);
+       2. `display: block` drops the implicit table role in some assistive
+          tech, so row/column relationships stop being announced.
+     Both need a rehype step or a wrapper element, not a CSS change. */
   .competition-prose table {
     display: block;
     width: max-content;

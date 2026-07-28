@@ -269,10 +269,20 @@ export const APPROVED_PLANS_INVENTORY: string[] = [
  *    unqualified comparative price claim one clause after the one it had just
  *    qualified.
  *
- *  - "An extra seat freezes members … Owners are never frozen."
- *    `server/usecases/entitlement-freeze.ts` `frozenMemberIds` (`:103`) reads
+ *  - "An extra seat stops you adding members, and marks the ones over the
+ *    limit … owners are never marked … enforced on our public API today."
+ *    `frozenMemberIds` (`entitlement-freeze.ts:103`) reads
  *    `getLimit(orgId, "members.max")`, which SUMS the add-on bonus, and exempts
- *    owners explicitly (`:113-116`).
+ *    owners explicitly. ROUND 2 SAID "re-checked on every write" AND OVERSTATED
+ *    IT: `assertMemberNotFrozen` has exactly ONE production call site,
+ *    `server/api-v1/auth.ts:213-214`, gated on `via: session` AND
+ *    `scope === "write"` AND `role === "admin"` — a bearer token returns from
+ *    `apiKeyAuth` first, so API-KEY writes are never freeze-checked, and no
+ *    in-app screen calls it at all. What IS enforced everywhere is ADMISSION:
+ *    `lib/invites.ts:67` and `app/api/orgs/[id]/members/[userId]/role/route.ts:22`
+ *    both count the quota in the same transaction as the write. The copy now
+ *    claims the admission half outright and describes the read-only mark as a
+ *    signal rather than a lock.
  *
  *  - "An extra organisation does not freeze anything … what it loses is the
  *    ability to add another."
@@ -323,9 +333,157 @@ export const APPROVED_ADD_ONS_INVENTORY: string[] = [
   "7d1518387c5c90e4",
   "d1d87a9a3dbdeb8e",
   "b50fa0d68d469172",
-  "2a1276c7fbee0c93",
+  "53cc38c0e056c7b4",
   "704faf902d99b14c",
   "89e6a00cfa216278",
   "e0bc899381ce86af",
   "fe061d7659564782",
+];
+
+/**
+ * The WHOLE of `content/help/billing/groups.md` (v17 gap wave 7, task 7, round 3).
+ *
+ * GATED BECAUSE THE VOCABULARY WAS MEASURED AT 0/24 ON IT. Off-vocabulary false
+ * rate claims pasted into this file — "costs 50% of the base rate", "half as
+ * much as the first", "half of what the plan costs", plus native es/fr/nl —
+ * shipped 119/119 green, as did an entire new help article. The same edit to
+ * the gated `add-ons.md` redded immediately.
+ *
+ * That number also bears on the computed half-rate axis in
+ * `help-copy-truth.test.ts`: the axis is computed THROUGH `en.halfClaim`, so
+ * membership was being decided by a regex that catches almost nothing. Gating
+ * the two articles on the axis is what makes the axis mean something.
+ *
+ * WHAT THIS ARTICLE ASSERTS, AND WHAT DECIDES IT:
+ *  - the extra-organisation rate, five times — `stripe-plans.json`'s graduated
+ *    tiers via `riderClaimShape`; only "no more than half" is true in all
+ *    twenty plan x interval x currency combinations.
+ *  - WHEN THE ATTACH CHARGE LANDS. `attachOrgToGroup` bills entirely through
+ *    `syncGroupQuantity`, whose only Stripe mutation is
+ *    `subscriptions.update` with `create_prorations`
+ *    (`billing-groups.ts:306-309`) — the NEXT invoice, not the card, and the
+ *    same behaviour the add-on paths have. Round 2 said "charged now" on six
+ *    surfaces here on the strength of a stale comment.
+ *  - the dunning window — real, but it is the next INVOICE that can fail;
+ *    nothing is attempted against the card at attach.
+ *  - the freed slot, the fee lock, payouts, the detach modes — see the
+ *    per-section notes in `server/usecases/billing-groups.ts`.
+ */
+export const APPROVED_GROUPS_INVENTORY: string[] = [
+  "6dfdc975fd75c021",
+  "56e3282cee657350",
+  "889eb9bb8adb1b8f",
+  "0b3f064c075f4830",
+  "2c08e52c75400e40",
+  "b27d737d14d930a1",
+  "650ab572d939bca6",
+  "f78e9f343b9dc2e8",
+  "d2190ce79f9684a3",
+  "87261be9da787175",
+  "beaab221487f9585",
+  "edd2b6da9a126c56",
+  "9faecfa06325046c",
+  "a09dc0137f8e8527",
+  "e12f4df63f6cc9ea",
+  "03db06a1af2d3405",
+  "696c2fcc2ecfec40",
+  "a052c3f07ce2508c",
+  "0efcbcbfd21cd2d3",
+  "f3e48e76dfb4c932",
+  "71f2718498988d98",
+  "19f8dbd797ab2df3",
+  "86457c10b518c75c",
+  "670d6537399af0cb",
+  "44b8772e6777bd12",
+  "8d62189b191b015f",
+  "bb6e0a58fdb569a4",
+  "93cbb9e0a733ea84",
+  "a082daadd09b8b31",
+  "506437e366fdbb9f",
+  "3eca421ec4c1ecd2",
+  "ce62fde77df9f3cb",
+  "af77535948d286c5",
+  "791c29feee358ae2",
+  "3b9f1b1cb23117b0",
+  "afe3dfcd35264bc9",
+  "45ac520e121a63aa",
+  "845db4ff8eae0223",
+  "3812af4fc53ba873",
+  "7e50122fa44a6f4b",
+  "f1eec393ae73101f",
+  "e20498cfa56931d3",
+  "858c8b7b0159c14f",
+  "af0c83ae6240326a",
+  "eb9b66040aaa25d8",
+  "5b365c93cb4a5637",
+  "7104f26a03ffde1e",
+  "537d992c53d3e378",
+  "cc5546e9475093dd",
+  "5d34611e1654c2fa",
+  "1687f37c2560ab80",
+  "2a82d5d161253e15",
+  "79756849efc57255",
+  "25eb5c468a8a54a2",
+  "9eb0591ae278ad76",
+  "37e0ccd2e5e57b16",
+  "80a8c63adbf7acf6",
+  "aa38f07aed66bd26",
+  "3b68d1b4c3fc4888",
+  "cbfceb3121b039d5",
+  "14babe148d741a28",
+  "c1952e825277a576",
+  "5a31bc0dd92a9d01",
+  "529f239aa64eaa4e",
+  "ef90d0b1078b0b3d",
+  "7a89a4a943513245",
+  "19438b187f04e834",
+  "84701e090fcbf515",
+  "ddc8366bdf93737f",
+  "bb92ff4f463ccd7b",
+  "29c9a5af721c8abb",
+  "a04e4219f607e695",
+  "2b57b36732a3e9fb",
+  "16727d4791a0a08b",
+  "c5c32d350da1d6b1",
+  "09c784bdca897d29",
+  "3d324adb3ee0b927",
+  "e2fe25cfb8981353",
+  "1415f62ed176347a",
+  "a83851ffc59ddfeb",
+  "290e525981e1463d",
+  "364b1c1d4b1409c9",
+  "8d2ecf6ae325690e",
+  "7dde35de16939fb2",
+  "2f102e765460c832",
+  "3b281af0174847e4",
+];
+
+/**
+ * The WHOLE of `content/help/getting-started/create-your-organisation.md`
+ * (v17 gap wave 7, task 7, round 3).
+ *
+ * A file nothing in this wave had opened until the review found it stating the
+ * extra-organisation rate at `:25`. Small, and gated for the same measured
+ * reason as `groups.md`: it is a funnel page, it quotes the fee ladder and the
+ * plan org caps, and the vocabulary that was supposedly defending it scored
+ * 0/24.
+ *
+ * WHAT IT ASSERTS: the fee ladder (8/5/2/1, `plan_entitlements`
+ * `registration.fee_percent`), the plan org caps (5 / 10, `orgs.max_owned`,
+ * V314), the extra-organisation rate (`riderClaimShape`), and that Community
+ * can already take card entry fees.
+ */
+export const APPROVED_CREATE_ORG_INVENTORY: string[] = [
+  "5a9aee8c75f74828",
+  "c7abb53b293957ff",
+  "7780e9adec7a42e1",
+  "97afdcb5cc7373e9",
+  "332fd65e1bd72032",
+  "b29441d979e91695",
+  "b389c86ad2de4a26",
+  "264f686b9b00d09f",
+  "09c784bdca897d29",
+  "37c315ff03bb75b3",
+  "d78a55bea4454182",
+  "ec33da78b550dcac",
 ];
