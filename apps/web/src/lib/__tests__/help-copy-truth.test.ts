@@ -1613,6 +1613,20 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
       callers.length,
       `the freeze now reaches only ${callers.length} component files — the article says "most of the app", and that is no longer obviously true`,
     ).toBeGreaterThan(30);
+    // …and the discovery must genuinely SPAN BEYOND the `/api/v1/orgs/` slice,
+    // which is the whole defect being fixed. A regression to prefix-on-`orgs`
+    // would still clear the floor above by counting the same five files plus
+    // noise, so require callers whose only freeze-checked routes are
+    // `requireResourceAuth` ones. Measured: the large majority.
+    const resourceOnlyCallers = allStrippedSources()
+      .filter(([f]) => f.startsWith("components/") && !f.includes("__tests__"))
+      .filter(([, src]) => !src.includes("/api/v1/orgs/"))
+      .filter(([, src]) => prefixes.some((p) => p !== "/api/v1/orgs/" && src.includes(p)))
+      .map(([f]) => f);
+    expect(
+      resourceOnlyCallers.length,
+      "discovery has collapsed back to the /api/v1/orgs/ slice — requireResourceAuth routes are freeze-checked too, and they are 85% of the surface",
+    ).toBeGreaterThan(20);
 
     // The copy must not read as a closed enumeration of a few screens…
     expect(addOns, "the freeze is not a four-screen corner of the product").not.toMatch(
