@@ -7,7 +7,7 @@
       "key": "pro",
       "product": {
         "name": "Seazn Club Pro",
-        "description": "Unlimited competitions, multi-division, online registration + entry fees, realtime scoreboard, custom branding, CSV/PDF exports. Covers up to 5 organisations on one bill — each extra organisation is half the base rate."
+        "description": "Unlimited competitions, multi-division, online registration + entry fees, realtime scoreboard, custom branding, CSV/PDF exports. Covers up to 5 organisations on one bill — each extra organisation costs no more than half the base rate."
       },
       "prices": {
         "monthly": {
@@ -56,7 +56,7 @@
       "key": "pro_plus",
       "product": {
         "name": "Seazn Club Pro Plus",
-        "description": "Everything in Pro, plus unlimited members, teams and clubs inside every organisation, a 1% platform fee on entry fees, automatic officials assignment, write API access, priority support and the largest monthly AI credit grant. Covers up to 10 organisations on one bill — each extra organisation is half the base rate."
+        "description": "Everything in Pro, plus unlimited members, teams and clubs inside every organisation, a 1% platform fee on entry fees, automatic officials assignment, write API access, priority support and the largest monthly AI credit grant. Covers up to 10 organisations on one bill — each extra organisation costs no more than half the base rate."
       },
       "prices": {
         "monthly": {
