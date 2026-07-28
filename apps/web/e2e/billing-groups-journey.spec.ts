@@ -324,7 +324,10 @@ test.describe.serial("billing groups — visual workflow", () => {
     const dialog = dialogOf(page);
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("there is nothing to pay now");
-    await expect(dialog).not.toContainText("charged now");
+    // Negative asserted against the live CHARGED wording — "charged now" was
+    // removed from the product (attach prorates onto the next invoice), so a
+    // negative on that string had become vacuous.
+    await expect(dialog).not.toContainText("added to your next invoice");
     await shot(dialog, "attach-confirm-free");
 
     await confirmDialog(page, "Move it onto this bill");

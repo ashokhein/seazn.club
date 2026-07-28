@@ -257,7 +257,9 @@ test.describe.serial("billing groups", () => {
     const dialog = page.getByRole("alertdialog");
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("your bill goes up by no more than half the base rate");
-    await expect(dialog).toContainText("charged now");
+    // The TIMING, not "charged now" — attach prorates onto the next invoice
+    // (syncGroupQuantity's create_prorations); nothing hits the card here.
+    await expect(dialog).toContainText("added to your next invoice");
     await page.keyboard.press("Escape");
   });
 
@@ -274,8 +276,10 @@ test.describe.serial("billing groups", () => {
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("there is nothing to pay now");
     // The two attach bodies must never be confusable — this is the pair the
-    // customer reads immediately before spending money.
-    await expect(dialog).not.toContainText("charged now");
+    // customer reads immediately before spending money. Asserted against the
+    // wording the CHARGED body actually uses: "charged now" no longer appears
+    // anywhere, so a negative on it passed whatever the dialog said.
+    await expect(dialog).not.toContainText("added to your next invoice");
     await page.keyboard.press("Escape");
   });
 
