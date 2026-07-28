@@ -660,6 +660,20 @@ describe("ended — the pass is on the record but has stopped applying", () => {
     expect(html).toContain('data-pass-held-rung="event_pass"');
   });
 
+  it("does not tell an ended pass it still applies", async () => {
+    // `upgrade.owned.nextBody` opens "The pass stays with this competition
+    // whatever you do next" — reassurance that it keeps working, which is the
+    // exact opposite of what the ticket above this card has just said. Two
+    // claims about one purchase, pointing opposite ways, on one screen.
+    endedPass({ reason: "terminal" });
+    const html = await render();
+    expect(html).toContain(t(uiEn, "pass.entry.ended.nextBody", { org: "Riverside CC" }));
+    expect(html).not.toContain(t(uiEn, "upgrade.owned.nextBody", { org: "Riverside CC" }));
+    // Not vacuous: the still-active state genuinely does use that sentence.
+    heldPass();
+    expect(await render()).toContain(t(uiEn, "upgrade.owned.nextBody", { org: "Riverside CC" }));
+  });
+
   it("offers Create next year's edition alongside Go Pro", async () => {
     // The pass cannot be bought again for THIS competition, but next season's
     // edition is a different competition and can have its own. It is the only

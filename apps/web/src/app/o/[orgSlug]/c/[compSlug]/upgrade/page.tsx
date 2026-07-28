@@ -830,10 +830,24 @@ function ProNext({
         {proMonthly}
         <span className="text-base font-normal text-slate-500">{t(dict, "upgrade.perMonth")}</span>
       </p>
+      {/* The ended state gets its OWN body, not the owned one. That string
+          opens "The pass stays with this competition whatever you do next",
+          which reads as "it still works" — directly contradicting the card
+          above, which has just said the pass stopped lifting this
+          competition's limits. Two claims about the same purchase, in
+          opposite directions, on one screen. The ended copy says the true
+          part (the pass and its receipt are still here) without the part
+          that stopped being true. */}
       <p className="mt-3 max-w-xl text-sm text-slate-600">
-        {t(dict, held || ended ? "upgrade.owned.nextBody" : "upgrade.proCard.body", {
-          org: orgName,
-        })}
+        {t(
+          dict,
+          ended
+            ? "pass.entry.ended.nextBody"
+            : held
+              ? "upgrade.owned.nextBody"
+              : "upgrade.proCard.body",
+          { org: orgName },
+        )}
       </p>
       {/* Wrapped and wrapping: at 375px two buttons on one row would either
           overflow or squeeze, and `flex-wrap` lets the second drop under the
