@@ -47,6 +47,7 @@ import {
   LOCALE_CLAIMS,
   type LocalisedValue,
   type PricedPlan,
+  claim,
   collectPatterns,
   controlCharacterFaults,
   inertPatternFaults,
@@ -1189,6 +1190,164 @@ describe("the four-locale dictionaries say what the resolver enforces", () => {
    * one claim set will diverge again; one of them being a copy of the other
    * cannot.
    */
+  /**
+   * ── THE IN-APP COMPARISON PANEL, AND WHY A MIRROR IS THE WRONG GUARD ──────
+   *
+   * `billing.community.f1-f7` and `billing.pro.f1-f7` render in Settings →
+   * Billing as a two-column Community-vs-Pro table, and the ✓/✗ is POSITIONAL:
+   * page.tsx marks community f1-f4 with ✓ and f5-f7 with ✗. So the falsehood
+   * available here is not wording drift — it is a row in the wrong column.
+   *
+   * Three were:
+   *   f5 "Entry fees (Stripe payouts)" ✗  — `registration.paid` is TRUE on
+   *      community, and the public card sells "Online registration & entry fees
+   *      (8% fee)". The panel was telling a Community org it cannot take money.
+   *   f6 "Branding & exports" ✗           — `branding` and `exports` are BOTH
+   *      true on community (V310). Only `exports.branded` and
+   *      `dashboard.branding` are denied.
+   *   f4 "Free-event registration"        — the exact framing pricing-cards.ts
+   *      documents the public card being corrected AWAY from.
+   *
+   * A literal mirror against FREE_FEATURES/PRO_FEATURES would be the wrong
+   * instrument: these panels are a different shape (seven slots, denial rows, no
+   * home stub) and forcing them to be string-equal would be false discipline.
+   * POLARITY AGAINST THE MATRIX is the guard that actually decides the question
+   * — and it is strictly stronger, because it also fails when the matrix moves.
+   *
+   * Note what the comparison READS: the ✓/✗ lives in the JSX, not in the
+   * dictionary, so the polarity here is declared alongside the key and pinned to
+   * page.tsx by the positional assertion below. A guard that read only the
+   * strings could never have seen this class — the fifth normaliser-shaped hole
+   * this wave has found.
+   */
+  const PANEL_CLAIMS: Array<{
+    key: string;
+    plan: string;
+    /** ✓ or ✗ in page.tsx, and therefore what the row asserts. */
+    polarity: "granted" | "denied";
+    /** Every feature the row names. ALL must agree with the polarity. */
+    features: string[];
+  }> = [
+    { key: "billing.community.f4", plan: "community", polarity: "granted", features: ["registration.enabled", "registration.paid"] },
+    { key: "billing.community.f5", plan: "community", polarity: "denied", features: ["exports.branded", "dashboard.player_profiles"] },
+    { key: "billing.community.f6", plan: "community", polarity: "denied", features: ["dashboard.branding"] },
+    { key: "billing.community.f7", plan: "community", polarity: "denied", features: ["realtime"] },
+    { key: "billing.pro.f4", plan: "pro", polarity: "granted", features: ["scoring.ball_by_ball", "scoring.rally_by_rally"] },
+    { key: "billing.pro.f5", plan: "pro", polarity: "granted", features: ["dashboard.branding"] },
+    { key: "billing.pro.f6", plan: "pro", polarity: "granted", features: ["exports"] },
+    { key: "billing.pro.f7", plan: "pro", polarity: "granted", features: ["realtime"] },
+  ];
+
+  /**
+   * ── THE ROADMAP LABEL, IN EVERY LANGUAGE (fix round 3) ────────────────────
+   *
+   * `pricing.plus.soonLabel` was pinned in four locales and asserted by an
+   * ENGLISH LITERAL. So flipping es/fr/nl to "Ya incluido" and re-approving them
+   * shipped green — the same eight-undelivered-features-reclassified breach that
+   * was closed for English only.
+   *
+   * An ALLOWLIST, not a denylist: the label must MATCH a recognised way of
+   * saying "not yet" in its own language. Nobody has to have imagined the right
+   * falsehood — "Included now" simply is not a futurity form. Built through
+   * `claim()` so the accented forms actually match (`\b` is ASCII-only in JS,
+   * which has voided two guards in this wave already).
+   */
+  const FUTURITY_FORMS: Record<DictionaryLocale, RegExp> = {
+    en: claim(String.raw`\b(coming\s+soon|soon|planned|roadmap|in\s+development|next\s+up|on\s+the\s+way)\b`),
+    es: claim(String.raw`\b(pr[óo]ximamente|pronto|en\s+desarrollo|previsto|hoja\s+de\s+ruta|en\s+camino)\b`),
+    fr: claim(String.raw`\b(bient[ôo]t|prochainement|[àa]\s+venir|en\s+d[ée]veloppement|feuille\s+de\s+route)\b`),
+    nl: claim(String.raw`\b(binnenkort|gepland|in\s+ontwikkeling|routekaart|komt\s+eraan|op\s+komst)\b`),
+  };
+
+  it("states futurity in every language, not just English", () => {
+    for (const locale of DICTIONARY_LOCALES) {
+      const label = load(locale, "marketing")["pricing.plus.soonLabel"]!;
+      expect(label, `${locale}: no roadmap label`).toBeTruthy();
+      expect(
+        FUTURITY_FORMS[locale].test(label),
+        `${locale}: "${label}" is not a recognised way of saying "not yet" — eight undelivered features sit under it`,
+      ).toBe(true);
+    }
+    // The reviewer's probe: a plausible availability claim in each language must
+    // NOT satisfy the rule, however it is re-approved.
+    for (const [locale, shipped] of [
+      ["en", "Included now"],
+      ["es", "Ya incluido"],
+      ["fr", "Déjà inclus"],
+      ["nl", "Nu inbegrepen"],
+    ] as Array<[DictionaryLocale, string]>) {
+      expect(FUTURITY_FORMS[locale].test(shipped), `${locale}: "${shipped}"`).toBe(false);
+    }
+    // …and the rule is not vacuous in the other direction: each locale's real
+    // label is a positive fixture for its own pattern (asserted above), and a
+    // second honest phrasing must also pass.
+    for (const [locale, alt] of [
+      ["en", "On the way"],
+      ["es", "En desarrollo"],
+      ["fr", "À venir"],
+      ["nl", "In ontwikkeling"],
+    ] as Array<[DictionaryLocale, string]>) {
+      expect(FUTURITY_FORMS[locale].test(alt), `${locale}: "${alt}" is honest and must pass`).toBe(true);
+    }
+  });
+
+  it("the in-app panel's ticks and crosses agree with plan_entitlements", async () => {
+    const features = [...new Set(PANEL_CLAIMS.flatMap((c) => c.features))];
+    const rows = await sql<{ feature_key: string; plan_key: string; bool_value: boolean | null }[]>`
+      select feature_key, plan_key, bool_value from plan_entitlements
+      where feature_key = any(${features})`;
+    expect(rows.length, "no rows for the panel's features").toBeGreaterThan(0);
+    const grants: Record<string, Record<string, boolean | null>> = {};
+    for (const r of rows) (grants[r.feature_key] ??= {})[r.plan_key] = r.bool_value;
+
+    const faults: string[] = [];
+    let checked = 0;
+    for (const claim of PANEL_CLAIMS) {
+      for (const feature of claim.features) {
+        const value = grants[feature]?.[claim.plan];
+        if (value === undefined) {
+          faults.push(`${claim.key}: no ${claim.plan}/${feature} row — the row is pinned to nothing`);
+          continue;
+        }
+        checked += 1;
+        if (claim.polarity === "granted" && value !== true) {
+          faults.push(`${claim.key}: shown with a ✓ but ${claim.plan} does not grant ${feature}`);
+        }
+        if (claim.polarity === "denied" && value === true) {
+          faults.push(`${claim.key}: shown with a ✗ but ${claim.plan} DOES grant ${feature}`);
+        }
+      }
+    }
+    expect(faults).toEqual([]);
+    expect(checked, "the polarity table resolved no rows").toBeGreaterThan(8);
+
+    // The rule fires: the three rows this round corrected, as they shipped.
+    const flipped = { ...grants, "dashboard.branding": { ...grants["dashboard.branding"], community: true } };
+    const refaults: string[] = [];
+    for (const claim of PANEL_CLAIMS.filter((c) => c.key === "billing.community.f6")) {
+      for (const feature of claim.features) {
+        if (claim.polarity === "denied" && flipped[feature]?.[claim.plan] === true) {
+          refaults.push(`${claim.key}: shown with a ✗ but ${claim.plan} DOES grant ${feature}`);
+        }
+      }
+    }
+    expect(refaults, "a ✗ row whose feature is granted must red").not.toEqual([]);
+  });
+
+  // …and the polarity declared above must be the polarity page.tsx renders. The
+  // ✓/✗ is positional there, so a re-ordered <li> would silently invert a row.
+  it("declares the polarity the billing page actually renders", () => {
+    const page = readFileSync("src/app/o/[orgSlug]/settings/billing/page.tsx", "utf8");
+    for (const claim of PANEL_CLAIMS) {
+      const line = page
+        .split("\n")
+        .find((l) => l.includes(`"${claim.key}"`));
+      expect(line, `${claim.key} is not rendered by the billing page`).toBeTruthy();
+      const rendered = line!.includes("✗") ? "denied" : "granted";
+      expect(rendered, `${claim.key}: page.tsx renders ${rendered}`).toBe(claim.polarity);
+    }
+  });
+
   it("the in-app Pro Plus panel says exactly what the /pricing card says", () => {
     for (const locale of DICTIONARY_LOCALES) {
       const marketing = load(locale, "marketing");

@@ -1444,6 +1444,17 @@ describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces"
   // localised four ways. Numerals are identical across these locales, so the
   // digits are checkable without reading the prose around them — and a
   // half-updated translation set is exactly how the drift started.
+  // Fix round 3: f3 quotes `dashboard.public.max` and was the one numeric row of
+  // this panel nothing read. Its neighbours f4-f7 are pinned by polarity in
+  // dictionary-copy-truth.test.ts; this closes the panel's numeric axis.
+  it("billing.community.f3 carries the live public-dashboard cap in all four locales", async () => {
+    const dashboards = await capFor("dashboard.public.max", "community");
+    expect(dashboards, "community must have a finite public-dashboard cap").not.toBeNull();
+    for (const locale of LOCALES) {
+      expect(dict(locale)["billing.community.f3"], `${locale} f3`).toContain(String(dashboards));
+    }
+  });
+
   it("billing.community.f1/f2 carry the same numbers in all four locales", async () => {
     const entrants = await capFor("entrants.per_division.max", "community");
     const comps = await capFor("competitions.max_active", "community");
