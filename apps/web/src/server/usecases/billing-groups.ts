@@ -19,6 +19,7 @@ import { getStripe } from "@/lib/stripe";
 import {
   assertPriceBillsQuantity,
   syncPaymentMethodFlagForSubscription,
+  syncSubscriptionForGroup,
 } from "@/lib/billing";
 import { auditWalletForfeitedOnDetach, mergeWalletOnAttach } from "@/lib/credits";
 import {
@@ -468,6 +469,104 @@ export async function reconcileGroupQuantities(limit = 500): Promise<{
       `[billing] quantity reconcile hit its limit of ${limit} — some groups were not visited`,
     );
   return { checked: groups.length, corrected, failed };
+}
+
+/**
+ * Retire a billing group that has no organisations left and a status our own
+ * writes will never move again (#375, split out of #367).
+ *
+ * The state this exists for: `cancelGroupIfEmpty` refuses — correctly — to
+ * cancel a group whose status is outside `('trialing','active','past_due')`,
+ * and the status that actually reaches it is `incomplete`, an abandoned first
+ * checkout. Nothing then retires the row. `reconcileGroupQuantities` skips it
+ * (it selects the same three statuses), and `dropEmptyGroup` will not take it
+ * because it ever reached Stripe. So the row sits at `incomplete` for ever,
+ * describing a subscription Stripe destroyed within 23 hours.
+ *
+ * THREE things this deliberately does not do:
+ *
+ *  1. **It does not delete.** The row carries `trial_used_at`, the Stripe
+ *     customer link and any dispute history, and the partial unique index on
+ *     `stripe_customer_id` depends on it existing. Deleting it would hand the
+ *     payer a fresh trial for the price of abandoning a checkout — the farm
+ *     #241 closed on the detach path. The row is retired IN PLACE.
+ *  2. **It does not guess.** The obvious predicate — "org-less and
+ *     `incomplete`, therefore dead" — infers Stripe's state from ours. This
+ *     asks Stripe and writes back what it says, through
+ *     `syncSubscriptionForGroup`, the one writer that owns that translation.
+ *     There is no second copy of STATUS_MAP here, and none of the
+ *     `incomplete_expired` predicate that matches nothing (see lib/billing.ts).
+ *  3. **It does not cancel at Stripe.** Everything selected here is either
+ *     already dead there, or alive and billing for nobody — and the second case
+ *     is an alarm for a human, not an unattended cancel of a live subscription.
+ *
+ * The one-day floor keeps this away from a detach still in flight and puts the
+ * whole 23-hour `incomplete` window behind us, so the answer Stripe gives is
+ * the final one rather than a checkout somebody is still paying.
+ */
+export async function sweepOrphanGroups(limit = 200): Promise<{
+  checked: number;
+  retired: number;
+  stillLive: number;
+  failed: number;
+}> {
+  const groups = await sql<
+    { id: string; stripe_subscription_id: string; status: string }[]
+  >`
+    select s.id, s.stripe_subscription_id, s.status
+      from subscriptions s
+     where s.stripe_subscription_id is not null
+       -- Already terminal: nothing left to retire. This is also what keeps the
+       -- sweep off every ordinarily-cancelled group, which is the wider net a
+       -- naive "canceled and org-less" predicate would have cast (#375).
+       and s.status <> 'canceled'
+       and s.updated_at < now() - interval '1 day'
+       and not exists (
+             select 1 from organizations o
+              where o.subscription_id = s.id and o.deleted_at is null)
+     order by s.updated_at
+     limit ${limit}`;
+  let retired = 0,
+    stillLive = 0,
+    failed = 0;
+  for (const g of groups) {
+    try {
+      const stripeSub = await getStripe().subscriptions.retrieve(g.stripe_subscription_id);
+      // Write whatever Stripe says, terminal or not: a row claiming `incomplete`
+      // while Stripe says `active` is drift in the expensive direction, and the
+      // same call fixes both. Plan, period end and payment-method flag come
+      // along with it, because they were stamped from the same stale object.
+      await syncSubscriptionForGroup(g.id, stripeSub);
+      await invalidateGroupEntitlements(g.id);
+      if (stripeSub.status === "canceled" || stripeSub.status === "incomplete_expired") {
+        retired++;
+      } else {
+        stillLive++;
+        // The case the #367 warn said was worth chasing, now with Stripe's own
+        // answer attached. Not cancelled from here: a live subscription with no
+        // organisations may be a detach mid-flight or a support action in
+        // progress, and an unattended cancel of a paying customer's
+        // subscription is not a sweep's decision to make.
+        console.error(
+          `[billing] group ${g.id} has no organisations, but Stripe says its subscription ` +
+            `${g.stripe_subscription_id} is '${stripeSub.status}' — live and billing for nobody. ` +
+            `Row updated to match; the subscription was NOT cancelled.`,
+        );
+      }
+    } catch (err) {
+      // One unreadable subscription (deleted at Stripe, wrong key, archived
+      // price) must not stop the sweep for everybody else. Left untouched
+      // rather than assumed dead: writing `canceled` off a failed read is
+      // exactly the guess this function refuses to make.
+      failed++;
+      console.error(`[billing] orphan-group sweep failed for group ${g.id}`, err);
+    }
+  }
+  if (groups.length === limit)
+    console.warn(
+      `[billing] orphan-group sweep hit its limit of ${limit} — some groups were not visited`,
+    );
+  return { checked: groups.length, retired, stillLive, failed };
 }
 
 /**

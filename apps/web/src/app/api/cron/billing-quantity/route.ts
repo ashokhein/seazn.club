@@ -1,7 +1,11 @@
 import { headers } from "next/headers";
 import { handler } from "@/lib/http";
 import { HttpError } from "@/lib/errors";
-import { countOrgsWithoutGroup, reconcileGroupQuantities } from "@/server/usecases/billing-groups";
+import {
+  countOrgsWithoutGroup,
+  reconcileGroupQuantities,
+  sweepOrphanGroups,
+} from "@/server/usecases/billing-groups";
 import { sweepStaleOrgAddonPrices } from "@/server/usecases/billing-events";
 
 /** POST /api/cron/billing-quantity — daily: for every live billing group whose
@@ -34,11 +38,21 @@ export async function POST() {
     // Report-only, deliberately: a repairing sweep would be an unattended bulk
     // billing mutation, and whatever left a group on a stale price is likely
     // still there to do it again. `mismatched > 0` is the signal to look.
-    const [reconcile, orphanOrgs, addonPrices] = await Promise.all([
+    //
+    // orphanGroups is the mirror image of orphanOrgs (#375): an org with no
+    // group, versus a GROUP with no orgs. It retires the second in place from
+    // Stripe's own answer — the state `cancelGroupIfEmpty` declines to touch,
+    // most often an abandoned first checkout stuck at `incomplete`. Daily is
+    // the right cadence: Stripe expires such a subscription within 23 hours and
+    // the sweep only looks at rows untouched for a day, so an earlier run would
+    // read a checkout somebody is still paying. `stillLive > 0` is the signal
+    // to look — a subscription alive at Stripe with nobody on the bill.
+    const [reconcile, orphanOrgs, addonPrices, orphanGroups] = await Promise.all([
       reconcileGroupQuantities(),
       countOrgsWithoutGroup(),
       sweepStaleOrgAddonPrices(),
+      sweepOrphanGroups(),
     ]);
-    return { ...reconcile, orphanOrgs, addonPrices };
+    return { ...reconcile, orphanOrgs, addonPrices, orphanGroups };
   });
 }
