@@ -49,6 +49,8 @@ import { sql } from "@/lib/db";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { AiCompetitionLastResult, AiCompetitionPlanResponse } from "@/server/api-v1/schemas";
+import type { AiCompetitionPlanResponse as CompetitionPlanWire } from "@/server/api-v1/schemas";
+import type { AiCompetitionPlanResponse as CompetitionPlanDomain } from "../competition-schedule-ai";
 import { ROUTES } from "@/server/api-v1/openapi";
 import { matchKeyRoute } from "@/server/api-v1/key-scopes";
 import { createApiKey } from "../api-keys";
@@ -94,12 +96,17 @@ interface SeededDivision {
   fixtureIds: string[];
 }
 
-/** One division with 4 entrants → 6 round-robin fixtures on its own courts. */
+/** One division of `entrants` entrants → `n*(n-1)/2` round-robin fixtures on
+ *  its own courts. The count is a PARAMETER because the two seeded divisions
+ *  must differ in it: with both at 6 fixtures, "every row carries its own
+ *  division's movable count" and "every row carries the first division's
+ *  count" produce identical assertions. */
 async function seedDivision(
   auth: AuthCtx,
   competitionId: string,
   name: string,
   courts: string[],
+  entrants: number,
 ): Promise<SeededDivision> {
   const slug = `${name.toLowerCase()}-${randomUUID().slice(0, 6)}`;
   const division = await createDivision(auth, competitionId, {
@@ -113,7 +120,7 @@ async function seedDivision(
   await createEntrants(
     auth,
     division.id,
-    Array.from({ length: 4 }, (_, i) => ({
+    Array.from({ length: entrants }, (_, i) => ({
       kind: "individual" as const,
       display_name: `${slug}-E${i + 1}`,
       seed: i + 1,
@@ -137,6 +144,12 @@ async function seedDivision(
   return { id: division.id, name, courts, fixtureIds };
 }
 
+/** Alpha: 4 entrants → 6 fixtures. Beta: 5 → 10. The counts are ASYMMETRIC on
+ *  purpose — see `seedDivision` — and both are asserted by name-sorted position,
+ *  never by id (the determinism contract forbids sorting on a UUID). */
+const ALPHA_MOVABLE = 6;
+const BETA_MOVABLE = 10;
+
 /** pro_plus (scheduling.ai + scheduling.multi_division + api.access/api.write)
  *  with a funded wallet, plus two divisions on DISJOINT courts so a legal joint
  *  plan exists. */
@@ -155,8 +168,8 @@ async function seedBoard(): Promise<{
     branding: {},
   });
   const divisions = [
-    await seedDivision(auth, comp.id, "Alpha", ["Court 1", "Court 2"]),
-    await seedDivision(auth, comp.id, "Beta", ["Court 3", "Court 4"]),
+    await seedDivision(auth, comp.id, "Alpha", ["Court 1", "Court 2"], 4),
+    await seedDivision(auth, comp.id, "Beta", ["Court 3", "Court 4"], 5),
   ];
   return { auth, competitionId: comp.id, divisions };
 }
@@ -223,25 +236,61 @@ beforeEach(() => {
   delete process.env.AI_PROVIDER;
 });
 
+/**
+ * COMPILE-TIME bridge between the domain type and the wire contract. Nothing
+ * else binds them: `competition-schedule-ai.ts` declares an interface and
+ * `api-v1/schemas.ts` declares a Zod schema, both named
+ * `AiCompetitionPlanResponse`, and the route hands the first to a client that
+ * was promised the second.
+ *
+ * It costs one line and it has teeth on exactly the fields the runtime
+ * round-trips cannot reach: the happy path returns empty `warnings`,
+ * `blocking` and `skipped_divisions` and no `proposal[].schedule_locked`, so
+ * their wire shape would otherwise be proved only against the hand-written
+ * literal below — which can itself drift from the domain type. Substituting
+ * `ScheduleConflict` for `AiPlanConflict` in the schema, for instance, is
+ * invisible to `tsc` without this and fails with "Type 'Conflict[]' is not
+ * assignable … missing fixture_id, code, blocking" with it.
+ *
+ * IT DOES NOT REPLACE THE RUNTIME ROUND-TRIPS. Structural assignability
+ * tolerates excess properties, so it cannot see a Zod schema that STRIPS a
+ * field it never declared — which is precisely the `divisions` collision
+ * below. Two different nets, both load-bearing.
+ */
+const asWire = (r: CompetitionPlanDomain): CompetitionPlanWire => r;
+
 // ---------------------------------------------------------------------------
 // The `divisions` name collision. AiRunPriceFields already declares a
 // `divisions` key (the meter stamp's per-division PRICE rows); the joint
 // response needs a `divisions` key too (the board's picker data: name +
-// movable count). Whichever schema loses the spread is not an error in either
-// direction — Zod STRIPS the keys the winner does not declare, TypeScript
-// accepts the merged object shape, and the route still answers 200. So neither
-// a comment nor `tsc` nor an assertion on `divisions.length` can catch it.
+// movable count).
+//
+// The two spread orders fail DIFFERENTLY, which is why both nets exist:
+//   * `divisions` before the spread → `tsc` catches it (TS2783, "specified
+//     more than once"), so that one cannot ship.
+//   * the CORRECT order → silent. Zod STRIPS the keys the winning sub-schema
+//     does not declare, TypeScript is happy, and the route answers 200 with
+//     `name` and `movable` simply gone.
+// The second case is what the tests below exist for; no comment, no `tsc` run
+// and no assertion on `divisions.length` can see it.
 // ---------------------------------------------------------------------------
 describe("AiCompetitionPlanResponse — the `divisions` collision", () => {
   /** Exactly what `aiPlanForCompetition` returns (competition-schedule-ai.ts):
-   *  the meter stamp merged with the board's per-division data under ONE key. */
-  const jointResult = {
+   *  the meter stamp merged with the board's per-division data under ONE key.
+   *
+   *  Annotated with the DOMAIN type so the literal cannot drift from what the
+   *  orchestrator actually returns — a hand-written fixture that has quietly
+   *  stopped resembling its subject proves nothing. It exercises the fields the
+   *  live happy path leaves empty: non-empty `warnings`/`blocking`,
+   *  `skipped_divisions`, and `proposal[].schedule_locked`. */
+  const jointResult: CompetitionPlanDomain = {
     proposal: [
       {
         fixture_id: "11111111-1111-1111-1111-111111111111",
         scheduled_at: "2026-08-01T09:00:00.000Z",
         court_label: "Court 1",
         division_id: "aaaaaaaa-1111-1111-1111-111111111111",
+        schedule_locked: false,
       },
     ],
     unschedulable: [{ fixture_id: "22222222-2222-2222-2222-222222222222", reason: "no slot" }],
@@ -287,7 +336,7 @@ describe("AiCompetitionPlanResponse — the `divisions` collision", () => {
   };
 
   it("keeps the BOARD's per-division fields (name, movable) through a parse", () => {
-    const parsed = AiCompetitionPlanResponse.parse(jointResult);
+    const parsed = AiCompetitionPlanResponse.parse(asWire(jointResult));
     expect(parsed.divisions).toHaveLength(2);
     expect(parsed.divisions[0]!.name).toBe("Alpha");
     expect(parsed.divisions[0]!.movable).toBe(6);
@@ -296,7 +345,7 @@ describe("AiCompetitionPlanResponse — the `divisions` collision", () => {
   });
 
   it("keeps the METER STAMP's per-division price fields through the same parse", () => {
-    const parsed = AiCompetitionPlanResponse.parse(jointResult);
+    const parsed = AiCompetitionPlanResponse.parse(asWire(jointResult));
     expect(parsed.divisions[1]!.rung).toBe(2);
     expect(parsed.divisions[1]!.predicted_rung).toBe(3);
     expect(parsed.divisions[1]!.underfunded).toBe(true);
@@ -311,7 +360,7 @@ describe("AiCompetitionPlanResponse — the `divisions` collision", () => {
     // field being MISSING from the schema rather than merely losing a spread:
     // Zod's default `strip` deletes anything undeclared silently, so a
     // round-trip that is not `toEqual` its input is the only way to see it.
-    expect(AiCompetitionPlanResponse.parse(jointResult)).toEqual(jointResult);
+    expect(AiCompetitionPlanResponse.parse(asWire(jointResult))).toEqual(jointResult);
   });
 });
 
@@ -396,16 +445,23 @@ describe.skipIf(!HAS_DB)("POST /competitions/{id}/schedule/ai-plan", () => {
     expect(body.ok).toBe(true);
     const data = body.data;
     // Every proposed slot names the division the SERVER resolved it to.
-    expect(data.proposal).toHaveLength(12);
+    expect(data.proposal).toHaveLength(ALPHA_MOVABLE + BETA_MOVABLE);
     expect(new Set(data.proposal.map((p: { division_id: string }) => p.division_id))).toEqual(
       new Set(divisions.map((d) => d.id)),
     );
     // The price block, and the merged per-division array behind it.
     expect(typeof data.credits).toBe("number");
     expect(typeof data.discount).toBe("number");
-    expect(data.divisions.map((d: { name: string }) => d.name).sort()).toEqual(["Alpha", "Beta"]);
-    expect(data.divisions.every((d: { movable: number }) => d.movable === 6)).toBe(true);
-    expect(data.divisions.every((d: { rung: number }) => [1, 2, 3].includes(d.rung))).toBe(true);
+    // Sorted by NAME, never by id — the determinism contract forbids ordering
+    // on a UUID, and the pack's own division order is (name, slug) too.
+    const byName = [...(data.divisions as { name: string; movable: number; rung: number }[])].sort(
+      (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
+    );
+    expect(byName.map((d) => d.name)).toEqual(["Alpha", "Beta"]);
+    // ASYMMETRIC by construction. Equal counts here would be satisfied just as
+    // well by a merge that stamped the FIRST division's count onto every row.
+    expect(byName.map((d) => d.movable)).toEqual([ALPHA_MOVABLE, BETA_MOVABLE]);
+    expect(byName.every((d) => [1, 2, 3].includes(d.rung))).toBe(true);
     // The published contract must describe what the route actually sends: any
     // field the schema does not declare is stripped here and vanishes.
     expect(AiCompetitionPlanResponse.parse(data)).toEqual(data);
