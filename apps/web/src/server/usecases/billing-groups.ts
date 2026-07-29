@@ -546,6 +546,7 @@ interface CancelClaim {
   prev_plan: string;
   prev_comped: Date | null;
   prev_qty: number;
+  prev_cancel_at_period_end: boolean;
   stripe_subscription_id: string | null;
 }
 
@@ -558,7 +559,8 @@ async function cancelGroupIfEmpty(
     // the rollback below.
     const [prev] = await tx<CancelClaim[]>`
       select status as prev_status, plan_key as prev_plan, comped_until as prev_comped,
-             quantity_paid as prev_qty, stripe_subscription_id
+             quantity_paid as prev_qty, cancel_at_period_end as prev_cancel_at_period_end,
+             stripe_subscription_id
         from subscriptions where id = ${subscriptionId} for update`;
     if (!prev) return null;
     // Statement 2, and a NEW snapshot with it: this is where an attach that
@@ -588,10 +590,22 @@ async function cancelGroupIfEmpty(
       // Put it back exactly as it was. A row left saying `canceled` while Stripe
       // keeps charging is the worst outcome: it drops out of every
       // live-subscription filter, including the sweep's, so nothing retries.
+      //
+      // #315: `cancel_at_period_end` restores with the rest. The claim clears it
+      // because a group being cancelled OUTRIGHT has no period left to cancel at
+      // — but that reasoning only holds if the outright cancel lands. When
+      // Stripe refuses, the flag reverts to what it was, and what it was is the
+      // customer's standing instruction to stop billing at the period boundary,
+      // recorded nowhere else. Dropping it leaves a live, billable subscription
+      // that is no longer scheduled to end while the customer believes they
+      // cancelled — a worse state than never having attempted the cancel, and
+      // the one column here no reconcile sweep can rebuild, because intent
+      // cannot be re-derived from Stripe's or our own remaining state.
       await sql`
         update subscriptions
            set status = ${claimed.prev_status}, plan_key = ${claimed.prev_plan},
                comped_until = ${claimed.prev_comped}, quantity_paid = ${claimed.prev_qty},
+               cancel_at_period_end = ${claimed.prev_cancel_at_period_end},
                updated_at = now()
          where id = ${subscriptionId}`;
       console.error("cancelGroupIfEmpty: Stripe cancel failed", subscriptionId, err);

@@ -260,9 +260,10 @@ const readGroup = async (id: string) =>
         comped_until: Date | null;
         trial_used_at: Date | null;
         has_payment_method: boolean;
+        cancel_at_period_end: boolean;
       }[]
     >`select plan_key, status, owner_user_id, quantity_paid, comped_until, trial_used_at,
-             has_payment_method from subscriptions where id = ${id}`
+             has_payment_method, cancel_at_period_end from subscriptions where id = ${id}`
   )[0];
 
 const orgGroup = async (orgId: string) =>
@@ -1020,6 +1021,55 @@ describe.skipIf(!HAS_DB)("detach", () => {
     // And so is the answer the group serves. This is the assertion the missing
     // invalidate failed.
     expect(await hasFeature(joiner.orgId, "api.access")).toBe(true);
+    err.mockRestore();
+  });
+
+  it("a FAILED Stripe cancel puts cancel_at_period_end back — a lost flag is a subscription nobody cancels", async () => {
+    // #315. The customer already pressed cancel: the group is live and paying
+    // now, and Stripe is scheduled to end it at the period boundary. The claim
+    // clears that flag along with status/plan/comped/qty because the group is
+    // about to be cancelled OUTRIGHT, which makes the schedule moot.
+    //
+    // When Stripe refuses, the outright cancel never happened — so the schedule
+    // is not moot, it is the customer's standing instruction, and the rollback
+    // that restores status/plan/comped/qty but not this one leaves a group that
+    // is live, billable, and no longer scheduled to stop. That is strictly worse
+    // than never having tried: the customer believes they cancelled, nothing in
+    // the product says otherwise, and the renewal invoices keep arriving with
+    // nobody looking for them. Every other rolled-back column is recoverable by
+    // the reconcile sweep; this one is not — no sweep can infer an intent that
+    // was only ever recorded here.
+    //
+    // Driven through the real failure path (the Stripe double throws) rather
+    // than by hand-writing the post-claim row: writing the row and calling the
+    // restore would prove the restore, not that the catch reaches it.
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const stripeSubId = "sub_capefail_" + uniq();
+    const group = await makeGroup(payer, {
+      stripeSubId,
+      periodEndDays: 30,
+      cancelAtPeriodEnd: true,
+    });
+    const leaving = await makeOrg(group, clubOwner);
+    expect((await readGroup(group)).cancel_at_period_end).toBe(true);
+
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    stripeMock.subscriptionsCancel.mockImplementationOnce(async () => {
+      throw new Error("stripe refused the cancel");
+    });
+
+    const res = await detachOrgFromGroup({ actorUserId: clubOwner, orgId: leaving });
+
+    expect(stripeMock.subscriptionsCancel).toHaveBeenCalledWith(stripeSubId);
+    expect(res.cancelled_group).toBeNull();
+    const after = await readGroup(group);
+    // Exactly as it was, all five columns.
+    expect(after.status).toBe("active");
+    expect(after.plan_key).toBe("pro");
+    expect(after.quantity_paid).toBe(1);
+    expect(after.comped_until).toBeNull();
+    expect(after.cancel_at_period_end).toBe(true);
     err.mockRestore();
   });
 
