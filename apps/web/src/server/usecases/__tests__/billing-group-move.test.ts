@@ -2370,33 +2370,89 @@ describe.skipIf(!HAS_DB)("a live subscription with nothing left to bill", () => 
     expect(Number(n)).toBe(1);
   });
 
-  it("never cancels an INCOMPLETE group whose last org was soft deleted — cancelGroupIfEmpty's status list excludes 'incomplete' (#311)", async () => {
+  it("REFUSES AUDIBLY when an INCOMPLETE group's last org departs — declining is not the same as having acted (#311, #367)", async () => {
     // syncGroupQuantity's own gate is hasLiveSubscription, which correctly
     // treats 'incomplete' as live (LIVE_SUBSCRIPTION_STATUSES), so it reaches
     // the orphaned branch and calls the private cancelGroupIfEmpty exactly as
     // it would for an 'active' group. But that function's claiming UPDATE has
     // its OWN hand-written `status in ('trialing', 'active', 'past_due')`,
-    // which excludes 'incomplete' — so the UPDATE matches zero rows, the
-    // claim silently fails, and the group is left billing Stripe for an org
-    // that no longer exists, with nothing left to ever retry it. This pins
-    // that CURRENT behaviour; #311 stops short of deriving this list from the
-    // constant because doing so (this group would start being cancelled) is a
-    // live behaviour change, not a pure refactor.
+    // which excludes 'incomplete' — so the UPDATE matches zero rows.
+    //
+    // NOT cancelling is correct and stays (#367): 'incomplete' means Stripe's
+    // first invoice is unpaid, which it voids itself within 23 hours, so a
+    // cancel would be sent for a subscription Stripe is about to destroy
+    // anyway. What was wrong was that the refusal was INDISTINGUISHABLE from a
+    // successful cancel — same return shape, no log, no error. A guard that
+    // declines silently reads exactly like one that is broken, which is what
+    // cost a wave to notice. So: still no cancel, still 'incomplete', but the
+    // refusal must now say so, and say WHY.
     const payer = await makeUser("payer");
     const stripeSubId = "sub_incomplete_orphan_" + uniq();
     const group = await makeGroup(payer, { stripeSubId, status: "incomplete", periodEndDays: 30 });
     const orgId = await makeOrg(group, payer);
     await sql`update organizations set deleted_at = now() where id = ${orgId}`;
 
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Read the spy BEFORE restoring it. vi's mockRestore also RESETS, so
+    // `warn.mock.calls` is empty afterwards and every assertion on it passes
+    // vacuously — the exact shape of check this issue is about.
+    let said = "";
+    let erred: string[] = [];
     try {
       await syncGroupQuantity(group);
     } finally {
+      said = warn.mock.calls.map((c) => c.map(String).join(" ")).join("\n");
+      erred = err.mock.calls.map((c) => c.map(String).join(" "));
+      warn.mockRestore();
       err.mockRestore();
     }
 
     expect(stripeMock.subscriptionsCancel).not.toHaveBeenCalled();
     expect((await readGroup(group)).status).toBe("incomplete");
+    // The audible half. Naming the group alone would not be enough to act on:
+    // the line has to carry the status that caused the refusal, or the next
+    // reader is back to re-deriving it from the SQL.
+    expect(said).toMatch(/declined|refus/i);
+    expect(said).toContain(group);
+    expect(said).toContain("incomplete");
+    // And the outcome must not be dressed up as the failure it is not: a refusal
+    // reported as `cancel_failed` would light up the orphan branch's "CANCEL
+    // FAILED, will retry" error — untrue, since no cancel was ever attempted —
+    // and on the detach path would send the group to dropEmptyGroup.
+    expect(erred).toEqual([]);
+  });
+
+  it("stays QUIET when the group simply is not empty — a race is not a refusal", async () => {
+    // The counterpart to the test above, and the reason the decline is
+    // diagnosed empty-first rather than status-first. detach calls
+    // cancelGroupIfEmpty unconditionally on the group it left, including when
+    // other orgs remain — the overwhelmingly common outcome. If the new log
+    // fired on every claim that matched nothing it would fire on every ordinary
+    // detach, and an alarm that cries on the happy path is one nobody reads.
+    // The group is 'incomplete' on purpose: BOTH halves of the claim's
+    // predicate fail here, and "not empty" is still the honest answer.
+    const payer = await makeUser("payer");
+    const group = await makeGroup(payer, {
+      stripeSubId: "sub_incomplete_busy_" + uniq(),
+      status: "incomplete",
+      periodEndDays: 30,
+      quantityPaid: 2,
+    });
+    const leaver = await makeOrg(group, payer);
+    await makeOrg(group, payer);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // Captured before the restore, which resets the spy — see the note above.
+    let said: string[] = [];
+    try {
+      await detachOrgFromGroup({ actorUserId: payer, orgId: leaver });
+    } finally {
+      said = warn.mock.calls.map((c) => c.map(String).join(" "));
+      warn.mockRestore();
+    }
+
+    expect(said).toEqual([]);
   });
 });
 

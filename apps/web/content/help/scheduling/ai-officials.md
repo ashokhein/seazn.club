@@ -4,7 +4,7 @@ description: Staff your matches automatically — AI Officials assigns officials
 order: 9
 ---
 
-**AI Officials** is the second phase of AI scheduling: once the times are set, it staffs the matches. Assign referees and other officials across the whole timetable from one instruction — or leave the instruction empty for a sensible default spread. Like the schedule pass it is **propose-only**: nothing is written until you apply. Automatic officials assignment is a **Pro Plus** feature.
+**AI Officials** is the second phase of AI scheduling: once the times are set, it staffs the matches. Assign referees and other officials across the whole timetable from one instruction — or leave the instruction empty for a sensible default spread. Like the schedule pass it is **propose-only**: nothing is written until you apply. Like the schedule pass, it needs no upgrade — it runs on **every plan, Community included**.
 
 ## Where it fits
 
@@ -19,9 +19,11 @@ You reach the officials pass from the AI console straight after the [schedule pa
 
 Give it an instruction ("keep the same referee across a team's group games") to steer it, or run it with no instruction to get the deterministic solver's default spread. The engine referee checks every proposal and repairs blocking clashes for up to two rounds before showing you what's left.
 
-## Run quotas
+## Credits and rate limits
 
-Unlike schedule generations, **officials AI runs are not metered** — restaff as often as you like. The empty-instruction default spread is produced without a model call at all, so it's effectively free.
+AI Officials is metered the same way as the schedule pass: every run spends **one AI credit** from your organisation's shared wallet, including the no-instruction default spread, which makes no model call but still draws from the wallet. A run that fails or times out is **refunded**, so it never costs you a credit. See [AI credits](/help/billing/credits) for the monthly grant, buying packs, and how a billing group shares one wallet.
+
+Separately, officials AI has its own burst brake of **5 runs an hour per division** — independent of the schedule pass's own hourly limit, so a busy hour staffing matches doesn't use up your scheduling budget or the other way round.
 
 Instruction runs carry the same data guarantee as the [schedule pass](/help/scheduling/ai-scheduling): only this division's officials brief is sent to one of our AI providers, and it is **not used to train AI models**. See our [sub-processors list](/legal/sub-processors) for the full set.
 

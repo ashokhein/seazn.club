@@ -21,6 +21,7 @@ import stripePlans from "@/config/stripe-plans.json";
 import { sql } from "@/lib/db";
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
 import {
+  aiOfficialsPlanGateFaults,
   BOUNDED_SCOPE_GRAMMAR,
   FEE_LADDER_PLAN_KEYS,
   mentionsRateAfterPass,
@@ -104,6 +105,15 @@ afterAll(async () => {
  * this list and into real scans once #303 corrected the copy. What remains
  * below is a real gap with a real issue, and listing it as data rather than
  * leaving it silently unscanned is the point.
+ *
+ * #365: `scheduling/ai-officials.md` was the THIRD copy of #303's unmetered-run
+ * falsehood, plus its own "Automatic officials assignment is a Pro Plus
+ * feature" — untouched because #303's guard was only ever invoked on
+ * `ai-scheduling.md` by name. Fixed here (see `scheduling/ai-officials.md is
+ * gated too`, further down) and the unmetered-run guard is now run over EVERY
+ * article in the tree (see `no help article anywhere claims an AI run is
+ * unmetered/free`, further down) rather than added as a fourth named file — so
+ * a fourth copy reds this suite instead of waiting for someone to notice.
  */
 const KNOWN_GAPS = [
   "lib/pricing-cards.ts + e2e/pro-plus-tier.spec.ts — card bullets pinned verbatim (#303)",
@@ -113,7 +123,7 @@ const KNOWN_GAPS = [
   "app/globals.css .competition-prose table — `display: block` is what gives that scroll box its overflow, and it drops the implicit table role in some assistive tech (row/column relationships stop being announced). Mitigation is an explicit role=\"table\"/rowgroup set, which the same sanitiser strips (#303)",
   // ── Round 4 bookkeeping: the residuals, named rather than left implicit ────
   "THE AXIS IS CIRCULAR. `claiming` is computed by running `en.halfClaim` over the tree, so an article only joins the half-rate axis — and therefore only earns a gate — if that vocabulary already matches it. The vocabulary has been measured at 0/12 and 0/24, so an article stating the rate in an unseen shape is invisible to the axis AND ungated. The axis narrows the ungated set; it does not close it (#303)",
-  "THE FOURTH ARTICLE. `billing/plans.md` states the plan org caps and the fee ladder and is inventory-gated. `billing/downgrade.md` and `scheduling/ai-scheduling.md` now carry the fee-lock/run-cap/unmetered-run vocabulary scans (below), which is real coverage but NOT the word-for-word inventory gate — a reword that stays inside the vocabulary's blind spots is still possible. `billing/credits.md`, `billing/operator.md` and every other non-billing, non-scheduling article remain fully ungated and unscanned, defended only by the vocabulary above (#303)",
+  "THE FOURTH ARTICLE. `billing/plans.md` states the plan org caps and the fee ladder and is inventory-gated. `billing/downgrade.md`, `scheduling/ai-scheduling.md` and `scheduling/ai-officials.md` now carry the fee-lock/run-cap/unmetered-run vocabulary scans (below), which is real coverage but NOT the word-for-word inventory gate — a reword that stays inside the vocabulary's blind spots is still possible. `billing/credits.md`, `billing/operator.md` and every other non-billing, non-scheduling article remain fully ungated and unscanned, defended only by the vocabulary above (#303, #365)",
   "COMMENTS OWNED BY A CLOSING TOKEN SURVIVE `codeOnly` — NOT just the JSX idiom. `forEachChild` never visits TOKENS, so any comment whose nearest owner is a closing token is never blanked: `{/* … */}`, but equally an end-of-block comment on its own line, a comment in an empty block, the last call argument, the last array element, the last object property, the end of an interface body, a `switch`, or an `if`. Only an end-of-file comment is blanked. Measured tree-wide: 569 comment lines / 32,229 chars across 168 of 1,460 files. Direction is FAIL-SAFE — a negative scan can red on a comment that mentions a banned idiom, but can never miss real code — which is why it is recorded rather than fixed. Recorded as .tsx-only in round 5; that scoping was wrong and would have left the next reader hunting a JSX bug (#338)",
   "LITERAL-FREE SPANS ARE UNAUDITED, AND THIS ONE IS FAIL-OPEN. `blankedInsideLiteralFaults` proves every changed character lies OUTSIDE every string/regex/template-part/JSX literal, which closes the historical family (a `/*` inside a string ate 193 lines of division-settings.tsx) — proven by a length-preserving blank across every file raising 14,857 faults. It does NOT audit a stripper that eats a span containing NO literal at all. Constructed and it PASSES: blanking the largest literal-free span per file ships 79/79 green while destroying 1,061,443 chars across 1,341 of 1,460 files, largest single span 11,831 chars in server/usecases/billing-events.ts — LARGER than the 11,384 the historical bug actually ate. So this is not a corner case, it is most of the tree. THE COST ESTIMATE IN THE TASK 7 REPORT IS WRONG and that is the part that matters: closing this does NOT need a re-parse-and-compare 'doubling the walk'. It is a string check on the CHANGED CHARACTERS ONLY — take each maximal run of changed offsets, extend across neighbouring changed/space chars, require that span's raw text to be comments and whitespace only. O(changed chars), no re-parse, sub-millisecond per file. A wrong cost estimate is what stops a thing ever being closed (#338)",
   "FRONTMATTER PARSER DIVERGENCE, STILL LIVE. `server/help-content.ts`'s parseFrontmatter splits on `indexOf(\":\")` and is last-wins, so an indented `  description:` or a spaced `description :` is still RENDERED as the article's description while `copy-truth.ts`'s claimSurfaces regex (`^([A-Za-z_][\\w-]*):`) does not match it — the field scores 0 gate faults and is invisible to every rule. A falsehood delivered that way ships green (#303)",
@@ -352,6 +362,137 @@ AI Schedule needs no upgrade — it runs on **every plan, Community included**. 
 The quota is a **lifetime total per division** — it doesn't reset weekly or monthly, and a new division starts a fresh count. Refine and repair each use one generation. A run that fails or times out **does not** count. Separately, every plan has a burst brake of **5 AI runs per hour per division**. **Officials AI runs are not metered** — once you have automatic officials assignment, you can restaff as often as you like.`;
     expect(retiredRunCapProseFaults("x", oldTable)).not.toEqual([]);
     expect(unmeteredAiRunProseFaults("x", oldTable)).not.toEqual([]);
+  });
+});
+
+describe("scheduling/ai-officials.md is gated too (#365)", () => {
+  const aiOfficials = helpArticleBySlug("scheduling/ai-officials");
+
+  it("never claims AI Officials needs Pro Plus", () => {
+    expect(aiOfficialsPlanGateFaults("ai-officials.md", aiOfficials)).toEqual([]);
+  });
+
+  it("never claims an AI run — schedule or officials — is unmetered", () => {
+    expect(unmeteredAiRunProseFaults("ai-officials.md", aiOfficials)).toEqual([]);
+  });
+
+  // MUTATION PROOF, half 1 of #365: the exact "Automatic officials assignment
+  // is a Pro Plus feature" sentence, established false against officials-ai.ts
+  // and against plan_entitlements (the ONLY row for officials.auto is
+  // pro_plus-only, and that gate lives in a different function, officials.ts's
+  // autoAssignOfficials/applyOfficialAssignments).
+  //
+  // `officialsAiPlanForDivision` does hold ONE `requireFeature` —
+  // `officials.roles_multi`, and only when the policy names more than one role
+  // (officials-ai.ts:1037). It is not a plan gate in practice: V319 opened that
+  // key on every plan including community, which is what makes the replacement
+  // sentence true. Since the claim now rests on a matrix ROW rather than on the
+  // absence of a call, the describe below pins the row.
+  it("reds on the exact Pro-Plus-gate sentence #365 found", () => {
+    const reverted = aiOfficials.replace(
+      "Like the schedule pass, it needs no upgrade — it runs on **every plan, Community included**.",
+      "Automatic officials assignment is a **Pro Plus** feature.",
+    );
+    expect(reverted, "the replacement never matched — the article moved").not.toBe(aiOfficials);
+    expect(aiOfficialsPlanGateFaults("x", reverted)).not.toEqual([]);
+  });
+
+  // MUTATION PROOF, half 2 of #365: the exact "officials AI runs are not
+  // metered … restaff as often as you like … effectively free" sentence —
+  // established false against credits.ts's spendCredit, whose reserve/settle
+  // wraps officialsAiPlanForDivision's ENTIRE call, including the
+  // no-instruction default spread that makes no model call.
+  it("reds on the exact unmetered sentence #365 found", () => {
+    const reverted = aiOfficials.replace(
+      /## Credits and rate limits\n\n[\s\S]*?(?=\n\nInstruction runs carry)/,
+      `## Run quotas
+
+Unlike schedule generations, **officials AI runs are not metered** — restaff as often as you like. The empty-instruction default spread is produced without a model call at all, so it's effectively free.`,
+    );
+    expect(reverted, "the replacement never matched — the article moved").not.toBe(aiOfficials);
+    expect(unmeteredAiRunProseFaults("x", reverted)).not.toEqual([]);
+  });
+});
+
+/**
+ * The "every plan, Community included" half of #365, pinned to the matrix
+ * rather than to prose.
+ *
+ * The two guards above are VOCABULARY scans: they forbid the false sentence
+ * from coming back. Neither can notice the opposite failure — the sentence
+ * staying word-for-word identical while the thing it describes changes
+ * underneath it. That is precisely how the article became wrong the first time.
+ *
+ * `officials.roles_multi` is the one entitlement `officialsAiPlanForDivision`
+ * requires (and only for a multi-role policy). V319 set it true on every plan,
+ * community included, which is what makes "it needs no upgrade" true today. Put
+ * it back behind a paid tier and the article is false again with no edit to it,
+ * so the row is what this asserts.
+ */
+describe.skipIf(!HAS_DB)("ai-officials.md's 'every plan' claim is the matrix's (#365)", () => {
+  it("officials.roles_multi is open on every plan the matrix carries", async () => {
+    const rows = await sql<{ plan_key: string; bool_value: boolean | null }[]>`
+      select plan_key, bool_value from plan_entitlements
+      where feature_key = 'officials.roles_multi' order by plan_key`;
+    // Canary: a typo'd feature key would return zero rows and every assertion
+    // below would pass vacuously.
+    expect(rows.length, "no officials.roles_multi rows — the gate's key moved").toBeGreaterThan(3);
+    expect(
+      rows.map((r) => r.plan_key),
+      "the article names Community by name",
+    ).toContain("community");
+    expect(
+      rows.filter((r) => r.bool_value !== true).map((r) => r.plan_key),
+      "ai-officials.md says AI Officials runs on every plan — these plans no longer allow it",
+    ).toEqual([]);
+  });
+});
+
+/**
+ * TREE-WIDE, #365. `unmeteredAiRunProseFaults` was invoked on exactly one
+ * named article — `ai-scheduling.md` — until this task, which is precisely how
+ * `ai-officials.md` carried the SAME false claim, untouched, since #303. Rather
+ * than add a second name to a list (the shape that missed it the first time),
+ * this scans EVERY article `allHelpArticles()` returns, so a THIRD copy of the
+ * claim reds this suite on its own, wherever it lands, without anyone adding
+ * its filename here first.
+ *
+ * `aiOfficialsPlanGateFaults` (the Pro-Plus-gate half of #365) is DELIBERATELY
+ * NOT included in this tree-wide scan — see its JSDoc in `copy-truth.ts`:
+ * `officials.md` states an almost identically worded TRUE claim about a
+ * different, deterministic gate, and a vocabulary broad enough to catch the
+ * false claim here would also catch that true one. That guard stays scoped to
+ * `ai-officials.md` by name (above), which is the honest fix for a claim whose
+ * truth depends on which article is making it, not on the words alone.
+ */
+const unmeteredFaultsAcrossTree = (
+  extra: Array<{ slug: string; text: string }> = [],
+): string[] => {
+  const faults: string[] = [];
+  for (const article of allHelpArticles().values()) {
+    faults.push(...unmeteredAiRunProseFaults(`${article.slug}.md`, helpArticleBySlug(article.slug)));
+  }
+  for (const e of extra) {
+    faults.push(...unmeteredAiRunProseFaults(`${e.slug}.md`, e.text));
+  }
+  return faults;
+};
+
+describe("no help article anywhere claims an AI run is unmetered/free (#365)", () => {
+  it("the tree, as it stands today, makes the claim nowhere", () => {
+    expect(unmeteredFaultsAcrossTree()).toEqual([]);
+  });
+
+  // ANTI-VACUITY, the point of scanning the tree rather than a list: a THIRD
+  // copy of the claim, in an article nobody named here, must still red.
+  it("would catch a third copy of the claim, in an article this list never named", () => {
+    const faults = unmeteredFaultsAcrossTree([
+      {
+        slug: "some/other-article-nobody-named",
+        text: "Officials AI runs are not metered on any plan — restaff as often as you like.",
+      },
+    ]);
+    expect(faults.join(" ")).toContain("unmetered");
   });
 });
 
@@ -901,7 +1042,7 @@ describe("an added falsehood fails whatever it says", () => {
    * claims is a reading, not a lookup. Claiming otherwise in this comment would
    * be the very defect the round is about.
    */
-  it("every file a `why` cites exists, and every line it cites is in range", { timeout: 60_000 }, () => {
+  it("every file a `why` cites exists, and every line it cites is in range", () => {
     const sources = [
       ["_approved-copy.ts", webSource("lib/__tests__/_approved-copy.ts")],
       ["_approved-dictionary-copy.ts", webSource("lib/__tests__/_approved-dictionary-copy.ts")],
@@ -1480,7 +1621,7 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
   // 9.3s in the full run (file total 10.5s). Quoting the isolated figure would
   // be the same kind of optimism this wave keeps correcting elsewhere, so both
   // are here. The 60s is real headroom for a loaded machine, not decoration.
-  it("freezes exactly the two axes the article says, and orgs.max_owned is not one", { timeout: 60_000 }, () => {
+  it("freezes exactly the two axes the article says, and orgs.max_owned is not one", () => {
     const source = webSource("server/usecases/entitlement-freeze.ts");
     const frozen = [...source.matchAll(/getLimit\(orgId,\s*"([^"]+)"\)/g)].map((m) => m[1]!);
 
@@ -2040,7 +2181,7 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
   // sentence on the page: the day somebody builds either control, the article
   // starts telling customers to email support for a button that is on screen.
   // Nothing about the copy can detect that, so this watches the CODE.
-  it("says 'no control in Settings yet' only while that is still true", { timeout: 60_000 }, () => {
+  it("says 'no control in Settings yet' only while that is still true", () => {
     // The purchase entry points. A control means a component or page reaching
     // for one of these — the API routes and the usecases themselves are not
     // evidence of a UI, which is exactly the distinction the sentence makes.

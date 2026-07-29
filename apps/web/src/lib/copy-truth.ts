@@ -1308,6 +1308,55 @@ export function unmeteredAiRunProseFaults(label: string, markdown: string): stri
   return faults;
 }
 
+/**
+ * v17 gap #365: `content/help/scheduling/ai-officials.md` said "Automatic
+ * officials assignment is a Pro Plus feature." That sentence describes a REAL
+ * gate — just not this one. `officials.ts`'s `officials.auto` feature key
+ * (V290; `plan_entitlements` has `bool_value=true` for `pro_plus` only, `false`
+ * for `pro`/`community` — measured against the local DB) gates a DIFFERENT,
+ * deterministic "quick auto-assign" action (`autoAssignOfficials` /
+ * `applyOfficialAssignments`, both call `requireFeature(auth.orgId,
+ * "officials.auto")`), and `officials.md` correctly documents THAT gate. The
+ * LLM-driven AI Officials architect this article is about is a separate code
+ * path: `officials-ai.ts`'s own orchestrator comment states it directly — "the
+ * AI officials path is NOT plan-gated" — `officialsAiPlanForDivision` never
+ * calls `requireFeature` on any tier; it is metered by the AI credit wallet
+ * instead (SPEC-1 §5, §7 / SPEC-2 §5.2), the same wallet the guard above
+ * defends.
+ *
+ * DELIBERATELY NOT run tree-wide, unlike the guard above: the two features
+ * share almost identical human phrasing ("automatic officials assignment … is
+ * a Pro Plus feature") for two different gates, so a vocabulary broad enough to
+ * catch the false claim in THIS article would also catch `officials.md`'s TRUE
+ * one — the ambiguity is in the English, not in the regex. Scoping this
+ * function's one call site to `ai-officials.md` (see
+ * `help-copy-truth.test.ts`) is the fix; the pattern is written narrowly enough
+ * that it does not currently match `officials.md`'s wording either (the
+ * parenthetical "(propose/apply)" breaks the adjacency the first pattern
+ * requires), but that is a bonus, not the safety mechanism.
+ */
+export function aiOfficialsPlanGateFaults(label: string, markdown: string): string[] {
+  const patterns = [
+    /\bautomatic\s+officials?\s+assignment\s+is\s+a\b[^.;]{0,20}\bpro\s+plus\b[^.;]{0,20}\bfeature\b/i,
+    /\bAI\s+officials?\b[^.;]{0,40}\b(?:is|are)\s+a\b[^.;]{0,20}\bpro\s+plus\b[^.;]{0,20}\bfeature\b/i,
+    /\bAI\s+officials?\b[^.;]{0,40}\brequires?\b[^.;]{0,20}\bpro\s+plus\b/i,
+    /\bpro\s+plus\s+only\b[^.;]{0,40}\bAI\s+officials?\b|\bAI\s+officials?\b[^.;]{0,40}\bpro\s+plus\s+only\b/i,
+  ];
+  const faults: string[] = [];
+  for (const block of claimTexts(markdown)) {
+    for (const sentence of sentences(block)) {
+      for (const pattern of patterns) {
+        if (pattern.test(sentence)) {
+          faults.push(
+            `${label}: "${sentence.slice(0, 72)}…" claims AI Officials needs Pro Plus — the AI officials path is NOT plan-gated (officials-ai.ts:officialsAiPlanForDivision never calls requireFeature); only the separate, deterministic officials.auto action is (officials.ts, V290, plan_entitlements pro_plus-only)`,
+          );
+        }
+      }
+    }
+  }
+  return faults;
+}
+
 // ── The pass's duration and credit grant, in prose ───────────────────────────
 
 /**
