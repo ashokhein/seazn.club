@@ -67,6 +67,33 @@ Copy these values verbatim. Every task's requirements implicitly include this se
 
 ---
 
+## Rulings made during execution
+
+Decisions taken after the plan was written. They **override** the task text below where they conflict, and later tasks must not "correct" them back.
+
+**R1 — `schedule.ts` and `schedule-ai.ts` were edited by Task 1.** Task 1's Files block said "read, do not edit"; that was lifted. `buildSchedulePack`'s `BuildPackOptions` gained optional `extraExisting` and `excludeDivisionIds`; `siblingAssignments` gained `excludeDivisionIds`; `OTHER_DIVISION_LABEL` and `OCCUPYING` are now exported. All additive — every existing caller is unchanged. **Task 3 must not re-add `OTHER_DIVISION_LABEL`.**
+
+**R2 — obstacle dedupe keys on `(division_id, court, from, to)`**, not the plan's `(court, from, to)`. Without division identity, two selected divisions' immovable fixtures at the same court and span collapse into one, hiding a real fixture from both the model and the verifier.
+
+**R3 — divisions sort on `(name, slug)`**, not `(name, id)`. Since drafts accumulate forward, build order decides draft *content*, so a UUID tie-break would make two identically-seeded boards produce different drafts. `createDivision` enforces a unique slug; it does not enforce a unique name.
+
+**R4 — the draft is a legality hint, explicitly not a balance hint.** Divisions are drafted sequentially, each seeing the earlier ones' assignments, so division 1 takes the early slots and later ones stack behind it. That is deliberate: legal-but-unbalanced beats balanced-but-clashing for a hint, and chunked interleaving would risk the determinism contract for modest gain. **`JOINT_RULES` (Task 2) must tell the model to rebalance rather than anchor**, since J4 asks for exactly the fairness the draft does not have.
+
+**R5 — `CompetitionPackDivision.draftPlaced`** carries how many of a division's movable fixtures the draft actually placed. `slotFixtures` returns unplaced fixtures in `result.conflicts`, which `schedule-ai.ts` discards — so without this the pack silently comes back short. **`draftPlaced < movableIds.length` means "did not fit" only in `generate` mode**; `repair` and `refine` derive `draft` differently.
+
+**R6 — zero-movable divisions are dropped from the run before quoting** (Task 4), so they are never charged. If fewer than 2 remain, the `>= 2 divisions` rule fires with its 400. Refusing an entire joint run because one of five divisions is already fully scheduled is wrong for a *joint* action, and charging for a division that was not solved is worse.
+
+**R7 — `movableIds` iteration order is not stable.** Only `.size` and membership are safe. Tasks 3 and 4 must never serialize `[...movableIds]` into a prompt or an event payload.
+
+**R8 — mixed division timezones.** All internal comparisons are epoch ms, but `pack.draft` and each division's settings keep their own division's `zonedIso` rendering, so on a mixed-tz competition the arrays read as non-monotone. `JOINT_RULES` must say so (Task 2), and the board must show which timezone it is rendering in (Task 8).
+
+**R9 — three cross-division cases Task 3 must test**, all discovered in Task 1 and none of them fixable there:
+- **Person overlap in the drafts.** A person in an entrant of division A and one of division B appears in *neither* division's `pack.people`, because each pack lists only persons in ≥2 of its **own** entrants. The fixed board now carries `people`; the drafts structurally cannot. `verifyJoint` sees the whole board and owns this.
+- **`parallelism: "block"` asymmetry.** `extraExisting` feeds block-mode exclusivity, so a division refuses to overlap *earlier* divisions' drafts but never later ones.
+- **Cross-division gap is charged at the drafting division's `gapMinutes`.** `verifyJoint` uses each division's own config, so it can legitimately reject the draft it was handed. Test that case explicitly rather than discovering it in a repair round.
+
+---
+
 ## Task 1: Joint pack builder
 
 **Files:**
@@ -103,7 +130,7 @@ Copy these values verbatim. Every task's requirements implicitly include this se
   export interface CompetitionPack {
     mode: "generate" | "refine" | "repair";
     competition: { id: string; name: string };
-    divisions: CompetitionPackDivision[];      // sorted by name, then id
+    divisions: CompetitionPackDivision[];      // sorted by (name, slug) — see R3
     /** Union of every selected division's court labels, sorted. */
     courts: string[];
     /** Court labels that do NOT appear in every selected division — the board
@@ -191,6 +218,8 @@ npx vitest run src/server/usecases/__tests__/schedule-ai-pack.test.ts
   - **J2** A court is shared across divisions when the label matches exactly. Two fixtures from different divisions must never overlap on the same `court_label`.
   - **J3** Each division has its own `matchMinutes`, `gapMinutes`, session windows and blackouts under `divisions[]`. Apply each fixture's own division's values — they are not interchangeable.
   - **J4** Balance prime slots across divisions. No division may be pushed entirely to the end of the day while another takes every early court.
+  - **J5** The `draft` is a **legality** hint, not a balance hint (ruling R4). It is built division by division, so earlier divisions hold the early slots — rebalance it under J4 rather than anchoring on it. A division whose `draftPlaced` is below its movable count has a **partial** draft; place the remainder yourself (ruling R5).
+  - **J6** Divisions may run in different timezones (ruling R8). Every `scheduled_at` carries its own division's UTC offset, so the arrays are not necessarily in clock order — compare instants, not strings.
   - Output format is unchanged: one flat `assignments` array. Do not add a division field to the output — the server resolves each `fixture_id` to its division.
 - Label the rules `J1`–`J4` so they match the existing `H1`–`H7` / `S1`–`S5` convention that `schedule-ai-prompt.test.ts:26` asserts on.
 
@@ -328,6 +357,12 @@ export function verifyJoint(plan: AiSchedulePlan, pack: CompetitionPack): Confli
 8. `"duplicate conflicts across per-division passes are reported once"`.
 9. `"obstacle ids are unique across the union"` — two divisions each contributing obstacles → no duplicate `fixtureId` among the synthetic obstacle assignments.
 
+**Plus the three cases ruling R9 hands to this task.** Each was found during Task 1 and is unfixable there — `verifyJoint` is the only place that sees the whole board:
+
+10. `"a person shared across two divisions' entrants is caught as an overlap"` — the important one. Each division's pack lists only persons appearing in ≥2 of its **own** entrants, so a person in one entrant of A and one of B is in *neither* `pack.people`. The joint pack's merged `people` is what makes this visible. Seed exactly that shape and put the two fixtures on **different courts** at overlapping times — different courts is what proves the assertion is the person check and not a court clash.
+11. `"a division's parallelism:'block' setting is applied to its own fixtures only"` — `extraExisting` feeds block-mode exclusivity asymmetrically (a division refuses to overlap *earlier* divisions' drafts, never later ones). Pin the intended semantics so the asymmetry cannot silently change.
+12. `"verifyJoint may legitimately reject a draft it was handed"` — cross-division gap is charged at the *drafting* division's `gapMinutes`, while `verifyJoint` uses each division's own. Seed two divisions with different `gapMinutes` sharing a court, so the draft is legal to the drafter and illegal to the verifier. Assert the conflict IS reported rather than swallowed. This is expected behaviour, not a bug — the test exists so a later change cannot quietly make the verifier agree with a draft it should not.
+
 - [ ] **Step 2: Run and watch fail**
 - [ ] **Step 3: Implement**
 - [ ] **Step 4: Re-run green; then `npx vitest run src/server/usecases/__tests__/schedule-ai-run.test.ts src/server/usecases/__tests__/schedule-ai-ladder.test.ts` to prove the single-division path is untouched**
@@ -360,6 +395,7 @@ export function verifyJoint(plan: AiSchedulePlan, pack: CompetitionPack): Confli
 4. `input.division_ids.length >= 2` → else 400 `AI_PLAN_SINGLE_DIVISION`.
 5. Load the competition and its divisions in one `withTenant`. Unknown competition → 404. Any requested id not in this competition → 404 naming it. Any selected division with `schedule_locked` → 409 `SCHEDULE_LOCKED` naming the division.
 6. **422 naming the division** for a division that cannot be planned — zero courts configured (spec §11). Before any reserve.
+6b. **Drop zero-movable divisions from the run (ruling R6)** — before quoting, so they are never charged. Report which were dropped in the response. If fewer than 2 remain, fall back to the `>= 2 divisions` 400 at step 4. Do NOT let the per-division builder's `422 AI_PLAN_EMPTY_SCOPE` escape: refusing a whole joint run because one of five divisions is already fully scheduled is wrong for a joint action, and charging for a division that was never solved is worse.
 7. `walletIdFor(orgId)`.
 8. `` rateLimit(`ai-plan-competition:${competitionId}`, { max: 3, windowSeconds: 3600 }) ``.
 9. `buildCompetitionPack(...)` — the 500 cap fires here, still before any reserve.
