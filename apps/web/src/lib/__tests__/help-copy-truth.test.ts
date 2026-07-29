@@ -1621,7 +1621,14 @@ describe("the add-ons article's behaviour claims are pinned to the code", () => 
   // 9.3s in the full run (file total 10.5s). Quoting the isolated figure would
   // be the same kind of optimism this wave keeps correcting elsewhere, so both
   // are here. The 60s is real headroom for a loaded machine, not decoration.
-  it("freezes exactly the two axes the article says, and orgs.max_owned is not one", () => {
+  //
+  // RESTORED after #372 removed it. That removal measured this test ALONE
+  // (2.1s) and read it as leftover padding — past the paragraph above, which
+  // had already said the isolated figure is the misleading one. Re-measured
+  // inside a full `vitest run` of all 532 files: 41.8s, and it failed on the
+  // 30s config default. Allowlisted in inline-timeout-truth.test.ts, which is
+  // what that allowlist is for.
+  it("freezes exactly the two axes the article says, and orgs.max_owned is not one", { timeout: 60_000 }, () => {
     const source = webSource("server/usecases/entitlement-freeze.ts");
     const frozen = [...source.matchAll(/getLimit\(orgId,\s*"([^"]+)"\)/g)].map((m) => m[1]!);
 
