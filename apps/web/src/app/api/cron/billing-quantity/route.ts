@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { handler } from "@/lib/http";
 import { HttpError } from "@/lib/errors";
 import { countOrgsWithoutGroup, reconcileGroupQuantities } from "@/server/usecases/billing-groups";
+import { sweepStaleOrgAddonPrices } from "@/server/usecases/billing-events";
 
 /** POST /api/cron/billing-quantity — daily: for every live billing group whose
  *  paid-for seat count disagrees with its organisation count, put the Stripe
@@ -21,10 +22,23 @@ export async function POST() {
     if (given !== secret) throw new HttpError(401, "Bad cron secret");
     // orphanOrgs is the #232 P2 invariant guard: 0 in a healthy database. The
     // schedule warns when reconcile corrects drift or an orphan appears.
-    const [reconcile, orphanOrgs] = await Promise.all([
+    //
+    // addonPrices rides this schedule rather than the hourly billing-events one
+    // (#332). Same subscription ITEMS as reconcileGroupQuantities above, one
+    // field over: that call puts the item's QUANTITY back on the truth, this one
+    // reports items whose PRICE no longer matches the plan's rider. Daily is
+    // also the honest cadence for its cost — it reads one Stripe price per
+    // active rider, so hourly would multiply that by 24 to re-derive an answer
+    // that changes only when a price does.
+    //
+    // Report-only, deliberately: a repairing sweep would be an unattended bulk
+    // billing mutation, and whatever left a group on a stale price is likely
+    // still there to do it again. `mismatched > 0` is the signal to look.
+    const [reconcile, orphanOrgs, addonPrices] = await Promise.all([
       reconcileGroupQuantities(),
       countOrgsWithoutGroup(),
+      sweepStaleOrgAddonPrices(),
     ]);
-    return { ...reconcile, orphanOrgs };
+    return { ...reconcile, orphanOrgs, addonPrices };
   });
 }

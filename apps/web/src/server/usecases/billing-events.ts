@@ -41,6 +41,7 @@ import {
   invalidateOrgEntitlements,
 } from "@/lib/entitlements";
 import { orgIdsInGroup, subscriptionIdForOrg } from "@/lib/billing-group";
+import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscription-status";
 import { syncGroupQuantity } from "@/server/usecases/billing-groups";
 import {
   creditPassTowardSubscription,
@@ -752,14 +753,19 @@ export async function syncSeatAddonsForSubscription(
  * reads. So a failure is logged AND STAFF-ALERTED and processing continues:
  * rows still reconcile, only the PRICE stays stale.
  *
- * A FAILURE IS OBSERVABLE, NOT REPAIRED. There is no retry and no sweep: this
- * runs only when a `customer.subscription.created`/`.updated` event arrives, so
- * "the next event re-converges it" is worth nothing for a group Stripe has no
- * reason to emit another event about.
+ * A FAILURE IS OBSERVABLE, NOT REPAIRED. There is no retry here: this runs only
+ * when a `customer.subscription.created`/`.updated` event arrives, so "the next
+ * event re-converges it" is worth nothing for a group Stripe has no reason to
+ * emit another event about.
  * That group bills the wrong rate indefinitely, which is why every failure path
- * raises a staff alert rather than only a log. The daily reconciliation sweep
- * and the /admin mismatch list that would actually REPAIR it are tracked as
- * issue #332; until they land, the alert is the entire safety net.
+ * raises a staff alert rather than only a log.
+ *
+ * `sweepStaleOrgAddonPrices` (#332, below) is the second half of that net: it
+ * finds a group that went stale before the alert existed, or whose alert was
+ * missed. It REPORTS ONLY — it re-prices nothing — so this alert is still what
+ * a responder acts on, and the sweep is still not a repair. Note also that it
+ * is not yet SCHEDULED: the cron step and the /admin mismatch list that read it
+ * are the remaining halves of #332.
  */
 export async function convergeOrgAddonPrices(
   stripeSub: Stripe.Subscription,
@@ -827,9 +833,10 @@ export async function convergeOrgAddonPrices(
     // subscription event of any kind (a dunning retry, a seat purchase, a plan
     // edit) that clears those gates re-reads the claim and converges the item
     // then. What does not exist is anything
-    // that SCHEDULES such an event: no retry, and #332's sweep is unbuilt, which
-    // is the header's point. A group nothing else touches keeps billing the
-    // wrong rate until something touches it.
+    // that SCHEDULES such an event: no retry, and #332's sweep REPORTS rather
+    // than re-converging (and is not wired to a cron yet), which is the header's
+    // point. A group nothing else touches keeps billing the wrong rate until
+    // something touches it.
     //
     // And the alert it sends is MISLEADING in this case specifically: `reason`
     // reads "another subscription item already holds the target price (duplicate
@@ -888,7 +895,10 @@ export async function convergeOrgAddonPrices(
       // every rider on every `subscription.updated`, which is exactly the
       // per-event round trip the early return at the top of this function exists
       // to avoid. That trade belongs to #332's scheduled reconciliation, which
-      // pays it once a day per group instead of once an event per rider.
+      // pays it once a day per group instead of once an event per rider — and
+      // note the sweep as shipped does NOT close this window: it compares PRICE
+      // ids only, so a converged price hiding a stale QUANTITY is still invisible
+      // to both halves. Widening it to quantity is a change to that function.
       if (item.price?.id === expectedPriceId) continue;
       // A quantity-0 item is a removal in disguise; the row sync below flips
       // its row to canceled. Re-pricing it would be paying a Stripe write to
@@ -900,8 +910,10 @@ export async function convergeOrgAddonPrices(
       // a row the customer is paying for. Much less reachable than the
       // steady-state exit above: no app path produces a qty-0 rider item at all
       // — setExtraOrgs removes via `subscriptionItems.del` — so it takes a
-      // Dashboard edit AND an out-of-order delivery. Same remedy, same owner:
-      // #332.
+      // Dashboard edit AND an out-of-order delivery. Same owner, #332, but NOT
+      // yet the same remedy: the shipped sweep skips a qty-0 row (it reads
+      // `status = 'active'` org_addons rows, and the sync has already canceled
+      // this one) and compares prices, not quantities.
       if ((item.quantity ?? 0) <= 0) continue;
       // Hoisted so the catch below can report the price Stripe ACTUALLY holds
       // rather than the payload's, which may be superseded. Null only if the
@@ -942,7 +954,8 @@ export async function convergeOrgAddonPrices(
         // property STRUCTURAL — an exit added later inherits it by construction.
         //
         // "The next event repairs it" is worth nothing here: convergence fires
-        // only on a plan change, and #332's sweep does not exist yet.
+        // only on an event Stripe has a reason to emit for this group, and
+        // #332's sweep only reports — it never writes a row back.
         const idx = items.indexOf(item);
         if (idx >= 0) items[idx] = live;
         // Someone got there first — a purchase (setExtraOrgs re-prices AND
@@ -1115,6 +1128,317 @@ export async function maybeAlertOrgRepriceFailed(opts: {
       err,
     );
   }
+}
+
+/** One live extra-org rider found on a price that is NOT its group's plan rate
+ *  — or one the sweep could not price at all. The shape a staff list renders
+ *  and a manual Dashboard fix acts on. */
+export interface OrgAddonPriceMismatch {
+  /** The billing GROUP (subscriptions.id) — what a human looks up first. */
+  subscriptionId: string;
+  stripeSubscriptionId: string;
+  planKey: string;
+  /** The Stripe subscription ITEM. Always known here: the sweep starts from
+   *  org_addons rows, which are keyed on it. */
+  itemId: string;
+  /** What Stripe HOLDS. Null when the expected price could not be resolved, in
+   *  which case the item was never read — there was nothing to compare it to. */
+  currentPriceId: string | null;
+  /** The current plan's rider price, or null when the catalog could not name
+   *  one (unsynced) or the plan has no rider SKU at all. */
+  expectedPriceId: string | null;
+  /** How many organisations are riding at the wrong rate — the blast radius. */
+  qty: number;
+  reason: string;
+}
+
+/** How many mismatches one pass will EMAIL about. The full list is always
+ *  returned in `mismatches`, so nothing is lost by capping here; this only
+ *  bounds the inbox when a single systemic fault (an unsynced catalog) makes
+ *  every group in the database report at once. */
+export const ORG_PRICE_SWEEP_ALERT_CAP = 10;
+
+/**
+ * Periodic backstop for the extra-organisation rider's two rates (v17 gap
+ * #332). REPORTS, never repairs.
+ *
+ * WHY IT EXISTS. `convergeOrgAddonPrices` is the only thing that moves a rider
+ * onto its group's current rate, it runs ONLY on a
+ * `customer.subscription.created`/`.updated` delivery, and it deliberately
+ * never throws — so each of its reachable failures (an unsynced catalog, a
+ * currency outside the rider price's `currency_options` (the #191 class), a
+ * duplicate rider losing the target-price claim) ends in a log, a staff alert
+ * and a group left on the wrong price. Nothing SCHEDULES another event for that
+ * group, so "the next event re-converges it" buys nothing for a customer who
+ * never changes plan again. The alert covers the moment of failure; it does not
+ * cover a group that went stale before the alert existed, or one whose alert
+ * was missed. This is what covers those.
+ *
+ * The invariant is load-bearing rather than cosmetic: $9 on pro and $19 on
+ * pro_plus is what stops "Pro + riders" undercutting Pro Plus. A rider stuck on
+ * the pro price under a pro_plus plan IS that arbitrage; stuck the other way it
+ * is an overcharge. Either way it is a money fault, not a tidiness one.
+ *
+ * IT DOES NOT RE-PRICE, and that is the deliberate half of #332's third
+ * question. A sweep that repaired would be a BULK billing mutation — every
+ * fixed item bills a proration, unattended, against subscriptions whose owners
+ * are not present — and the fault that made them stale (an unsynced catalog, an
+ * unsupported currency) is very likely still present, so the repair would
+ * mostly fail and the successes would be the ones nobody vetted. Report first,
+ * read the list, then decide. Making it repair later is a change to this
+ * function, not to its callers.
+ *
+ * IT COMPARES PRICE IDS AGAINST LIVE STRIPE STATE, for two reasons. The DB
+ * records the rider's `stripe_item_id` and never its price, so there is nothing
+ * local to compare; and the whole failure class is "our idea of this
+ * subscription and Stripe's disagree", which a read of our own tables cannot
+ * see by construction. By ID and not by lookup key — the same comparison
+ * `convergeOrgAddonPrices` makes, and for the reason recorded there: a price
+ * REPLACED under the same lookup key is a genuinely different price that a
+ * key-wise comparison would call converged.
+ *
+ * COST is one `prices.list` per DISTINCT PLAN in the pass (memoised, not once
+ * per rider) plus one `subscriptionItems.retrieve` per live rider — and the
+ * working set is only groups that have BOUGHT an extra organisation, which is a
+ * small minority of subscriptions. `limit` bounds it hard.
+ *
+ * `total` IS NOT `checked`, AND THE GAP IS THE POINT. `limit` truncates a
+ * STABLE ordering (`a.created_at`), and unlike sweepStuckEvents' working set —
+ * which DRAINS, because a replayed row stops being stuck — this one does not: a
+ * rider stays live and re-selectable for ever, converged or not. So once the
+ * estate exceeds `limit`, the same oldest N are re-examined every pass and the
+ * NEWEST riders are never looked at, silently. Returning the unlimited count
+ * beside the examined one makes that visible (`checked < total` means this pass
+ * did not cover the estate) rather than leaving a backstop that has quietly
+ * stopped backing anything up. Both counts are read through ONE predicate
+ * builder for the same reason: a duplicated WHERE clause that drifted would make
+ * `total` a lie about the very thing it exists to police.
+ *
+ * NEVER THROWS ON A SINGLE ROW. One unreadable item must not abandon the rest
+ * of the sweep, so each Stripe read is caught and classified:
+ *  - `vanished`   — the item is gone from Stripe (`resource_missing`). Not a
+ *                   price fault and not alerted; the org_addons row outliving
+ *                   its item is a different bug with a different owner (#329).
+ *  - `unreadable` — any other Stripe failure. Explicitly NOT reported as a
+ *                   mismatch: a transient outage that rendered as "this group
+ *                   is billing the wrong rate" is exactly the false positive
+ *                   that teaches a responder to ignore the list.
+ *  - `unresolved` — we could not name the expected price (catalog unsynced, or
+ *                   a plan with no rider SKU at all). Reported and alerted,
+ *                   because a rider nobody can price is stale by definition.
+ *
+ * The DB read is deliberately gated on `LIVE_SUBSCRIPTION_STATUSES` and a
+ * non-null `stripe_subscription_id`: a canceled group keeps its Stripe id
+ * forever, and re-pricing (or paging anyone about) a departed customer's rider
+ * is noise. `status = 'active'` on the org_addons row excludes both the
+ * `canceled` freeze-not-delete rows and admin `granted` rows, which have no
+ * Stripe item and therefore no price to be wrong.
+ *
+ * REPEATS ITS ALERTS. There is no attempt counter to park a row with (unlike
+ * sweepStuckEvents, which has `replay_attempts`), so a group that stays broken
+ * is alerted again on the next pass. That is the intended behaviour for a money
+ * fault — it should nag until someone acts — and it is bounded by
+ * ORG_PRICE_SWEEP_ALERT_CAP per pass. The de-duplicated read is the /admin
+ * mismatch list (#332's second half), which renders `mismatches` directly.
+ */
+export async function sweepStaleOrgAddonPrices(limit = 500): Promise<{
+  total: number;
+  checked: number;
+  mismatched: number;
+  unresolved: number;
+  vanished: number;
+  unreadable: number;
+  alerted: number;
+  mismatches: OrgAddonPriceMismatch[];
+}> {
+  const mismatches: OrgAddonPriceMismatch[] = [];
+  let total = 0,
+    checked = 0,
+    mismatched = 0,
+    unresolved = 0,
+    vanished = 0,
+    unreadable = 0,
+    alerted = 0;
+  const done = () => ({
+    total,
+    checked,
+    mismatched,
+    unresolved,
+    vanished,
+    unreadable,
+    alerted,
+    mismatches,
+  });
+  // No Stripe account configured (CI, a local shell): there is nothing to
+  // compare against, and pretending otherwise would report every rider in the
+  // database as broken. Same guard, same reason, as sweepStuckEvents. `total`
+  // stays 0 rather than being counted anyway — nothing was examined, and a
+  // non-zero total beside a zero checked would read as a coverage failure.
+  if (!process.env.STRIPE_SECRET_KEY) return done();
+
+  // The ONE definition of "a rider whose price could be wrong", so the counted
+  // set and the examined set cannot drift. A fresh fragment per call rather than
+  // one shared value: each embedding binds its own parameters.
+  //
+  // `wallet_id` is TEXT with no FK (V323) — coalesce(group_subscription_id,
+  // org_id) — so the join casts rather than the column. An org-addon row for a
+  // GROUP always carries the subscription id, so an org-id wallet simply finds
+  // no row here and is skipped, which is correct: an ungrouped org has no
+  // Stripe subscription for a rider to ride.
+  const liveRiders = () => sql`
+      from org_addons a
+      join subscriptions s on s.id::text = a.wallet_id
+     where a.status = 'active'
+       and a.feature_key = ${ORG_ADDON_FEATURE_KEY}
+       and a.stripe_item_id is not null
+       and s.stripe_subscription_id is not null
+       and s.status in ${sql([...LIVE_SUBSCRIPTION_STATUSES])}`;
+
+  const [counted] = await sql<{ n: number }[]>`
+    select count(*)::int as n ${liveRiders()}`;
+  total = counted?.n ?? 0;
+
+  const rows = await sql<
+    {
+      subscription_id: string;
+      plan_key: string;
+      stripe_subscription_id: string;
+      stripe_item_id: string;
+      qty: number;
+    }[]
+  >`
+    select s.id::text as subscription_id, s.plan_key, s.stripe_subscription_id,
+           a.stripe_item_id, a.qty
+     ${liveRiders()}
+     order by a.created_at
+     limit ${limit}`;
+  if (total > rows.length) {
+    console.warn(
+      `[billing] extra-org rider sweep is TRUNCATED: ${rows.length} of ${total} live riders ` +
+        `examined this pass (limit ${limit}) — the newest riders are never reached`,
+    );
+  }
+
+  // One catalog lookup per DISTINCT plan, not per rider: every group on pro
+  // resolves the same price id, and `prices.list` is a network call. Memoised
+  // ACROSS FAILURES too — an unsynced catalog fails identically for every row,
+  // and retrying it per row would turn one outage into `limit` round trips.
+  const expectedByPlan = new Map<string, { priceId: string | null; reason: string }>();
+  async function expectedFor(planKey: string): Promise<{ priceId: string | null; reason: string }> {
+    const hit = expectedByPlan.get(planKey);
+    if (hit) return hit;
+    let result: { priceId: string | null; reason: string };
+    if (!orgAddonForPlan(planKey)) {
+      // Not a resolution failure — this plan HAS no rider SKU. Reachable
+      // because convergeOrgAddonPrices deliberately declines to cancel a rider
+      // on such a plan (removal belongs to the cancel paths), so a downgrade to
+      // community leaves a paid rider riding a plan that cannot price it. Today
+      // that state is invisible; naming it is the point of the sweep.
+      result = {
+        priceId: null,
+        reason:
+          `this group is on ${planKey}, which has no extra-organisation rider SKU, yet it is ` +
+          `still billed for one — nothing prices this item`,
+      };
+    } else {
+      try {
+        result = { priceId: await resolveOrgAddonPriceId(planKey), reason: "" };
+      } catch (err) {
+        result = {
+          priceId: null,
+          reason:
+            `the sweep could not resolve the ${planKey} rider price from the catalog — run ` +
+            `stripe:sync for this account: ${errText(err)}`,
+        };
+      }
+    }
+    expectedByPlan.set(planKey, result);
+    return result;
+  }
+
+  for (const row of rows) {
+    checked++;
+    const expected = await expectedFor(row.plan_key);
+    const base = {
+      subscriptionId: row.subscription_id,
+      stripeSubscriptionId: row.stripe_subscription_id,
+      planKey: row.plan_key,
+      itemId: row.stripe_item_id,
+      qty: row.qty,
+    };
+    if (!expected.priceId) {
+      // Nothing to compare against, so the item is deliberately NOT read: a
+      // round trip whose answer could not change the verdict.
+      unresolved++;
+      mismatches.push({
+        ...base,
+        currentPriceId: null,
+        expectedPriceId: null,
+        reason: expected.reason,
+      });
+      continue;
+    }
+    let live: Stripe.SubscriptionItem;
+    try {
+      live = await getStripe().subscriptionItems.retrieve(row.stripe_item_id);
+    } catch (err) {
+      if (isStripeResourceMissing(err)) {
+        vanished++;
+        console.warn(
+          `[billing] extra-org rider ${row.stripe_item_id} (group ${row.subscription_id}) is gone ` +
+            `from Stripe but its org_addons row is still active — no price to check`,
+        );
+        continue;
+      }
+      unreadable++;
+      console.error(
+        `[billing] could not read extra-org rider ${row.stripe_item_id} (group ` +
+          `${row.subscription_id}) — its rate is UNKNOWN this pass, not wrong`,
+        err,
+      );
+      continue;
+    }
+    if (live?.price?.id === expected.priceId) continue;
+    mismatched++;
+    mismatches.push({
+      ...base,
+      currentPriceId: live?.price?.id ?? null,
+      expectedPriceId: expected.priceId,
+      reason:
+        `reconciliation sweep: this rider is on ${live?.price?.id ?? "an unknown price"} but the ` +
+        `group's ${row.plan_key} plan bills ${expected.priceId} — convergence never completed and ` +
+        `nothing will retry it`,
+    });
+  }
+
+  // Logged for EVERY mismatch (the record when staff email is not configured);
+  // emailed for the first ORG_PRICE_SWEEP_ALERT_CAP only.
+  for (const m of mismatches) {
+    console.error(
+      `[billing] stale extra-org rider ${m.itemId} (qty ${m.qty}) on subscription ` +
+        `${m.stripeSubscriptionId} (group ${m.subscriptionId}, plan ${m.planKey}): ` +
+        `${m.currentPriceId ?? "unknown"} != ${m.expectedPriceId ?? "unresolved"} — ${m.reason}`,
+    );
+  }
+  // The env is re-read here rather than left to maybeAlertOrgRepriceFailed's own
+  // gate so the returned `alerted` counts what was actually attempted; a counter
+  // that incremented on a call the callee no-ops would report sends that never
+  // happened, and this number is what a cron response is judged on.
+  if (process.env.STAFF_ALERT_EMAIL) {
+    for (const m of mismatches.slice(0, ORG_PRICE_SWEEP_ALERT_CAP)) {
+      await maybeAlertOrgRepriceFailed({
+        subscriptionId: m.subscriptionId,
+        stripeSubscriptionId: m.stripeSubscriptionId,
+        planKey: m.planKey,
+        itemId: m.itemId,
+        currentPriceId: m.currentPriceId,
+        expectedPriceId: m.expectedPriceId,
+        reason: m.reason,
+      });
+      alerted++;
+    }
+  }
+  return done();
 }
 
 /**
