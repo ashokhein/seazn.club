@@ -271,9 +271,15 @@ describe("JOINT_RULES (issue #350)", () => {
 - Modify: `apps/web/src/server/usecases/schedule-ai.ts` — export what the joint module needs (`runLadder`, `planRungs`, `MAX_TOKENS`, `MAX_REPAIR_ROUNDS`, `isBlocking`, `aiReasoning`, `schedulingAiModel`, `ROUND_TIMEOUT_MS`). Export only; change no behaviour.
 - Test: `apps/web/src/server/usecases/__tests__/competition-schedule-verify.test.ts` (pure, no DB — model on `schedule-ai-run.test.ts`)
 
-**R10 — the cross-division person conflict MUST name the person and both entrants.** This is a contract, promised to the model in `JOINT_RULES` and required for the repair loop to converge.
+**R10 (revised) — the joint people map is built across the whole run, so the model can avoid cross-division person clashes rather than being punished for them.**
 
-Each division's `packPeople` is filtered to that division's own entrants (`schedule-ai.ts:540-541`), so a person rostered into one entrant of A and one of B appears in **neither** source map — and H4 tells the model to avoid overlaps for *"two entrants sharing a person in the shared-player map"*, a map that is empty for exactly this case. The model therefore cannot avoid the collision from the data it holds. If `verifyJoint` reports a bare `person_overlap` with no names, the repair round has nothing to act on and the model will re-propose the same placement — an infinite thrash on a metered, credit-consuming path, terminated only by the token budget. `Conflict.detail` must carry the person id and both entrant ids. Add a test asserting that, not merely that a conflict is raised.
+Each division's `packPeople` is filtered to that division's own entrants (`schedule-ai.ts:540-541`), so a person rostered into one entrant of A and one of B appears in **neither** source map. H4 tells the model to avoid overlaps for *"two entrants sharing a person in the shared-player map"* — empty for exactly this case.
+
+An earlier version of this ruling tried to fix that at the verifier: report the clash and name the entrants. Review showed that needs **three** server behaviours that do not exist — the data is absent from the pack; `person_overlap` is a warn (`calendar.ts:102`) and `isBlocking` (`schedule-ai.ts:831-833`) covers only `court` and direct `order`, so such a plan ships clean; and no repair round fires without a blocking conflict, with `Conflict.detail` carrying a bare person UUID the model cannot resolve.
+
+**So fix the pack instead.** `buildCompetitionPack` builds `people` by calling `peopleByEntrant` (`schedule.ts:226`) over **every selected division's** entrant ids and keeping persons in ≥2 entrants **across the run** — the same `>= 2` rule, over the joint entrant set rather than one division's. No new SQL, no engine change, no new conflict semantics: the model gets the data, H4 applies unchanged, and `person_overlap` stays a warn exactly as it is single-division. Sort merged `entrant_ids` by entrant name (`schedule-ai.ts:517-523`).
+
+This is the general lesson: when the model is graded on something it cannot see, **give it sight** rather than building machinery to punish it more legibly.
 
 **Interfaces:**
 - Consumes: `validateAssignments(assignments, config, existing, dependencies): Conflict[]` from `@seazn/engine` (`packages/engine/src/scheduling/calendar.ts:419`); `Assignment` has an optional `divisionId` field already (`calendar.ts:58`).
