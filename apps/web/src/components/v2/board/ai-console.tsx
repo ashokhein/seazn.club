@@ -13,7 +13,8 @@ import { usePathname } from "next/navigation";
 import posthog from "posthog-js";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { track, EVENTS } from "@/lib/analytics";
-import { useMsg } from "@/components/i18n/dict-provider";
+import { useMsg, usePlural } from "@/components/i18n/dict-provider";
+import { isRung } from "@/lib/ai-rung";
 import type { MessageKey } from "@/lib/messages";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { PlanBadge } from "@/components/plan-badge";
@@ -38,6 +39,7 @@ import {
 } from "./ai-apply";
 import { AiWishChips } from "./ai-wish-chips";
 import { AiPreflight, AiLastRun, type PreflightInput } from "./ai-preflight";
+import { AiQuoteCard, quoteFor, type QuoteCardLine } from "./ai-quote-card";
 import { compileWishes, deriveFreeText, joinNonEmpty, type Wish } from "./wish-compile";
 import { compileOfficialsWishes, type OfficialsWish } from "./officials-wish-compile";
 import { AiTrace, type TraceEvent } from "./ai-trace";
@@ -360,6 +362,12 @@ export function AiConsole({
       instruction,
       mode,
       ...(state.scope ? { scope: state.scope } : {}),
+      // The confirm card's rung. Omitted when the organiser left the control
+      // alone (`null`) so the server sizes the run from its own prediction —
+      // sending a number we guessed would freeze a stale client-side estimate
+      // into the price. `isRung` is the boundary filter for the reducer's
+      // untyped `number`.
+      ...(state.rung !== null && isRung(state.rung) ? { rung: state.rung } : {}),
       // A dry officials-coverage preview rides along only when the division has a
       // saved policy (none is persisted today, so this is omitted — see the prop).
       ...(officialsPolicy ? { officials_policy: officialsPolicy } : {}),
@@ -397,7 +405,7 @@ export function AiConsole({
       const key = aiErrorKey(status, aiErrorCodeOf(err));
       dispatch({ type: "RUN_ERROR", error: { status, message: msg(key), key } });
     }
-  }, [busy, divisionId, msg, officialsPolicy, state.instruction, state.mode, state.scope, state.schedulePlan]);
+  }, [busy, divisionId, msg, officialsPolicy, state.instruction, state.mode, state.rung, state.scope, state.schedulePlan]);
 
   // Phase B run. Empty instruction + no prior = the zero-token solver draft (the
   // auto-run on first entry); a non-empty instruction plans with the LLM; a
@@ -825,9 +833,30 @@ function BriefStep({
   onFill: (value: string) => void;
   lastRun: AiLastResult | null;
 }) {
+  const plural = usePlural();
   const tooShort = state.instruction.trim().length < 3;
-  const runLabel = msg(`board.ai.run.${state.mode}` as MessageKey);
   const presetNums = [1, 2, 3] as const;
+  // ONE line — the division being planned. The joint competition console
+  // (#350) builds the same shape with one line per selected division; the card
+  // switches layout on the count, so there is no second card to keep in sync.
+  const quoteLines: QuoteCardLine[] = [
+    {
+      key: preflight.divisionId,
+      label: null,
+      input: {
+        movableFixtures: brief.movable,
+        entrants: brief.entrants.length,
+        courts: brief.courts.length,
+      },
+      chosen: state.rung,
+    },
+  ];
+  // The CTA's count comes from the SAME quote the card renders — pricing the
+  // run twice is how a button and the card above it come to disagree.
+  const runLabel = msg("board.ai.quote.cta", {
+    action: msg(`board.ai.run.${state.mode}` as MessageKey),
+    credits: plural("board.ai.quote.credits", quoteFor(quoteLines).credits),
+  });
   return (
     <div className="space-y-3">
       {/* Run type */}
@@ -920,6 +949,18 @@ function BriefStep({
 
       {/* Pre-flight readiness — informational, never blocks the run. */}
       <AiPreflight {...preflight} />
+
+      {/* What the run costs, and the budget the organiser is buying. Hidden on
+          a frozen board: the run cannot happen, so quoting it would be a price
+          for something that is not on offer. */}
+      {!scheduleFrozen && (
+        <AiQuoteCard
+          lines={quoteLines}
+          onChange={(_key, rung) => dispatch({ type: "SET_RUNG", rung })}
+          msg={msg}
+          busy={busy}
+        />
+      )}
 
       {state.run === "error" && state.error && (
         state.error.key === "board.ai.error.outOfCredits" ? (
