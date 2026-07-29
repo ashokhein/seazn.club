@@ -22,7 +22,10 @@ import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 
 import { sql } from "@/lib/db";
-import { groupAlreadyCapped } from "../../../../../../scripts/backfill-pass-credit-redemptions";
+import {
+  describeCapStatus,
+  groupAlreadyCapped,
+} from "../../../../../../scripts/backfill-pass-credit-redemptions";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 12);
@@ -141,5 +144,50 @@ describe.skipIf(!HAS_DB)("backfill pre-check: groupAlreadyCapped", () => {
     const { orgId, subscriptionId } = await seedOrgAndSubscription();
     await seedRedemption({ subscriptionId, orgId, reversed: true });
     expect(await groupAlreadyCapped(sql, subscriptionId)).toBe(false);
+  });
+});
+
+// #307: `groupAlreadyCapped` collapses BOTH arms of the widened cap index
+// into one boolean, which is exactly right for "is there anything to
+// backfill" but wrong for a SUMMARY — a healthy live cap and an
+// undetermined-blocked group are opposite operational states (one is fine,
+// the other is money nobody has decided about) and a report that folds them
+// into one "already capped" count cannot be told apart from "the run went
+// well" by whoever reads it. `describeCapStatus` is the function the
+// backfill's main loop uses to keep them separate; this test builds BOTH row
+// shapes side by side and asserts they resolve to distinct, correctly-typed
+// statuses — a test built from only one shape cannot catch a conflation.
+describe.skipIf(!HAS_DB)("backfill summary: describeCapStatus tells healthy and undetermined apart", () => {
+  it("resolves a group with no redemption row as free", async () => {
+    const { subscriptionId } = await seedOrgAndSubscription();
+    expect(await describeCapStatus(sql, subscriptionId)).toBe("free");
+  });
+
+  it("resolves a healthy LIVE redemption as capped_healthy, distinctly from capped_undetermined", async () => {
+    const healthy = await seedOrgAndSubscription();
+    await seedRedemption({ subscriptionId: healthy.subscriptionId, orgId: healthy.orgId });
+
+    const blocked = await seedOrgAndSubscription();
+    await seedRedemption({
+      subscriptionId: blocked.subscriptionId,
+      orgId: blocked.orgId,
+      reversed: true,
+      undetermined: true,
+    });
+
+    const healthyStatus = await describeCapStatus(sql, healthy.subscriptionId);
+    const blockedStatus = await describeCapStatus(sql, blocked.subscriptionId);
+
+    expect(healthyStatus).toBe("capped_healthy");
+    expect(blockedStatus).toBe("capped_undetermined");
+    // The whole defect in one line: these must never collapse to the same
+    // value, or a summary built on top of this function conflates them again.
+    expect(healthyStatus).not.toBe(blockedStatus);
+  });
+
+  it("resolves a cleanly-reversed (determined) redemption as free, not undetermined", async () => {
+    const { orgId, subscriptionId } = await seedOrgAndSubscription();
+    await seedRedemption({ subscriptionId, orgId, reversed: true });
+    expect(await describeCapStatus(sql, subscriptionId)).toBe("free");
   });
 });
