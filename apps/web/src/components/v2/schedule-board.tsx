@@ -60,6 +60,11 @@ interface Props {
   stages: BoardStage[];
   fixtures: BoardFixture[];
   entrantNames: Record<string, string>;
+  /** Per division, the entrants an AI run is PRICED on — `status not in
+   *  ('withdrawn','disqualified')`, mirroring schedule-ai.ts:505. Distinct from
+   *  `entrantNames`, which is a competition-wide id→name map for card titles
+   *  and must keep naming withdrawn entrants' existing fixtures. */
+  activeEntrantCounts: Record<string, number>;
   feedLabels: Record<string, FeedLabelPair>;
   settings: { division_id: string; config: BoardConfig; tz: string };
   canEdit: boolean;
@@ -102,6 +107,7 @@ export function ScheduleBoard({
   stages,
   fixtures,
   entrantNames,
+  activeEntrantCounts,
   feedLabels,
   settings,
   canEdit,
@@ -162,14 +168,24 @@ export function ScheduleBoard({
         cfg.perEntrantMinRest > 0 ||
         (cfg.roundMinutes ?? 0) > 0 ||
         Boolean((cfg as { constraints?: unknown }).constraints),
-      movable: divFixtures.filter((f) => f.status === "scheduled").length,
+      // The fixtures themselves, not a count: a scoped repair has to be quoted
+      // on the fixtures actually in scope (see `movableForRun`), and a count
+      // cannot be narrowed after the fact.
+      movableFixtures: divFixtures
+        .filter((f) => f.status === "scheduled")
+        .map((f) => ({
+          id: f.id,
+          scheduled_at: f.scheduled_at ? new Date(f.scheduled_at).toISOString() : null,
+          court_label: f.court_label,
+        })),
       pinned: divFixtures.filter((f) => f.schedule_locked).length,
       entrants: Object.entries(entrantNames)
         .map(([id, name]) => ({ id, name }))
         .sort((a, b) => a.name.localeCompare(b.name)),
+      activeEntrants: single ? (activeEntrantCounts[single.id] ?? 0) : 0,
       officialsWithBlackout,
     };
-  }, [cfg, fixtures, entrantNames, single, officialsWithBlackout]);
+  }, [cfg, fixtures, entrantNames, activeEntrantCounts, single, officialsWithBlackout]);
 
   // ------------------------------------------------- division filter (?d=)
   const selectedSlugs = useMemo(() => {
@@ -274,6 +290,12 @@ export function ScheduleBoard({
       matchup: cardTitle(f, entrantNames, feedLabels),
       isFinal: maxRound > 0 && f.round_no === maxRound && atMaxRound === 1,
       isJunior: false,
+      // Carried for the PHASE B quote: the officials pack holds the fixtures
+      // that have a time and are not decided, priced on their distinct entrant
+      // and court counts (officialsQuoteInput mirrors it).
+      status: f.status,
+      home_entrant_id: f.home_entrant_id,
+      away_entrant_id: f.away_entrant_id,
     }));
   }, [single, actions.board, entrantNames, feedLabels]);
 

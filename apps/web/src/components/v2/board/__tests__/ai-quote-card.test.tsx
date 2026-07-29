@@ -18,8 +18,41 @@ import type { Dict } from "@/lib/i18n-constants";
 import { DictProvider } from "@/components/i18n/dict-provider";
 import { quoteRun, schedulingRungWeights, type RungInput } from "@/lib/ai-rung";
 import en from "@/dictionaries/en/ui.json";
-import { AiQuoteCard, rungForKey, toQuoteLineInputs, type QuoteCardLine } from "../ai-quote-card";
-import { AiConsole } from "../ai-console";
+import type { AiConsoleFixture } from "../ai-diff";
+import {
+  AiQuoteCard,
+  pickValue,
+  rungForKey,
+  toQuoteLineInputs,
+  type QuoteCardLine,
+} from "../ai-quote-card";
+import {
+  AiConsole,
+  movableForRun,
+  officialsQuoteInput,
+  scheduleQuoteLines,
+  type AiBriefContext,
+} from "../ai-console";
+
+/** An AiConsoleFixture with only the fields the officials sizing reads. */
+function fx(
+  id: string,
+  o: { status: string; at: string | null; court: string | null; home: string; away: string },
+): AiConsoleFixture {
+  return {
+    id,
+    stage_id: "st-1",
+    scheduled_at: o.at,
+    court_label: o.court,
+    code: id,
+    matchup: `${o.home} v ${o.away}`,
+    isFinal: false,
+    isJunior: false,
+    status: o.status,
+    home_entrant_id: o.home,
+    away_entrant_id: o.away,
+  };
+}
 
 const dict = en as unknown as Dict;
 const enText = en as unknown as Record<string, string>;
@@ -33,6 +66,9 @@ const MEDIUM: RungInput = { movableFixtures: 90, entrants: 20, courts: 3 }; // s
 const LARGE: RungInput = { movableFixtures: 250, entrants: 40, courts: 4 }; // score 278 -> rung 3
 // est. tokens (~134K) exceed even the rung-3 budget (128K) — the "very large" state.
 const HUGE: RungInput = { movableFixtures: 500, entrants: 100, courts: 8 }; // score 566
+// Fits its OWN rung-3 budget (est ~114K ≤ 128K), but two of them (~228K) do not
+// fit the 224K that 3+3 credits buy — the joint-only "very large" state.
+const BIG: RungInput = { movableFixtures: 450, entrants: 40, courts: 5 }; // score 480
 
 function line(key: string, input: RungInput, chosen: number | null = null, label: string | null = null): QuoteCardLine {
   return { key, label, input, chosen };
@@ -77,6 +113,20 @@ function chips(html: string): Chip[] {
 }
 
 const checkedRungs = (html: string) => chips(html).filter((c) => c.checked).map((c) => c.rung);
+
+/**
+ * Every representation of a division row's amount: the e2e/data hook, the
+ * screen-reader string, and the digit a sighted organiser actually reads.
+ *
+ * Asserting only the data attribute is how a "fix" for an unpinned money digit
+ * ends up pinning a *different* element that happens to hold the right value —
+ * three mutations of the visible span survived exactly that mistake.
+ */
+function rowAmounts(html: string): { attr: string; sr: string; visible: string }[] {
+  const re =
+    /<span data-ai-line-rung="(\d)"[^>]*><span class="sr-only">([^<]*)<\/span><span aria-hidden="true">(\d+)<\/span><\/span>/g;
+  return [...html.matchAll(re)].map((m) => ({ attr: m[1], sr: m[2], visible: m[3] }));
+}
 
 describe("AiQuoteCard", () => {
   it("pre-selects the predicted rung", () => {
@@ -138,6 +188,45 @@ describe("AiQuoteCard", () => {
     expect(quoteRun(toQuoteLineInputs([line("d1", SMALL), line("d2", SMALLER_ISH)]), schedulingRungWeights()).rungTotal).toBe(2);
   });
 
+  it("prices each division row from its own rung, not the first row's or the total", () => {
+    // MIXED RUNGS, deliberately. The test above varies fixture SIZE but both
+    // divisions land on rung 1, so every money digit on the card — both row
+    // amounts and the total — is the same `1`, and a row that rendered
+    // `lines[0].rung`, or `quote.credits`, would be indistinguishable from a
+    // correct one. Rung 1 + rung 3 makes all four numbers different:
+    // rows 1 and 3, discount 1, total max(1, 4-1) = 3.
+    const html = render([
+      line("d1", SMALL, null, "Under 12s"), // rung 1, ~8K
+      line("d2", LARGE, null, "Under 16s"), // rung 3, ~68K
+    ]);
+    // All THREE renderings of each amount, not just the data hook: the digit on
+    // screen and the string a screen reader announces are the ones that would
+    // actually mislead someone about what they are paying.
+    expect(rowAmounts(html)).toEqual([
+      { attr: "1", sr: "1 credit", visible: "1" },
+      { attr: "3", sr: "3 credits", visible: "3" },
+    ]);
+    // Est-tokens are per row too — a shared `lines[0].estTokens` would print ~8K twice.
+    expect(html).toContain("~8K tokens");
+    expect(html).toContain("~68K tokens");
+    expect(html).toContain('data-ai-discount="1"');
+    expect(creditsShown(html)).toBe(3);
+    // The row amounts must not silently be the total, and vice versa.
+    expect(creditsShown(html)).not.toBe(1);
+  });
+
+  it("names the token budget the credits buy", () => {
+    // #348 §8's explicit copy rule: credits buy a BUDGET, not usage. The
+    // sentence is the only place the organiser learns what they are getting,
+    // and 1/2/3 credits buy 32K/64K/128K.
+    expect(render([line("d1", SMALL)])).toContain("up to 32K tokens");
+    expect(render([line("d1", MEDIUM)])).toContain("up to 64K tokens");
+    expect(render([line("d1", LARGE)])).toContain("up to 128K tokens");
+    // Picking a lower rung buys a SMALLER budget — the number has to follow the
+    // choice, not the prediction.
+    expect(render([line("d1", LARGE, 1)])).toContain("up to 32K tokens");
+  });
+
   it("warns when the estimate outgrows even the rung-3 budget", () => {
     const veryLarge = enText["board.ai.quote.veryLarge"];
     expect(render([line("d1", LARGE)])).not.toContain(veryLarge);
@@ -156,6 +245,45 @@ describe("AiQuoteCard", () => {
     expect(html).not.toContain(enText["board.ai.quote.veryLarge"]);
     // …and a genuinely oversized run still says so, whatever is picked.
     expect(render([line("d1", HUGE, 1)])).toContain(enText["board.ai.quote.veryLarge"]);
+  });
+
+  it("names WHICH divisions are very large on a joint run", () => {
+    // "Split the division" is unactionable when the card is showing five of
+    // them and the warning names none. The singular copy must not be what a
+    // joint run renders.
+    const html = render([
+      line("d1", SMALL, null, "Under 12s"),
+      line("d2", HUGE, null, "Under 16s"),
+    ]);
+    // ONE offending division takes the singular verb — "Under 16s are very
+    // large" is the kind of copy that reads as a bug on a surface about money.
+    expect(html).toContain("Under 16s is very large");
+    expect(html).not.toContain(enText["board.ai.quote.veryLarge"]); // the un-attributed copy
+    // The healthy division is not accused.
+    expect(html).not.toContain("Under 12s is very large");
+
+    // Two offenders take the plural, and both are named.
+    const both = render([
+      line("d1", HUGE, null, "Under 12s"),
+      line("d2", HUGE, null, "Under 16s"),
+    ]);
+    expect(both).toContain("Under 12s, Under 16s are very large");
+  });
+
+  it("tells a joint run to drop divisions when no single one is at fault", () => {
+    // Each division fits its own rung-3 budget (est ~114K ≤ 128K), so naming
+    // one and telling the organiser to split it would be wrong. Together they
+    // are ~228K against the 224K that 3+3 credits buy — a real problem with
+    // different advice: run fewer divisions together.
+    const html = render([line("a", BIG, null, "Alpha"), line("b", BIG, null, "Bravo")]);
+    expect(html).toContain(enText["board.ai.quote.veryLargeJoint"]);
+    expect(html).not.toContain("are very large"); // no division is accused
+    expect(html).not.toContain(enText["board.ai.quote.veryLarge"]); // nor the singular copy
+
+    // One division alone is under its budget and says nothing at all.
+    const alone = render([line("a", BIG)]);
+    expect(alone).not.toContain(enText["board.ai.quote.veryLargeJoint"]);
+    expect(alone).not.toContain(enText["board.ai.quote.veryLarge"]);
   });
 
   it("the rung control is a keyboard-navigable radiogroup", () => {
@@ -179,6 +307,20 @@ describe("AiQuoteCard", () => {
     expect(rungForKey("End", 1)).toBe(3);
     expect(rungForKey("Tab", 2)).toBeNull();
     expect(rungForKey("a", 2)).toBeNull();
+  });
+
+  it("picking the recommended rung means 'follow the prediction', not a frozen number", () => {
+    // Clicking the already-selected chip is a visual no-op, but a control that
+    // reported the NUMBER would flip the request from "server, size this
+    // yourself" to "charge me my client-side guess" — freezing an estimate the
+    // server may not agree with into the price. It would also make `null`
+    // unreachable the moment the control is touched, so there would be no way
+    // back to the recommendation.
+    expect(pickValue(2, 2)).toBeNull();
+    expect(pickValue(1, 2)).toBe(1);
+    expect(pickValue(3, 2)).toBe(3);
+    expect(pickValue(1, 1)).toBeNull();
+    expect(pickValue(3, 3)).toBeNull();
   });
 
   it("maps a null rung to undefined at the quoteRun boundary", () => {
@@ -227,41 +369,179 @@ describe("AiQuoteCard", () => {
 // where the organiser actually commits, so the count has to be ON it — and it
 // has to be the SAME count the card shows, which is why the console reads it
 // from the card module rather than pricing the run a second time.
-const RUNG3_BRIEF = {
+const DIVISION_ID = "00000000-0000-4000-8000-000000000001";
+
+const movableFixture = (i: number, court: string, at: string | null) => ({
+  id: `f${i}`,
+  scheduled_at: at,
+  court_label: court,
+});
+
+/** 250 movable on Court 1, 40 ACTIVE entrants, 4 courts → score 278 → rung 3. */
+const RUNG3_BRIEF: AiBriefContext = {
   courts: ["Court 1", "Court 2", "Court 3", "Court 4"],
   windows: 1,
   blackouts: 0,
   constraintsSet: false,
-  movable: 250,
+  movableFixtures: Array.from({ length: 250 }, (_, i) =>
+    movableFixture(i, "Court 1", "2026-08-01T10:00:00.000Z"),
+  ),
   pinned: 0,
-  entrants: Array.from({ length: 40 }, (_, i) => ({ id: `e${i}`, name: `Team ${i}` })),
+  // The chip picker's list is competition-wide and unfiltered — deliberately a
+  // different (larger) number than `activeEntrants`, so a card that priced off
+  // it would be visible.
+  entrants: Array.from({ length: 96 }, (_, i) => ({ id: `e${i}`, name: `Team ${i}` })),
+  activeEntrants: 40,
   officialsWithBlackout: 0,
 };
 
-const consoleProps = {
-  divisionId: "00000000-0000-4000-8000-000000000001",
+// A typed fixture, not a cast: `currency` is required, and a bare
+// `as unknown as Parameters<…>[0]` would silently drop the next required prop
+// someone adds — failing at runtime, or not at all.
+const consoleProps: Parameters<typeof AiConsole>[0] = {
+  divisionId: DIVISION_ID,
   expectedSeq: 1,
   aiAllowed: true,
+  currency: "usd",
   brief: RUNG3_BRIEF,
   fixtures: [],
   scheduleFrozen: false,
   onClose: () => {},
-} as unknown as Parameters<typeof AiConsole>[0];
+};
+
+const renderConsole = (props: Partial<Parameters<typeof AiConsole>[0]> = {}): string =>
+  renderToStaticMarkup(
+    <DictProvider dict={dict} locale="en">
+      <AiConsole {...consoleProps} {...props} />
+    </DictProvider>,
+  );
+
+const runButton = (html: string): string =>
+  html.slice(html.indexOf("ai-run"), html.indexOf("ai-run") + 900);
 
 describe("AiConsole brief step", () => {
   it("the CTA names the credit count", () => {
-    const html = renderToStaticMarkup(
-      <DictProvider dict={dict} locale="en">
-        <AiConsole {...consoleProps} />
-      </DictProvider>,
-    );
-    // 250 movable / 40 entrants / 4 courts predicts rung 3 -> 3 credits.
-    const credits = quoteRun(
-      [{ key: consoleProps.divisionId, input: LARGE }],
-      schedulingRungWeights(),
-    ).credits;
+    const html = renderConsole();
+    // 250 movable / 40 active entrants / 4 courts predicts rung 3 -> 3 credits.
+    const credits = quoteRun([{ key: DIVISION_ID, input: LARGE }], schedulingRungWeights()).credits;
     expect(credits).toBe(3);
-    const runBtn = html.slice(html.indexOf("ai-run"), html.indexOf("ai-run") + 900);
-    expect(runBtn).toContain(`${credits} credits`);
+    expect(runButton(html)).toContain(`${credits} credits`);
+  });
+
+  it("a frozen board names no price", () => {
+    // The card is hidden on a frozen board because "quoting it would be a price
+    // for something that is not on offer" — the disabled button underneath it
+    // must not go on quoting one.
+    const html = renderConsole({ scheduleFrozen: true });
+    expect(html).toContain(enText["board.ai.frozen"]); // the frozen notice is rendered…
+    expect(runButton(html)).not.toContain("credits");
+    expect(runButton(html)).toContain("Generate schedule");
+  });
+});
+
+// ------------------------------------------- the OTHER half of agreement
+// `quoteRun` being shared makes the arithmetic agree. It does nothing about the
+// INPUTS, and that is where the two sides actually drift: the server narrows
+// movable fixtures by scope in repair mode only (schedule-ai.ts:319) and counts
+// entrants `status not in ('withdrawn','disqualified')` (:505).
+describe("the RungInput the client builds", () => {
+  const briefFor = (over: Partial<AiBriefContext> = {}): AiBriefContext => ({
+    ...RUNG3_BRIEF,
+    ...over,
+  });
+
+  it("prices on the entrants the server prices on, not the picker's list", () => {
+    // 40 movable / 2 courts. With the server's 20 active entrants the score is
+    // 40 + 10 + 4 = 54 → rung 1. With the picker's unfiltered 60 it is
+    // 40 + 30 + 4 = 74 → rung 2. One credit or two, for the same run.
+    const brief = briefFor({
+      courts: ["Court 1", "Court 2"],
+      movableFixtures: Array.from({ length: 40 }, (_, i) =>
+        movableFixture(i, "Court 1", "2026-08-01T10:00:00.000Z"),
+      ),
+      entrants: Array.from({ length: 60 }, (_, i) => ({ id: `e${i}`, name: `Team ${i}` })),
+      activeEntrants: 20,
+    });
+    const [priced] = scheduleQuoteLines(DIVISION_ID, brief, "generate", undefined, null);
+    expect(priced.input).toEqual({ movableFixtures: 40, entrants: 20, courts: 2 });
+    expect(quoteRun([{ key: "d", input: priced.input }], schedulingRungWeights()).credits).toBe(1);
+    // The lazy version — `brief.entrants.length` — really does cost more.
+    expect(
+      quoteRun(
+        [{ key: "d", input: { ...priced.input, entrants: brief.entrants.length } }],
+        schedulingRungWeights(),
+      ).credits,
+    ).toBe(2);
+  });
+
+  it("quotes a scoped repair on the fixtures in scope, not the whole division", () => {
+    // Repair scoped to one court: 5 of 250 fixtures. Unnarrowed that is a
+    // rung-3 card (3 credits) in front of a rung-1 charge.
+    const brief = briefFor({
+      movableFixtures: [
+        ...Array.from({ length: 245 }, (_, i) =>
+          movableFixture(i, "Court 1", "2026-08-01T10:00:00.000Z"),
+        ),
+        ...Array.from({ length: 5 }, (_, i) =>
+          movableFixture(500 + i, "Court 9", "2026-08-01T10:00:00.000Z"),
+        ),
+      ],
+    });
+    const scope = { courts: ["Court 9"] };
+    const repair = scheduleQuoteLines(DIVISION_ID, brief, "repair", scope, null);
+    expect(repair[0].input.movableFixtures).toBe(5);
+    expect(quoteRun(toQuoteLineInputs(repair), schedulingRungWeights()).credits).toBe(1);
+
+    // …and generate/refine re-plan the whole set even when a scope is present,
+    // exactly as the server does. A client that narrowed unconditionally would
+    // UNDER-quote, which is the dangerous direction.
+    for (const mode of ["generate", "refine"] as const) {
+      const lines = scheduleQuoteLines(DIVISION_ID, brief, mode, scope, null);
+      expect(lines[0].input.movableFixtures, mode).toBe(250);
+      expect(quoteRun(toQuoteLineInputs(lines), schedulingRungWeights()).credits).toBe(3);
+    }
+  });
+
+  it("mirrors inScope: a court-less fixture is always in scope, and `from` is inclusive", () => {
+    const fixtures = [
+      movableFixture(1, "Court 1", "2026-08-01T09:00:00.000Z"),
+      movableFixture(2, "Court 9", "2026-08-01T10:00:00.000Z"),
+      { id: "tray", scheduled_at: null, court_label: null },
+    ];
+    // A fixture with no court survives a court scope (server: `court_label === null || …`).
+    expect(
+      movableForRun(fixtures, "repair", { courts: ["Court 9"] }).map((f) => f.id),
+    ).toEqual(["f2", "tray"]);
+    // `from` is >=, and an unscheduled fixture is never filtered out by it.
+    expect(
+      movableForRun(fixtures, "repair", { from: "2026-08-01T10:00:00.000Z" }).map((f) => f.id),
+    ).toEqual(["f2", "tray"]);
+  });
+
+  it("sizes the officials quote from the officials pack, not the division", () => {
+    // The pack holds fixtures that have a time and are not decided, with the
+    // DISTINCT entrants and courts of exactly those — a decided fixture, an
+    // untimed one, and a repeated entrant must each be handled.
+    const fixtures = [
+      fx("a", { status: "scheduled", at: "2026-08-01T09:00:00.000Z", court: "Court 1", home: "e1", away: "e2" }),
+      fx("b", { status: "scheduled", at: "2026-08-01T10:00:00.000Z", court: "Court 1", home: "e1", away: "e3" }),
+      fx("c", { status: "decided", at: "2026-08-01T08:00:00.000Z", court: "Court 2", home: "e4", away: "e5" }),
+      fx("d", { status: "scheduled", at: null, court: null, home: "e6", away: "e7" }),
+    ];
+    // No proposal yet: only the two timed, undecided fixtures count. Entrants
+    // e1/e2/e3 = 3 distinct (e1 appears twice), one court.
+    expect(officialsQuoteInput(fixtures, [])).toEqual({
+      movableFixtures: 2,
+      entrants: 3,
+      courts: 1,
+    });
+    // Phase A's dry-run proposal gives the untimed fixture a slot on a new
+    // court — the officials pack then includes it, exactly as the server's
+    // `scheduleOverride` does.
+    expect(
+      officialsQuoteInput(fixtures, [
+        { fixture_id: "d", scheduled_at: "2026-08-01T11:00:00.000Z", court_label: "Court 3" },
+      ]),
+    ).toEqual({ movableFixtures: 3, entrants: 5, courts: 2 });
   });
 });

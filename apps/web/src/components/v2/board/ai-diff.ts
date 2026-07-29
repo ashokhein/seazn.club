@@ -27,6 +27,15 @@ export interface AiConsoleFixture extends AiFixtureRef {
   /** Owning stage — the schedule apply route is stage-scoped, so Task 15 groups
    *  the accept payload by this before persisting (rejects cross-stage sets). */
   stage_id: string;
+  /** Fixture status, and the two entrants. Carried so the console can size the
+   *  PHASE B (officials) quote from exactly the fixtures the officials pack
+   *  will hold — "has a time and is not decided", with that pack's distinct
+   *  entrant and court counts (officials-ai.ts:172, :1112). Without them the
+   *  confirm card would price officials off a plausible-looking estimate rather
+   *  than the server's own inputs. */
+  status: string;
+  home_entrant_id: string | null;
+  away_entrant_id: string | null;
 }
 
 /** One court/time slot — the shared shape of a from/to/at position. */

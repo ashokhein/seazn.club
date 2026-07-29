@@ -14,7 +14,9 @@
 // unit-tested against a constructed plan. The component is a renderer over it.
 import { useMemo, useState } from "react";
 import { timeLabel } from "@/lib/day-label";
-import { useMsg } from "@/components/i18n/dict-provider";
+import { useMsg, usePlural } from "@/components/i18n/dict-provider";
+import { officialsRungWeights, type RungInput } from "@/lib/ai-rung";
+import { AiQuoteCard, quoteFor, type QuoteCardLine } from "./ai-quote-card";
 import type { MessageKey } from "@/lib/messages";
 import type { AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
 import { OfficialAvatar } from "@/components/v2/officials-shared";
@@ -104,6 +106,9 @@ export function buildOfficialsTrace(
 export function AiOfficialsReview({
   plan,
   placements,
+  quoteInput,
+  rung,
+  onRung,
   currency,
   fixtures,
   roster,
@@ -124,6 +129,13 @@ export function AiOfficialsReview({
 }: {
   plan: AiOfficialsPlanResponse | null;
   placements: OfficialsPlacement[];
+  /** The officials pack's own sizing, mirrored client-side by
+   *  `officialsQuoteInput` so this card prices on the numbers the SERVER will
+   *  price on — not on the division's totals, which the pack is a subset of. */
+  quoteInput: RungInput;
+  /** Phase B's chosen rung; `null` follows the server's prediction. */
+  rung: number | null;
+  onRung: (rung: number | null) => void;
   /** Org's locked billing currency — the shared out-of-credits block (A6)
    *  prices its Buy-credits ladder in it. */
   currency: Currency;
@@ -148,6 +160,23 @@ export function AiOfficialsReview({
   onPulse: (ids: string[]) => void;
 }) {
   const msg = useMsg();
+  const plural = usePlural();
+  // Phase B's quote. An EMPTY instruction is the deterministic solver pass —
+  // no model call, flat 1 credit (`freeDraftQuote`) — so the card must say so
+  // rather than size a run that will spend nothing.
+  const officialsWeights = useMemo(() => officialsRungWeights(), []);
+  const freeDraft = instruction.trim() === "";
+  const quoteLines: QuoteCardLine[] = [
+    { key: "officials", label: null, input: quoteInput, chosen: rung },
+  ];
+  const replanCredits = quoteFor(quoteLines, {
+    weights: officialsWeights,
+    freeDraft,
+  }).credits;
+  const replanLabel = msg("board.ai.quote.cta", {
+    action: msg("board.ai.officials.replan"),
+    credits: plural("board.ai.quote.credits", replanCredits),
+  });
   const model = useMemo(
     () => (plan ? buildOfficialsGrid({ plan, placements, fixtures, roster, roles, hasPrior }) : null),
     [plan, placements, fixtures, roster, roles, hasPrior],
@@ -269,6 +298,17 @@ export function AiOfficialsReview({
       {/* Refine turn — officials wish chips + instruction + Re-plan. */}
       <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-3">
         <OfficialsWishChips wishes={wishes} onChange={onWishes} roster={roster} />
+        {/* What the re-plan costs. Phase B was spending credits with no
+            pre-spend surface at all; this is the same #348 card at single-line
+            scale, priced with the OFFICIALS weights. */}
+        <AiQuoteCard
+          lines={quoteLines}
+          onChange={(_key, r) => onRung(r)}
+          msg={msg}
+          busy={busy}
+          weights={officialsWeights}
+          freeDraft={freeDraft}
+        />
         <div>
           <label htmlFor="ai-officials-instruction" className="label">
             {msg("board.ai.officials.instructionLabel")}
@@ -297,7 +337,7 @@ export function AiOfficialsReview({
           ) : (
             <>
               <span aria-hidden>✦</span>
-              {msg("board.ai.officials.replan")}
+              {replanLabel}
             </>
           )}
         </button>

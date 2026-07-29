@@ -44,6 +44,11 @@ export interface AiConsoleState {
    *  `number` so the reducer stays free of the Rung import and any junk value
    *  is filtered at the request boundary rather than trusted here. */
   rung: number | null;
+  /** Phase B's own rung. Separate from `rung` on purpose: officials packs are
+   *  priced with different weights (`officialsRungWeights`) over a different
+   *  pack, so the two phases predict independently and one phase's choice must
+   *  never be read as the other's. */
+  officialsRung: number | null;
   schedulePlan: AiPlanResponse | null; // Phase A result
   officialsPlan: AiOfficialsPlanResponse | null; // Phase B result
   /** Blocking fixtures the organiser unticked in the diff panel — they drop to
@@ -62,7 +67,7 @@ export type AiConsoleAction =
   | { type: "SET_INSTRUCTION"; value: string; officials?: boolean }
   | { type: "SET_MODE"; mode: AiMode }
   | { type: "SET_SCOPE"; scope: AiScope | undefined }
-  | { type: "SET_RUNG"; rung: number | null }
+  | { type: "SET_RUNG"; rung: number | null; officials?: boolean }
   | { type: "RUN_START" }
   | { type: "RUN_FLAGGED" }
   | { type: "RUN_DONE"; plan: AiPlanResponse }
@@ -85,6 +90,7 @@ export const initialAiConsoleState: AiConsoleState = {
   officialsInstruction: "",
   scope: undefined,
   rung: null,
+  officialsRung: null,
   schedulePlan: null,
   officialsPlan: null,
   excludedFixtures: [],
@@ -108,7 +114,8 @@ export function aiConsoleReducer(s: AiConsoleState, a: AiConsoleAction): AiConso
       // Survives a run: the organiser's budget choice is about this division's
       // size, not about one attempt, so a refine after a generate keeps it.
       // RESET (closing the console) is what clears it back to the prediction.
-      return { ...s, rung: a.rung };
+      // Phase B keeps its own — same reasoning as `officialsInstruction`.
+      return a.officials ? { ...s, officialsRung: a.rung } : { ...s, rung: a.rung };
 
     case "RUN_START":
       // A fresh run clears the last error but keeps the current proposal on

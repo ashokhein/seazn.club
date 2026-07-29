@@ -139,6 +139,16 @@ export default async function CompetitionSchedulePage({
           entrantNames={Object.fromEntries(
             perDivision.flatMap(({ entrants }) => entrants.map((e) => [e.id, e.display_name])),
           )}
+          // What an AI run is PRICED on — the same filter the server applies
+          // when it sizes the pack (schedule-ai.ts:505). Kept separate from
+          // entrantNames, which must keep naming withdrawn entrants so their
+          // existing fixtures still render a matchup.
+          activeEntrantCounts={Object.fromEntries(
+            perDivision.map(({ division, entrants }) => [
+              division.id,
+              entrants.filter((e) => e.status !== "withdrawn" && e.status !== "disqualified").length,
+            ]),
+          )}
           feedLabels={feedLabels(feedRows)}
           settings={{
             division_id: divisions[0]?.id ?? id,

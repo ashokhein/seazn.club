@@ -12,26 +12,33 @@ const stub = {
   "board.ai.run.generate": "RUN-LABEL",
 };
 
-const props = {
+const props: Parameters<typeof AiConsole>[0] = {
   divisionId: "00000000-0000-4000-8000-000000000001",
   expectedSeq: 1,
   aiAllowed: true,
+  currency: "usd",
   brief: {
     courts: ["Court 1", "Court 2"],
     windows: 1,
     blackouts: 0,
     constraintsSet: false,
-    movable: 4,
+    movableFixtures: Array.from({ length: 4 }, (_, i) => ({
+      id: `f${i}`,
+      scheduled_at: "2026-08-01T10:00:00.000Z",
+      court_label: "Court 1",
+    })),
     pinned: 0,
     entrants: [
       { id: "e1", name: "Team A" },
       { id: "e2", name: "Team B" },
     ],
+    activeEntrants: 2,
     officialsWithBlackout: 0,
   },
   fixtures: [],
+  scheduleFrozen: false,
   onClose: () => {},
-} as unknown as Parameters<typeof AiConsole>[0];
+};
 
 const render = (scheduleFrozen: boolean) =>
   renderToStaticMarkup(

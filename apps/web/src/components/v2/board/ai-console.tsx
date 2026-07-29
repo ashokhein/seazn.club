@@ -71,14 +71,121 @@ export interface AiBriefContext {
   blackouts: number;
   /** Any non-default constraint knobs set (rest / grouping / v2 constraints). */
   constraintsSet: boolean;
-  /** Movable fixtures (status "scheduled") the AI would place. */
-  movable: number;
+  /** Movable fixtures (status "scheduled") the AI would place — the fixtures
+   *  themselves, not a count, because the confirm card has to narrow them by
+   *  `scope` exactly as `buildSchedulePack` does, or a scoped repair quotes the
+   *  whole division. `pool_id` is deliberately absent: the board's only scope
+   *  producer (use-disruption-signals) emits `{courts?, from?}`, so these two
+   *  fields are the complete mirror of the server's `inScope`. */
+  movableFixtures: MovableFixture[];
   /** Pinned fixtures (schedule_locked) the AI must not move. */
   pinned: number;
-  /** Entrants for the chip pickers, sorted by name. */
+  /** Entrants for the chip pickers, sorted by name. NOT a pricing input — this
+   *  list is competition-wide and unfiltered (it is built from the board's
+   *  `entrantNames` map), so pricing off it over-quotes a multi-division board
+   *  several times over. Use `activeEntrants`. */
   entrants: { id: string; name: string }[];
+  /** Entrants the SERVER prices on: this division's, `status not in
+   *  ('withdrawn','disqualified')` (schedule-ai.ts:505). */
+  activeEntrants: number;
   /** Officials with at least one blackout date (M in "N officials, M with …"). */
   officialsWithBlackout: number;
+}
+
+/** The fixture fields `inScope` reads — a structural subset of BoardFixture. */
+export interface MovableFixture {
+  id: string;
+  /** ISO string, or null while the fixture sits in the tray. */
+  scheduled_at: string | null;
+  court_label: string | null;
+}
+
+/**
+ * The client's mirror of `buildSchedulePack`'s movable-fixture selection
+ * (schedule-ai.ts:319 + its `inScope` at :260).
+ *
+ * Scope only narrows a REPAIR round; generate and refine re-plan the whole set.
+ * Getting this wrong is not cosmetic — a repair scoped to one court would
+ * otherwise be quoted at the whole division's size, which is a rung-3 card
+ * (3 credits) in front of a rung-1 charge.
+ *
+ * Pure and exported so the agreement with the server is testable without React.
+ */
+export function movableForRun(
+  fixtures: MovableFixture[],
+  mode: AiMode,
+  scope: AiScope | undefined,
+): MovableFixture[] {
+  if (mode !== "repair" || !scope) return fixtures;
+  return fixtures.filter((f) => {
+    if (scope.courts && !(f.court_label === null || scope.courts.includes(f.court_label))) {
+      return false;
+    }
+    if (scope.from) {
+      const from = new Date(scope.from).getTime();
+      if (!(f.scheduled_at === null || new Date(f.scheduled_at).getTime() >= from)) return false;
+    }
+    return true;
+  });
+}
+
+/**
+ * The confirm card's line for a single-division (Phase A) run.
+ *
+ * Split out of `BriefStep` and exported because this — not the arithmetic — is
+ * where a client/server price divergence actually comes from: `quoteRun` is
+ * shared, so the only way the two sides can disagree is by being handed
+ * different `RungInput`s. Keeping it pure means the agreement is testable.
+ */
+export function scheduleQuoteLines(
+  divisionId: string,
+  brief: Pick<AiBriefContext, "movableFixtures" | "activeEntrants" | "courts">,
+  mode: AiMode,
+  scope: AiScope | undefined,
+  rung: number | null,
+): QuoteCardLine[] {
+  return [
+    {
+      key: divisionId,
+      label: null,
+      input: {
+        movableFixtures: movableForRun(brief.movableFixtures, mode, scope).length,
+        entrants: brief.activeEntrants,
+        courts: brief.courts.length,
+      },
+      chosen: rung,
+    },
+  ];
+}
+
+/**
+ * The client's mirror of the OFFICIALS pack's sizing inputs
+ * (officials-ai.ts:163-176 for the fixture selection, :1110-1116 for the three
+ * numbers it prices on).
+ *
+ * The pack holds every division fixture that has a time — taking the dry-run
+ * `schedule` (Phase A's proposal) as an override over the persisted slot — and
+ * is not already decided. Its entrant and court counts are the DISTINCT values
+ * across exactly those fixtures, not the division's totals.
+ *
+ * Pure and exported so the agreement with the server is testable without React.
+ */
+export function officialsQuoteInput(
+  fixtures: AiConsoleFixture[],
+  placements: { fixture_id: string; scheduled_at: string; court_label: string }[],
+): { movableFixtures: number; entrants: number; courts: number } {
+  const override = new Map(placements.map((p) => [p.fixture_id, p] as const));
+  const included = fixtures
+    .map((f) => {
+      const ov = override.get(f.id);
+      return { f, at: ov?.scheduled_at ?? f.scheduled_at, court: ov?.court_label ?? f.court_label };
+    })
+    .filter((x) => x.at !== null && x.f.status !== "decided");
+  const entrants = new Set(
+    included.flatMap((x) => [x.f.home_entrant_id, x.f.away_entrant_id]).filter((e) => e !== null),
+  );
+  const courts = new Set(included.map((x) => x.court).filter((c) => c !== null));
+  return { movableFixtures: included.length, entrants: entrants.size, courts: courts.size };
 }
 
 /**
@@ -299,7 +406,7 @@ export function AiConsole({
     windows: brief.windows,
     blackouts: brief.blackouts,
     constraintsSet: brief.constraintsSet,
-    movable: brief.movable,
+    movable: brief.movableFixtures.length,
     pinned: brief.pinned,
     officials: rosterCount,
     officialsBlackout: brief.officialsWithBlackout,
@@ -430,6 +537,13 @@ export function AiConsole({
       }));
       const officialsBody: AiOfficialsPlanRequest = {
         instruction: opts.instruction,
+        // Phase B's own rung, from its own confirm card. Omitted when the
+        // organiser left it on the recommendation, so the server sizes the run
+        // from its own prediction. The empty-instruction draft is quoted flat
+        // at 1 credit server-side (`freeDraftQuote`) and ignores this.
+        ...(state.officialsRung !== null && isRung(state.officialsRung)
+          ? { rung: state.officialsRung }
+          : {}),
         ...(schedule.length > 0 ? { schedule } : {}),
         policy: officialsPolicy ?? DEFAULT_OFFICIALS_POLICY,
         ...(opts.priorAssignments
@@ -450,7 +564,7 @@ export function AiConsole({
         dispatch({ type: "RUN_ERROR", error: { status, message: msg(key), key } });
       }
     },
-    [busy, divisionId, msg, officialsPolicy, state.schedulePlan],
+    [busy, divisionId, msg, officialsPolicy, state.officialsRung, state.schedulePlan],
   );
 
   // Auto-run the free solver draft the first time the organiser reaches the
@@ -839,24 +953,25 @@ function BriefStep({
   // ONE line — the division being planned. The joint competition console
   // (#350) builds the same shape with one line per selected division; the card
   // switches layout on the count, so there is no second card to keep in sync.
-  const quoteLines: QuoteCardLine[] = [
-    {
-      key: preflight.divisionId,
-      label: null,
-      input: {
-        movableFixtures: brief.movable,
-        entrants: brief.entrants.length,
-        courts: brief.courts.length,
-      },
-      chosen: state.rung,
-    },
-  ];
+  const quoteLines = scheduleQuoteLines(
+    preflight.divisionId,
+    brief,
+    state.mode,
+    state.scope,
+    state.rung,
+  );
   // The CTA's count comes from the SAME quote the card renders — pricing the
-  // run twice is how a button and the card above it come to disagree.
-  const runLabel = msg("board.ai.quote.cta", {
-    action: msg(`board.ai.run.${state.mode}` as MessageKey),
-    credits: plural("board.ai.quote.credits", quoteFor(quoteLines).credits),
-  });
+  // run twice is how a button and the card above it come to disagree. On a
+  // frozen board the count is suppressed for the same reason the card is
+  // hidden: there is no run to price, so naming a price would be quoting for
+  // something that is not on offer.
+  const runAction = msg(`board.ai.run.${state.mode}` as MessageKey);
+  const runLabel = scheduleFrozen
+    ? runAction
+    : msg("board.ai.quote.cta", {
+        action: runAction,
+        credits: plural("board.ai.quote.credits", quoteFor(quoteLines).credits),
+      });
   return (
     <div className="space-y-3">
       {/* Run type */}
@@ -1189,6 +1304,9 @@ function OfficialsStep({
     <AiOfficialsReview
       plan={state.officialsPlan}
       placements={placements}
+      quoteInput={officialsQuoteInput(fixtures, placements)}
+      rung={state.officialsRung}
+      onRung={(rung) => dispatch({ type: "SET_RUNG", rung, officials: true })}
       currency={currency}
       fixtures={fixtures}
       roster={roster}
