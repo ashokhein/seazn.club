@@ -41,7 +41,7 @@ import {
   invalidateOrgEntitlements,
 } from "@/lib/entitlements";
 import { orgIdsInGroup, subscriptionIdForOrg } from "@/lib/billing-group";
-import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscription-status";
+import { LIVE_SUBSCRIPTION_STATUSES, isTerminalStripeStatus } from "@/lib/subscription-status";
 import { syncGroupQuantity } from "@/server/usecases/billing-groups";
 import {
   creditPassTowardSubscription,
@@ -543,9 +543,14 @@ async function mayWriteGroup(
 /** Terminal STRIPE statuses. Everything else still owns the subscription: our
  *  STATUS_MAP collapses unpaid/paused into past_due and keeps incomplete
  *  distinct (#206 — it conveys no plan), and every one of those is in
- *  LIVE_SUBSCRIPTION_STATUSES, so "not terminal" still means "live". */
+ *  LIVE_SUBSCRIPTION_STATUSES, so "not terminal" still means "live".
+ *
+ *  The two-string list moved to lib/subscription-status.ts when
+ *  `sweepOrphanGroups` needed the same question (#375). This file cannot be the
+ *  home of it: billing-groups.ts would have to import from here, and this module
+ *  already imports THAT one. */
 function isLiveStripeStatus(status: Stripe.Subscription.Status): boolean {
-  return status !== "canceled" && status !== "incomplete_expired";
+  return !isTerminalStripeStatus(status);
 }
 
 async function handleSubscriptionChanged(stripeSub: Stripe.Subscription) {
