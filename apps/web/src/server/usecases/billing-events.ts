@@ -1233,31 +1233,20 @@ async function handleSubscriptionDeleted(stripeSub: Stripe.Subscription) {
   // strictly bigger hole than the self-serve reduction setExtraOrgs guards,
   // which churn bypasses entirely.
   //
-  // Scoped exactly like that sweep: this feature key only, and
-  // `stripe_item_id is not null`, so an ADMIN-granted comp of the same cap
-  // (SPEC-3, status='granted', null item id) and every seat / size-pack row on
-  // the same wallet survive. FROZEN, never deleted (V323/V324) — the qty stays
-  // for history and for a re-buy.
+  // BOTH Stripe-billed add-on families, not just the extra-org rider: the seat
+  // (`members.max`) rows had the identical hole, for the identical reason, and
+  // closing it is issue #330.
   //
-  // Seats have the same hole (`members.max` add-ons also outlive a cancel).
-  // That is INHERITED, not introduced here, and is tracked as issue #330.
-  //
-  // The reason recorded here previously — "closing it means deciding what a
-  // re-buy inherits" — was WRONG, and is corrected rather than deleted so the
-  // fix is never weighed against a cost that does not exist. `quantity_paid`
-  // above is the PLAN item's quantity (how many organisations the group bills
-  // for, maintained by syncGroupQuantity); it has nothing to do with the
-  // `members.max` rows in org_addons, so resetting it decides nothing about
-  // seats. And syncSeatAddonsForSubscription is cancel-what-I-do-not-see, so a
-  // stale seat row is swept by the first `subscription.updated` after a re-buy
-  // in any case.
-  //
-  // What actually keeps it out is SCOPE: this change is #293's extra-org
-  // rider, the seat family has its own sweep and its own issue, and widening a
-  // cancel across add-on families is not something to do in passing.
+  // Scoped exactly like that sweep in every other respect: these feature keys
+  // only, so a size-pack or any future family on the same wallet survives, and
+  // `stripe_item_id is not null`, so an ADMIN-granted comp of either cap
+  // (SPEC-3, status='granted', null item id) survives — a grant is capacity the
+  // group was GIVEN, never something Stripe was billing. FROZEN, never deleted
+  // (V323/V324) — the qty stays for history and for a re-buy.
   await sql`
     update org_addons set status = 'canceled'
-     where wallet_id = ${subscriptionId} and feature_key = ${ORG_ADDON_FEATURE_KEY}
+     where wallet_id = ${subscriptionId}
+       and feature_key in ${sql([ORG_ADDON_FEATURE_KEY, SEAT_ADDON.featureKey])}
        and stripe_item_id is not null and status = 'active'`;
   // A cancel drops EVERY org in the group to Community at once.
   await invalidateGroupEntitlements(subscriptionId);
@@ -1669,6 +1658,25 @@ async function handlePlatformDispute(
     // customer has since renewed/re-bought under a different (or no) dispute.
     await sql`update subscriptions set plan_key = 'community', status = 'canceled',
               updated_at = now() where id = ${subscriptionId} and dispute_id = ${dispute.id}`;
+    // The plan is one axis; recurring add-ons sit on TOP of it (#331). Losing a
+    // dispute is churn by another route — nothing else cancels these rows on
+    // this path, because syncOrgAddonsForSubscription runs only on
+    // `customer.subscription.updated`, which a dispute never emits — so the
+    // group kept `community base + N` on orgs.max_owned AND members.max, for
+    // ever and unpaid. Scoped exactly like the churn cancel: these two
+    // Stripe-billed families only, `stripe_item_id is not null` so an
+    // ADMIN-granted comp (SPEC-3, status='granted', null item id) survives, and
+    // FROZEN rather than deleted so the qty stays for history and a re-buy.
+    // Guarded on dispute_id like the update above — via `exists`, since the
+    // update may have to fire on a group whose plan row was already community —
+    // so a stale loss that clobbered no plan strips no capacity either.
+    await sql`
+      update org_addons set status = 'canceled'
+       where wallet_id = ${subscriptionId}
+         and feature_key in ${sql([ORG_ADDON_FEATURE_KEY, SEAT_ADDON.featureKey])}
+         and stripe_item_id is not null and status = 'active'
+         and exists (select 1 from subscriptions s
+                      where s.id = ${subscriptionId} and s.dispute_id = ${dispute.id})`;
     // A lost dispute cancels the plan for every org in the group.
     await invalidateGroupEntitlements(subscriptionId);
   }

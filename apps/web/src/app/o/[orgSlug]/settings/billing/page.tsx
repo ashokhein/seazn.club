@@ -220,12 +220,20 @@ export default async function BillingPage({
   // already passed. `not exists` is presence-only — a staff-granted pass has a
   // null `stripe_payment_intent` and is fully active, so filtering on payment
   // would re-offer a pass the org already holds.
+  //
+  // `pass_applies` (V343) is the DATE half, and without it this list offered a
+  // $29/$59 purchase the checkout route now refuses outright (v17 gap #353): the
+  // status filter alone leaves a competition that is still 'live' but whose end
+  // date passed months ago — the arm nobody marks completed. The SQL predicate
+  // rather than a second WHERE clause spelling out the grace week, so this list
+  // and the resolver cannot answer the question differently.
   const passCandidates = passOfferable
     ? await sql<PassCandidate[]>`
         select c.id, c.name, c.slug
         from competitions c
         where c.org_id = ${orgId}
           and c.status in ('draft','published','live')
+          and pass_applies(c.status, c.ends_on, (now() at time zone 'utc')::date)
           and not exists (
             select 1 from competition_passes cp where cp.competition_id = c.id)
         order by c.created_at desc

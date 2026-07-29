@@ -120,6 +120,23 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   "665584fd0671d579",
   "3f3be96ac6e6be4e",
   "a28f1eacfd464458",
+  // Approved 2026-07-29 (v17 gap #353). ONE new paragraph, inserted here: "The
+  // same line decides when a pass can be BOUGHT. You can buy a pass while its
+  // competition is still running, or during the 7-day grace after its end date;
+  // once a competition has passed that line the purchase is refused rather than
+  // sold, so you can never pay for a pass that would apply to nothing."
+  //
+  // Read against the code before recording, per this file's own rule. The claim
+  // is "the buy window is the same window as the apply window", and the code it
+  // describes is `lib/entitlements.ts`'s `passLockReason` — status in
+  // {completed, archived}, or ends_on + PASS_END_GRACE_DAYS (7) < today (UTC) —
+  // which is now what `api/billing/pass-checkout/route.ts` gates the purchase
+  // on, and what `pass_applies` (V343) gates the billing page's offer list on.
+  // So the two windows are literally the same predicate, and "7 days" is that
+  // constant rather than a number written down twice. "Refused rather than sold"
+  // is the 410, which is raised BEFORE any Stripe session is created — no money
+  // moves, which is the part of the sentence a reader is relying on.
+  "3b3bc011debe7da5",
   "9a68888ef2d9aa1a",
   "c42978cab6965d56",
   "331525dbff809017",

@@ -3327,6 +3327,7 @@ export type DictionaryKey =
   | "upgrade.active.title"
   | "upgrade.backToCompetition"
   | "upgrade.buyCta"
+  | "upgrade.buyError.ended"
   | "upgrade.buyError.generic"
   | "upgrade.buyError.rung"
   | "upgrade.buyError.stale"

@@ -263,6 +263,43 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
     });
   }
 
+  // v17 #347: V343 lifted the pass arm's predicate out of org_has_feature into
+  // `pass_applies(status, ends_on, today)`, so the two TS ENFORCEMENT sites
+  // (competitions.ts's active-comp quota, entitlement-freeze.ts's candidate
+  // loader + count) could ask the lock question instead of "does a pass row
+  // exist". That makes pass_applies a THIRD public copy of SPEC-4 §7's rule,
+  // and this suite is where copies get tied together: assert it against
+  // passLockReason directly, arm by arm, rather than only through
+  // org_has_feature — the enforcement sites call the function, not the resolver,
+  // so a drift there would not show up in any case above.
+  //
+  // `today` is passed explicitly as the UTC calendar date, the same basis
+  // passLockReason computes on (V334). Dates are UTC-midnight STRINGS: a
+  // `new Date()`-derived value carries a time of day and lands ~20h off the
+  // boundary, where the rule's strict `<` and a buggy `<=` are
+  // indistinguishable (#346).
+  it("pass_applies (V343) answers exactly what passLockReason answers", async () => {
+    const shapes: [label: string, status: string, endsOn: string | null][] = [
+      ["archived (terminal)", "archived", null],
+      ["completed (terminal)", "completed", null],
+      // Terminal wins even with a perfectly current ends_on — the arms are
+      // OR'd, and a completed competition inside its grace must still lock.
+      ["archived with a live ends_on", "archived", utcDayString(0)],
+      ["live, exactly ON the grace boundary", "live", utcDayString(-PASS_END_GRACE_DAYS)],
+      ["live, one day PAST the grace boundary", "live", utcDayString(-PASS_END_GRACE_DAYS - 1)],
+      ["live, no ends_on at all", "live", null],
+    ];
+    for (const [label, status, endsOn] of shapes) {
+      const [row] = await sql<{ v: boolean }[]>`
+        select pass_applies(${status}, ${endsOn}::date,
+                            (now() at time zone 'utc')::date) as v`;
+      const tsApplies = passLockReason(status, endsOn) === null;
+      expect(`${label}: sql=${row.v} ts=${tsApplies}`).toBe(
+        `${label}: sql=${tsApplies} ts=${tsApplies}`,
+      );
+    }
+  });
+
   it("coalesces a null-bool Event Pass row THROUGH to the plan, not into a deny", async () => {
     // A pass row whose bool_value is null is NO answer, not a deny: it must fall
     // through to the plan row, exactly as org_has_feature's coalesce does.

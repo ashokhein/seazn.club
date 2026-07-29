@@ -40,7 +40,10 @@ export function selectFrozen(
 // Activity = latest score event anywhere in the competition, else created_at.
 // Passed competitions (v3/07 §3) are excluded here AND from the count below:
 // an Event Pass buys that competition out of the active-comp quota for its
-// lifetime, so it neither freezes nor occupies a free slot.
+// lifetime — which ENDS at the grace boundary (SPEC-4 §7). This used to read
+// "a pass row exists", so the exemption never ended (#347): a `live`
+// competition past its ends_on + grace was immune to freezing for ever.
+// V343's pass_applies is the same predicate the resolver uses.
 async function loadCandidates(tx: Tx): Promise<FreezeCandidate[]> {
   const rows = await tx<{ id: string; last_active: string }[]>`
     select c.id,
@@ -50,7 +53,10 @@ async function loadCandidates(tx: Tx): Promise<FreezeCandidate[]> {
     left join fixtures f on f.division_id = d.id
     left join score_events e on e.fixture_id = f.id
     where c.status in ${tx([...ACTIVE_COMPETITION_STATUSES])}
-      and not exists (select 1 from competition_passes cp where cp.competition_id = c.id)
+      and not exists (
+        select 1 from competition_passes cp
+         where cp.competition_id = c.id
+           and pass_applies(c.status, c.ends_on, (now() at time zone 'utc')::date))
     group by c.id, c.created_at`;
   return rows.map((r) => ({ id: r.id, lastActiveAt: r.last_active }));
 }
@@ -67,7 +73,10 @@ export async function frozenCompetitionIds(orgId: string, tx?: Tx): Promise<Set<
     const [{ n }] = await t<{ n: number }[]>`
       select count(*)::int as n from competitions c
       where c.status in ${t([...ACTIVE_COMPETITION_STATUSES])}
-        and not exists (select 1 from competition_passes cp where cp.competition_id = c.id)`;
+        and not exists (
+          select 1 from competition_passes cp
+           where cp.competition_id = c.id
+             and pass_applies(c.status, c.ends_on, (now() at time zone 'utc')::date))`;
     if (n <= limit) return new Set();
     return selectFrozen(await loadCandidates(t), limit);
   };

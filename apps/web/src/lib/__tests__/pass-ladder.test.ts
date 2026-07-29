@@ -192,9 +192,23 @@ describe("passCheckoutErrorKey", () => {
     // and 401/404 add two more. They differ in cause and NOT in remedy.
     //
     // 409 is deliberately NOT in this list any more (v17 gap #326): see below.
+    // Neither is 410 (v17 gap #353) — same reason, different remedy.
     for (const status of [400, 401, 402, 404, 429]) {
       expect(passCheckoutErrorKey(status)).toBe("upgrade.buyError.stale");
     }
+  });
+
+  it("does NOT tell a buyer to reload a competition that is over (410)", () => {
+    // v17 gap #353. The route refuses a purchase for a completed, archived or
+    // past-grace competition, because the pass would apply to nothing. 410 sits
+    // INSIDE the 4xx range, so only the arm ordering keeps it out of the stale
+    // bucket — and "the page may be out of date, reload and try again" is a lie
+    // to this reader twice over: reloading changes nothing, and on the terminal
+    // arm nothing the buyer can do changes anything (#248 Q4 — one pass per
+    // competition, forever, and this one was never bought).
+    expect(passCheckoutErrorKey(410)).toBe("upgrade.buyError.ended");
+    expect(passCheckoutErrorKey(410)).not.toBe(passCheckoutErrorKey(400));
+    expect(passCheckoutErrorKey(410)).not.toBe(passCheckoutErrorKey(409));
   });
 
   it("does NOT tell an already-charged buyer to reload and try again (409)", () => {

@@ -357,6 +357,11 @@ describe.skipIf(!HAS_DB)("extra-org add-on — webhook sync -> resolver", () => 
 });
 
 describe.skipIf(!HAS_DB)("extra-org add-on — never sweeps another add-on family", () => {
+  // Still correct after #330, which is a different path: the CHURN cancel
+  // (handleSubscriptionDeleted) now takes both families down together, but this
+  // RECONCILE sweep stays scoped to orgs.max_owned — a subscription that no
+  // longer reports an org item says nothing about its seat items, which
+  // syncSeatAddonsForSubscription reconciles on its own.
   it("removing every org add-on leaves the SEAT rows on the same wallet untouched", async () => {
     const { orgId, walletId } = await makeGroupOrg("pro");
     const membersBase = (await getLimit(orgId, "members.max"))!;
