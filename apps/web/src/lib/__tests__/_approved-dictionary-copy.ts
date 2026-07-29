@@ -784,4 +784,72 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
       nl: "{org} gaat meteen over op dit abonnement. Je hebt een plek die je al betaald hebt, dus er is nu niets te betalen en er wordt niets aan je volgende factuur toegevoegd. Vanaf je volgende verlenging wordt ze gefactureerd als elke andere organisatie op de rekening.",
     },
   },
+  // ── The END of a pass's life (v17 gap #301) ────────────────────────────────
+  // Added by the W8 review round, and the reason is measured, not precautionary:
+  // this is now the most on-topic pass-lifecycle copy in the app and it was the
+  // only pass copy nothing scanned. A control mutation rewrote
+  // `reasonTerminal` wholesale and shipped 208/208 GREEN.
+  //
+  // It cost a live falsehood to find out. `pass.entry.ended.nextBody` shipped
+  // saying "Pro lifts the same limits" — false for an `event_pass_l` holder,
+  // and contradicted by the comparison table five rows ABOVE it on the same
+  // screen (Event Pass L: unlimited entrants; Pro: 256). That is issue #337,
+  // which `pricing.faq.upgraded.a` above already documents and deliberately
+  // steers around; the in-app string walked into it because nothing pointed a
+  // rule at these keys.
+  {
+    file: "ui",
+    key: "pass.entry.ended",
+    why: "the ENDED state's name, on <CompetitionPassEntry>, the /upgrade ticket stub and the dashboard seal. It must not read as deleted or refunded: the pass ROW is untouched and the receipt still lists it (server/usecases/billing-manage.ts getPassPurchases — qualified, because lib/billing-manage.ts also exists). Source of truth: lib/entitlements.ts passLockReason (any non-null reason = ended) and its SQL twin V338's pass arm.",
+    text: {
+      en: "Event Pass ended",
+      es: "Pase de evento finalizado",
+      fr: "Event Pass terminé",
+      nl: "Event Pass beëindigd",
+    },
+  },
+  {
+    file: "ui",
+    key: "pass.entry.ended.reasonTerminal",
+    why: "WHY a pass stopped applying on the `terminal` arm. Two claims: nothing is deleted (true — the row survives; only refund/dispute deletes it, usecases/billing-events.ts) and the pass has stopped lifting LIMITS (true of the competition's own caps, via V338's pass arm requiring a non-terminal status). Deliberately says 'its limits', NOT the org's: #347 records that usecases/competitions.ts:88 and entitlement-freeze.ts still exempt on bare row existence, so the org-level active-competition quota is a claim this sentence must not make.",
+    text: {
+      en: "Nothing is deleted — this competition is finished or archived, so its Event Pass has stopped lifting its limits.",
+      es: "No se ha eliminado nada — esta competición está finalizada o archivada, así que su pase de evento ha dejado de ampliar sus límites.",
+      fr: "Rien n'est supprimé — cette compétition est terminée ou archivée, donc son Event Pass a cessé de relever ses limites.",
+      nl: "Er wordt niets verwijderd — deze competitie is afgerond of gearchiveerd, dus de Event Pass verhoogt de limieten niet meer.",
+    },
+  },
+  {
+    file: "ui",
+    key: "pass.entry.ended.reasonPastEnds",
+    why: "WHY a pass stopped applying on the `past_ends_on` arm, plus the one action that reverses it. 'Update the end date' is honest — the rule reads competitions.ends_on live (entitlements.ts passLockReason, PASS_END_GRACE_DAYS = 7, strict <) so moving the date does restore the pass. Bound worth knowing: the resolver caches for ENT_TTL_SECONDS = 300 and no competition write invalidates it, so the advice takes up to 5 minutes to take effect.",
+    text: {
+      en: "Nothing is deleted — this competition is past its end date, so its Event Pass has stopped lifting its limits. Update the end date if it is still running.",
+      es: "No se ha eliminado nada — esta competición ha superado su fecha de fin, así que su pase de evento ha dejado de ampliar sus límites. Actualiza la fecha de fin si sigue en marcha.",
+      fr: "Rien n'est supprimé — cette compétition a dépassé sa date de fin, donc son Event Pass a cessé de relever ses limites. Modifiez la date de fin si elle est toujours en cours.",
+      nl: "Er wordt niets verwijderd — deze competitie is voorbij de einddatum, dus de Event Pass verhoogt de limieten niet meer. Pas de einddatum aan als de competitie nog loopt.",
+    },
+  },
+  {
+    file: "ui",
+    key: "pass.entry.ended.nextBody",
+    why: "what is still true once the pass has ended, on the /upgrade page's Pro panel. MUST NOT claim Pro is a superset of the pass — that is #337: plan_entitlements gives event_pass_l entrants.per_division.max = null (unlimited, V341) against pro's 256 (V270), so 'the same limits' is FALSE for an L holder AND is contradicted by the comparison table on the same screen. The approved wording claims only BREADTH (every competition, not just this one) and CONTINUITY (next season), both of which hold for either rung. Source of truth: V341, V270, and upgrade/page.tsx's own header note.",
+    text: {
+      en: "The pass and its receipt stay on this competition. Pro raises every competition in {org}, not just this one — and keeps raising them next season.",
+      es: "El pase y su recibo se quedan en esta competición. Pro mejora todas las competiciones de {org}, no solo esta, y las sigue mejorando la próxima temporada.",
+      fr: "Le pass et son reçu restent attachés à cette compétition. Pro améliore toutes les compétitions de {org}, pas seulement celle-ci, et continue de les améliorer la saison prochaine.",
+      nl: "De pass en de bon blijven bij deze competitie. Pro upgradet elke competitie in {org}, niet alleen deze — en blijft dat volgend seizoen doen.",
+    },
+  },
+  {
+    file: "ui",
+    key: "pass.entry.ended.nextEdition",
+    why: "the one thing the product can still say YES to. A pass cannot be re-bought for THIS competition (decision #248 Q4, enforced by api/billing/pass-checkout/route.ts and the competition_passes PK on competition_id), but next season's edition is a NEW competition and can hold its own pass — so this link must point at competition creation, never at a re-purchase.",
+    text: {
+      en: "Create next year's edition",
+      es: "Crear la edición del próximo año",
+      fr: "Créer l'édition de l'année prochaine",
+      nl: "Editie van volgend jaar aanmaken",
+    },
+  },
 ];

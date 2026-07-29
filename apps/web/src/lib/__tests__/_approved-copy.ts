@@ -113,6 +113,14 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   "219ccaea5a3878ae",
   "6feca5577c55cf2b",
   "170d10914abdbfe5",
+  "32654b5a563aabb6",
+  "d90e342a66f0ff56",
+  "f1006b950ce393b1",
+  "f39d96b7fbbbfc13",
+  "665584fd0671d579",
+  "3f3be96ac6e6be4e",
+  "a28f1eacfd464458",
+  "9a68888ef2d9aa1a",
   "c42978cab6965d56",
   "331525dbff809017",
   "32654b5a563aabb6",
@@ -139,8 +147,21 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   "9c62d251033d27b5",
   "c503ebdc56e74a10",
   "157334bc6c0df3e8",
-  "9e1079e896d70264",
-  "5bc994f6cd963522",
+  // Re-approved 2026-07-29 (W8 final review, M-1). Both surfaces carried a
+  // SUPERSET claim — "your plan already grants more" and "buying one would give
+  // you less than you hold" — which is #337: V341 gives event_pass_l unlimited
+  // entrants per division against pro's 256 (V270), so Pro is NOT a superset of
+  // the L rung and neither sentence is true for an L holder.
+  //
+  // Read against the code before re-recording, per this file's own rule. The
+  // approved replacement is the FEATURES form, which is literally true for both
+  // rungs and is the form `api/billing/pass-checkout/route.ts:42-50` already
+  // uses — its comment records the same correction being made there when L
+  // shipped. The help article never got it; W8 then re-approved these two
+  // digests with the stale clause still inside them, which is how a positional
+  // gate freezes a falsehood faithfully.
+  "e40adfba29adb4be",
+  "fc7b7ca169471dc5",
 ];
 
 /**

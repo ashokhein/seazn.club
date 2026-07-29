@@ -17,7 +17,9 @@ import {
   hasFeature,
   invalidateOrgEntitlements,
   isPassLocked,
+  passLockReason,
   PASS_END_GRACE_DAYS,
+  PASS_LOCK_REASONS,
 } from "@/lib/entitlements";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -27,6 +29,19 @@ const daysFromToday = (n: number) => {
   d.setUTCDate(d.getUTCDate() + n);
   return d;
 };
+/**
+ * The same day as `daysFromToday`, but as the 'YYYY-MM-DD' string the DATE column
+ * actually holds — which parses to a TRUE UTC midnight.
+ *
+ * This distinction is load-bearing, not stylistic. `daysFromToday` seeds from
+ * `new Date()` and so carries the current time of day, while the implementation
+ * compares against a truncated `Date.UTC(y, m, d)`. A Date-form `daysFromToday(-7)`
+ * therefore lands ~20 HOURS past the grace boundary instead of exactly on it, and
+ * an off-by-one there (`<` vs `<=`) is invisible to the assertion. Measured:
+ * Date form graceEnd-today = +20.45h (mutation-blind); string form = 0.00h
+ * (mutation-visible). Any boundary assertion MUST use this helper.
+ */
+const dateStrFromToday = (n: number) => daysFromToday(n).toISOString().slice(0, 10);
 
 // ---------------------------------------------------------------------------
 // 1. isPassLocked — pure predicate (SPEC-4 §7, mapped to reality)
@@ -55,7 +70,11 @@ describe("isPassLocked", () => {
   it("keeps a competition inside the grace window unlocked", () => {
     expect(isPassLocked("live", daysFromToday(-3))).toBe(false);
     // Exactly grace days ago: ends_on + 7 == today, not < today, so NOT locked.
-    expect(isPassLocked("live", daysFromToday(-PASS_END_GRACE_DAYS))).toBe(false);
+    // String form is REQUIRED to land on the boundary — see dateStrFromToday.
+    expect(isPassLocked("live", dateStrFromToday(-PASS_END_GRACE_DAYS))).toBe(false);
+    // Mirror one day further out: the control arm that must stay TRUE, so a
+    // mutation flipping the comparison cannot green both sides at once.
+    expect(isPassLocked("live", dateStrFromToday(-(PASS_END_GRACE_DAYS + 1)))).toBe(true);
   });
 
   it("does not lock a future or null ends_on on an active competition", () => {
@@ -68,6 +87,101 @@ describe("isPassLocked", () => {
     expect(isPassLocked("live", past)).toBe(true);
     const future = daysFromToday(30).toISOString().slice(0, 10);
     expect(isPassLocked("live", future)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 1b. passLockReason — the reason isPassLocked collapses to a boolean.
+//     v17 gap #301: the UI needs to NAME why a pass stopped applying (a
+//     finished competition vs one that simply ran past its end date), and
+//     that reason must come from the SAME arms isPassLocked already computes,
+//     never a second hand-written copy.
+// ---------------------------------------------------------------------------
+describe("passLockReason", () => {
+  it("names a terminal status regardless of ends_on", () => {
+    expect(passLockReason("archived", null)).toBe("terminal");
+    expect(passLockReason("archived", daysFromToday(30))).toBe("terminal");
+    expect(passLockReason("completed", null)).toBe("terminal");
+    expect(passLockReason("completed", daysFromToday(30))).toBe("terminal");
+  });
+
+  it("names past_ends_on once an active competition is beyond the grace window", () => {
+    expect(passLockReason("live", daysFromToday(-(PASS_END_GRACE_DAYS + 1)))).toBe(
+      "past_ends_on",
+    );
+  });
+
+  it("is null while active and not past the grace window", () => {
+    for (const status of ["draft", "published", "live"]) {
+      expect(passLockReason(status, null)).toBeNull();
+      expect(passLockReason(status, daysFromToday(30))).toBeNull();
+    }
+    expect(passLockReason("live", daysFromToday(-3))).toBeNull();
+  });
+
+  // The `<` vs `<=` boundary gets its own case because it is the single most
+  // mutable character in the rule and the SQL twin (V338) commits to the same
+  // strictness. Both assertions use the string form so the comparison lands
+  // EXACTLY on the boundary; with the Date form the pair is ~20h off it and a
+  // flipped operator reds nothing here.
+  it("puts the grace boundary strictly past today — ends_on + grace == today still applies", () => {
+    // ends_on + 7d == today 00:00 UTC → not `< today` → still applying.
+    expect(passLockReason("live", dateStrFromToday(-PASS_END_GRACE_DAYS))).toBeNull();
+    // One day further: ends_on + 7d == yesterday → `< today` → locked. Control
+    // arm — it stays green under the mutation, so a red on the line above is
+    // unambiguously the boundary and not a broken helper.
+    expect(passLockReason("live", dateStrFromToday(-(PASS_END_GRACE_DAYS + 1)))).toBe(
+      "past_ends_on",
+    );
+    expect(isPassLocked("live", dateStrFromToday(-PASS_END_GRACE_DAYS))).toBe(false);
+    expect(isPassLocked("live", dateStrFromToday(-(PASS_END_GRACE_DAYS + 1)))).toBe(true);
+  });
+
+  it("accepts a YYYY-MM-DD string, matching isPassLocked", () => {
+    const past = dateStrFromToday(-(PASS_END_GRACE_DAYS + 1));
+    expect(passLockReason("live", past)).toBe("past_ends_on");
+  });
+
+  // Contract for Tasks 2-6, previously undefended: an unreadable ends_on must
+  // not silently revoke a pass the org paid for. Unreachable from production
+  // today — competitions.ends_on is a `date` column and both call sites hand the
+  // function the driver's `Date | null`, so the string branch (and with it this
+  // NaN arm) is only reachable from a future JSON/API-boundary caller. That is
+  // exactly why it needs pinning: it costs nothing to hold now, and nothing
+  // would catch it being flipped to fail-closed later.
+  it("treats an unparseable ends_on as still applying (fail-open, matching isPassLocked)", () => {
+    expect(passLockReason("live", "not-a-date")).toBeNull();
+    expect(isPassLocked("live", "not-a-date")).toBe(false);
+    // A terminal status still wins — the fail-open is only the ends_on arm.
+    expect(passLockReason("archived", "not-a-date")).toBe("terminal");
+  });
+
+  // Exhaustiveness: PASS_LOCK_REASONS is what surfaces map over, so every member
+  // must be a value passLockReason can actually return. Adding a third reason to
+  // the union without teaching this function to produce it reds here.
+  it("can produce every reason in PASS_LOCK_REASONS", () => {
+    const produced = new Set(
+      [
+        passLockReason("archived", null),
+        passLockReason("live", dateStrFromToday(-(PASS_END_GRACE_DAYS + 1))),
+      ].filter((r): r is NonNullable<typeof r> => r !== null),
+    );
+    expect([...produced].sort()).toEqual([...PASS_LOCK_REASONS].sort());
+  });
+
+  it("is the single source isPassLocked wraps — boolean and reason never disagree", () => {
+    const cases: [string, number | null][] = [
+      ["archived", null],
+      ["completed", 10],
+      ["live", -(PASS_END_GRACE_DAYS + 1)],
+      ["live", -3],
+      ["live", 30],
+      ["draft", null],
+    ];
+    for (const [status, days] of cases) {
+      const endsOn = days === null ? null : daysFromToday(days);
+      expect(isPassLocked(status, endsOn)).toBe(passLockReason(status, endsOn) !== null);
+    }
   });
 });
 

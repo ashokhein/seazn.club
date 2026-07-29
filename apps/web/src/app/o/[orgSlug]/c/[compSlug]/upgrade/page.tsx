@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 // "You're on Pro" and nothing else, on a page whose whole job is to explain what
 // their competition can do.
 //
-// Five states now, decided once in `upgradePageState()` and rendered here:
+// Six states now, decided once in `upgradePageState()` and rendered here:
 //
 //   offer (owner)     the ticket, priced, with the buy button
 //   offer (non-owner) the same ticket, no button — the price stays visible so
@@ -20,6 +20,13 @@ export const dynamic = "force-dynamic";
 //                     receipt link, and the Pro step the dead end never offered
 //   ceiling           a pass is held and something still blocked them; Pro only,
 //                     with the credit line and the blocked limit picked out
+//   ended             the pass is on the record but has stopped applying — the
+//                     competition reached a terminal status, or ran past its
+//                     end date plus the grace week (v17 gap #301). The stub
+//                     keeps the rung, the date and the receipt (nothing bought
+//                     is deleted) but loses the floodlight, and the page stops
+//                     claiming the pass is active. It is never re-offered, so
+//                     the two doors out are the plan and next year's edition.
 //   paid_plan         NO TICKET AND NO PRICE ANYWHERE. Every boolean the pass
 //                     lifts is already true on a paid plan, and Pro raises the
 //                     caps the pass raises (128 entrants per division against
@@ -45,6 +52,7 @@ import { PassUpgradeButton } from "@/components/pass-upgrade";
 import { Tip } from "@/components/ui/tip";
 import { formatMinor, isPassKey, proPrice, type Currency, type PassKey } from "@/lib/currency";
 import {
+  PASS_LOCK_REASON_KEY,
   PASS_RUNG_NAME_KEY,
   passLadderOptions,
   type PassRungOption,
@@ -52,7 +60,7 @@ import {
 import { preferredCurrency } from "@/lib/currency-server";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, type Dict, type Locale } from "@/lib/i18n";
-import { isPaidPlan, orgPlanKey } from "@/lib/entitlements";
+import { isPaidPlan, orgPlanKey, passLockReason } from "@/lib/entitlements";
 import { planLabel } from "@/lib/plan-label";
 import { getPassPurchases, type PassPurchaseRow } from "@/server/usecases/billing-manage";
 import { upgradePageState, type UpgradePageState } from "@/lib/upgrade-page-state";
@@ -109,11 +117,24 @@ export default async function CompetitionUpgradePage({
     // a receipt and a credit can be promised at all.
     // `pass_key` names the RUNG (v17 #294) — with M and L both live, a $59
     // buyer must not be told they hold the $29 product.
+    // The competition's `status`/`ends_on` decide whether the pass is still
+    // APPLYING (v17 gap #301). Joined rather than queried separately so the row
+    // and the verdict about it cannot be read a moment apart; the arms
+    // themselves stay in `passLockReason`, which is the same predicate V338
+    // enforces in SQL.
     sql<
-      { purchased_at: Date | string; stripe_payment_intent: string | null; pass_key: string }[]
+      {
+        purchased_at: Date | string;
+        stripe_payment_intent: string | null;
+        pass_key: string;
+        status: string;
+        ends_on: Date | string | null;
+      }[]
     >`
-      select purchased_at, stripe_payment_intent, pass_key
-      from competition_passes where competition_id = ${compId}`,
+      select cp.purchased_at, cp.stripe_payment_intent, cp.pass_key, c.status, c.ends_on
+      from competition_passes cp
+      join competitions c on c.id = cp.competition_id
+      where cp.competition_id = ${compId}`,
     // The resolver's derivation, NOT `subscriptions.plan_key` raw — see
     // lib/upgrade-page-state.ts. pass-checkout/route.ts now judges eligibility
     // through this same `isPaidPlan(orgPlanKey(...))`, so the page and the route
@@ -185,9 +206,11 @@ export default async function CompetitionUpgradePage({
   const dict = await getDictionary(locale, "ui");
 
   const paidPlan = isPaidPlan(planKey);
+  const lockReason = pass ? passLockReason(pass.status, pass.ends_on) : null;
   const state = upgradePageState({
     paidPlan,
     hasPass: !!pass,
+    lockReason,
     isOwner: page.org.role === "owner",
     feature: sp.feature ?? null,
   });
@@ -217,7 +240,11 @@ export default async function CompetitionUpgradePage({
     readMatrix(columns),
     // Only fetched where a receipt is rendered: one Stripe call per pass the ORG
     // holds, and no state but these two shows one.
-    state.kind === "owned" || state.kind === "ceiling"
+    // "ended" included (v17 gap #301): the purchase is still a purchase.
+    // Nothing bought is deleted, and the receipt is the concrete proof of that
+    // on the one screen where an org is being told its pass has stopped
+    // working.
+    state.kind === "owned" || state.kind === "ceiling" || state.kind === "ended"
       ? getPassPurchases(orgId)
       : Promise.resolve<PassPurchaseRow[]>([]),
   ]);
@@ -400,6 +427,13 @@ function Ticket({
   ladderOptions: PassRungOption[];
 }) {
   const held = state.kind === "owned" || state.kind === "ceiling";
+  // A pass that is still ON THE RECORD but no longer applying (v17 gap #301).
+  // Kept separate from `held` throughout rather than folded into it: the two
+  // share a shape — same stub, same rung, same receipt — but say opposite
+  // things about whether the org's limits are currently lifted, and every place
+  // below that treats them alike is a place that would have to be re-checked if
+  // that ever stopped being true.
+  const ended = state.kind === "ended";
 
   return (
     <section
@@ -425,6 +459,21 @@ function Ticket({
               )}
             </p>
           </>
+        ) : state.kind === "ended" ? (
+          <>
+            <p className="mt-5 text-sm font-semibold text-slate-900">
+              {t(dict, "pass.entry.ended")}
+            </p>
+            {/* Through the shared Record, never a `state.reason === "terminal"
+                ? … : …` here. The ternary keeps compiling when a third reason
+                joins PASS_LOCK_REASONS and quietly files it under "ran past its
+                end date" — the wrong sentence AND the wrong next step, since
+                one of those two points at the end date and the other does not.
+                Keyed lookup makes that a compile error instead. */}
+            <p className="mt-1 text-sm text-slate-600">
+              {t(dict, PASS_LOCK_REASON_KEY[state.reason])}
+            </p>
+          </>
         ) : (
           <p className="mt-5 text-sm text-slate-600">
             {t(dict, held ? "upgrade.active.body" : "upgrade.intro")}
@@ -438,9 +487,22 @@ function Ticket({
       <div className="ticket-seam" aria-hidden />
 
       <div className="ticket-stub flex flex-col justify-center gap-3 p-6 text-center sm:w-56 sm:p-7">
-        {held ? (
-          <div data-pass-active>
-            <p className="app-eyebrow justify-center">{t(dict, "upgrade.active.title")}</p>
+        {held || ended ? (
+          <div data-pass-active={held || undefined} data-pass-ended={ended || undefined}>
+            {/* `.app-eyebrow` is the console's floodlit "this is on" device —
+                condensed caps with a lime tick. An ended pass gets the plain
+                muted treatment instead: wearing the lit one over "Event Pass
+                ended" would contradict the words inside it, and on this stub
+                the badge is read before the prose. */}
+            <p
+              className={
+                ended
+                  ? "justify-center text-[0.6875rem] font-semibold uppercase tracking-wide text-white/70"
+                  : "app-eyebrow justify-center"
+              }
+            >
+              {t(dict, ended ? "pass.entry.ended" : "upgrade.active.title")}
+            </p>
             {/* WHICH pass. Two rungs are live (#294) and they differ by more
                 than money — an L holder reading only "Event Pass active" cannot
                 tell whether the 20-division ceiling they were sold is the one
@@ -453,7 +515,7 @@ function Ticket({
                 selector that can only ever be wrong, never red. */}
             <p
               data-pass-held-rung={heldRung}
-              className="app-display mt-2 text-sm font-bold text-lime-300"
+              className={`app-display mt-2 text-sm font-bold ${ended ? "text-white/80" : "text-lime-300"}`}
             >
               {t(dict, PASS_RUNG_NAME_KEY[heldRung])}
             </p>
@@ -752,23 +814,62 @@ function ProNext({
   creditEligible: boolean;
 }) {
   const held = state.kind === "owned" || state.kind === "ceiling";
+  // An ended pass reads as "already bought something here" for this panel's
+  // purposes — the solid border and the "what's next" framing both still fit.
+  // What it adds is the second door: the plan is not the only sensible move
+  // when the competition itself is over.
+  const ended = state.kind === "ended";
   const proMonthly = formatMinor(proPrice("monthly", currency), currency);
 
   return (
-    <section className={`card mt-6 p-6 ${held ? "" : "border-dashed"}`}>
+    <section className={`card mt-6 p-6 ${held || ended ? "" : "border-dashed"}`}>
       <p className="app-eyebrow">
-        {t(dict, held ? "upgrade.owned.nextTitle" : "upgrade.proCard.title")}
+        {t(dict, held || ended ? "upgrade.owned.nextTitle" : "upgrade.proCard.title")}
       </p>
       <p className="mt-2 text-3xl font-bold text-slate-900 tabular-nums">
         {proMonthly}
         <span className="text-base font-normal text-slate-500">{t(dict, "upgrade.perMonth")}</span>
       </p>
+      {/* The ended state gets its OWN body, not the owned one. That string
+          opens "The pass stays with this competition whatever you do next",
+          which reads as "it still works" — directly contradicting the card
+          above, which has just said the pass stopped lifting this
+          competition's limits. Two claims about the same purchase, in
+          opposite directions, on one screen. The ended copy says the true
+          part (the pass and its receipt are still here) without the part
+          that stopped being true. */}
       <p className="mt-3 max-w-xl text-sm text-slate-600">
-        {t(dict, held ? "upgrade.owned.nextBody" : "upgrade.proCard.body", { org: orgName })}
+        {t(
+          dict,
+          ended
+            ? "pass.entry.ended.nextBody"
+            : held
+              ? "upgrade.owned.nextBody"
+              : "upgrade.proCard.body",
+          { org: orgName },
+        )}
       </p>
-      <Link href={routes.billing(orgSlug)} className="btn btn-primary mt-5 inline-block px-5 py-2.5">
-        {t(dict, "upgrade.proCard.cta")} →
-      </Link>
+      {/* Wrapped and wrapping: at 375px two buttons on one row would either
+          overflow or squeeze, and `flex-wrap` lets the second drop under the
+          first rather than shrinking both. */}
+      <div className="mt-5 flex flex-wrap gap-3">
+        <Link href={routes.billing(orgSlug)} className="btn btn-primary inline-block px-5 py-2.5">
+          {t(dict, "upgrade.proCard.cta")} →
+        </Link>
+        {/* The honest alternative to a re-buy. The pass cannot be bought again
+            for THIS competition (decision #248 Q4), but next season's edition
+            is a new competition and can have its own — so this is the one
+            place the product can still say yes. */}
+        {ended && (
+          <Link
+            href={routes.competitionNew(orgSlug)}
+            data-pass-next-edition
+            className="btn btn-ghost inline-block px-5 py-2.5"
+          >
+            {t(dict, "pass.entry.ended.nextEdition")} →
+          </Link>
+        )}
+      </div>
       {creditEligible && (
         <p data-pass-credit className="mt-3 text-xs text-slate-500">
           {t(dict, "upgrade.credit", { plan: "Pro" })}

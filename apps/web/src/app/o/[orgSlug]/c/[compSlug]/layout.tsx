@@ -18,6 +18,14 @@ export const dynamic = "force-dynamic";
 // and the "pass active" signals named the product family while two rungs sell at
 // $29 and $59.
 //
+// The fourth is whether the pass STILL APPLIES (v17 gap #301). The read here
+// was row existence and nothing more, so a pass the resolver had already
+// stopped honouring — its competition completed or archived, or run past
+// `ends_on` plus grace — reached every island underneath looking exactly like a
+// live one, and they said "Event Pass active" to an org that was back on
+// Community caps. Fixing it at the six surfaces would have been six copies of
+// the rule; the join lives here, and `passLockReason` judges it.
+//
 // Deliberately NOT auth-gated. `requireCompetitionPage` 404s scorers and
 // non-members, but the /o layout lets both through on purpose so an accepted
 // official's fixture deep-link (design v2 §A2) can reach `requireFixturePage`
@@ -30,7 +38,7 @@ export const dynamic = "force-dynamic";
 // child page owns the 404 / permanent-redirect, and a pass state is never worth
 // pre-empting it.
 import { sql } from "@/lib/db";
-import { isPaidPlan, orgPlanKey } from "@/lib/entitlements";
+import { isPaidPlan, orgPlanKey, passLockReason, type PassLockReason } from "@/lib/entitlements";
 import { isPassKey, type Currency, type PassKey } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
 import { orgBySlug, compBySlug } from "@/server/slug-resolve";
@@ -55,17 +63,22 @@ export default async function CompetitionLayout({
   params: Promise<{ orgSlug: string; compSlug: string }>;
 }) {
   const { orgSlug, compSlug } = await params;
-  const { passKey, paidPlan, currency } = await passState(orgSlug, compSlug);
+  const { passKey, paidPlan, currency, lockReason } = await passState(orgSlug, compSlug);
   return (
-    <CompetitionPassProvider passKey={passKey} paidPlan={paidPlan} currency={currency}>
+    <CompetitionPassProvider
+      passKey={passKey}
+      paidPlan={paidPlan}
+      currency={currency}
+      lockReason={lockReason}
+    >
       {children}
     </CompetitionPassProvider>
   );
 }
 
 /**
- * Which pass rung does this competition hold, is the org on a paid plan, and
- * what currency does it buy in?
+ * Which pass rung does this competition hold, is the org on a paid plan, what
+ * currency does it buy in, and — if there is a pass — has it stopped applying?
  *
  * The slug lookups go through the React-`cache()`d resolvers, which the org
  * layout and the child page already call with the same arguments — so in the
@@ -77,6 +90,20 @@ export default async function CompetitionLayout({
  * `isPassKey` guards it rather than a cast — the column is `not null default
  * 'event_pass'` and a row written by a future rung this build predates must
  * degrade to a real label, not to a missing dictionary key.
+ *
+ * The join to `competitions` for `status`/`ends_on` (v17 gap #301) rides the
+ * pass row's own lookup rather than adding a query: the layout is already
+ * inside the competition, and the two columns are what decides whether the pass
+ * is still lifting anything. An INNER join is deliberate — `competition_id` is
+ * a FK, so a pass row with no competition cannot exist, and if one somehow did
+ * there would be no status to judge it by.
+ *
+ * The judgement itself is `passLockReason`'s, never this file's. The same rule
+ * is enforced in three places that must agree exactly — the TS resolver, the
+ * `org_has_feature` SQL (V338), and now the UI — and the only defence against
+ * them drifting is that two of them call the same function and the third is
+ * pinned to it by `entitlements-sql-parity.test.ts`. A status list or a date
+ * comparison written here would be a fourth copy.
  *
  * `stripe_payment_intent` is NOT consulted: it is nullable by design (V271),
  * and a staff-granted pass with a null intent is fully active.
@@ -93,15 +120,29 @@ export default async function CompetitionLayout({
 async function passState(
   orgSlug: string,
   compSlug: string,
-): Promise<{ passKey: PassKey | null; paidPlan: boolean; currency: Currency }> {
-  const none = { passKey: null, paidPlan: false, currency: "usd" as Currency };
+): Promise<{
+  passKey: PassKey | null;
+  paidPlan: boolean;
+  currency: Currency;
+  lockReason: PassLockReason | null;
+}> {
+  const none = {
+    passKey: null,
+    paidPlan: false,
+    currency: "usd" as Currency,
+    lockReason: null,
+  };
   const org = await orgBySlug(orgSlug);
   if (!org || "renamedTo" in org) return none;
   const comp = await compBySlug(org.id, compSlug);
   if (!comp || "renamedTo" in comp) return none;
   const [[pass], planKey, currency] = await Promise.all([
-    sql<{ pass_key: string }[]>`
-      select pass_key from competition_passes where competition_id = ${comp.id} limit 1`,
+    sql<{ pass_key: string; status: string; ends_on: Date | string | null }[]>`
+      select cp.pass_key, c.status, c.ends_on
+      from competition_passes cp
+      join competitions c on c.id = cp.competition_id
+      where cp.competition_id = ${comp.id}
+      limit 1`,
     orgPlanKey(org.id),
     preferredCurrency(org.id),
   ]);
@@ -109,5 +150,9 @@ async function passState(
     passKey: pass ? (isPassKey(pass.pass_key) ? pass.pass_key : "event_pass") : null,
     paidPlan: isPaidPlan(planKey),
     currency,
+    // No pass, no lock: the reason is about a PURCHASE that has stopped
+    // applying, not about the competition, so an archived competition with no
+    // pass row carries null and reads "none" exactly as it does today.
+    lockReason: pass ? passLockReason(pass.status, pass.ends_on) : null,
   };
 }

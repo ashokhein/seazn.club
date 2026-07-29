@@ -122,6 +122,26 @@ const PASS_BOUND_KEYS = [
   ["ui", "billing.passOffer.note"],
 ] as const;
 
+// THE `pass.entry.ended.*` KEYS ARE PINNED, BUT DELIBERATELY NOT HERE — and
+// getting that wrong is instructive enough to write down (W8 review round).
+//
+// They were added to this list first. Three tests redded, and the third is the
+// one that matters: `localePassBoundFaults` requires every value here to
+// POSITIVELY state that the pass is bounded to a running competition. That is
+// exactly right for copy that SELLS the pass — disclosure of the bound is the
+// whole point — and incoherent for copy about a pass that has already stopped,
+// where the competition is by definition no longer running.
+//
+// So this list is not "all pass copy"; it is "copy that offers the pass and must
+// therefore say what bounds it". The ended-lifecycle strings are a different
+// claim family and are pinned by APPROVED_DICTIONARY_COPY instead, which is
+// enforced independently (`approvedDictionaryFaults`) and is the half that
+// forces a new wording to be justified against code in its `why`. That is the
+// mechanism the missing gate cost us: `pass.entry.ended.nextBody` shipped
+// claiming Pro "lifts the same limits", which #337 records as FALSE for an
+// event_pass_l holder (unlimited entrants vs Pro's 256) and which the
+// comparison table five rows above it on the same screen contradicts.
+
 const PASS_BOUND_VALUES: LocalisedValue[] = PASS_BOUND_KEYS.flatMap(([file, key]) =>
   across(file, key),
 );
@@ -858,7 +878,9 @@ describe.skipIf(!HAS_DB)("the four-locale dictionaries say what the resolver enf
     for (const key of PANEL_KEYS) {
       expect(pinned.has(key), `${key} is an in-app panel claim but is not pinned`).toBe(true);
     }
-    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(236);
+    // 236 -> 256: the five `pass.entry.ended.*` keys x four locales, pinned by
+    // the W8 review round. A count, not a floor, so a DELETED pin reds too.
+    expect(APPROVED_DICTIONARY_COPY.length * DICTIONARY_LOCALES.length).toBe(256);
     // Every entry must say what it claims and what decides it — a pin with no
     // `why` is a snapshot, and a snapshot teaches the next editor to re-record
     // rather than to re-check.

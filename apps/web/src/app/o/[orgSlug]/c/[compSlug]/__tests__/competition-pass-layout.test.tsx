@@ -32,6 +32,7 @@ import {
   usePassActive,
   usePassCurrency,
   usePassGateState,
+  usePassLockReason,
   usePassRung,
 } from "@/components/competition-pass-provider";
 import CompetitionLayout from "../layout";
@@ -42,7 +43,7 @@ const uniq = () => randomUUID().slice(0, 8);
 function Probe() {
   return (
     <span id="p">
-      {`pass:${usePassActive()} state:${usePassGateState()} rung:${usePassRung()} currency:${usePassCurrency()}`}
+      {`pass:${usePassActive()} state:${usePassGateState()} rung:${usePassRung()} currency:${usePassCurrency()} reason:${usePassLockReason()}`}
     </span>
   );
 }
@@ -225,6 +226,97 @@ describe.skipIf(!HAS_DB)("competition layout provides Event Pass state", () => {
     // The row is still reported honestly; the gate state is not.
     expect(html).toContain("pass:true");
     expect(html).toContain("state:paid_plan");
+  });
+
+  // v17 gap #301. The layout's pass read was `select pass_key ... limit 1` —
+  // row existence and nothing else — so a pass the resolver had ALREADY
+  // stopped honouring (terminal status, or past ends_on + grace) reached every
+  // island underneath looking exactly like a live one. The join to
+  // `competitions` is what makes the difference visible; `passLockReason` is
+  // the only thing allowed to judge it.
+  it("is 'ended' when the pass exists but its competition is archived", async () => {
+    const rig = await seed();
+    await sql`insert into competition_passes (competition_id, org_id)
+              values (${rig.compId}, ${rig.orgId})`;
+    await sql`update competitions set status = 'archived' where id = ${rig.compId}`;
+    const html = await renderLayout(rig.orgSlug, rig.compSlug);
+    // The ROW is still reported honestly — the org did buy a pass, and it is
+    // never re-sold. Only the gate state changes.
+    expect(html).toContain("pass:true");
+    expect(html).toContain("state:ended");
+    expect(html).toContain("reason:terminal");
+  });
+
+  it("is 'ended' when the pass's competition is completed", async () => {
+    // The other half of the terminal set, and the one an organiser actually
+    // reaches: finishing a competition writes 'completed'.
+    const rig = await seed();
+    await sql`insert into competition_passes (competition_id, org_id)
+              values (${rig.compId}, ${rig.orgId})`;
+    await sql`update competitions set status = 'completed' where id = ${rig.compId}`;
+    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:ended");
+  });
+
+  it("is 'ended' when the pass's competition ended beyond the grace window", async () => {
+    const rig = await seed();
+    await sql`insert into competition_passes (competition_id, org_id)
+              values (${rig.compId}, ${rig.orgId})`;
+    const eightDaysAgo = new Date(Date.now() - 8 * 86_400_000).toISOString().slice(0, 10);
+    await sql`update competitions set status = 'live', ends_on = ${eightDaysAgo}
+              where id = ${rig.compId}`;
+    const html = await renderLayout(rig.orgSlug, rig.compSlug);
+    // The reason distinguishes it from the terminal case above — the two get
+    // different wording and different CTAs downstream, so a boolean here would
+    // pass the state assertion and still lose what Tasks 3-6 need.
+    expect(html).toContain("state:ended");
+    expect(html).toContain("reason:past_ends_on");
+  });
+
+  it("stays 'held' — not 'ended' — inside the grace window", async () => {
+    // The control arm for both cases above: a still-running competition, and a
+    // recently-ended one, must keep reading exactly as they do today.
+    const rig = await seed();
+    await sql`insert into competition_passes (competition_id, org_id)
+              values (${rig.compId}, ${rig.orgId})`;
+    const threeDaysAgo = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10);
+    await sql`update competitions set status = 'live', ends_on = ${threeDaysAgo}
+              where id = ${rig.compId}`;
+    const html = await renderLayout(rig.orgSlug, rig.compSlug);
+    expect(html).toContain("state:held");
+    expect(html).toContain("reason:null");
+  });
+
+  it("stays 'held' for a live competition with no end date at all", async () => {
+    // `ends_on` is nullable and most competitions carry no date. If the join
+    // or the null handling were wrong this is the case that would flip the
+    // whole product to "ended" at once.
+    const rig = await seed();
+    await sql`insert into competition_passes (competition_id, org_id)
+              values (${rig.compId}, ${rig.orgId})`;
+    await sql`update competitions set status = 'live', ends_on = null
+              where id = ${rig.compId}`;
+    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:held");
+  });
+
+  it("prefers 'paid_plan' over an ended pass", async () => {
+    const rig = await seed();
+    await sql`insert into competition_passes (competition_id, org_id)
+              values (${rig.compId}, ${rig.orgId})`;
+    await sql`update competitions set status = 'completed' where id = ${rig.compId}`;
+    await sql`update subscriptions set plan_key = 'pro', status = 'active'
+              where id = (select subscription_id from organizations where id = ${rig.orgId})`;
+    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:paid_plan");
+  });
+
+  it("carries no reason for a competition with no pass, whatever its status", async () => {
+    // The reason is about a PASS, not about a competition. An archived
+    // competition with no pass row has nothing to be locked.
+    const rig = await seed();
+    await sql`update competitions set status = 'archived' where id = ${rig.compId}`;
+    const html = await renderLayout(rig.orgSlug, rig.compSlug);
+    expect(html).toContain("pass:false");
+    expect(html).toContain("state:none");
+    expect(html).toContain("reason:null");
   });
 
   it("is false — and still renders children — for an unresolvable slug", async () => {

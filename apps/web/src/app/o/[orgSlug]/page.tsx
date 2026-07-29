@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 // Org home — competitions as match-day cards (v3/03 §2). Nav comes from the
 // /o layout; auth comes from the URL (PROMPT-30).
 import Link from "@/components/ui/console-link";
-import { Ticket, Trophy } from "lucide-react";
+import { Trophy } from "lucide-react";
 import { BillingBanner } from "@/components/billing-banner";
 import { requireOrgPage } from "@/server/page-auth";
 import { listCompetitions } from "@/server/usecases/competitions";
@@ -14,9 +14,10 @@ import { CardMenu } from "@/components/ui/card-menu";
 import { ViewToggleContainer } from "@/components/ui/view-toggle";
 import { StatusChip, competitionChipState, CHIP_SORT } from "@/components/ui/status-chip";
 import { sql } from "@/lib/db";
-import { isPaidPlan, orgPlanKey } from "@/lib/entitlements";
+import { isPaidPlan, orgPlanKey, passLockReason } from "@/lib/entitlements";
 import { formatMinor, isPassKey } from "@/lib/currency";
-import { lowestPassRung, passActiveLabels } from "@/lib/pass-ladder";
+import { lowestPassRung } from "@/lib/pass-ladder";
+import { PassSeal } from "@/components/pass-seal";
 import { preferredCurrency } from "@/lib/currency-server";
 import { routes } from "@/lib/routes";
 import { resolveLocale } from "@/lib/resolve-locale";
@@ -62,8 +63,30 @@ export default async function OrgHomePage({
         // `pass_key` rides along (v17 #294): the seal on a passed card is the
         // ONLY thing this page says about the pass, and with M and L both live
         // "Event Pass active" names the $29 product to an org that paid $59.
-        sql<{ competition_id: string; pass_key: string }[]>`
-          select competition_id, pass_key from competition_passes where org_id = ${org.id}`,
+        //
+        // status/ends_on ride along too (v17 gap #301). The seal read row
+        // EXISTENCE alone, so it kept saying "active" on a competition that had
+        // finished months ago — the resolver had long since stopped honouring
+        // that row. Joined rather than read separately so the row and the
+        // verdict about it cannot come from two different moments.
+        sql<
+          // `Date | string | null`, matching the four other sites that feed this
+          // predicate: `ends_on` is a `date` column and the driver hands back a
+          // Date. Declaring it `string` here contradicted `passLockReason`'s own
+          // note that production never passes it a string — the reason its NaN
+          // arm is considered unreachable — and invited a `.slice(0, 10)` that
+          // would throw.
+          {
+            competition_id: string;
+            pass_key: string;
+            status: string;
+            ends_on: Date | string | null;
+          }[]
+        >`
+          select cp.competition_id, cp.pass_key, c.status, c.ends_on
+          from competition_passes cp
+          join competitions c on c.id = cp.competition_id
+          where cp.org_id = ${org.id}`,
     preferredCurrency(org.id),
   ]);
   // isPassKey, not a cast: the column is `not null default 'event_pass'` and a
@@ -72,7 +95,12 @@ export default async function OrgHomePage({
   const passed = new Map(
     passRows.map((r) => [r.competition_id, isPassKey(r.pass_key) ? r.pass_key : "event_pass"] as const),
   );
-  const heldLabels = passActiveLabels(dict);
+  // WHY each held pass has stopped applying, or null while it still does. The
+  // arms stay in `passLockReason` — a second copy here is exactly how the badge
+  // and the resolver drift apart again.
+  const passLock = new Map(
+    passRows.map((r) => [r.competition_id, passLockReason(r.status, r.ends_on)] as const),
+  );
   // The card menu's "Event Pass — from {price}" quotes the ladder FLOOR: the
   // menu item offers no choice of rung, and the choice itself lives on the
   // upgrade page it links to (v17 #294).
@@ -159,17 +187,18 @@ export default async function OrgHomePage({
                           "Spring S…". The status chip already owns the card's
                           word; this says the pass is on and gets out of the
                           way, carrying its label on the element itself. */}
+                      {/* v17 gap #301. Lime means "this is on" across the
+                          console, so a locked pass wearing it is the page
+                          telling an organiser their limits are lifted when they
+                          are not. The whole decision lives in <PassSeal>, which
+                          RENDERS in a test — inline here it was three green
+                          mutations (task 6 review, I-1). */}
                       {heldRung && (
-                        <span
-                          data-pass-held
-                          data-pass-held-rung={heldRung}
-                          role="img"
-                          aria-label={heldLabels[heldRung]}
-                          title={heldLabels[heldRung]}
-                          className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-lime-100 text-lime-800 ring-1 ring-inset ring-lime-300"
-                        >
-                          <Ticket className="h-3 w-3" strokeWidth={2.25} aria-hidden />
-                        </span>
+                        <PassSeal
+                          dict={dict}
+                          rung={heldRung}
+                          lockReason={passLock.get(c.id) ?? null}
+                        />
                       )}
                     </span>
                   }

@@ -15,6 +15,7 @@ import {
   usePassActive,
   usePassCurrency,
   usePassGateState,
+  usePassLockReason,
   usePassRung,
 } from "@/components/competition-pass-provider";
 
@@ -32,6 +33,10 @@ function RungProbe() {
 
 function CurrencyProbe() {
   return <span id="c">{`currency:${usePassCurrency()}`}</span>;
+}
+
+function ReasonProbe() {
+  return <span id="lr">{`reason:${usePassLockReason()}`}</span>;
 }
 
 describe("CompetitionPassProvider / usePassActive", () => {
@@ -149,6 +154,111 @@ describe("usePassGateState", () => {
       </CompetitionPassProvider>,
     );
     expect(html).toContain("state:none");
+  });
+
+  // v17 gap #301. "held" used to mean nothing more than "a row exists", so a
+  // pass whose competition had finished — one the resolver had ALREADY stopped
+  // honouring (SPEC-4 §7) — read identically to one still applying, and every
+  // gate under this provider said "Event Pass active" to an org back on
+  // Community caps.
+  it("is 'ended' when a pass is held and locked", () => {
+    const html = state(
+      <CompetitionPassProvider passKey="event_pass" paidPlan={false} lockReason="terminal">
+        <StateProbe />
+      </CompetitionPassProvider>,
+    );
+    expect(html).toContain("state:ended");
+  });
+
+  it("is 'held' — not 'ended' — when a pass is held and nothing locked it", () => {
+    // The control arm: without it the case above would still pass if the hook
+    // simply answered "ended" to every held pass.
+    const html = state(
+      <CompetitionPassProvider passKey="event_pass" paidPlan={false} lockReason={null}>
+        <StateProbe />
+      </CompetitionPassProvider>,
+    );
+    expect(html).toContain("state:held");
+  });
+
+  it("defaults lockReason to null when the prop is omitted — existing call sites keep meaning 'held'", () => {
+    // Same safe-default contract as paidPlan, the other way round: a caller
+    // that forgets this prop must not have a live pass silently declared dead.
+    const html = state(
+      <CompetitionPassProvider passKey="event_pass" paidPlan={false}>
+        <StateProbe />
+      </CompetitionPassProvider>,
+    );
+    expect(html).toContain("state:held");
+  });
+
+  it("prefers 'paid_plan' over an ended pass — the plan still wins over everything", () => {
+    // Precedence is decided in ONE place. A paid org's gate was closed by its
+    // PLAN's ceiling, so neither "held" nor "ended" may explain it.
+    const html = state(
+      <CompetitionPassProvider passKey="event_pass" paidPlan lockReason="past_ends_on">
+        <StateProbe />
+      </CompetitionPassProvider>,
+    );
+    expect(html).toContain("state:paid_plan");
+  });
+
+  it("stays 'none' for a locked reason with no pass row — a lock needs something to lock", () => {
+    // Nonsense input, pinned: the provider must not manufacture an "ended"
+    // pass for a competition that never had one.
+    const html = state(
+      <CompetitionPassProvider passKey={null} lockReason="terminal">
+        <StateProbe />
+      </CompetitionPassProvider>,
+    );
+    expect(html).toContain("state:none");
+  });
+});
+
+// The REASON, not just the yes/no (v17 gap #301): the surfaces in Tasks 3-6
+// have to tell "this competition finished" from "it simply ran past its end
+// date", and neither the wording nor the CTA is the same for both. Computed by
+// `passLockReason` server-side — this only carries it.
+describe("usePassLockReason", () => {
+  it("is null outside a competition", () => {
+    expect(renderToStaticMarkup(<ReasonProbe />)).toContain("reason:null");
+  });
+
+  it("is null inside a competition whose pass still applies", () => {
+    const html = renderToStaticMarkup(
+      <CompetitionPassProvider passKey="event_pass">
+        <ReasonProbe />
+      </CompetitionPassProvider>,
+    );
+    expect(html).toContain("reason:null");
+  });
+
+  it("surfaces the exact reason the provider was given, both arms", () => {
+    // Both arms, because "reports past_ends_on" proves nothing if the hook
+    // answers past_ends_on to everything — the same shape as the bug being
+    // fixed, with the literal the other way round.
+    for (const reason of ["terminal", "past_ends_on"] as const) {
+      const html = renderToStaticMarkup(
+        <CompetitionPassProvider passKey="event_pass" lockReason={reason}>
+          <ReasonProbe />
+        </CompetitionPassProvider>,
+      );
+      expect(html, reason).toContain(`reason:${reason}`);
+    }
+  });
+
+  it("still reports the reason under a paid plan", () => {
+    // Same contract as usePassActive/usePassRung: this answers the PASS's own
+    // question. The "what should we say here" precedence stays in
+    // usePassGateState, which reports paid_plan for this input.
+    const html = renderToStaticMarkup(
+      <CompetitionPassProvider passKey="event_pass" paidPlan lockReason="terminal">
+        <ReasonProbe />
+        <StateProbe />
+      </CompetitionPassProvider>,
+    );
+    expect(html).toContain("reason:terminal");
+    expect(html).toContain("state:paid_plan");
   });
 });
 

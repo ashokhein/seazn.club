@@ -7,13 +7,15 @@ import { PlanBadge } from "@/components/plan-badge";
 import {
   usePassCurrency,
   usePassGateState,
+  usePassLockReason,
   usePassRung,
 } from "@/components/competition-pass-provider";
 import { formatMinor, proPlusPrice, proPrice, type Currency } from "@/lib/currency";
-import { lowestPassRung, passActiveLabel } from "@/lib/pass-ladder";
+import { lowestPassRung, passActiveLabel, PASS_LOCK_REASON_KEY } from "@/lib/pass-ladder";
 import { PASS_FEATURES } from "@/lib/pass-features";
 import { routes } from "@/lib/routes";
 import { useDict, useMsg } from "@/components/i18n/dict-provider";
+import { t } from "@/lib/i18n-runtime";
 
 /**
  * Feature keys an Event Pass lifts. Only these gates offer the per-event path
@@ -107,7 +109,8 @@ function paidPlan(feature: string, currency: Currency): { name: string; price: s
  * derives from the same feature_key the 402 response carries, so a blocked
  * server call and a pre-emptively gated control read identically.
  *
- * Four states (spec 2026-07-21 D1), off ONE signal from the competition layout:
+ * Off ONE signal from the competition layout (spec 2026-07-21 D1; the `ended`
+ * rows are v17 gap #301):
  *
  * | pass gate state | feature liftable | renders                              |
  * |-----------------|------------------|--------------------------------------|
@@ -115,6 +118,7 @@ function paidPlan(feature: string, currency: Currency): { name: string; price: s
  * | none            | no               | Pro only (as before)                 |
  * | held            | yes              | Pro only — pass ceiling              |
  * | held            | no               | Pro only — not on pass               |
+ * | ended           | either           | Pro only — pass has stopped applying |
  * | paid_plan       | either           | Pro only (as before) — pass is moot  |
  *
  * `held` is task 17's fix: a gate rendering for a key the pass DOES lift, while
@@ -140,7 +144,9 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
   const gate = usePassGateState();
   const heldRung = usePassRung();
   const currency = usePassCurrency();
+  const lockReason = usePassLockReason();
   const passOwned = gate === "held";
+  const passEnded = gate === "ended";
   const liftable = PASS_FEATURES.has(feature);
   // Only an org that can still BENEFIT from a pass is offered one.
   const passHref = liftable && gate === "none" ? passHrefFromPath(pathname, feature) : null;
@@ -151,6 +157,7 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
         href={passHref ?? href}
         data-feature={feature}
         data-pass-owned={passOwned || undefined}
+        data-pass-ended={passEnded || undefined}
         className="inline-flex items-center gap-1.5 rounded-full bg-purple-50 px-3 py-1 text-xs font-medium text-purple-700 hover:bg-purple-100"
       >
         <LockIcon />
@@ -201,6 +208,64 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
         <p className="mt-2 text-xs text-purple-700">
           {plan.name} covers every competition in your organization. {creditLine(msg, plan.name)}
         </p>
+      </div>
+    );
+  }
+
+  // v17 gap #301: the row still exists, but the resolver has already stopped
+  // honouring it — this competition is back on Community caps. Deliberately its
+  // own branch rather than a variant of the one above, because the two states
+  // give opposite advice: `passOwned` says "your pass is on and you have used
+  // all of it", which for a locked pass is false twice over. The org is at no
+  // usage ceiling; the pass simply lifts nothing here any more.
+  //
+  // It never re-offers the purchase (decision #248 Q4 — one pass per
+  // competition, forever), so the only honest path left is the plan.
+  //
+  // `lockReason` is non-null whenever `gate === "ended"` — usePassGateState
+  // derives one from the other — so the conjunct never fails in practice. It is
+  // the narrowing TypeScript needs to index PASS_LOCK_REASON_KEY, and if the
+  // impossible pairing ever did arrive it degrades to the plain Pro card rather
+  // than rendering a heading above a missing sentence.
+  if (passEnded && lockReason) {
+    const plan = paidPlan(feature, currency);
+    return (
+      <div
+        data-feature={feature}
+        data-pass-ended
+        className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700"
+      >
+        {/* Slate, and NOT `.app-eyebrow`. That class is the console's floodlit
+            "this is on" signal (condensed caps, lime tick) and the card above
+            earns it; wearing it here would say the opposite of the sentence
+            underneath. The purple family means "a payment lifts this" — also
+            wrong, since nothing on this card is for sale. */}
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          {msg("pass.entry.ended")}
+        </p>
+        <p className="mt-2 flex items-center gap-2 font-medium">
+          <LockIcon />
+          <PlanBadge feature={feature} />
+          {reason}
+        </p>
+        {/* Keyed off the reason through the shared Record, never a
+            `=== "terminal" ? … : …` here: the ternary keeps compiling when a
+            third reason joins PASS_LOCK_REASONS and silently files it under
+            "ran past its end date", which is the wrong sentence and the wrong
+            next step. The Record is a compile error instead.
+
+            Read through `t(dict, …)` rather than `msg(…)` like its neighbours
+            because the two speak different key universes: `useMsg()` takes a
+            `MessageKey` while `PASS_LOCK_REASON_KEY` is a `DictionaryKey` map,
+            which is the wider set. Casting to bridge them would throw away the
+            exhaustiveness this Record exists to provide. `dict` is already read
+            above for the rung label, so this adds no new provider dependency. */}
+        <p className="mt-2">{t(dict, PASS_LOCK_REASON_KEY[lockReason])}</p>
+        <div className="mt-3">
+          <Link href={href} className="btn btn-primary px-4 py-2 text-sm">
+            Go {plan.name} — {plan.price}
+          </Link>
+        </div>
       </div>
     );
   }

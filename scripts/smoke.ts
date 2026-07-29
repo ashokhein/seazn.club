@@ -4598,6 +4598,55 @@ async function grantPass(
   }
 }
 
+/**
+ * Mark a competition completed directly via SQL (v17 gap #301).
+ *
+ * Same disposable-DB, SQL-flip convention as grantPass/setPlan, and for the
+ * same reason: the thing under test is what every SURFACE says once the
+ * resolver stops honouring a pass, and the only way to reach that state through
+ * the product is to finish a competition, which is not a checkout flow smoke
+ * can drive. The pass ROW is deliberately left untouched — that is the whole
+ * point of the gap: the row outlives its own usefulness.
+ */
+async function endCompetition(competitionId: string): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is required to end a competition in smoke");
+  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  const sql = postgres(url, {
+    connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
+    ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
+    prepare: !url.includes(":6543"),
+    max: 1,
+  });
+  try {
+    await sql`update competitions set status = 'completed' where id = ${competitionId}`;
+  } finally {
+    await sql.end();
+  }
+}
+
+/**
+ * True when `name` is a REAL rendered HTML attribute — not merely a prop name
+ * that survived into the RSC flight payload Next embeds in the same body.
+ *
+ * React does NOT drop an omitted prop when it serialises a server-rendered
+ * element; it encodes the `undefined` so the client can tell "absent" from
+ * "never sent". Rendering `<div data-pass-active={held || undefined}>` with
+ * `held` false produces, verbatim:
+ *
+ *   0:["$","div",null,{"data-pass-active":"$undefined","data-pass-ended":true},…]
+ *
+ * So `body.includes("data-pass-active")` is TRUE for an attribute the browser
+ * never sees, and the string is present in BOTH states. A bare-name check is
+ * therefore vacuous in the positive direction and IMPOSSIBLE to satisfy in the
+ * negative one — the p301 upgrade checks hit both halves of that at once.
+ * Anchoring on `="` keys off the serialised attribute, which only real markup
+ * carries.
+ */
+function renderedAttr(body: string, name: string): boolean {
+  return body.includes(`${name}="`);
+}
+
 /** Every Event Pass rung the `plans` table actually carries, sorted. Read with
  *  a plain `select key` and filtered in JS rather than a `like 'event\_pass%'`
  *  — the escaped underscore is a needless trap inside a tagged template. */
@@ -5474,7 +5523,64 @@ async function pricingV3Suite(): Promise<void> {
   const upgradePage = await html(buyer, `/o/${orgRow.slug}/c/${compA.slug}/upgrade`);
   check(
     "p36: upgrade page shows pass active",
-    upgradePage.status === 200 && upgradePage.body.includes("data-pass-active"),
+    upgradePage.status === 200 && renderedAttr(upgradePage.body, "data-pass-active"),
+  );
+
+  // v17 gap #301: finish compA's competition and prove every surface stops
+  // calling its pass "active". The row is untouched, so anything still reading
+  // row existence alone keeps saying active and fails here — which is exactly
+  // the defect, and the reason these are integration checks rather than more
+  // unit tests: each surface passed its own tests while disagreeing with the
+  // resolver.
+  await endCompetition(compA.id);
+
+  const upgradeEnded = await html(buyer, `/o/${orgRow.slug}/c/${compA.slug}/upgrade`);
+  // Three separate checks, deliberately. The first version ANDed all three into
+  // one boolean and failed in CI without saying WHICH part failed — the same
+  // "reports less than it knows" defect this wave keeps finding in guards.
+  //
+  // All marker checks go through `renderedAttr`, never `body.includes(name)`:
+  // the flight payload carries the prop NAME in both states (see its doc), so a
+  // bare-name check passed here in the wrong state and failed in the right one.
+  check(
+    `p301: the upgrade page still renders for a finished competition (got ${upgradeEnded.status})`,
+    upgradeEnded.status === 200,
+  );
+  check(
+    "p301: upgrade page marks the pass ENDED once its competition finished",
+    renderedAttr(upgradeEnded.body, "data-pass-ended"),
+  );
+  check(
+    "p301: upgrade page drops the ACTIVE marker once its competition finished",
+    !renderedAttr(upgradeEnded.body, "data-pass-active"),
+  );
+
+  const dashboardEnded = await html(buyer, `/o/${orgRow.slug}`);
+  check(
+    "p301: dashboard card seal shows ENDED once its competition finished",
+    dashboardEnded.status === 200 && renderedAttr(dashboardEnded.body, "data-pass-ended"),
+  );
+  check(
+    "p301: dashboard card seal drops the HELD marker once its competition finished",
+    !renderedAttr(dashboardEnded.body, "data-pass-held"),
+  );
+
+  const billingEnded = await html(buyer, `/o/${orgRow.slug}/settings/billing`);
+  check(
+    "p301: billing page marks the purchase ended and does not re-offer that competition",
+    billingEnded.status === 200 &&
+      billingEnded.body.includes('data-pass-status="ended"') &&
+      !billingEnded.body.includes(`href="/o/${orgRow.slug}/c/${compA.slug}/upgrade"`),
+  );
+
+  const rebuyEnded = await raw(buyer, "/api/billing/pass-checkout", "POST", {
+    competition_id: compA.id,
+  });
+  check(
+    "p301: re-buying an ENDED pass still 400s, with the sentence that is true in both states",
+    rebuyEnded.status === 400 &&
+      typeof rebuyEnded.json.error === "string" &&
+      /on file/i.test(rebuyEnded.json.error),
   );
 }
 

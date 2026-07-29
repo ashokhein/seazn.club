@@ -41,6 +41,21 @@ Your **brand colour** on public pages stays a Pro feature — the pass carries y
 
 Charging entry fees, your org logo and plain PDF/XLSX exports need no pass at all — they're free on Community.
 
+## When a pass stops applying
+
+A pass lifts your plan **while its competition is running**, and stops once that competition is over. Two things end it:
+
+- You mark the competition **completed or archived**, or
+- its **end date passed more than 7 days ago** — a grace week, so a competition that overruns its planned end still keeps its pass through the finals.
+
+Nothing is deleted, and nothing is taken back. The competition stays fully readable, every entrant, result and document stays where it is, and the purchase stays on your billing page with its invoice. What switches off are the running lifts: the entrant and division headroom drops back to your plan's limits, branded exports go back to plain tables, and the realtime board and sponsor tools stop. It is the same fallback as a downgrade, scoped to that one finished event.
+
+**One thing does not switch back: the platform fee.** If that competition has already taken a paid card entry, the platform fee stays locked at what the first paid card entry was charged — the same rule that applies when a pass is refunded. A competition with no paid card entry yet follows your plan's rate.
+
+The app says so everywhere it mentions the pass: the **Event Pass M active** (or **L active**) marker becomes **Event Pass ended**, names which of the two reasons above applied, and offers the two things that are actually still available — **Create next year's edition**, and **Go Pro** if you are running events often enough that the monthly plan fits better. The pass is never offered for sale again on that competition, because it cannot be bought twice.
+
+**Renaming a competition does not need a new pass** — the pass is bound to the competition itself, not its name, so you can rename this year's event freely and its pass rides along. A **brand-new competition needs its own pass, even if it has the same name**: finishing this year's championship and creating next year's is a new event, so it is a new purchase. Creating a fresh competition never copies last year's pass onto it — starting from scratch is exactly that.
+
 ## When it fits
 
 The annual club championship, a one-off fundraiser, a school sports day: events that deserve the full kit for two weekends a year. If you run events most months, Pro costs less.
@@ -84,6 +99,6 @@ When that happens the event stays fully **readable** — nothing you built is de
 
 **Where do I buy one?** Wherever the competition is: open it and the **Event Pass — from $29 one-time** link sits above its name, on the overview and on its settings page. From the competition list, it's in the **⋯** menu on the card. Your [billing page](/o/settings/billing) lists the same link for each competition you could still pass, under **Event Pass** below the usage meter. All four go to the same one-page checkout, where you choose M or L before paying.
 
-Once a competition holds a pass, those links are replaced by an **Event Pass active** marker — there's nothing left to buy for that event. On a paid plan they don't appear at all, because your plan already grants more.
+Once a competition holds a pass, those links are replaced by an **Event Pass M active** or **Event Pass L active** marker, naming the size you bought — there's nothing left to buy for that event. On a paid plan they don't appear at all, because your plan already covers every Event Pass feature. Once that competition is over the marker becomes **Event Pass ended** and points you at next year's edition instead — see [when a pass stops applying](#when-a-pass-stops-applying).
 
-**What does the competition's upgrade page show me?** Whatever is true for that competition. Before you buy: both sizes with their prices and their limits, so you can pick one, and a table of what changes — divisions, entrants per division, the platform fee and the organiser extras — read straight from the live plan limits, so the numbers on it are the numbers we actually enforce. If you're not the owner, the same page without a checkout, so you know what to ask for. After you buy: the date you bought it and a link to the **receipt**, plus the Pro step and what a pass credits toward it. If you're on a paid plan it shows your plan against Free and offers no pass at all — buying one would give you less than you hold.
+**What does the competition's upgrade page show me?** Whatever is true for that competition. Before you buy: both sizes with their prices and their limits, so you can pick one, and a table of what changes — divisions, entrants per division, the platform fee and the organiser extras — read straight from the live plan limits, so the numbers on it are the numbers we actually enforce. If you're not the owner, the same page without a checkout, so you know what to ask for. After you buy: the date you bought it and a link to the **receipt**, plus the Pro step and what a pass credits toward it. Once the competition is over: the same date and receipt — the purchase does not disappear — under an **Event Pass ended** marker that says which of the two reasons applied, with next year's edition offered alongside Pro. If you're on a paid plan it shows your plan against Free and offers no pass at all — your plan already covers every Event Pass feature.

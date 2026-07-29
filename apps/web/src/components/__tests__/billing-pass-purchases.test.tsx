@@ -12,7 +12,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BillingPassPurchases } from "@/components/billing-pass-purchases";
-import { PASS_RUNG_NAME_KEY } from "@/lib/pass-ladder";
+import { PASS_RUNG_NAME_KEY, passActiveLabel } from "@/lib/pass-ladder";
 import { PASS_KEYS, type PassKey } from "@/lib/currency";
 import { t } from "@/lib/i18n-runtime";
 import enUi from "@/dictionaries/en/ui.json";
@@ -101,5 +101,82 @@ describe("BillingPassPurchases", () => {
 
   it("renders nothing when the org holds no pass", () => {
     expect(render([])).toBe("");
+  });
+});
+
+describe("BillingPassPurchases — Active/Ended badge (v17 gap #301)", () => {
+  // `getPassPurchases` has computed `row.ended` correctly since SPEC-4
+  // (billing-manage.ts:425, via `isPassLocked`) and NOTHING rendered it. So the
+  // one page that lists what an org has bought showed a pass whose competition
+  // finished last season identically to one still lifting limits today — on the
+  // screen where someone is deciding whether to spend more.
+  const ACTIVE_M = passActiveLabel(enUi, "event_pass");
+  const ACTIVE_L = passActiveLabel(enUi, "event_pass_l");
+  const ENDED = t(enUi, "pass.entry.ended");
+
+  it("marks a still-applying pass active", () => {
+    const html = render([row({ ended: false })]);
+    expect(html).toContain(ACTIVE_M);
+    expect(html).not.toContain(ENDED);
+  });
+
+  it("marks a locked pass ended, not active", () => {
+    const html = render([row({ ended: true })]);
+    expect(html).toContain(ENDED);
+    expect(html).not.toContain(ACTIVE_M);
+  });
+
+  it("carries a stable per-row status hook distinguishing the two", () => {
+    expect(render([row({ ended: false })])).toContain('data-pass-status="active"');
+    expect(render([row({ ended: true })])).toContain('data-pass-status="ended"');
+  });
+
+  it("badges each row independently — one ended pass does not tar the others", () => {
+    // The real shape of this list: an org accumulates passes season after
+    // season, so a MIXED list is the ordinary case, not the edge one.
+    const html = render([
+      row({ competitionId: "c1", competitionName: "Summer League", ended: true }),
+      row({
+        competitionId: "c2",
+        competitionName: "Winter Cup",
+        competitionSlug: "winter-cup",
+        ended: false,
+      }),
+    ]);
+    expect(html).toContain('data-pass-status="ended"');
+    expect(html).toContain('data-pass-status="active"');
+    expect(html).toContain("Summer League");
+    expect(html).toContain("Winter Cup");
+  });
+
+  it("names the RUNG on the active badge, so L is not badged as M", () => {
+    // #294's rule applied to this badge too: a flat "Event Pass active" tells a
+    // $59 buyer they hold the $29 product.
+    const l = render([row({ passKey: "event_pass_l", ended: false })]);
+    expect(l).toContain(ACTIVE_L);
+    expect(l).not.toContain(ACTIVE_M);
+  });
+
+  it("leaves no un-substituted placeholder in the badge", () => {
+    // `pass.entry.active` is "{rung} active". Read through `t()` directly —
+    // which is what this task's brief specified — it renders that brace to a
+    // customer. `passActiveLabel` is the reason it cannot.
+    for (const ended of [false, true]) {
+      expect(render([row({ ended })])).not.toContain("{rung}");
+    }
+  });
+
+  it("keeps the rung line and the date beside the badge", () => {
+    const html = render([row({ ended: true })]);
+    expect(html).toContain('data-pass-rung="event_pass"');
+    // Formatted the way the component formats it rather than re-typed: the
+    // literal depends on the ICU locale data, so a hardcoded "5 May 2026" is a
+    // test that fails on the runtime rather than on the code.
+    const shown = new Date("2026-05-05T09:00:00.000Z").toLocaleDateString("en", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+    expect(html).toContain(shown);
   });
 });

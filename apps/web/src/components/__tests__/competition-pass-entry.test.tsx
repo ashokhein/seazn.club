@@ -6,7 +6,7 @@
 // could only discover the pass by first being blocked by a limit, which is the
 // worst possible moment to meet a price.
 //
-// The two failures this must NOT reintroduce, both already paid for once:
+// The THREE failures this must NOT reintroduce, all three already paid for once:
 //
 //   paid_plan → the pass grants strictly LESS than any paid plan: Pro's matrix
 //               is a superset of it at every key the pass lifts. Offering it
@@ -15,6 +15,13 @@
 //   held      → never re-sell a pass the org already owns. Presence is ROW
 //               EXISTENCE, never payment: a staff-granted pass carries a null
 //               `stripe_payment_intent` and is fully active.
+//   ended     → a pass whose competition finished, or ran past its end date plus
+//               grace, has STOPPED applying (SPEC-4 §7): the resolver is back on
+//               Community caps for it. Saying "Event Pass M active" there was the
+//               literal v17 gap #301 P1 defect — and, once `usePassGateState()`
+//               learned the state, saying nothing at all would drop the org
+//               straight onto the BUY link for a pass it already owns and can
+//               never repurchase. Both lies are asserted against below.
 //
 // Rendered through react-dom/server, like competition-pass-provider.test.tsx:
 // the suite runs in the node environment and this island has no effects.
@@ -22,8 +29,12 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CompetitionPassProvider } from "@/components/competition-pass-provider";
 import { CompetitionPassEntry } from "@/components/competition-pass-entry";
-import { passActiveLabels } from "@/lib/pass-ladder";
+import { passActiveLabels, passEndedReasons } from "@/lib/pass-ladder";
+import { t } from "@/lib/i18n-runtime";
 import type { PassKey } from "@/lib/currency";
+// Type-only: `@/lib/entitlements` is a server module (postgres + ioredis) and a
+// VALUE import of it would drag both into this suite for the sake of a union.
+import type { PassLockReason } from "@/lib/entitlements";
 import uiEn from "@/dictionaries/en/ui.json";
 
 const HREF = "/o/riverside/c/summer-league/upgrade";
@@ -34,21 +45,62 @@ const BUY = "Event Pass — from $29 one-time";
 // rather than a literal here going quietly stale.
 const ACTIVE_LABELS = passActiveLabels(uiEn);
 const ACTIVE = ACTIVE_LABELS.event_pass;
+// Same reasoning as ACTIVE_LABELS: built the way the pages build them, so the
+// approved dictionary wording reaches this file instead of a literal here going
+// stale the first time the sentence is corrected.
+const ENDED = t(uiEn, "pass.entry.ended");
+const ENDED_REASONS = passEndedReasons(uiEn);
+const NEXT_EDITION_HREF = "/o/riverside/c/new";
+const NEXT_EDITION = t(uiEn, "pass.entry.ended.nextEdition");
+const GO_PRO_HREF = "/o/riverside/settings/billing";
+const GO_PRO = t(uiEn, "upgrade.proCard.cta");
+
+/**
+ * The rendered markup, with react-dom's text-node escaping undone.
+ *
+ * Every assertion in this file is about COPY or about markup STRUCTURE, never
+ * about encoding — and an apostrophe is enough to break both directions of
+ * that. "Create next year's edition" arrives as `year&#x27;s`, which fails a
+ * positive `toContain` loudly and, far worse, makes a NEGATIVE one pass
+ * vacuously. Two of the four locales' new strings carry apostrophes
+ * (fr "l'année", "n'est"), so this is not a one-string workaround.
+ */
+const decode = (html: string) =>
+  html
+    .replace(/&#x27;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
 
 function render({
   passKey = null,
   paidPlan = false,
+  lockReason = null,
   canBuy = true,
-}: { passKey?: PassKey | null; paidPlan?: boolean; canBuy?: boolean } = {}) {
-  return renderToStaticMarkup(
-    <CompetitionPassProvider passKey={passKey} paidPlan={paidPlan}>
-      <CompetitionPassEntry
-        href={HREF}
-        buyLabel={BUY}
-        activeLabels={ACTIVE_LABELS}
-        canBuy={canBuy}
-      />
-    </CompetitionPassProvider>,
+}: {
+  passKey?: PassKey | null;
+  paidPlan?: boolean;
+  lockReason?: PassLockReason | null;
+  canBuy?: boolean;
+} = {}) {
+  return decode(
+    renderToStaticMarkup(
+      <CompetitionPassProvider passKey={passKey} paidPlan={paidPlan} lockReason={lockReason}>
+        <CompetitionPassEntry
+          href={HREF}
+          buyLabel={BUY}
+          activeLabels={ACTIVE_LABELS}
+          endedLabel={ENDED}
+          endedReasons={ENDED_REASONS}
+          nextEditionHref={NEXT_EDITION_HREF}
+          nextEditionLabel={NEXT_EDITION}
+          goProHref={GO_PRO_HREF}
+          goProLabel={GO_PRO}
+          canBuy={canBuy}
+        />
+      </CompetitionPassProvider>,
+    ),
   );
 }
 
@@ -135,9 +187,126 @@ describe("CompetitionPassEntry", () => {
   it("reads 'none' — and therefore offers the pass — with no provider above it", () => {
     // Nothing should mount this outside a competition, but if something does,
     // the safe default is today's behaviour, not a crash.
-    const html = renderToStaticMarkup(
-      <CompetitionPassEntry href={HREF} buyLabel={BUY} activeLabels={ACTIVE_LABELS} canBuy />,
+    const html = decode(
+      renderToStaticMarkup(
+      <CompetitionPassEntry
+        href={HREF}
+        buyLabel={BUY}
+        activeLabels={ACTIVE_LABELS}
+        endedLabel={ENDED}
+        endedReasons={ENDED_REASONS}
+        nextEditionHref={NEXT_EDITION_HREF}
+        nextEditionLabel={NEXT_EDITION}
+        goProHref={GO_PRO_HREF}
+        goProLabel={GO_PRO}
+        canBuy
+      />,
+      ),
     );
     expect(html).toContain(BUY);
+  });
+});
+
+// ===========================================================================
+// v17 gap #301 P1 — the pass that has stopped applying.
+//
+// Two opposite lies live either side of this branch, and both have been real
+// code on this file: "Event Pass M active" over a pass the resolver stopped
+// honouring (the shipped defect), and — the moment `usePassGateState()` learned
+// to say "ended" without this component learning to render it — the BUY link,
+// offering a $29 purchase the API refuses outright (pass-checkout/route.ts
+// refuses on an existing `competition_passes` row, and that table's PK is
+// `competition_id` alone). Every case below pins one side or the other.
+// ===========================================================================
+describe("CompetitionPassEntry — ended", () => {
+  it("shows the ended signal instead of 'active' once the pass is locked", () => {
+    const html = render({ passKey: "event_pass", lockReason: "terminal" });
+    expect(html).toContain(ENDED);
+    expect(html).not.toContain(ACTIVE);
+    expect(html).not.toContain(ACTIVE_LABELS.event_pass_l);
+  });
+
+  it("never re-offers the purchase — no price, no link, no CTA hook", () => {
+    // The regression this task exists to close: `ended` falling through the
+    // `held` branch lands on the buy link, which is a dead end (the checkout
+    // route refuses) AND an implicit claim that the org does not already own it.
+    const html = render({ passKey: "event_pass", lockReason: "past_ends_on" });
+    expect(html).not.toContain("$29");
+    expect(html).not.toContain(`href="${HREF}"`);
+    expect(html).not.toContain("data-pass-cta");
+    expect(html).not.toContain("data-pass-entry");
+    expect(html).not.toContain(BUY);
+  });
+
+  it("names the terminal reason distinctly from the past-ends-on reason", () => {
+    // Collapsing the two is how an organiser whose only problem is a stale end
+    // date gets told their competition is over.
+    const terminal = render({ passKey: "event_pass", lockReason: "terminal" });
+    const pastEnds = render({ passKey: "event_pass", lockReason: "past_ends_on" });
+    expect(terminal).toContain(ENDED_REASONS.terminal);
+    expect(pastEnds).toContain(ENDED_REASONS.past_ends_on);
+    expect(terminal).not.toContain(ENDED_REASONS.past_ends_on);
+    expect(pastEnds).not.toContain(ENDED_REASONS.terminal);
+  });
+
+  // EXHAUSTIVE over the reason set, not over the two arms someone remembered.
+  // `passEndedReasons` returns a `Record<PassLockReason, string>`, so a third
+  // reason added to PASS_LOCK_REASONS appears here the day it is written — and
+  // this is the assertion that would catch it rendering nothing.
+  it.each(Object.keys(ENDED_REASONS) as PassLockReason[])(
+    "renders the ended card, with its own sentence, for lock reason %s",
+    (reason) => {
+      const html = render({ passKey: "event_pass", lockReason: reason });
+      expect(html).toContain("data-pass-ended");
+      expect(ENDED_REASONS[reason].length, `${reason} has no sentence`).toBeGreaterThan(20);
+      expect(html).toContain(ENDED_REASONS[reason]);
+      expect(html).not.toContain(`href="${HREF}"`);
+    },
+  );
+
+  it("offers a fresh next-year competition, never a copy of this one", () => {
+    // routes.competitionNew — the blank form. There is no copy-competition
+    // feature, so a link claiming to duplicate this one would be a promise the
+    // product cannot keep.
+    const html = render({ passKey: "event_pass", lockReason: "terminal" });
+    expect(html).toContain(`href="${NEXT_EDITION_HREF}"`);
+    expect(html).toContain(NEXT_EDITION);
+  });
+
+  it("offers Go Pro alongside the next-edition link", () => {
+    // The pass is gone and cannot come back for THIS competition; a plan is the
+    // only thing that lifts it now, which makes this the one honest upsell here.
+    const html = render({ passKey: "event_pass", lockReason: "terminal" });
+    expect(html).toContain(`href="${GO_PRO_HREF}"`);
+    expect(html).toContain(GO_PRO);
+  });
+
+  it("shows the ended state regardless of canBuy — a fact, not an invitation", () => {
+    const html = render({ passKey: "event_pass", lockReason: "terminal", canBuy: false });
+    expect(html).toContain(ENDED);
+    expect(html).toContain("data-pass-ended");
+  });
+
+  it("carries its own data hook, distinct from the held pill", () => {
+    const html = render({ passKey: "event_pass", lockReason: "terminal" });
+    expect(html).toContain("data-pass-ended");
+    expect(html).not.toContain("data-pass-held");
+  });
+
+  it("renders nothing for a paid org whose (dormant) pass is also locked", () => {
+    // Belt and braces: paid_plan must win even when BOTH other facts are set.
+    // A paid org is not being sold anything here and is not owed an epitaph for
+    // a pass its plan has long since exceeded.
+    expect(render({ passKey: "event_pass", paidPlan: true, lockReason: "terminal" })).toBe("");
+  });
+
+  it("still OFFERS the pass when a lock reason arrives with no pass row", () => {
+    // Precedence lives in usePassGateState (passKey before lockReason) and this
+    // is the surface half of it: an archived competition that never held a pass
+    // must read "none", not invent an ended one. Offering it is right —
+    // competitions.ts still lets a pass be bought for it.
+    const html = render({ lockReason: "terminal" });
+    expect(html).toContain(BUY);
+    expect(html).not.toContain("data-pass-ended");
   });
 });

@@ -1,7 +1,7 @@
 import Link from "@/components/ui/console-link";
 import { routes } from "@/lib/routes";
 import { asCurrency, formatMinor } from "@/lib/currency";
-import { PASS_RUNG_NAME_KEY } from "@/lib/pass-ladder";
+import { PASS_RUNG_NAME_KEY, passActiveLabel } from "@/lib/pass-ladder";
 import { t, type Dict, type Locale } from "@/lib/i18n";
 import type { PassPurchaseRow } from "@/server/usecases/billing-manage";
 
@@ -21,6 +21,12 @@ interface Props {
  * competition it bought it for. The generic invoice list below shows the same
  * money as anonymous Stripe rows; this section is the index that says which
  * event each charge was.
+ *
+ * `row.ended` (v17 gap #301) has been computed correctly by `getPassPurchases`
+ * (billing-manage.ts:425, via `isPassLocked`) since SPEC-4 — this is the first
+ * surface to actually RENDER it. Until now every row read the same whether the
+ * pass still lifted anything or not, so the one page listing what an org has
+ * bought could not tell it which of those purchases had stopped working.
  *
  * Deliberately quiet — a plain named list in the same card/eyebrow/divide-y
  * idiom as Payment methods and Invoices, because a second, louder money card
@@ -48,12 +54,27 @@ export function BillingPassPurchases({ rows, orgSlug, locale, dict, invoicesList
             className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5 text-sm"
           >
             <div className="min-w-0">
-              <Link
-                href={routes.competition(orgSlug, row.competitionSlug)}
-                className="font-medium text-slate-800 hover:underline"
-              >
-                {row.competitionName}
-              </Link>
+              <div className="flex flex-wrap items-center gap-2">
+                <Link
+                  href={routes.competition(orgSlug, row.competitionSlug)}
+                  className="font-medium text-slate-800 hover:underline"
+                >
+                  {row.competitionName}
+                </Link>
+                {/* Lime for on, slate for off — the console's own vocabulary,
+                    the same pair the dashboard seal uses. The active label
+                    NAMES the rung (`passActiveLabel`, not a bare
+                    `t(dict, "pass.entry.active")`, which is "{rung} active"
+                    and would render that brace to a customer). */}
+                <span
+                  data-pass-status={row.ended ? "ended" : "active"}
+                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wide ${
+                    row.ended ? "bg-slate-100 text-slate-500" : "bg-lime-100 text-lime-800"
+                  }`}
+                >
+                  {row.ended ? t(dict, "pass.entry.ended") : passActiveLabel(dict, row.passKey)}
+                </span>
+              </div>
               <p className="text-xs text-slate-500">
                 {/* WHICH pass, first (v17 #294). Two rungs sell at different
                     prices and the amount beside it cannot stand in for the

@@ -13,6 +13,7 @@
 // here, comparing the two.
 import { describe, expect, it } from "vitest";
 import {
+  PASS_LOCK_REASON_KEY,
   PASS_RUNG_NAME_KEY,
   PASS_RUNG_SIZE_KEY,
   lowestPassRung,
@@ -20,8 +21,10 @@ import {
   passActiveLabel,
   passActiveLabels,
   passCheckoutErrorKey,
+  passEndedReasons,
   passLadderOptions,
 } from "../pass-ladder";
+import { PASS_LOCK_REASONS } from "@/lib/entitlements";
 import { PASS_KEYS, SUPPORTED_CURRENCIES, passPrice } from "@/lib/currency";
 import uiEn from "@/dictionaries/en/ui.json";
 
@@ -208,5 +211,61 @@ describe("passCheckoutErrorKey", () => {
     for (const status of [500, 502, 504, null]) {
       expect(passCheckoutErrorKey(status)).toBe("upgrade.buyError.generic");
     }
+  });
+});
+
+describe("PASS_LOCK_REASON_KEY / passEndedReasons", () => {
+  const dict = uiEn;
+
+  // W8 task 3 review, I-1. Every other assertion about these two sentences was
+  // built FROM `passEndedReasons()` or FROM the Record — so swapping the
+  // Record's two arms left the whole suite green, and the card would have told
+  // an organiser whose competition merely ran past its end date that it was
+  // "finished or archived", and told one whose competition had finished to go
+  // and update the end date. The mapping is the thing most worth pinning and
+  // was the one thing nothing pinned.
+  //
+  // Broken here by asserting against MEANING rather than against the mapping:
+  // each reason's sentence has to talk about the situation that reason names.
+  // A test that re-typed today's English would drift the first time the copy is
+  // reworded; these two probes are about subject matter, not wording.
+  it("points each reason at a sentence about that reason", () => {
+    const terminal = passEndedReasons(dict).terminal;
+    const pastEnds = passEndedReasons(dict).past_ends_on;
+
+    // A finished/archived competition. Its next step is next season, NOT a date
+    // edit — so the terminal sentence must not send anyone to the end date.
+    expect(terminal).toMatch(/finished|archived/i);
+    expect(terminal).not.toMatch(/end date/i);
+
+    // A competition that merely ran past `ends_on` is often still being played,
+    // and the date IS the fix. It must say so, and must not declare the
+    // competition over.
+    expect(pastEnds).toMatch(/end date/i);
+    expect(pastEnds).not.toMatch(/finished|archived/i);
+  });
+
+  it("pins the two dictionary keys themselves", () => {
+    // The literal keys, so a swap inside the Record is a diff in this file
+    // rather than a silent re-pointing. Cheap, and it fails loudly in exactly
+    // the case the review found.
+    expect(PASS_LOCK_REASON_KEY).toEqual({
+      terminal: "pass.entry.ended.reasonTerminal",
+      past_ends_on: "pass.entry.ended.reasonPastEnds",
+    });
+  });
+
+  it("covers every reason the resolver can return, with distinct real copy", () => {
+    const reasons = passEndedReasons(dict);
+    expect(Object.keys(reasons).sort()).toEqual([...PASS_LOCK_REASONS].sort());
+    const sentences = Object.values(reasons);
+    // Non-empty and non-identical: a missing dictionary key resolves to the key
+    // name or to "", and two reasons sharing one sentence is the collapse the
+    // separate arms exist to prevent.
+    for (const s of sentences) {
+      expect(s.length).toBeGreaterThan(20);
+      expect(s).not.toMatch(/^pass\./);
+    }
+    expect(new Set(sentences).size).toBe(sentences.length);
   });
 });

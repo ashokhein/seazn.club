@@ -30,8 +30,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactNode } from "react";
 import { CompetitionPassProvider } from "@/components/competition-pass-provider";
 import { PASS_FEATURES, UpgradeGate } from "@/components/upgrade-gate";
-import { formatMinor, passPrice, type Currency, type PassKey } from "@/lib/currency";
-import { lowestPassRung, passActiveLabel } from "@/lib/pass-ladder";
+import { formatMinor, passPrice, proPrice, type Currency, type PassKey } from "@/lib/currency";
+import { lowestPassRung, passActiveLabel, PASS_LOCK_REASON_KEY } from "@/lib/pass-ladder";
+// Type-only: `@/lib/entitlements` is a server module, and this file renders
+// client components. The value side of it must never reach this bundle.
+import type { PassLockReason } from "@/lib/entitlements";
 import { DictProvider } from "@/components/i18n/dict-provider";
 import { t } from "@/lib/i18n-runtime";
 import uiEn from "@/dictionaries/en/ui.json";
@@ -72,17 +75,24 @@ function render(
     passKey = null,
     paidPlan = false,
     currency = "usd",
-    provider = passKey !== null || paidPlan,
+    lockReason = null,
+    provider = passKey !== null || paidPlan || lockReason !== null,
   }: {
     passKey?: PassKey | null;
     paidPlan?: boolean;
     currency?: Currency;
+    lockReason?: PassLockReason | null;
     provider?: boolean;
   } = {},
 ) {
   return renderToStaticMarkup(
     provider ? (
-      <CompetitionPassProvider passKey={passKey} paidPlan={paidPlan} currency={currency}>
+      <CompetitionPassProvider
+        passKey={passKey}
+        paidPlan={paidPlan}
+        currency={currency}
+        lockReason={lockReason}
+      >
         {node}
       </CompetitionPassProvider>
     ) : (
@@ -302,6 +312,147 @@ describe("UpgradeGate — pass held (D1: never re-sell a pass the org holds)", (
       passKey: "event_pass",
     });
     expect(html).toContain('href="/settings/billing#plans"');
+  });
+});
+
+describe("UpgradeGate — pass ended (v17 gap #301: a locked pass is not 'active')", () => {
+  // The row still exists, so `usePassActive()` is true and every pre-#301
+  // surface read that as "the pass is on". The resolver disagrees: once
+  // `passLockReason` returns a reason, org_has_feature has already dropped back
+  // to Community caps for this competition. This gate was therefore telling a
+  // blocked org that its pass was ACTIVE and that it had "used everything the
+  // Event Pass includes here" — two false statements about money, on the one
+  // screen where the org is deciding whether to spend more.
+  const dictEn = uiEn as unknown as Dict;
+  const ended = (reason: PassLockReason) => ({ passKey: "event_pass" as PassKey, lockReason: reason });
+
+  it("does not say the pass is active, or that everything on it was used up", () => {
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, ended("terminal"));
+    expect(html).not.toContain(passActiveLabel(dictEn, "event_pass"));
+    expect(html).not.toContain(passActiveLabel(dictEn, "event_pass_l"));
+    expect(html).not.toMatch(/used everything the Event Pass includes/i);
+    expect(html).toContain("data-pass-ended");
+    expect(html).not.toContain("data-pass-owned");
+  });
+
+  it("never re-offers the pass once ended, same as held", () => {
+    // Decision #248 Q4: one pass per competition, forever. There is no second
+    // sale to make here, so a price or a checkout link would be an offer the
+    // product cannot honour.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, ended("past_ends_on"));
+    expect(html).not.toContain(UPGRADE_HREF);
+    expect(html).not.toContain(PASS_PRICE);
+    expect(html).not.toContain(FLOOR_USD);
+    expect(html).not.toContain("data-pass-gate");
+    expect(html).not.toContain("data-pass-cta");
+  });
+
+  it("still sends the reader to Pro — the only real path left", () => {
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, ended("terminal"));
+    expect(html).toContain("/settings/billing");
+  });
+
+  it("names the terminal reason distinctly from past-ends-on", () => {
+    // Both arms, against the dictionary rather than a re-typed English
+    // sentence: this then catches a hardcoded literal, a typo'd key, AND a
+    // wording change, where a copy of today's copy would catch only the last.
+    // A card that hardcodes either arm fails the opposite assertion.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const terminalCopy = t(dictEn, PASS_LOCK_REASON_KEY.terminal);
+    const pastEndsCopy = t(dictEn, PASS_LOCK_REASON_KEY.past_ends_on);
+    expect(terminalCopy).not.toEqual(pastEndsCopy);
+
+    const terminal = render(<UpgradeGate feature={LIFTABLE} />, ended("terminal"));
+    expect(terminal).toContain(terminalCopy);
+    expect(terminal).not.toContain(pastEndsCopy);
+
+    const pastEnds = render(<UpgradeGate feature={LIFTABLE} />, ended("past_ends_on"));
+    expect(pastEnds).toContain(pastEndsCopy);
+    expect(pastEnds).not.toContain(terminalCopy);
+  });
+
+  it("reads both reasons through the shared Record, so a new one cannot go unhandled", () => {
+    // The guard against the `=== "terminal" ? … : …` shape the first draft of
+    // this card used: that ternary keeps compiling when a third reason joins
+    // PASS_LOCK_REASONS and quietly renders the past-ends-on sentence for it.
+    // Iterating the exported key set means every reason must produce its own
+    // sentence, and a reason added upstream without copy fails here.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const seen = new Set<string>();
+    for (const reason of Object.keys(PASS_LOCK_REASON_KEY) as PassLockReason[]) {
+      const html = render(<UpgradeGate feature={LIFTABLE} />, ended(reason));
+      const copy = t(dictEn, PASS_LOCK_REASON_KEY[reason]);
+      expect(html).toContain(copy);
+      expect(copy).not.toEqual("");
+      seen.add(copy);
+    }
+    expect(seen.size).toBe(Object.keys(PASS_LOCK_REASON_KEY).length);
+  });
+
+  it("does not wear the console's 'this is on' eyebrow", () => {
+    // .app-eyebrow is the floodlit lime-tick treatment the pass-HELD card
+    // earns. On this card it would contradict the sentence beneath it, and a
+    // reader scanning for state reads the badge before the prose.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, ended("terminal"));
+    expect(html).not.toContain("app-eyebrow");
+  });
+
+  it("marks the compact pill too, without changing its state-agnostic copy", () => {
+    pathname = "/o/riverside/c/summer-league/d/main/schedule";
+    const html = render(<UpgradeGate feature={LIFTABLE} compact />, ended("terminal"));
+    expect(html).toContain("data-pass-ended");
+    expect(html).toContain('href="/settings/billing"');
+    expect(html).not.toContain(UPGRADE_HREF);
+  });
+
+  it("says the same for a feature the pass never lifted", () => {
+    // The ended card explains the PASS's state, not the feature's, so it does
+    // not branch on liftability the way the owned card does.
+    pathname = "/o/riverside/c/summer-league/schedule";
+    const html = render(<UpgradeGate feature={NOT_LIFTABLE} />, ended("terminal"));
+    expect(html).toContain("data-pass-ended");
+    expect(html).toContain(t(dictEn, PASS_LOCK_REASON_KEY.terminal));
+  });
+
+  it("paid_plan still beats an ended pass", () => {
+    // usePassGateState decides precedence once. A paid org's gate was closed by
+    // its PLAN, so explaining it with a dead pass would name the wrong limit.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, {
+      passKey: "event_pass",
+      paidPlan: true,
+      lockReason: "terminal",
+    });
+    expect(html).not.toContain("data-pass-ended");
+    expect(html).not.toContain("data-pass-owned");
+    expect(html).toContain("See plans &amp; upgrade");
+  });
+
+  it("stays 'none' when a lock reason arrives with no pass row", () => {
+    // The provider checks passKey before lockReason precisely so a stray reason
+    // cannot invent an ended pass for a competition that never had one — that
+    // org must still be offered the pass it can genuinely buy.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, { lockReason: "terminal" });
+    expect(html).not.toContain("data-pass-ended");
+    expect(html).toContain("data-pass-gate");
+    expect(html).toContain(`href="${UPGRADE_HREF}"`);
+  });
+
+  it("quotes the Pro price in the org's own currency, not hardcoded usd", () => {
+    // Same rule #294 established for the cards either side of this one: every
+    // amount on a card uses the currency the org is actually charged in.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, {
+      ...ended("terminal"),
+      currency: "gbp",
+    });
+    expect(html).toContain(formatMinor(proPrice("monthly", "gbp"), "gbp"));
+    expect(html).not.toContain(formatMinor(proPrice("monthly", "usd"), "usd"));
   });
 });
 
