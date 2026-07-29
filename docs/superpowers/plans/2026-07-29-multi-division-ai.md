@@ -25,6 +25,11 @@ Copy these values verbatim. Every task's requirements implicitly include this se
 - **i18n:** dictionaries are FLAT dotted-key JSON at `apps/web/src/dictionaries/{en,es,fr,nl}/ui.json`. Every new user-facing string goes into all four locales with the same key set. Then run `npm run i18n:gen-keys` and `npm run i18n:check` from the repo root. CI fails on drift.
 - **Every UI surface must be 375px-clean:** no horizontal page scroll; wide tables in an `overflow-x: auto` container.
 - **TDD is mandatory.** Write the failing test, run it, watch it fail for the right reason, then implement. Every change ships a test that fails without it.
+- **Three ways a "failing" test lies, all hit during execution — check for each:**
+  1. **A fresh `toMatchSnapshot()` always passes its own red step.** On a not-yet-existing value it writes `` = `undefined` `` into the `.snap` and matches it. Delete that entry before implementing, or the snapshot pins nothing. (Task 2.)
+  2. **A test that restates the implementation's own predicate can only catch one direction of error.** Task 1's obstacle test asserted "no obstacle shares `(court, start)` with any selected movable" — the implementation's filter, restated. It caught under-removal, never over-removal, and it actively blocked the correct fix. Assert the *domain* property instead.
+  3. **A test can stop being able to fail for the reason its title names.** Task 1's cap-ordering test was made vacuous by a later change that moved the check earlier — it still passed, now for a different reason, and read as coverage. When you move a guard, re-check the tests that named it.
+- **When a test's assertion could be satisfied by more than one constraint, neutralise the others.** Task 1's cross-person test only proves the person block because the two divisions sit on different courts with zero rest and no blackouts — otherwise a court clash would produce the same pass.
 - **Verification commands** (run from `/Users/ashokhein/github/seazn-wt-359`):
   ```bash
   npm run typecheck --workspace apps/web
