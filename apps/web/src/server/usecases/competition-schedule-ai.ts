@@ -923,6 +923,27 @@ export function verifyConfigFor(
   };
 }
 
+/** The joint pipeline's conflict partition: `warnings` is the EXACT complement
+ *  of `blocking`, never a narrower selection.
+ *
+ *  Extracted and exported only so a test can pin that, because it is the one
+ *  place R13 can be broken silently. This partition feeds two things at once —
+ *  `planIsAcceptable`'s escalation numerator, and the `warnings` the response
+ *  carries — so a filter added here drops a whole conflict class from BOTH the
+ *  ladder's quality signal and the organiser's review, with every joint suite
+ *  still green. R13 exists because a cross-division person double-book is a
+ *  warning that no automated gate catches: the organiser reading the proposal
+ *  is the last line of defence, and this is where they stop being able to. */
+export function partitionConflicts(conflicts: readonly Conflict[]): {
+  blocking: Conflict[];
+  warnings: Conflict[];
+} {
+  return {
+    blocking: conflicts.filter(isBlocking),
+    warnings: conflicts.filter((c) => !isBlocking(c)),
+  };
+}
+
 /**
  * Verify a joint proposal: one `validateAssignments` pass per division, each
  * with that division's own config, each over the whole board.
@@ -1275,8 +1296,7 @@ export async function runCompetitionAiPlan(
     }
 
     const conflicts = verifyJoint(plan!, pack);
-    const blocking = conflicts.filter(isBlocking);
-    const warnings = conflicts.filter((c) => !isBlocking(c));
+    const { blocking, warnings } = partitionConflicts(conflicts);
 
     if (best === null || blocking.length <= best.blocking.length) {
       best = { plan: plan!, blocking, warnings };

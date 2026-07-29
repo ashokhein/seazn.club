@@ -22,6 +22,7 @@ import { describe, expect, it } from "vitest";
 import {
   jointFeedDependencies,
   jointStructuralCheck,
+  partitionConflicts,
   toJointEngineAssignments,
   toJointObstacleAssignments,
   verifyConfigFor,
@@ -881,6 +882,12 @@ describe("verifyConfigFor (#350)", () => {
     expect(conflicts.some(isBlocking)).toBe(false);
     // (2) and still in the escalation numerator.
     expect(planIsAcceptable({ blocking: [], warnings: conflicts }, 1)).toBe(true);
+    // (3) and the PIPELINE's own partition is what puts it there. (1) and (2)
+    //     hand `planIsAcceptable` a list, so they prove the ratio counts what it
+    //     is GIVEN — never what BUILDS it. Without this, a filter added at the
+    //     partition site drops the class from the numerator AND from the R13
+    //     "warnings in full" response, with every joint suite still green.
+    expect(partitionConflicts(conflicts)).toEqual({ blocking: [], warnings: conflicts });
     process.env.SCHEDULING_AI_ESCALATE_WARN_RATIO = "0";
     try {
       expect(planIsAcceptable({ blocking: [], warnings: conflicts }, 1)).toBe(false);
