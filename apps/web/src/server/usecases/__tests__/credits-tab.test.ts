@@ -8,9 +8,11 @@ import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import {
   grantMonthly,
+  grantMonthlyForAllWallets,
   mergeWalletOnAttach,
   recordEarnGrant,
   recordPackPurchase,
+  release,
   reserve,
   settle,
   walletIdFor,
@@ -111,6 +113,61 @@ describe.skipIf(!HAS_DB)("getCreditsTab", () => {
     expect(view.sharedOrgCount).toBe(2);
   });
 
+  // v17 gap #318, the PLAN dimension of the same divergence #291 fixed for
+  // quantity: the tab derived its cap from the subscription's RAW `plan_key`
+  // while `grantMonthlyForAllWallets` grants on the plan `orgPlanKey`
+  // RESOLVES — which degrades a suspended / past_due-beyond-grace /
+  // expired-comp wallet to Community. The org was granted 10 and told 60.
+  // `grantUsed` is clamped by `Math.min(grantCap, ...)`, so the lie could
+  // never show up as a meter over 100%: it showed up as a cap the wallet
+  // never had. The sweep is run here rather than assumed, so this asserts a
+  // real disagreement between two live derives.
+  it("REGRESSION (#318): a past_due-beyond-grace Pro wallet shows the Community cap the sweep actually grants", async () => {
+    const { auth } = await seedOrg("pro");
+    const groupId = (await orgGroupId(auth.orgId))!;
+    // A REAL degradation path, not a hand-written inconsistent row: dunning
+    // has run past orgPlanKey's 14-day past_due grace (anchored on the
+    // status TRANSITION), so every resolved read for this wallet — the
+    // sweep's included — is already Community.
+    await sql`
+      update subscriptions
+         set status = 'past_due', status_changed_at = now() - interval '20 days'
+       where id = ${groupId}`;
+
+    const walletId = await walletIdFor(auth.orgId);
+    const swept = await grantMonthlyForAllWallets({ walletIds: [walletId] });
+    expect(swept.granted).toBe(10); // what the wallet ACTUALLY got
+
+    const view = await getCreditsTab(auth.orgId);
+    expect(view.grantCap).toBe(10); // NOT 60 — the raw plan_key still reads 'pro'
+  });
+
+  // The other side of #318, and the reason the fix resolves the plan on the
+  // group's REPRESENTATIVE org rather than on the viewing org: the sweep
+  // picks the oldest live non-suspended org to answer for the whole wallet,
+  // precisely so one moderation-suspended member cannot degrade the pool its
+  // siblings are paying for. Resolving `orgPlanKey(orgId)` on the viewing org
+  // would have swapped #318's overstatement for an equal and opposite
+  // UNDERstatement on this shape. Passes before and after the fix by design —
+  // it is the guard on the fix, not its red.
+  it("#318 guard: a suspended member org still shows the group's Pro cap, resolved on the representative org", async () => {
+    const { auth: payer } = await seedOrg("pro");
+    const groupId = (await orgGroupId(payer.orgId))!;
+
+    const { auth: member } = await seedOrg("community");
+    await sql`
+      update organizations set subscription_id = ${groupId}, status = 'suspended'
+       where id = ${member.orgId}`;
+
+    const walletId = await walletIdFor(member.orgId);
+    const swept = await grantMonthlyForAllWallets({ walletIds: [walletId] });
+    expect(swept.granted).toBe(60); // the group is still Pro; the pool is unharmed
+
+    const view = await getCreditsTab(member.orgId);
+    expect(view.grantCap).toBe(60); // NOT 10 — moderation is per-org, the wallet is the group's
+    expect(view.sharedOrgCount).toBe(2);
+  });
+
   it("REGRESSION (#292): the used-this-month meter excludes a hold recorded 30 minutes before the UTC month boundary", async (ctx) => {
     const [{ tz }] = await sql<{ tz: string }[]>`select current_setting('TimeZone') as tz`;
     // getCreditsTab has no tx to force a TZ on (see this task's Testability
@@ -144,6 +201,29 @@ describe.skipIf(!HAS_DB)("getCreditsTab", () => {
     const view = await getCreditsTab(auth.orgId);
 
     expect(view.grantUsed).toBe(0); // must NOT count toward the current UTC month
+  });
+
+  // v17 gap #319: `release()` writes a compensating `source='refund'` row
+  // linked to the hold by `ref`, and `spentThisPeriodByOrg` (credits.ts) nets
+  // it — so the operator allocation cap correctly gives a failed run's
+  // allowance back. This meter summed GROSS `run_spend` three lines away from
+  // that derive, so the same failed run read as "used this month" here for
+  // the rest of the month. Two derives of one quantity, disagreeing.
+  it("REGRESSION (#319): the used-this-month meter nets a released run's refund, and still counts a settled one", async () => {
+    const { auth } = await seedOrg("pro");
+    const walletId = await walletIdFor(auth.orgId);
+    await grantMonthly(walletId, "pro", 1);
+
+    // A run that genuinely happened — must stay counted.
+    const settled = await reserve(walletId, auth.orgId, 1);
+    await settle(settled, randomUUID());
+    // A run that failed before settling — release() hands the credits back.
+    const failed = await reserve(walletId, auth.orgId, 3);
+    expect(await release(failed)).toBe(3);
+
+    const view = await getCreditsTab(auth.orgId);
+    expect(view.grantUsed).toBe(1); // NOT 4 — the released run was refunded
+    expect(view.balance).toBe(59); // and the ledger already agrees
   });
 
   // v17 gap #285: credits that arrive because the org joined a billing group

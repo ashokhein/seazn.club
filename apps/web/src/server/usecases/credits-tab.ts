@@ -1,6 +1,7 @@
 import "server-only";
 import { sql } from "@/lib/db";
 import { balance, packBalance, utcMonthStart, walletIdFor } from "@/lib/credits";
+import { orgPlanKey } from "@/lib/entitlements";
 import { getOrCreateReferralCode } from "@/lib/referral";
 
 /**
@@ -40,15 +41,20 @@ export interface CreditHistoryRow {
 export interface CreditsTabView {
   /** Pooled balance = `sum(ledger.delta)` (grant + pack). */
   balance: number;
-  /** Grant credits consumed this period = this month's grant-bucket `run_spend`,
-   *  clamped to [0, grantCap]. NOT `grantCap − grantBalance`: a never-granted org
-   *  has grantBalance 0 yet has used nothing, which that formula would misreport as
+  /** Grant credits consumed this period = this month's grant-bucket `run_spend`
+   *  NET of the refunds released against those holds (#319), clamped to
+   *  [0, grantCap]. NOT `grantCap − grantBalance`: a never-granted org has
+   *  grantBalance 0 yet has used nothing, which that formula would misreport as
    *  a full meter. */
   grantUsed: number;
-  /** This period's monthly grant = `ai.credits.monthly(plan) * quantity`, where
-   *  quantity is what `grantMonthlyForAllWallets` grants on: 1 for Community
-   *  (flat, never seat-scaled — SPEC-2 §11.2), `max(quantityPaid, live orgs)`
-   *  while the sub is TRIALING (#291), else `quantityPaid`. */
+  /** This period's monthly grant = `ai.credits.monthly(plan) * quantity`, both
+   *  factors taken from `grantMonthlyForAllWallets`'s own rule so the tab can
+   *  never quote a cap the sweep will not grant. PLAN is `orgPlanKey`'s
+   *  RESOLVED answer for the group's representative org, not the raw
+   *  `plan_key` (#318) — a suspended / past_due-beyond-grace / expired-comp
+   *  wallet reads Community. QUANTITY is 1 for Community (flat, never
+   *  seat-scaled — SPEC-2 §11.2), `max(quantityPaid, live orgs)` while the sub
+   *  is TRIALING (#291), else `quantityPaid`. */
   grantCap: number;
   /** Whole days until the calendar-month reset `grantMonthly` anchors on. */
   grantResetsInDays: number;
@@ -165,16 +171,36 @@ export async function creditHistory(walletId: string, limit = HISTORY_LIMIT): Pr
 export async function getCreditsTab(orgId: string): Promise<CreditsTabView> {
   const walletId = await walletIdFor(orgId);
 
-  const [plan] = await sql<{ plan_key: string; quantity_paid: number; status: string | null }[]>`
-    select coalesce(s.plan_key, 'community') as plan_key,
-           coalesce(s.quantity_paid, 1) as quantity_paid,
-           s.status
+  const [plan] = await sql<{ quantity_paid: number; status: string | null; rep_org_id: string }[]>`
+    select coalesce(s.quantity_paid, 1) as quantity_paid,
+           s.status,
+           coalesce(rep.id, o.id) as rep_org_id
       from organizations o
       left join subscriptions s on s.id = o.subscription_id
+      left join lateral (
+        select r.id from organizations r
+         where r.subscription_id = s.id and r.deleted_at is null
+         order by (r.status = 'suspended'), r.created_at
+         limit 1
+      ) rep on true
      where o.id = ${orgId}`;
-  const planKey = plan?.plan_key ?? "community";
   const quantityPaid = plan?.quantity_paid ?? 1;
   const trialing = plan?.status === "trialing";
+  // #318: the PLAN the sweep will actually grant on, not the raw `s.plan_key`.
+  // `orgPlanKey` degrades a suspended / past_due-beyond-grace / expired-comp /
+  // cancelled wallet to Community, so reading the raw column told a wallet
+  // that had just been granted 10 that its cap was 60.
+  //
+  // Resolved on the group's REPRESENTATIVE org — the `rep` lateral above is
+  // `grantMonthlyForAllWallets`'s own, verbatim (oldest live org, a suspended
+  // one only if every member is suspended), and carries the same hand-sync
+  // obligation as that copy and `groupOrgLimit`'s. Resolving on the VIEWING
+  // org instead would be wrong in the opposite direction: moderation
+  // suspension is deliberately scoped to one org, so a suspended member
+  // would read a Community cap for a pool its siblings still fund at Pro.
+  // For an ungrouped org the lateral finds nothing and `coalesce` falls back
+  // to the org itself, which is also the org that answers for its own wallet.
+  const planKey = await orgPlanKey(plan?.rep_org_id ?? orgId);
 
   const [entitlement] = await sql<{ int_value: number | null }[]>`
     select int_value from plan_entitlements
@@ -198,10 +224,27 @@ export async function getCreditsTab(orgId: string): Promise<CreditsTabView> {
       // PARAMETER (#292) — `date_trunc('month', now())` truncated in the DB
       // session's TimeZone (Europe/London in prod), so a spend at 23:30 UTC on
       // the last of the month counted into the NEXT month's meter.
+      //
+      // NET of refunds (#319), by the SAME ref-correlated subquery
+      // `spentThisPeriodByOrg` (credits.ts) nets the operator allocation cap
+      // with: a failed run's `release()` writes a `source='refund'` row with
+      // `ref = hold.id` and no `spent_by_org_id`, so the only way to see it is
+      // to net each hold by the refund rows pointing AT it. Summing gross
+      // `run_spend` left a released run reading as "used this month" for the
+      // rest of the month while the cap had already given it back — one
+      // quantity, two derives, three lines apart, disagreeing. A pack refund
+      // also uses `source='refund'` but its `ref` is a payment-intent id and
+      // can never match a `run_spend` row id, so it cannot leak in here.
       sql<{ used: string | null }[]>`
-      select coalesce(sum(-delta), 0)::text as used from ai_credit_ledger
-       where wallet_id = ${walletId} and bucket = 'grant' and source = 'run_spend'
-         and created_at >= ${periodStart}`,
+      select coalesce(sum(
+        -h.delta - coalesce((
+          select sum(r.delta) from ai_credit_ledger r
+           where r.source = 'refund' and r.ref = h.id::text
+        ), 0)
+      ), 0)::text as used
+        from ai_credit_ledger h
+       where h.wallet_id = ${walletId} and h.bucket = 'grant' and h.source = 'run_spend'
+         and h.created_at >= ${periodStart}`,
       creditHistory(walletId),
       sql<{ n: number }[]>`
       select count(*)::int as n from organizations
@@ -228,14 +271,10 @@ export async function getCreditsTab(orgId: string): Promise<CreditsTabView> {
   // docstring for the full rule). Reading the frozen count alone showed a
   // trialing group with a mid-trial rider "70 used / 60".
   //
-  // KNOWN DIVERGENCE, quantity only — the PLAN dimension is NOT unified: this
-  // reads the raw `s.plan_key` from the `plan` query above while the sweep
-  // resolves it through
-  // `orgPlanKey`, which degrades a suspended / past_due>14d / expired-comp
-  // wallet to Community. So a suspended Pro org is granted 10 but this tab
-  // still shows a cap of 60. Display-level only (the ledger and every spend
-  // path use the resolved plan); deliberately left for a follow-up rather than
-  // changed here, since switching it changes what customers see.
+  // PLAN follows it too, since #318: `planKey` above is `orgPlanKey`'s
+  // resolved answer for the group's representative org, so both dimensions of
+  // this cap are now the sweep's own — there is no derive left here that the
+  // grant cron does not share.
   const grantCap =
     perSeat *
     (planKey === "community" ? 1 : trialing ? Math.max(quantityPaid, sharedOrgCount) : quantityPaid);
