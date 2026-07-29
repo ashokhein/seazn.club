@@ -486,3 +486,33 @@ describe("runAiPlan (v4/00 §3-4)", () => {
     expect(out.diff.unscheduled).toEqual([F4]);
   });
 });
+
+// Token-weighted AI credit rung (design ai-rung.ts): runAiPlan's optional 5th
+// param is the hard per-run token budget an escalation-aware caller enforces.
+// Omitted (every test above), behaviour is unchanged — these pin the opt-in path.
+describe("runAiPlan — hard token budget (design ai-rung.ts)", () => {
+  it("clamps the round's max_tokens to what's left of the budget", async () => {
+    parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
+    await runAiPlan(pack, movableIds, undefined, undefined, { tokens: 3_000, spentBefore: 0 });
+    const body = parse.mock.calls[0]![0] as { max_tokens: number };
+    expect(body.max_tokens).toBe(3_000);
+  });
+
+  it("stops before a round that would exceed the budget and ships the best plan so far", async () => {
+    // Round 1: a clash (blocking) that alone spends nearly the whole budget.
+    parse.mockResolvedValueOnce(planResponse(clashingPlan, { input_tokens: 1000, output_tokens: 30_001 }));
+    const out = await runAiPlan(pack, movableIds, undefined, undefined, { tokens: 32_000, spentBefore: 0 });
+    // The repair round never fires: 30,001 spent + the 2,000 reserve would
+    // exceed the 32,000 budget, so only round 1 ran.
+    expect(parse).toHaveBeenCalledTimes(1);
+    expect(out.blocking.length).toBeGreaterThan(0); // degraded best-so-far, not a clean plan
+    expect(out.usage.output_tokens).toBe(30_001);
+  });
+
+  it("fails without a model call when a later ladder rung inherits an already-exhausted budget", async () => {
+    await expect(
+      runAiPlan(pack, movableIds, undefined, undefined, { tokens: 10_000, spentBefore: 9_000 }),
+    ).rejects.toMatchObject({ code: "AI_PLAN_FAILED" });
+    expect(parse).not.toHaveBeenCalled();
+  });
+});

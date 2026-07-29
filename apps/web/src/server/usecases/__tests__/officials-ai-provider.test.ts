@@ -140,4 +140,28 @@ describe("officials runner ↔ provider seam", () => {
     expect(out.usage.output_tokens).toBe(220);
     expect(out.usage.cost_usd).toBeCloseTo(0.12);
   });
+
+  // Token-weighted AI credit rung (design ai-rung.ts): runOfficialsAiPlan's
+  // optional 4th param is the hard per-run token budget an escalation-aware
+  // caller enforces. Omitted (every test above), behaviour is unchanged.
+  it("clamps maxTokens to what's left of the budget", async () => {
+    const chat = vi.fn().mockResolvedValue(round(assignAll(fixtureIds, refA)));
+    anthropicProvider.mockReturnValue({ id: "anthropic", isConfigured: () => true, chat });
+
+    const { runOfficialsAiPlan } = await import("../officials-ai");
+    await runOfficialsAiPlan(pack, undefined, undefined, { tokens: 5_000, spentBefore: 0 });
+
+    expect(chat.mock.calls[0]![0].maxTokens).toBe(5_000);
+  });
+
+  it("fails without a model call when a later ladder rung inherits an already-exhausted budget", async () => {
+    const chat = vi.fn();
+    anthropicProvider.mockReturnValue({ id: "anthropic", isConfigured: () => true, chat });
+
+    const { runOfficialsAiPlan } = await import("../officials-ai");
+    await expect(
+      runOfficialsAiPlan(pack, undefined, undefined, { tokens: 10_000, spentBefore: 9_000 }),
+    ).rejects.toMatchObject({ code: "AI_PLAN_FAILED" });
+    expect(chat).not.toHaveBeenCalled();
+  });
 });
