@@ -273,11 +273,23 @@ export async function siblingAssignments(
   divisionId: string,
   competitionId: string,
   fallbackMatchMinutes: number,
+  /** Further divisions to leave out, on top of `divisionId` itself.
+   *
+   *  Added for the #350 joint pack: when several divisions of a competition are
+   *  planned together the others are not "siblings" whose board is fixed — they
+   *  are in the same run and their movable fixtures are being re-placed. Serving
+   *  them here hands a division the rest of the run's own work as immovable
+   *  obstacles, and since siblings carry NO division identity a caller cannot
+   *  tell those entries from a genuinely-outside division's booking. Excluding
+   *  them at the source is what makes "this obstacle is from outside the run" a
+   *  fact instead of a slot-key guess. */
+  excludeDivisionIds: readonly string[] = [],
 ): Promise<Assignment[]> {
+  const excluded = [...new Set([divisionId, ...excludeDivisionIds])];
   const rows = await tx<FixtureLite[]>`
     select ${tx(FIXTURE_LITE_COLS)} from fixtures
     where division_id in (select id from divisions
-                          where competition_id = ${competitionId} and id <> ${divisionId})
+                          where competition_id = ${competitionId} and id not in ${tx(excluded)})
       and scheduled_at is not null and court_label is not null
       and status in ${tx(OCCUPYING)}`;
   if (rows.length === 0) return [];

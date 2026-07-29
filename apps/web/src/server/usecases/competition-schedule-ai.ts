@@ -10,19 +10,38 @@ import "server-only";
 // Determinism is contractual (see schedule-ai.ts:1-12 — a golden snapshot binds
 // two builds of an identically-seeded board to be byte-identical). Every array
 // here sorts on stable DOMAIN keys; where a joint sort needs a division
-// discriminator it uses the division NAME, never the per-seed division UUID.
+// discriminator it uses the division's NAME and SLUG, never the per-seed UUID.
+// Slug matters as more than a tie-break: division order decides the sequential
+// draft below, so it decides pack CONTENT, and `createDivision` enforces a
+// unique slug but not a unique name.
 //
 // The two things a joint pack must get right that a per-division pack cannot:
-//   * a selected division's own fixtures must never re-appear as obstacles —
-//     buildSchedulePack serves every SIBLING division's placements as
-//     "Other division" obstacles, including the siblings that are themselves in
-//     this run;
+//   * the run's own divisions must not be served to each other as immovable
+//     obstacles. buildSchedulePack flattens every sibling division to the
+//     anonymous OTHER_DIVISION_LABEL, so they are excluded at the source
+//     (`excludeDivisionIds`) rather than filtered out afterwards — a slot-key
+//     filter cannot tell "division B's fixture re-served to me" from "excluded
+//     division C happens to sit on the same court at the same instant", and
+//     deleting the second is deleting a hard constraint with no trace.
 //   * courts are matched across divisions by LABEL and nothing else, so the
 //     pack names the labels that do not appear in every selected division
 //     (`divergentCourts`) for the board to warn on.
+//
+// THE DRAFT IS A LEGALITY HINT, NOT A BALANCE HINT. Divisions are drafted in
+// sequence, each seeing what the ones before it took, which makes the joint
+// draft free of cross-division court clashes but maximally UNBALANCED by
+// construction: the first division gets every prime slot and the last gets
+// whatever is left (and on a board that does not fit, nothing at all — hence
+// `draftPlaced`). That trade is deliberate. Legal-but-unbalanced beats
+// balanced-but-clashing for something that is only a starting point, and
+// chunked interleaving would put the determinism contract at risk for a hint.
+// Fair prime-slot distribution across divisions (the plan's rule J4) is the
+// MODEL's job, and JOINT_RULES tells it to rebalance rather than anchor on what
+// it was handed.
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
+import { MOVABLE_STATUS } from "./schedule";
 import {
   OTHER_DIVISION_LABEL,
   buildSchedulePack,
@@ -72,6 +91,13 @@ export interface CompetitionPackDivision {
   settings: PackSettings;
   /** This division's movable fixture ids, in the pack's movable order. */
   movableIds: string[];
+  /** How many of `movableIds` the joint draft actually placed. Less than
+   *  `movableIds.length` means the board did not fit and this division's draft
+   *  is PARTIAL — the greedy pass returns the rest as `no_slot` conflicts, which
+   *  the per-division builder discards, so without this count a truncated draft
+   *  is indistinguishable from a complete one. Divisions are drafted in order,
+   *  so it is the later ones that get starved. */
+  draftPlaced: number;
 }
 
 export interface CompetitionPackFixture extends PackFixture {
@@ -138,32 +164,45 @@ export async function buildCompetitionPack(
     throw new HttpError(400, "no divisions selected", "AI_PLAN_NO_DIVISIONS");
   }
 
-  const { competition, divisionRows } = await withTenant(auth.orgId, async (tx) => {
+  const { competition, divisionRows, movableCount } = await withTenant(auth.orgId, async (tx) => {
     const [row] = await tx<{ id: string; name: string }[]>`
       select id, name from competitions where id = ${competitionId}`;
     if (!row) throw new HttpError(404, "competition not found");
-    const divisionRows = await tx<{ id: string; name: string }[]>`
-      select id, name from divisions
+    const divisionRows = await tx<{ id: string; name: string; slug: string }[]>`
+      select id, name, slug from divisions
       where competition_id = ${competitionId} and id in ${tx(requested)}`;
-    return { competition: row, divisionRows };
+    // Cheap cap pre-check: without it 20 divisions × 500 fixtures are greedily
+    // solved before the refusal. This counts UN-SCOPED movable fixtures, which
+    // is exact for every mode this builder uses (it never passes a repair
+    // `scope`); the post-union check below stays the authoritative one.
+    const [count] = await tx<{ n: number }[]>`
+      select count(*)::int as n from fixtures
+      where division_id in ${tx(requested)} and status = ${MOVABLE_STATUS}`;
+    return { competition: row, divisionRows, movableCount: count?.n ?? 0 };
   });
 
   const nameById = new Map(divisionRows.map((d) => [d.id, d.name]));
+  const slugById = new Map(divisionRows.map((d) => [d.id, d.slug]));
   for (const id of requested) {
     if (!nameById.has(id)) throw new HttpError(404, `division not in competition: ${id}`);
   }
-  // Build (and therefore emit) in a stable DOMAIN order: name, then id as the
-  // last-resort tie-break for two divisions sharing a name.
+  if (movableCount > COMPETITION_MOVABLE_CAP) throw tooLarge();
+
+  // Build (and therefore emit) in a stable DOMAIN order: name, then SLUG. Slug
+  // is not a cosmetic tie-break — the sequential draft below means this order
+  // decides every later division's greedy result, so a UUID tie-break would
+  // make two identically-seeded boards with same-named divisions produce
+  // different packs. `createDivision` enforces a unique slug, not a unique name.
   const order = [...requested].sort(
-    (a, b) => cmp(nameById.get(a)!, nameById.get(b)!) || cmp(a, b),
+    (a, b) => cmp(nameById.get(a)!, nameById.get(b)!) || cmp(slugById.get(a)!, slugById.get(b)!),
   );
 
-  // Sequential accumulation. Each division's greedy draft additionally sees
-  // every slot the divisions BEFORE it just took, so the joint draft is legal
-  // across divisions on a shared court label rather than N independently-legal
-  // boards stacked on top of each other. Order is the stable (name, id) domain
-  // sort above, so accumulating is reproducible — the byte-identical-rebuild
-  // test is the guard that it stayed that way.
+  // Sequential accumulation. Each division's greedy draft additionally sees the
+  // slots the divisions BEFORE it took — their drafts AND their own immovable
+  // fixtures, which no longer reach them as siblings now that the run is
+  // excluded at the source. That makes the joint draft free of cross-division
+  // court clashes rather than N independently-legal boards stacked on top of
+  // each other. See the module header on why this is a legality hint only.
   const built: { id: string; pack: SchedulePack; movableIds: Set<string> }[] = [];
   const drafted: Assignment[] = [];
   for (const id of order) {
@@ -186,6 +225,10 @@ export async function buildCompetitionPack(
         instruction: opts.instruction,
         ...(prior !== undefined ? { prior } : {}),
         extraExisting: drafted,
+        // The rest of the run is not fixed court occupancy — it is being
+        // re-planned in this same pass. Excluding it here is what makes every
+        // surviving OTHER_DIVISION_LABEL obstacle provably from outside the run.
+        excludeDivisionIds: order,
       });
     } catch (err) {
       // A single oversized division refuses with the per-division 422. Inside a
@@ -197,13 +240,16 @@ export async function buildCompetitionPack(
     }
     built.push({ id, pack: one.pack, movableIds: one.movableIds });
 
-    // Feed this division's draft forward as court occupancy. entrants come
-    // along because they are free (they are on the fixture), but they can never
-    // clash across divisions — an entrant belongs to exactly one division.
-    // `people` is deliberately empty: a person rostered into one entrant of A
-    // and one of B is in NEITHER division's pack people map, so a per-division
-    // pack cannot supply cross-division person data. Cross-division person
-    // overlap is the joint VERIFIER's job (Task 3), not the draft's.
+    // Feed this division's occupancy forward: the slots it just drafted, plus
+    // its OWN immovable fixtures — the latter no longer reach later divisions
+    // as siblings now that the whole run is excluded from the sibling sweep.
+    //
+    // entrants ride along because they are free (they are on the fixture),
+    // though they can never clash across divisions — an entrant belongs to
+    // exactly one division. `people` is deliberately empty: a person rostered
+    // into one entrant of A and one of B is in NEITHER division's pack people
+    // map, so a per-division pack cannot supply cross-division person data.
+    // Cross-division person overlap is the joint VERIFIER's job (Task 3).
     const minutes = one.pack.settings.matchMinutes;
     const fixtureById = new Map(one.pack.fixtures.movable.map((f) => [f.id, f]));
     for (const a of one.pack.draft) {
@@ -215,6 +261,17 @@ export async function buildCompetitionPack(
         startAt,
         endAt: startAt + minutes * MS_PER_MIN,
         entrants: [f?.home ?? null, f?.away ?? null].filter((e): e is string => e !== null),
+        people: [],
+      });
+    }
+    for (const o of one.pack.fixtures.obstacles) {
+      if (o.label === OTHER_DIVISION_LABEL) continue;
+      drafted.push({
+        fixtureId: `fixed:${id}:${o.court}:${ms(o.from)}`,
+        court: o.court,
+        startAt: ms(o.from),
+        endAt: ms(o.to),
+        entrants: [],
         people: [],
       });
     }
@@ -232,6 +289,7 @@ export async function buildCompetitionPack(
     tz: b.pack.division.tz,
     settings: b.pack.settings,
     movableIds: b.pack.fixtures.movable.map((f) => f.id),
+    draftPlaced: b.pack.draft.length,
   }));
 
   // Courts: a label is THE SAME COURT across divisions iff the string matches.
@@ -239,13 +297,17 @@ export async function buildCompetitionPack(
   const courts = [...new Set(built.flatMap((b) => b.pack.settings.courts))].sort(cmp);
   const divergentCourts = courts.filter((c) => !courtSets.every((s) => s.has(c)));
 
-  const divisionName = (id: string): string => nameById.get(id) ?? "";
+  // Division discriminator for every joint sort: name (human-meaningful
+  // grouping) then slug (unique and stable). Never the UUID.
+  const byDivision = (a: string, b: string): number =>
+    cmp(nameById.get(a) ?? "", nameById.get(b) ?? "") ||
+    cmp(slugById.get(a) ?? "", slugById.get(b) ?? "");
 
   const movable: CompetitionPackFixture[] = built
     .flatMap((b) => b.pack.fixtures.movable.map((f) => ({ ...f, division_id: b.id })))
     .sort(
       (a, b) =>
-        cmp(divisionName(a.division_id), divisionName(b.division_id)) ||
+        byDivision(a.division_id, b.division_id) ||
         a.round - b.round ||
         a.seq - b.seq ||
         cmp(a.ext_key ?? "", b.ext_key ?? "") ||
@@ -256,34 +318,24 @@ export async function buildCompetitionPack(
   // -------------------------------------------------------------------------
   // Obstacles.
   //
-  // A per-division pack's obstacle list is (its own fixed fixtures) + (EVERY
-  // sibling division's placements, flattened to the OTHER_DIVISION_LABEL). When two
-  // siblings are both in this run each one's board arrives twice: once as its
-  // own movable fixtures, once as the other's obstacles. Serving both would
-  // hand the model a board where half its own work is already immovable.
+  // Each source pack's obstacle list is now (its own fixed fixtures, labelled
+  // with the division) + (only the divisions OUTSIDE this run, flattened to the
+  // anonymous OTHER_DIVISION_LABEL) — the run itself was excluded at the source
+  // via `excludeDivisionIds`. So the label is a sound classifier: an
+  // OTHER_DIVISION_LABEL entry is provably from outside the run and
+  // `division_id: null` is a fact, not an inference.
   //
-  // So: a sibling entry whose (court, start) is a slot a SELECTED division
-  // already owns — as a movable fixture's current placement or as its own fixed
-  // obstacle — is dropped. Court+start identifies a placement; end is left out
-  // of the key because a sibling's duration is re-derived from that sibling's
-  // settings and need not agree byte-for-byte with its own pack's.
-  // -------------------------------------------------------------------------
-  const ownedSlots = new Set<string>();
-  for (const b of built) {
-    for (const f of b.pack.fixtures.movable) {
-      if (f.current.at !== null && f.current.court !== null) {
-        ownedSlots.add(`${f.current.court}|${ms(f.current.at)}`);
-      }
-    }
-    for (const o of b.pack.fixtures.obstacles) {
-      if (o.label !== OTHER_DIVISION_LABEL) ownedSlots.add(`${o.court}|${ms(o.from)}`);
-    }
-  }
-
-  // Foreign obstacles arrive once per source pack, each rendered in THAT
-  // division's timezone. Re-render them in one canonical zone (the first
+  // That is why there is no slot-key filter here any more. One could not tell
+  // "division B's fixture re-served to me" from "excluded division C sits on the
+  // same court at the same instant", and dropping the second silently deletes a
+  // hard constraint — obstacles are what the joint verifier reads, so nothing
+  // downstream could recover it.
+  //
+  // Foreign obstacles still arrive once per source pack, each rendered in THAT
+  // division's timezone; re-render them in one canonical zone (the first
   // division in the emitted order) so the same excluded placement is one entry
   // with one spelling however many selected divisions reported it.
+  // -------------------------------------------------------------------------
   const canonicalTz = divisions[0]!.tz;
   const collected: CompetitionPackObstacle[] = [];
   for (const b of built) {
@@ -292,7 +344,6 @@ export async function buildCompetitionPack(
         collected.push({ ...o, division_id: b.id });
         continue;
       }
-      if (ownedSlots.has(`${o.court}|${ms(o.from)}`)) continue;
       collected.push({
         court: o.court,
         from: zonedIso(ms(o.from), canonicalTz),
@@ -302,10 +353,15 @@ export async function buildCompetitionPack(
       });
     }
   }
+  // Dedupe carries the division identity: without it, two selected divisions'
+  // own immovable fixtures sharing a court and span collapse into one entry
+  // tagged with whichever built first, hiding a real fixture from both the model
+  // and the verifier. Foreign entries all key on the same null, so the
+  // duplicate-report collapse they need still happens.
   const seenObstacle = new Set<string>();
   const obstacles = collected
     .filter((o) => {
-      const key = `${o.court}|${ms(o.from)}|${ms(o.to)}`;
+      const key = `${o.division_id ?? ""}|${o.court}|${ms(o.from)}|${ms(o.to)}`;
       if (seenObstacle.has(key)) return false;
       seenObstacle.add(key);
       return true;
@@ -323,7 +379,7 @@ export async function buildCompetitionPack(
   const byJointAssignment = (a: CompetitionPackAssignment, b: CompetitionPackAssignment): number =>
     ms(a.scheduled_at) - ms(b.scheduled_at) ||
     cmp(a.court_label, b.court_label) ||
-    cmp(divisionName(a.division_id), divisionName(b.division_id)) ||
+    byDivision(a.division_id, b.division_id) ||
     cmp(a.fixture_id, b.fixture_id);
 
   const draft: CompetitionPackAssignment[] = built
@@ -337,8 +393,8 @@ export async function buildCompetitionPack(
   // Shared players. A person rostered into two entrants of division A and two of
   // division B appears in both source packs; union the entrant sets rather than
   // emitting the person twice. First-seen order (divisions in emitted order,
-  // people in their per-division order) is the ordering key — person and entrant
-  // ids are per-seed UUIDs and must never decide an order.
+  // people in their per-division order) is the ordering key for the PEOPLE array
+  // — person ids are per-seed UUIDs and must never decide an order.
   const personOrder: string[] = [];
   const entrantsByPerson = new Map<string, string[]>();
   for (const b of built) {
@@ -352,9 +408,15 @@ export async function buildCompetitionPack(
       for (const e of p.entrant_ids) if (!ents.includes(e)) ents.push(e);
     }
   }
+  // The merged entrant_ids must be re-sorted GLOBALLY by entrant name — the
+  // invariant at schedule-ai.ts:622-630. Concatenating A's name-sorted ids with
+  // B's leaves the array sorted only within each division.
+  const entrantNameById = new Map(entrants.map((e) => [e.id, e.name]));
+  const byEntrantName = (a: string, b: string): number =>
+    cmp(entrantNameById.get(a) ?? "", entrantNameById.get(b) ?? "") || cmp(a, b);
   const people: PackPerson[] = personOrder.map((person_id) => ({
     person_id,
-    entrant_ids: entrantsByPerson.get(person_id)!,
+    entrant_ids: entrantsByPerson.get(person_id)!.sort(byEntrantName),
   }));
 
   // Each source pack already normalised its slice of the prior proposal into

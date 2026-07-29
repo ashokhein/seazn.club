@@ -245,6 +245,13 @@ export interface BuildPackOptions {
    *  Optional and additive: it only widens `existing`, and `generate` is the
    *  only mode that solves a draft, so no current caller is affected. */
   extraExisting?: Assignment[];
+  /** Divisions of the same competition to leave OUT of the sibling sweep, on
+   *  top of this one — see `siblingAssignments` (schedule.ts:271). #350: the
+   *  rest of a joint run is not fixed court occupancy, it is being re-planned in
+   *  the same pass, and sibling obstacles carry no division identity, so
+   *  anything surviving the sweep must be provably from outside the run.
+   *  Defaults to none, so no current caller is affected. */
+  excludeDivisionIds?: string[];
 }
 
 /** Movable fixtures respect a repair `scope`: a fixture stays movable if it is
@@ -338,7 +345,13 @@ export async function buildSchedulePack(
       (f) => !movableSet.has(f.id) && f.scheduled_at !== null && f.court_label !== null,
     );
     const obstacleAssignments = obstacleFixtures.map((f) => toAssignment(f, matchMinutes, people));
-    const siblings = await siblingAssignments(tx, divisionId, division.competition_id, matchMinutes);
+    const siblings = await siblingAssignments(
+      tx,
+      divisionId,
+      division.competition_id,
+      matchMinutes,
+      opts.excludeDivisionIds ?? [],
+    );
 
     // Draft: generate → greedy slotFixtures; refine → the prior proposal
     // verbatim; repair → the movable set's current persisted slots.
