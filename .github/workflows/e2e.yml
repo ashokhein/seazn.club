@@ -132,22 +132,49 @@ jobs:
       # Pre-compiled production build, not `next dev`: `next dev` pins its V8
       # heap to half the runner RAM and restarts past ~80% use (transient 404s
       # from Turbopack's on-demand compiles near the ceiling) — flaky under a
-      # full Playwright run. `next start` has neither watchdog nor per-request
-      # compiles, and matches production.
+      # full Playwright run. The standalone server has neither watchdog nor
+      # per-request compiles, and is what production runs.
       - name: Build (production)
         run: npm run build --workspace apps/web
 
+      # Serve the standalone output, the way fly.toml does (#356). `next start`
+      # does not serve an `output: standalone` build — it warns and falls back
+      # to the untraced .next tree, which is a different serving path from
+      # production and cannot catch a standalone-only regression.
+      #
+      # `.next/static` is not part of the standalone output. Without staging it
+      # the server answers /api/health and HTML 200 while every
+      # /_next/static/*.js 404s — specs then fail one at a time on clicks that
+      # look like product bugs (#342, which is what e2e/global-setup.ts's third
+      # probe now refuses to run through).
+      #
+      # `rm -rf` first: `cp -R src dst` with dst present copies INTO it.
       - name: Start server
         run: |
-          npm run start --workspace apps/web > dev-server.log 2>&1 &
+          rm -rf apps/web/.next/standalone/apps/web/.next/static
+          cp -R apps/web/.next/static apps/web/.next/standalone/apps/web/.next/static
+          node apps/web/.next/standalone/apps/web/server.js > dev-server.log 2>&1 &
           echo "waiting for server…"
+          up=""
           for i in $(seq 1 90); do
             if curl -sf http://localhost:3000/api/health >/dev/null; then
-              echo "server up after ${i}s window"; exit 0
+              echo "server up after ${i}s window"; up=1; break
             fi
             sleep 2
           done
-          echo "server did not become healthy"; cat dev-server.log; exit 1
+          if [ -z "$up" ]; then
+            echo "server did not become healthy"; cat dev-server.log; exit 1
+          fi
+          chunk=$(ls apps/web/.next/static/chunks/*.js 2>/dev/null | head -1)
+          if [ -z "$chunk" ]; then
+            echo "no built chunks found — build output is not where expected"; exit 1
+          fi
+          asset="/_next/${chunk#apps/web/.next/}"
+          if ! curl -sf "http://localhost:3000$asset" >/dev/null; then
+            echo "static asset $asset 404s — standalone tree not staged"
+            cat dev-server.log; exit 1
+          fi
+          echo "static assets serve ($asset)"
 
       # Browsers cached per Playwright version.
       - name: Cache Playwright browsers
