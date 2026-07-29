@@ -78,14 +78,21 @@ export async function listCompetitions(
 
 // Doc 10 §1: `competitions.max_active` — draft/published/live competitions
 // count; completed/archived don't, and neither do Event-Passed comps (a pass
-// buys its competition out of the quota, v3/07 §3). Enforced at the write
-// (doc 10 §2 rule 1).
+// buys its competition out of the quota, v3/07 §3) — for as long as the pass
+// APPLIES, which is what this used to get wrong (#347). "A pass row exists" is
+// not the rule: SPEC-4 §7 ends the pass at the grace boundary, and a live
+// competition past that boundary was keeping a free slot for ever. Same
+// predicate the resolver uses (V343's pass_applies), so the three sites cannot
+// drift apart again. Enforced at the write (doc 10 §2 rule 1).
 async function assertActiveQuota(auth: AuthCtx): Promise<void> {
   const count = await withTenant(auth.orgId, async (tx) => {
     const [{ n }] = await tx<{ n: number }[]>`
       select count(*)::int as n from competitions c
       where c.status in ${tx([...ACTIVE_COMPETITION_STATUSES])}
-        and not exists (select 1 from competition_passes cp where cp.competition_id = c.id)`;
+        and not exists (
+          select 1 from competition_passes cp
+           where cp.competition_id = c.id
+             and pass_applies(c.status, c.ends_on, (now() at time zone 'utc')::date))`;
     return n;
   });
   const { ok } = await withinLimit(auth.orgId, "competitions.max_active", count + 1);
@@ -421,6 +428,12 @@ export async function deleteCompetition(auth: AuthCtx, id: string): Promise<void
     // Money guards (payments-hardening spec P0-1): a delete would CASCADE
     // paid registrations, the Event Pass, and comp-scoped sponsorship —
     // erasing the app's only record of live money. Archive is always allowed.
+    //
+    // Deliberately bare row-existence, NOT V343's pass_applies (#347): this
+    // asks "was a pass ever bought" — money history, like pass-credit.ts:138 —
+    // not "is a pass applying". Adding the lock predicate here would INVERT the
+    // guard on exactly the competitions most likely to be deleted (long-ended
+    // ones), letting the cascade erase the record of a real $29/$59 charge.
     const [pass] = await tx`
       select 1 from competition_passes where competition_id = ${id} limit 1`;
     if (pass) {
