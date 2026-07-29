@@ -4,7 +4,7 @@
 // division keeps its OWN settings, a selected division never appears as its own
 // obstacle, and the whole thing is byte-for-byte deterministic.
 // Real Postgres required; skipped without DATABASE_URL.
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -13,8 +13,16 @@ import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
 import { buildCompetitionPack, COMPETITION_MOVABLE_CAP } from "../competition-schedule-ai";
-import { OTHER_DIVISION_LABEL } from "../schedule-ai";
+import { buildSchedulePack, OTHER_DIVISION_LABEL } from "../schedule-ai";
 import { seedOrg } from "./_seed";
+
+// A pass-through spy over the real implementation — it changes no behaviour and
+// exists so the cap pre-check can assert directly that NO per-division build
+// ran, instead of piggybacking on some other error arriving first.
+vi.mock("../schedule-ai", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../schedule-ai")>();
+  return { ...actual, buildSchedulePack: vi.fn(actual.buildSchedulePack) };
+});
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -468,6 +476,54 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     expect(clashes).toEqual([]);
   }, 60_000);
 
+  // Excluding the run from the sibling sweep (I1) also took the run's own
+  // IMMOVABLE fixtures out of every division's greedy view. Feeding each built
+  // division's obstacles forward only closes that one way — the division built
+  // FIRST still never sees a later division's fixed board, so it can draft on
+  // top of a fixture nothing can move. Same defect class as the round-1 court
+  // clash: a knowingly-illegal hint the model may anchor on, paid for out of a
+  // fixed token budget.
+  //
+  // Alpha2 sorts first and has nothing placed; Bravo2 holds Court 1 at 09:00
+  // with a finalized fixture. Alpha2's greedy pass starts at 09:00 on Court 1
+  // unless something stops it.
+  it("no division's draft sits on another division's immovable fixture", async () => {
+    const cup = await seedCompetition(auth, `Fixed Cup ${randomUUID().slice(0, 6)}`, [
+      { name: "Alpha2", courts: ["Court 1"], matchMinutes: 30, entrants: 4, place: false, startOffsetMin: 0 },
+      { name: "Bravo2", courts: ["Court 1"], matchMinutes: 30, entrants: 4, place: true, startOffsetMin: 0, finalizeFirst: true },
+    ]);
+    const [alpha2, bravo2] = cup.divisions as [SeededDivision, SeededDivision];
+    const { pack } = await buildCompetitionPack(
+      auth,
+      cup.competitionId,
+      cup.divisions.map((d) => d.id),
+      { mode: "generate", instruction: "x" },
+    );
+    // The immovable fixture really is in the pack, tagged to its own division.
+    const fixed = pack.fixtures.obstacles.filter(
+      (o) => o.division_id === bravo2.id && o.court === "Court 1" && Date.parse(o.from) === T0,
+    );
+    expect(fixed.length).toBe(1);
+    // Alpha2 is built first and drafts a full board — so it really did compete
+    // for that slot; a starved or empty draft would make this vacuous.
+    const alphaDivision = pack.divisions.find((d) => d.id === alpha2.id)!;
+    expect(pack.divisions[0]!.id).toBe(alpha2.id);
+    expect(alphaDivision.draftPlaced).toBe(RR);
+    expect(pack.draft.some((a) => a.division_id === alpha2.id && a.court_label === "Court 1")).toBe(true);
+
+    const minutes = new Map(pack.divisions.map((d) => [d.id, d.settings.matchMinutes]));
+    const overlaps: string[] = [];
+    for (const a of pack.draft) {
+      if (a.court_label !== "Court 1") continue;
+      const from = Date.parse(a.scheduled_at);
+      const to = from + minutes.get(a.division_id)! * MIN;
+      if (from < T0 + 30 * MIN && T0 < to) {
+        overlaps.push(`${a.fixture_id} @ ${new Date(from).toISOString()}`);
+      }
+    }
+    expect(overlaps).toEqual([]);
+  }, 60_000);
+
   // I2: sequential accumulation means a board that does not fit starves the
   // LAST divisions — slotFixtures returns their fixtures as `no_slot` conflicts
   // and schedule-ai.ts discards conflicts, so `draft` is simply short. Without a
@@ -649,18 +705,20 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
   }, 120_000);
 
   // M9: the cap must fire before ANY per-division build, not after N greedy
-  // solves. Proved without timing: "Aaa" sorts first and has nothing movable, so
-  // in repair mode building it raises 422 AI_PLAN_EMPTY_SCOPE — a different
-  // error that escapes the too-large catch. Seeing the 409 means no division was
-  // built at all.
+  // solves. Asserted DIRECTLY — the 409 is raised and buildSchedulePack was
+  // never called — rather than by piggybacking on another error arriving first.
+  // Neither division is individually over the per-division cap, so 300 + 201 is
+  // the only thing that can produce this refusal.
   it("refuses an oversized run before building any division's pack", async () => {
     const { auth } = await seedOrg("pro");
     const comp = await createCompetition(auth, { name: "Precheck", visibility: "public", branding: {} });
-    const empty = await seedBigDivision(auth, comp.id, "Aaa", 0);
-    const big = await seedBigDivision(auth, comp.id, "Bbb", 501);
+    const a = await seedBigDivision(auth, comp.id, "Aaa", 300);
+    const b = await seedBigDivision(auth, comp.id, "Bbb", 201);
+    vi.mocked(buildSchedulePack).mockClear();
     await expect(
-      buildCompetitionPack(auth, comp.id, [empty, big], { mode: "repair", instruction: "x" }),
+      buildCompetitionPack(auth, comp.id, [a, b], { mode: "generate", instruction: "x" }),
     ).rejects.toMatchObject({ status: 409, code: "AI_PLAN_TOO_LARGE" });
+    expect(vi.mocked(buildSchedulePack)).not.toHaveBeenCalled();
   }, 120_000);
 
   it("over the cap refuses with AI_PLAN_TOO_LARGE", async () => {

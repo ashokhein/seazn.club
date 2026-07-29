@@ -59,7 +59,10 @@ function afterScheduleWrite(
 // rain-rescheduling touches remaining fixtures only).
 export const MOVABLE_STATUS = "scheduled";
 // Statuses that still occupy a court (cancelled/abandoned ones do not).
-const OCCUPYING = ["scheduled", "in_play", "decided", "finalized", "forfeited"];
+// Exported so the #350 joint builder derives its "fixed occupancy" set as
+// OCCUPYING minus MOVABLE_STATUS rather than copying the list — a copy would
+// drift silently the day a status is added here.
+export const OCCUPYING = ["scheduled", "in_play", "decided", "finalized", "forfeited"];
 
 // ---------------------------------------------------------------------------
 // Settings

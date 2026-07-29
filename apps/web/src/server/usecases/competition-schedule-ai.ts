@@ -41,7 +41,8 @@ import "server-only";
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
-import { MOVABLE_STATUS } from "./schedule";
+import { MOVABLE_STATUS, OCCUPYING } from "./schedule";
+import { ScheduleConfig } from "@/server/api-v1/schemas";
 import {
   OTHER_DIVISION_LABEL,
   buildSchedulePack,
@@ -72,6 +73,11 @@ const TOO_LARGE = "AI_PLAN_TOO_LARGE";
  *  alone for the per-division callers. */
 const tooLarge = (): HttpError =>
   new HttpError(409, "too large — schedule per division", TOO_LARGE);
+
+/** Court-holding statuses that are NOT being re-placed by this run: the fixed
+ *  board of a part-played competition (a rain-delay repair over a morning that
+ *  is already `decided` is the canonical case). Derived, never copied. */
+const FIXED_OCCUPYING = OCCUPYING.filter((s) => s !== MOVABLE_STATUS);
 
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const ms = (iso: string): number => Date.parse(iso);
@@ -164,7 +170,7 @@ export async function buildCompetitionPack(
     throw new HttpError(400, "no divisions selected", "AI_PLAN_NO_DIVISIONS");
   }
 
-  const { competition, divisionRows, movableCount } = await withTenant(auth.orgId, async (tx) => {
+  const { competition, divisionRows, movableCount, fixedRows } = await withTenant(auth.orgId, async (tx) => {
     const [row] = await tx<{ id: string; name: string }[]>`
       select id, name from competitions where id = ${competitionId}`;
     if (!row) throw new HttpError(404, "competition not found");
@@ -178,7 +184,42 @@ export async function buildCompetitionPack(
     const [count] = await tx<{ n: number }[]>`
       select count(*)::int as n from fixtures
       where division_id in ${tx(requested)} and status = ${MOVABLE_STATUS}`;
-    return { competition: row, divisionRows, movableCount: count?.n ?? 0 };
+    // The run's own FIXED board — court-holding fixtures that this run is not
+    // re-placing. Excluding the run from the sibling sweep (so obstacle
+    // attribution is sound) also took these out of every division's greedy
+    // view, and feeding each built division's obstacles forward only closes the
+    // gap one way: the division built FIRST would still never see a later one's
+    // immovable fixtures and could draft on top of them.
+    //
+    // Loaded ONCE here, in the pre-pass that already runs, and handed to every
+    // division — so the compensation is symmetric. Movable fixtures are
+    // deliberately excluded: their current placements are exactly what is being
+    // re-planned, and constraining against them would pin the schedule to where
+    // it already is.
+    const fixedRows = await tx<
+      {
+        id: string;
+        division_id: string;
+        scheduled_at: string | Date;
+        court_label: string;
+        home_entrant_id: string | null;
+        away_entrant_id: string | null;
+        round_no: number;
+        seq_in_round: number;
+        ext_key: string | null;
+        config: unknown;
+      }[]
+    >`
+      select f.id, f.division_id, f.scheduled_at, f.court_label,
+             f.home_entrant_id, f.away_entrant_id, f.round_no, f.seq_in_round, f.ext_key,
+             s.config
+      from fixtures f
+      left join schedule_settings s on s.division_id = f.division_id
+      where f.division_id in ${tx(requested)}
+        and f.status in ${tx(FIXED_OCCUPYING)}
+        and f.scheduled_at is not null
+        and f.court_label is not null`;
+    return { competition: row, divisionRows, movableCount: count?.n ?? 0, fixedRows };
   });
 
   const nameById = new Map(divisionRows.map((d) => [d.id, d.name]));
@@ -197,12 +238,50 @@ export async function buildCompetitionPack(
     (a, b) => cmp(nameById.get(a)!, nameById.get(b)!) || cmp(slugById.get(a)!, slugById.get(b)!),
   );
 
-  // Sequential accumulation. Each division's greedy draft additionally sees the
-  // slots the divisions BEFORE it took — their drafts AND their own immovable
-  // fixtures, which no longer reach them as siblings now that the run is
-  // excluded at the source. That makes the joint draft free of cross-division
-  // court clashes rather than N independently-legal boards stacked on top of
-  // each other. See the module header on why this is a legality hint only.
+  // Division discriminator for every joint sort: name (human-meaningful
+  // grouping) then slug (unique and stable). Never the UUID.
+  const byDivision = (a: string, b: string): number =>
+    cmp(nameById.get(a) ?? "", nameById.get(b) ?? "") ||
+    cmp(slugById.get(a) ?? "", slugById.get(b) ?? "");
+
+  // The run's fixed board as engine assignments — every division gets all of it
+  // (minus its own, which buildSchedulePack already supplies internally), so the
+  // compensation is symmetric rather than one-directional. Sorted on stable
+  // domain keys like everything else here; the byte-identical test is the guard.
+  const fixedMinutes = new Map<string, number>();
+  for (const r of fixedRows) {
+    if (!fixedMinutes.has(r.division_id)) {
+      fixedMinutes.set(r.division_id, ScheduleConfig.parse(r.config ?? {}).matchMinutes);
+    }
+  }
+  const fixedOccupancy: Assignment[] = [...fixedRows]
+    .sort(
+      (a, b) =>
+        byDivision(a.division_id, b.division_id) ||
+        a.round_no - b.round_no ||
+        a.seq_in_round - b.seq_in_round ||
+        cmp(a.ext_key ?? "", b.ext_key ?? ""),
+    )
+    .map((r) => {
+      const startAt = new Date(r.scheduled_at).getTime();
+      return {
+        fixtureId: r.id,
+        court: r.court_label,
+        startAt,
+        endAt: startAt + (fixedMinutes.get(r.division_id) ?? 0) * MS_PER_MIN,
+        entrants: [r.home_entrant_id, r.away_entrant_id].filter((e): e is string => e !== null),
+        // Same reason as the drafts below: a per-division pack cannot supply
+        // cross-division person data, so person overlap is the verifier's job.
+        people: [],
+        divisionId: r.division_id,
+      };
+    });
+
+  // Sequential accumulation. Each division's greedy draft sees the run's whole
+  // fixed board plus the slots the divisions BEFORE it drafted, so the joint
+  // draft is free of cross-division court clashes rather than N
+  // independently-legal boards stacked on top of each other. See the module
+  // header on why this is a legality hint only.
   const built: { id: string; pack: SchedulePack; movableIds: Set<string> }[] = [];
   const drafted: Assignment[] = [];
   for (const id of order) {
@@ -224,7 +303,9 @@ export async function buildCompetitionPack(
         mode: opts.mode,
         instruction: opts.instruction,
         ...(prior !== undefined ? { prior } : {}),
-        extraExisting: drafted,
+        // This division's own fixed fixtures arrive internally as
+        // obstacleAssignments, so only the rest of the run's are added here.
+        extraExisting: [...fixedOccupancy.filter((a) => a.divisionId !== id), ...drafted],
         // The rest of the run is not fixed court occupancy — it is being
         // re-planned in this same pass. Excluding it here is what makes every
         // surviving OTHER_DIVISION_LABEL obstacle provably from outside the run.
@@ -240,9 +321,8 @@ export async function buildCompetitionPack(
     }
     built.push({ id, pack: one.pack, movableIds: one.movableIds });
 
-    // Feed this division's occupancy forward: the slots it just drafted, plus
-    // its OWN immovable fixtures — the latter no longer reach later divisions
-    // as siblings now that the whole run is excluded from the sibling sweep.
+    // Feed the slots this division just drafted forward to the next ones. Its
+    // fixed fixtures are already in `fixedOccupancy`, which every division sees.
     //
     // entrants ride along because they are free (they are on the fixture),
     // though they can never clash across divisions — an entrant belongs to
@@ -261,17 +341,6 @@ export async function buildCompetitionPack(
         startAt,
         endAt: startAt + minutes * MS_PER_MIN,
         entrants: [f?.home ?? null, f?.away ?? null].filter((e): e is string => e !== null),
-        people: [],
-      });
-    }
-    for (const o of one.pack.fixtures.obstacles) {
-      if (o.label === OTHER_DIVISION_LABEL) continue;
-      drafted.push({
-        fixtureId: `fixed:${id}:${o.court}:${ms(o.from)}`,
-        court: o.court,
-        startAt: ms(o.from),
-        endAt: ms(o.to),
-        entrants: [],
         people: [],
       });
     }
@@ -296,12 +365,6 @@ export async function buildCompetitionPack(
   const courtSets = built.map((b) => new Set(b.pack.settings.courts));
   const courts = [...new Set(built.flatMap((b) => b.pack.settings.courts))].sort(cmp);
   const divergentCourts = courts.filter((c) => !courtSets.every((s) => s.has(c)));
-
-  // Division discriminator for every joint sort: name (human-meaningful
-  // grouping) then slug (unique and stable). Never the UUID.
-  const byDivision = (a: string, b: string): number =>
-    cmp(nameById.get(a) ?? "", nameById.get(b) ?? "") ||
-    cmp(slugById.get(a) ?? "", slugById.get(b) ?? "");
 
   const movable: CompetitionPackFixture[] = built
     .flatMap((b) => b.pack.fixtures.movable.map((f) => ({ ...f, division_id: b.id })))
