@@ -1874,14 +1874,23 @@ export const AiCompetitionPlanResponse = z.object({
   // two sibling arrays over one key would be a join every client redoes on
   // every render.
   //
-  // Getting the order wrong fails SILENTLY IN BOTH DIRECTIONS. TypeScript
-  // accepts either merged object type, and Zod does not error on the loser
-  // either — it STRIPS the keys the winning schema does not declare, so
-  // `name` and `movable` (or `rung` and `predicted_rung`) simply vanish from
-  // a 200 response with no exception and no warning. Neither this comment nor
-  // `tsc` nor an assertion on `divisions.length` can catch it; the guard is
-  // competition-schedule-ai-http.test.ts, which asserts BOTH sets of fields
-  // survive one parse of a real orchestrator result.
+  // The two directions are NOT symmetric — measured, not assumed:
+  //
+  //   * Swapping this order (spread AFTER the override) does NOT compile:
+  //     1 x TS2783 "'divisions' is specified more than once", plus 4 x TS2339
+  //     and 7 x TS18048 knock-on. The wrong order cannot ship, and `tsc` is a
+  //     real net for THAT mistake specifically.
+  //   * The order as written is the SILENT one. Any later edit that keeps the
+  //     shapes structurally compatible — dropping a key from the merged row,
+  //     letting the two arrays drift apart — passes `tsc` clean, and Zod does
+  //     not error either: it STRIPS the keys the winning schema does not
+  //     declare, so `name`/`movable` (or `rung`/`predicted_rung`) simply
+  //     vanish from a 200 response with no exception and no warning.
+  //
+  // Neither this comment nor an assertion on `divisions.length` catches the
+  // silent case. The guard is competition-schedule-ai-http.test.ts, which
+  // asserts BOTH sets of fields survive one parse of a real orchestrator
+  // result.
   // ---------------------------------------------------------------------
   ...AiRunPriceFields,
   divisions: z.array(
