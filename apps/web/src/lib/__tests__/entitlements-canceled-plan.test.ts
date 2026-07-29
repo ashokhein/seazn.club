@@ -18,7 +18,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
-import { getLimit, hasFeature, orgPlanKey } from "@/lib/entitlements";
+import { addonBonusForWallet, getLimit, hasFeature, orgPlanKey } from "@/lib/entitlements";
 import { groupOrgLimit } from "@/lib/billing-group";
 import { processStripeEvent } from "@/server/usecases/billing-events";
 import type Stripe from "stripe";
@@ -147,9 +147,11 @@ describe.skipIf(!HAS_DB)("a cancelled subscription does not convey its plan", ()
 // webhook handler.
 const COMMUNITY_MAX_OWNED = 1;
 
-/** A group with a Stripe subscription id, one org, and add-on rows on three
- *  distinct axes: a PURCHASED extra-org rider, an ADMIN comp of the same cap,
- *  and a purchased SEAT rider. Only the first may die with the subscription. */
+/** A group with a Stripe subscription id, one org, and add-on rows on four
+ *  distinct axes: a PURCHASED extra-org rider, an ADMIN comp of that cap, a
+ *  purchased SEAT rider and an ADMIN comp of THAT cap. Churn cancels the two
+ *  PURCHASED rows (#293 for orgs, #330 for seats) and neither comp: the split
+ *  is what Stripe was billing, not which cap the row lifts. */
 async function seedChurnGroup(): Promise<{
   orgId: string;
   subId: string;
@@ -177,7 +179,8 @@ async function seedChurnGroup(): Promise<{
     values
       (${subId}, null, 'orgs.max_owned', 1, 2, ${`si_org_${suffix}`}, 'active'),
       (${subId}, null, 'orgs.max_owned', 1, 1, null, 'granted'),
-      (${subId}, null, 'members.max', 1, 3, ${`si_seat_${suffix}`}, 'active')`;
+      (${subId}, null, 'members.max', 1, 3, ${`si_seat_${suffix}`}, 'active'),
+      (${subId}, null, 'members.max', 1, 1, null, 'granted')`;
   return { orgId, subId, stripeSubId };
 }
 
@@ -243,22 +246,36 @@ describe.skipIf(!HAS_DB)("churn cancels the recurring add-ons it was renting", (
     expect(granted!.status).toBe("granted");
   });
 
-  // PINNED BUG, not an invariant. Seats have the same churn hole this describe
-  // block closes for orgs.max_owned: a `members.max` rider outlives the
-  // subscription that paid for it. That is INHERITED, not introduced by v17 gap
-  // #293, and is tracked as issue #330. This test records TODAY's behaviour so
-  // the #293 cancel is proven not to reach across feature keys; when #330 is
-  // fixed, THIS is the test that should go red, and flipping it to 'canceled'
-  // is the expected edit.
-  it("PINNED BUG #330: the seat rider survives churn — it must go red when #330 is fixed", async () => {
-    const { subId, stripeSubId } = await seedChurnGroup();
+  // #330, the seat half of the same hole. This test was the PINNED BUG left
+  // behind by #293 — it asserted `active`, recording that the churn cancel did
+  // not reach across feature keys — and flipping it to 'canceled' is exactly
+  // the edit that issue predicted. syncSeatAddonsForSubscription runs only on
+  // `customer.subscription.updated` and a DELETED subscription still reports
+  // its items, so nothing else ever cancelled these rows: a churned group kept
+  // `community base + 3` seats for ever, unpaid.
+  it("REGRESSION (#330): a deleted subscription cancels the SEAT rider too", async () => {
+    const { orgId, subId, stripeSubId } = await seedChurnGroup();
+    // purchased 3 + admin comp 1, on top of whatever the plan grants.
+    expect(await addonBonusForWallet(subId, "members.max", orgId)).toBe(4);
 
     await processStripeEvent(deletedEvent(stripeSubId, subId));
 
-    const [seat] = await sql<{ status: string }[]>`
-      select status from org_addons
-       where wallet_id = ${subId} and feature_key = 'members.max'`;
-    expect(seat!.status).toBe("active");
+    // The purchased rider FREEZES (V323/V324 — row and qty kept for history and
+    // for a re-buy); the admin comp is untouched, because a grant is capacity
+    // the group was GIVEN, not something Stripe was billing.
+    const rows = await sql<{ stripe_item_id: string | null; qty: number; status: string }[]>`
+      select stripe_item_id, qty, status from org_addons
+       where wallet_id = ${subId} and feature_key = 'members.max'
+       order by stripe_item_id nulls last`;
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.stripe_item_id).not.toBeNull();
+    expect(rows[0]!.status).toBe("canceled");
+    expect(rows[0]!.qty).toBe(3);
+    expect(rows[1]!.stripe_item_id).toBeNull();
+    expect(rows[1]!.status).toBe("granted");
+
+    // …so the seat cap falls back to the plan base plus the comp alone.
+    expect(await addonBonusForWallet(subId, "members.max", orgId)).toBe(1);
   });
 
   it("refuses to cancel another group's rows when the delete may not write", async () => {
@@ -271,5 +288,8 @@ describe.skipIf(!HAS_DB)("churn cancels the recurring add-ons it was renting", (
 
     expect(await orgPlanKey(orgId)).toBe("pro");
     expect(await getLimit(orgId, "orgs.max_owned")).toBe(8);
+    // Both families, not just the one #293 added: the seat cancel (#330) sits
+    // after the same return, so a replayed delete must not strip seats either.
+    expect(await addonBonusForWallet(subId, "members.max", orgId)).toBe(4);
   });
 });
