@@ -49,8 +49,17 @@ import type { AuthCtx } from "@/server/api-v1/auth";
 import { MOVABLE_STATUS, OCCUPYING, peopleByEntrant } from "./schedule";
 import { ScheduleConfig } from "@/server/api-v1/schemas";
 import {
+  MAX_REPAIR_ROUNDS,
+  MAX_TOKENS,
   OTHER_DIVISION_LABEL,
+  ROUND_TIMEOUT_MS,
+  aiReasoning,
   buildSchedulePack,
+  isBlocking,
+  planIsAcceptable,
+  planRungs,
+  runLadder,
+  schedulingAiModel,
   zonedIso,
   type PackAssignment,
   type PackEntrant,
@@ -60,7 +69,22 @@ import {
   type PackSettings,
   type SchedulePack,
 } from "./schedule-ai";
-import type { Assignment } from "@seazn/engine/scheduling";
+import { AiSchedulePlan, JOINT_RULES, SYSTEM_PROMPT } from "./schedule-ai-prompt";
+import { resolveProvider, selectProvider, type ProviderName } from "@/server/ai/select-provider";
+import {
+  AiProviderError,
+  type AiChatResponse,
+  type AiProvider,
+  type AiTurn,
+} from "@/server/ai/provider";
+import { aiRunCostUsd } from "@/lib/ai-pricing";
+import { unmeteredTokenMeter, type TokenMeter } from "@/lib/ai-rung";
+import {
+  validateAssignments,
+  type Assignment,
+  type Conflict,
+  type OrderDependency,
+} from "@seazn/engine/scheduling";
 
 const MS_PER_MIN = 60_000;
 
@@ -574,4 +598,525 @@ export async function buildCompetitionPack(
   };
 
   return { pack, movableIds };
+}
+
+// ===========================================================================
+// #350 Phase B — the JOINT VERIFIER and the JOINT RUNNER.
+//
+// THE CENTRAL DESIGN DECISION, stated once here because everything below
+// follows from it:
+//
+//   `validateAssignments` takes ONE scalar config — one matchMinutes, one
+//   gapMinutes, one blackouts[], one sessionWindows[], one constraints. A joint
+//   run's divisions legitimately differ on every one of them.
+//
+// The tempting move is to merge them into a "strictest" config and make one
+// call. That is wrong in both directions and silently: a merged session window
+// applies division A's 09:00-12:00 to division B's fixtures (rejecting a legal
+// afternoon board), and a merged blackout blacks out a division that never had
+// one. There is no merge that is sound, because the fields are not properties of
+// the BOARD — they are properties of a division's fixtures.
+//
+// So `verifyJoint` runs one pass PER DIVISION, with that division's own config,
+// over that division's own fixtures, handing every OTHER division's proposed
+// slots plus every obstacle in as `existing`. `validateAssignments` reports
+// conflicts only for the assignments it is given, never for `existing`, so each
+// pass judges exactly one division's fixtures by exactly one division's rules —
+// while the checks that read the whole board (court occupancy, person overlap,
+// feed order) still see every division's fixtures. That is precisely what
+// JOINT_RULES' preamble promises the model, and the model is graded on it.
+//
+// Two consequences worth naming, both covered by tests:
+//   * a cross-division court clash is reported TWICE, once per side, from the
+//     two divisions' own passes. That is the desired report — either fixture
+//     can be the one that moves — but it is also why some conflicts genuinely
+//     arrive twice and are deduped below.
+//   * cross-division court gap is charged at each division's OWN gapMinutes, so
+//     verifyJoint can legitimately reject the greedy draft it was handed (the
+//     drafting division applied its own, smaller, gap). Expected, not a bug.
+// ===========================================================================
+
+/** The joint system prompt. SYSTEM_PROMPT is golden-snapshotted and must never
+ *  be edited; JOINT_RULES is a separate constant appended to it here — this is
+ *  its ONLY consumer, so this concatenation is what puts Task 2's rules on the
+ *  wire. */
+export const JOINT_SYSTEM_PROMPT = `${SYSTEM_PROMPT}\n\n${JOINT_RULES}`;
+
+export interface CompetitionPlanResult {
+  /** Each entry carries the division the server resolved it to — the model is
+   *  told NOT to emit a division field (JOINT_RULES OUTPUT), so this is derived
+   *  from the pack, never echoed. */
+  proposal: {
+    fixture_id: string;
+    scheduled_at: string;
+    court_label: string;
+    division_id: string;
+    schedule_locked?: boolean;
+  }[];
+  unschedulable: { fixture_id: string; reason: string }[];
+  warnings: Conflict[];
+  blocking: Conflict[];
+  diff: { moved: string[]; placed: string[]; unscheduled: string[]; unchanged: string[] };
+  explanations: { fixture_id: string; note: string }[];
+  constraint_suggestions?: AiSchedulePlan["constraint_suggestions"];
+  summary: string;
+  usage: { input_tokens: number; output_tokens: number; repair_rounds: number; cost_usd: number | null };
+}
+
+/** Map the LLM proposal onto engine assignments. Two things differ from the
+ *  single-division `toEngineAssignments` (schedule-ai.ts:878):
+ *
+ *  * `endAt` uses EACH fixture's own division's matchMinutes. A shared duration
+ *    is the single easiest way to make this whole module wrong — a 30-minute
+ *    reading of a 90-minute division's fixtures reports a clean board.
+ *  * `divisionId` is stamped, because it is what `verifyJoint` partitions on.
+ *    It has one further effect, deliberate: `effectiveRestMinutes` consults
+ *    `constraints.restByGroup[divisionId]`, which the single-division path
+ *    never reaches (it leaves divisionId unset). Since each division's pass runs
+ *    with that division's own constraints, a restByGroup entry keyed by a
+ *    division now governs that division's own fixtures — which is what the field
+ *    means. `poolId` is deliberately still NOT stamped, matching the
+ *    single-division path exactly. */
+export function toJointEngineAssignments(plan: AiSchedulePlan, pack: CompetitionPack): Assignment[] {
+  const fixtureById = new Map(pack.fixtures.movable.map((f) => [f.id, f]));
+  const minutesByDivision = new Map(pack.divisions.map((d) => [d.id, d.settings.matchMinutes]));
+  const personsByEntrant = new Map<string, string[]>();
+  for (const p of pack.people) {
+    for (const e of p.entrant_ids) {
+      (personsByEntrant.get(e) ?? personsByEntrant.set(e, []).get(e)!).push(p.person_id);
+    }
+  }
+  return plan.assignments.map((a) => {
+    const f = fixtureById.get(a.fixture_id);
+    const entrants = f ? [f.home, f.away].filter((e): e is string => e !== null) : [];
+    const startAt = ms(a.scheduled_at);
+    const minutes = f !== undefined ? minutesByDivision.get(f.division_id) ?? 0 : 0;
+    return {
+      fixtureId: a.fixture_id,
+      court: a.court_label,
+      startAt,
+      endAt: startAt + minutes * MS_PER_MIN,
+      entrants,
+      people: entrants.flatMap((e) => personsByEntrant.get(e) ?? []),
+      ...(f !== undefined ? { divisionId: f.division_id } : {}),
+    };
+  });
+}
+
+/** Fixed court occupancy the proposal must dodge, as engine assignments.
+ *
+ *  The synthetic ids are division-scoped (`obstacle:${divisionIndex}:${i}`,
+ *  with `x` standing for an obstacle from outside the run) rather than the
+ *  per-division `obstacle:${i}` of schedule-ai.ts:904. That id is only unique
+ *  within ONE division's list, and a duplicate id on the joint board is not
+ *  inert: `validateAssignments` builds a `byId` map over `existing` +
+ *  `assignments` for feed-order resolution, where a collision silently drops an
+ *  entry. */
+export function toJointObstacleAssignments(pack: CompetitionPack): Assignment[] {
+  const indexByDivision = new Map(pack.divisions.map((d, i) => [d.id, String(i)]));
+  const counters = new Map<string, number>();
+  return pack.fixtures.obstacles.map((o) => {
+    const key = o.division_id === null ? "x" : indexByDivision.get(o.division_id) ?? o.division_id;
+    const n = counters.get(key) ?? 0;
+    counters.set(key, n + 1);
+    return {
+      fixtureId: `obstacle:${key}:${n}`,
+      court: o.court,
+      startAt: ms(o.from),
+      endAt: ms(o.to),
+      entrants: [],
+      people: [],
+    };
+  });
+}
+
+/** Direct winner/loser feeds across the whole union — the joint mirror of
+ *  `packFeedDependencies` (schedule-ai.ts:957). Feeds are within-division in
+ *  practice, but the dependency list is resolved against the whole board by the
+ *  engine, so it is built over the whole board here too. */
+export function jointFeedDependencies(pack: CompetitionPack): OrderDependency[] {
+  const deps: OrderDependency[] = [];
+  for (const f of pack.fixtures.movable) {
+    for (const dependsOn of f.feeds.after) {
+      deps.push({ fixtureId: f.id, dependsOn, direct: true });
+    }
+  }
+  return deps;
+}
+
+/** One division's verifier config — the per-division mirror of `verifyConfig`
+ *  (schedule-ai.ts:914), reading `division.settings` instead of `pack.settings`
+ *  and keeping every one of its deliberate drops:
+ *
+ *    startWindows: []   the pack carries ISO strings, the engine wants epoch ms
+ *    fieldFairness: off
+ *    parallelism: mixed  a PLACER preference, not a legality rule. Load-bearing
+ *                        here in a way it is not single-division: the joint draft
+ *                        feeds block-mode exclusivity asymmetrically (a division
+ *                        avoids the divisions drafted BEFORE it and never those
+ *                        after), so honouring it in the verifier would turn a
+ *                        build-order artefact into a verdict.
+ *    crossPersonClash: warn   matches single-division semantics exactly — a
+ *                        person clash is reported, never blocking. */
+export function verifyConfigFor(
+  division: CompetitionPackDivision,
+): Parameters<typeof validateAssignments>[1] {
+  const s = division.settings;
+  return {
+    perEntrantMinRest: s.perEntrantMinRest,
+    matchMinutes: s.matchMinutes,
+    ...(s.constraints !== null
+      ? {
+          constraints: {
+            ...(s.constraints.restMin !== undefined ? { restMin: s.constraints.restMin } : {}),
+            ...(s.constraints.restByGroup !== undefined
+              ? { restByGroup: s.constraints.restByGroup }
+              : {}),
+            noBackToBack: s.constraints.noBackToBack,
+            startWindows: [],
+            fieldFairness: "off" as const,
+            parallelism: "mixed" as const,
+            crossPersonClash: "warn" as const,
+          },
+        }
+      : {}),
+    gapMinutes: s.gapMinutes,
+    blackouts: s.blackouts.map((b) => ({
+      ...(b.court !== undefined ? { court: b.court } : {}),
+      from: ms(b.from),
+      to: ms(b.to),
+    })),
+    sessionWindows: s.sessionWindows.map((w) => ({ from: ms(w.from), to: ms(w.to) })),
+  };
+}
+
+/**
+ * Verify a joint proposal: one `validateAssignments` pass per division, each
+ * with that division's own config, each over the whole board.
+ *
+ * See the section header for why this is not one merged call. The `existing`
+ * handed to a division's pass is every OTHER division's proposed slots plus
+ * every obstacle — that is what makes a cross-division court clash visible: the
+ * other division's fixture is on the board, so this division's fixture collides
+ * with it and is reported. The other side of the same clash is reported by that
+ * division's own pass.
+ *
+ * Deduplication is not cosmetic. `validateAssignments` resolves feed
+ * dependencies against the whole board rather than the pass's own assignments,
+ * so a within-division order violation is re-reported verbatim by every other
+ * division's pass. Keyed on (fixtureId, reason, detail): the two SIDES of a
+ * court clash differ on fixtureId and both survive, which is the intent — either
+ * one can be the fixture that moves.
+ */
+export function verifyJoint(plan: AiSchedulePlan, pack: CompetitionPack): Conflict[] {
+  const all = toJointEngineAssignments(plan, pack);
+  const obstacles = toJointObstacleAssignments(pack);
+  const deps = jointFeedDependencies(pack);
+  const seen = new Set<string>();
+  const out: Conflict[] = [];
+  for (const division of pack.divisions) {
+    const mine = all.filter((a) => a.divisionId === division.id);
+    if (mine.length === 0) continue;
+    const others = all.filter((a) => a.divisionId !== division.id);
+    for (const c of validateAssignments(
+      mine,
+      verifyConfigFor(division),
+      [...others, ...obstacles],
+      deps,
+    )) {
+      const key = `${c.fixtureId}|${c.reason}|${c.detail ?? ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(c);
+    }
+  }
+  return out.sort((a, b) => cmp(a.fixtureId, b.fixtureId) || cmp(a.reason, b.reason));
+}
+
+/** Structural gate run before the engine verifier — the joint mirror of
+ *  `structuralCheck` (schedule-ai.ts:841). One rule changes: a fixture's
+ *  `court_label` must appear in ITS OWN division's `settings.courts`, not merely
+ *  in `pack.courts`. The union is a rendering convenience for the board; using
+ *  it as the gate would let the model place an Alpha fixture on a court only
+ *  Beta has, which is unschedulable in the real world and which the engine
+ *  cannot detect (it has no notion of which courts a division owns). */
+export function jointStructuralCheck(
+  plan: AiSchedulePlan,
+  movableIds: Set<string>,
+  pack: CompetitionPack,
+): string | null {
+  const fixtureById = new Map(pack.fixtures.movable.map((f) => [f.id, f]));
+  const divisionById = new Map(pack.divisions.map((d) => [d.id, d]));
+  const pinned = new Map(pack.fixtures.movable.filter((f) => f.pinned).map((f) => [f.id, f]));
+  const seen = new Set<string>();
+  const placed = new Set<string>();
+  for (const a of plan.assignments) {
+    if (!movableIds.has(a.fixture_id)) return `assignment references non-movable fixture ${a.fixture_id}`;
+    if (seen.has(a.fixture_id)) return `fixture ${a.fixture_id} appears more than once`;
+    seen.add(a.fixture_id);
+    placed.add(a.fixture_id);
+    const division = divisionById.get(fixtureById.get(a.fixture_id)?.division_id ?? "");
+    if (division === undefined) return `assignment references a fixture with no division: ${a.fixture_id}`;
+    if (!division.settings.courts.includes(a.court_label)) {
+      return `fixture ${a.fixture_id} uses a court its own division (${division.name}) does not have: ${a.court_label}`;
+    }
+    const pin = pinned.get(a.fixture_id);
+    if (
+      pin &&
+      (pin.current.at === null ||
+        ms(pin.current.at) !== ms(a.scheduled_at) ||
+        pin.current.court !== a.court_label)
+    ) {
+      return `pinned fixture ${a.fixture_id} must not move`;
+    }
+  }
+  for (const u of plan.unschedulable) {
+    if (!movableIds.has(u.fixture_id)) return `unschedulable references non-movable fixture ${u.fixture_id}`;
+    if (seen.has(u.fixture_id)) return `fixture ${u.fixture_id} appears more than once`;
+    seen.add(u.fixture_id);
+    if (pinned.has(u.fixture_id)) return `pinned fixture ${u.fixture_id} cannot be marked unschedulable`;
+  }
+  // R7: `movableIds` iteration order is NOT stable — only `.size` and
+  // membership are. This loop reads membership and produces at most one id in an
+  // error string, so it is safe; nothing here may serialise the whole set.
+  for (const id of movableIds) {
+    if (!seen.has(id)) return `movable fixture ${id} is missing from the plan`;
+  }
+  for (const [id] of pinned) {
+    if (movableIds.has(id) && !placed.has(id)) return `pinned fixture ${id} must stay at its current slot`;
+  }
+  return null;
+}
+
+/** proposal vs each movable fixture's current slot, over the union — the joint
+ *  mirror of `computeDiff` (schedule-ai.ts:968). */
+function computeJointDiff(plan: AiSchedulePlan, pack: CompetitionPack): CompetitionPlanResult["diff"] {
+  const proposalById = new Map(plan.assignments.map((a) => [a.fixture_id, a]));
+  const unsched = new Set(plan.unschedulable.map((u) => u.fixture_id));
+  const diff: CompetitionPlanResult["diff"] = { moved: [], placed: [], unscheduled: [], unchanged: [] };
+  for (const f of pack.fixtures.movable) {
+    const a = proposalById.get(f.id);
+    if (a) {
+      const hadSlot = f.current.at !== null && f.current.court !== null;
+      if (!hadSlot) diff.placed.push(f.id);
+      else if (ms(f.current.at!) === ms(a.scheduled_at) && f.current.court === a.court_label) {
+        diff.unchanged.push(f.id);
+      } else diff.moved.push(f.id);
+    } else if (unsched.has(f.id)) {
+      diff.unscheduled.push(f.id);
+    }
+  }
+  return diff;
+}
+
+/** One round, joint system prompt. A near-copy of `callModel`
+ *  (schedule-ai.ts:990) rather than a parameterisation of it: that function's
+ *  `system: SYSTEM_PROMPT` is asserted by the single-division tests, and adding
+ *  a prompt parameter to the shipped per-division path to serve a new one is a
+ *  behaviour change on a live endpoint for no gain. Everything else — the
+ *  AbortController deadline, the explicit SDK timeout, the null-on-unparseable
+ *  contract — is identical and must stay so. */
+async function callJointModel(
+  provider: AiProvider,
+  model: string,
+  messages: AiTurn[],
+  maxTokens: number = MAX_TOKENS,
+): Promise<AiChatResponse<AiSchedulePlan> | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ROUND_TIMEOUT_MS);
+  try {
+    return await provider.chat({
+      model,
+      system: JOINT_SYSTEM_PROMPT,
+      messages,
+      maxTokens,
+      reasoning: aiReasoning(model),
+      schema: { name: "schedule_plan", zod: AiSchedulePlan },
+      signal: controller.signal,
+      timeoutMs: 600_000,
+    });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new HttpError(422, "AI scheduling timed out; please retry", "AI_PLAN_TIMEOUT");
+    }
+    if (err instanceof HttpError || err instanceof AiProviderError) throw err;
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Run the schedule architect over a pre-built JOINT pack. Mirrors `runAiPlan`
+ * (schedule-ai.ts:1042) round for round — same meter placement (the round's
+ * output is charged the moment usage is known, BEFORE the refusal and
+ * parse-failure throws), same single corrective retry for a malformed plan, same
+ * MAX_REPAIR_ROUNDS, same fewest-blocking best-so-far selection, same
+ * usage-rides-on-the-422 contract. Takes the pack as data; never touches the DB.
+ *
+ * What differs: the system prompt is SYSTEM_PROMPT + JOINT_RULES, and the two
+ * checks are the joint ones.
+ *
+ * @throws HttpError 503 AI_PROVIDER_NOT_CONFIGURED, 422 AI_PLAN_FAILED (refusal,
+ *   un-correctable structural violation, or budget exhausted before a usable
+ *   plan), 422 AI_PLAN_TIMEOUT.
+ */
+export async function runCompetitionAiPlan(
+  pack: CompetitionPack,
+  movableIds: Set<string>,
+  modelOverride?: string,
+  providerName?: ProviderName,
+  meter: TokenMeter = unmeteredTokenMeter(),
+): Promise<CompetitionPlanResult> {
+  const provider = providerName ? resolveProvider(providerName) : selectProvider();
+  if (!provider.isConfigured()) {
+    throw new HttpError(503, "AI scheduling is not configured on this server", "AI_PROVIDER_NOT_CONFIGURED");
+  }
+  const model = modelOverride ?? schedulingAiModel();
+
+  const conversation: AiTurn[] = [{ role: "user", content: JSON.stringify(pack) }];
+  const divisionByFixture = new Map(pack.fixtures.movable.map((f) => [f.id, f.division_id]));
+
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let costUsd: number | null = 0;
+  let repairRounds = 0;
+  let correctiveUsed = false;
+
+  let best: { plan: AiSchedulePlan; blocking: Conflict[]; warnings: Conflict[] } | null = null;
+
+  const usageNow = () => ({
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    repair_rounds: repairRounds,
+    cost_usd: costUsd,
+  });
+
+  const finalizeFrom = (chosen: NonNullable<typeof best>): CompetitionPlanResult => ({
+    proposal: chosen.plan.assignments.map((a) => ({
+      fixture_id: a.fixture_id,
+      scheduled_at: a.scheduled_at,
+      court_label: a.court_label,
+      // Resolved server-side from the pack. JOINT_RULES tells the model NOT to
+      // emit a division field, so this is never an echo of model output.
+      division_id: divisionByFixture.get(a.fixture_id) ?? "",
+      ...(a.schedule_locked !== undefined ? { schedule_locked: a.schedule_locked } : {}),
+    })),
+    unschedulable: chosen.plan.unschedulable,
+    warnings: chosen.warnings,
+    blocking: chosen.blocking,
+    diff: computeJointDiff(chosen.plan, pack),
+    explanations: chosen.plan.explanations,
+    ...(chosen.plan.constraint_suggestions !== undefined
+      ? { constraint_suggestions: chosen.plan.constraint_suggestions }
+      : {}),
+    summary: chosen.plan.summary,
+    usage: usageNow(),
+  });
+
+  for (;;) {
+    if (!meter.canStartRound()) {
+      if (best !== null) return finalizeFrom(best);
+      throw new HttpError(
+        422,
+        "AI scheduling stopped: token budget exhausted before a usable plan was produced",
+        "AI_PLAN_FAILED",
+        { usage: usageNow() },
+      );
+    }
+    const roundMaxTokens = meter.clampRound(MAX_TOKENS);
+
+    let response: Awaited<ReturnType<typeof callJointModel>>;
+    try {
+      response = await callJointModel(provider, model, conversation, roundMaxTokens);
+    } catch (err) {
+      if (err instanceof HttpError && err.code === "AI_PLAN_TIMEOUT") {
+        throw new HttpError(422, err.message, "AI_PLAN_TIMEOUT", { usage: usageNow() });
+      }
+      throw err;
+    }
+    const roundInput = response?.usage?.inputTokens ?? 0;
+    const roundOutput = response?.usage?.outputTokens ?? 0;
+    inputTokens += roundInput;
+    outputTokens += roundOutput;
+    meter.add(roundOutput);
+    const roundCost =
+      response?.usage?.costUsd ??
+      (response ? aiRunCostUsd(response.servedModel, roundInput, roundOutput) : 0);
+    costUsd = costUsd === null || roundCost === null ? null : costUsd + roundCost;
+
+    if (response?.refused) {
+      throw new HttpError(
+        422,
+        "AI scheduling could not produce a usable plan; please retry",
+        "AI_PLAN_FAILED",
+        { usage: usageNow() },
+      );
+    }
+
+    const plan = response?.parsed ?? null;
+    const structuralError =
+      plan === null ? "the model returned no parseable plan" : jointStructuralCheck(plan, movableIds, pack);
+    if (structuralError !== null) {
+      if (correctiveUsed) {
+        throw new HttpError(
+          422,
+          "AI scheduling could not produce a usable plan; please retry",
+          "AI_PLAN_FAILED",
+          { usage: usageNow() },
+        );
+      }
+      correctiveUsed = true;
+      conversation.push(response?.assistantTurn ?? { role: "assistant", content: [] });
+      conversation.push({
+        role: "user",
+        content: JSON.stringify({
+          structural_error: structuralError,
+          note: "Your previous output was rejected before verification. Resend the full plan: every movable fixture of every division exactly once (in assignments or unschedulable), only movable ids, court_label drawn from that fixture's OWN division's settings.courts, and never move a pinned fixture.",
+        }),
+      });
+      continue;
+    }
+
+    const conflicts = verifyJoint(plan!, pack);
+    const blocking = conflicts.filter(isBlocking);
+    const warnings = conflicts.filter((c) => !isBlocking(c));
+
+    if (best === null || blocking.length <= best.blocking.length) {
+      best = { plan: plan!, blocking, warnings };
+    }
+
+    if (blocking.length === 0 || repairRounds >= MAX_REPAIR_ROUNDS) {
+      return finalizeFrom(best!);
+    }
+
+    repairRounds++;
+    conversation.push(response?.assistantTurn ?? { role: "assistant", content: [] });
+    conversation.push({
+      role: "user",
+      content: JSON.stringify({
+        verifier_conflicts: conflicts,
+        note: "Fix only these conflicts. Move as few fixtures as possible. Do not reintroduce earlier conflicts. A court conflict between two divisions is reported on both fixtures — move either one.",
+      }),
+    });
+  }
+}
+
+/** Wire the joint runner to the shared model ladder — the joint mirror of
+ *  `runAiPlanLadder` (schedule-ai.ts:1541). The SAME meter instance is handed to
+ *  every rung, so the run's hard token budget spans the whole ladder rather than
+ *  resetting per rung, and escalation stops the moment the meter refuses a round
+ *  (entering a further rung would spend nothing but would write a model into
+ *  `rungs_tried` that was never actually asked). */
+export async function runCompetitionAiPlanLadder(
+  pack: CompetitionPack,
+  movableIds: Set<string>,
+  meter: TokenMeter,
+): Promise<CompetitionPlanResult & { served_model: string; escalated_from?: string; rungs_tried: string[] }> {
+  return runLadder(
+    planRungs(),
+    (rung) => runCompetitionAiPlan(pack, movableIds, rung.model, rung.provider, meter),
+    (result) => planIsAcceptable(result, movableIds.size),
+    () => !meter.stoppedOnBudget,
+  );
 }

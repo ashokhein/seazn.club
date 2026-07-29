@@ -673,15 +673,19 @@ export async function buildSchedulePack(
 // and only decides whether we receive the round. It does make repair rounds 2-3
 // reachable, and each round re-sends the prior round's output as input — so the
 // worst case gets more expensive even though the per-round cost is unchanged.
-const ROUND_TIMEOUT_MS = Number(process.env.SCHEDULING_AI_ROUND_TIMEOUT_MS) || 600_000;
-const MAX_REPAIR_ROUNDS = 2;
+// ROUND_TIMEOUT_MS / MAX_REPAIR_ROUNDS / MAX_TOKENS below are exported for the
+// #350 joint runner (competition-schedule-ai.ts), which drives the same round
+// loop over a multi-division pack and must not fork these numbers. Export only —
+// no caller behaviour changes.
+export const ROUND_TIMEOUT_MS = Number(process.env.SCHEDULING_AI_ROUND_TIMEOUT_MS) || 600_000;
+export const MAX_REPAIR_ROUNDS = 2;
 
 /** Output token ceiling per round. Configurable per environment (same
  *  philosophy as AI_PROVIDER) so a candidate that spends its whole budget on
  *  reasoning can be given more room without a code change. Default of
  *  32_000 is unchanged from the hardcoded value, so the shipped Anthropic
  *  path behaves identically unless this is explicitly overridden. */
-const MAX_TOKENS = Number(process.env.SCHEDULING_AI_MAX_TOKENS) || 32_000;
+export const MAX_TOKENS = Number(process.env.SCHEDULING_AI_MAX_TOKENS) || 32_000;
 
 /** The model every architect run uses (both phases import this — single
  *  source). Default measured live 2026-07-19 (17-fixture pack, adaptive
@@ -828,7 +832,10 @@ export interface AiPlanResult {
 // a court double-booking, or a direct feed scheduled before its source ends.
 // Same taxonomy as the drag-drop board (schedule.ts mapConflicts). Rest,
 // blackout, session-window, person-overlap and indirect order land in warnings.
-function isBlocking(c: Conflict): boolean {
+// Exported so the #350 joint runner classifies a joint conflict report with the
+// SAME taxonomy — a cross-division court clash must block exactly as a
+// within-division one does.
+export function isBlocking(c: Conflict): boolean {
   return c.reason === "court" || (c.reason === "order" && c.direct === true);
 }
 
@@ -1311,8 +1318,16 @@ function escalationWarningRatio(): number {
 /** Is a plan good enough to ship without re-running on the primary model?
  *  Blocking conflicts are never acceptable — the engine says the schedule is
  *  physically impossible. Warnings are soft (rest, blackout, session window,
- *  cross-person), so they are judged against pack size rather than absolutely. */
-function planIsAcceptable(result: AiPlanResult, movableCount: number): boolean {
+ *  cross-person), so they are judged against pack size rather than absolutely.
+ *
+ *  Exported for the #350 joint ladder, and its parameter widened from
+ *  AiPlanResult to the two fields it actually reads so a joint result (which
+ *  carries division-tagged proposals) satisfies it without a cast. No caller
+ *  behaviour changes — every existing AiPlanResult still matches. */
+export function planIsAcceptable(
+  result: Pick<AiPlanResult, "blocking" | "warnings">,
+  movableCount: number,
+): boolean {
   if (result.blocking.length > 0) return false;
   if (movableCount === 0) return true;
   return result.warnings.length / movableCount <= escalationWarningRatio();
