@@ -1936,6 +1936,33 @@ describe.skipIf(!HAS_DB)("quantity drift", () => {
     // refunds in this design.
     expect(call![1].proration_behavior).toBe("none");
   });
+
+  it("leaves an INCOMPLETE group's drift uncorrected — its status list excludes 'incomplete' (#311)", async () => {
+    // hasLiveSubscription/LIVE_SUBSCRIPTION_STATUSES (subscription-status.ts)
+    // count 'incomplete' as live. reconcileGroupQuantities' own hand-written
+    // `status in ('trialing', 'active', 'past_due')` does not, so a group whose
+    // first invoice never paid is never selected here no matter how far its
+    // quantity_paid drifts from its live org count — unlike the identically
+    // drifted 'active' sibling above, which the same sweep DOES correct. This
+    // pins the CURRENT behaviour; #311 stops short of deriving this list from
+    // the constant because doing so would be a live behaviour change (this
+    // group would start getting corrected) rather than a pure refactor.
+    const payer = await makeUser("payer");
+    const stripeSubId = "sub_incomplete_drift_" + uniq();
+    const group = await makeGroup(payer, { stripeSubId, status: "incomplete", quantityPaid: 5 });
+    await makeOrg(group, payer);
+    await makeOrg(group, payer);
+    await makeOrg(group, payer);
+    stripeMock.state.quantity = 5;
+
+    await reconcileGroupQuantities(2000);
+
+    expect((await readGroup(group)).quantity_paid).toBe(5);
+    const call = stripeMock.subscriptionsUpdate.mock.calls.find(
+      (c) => (c as unknown as [string])[0] === stripeSubId,
+    );
+    expect(call).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2319,6 +2346,35 @@ describe.skipIf(!HAS_DB)("a live subscription with nothing left to bill", () => 
       select count(*)::text as n from subscriptions
        where id = ${group} and status in ('trialing', 'active', 'past_due')`;
     expect(Number(n)).toBe(1);
+  });
+
+  it("never cancels an INCOMPLETE group whose last org was soft deleted — cancelGroupIfEmpty's status list excludes 'incomplete' (#311)", async () => {
+    // syncGroupQuantity's own gate is hasLiveSubscription, which correctly
+    // treats 'incomplete' as live (LIVE_SUBSCRIPTION_STATUSES), so it reaches
+    // the orphaned branch and calls the private cancelGroupIfEmpty exactly as
+    // it would for an 'active' group. But that function's claiming UPDATE has
+    // its OWN hand-written `status in ('trialing', 'active', 'past_due')`,
+    // which excludes 'incomplete' — so the UPDATE matches zero rows, the
+    // claim silently fails, and the group is left billing Stripe for an org
+    // that no longer exists, with nothing left to ever retry it. This pins
+    // that CURRENT behaviour; #311 stops short of deriving this list from the
+    // constant because doing so (this group would start being cancelled) is a
+    // live behaviour change, not a pure refactor.
+    const payer = await makeUser("payer");
+    const stripeSubId = "sub_incomplete_orphan_" + uniq();
+    const group = await makeGroup(payer, { stripeSubId, status: "incomplete", periodEndDays: 30 });
+    const orgId = await makeOrg(group, payer);
+    await sql`update organizations set deleted_at = now() where id = ${orgId}`;
+
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await syncGroupQuantity(group);
+    } finally {
+      err.mockRestore();
+    }
+
+    expect(stripeMock.subscriptionsCancel).not.toHaveBeenCalled();
+    expect((await readGroup(group)).status).toBe("incomplete");
   });
 });
 
