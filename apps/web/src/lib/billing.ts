@@ -14,6 +14,7 @@ import { grantTrialForRow, recordPassGrant, recordPassRefund, walletIdFor } from
 import { PASS_KEYS, isPassKey, type PassKey } from "@/lib/currency";
 import stripePlans from "@/config/stripe-plans.json";
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
+import { planItem } from "@/lib/subscription-items";
 import { creditPassTowardSubscription } from "@/server/usecases/pass-credit";
 import { sendPassRungMismatchAlertEmail } from "@/lib/email";
 
@@ -730,7 +731,10 @@ export async function syncSubscriptionForGroup(
   subscriptionId: string,
   stripeSub: Stripe.Subscription,
 ): Promise<void> {
-  const priceId = stripeSub.items.data[0]?.price?.id ?? null;
+  // The PLAN item's price, not `data[0]`'s: an add-on's price maps to no `plans`
+  // row, so picking it by position resolved "unknown price" and left the group
+  // on whatever plan_key it already had (#329).
+  const priceId = planItem(stripeSub)?.price?.id ?? null;
   const knownPlanKey = priceId ? await planKeyForPrice(priceId) : null;
   // Unknown price (grandfathered/migrated in Stripe but not synced into `plans`):
   // keep the org's current plan instead of silently downgrading every affected
@@ -763,8 +767,11 @@ export async function syncSubscriptionForGroup(
   // that lands here corrects itself on the next webhook once the status is
   // mapped; the reverse mistake bills nobody and entitles everybody.
   const status = mapped ?? "incomplete";
-  // In Stripe v22, current_period_end lives on each subscription item.
-  const periodEnd = stripeSub.items.data[0]?.current_period_end ?? null;
+  // In Stripe v22, current_period_end lives on each subscription ITEM — and a
+  // group with an add-on has more than one, on different cycles. Reading
+  // `data[0]` stamped an annual group with a monthly rider's period end,
+  // eleven months early, whenever Stripe returned the rider first (#329).
+  const periodEnd = planItem(stripeSub)?.current_period_end ?? null;
   // null = this object cannot answer; see paymentMethodFromStripeSubscription.
   const hasPm = paymentMethodFromStripeSubscription(stripeSub);
 

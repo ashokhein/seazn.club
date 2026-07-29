@@ -12,6 +12,7 @@ import {
 import { invalidateEntitlementsForOrgGroup, isPassLocked } from "@/lib/entitlements";
 import { isPassKey, type PassKey } from "@/lib/currency";
 import { subscriptionIdForOrg } from "@/lib/billing-group";
+import { planItem } from "@/lib/subscription-items";
 import { logStaffAction } from "@/lib/admin";
 import {
   buildAddressUpdateParams,
@@ -244,7 +245,10 @@ export async function getBillingOverview(orgId: string): Promise<BillingOverview
     >`
       select stripe_price_id_monthly, stripe_price_id_annual
       from plans where key = ${sub.plan_key}`;
-    const priceId = stripeSub?.items.data[0]?.price?.id ?? null;
+    // The PLAN item's price — `intervalForPrice` below asks "is this group
+    // billed monthly or yearly", and an add-on rider is always monthly, so
+    // `data[0]` mislabelled an annual group's interval (#329).
+    const priceId = (stripeSub ? planItem(stripeSub) : null)?.price?.id ?? null;
     // Scope invoices to the current payer's own tenure(s) (#privacy): the group
     // is one customer whose invoice PDFs snapshot the payer-of-record's name and
     // address, so a new payer must not see a predecessor's. The viewer here is
@@ -599,8 +603,15 @@ async function resolvePriceChange(
     throw new HttpError(503, "Billing is not yet configured. Please contact support.");
 
   const stripeSub = await getStripe().subscriptions.retrieve(sub.stripe_subscription_id);
-  const item = stripeSub.items.data[0];
-  if (!item) throw new HttpError(500, "Subscription has no items.");
+  // The PLAN item — the caller puts `itemId` straight into a price SWAP, so
+  // `data[0]` picking an add-on rider would move the RIDER onto the plan price
+  // and leave the plan itself untouched (#329). Unresolvable is a 500 for the
+  // same reason the empty case already was: this function's entire output is
+  // "which item to reprice", and there is no safe answer to invent. The
+  // pre-existing throw is retargeted rather than added — a null here must not
+  // reach `item.price.id` below and refuse the change as "already on this plan".
+  const item = planItem(stripeSub);
+  if (!item) throw new HttpError(500, "Subscription has no plan item.");
   if (item.price.id === priceId) throw new HttpError(400, alreadyMessage);
 
   return {

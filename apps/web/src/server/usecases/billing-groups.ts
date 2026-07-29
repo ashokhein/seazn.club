@@ -26,6 +26,7 @@ import {
 } from "@/lib/entitlements";
 import { activeOrgCount, assertWithinGroupCap, groupOrgLimit } from "@/lib/billing-group";
 import { orgAddonForPlan } from "@/lib/org-addons";
+import { planItem } from "@/lib/subscription-items";
 import { hasLiveSubscription } from "@/lib/subscription-status";
 import { intervalForPrice } from "@/lib/billing-manage";
 import { toLocale, type Locale } from "@/lib/i18n-constants";
@@ -83,13 +84,16 @@ export interface QuantitySync {
   orphaned?: boolean;
 }
 
-/** The single item on a group's live Stripe subscription. */
+/** The PLAN item on a group's live Stripe subscription — never `data[0]`,
+ *  which is an add-on half the time now (#329). Everything below prices,
+ *  previews and syncs the QUANTITY (the group's org count) off this item; a
+ *  rider picked by position would move the wrong subscription line. */
 async function subscriptionItem(
   stripeSubscriptionId: string,
 ): Promise<{ live: Stripe.Subscription; item: Stripe.SubscriptionItem }> {
   const live = await getStripe().subscriptions.retrieve(stripeSubscriptionId);
-  const item = live.items.data[0];
-  if (!item) throw new HttpError(500, "Subscription has no items.");
+  const item = planItem(live);
+  if (!item) throw new HttpError(500, "Subscription has no plan item.");
   return { live, item };
 }
 
