@@ -91,8 +91,12 @@ describe("knockout qualification", () => {
 describe("goalEvents", () => {
   it("emits the exact scoreline attributed by entrant id", () => {
     const ev = goalEvents("home-id", "away-id", 2, 1);
-    const homeGoals = ev.filter((e) => e.type === "football.goal" && (e.payload as any).by === "home-id");
-    const awayGoals = ev.filter((e) => e.type === "football.goal" && (e.payload as any).by === "away-id");
+    const homeGoals = ev.filter(
+      (e) => e.type === "football.goal" && (e.payload as { by: string }).by === "home-id",
+    );
+    const awayGoals = ev.filter(
+      (e) => e.type === "football.goal" && (e.payload as { by: string }).by === "away-id",
+    );
     expect(homeGoals).toHaveLength(2);
     expect(awayGoals).toHaveLength(1);
     expect(ev[0]).toEqual({ type: "core.start", payload: {} });

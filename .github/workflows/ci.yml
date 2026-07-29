@@ -72,6 +72,21 @@ jobs:
           npm run i18n:gen-keys
           git diff --exit-code apps/web/src/lib/i18n-keys.ts || {
             echo "i18n-keys.ts is stale — run 'npm run i18n:gen-keys' and commit."; exit 1; }
+      # eslint gate (#344). Nothing ran lint in CI before, and `main` carried 31
+      # errors for long enough that none of them were recent. BLOCKING, not
+      # advisory: an advisory gate on a repo that already had 31 errors just
+      # prints 32 next week.
+      #
+      # Errors only. The 73 warnings are deliberately not gated — clearing them
+      # is a separate piece of work, and failing on them today would mean either
+      # a mass rewrite in this PR or a gate nobody can keep green.
+      #
+      # Exactly ONE suppression exists in the tree (period-pad.tsx, a ref read
+      # during render on a live-scoring countdown with no test coverage) and it
+      # names the issue that will remove it: #355. Nothing else may join it.
+      - name: eslint
+        run: npm run lint
+
       - run: npm test --workspace apps/web
       # Live-Stripe tier probe (sk_test, test-mode): confirms our plan/tier
       # amounts still round-trip real Stripe. Self-contained (no stripe:sync /

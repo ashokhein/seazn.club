@@ -6,6 +6,7 @@
 // every field writes the same PUT payload as before. Connect state stays a
 // LINK to Settings → Connect (never duplicated here).
 import { useState } from "react";
+import Link from "next/link";
 import { PlanBadge } from "@/components/plan-badge";
 import { Tip } from "@/components/ui/tip";
 import type { Pulse } from "@/lib/registration-derive";
@@ -305,9 +306,9 @@ export function RegistrationSettings({
                 </span>
                 <span className="mt-0.5 block text-slate-500">{msg("reg.settings.cardPaymentDesc")}</span>
                 {!settings.charges_enabled && (
-                  <a href="/settings/connect" className="mt-1 block font-medium text-purple-700 underline">
+                  <Link href="/settings/connect" className="mt-1 block font-medium text-purple-700 underline">
                     {msg("reg.settings.connectStripeFirst")}
-                  </a>
+                  </Link>
                 )}
               </span>
             </label>

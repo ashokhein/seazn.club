@@ -4,6 +4,43 @@ import { buildOpenRouterBody } from "../openrouter-request";
 
 const Plan = z.object({ ok: z.boolean() });
 
+// buildOpenRouterBody's real return type is `Record<string, unknown>` (the
+// wire body is assembled from a union of conditionally-present fields, so a
+// precise static type isn't worth maintaining in the source). These tests
+// reach deep into that JSON to assert the wire shape, so they need SOME
+// static shape to index into — this is that shape, narrow enough to cover
+// exactly what the assertions below touch, not a general OpenRouter type.
+interface WireContentPart {
+  type?: string;
+  text?: string;
+  cache_control?: { type: string };
+}
+interface WireMessage {
+  role: string;
+  content: unknown;
+}
+interface WireSchemaNode {
+  type?: string;
+  properties?: Record<string, WireSchemaNode>;
+  items?: WireSchemaNode;
+  maxItems?: number;
+  minItems?: number;
+  minimum?: number;
+  maximum?: number;
+  exclusiveMinimum?: number;
+  exclusiveMaximum?: number;
+}
+interface WireBody {
+  messages: WireMessage[];
+  reasoning?: { effort?: string; enabled?: boolean; max_tokens?: number };
+  response_format: {
+    type: string;
+    json_schema: { name: string; strict: boolean; schema: WireSchemaNode };
+  };
+  provider: { data_collection: string };
+  zdr: boolean;
+}
+
 const req = (over: Record<string, unknown> = {}) => ({
   model: "anthropic/claude-sonnet-5",
   system: "SYS",
@@ -18,13 +55,15 @@ const req = (over: Record<string, unknown> = {}) => ({
 
 describe("openrouter request body", () => {
   it("puts the system prompt first and marks it cacheable", () => {
-    const body = buildOpenRouterBody(req()) as any;
+    const body = buildOpenRouterBody(req()) as unknown as WireBody;
     expect(body.messages[0].role).toBe("system");
-    expect(body.messages[0].content[0].cache_control).toEqual({ type: "ephemeral" });
+    expect((body.messages[0].content as WireContentPart[])[0].cache_control).toEqual({
+      type: "ephemeral",
+    });
   });
 
   it("maps effort reasoning (adaptive thinking) to the unified reasoning parameter", () => {
-    const body = buildOpenRouterBody(req()) as any;
+    const body = buildOpenRouterBody(req()) as unknown as WireBody;
     expect(body.reasoning).toEqual({ effort: "high" });
   });
 
@@ -35,24 +74,24 @@ describe("openrouter request body", () => {
     // way of saying that without dropping `effort`.
     const body = buildOpenRouterBody(
       req({ reasoning: { kind: "effort", effort: "high", thinking: "disabled" } }),
-    ) as any;
+    ) as unknown as WireBody;
     expect(body.reasoning).toEqual({ effort: "high", enabled: false });
   });
 
   it("maps a legacy budget to reasoning.max_tokens", () => {
     const body = buildOpenRouterBody(
       req({ reasoning: { kind: "budget", tokens: 8_000 } }),
-    ) as any;
+    ) as unknown as WireBody;
     expect(body.reasoning).toEqual({ max_tokens: 8_000 });
   });
 
   it("omits reasoning entirely when none is asked for", () => {
-    const body = buildOpenRouterBody(req({ reasoning: { kind: "none" } })) as any;
+    const body = buildOpenRouterBody(req({ reasoning: { kind: "none" } })) as unknown as WireBody;
     expect(body.reasoning).toBeUndefined();
   });
 
   it("requests a strict json schema built from the zod schema", () => {
-    const body = buildOpenRouterBody(req()) as any;
+    const body = buildOpenRouterBody(req()) as unknown as WireBody;
     expect(body.response_format.type).toBe("json_schema");
     expect(body.response_format.json_schema.name).toBe("schedule_plan");
     expect(body.response_format.json_schema.strict).toBe(true);
@@ -60,7 +99,7 @@ describe("openrouter request body", () => {
   });
 
   it("always carries the data policy", () => {
-    const body = buildOpenRouterBody(req()) as any;
+    const body = buildOpenRouterBody(req()) as unknown as WireBody;
     expect(body.provider.data_collection).toBe("deny");
     expect(body.zdr).toBe(true);
   });
@@ -72,15 +111,17 @@ describe("openrouter request body", () => {
   // call, for every model, before the fix.
   it("strips maxItems/minItems from array schemas — OpenRouter's strict mode rejects them", () => {
     const Bounded = z.object({ items: z.array(z.string()).min(1).max(10) });
-    const body = buildOpenRouterBody(req({ schema: { name: "bounded", zod: Bounded } })) as any;
-    const itemsSchema = body.response_format.json_schema.schema.properties.items;
+    const body = buildOpenRouterBody(
+      req({ schema: { name: "bounded", zod: Bounded } }),
+    ) as unknown as WireBody;
+    const itemsSchema = body.response_format.json_schema.schema.properties!.items;
     expect(itemsSchema.maxItems).toBeUndefined();
     expect(itemsSchema.minItems).toBeUndefined();
     // The bound itself is still enforced elsewhere (AiSchedulePlan.safeParse
     // in schedule-ai.ts) — this only removes the wire-level hint the vendor
     // can't accept, so the rest of the schema must survive unstripped.
     expect(itemsSchema.type).toBe("array");
-    expect(itemsSchema.items.type).toBe("string");
+    expect(itemsSchema.items!.type).toBe("string");
   });
 
   // Regression: same rejection class, on integers — OpenRouter's strict mode
@@ -90,8 +131,10 @@ describe("openrouter request body", () => {
   // via AiConstraintDelta = SchedulingConstraints.partial()).
   it("strips minimum/maximum/exclusive bounds from numeric schemas", () => {
     const Bounded = z.object({ n: z.number().int().nonnegative().max(100) });
-    const body = buildOpenRouterBody(req({ schema: { name: "bounded", zod: Bounded } })) as any;
-    const nSchema = body.response_format.json_schema.schema.properties.n;
+    const body = buildOpenRouterBody(
+      req({ schema: { name: "bounded", zod: Bounded } }),
+    ) as unknown as WireBody;
+    const nSchema = body.response_format.json_schema.schema.properties!.n;
     expect(nSchema.minimum).toBeUndefined();
     expect(nSchema.maximum).toBeUndefined();
     expect(nSchema.exclusiveMinimum).toBeUndefined();
@@ -122,7 +165,7 @@ describe("openrouter request body", () => {
           { role: "user", content: "fix it" },
         ],
       }),
-    ) as any;
+    ) as unknown as WireBody;
     // messages[0] is the injected system prompt, so the replayed assistant
     // turn lands at index 2.
     expect(body.messages[2]).toEqual(rawAssistantMessage);
@@ -133,7 +176,9 @@ describe("openrouter request body", () => {
   // JSON.stringify(...)) — must pass through untouched, not be mistaken for
   // a replayable assistant message object.
   it("leaves plain string-content turns untouched", () => {
-    const body = buildOpenRouterBody(req({ messages: [{ role: "user", content: "plain string" }] })) as any;
+    const body = buildOpenRouterBody(
+      req({ messages: [{ role: "user", content: "plain string" }] }),
+    ) as unknown as WireBody;
     expect(body.messages[1]).toEqual({ role: "user", content: "plain string" });
   });
 });

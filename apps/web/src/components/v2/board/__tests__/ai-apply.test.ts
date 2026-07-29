@@ -25,7 +25,7 @@ const offAudit: AiApplyMeta = { instruction: "cover it", summary: "assigned 2", 
 function recorder(
   handlers: Record<string, (call: { url: string; json: unknown; method?: string }) => unknown> = {},
 ) {
-  const calls: { url: string; method?: string; json: any }[] = [];
+  const calls: { url: string; method?: string; json: unknown }[] = [];
   const api: ApplyApi = (async (url: string, options?: { method?: string; json?: unknown }) => {
     calls.push({ url, method: options?.method, json: options?.json });
     for (const [pat, fn] of Object.entries(handlers)) {
@@ -92,7 +92,7 @@ describe("applyAiPlans — chained accept", () => {
     expect(calls[0].json).toMatchObject({ kind: "ai" });
     expect((calls[0].json as { label: string }).label).toMatch(/^Before AI · /);
     expect(calls[1].json).toMatchObject({ source: "ai", expected_seq: 7, ai: audit });
-    expect(calls[1].json.assignments).toEqual([
+    expect((calls[1].json as { assignments: unknown }).assignments).toEqual([
       { fixture_id: "fa", scheduled_at: "2026-08-01T10:00:00Z", court_label: "Court 1" },
       { fixture_id: "fb", scheduled_at: "2026-08-01T11:00:00Z", court_label: "Court 1" },
     ]);
@@ -104,8 +104,12 @@ describe("applyAiPlans — chained accept", () => {
     await applyAiPlans(baseInput({ excludedFixtureIds: ["fb"] }), api);
 
     // [1] schedule apply, [2] officials apply (after the POST create).
-    expect(calls[1].json.assignments.map((a: { fixture_id: string }) => a.fixture_id)).toEqual(["fa"]);
-    expect(calls[2].json.assignments.map((a: { fixture_id: string }) => a.fixture_id)).toEqual(["fa"]);
+    expect(
+      (calls[1].json as { assignments: { fixture_id: string }[] }).assignments.map((a) => a.fixture_id),
+    ).toEqual(["fa"]);
+    expect(
+      (calls[2].json as { assignments: { fixture_id: string }[] }).assignments.map((a) => a.fixture_id),
+    ).toEqual(["fa"]);
   });
 
   it("applies each stage separately with a forward-walking expected_seq", async () => {
@@ -125,7 +129,7 @@ describe("applyAiPlans — chained accept", () => {
       "/api/v1/stages/st-1/schedule/apply",
       "/api/v1/stages/st-2/schedule/apply",
     ]);
-    expect(applies.map((c) => c.json.expected_seq)).toEqual([7, 8]);
+    expect(applies.map((c) => (c.json as { expected_seq: number }).expected_seq)).toEqual([7, 8]);
   });
 
   // ------------------------------------------------------------- outcome branches
