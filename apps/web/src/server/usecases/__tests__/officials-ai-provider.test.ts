@@ -6,6 +6,7 @@
 // without caring how the adapter fills that interface in. Mirrors
 // schedule-ai-provider.test.ts (Task 4).
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createTokenMeter } from "@/lib/ai-rung";
 
 const anthropicProvider = vi.fn();
 vi.mock("@/server/ai/anthropic-provider", () => ({ anthropicProvider }));
@@ -141,15 +142,15 @@ describe("officials runner ↔ provider seam", () => {
     expect(out.usage.cost_usd).toBeCloseTo(0.12);
   });
 
-  // Token-weighted AI credit rung (design ai-rung.ts): runOfficialsAiPlan's
-  // optional 4th param is the hard per-run token budget an escalation-aware
-  // caller enforces. Omitted (every test above), behaviour is unchanged.
+  // Token-weighted AI credit pricing (lib/ai-rung.ts): runOfficialsAiPlan's
+  // optional 4th param is the run's TokenMeter. Omitted (every test above), an
+  // unmetered meter is used and behaviour is unchanged.
   it("clamps maxTokens to what's left of the budget", async () => {
     const chat = vi.fn().mockResolvedValue(round(assignAll(fixtureIds, refA)));
     anthropicProvider.mockReturnValue({ id: "anthropic", isConfigured: () => true, chat });
 
     const { runOfficialsAiPlan } = await import("../officials-ai");
-    await runOfficialsAiPlan(pack, undefined, undefined, { tokens: 5_000, spentBefore: 0 });
+    await runOfficialsAiPlan(pack, undefined, undefined, createTokenMeter(5_000));
 
     expect(chat.mock.calls[0]![0].maxTokens).toBe(5_000);
   });
@@ -158,10 +159,30 @@ describe("officials runner ↔ provider seam", () => {
     const chat = vi.fn();
     anthropicProvider.mockReturnValue({ id: "anthropic", isConfigured: () => true, chat });
 
+    const meter = createTokenMeter(10_000);
+    meter.add(9_000); // an earlier rung already spent this
     const { runOfficialsAiPlan } = await import("../officials-ai");
-    await expect(
-      runOfficialsAiPlan(pack, undefined, undefined, { tokens: 10_000, spentBefore: 9_000 }),
-    ).rejects.toMatchObject({ code: "AI_PLAN_FAILED" });
+    await expect(runOfficialsAiPlan(pack, undefined, undefined, meter)).rejects.toMatchObject({
+      code: "AI_PLAN_FAILED",
+    });
     expect(chat).not.toHaveBeenCalled();
+    expect(meter.stoppedOnBudget).toBe(true);
+  });
+
+  // Phase B's empty-instruction path returns the deterministic solver draft
+  // with no model call at all — the meter must never refuse it, whatever the
+  // budget, because there is nothing to spend.
+  it("returns the solver draft on an empty instruction even with an exhausted meter", async () => {
+    const chat = vi.fn();
+    anthropicProvider.mockReturnValue({ id: "anthropic", isConfigured: () => true, chat });
+
+    const meter = createTokenMeter(1_000);
+    meter.add(1_000);
+    const { runOfficialsAiPlan } = await import("../officials-ai");
+    const out = await runOfficialsAiPlan({ ...pack, instruction: "  " }, undefined, undefined, meter);
+
+    expect(chat).not.toHaveBeenCalled();
+    expect(out.usage.output_tokens).toBe(0);
+    expect(meter.stoppedOnBudget).toBe(false);
   });
 });

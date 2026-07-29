@@ -298,9 +298,46 @@ describe.skipIf(!HAS_DB)("AI credit wallet metering — schedule-ai (SPEC-2 §5.
         where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}`;
       expect(event!.payload.underfunded).toBe(true);
       expect(event!.payload.rung).toBe(1);
+      expect(event!.payload.credits).toBe(1);
+      // Finished inside its budget — this is what a healthy run looks like, so
+      // the cliff stamp below means something.
+      expect(event!.payload.stopped_on_budget).toBe(false);
     } finally {
       if (savedS1 === undefined) delete process.env.AI_RUNG_S1;
       else process.env.AI_RUNG_S1 = savedS1;
+    }
+  });
+
+  // `underfunded` only records what the USER picked. It cannot tell a run that
+  // finished cleanly from one the budget cut short — which is exactly the
+  // signal needed to spot a mispriced rung while the predictor is still
+  // uncalibrated. `stopped_on_budget` is that signal, and it must survive onto
+  // the ledger on the failure path too.
+  it("stamps stopped_on_budget on a run the token budget cut short, and charges nothing", async () => {
+    const savedBudget = process.env.AI_RUNG_BUDGET_1;
+    process.env.AI_RUNG_BUDGET_1 = "500"; // below the per-round reserve → no round can start
+    try {
+      const { auth } = await seedOrg("community");
+      const { divisionId } = await seedPlannableDivision(auth);
+      const walletId = await walletIdFor(auth.orgId);
+      await grantCredits(walletId, 5);
+
+      await expect(
+        aiPlanForDivision(auth, divisionId, { instruction: "plan it", mode: "generate", rung: 1 }),
+      ).rejects.toMatchObject({ code: "AI_PLAN_FAILED" });
+
+      expect(chat).not.toHaveBeenCalled(); // refused before any COGS
+      expect(await balance(walletId)).toBe(5); // hold released — a failed run is free
+
+      const [event] = await sql<{ payload: Record<string, unknown> }[]>`
+        select payload from competition_events
+        where type = 'schedule.ai_failed' and payload->>'division_id' = ${divisionId}`;
+      expect(event!.payload.stopped_on_budget).toBe(true);
+      expect(event!.payload.budget).toBe(500);
+      expect(event!.payload.credits).toBe(1);
+    } finally {
+      if (savedBudget === undefined) delete process.env.AI_RUNG_BUDGET_1;
+      else process.env.AI_RUNG_BUDGET_1 = savedBudget;
     }
   });
 });
@@ -406,5 +443,44 @@ describe.skipIf(!HAS_DB)("AI credit wallet metering — officials-ai (SPEC-2 §5
     ).rejects.toMatchObject({ status: 402, featureKey: "ai.credits" });
     expect(chat).not.toHaveBeenCalled();
     expect(await balance(walletId)).toBe(0);
+  });
+
+  // REGRESSION (token-weighted rungs, lib/ai-rung.ts): the empty-instruction
+  // path returns the deterministic solver draft with ZERO model calls, so it
+  // burns no COGS at all. Pricing it from the pack — as every other run is
+  // priced — charged a large division 2 or 3 credits for that free draft. It
+  // cost 1 credit before rung pricing existed; it must still cost 1.
+  it("prices the zero-LLM-call solver draft at 1 credit even when the pack predicts a higher rung", async () => {
+    const savedS1 = process.env.AI_RUNG_OFFICIALS_S1;
+    const savedS2 = process.env.AI_RUNG_OFFICIALS_S2;
+    process.env.AI_RUNG_OFFICIALS_S1 = "0"; // force this pack above rung 1...
+    process.env.AI_RUNG_OFFICIALS_S2 = "0"; // ...all the way to rung 3
+    try {
+      const { auth } = await seedOrg("community");
+      const { divisionId, fixtureIds } = await seedPlannableDivision(auth, { officials: 1 });
+      const walletId = await walletIdFor(auth.orgId);
+      await grantCredits(walletId, 3);
+
+      const out = await officialsAiPlanForDivision(auth, divisionId, {
+        instruction: "",
+        policy: POLICY,
+        schedule: spread(fixtureIds),
+      });
+
+      expect(chat).not.toHaveBeenCalled();
+      expect(out.credits).toBe(1);
+      expect(out.rung).toBe(1);
+      expect(out.underfunded).toBe(false); // not "cheaped out" — there is nothing to fund
+      expect(await balance(walletId)).toBe(2); // 3 − 1, NOT 3 − 3
+
+      const spends = (await ledgerRows(walletId)).filter((r) => r.source === "run_spend");
+      expect(spends).toHaveLength(1);
+      expect(spends[0]).toMatchObject({ delta: -1 });
+    } finally {
+      if (savedS1 === undefined) delete process.env.AI_RUNG_OFFICIALS_S1;
+      else process.env.AI_RUNG_OFFICIALS_S1 = savedS1;
+      if (savedS2 === undefined) delete process.env.AI_RUNG_OFFICIALS_S2;
+      else process.env.AI_RUNG_OFFICIALS_S2 = savedS2;
+    }
   });
 });
