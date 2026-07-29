@@ -1569,7 +1569,7 @@
   "compset.status.archived": "archived",
   "compset.statusHint.published": "A timetable is set — publish it?",
   "compset.statusHint.live": "Matches are underway — mark it live?",
-  "compset.statusHint.completed": "Every match is decided — mark it completed?",
+  "compset.statusHint.completed": "Its matches are done, or its end date has passed — mark it completed?",
   "compset.statusHint.fallback": "Looks like this should be “{status}”.",
   "compset.tab.general": "General",
   "compset.tab.branding": "Branding",
@@ -2721,5 +2721,11 @@
   "board.ai.trace.line.draftOfficials": "draft › {fixtures} fixtures · {roles} required roles",
   "board.ai.trace.line.planOfficials": "plan › assigned {count} duties",
   "board.ai.trace.line.verifyOfficials": "verify › assignOfficials",
-  "board.ai.trace.line.blockingRemainOfficials": "{count} blocking — left for manual assignment"
+  "board.ai.trace.line.blockingRemainOfficials": "{count} blocking — left for manual assignment",
+  "comp.wrapUp.title": "This competition's end date has passed",
+  "comp.wrapUp.body": "It was due to end on {date}. Mark it completed, or set a new end date if it's still running.",
+  "comp.wrapUp.complete": "Mark it completed",
+  "comp.wrapUp.completing": "Marking completed…",
+  "comp.wrapUp.changeDate": "Change the end date",
+  "comp.wrapUp.failed": "Couldn't update the status. Try again."
 }

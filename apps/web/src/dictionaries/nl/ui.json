@@ -1569,7 +1569,7 @@
   "compset.status.archived": "gearchiveerd",
   "compset.statusHint.published": "Er is een programma ingesteld — publiceren?",
   "compset.statusHint.live": "Wedstrijden zijn bezig — als live markeren?",
-  "compset.statusHint.completed": "Elke wedstrijd is beslist — als voltooid markeren?",
+  "compset.statusHint.completed": "De wedstrijden zijn afgelopen of de einddatum is verstreken — als voltooid markeren?",
   "compset.statusHint.fallback": "Dit zou waarschijnlijk “{status}” moeten zijn.",
   "compset.tab.general": "Algemeen",
   "compset.tab.branding": "Branding",
@@ -2721,5 +2721,11 @@
   "board.ai.trace.line.draftOfficials": "concept › {fixtures} wedstrijden · {roles} vereiste rollen",
   "board.ai.trace.line.planOfficials": "plan › {count} taken toegewezen",
   "board.ai.trace.line.verifyOfficials": "check › assignOfficials",
-  "board.ai.trace.line.blockingRemainOfficials": "{count} blokkerend — handmatig toewijzen"
+  "board.ai.trace.line.blockingRemainOfficials": "{count} blokkerend — handmatig toewijzen",
+  "comp.wrapUp.title": "De einddatum van deze competitie is verstreken",
+  "comp.wrapUp.body": "Ze zou eindigen op {date}. Markeer ze als voltooid, of stel een nieuwe einddatum in als ze nog loopt.",
+  "comp.wrapUp.complete": "Als voltooid markeren",
+  "comp.wrapUp.completing": "Bezig met markeren…",
+  "comp.wrapUp.changeDate": "Einddatum wijzigen",
+  "comp.wrapUp.failed": "Kon de status niet bijwerken. Probeer opnieuw."
 }

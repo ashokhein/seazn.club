@@ -45,7 +45,16 @@ vi.mock("@/server/usecases/competitions", () => ({
   }),
 }));
 vi.mock("@/server/usecases/divisions", () => ({ listDivisions: async () => [] }));
-vi.mock("@/lib/entitlements", () => ({ hasFeature: async () => false }));
+// `importOriginal` rather than a hand-written stub: this page reaches
+// entitlements twice now — `hasFeature` directly, and `passLockReason` through
+// lib/competition-wrapup's status nudge (v17 gap #362) — and a bare object mock
+// turns the SECOND arrival into an "export is not defined" crash rather than a
+// visible failure of the thing this test is about. Only `hasFeature` is
+// overridden; the rest of the module stays real.
+vi.mock("@/lib/entitlements", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/entitlements")>()),
+  hasFeature: async () => false,
+}));
 vi.mock("@/lib/currency-server", () => ({ preferredCurrency: async () => "usd" }));
 vi.mock("@/lib/resolve-locale", () => ({ resolveLocale: async () => "en" }));
 // The client form itself is not what this fix touches — stubbed so its own

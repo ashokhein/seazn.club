@@ -14,6 +14,9 @@ import { StatusChip, divisionChipState, CHIP_SORT } from "@/components/ui/status
 import { divisionAccent, monogram } from "@/lib/division-hue";
 import { resolveLogoUrl } from "@/server/public-site/data";
 import { CompetitionPassEntry } from "@/components/competition-pass-entry";
+import { CompetitionWrapUpPrompt } from "@/components/competition-wrap-up-prompt";
+import { needsWrapUp } from "@/lib/competition-wrapup";
+import { fmtDate, UTC } from "@/lib/format";
 import { formatMinor } from "@/lib/currency";
 import { lowestPassRung, passActiveLabels, passEndedReasons } from "@/lib/pass-ladder";
 import { preferredCurrency } from "@/lib/currency-server";
@@ -138,6 +141,31 @@ export default async function CompetitionPage({
             </Link>
           </div>
         </div>
+
+          {/* v17 gap #362 — nothing retires a competition past its end date, so
+              the product asks instead of sweeping. Editors only: the two
+              answers are both writes, and a scorer has neither the permission
+              nor the standing to retire someone else's competition.
+
+              NOT gated on `frozen`. A frozen competition is read-only, but
+              `isRetirePatch` (usecases/competitions.ts) exempts a bare
+              status→completed precisely so an over-quota org can get back under
+              it — which makes this prompt MORE useful there, not less.
+
+              `ends_on` is a DATE, so it formats in UTC: the local-zone reading
+              of a bare date is a day off for half the world, and this sentence
+              quotes the same boundary the lock arm judges. */}
+          {canEdit && needsWrapUp(competition.status, competition.ends_on) && (
+            <CompetitionWrapUpPrompt
+              competitionId={competition.id}
+              endedOnLabel={fmtDate(UTC, competition.ends_on, {
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+              })}
+              settingsHref={routes.competitionSettings(orgSlug, compSlug)}
+            />
+          )}
 
           <section>
             <div className="mb-3 flex items-center justify-between">

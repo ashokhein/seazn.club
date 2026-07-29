@@ -1569,7 +1569,7 @@
   "compset.status.archived": "archivada",
   "compset.statusHint.published": "Hay un horario definido, ¿publicarla?",
   "compset.statusHint.live": "Los partidos están en marcha, ¿marcarla como en vivo?",
-  "compset.statusHint.completed": "Todos los partidos están decididos, ¿marcarla como completada?",
+  "compset.statusHint.completed": "Sus partidos están terminados o su fecha de finalización ya pasó, ¿marcarla como completada?",
   "compset.statusHint.fallback": "Parece que esto debería ser “{status}”.",
   "compset.tab.general": "General",
   "compset.tab.branding": "Marca",
@@ -2721,5 +2721,11 @@
   "board.ai.trace.line.draftOfficials": "borrador › {fixtures} partidos · {roles} roles requeridos",
   "board.ai.trace.line.planOfficials": "plan › {count} asignaciones propuestas",
   "board.ai.trace.line.verifyOfficials": "verif › assignOfficials",
-  "board.ai.trace.line.blockingRemainOfficials": "{count} bloqueante — se asignan manualmente"
+  "board.ai.trace.line.blockingRemainOfficials": "{count} bloqueante — se asignan manualmente",
+  "comp.wrapUp.title": "La fecha de finalización de esta competición ya pasó",
+  "comp.wrapUp.body": "Debía terminar el {date}. Márcala como completada o establece una nueva fecha de finalización si sigue en curso.",
+  "comp.wrapUp.complete": "Marcar como completada",
+  "comp.wrapUp.completing": "Marcando como completada…",
+  "comp.wrapUp.changeDate": "Cambiar la fecha de finalización",
+  "comp.wrapUp.failed": "No se pudo actualizar el estado. Inténtalo de nuevo."
 }
