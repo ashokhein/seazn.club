@@ -20,6 +20,8 @@ import { preferredCurrency } from "@/lib/currency-server";
 import { routes } from "@/lib/routes";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, plural } from "@/lib/i18n";
+import { sql } from "@/lib/db";
+import { checkoutTrialDays } from "@/lib/billing";
 
 export default async function CompetitionPage({
   params,
@@ -32,14 +34,22 @@ export default async function CompetitionPage({
   const id = page.competition.id;
   const locale = await resolveLocale();
   const dict = await getDictionary(locale, "ui");
-  const [competition, divisions, stats, currency] = await Promise.all([
+  const [competition, divisions, stats, currency, [subRow]] = await Promise.all([
     getCompetition(auth, id),
     listDivisions(auth, id),
     listDivisionCardStats(auth, id),
     // The pass price is currency-switcher-dependent, and the entry point is a
     // client island — so it is formatted here and crosses as a finished string.
     preferredCurrency(page.org.id),
+    // v17 gap #354 — the "ended" pass card below offers a Go Pro link whose
+    // label must not promise a trial the checkout won't grant. Same read
+    // `checkoutTrialDays` (lib/billing.ts) itself consults.
+    sql<{ trial_used_at: string | null }[]>`
+      select s.trial_used_at from organizations o
+      join subscriptions s on s.id = o.subscription_id
+      where o.id = ${page.org.id}`,
   ]);
+  const trialAvailable = checkoutTrialDays(subRow) > 0;
   const publicPath =
     competition.visibility !== "private" ? routes.shared(orgSlug, competition.slug) : null;
 
@@ -67,7 +77,7 @@ export default async function CompetitionPage({
               nextEditionHref={routes.competitionNew(orgSlug)}
               nextEditionLabel={t(dict, "pass.entry.ended.nextEdition")}
               goProHref={routes.billing(orgSlug)}
-              goProLabel={t(dict, "upgrade.proCard.cta")}
+              goProLabel={t(dict, trialAvailable ? "upgrade.proCard.cta" : "upgrade.proCard.ctaNoTrial")}
               canBuy={canEdit}
             />
             <h1 className="page-title mt-1 truncate">

@@ -820,6 +820,7 @@
   "upgrade.perMonth": "/mes",
   "upgrade.proCard.body": "Pro mejora todas las competiciones de {org}, no solo esta — y añade el tablero de planificación, las estadísticas de jugadores, los oficiales y el acceso a la API que el pase nunca cubre.",
   "upgrade.proCard.cta": "Pasar a Pro — prueba gratuita de 14 días",
+  "upgrade.proCard.ctaNoTrial": "Hazte Pro",
   "upgrade.titleOwned": "Event Pass — «{name}»",
   "upgrade.titlePlan": "«{name}» con tu plan",
   "upgrade.buyCta": "Comprar el pase — {rung}",

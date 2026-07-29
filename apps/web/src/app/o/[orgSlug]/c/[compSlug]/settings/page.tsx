@@ -11,7 +11,8 @@ import { formatMinor } from "@/lib/currency";
 import { lowestPassRung, passActiveLabels, passEndedReasons } from "@/lib/pass-ladder";
 import { preferredCurrency } from "@/lib/currency-server";
 import { hasFeature } from "@/lib/entitlements";
-import { withTenant } from "@/lib/db";
+import { sql, withTenant } from "@/lib/db";
+import { checkoutTrialDays } from "@/lib/billing";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t } from "@/lib/i18n";
 
@@ -38,15 +39,23 @@ export default async function CompetitionSettingsPage({
   const id = page.competition.id;
   const locale = await resolveLocale();
   const dict = await getDictionary(locale, "ui");
-  const [competition, discoveryBranding, themeBranding, allDivisions, currency] =
+  const [competition, discoveryBranding, themeBranding, allDivisions, currency, [subRow]] =
     await Promise.all([
       getCompetition(auth, id),
       hasFeature(auth.orgId, "discovery.branding"),
       hasFeature(auth.orgId, "dashboard.branding"),
       listDivisions(auth, id, { includeArchived: true }),
       preferredCurrency(org.id),
+      // v17 gap #354 — the "ended" pass card below offers a Go Pro link whose
+      // label must not promise a trial the checkout won't grant. Same read
+      // `checkoutTrialDays` (lib/billing.ts) itself consults.
+      sql<{ trial_used_at: string | null }[]>`
+        select s.trial_used_at from organizations o
+        join subscriptions s on s.id = o.subscription_id
+        where o.id = ${org.id}`,
     ]);
   const archivedDivisions = allDivisions.filter((d) => d.archived_at !== null);
+  const trialAvailable = checkoutTrialDays(subRow) > 0;
 
   // Youth flag (v3/11 gap 8): any live division with a U-age eligibility rule
   // raises the guardian-consent interstitial before the competition leaves
@@ -95,7 +104,7 @@ export default async function CompetitionSettingsPage({
             nextEditionHref={routes.competitionNew(orgSlug)}
             nextEditionLabel={t(dict, "pass.entry.ended.nextEdition")}
             goProHref={routes.billing(orgSlug)}
-            goProLabel={t(dict, "upgrade.proCard.cta")}
+            goProLabel={t(dict, trialAvailable ? "upgrade.proCard.cta" : "upgrade.proCard.ctaNoTrial")}
             canBuy={canEdit}
           />
           <h1 className="mt-1 text-xl font-semibold tracking-tight text-slate-900">

@@ -820,6 +820,7 @@
   "upgrade.perMonth": "/month",
   "upgrade.proCard.body": "Pro raises every competition in {org}, not just this one — and adds the schedule board, player stats, officials and API access the pass never covers.",
   "upgrade.proCard.cta": "Go Pro — 14-day free trial",
+  "upgrade.proCard.ctaNoTrial": "Go Pro",
   "upgrade.titleOwned": "Event Pass — “{name}”",
   "upgrade.titlePlan": "“{name}” on your plan",
   "upgrade.buyCta": "Buy the pass — {rung}",

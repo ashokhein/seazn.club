@@ -44,7 +44,7 @@ export const dynamic = "force-dynamic";
 // time. See lib/pass-comparison.ts for why nothing is written down.
 import Link from "@/components/ui/console-link";
 import { sql } from "@/lib/db";
-import { competitionHasRefusedPassPayment, reconcilePassCheckout } from "@/lib/billing";
+import { checkoutTrialDays, competitionHasRefusedPassPayment, reconcilePassCheckout } from "@/lib/billing";
 import { captureError } from "@/lib/sentry";
 import { requireCompetitionPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";
@@ -147,9 +147,12 @@ export default async function CompetitionUpgradePage({
     // orgPlanKey() does the same org→subscription join internally but doesn't
     // expose the id, and `groupAlreadyRedeemed` below needs the group's
     // `subscriptions.id` directly (same join `creditPassTowardSubscription`
-    // itself does in pass-credit.ts).
-    sql<{ id: string }[]>`
-      select s.id from organizations o join subscriptions s on s.id = o.subscription_id
+    // itself does in pass-credit.ts). `trial_used_at` rides along (v17 gap
+    // #354): the Go Pro CTA below must ask the SAME question the checkout
+    // does — `checkoutTrialDays` — rather than promise a trial a second,
+    // independent read might disagree with.
+    sql<{ id: string; trial_used_at: string | null }[]>`
+      select s.id, s.trial_used_at from organizations o join subscriptions s on s.id = o.subscription_id
       where o.id = ${orgId}`,
     // A payment for THIS competition was taken and then refused by the mint
     // guard (v17 gap #326, V342). Read here rather than inferred from the
@@ -276,6 +279,10 @@ export default async function CompetitionUpgradePage({
   // a missing row is treated as ineligible rather than assumed, matching this
   // page's existing defensive style.
   const subscriptionId = subRow?.id ?? null;
+  // v17 gap #354 — the SAME predicate the embedded checkout builds its
+  // `trial_period_days` from (lib/billing.ts): an org whose `trial_used_at`
+  // is already set must not be promised a trial the checkout will not grant.
+  const trialAvailable = checkoutTrialDays(subRow) > 0;
   const creditEligible =
     !!pass?.stripe_payment_intent &&
     !!purchasedAt &&
@@ -373,6 +380,7 @@ export default async function CompetitionUpgradePage({
           orgSlug={orgSlug}
           orgName={page.org.name}
           creditEligible={creditEligible}
+          trialAvailable={trialAvailable}
         />
       )}
 
@@ -805,6 +813,7 @@ function ProNext({
   orgSlug,
   orgName,
   creditEligible,
+  trialAvailable,
 }: {
   dict: Dict;
   state: UpgradePageState;
@@ -812,6 +821,10 @@ function ProNext({
   orgSlug: string;
   orgName: string;
   creditEligible: boolean;
+  /** v17 gap #354 — `checkoutTrialDays(sub) > 0`, read where the page fetches
+   *  the org's subscription. The CTA below drops its trial clause once this
+   *  is false, whatever pass state put the card on screen. */
+  trialAvailable: boolean;
 }) {
   const held = state.kind === "owned" || state.kind === "ceiling";
   // An ended pass reads as "already bought something here" for this panel's
@@ -854,7 +867,7 @@ function ProNext({
           first rather than shrinking both. */}
       <div className="mt-5 flex flex-wrap gap-3">
         <Link href={routes.billing(orgSlug)} className="btn btn-primary inline-block px-5 py-2.5">
-          {t(dict, "upgrade.proCard.cta")} →
+          {t(dict, trialAvailable ? "upgrade.proCard.cta" : "upgrade.proCard.ctaNoTrial")} →
         </Link>
         {/* The honest alternative to a re-buy. The pass cannot be bought again
             for THIS competition (decision #248 Q4), but next season's edition
