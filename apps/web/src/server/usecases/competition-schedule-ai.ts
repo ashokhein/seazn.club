@@ -78,7 +78,20 @@ import {
   type AiTurn,
 } from "@/server/ai/provider";
 import { aiRunCostUsd } from "@/lib/ai-pricing";
-import { unmeteredTokenMeter, type TokenMeter } from "@/lib/ai-rung";
+import {
+  createTokenMeter,
+  meterStamp,
+  quoteRun,
+  schedulingRungWeights,
+  unmeteredTokenMeter,
+  type RunMeterStamp,
+  type Rung,
+  type TokenMeter,
+} from "@/lib/ai-rung";
+import { spendCredit, walletIdFor } from "@/lib/credits";
+import { requireFeature } from "@/lib/entitlements";
+import { isServerFeatureEnabled } from "@/lib/posthog-server";
+import { rateLimit } from "@/lib/rate-limit";
 import {
   validateAssignments,
   type Assignment,
@@ -1219,4 +1232,432 @@ export async function runCompetitionAiPlanLadder(
     (result) => planIsAcceptable(result, movableIds.size),
     () => !meter.stoppedOnBudget,
   );
+}
+
+// ===========================================================================
+// #350 Phase C — the ORCHESTRATOR. Gates, pricing, the credit spend, the two
+// competition-level ledger events. This is the money path: everything that can
+// refuse must refuse BEFORE `spendCredit`, and the gate ORDER below is the
+// acceptance criterion, not an implementation detail.
+// ===========================================================================
+
+const SINGLE_DIVISION = "AI_PLAN_SINGLE_DIVISION";
+
+/** Fewer than two divisions to solve. This is not merely a UX nicety: pricing
+ *  gives a joint run `max(1, Σ rungs − 1)`, so a lone rung-2 division routed
+ *  through this endpoint would cost 1 credit instead of the 2 the division
+ *  endpoint charges. The rule closes that arbitrage, which is why it also fires
+ *  when the zero-movable drop below leaves only one division standing. */
+const singleDivision = (): HttpError =>
+  new HttpError(400, "use the division schedule page to plan a single division", SINGLE_DIVISION);
+
+/** A division whose own data cannot be planned (spec §11). Refused before any
+ *  credit is reserved and NAMES the division — "something is wrong somewhere in
+ *  your competition" is not an actionable error for a 12-division board. */
+const UNPLANNABLE = "AI_PLAN_DIVISION_UNPLANNABLE";
+
+export interface AiCompetitionPlanRequest {
+  /** At least two, de-duplicated by the orchestrator. */
+  division_ids: string[];
+  instruction: string;
+  mode: "generate" | "refine" | "repair";
+  /** Per-division rung override keyed by division id (the confirm card's
+   *  segmented control). Advisory: the server always recomputes the quote, and
+   *  a value that is not 1|2|3 — or names a division not in the run — is
+   *  ignored by `quoteRun` rather than being an error. */
+  rung_overrides?: Record<string, number>;
+  prior?: { instruction: string; assignments: CompetitionPackAssignment[] };
+}
+
+/**
+ * `constraint_suggestions` is deliberately NOT part of the joint response.
+ *
+ * The model emits them in the ENGINE shape — `startWindows[].notBefore/notAfter`
+ * are epoch ms — and the single-division endpoint renders them to
+ * ISO-with-offset in that division's timezone before answering
+ * (`isoConstraintSuggestions`, schedule-ai.ts:1275). A joint run has no single
+ * timezone to render in (ruling R8), and a suggestion is a durable rule for ONE
+ * division's settings. So there is no correct joint answer here — only a choice
+ * between shipping raw epoch numbers into a field clients parse as ISO, and
+ * silently attributing one division's zone to another division's rule. Dropping
+ * the field is the honest third option; a per-division suggestion channel is its
+ * own design, not a side effect of this endpoint.
+ */
+export interface AiCompetitionPlanResponse
+  extends Omit<CompetitionPlanResult, "usage" | "constraint_suggestions">,
+    Omit<RunMeterStamp, "divisions"> {
+  /** Court labels not shared by every solved division — same-named courts are
+   *  the SAME court and differently-named ones are not, so the board warns. */
+  divergent_courts: string[];
+  /**
+   * One row per SOLVED division, in pack order: what it is AND what it cost.
+   *
+   * Deliberately ONE array. `RunMeterStamp.divisions` (lib/ai-rung.ts, mirrored
+   * by `AiRunPriceFields` in api-v1/schemas.ts) already keys a per-division
+   * price breakdown by division id, and the board needs the division's name and
+   * movable count against the same ids — two sibling arrays over one key is a
+   * join the client would have to do on every render, and the plan's own
+   * response sketch collided on this exact name. So the price fields are merged
+   * in here, and the LEDGER event keeps meterStamp's narrow shape verbatim.
+   */
+  divisions: {
+    id: string;
+    name: string;
+    movable: number;
+    rung: Rung;
+    predicted_rung: Rung;
+    underfunded: boolean;
+  }[];
+  /** Requested divisions dropped from the run before quoting (ruling R6), so
+   *  the organiser is told why a division they selected is missing from the
+   *  proposal rather than silently getting a smaller board back. */
+  skipped_divisions: { id: string; name: string; reason: "no_movable_fixtures" }[];
+  /** Public shape only — `cost_usd` stays on the ledger event. */
+  usage: { input_tokens: number; output_tokens: number; repair_rounds: number };
+}
+
+/**
+ * POST /competitions/{id}/schedule/ai-plan orchestrator — the joint twin of
+ * `aiPlanForDivision` (schedule-ai.ts:1585).
+ *
+ * GATE ORDER, and why each step sits where it does:
+ *
+ *   1. kill switch `ai-scheduling` (fail-open) — a rollout switch, never a
+ *      billing gate, so an unreachable PostHog must not block a paying org.
+ *   2. `scheduling.ai` (402).
+ *   3. `scheduling.multi_division` (402). This is the FIRST server-side
+ *      enforcement of that key anywhere: until now it only hid a page
+ *      (`c/[compSlug]/schedule/page.tsx:36`), so an API caller could reach
+ *      multi-division behaviour without the plan.
+ *   4. `>= 2` divisions (400) — the discount-arbitrage rule above.
+ *   5. competition + divisions in ONE query: unknown competition 404, a
+ *      requested id not in this competition 404 naming it, a frozen division
+ *      409 naming it.
+ *   6. a division that cannot be planned at all (no courts / unparseable
+ *      settings) 422 naming it.
+ *   6b. divisions with nothing movable are DROPPED (ruling R6), not refused —
+ *      a joint action over five divisions must not fail because one of them is
+ *      already fully scheduled, and must never charge for a division it did not
+ *      solve. Fewer than two left falls back to step 4's 400.
+ *   7. wallet resolve, 8. rate limit (its OWN key namespace — a joint run must
+ *      not consume the per-division 5/hr buckets), 9. pack build (the summed
+ *      500 cap fires here), 10. quote, 11. `spendCredit`.
+ *
+ * Everything through step 10 happens before a single credit is reserved.
+ *
+ * @throws HttpError 403 FEATURE_DISABLED, 402 (either paid gate, or an empty
+ *   credit wallet), 400 AI_PLAN_SINGLE_DIVISION, 404, 409 SCHEDULE_LOCKED,
+ *   409 AI_PLAN_TOO_LARGE, 422 AI_PLAN_DIVISION_UNPLANNABLE, 429, plus
+ *   everything the runner raises (422 AI_PLAN_FAILED/AI_PLAN_TIMEOUT, 503).
+ */
+export async function aiPlanForCompetition(
+  auth: AuthCtx,
+  competitionId: string,
+  input: AiCompetitionPlanRequest,
+): Promise<AiCompetitionPlanResponse> {
+  // Stable analytics id: the user, or an org: synthetic when an API key drives
+  // the call (auth.userId is null for key auth).
+  const distinctId = auth.userId ?? `org:${auth.orgId}`;
+  if (
+    !(await isServerFeatureEnabled("ai-scheduling", distinctId, { orgId: auth.orgId, fallback: true }))
+  ) {
+    throw new HttpError(403, "AI scheduling is currently turned off", "FEATURE_DISABLED");
+  }
+  await requireFeature(auth.orgId, "scheduling.ai");
+  await requireFeature(auth.orgId, "scheduling.multi_division");
+
+  const requested = [...new Set(input.division_ids)];
+  if (requested.length < 2) throw singleDivision();
+
+  const rows = await withTenant(auth.orgId, async (tx) => {
+    const [comp] = await tx<{ id: string }[]>`
+      select id from competitions where id = ${competitionId}`;
+    if (!comp) throw new HttpError(404, "competition not found");
+    // One query for every per-division gate below — locked state, slot config
+    // and the movable count that decides the R6 drop. The count is un-scoped
+    // `status = MOVABLE_STATUS`, which is exactly what the joint builder plans
+    // (it never passes a repair `scope`), so it cannot disagree with the pack.
+    return tx<
+      {
+        id: string;
+        name: string;
+        slug: string;
+        schedule_locked: boolean | null;
+        config: unknown | null;
+        movable: number;
+      }[]
+    >`
+      select d.id, d.name, d.slug, d.schedule_locked, ss.config,
+             (select count(*)::int from fixtures f
+               where f.division_id = d.id and f.status = ${MOVABLE_STATUS}) as movable
+        from divisions d
+        left join schedule_settings ss on ss.division_id = d.id
+       where d.competition_id = ${competitionId} and d.id in ${tx(requested)}`;
+  });
+
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  // Checks run in REQUEST order so the error a caller gets back is a function
+  // of the request alone, never of row order out of Postgres.
+  for (const id of requested) {
+    if (!byId.has(id)) throw new HttpError(404, `division not in competition: ${id}`);
+  }
+  for (const id of requested) {
+    const row = byId.get(id)!;
+    // A frozen division rejects every applied plan, so planning one spends
+    // credits and tokens on a proposal the organiser is then blocked from
+    // using — the failure would surface minutes later at Apply. Refuse here.
+    if (row.schedule_locked === true) {
+      throw new HttpError(
+        409,
+        `the schedule for division "${row.name}" is frozen — unfreeze it to plan with AI`,
+        "SCHEDULE_LOCKED",
+      );
+    }
+  }
+  for (const id of requested) {
+    const row = byId.get(id)!;
+    // `courts` is min(1) in ScheduleConfig, so an empty list can only reach the
+    // row from outside the API — and it would otherwise surface as a 500 from
+    // the parse inside buildSchedulePack. Both branches are live: the first is
+    // the specific, actionable message, the second catches every other way a
+    // hand-edited config fails to parse.
+    const raw = (row.config ?? {}) as { courts?: unknown };
+    if (Array.isArray(raw.courts) && raw.courts.length === 0) {
+      throw new HttpError(
+        422,
+        `division "${row.name}" has no courts configured — set them on its schedule settings`,
+        UNPLANNABLE,
+      );
+    }
+    if (!ScheduleConfig.safeParse(row.config ?? {}).success) {
+      throw new HttpError(
+        422,
+        `division "${row.name}" has invalid schedule settings and cannot be planned`,
+        UNPLANNABLE,
+      );
+    }
+  }
+
+  // Ruling R6. Dropped BEFORE the quote, so a division with nothing to solve is
+  // never a priced line — and, in `repair` mode, so the per-division builder's
+  // 422 AI_PLAN_EMPTY_SCOPE can never escape from a joint call.
+  const kept = requested.filter((id) => byId.get(id)!.movable > 0);
+  const skipped_divisions = requested
+    .filter((id) => byId.get(id)!.movable === 0)
+    .map((id) => ({
+      id,
+      name: byId.get(id)!.name,
+      reason: "no_movable_fixtures" as const,
+    }))
+    // Same (name, slug) domain order the pack sorts divisions by — never the id.
+    .sort(
+      (a, b) =>
+        cmp(a.name, b.name) || cmp(byId.get(a.id)!.slug, byId.get(b.id)!.slug),
+    );
+  if (kept.length < 2) throw singleDivision();
+
+  // AI runs are wallet-metered on every tier (v17 SPEC-2 §5.2). Resolved here;
+  // the reserve itself happens below, right around the model call, so a
+  // rate-limited or too-large request never touches the wallet.
+  const walletId = await walletIdFor(auth.orgId);
+  // Its OWN key namespace. Sharing `ai-plan:{divisionId}` would let one joint
+  // run burn a slot in every selected division's per-division bucket.
+  await rateLimit(`ai-plan-competition:${competitionId}`, { max: 3, windowSeconds: 3600 });
+
+  // The summed 500-fixture cap lives in here — still before any reserve.
+  const { pack, movableIds } = await buildCompetitionPack(auth, competitionId, kept, {
+    mode: input.mode,
+    instruction: input.instruction,
+    ...(input.prior !== undefined ? { prior: input.prior } : {}),
+  });
+
+  // Token-weighted pricing (lib/ai-rung.ts): one line per SOLVED division, so
+  // `credits` is max(1, Σ rungs − 1) and `budget` is sized from the
+  // UNDISCOUNTED Σ — the batch discount is a margin gift, not a capability cut.
+  const quote = quoteRun(
+    pack.divisions.map((d) => ({
+      key: d.id,
+      input: {
+        movableFixtures: d.movableIds.length,
+        entrants: pack.entrants.filter((e) => e.division_id === d.id).length,
+        courts: d.settings.courts.length,
+      },
+      ...(input.rung_overrides?.[d.id] !== undefined
+        ? { chosen: input.rung_overrides[d.id]! }
+        : {}),
+    })),
+    schedulingRungWeights(),
+  );
+  // One meter for the whole run — every ladder rung and repair round charges it.
+  const meter = createTokenMeter(quote.budget, { units: movableIds.size });
+  const pricedByDivision = new Map(quote.lines.map((l) => [l.key, l]));
+
+  // R7: only `.size` and membership of `movableIds` are stable, so nothing here
+  // serialises the set. Division ids are a sorted array off the pack instead.
+  const division_ids = pack.divisions.map((d) => d.id).sort(cmp);
+  const skipped_division_ids = skipped_divisions.map((s) => s.id).sort(cmp);
+
+  let result: CompetitionPlanResult & {
+    served_model: string;
+    escalated_from?: string;
+    rungs_tried: string[];
+  };
+  try {
+    // Reserve → run → settle on success, release on throw. A
+    // PaymentRequiredError("ai.credits") from an empty wallet is raised by the
+    // reserve itself, before the model is ever called, and falls through the
+    // catch below untouched.
+    result = await spendCredit(walletId, auth.orgId, quote.credits, async () => ({
+      aiRunId: crypto.randomUUID(),
+      // The LADDER, not the single-model runner: production wants the fallback
+      // chain, and the two names differ by one word.
+      result: await runCompetitionAiPlanLadder(pack, movableIds, meter),
+    }));
+  } catch (err) {
+    // Spec §11: a run that produced nothing usable is not charged (spendCredit
+    // released the hold on the throw) but IS recorded — an un-metered failure
+    // is invisible in both analytics and the run ledger, and a failed joint run
+    // is the most expensive failure this product has.
+    const providerErr = err instanceof AiProviderError ? err : null;
+    const providerCause = providerErr?.cause as { status?: number; name?: string } | undefined;
+    const planErr =
+      err instanceof HttpError && (err.code === "AI_PLAN_FAILED" || err.code === "AI_PLAN_TIMEOUT")
+        ? err
+        : null;
+    if (planErr || providerErr) {
+      const usage = (planErr?.extra?.usage ??
+        (err as { usage?: Record<string, unknown> }).usage ??
+        {}) as {
+        input_tokens?: number;
+        output_tokens?: number;
+        repair_rounds?: number;
+        cost_usd?: number | null;
+      };
+      const model =
+        (planErr?.extra?.model as string | undefined) ??
+        (err as { model?: string }).model ??
+        schedulingAiModel();
+      const outcome = providerErr
+        ? "provider_error"
+        : planErr!.code === "AI_PLAN_TIMEOUT"
+          ? "timeout"
+          : "failed";
+      const cost_usd =
+        usage.cost_usd ?? aiRunCostUsd(model, usage.input_tokens ?? 0, usage.output_tokens ?? 0);
+      await withTenant(auth.orgId, async (tx) => {
+        await tx`
+          insert into competition_events (competition_id, org_id, type, payload, actor_id)
+          values (${competitionId}, ${auth.orgId}, 'schedule.ai_failed_multi',
+                  ${tx.json({
+                    division_ids,
+                    skipped_division_ids,
+                    phase: "schedule",
+                    mode: input.mode,
+                    outcome,
+                    model,
+                    usage: {
+                      input_tokens: usage.input_tokens ?? 0,
+                      output_tokens: usage.output_tokens ?? 0,
+                      repair_rounds: usage.repair_rounds ?? 0,
+                    },
+                    cost_usd,
+                    pack_units: movableIds.size,
+                    // What was reserved, what it bought, and the per-division
+                    // breakdown behind the discount — stamped on the failure row
+                    // too, so a run that cost real tokens for nothing is priced
+                    // in the ledger exactly like one that worked.
+                    ...meterStamp(quote, meter),
+                    ...(providerErr
+                      ? {
+                          provider_status: providerCause?.status ?? null,
+                          provider_type: providerCause?.name ?? providerErr.name,
+                        }
+                      : {}),
+                  } as never)}, ${auth.userId})`;
+      });
+    }
+    if (providerErr) {
+      // The provider's message can carry OUR billing state — never let it reach
+      // a tenant.
+      throw new HttpError(
+        503,
+        "AI scheduling is temporarily unavailable; please retry",
+        "AI_PROVIDER_UNAVAILABLE",
+      );
+    }
+    throw err;
+  }
+
+  const model = result.served_model;
+  const cost_usd =
+    result.usage.cost_usd ??
+    aiRunCostUsd(model, result.usage.input_tokens, result.usage.output_tokens);
+  await withTenant(auth.orgId, async (tx) => {
+    await tx`
+      insert into competition_events (competition_id, org_id, type, payload, actor_id)
+      values (${competitionId}, ${auth.orgId}, 'schedule.ai_generated_multi',
+              ${tx.json({
+                division_ids,
+                // R6: what the organiser asked for but the run did not solve —
+                // without it the ledger cannot explain why a 5-division request
+                // was priced as 4.
+                skipped_division_ids,
+                mode: input.mode,
+                model,
+                usage: result.usage,
+                cost_usd,
+                pack_units: movableIds.size,
+                // credits, discount, budget, spent_tokens, stopped_on_budget,
+                // underfunded and the per-division breakdown — one builder, so
+                // the event and the API response cannot drift.
+                ...meterStamp(quote, meter),
+                ...(result.escalated_from
+                  ? {
+                      escalated_from: result.escalated_from,
+                      rungs_tried: result.rungs_tried,
+                      warnings: result.warnings.length,
+                      movable: movableIds.size,
+                    }
+                  : {}),
+              } as never)}, ${auth.userId})`;
+  });
+
+  return {
+    proposal: result.proposal,
+    unschedulable: result.unschedulable,
+    // R13: warnings are carried IN FULL. `isBlocking` covers only `court` and
+    // direct `order`, so blackout, session-window, rest and person-overlap
+    // violations neither block nor trigger a repair round — the organiser
+    // reviewing this response is the last automated-gate-free line of defence,
+    // and the board cannot render what is not returned here.
+    warnings: result.warnings,
+    blocking: result.blocking,
+    diff: result.diff,
+    explanations: result.explanations,
+    // constraint_suggestions is dropped on purpose — see the response type.
+    summary: result.summary,
+    divergent_courts: pack.divergentCourts,
+    skipped_divisions,
+    usage: {
+      input_tokens: result.usage.input_tokens,
+      output_tokens: result.usage.output_tokens,
+      repair_rounds: result.usage.repair_rounds,
+    },
+    ...meterStamp(quote, meter),
+    // AFTER the stamp, deliberately: the stamp carries its own narrow
+    // `divisions` breakdown and this merged one replaces it (see the field's
+    // doc comment). Every solved division has a quote line — they are built
+    // from the same `pack.divisions` — so the lookup cannot miss.
+    divisions: pack.divisions.map((d) => {
+      const line = pricedByDivision.get(d.id)!;
+      return {
+        id: d.id,
+        name: d.name,
+        movable: d.movableIds.length,
+        rung: line.rung,
+        predicted_rung: line.predictedRung,
+        underfunded: line.underfunded,
+      };
+    }),
+  };
 }
