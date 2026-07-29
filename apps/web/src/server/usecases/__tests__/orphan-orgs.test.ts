@@ -25,10 +25,15 @@ describe.skipIf(!HAS_DB)("countOrgsWithoutGroup", () => {
     // MEMBERSHIP of this test's own id, not an exact count: vitest runs files
     // in parallel against one shared schema, so a sibling suite's fixture org
     // turns an exact count into a coin flip (#321).
+    //
+    // And narrowed with `ids`, which is not belt-and-braces: the helper is
+    // capped, and a schema that has accumulated more bare fixture orgs than the
+    // cap cannot show this one. An unnarrowed membership assertion is still a
+    // question about the whole table — the same defect one layer down.
     const s = uniq();
     const [{ id: bare }] = await sql<{ id: string }[]>`
       insert into organizations (name, slug) values (${"Bare " + s}, ${"bare-" + s}) returning id`;
-    expect(await orgsWithoutGroup()).toContain(bare);
+    expect(await orgsWithoutGroup({ ids: [bare] })).toContain(bare);
 
     // A properly grouped org does NOT show up in the list.
     const [{ id: user }] = await sql<{ id: string }[]>`
@@ -41,11 +46,11 @@ describe.skipIf(!HAS_DB)("countOrgsWithoutGroup", () => {
     const [{ id: grouped }] = await sql<{ id: string }[]>`
       insert into organizations (name, slug, created_by, subscription_id)
       values (${"Grp " + s2}, ${"grp-" + s2}, ${user}, ${sub}) returning id`;
-    expect(await orgsWithoutGroup()).not.toContain(grouped);
+    expect(await orgsWithoutGroup({ ids: [grouped] })).not.toContain(grouped);
 
     // Soft-deleting the bare org drops it from the list.
     await sql`update organizations set deleted_at = now() where id = ${bare}`;
-    expect(await orgsWithoutGroup()).not.toContain(bare);
+    expect(await orgsWithoutGroup({ ids: [bare] })).not.toContain(bare);
 
     // The count still tracks the list — loose, because it's the schema-wide
     // aggregate this file no longer asserts an exact value against.
@@ -58,8 +63,8 @@ describe.skipIf(!HAS_DB)("countOrgsWithoutGroup", () => {
     const s = uniq();
     const [{ id: bare }] = await sql<{ id: string }[]>`
       insert into organizations (name, slug) values (${"Bare " + s}, ${"bare-" + s}) returning id`;
-    expect(await orgsWithoutGroup()).toContain(bare);
+    expect(await orgsWithoutGroup({ ids: [bare] })).toContain(bare);
     await sql`update organizations set deleted_at = now() where id = ${bare}`;
-    expect(await orgsWithoutGroup()).not.toContain(bare);
+    expect(await orgsWithoutGroup({ ids: [bare] })).not.toContain(bare);
   });
 });
