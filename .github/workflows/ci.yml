@@ -235,8 +235,17 @@ jobs:
       # rate-limit.redis.test.ts and entitlements-cache-invalidation.redis.test.ts
       # are Redis-gated, so they still self-skip here and execute in the two
       # dedicated steps below, each of which owns REDIS_URL for itself alone.
+      #
+      # NO stray `run` positional. The workspace script is already `vitest run`,
+      # so `-- run src/server src/lib` passed THREE filename filters rather than
+      # a command and two paths — and the extra one matched
+      # src/components/__tests__/run-your-own-cta.test.tsx and
+      # src/components/v2/board/__tests__/run-elapsed.test.tsx, dragging two
+      # component suites into a Postgres job that was never meant to run them
+      # (187 files collected against the 185 the paths select). Measured on
+      # 2026-07-29 while chasing #339.
       - name: Engine-db + service-layer + lib integration tests (real Postgres)
-        run: npm test --workspace apps/web -- run src/server src/lib
+        run: npm test --workspace apps/web -- --reporter=default --reporter=json --outputFile=vitest-results-lib-server.json src/server src/lib
 
       # The DB-gated suites under src/app. src/lib is NOT repeated here: the
       # Engine-db step above already runs it, and running it in both steps shares
@@ -248,7 +257,20 @@ jobs:
       # pass-scoping-guard.test.ts is no longer excluded: the Event Pass scoping
       # sweep it tracked has landed, so it passes and runs with the rest.
       - name: Service-layer integration tests outside src/server (real Postgres)
-        run: npm test --workspace apps/web -- run src/app
+        run: npm test --workspace apps/web -- --reporter=default --reporter=json --outputFile=vitest-results-app.json src/app
+
+      # Collection reconciliation (#339). A run is only evidence about the files
+      # it collected, and collection has been observed to vary between runs with
+      # identical arguments — 511 files once, 158 three times, all exit 0. This
+      # compares what `vitest list` selects for these paths against what the two
+      # steps above actually executed, and fails the job when they disagree.
+      # Costs one collection pass, not a second suite run.
+      - name: Vitest collection reconciliation
+        run: |
+          node --experimental-strip-types scripts/check-vitest-collection.ts \
+            --results apps/web/vitest-results-lib-server.json -- src/server src/lib
+          node --experimental-strip-types scripts/check-vitest-collection.ts \
+            --results apps/web/vitest-results-app.json -- src/app
 
       # REDIS_URL is scoped to this step only. Setting it job-wide would switch
       # the entitlement cache (lib/entitlements.ts) on for the src/server suite,
