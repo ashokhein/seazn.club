@@ -442,6 +442,20 @@ const STATUS_MAP: Record<string, string> = {
   // subscription — see LIVE_SUBSCRIPTION_STATUSES), so a second checkout is
   // blocked; the entitlement resolver degrades it to community until it pays.
   incomplete: "incomplete",
+  // …but `incomplete_expired` COLLAPSES into canceled, and that asymmetry is
+  // deliberate. `incomplete` needs its own name because it is LIVE and its
+  // liveness has consequences (no second checkout, no past_due grace).
+  // `incomplete_expired` is terminal, and every consumer of our vocabulary
+  // treats it exactly as `canceled`: outside LIVE_SUBSCRIPTION_STATUSES, plan
+  // degraded, re-subscribe allowed. A separate name would buy no behaviour and
+  // would have to be added to every `status in (…)` list.
+  //
+  // The consequence is worth stating, because it has already misled someone
+  // (#367 → #375): NO ROW EVER CARRIES 'incomplete_expired'. A query written as
+  // `where status = 'incomplete_expired'` matches nothing, silently, for ever.
+  // The distinction is not lost, only moved — billing_events.payload keeps the
+  // raw Stripe event, so `payload->'data'->'object'->>'status'` still answers
+  // "did this subscription die unpaid or churn after paying?".
   incomplete_expired: "canceled",
   unpaid: "past_due",
   paused: "past_due",
