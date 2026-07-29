@@ -988,10 +988,33 @@ export async function detachOrgFromGroup(args: {
               ${compedUntil}, ${group.trial_used_at}, now())
       returning id`;
     await tx`update organizations set subscription_id = ${fresh.id} where id = ${orgId}`;
-    // #285: no wallet merge on detach (the departing org takes no share of
-    // the group's pool — decided default) — just an audit trail of what was
-    // left behind, for accountability.
-    await auditWalletForfeitedOnDetach(tx, actorUserId, orgId, group.id, fresh.id, "detach");
+    // #285 decided the default: a departing org takes no share of the group's
+    // pool, because a shared wallet has no per-org share to split off — just an
+    // audit trail of what was left behind, for accountability.
+    //
+    // #304 is the ONE case that default cannot cover. When `others` is empty the
+    // org is the last one out, and "the credits stay with the group" means "they
+    // stay with a group that is about to be dropped": the lines after this
+    // transaction hand `result.from` to cancelGroupIfEmpty/dropEmptyGroup, and
+    // `ai_credit_ledger.wallet_id` carries NO foreign key, so nothing keeps that
+    // row alive on the ledger's behalf. There is no remaining org to be
+    // "the group's pool" for either — nobody resolves to that wallet any more
+    // (walletIdFor is coalesce(subscription_id, id)), so the balance is not
+    // somebody else's, it is nobody's.
+    //
+    // The refusal above ("already has its own billing group") does NOT prevent
+    // this: it only fires when the leaving org's owner IS the group payer. A
+    // club owner leaving a federation payer's group reaches exactly this state.
+    //
+    // mergeWalletOnAttach is direction-agnostic despite the name — (from, to),
+    // bucket-preserving, locks both wallets in sorted order, and its only guard
+    // is from === to. Attach reaches the same fork for the same reason (the
+    // sole-live-org merge at the top of attachOrgToGroup); this is the mirror.
+    if (others.length === 0) {
+      await mergeWalletOnAttach(tx, group.id, fresh.id);
+    } else {
+      await auditWalletForfeitedOnDetach(tx, actorUserId, orgId, group.id, fresh.id, "detach");
+    }
     // `comped` drives the seat spend below: a seat is only consumed when a comp
     // was actually handed out (ride_out on a paying group), never on a release.
     return {

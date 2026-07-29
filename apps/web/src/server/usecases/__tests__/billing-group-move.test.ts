@@ -172,6 +172,7 @@ vi.mock("@/lib/stripe", () => ({ getStripe: () => stripeMock.stripe }));
 import { sql } from "@/lib/db";
 import { hasFeature } from "@/lib/entitlements";
 import { billedQuantity } from "@/lib/billing-group";
+import { balance, grantBalance, packBalance, walletIdFor } from "@/lib/credits";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import {
   acceptGroupTransfer,
@@ -1140,6 +1141,120 @@ describe.skipIf(!HAS_DB)("detach leaves an audit trail for the wallet it does no
     // The same action name is written by the attach-side forfeit, so the row
     // has to say which path it came from.
     expect(audit?.detail?.via).toBe("detach");
+  });
+});
+
+describe.skipIf(!HAS_DB)("detach of the LAST org carries the wallet out (#304)", () => {
+  it("hands the shared pool to the leaver when it empties the group", async () => {
+    // The shape #285's default cannot cover. A payer's group holds exactly ONE
+    // org, owned by somebody else (a club owner in a federation's group), so the
+    // "you already have your own billing group" refusal — which only fires when
+    // the leaver's owner IS the payer — lets this through. The org leaves, the
+    // group is left with no orgs at all, and "the credits stay with the group"
+    // means "they stay with a group nobody is in and nobody can reach": no org
+    // resolves to it, and `ai_credit_ledger.wallet_id` has no foreign key to
+    // keep the row alive on its behalf.
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const group = await makeGroup(payer, {
+      plan: "pro",
+      stripeSubId: null,
+      stripeCustomerId: null,
+      periodEndDays: 30,
+    });
+    const orgId = await makeOrg(group, clubOwner);
+    // Both buckets, so a merge that pooled them into one row would show.
+    await sql`insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${group}, 25, 'monthly_grant', 'grant', 25, ${"seed-" + uniq()})`;
+    await sql`insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${group}, 10, 'pack_purchase', 'pack', 35, ${"seed-" + uniq()})`;
+
+    const res = await detachOrgFromGroup({ actorUserId: clubOwner, orgId, mode: "release" });
+
+    // The move really happened, and to a NEW group (otherwise the balances below
+    // would be reading the same wallet twice and pass for nothing).
+    expect(res.subscription_id).not.toBe(group);
+    expect(await orgGroup(orgId)).toBe(res.subscription_id);
+
+    // The whole pool followed the org out, bucket-preserving: pack credits never
+    // expire, so pooling them into the resetting grant bucket would destroy them
+    // on the 1st.
+    expect(await grantBalance(res.subscription_id)).toBe(25);
+    expect(await packBalance(res.subscription_id)).toBe(10);
+    // And nothing is left behind on the emptied group.
+    expect(await balance(group)).toBe(0);
+  });
+
+  it("still takes NO share when sibling orgs stay behind (#285 default, unchanged)", async () => {
+    // The #304 branch must be exactly one case wide. With a sibling remaining,
+    // the wallet is a live shared pool that org is still spending from, and the
+    // leaver carries nothing — the decided default.
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const group = await makeGroup(payer, { stripeSubId: "sub_304_kept_" + uniq() });
+    const staysBehind = await makeOrg(group, payer);
+    const orgId = await makeOrg(group, clubOwner);
+    await sql`insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${group}, 40, 'monthly_grant', 'grant', 40, ${"seed-" + uniq()})`;
+    await sql`insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${group}, 15, 'pack_purchase', 'pack', 55, ${"seed-" + uniq()})`;
+
+    const res = await detachOrgFromGroup({ actorUserId: clubOwner, orgId, mode: "release" });
+
+    expect(await orgGroup(orgId)).toBe(res.subscription_id);
+    expect(await orgGroup(staysBehind)).toBe(group);
+    // The remaining org keeps every credit it relies on.
+    expect(await grantBalance(group)).toBe(40);
+    expect(await packBalance(group)).toBe(15);
+    // The leaver starts empty, and the forfeit is still audited.
+    expect(await balance(res.subscription_id)).toBe(0);
+    const [audit] = await sql<{ detail: { via?: string } }[]>`
+      select detail from staff_audit_log
+       where target_id = ${orgId} and action = 'billing_group.detach_wallet_not_carried'
+       order by created_at desc limit 1`;
+    expect(audit?.detail?.via).toBe("detach");
+  });
+
+  it("leaves the pool REACHABLE, not merely moved", async () => {
+    // A balance that reads right while the ledger still points at a wallet
+    // nothing resolves to is the same bug one layer down. Two things have to
+    // hold: the org's own wallet resolution (coalesce(subscription_id, id) —
+    // what every spend path actually reads) must find the credits, and no row
+    // may be left naming a subscription id that no longer exists, since
+    // `ai_credit_ledger.wallet_id` carries no foreign key to stop that.
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const group = await makeGroup(payer, {
+      plan: "pro",
+      stripeSubId: null,
+      stripeCustomerId: null,
+      periodEndDays: 30,
+    });
+    const orgId = await makeOrg(group, clubOwner);
+    await sql`insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${group}, 25, 'monthly_grant', 'grant', 25, ${"seed-" + uniq()})`;
+    await sql`insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${group}, 10, 'pack_purchase', 'pack', 35, ${"seed-" + uniq()})`;
+
+    await detachOrgFromGroup({ actorUserId: clubOwner, orgId, mode: "release" });
+
+    // Reached the way a real AI run reaches it, not by the id detach returned.
+    const wallet = await walletIdFor(orgId);
+    expect(wallet).not.toBe(group);
+    expect(await balance(wallet)).toBe(35);
+
+    // Nothing on the old wallet is orphaned. The merge is double-entry, so the
+    // compensating debits stay on the old wallet by design (net 0) — what must
+    // NOT happen is those rows surviving a `dropEmptyGroup`/`cancelGroupIfEmpty`
+    // that removed the subscription row they name, leaving history pointing into
+    // nothing. Either the row is still there or no rows are.
+    const [orphans] = await sql<{ n: string }[]>`
+      select count(*)::text as n
+        from ai_credit_ledger l
+       where l.wallet_id = ${group}
+         and not exists (select 1 from subscriptions s where s.id::text = l.wallet_id)`;
+    expect(Number(orphans.n)).toBe(0);
+    expect(await balance(group)).toBe(0);
   });
 });
 
