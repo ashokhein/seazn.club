@@ -18,10 +18,12 @@ const mocks = vi.hoisted(() => ({
   reconcile: vi.fn(),
   orphans: vi.fn(),
   addonPrices: vi.fn(),
+  orphanGroups: vi.fn(),
 }));
 vi.mock("@/server/usecases/billing-groups", () => ({
   reconcileGroupQuantities: mocks.reconcile,
   countOrgsWithoutGroup: mocks.orphans,
+  sweepOrphanGroups: mocks.orphanGroups,
 }));
 vi.mock("@/server/usecases/billing-events", () => ({
   sweepStaleOrgAddonPrices: mocks.addonPrices,
@@ -40,6 +42,7 @@ const authorize = () => {
   hdrs.store = new Headers({ "x-cron-secret": "s3cret" });
   mocks.reconcile.mockResolvedValue({ checked: 3, corrected: 1 });
   mocks.orphans.mockResolvedValue(0);
+  mocks.orphanGroups.mockResolvedValue({ checked: 2, retired: 1, stillLive: 0, failed: 0 });
   mocks.addonPrices.mockResolvedValue({
     total: 2,
     checked: 2,
@@ -88,5 +91,18 @@ describe("POST /api/cron/billing-quantity", () => {
     expect(body.data).toMatchObject({ checked: 3, corrected: 1, orphanOrgs: 0 });
     expect(mocks.reconcile).toHaveBeenCalledTimes(1);
     expect(mocks.orphans).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs the org-less GROUP sweep and reports it (#375)", async () => {
+    // Same reasoning as the #332 assertion above, on the mirror-image guard: an
+    // org with no group vs a GROUP with no orgs. `stillLive` is the field an
+    // operator acts on — a subscription alive at Stripe with nobody on the bill
+    // — so a run whose counts never reach the response is the same as no run.
+    authorize();
+    const body = (await (await POST()).json()) as {
+      data: { orphanGroups?: { checked: number; retired: number; stillLive: number } };
+    };
+    expect(mocks.orphanGroups).toHaveBeenCalledTimes(1);
+    expect(body.data.orphanGroups).toMatchObject({ checked: 2, retired: 1, stillLive: 0 });
   });
 });

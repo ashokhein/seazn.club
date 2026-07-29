@@ -35,6 +35,13 @@ const STRIPE_ONLY_STATUSES = ["incomplete_expired", "unpaid", "paused"] as const
 const TRANSLATION_BOUNDARY = new Set([
   "lib/billing.ts",
   "server/usecases/billing-events.ts",
+  // `isTerminalStripeStatus` — the one predicate over STRIPE's vocabulary,
+  // added when `sweepOrphanGroups` needed the same question the webhook guard
+  // asks (#375). It lives in this leaf module because billing-events already
+  // imports billing-groups, so the two callers cannot import each other; the
+  // alternative was a second hand-written copy of these two strings, which is
+  // exactly what this guard exists to prevent.
+  "lib/subscription-status.ts",
 ]);
 
 const SRC = path.resolve(__dirname, "../..");

@@ -29,7 +29,7 @@ import {
 import { activeOrgCount, assertWithinGroupCap, groupOrgLimit } from "@/lib/billing-group";
 import { orgAddonForPlan } from "@/lib/org-addons";
 import { planItem } from "@/lib/subscription-items";
-import { hasLiveSubscription } from "@/lib/subscription-status";
+import { hasLiveSubscription, isTerminalStripeStatus } from "@/lib/subscription-status";
 import { intervalForPrice } from "@/lib/billing-manage";
 import { toLocale, type Locale } from "@/lib/i18n-constants";
 import {
@@ -538,7 +538,11 @@ export async function sweepOrphanGroups(limit = 200): Promise<{
       // along with it, because they were stamped from the same stale object.
       await syncSubscriptionForGroup(g.id, stripeSub);
       await invalidateGroupEntitlements(g.id);
-      if (stripeSub.status === "canceled" || stripeSub.status === "incomplete_expired") {
+      // Asked through the SHARED predicate, not a local pair of string
+      // comparisons: `incomplete_expired` is a Stripe-only status our own
+      // writes never produce, and a second copy of that list here is the drift
+      // `status-vocabulary-truth` exists to prevent (#375/#378).
+      if (isTerminalStripeStatus(stripeSub.status)) {
         retired++;
       } else {
         stillLive++;
