@@ -41,7 +41,7 @@ import "server-only";
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
-import { MOVABLE_STATUS, OCCUPYING } from "./schedule";
+import { MOVABLE_STATUS, OCCUPYING, peopleByEntrant } from "./schedule";
 import { ScheduleConfig } from "@/server/api-v1/schemas";
 import {
   OTHER_DIVISION_LABEL,
@@ -67,10 +67,11 @@ export const COMPETITION_MOVABLE_CAP = 500;
 const TOO_LARGE = "AI_PLAN_TOO_LARGE";
 
 /** One too-large contract for the whole joint call. The per-division builder
- *  refuses >500 with a 422 carrying this same code string; a caller of
- *  buildCompetitionPack must never have to tell the two apart, so the
- *  per-division refusal is re-thrown as this one. The per-division 422 is left
- *  alone for the per-division callers. */
+ *  refuses >500 with a 422 carrying this same code string, and a joint caller
+ *  must never have to tell the two apart. In practice the pre-check subsumes
+ *  the per-division case entirely — see the catch in the build loop, which is
+ *  a backstop, not live logic. The per-division 422 is left alone for the
+ *  per-division callers. */
 const tooLarge = (): HttpError =>
   new HttpError(409, "too large — schedule per division", TOO_LARGE);
 
@@ -97,12 +98,20 @@ export interface CompetitionPackDivision {
   settings: PackSettings;
   /** This division's movable fixture ids, in the pack's movable order. */
   movableIds: string[];
-  /** How many of `movableIds` the joint draft actually placed. Less than
-   *  `movableIds.length` means the board did not fit and this division's draft
-   *  is PARTIAL — the greedy pass returns the rest as `no_slot` conflicts, which
-   *  the per-division builder discards, so without this count a truncated draft
-   *  is indistinguishable from a complete one. Divisions are drafted in order,
-   *  so it is the later ones that get starved. */
+  /** How many of `movableIds` this division contributed to `draft`. Less than
+   *  `movableIds.length` means the draft is PARTIAL — without this count a
+   *  truncated draft is indistinguishable from a complete one.
+   *
+   *  WHY it is short depends on the mode, so do not render one explanation:
+   *    generate — the board did not fit. The greedy pass returns the overflow
+   *               as `no_slot` conflicts, which the per-division builder
+   *               discards. Divisions are drafted in order, so the later ones
+   *               starve first. This is the only mode where "did not fit" is
+   *               the right reading.
+   *    repair   — `draft` is the movable set filtered to fixtures that already
+   *               have a slot, so a short count just means some are unplaced.
+   *    refine   — `draft` is the prior proposal intersected with the movable
+   *               set, so a short count means the prior did not cover them. */
   draftPlaced: number;
 }
 
@@ -122,7 +131,7 @@ export interface CompetitionPackAssignment extends PackAssignment {
 export interface CompetitionPack {
   mode: "generate" | "refine" | "repair";
   competition: { id: string; name: string };
-  /** Sorted by name, then id. */
+  /** Sorted by name, then slug. */
   divisions: CompetitionPackDivision[];
   /** Union of every selected division's court labels, sorted. */
   courts: string[];
@@ -151,13 +160,12 @@ export interface BuildCompetitionPackOptions {
  *   the set the joint verifier rejects out-of-set assignments against.
  *
  * Throws 404 (unknown competition, or a division that is not in it) and
- * 409 AI_PLAN_TOO_LARGE when the run is too big — whether that is the summed
- * movable count exceeding {@link COMPETITION_MOVABLE_CAP} or a single division
- * tripping the per-division cap first (that 422 is re-thrown as this 409, so a
- * joint call has exactly one too-large contract). The minimum-two-divisions
- * rule is a caller
- * gate (it exists to stop discount arbitrage, not to protect the pack), so it
- * is enforced by aiPlanForCompetition, not here.
+ * 409 AI_PLAN_TOO_LARGE when the run is too big — the summed movable count
+ * exceeding {@link COMPETITION_MOVABLE_CAP}, which subsumes a single division
+ * being over the per-division cap, so a joint call has exactly one too-large
+ * contract and one status. The minimum-two-divisions rule is a caller gate (it
+ * exists to stop discount arbitrage, not to protect the pack), so it is
+ * enforced by aiPlanForCompetition, not here.
  */
 export async function buildCompetitionPack(
   auth: AuthCtx,
@@ -170,7 +178,7 @@ export async function buildCompetitionPack(
     throw new HttpError(400, "no divisions selected", "AI_PLAN_NO_DIVISIONS");
   }
 
-  const { competition, divisionRows, movableCount, fixedRows } = await withTenant(auth.orgId, async (tx) => {
+  const { competition, divisionRows, movableCount, fixedRows, fixedPeople } = await withTenant(auth.orgId, async (tx) => {
     const [row] = await tx<{ id: string; name: string }[]>`
       select id, name from competitions where id = ${competitionId}`;
     if (!row) throw new HttpError(404, "competition not found");
@@ -219,7 +227,19 @@ export async function buildCompetitionPack(
         and f.status in ${tx(FIXED_OCCUPYING)}
         and f.scheduled_at is not null
         and f.court_label is not null`;
-    return { competition: row, divisionRows, movableCount: count?.n ?? 0, fixedRows };
+    // …with their PEOPLE. Under `crossPersonClash: "hard"` slotFixtures rejects
+    // any placement overlapping someone already committed in `existing`
+    // (calendar.ts:275-283), so an empty people list silently disables that
+    // block and lets a draft double-book a person against a fixture nobody can
+    // move. This is the same call `siblingAssignments` makes for exactly this
+    // field, over the same kind of rows.
+    const fixedPeople = await peopleByEntrant(
+      tx,
+      [...new Set(fixedRows.flatMap((r) => [r.home_entrant_id, r.away_entrant_id]))].filter(
+        (e): e is string => e !== null,
+      ),
+    );
+    return { competition: row, divisionRows, movableCount: count?.n ?? 0, fixedRows, fixedPeople };
   });
 
   const nameById = new Map(divisionRows.map((d) => [d.id, d.name]));
@@ -270,9 +290,14 @@ export async function buildCompetitionPack(
         startAt,
         endAt: startAt + (fixedMinutes.get(r.division_id) ?? 0) * MS_PER_MIN,
         entrants: [r.home_entrant_id, r.away_entrant_id].filter((e): e is string => e !== null),
-        // Same reason as the drafts below: a per-division pack cannot supply
-        // cross-division person data, so person overlap is the verifier's job.
-        people: [],
+        // Unlike the drafts below, these rows come from this module's own SQL,
+        // so the person data IS available — and it is load-bearing: it is what
+        // makes `crossPersonClash: "hard"` reject a draft that would commit
+        // someone already playing in another division's fixed fixture.
+        people: [
+          ...(r.home_entrant_id !== null ? fixedPeople.get(r.home_entrant_id) ?? [] : []),
+          ...(r.away_entrant_id !== null ? fixedPeople.get(r.away_entrant_id) ?? [] : []),
+        ],
         divisionId: r.division_id,
       };
     });
@@ -312,8 +337,17 @@ export async function buildCompetitionPack(
         excludeDivisionIds: order,
       });
     } catch (err) {
-      // A single oversized division refuses with the per-division 422. Inside a
-      // joint call that must read as the joint cap — same code, one status.
+      // UNREACHABLE BY CONSTRUCTION — kept as a backstop, not live logic.
+      //
+      // The per-division builder refuses >500 movable with a 422 carrying this
+      // same code, and inside a joint call that must read as the joint 409. But
+      // the pre-check above always fires first: it counts `status =
+      // MOVABLE_STATUS` over exactly these divisions, and a division's own
+      // `movable` is a strict subset of that count (same predicate, same
+      // divisions, and this builder never passes a repair `scope`). So
+      // `movable.length > 500` implies `movableCount > 500`, and the pre-check
+      // has already thrown. Delete the pre-check and this becomes live again —
+      // which is what makes it worth keeping.
       if (err instanceof HttpError && (err.code === TOO_LARGE || err.message === TOO_LARGE)) {
         throw tooLarge();
       }
@@ -472,7 +506,7 @@ export async function buildCompetitionPack(
     }
   }
   // The merged entrant_ids must be re-sorted GLOBALLY by entrant name — the
-  // invariant at schedule-ai.ts:622-630. Concatenating A's name-sorted ids with
+  // invariant at schedule-ai.ts:517-523, applied at :542. Concatenating A's name-sorted ids with
   // B's leaves the array sorted only within each division.
   const entrantNameById = new Map(entrants.map((e) => [e.id, e.name]));
   const byEntrantName = (a: string, b: string): number =>

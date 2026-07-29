@@ -524,6 +524,50 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     expect(overlaps).toEqual([]);
   }, 60_000);
 
+  // C1: the fixed board must carry its PEOPLE. Under `crossPersonClash: "hard"`
+  // slotFixtures rejects a placement overlapping anyone already committed in
+  // `existing` (calendar.ts:275-283), so an empty `people[]` silently disables
+  // that block and lets a draft double-book a person against a finalized
+  // fixture nobody can move. Unlike the drafts, these rows come from this
+  // module's own SQL, so the data IS available.
+  //
+  // AlphaP is built first and uses Court 1; BravoP holds Court 2 at 09:00 with a
+  // finalized fixture. Different courts, so ONLY the person block can move
+  // AlphaP off 09:00. Two entrants each → exactly one fixture each, so there is
+  // no ambiguity about which slot the greedy pass wants.
+  it("a draft never double-books a person committed to another division's fixed fixture", async () => {
+    const cup = await seedCompetition(auth, `People Clash ${randomUUID().slice(0, 6)}`, [
+      { name: "AlphaP", courts: ["Court 1"], matchMinutes: 30, entrants: 2, place: false, startOffsetMin: 0 },
+      { name: "BravoP", courts: ["Court 2"], matchMinutes: 30, entrants: 2, place: true, startOffsetMin: 0, finalizeFirst: true },
+    ]);
+    const [alphaP, bravoP] = cup.divisions as [SeededDivision, SeededDivision];
+    const [{ id: person }] = await sql<{ id: string }[]>`
+      insert into persons (org_id, full_name) values (${auth.orgId}, 'Cross Division Player') returning id`;
+    for (const d of [alphaP, bravoP]) {
+      const [e1] = await sql<{ id: string }[]>`
+        select id from entrants where division_id = ${d.id} order by seed limit 1`;
+      await sql`insert into entrant_members (entrant_id, person_id, org_id)
+                values (${e1!.id}, ${person}, ${auth.orgId})`;
+    }
+    const { pack } = await buildCompetitionPack(auth, cup.competitionId, [alphaP.id, bravoP.id], {
+      mode: "generate",
+      instruction: "x",
+    });
+    // BravoP's finalized fixture is on the board, on its OWN court — so court
+    // occupancy cannot be what moves AlphaP.
+    const fixed = pack.fixtures.obstacles.filter(
+      (o) => o.division_id === bravoP.id && o.court === "Court 2" && Date.parse(o.from) === T0,
+    );
+    expect(fixed.length).toBe(1);
+    expect(pack.divisions[0]!.id).toBe(alphaP.id);
+
+    const alphaDraft = pack.draft.filter((a) => a.division_id === alphaP.id);
+    expect(alphaDraft.length).toBe(1);
+    expect(alphaDraft[0]!.court_label).toBe("Court 1");
+    // The shared person is committed until 09:30, so AlphaP cannot start at 09:00.
+    expect(Date.parse(alphaDraft[0]!.scheduled_at)).toBeGreaterThanOrEqual(T0 + 30 * MIN);
+  }, 60_000);
+
   // I2: sequential accumulation means a board that does not fit starves the
   // LAST divisions — slotFixtures returns their fixtures as `no_slot` conflicts
   // and schedule-ai.ts discards conflicts, so `draft` is simply short. Without a
@@ -561,7 +605,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
   }, 60_000);
 
   it("merges a shared person's entrant ids in global name order", async () => {
-    // M10: entrant-id arrays order on the entrant NAME (schedule-ai.ts:622-630).
+    // M10: entrant-id arrays order on the entrant NAME (schedule-ai.ts:517-523, applied at :542).
     // Oscar sorts before Papa, but Oscar's entrants are named zz-* and Papa's
     // aa-*, so appending Papa's ids to Oscar's breaks the invariant.
     const cup = await seedCompetition(auth, `People Cup ${randomUUID().slice(0, 6)}`, [
@@ -685,16 +729,20 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
   }, 120_000);
 
   // One code, one status. The per-division builder refuses >500 with a 422
-  // (schedule-ai.ts:293) and the joint sum cap with a 409 — both spelling the
-  // code AI_PLAN_TOO_LARGE. Inside a joint call the caller must see exactly one
-  // contract, or the endpoint cannot present it coherently. "Aaa" sorts before
-  // "Bbb", so the oversized division is the FIRST one built and its 422 is what
-  // would otherwise escape.
-  it("a division over the per-division cap inside a joint call is the joint 409, not a 422", async () => {
+  // (schedule-ai.ts) and the joint cap with a 409 — both spelling
+  // AI_PLAN_TOO_LARGE — and a joint caller must only ever see the 409.
+  //
+  // The MECHANISM is the pre-check, not the 422→409 re-throw: a single division
+  // over 500 is also over the summed pre-check, so no division is ever built and
+  // the re-throw never runs. Asserting that here keeps the title honest — an
+  // earlier version of this test named the re-throw while exercising the
+  // pre-check, and passed identically with the re-throw deleted.
+  it("a division over the per-division cap surfaces the joint 409 from the pre-check", async () => {
     const { auth } = await seedOrg("pro");
     const comp = await createCompetition(auth, { name: "Cap One Big", visibility: "public", branding: {} });
     const big = await seedBigDivision(auth, comp.id, "Aaa", 501);
     const small = await seedBigDivision(auth, comp.id, "Bbb", 2);
+    vi.mocked(buildSchedulePack).mockClear();
     await expect(
       buildCompetitionPack(auth, comp.id, [big, small], { mode: "generate", instruction: "x" }),
     ).rejects.toMatchObject({
@@ -702,6 +750,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
       code: "AI_PLAN_TOO_LARGE",
       message: "too large — schedule per division",
     });
+    expect(vi.mocked(buildSchedulePack)).not.toHaveBeenCalled();
   }, 120_000);
 
   // M9: the cap must fire before ANY per-division build, not after N greedy
