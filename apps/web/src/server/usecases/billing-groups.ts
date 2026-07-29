@@ -385,7 +385,11 @@ export async function syncGroupQuantity(
     const outcome = await cancelGroupIfEmpty(subscriptionId);
     // "not_empty" is a legitimate outcome, not a failure: an org arrived between
     // the count above and this claim, and the group is billable after all.
-    if (outcome !== "not_empty")
+    // "not_cancellable" has already logged its own reason — including the status
+    // that caused the refusal — inside cancelGroupIfEmpty. Re-reporting it here
+    // as "CANCEL FAILED, will retry" would be both a duplicate and a lie: no
+    // cancel was attempted and nothing retries it.
+    if (outcome === "cancelled" || outcome === "cancel_failed")
       console.error(
         `[billing] group ${subscriptionId} has a live subscription and no organisations — ` +
           (outcome === "cancelled" ? "cancelled" : "CANCEL FAILED, will retry"),
@@ -422,6 +426,20 @@ export async function reconcileGroupQuantities(limit = 500): Promise<{
   const groups = await sql<{ id: string }[]>`
     select s.id from subscriptions s
      where s.stripe_subscription_id is not null
+       -- 'incomplete' is absent ON PURPOSE, and this list diverging from
+       -- LIVE_SUBSCRIPTION_STATUSES is not an oversight (#311, #367).
+       -- 'incomplete' means Stripe's first invoice has not been paid, and it has
+       -- a hard 23-HOUR ceiling: Stripe then moves the subscription to
+       -- 'incomplete_expired' and voids that invoice itself. This is a DAILY
+       -- cron, so a group can be seen in that state at most once, and by the run
+       -- that could act on it the subscription is either 'active' (already
+       -- selected here, drift and all) or dead. Including it would therefore
+       -- correct nothing that stays corrected — and it would mean changing an
+       -- item quantity while the first invoice is still open and unpaid, which
+       -- Stripe does not document. Unspecified behaviour, on an unpaid invoice,
+       -- executed unattended, for no benefit. cancelGroupIfEmpty omits it too,
+       -- for a DIFFERENT reason stated there; the two sites legitimately want
+       -- different sets, which is why neither derives from the constant.
        and s.status in ('trialing', 'active', 'past_due')
        and s.quantity_paid <> (
              select count(*) from organizations o
@@ -540,6 +558,21 @@ export async function orgsWithoutGroup(
  *
  * `not_empty` is a normal outcome, not an error: an org arrived, and the group
  * is billable after all.
+ *
+ * `not_cancellable` is the fourth outcome, and it exists because for a long time
+ * there were only three (#367). The claim can match nothing for TWO reasons —
+ * an org arrived, or the status is outside the set this will cancel — and
+ * reporting both as `not_empty` meant a group that was refused looked exactly
+ * like a group that had been cancelled: same shape, no log, no error. A guard
+ * that declines silently is indistinguishable from one that is broken, and it
+ * cost a wave to notice that this was the former. So the two are now told apart
+ * and the refusal is logged with the status that caused it.
+ *
+ * The status is deliberately NOT widened to match LIVE_SUBSCRIPTION_STATUSES.
+ * The one status that reaches this in practice is `incomplete`, which Stripe
+ * expires and voids by itself inside 23 hours; cancelling would send Stripe a
+ * cancel for a subscription it is about to destroy anyway. See the note on
+ * reconcileGroupQuantities, which omits the same status for a different reason.
  */
 interface CancelClaim {
   prev_status: string;
@@ -552,8 +585,8 @@ interface CancelClaim {
 
 async function cancelGroupIfEmpty(
   subscriptionId: string,
-): Promise<"cancelled" | "not_empty" | "cancel_failed"> {
-  const claimed = (await sql.begin(async (tx) => {
+): Promise<"cancelled" | "not_empty" | "not_cancellable" | "cancel_failed"> {
+  const attempt = (await sql.begin(async (tx) => {
     // Statement 1: take the row lock, and WAIT for whoever holds it (an attach
     // in flight). Nothing is decided here — the previous values are captured for
     // the rollback below.
@@ -579,9 +612,40 @@ async function cancelGroupIfEmpty(
                select 1 from organizations o
                 where o.subscription_id = s.id and o.deleted_at is null)
       returning s.id`;
-    return claim ? prev : null;
-  })) as CancelClaim | null;
-  if (!claimed) return "not_empty";
+    if (claim) return { prev, claimed: true, empty: true };
+    // The claim matched nothing. The row is LOCKED, so exactly one of the two
+    // predicates above failed, and which one is the whole point of this
+    // function's fourth outcome — so ask, rather than assume the innocent one.
+    //
+    // Diagnosed by ELIMINATION rather than by re-testing the status in TS: a
+    // second copy of that status list would be one more thing to keep in step
+    // with the SQL, and the two drifting apart is precisely the class of defect
+    // this change exists to make audible. If no live organisation exists, the
+    // emptiness half held and the status half is the only remaining explanation.
+    const [{ n }] = await tx<{ n: string }[]>`
+      select count(*)::text as n from organizations o
+       where o.subscription_id = ${subscriptionId} and o.deleted_at is null`;
+    return { prev, claimed: false, empty: Number(n) === 0 };
+  })) as { prev: CancelClaim; claimed: boolean; empty: boolean } | null;
+  // No row at all: nothing to cancel and nothing to report.
+  if (!attempt) return "not_empty";
+  if (!attempt.claimed) {
+    // An org arrived while statement 1 was blocked on the attach's lock. This is
+    // the ordinary outcome of every detach that leaves somebody behind, and an
+    // alarm that fires on the happy path is one nobody reads.
+    if (!attempt.empty) return "not_empty";
+    console.warn(
+      `[billing] cancelGroupIfEmpty DECLINED to cancel group ${subscriptionId}: it has no live ` +
+        `organisations, but its status is '${attempt.prev.prev_status}', which is outside the ` +
+        `set this claim cancels ('trialing', 'active', 'past_due'). Nothing was cancelled at ` +
+        `Stripe and nothing here will retry. For 'incomplete' that is deliberate — the first ` +
+        `invoice is unpaid, and Stripe voids it and expires the subscription itself within 23 ` +
+        `hours (#367). Any OTHER status reaching this line is worth chasing: it means a group ` +
+        `is live at Stripe and billing for nobody.`,
+    );
+    return "not_cancellable";
+  }
+  const claimed = attempt.prev;
 
   if (claimed.stripe_subscription_id) {
     try {
@@ -1152,7 +1216,14 @@ export async function detachOrgFromGroup(args: {
   // why doing it in one statement does not close the window.
   let cancelled: string | null = null;
   const outcome = await cancelGroupIfEmpty(result.from);
-  if (outcome !== "not_empty") {
+  // Only the two outcomes that CHANGED something end the detach here.
+  // `not_cancellable` falls through with `not_empty`, deliberately: the group
+  // was refused, not cancelled, so the seat decrement below still has to run,
+  // and dropEmptyGroup must NOT be reached — whether an org-less group with a
+  // status outside that set should be reaped locally is a decision nobody has
+  // taken (#367), and taking it accidentally, here, on the else branch of a
+  // condition written for `cancel_failed`, is how it would get taken badly.
+  if (outcome === "cancelled" || outcome === "cancel_failed") {
     if (outcome === "cancelled") cancelled = result.from;
     else await dropEmptyGroup(result.from);
     return { subscription_id: result.to, cancelled_group: cancelled };
