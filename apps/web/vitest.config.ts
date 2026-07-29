@@ -72,6 +72,24 @@ export default defineConfig({
   test: {
     environment: "node",
     pool: "threads",
+    // Most of this suite talks to a real Postgres, and vitest's 5s default is
+    // not a budget those tests were ever written against — a loaded runner
+    // turns an honest 6s query into a red build. The repo's habit was to pass
+    // `--testTimeout=30000` by hand, but CI runs a bare `npm test`, so the
+    // habit protected local runs and not the one that gates merges.
+    //
+    // #363 removed a set of inline `{ timeout: 20000 }` pins on exactly that
+    // reasoning — "let the repo-wide convention govern". This is the line that
+    // makes such a convention exist. Without it, dropping the pins LOWERED
+    // those tests from 20s to 5s in CI, which is the opposite of the intent.
+    //
+    // Set here rather than per-test on purpose: an inline timeout silently
+    // OVERRIDES `--testTimeout`, so a file that pins its own is a file whose
+    // timeout nobody can tune from the outside. That was the whole defect
+    // behind #363 — someone hits a CI timeout, passes the flag, watches it fail
+    // identically, and concludes the test hangs.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     // Warns once when DATABASE_URL is absent: the DB suites then SKIP and the
     // run still exits 0, which has already been misread as a pass. See the file.
     globalSetup: ["./vitest.globalSetup.ts"],
