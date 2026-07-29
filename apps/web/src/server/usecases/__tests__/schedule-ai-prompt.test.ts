@@ -125,8 +125,21 @@ describe("JOINT_RULES (issue #350)", () => {
   // by the snapshot below. Without this a pure re-wrap would fail a semantic
   // test, which would train the next reader to reach for `vitest -u`.
   const flat = (s: string): string => s.replace(/\s+/g, " ");
-  const rule = (id: string, next: string): string =>
-    flat(JOINT_RULES.slice(JOINT_RULES.indexOf(id), JOINT_RULES.indexOf(next)));
+  // Fails CLOSED. A dropped label makes indexOf return -1, and slice(x, -1) then
+  // silently returns a WIDER span that the pins may still match — a deleted rule
+  // would read as green. Assert the bounds rather than trusting the slice.
+  const rule = (id: string, next: string): string => {
+    const start = JOINT_RULES.indexOf(id);
+    const end = JOINT_RULES.indexOf(next);
+    expect(start, `label ${id} missing`).toBeGreaterThanOrEqual(0);
+    expect(end, `label ${next} missing or out of order`).toBeGreaterThan(start);
+    return flat(JOINT_RULES.slice(start, end));
+  };
+  const tail = (id: string): string => {
+    const start = JOINT_RULES.indexOf(id);
+    expect(start, `label ${id} missing`).toBeGreaterThanOrEqual(0);
+    return flat(JOINT_RULES.slice(start));
+  };
 
   it("is frozen", () => {
     expect(JOINT_RULES).toMatchSnapshot();
@@ -154,8 +167,7 @@ describe("JOINT_RULES (issue #350)", () => {
     // `assignments` pushes the model to invent illegal slots for overflow, which
     // is the EXPECTED joint failure (it is why draftPlaced can be short and why
     // the 500 cap exists), and the org pays for the repair rounds.
-    const out = flat(JOINT_RULES.slice(JOINT_RULES.indexOf("OUTPUT")));
-    expect(out.length).toBeGreaterThan(0);
+    const out = tail("OUTPUT");
     expect(out).toContain("unschedulable");
     expect(out).toMatch(/appears exactly once/);
     expect(out).toMatch(/assignments array, or in unschedulable/);
@@ -170,9 +182,35 @@ describe("JOINT_RULES (issue #350)", () => {
     expect(preamble).toMatch(/J4 and J5/);
     expect(preamble).toMatch(/hard/i);
     expect(preamble).toMatch(/goal/i);
-    expect(preamble).toMatch(/S1/);
+    // Pin the DIRECTION, not just the token. `/S1/` alone is satisfied by the
+    // literal "S1-S5", so a rewrite to "ABOVE the organiser's instruction" —
+    // the exact inversion this test exists to prevent — would still pass.
+    expect(preamble).toMatch(/below the organiser's instruction/);
     // And J4 itself must yield to the instruction rather than dilute it.
     expect(rule("J4.", "J5.")).toMatch(/S1 wins/);
+  });
+
+  it("scopes the verifier per division without implying an intersection-only board", () => {
+    // "runs H1-H7 once per division against its own settings over the whole
+    // board" reads as: apply A's settings to every fixture — which rejects B's
+    // fixtures on B-only courts, i.e. demands the INTERSECTION of court sets.
+    // That is the opposite of J1, and divergentCourts exists precisely because
+    // non-shared courts are expected. The two ideas must be stated separately.
+    const preamble = flat(JOINT_RULES.slice(0, JOINT_RULES.indexOf("J1.")));
+    expect(preamble).toMatch(/own fixtures/);
+    expect(preamble).toMatch(/court and person checks/);
+    expect(preamble).toMatch(/occupancy/);
+    // The enumeration must cover prior-proposal entries, which carry a
+    // division_id too and are read in refine and repair.
+    expect(preamble).toMatch(/prior[- ]proposal/i);
+  });
+
+  it("explains divergentCourts, the precomputed answer to J1 and J2", () => {
+    // The pack ships it and the board warns on it; the model was never told what
+    // it means, so the one field that flags a court it may not use went unread.
+    const flatAll = flat(JOINT_RULES);
+    expect(flatAll).toContain("divergentCourts");
+    expect(flatAll).toMatch(/some divisions only|not in every division|exist for some/i);
   });
 
   it("J3 names perEntrantMinRest, which sits outside constraints", () => {
@@ -182,19 +220,28 @@ describe("JOINT_RULES (issue #350)", () => {
     expect(rule("J3.", "J4.")).toContain("perEntrantMinRest");
   });
 
-  it("J7 warns that the shared-player map is within-division only", () => {
-    // schedule-ai.ts:540-541 builds each division's people map from that
-    // division's OWN entrants, filtered to size >= 2 — so a person in one entrant
-    // of A and one of B is in NEITHER source map, while H4 tells the model to
-    // avoid overlaps for entrants "sharing a person in the shared-player map".
-    // Unwarned, the model thrashes repair rounds on a metered, paid path.
-    const j7 = flat(JOINT_RULES.slice(JOINT_RULES.indexOf("J7.")));
-    expect(j7.length).toBeGreaterThan(0);
+  it("J7 states the shared-player map spans every selected division", () => {
+    // buildCompetitionPack now builds `people` over the RUN's whole entrant set,
+    // so cross-division sharers are in the map and H4 applies to them normally.
+    // J7 is a statement of fact about the pack, not a warning about missing data.
+    const j7 = tail("J7.");
     expect(j7).toMatch(/shared-player map/i);
-    expect(j7).toMatch(/within[- ]division/i);
-    // The verifier does see it, and Task 3 owes a conflict naming the person.
-    expect(j7).toMatch(/verifier/i);
-    expect(j7).toMatch(/person/i);
+    expect(j7).toMatch(/every selected division|across (every|all)/i);
+    expect(j7).toMatch(/H4/);
+  });
+
+  it("J7 promises nothing the server does not deliver", () => {
+    // The prompt must not claim a rejection the pipeline cannot produce.
+    // person_overlap is a WARN (calendar.ts:102) and isBlocking covers only
+    // `court` and direct `order` (schedule-ai.ts:831-833), so a plan whose sole
+    // flaw is a person clash returns clean and never triggers a repair round.
+    // Promising a rejection would be a lie the model then reasons from.
+    const j7 = tail("J7.");
+    expect(j7).not.toMatch(/reject/i);
+    expect(j7).not.toMatch(/repair round/i);
+    // And it must not tell the model the data is unavailable — it now is.
+    expect(j7).not.toMatch(/cannot predict/i);
+    expect(j7).not.toMatch(/within[- ]division only/i);
   });
 
   it("J5 tells the model to rebalance rather than trust the draft (ruling R4)", () => {
@@ -209,6 +256,10 @@ describe("JOINT_RULES (issue #350)", () => {
     // that carries it, so the model can detect it rather than assume completeness.
     expect(j5).toContain("draftPlaced");
     expect(j5).toMatch(/partial/i);
+    // J5 is labelled a GOAL, but "place the remainder yourself" is not tradeable
+    // against S2/S3: structuralCheck (schedule-ai.ts:865-867) rejects any plan
+    // missing a movable id, so those fixtures must still be accounted for.
+    expect(j5).toMatch(/still (has to|have to|must)|OUTPUT accounting|accounted for/i);
   });
 
   it("J6 tells the model divisions may differ in timezone — compare instants", () => {

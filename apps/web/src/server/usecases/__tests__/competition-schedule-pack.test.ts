@@ -638,6 +638,45 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     ]);
   }, 60_000);
 
+  it("carries a person shared across two divisions, invisible to either alone", async () => {
+    // The whole reason the joint people map cannot be a union of the per-division
+    // maps. schedule-ai.ts:540-543 keeps only persons in >= 2 entrants of THAT
+    // division, so someone rostered into one entrant of A and one of B clears the
+    // bar in neither and is in NEITHER source map — while H4 sends the model to
+    // that very map to avoid entrant overlaps. Building it over the run's whole
+    // entrant set is what makes the clash avoidable rather than merely detectable.
+    const cup = await seedCompetition(auth, `Cross Cup ${randomUUID().slice(0, 6)}`, [
+      { name: "Quebec", entrantPrefix: "qq", courts: ["Court 1"], matchMinutes: 30, entrants: 4, place: false, startOffsetMin: 0 },
+      { name: "Romeo", entrantPrefix: "rr", courts: ["Court 1"], matchMinutes: 30, entrants: 4, place: false, startOffsetMin: 0 },
+    ]);
+    const [{ id: person }] = await sql<{ id: string }[]>`
+      insert into persons (org_id, full_name) values (${auth.orgId}, 'Cross Division Player') returning id`;
+    // Exactly ONE entrant per division — below the >= 2 bar in both.
+    for (const d of cup.divisions) {
+      const [ent] = await sql<{ id: string }[]>`
+        select id from entrants where division_id = ${d.id} order by seed limit 1`;
+      await sql`insert into entrant_members (entrant_id, person_id, org_id)
+                values (${ent!.id}, ${person}, ${auth.orgId})`;
+    }
+    // Neither division's own pack can see them — the precondition, asserted so a
+    // future change to the per-division builder cannot make this test vacuous.
+    for (const d of cup.divisions) {
+      const one = await buildSchedulePack(auth, d.id, { mode: "generate", instruction: "x" });
+      expect(one.pack.people.map((p) => p.person_id)).not.toContain(person);
+    }
+
+    const { pack } = await buildCompetitionPack(
+      auth,
+      cup.competitionId,
+      cup.divisions.map((d) => d.id),
+      { mode: "generate", instruction: "x" },
+    );
+    const found = pack.people.find((p) => p.person_id === person);
+    expect(found).toBeDefined();
+    const nameById = new Map(pack.entrants.map((e) => [e.id, e.name]));
+    expect(found!.entrant_ids.map((e) => nameById.get(e))).toEqual(["qq-E1", "rr-E1"]);
+  }, 60_000);
+
   it("two builds of an identically seeded competition are byte-identical", async () => {
     const boardA = await seedOrg("pro");
     const boardB = await seedOrg("pro");

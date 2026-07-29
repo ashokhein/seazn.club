@@ -15,7 +15,7 @@ import "server-only";
 // draft below, so it decides pack CONTENT, and `createDivision` enforces a
 // unique slug but not a unique name.
 //
-// The two things a joint pack must get right that a per-division pack cannot:
+// The three things a joint pack must get right that a per-division pack cannot:
 //   * the run's own divisions must not be served to each other as immovable
 //     obstacles. buildSchedulePack flattens every sibling division to the
 //     anonymous OTHER_DIVISION_LABEL, so they are excluded at the source
@@ -26,6 +26,11 @@ import "server-only";
 //   * courts are matched across divisions by LABEL and nothing else, so the
 //     pack names the labels that do not appear in every selected division
 //     (`divergentCourts`) for the board to warn on.
+//   * the shared-player map is rebuilt over the whole run. A per-division map
+//     keeps only persons in >= 2 of ITS OWN entrants, so someone in one entrant
+//     of A and one of B is in neither — invisible to a union of the two. H4
+//     points the model at that map, so leaving the gap would ask it to avoid a
+//     clash it was never shown.
 //
 // THE DRAFT IS A LEGALITY HINT, NOT A BALANCE HINT. Divisions are drafted in
 // sequence, each seeing what the ones before it took, which makes the joint
@@ -364,10 +369,16 @@ export async function buildCompetitionPack(
     //
     // entrants ride along because they are free (they are on the fixture),
     // though they can never clash across divisions — an entrant belongs to
-    // exactly one division. `people` is deliberately empty: a person rostered
-    // into one entrant of A and one of B is in NEITHER division's pack people
-    // map, so a per-division pack cannot supply cross-division person data.
-    // Cross-division person overlap is the joint VERIFIER's job (Task 3).
+    // exactly one division. `people` is empty because there is nothing to put
+    // in it HERE: a person rostered into one entrant of A and one of B is in
+    // NEITHER source pack's people map, so this feed-forward cannot supply
+    // cross-division person data even in principle.
+    //
+    // The joint pack's own `people` (built below over the run's whole entrant
+    // set) does cover it, so the MODEL can avoid these. The greedy DRAFT still
+    // cannot — each division's pass sees only its own people — so a draft may
+    // hand over a cross-division person overlap, and the joint verifier remains
+    // the backstop for it (Task 3).
     const minutes = one.pack.settings.matchMinutes;
     const fixtureById = new Map(one.pack.fixtures.movable.map((f) => [f.id, f]));
     for (const a of one.pack.draft) {
@@ -491,34 +502,51 @@ export async function buildCompetitionPack(
     b.pack.entrants.map((e) => ({ ...e, division_id: b.id })),
   );
 
-  // Shared players. A person rostered into two entrants of division A and two of
-  // division B appears in both source packs; union the entrant sets rather than
-  // emitting the person twice. First-seen order (divisions in emitted order,
-  // people in their per-division order) is the ordering key for the PEOPLE array
-  // — person ids are per-seed UUIDs and must never decide an order.
-  const personOrder: string[] = [];
-  const entrantsByPerson = new Map<string, string[]>();
-  for (const b of built) {
-    for (const p of b.pack.people) {
-      let ents = entrantsByPerson.get(p.person_id);
-      if (ents === undefined) {
-        ents = [];
-        entrantsByPerson.set(p.person_id, ents);
-        personOrder.push(p.person_id);
-      }
-      for (const e of p.entrant_ids) if (!ents.includes(e)) ents.push(e);
-    }
-  }
-  // The merged entrant_ids must be re-sorted GLOBALLY by entrant name — the
-  // invariant at schedule-ai.ts:517-523, applied at :542. Concatenating A's name-sorted ids with
-  // B's leaves the array sorted only within each division.
+  // Shared players, derived from the RUN's whole entrant set — deliberately NOT
+  // a union of the per-division maps.
+  //
+  // Each source pack keeps only persons rostered into >= 2 of its OWN entrants
+  // (schedule-ai.ts:540-543), because within one division those are the only ones
+  // that can create a cross-entrant clash. Across a joint run that bar is wrong:
+  // a person in ONE entrant of A and ONE of B clears it in neither division and
+  // is therefore in no source map, while H4 sends the model to this very map to
+  // avoid entrant overlaps. The model would then be asked to avoid a clash the
+  // pack never showed it.
+  //
+  // Applying the same >= 2 rule to the joint entrant set fixes that at the
+  // source. It is a strict superset of the union: every within-division sharer
+  // still qualifies, and the cross-division ones now do too. Nothing downstream
+  // changes semantics — person_overlap stays the warn it is single-division
+  // (calendar.ts:102) — the model simply gets the data it needs to comply.
   const entrantNameById = new Map(entrants.map((e) => [e.id, e.name]));
   const byEntrantName = (a: string, b: string): number =>
     cmp(entrantNameById.get(a) ?? "", entrantNameById.get(b) ?? "") || cmp(a, b);
-  const people: PackPerson[] = personOrder.map((person_id) => ({
-    person_id,
-    entrant_ids: entrantsByPerson.get(person_id)!.sort(byEntrantName),
-  }));
+  const entrantNameKey = (ids: readonly string[]): string =>
+    ids.map((e) => entrantNameById.get(e) ?? e).join("|");
+  const membersByEntrant = await withTenant(auth.orgId, (tx) =>
+    peopleByEntrant(
+      tx,
+      entrants.map((e) => e.id),
+    ),
+  );
+  const entrantsByPerson = new Map<string, Set<string>>();
+  for (const [entrantId, personIds] of membersByEntrant) {
+    for (const p of personIds) {
+      (entrantsByPerson.get(p) ?? entrantsByPerson.set(p, new Set()).get(p)!).add(entrantId);
+    }
+  }
+  // peopleByEntrant's rows carry no ORDER BY, so nothing here may lean on
+  // insertion order the way the old first-seen merge did. Both the entrant_ids
+  // array and the people array sort on the entrant NAME — the invariant at
+  // schedule-ai.ts:517-523, mirroring its own people sort at :544-548.
+  const people: PackPerson[] = [...entrantsByPerson.entries()]
+    .filter(([, ents]) => ents.size >= 2)
+    .map(([person_id, ents]) => ({ person_id, entrant_ids: [...ents].sort(byEntrantName) }))
+    .sort(
+      (a, b) =>
+        cmp(entrantNameKey(a.entrant_ids), entrantNameKey(b.entrant_ids)) ||
+        cmp(a.person_id, b.person_id),
+    );
 
   // Each source pack already normalised its slice of the prior proposal into
   // its own timezone; re-tag and re-sort rather than re-deriving.

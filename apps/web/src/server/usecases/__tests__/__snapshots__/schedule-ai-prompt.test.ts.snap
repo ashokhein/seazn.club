@@ -3,19 +3,24 @@
 exports[`JOINT_RULES (issue #350) > is frozen 1`] = `
 "JOINT MODE — you are scheduling several divisions of one competition onto one
 shared board. The pack carries a divisions array in place of a single settings
-block, and every fixture, entrant and draft assignment carries a division_id.
-J1, J2, J3 and J6 extend the HARD rules: the verifier runs H1-H7 once per division,
-against that division's own settings, over the whole board, so a violation in any
-one of them rejects the answer. J4 and J5 are GOALS — rank them among S1-S5, below
-the organiser's instruction, which still outranks everything except hard rules. J7
-is a warning about data the pack cannot give you.
+block, and every fixture, entrant, draft assignment and prior-proposal entry
+carries a division_id.
+J1, J2, J3 and J6 extend the HARD rules. The verifier checks each division's own
+fixtures against that division's own settings — one division's windows, blackouts
+and durations never govern another division's fixtures — while the court and
+person checks additionally see every division's fixtures as occupancy on the one
+shared board. A violation of any of them rejects the answer. J4 and J5 are GOALS —
+rank them among S1-S5, below the organiser's instruction, which still outranks
+everything except hard rules. J7 describes the shared-player map.
 J1. Every fixture carries a division_id. Its court_label must be a court that
     fixture's own division lists in divisions[].settings.courts. The top-level
     courts array is the union across divisions — it is not a licence to use a court
     your fixture's division does not have.
 J2. A court is shared between divisions when the label matches exactly, and only
     then. Two fixtures from different divisions must never overlap on the same
-    court_label.
+    court_label. The divergentCourts list names the labels that exist for some
+    divisions only — before using one of those, check that the fixture's own
+    division lists it.
 J3. Each division has its own matchMinutes, gapMinutes, perEntrantMinRest, session
     windows, blackouts and constraints under divisions[]. Apply each fixture's own
     division's values. They are not interchangeable, and the strictest division's
@@ -29,7 +34,9 @@ J5. The draft is a legality hint, not a balance hint. It is built one division a
     and the later ones stack up behind them. Rebalance it under J4 rather than
     anchoring on the shape you were handed. A division whose draftPlaced is below
     the length of its movableIds has a PARTIAL draft — its remaining fixtures are
-    absent from the draft entirely, so place them yourself.
+    absent from the draft entirely, so place them yourself. Where they go is a
+    goal; that they are accounted for is not — every one of them still has to
+    appear under OUTPUT.
 J6. Divisions may run in different timezones, so the pack is not in one clock. Each
     division's settings and windows, and the scheduled_at of every draft and prior
     proposal entry, are written in that division's zone; an obstacle's from/to is
@@ -38,13 +45,11 @@ J6. Divisions may run in different timezones, so the pack is not in one clock. E
     listed division's zone. Two equal-looking wall clock times may therefore be
     hours apart and the arrays need not be in clock order: compare instants, not
     strings. Write each assignment's scheduled_at in its own division's zone.
-J7. The shared-player map covers WITHIN-division sharing only — it is built one
-    division at a time, so a person rostered into an entrant of one division and an
-    entrant of another appears in it nowhere, in any division. The verifier checks
-    people across the whole board regardless, and names the person and both
-    entrants when it rejects. You cannot predict these from the pack: do not read
-    the map's silence as proof that two entrants of different divisions are
-    unrelated, and expect a repair round to tell you about the ones that clash.
+J7. The shared-player map spans every selected division. It lists each person
+    rostered into two or more entrants anywhere in this run, so it covers entrants
+    in different divisions as well as entrants within one. Two entrants sharing a
+    person must not play overlapping fixtures wherever those entrants sit — that
+    is H4, applied to the joint map.
 OUTPUT is unchanged, and H1-H7's accounting still holds across the union: every
 movable fixture of every division appears exactly once — in the one flat
 assignments array, or in unschedulable with a short honest reason citing the rule
