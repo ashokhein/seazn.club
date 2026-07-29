@@ -1398,6 +1398,28 @@ describe.skipIf(!HAS_DB)("detach of the LAST org carries the wallet out (#304)",
     expect(audit?.detail?.via).toBe("detach");
   });
 
+  it("REGRESSION (#308): writes NO forfeit row when there was nothing to forfeit", async () => {
+    // The row answers "what did this organisation leave behind". Written when
+    // the answer is "nothing" it is pure volume — and it is the COMMON case,
+    // since most organisations detach with an empty wallet. Every such row then
+    // had to be filtered back out of /admin, so the honest fix is not to create
+    // it. The case above proves the row still appears when a balance really is
+    // forfeited, which makes this a narrowing rather than a removal.
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const group = await makeGroup(payer, { stripeSubId: "sub_308_empty_" + uniq() });
+    await makeOrg(group, payer); // a sibling stays, so the forfeit path is the one taken
+    const orgId = await makeOrg(group, clubOwner);
+    // No ledger rows seeded: the group's wallet is empty on both buckets.
+
+    await detachOrgFromGroup({ actorUserId: clubOwner, orgId, mode: "release" });
+
+    const [row] = await sql<{ n: number }[]>`
+      select count(*)::int as n from staff_audit_log
+       where target_id = ${orgId} and action = 'billing_group.detach_wallet_not_carried'`;
+    expect(row!.n).toBe(0);
+  });
+
   it("leaves the pool REACHABLE, not merely moved", async () => {
     // A balance that reads right while the ledger still points at a wallet
     // nothing resolves to is the same bug one layer down. Two things have to

@@ -1,5 +1,6 @@
 import Link from "@/components/ui/console-link";
 import { sql } from "@/lib/db";
+import { CUSTOMER_SELF_SERVICE_AUDIT_ACTIONS } from "@/lib/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -75,7 +76,23 @@ export default async function AdminAuditPage() {
                 <td className="px-3 py-2 text-slate-500 text-xs whitespace-nowrap">
                   {new Date(r.created_at).toLocaleString()}
                 </td>
-                <td className="px-3 py-2 text-slate-300">{r.actor_email}</td>
+                <td className="px-3 py-2 text-slate-300">
+                  {r.actor_email}
+                  {/* #308: two self-service billing effects record themselves in
+                      this table with the CUSTOMER as actor. They are deliberately
+                      NOT hidden here — this page is the forensic record, and the
+                      V111 hash chain verifies over every row, so omitting some
+                      would destroy the accountability the write exists to provide
+                      AND make the chain unauditable against what is shown.
+                      Labelled instead, so nobody infers an organiser is staff.
+                      The dashboard tile and its glance list DO exclude them,
+                      because those answer "what did staff do today". */}
+                  {(CUSTOMER_SELF_SERVICE_AUDIT_ACTIONS as readonly string[]).includes(r.action) && (
+                    <span className="ml-2 rounded bg-slate-700 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
+                      customer
+                    </span>
+                  )}
+                </td>
                 <td className="px-3 py-2 font-mono text-purple-300">{r.action}</td>
                 <td className="px-3 py-2 text-slate-400">
                   {r.target_type === "org" || r.target_type === "user" ? (
