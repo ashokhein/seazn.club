@@ -603,7 +603,7 @@ export async function linkStripeCustomer(orgId: string, customerId: string): Pro
  * checkout that created this customer paid for ONE group, and by the time its
  * webhook arrives the org named in the metadata may bill through another one —
  * at which point writing through the org stamps the payer's customer id onto a
- * different customer's row. V310's partial unique index on stripe_customer_id
+ * different customer's row. V314's partial unique index on stripe_customer_id
  * turns that into a raised error rather than silent corruption, which is a
  * safety net, not a licence to keep resolving through the org.
  */
@@ -706,7 +706,7 @@ export async function planKeyForPrice(priceId: string): Promise<string | null> {
  * the webhook handler and the reconcile-on-return path so both stay in sync.
  *
  * Formerly an `insert … on conflict (org_id)` upsert. There is nothing to
- * insert any more: every org is created pointing at a group and V310 backfilled
+ * insert any more: every org is created pointing at a group and V314 backfilled
  * the rest, so the row always exists and this is a plain UPDATE by group id. The
  * old ON CONFLICT clause is preserved verbatim as the SET list — in Postgres an
  * UPDATE's right-hand side reads the OLD row, so each `case when <col> is

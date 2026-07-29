@@ -27,7 +27,7 @@ export async function subscriptionIdForOrg(orgId: string): Promise<string | null
 
 /**
  * The group an org bills through. Throws rather than returning null: every org
- * gets a group at creation (V310 backfilled the rest), so a missing one is a
+ * gets a group at creation (V314 backfilled the rest), so a missing one is a
  * broken invariant, not a state a caller should branch on.
  */
 export async function requireSubscriptionIdForOrg(orgId: string): Promise<string> {
@@ -106,7 +106,7 @@ export async function groupIdsOwnedBy(userId: string): Promise<string[]> {
 
 /**
  * Refuse to put another org into a group that is already at its plan's
- * `orgs.max_owned` — community 1, Pro 5, Pro Plus 10 (V310).
+ * `orgs.max_owned` — community 1, Pro 5, Pro Plus 10 (V314).
  *
  * The limit is resolved through a member org because entitlements are
  * org-addressed; every org in the group resolves the same plan, so any of them

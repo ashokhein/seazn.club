@@ -74,7 +74,7 @@ async function seedOrgAwaitingReconcile(): Promise<{ orgId: string; priceId: str
 /** A completed subscription checkout session as reconcileCheckout retrieves
  *  it — same shape as billing-reconcile-invalidate.test.ts's
  *  subscriptionSession, except the customer id is unique PER CALL: the
- *  partial unique index on subscriptions.stripe_customer_id (V310) means two
+ *  partial unique index on subscriptions.stripe_customer_id (V314) means two
  *  different groups sharing one literal customer id in the same test run
  *  throws on the second linkStripeCustomer, which would otherwise mask this
  *  file's own assertions behind an unrelated 23505. */

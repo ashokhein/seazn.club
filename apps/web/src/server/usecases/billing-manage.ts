@@ -67,7 +67,7 @@ interface SubRow {
   currency: string | null;
 }
 
-/** The billing GROUP behind an org (V310) — many orgs may share one row. */
+/** The billing GROUP behind an org (V314) — many orgs may share one row. */
 async function subRow(orgId: string): Promise<SubRow | null> {
   const [sub] = await sql<SubRow[]>`
     select s.id, s.owner_user_id, s.plan_key, s.status, s.stripe_customer_id,

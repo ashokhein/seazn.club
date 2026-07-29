@@ -269,7 +269,7 @@ describe("AdminPlanPanel — Payment methods (Task 6C staff-only card removal)",
     expect(html).not.toContain("No cards on file — or Stripe could not be reached.");
   });
 
-  // Blast radius (V310). Every control on this panel writes the SHARED
+  // Blast radius (V314). Every control on this panel writes the SHARED
   // subscriptions row, so a comp applied from one org's page moves the plan for
   // every org on that bill. The usecases were always group-wide; the panel was
   // not, so staff had no way to see how many orgs they were about to change.

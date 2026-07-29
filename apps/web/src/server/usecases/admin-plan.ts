@@ -25,7 +25,7 @@ import {
  * reached from the staff console with an operator-supplied org id, so a 500
  * both blames us and pages someone for what is a data condition they are
  * looking straight at. 404 says the true thing: there is no billing to act on.
- * (This also restores restoreTrial's original 404, which V310 turned into a
+ * (This also restores restoreTrial's original 404, which V314 turned into a
  * 500.)
  */
 async function groupIdForOrg(orgId: string): Promise<string> {

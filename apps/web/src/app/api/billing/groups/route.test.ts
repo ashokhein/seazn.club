@@ -107,7 +107,7 @@ describe.skipIf(!HAS_DB)("GET /api/billing/groups", () => {
     expect(mine).toBeDefined();
     expect(mine!.plan_key).toBe("pro");
     expect(mine!.orgs.map((o) => o.id).sort()).toEqual([...g.orgIds].sort());
-    // Pro holds 5 (V310). The cap is what the UI needs to say "2 slots left"
+    // Pro holds 5 (V314). The cap is what the UI needs to say "2 slots left"
     // without inventing the number itself.
     expect(mine!.max_orgs).toBe(5);
   });

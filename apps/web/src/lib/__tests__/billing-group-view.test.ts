@@ -1,4 +1,4 @@
-// The billing-group panel's decisions (V310). This is the copy and the
+// The billing-group panel's decisions (V314). This is the copy and the
 // arithmetic a payer reads immediately before spending money or giving a
 // subscription away, so every branch is pinned here rather than left to a
 // screenshot someone remembers to look at.

@@ -1,4 +1,4 @@
-// Which billing GROUP does a customer.subscription.* webhook write to? (V310)
+// Which billing GROUP does a customer.subscription.* webhook write to? (V314)
 //
 // Before billing groups a subscription belonged to exactly one org, so the
 // webhook could resolve through `metadata.org_id → that org's subscription`.

@@ -88,7 +88,7 @@ export default async function BillingPage({
     await reconcileCheckout(orgId, sp.session_id);
   }
 
-  // WHO PAYS, not who owns this org (V310). A billing group can fund many orgs,
+  // WHO PAYS, not who owns this org (V314). A billing group can fund many orgs,
   // each with its own owner, and everything below the plan summary —
   // invoices, billing address, tax ids, cards, the credit balance, and every
   // mutating control — belongs to the PAYER. Gating those on `org.role` would
@@ -125,7 +125,7 @@ export default async function BillingPage({
     isPayer ? [] : getFormerPayerInvoices(orgId, user.id),
   ]);
 
-  // The billing GROUP behind this org (V310). `org_id` is projected from the
+  // The billing GROUP behind this org (V314). `org_id` is projected from the
   // org, not read from subscriptions — the column is gone, and the row may be
   // shared with sibling orgs.
   const [sub] = await sql<Subscription[]>`

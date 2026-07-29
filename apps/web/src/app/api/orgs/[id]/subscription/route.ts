@@ -12,7 +12,7 @@ export async function GET(
     const { id: orgId } = await params;
     await requireOrgRole(orgId, ORG_ROLES);
 
-    // Reached through organizations.subscription_id (V310). `org_id` is no
+    // Reached through organizations.subscription_id (V314). `org_id` is no
     // longer a column on subscriptions — it is projected from the org we were
     // asked about, because many orgs may share the row behind it.
     //

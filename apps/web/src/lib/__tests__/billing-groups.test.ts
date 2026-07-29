@@ -1,4 +1,4 @@
-// Billing groups (V310) with MORE THAN ONE ORG IN THE GROUP.
+// Billing groups (V314) with MORE THAN ONE ORG IN THE GROUP.
 //
 // Every other suite seeds a group of one, which is the one shape that cannot
 // fail: a group of one resolves like the old org-keyed subscription did, its cap

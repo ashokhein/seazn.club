@@ -4,7 +4,7 @@ import { sql } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 export default async function AdminOrgsPage() {
-  // Joined through organizations.subscription_id. V310 dropped
+  // Joined through organizations.subscription_id. V314 dropped
   // subscriptions.org_id and reversed the direction of the relationship — this
   // page was still joining on the old column, so it was a hard 500.
   //
