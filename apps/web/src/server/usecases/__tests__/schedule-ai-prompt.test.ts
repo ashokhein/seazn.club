@@ -119,12 +119,21 @@ describe("schedule-ai prompt contract", () => {
 });
 
 describe("JOINT_RULES (issue #350)", () => {
+  // The prompt is hard-wrapped at ~80 columns, so a pinned phrase can straddle a
+  // newline plus four spaces of indent. Semantic pins therefore match against a
+  // whitespace-normalised copy; the exact bytes, wrapping included, stay frozen
+  // by the snapshot below. Without this a pure re-wrap would fail a semantic
+  // test, which would train the next reader to reach for `vitest -u`.
+  const flat = (s: string): string => s.replace(/\s+/g, " ");
+  const rule = (id: string, next: string): string =>
+    flat(JOINT_RULES.slice(JOINT_RULES.indexOf(id), JOINT_RULES.indexOf(next)));
+
   it("is frozen", () => {
     expect(JOINT_RULES).toMatchSnapshot();
   });
 
-  it("labels every joint rule J1..J6", () => {
-    for (const id of ["J1.", "J2.", "J3.", "J4.", "J5.", "J6."]) {
+  it("labels every joint rule J1..J7", () => {
+    for (const id of ["J1.", "J2.", "J3.", "J4.", "J5.", "J6.", "J7."]) {
       expect(JOINT_RULES).toContain(id);
     }
   });
@@ -139,11 +148,57 @@ describe("JOINT_RULES (issue #350)", () => {
     expect(JOINT_RULES).toMatch(/do not add/i);
   });
 
+  it("keeps the unschedulable escape hatch in the OUTPUT clause", () => {
+    // SYSTEM_PROMPT:70-72 says every movable fixture appears exactly once — in
+    // assignments OR in unschedulable. A joint restatement naming only
+    // `assignments` pushes the model to invent illegal slots for overflow, which
+    // is the EXPECTED joint failure (it is why draftPlaced can be short and why
+    // the 500 cap exists), and the org pays for the repair rounds.
+    const out = flat(JOINT_RULES.slice(JOINT_RULES.indexOf("OUTPUT")));
+    expect(out.length).toBeGreaterThan(0);
+    expect(out).toContain("unschedulable");
+    expect(out).toMatch(/appears exactly once/);
+    expect(out).toMatch(/assignments array, or in unschedulable/);
+  });
+
+  it("ranks J4/J5 as goals under S1, not as hard rules", () => {
+    // An unconditional J4 outranks S1 ("the organiser's instruction ... outranks
+    // everything except hard rules", SYSTEM_PROMPT:52-54) and collides with that
+    // prompt's own worked example, "juniors always before 2pm".
+    const preamble = flat(JOINT_RULES.slice(0, JOINT_RULES.indexOf("J1.")));
+    expect(preamble).toMatch(/J1, J2, J3 and J6/);
+    expect(preamble).toMatch(/J4 and J5/);
+    expect(preamble).toMatch(/hard/i);
+    expect(preamble).toMatch(/goal/i);
+    expect(preamble).toMatch(/S1/);
+    // And J4 itself must yield to the instruction rather than dilute it.
+    expect(rule("J4.", "J5.")).toMatch(/S1 wins/);
+  });
+
+  it("J3 names perEntrantMinRest, which sits outside constraints", () => {
+    // PackSettings.perEntrantMinRest is a SIBLING of constraints, and H4 cites it
+    // by name. Its own docstring records that it was added because it had been
+    // "silently ignored by AI Schedule" — leaving it unnamed here repeats that.
+    expect(rule("J3.", "J4.")).toContain("perEntrantMinRest");
+  });
+
+  it("J7 warns that the shared-player map is within-division only", () => {
+    // schedule-ai.ts:540-541 builds each division's people map from that
+    // division's OWN entrants, filtered to size >= 2 — so a person in one entrant
+    // of A and one of B is in NEITHER source map, while H4 tells the model to
+    // avoid overlaps for entrants "sharing a person in the shared-player map".
+    // Unwarned, the model thrashes repair rounds on a metered, paid path.
+    const j7 = flat(JOINT_RULES.slice(JOINT_RULES.indexOf("J7.")));
+    expect(j7.length).toBeGreaterThan(0);
+    expect(j7).toMatch(/shared-player map/i);
+    expect(j7).toMatch(/within[- ]division/i);
+    // The verifier does see it, and Task 3 owes a conflict naming the person.
+    expect(j7).toMatch(/verifier/i);
+    expect(j7).toMatch(/person/i);
+  });
+
   it("J5 tells the model to rebalance rather than trust the draft (ruling R4)", () => {
-    const j5 = JOINT_RULES.slice(
-      JOINT_RULES.indexOf("J5."),
-      JOINT_RULES.indexOf("J6."),
-    );
+    const j5 = rule("J5.", "J6.");
     expect(j5.length).toBeGreaterThan(0);
     // The draft's own bias is named, not merely "the draft is a hint".
     expect(j5).toMatch(/legality hint/i);
@@ -157,10 +212,21 @@ describe("JOINT_RULES (issue #350)", () => {
   });
 
   it("J6 tells the model divisions may differ in timezone — compare instants", () => {
-    const j6 = JOINT_RULES.slice(JOINT_RULES.indexOf("J6."));
+    const j6 = rule("J6.", "J7.");
     expect(j6.length).toBeGreaterThan(0);
     expect(j6).toMatch(/timezone/i);
-    expect(j6).toMatch(/offset/i);
     expect(j6).toMatch(/instants,? not strings/i);
+    // Name the fields that actually carry a time. PackObstacle is
+    // {court, from, to, label} — it has no scheduled_at, so citing one there
+    // sends the model looking for a field that does not exist.
+    expect(j6).toContain("scheduled_at");
+    expect(j6).toContain("from/to");
+    // A foreign obstacle (division_id: null) is re-rendered in canonicalTz —
+    // divisions[0].tz — NOT in "its own division's" zone, which it has none of.
+    expect(j6).toMatch(/null division_id/);
+    expect(j6).toMatch(/first listed division/i);
+    // …and which zone to EMIT in, since SYSTEM_PROMPT:33's "the division
+    // timezone" is singular and becomes per-fixture in joint mode.
+    expect(j6).toMatch(/write each assignment/i);
   });
 });

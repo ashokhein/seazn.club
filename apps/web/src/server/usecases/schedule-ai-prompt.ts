@@ -82,44 +82,74 @@ if a wish was impossible.`;
 // Joint (multi-division) addendum — issue #350. Appended to SYSTEM_PROMPT by the
 // competition runner as `${SYSTEM_PROMPT}\n\n${JOINT_RULES}`; it is a SEPARATE
 // constant so the single-division prompt above stays byte-frozen. Same register
-// as the H/S rules: terse, imperative, numbered J1-J6.
+// as the H/S rules: terse, imperative, numbered J1-J7.
 //
-// J5 and J6 exist because of properties of the joint pack the model cannot infer
-// from the pack itself: the draft is built division by division, so it is biased
-// toward whichever division was built first (ruling R4), and each division renders
-// its timestamps in its own timezone (ruling R8).
+// The split matters as much as the rules. J1-J3 and J6 are mechanical and the
+// verifier enforces them, so they read as hard. J4-J5 are BALANCE goals: shipped
+// unconditionally they would outrank S1, which the frozen prompt says "outranks
+// everything except hard rules" — and they would collide with its own worked
+// example ("juniors always before 2pm") on a two-division board.
+//
+// J5, J6 and J7 exist because of properties of the joint pack the model cannot
+// infer from the pack itself:
+//   J5 — the draft is built division by division, so it is biased toward whichever
+//        division was built first (ruling R4) and may be partial (ruling R5).
+//   J6 — each division renders its own timestamps in its own zone (ruling R8),
+//        while foreign obstacles are re-rendered in canonicalTz = divisions[0].tz.
+//   J7 — `packPeople` (schedule-ai.ts:540-541) is built per division and filtered
+//        to entrant sets of size >= 2 WITHIN that division, so a person rostered
+//        across two divisions is in no source map and therefore nowhere in the
+//        joint pack. H4 points the model at a map that, for exactly this case, is
+//        empty. Unwarned, it burns metered repair rounds discovering that.
 export const JOINT_RULES = `JOINT MODE — you are scheduling several divisions of one competition onto one
 shared board. The pack carries a divisions array in place of a single settings
-block, and every fixture, obstacle and draft assignment carries a division_id. These
-rules sit on top of the hard rules above. The verifier checks each division
-separately against that division's own settings over the whole board, so a
-violation in any one of them rejects the answer.
+block, and every fixture, entrant and draft assignment carries a division_id.
+J1, J2, J3 and J6 extend the HARD rules: the verifier runs H1-H7 once per division,
+against that division's own settings, over the whole board, so a violation in any
+one of them rejects the answer. J4 and J5 are GOALS — rank them among S1-S5, below
+the organiser's instruction, which still outranks everything except hard rules. J7
+is a warning about data the pack cannot give you.
 J1. Every fixture carries a division_id. Its court_label must be a court that
-    fixture's own division lists in divisions[].settings.courts. The courts array is
-    the union across divisions — it is not a licence to use a court your fixture's
-    division does not have.
+    fixture's own division lists in divisions[].settings.courts. The top-level
+    courts array is the union across divisions — it is not a licence to use a court
+    your fixture's division does not have.
 J2. A court is shared between divisions when the label matches exactly, and only
     then. Two fixtures from different divisions must never overlap on the same
     court_label.
-J3. Each division has its own matchMinutes, gapMinutes, session windows, blackouts
-    and constraints under divisions[]. Apply each fixture's own division's values.
-    They are not interchangeable, and the strictest division's rules do not govern
-    the others.
-J4. Balance the prime slots across divisions. No division may be pushed entirely to
-    the end of the day while another takes every early court.
+J3. Each division has its own matchMinutes, gapMinutes, perEntrantMinRest, session
+    windows, blackouts and constraints under divisions[]. Apply each fixture's own
+    division's values. They are not interchangeable, and the strictest division's
+    values do not govern the others.
+J4. Balance the prime slots across divisions. No division should be pushed entirely
+    to the end of the day while another takes every early court. Where this and the
+    organiser's instruction genuinely conflict, S1 wins — place as the instruction
+    asks and name the imbalance in summary, rather than diluting the instruction.
 J5. The draft is a legality hint, not a balance hint. It is built one division at a
     time, each seeing the earlier ones, so the first divisions hold the early slots
     and the later ones stack up behind them. Rebalance it under J4 rather than
     anchoring on the shape you were handed. A division whose draftPlaced is below
     the length of its movableIds has a PARTIAL draft — its remaining fixtures are
     absent from the draft entirely, so place them yourself.
-J6. Divisions may run in different timezones. Every scheduled_at is rendered with
-    its own division's UTC offset, so the draft, the obstacles and the prior
-    proposal are not necessarily in clock order and two equal-looking wall clock
-    times may be hours apart. Compare instants, not strings.
-OUTPUT is unchanged: one flat assignments array covering every movable fixture of
-every division. Do not add a division field to an assignment — the server resolves
-each fixture_id to its own division.`;
+J6. Divisions may run in different timezones, so the pack is not in one clock. Each
+    division's settings and windows, and the scheduled_at of every draft and prior
+    proposal entry, are written in that division's zone; an obstacle's from/to is
+    written in the zone of the division named by its division_id, and an obstacle
+    with a null division_id comes from outside this run and is written in the first
+    listed division's zone. Two equal-looking wall clock times may therefore be
+    hours apart and the arrays need not be in clock order: compare instants, not
+    strings. Write each assignment's scheduled_at in its own division's zone.
+J7. The shared-player map covers WITHIN-division sharing only — it is built one
+    division at a time, so a person rostered into an entrant of one division and an
+    entrant of another appears in it nowhere, in any division. The verifier checks
+    people across the whole board regardless, and names the person and both
+    entrants when it rejects. You cannot predict these from the pack: do not read
+    the map's silence as proof that two entrants of different divisions are
+    unrelated, and expect a repair round to tell you about the ones that clash.
+OUTPUT is unchanged, and H1-H7's accounting still holds across the union: every
+movable fixture of every division appears exactly once — in the one flat
+assignments array, or in unschedulable with a short honest reason citing the rule
+id (H1-H7, or J1-J3, J6) that blocked it. Do not add a division field to an
+assignment — the server resolves each fixture_id to its own division.`;
 
 export const AiAssignment = z.object({
   fixture_id: z.string().uuid(),

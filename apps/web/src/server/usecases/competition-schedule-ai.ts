@@ -4,7 +4,7 @@ import "server-only";
 // buildCompetitionPack unions several divisions of ONE competition into a
 // single deterministic pack. It owns no SQL of its own beyond the competition
 // lookup: every division's board is assembled by the existing
-// buildSchedulePack (schedule-ai.ts:256), then merged here. That keeps one
+// buildSchedulePack in schedule-ai.ts, then merged here. That keeps one
 // loader, one draft solver and one set of ordering invariants.
 //
 // Determinism is contractual (see schedule-ai.ts:1-12 — a golden snapshot binds
