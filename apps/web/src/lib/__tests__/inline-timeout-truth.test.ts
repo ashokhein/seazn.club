@@ -242,11 +242,21 @@ function scanFile(absPath: string, relPath: string): Violation[] {
  *
  * This list may only ever SHRINK: the second test below fails if an entry
  * stops matching a real pin, so a fixed file cannot leave a stale exemption
- * behind to hide the next one. It is empty right now — see the guard's
- * current finding in the task report for what it found instead of being
- * allowlisted here.
+ * behind to hide the next one.
+ *
+ * An entry needs a duration measured INSIDE a full `vitest run`, not in
+ * isolation. The one entry below is here because #372 deleted its pin on an
+ * isolated 2.1s reading and the test then took 41.8s under the real suite: the
+ * two numbers differ by 20x, and only the second one is the one CI experiences.
+ * A justification quoting the isolated figure is not a justification.
  */
-const ALLOWLIST: Readonly<Record<string, string>> = {};
+const ALLOWLIST: Readonly<Record<string, string>> = {
+  'lib/__tests__/help-copy-truth.test.ts::freezes exactly the two axes the article says, and orgs.max_owned is not one':
+    "First consumer of allAuditedSources() — it pays the whole walk-and-parse " +
+    "cost that later tests get memoised for free. Measured 2.1s alone and " +
+    "41.8s in a full 532-file run, where it failed the 30s default. #372 " +
+    "removed this pin reading only the isolated figure; restored.",
+};
 
 describe("no test/hook re-pins an inline timeout or retry (#370)", () => {
   // Excludes this file itself: its synthetic sample string below deliberately
