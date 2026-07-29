@@ -20,13 +20,13 @@ const state = (over: Partial<Parameters<typeof upgradePageState>[0]> = {}) =>
 
 describe("upgradePageState", () => {
   it("offers the pass to a community owner with no pass", () => {
-    expect(state()).toEqual({ kind: "offer", canBuy: true });
+    expect(state()).toEqual({ kind: "offer", canBuy: true, beyondPlan: false });
   });
 
   it("shows the offer to a non-owner but does not let them buy", () => {
     // U4: the price stays visible — a non-owner's next move is to take a number
     // to whoever can spend it — but no checkout is reachable from here.
-    expect(state({ isOwner: false })).toEqual({ kind: "offer", canBuy: false });
+    expect(state({ isOwner: false })).toEqual({ kind: "offer", canBuy: false, beyondPlan: false });
   });
 
   it("confirms a held pass", () => {
@@ -58,6 +58,7 @@ describe("upgradePageState", () => {
     expect(state({ feature: "entrants.per_division.max" })).toEqual({
       kind: "offer",
       canBuy: true,
+      beyondPlan: false,
     });
   });
 
@@ -67,9 +68,53 @@ describe("upgradePageState", () => {
     expect(state({ hasPass: true, feature: "   " })).toEqual({ kind: "owned" });
   });
 
-  it("never offers a pass to an org on a paid plan", () => {
+  it("never offers a pass to an org on a paid plan that already covers it", () => {
     expect(state({ paidPlan: true })).toEqual({ kind: "paid_plan" });
     expect(state({ paidPlan: true, isOwner: false })).toEqual({ kind: "paid_plan" });
+    // An EMPTY exceeding list says the same thing explicitly — which is what a
+    // Pro Plus org, or a Pro org against the M rung, actually resolves to.
+    expect(state({ paidPlan: true, exceedingRungs: [] })).toEqual({ kind: "paid_plan" });
+  });
+
+  // v17 gap #327. Pro stopped being a superset of every rung when L shipped: L
+  // raises `entrants.per_division.max` above Pro's 256. A Pro organiser with one
+  // oversized division was refused at the checkout AND told here that their plan
+  // already covered it — the dead end this branch removes.
+  describe("beyondPlan — a rung that still beats a paid plan", () => {
+    it("offers the exceeding rung to a paid owner", () => {
+      expect(state({ paidPlan: true, exceedingRungs: ["event_pass_l"] })).toEqual({
+        kind: "offer",
+        canBuy: true,
+        beyondPlan: true,
+      });
+    });
+
+    it("shows it to a paid non-owner without a checkout", () => {
+      expect(state({ paidPlan: true, isOwner: false, exceedingRungs: ["event_pass_l"] })).toEqual({
+        kind: "offer",
+        canBuy: false,
+        beyondPlan: true,
+      });
+    });
+
+    it("does NOT offer a second pass to a paid org that already holds one", () => {
+      // There is no M→L upgrade path (#294 Q3) and one competition takes one
+      // pass forever (#248 Q4), so offering here would advertise a purchase the
+      // checkout cannot complete — the downgrade-sale defect from the other side.
+      expect(state({ paidPlan: true, hasPass: true, exceedingRungs: ["event_pass_l"] })).toEqual({
+        kind: "paid_plan",
+      });
+    });
+
+    it("leaves the community offer untouched", () => {
+      // `beyondPlan` is a statement about a PAYING reader. A community org
+      // reaching the same offer must not be told its plan covers anything.
+      expect(state({ exceedingRungs: ["event_pass_l"] })).toEqual({
+        kind: "offer",
+        canBuy: true,
+        beyondPlan: false,
+      });
+    });
   });
 
   it("puts the paid plan ahead of a pass the org also holds", () => {
@@ -137,6 +182,7 @@ describe("upgradePageState", () => {
       expect(state({ hasPass: false, lockReason: "terminal" })).toEqual({
         kind: "offer",
         canBuy: true,
+        beyondPlan: false,
       });
     });
   });

@@ -227,7 +227,6 @@ describe("a surface that offers no rung quotes the ladder's floor", () => {
   const HOME_STUB = ["lib", "pricing-cards.ts"];
 
   it.each([
-    ["the paywall", PAYWALL],
     ["the billing-page offer", OFFER],
     ["the dashboard card menu", COMPETITION_LIST],
     ["the competition header", COMPETITION_HEADER],
@@ -239,6 +238,30 @@ describe("a surface that offers no rung quotes the ladder's floor", () => {
     // The literal is what made this wrong. A surface that quotes ONE rung is
     // stating that rung's price as the product's price.
     expect(src).not.toMatch(/passPrice\(/);
+  });
+
+  it("the paywall derives the floor of what is FOR SALE, and names no rung", () => {
+    // The paywall is the one surface that knows WHO is reading: it sits inside
+    // the competition provider, so it can see which rungs this org may still buy
+    // (#327). On a free plan that is the whole ladder and the floor is the
+    // ladder's floor; on Pro only L is for sale, and quoting the ladder's $29
+    // there would name a price the checkout refuses — the same mis-sale this
+    // block exists to prevent, arriving from the other side.
+    //
+    // So it prices per sellable rung and reduces with `lowestPricedRung`, which
+    // is still a DERIVED floor. What must never appear is a rung LITERAL.
+    const src = code(...PAYWALL);
+    expect(src).toContain("usePassSellableRungs(");
+    expect(src).toContain("lowestPricedRung(");
+    // Still keeps the ladder's floor as the fallback for a reader with no
+    // provider (an org-level gate), so a missing context cannot price nothing.
+    expect(src).toContain("lowestPassRung(");
+    // No rung may be PRICED by name. Scoped to the pricing call rather than to
+    // the literal anywhere in the file: `passActiveLabel(dict, heldRung ??
+    // "event_pass")` names a rung too, and legitimately — it labels the pass the
+    // org already HOLDS (the fallback every historic row carries), which is a
+    // different question from what this org may be sold.
+    expect(src).not.toMatch(/passPrice\(\s*currency\s*,\s*"/);
   });
 });
 

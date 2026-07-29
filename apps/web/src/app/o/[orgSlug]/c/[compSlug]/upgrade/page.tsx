@@ -50,7 +50,15 @@ import { requireCompetitionPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";
 import { PassUpgradeButton } from "@/components/pass-upgrade";
 import { Tip } from "@/components/ui/tip";
-import { formatMinor, isPassKey, proPrice, type Currency, type PassKey } from "@/lib/currency";
+import {
+  formatMinor,
+  isPassKey,
+  proPrice,
+  PASS_KEYS,
+  type Currency,
+  type PassKey,
+} from "@/lib/currency";
+import { passExceedsPlan, rungsExceedingPlan } from "@/lib/pass-vs-plan";
 import {
   PASS_LOCK_REASON_KEY,
   PASS_RUNG_NAME_KEY,
@@ -210,13 +218,26 @@ export default async function CompetitionUpgradePage({
 
   const paidPlan = isPaidPlan(planKey);
   const lockReason = pass ? passLockReason(pass.status, pass.ends_on) : null;
+  // v17 #327 — which rungs, if any, still raise something this PAID plan caps.
+  // Asked only for a paid org with no pass: every rung beats community (so the
+  // ordinary offer needs no query at all), and a paid org that already holds one
+  // cannot buy a second for the same competition. The answer comes from
+  // `plan_entitlements`, which is the same table the comparison below renders,
+  // so the page cannot offer a column it would then show as no improvement.
+  const exceedingRungs =
+    paidPlan && !pass
+      ? ((await rungsExceedingPlan(PASS_KEYS, planKey)) as PassKey[])
+      : [];
   const state = upgradePageState({
     paidPlan,
     hasPass: !!pass,
     lockReason,
     isOwner: page.org.role === "owner",
     feature: sp.feature ?? null,
+    exceedingRungs,
   });
+  /** The #327 branch: a paying customer is being shown a pass, and why. */
+  const beyondPlan = state.kind === "offer" && state.beyondPlan;
 
   // Which rung this competition holds, if any. Unrecognised keys fall back to
   // M — the same rule the reconcile and webhook paths apply (lib/billing.ts) —
@@ -224,6 +245,13 @@ export default async function CompetitionUpgradePage({
   // every historic row actually carries.
   const heldKey = pass?.pass_key;
   const heldRung: PassKey = isPassKey(heldKey) ? heldKey : "event_pass";
+
+  // A paid org that HOLDS a pass which beats its plan (#337). Since V344 that
+  // pass is not dormant — the resolver takes the better of the two per axis —
+  // so the panel's "your plan already includes every Event Pass feature" would
+  // be a plain falsehood for an L holder on Pro, on the one screen that exists
+  // to explain what they have.
+  const heldExceeds = paidPlan && !!pass && (await passExceedsPlan(heldRung, planKey));
 
   // A paid org is compared against ITS OWN plan, never against a pass column —
   // rendering the $29 column for a Pro reader is the soft version of the same
@@ -234,8 +262,14 @@ export default async function CompetitionUpgradePage({
   // deferred by the owner), so a second pass column on the owned or ceiling
   // state would advertise a purchase this product cannot complete — the same
   // defect as the paid-plan downgrade sale, pointed the other way.
+  //
+  // The one paid-plan exception is #327: when a rung genuinely exceeds the plan
+  // it gets a column beside it, because the whole claim being made to a paying
+  // customer is "this raises something your plan caps" — and the comparison is
+  // where they check that for themselves. Only the exceeding rungs, never both
+  // as a matter of course: an M column beside Pro would be the downgrade sale.
   const columns: string[] = paidPlan
-    ? ["community", planKey]
+    ? ["community", planKey, ...exceedingRungs]
     : pass
       ? ["community", heldRung, "pro"]
       : ["community", "event_pass", "event_pass_l", "pro"];
@@ -265,7 +299,14 @@ export default async function CompetitionUpgradePage({
   const ladderOptions: PassRungOption[] = passLadderOptions(currency, {
     event_pass: rungCaps("event_pass"),
     event_pass_l: rungCaps("event_pass_l"),
-  });
+  })
+    // #327: a paid org is offered ONLY the rungs that beat its plan. Filtering
+    // here rather than in `passLadderOptions` keeps the ladder itself a pure
+    // function of price and caps — and it is not cosmetic: `rungCaps` reads the
+    // matrix, which for a paid org carries only the exceeding rungs, so an
+    // unfiltered ladder would quote the missing rung's caps as `null` and
+    // advertise "unlimited" for a rung it never loaded.
+    .filter((o) => !beyondPlan || exceedingRungs.includes(o.key));
 
 
   const purchasedAt = pass ? new Date(pass.purchased_at) : null;
@@ -329,6 +370,17 @@ export default async function CompetitionUpgradePage({
         </p>
       )}
 
+      {/* v17 #327 — a PAYING customer is being shown a pass, which needs saying
+          out loud. Without this line the page reads as an upsell to someone who
+          has already bought the bigger thing; with it, the claim is specific and
+          the comparison table underneath is where they check it. Rendered above
+          the ticket because it is the reason the ticket is there at all. */}
+      {beyondPlan && (
+        <p className="mt-4 rounded-xl bg-slate-100 px-4 py-3 text-sm text-slate-700">
+          {t(dict, "upgrade.beyondPlan", { plan: planLabel(planKey) })}
+        </p>
+      )}
+
       {state.kind === "paid_plan" ? (
         <PlanPanel
           dict={dict}
@@ -336,6 +388,7 @@ export default async function CompetitionUpgradePage({
           orgSlug={orgSlug}
           orgName={page.org.name}
           holdsPass={!!pass}
+          passAdds={heldExceeds}
         />
       ) : (
         <Ticket
@@ -361,9 +414,20 @@ export default async function CompetitionUpgradePage({
         // Whichever pass columns are on screen: both while both are for sale,
         // the held one afterwards. Derived rather than listed so it can never
         // name a column `columns` does not have.
-        highlight={paidPlan ? null : columns.filter(isPassKey)}
+        highlight={paidPlan && !beyondPlan ? null : columns.filter(isPassKey)}
         ceilingFeature={ceilingFeature}
       />
+
+      {/* The table shows each offer's OWN matrix, which for a paying reader is
+          half the story: beside Pro's uncapped divisions and 2% fee, L's 20 and
+          5% read as a downgrade they are about to buy. They are not — the
+          resolver takes the better of the two per axis (V344), so the only line
+          that changes for this reader is the one the pass raises. Said here
+          rather than by rewriting the table, because the table's job is to show
+          what each offer IS. */}
+      {beyondPlan && (
+        <p className="mt-3 text-xs text-slate-500">{t(dict, "upgrade.beyondPlanTable")}</p>
+      )}
 
       {state.kind === "offer" && (
         <p className="mt-3 flex items-start gap-1.5 text-xs text-slate-500">
@@ -372,7 +436,12 @@ export default async function CompetitionUpgradePage({
         </p>
       )}
 
-      {state.kind !== "paid_plan" && (
+      {/* `!paidPlan`, not just `kind !== "paid_plan"` (#327): the new
+          beyond-plan offer IS the `offer` kind, and ProNext's whole content is
+          "go Pro next" — a Pro subscriber does not need selling their own plan,
+          and the pass-credit line under it promises a credit toward a first Pro
+          invoice they will never have. */}
+      {state.kind !== "paid_plan" && !paidPlan && (
         <ProNext
           dict={dict}
           state={state}
@@ -598,12 +667,16 @@ function PlanPanel({
   orgSlug,
   orgName,
   holdsPass,
+  passAdds,
 }: {
   dict: Dict;
   planKey: string;
   orgSlug: string;
   orgName: string;
   holdsPass: boolean;
+  /** The held pass beats this plan on some axis (#337) — so it is not dormant,
+   *  and the panel must not claim the plan already includes everything. */
+  passAdds: boolean;
 }) {
   return (
     <section
@@ -613,7 +686,7 @@ function PlanPanel({
       <p className="app-eyebrow !text-cream">{t(dict, "upgrade.pro.title")}</p>
       <h2 className="app-display mt-3 text-2xl font-bold sm:text-3xl">{planLabel(planKey)}</h2>
       <p className="mt-3 max-w-xl text-sm text-white/75">
-        {t(dict, "upgrade.pro.body", { org: orgName })}
+        {t(dict, passAdds ? "upgrade.pro.bodyPassAdds" : "upgrade.pro.body", { org: orgName })}
       </p>
       {holdsPass && (
         <p data-pass-dormant className="mt-3 max-w-xl text-sm text-white/60">

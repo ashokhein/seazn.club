@@ -56,8 +56,15 @@ export type UpgradePageState =
   | { kind: "ceiling"; feature: string; liftable: boolean }
   /** A pass is held and nothing is blocked. Confirm it, receipt it, offer Pro. */
   | { kind: "owned" }
-  /** No pass. `canBuy` is false for anyone but the owner — nobody else can spend. */
-  | { kind: "offer"; canBuy: boolean };
+  /**
+   * No pass. `canBuy` is false for anyone but the owner — nobody else can spend.
+   *
+   * `beyondPlan` is the v17 #327 case: the viewer is on a PAID plan and a rung
+   * still raises a limit that plan caps, so the offer is honest and the checkout
+   * will take it. Only the exceeding rungs get a column, and the copy has to
+   * explain why a paying customer is being shown a pass at all.
+   */
+  | { kind: "offer"; canBuy: boolean; beyondPlan: boolean };
 
 export function upgradePageState(input: {
   paidPlan: boolean;
@@ -67,8 +74,27 @@ export function upgradePageState(input: {
   isOwner: boolean;
   /** `?feature=` — the entitlement key of the gate that sent them here. */
   feature?: string | null;
+  /**
+   * Rungs that beat this org's plan on some axis (`passExceedsPlan`, #327).
+   * Empty for a community org: every rung beats community, and populating it
+   * there would only route the ordinary offer through the paid-plan branch.
+   */
+  exceedingRungs?: readonly string[];
 }): UpgradePageState {
-  if (input.paidPlan) return { kind: "paid_plan" };
+  // A paid plan no longer ends the conversation. It still does wherever the plan
+  // really is a superset — but L raises `entrants.per_division.max` above Pro's
+  // 256, so a Pro organiser with one oversized division has something real to
+  // buy (#327). The list is computed from `plan_entitlements`, so this branch
+  // closes by itself if Pro's cap is ever lifted.
+  //
+  // Only when NO pass is held: there is no M→L upgrade path (#294 Q3), so
+  // offering a second pass for one competition would advertise a purchase this
+  // product cannot complete.
+  if (input.paidPlan) {
+    if (!input.hasPass && (input.exceedingRungs?.length ?? 0) > 0)
+      return { kind: "offer", canBuy: input.isOwner, beyondPlan: true };
+    return { kind: "paid_plan" };
+  }
   if (input.hasPass) {
     // Before the ceiling, deliberately: see the precedence note above.
     if (input.lockReason) return { kind: "ended", reason: input.lockReason };
@@ -79,5 +105,5 @@ export function upgradePageState(input: {
     if (feature) return { kind: "ceiling", feature, liftable: PASS_FEATURES.has(feature) };
     return { kind: "owned" };
   }
-  return { kind: "offer", canBuy: input.isOwner };
+  return { kind: "offer", canBuy: input.isOwner, beyondPlan: false };
 }

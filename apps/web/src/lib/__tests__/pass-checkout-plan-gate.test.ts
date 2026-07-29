@@ -236,6 +236,63 @@ describe.skipIf(!HAS_DB)("pass-checkout eligibility uses the resolver, not raw p
     expect(stripeMock.checkoutCreate).not.toHaveBeenCalled();
   });
 
+  // v17 gap #327 — the refusal above is now about COVERAGE, not about being
+  // paid. Pro caps a division at 256 entrants; the L rung caps it at nothing, so
+  // a Pro organiser running one oversized division has something real to buy and
+  // used to be refused it while being told their plan covered it.
+  const seedPaid = async (orgId: string, planKey: string) => {
+    await sql`with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
+      insert into subscriptions (owner_user_id, plan_key, status, currency)
+      select coalesce(o.created_by, (select id from _owner)), ${planKey}, 'active', 'usd' from organizations o where o.id = ${orgId}
+      returning id
+    )
+    update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
+  };
+
+  it("lets a PRO org buy the L rung, which exceeds its plan (#327)", async () => {
+    const { orgId, compId } = await seedOrgWithComp();
+    await giveLPrice("price_test_pass_l");
+    await seedPaid(orgId, "pro");
+    authState.orgId = orgId;
+
+    const res = await passCheckoutPOST(req(compId, { pass_key: "event_pass_l" }));
+    expect(res.status).toBe(200);
+    expect(stripeMock.checkoutCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("still refuses a PRO org the M rung, which its plan does cover", async () => {
+    // The pair that makes the rule a rule rather than a special case for L: the
+    // same org, the same plan, refused on the rung that adds nothing (M gives
+    // 128 entrants against Pro's 256 and 10 divisions against Pro's uncapped).
+    const { orgId, compId } = await seedOrgWithComp();
+    await givePrice();
+    await seedPaid(orgId, "pro");
+    authState.orgId = orgId;
+
+    const res = await passCheckoutPOST(req(compId, { pass_key: "event_pass" }));
+    expect(res.status).toBe(400);
+    expect(stripeMock.checkoutCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses PRO PLUS even the L rung — that plan really is a superset", async () => {
+    // Pro Plus carries no entrant ceiling at all, so L adds nothing to it. This
+    // is what stops #327 from becoming "paid orgs may buy passes": the gate is
+    // computed from plan_entitlements, one plan at a time.
+    const { orgId, compId } = await seedOrgWithComp();
+    await giveLPrice("price_test_pass_l");
+    await seedPaid(orgId, "pro_plus");
+    authState.orgId = orgId;
+
+    const res = await passCheckoutPOST(req(compId, { pass_key: "event_pass_l" }));
+    expect(res.status).toBe(400);
+    expect(stripeMock.checkoutCreate).not.toHaveBeenCalled();
+  });
+
   it("still lets a plain community org buy", async () => {
     const { orgId, compId } = await seedOrgWithComp();
     await givePrice();
