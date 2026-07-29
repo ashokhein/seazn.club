@@ -296,4 +296,18 @@ describe("runLadder", () => {
     const out = await runLadder<AiPlanResult>(R, attempt, (r) => r.warnings.length === 0);
     expect(out.usage.cost_usd).toBeNull();
   });
+
+  // Token-weighted AI credit rung (design ai-rung.ts): a budget-aware caller
+  // needs to know how many output tokens every PRIOR rung already spent, so it
+  // can enforce one hard budget across the whole ladder rather than resetting
+  // it per rung.
+  it("hands each attempt the output tokens spent by every prior rung (0 on the first)", async () => {
+    const attempt = vi
+      .fn()
+      .mockResolvedValueOnce(fakeResult({ warnings: 9, usage: usage(200, 100, 0.02) }))
+      .mockResolvedValueOnce(fakeResult({ usage: usage(300, 150, 0.05) }));
+    await runLadder<AiPlanResult>(R, attempt, (r) => r.warnings.length === 0);
+    expect(attempt.mock.calls[0]![1]).toBe(0);
+    expect(attempt.mock.calls[1]![1]).toBe(100); // the first rung's output tokens
+  });
 });

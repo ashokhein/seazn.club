@@ -1569,6 +1569,11 @@ export const AiPlanRequest = z.object({
     })
     .optional(),
   officials_policy: AssignPolicyBody.optional(),
+  // Token-weighted AI credit rung (design ai-rung.ts): defaults to the server
+  // prediction when omitted. A caller may pick below the prediction — the run
+  // still executes, capped to the chosen rung's token budget, and the ledger
+  // stamps `underfunded: true`.
+  rung: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
 });
 export type AiPlanRequest = z.infer<typeof AiPlanRequest>;
 
@@ -1637,6 +1642,14 @@ export const AiPlanResponse = z.object({
       unfilled: z.array(z.object({ fixture_id: z.string(), role_key: z.string() })),
     })
     .nullable(),
+  // Token-weighted AI credit rung (design ai-rung.ts). Optional so older
+  // fixtures/clients built before this field set still satisfy the type —
+  // every real response always sends them.
+  rung: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  predicted_rung: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  budget: z.number().int().optional(),
+  spent_tokens: z.number().int().optional(),
+  underfunded: z.boolean().optional(),
 });
 export type AiPlanResponse = z.infer<typeof AiPlanResponse>;
 
@@ -1665,6 +1678,9 @@ export const AiOfficialsPlanRequest = z.object({
       ),
     })
     .optional(),
+  // Token-weighted AI credit rung (design ai-rung.ts): defaults to the server
+  // prediction when omitted; see AiPlanRequest.rung for the full contract.
+  rung: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
 });
 export type AiOfficialsPlanRequest = z.infer<typeof AiOfficialsPlanRequest>;
 
@@ -1711,6 +1727,14 @@ export const AiOfficialsPlanResponse = z.object({
     output_tokens: z.number().int(),
     repair_rounds: z.number().int(),
   }),
+  // Token-weighted AI credit rung (design ai-rung.ts). Optional so older
+  // fixtures/clients built before this field set still satisfy the type —
+  // every real response always sends them.
+  rung: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  predicted_rung: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  budget: z.number().int().optional(),
+  spent_tokens: z.number().int().optional(),
+  underfunded: z.boolean().optional(),
 });
 export type AiOfficialsPlanResponse = z.infer<typeof AiOfficialsPlanResponse>;
 

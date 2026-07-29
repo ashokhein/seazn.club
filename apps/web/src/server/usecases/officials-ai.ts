@@ -53,6 +53,14 @@ import {
   type LadderRung,
 } from "./schedule-ai";
 import { aiRunCostUsd } from "@/lib/ai-pricing";
+import {
+  clampRoundTokens,
+  hasRoundBudget,
+  officialsRungWeights,
+  predictRung,
+  tokenBudgetForRung,
+  type Rung,
+} from "@/lib/ai-rung";
 import { deferred } from "@/lib/deferred";
 import { maybeAlertExpensiveRun } from "@/server/usecases/ai-runs-admin";
 import { divisionFixtures, loadSettings } from "./schedule";
@@ -787,11 +795,13 @@ function finalizeOfficials(
  *  wire format, the reasoning shape, structured-output parsing, and echoing
  *  the assistant turn back unchanged on repair — callers just replay
  *  `response.assistantTurn`. Phase B has no legacy-model branch and does not
- *  gain one: always effort, never a token budget. */
+ *  gain one: always effort, never a legacy `thinking.budget_tokens` cap (the
+ *  ai-rung.ts hard token budget below is a separate, per-run concept). */
 async function callOfficialsModel(
   provider: AiProvider,
   model: string,
   messages: AiTurn[],
+  maxTokens: number = 32_000,
 ): Promise<AiChatResponse<AiOfficialsPlan> | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), OFFICIALS_ROUND_TIMEOUT_MS);
@@ -800,7 +810,7 @@ async function callOfficialsModel(
       model,
       system: OFFICIALS_SYSTEM_PROMPT,
       messages,
-      maxTokens: 32_000,
+      maxTokens,
       reasoning: { kind: "effort", effort: officialsAiEffort(), thinking: "adaptive" },
       schema: { name: "officials_plan", zod: AiOfficialsPlan },
       signal: controller.signal,
@@ -843,6 +853,7 @@ export async function runOfficialsAiPlan(
   pack: OfficialsPack,
   modelOverride?: string,
   providerName?: ProviderName,
+  budget?: { tokens: number; spentBefore: number },
 ): Promise<OfficialsPlanResult> {
   if (pack.instruction.trim() === "") {
     return finalizeOfficials(pack, draftAsPlan(pack), {
@@ -884,9 +895,27 @@ export async function runOfficialsAiPlan(
   });
 
   for (;;) {
+    // Hard token budget (design ai-rung.ts): spent so far is this rung's own
+    // output tokens plus whatever prior ladder rungs already spent. Below the
+    // reserve, stop asking for another round — ship the best plan already
+    // produced, or (nothing produced yet) fail in a way runLadder can recover
+    // from.
+    if (budget && !hasRoundBudget(budget.tokens, budget.spentBefore + outputTokens)) {
+      if (best !== null) return finalizeOfficials(pack, best.plan, usageNow());
+      throw new HttpError(
+        422,
+        "AI officials assignment stopped: token budget exhausted before a usable plan was produced",
+        "AI_PLAN_FAILED",
+        { usage: usageNow() },
+      );
+    }
+    const roundMaxTokens = budget
+      ? clampRoundTokens(32_000, budget.tokens, budget.spentBefore + outputTokens)
+      : 32_000;
+
     let response: Awaited<ReturnType<typeof callOfficialsModel>>;
     try {
-      response = await callOfficialsModel(provider, model, conversation);
+      response = await callOfficialsModel(provider, model, conversation, roundMaxTokens);
     } catch (err) {
       // A timed-out round still spent the earlier rounds' tokens — ride the
       // accumulated usage on the 422 (same contract as AI_PLAN_FAILED).
@@ -993,10 +1022,17 @@ export function officialsPlanRungs(): LadderRung[] {
  *  runLadder exactly as in Phase A. */
 async function runOfficialsAiPlanLadder(
   pack: OfficialsPack,
+  budgetTokens?: number,
 ): Promise<OfficialsPlanResult & { served_model: string; escalated_from?: string; rungs_tried: string[] }> {
   return runLadder(
     officialsPlanRungs(),
-    (rung) => runOfficialsAiPlan(pack, rung.model, rung.provider),
+    (rung, spentBefore) =>
+      runOfficialsAiPlan(
+        pack,
+        rung.model,
+        rung.provider,
+        budgetTokens !== undefined ? { tokens: budgetTokens, spentBefore } : undefined,
+      ),
     () => true,
   );
 }
@@ -1052,15 +1088,29 @@ export async function officialsAiPlanForDivision(
       : {}),
   });
 
+  // Token-weighted credit rung (design ai-rung.ts): predict from the pack data
+  // already loaded, let the caller override up or down, and stamp `underfunded`
+  // when they picked below the prediction. Officials packs carry no separate
+  // entrant/court lists — derive both from the fixtures already loaded.
+  const entrants = new Set(pack.fixtures.flatMap((f) => f.entrants)).size;
+  const courts = new Set(pack.fixtures.map((f) => f.court).filter((c): c is string => c !== null)).size;
+  const prediction = predictRung(
+    { movableFixtures: pack.fixtures.length, entrants, courts },
+    officialsRungWeights(),
+  );
+  const rung: Rung = input.rung ?? prediction.rung;
+  const budget = tokenBudgetForRung(rung);
+  const underfunded = rung < prediction.rung;
+
   let result: OfficialsPlanResult & { served_model: string; escalated_from?: string; rungs_tried: string[] };
   try {
-    // Reserve 1 credit → run the architect → settle on success / release on
-    // failure (SPEC-2 §5.2). PaymentRequiredError("ai.credits") from an empty
+    // Reserve `rung` credits → run the architect → settle on success / release
+    // on failure (SPEC-2 §5.2). PaymentRequiredError("ai.credits") from an empty
     // wallet falls through untouched below (matches no HttpError code here)
     // and rethrows as the 402.
-    result = await spendCredit(walletId, auth.orgId, 1, async () => ({
+    result = await spendCredit(walletId, auth.orgId, rung, async () => ({
       aiRunId: crypto.randomUUID(),
-      result: await runOfficialsAiPlanLadder(pack),
+      result: await runOfficialsAiPlanLadder(pack, budget),
     }));
   } catch (err) {
     // Meter a refused / un-correctable / timed-out run's token spend too —
@@ -1095,6 +1145,14 @@ export async function officialsAiPlanForDivision(
         // later): the fixture count the pack builder already computed, the
         // same number already reported to PostHog as `fixtures`.
         pack_units: pack.fixtures.length,
+        // Token-weighted credit rung (design ai-rung.ts) — even on a failed
+        // run the credit was reserved at this rung, so the ledger stamps it.
+        rung,
+        budget,
+        predicted_rung: prediction.rung,
+        est_tokens: prediction.estTokens,
+        spent_tokens: usage.output_tokens ?? 0,
+        underfunded,
       });
       await captureServer({
         event: "ai_plan_run",
@@ -1136,6 +1194,16 @@ export async function officialsAiPlanForDivision(
     // builder already computed — the smallest correct instrumentation ahead
     // of any size-weighted pricing decision (deferred, SPEC-2 §5.1).
     pack_units: pack.fixtures.length,
+    // Token-weighted credit rung (design ai-rung.ts): what was charged, what
+    // token budget it bought, what the predictor said, how much of the
+    // budget this run actually spent, and whether the org picked below the
+    // prediction.
+    rung,
+    budget,
+    predicted_rung: prediction.rung,
+    est_tokens: prediction.estTokens,
+    spent_tokens: result.usage.output_tokens,
+    underfunded,
     // Ladder telemetry: the first rung tried and the full ordered chain, when a
     // fallback happened (model above is only the winner).
     ...(result.escalated_from
@@ -1206,6 +1274,13 @@ export async function officialsAiPlanForDivision(
       output_tokens: result.usage.output_tokens,
       repair_rounds: result.usage.repair_rounds,
     },
+    // Token-weighted credit rung (design ai-rung.ts) — what was charged, what
+    // the predictor said, and whether the confirm-card's warning applies.
+    rung,
+    predicted_rung: prediction.rung,
+    budget,
+    spent_tokens: result.usage.output_tokens,
+    underfunded,
   };
 }
 

@@ -234,6 +234,75 @@ describe.skipIf(!HAS_DB)("AI credit wallet metering — schedule-ai (SPEC-2 §5.
     expect(refunds).toHaveLength(1);
     expect(spends[0]!.ref).toBeNull(); // never settled — the run never happened
   });
+
+  // Token-weighted AI credit rung (design ai-rung.ts): the amount spendCredit
+  // reserves is now `rung`, not a hardcoded 1 — these pin that the wallet and
+  // the audit ledger both follow the chosen rung, not the prediction.
+  it("an explicit rung above the prediction charges that many credits and stamps the ledger", async () => {
+    const { auth } = await seedOrg("community");
+    const { divisionId, fixtureIds } = await seedPlannableDivision(auth);
+    const walletId = await walletIdFor(auth.orgId);
+    await grantCredits(walletId, 5);
+
+    // This pack (4 entrants, 2 courts, a handful of fixtures) predicts rung 1
+    // under the default AI_RUNG_* thresholds — picking rung 2 is a deliberate
+    // over-spend, never `underfunded`.
+    chat.mockResolvedValueOnce(chatResponse(legalPlan(fixtureIds)));
+    const out = await aiPlanForDivision(auth, divisionId, {
+      instruction: "plan it",
+      mode: "generate",
+      rung: 2,
+    });
+    expect(out.rung).toBe(2);
+    expect(out.predicted_rung).toBe(1);
+    expect(out.underfunded).toBe(false);
+    expect(out.budget).toBe(64_000);
+    expect(await balance(walletId)).toBe(3); // 5 - 2
+
+    const rows = await ledgerRows(walletId);
+    const spends = rows.filter((r) => r.source === "run_spend");
+    expect(spends).toHaveLength(1);
+    expect(spends[0]).toMatchObject({ delta: -2 });
+
+    const [event] = await sql<{ payload: Record<string, unknown> }[]>`
+      select payload from competition_events
+      where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}`;
+    expect(event!.payload.rung).toBe(2);
+    expect(event!.payload.predicted_rung).toBe(1);
+    expect(event!.payload.underfunded).toBe(false);
+    expect(event!.payload.budget).toBe(64_000);
+  });
+
+  it("choosing below the predicted rung is honoured and stamps underfunded", async () => {
+    const savedS1 = process.env.AI_RUNG_S1;
+    process.env.AI_RUNG_S1 = "0"; // force this pack's prediction above rung 1
+    try {
+      const { auth } = await seedOrg("community");
+      const { divisionId, fixtureIds } = await seedPlannableDivision(auth);
+      const walletId = await walletIdFor(auth.orgId);
+      await grantCredits(walletId, 5);
+
+      chat.mockResolvedValueOnce(chatResponse(legalPlan(fixtureIds)));
+      const out = await aiPlanForDivision(auth, divisionId, {
+        instruction: "plan it",
+        mode: "generate",
+        rung: 1,
+      });
+      expect(out.predicted_rung).toBeGreaterThan(1);
+      expect(out.rung).toBe(1);
+      expect(out.underfunded).toBe(true);
+      expect(await balance(walletId)).toBe(4); // charged only the chosen rung (1)
+
+      const [event] = await sql<{ payload: Record<string, unknown> }[]>`
+        select payload from competition_events
+        where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}`;
+      expect(event!.payload.underfunded).toBe(true);
+      expect(event!.payload.rung).toBe(1);
+    } finally {
+      if (savedS1 === undefined) delete process.env.AI_RUNG_S1;
+      else process.env.AI_RUNG_S1 = savedS1;
+    }
+  });
 });
 
 const POLICY = {
