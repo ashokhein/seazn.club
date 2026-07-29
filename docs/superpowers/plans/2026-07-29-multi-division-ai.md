@@ -558,6 +558,14 @@ export async function applyCompetitionSchedule(
 
 **R11 — the joint verifier can be strictly stricter than the per-division one on identical input.** `verifyConfigFor` carries `restByGroup`, and joint assignments are stamped with `divisionId`, so `effectiveRestMinutes` (`calendar.ts:83`) finds a division-keyed rest override that the single-division path never reaches. The direction is correct — that is what the field means — and the outcome is a `rest` *warning*, never blocking, so it costs no repair rounds. But **plan-time and apply-time must not disagree**: whatever this task validates with must match what `verifyJoint` used at plan time, or a plan that verified clean can fail at apply.
 
+**R13 — the board MUST surface `warnings`, not bury them. This is a correctness requirement, not a polish item.**
+
+`isBlocking` (`schedule-ai.ts:838`) covers only `court` and direct `order`. Blackout, session-window, rest and **person-overlap** violations are warnings: they do not block, they fire no repair round, and after Task 3 the prompt tells the model plainly that it *will not be asked to repair them*. So nothing downstream of the model catches that class — the organiser reviewing the proposal is the last line of defence.
+
+A joint plan can therefore ship with a player double-booked across two divisions, or a fixture sitting inside a division's blackout, and every automated gate reports success. Tasks 7 and 8 must render warnings prominently in the review step, grouped by division, never collapsed behind a disclosure or a count badge. Treat "0 blocking, 12 warnings" as a state the UI has to make impossible to skim past.
+
+**R14 — `AI_PLAN_INVALID_ASSIGNMENT` is deliberately NOT in `isRecoverable`**, so it stops the ladder instead of burning a rung per retry on a caller bug. Task 6 must validate client-supplied fixture ids against the pack and translate this to a **4xx**: a 500 is right for server inconsistency and wrong for a bad request body.
+
 **R12 — an assignment naming a fixture outside the pack is a caller bug: throw, do not tolerate it.** `verifyJoint` throws when an entry lacks `divisionId`. Do not reintroduce a `?? 0` / `?? ""` default here — a zero-length assignment matches no division's partition, so it is verified by nobody while still being injected as a phantom court booking into every pass's occupancy.
 
 **Implementation notes:**
