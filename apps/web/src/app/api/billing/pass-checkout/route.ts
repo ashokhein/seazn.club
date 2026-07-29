@@ -9,7 +9,7 @@ import { buildPassCheckoutParams, competitionHasRefusedPassPayment } from "@/lib
 import { preferredCurrency } from "@/lib/currency-server";
 import { PASS_KEYS } from "@/lib/currency";
 import { routes } from "@/lib/routes";
-import { isPaidPlan, orgPlanKey } from "@/lib/entitlements";
+import { isPaidPlan, orgPlanKey, passLockReason } from "@/lib/entitlements";
 
 const schema = z
   .object({
@@ -36,8 +36,23 @@ export async function POST(req: Request) {
 
     // `name` is the Stripe invoice line description — without it an org that
     // buys three passes sees three identical rows on its billing page.
-    const [comp] = await sql<{ slug: string; name: string; org_id: string }[]>`
-      select slug, name, org_id from competitions where id = ${competition_id}`;
+    //
+    // `status`/`ends_on` ride along for the #353 gate below. Read HERE, with the
+    // row the rest of the route already needs, so the ownership check and the
+    // "is this competition still running" verdict cannot come from two different
+    // moments — and so a sale costs no extra query.
+    const [comp] = await sql<
+      {
+        slug: string;
+        name: string;
+        org_id: string;
+        status: string;
+        // `Date | string | null`, matching the five other sites that feed this
+        // predicate: `ends_on` is a `date` column and the driver hands back a
+        // Date, which is why `passLockReason`'s NaN arm is unreachable here.
+        ends_on: Date | string | null;
+      }[]
+    >`select slug, name, org_id, status, ends_on from competitions where id = ${competition_id}`;
     if (!comp || comp.org_id !== orgId) throw new HttpError(404, "competition not found");
 
     // A paid org is refused a pass (v3/07 §3 interplay).
@@ -122,6 +137,43 @@ export async function POST(req: Request) {
     // pass checkout, not only refused ones. Migration first.
     if (await competitionHasRefusedPassPayment(competition_id)) {
       throw new HttpError(409, "A payment for this competition is under review.");
+    }
+
+    // v17 gap #353 — the competition is already OVER, so the pass would not
+    // apply to a single thing the buyer is about to pay for.
+    //
+    // Until this the route read `slug, name, org_id` and never asked: a FIRST
+    // purchase for a finished or long-past competition was taken in full, the
+    // pass minted, and every surface in the product said "Event Pass ended" the
+    // same second. On the terminal arm the buyer could not even retry, because
+    // one pass per competition is forever (#248 Q4, enforced by the
+    // `competition_passes` PK) — so they lost the money AND their one chance.
+    //
+    // THE ROUTE IS THE AUTHORITY, even though the offer surfaces now suppress
+    // this. The surfaces have been wrong about the lock before — #301 is a whole
+    // wave of them saying a locked pass was active — and `/upgrade` is a direct
+    // link an organiser can hold in a bookmark or an email long after the event.
+    // A suppressed button is a nicety; refusing to take the money is the rule.
+    //
+    // Judged by `passLockReason`, never by a status list of its own: the SQL
+    // (`pass_applies`, V343) and this function are already the two authorised
+    // copies of the rule and a third is how they drift (#301's actual cause).
+    //
+    // 410 Gone, and its own arm in `passCheckoutErrorKey`: the generic 4xx copy
+    // says "the page may be out of date, reload and try again", which is a lie
+    // to this reader — reloading changes nothing, and on the terminal arm
+    // nothing the buyer can do changes anything.
+    //
+    // AFTER the two refusals above, deliberately. Both are more specific and
+    // more actionable than "it ended": an org that already holds a pass is owed
+    // the one-pass-forever sentence (#301 pinned that BOTH lock states get that
+    // identical refusal), and an org whose money is sitting in a mint refusal is
+    // owed news about the money before news about the calendar.
+    if (passLockReason(comp.status, comp.ends_on)) {
+      throw new HttpError(
+        410,
+        "This competition has already ended, so an Event Pass would not apply to it.",
+      );
     }
 
     // Priced by RUNG. Each rung's one-time price id is written back by

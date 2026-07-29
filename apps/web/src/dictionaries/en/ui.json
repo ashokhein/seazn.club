@@ -836,6 +836,7 @@
   "upgrade.buyError.rung": "This pass size isn’t on sale right now. Try the other size, or contact support.",
   "upgrade.buyError.underReview": "We've already taken a payment for this competition and it needs checking before the pass can be issued. We're on it — please don't pay again, and contact support if you haven't heard from us.",
   "upgrade.passUnderReview": "Your payment for this competition went through, but it didn't match the pass size we recorded, so we've held the pass rather than issue the wrong one. Our team has been alerted and will refund you or issue the right pass. Please don't pay again.",
+  "upgrade.buyError.ended": "This competition has already ended, so an Event Pass wouldn’t apply to it.",
   "upgrade.buyError.stale": "This purchase can’t go ahead — the page may be out of date. Reload and try again.",
   "upgrade.buyError.generic": "Checkout is unavailable right now. Please try again.",
   "upgrade.slotNote": "A competition with a pass stops counting against your free competition slots.",

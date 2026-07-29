@@ -836,6 +836,7 @@
   "upgrade.buyError.rung": "Este tamaño de pase no está a la venta ahora mismo. Prueba con el otro tamaño o escribe a soporte.",
   "upgrade.buyError.underReview": "Ya hemos recibido un pago por esta competición y hay que revisarlo antes de emitir el pase. Estamos en ello: no vuelvas a pagar y contacta con soporte si no tienes noticias nuestras.",
   "upgrade.passUnderReview": "Tu pago por esta competición se completó, pero no coincidía con el tamaño de pase que registramos, así que hemos retenido el pase en lugar de emitir el incorrecto. Nuestro equipo ya está avisado y te devolverá el dinero o emitirá el pase correcto. No vuelvas a pagar.",
+  "upgrade.buyError.ended": "Esta competición ya ha terminado, así que un Event Pass no se aplicaría a ella.",
   "upgrade.buyError.stale": "Esta compra no puede continuar: puede que la página esté desactualizada. Recarga e inténtalo de nuevo.",
   "upgrade.buyError.generic": "El pago no está disponible ahora mismo. Inténtalo de nuevo.",
   "upgrade.slotNote": "Una competición con pase deja de contar en tus plazas de competición gratuitas.",

@@ -85,6 +85,7 @@ import { sql } from "@/lib/db";
 import { POST as passCheckoutPOST } from "@/app/api/billing/pass-checkout/route";
 import { maybeAlertPassRungMismatch, reconcilePassCheckout } from "@/lib/billing";
 import { passCheckoutErrorKey } from "@/lib/pass-ladder";
+import { PASS_END_GRACE_DAYS } from "@/lib/entitlements";
 import { processStripeEvent } from "@/server/usecases/billing-events";
 import { balance, walletIdFor } from "@/lib/credits";
 import { PASS_CREDIT_GRANT } from "@/lib/pricing-cards";
@@ -99,6 +100,28 @@ async function seedOrgWithComp(): Promise<{ orgId: string; compId: string }> {
   const [{ id: compId }] = await sql<{ id: string }[]>`
     insert into competitions (org_id, name, slug)
     values (${orgId}, ${"Gate Cup " + suffix}, ${"gate-cup-" + suffix}) returning id`;
+  return { orgId, compId };
+}
+
+/** `seedOrgWithComp` plus the `subscriptions` row every org gets at creation,
+ *  on the free plan — an org that is genuinely eligible to buy a pass, with
+ *  `authState` already pointed at it. Module-scope (it was local to the #301
+ *  describe) so the #353 suite below buys from the same fixture: a refusal is
+ *  only meaningful against an org that could otherwise have bought. */
+async function seedCommunityOrgWithComp(): Promise<{ orgId: string; compId: string }> {
+  const { orgId, compId } = await seedOrgWithComp();
+  await sql`with _owner as (
+    insert into users (email, display_name, email_verified)
+    values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+    returning id
+  ),
+  _seed_sub as (
+    insert into subscriptions (owner_user_id, plan_key, status, currency)
+    select coalesce(o.created_by, (select id from _owner)), 'community', 'active', 'usd' from organizations o where o.id = ${orgId}
+    returning id
+  )
+  update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
+  authState.orgId = orgId;
   return { orgId, compId };
 }
 
@@ -990,22 +1013,8 @@ describe.skipIf(!HAS_DB)("pass-checkout refuses a re-buy truthfully, locked or n
   // two. The rule itself never changes (decision #248 Q4: one pass per
   // competition, forever), so the sentence is now true in BOTH states rather
   // than branching — and these two cases pin exactly that.
-  async function seedCommunityOrgWithComp() {
-    const { orgId, compId } = await seedOrgWithComp();
-    await sql`with _owner as (
-      insert into users (email, display_name, email_verified)
-      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
-      returning id
-    ),
-    _seed_sub as (
-      insert into subscriptions (owner_user_id, plan_key, status, currency)
-      select coalesce(o.created_by, (select id from _owner)), 'community', 'active', 'usd' from organizations o where o.id = ${orgId}
-      returning id
-    )
-    update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
-    authState.orgId = orgId;
-    return { orgId, compId };
-  }
+  //
+  // The fixture moved to module scope so the #353 suite below shares it.
 
   it("refuses a re-buy on an ACTIVE pass, without claiming present-tense possession", async () => {
     const { compId, orgId } = await seedCommunityOrgWithComp();
@@ -1050,5 +1059,82 @@ describe.skipIf(!HAS_DB)("pass-checkout refuses a re-buy truthfully, locked or n
     const endedBody = await (await passCheckoutPOST(req(ended.compId))).json();
 
     expect(endedBody.error).toBe(liveBody.error);
+  });
+});
+
+// v17 gap #353 — an Event Pass could be SOLD for a competition the lock rule
+// had already ended.
+//
+// The route read `slug, name, org_id` and nothing else, so a FIRST purchase was
+// never judged against `status`/`ends_on`. The money landed, the pass minted,
+// and every surface in the product said "Event Pass ended" the same second —
+// and on the terminal arm the buyer could not even try again, because decision
+// #248 Q4 (one pass per competition, forever, enforced by the
+// `competition_passes` PK) means there is no second purchase to make. They lost
+// the $29/$59 AND their one chance at it.
+//
+// Dates are written as explicit UTC CALENDAR strings, derived from the UTC
+// getters rather than from a local-midnight `new Date(...)`: the grace boundary
+// is a date-only comparison against the UTC day, and a local-midnight date sits
+// hours off it — exactly where `<` and `<=` become indistinguishable.
+describe.skipIf(!HAS_DB)("pass-checkout refuses a competition that has already ended (#353)", () => {
+  /** The UTC calendar date `offsetDays` from today, as 'YYYY-MM-DD'. */
+  const utcDay = (offsetDays: number): string => {
+    const now = new Date();
+    const dayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    return new Date(dayMs + offsetDays * 86_400_000).toISOString().slice(0, 10);
+  };
+
+  /** Did the route mint anything? A refusal that still wrote the row would be
+   *  the same defect with a different status code. */
+  const passExists = async (compId: string): Promise<boolean> => {
+    const rows = await sql<{ competition_id: string }[]>`
+      select competition_id from competition_passes where competition_id = ${compId}`;
+    return rows.length > 0;
+  };
+
+  it("410s a LIVE competition whose end date is past the grace window", async () => {
+    // Still 'live' — the organiser never marked it completed. Only the date has
+    // moved, which is the arm a status-only filter misses entirely, and the one
+    // that is RECOVERABLE (moving the end date makes the pass buyable again).
+    const { compId } = await seedCommunityOrgWithComp();
+    await givePrice();
+    await sql`update competitions set ends_on = ${utcDay(-(PASS_END_GRACE_DAYS + 1))}
+               where id = ${compId}`;
+
+    const res = await passCheckoutPOST(req(compId));
+    expect(res.status).toBe(410);
+    expect(stripeMock.checkoutCreate).not.toHaveBeenCalled();
+    expect(await passExists(compId)).toBe(false);
+    // The buyer reads a localised sentence, never the server's English. 410 is
+    // its OWN arm and not the generic 4xx "reload and try again", which would be
+    // a confident lie: reloading an ended competition changes nothing.
+    expect(passCheckoutErrorKey(410)).toBe("upgrade.buyError.ended");
+    expect(passCheckoutErrorKey(410)).not.toBe(passCheckoutErrorKey(400));
+  });
+
+  it("410s an ARCHIVED competition — the arm the buyer can never recover from", async () => {
+    const { compId } = await seedCommunityOrgWithComp();
+    await givePrice();
+    await sql`update competitions set status = 'archived' where id = ${compId}`;
+
+    const res = await passCheckoutPOST(req(compId));
+    expect(res.status).toBe(410);
+    expect(stripeMock.checkoutCreate).not.toHaveBeenCalled();
+    expect(await passExists(compId)).toBe(false);
+  });
+
+  it("still SELLS a competition sitting exactly on the grace boundary", async () => {
+    // ends_on + grace landing ON today is still applying (`passLockReason`'s
+    // strictly-less `<`). The discriminator for both refusals above: a gate that
+    // simply refused anything with an `ends_on` in the past would pass them and
+    // would stop selling passes for every competition in its final week.
+    const { compId } = await seedCommunityOrgWithComp();
+    await givePrice();
+    await sql`update competitions set ends_on = ${utcDay(-PASS_END_GRACE_DAYS)}
+               where id = ${compId}`;
+
+    expect((await passCheckoutPOST(req(compId))).status).toBe(200);
+    expect(stripeMock.checkoutCreate).toHaveBeenCalledTimes(1);
   });
 });

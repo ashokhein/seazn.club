@@ -54,6 +54,8 @@ Nothing is deleted, and nothing is taken back. The competition stays fully reada
 
 The app says so everywhere it mentions the pass: the **Event Pass M active** (or **L active**) marker becomes **Event Pass ended**, names which of the two reasons above applied, and offers the two things that are actually still available — **Create next year's edition**, and **Go Pro** if you are running events often enough that the monthly plan fits better. The pass is never offered for sale again on that competition, because it cannot be bought twice.
 
+**The same line decides when a pass can be BOUGHT.** You can buy a pass while its competition is still running, or during the 7-day grace after its end date; once a competition has passed that line the purchase is refused rather than sold, so you can never pay for a pass that would apply to nothing.
+
 **Renaming a competition does not need a new pass** — the pass is bound to the competition itself, not its name, so you can rename this year's event freely and its pass rides along. A **brand-new competition needs its own pass, even if it has the same name**: finishing this year's championship and creating next year's is a new event, so it is a new purchase. Creating a fresh competition never copies last year's pass onto it — starting from scratch is exactly that.
 
 ## When it fits

@@ -303,8 +303,25 @@ describe("CompetitionPassEntry — ended", () => {
   it("still OFFERS the pass when a lock reason arrives with no pass row", () => {
     // Precedence lives in usePassGateState (passKey before lockReason) and this
     // is the surface half of it: an archived competition that never held a pass
-    // must read "none", not invent an ended one. Offering it is right —
-    // competitions.ts still lets a pass be bought for it.
+    // must read "none", not invent an ended one.
+    //
+    // STILL DELIBERATE AFTER v17 gap #353, which is why this test is kept rather
+    // than flipped. #353 made the checkout route the authority: it now 410s an
+    // ended competition, and `passCheckoutErrorKey(410)` gives the buyer
+    // `upgrade.buyError.ended` — the true sentence, not "reload and try again".
+    // The two LIST surfaces (the dashboard card menu, the billing page's offer)
+    // suppress the offer so the refusal is rarely reached; the two surfaces this
+    // component serves — the competition header and competition settings — do
+    // not, and that is the decision.
+    //
+    // The reason they differ: those two are reached by a DIRECT LINK to a
+    // specific competition, often a bookmark or an old email, and the reader is
+    // already standing on the event. Hiding the control there answers nothing —
+    // it leaves an organiser who expected an Event Pass with a page that never
+    // mentions one. Clicking through to a stated "this competition has already
+    // ended, so an Event Pass wouldn't apply to it" tells them why, and no money
+    // moves either way. A list, by contrast, has no reader question to answer:
+    // it is an inventory of things to buy, and an unbuyable line on it is noise.
     const html = render({ lockReason: "terminal" });
     expect(html).toContain(BUY);
     expect(html).not.toContain("data-pass-ended");

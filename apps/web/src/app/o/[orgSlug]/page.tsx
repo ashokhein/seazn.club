@@ -14,7 +14,7 @@ import { CardMenu } from "@/components/ui/card-menu";
 import { ViewToggleContainer } from "@/components/ui/view-toggle";
 import { StatusChip, competitionChipState, CHIP_SORT } from "@/components/ui/status-chip";
 import { sql } from "@/lib/db";
-import { isPaidPlan, orgPlanKey, passLockReason } from "@/lib/entitlements";
+import { isPaidPlan, isPassLocked, orgPlanKey, passLockReason } from "@/lib/entitlements";
 import { formatMinor, isPassKey } from "@/lib/currency";
 import { lowestPassRung } from "@/lib/pass-ladder";
 import { PassSeal } from "@/components/pass-seal";
@@ -221,7 +221,18 @@ export default async function OrgHomePage({
                         // on a paid plan (`passed` is empty and `paidPlan`
                         // suppresses the offer) — never re-sold, never a
                         // downgrade. Editors only: the buy itself is owner-only.
-                        ...(!paidPlan && !heldRung && canEdit
+                        //
+                        // ...and absent once the COMPETITION is over (v17 gap
+                        // #353). The menu offered a purchase for a competition
+                        // that had finished or run a week past its end date —
+                        // money for a pass that would apply to nothing, and on
+                        // the terminal arm unrecoverable (#248 Q4: one pass per
+                        // competition, forever). `isPassLocked` is the same
+                        // predicate the seal above uses, from the row's own
+                        // columns — `listCompetitions` already selects `status`
+                        // and `ends_on` (COLS), so nothing here is undefined and
+                        // silently answering "not locked" for everything.
+                        ...(!paidPlan && !heldRung && canEdit && !isPassLocked(c.status, c.ends_on)
                           ? [
                               {
                                 label: t(dict, "pass.menu.buy", { price: passLabel }),

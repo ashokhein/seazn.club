@@ -226,7 +226,7 @@ export const PASS_RUNG_MARKETING_KEY: Record<PassKey, DictionaryKey> = {
  * is one unhandled throw away from being rendered to a buyer as purchase
  * advice. Mapping on status makes that structurally impossible.
  *
- * Four buckets, and the 4xx one is deliberately NOT narrowed to "bad rung":
+ * Five buckets, and the 4xx one is deliberately NOT narrowed to "bad rung":
  *
  *   409  a previous payment for this competition was taken and then REFUSED by
  *        the mint guard (v17 gap #326), so the sale is frozen until staff
@@ -236,6 +236,16 @@ export const PASS_RUNG_MARKETING_KEY: Record<PassKey, DictionaryKey> = {
  *        it has already been charged. It is the one refusal on this route the
  *        buyer cannot clear by any action at all, so the copy says what
  *        happened to their money instead of asking them to retry.
+ *   410  the competition itself is over — completed, archived, or more than the
+ *        grace week past its end date — so the pass would apply to nothing
+ *        (v17 gap #353). Split out of the 4xx bucket for the same reason 409 is,
+ *        and it is worth being precise about how it differs from `stale`: a
+ *        stale page is a page RELOADING fixes, and reloading fixes nothing here.
+ *        On the recoverable arm the remedy is off this page entirely — move the
+ *        competition's end date, or reopen it — and on the terminal arm there is
+ *        no remedy at all, because a pass cannot be bought twice for one
+ *        competition (#248 Q4) and this one was never bought once. So the copy
+ *        states the fact rather than issuing an instruction that cannot work.
  *   503  the only thing this route 503s for is a rung whose one-time price has
  *        not been `stripe:sync`'d in this environment. Unambiguous as a CAUSE,
  *        so the copy names the rung — but it says "try the other size" rather
@@ -253,6 +263,9 @@ export const PASS_RUNG_MARKETING_KEY: Record<PassKey, DictionaryKey> = {
  */
 export function passCheckoutErrorKey(status: number | null): DictionaryKey {
   if (status === 409) return "upgrade.buyError.underReview";
+  // Ahead of the 4xx arm below, which would otherwise swallow it: 410 is inside
+  // that range, and order is the only thing keeping these two apart.
+  if (status === 410) return "upgrade.buyError.ended";
   if (status === 503) return "upgrade.buyError.rung";
   if (status !== null && status >= 400 && status < 500) return "upgrade.buyError.stale";
   return "upgrade.buyError.generic";
