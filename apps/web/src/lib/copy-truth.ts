@@ -1215,8 +1215,9 @@ export function feeLockStatedFaults(label: string, markdown: string): string[] {
 }
 
 /**
- * The retired-cap scan, sentence by sentence, with one exemption the seed does
- * not need: prose is allowed to say the cap is GONE.
+ * The retired-cap scan, sentence by sentence, with two exemptions the seed does
+ * not need: prose is allowed to say the cap is GONE, and prose is allowed to
+ * state the genuinely live HOURLY rate limit.
  *
  * `retiredRunCapFaults` bans the vocabulary outright, which is right for a
  * product description — nothing there ever needs to mention a dead feature. An
@@ -1224,20 +1225,84 @@ export function feeLockStatedFaults(label: string, markdown: string): string[] {
  * useful sentence for a reader who remembers the old limits, and round 1 forced
  * it out of `plans.md`. A guard that bans true sentences gets worked around.
  *
- * The exemption is deliberately narrow: the denial must be in the SAME sentence
- * and the sentence must quote NO NUMBER. "There is no per-division run cap; each
- * division gets 5" is two sentences and reds on the second, and "no cap beyond
- * 20 runs a division" reds on its own digit.
+ * The first exemption is deliberately narrow: the denial must be in the SAME
+ * sentence and the sentence must quote NO NUMBER. "There is no per-division run
+ * cap; each division gets 5" is two sentences and reds on the second, and "no
+ * cap beyond 20 runs a division" reds on its own digit.
+ *
+ * The second exemption (#303) is for the OTHER live number:
+ * `rateLimit('ai-plan:'+divisionId, {max:5, windowSeconds:3600})` in
+ * `schedule-ai.ts` (and its officials twin in `officials-ai.ts`) is a genuine,
+ * still-enforced BURST BRAKE — "5 AI runs an hour per division" — and its shape
+ * ("<n> runs … per division") is indistinguishable from the retired LIFETIME
+ * cap to `RETIRED_AI_RUN_CAP_PATTERNS`, which was written before this rate
+ * limit existed as a separate, undocumented mechanism. Scoped to "hour" only
+ * (not day/week/month, which name no real mechanism): a sentence naming an
+ * hourly window is describing the rate limit, not the retired lifetime table.
+ * This is narrow enough that a compound sentence asserting BOTH a true hourly
+ * window AND a fictitious lifetime count in the same breath could still slip
+ * through — accepted, because splitting that hybrid claim into one sentence
+ * each is the far more natural way to write it, and the anti-vacuity corpus
+ * below still requires the base pattern to fire on a true positive.
  */
 export function retiredRunCapProseFaults(label: string, markdown: string): string[] {
   const faults: string[] = [];
   const denial = /\b(no|not|never|without|isn'?t|aren'?t|dropped|retired|removed|gone|scrapped)\b/i;
+  const hourlyRateLimit = /\b(?:an?|per|every)\s+hour\b|\bhourly\b/i;
   for (const block of claimTexts(markdown)) {
     for (const sentence of sentences(block)) {
       const hits = retiredRunCapFaults(sentence);
       if (hits.length === 0) continue;
       if (denial.test(sentence) && !/\d/.test(sentence)) continue;
+      if (hourlyRateLimit.test(sentence)) continue;
       faults.push(...hits.map((h) => `${label}: "${sentence.slice(0, 72)}…" ${h}`));
+    }
+  }
+  return faults;
+}
+
+/**
+ * v17 gap #303: `content/help/scheduling/ai-scheduling.md` said "Officials AI
+ * runs are not metered — once you have automatic officials assignment, you can
+ * restaff as often as you like." That is false on every tier: both AI phases
+ * spend the SAME shared credit wallet, one credit per run, reserved-then-settled
+ * by the identical `spendCredit(walletId, orgId, 1, …)` call in
+ * `schedule-ai.ts:aiPlanForDivision` and `officials-ai.ts:officialsAiPlanForDivision`
+ * (SPEC-2 §5.2) — including the no-instruction default spread, which makes no
+ * model call but still runs through `spendCredit` and is settled on success.
+ *
+ * The claim family is "an AI run costs nothing / has no limit", independent of
+ * which phase it names — a reworded falsehood about schedule runs would be
+ * exactly as false. Denial-of-the-CAP prose ("there is no per-division cap any
+ * more") is a different, TRUE claim and must not trip this: the vocabulary here
+ * is scoped to UNMETERED/FREE/UNCAPPED, not to the retired count itself (that is
+ * `RETIRED_AI_RUN_CAP_PATTERNS`, a sibling rule).
+ */
+export const AI_RUN_UNMETERED_PATTERNS = [
+  /\bnot\s+metered\b/i,
+  /\bunmetered\b/i,
+  /\brestaff\s+as\s+often\s+as\s+you\s+like\b/i,
+  /\brun\s+it\s+as\s+often\s+as\s+you\s+like\b/i,
+  /\b(?:as\s+often\s+as\s+you\s+(?:like|want|wish))\b[^.;]{0,20}\bno\s+(?:cost|charge)\b/i,
+  /\b(?:officials?|schedul\w*)\s+(?:AI\s+)?(?:runs?|generations?|passes?)\s+(?:are|is)\s+free\b/i,
+  /\bcosts?\s+nothing\s+to\s+(?:run|restaff|regenerate)\b/i,
+  /\buncapped\b[^.;]{0,20}\b(?:runs?|generations?|passes?)\b|\b(?:runs?|generations?|passes?)\b[^.;]{0,20}\buncapped\b/i,
+];
+
+/** The positive pairing: an article that raises this claim family must also
+ *  SAY the run is metered by the credit wallet — deleting the whole paragraph
+ *  would otherwise satisfy the negative half for free. */
+export function unmeteredAiRunProseFaults(label: string, markdown: string): string[] {
+  const faults: string[] = [];
+  for (const block of claimTexts(markdown)) {
+    for (const sentence of sentences(block)) {
+      for (const pattern of AI_RUN_UNMETERED_PATTERNS) {
+        if (pattern.test(sentence)) {
+          faults.push(
+            `${label}: "${sentence.slice(0, 72)}…" claims an AI run is unmetered/free — every run, schedule or officials, on any plan, spends one AI credit (SPEC-2 §5.2)`,
+          );
+        }
+      }
     }
   }
   return faults;
@@ -1636,6 +1701,19 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
       String.raw`\bcada\s+mes\b`,
       String.raw`\bpor\s+mes\b`,
       String.raw`\brecurrente\b`,
+      // #338 item 3: this list was MONTHLY-ONLY, so a yearly or weekly framing
+      // of the same one-time-grant falsehood — "cada año", "anuales", "en cada
+      // renovación" — scored 0/9 across all four locales. Same claim, other
+      // cadence; the family, not the month, is what has to be false.
+      String.raw`\banual(es|mente)?\b`,
+      String.raw`\bal\s+año\b`,
+      String.raw`\bcada\s+año\b`,
+      String.raw`\bpor\s+año\b`,
+      String.raw`\bsemanal(es|mente)?\b`,
+      String.raw`\bcada\s+semana\b`,
+      String.raw`\btrimestral(es|mente)?\b`,
+      String.raw`\brenovaci\w*\b`,
+      String.raw`\ben\s+cada\s+renovaci\w*\b`,
     ].map(claim),
     plusClaims: [
       [
@@ -1714,6 +1792,17 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
       String.raw`\bpar\s+mois\b`,
       String.raw`\bchaque\s+mois\b`,
       String.raw`\brécurrent(e|s)?\b`,
+      // #338 item 3 — the yearly/weekly twin of the same falsehood: "chaque
+      // année", "annuels", "à chaque renouvellement" all scored 0/9.
+      String.raw`\bannuel(le|s|les)?\b`,
+      String.raw`\bpar\s+an\b`,
+      String.raw`\bchaque\s+année\b`,
+      String.raw`\btous\s+les\s+ans\b`,
+      String.raw`\bhebdomadaire(s)?\b`,
+      String.raw`\bchaque\s+semaine\b`,
+      String.raw`\btrimestriel(le|s|les)?\b`,
+      String.raw`\brenouvellement(s)?\b`,
+      String.raw`\bà\s+chaque\s+renouvellement\b`,
     ].map(claim),
     plusClaims: [
       [
@@ -1790,6 +1879,16 @@ export const LOCALE_CLAIMS: Record<DictionaryLocale, LocaleClaims> = {
       String.raw`\bper\s+maand\b`,
       String.raw`\b(elke|iedere)\s+maand\b`,
       String.raw`\bterugkerend(e)?\b`,
+      // #338 item 3 — the yearly/weekly twin of the same falsehood: "elk jaar",
+      // "jaarlijks", "bij elke verlenging" all scored 0/9.
+      String.raw`\bjaarlijks(e)?\b`,
+      String.raw`\bper\s+jaar\b`,
+      String.raw`\b(elk|ieder)\s+jaar\b`,
+      String.raw`\bwekelijks(e)?\b`,
+      String.raw`\b(elke|iedere)\s+week\b`,
+      String.raw`\bper\s+kwartaal\b`,
+      String.raw`\bverlenging(en)?\b`,
+      String.raw`\bbij\s+elke\s+verlenging\b`,
     ].map(claim),
     plusClaims: [
       [
@@ -2372,8 +2471,25 @@ export function controlCharacterFaults(patterns: LocatedPattern[]): string[] {
  * nothing downstream can see it. `CONTROL_CHARACTER` is the one legitimate
  * exception — it is the checker, not a claim, and demanding it match a
  * known-positive fixture would mean putting a control character in the corpus.
+ *
+ * #338 item 4 (second vacuity hole): this was LINE-SHAPED — `=\s*(\/|new
+ * RegExp\b|claim\()` requires the pattern to sit immediately after the `=`,
+ * so it sees `const NAME = /…/` but not a pattern one token further in, inside
+ * a CONTAINER. `const ZZ_PROBE_LIST: RegExp[] = [/(?!x)x-inert/i]` shipped
+ * green: the `=` is followed by `[`, not `/`, so the line never matched at
+ * all — invisible to `collectPatterns` (it only walks exports) AND to this
+ * check (it only recognised the pattern immediately after `=`). Now it looks
+ * for a regex literal, `new RegExp(`, or `claim(` ANYWHERE after the `=` on
+ * the same line, so it does not matter how many array or object brackets sit
+ * between them.
+ *
+ * Deliberately NOT exported-container-transparent across MULTIPLE lines: a
+ * declaration whose regex literal is on a later line than `const NAME =` is
+ * still invisible to this check, the same residual limit the line-based scan
+ * always had. Recorded rather than fixed — closing it needs a token walk of
+ * the whole declaration, not a per-line regex.
  */
-const PATTERN_SHAPED = /=\s*(\/|new RegExp\b|claim\()/;
+const PATTERN_SHAPED = /=[^\n]*?(?:\/(?:[^/\\\n]|\\.)+\/[a-z]*\b|new\s+RegExp\s*\(|claim\s*\()/;
 export const UNEXPORTED_PATTERN_ALLOWLIST = ["CONTROL_CHARACTER", "PATTERN_SHAPED"];
 
 export function unexportedPatternFaults(moduleSource: string): string[] {
