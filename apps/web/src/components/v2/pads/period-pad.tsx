@@ -173,6 +173,19 @@ export function PeriodPad({
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
           <p className="mb-2 text-xs font-medium text-amber-800">{msg("pad.pp.runningPenalties")}</p>
           <ul className="space-y-1.5">
+            {/*
+              countdown() below reads stampsRef during render. The rule is right
+              about the pattern and wrong about the consequence HERE: the stamp is
+              written by an effect, so on the first render after a suspension
+              appears the read misses and returns the class's full duration rather
+              than a wrong number, and the 1s forceTick interval above is what
+              re-renders it thereafter. Fixing it properly means moving the
+              computation into the tick effect — a structural change to a
+              live-scoring display with no test coverage, which is not something to
+              do inside a lint sweep. #355 carries the tests and the restructure.
+              This is the ONE error the CI lint gate skips; nothing else may join it.
+            */}
+            {/* eslint-disable-next-line react-hooks/refs -- tracked as #355 */}
             {suspensions.map((susp, i) => {
               const side = sideInfo(susp.side);
               const hint = countdown(i, susp);

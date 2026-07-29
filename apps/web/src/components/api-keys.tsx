@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { Copy, Check, KeyRound } from "lucide-react";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { Tip } from "@/components/ui/tip";
@@ -308,9 +309,9 @@ export function ApiKeysPanel({
 
       <p className="text-xs text-slate-500">
         {msg("apiKeys.docs.prefix")}{" "}
-        <a href="/developers" className="font-medium text-purple-600 hover:underline">
+        <Link href="/developers" className="font-medium text-purple-600 hover:underline">
           {msg("apiKeys.docs.link")} →
-        </a>
+        </Link>
       </p>
 
       {revoked.length > 0 && (

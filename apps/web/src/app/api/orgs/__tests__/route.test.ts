@@ -15,7 +15,13 @@ vi.mock("@/server/usecases/billing-groups", () => ({ attachOrgToGroup: (...a: un
 const post = async (body: unknown) => {
   const { POST } = await import("../route");
   const res = await POST(new Request("http://t/api/orgs", { method: "POST", body: JSON.stringify(body) }));
-  return { status: res.status, json: (await res.json()) as { data?: any; error?: unknown } };
+  return {
+    status: res.status,
+    json: (await res.json()) as {
+      data?: { id: string; attach?: { ok: boolean; charged?: boolean; reason?: string } };
+      error?: unknown;
+    },
+  };
 };
 
 beforeEach(() => {
@@ -29,7 +35,7 @@ it("no attachToGroupId → org created individual, attach never called", async (
   const r = await post({ name: "Solo" });
   expect(r.status).toBe(200);
   expect(attachOrgToGroup).not.toHaveBeenCalled();
-  expect(r.json.data.attach).toBeUndefined();
+  expect(r.json.data!.attach).toBeUndefined();
 });
 
 it("eligible attachToGroupId → attach called, charged surfaced", async () => {
@@ -38,7 +44,7 @@ it("eligible attachToGroupId → attach called, charged surfaced", async () => {
   expect(attachOrgToGroup).toHaveBeenCalledWith({
     actorUserId: "user-1", orgId: "org-9", subscriptionId: "11111111-1111-4111-8111-111111111111",
   });
-  expect(r.json.data.attach).toEqual({ ok: true, charged: true });
+  expect(r.json.data!.attach).toEqual({ ok: true, charged: true });
 });
 
 it("consumes the referral cookie and threads it into createOrgForUser (#267 T2)", async () => {
@@ -54,6 +60,6 @@ it("attach failure → org still created standalone, reason surfaced (200)", asy
   attachOrgToGroup.mockRejectedValue(new HttpError(409, "This billing group has an unpaid invoice. Settle it before adding another organisation."));
   const r = await post({ name: "Joiner", attachToGroupId: "11111111-1111-4111-8111-111111111111" });
   expect(r.status).toBe(200);
-  expect(r.json.data.id).toBe("org-9");
-  expect(r.json.data.attach).toEqual({ ok: false, reason: "This billing group has an unpaid invoice. Settle it before adding another organisation." });
+  expect(r.json.data!.id).toBe("org-9");
+  expect(r.json.data!.attach).toEqual({ ok: false, reason: "This billing group has an unpaid invoice. Settle it before adding another organisation." });
 });

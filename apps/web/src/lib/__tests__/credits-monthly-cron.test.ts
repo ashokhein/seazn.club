@@ -62,8 +62,14 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     const subId = await setOrgPlan(orgId, "pro");
     await sql`update subscriptions set quantity_paid = 3 where id = ${subId}`;
 
-    await grantMonthlyForAllWallets();
+    // Left unscoped, deliberately: this is the one case in the file that
+    // still exercises the unfiltered (every-wallet) query shape the cron
+    // itself uses. `wallets` is therefore a schema-wide aggregate a sibling
+    // suite can move (#321/#351), so it gets a loose assertion; this wallet's
+    // own balance does not move regardless of how many others exist.
+    const res = await grantMonthlyForAllWallets();
 
+    expect(res.wallets).toBeGreaterThan(0);
     expect(await balance(subId)).toBe(60 * 3);
   });
 
@@ -74,7 +80,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     // Community is never seat-scaled (SPEC-2 §11.2 — "never grouped").
     await sql`update subscriptions set quantity_paid = 5 where id = ${subId}`;
 
-    await grantMonthlyForAllWallets();
+    await grantMonthlyForAllWallets({ walletIds: [subId] });
 
     expect(await balance(subId)).toBe(10);
   });
@@ -83,10 +89,10 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     const orgId = await seedOrg();
     const subId = await setOrgPlan(orgId, "pro_plus");
 
-    await grantMonthlyForAllWallets();
+    await grantMonthlyForAllWallets({ walletIds: [subId] });
     expect(await balance(subId)).toBe(200);
 
-    await grantMonthlyForAllWallets();
+    await grantMonthlyForAllWallets({ walletIds: [subId] });
     expect(await balance(subId)).toBe(200);
   });
 
@@ -97,7 +103,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     // read of this org (hasFeature, getLimit, the billing page).
     const subId = await setOrgPlan(orgId, "pro", "canceled");
 
-    await grantMonthlyForAllWallets();
+    await grantMonthlyForAllWallets({ walletIds: [subId] });
 
     // Before #290 the raw status filter (`status in ('trialing','active',
     // 'past_due')`) skipped this row entirely — a churned org got 0 credits
@@ -110,7 +116,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     const orgId = await seedOrg();
     const subId = await setOrgPlan(orgId, "pro", "incomplete");
 
-    await grantMonthlyForAllWallets();
+    await grantMonthlyForAllWallets({ walletIds: [subId] });
 
     expect(await balance(subId)).toBe(10);
   });
@@ -124,7 +130,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
       values (${subId}, 15, 'monthly_grant', 'grant', 15, ${`seed-${randomUUID().slice(0, 8)}`})`;
     expect(await grantBalance(subId)).toBe(15);
 
-    await grantMonthlyForAllWallets();
+    await grantMonthlyForAllWallets({ walletIds: [subId] });
 
     // Not 15 + 60 banked — expired then re-granted to exactly this period's amount.
     expect(await grantBalance(subId)).toBe(60);
@@ -137,12 +143,12 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     const cycle1 = new Date("2026-07-05T00:00:00Z");
     await sql`update subscriptions set current_period_end = ${cycle1} where id = ${subId}`;
 
-    await grantMonthlyForAllWallets();
+    await grantMonthlyForAllWallets({ walletIds: [subId] });
     expect(await balance(subId)).toBe(60);
 
     // Same calendar month, same period boundary — a second poll (e.g. the
     // next day's cron run) must be a no-op.
-    await grantMonthlyForAllWallets();
+    await grantMonthlyForAllWallets({ walletIds: [subId] });
     expect(await balance(subId)).toBe(60);
 
     // Stripe rolls the subscription to a new cycle (webhook sync advances
@@ -152,7 +158,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     const cycle2 = new Date("2026-07-19T00:00:00Z");
     await sql`update subscriptions set current_period_end = ${cycle2} where id = ${subId}`;
 
-    await grantMonthlyForAllWallets();
+    await grantMonthlyForAllWallets({ walletIds: [subId] });
     expect(await grantBalance(subId)).toBe(60); // still exactly one month's grant, not 120
     expect(await balance(subId)).toBe(60);
   });
@@ -164,10 +170,10 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
       select current_period_end from subscriptions where id = ${subId}`;
     expect(row?.current_period_end).toBeNull();
 
-    await grantMonthlyForAllWallets();
+    await grantMonthlyForAllWallets({ walletIds: [subId] });
     expect(await balance(subId)).toBe(10);
 
-    await grantMonthlyForAllWallets();
+    await grantMonthlyForAllWallets({ walletIds: [subId] });
     expect(await balance(subId)).toBe(10); // still idempotent via the calendar-month key
   });
 
@@ -192,18 +198,25 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
 
     vi.useFakeTimers({ now: new Date("2026-06-05T00:00:00Z"), toFake: ["Date"] });
 
-    await grantMonthlyForAllWallets();
+    // Scoped to THIS wallet (#351). An unscoped sweep here is the worst of the
+    // family: it runs four times, under FAKE TIMERS, so every wallet a sibling
+    // suite happens to own is swept at a simulated date it never agreed to —
+    // and the scan itself grows with everything the session has accumulated,
+    // which is what the 30s timeout above was compensating for.
+    const only = { walletIds: [subId] };
+
+    await grantMonthlyForAllWallets(only);
     expect(await balance(subId)).toBe(60); // month N
 
     // Same calendar month — a second poll must stay a no-op.
-    await grantMonthlyForAllWallets();
+    await grantMonthlyForAllWallets(only);
     expect(await balance(subId)).toBe(60);
 
     // Advance to month N+1 — current_period_end is UNCHANGED (still a year
     // out), yet a fresh grant must land: cadence is monthly, not
     // billing-cycle.
     vi.setSystemTime(new Date("2026-07-03T00:00:00Z"));
-    await grantMonthlyForAllWallets();
+    await grantMonthlyForAllWallets(only);
     expect(await grantBalance(subId)).toBe(60); // reset to this month's own 60, not banked to 120
     expect(await balance(subId)).toBe(60);
 
@@ -211,7 +224,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     // 3 calendar months in, 3 grants, still 60 in the bucket each time
     // (180 total ever granted across the ledger, use-or-lose resets each).
     vi.setSystemTime(new Date("2026-08-10T00:00:00Z"));
-    await grantMonthlyForAllWallets();
+    await grantMonthlyForAllWallets(only);
     expect(await grantBalance(subId)).toBe(60);
     expect(await balance(subId)).toBe(60);
   });
@@ -227,12 +240,26 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
       insert into organizations (name, slug, subscription_id)
       values (${"Rider " + suffix}, ${"rider-" + suffix}, ${subId})`;
 
-    await grantMonthlyForAllWallets();
+    await grantMonthlyForAllWallets({ walletIds: [subId] });
 
     // max(quantity_paid=1, liveOrgCount=2) — not quantity_paid alone, or the
     // rider org would spend against a wallet that only ever got 1 seat's
     // worth of monthly credits.
     expect(await balance(subId)).toBe(60 * 2);
+  });
+
+  it("can be scoped to named wallets, so a parallel suite's wallets cannot move the answer (#351)", { timeout: CRON_TEST_TIMEOUT }, async () => {
+    const orgId = await seedOrg();
+    const subId = await setOrgPlan(orgId, "pro");
+    await sql`update subscriptions set quantity_paid = 2 where id = ${subId}`;
+    const other = await seedOrg();
+    const otherSub = await setOrgPlan(other, "pro");
+    await sql`update subscriptions set quantity_paid = 1 where id = ${otherSub}`;
+
+    const res = await grantMonthlyForAllWallets({ walletIds: [subId] });
+    expect(res.wallets).toBe(1);
+    expect(await balance(subId)).toBe(60 * 2);
+    expect(await balance(otherSub)).toBe(0); // untouched: not in scope
   });
 
   it("REGRESSION (#291): a trialing group still grants for quantity_paid when it sits ABOVE the live org count", { timeout: CRON_TEST_TIMEOUT }, async () => {
@@ -246,7 +273,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     // satisfy every other test in this file.
     await sql`update subscriptions set quantity_paid = 3 where id = ${subId}`;
 
-    await grantMonthlyForAllWallets();
+    await grantMonthlyForAllWallets({ walletIds: [subId] });
 
     expect(await balance(subId)).toBe(60 * 3);
   });

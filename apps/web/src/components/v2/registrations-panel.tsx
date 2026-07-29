@@ -6,6 +6,7 @@
 // list. All derived numbers come from lib/registration-derive over the row
 // set this panel already loads.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { useConfirm } from "@/components/ui/confirm-provider";
@@ -289,7 +290,7 @@ export function RegistrationsPanel({
         {settings.payment_method === "stripe" && !settings.charges_enabled && (
           <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
             {msg("reg.stripeOffline.pre")}
-            <a href="/settings/connect" className="underline">{msg("reg.stripeOffline.link")}</a>
+            <Link href="/settings/connect" className="underline">{msg("reg.stripeOffline.link")}</Link>
             {msg("reg.stripeOffline.post")}
           </div>
         )}

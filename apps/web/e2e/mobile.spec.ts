@@ -9,6 +9,24 @@ import { TAG, apiJson, activeOrg, expectNoHorizontalScroll, addEntrantsViaApi } 
 // (v3/11 gaps 11, 12, 15).
 test.describe.configure({ mode: "serial" });
 
+// The check that guards every other 375px assertion in this file. It compared
+// document.scrollWidth against clientWidth, which `overflow-x: clip`
+// (globals.css:63) pins to the viewport — so a 525px overflow read as clean.
+// This probe is the control: if it ever passes, the helper is blind again and
+// every "no horizontal scroll" test in the suite is decorative.
+test("CONTROL (#325): the overflow check itself can fail", async ({ page }) => {
+  await page.goto("/pricing", { waitUntil: "load" });
+  await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.id = "overflow-probe";
+    probe.style.cssText = "width:900px;height:8px;background:transparent";
+    document.body.appendChild(probe);
+  });
+  await expect(expectNoHorizontalScroll(page)).rejects.toThrow(/overflow/i);
+  await page.evaluate(() => document.getElementById("overflow-probe")?.remove());
+  await expectNoHorizontalScroll(page);
+});
+
 let compId = "";
 let compSlug = "";
 let divisionId = "";

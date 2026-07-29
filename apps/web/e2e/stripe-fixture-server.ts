@@ -107,7 +107,14 @@ function subJson(s: SubState) {
 }
 
 export async function startStripeFixtureServer(
-  port = STRIPE_FIXTURE_PORT,
+  // 0 (the default) binds an OS-assigned ephemeral port — the real bound port
+  // is read back off the listening socket below. This is what lets several
+  // suites run their own fixture server in the same parallel vitest run
+  // without agreeing on a shared literal port up front (#313): three
+  // billing-group suites used to all hard-code 12118 and collided with
+  // EADDRINUSE the moment they ran together. An explicit port is still
+  // honoured, for the handful of callers that intentionally pin one.
+  port = 0,
 ): Promise<StripeFixtureServer> {
   const subs = new Map<string, SubState>();
   const calls: StripeFixtureCall[] = [];
@@ -197,10 +204,15 @@ export async function startStripeFixtureServer(
   });
 
   await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
+  // With port 0 the OS picks a free ephemeral port; server.address() is the
+  // only place that real number is knowable. A fixed `port` argument still
+  // round-trips through here unchanged.
+  const address = server.address();
+  const boundPort = typeof address === "object" && address !== null ? address.port : port;
   return {
-    url: `http://127.0.0.1:${port}`,
+    url: `http://127.0.0.1:${boundPort}`,
     host: "127.0.0.1",
-    port,
+    port: boundPort,
     calls,
     seedSubscription(sub) {
       subs.set(sub.id, {

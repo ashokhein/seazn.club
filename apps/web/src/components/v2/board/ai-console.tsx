@@ -311,7 +311,13 @@ export function AiConsole({
   // and whether that proposal was produced with a prior (so the grid knows when
   // `diff.changed` means "changed vs prior" — a first draft has none).
   const priorOfficialsInstruction = useRef("");
-  const officialsHadPrior = useRef(false);
+  // State, not a ref: it drives the `hadPrior` prop read during render
+  // (OfficialsStep below) — react-hooks/refs correctly flags a ref read at
+  // render time, since a ref mutation alone doesn't schedule the re-render
+  // that would pick it up. The `dispatch({ type: "RUN_START" })` right after
+  // the write already forces a render on every path that sets it, so this is
+  // a same-render swap, not a new one.
+  const [officialsHadPrior, setOfficialsHadPrior] = useState(false);
   const officialsAutoStarted = useRef(false);
   // Cancel any in-flight run on close/unmount (the board conditionally renders
   // the dock, so unmount cleanup covers close too) — its rejection is ignored.
@@ -407,7 +413,7 @@ export function AiConsole({
       const ac = new AbortController();
       abortRef.current = ac;
       setOfficialsTraceNonce((n) => n + 1);
-      officialsHadPrior.current = Boolean(opts.priorAssignments);
+      setOfficialsHadPrior(Boolean(opts.priorAssignments));
       dispatch({ type: "RUN_START" });
       const schedule = state.schedulePlan.proposal.map((p) => ({
         fixture_id: p.fixture_id,
@@ -632,7 +638,7 @@ export function AiConsole({
           fixtures={fixtures}
           roster={roster ?? []}
           policyRoles={(officialsPolicy ?? DEFAULT_OFFICIALS_POLICY).roles}
-          hadPrior={officialsHadPrior.current}
+          hadPrior={officialsHadPrior}
           busy={busy}
           traceNonce={officialsTraceNonce}
           wishes={officialsWishes}

@@ -72,6 +72,21 @@ jobs:
           npm run i18n:gen-keys
           git diff --exit-code apps/web/src/lib/i18n-keys.ts || {
             echo "i18n-keys.ts is stale — run 'npm run i18n:gen-keys' and commit."; exit 1; }
+      # eslint gate (#344). Nothing ran lint in CI before, and `main` carried 31
+      # errors for long enough that none of them were recent. BLOCKING, not
+      # advisory: an advisory gate on a repo that already had 31 errors just
+      # prints 32 next week.
+      #
+      # Errors only. The 73 warnings are deliberately not gated — clearing them
+      # is a separate piece of work, and failing on them today would mean either
+      # a mass rewrite in this PR or a gate nobody can keep green.
+      #
+      # Exactly ONE suppression exists in the tree (period-pad.tsx, a ref read
+      # during render on a live-scoring countdown with no test coverage) and it
+      # names the issue that will remove it: #355. Nothing else may join it.
+      - name: eslint
+        run: npm run lint
+
       - run: npm test --workspace apps/web
       # Live-Stripe tier probe (sk_test, test-mode): confirms our plan/tier
       # amounts still round-trip real Stripe. Self-contained (no stripe:sync /
@@ -149,6 +164,14 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: postgres
+        # A non-UTC, NON-SEASONAL session TZ (#320). Two date-boundary suites —
+        # credits-period-boundary and the credits-tab #292 regression — only
+        # exercise their boundary when the session TZ differs from UTC. On the
+        # default UTC service one skipped outright and the other tested nothing,
+        # so #292 has had zero CI coverage since it shipped. Etc/GMT-14 rather
+        # than Europe/London because London is BST for half the year, and
+        # coverage that depends on the season is coverage half the time.
+        command: postgres -c timezone=Etc/GMT-14
         ports:
           - 5432:5432
         options: >-
@@ -235,8 +258,17 @@ jobs:
       # rate-limit.redis.test.ts and entitlements-cache-invalidation.redis.test.ts
       # are Redis-gated, so they still self-skip here and execute in the two
       # dedicated steps below, each of which owns REDIS_URL for itself alone.
+      #
+      # NO stray `run` positional. The workspace script is already `vitest run`,
+      # so `-- run src/server src/lib` passed THREE filename filters rather than
+      # a command and two paths — and the extra one matched
+      # src/components/__tests__/run-your-own-cta.test.tsx and
+      # src/components/v2/board/__tests__/run-elapsed.test.tsx, dragging two
+      # component suites into a Postgres job that was never meant to run them
+      # (187 files collected against the 185 the paths select). Measured on
+      # 2026-07-29 while chasing #339.
       - name: Engine-db + service-layer + lib integration tests (real Postgres)
-        run: npm test --workspace apps/web -- run src/server src/lib
+        run: npm test --workspace apps/web -- --reporter=default --reporter=json --outputFile=vitest-results-lib-server.json src/server src/lib
 
       # The DB-gated suites under src/app. src/lib is NOT repeated here: the
       # Engine-db step above already runs it, and running it in both steps shares
@@ -248,7 +280,20 @@ jobs:
       # pass-scoping-guard.test.ts is no longer excluded: the Event Pass scoping
       # sweep it tracked has landed, so it passes and runs with the rest.
       - name: Service-layer integration tests outside src/server (real Postgres)
-        run: npm test --workspace apps/web -- run src/app
+        run: npm test --workspace apps/web -- --reporter=default --reporter=json --outputFile=vitest-results-app.json src/app
+
+      # Collection reconciliation (#339). A run is only evidence about the files
+      # it collected, and collection has been observed to vary between runs with
+      # identical arguments — 511 files once, 158 three times, all exit 0. This
+      # compares what `vitest list` selects for these paths against what the two
+      # steps above actually executed, and fails the job when they disagree.
+      # Costs one collection pass, not a second suite run.
+      - name: Vitest collection reconciliation
+        run: |
+          node --experimental-strip-types scripts/check-vitest-collection.ts \
+            --results apps/web/vitest-results-lib-server.json -- src/server src/lib
+          node --experimental-strip-types scripts/check-vitest-collection.ts \
+            --results apps/web/vitest-results-app.json -- src/app
 
       # REDIS_URL is scoped to this step only. Setting it job-wide would switch
       # the entitlement cache (lib/entitlements.ts) on for the src/server suite,

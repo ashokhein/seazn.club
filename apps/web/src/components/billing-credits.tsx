@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { t, plural, type Dict, type Locale, type TKey } from "@/lib/i18n";
 import type { CreditsTabView } from "@/server/usecases/credits-tab";
 import { BuyCredits } from "@/components/buy-credits";
@@ -197,12 +198,12 @@ export function BillingCredits({ view, dict, locale, exportHref, packs, currency
             earned: view.referralEarned,
           })}
         </p>
-        <a
+        <Link
           href="/help/billing/credits"
           className="text-xs font-medium text-purple-600 hover:underline"
         >
           {t(dict, "billing.credits.referral.howItWorks")} →
-        </a>
+        </Link>
       </div>
     </section>
     </>

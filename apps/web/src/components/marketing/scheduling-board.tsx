@@ -15,12 +15,16 @@ const COURTS = 3;
  *  page wraps this island in (demo team names included, for a localized feel). */
 export function SchedulingBoard() {
   const t = useT();
-  const fixturesRef = useRef<string[]>([
+  // Translated once and held for the component's lifetime (never re-derived
+  // on a later locale change) — a plain lazy useState initializer instead of
+  // a ref read during render, which react-hooks/refs (rightly) disallows:
+  // reading `.current` while computing the `board` initial state below could
+  // observe a mutated ref on a later render.
+  const [fixtures] = useState<string[]>(() => [
     t("sched.board.fixture.1"),
     t("sched.board.fixture.2"),
     t("sched.board.fixture.3"),
   ]);
-  const fixtures = fixturesRef.current;
   const [mode, setMode] = useState<"replay" | "play" | "published">("replay");
   const [board, setBoard] = useState<BoardState>(() => createBoard(fixtures, COURTS));
   const [armed, setArmed] = useState<number | null>(null);
