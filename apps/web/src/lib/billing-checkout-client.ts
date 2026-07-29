@@ -6,6 +6,7 @@
 // Stripe's embedded spinner loading forever with nothing to render.
 
 import type { PassKey } from "@/lib/currency";
+import { orgScopeHeaders } from "@/lib/org-scope";
 
 export type CheckoutSecretResult =
   | { ok: true; clientSecret: string }
@@ -30,7 +31,15 @@ async function fetchClientSecret(
   try {
     const res = await fetchFn(path, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        // WHICH organisation this write is for, from the console URL on
+        // screen rather than the `seazn_org` cookie the route would otherwise
+        // read — that cookie lags a navigation by one client effect, so a save
+        // made inside the window landed on the PREVIOUS billing group (v17 gap
+        // #334).
+        ...orgScopeHeaders(),
+      },
       body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => null);

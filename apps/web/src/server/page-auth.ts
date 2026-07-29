@@ -8,6 +8,7 @@ import "server-only";
 // two orgs can't corrupt each other. Renamed slugs permanent-redirect.
 import { notFound, permanentRedirect, redirect } from "next/navigation";
 import { getCurrentUser, getUserOrgs, getActiveOrgId } from "@/lib/auth";
+import { sql } from "@/lib/db";
 import { EDITOR_ROLES, type OrgMembership, type User } from "@/lib/types";
 import { resourceOrg, type AuthCtx, type ResourceKind } from "@/server/api-v1/auth";
 import { HttpError } from "@/lib/errors";
@@ -86,6 +87,103 @@ export async function requireOrgPage(
     user,
     org,
     canEdit: (EDITOR_ROLES as readonly string[]).includes(org.role),
+  };
+}
+
+/**
+ * Session auth for the BILLING tabs under `/o/[orgSlug]/settings`
+ * (Billing, Credits, Add-ons) — v17 gap #333.
+ *
+ * `requireOrgPage`'s rule is membership, and that is right for every organiser
+ * surface: those pages are about the club. Billing is not about the club, it is
+ * about the GROUP — `subscriptions` is its own row with its own
+ * `owner_user_id`, one bill may fund many clubs, and `transferGroup` moves that
+ * column ALONE, leaving memberships untouched. So a payer can end up funding a
+ * bill they are not a member of (by transfer, or by an org owner removing them)
+ * and, gated on membership, has no route to any of the pages that manage it —
+ * not even to cancel.
+ *
+ * THE ONE RELAXATION, stated exactly: membership is no longer the only way in.
+ * The group's payer is admitted as well. Nothing else moves —
+ *
+ *   - a member is admitted on exactly the terms `requireOrgPage` gives them,
+ *     with the same role and the same `canEdit`;
+ *   - a non-member who does NOT pay for this org's group still 404s, so
+ *     existence is never leaked to a stranger;
+ *   - a scorer who does not pay still bounces to "My matches" (doc 13 §4);
+ *   - the payer is admitted READ-ONLY as far as the org goes: `role` is null
+ *     and `canEdit` is false, so nothing here becomes a way to edit a club.
+ *     What they get is the bill, which is theirs already.
+ *
+ * `requireOrgPage` itself is deliberately UNCHANGED. Putting the exception
+ * inside it would relax the membership rule for every organiser page in the
+ * tree to serve three tabs; a separate gate keeps the widening where it is
+ * legible and where a reviewer can see its whole audience.
+ *
+ * `viaPayer` tells the page which of the two it is looking at. Chrome that
+ * assumes membership — the back link into the org's own Settings index, which
+ * IS member-gated — must not be rendered for a payer who would only 404 on it.
+ */
+export async function requireBillingPage(
+  orgSlug: string,
+  opts: { tail?: string } = {},
+): Promise<PageAuth & { viaPayer: boolean }> {
+  const user = await getCurrentUser();
+  if (!user) redirect("/login");
+  const resolved = await orgBySlug(orgSlug);
+  if (resolved && "renamedTo" in resolved) {
+    permanentRedirect(routes.orgHome(resolved.renamedTo) + (opts.tail ?? ""));
+  }
+  if (!resolved) notFound();
+  const orgs = await getUserOrgs(user.id);
+  const org = orgs.find((o) => o.id === resolved.id);
+
+  // Members first, and untouched: whatever `requireOrgPage` would have handed
+  // them, they still get. Only the two arms it REFUSES are reconsidered below,
+  // so no existing visitor's outcome can move.
+  if (org && org.role !== "scorer") {
+    return {
+      auth: { orgId: org.id, via: "session", userId: user.id, role: org.role, keyId: null },
+      user,
+      org,
+      canEdit: (EDITOR_ROLES as readonly string[]).includes(org.role),
+      viaPayer: false,
+    };
+  }
+
+  // Does this person pay for the group this organisation bills through? Read
+  // straight off `subscriptions.owner_user_id` — the same column
+  // `requireBillingOwner` gates the mutating routes on, so the pages a payer
+  // can OPEN and the writes a payer can MAKE cannot answer differently. An org
+  // with no group (`subscription_id` null) simply has no payer, and the join
+  // drops it.
+  const [payer] = await sql<{ owner_user_id: string }[]>`
+    select s.owner_user_id
+      from organizations o
+      join subscriptions s on s.id = o.subscription_id
+     where o.id = ${resolved.id}`;
+  if (!payer || payer.owner_user_id !== user.id) {
+    // Unchanged refusals: a scorer keeps its own bounce (doc 13 §4), and a
+    // non-member gets the 404 that never leaks existence.
+    if (org) redirect("/my-matches");
+    notFound();
+  }
+
+  return {
+    auth: { orgId: resolved.id, via: "session", userId: user.id, role: null, keyId: null },
+    user,
+    // Payer placeholder. They hold no role in this organisation and must not
+    // acquire one here: the pages read `org.id` for the bill and `org.role`
+    // only to decide what a MEMBER may see, and null denies all of it. Same
+    // shape requireFixturePage uses for a non-member official.
+    org: {
+      id: resolved.id,
+      slug: resolved.slug,
+      name: resolved.name,
+      role: null,
+    } as unknown as OrgMembership,
+    canEdit: false,
+    viaPayer: true,
   };
 }
 

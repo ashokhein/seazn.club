@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 // billing group they don't pay for must still see the pool they spend from, so
 // this page is member-visible and NOT payer-gated. The credit-pack purchase +
 // CSV export it mounts are session-authed inside their own handlers.
-import { requireOrgPage } from "@/server/page-auth";
+import { requireBillingPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";
 import { BackLink } from "@/components/back-link";
 import { BillingCredits } from "@/components/billing-credits";
@@ -20,7 +20,7 @@ export default async function CreditsSettingsPage({
   params: Promise<{ orgSlug: string }>;
 }) {
   const { orgSlug } = await params;
-  const { org } = await requireOrgPage(orgSlug, { tail: "/settings/credits" });
+  const { org, viaPayer } = await requireBillingPage(orgSlug, { tail: "/settings/credits" });
   const orgId = org.id;
   const locale = await resolveLocale();
   const dict = await getDictionary(locale, "ui");
@@ -33,11 +33,17 @@ export default async function CreditsSettingsPage({
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-8">
-      <BackLink
-        href={routes.orgSettings(orgSlug)}
-        label={t(dict, "action.settings")}
-        emphasis="button"
-      />
+      {/* The org's own Settings index is member-gated, so a payer who is not a
+          member of this club would only 404 on it (v17 gap #333). They arrived
+          from the bill, not from the club, and have nothing to go back to
+          here. */}
+      {!viaPayer && (
+        <BackLink
+          href={routes.orgSettings(orgSlug)}
+          label={t(dict, "action.settings")}
+          emphasis="button"
+        />
+      )}
       <div className="mb-6">
         <h1 className="page-title">{t(dict, "settings.nav.credits")}</h1>
       </div>

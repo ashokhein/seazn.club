@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import { sql } from "@/lib/db";
 import { reconcileCheckout, billingCtaLabel, hasLiveSubscription } from "@/lib/billing";
-import { requireOrgPage } from "@/server/page-auth";
+import { requireBillingPage } from "@/server/page-auth";
 import { BillingBanner } from "@/components/billing-banner";
 import { UpgradeButton, DowngradeButton } from "@/components/billing-actions";
 import {
@@ -73,7 +73,9 @@ export default async function BillingPage({
   searchParams: Promise<{ checkout?: string; session_id?: string }>;
 }) {
   const { orgSlug } = await params;
-  const { org, user } = await requireOrgPage(orgSlug, { tail: "/settings/billing" });
+  const { org, user, viaPayer } = await requireBillingPage(orgSlug, {
+    tail: "/settings/billing",
+  });
   const orgId = org.id;
   const locale = await resolveLocale();
   const dict = await getDictionary(locale, "ui");
@@ -251,11 +253,16 @@ export default async function BillingPage({
         {/* The apron chevron alone was not found: 16px at 70% opacity on the
             dark bar, label hidden until hover. #190 removed the labelled link
             as duplication; reported twice as missing, so it is back. */}
-        <BackLink
-          href={routes.orgSettings(orgSlug)}
-          label={t(dict, "action.settings")}
-          emphasis="button"
-        />
+        {/* …and not at all for a payer who is not a member of this club: the
+            Settings index it points at is member-gated and would 404 on them
+            (v17 gap #333). */}
+        {!viaPayer && (
+          <BackLink
+            href={routes.orgSettings(orgSlug)}
+            label={t(dict, "action.settings")}
+            emphasis="button"
+          />
+        )}
         <div className="mb-6">
           <h1 className="page-title">
             {t(dict, "billing.title")}
