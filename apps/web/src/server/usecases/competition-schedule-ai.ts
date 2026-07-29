@@ -61,7 +61,7 @@ const MS_PER_MIN = 60_000;
 
 /** Total movable fixtures across the whole joint pack. Over this the run is
  *  refused before any credit is reserved — the per-division builder keeps its
- *  own 500 cap (schedule-ai.ts:293), this one is on the SUM. */
+ *  own 500 cap in schedule-ai.ts, this one is on the SUM. */
 export const COMPETITION_MOVABLE_CAP = 500;
 
 const TOO_LARGE = "AI_PLAN_TOO_LARGE";
@@ -347,7 +347,11 @@ export async function buildCompetitionPack(
       // divisions, and this builder never passes a repair `scope`). So
       // `movable.length > 500` implies `movableCount > 500`, and the pre-check
       // has already thrown. Delete the pre-check and this becomes live again —
-      // which is what makes it worth keeping.
+      // which is what makes it worth keeping. It is also only unreachable
+      // WITHIN ONE SNAPSHOT: the pre-check and buildSchedulePack read in
+      // different transactions, so fixtures inserted between them can push a
+      // division over 500 after the pre-check has passed — a second reason to
+      // keep the backstop, not a reason to trust the pre-check less.
       if (err instanceof HttpError && (err.code === TOO_LARGE || err.message === TOO_LARGE)) {
         throw tooLarge();
       }

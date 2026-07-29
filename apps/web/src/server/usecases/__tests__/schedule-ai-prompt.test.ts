@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   SYSTEM_PROMPT,
+  JOINT_RULES,
   AiSchedulePlan,
   AiConstraintDelta,
 } from "../schedule-ai-prompt";
@@ -114,5 +115,52 @@ describe("schedule-ai prompt contract", () => {
     expect(
       AiConstraintDelta.safeParse({ crossPersonClash: "nope" }).success,
     ).toBe(false);
+  });
+});
+
+describe("JOINT_RULES (issue #350)", () => {
+  it("is frozen", () => {
+    expect(JOINT_RULES).toMatchSnapshot();
+  });
+
+  it("labels every joint rule J1..J6", () => {
+    for (const id of ["J1.", "J2.", "J3.", "J4.", "J5.", "J6."]) {
+      expect(JOINT_RULES).toContain(id);
+    }
+  });
+
+  it("does not alter the frozen single-division system prompt", () => {
+    expect(SYSTEM_PROMPT).not.toContain("J1");
+    expect(SYSTEM_PROMPT).not.toContain("division_id");
+  });
+
+  it("tells the model the output shape is unchanged — no division field", () => {
+    expect(JOINT_RULES).toMatch(/assignments/i);
+    expect(JOINT_RULES).toMatch(/do not add/i);
+  });
+
+  it("J5 tells the model to rebalance rather than trust the draft (ruling R4)", () => {
+    const j5 = JOINT_RULES.slice(
+      JOINT_RULES.indexOf("J5."),
+      JOINT_RULES.indexOf("J6."),
+    );
+    expect(j5.length).toBeGreaterThan(0);
+    // The draft's own bias is named, not merely "the draft is a hint".
+    expect(j5).toMatch(/legality hint/i);
+    expect(j5).toMatch(/not a balance hint/i);
+    expect(j5).toMatch(/rebalance/i);
+    expect(j5).toMatch(/anchor/i);
+    // …and the partial-draft case (ruling R5) is spelled out with the field name
+    // that carries it, so the model can detect it rather than assume completeness.
+    expect(j5).toContain("draftPlaced");
+    expect(j5).toMatch(/partial/i);
+  });
+
+  it("J6 tells the model divisions may differ in timezone — compare instants", () => {
+    const j6 = JOINT_RULES.slice(JOINT_RULES.indexOf("J6."));
+    expect(j6.length).toBeGreaterThan(0);
+    expect(j6).toMatch(/timezone/i);
+    expect(j6).toMatch(/offset/i);
+    expect(j6).toMatch(/instants,? not strings/i);
   });
 });

@@ -79,6 +79,48 @@ summary:
 at most three sentences to the organiser — what you did, any compromises, what to change
 if a wish was impossible.`;
 
+// Joint (multi-division) addendum — issue #350. Appended to SYSTEM_PROMPT by the
+// competition runner as `${SYSTEM_PROMPT}\n\n${JOINT_RULES}`; it is a SEPARATE
+// constant so the single-division prompt above stays byte-frozen. Same register
+// as the H/S rules: terse, imperative, numbered J1-J6.
+//
+// J5 and J6 exist because of properties of the joint pack the model cannot infer
+// from the pack itself: the draft is built division by division, so it is biased
+// toward whichever division was built first (ruling R4), and each division renders
+// its timestamps in its own timezone (ruling R8).
+export const JOINT_RULES = `JOINT MODE — you are scheduling several divisions of one competition onto one
+shared board. The pack carries a divisions array in place of a single settings
+block, and every fixture, obstacle and draft assignment carries a division_id. These
+rules sit on top of the hard rules above. The verifier checks each division
+separately against that division's own settings over the whole board, so a
+violation in any one of them rejects the answer.
+J1. Every fixture carries a division_id. Its court_label must be a court that
+    fixture's own division lists in divisions[].settings.courts. The courts array is
+    the union across divisions — it is not a licence to use a court your fixture's
+    division does not have.
+J2. A court is shared between divisions when the label matches exactly, and only
+    then. Two fixtures from different divisions must never overlap on the same
+    court_label.
+J3. Each division has its own matchMinutes, gapMinutes, session windows, blackouts
+    and constraints under divisions[]. Apply each fixture's own division's values.
+    They are not interchangeable, and the strictest division's rules do not govern
+    the others.
+J4. Balance the prime slots across divisions. No division may be pushed entirely to
+    the end of the day while another takes every early court.
+J5. The draft is a legality hint, not a balance hint. It is built one division at a
+    time, each seeing the earlier ones, so the first divisions hold the early slots
+    and the later ones stack up behind them. Rebalance it under J4 rather than
+    anchoring on the shape you were handed. A division whose draftPlaced is below
+    the length of its movableIds has a PARTIAL draft — its remaining fixtures are
+    absent from the draft entirely, so place them yourself.
+J6. Divisions may run in different timezones. Every scheduled_at is rendered with
+    its own division's UTC offset, so the draft, the obstacles and the prior
+    proposal are not necessarily in clock order and two equal-looking wall clock
+    times may be hours apart. Compare instants, not strings.
+OUTPUT is unchanged: one flat assignments array covering every movable fixture of
+every division. Do not add a division field to an assignment — the server resolves
+each fixture_id to its own division.`;
+
 export const AiAssignment = z.object({
   fixture_id: z.string().uuid(),
   scheduled_at: z.string().datetime({ offset: true }),
