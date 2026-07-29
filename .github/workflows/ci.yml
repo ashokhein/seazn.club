@@ -149,6 +149,14 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: postgres
+        # A non-UTC, NON-SEASONAL session TZ (#320). Two date-boundary suites —
+        # credits-period-boundary and the credits-tab #292 regression — only
+        # exercise their boundary when the session TZ differs from UTC. On the
+        # default UTC service one skipped outright and the other tested nothing,
+        # so #292 has had zero CI coverage since it shipped. Etc/GMT-14 rather
+        # than Europe/London because London is BST for half the year, and
+        # coverage that depends on the season is coverage half the time.
+        command: postgres -c timezone=Etc/GMT-14
         ports:
           - 5432:5432
         options: >-
