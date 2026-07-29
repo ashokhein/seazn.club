@@ -871,6 +871,27 @@ export function verifyConfigFor(
               ? { restByGroup: s.constraints.restByGroup }
               : {}),
             noBackToBack: s.constraints.noBackToBack,
+            // PLAN-TIME CONSEQUENCE, flagged rather than left to be discovered:
+            // this function feeds `verifyJoint`, whose non-blocking conflicts
+            // become `result.warnings`, which `planIsAcceptable` divides by the
+            // movable count against SCHEDULING_AI_ESCALATE_WARN_RATIO
+            // (schedule-ai.ts:1333). So `start_window` violations now count
+            // toward ladder escalation, and a joint plan that used to look
+            // acceptable can escalate a rung.
+            //
+            // Kept in the ratio on purpose. The pack SHOWS the model these
+            // windows (`PackSettings.constraints.startWindows`), so ignoring
+            // them is a real quality miss — and every other soft constraint the
+            // model is shown (blackout, session window, rest, person overlap)
+            // already counts, so excluding one class would make the heuristic
+            // inconsistent in a way nobody would remember. It cannot change what
+            // an org is charged: credits are quoted up front and escalation
+            // spends the already-paid budget. It CAN bring `stopped_on_budget`
+            // forward, which is the honest cost. The ratio is documented as
+            // uncalibrated and is an env knob — that is where it should be tuned,
+            // not by hand-picking which reasons count. Pinned by a test in
+            // competition-schedule-verify.test.ts.
+            //
             // `PackStartWindow.target.kind` is a bare `string` (the pack is a
             // wire shape), so an unrecognised kind is DROPPED rather than cast
             // through: the engine would silently never match it, and a cast

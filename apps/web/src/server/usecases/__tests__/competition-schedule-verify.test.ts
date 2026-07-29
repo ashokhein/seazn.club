@@ -31,7 +31,7 @@ import {
   type CompetitionPackFixture,
   type CompetitionPackObstacle,
 } from "../competition-schedule-ai";
-import type { PackConstraints, PackSettings } from "../schedule-ai";
+import { isBlocking, planIsAcceptable, type PackConstraints, type PackSettings } from "../schedule-ai";
 import type { AiSchedulePlan } from "../schedule-ai-prompt";
 
 // --- Fixed ids -------------------------------------------------------------
@@ -852,5 +852,45 @@ describe("verifyConfigFor (#350)", () => {
 
   it("omits constraints entirely when the division has none", () => {
     expect(verifyConfigFor(division(D1, "Alpha")).constraints).toBeUndefined();
+  });
+
+  it("a start-window violation is a WARNING that counts toward ladder escalation", () => {
+    // Two things at once, because they are one decision.
+    //
+    // (1) `start_window` is NOT blocking. `isBlocking` covers court and direct
+    //     order only, and converting startWindows must not have changed that —
+    //     no new 409s at apply, no repair rounds, no blocking-driven ladder cost.
+    // (2) It IS counted by `planIsAcceptable`, whose ratio is
+    //     warnings / movable. So the conversion made a joint plan that used to
+    //     look acceptable able to escalate a rung. Deliberate — the pack SHOWS
+    //     the model its start windows, so ignoring them is a real quality miss,
+    //     and every other soft class already counts — and it cannot change what
+    //     an org is charged. It CAN bring `stopped_on_budget` forward, so it is
+    //     pinned here rather than left to be discovered in production.
+    const d = division(D1, "Alpha", {
+      settings: settings({
+        constraints: constraints({
+          startWindows: [{ target: { kind: "division", id: D1 }, notBefore: at("14:00") }],
+        }),
+      }),
+    });
+    const p = pack([d], [fixture(F1, D1, { home: E1, away: E2 })]);
+    const conflicts = verifyJoint(plan([assign(F1, at("09:00"), "Court 1")]), p);
+    expect(conflicts.map((c) => c.reason)).toEqual(["start_window"]);
+    // (1) reported, never blocking.
+    expect(conflicts.some(isBlocking)).toBe(false);
+    // (2) and still in the escalation numerator.
+    expect(planIsAcceptable({ blocking: [], warnings: conflicts }, 1)).toBe(true);
+    process.env.SCHEDULING_AI_ESCALATE_WARN_RATIO = "0";
+    try {
+      expect(planIsAcceptable({ blocking: [], warnings: conflicts }, 1)).toBe(false);
+      // Control: with the window satisfied there is no warning at all, so the
+      // `false` above is this conflict rather than the threshold on its own.
+      const clean = verifyJoint(plan([assign(F1, at("14:00"), "Court 1")]), p);
+      expect(clean).toEqual([]);
+      expect(planIsAcceptable({ blocking: [], warnings: clean }, 1)).toBe(true);
+    } finally {
+      delete process.env.SCHEDULING_AI_ESCALATE_WARN_RATIO;
+    }
   });
 });

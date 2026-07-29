@@ -166,10 +166,16 @@ export interface CompetitionApplyOut {
    *
    * Deliberate: the board renders an applied joint plan's residual warnings
    * next to the ones the plan itself came back with, and `mapConflicts` cannot
-   * classify a joint report anyway — its `blocking` flag consults ONE
-   * division's `crossPersonClash` setting, and a cross-division person clash
-   * has two divisions and no single owner for that decision. `isBlocking` is
-   * the joint taxonomy and it is what both ends of #350 use.
+   * classify a joint report anyway — it takes ONE `crossPersonClash` for a
+   * whole call, while a joint call spans divisions that may disagree on it.
+   *
+   * `isBlocking` is the taxonomy the joint PLAN end uses whole. This APPLY end
+   * uses it as a floor and adds the emitting division's own `crossPersonClash`
+   * on top (see the blocking loop below), which is the same plan/apply split
+   * the single-division path already has: `verifyConfig` warns, `applySchedule`
+   * refuses. So `isBlocking` is NOT "what both ends of #350 use" — an earlier
+   * version of this comment said so, and item 2 of fix round 1 is what made it
+   * false.
    */
   conflicts: Conflict[];
 }
@@ -500,10 +506,19 @@ export async function applyCompetitionSchedule(
         // Decided BEFORE the dedupe `continue`, so the verdict is a property of
         // the conflict rather than of which pass happened to reach it first —
         // the same key genuinely can arrive from more than one pass (see the
-        // dependency loop noted above). Effective cross-division rule: HARD IF
-        // ANY INVOLVED DIVISION OPTED IN. That is the safe direction for an org
-        // that explicitly asked not to double-book its people, and both
-        // divisions belong to one org, so there is no fairness question.
+        // dependency loop noted above).
+        //
+        // NOT a union over the request. The verdict is the setting of the
+        // division that OWNS the overlapping fixture, so an overlap inside a
+        // "warn" division still applies even when another division in the same
+        // request is "hard". What the per-division rule buys, stated as the
+        // cross-division case: a person in a "hard" division A and a "warn"
+        // division B is refused, because A's own pass sees B's proposed slot on
+        // the merged board and blocks on A's fixture — "hard if a division IN
+        // THIS REQUEST that owns one of the clashing fixtures opted in", never
+        // "hard if anything in the competition is hard". That is the safe
+        // direction for an org that asked not to double-book its people without
+        // making one division's setting govern another's board.
         if (isBlocking(c) || (c.reason === "person_overlap" && personBlocks)) {
           blockingKeys.add(key);
         }

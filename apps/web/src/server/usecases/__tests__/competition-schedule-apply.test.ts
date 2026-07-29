@@ -19,6 +19,7 @@ import type postgres from "postgres";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { EngineError } from "@seazn/engine/core";
+import type { Conflict } from "@seazn/engine/scheduling";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
@@ -241,6 +242,18 @@ function lineUp(
     })),
   };
 }
+
+/** A neutral constraints row. Tests vary ONE field off this so the arms of an
+ *  A/B differ by that field and nothing else — in particular never by
+ *  "constraints row absent vs present", which is a different code path. */
+const BASE_CONSTRAINTS = {
+  restMin: 0,
+  noBackToBack: false,
+  startWindows: [] as unknown[],
+  fieldFairness: "off",
+  parallelism: "mixed",
+  crossPersonClash: "warn",
+};
 
 const AI = {
   instruction: "  Fit both divisions into the morning.  ",
@@ -599,6 +612,54 @@ describe.skipIf(!HAS_DB)("applyCompetitionSchedule (#350)", () => {
       .toBe(true);
   }, 60_000);
 
+  it("a direct feed conflict keeps its `direct` flag through the wire schema", async () => {
+    // The round-trip parse above only ever sees BLACKOUT conflicts, which carry
+    // no `direct` — so a dropped `direct` in the published conflict shape would
+    // survive it. `direct` is the field that decides whether an order violation
+    // blocks, so it is the one that must not go missing.
+    //
+    // It can only be observed on the 409: a direct order conflict IS blocking,
+    // so it never appears in a successful return.
+    const feeder = board.alpha.fixtureIds[0]!;
+    const target = board.alpha.fixtureIds[5]!;
+    await sql`
+      update fixtures set winner_to_fixture = ${target} where id = ${feeder}`;
+    const bravo = lineUp(board.bravo, await divisionSeq(board.bravo.id), "Court 3", 0);
+    const alpha: CompetitionApplyDivision = {
+      division_id: board.alpha.id,
+      expected_seq: await divisionSeq(board.alpha.id),
+      assignments: board.alpha.fixtureIds.map((fixture_id, i) => ({
+        fixture_id,
+        // The target starts while its feeder is still playing.
+        scheduled_at: fixture_id === target ? at(0) : at((i + 1) * 30),
+        court_label: fixture_id === target ? "Court 2" : "Court 1",
+      })),
+    };
+    let caught: unknown;
+    try {
+      await applyCompetitionSchedule(auth, board.competitionId, {
+        divisions: [alpha, bravo],
+        source: "ai",
+        ai: AI,
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(EngineError.is(caught)).toBe(true);
+    const blocking = (caught as EngineError).data as { conflicts: Conflict[] };
+    const order = blocking.conflicts.filter((c) => c.reason === "order");
+    expect(order.length).toBeGreaterThan(0);
+    expect(order.every((c) => c.direct === true)).toBe(true);
+
+    // Real engine conflicts, carrying `direct`, through the published shape.
+    const parsed = ApplyCompetitionScheduleResult.parse({
+      applied: 0,
+      conflicts: blocking.conflicts,
+    });
+    expect(parsed.conflicts.some((c) => c.direct === true)).toBe(true);
+    expect(parsed.conflicts).toEqual(blocking.conflicts);
+  }, 60_000);
+
   it("an org without scheduling.multi_division is refused, and nothing is written", async () => {
     // The request carries client-supplied assignments, so this endpoint needs no
     // prior plan run and no AI: it is a multi-division bulk write in its own
@@ -645,7 +706,25 @@ describe.skipIf(!HAS_DB)("applyCompetitionSchedule (#350)", () => {
     const bravoOf = async (): Promise<CompetitionApplyDivision> =>
       lineUp(board.bravo, await divisionSeq(board.bravo.id), "Court 3", 0);
 
-    // "warn" (the default — no constraints row at all): reported, not blocking.
+    // A CLEAN A/B: both arms carry a constraints row and differ on
+    // `crossPersonClash` alone. Varying "row absent vs row present" instead
+    // would let a bug in the no-constraints path read as a passing setting test.
+    // Bravo is pinned to "warn" in both arms so it can never be what decides.
+    const arm = async (clash: "warn" | "hard"): Promise<void> => {
+      ({ auth } = await seedOrg("pro"));
+      board = await seedBoard(auth);
+      await sharePerson(auth.orgId, [board.alpha.fixtureIds[0]!, board.alpha.fixtureIds[1]!]);
+      await setConstraints(board.alpha.id, ["Court 1", "Court 2"], {
+        ...BASE_CONSTRAINTS,
+        crossPersonClash: clash,
+      });
+      await setConstraints(board.bravo.id, ["Court 1", "Court 3"], {
+        ...BASE_CONSTRAINTS,
+        crossPersonClash: "warn",
+      });
+    };
+
+    await arm("warn");
     const warned = await applyCompetitionSchedule(auth, board.competitionId, {
       divisions: [overlapping(await divisionSeq(board.alpha.id)), await bravoOf()],
       source: "ai",
@@ -657,18 +736,10 @@ describe.skipIf(!HAS_DB)("applyCompetitionSchedule (#350)", () => {
     // and not some other property of this seed.
     expect(unplaced(await slots(board.alpha.id))).toBe(false);
 
-    // Same board, same overlap, opted in: refused.
-    ({ auth } = await seedOrg("pro"));
-    board = await seedBoard(auth);
-    await sharePerson(auth.orgId, [board.alpha.fixtureIds[0]!, board.alpha.fixtureIds[1]!]);
-    await setConstraints(board.alpha.id, ["Court 1", "Court 2"], {
-      restMin: 0,
-      noBackToBack: false,
-      startWindows: [],
-      fieldFairness: "off",
-      parallelism: "mixed",
-      crossPersonClash: "hard",
-    });
+    // Same board, same overlap, one word of config different: refused. This is
+    // also the CONVERSE of the separating case below — the overlap sits inside
+    // the "hard" division while a "warn" division is in the same request.
+    await arm("hard");
     await expect(
       applyCompetitionSchedule(auth, board.competitionId, {
         divisions: [overlapping(await divisionSeq(board.alpha.id)), await bravoOf()],
@@ -678,7 +749,50 @@ describe.skipIf(!HAS_DB)("applyCompetitionSchedule (#350)", () => {
     ).rejects.toMatchObject({ code: "SCHEDULE_CONFLICT" });
     expect(unplaced(await slots(board.alpha.id))).toBe(true);
     expect(unplaced(await slots(board.bravo.id))).toBe(true);
-  }, 120_000);
+  }, 180_000);
+
+  it("a 'hard' division does not make a 'warn' division's own overlap blocking", async () => {
+    // THE CASE THAT SEPARATES per-division attribution from a union over the
+    // request. Both of the tests above have exactly one "hard" division, so
+    // `personBlocks` and `order.some(... === "hard")` agree on every one of
+    // them — the property that makes the rule right was pinned by nothing.
+    //
+    // Here the overlap is inside ALPHA, which is "warn"; BRAVO is "hard" and
+    // has no overlap at all. Per-division: not blocking, so it applies. Union:
+    // 409. Only one of those is the rule this module claims to implement.
+    await sharePerson(auth.orgId, [board.alpha.fixtureIds[0]!, board.alpha.fixtureIds[1]!]);
+    await setConstraints(board.alpha.id, ["Court 1", "Court 2"], {
+      ...BASE_CONSTRAINTS,
+      crossPersonClash: "warn",
+    });
+    await setConstraints(board.bravo.id, ["Court 1", "Court 3"], {
+      ...BASE_CONSTRAINTS,
+      crossPersonClash: "hard",
+    });
+    const out = await applyCompetitionSchedule(auth, board.competitionId, {
+      divisions: [
+        {
+          division_id: board.alpha.id,
+          expected_seq: await divisionSeq(board.alpha.id),
+          assignments: board.alpha.fixtureIds.map((fixture_id, i) => ({
+            fixture_id,
+            scheduled_at: i < 2 ? at(0) : at(i * 30),
+            court_label: i === 1 ? "Court 2" : "Court 1",
+          })),
+        },
+        lineUp(board.bravo, await divisionSeq(board.bravo.id), "Court 3", 0),
+      ],
+      source: "ai",
+      ai: AI,
+    });
+    expect(out.applied).toBe(9);
+    // Reported — never swallowed — but not blocking, because the division that
+    // OWNS the overlapping fixtures did not opt in.
+    const overlaps = out.conflicts.filter((c) => c.reason === "person_overlap");
+    expect(overlaps.length).toBeGreaterThan(0);
+    for (const c of overlaps) expect(board.alpha.fixtureIds).toContain(c.fixtureId);
+    expect(unplaced(await slots(board.alpha.id))).toBe(false);
+  }, 60_000);
 
   it("a cross-division person clash blocks when EITHER division opted in", async () => {
     // Person in Alpha and in Bravo; only Alpha is "hard". Alpha's own pass sees
@@ -688,14 +802,17 @@ describe.skipIf(!HAS_DB)("applyCompetitionSchedule (#350)", () => {
     // an org that explicitly asked not to double-book its people.
     await sharePerson(auth.orgId, [board.alpha.fixtureIds[0]!, board.bravo.fixtureIds[0]!]);
     await setConstraints(board.alpha.id, ["Court 1", "Court 2"], {
-      restMin: 0,
-      noBackToBack: false,
-      startWindows: [],
-      fieldFairness: "off",
-      parallelism: "mixed",
+      ...BASE_CONSTRAINTS,
       crossPersonClash: "hard",
     });
-    // Bravo keeps the default "warn" — its own pass would let this through.
+    // Bravo is EXPLICITLY "warn" — its own pass would let this through, so the
+    // 409 can only come from Alpha's pass seeing Bravo's slot on the merged
+    // board. Spelled out rather than left as an absent row, so the two arms
+    // differ by the setting alone.
+    await setConstraints(board.bravo.id, ["Court 1", "Court 3"], {
+      ...BASE_CONSTRAINTS,
+      crossPersonClash: "warn",
+    });
     const { alpha, bravo } = await clean();
     await expect(
       applyCompetitionSchedule(auth, board.competitionId, {
@@ -713,14 +830,10 @@ describe.skipIf(!HAS_DB)("applyCompetitionSchedule (#350)", () => {
     // a conflict class the whole joint product was blind to while the per-stage
     // apply reported it. Warnings only: `isBlocking` does not cover it.
     await setConstraints(board.bravo.id, ["Court 1", "Court 3"], {
-      restMin: 0,
-      noBackToBack: false,
+      ...BASE_CONSTRAINTS,
       // Division-targeted, which only works because the joint path stamps
       // `divisionId` on every proposed assignment.
       startWindows: [{ target: { kind: "division", id: board.bravo.id }, notBefore: at(240) }],
-      fieldFairness: "off",
-      parallelism: "mixed",
-      crossPersonClash: "warn",
     });
     const { alpha, bravo } = await clean();
     const out = await applyCompetitionSchedule(auth, board.competitionId, {
