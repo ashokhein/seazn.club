@@ -13,9 +13,10 @@
 
 // BEFORE any import pulls in @/lib/stripe: a fake key (the fixture ignores it)
 // and the host override, so getStripe() builds a client aimed at the fixture.
+// STRIPE_MOCK_PORT is set from the fixture's own ephemeral bound port in
+// beforeAll below, not hard-coded — see stripe-fixture-server.ts (#313).
 process.env.STRIPE_SECRET_KEY ??= "sk_test_fixture_never_real";
 process.env.STRIPE_MOCK_HOST = "127.0.0.1";
-process.env.STRIPE_MOCK_PORT = "12118";
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -91,7 +92,8 @@ async function quantityPaid(groupId: string): Promise<number> {
 
 beforeAll(async () => {
   if (!HAS_DB) return;
-  fixture = await startStripeFixtureServer(12118);
+  fixture = await startStripeFixtureServer();
+  process.env.STRIPE_MOCK_PORT = String(fixture.port);
 });
 beforeEach(() => fixture?.reset());
 afterAll(async () => {
