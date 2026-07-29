@@ -89,9 +89,12 @@ import {
   type TokenMeter,
 } from "@/lib/ai-rung";
 import { spendCredit, walletIdFor } from "@/lib/credits";
+import { deferred } from "@/lib/deferred";
 import { requireFeature } from "@/lib/entitlements";
-import { isServerFeatureEnabled } from "@/lib/posthog-server";
+import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import { rateLimit } from "@/lib/rate-limit";
+import { assertCompetitionNotFrozen } from "./entitlement-freeze";
+import { maybeAlertExpensiveRun } from "./ai-runs-admin";
 import {
   validateAssignments,
   type Assignment,
@@ -107,6 +110,12 @@ const MS_PER_MIN = 60_000;
 export const COMPETITION_MOVABLE_CAP = 500;
 
 const TOO_LARGE = "AI_PLAN_TOO_LARGE";
+/** The per-division builder's "nothing in scope" refusal. Never surfaced to a
+ *  joint caller — see the build loop's catch. */
+const EMPTY_SCOPE = "AI_PLAN_EMPTY_SCOPE";
+/** What it becomes instead: a retryable 409, because the only way to reach it
+ *  from a joint call is a concurrent change between the gate and the build. */
+const SCOPE_CHANGED = "AI_PLAN_SCOPE_CHANGED";
 
 /** One too-large contract for the whole joint call. The per-division builder
  *  refuses >500 with a 422 carrying this same code string, and a joint caller
@@ -396,6 +405,22 @@ export async function buildCompetitionPack(
       // keep the backstop, not a reason to trust the pre-check less.
       if (err instanceof HttpError && (err.code === TOO_LARGE || err.message === TOO_LARGE)) {
         throw tooLarge();
+      }
+      // The OTHER per-division refusal that must never reach a joint caller
+      // (ruling R6): in `repair` mode buildSchedulePack 422s AI_PLAN_EMPTY_SCOPE
+      // when a division has nothing movable. The orchestrator drops such
+      // divisions before ever getting here — but its gate query and this build
+      // run in different transactions, so a concurrent unschedule/finalize can
+      // empty a division in between. That is a transient race, not a request
+      // defect: re-running picks up the new state and drops the division. So it
+      // becomes a retryable 409 rather than a per-division 422 the joint caller
+      // has no way to act on. Before any credit is reserved either way.
+      if (err instanceof HttpError && (err.code === EMPTY_SCOPE || err.message === EMPTY_SCOPE)) {
+        throw new HttpError(
+          409,
+          "a division's schedule changed while planning — please retry",
+          SCOPE_CHANGED,
+        );
       }
       throw err;
     }
@@ -1373,6 +1398,14 @@ export async function aiPlanForCompetition(
     const [comp] = await tx<{ id: string }[]>`
       select id from competitions where id = ${competitionId}`;
     if (!comp) throw new HttpError(404, "competition not found");
+    // A competition frozen by competitions.max_active (a downgrade left more
+    // active competitions than the plan allows) is read-only: applySchedule
+    // refuses with a 402 (schedule.ts:496). Exactly the argument the
+    // schedule_locked 409 below makes — planning one spends credits and tokens
+    // on a proposal the organiser is then blocked from applying — except a
+    // joint run's charge is N times larger, so it is checked here rather than
+    // inherited from the single-division path, which does not check it.
+    await assertCompetitionNotFrozen(auth.orgId, competitionId, tx);
     // One query for every per-division gate below — locked state, slot config
     // and the movable count that decides the R6 drop. The count is un-scoped
     // `status = MOVABLE_STATUS`, which is exactly what the joint builder plans
@@ -1575,6 +1608,26 @@ export async function aiPlanForCompetition(
                       : {}),
                   } as never)}, ${auth.userId})`;
       });
+      await captureServer({
+        event: "ai_plan_run",
+        distinctId,
+        orgId: auth.orgId,
+        properties: {
+          phase: "schedule",
+          mode: input.mode,
+          model,
+          fixtures: movableIds.size,
+          repair_rounds: usage.repair_rounds ?? 0,
+          input_tokens: usage.input_tokens ?? 0,
+          output_tokens: usage.output_tokens ?? 0,
+          cost_usd,
+          blocking: 0,
+          outcome,
+          divisions: pack.divisions.length,
+          credits: quote.credits,
+          ...(providerErr ? { provider_status: providerCause?.status ?? null } : {}),
+        },
+      });
     }
     if (providerErr) {
       // The provider's message can carry OUR billing state — never let it reach
@@ -1602,6 +1655,13 @@ export async function aiPlanForCompetition(
                 // without it the ledger cannot explain why a 5-division request
                 // was priced as 4.
                 skipped_division_ids,
+                // LOAD-BEARING, not decoration. Both /admin readers classify a
+                // run by `type` first and fall back to `payload->>'phase'`,
+                // whose default arm is 'officials' (ai-runs-admin.ts:115,472) —
+                // so an unstamped joint run is filed under the wrong phase and
+                // skews both phases' $/unit. The failure row below stamps it
+                // too; the two must not drift.
+                phase: "schedule",
                 mode: input.mode,
                 model,
                 usage: result.usage,
@@ -1620,6 +1680,47 @@ export async function aiPlanForCompetition(
                     }
                   : {}),
               } as never)}, ${auth.userId})`;
+  });
+
+  // Expensive-run watch (v17 gap #295) — deliberately AFTER the insert above,
+  // whose table is the baseline's own source, and deferred so the tenant's paid
+  // response does not wait on a table scan plus an email send. A joint run is
+  // the class this alert exists for: it is compared against the SINGLE-division
+  // 30-day median (medianRunCostUsd is scoped to schedule.ai_generated), so an
+  // N-division run that costs several times one division's run will trip it —
+  // which is the intended signal while joint pricing is uncalibrated, not noise.
+  deferred(() =>
+    maybeAlertExpensiveRun({
+      orgId: auth.orgId,
+      competitionId,
+      phase: "schedule",
+      model,
+      costUsd: cost_usd,
+      mode: input.mode,
+      packUnits: movableIds.size,
+    }),
+  );
+
+  await captureServer({
+    event: "ai_plan_run",
+    distinctId,
+    orgId: auth.orgId,
+    properties: {
+      phase: "schedule",
+      mode: input.mode,
+      model,
+      fixtures: movableIds.size,
+      repair_rounds: result.usage.repair_rounds,
+      input_tokens: result.usage.input_tokens,
+      output_tokens: result.usage.output_tokens,
+      cost_usd,
+      blocking: result.blocking.length,
+      outcome: "ok",
+      // The one property the single-division event cannot carry: what makes
+      // this run a joint one, and what it was priced on.
+      divisions: pack.divisions.length,
+      credits: quote.credits,
+    },
   });
 
   return {

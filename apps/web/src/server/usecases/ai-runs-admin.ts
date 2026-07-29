@@ -10,11 +10,30 @@ import { aiRunUnitNoun } from "@/lib/ai-pricing";
 import { EARN_GRANT_DAILY_ALERT_THRESHOLD, earnGrantVolumeToday } from "@/lib/credits";
 import { sendAiRunCostAlertEmail } from "@/lib/email";
 
+/**
+ * Every event type that IS an architect run. This list is the join key between
+ * revenue and cost: `aiMarginReport` reads credits sold from `ai_credit_ledger`
+ * (which counts every `run_spend`, whatever produced it) and COGS from
+ * `competition_events` filtered by this list. A run class missing from here
+ * therefore books revenue against ZERO cost and reads as pure margin —
+ * silently, and worst on the runs that cost the most.
+ *
+ * `_multi` is #350's multi-division joint run, which charges up to N credits in
+ * one go and is the costliest class on the platform.
+ */
 export const AI_RUN_EVENT_TYPES = [
   "schedule.ai_generated",
+  "schedule.ai_generated_multi",
   "schedule.ai_officials_generated",
   "schedule.ai_failed",
+  "schedule.ai_failed_multi",
 ] as const;
+
+/** The failure half of the list — every type whose rows carry an `outcome`
+ *  other than "ok". Kept next to the list above so a new run class cannot be
+ *  added to one and forgotten in the other, which would list a failed run as a
+ *  success on /admin/ai-runs. */
+const AI_RUN_FAILURE_EVENT_TYPES = ["schedule.ai_failed", "schedule.ai_failed_multi"] as const;
 
 // ---------------------------------------------------------------------------
 // JSONB read guards (v17 gap #295)
@@ -107,7 +126,8 @@ export async function listAiRuns(limit: number): Promise<AiRunRow[]> {
            case when ${COSTED_E()}
                 then (e.payload->>'cost_usd')::numeric::float8 end   as cost_usd,
            case
-             when e.type = 'schedule.ai_failed' then coalesce(e.payload->>'outcome', 'failed')
+             when e.type = any(${AI_RUN_FAILURE_EVENT_TYPES as unknown as string[]})
+               then coalesce(e.payload->>'outcome', 'failed')
              else 'ok'
            end as outcome
     from competition_events e
