@@ -41,21 +41,39 @@ estTokens = piecewise-linear(sizeScore)   // for helper text only
 ```
 
 - `ENTRANT_W`, `COURT_W`, `S1`, `S2`, and the est-tokens curve are code constants with env override (`AI_RUNG_*`).
-- **Calibration** happens once during implementation: one SQL pass over `competition_events` (`schedule.ai_generated` / `schedule.ai_officials_generated` payloads) bucketing actual `output_tokens` (p50/p90) by `pack_units`. Thresholds chosen so p90 of a rung's bucket fits inside that rung's budget. Recalibration = rerun the query, edit constants. The calibration query ships in the repo under `scripts/`.
+- **Calibration** happens once during implementation: one SQL pass over `competition_events` (`schedule.ai_generated` / `schedule.ai_officials_generated` payloads) bucketing actual `output_tokens` (p50/p90) by `pack_units`. Thresholds chosen so p90 of a rung's bucket fits inside that rung's budget. Recalibration = rerun the query, edit constants. The query ships as `scripts/ai-rung-calibration.sql`. **Constants shipped UNCALIBRATED** — the query has not yet been run against prod; §3 of it reads the `stopped_on_budget` stamp as ground truth once there is history, and every budget/threshold is env-overridable in the meantime.
 - Phase B uses the same function with its own constant set (`AI_RUNG_OFFICIALS_*`) — officials packs are lighter and will land rung 1 almost always.
 - The server **always recomputes** the prediction at run time; the client's displayed prediction is advisory.
 
 ## 5. Budget meter (enforcement)
 
+The budget keys on **credits charged**, not on the rung — issue #350 charges
+`max(1, Σ rungs − 1)`, which reaches 5, 8, 11 credits, and a `Record<Rung, …>`
+table cannot key those. The approved 1/2/3 values are unchanged; the curve
+extends past 3 at a flat step:
+
 ```ts
-TOKEN_BUDGETS = { 1: 32_000, 2: 64_000, 3: 128_000 }  // generation tokens (output incl. thinking), whole run
+tokenBudgetForCredits(n)  // generation tokens (output incl. thinking), whole run
+  n <= 3 ? {1: 32_000, 2: 64_000, 3: 128_000}[n]
+         : 128_000 + 32_000 * (n - 3)
 ```
 
-In the existing ladder loop (both phases):
+Every value is env-overridable (`AI_RUNG_BUDGET_1/2/3`, `AI_RUNG_BUDGET_STEP`)
+so an uncalibrated cliff can be loosened in prod without a deploy.
 
-1. `spent += usage.output_tokens` after every round (the same usage numbers already captured for COGS — reuse, no new plumbing).
-2. Before starting the next round: if `spent + MIN_ROUND_RESERVE > budget` → stop escalating; finalize with best valid result so far, else fail. `MIN_ROUND_RESERVE` default 2_000 (a round smaller than this can't produce a useful plan/repair), env-overridable.
-3. Per-round cap: `max_tokens = min(32_000, budget - spent)`.
+In the existing ladder loop (both phases), via one `TokenMeter` per run shared
+by every rung — so the budget spans the whole ladder and cross-rung accounting
+lives in one object rather than a number each layer must remember to forward:
+
+1. `meter.add(usage.output_tokens)` as soon as a round's usage is known, **before** the refusal/parse-failure throws — a round that spent tokens and then failed still counts, so a run cannot loop past its cap on failures alone.
+2. Before starting the next round: `meter.canStartRound()` → `spent + reserve <= budget`. False stops escalation, finalizes with the best valid result so far, else fails — and flips `stoppedOnBudget`.
+3. Per-round cap: `meter.clampRound(32_000)` = `min(32_000, budget − spent)`.
+
+`MIN_ROUND_RESERVE` is **size-aware**: `max(2_000, movableFixtures × 40)`
+(`AI_RUNG_MIN_ROUND_RESERVE` / `AI_RUNG_RESERVE_PER_UNIT`). A flat 2 000 is
+wrong for a 200-fixture pack — the assignment list alone is several thousand
+output tokens, so a round clamped below that truncates, fails to parse, and
+burns the remaining budget for nothing.
 
 Provider-agnostic: identical on OpenRouter fallback models and direct Anthropic. Input tokens are **not** metered (budget = generation budget; on adaptive-thinking models thinking bills as output, which is exactly the cost we're scaling for).
 
@@ -67,8 +85,10 @@ Provider-agnostic: identical on OpenRouter fallback models and direct Anthropic.
 
 ## 7. Billing / ledger
 
-- `spendCredit(walletId, orgId, rung, ...)` — the amount param exists today (hardcoded 1). Reserve→settle/release flow untouched. Grant-first spend order untouched. **No schema change, no migration.**
-- Settle payload adds: `{ rung, budget, predicted_rung, est_tokens, spent_tokens, underfunded }`.
+- `spendCredit(walletId, orgId, quote.credits, ...)` — the amount param exists today (hardcoded 1). Reserve→settle/release flow untouched. Grant-first spend order untouched. **No schema change, no migration.**
+- Settle payload adds `meterStamp(quote, meter)`: `{ credits, budget, spent_tokens, est_tokens, underfunded, stopped_on_budget, rung, predicted_rung }` — and, for a joint run, `{ discount, divisions: [{id, rung, predicted_rung, underfunded}] }` instead of the flat `rung`/`predicted_rung`.
+- **`stopped_on_budget`** is stamped by the meter itself and is the only signal that separates "the budget cut this run short" from "the plan was merely degraded". `underfunded` records the user's choice, not the outcome; without both, §10's "cheaped-out → failed" analysis cannot be run. It is stamped on the failure event too.
+- **The zero-token path is not priced from the pack.** Phase B's empty-instruction run returns the deterministic solver draft with no model call, so it is quoted flat at 1 credit (`freeDraftQuote()`) — sizing it would charge a large division 2-3 credits for a run that spends nothing.
 - Failure path unchanged: no valid schedule (including budget exhausted with nothing usable) → hold **released, no charge**. COGS eaten; worst case ≈ $2 (128K output × $15/M), acceptable.
 - Margin sanity: rung 3 worst-case COGS ≈ $2–2.5 vs 3 credits ≈ $7 retail-equivalent; rung 1 ≈ $0.50 vs 1 credit.
 
