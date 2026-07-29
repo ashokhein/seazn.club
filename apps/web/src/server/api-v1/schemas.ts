@@ -1928,6 +1928,72 @@ export const AiCompetitionLastResult = z.object({
 });
 export type AiCompetitionLastResult = z.infer<typeof AiCompetitionLastResult>;
 
+/**
+ * POST /competitions/{id}/schedule/apply — persist a joint plan across several
+ * divisions ATOMICALLY (#350 Task 6, spec §8). One transaction writes every
+ * division's board or none of it; the per-stage endpoint cannot do this, and
+ * calling it in a loop leaves half a board written on any mid-flight failure.
+ */
+export const ApplyCompetitionScheduleRequest = z.object({
+  divisions: z
+    .array(
+      z.object({
+        division_id: Uuid,
+        /** REQUIRED here, unlike the per-stage apply's optional token: a joint
+         *  write that skipped the check on one division would let a stale board
+         *  silently overwrite a concurrent edit there while every other
+         *  division was guarded. */
+        expected_seq: z.number().int().nonnegative(),
+        assignments: z
+          .array(
+            z.object({
+              fixture_id: Uuid,
+              scheduled_at: IsoDateTime,
+              court_label: z.string().min(1).max(100),
+            }),
+          )
+          .min(1)
+          .max(500),
+      }),
+    )
+    /**
+     * `.min(1)`, NOT `.min(2)` — and that is not an oversight.
+     *
+     * The >= 2 rule on the PLAN endpoint exists to stop discount arbitrage: a
+     * joint run is priced at max(1, sum of rungs - 1), so a one-division "joint"
+     * run would buy a single-division solve at a discount. Applying costs
+     * nothing. Refusing a one-division apply would only mean the board had to
+     * decide, per outcome, which of two endpoints to post an already-paid-for
+     * plan to — and ruling R6 lets a run legitimately end up with fewer solved
+     * divisions than were requested.
+     *
+     * The ceiling matches the plan request's, since one apply can never span
+     * more divisions than one run planned.
+     */
+    .min(1)
+    .max(20),
+  /** "ai" only. Manual board edits stay on the per-stage endpoint: a hand edit
+   *  is one division by construction. */
+  source: z.literal("ai"),
+  /** Audit provenance (v4/03 §10) — stamped into every division's
+   *  `schedule_applied` row AND the one `schedule.applied_multi` row that
+   *  GET /competitions/{id}/schedule/ai-last recalls. `model` is overwritten
+   *  server-side with the model that actually ran. */
+  ai: AiApplyMeta.optional(),
+});
+export type ApplyCompetitionScheduleRequest = z.infer<typeof ApplyCompetitionScheduleRequest>;
+
+export const ApplyCompetitionScheduleResult = z.object({
+  applied: z.number().int(),
+  /** The ENGINE verifier's camelCase `Conflict`, exactly as the joint ai-plan
+   *  response carries it — NOT the snake_case `ScheduleConflict` of the
+   *  per-stage apply. `applyCompetitionSchedule` returns `Conflict[]` verbatim,
+   *  so declaring the other shape here would strip every field of every warning
+   *  down to `{}` and publish a contract the route does not honour. */
+  conflicts: z.array(AiPlanConflict),
+});
+export type ApplyCompetitionScheduleResult = z.infer<typeof ApplyCompetitionScheduleResult>;
+
 // Custom points & rank control (Jul3/05, PROMPT-25) ---------------------------
 
 export const OverrideStandings = z.object({

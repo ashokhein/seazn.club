@@ -44,7 +44,10 @@ const iso = (t: number): string => new Date(t).toISOString();
 
 // Every schedule write invalidates both public cache layers (the same pattern
 // as scoring, doc 09 §3 / doc 12 §2) and refreshes any open boards.
-function afterScheduleWrite(
+// Exported for the #350 joint apply (competition-schedule-apply.ts), which fires
+// it once per written division AFTER its single transaction commits — same
+// placement as `applySchedule`, not a second copy of the invalidation list.
+export function afterScheduleWrite(
   divisionId: string,
   competitionId: string,
   reason: "schedule" | "publish" | "start",
@@ -199,7 +202,9 @@ export function scopeLocked(
   );
 }
 
-async function divisionLockState(
+// Exported for the #350 joint apply: a locked division must abort a joint write
+// on exactly the terms it aborts a single-division one.
+export async function divisionLockState(
   tx: Tx,
   divisionId: string,
 ): Promise<{ frozen: boolean; scopes: LockedScope[] }> {
@@ -659,7 +664,10 @@ export interface MoveInput {
 /** Optimistic-concurrency guard (v3/11 gap 10): schedule writes may carry the
  *  division seq the client rendered from; a stale token means another admin
  *  edited the board since — 409 with the current seq so the client resyncs. */
-async function assertFreshSeq(
+// Exported for the #350 joint apply, which asserts it once per division inside
+// ONE transaction: a stale token on any division must abort every division's
+// write, and that only holds if both sides raise the identical SEQ_CONFLICT.
+export async function assertFreshSeq(
   tx: Tx,
   divisionId: string,
   expectedSeq: number | undefined,
