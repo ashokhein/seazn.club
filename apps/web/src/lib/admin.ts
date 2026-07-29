@@ -29,6 +29,31 @@ export async function requireSuperadmin(): Promise<StaffUser> {
   return staff;
 }
 
+/**
+ * Actions written to `staff_audit_log` by a CUSTOMER acting on their own
+ * account, not by staff (v17 gap #308).
+ *
+ * The table is the schema's only generic actor+target+detail sink, so two
+ * self-service billing effects record themselves here for accountability — a
+ * departing organisation's forfeited wallet balance (#285) and the comped plan
+ * a `ride_out` detach hands out (#306). Both carry the CUSTOMER as `actor_id`,
+ * because the customer is who did it.
+ *
+ * That is right for the record and wrong for `/admin`, which reads the same
+ * table as "what staff did". Unfiltered, a busy day of ordinary detaches reads
+ * as staff activity, so the number people glance at to spot unusual staff
+ * behaviour is mostly not staff behaviour.
+ *
+ * These happen to be dot-namespaced where everything `logStaffAction` writes is
+ * a bare name, but that convention is enforced nowhere and a future author has
+ * no reason to know it. Hence an explicit list, plus a guard test that fails
+ * when a direct insert appears with an action that is not on it.
+ */
+export const CUSTOMER_SELF_SERVICE_AUDIT_ACTIONS = [
+  "billing_group.detach_wallet_not_carried",
+  "billing_group.detach_comp_granted",
+] as const;
+
 /** Record a staff action in the audit log. */
 export async function logStaffAction(
   actorId: string,

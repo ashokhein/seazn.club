@@ -1,5 +1,6 @@
 import Link from "@/components/ui/console-link";
 import { sql } from "@/lib/db";
+import { CUSTOMER_SELF_SERVICE_AUDIT_ACTIONS } from "@/lib/admin";
 
 export default async function AdminDashboard() {
   const [counts] = await sql<{
@@ -9,7 +10,12 @@ export default async function AdminDashboard() {
       (select count(*)::int from users where deleted_at is null)          as users,
       (select count(*)::int from organizations where status = 'active')   as orgs,
       (select count(*)::int from subscriptions where plan_key <> 'community' and status in ('trialing','active')) as active_subs,
-      (select count(*)::int from staff_audit_log where created_at >= now() - interval '24 hours') as staff_actions_today`;
+      -- STAFF actions, so the self-service rows customers write into the same
+      -- table are excluded (#308). Counting them made this tile a measure of
+      -- how many organisations detached today, under a label that says staff.
+      (select count(*)::int from staff_audit_log
+        where created_at >= now() - interval '24 hours'
+          and action <> all(${sql.array([...CUSTOMER_SELF_SERVICE_AUDIT_ACTIONS])}::text[])) as staff_actions_today`;
 
   const recentAudit = await sql<{
     id: string; actor_email: string; action: string; target_type: string;
@@ -17,6 +23,7 @@ export default async function AdminDashboard() {
   }[]>`
     select s.id, u.email as actor_email, s.action, s.target_type, s.target_id, s.created_at
     from staff_audit_log s join users u on u.id = s.actor_id
+    where s.action <> all(${sql.array([...CUSTOMER_SELF_SERVICE_AUDIT_ACTIONS])}::text[])
     order by s.created_at desc limit 20`;
 
   return (

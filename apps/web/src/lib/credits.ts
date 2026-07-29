@@ -1011,6 +1011,12 @@ export async function auditWalletForfeitedOnDetach(
 ): Promise<void> {
   const grant = Math.max(0, await bucketBalance(tx, oldWalletId, "grant"));
   const pack = Math.max(0, await bucketBalance(tx, oldWalletId, "pack"));
+  // Nothing was left behind, so there is nothing to be accountable for (#308).
+  // This row exists to answer "what did that organisation forfeit"; written when
+  // the answer is "nothing" it is pure volume, and it is the common case — most
+  // organisations detach with an empty wallet. Every such row also had to be
+  // filtered back out of /admin, so the cheapest fix is not to create it.
+  if (grant === 0 && pack === 0) return;
   await tx`
     insert into staff_audit_log (actor_id, action, target_type, target_id, detail)
     values (${actorUserId}, 'billing_group.detach_wallet_not_carried', 'org', ${orgId},
