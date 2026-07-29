@@ -260,9 +260,10 @@ const readGroup = async (id: string) =>
         comped_until: Date | null;
         trial_used_at: Date | null;
         has_payment_method: boolean;
+        cancel_at_period_end: boolean;
       }[]
     >`select plan_key, status, owner_user_id, quantity_paid, comped_until, trial_used_at,
-             has_payment_method from subscriptions where id = ${id}`
+             has_payment_method, cancel_at_period_end from subscriptions where id = ${id}`
   )[0];
 
 const orgGroup = async (orgId: string) =>
@@ -1023,6 +1024,55 @@ describe.skipIf(!HAS_DB)("detach", () => {
     err.mockRestore();
   });
 
+  it("a FAILED Stripe cancel puts cancel_at_period_end back — a lost flag is a subscription nobody cancels", async () => {
+    // #315. The customer already pressed cancel: the group is live and paying
+    // now, and Stripe is scheduled to end it at the period boundary. The claim
+    // clears that flag along with status/plan/comped/qty because the group is
+    // about to be cancelled OUTRIGHT, which makes the schedule moot.
+    //
+    // When Stripe refuses, the outright cancel never happened — so the schedule
+    // is not moot, it is the customer's standing instruction, and the rollback
+    // that restores status/plan/comped/qty but not this one leaves a group that
+    // is live, billable, and no longer scheduled to stop. That is strictly worse
+    // than never having tried: the customer believes they cancelled, nothing in
+    // the product says otherwise, and the renewal invoices keep arriving with
+    // nobody looking for them. Every other rolled-back column is recoverable by
+    // the reconcile sweep; this one is not — no sweep can infer an intent that
+    // was only ever recorded here.
+    //
+    // Driven through the real failure path (the Stripe double throws) rather
+    // than by hand-writing the post-claim row: writing the row and calling the
+    // restore would prove the restore, not that the catch reaches it.
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const stripeSubId = "sub_capefail_" + uniq();
+    const group = await makeGroup(payer, {
+      stripeSubId,
+      periodEndDays: 30,
+      cancelAtPeriodEnd: true,
+    });
+    const leaving = await makeOrg(group, clubOwner);
+    expect((await readGroup(group)).cancel_at_period_end).toBe(true);
+
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    stripeMock.subscriptionsCancel.mockImplementationOnce(async () => {
+      throw new Error("stripe refused the cancel");
+    });
+
+    const res = await detachOrgFromGroup({ actorUserId: clubOwner, orgId: leaving });
+
+    expect(stripeMock.subscriptionsCancel).toHaveBeenCalledWith(stripeSubId);
+    expect(res.cancelled_group).toBeNull();
+    const after = await readGroup(group);
+    // Exactly as it was, all five columns.
+    expect(after.status).toBe("active");
+    expect(after.plan_key).toBe("pro");
+    expect(after.quantity_paid).toBe(1);
+    expect(after.comped_until).toBeNull();
+    expect(after.cancel_at_period_end).toBe(true);
+    err.mockRestore();
+  });
+
   it("refuses when the org already has a billing group of its own", async () => {
     const owner = await makeUser("solo");
     const loose = await makeLooseOrg(owner);
@@ -1141,6 +1191,139 @@ describe.skipIf(!HAS_DB)("detach leaves an audit trail for the wallet it does no
     // The same action name is written by the attach-side forfeit, so the row
     // has to say which path it came from.
     expect(audit?.detail?.via).toBe("detach");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The comp a ride_out hands out (#306)
+// ---------------------------------------------------------------------------
+
+/** The comp-grant audit row for `orgId`, newest first. */
+const compAudit = async (orgId: string) =>
+  (
+    await sql<
+      {
+        actor_id: string;
+        target_type: string;
+        detail: {
+          old_group_id?: string;
+          new_group_id?: string;
+          payer_user_id?: string;
+          plan_key?: string;
+          comped_until?: string;
+          inherited_from?: string;
+          mode?: string;
+        };
+      }[]
+    >`
+      select actor_id, target_type, detail from staff_audit_log
+       where target_id = ${orgId} and action = 'billing_group.detach_comp_granted'
+       order by created_at desc limit 1`
+  )[0];
+
+describe.skipIf(!HAS_DB)("detach audits the comp it hands out (#306)", () => {
+  it("records the ride_out comp, its expiry, and the payer it is charged against", async () => {
+    // A ride_out mints the leaver a free paid-plan period at the OLD payer's
+    // expense. Before #306 the only trace of that grant was a column value on a
+    // brand-new subscriptions row: no actor, no old group, no payer, nothing to
+    // answer "who took a month of Pro Plus off my subscription, and when".
+    // The wallet forfeit beside it has been audited since #285; a comped plan is
+    // the same class of silent, money-adjacent outcome.
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const group = await makeGroup(payer, {
+      plan: "pro_plus",
+      stripeSubId: "sub_comp_audit_" + uniq(),
+      quantityPaid: 2,
+      periodEndDays: 30,
+    });
+    stripeMock.state.quantity = 2;
+    await makeOrg(group, payer);
+    const orgId = await makeOrg(group, clubOwner);
+
+    const res = await detachOrgFromGroup({ actorUserId: clubOwner, orgId });
+
+    // The comp really was handed out (otherwise the audit assertions below are
+    // asserting about nothing).
+    const fresh = await readGroup(res.subscription_id);
+    expect(fresh.plan_key).toBe("pro_plus");
+    expect(fresh.comped_until).not.toBeNull();
+
+    const audit = await compAudit(orgId);
+    // An entitlement grant with an actor on it — the whole point of #306.
+    expect(audit?.actor_id).toBe(clubOwner);
+    expect(audit?.target_type).toBe("org");
+    expect(audit?.detail?.old_group_id).toBe(group);
+    expect(audit?.detail?.new_group_id).toBe(res.subscription_id);
+    // Whose subscription paid for it. The actor here is the club owner, NOT the
+    // payer, so a row that recorded only the actor would name the wrong party.
+    expect(audit?.detail?.payer_user_id).toBe(payer);
+    expect(audit?.detail?.plan_key).toBe("pro_plus");
+    // What was granted, and until when — the same instant that landed on the row.
+    expect(audit?.detail?.comped_until).toBe(fresh.comped_until?.toISOString());
+    expect(audit?.detail?.mode).toBe("ride_out");
+    // Which of the two dates it inherited. A staff comp and a paid period end
+    // are very different money, and the coalesce in detach hides which one won.
+    expect(audit?.detail?.inherited_from).toBe("current_period_end");
+  });
+
+  it("names the STAFF comp when that is the date the leaver rode out on", async () => {
+    // A staff-comped group has comped_until set and current_period_end NULL, so
+    // the leaver's free period is being taken off a comp somebody granted by
+    // hand rather than off a period a customer paid for. The trail has to be
+    // able to tell those apart; only this field can.
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const comped = await makeGroup(payer, {
+      plan: "pro",
+      stripeSubId: null,
+      periodEndDays: null,
+      compedUntilDays: 20,
+    });
+    await makeOrg(comped, payer);
+    const orgId = await makeOrg(comped, clubOwner);
+
+    const res = await detachOrgFromGroup({ actorUserId: clubOwner, orgId });
+    expect((await readGroup(res.subscription_id)).plan_key).toBe("pro");
+
+    const audit = await compAudit(orgId);
+    expect(audit?.detail?.inherited_from).toBe("comped_until");
+    expect(audit?.detail?.plan_key).toBe("pro");
+  });
+
+  it("writes NOTHING when no comp is handed out — a release, or a past_due group", async () => {
+    // The row must mark an actual grant, not "a detach happened". A trail that
+    // fires on every detach cannot be read as "these orgs got free plan time".
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const live = await makeGroup(payer, {
+      stripeSubId: "sub_comp_none_" + uniq(),
+      quantityPaid: 2,
+      periodEndDays: 30,
+    });
+    stripeMock.state.quantity = 2;
+    await makeOrg(live, payer);
+    const released = await makeOrg(live, clubOwner);
+
+    await detachOrgFromGroup({ actorUserId: clubOwner, orgId: released, mode: "release" });
+    expect((await readGroup((await orgGroup(released)) as string)).comped_until).toBeNull();
+    expect(await compAudit(released)).toBeUndefined();
+
+    // ride_out on a past_due group degrades to release (a dunning group cannot
+    // hand on a period it has not paid for), so there is no comp there either.
+    const dunning = await makeGroup(payer, {
+      status: "past_due",
+      stripeSubId: "sub_comp_dunning_" + uniq(),
+      quantityPaid: 2,
+      periodEndDays: 30,
+    });
+    stripeMock.state.quantity = 2;
+    await makeOrg(dunning, payer);
+    const degraded = await makeOrg(dunning, clubOwner);
+
+    await detachOrgFromGroup({ actorUserId: clubOwner, orgId: degraded });
+    expect((await readGroup((await orgGroup(degraded)) as string)).comped_until).toBeNull();
+    expect(await compAudit(degraded)).toBeUndefined();
   });
 });
 
@@ -1753,6 +1936,33 @@ describe.skipIf(!HAS_DB)("quantity drift", () => {
     // refunds in this design.
     expect(call![1].proration_behavior).toBe("none");
   });
+
+  it("leaves an INCOMPLETE group's drift uncorrected — its status list excludes 'incomplete' (#311)", async () => {
+    // hasLiveSubscription/LIVE_SUBSCRIPTION_STATUSES (subscription-status.ts)
+    // count 'incomplete' as live. reconcileGroupQuantities' own hand-written
+    // `status in ('trialing', 'active', 'past_due')` does not, so a group whose
+    // first invoice never paid is never selected here no matter how far its
+    // quantity_paid drifts from its live org count — unlike the identically
+    // drifted 'active' sibling above, which the same sweep DOES correct. This
+    // pins the CURRENT behaviour; #311 stops short of deriving this list from
+    // the constant because doing so would be a live behaviour change (this
+    // group would start getting corrected) rather than a pure refactor.
+    const payer = await makeUser("payer");
+    const stripeSubId = "sub_incomplete_drift_" + uniq();
+    const group = await makeGroup(payer, { stripeSubId, status: "incomplete", quantityPaid: 5 });
+    await makeOrg(group, payer);
+    await makeOrg(group, payer);
+    await makeOrg(group, payer);
+    stripeMock.state.quantity = 5;
+
+    await reconcileGroupQuantities(2000);
+
+    expect((await readGroup(group)).quantity_paid).toBe(5);
+    const call = stripeMock.subscriptionsUpdate.mock.calls.find(
+      (c) => (c as unknown as [string])[0] === stripeSubId,
+    );
+    expect(call).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2136,6 +2346,35 @@ describe.skipIf(!HAS_DB)("a live subscription with nothing left to bill", () => 
       select count(*)::text as n from subscriptions
        where id = ${group} and status in ('trialing', 'active', 'past_due')`;
     expect(Number(n)).toBe(1);
+  });
+
+  it("never cancels an INCOMPLETE group whose last org was soft deleted — cancelGroupIfEmpty's status list excludes 'incomplete' (#311)", async () => {
+    // syncGroupQuantity's own gate is hasLiveSubscription, which correctly
+    // treats 'incomplete' as live (LIVE_SUBSCRIPTION_STATUSES), so it reaches
+    // the orphaned branch and calls the private cancelGroupIfEmpty exactly as
+    // it would for an 'active' group. But that function's claiming UPDATE has
+    // its OWN hand-written `status in ('trialing', 'active', 'past_due')`,
+    // which excludes 'incomplete' — so the UPDATE matches zero rows, the
+    // claim silently fails, and the group is left billing Stripe for an org
+    // that no longer exists, with nothing left to ever retry it. This pins
+    // that CURRENT behaviour; #311 stops short of deriving this list from the
+    // constant because doing so (this group would start being cancelled) is a
+    // live behaviour change, not a pure refactor.
+    const payer = await makeUser("payer");
+    const stripeSubId = "sub_incomplete_orphan_" + uniq();
+    const group = await makeGroup(payer, { stripeSubId, status: "incomplete", periodEndDays: 30 });
+    const orgId = await makeOrg(group, payer);
+    await sql`update organizations set deleted_at = now() where id = ${orgId}`;
+
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await syncGroupQuantity(group);
+    } finally {
+      err.mockRestore();
+    }
+
+    expect(stripeMock.subscriptionsCancel).not.toHaveBeenCalled();
+    expect((await readGroup(group)).status).toBe("incomplete");
   });
 });
 

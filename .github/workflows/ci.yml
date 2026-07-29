@@ -318,6 +318,15 @@ jobs:
         env:
           REDIS_URL: redis://localhost:6379
 
+      # #336: platform-settings.ts's cached fee is namespaced by DB_SCHEMA now,
+      # but the regression that catches it going back to a single global key
+      # needs a real Redis actually holding a warm, cross-schema entry — same
+      # REDIS_URL-scoping reason as the two steps above.
+      - name: Platform fee cache isolation tests (real Redis)
+        run: npm test --workspace apps/web -- run src/lib/__tests__/platform-fee-cache-isolation.redis.test.ts
+        env:
+          REDIS_URL: redis://localhost:6379
+
       # Live-Stripe against real test-mode Stripe (sk_test, already in the job env)
       # on the real Postgres this job runs. Sync prices first, then run ONLY the
       # CI-safe live suites: billing-tiers (self-contained) + billing-proration

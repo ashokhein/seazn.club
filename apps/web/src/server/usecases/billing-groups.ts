@@ -12,6 +12,7 @@ import "server-only";
 // club's own bank account with its own KYC, and regrouping who pays for the
 // SOFTWARE has no effect on money in or out. Nothing in this file touches it.
 import type Stripe from "stripe";
+import type postgres from "postgres";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { getStripe } from "@/lib/stripe";
@@ -545,6 +546,7 @@ interface CancelClaim {
   prev_plan: string;
   prev_comped: Date | null;
   prev_qty: number;
+  prev_cancel_at_period_end: boolean;
   stripe_subscription_id: string | null;
 }
 
@@ -557,7 +559,8 @@ async function cancelGroupIfEmpty(
     // the rollback below.
     const [prev] = await tx<CancelClaim[]>`
       select status as prev_status, plan_key as prev_plan, comped_until as prev_comped,
-             quantity_paid as prev_qty, stripe_subscription_id
+             quantity_paid as prev_qty, cancel_at_period_end as prev_cancel_at_period_end,
+             stripe_subscription_id
         from subscriptions where id = ${subscriptionId} for update`;
     if (!prev) return null;
     // Statement 2, and a NEW snapshot with it: this is where an attach that
@@ -587,10 +590,22 @@ async function cancelGroupIfEmpty(
       // Put it back exactly as it was. A row left saying `canceled` while Stripe
       // keeps charging is the worst outcome: it drops out of every
       // live-subscription filter, including the sweep's, so nothing retries.
+      //
+      // #315: `cancel_at_period_end` restores with the rest. The claim clears it
+      // because a group being cancelled OUTRIGHT has no period left to cancel at
+      // — but that reasoning only holds if the outright cancel lands. When
+      // Stripe refuses, the flag reverts to what it was, and what it was is the
+      // customer's standing instruction to stop billing at the period boundary,
+      // recorded nowhere else. Dropping it leaves a live, billable subscription
+      // that is no longer scheduled to end while the customer believes they
+      // cancelled — a worse state than never having attempted the cancel, and
+      // the one column here no reconcile sweep can rebuild, because intent
+      // cannot be re-derived from Stripe's or our own remaining state.
       await sql`
         update subscriptions
            set status = ${claimed.prev_status}, plan_key = ${claimed.prev_plan},
                comped_until = ${claimed.prev_comped}, quantity_paid = ${claimed.prev_qty},
+               cancel_at_period_end = ${claimed.prev_cancel_at_period_end},
                updated_at = now()
          where id = ${subscriptionId}`;
       console.error("cancelGroupIfEmpty: Stripe cancel failed", subscriptionId, err);
@@ -869,6 +884,68 @@ export interface DetachResult {
 export type DetachMode = "ride_out" | "release";
 
 /**
+ * Record that a `ride_out` detach handed `orgId` a free period of a paid plan
+ * (#306). The grant itself is nothing but two column values on a brand-new
+ * subscriptions row — `plan_key` and `comped_until` — which say what the org
+ * ended up with but not that anyone granted it, who, when, or off whose
+ * subscription. And it IS a grant at somebody else's expense: the old payer
+ * keeps paying for the period, the departed org keeps using it, and the seat is
+ * spent, so re-adding that org is charged again.
+ *
+ * The sibling of `auditWalletForfeitedOnDetach` (#285) — same table, same
+ * shape, same reason. That one exists because a silent WALLET outcome was
+ * unacceptable; a comped plan is the same problem for a different asset. It
+ * lives HERE rather than beside it in lib/credits.ts because no credits are
+ * involved: this is plan entitlement, and credits.ts owns the ledger.
+ *
+ * `staff_audit_log` (V103), not `billing_events`: billing_events is the Stripe
+ * INGEST table, keyed by the Stripe event id it dedupes on (`id text primary
+ * key`, webhook body in `payload`), so a synthetic row there would invent an
+ * event Stripe never sent and squat on that dedupe key. staff_audit_log is the
+ * schema's only generic actor+target+detail sink and its `actor_id` carries no
+ * `is_staff` constraint — the argument #285 already made. Unlike sponsors.ts's
+ * actorless org-wide packages, a detach ALWAYS has a real user behind it
+ * (`actorUserId` is required and authorised above), so the NOT NULL `actor_id`
+ * is satisfied honestly rather than by proxy.
+ *
+ * `inherited_from` is not decoration. The `coalesce(current_period_end,
+ * comped_until)` below erases which date won, and the two are very different
+ * money: a period a customer actually paid for, versus a comp staff granted by
+ * hand. Only this field can tell a reader which one was passed on.
+ */
+async function auditCompGrantedOnDetach(
+  tx: postgres.TransactionSql,
+  a: {
+    actorUserId: string;
+    orgId: string;
+    oldGroupId: string;
+    newGroupId: string;
+    payerUserId: string;
+    planKey: string;
+    compedUntil: string;
+    inheritedFrom: "current_period_end" | "comped_until";
+    mode: DetachMode;
+  },
+): Promise<void> {
+  await tx`
+    insert into staff_audit_log (actor_id, action, target_type, target_id, detail)
+    values (${a.actorUserId}, 'billing_group.detach_comp_granted', 'org', ${a.orgId},
+            ${tx.json({
+              old_group_id: a.oldGroupId,
+              new_group_id: a.newGroupId,
+              // Who is out of pocket. The actor is often the LEAVER's owner, not
+              // the payer, so a row carrying only actor_id names the wrong party.
+              payer_user_id: a.payerUserId,
+              plan_key: a.planKey,
+              // Normalised here: the driver hands timestamptz back as a Date,
+              // and JSON.stringify would render one shape and a string another.
+              comped_until: new Date(a.compedUntil).toISOString(),
+              inherited_from: a.inheritedFrom,
+              mode: a.mode,
+            } as never)})`;
+}
+
+/**
  * Move `orgId` out of its billing group and onto a fresh one of its own.
  *
  * EITHER SIDE may initiate: the group's payer can push an org out, and the
@@ -980,6 +1057,15 @@ export async function detachOrgFromGroup(args: {
         : null;
     // No expiry date means no paid plan. Community is the only safe landing.
     const planKey = compedUntil ? group.plan_key : "community";
+    // Which of the two dates the coalesce above actually took. current_period_end
+    // wins when present, so its presence is the whole test. Recorded in the audit
+    // row because the coalesce is otherwise lossy — see auditCompGrantedOnDetach.
+    const inheritedFrom =
+      compedUntil == null
+        ? null
+        : group.current_period_end != null
+          ? ("current_period_end" as const)
+          : ("comped_until" as const);
 
     const [fresh] = await tx<{ id: string }[]>`
       insert into subscriptions
@@ -988,6 +1074,22 @@ export async function detachOrgFromGroup(args: {
               ${compedUntil}, ${group.trial_used_at}, now())
       returning id`;
     await tx`update organizations set subscription_id = ${fresh.id} where id = ${orgId}`;
+    // #306: a ride_out just minted a free paid period at the payer's expense.
+    // Only when one was ACTUALLY handed out — a release, or a group too far into
+    // dunning to hand anything on, grants nothing, and a trail that fired on
+    // every detach could not be read as "these orgs got free plan time".
+    if (compedUntil != null && inheritedFrom)
+      await auditCompGrantedOnDetach(tx, {
+        actorUserId,
+        orgId,
+        oldGroupId: group.id,
+        newGroupId: fresh.id,
+        payerUserId: group.owner_user_id,
+        planKey,
+        compedUntil,
+        inheritedFrom,
+        mode,
+      });
     // #285 decided the default: a departing org takes no share of the group's
     // pool, because a shared wallet has no per-org share to split off — just an
     // audit trail of what was left behind, for accountability.

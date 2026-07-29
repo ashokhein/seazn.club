@@ -18,6 +18,10 @@ Every plan comes with a monthly grant that **resets on the 1st of each month** �
 
 The grant meter on the Credits tab shows how much of this month's grant you've used and when it resets. Unused grant credits don't roll over — the pool is topped back up to the full amount each month.
 
+If a run fails before it finishes, its credits are refunded — the meter gives them back, so a failed run never counts against your grant.
+
+If a subscription lapses — a payment more than 14 days overdue, a comp that has ended, or a cancelled plan — the monthly grant falls back to the Community 10 a month until it is back in good standing, and the Credits tab shows that lower figure.
+
 ## Packs and Event Pass credits never expire
 
 When your monthly grant runs low, you can **buy a credit pack**. Pack credits — and the **one-time credits an Event Pass adds** — go into a separate pool that **never expires**. AI runs always spend your monthly grant first, so a pack is only touched once the grant is gone. That way a pack you buy is never wasted while free grant credits remain.

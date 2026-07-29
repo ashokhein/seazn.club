@@ -67,7 +67,7 @@ vi.mock("@/lib/billing", () => ({
   syncSubscription: billingMock.syncSubscription,
 }));
 
-// V310: the plan change lands on the billing GROUP, so the cache drop is
+// V314: the plan change lands on the billing GROUP, so the cache drop is
 // invalidateEntitlementsForOrgGroup — still called with the org id.
 const entitlementsMock = vi.hoisted(() => ({
   invalidateOrgEntitlements: vi.fn(),
@@ -162,7 +162,7 @@ describe("previewPlanChange price-id selection", () => {
         }),
       }),
     );
-    // V310: the renewal quote is Stripe's own recurring preview, NOT
+    // V314: the renewal quote is Stripe's own recurring preview, NOT
     // proPlusPrice(). Prices are tiers_mode: graduated now, so the flat helper
     // under-quotes every multi-org group — 5800 here is base + one extra org,
     // a number the flat lookup cannot produce.

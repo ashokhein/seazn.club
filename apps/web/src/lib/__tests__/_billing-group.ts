@@ -1,4 +1,4 @@
-// Fixture helper for billing groups (V310).
+// Fixture helper for billing groups (V314).
 //
 // Billing moved off the org: `subscriptions` is now the GROUP (its own id,
 // its own owner_user_id payer) and `organizations.subscription_id` points at

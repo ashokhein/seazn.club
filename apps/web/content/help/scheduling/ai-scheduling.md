@@ -10,8 +10,8 @@ order: 5
 
 Scheduling runs in two passes, and you can stop after the first:
 
-1. **Schedule** — the architect places every movable fixture on a court and time. This phase runs on **every plan** (within the run quota below).
-2. **Officials** — once you're happy with the times, the architect can staff the matches, assigning referees and other officials around their roles, blackout dates and other bookings. The officials pass is part of **automatic officials assignment**, a **Pro Plus** feature.
+1. **Schedule** — the architect places every movable fixture on a court and time. This phase runs on **every plan** (within the credits and rate limit below).
+2. **Officials** — once you're happy with the times, the architect can staff the matches, assigning referees and other officials around their roles, blackout dates and other bookings. Like the schedule pass, it runs on **every plan** too — see [AI Officials](/help/scheduling/ai-officials).
 
 You can apply the schedule on its own, or apply both together.
 
@@ -37,18 +37,11 @@ Your data stays yours: the brief is sent to one of our AI providers — Anthropi
 
 Every proposal is checked by the same engine that powers the drag-and-drop board. Blocking clashes (a double-booked court, a final before its feeder finishes) are repaired automatically for up to two rounds; anything left over is shown to you rather than hidden. Rest gaps, session windows and soft warnings are surfaced, never silently ignored.
 
-## Run quotas
+## Credits and rate limits
 
-AI Schedule needs no upgrade — it runs on **every plan, Community included**. What your plan sets is how many times you can run it: each **schedule generation** counts against a per-division quota.
+AI Schedule needs no upgrade — it runs on **every plan, Community included**. There is no per-division run cap any more: every run is metered by your organisation's shared **AI credit wallet** instead. Generate, refine and repair each spend **one AI credit**, and the officials pass spends one too — including its no-instruction default spread, which makes no model call but still draws from the wallet. A run that fails or times out is **refunded**, so it never costs you a credit. See [AI credits](/help/billing/credits) for the monthly grant, buying packs, and how a billing group shares one wallet.
 
-| Plan | AI schedule generations per division |
-| --- | --- |
-| Community | 5 |
-| Event Pass | 10 |
-| Pro | 20 |
-| Pro Plus | 50 |
-
-The quota is a **lifetime total per division** — it doesn't reset weekly or monthly, and a new division starts a fresh count. Refine and repair each use one generation. A run that fails or times out **does not** count. Separately, every plan has a burst brake of **5 AI runs per hour per division**. **Officials AI runs are not metered** — once you have automatic officials assignment, you can restaff as often as you like.
+Separately, every plan has a burst brake of **5 AI runs an hour per division** for scheduling, and its own **5 an hour** for officials — independent counters, so a busy hour staffing matches doesn't use up your scheduling budget or the other way round.
 
 ## Applying and undo
 

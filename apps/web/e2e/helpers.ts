@@ -231,7 +231,7 @@ async function withDb<T>(
  * Every fixture below writes the GROUP, so a missing link has to throw rather
  * than update zero rows. A no-op fixture is the worst kind: the spec runs
  * against whatever state the row already held and reports on the wrong thing,
- * which is how the pre-V310 version of these helpers survived a schema change
+ * which is how the pre-V314 version of these helpers survived a schema change
  * that had already made them impossible.
  */
 async function requireGroupId(sql: import("postgres").Sql, orgId: string): Promise<string> {
@@ -275,10 +275,10 @@ export async function communityLimit(featureKey: string): Promise<number> {
  * Set an org's plan directly in the DB (same trick auth.setup.ts uses for the
  * Pro account). Targets by org id or by owner email.
  *
- * Writes the org's billing GROUP, because V310 moved the plan there and dropped
+ * Writes the org's billing GROUP, because V314 moved the plan there and dropped
  * `subscriptions.org_id`. Two consequences worth knowing before you call it:
  *
- *  - It UPDATES, never inserts. Post-V310 every org points at a group from the
+ *  - It UPDATES, never inserts. Post-V314 every org points at a group from the
  *    moment it is created (lib/auth.ts createOrgForUser), so an insert here
  *    would mint a second, orphaned group that nothing reads.
  *  - The plan is a property of the group, so on a SHARED group this moves every
@@ -509,7 +509,7 @@ export async function setOrgSubscriptionSql(
   const used = fields.trial_used_at ?? null;
   const setId = "stripe_subscription_id" in fields;
   await withDb(async (sql) => {
-    // The org's billing GROUP — V310 moved every one of these columns onto it
+    // The org's billing GROUP — V314 moved every one of these columns onto it
     // and dropped subscriptions.org_id. See setOrgPlanBySql for why this
     // updates rather than inserts, and for the shared-group blast radius.
     const groupId = await requireGroupId(sql, orgId);

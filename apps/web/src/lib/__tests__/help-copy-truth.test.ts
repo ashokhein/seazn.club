@@ -49,6 +49,7 @@ import {
   retiredRunCapProseFaults,
   riderRateFaults,
   statesFeeLock,
+  unmeteredAiRunProseFaults,
   unqualifiedFeeReversionFaults,
 } from "@/lib/copy-truth";
 import { HELP_ARTICLE_SLUGS, helpUrl } from "@/lib/help";
@@ -94,16 +95,17 @@ afterAll(async () => {
 /**
  * Articles this task fixed, and therefore scans.
  *
- * NOT a directory walk. `content/help/billing/downgrade.md` carries the SAME
- * unqualified fee-reversion claim these guards now ban, `scheduling/ai-scheduling.md`
- * still documents the retired per-division run cap, and both are out of scope
- * for this wave by decision, tracked on #303. A `readdirSync` here would red the
- * suite on other people's work; naming the gaps keeps them visible and makes
- * closing one a one-line move rather than a rediscovery.
+ * NOT a directory walk. Two siblings this task fixed were `billing/downgrade.md`
+ * (the same unqualified fee-reversion claim these guards ban — see the new
+ * describe block below, `billing/downgrade.md is gated too`) and
+ * `scheduling/ai-scheduling.md` (the retired per-division run-cap table AND the
+ * false "officials AI runs are not metered" claim — see
+ * `scheduling/ai-scheduling.md is gated too`, further down). Both moved out of
+ * this list and into real scans once #303 corrected the copy. What remains
+ * below is a real gap with a real issue, and listing it as data rather than
+ * leaving it silently unscanned is the point.
  */
 const KNOWN_GAPS = [
-  "billing/downgrade.md:28 — 'the rate returns to 8%', same missing V312 qualifier (#303)",
-  "scheduling/ai-scheduling.md — retired per-division run-cap table and hourly brake (#303)",
   "lib/pricing-cards.ts + e2e/pro-plus-tier.spec.ts — card bullets pinned verbatim (#303)",
   "config/tips.ts + dictionaries/*/ui.json — tips.schedule.save-points.body is stale on BOTH sides vs schedule.checkpoints.max (community 2 since V319, pro 5, pro_plus unlimited); documented as the tip-mirror exception in dictionary-copy-truth.test.ts (#303)",
   "content/help/** link TARGETS are invisible to the inventory gate — claimSurfaces reduces [text](/url) to text, so repointing a URL raises 0 faults (sibling of the link-TITLE hole, #338)",
@@ -111,7 +113,7 @@ const KNOWN_GAPS = [
   "app/globals.css .competition-prose table — `display: block` is what gives that scroll box its overflow, and it drops the implicit table role in some assistive tech (row/column relationships stop being announced). Mitigation is an explicit role=\"table\"/rowgroup set, which the same sanitiser strips (#303)",
   // ── Round 4 bookkeeping: the residuals, named rather than left implicit ────
   "THE AXIS IS CIRCULAR. `claiming` is computed by running `en.halfClaim` over the tree, so an article only joins the half-rate axis — and therefore only earns a gate — if that vocabulary already matches it. The vocabulary has been measured at 0/12 and 0/24, so an article stating the rate in an unseen shape is invisible to the axis AND ungated. The axis narrows the ungated set; it does not close it (#303)",
-  "THE FOURTH ARTICLE. `billing/plans.md` states the plan org caps and the fee ladder and is inventory-gated, but `billing/downgrade.md`, `billing/credits.md`, `billing/operator.md` and every non-billing article are ungated and unscanned. They are defended only by the vocabulary above (#303)",
+  "THE FOURTH ARTICLE. `billing/plans.md` states the plan org caps and the fee ladder and is inventory-gated. `billing/downgrade.md` and `scheduling/ai-scheduling.md` now carry the fee-lock/run-cap/unmetered-run vocabulary scans (below), which is real coverage but NOT the word-for-word inventory gate — a reword that stays inside the vocabulary's blind spots is still possible. `billing/credits.md`, `billing/operator.md` and every other non-billing, non-scheduling article remain fully ungated and unscanned, defended only by the vocabulary above (#303)",
   "COMMENTS OWNED BY A CLOSING TOKEN SURVIVE `codeOnly` — NOT just the JSX idiom. `forEachChild` never visits TOKENS, so any comment whose nearest owner is a closing token is never blanked: `{/* … */}`, but equally an end-of-block comment on its own line, a comment in an empty block, the last call argument, the last array element, the last object property, the end of an interface body, a `switch`, or an `if`. Only an end-of-file comment is blanked. Measured tree-wide: 569 comment lines / 32,229 chars across 168 of 1,460 files. Direction is FAIL-SAFE — a negative scan can red on a comment that mentions a banned idiom, but can never miss real code — which is why it is recorded rather than fixed. Recorded as .tsx-only in round 5; that scoping was wrong and would have left the next reader hunting a JSX bug (#338)",
   "LITERAL-FREE SPANS ARE UNAUDITED, AND THIS ONE IS FAIL-OPEN. `blankedInsideLiteralFaults` proves every changed character lies OUTSIDE every string/regex/template-part/JSX literal, which closes the historical family (a `/*` inside a string ate 193 lines of division-settings.tsx) — proven by a length-preserving blank across every file raising 14,857 faults. It does NOT audit a stripper that eats a span containing NO literal at all. Constructed and it PASSES: blanking the largest literal-free span per file ships 79/79 green while destroying 1,061,443 chars across 1,341 of 1,460 files, largest single span 11,831 chars in server/usecases/billing-events.ts — LARGER than the 11,384 the historical bug actually ate. So this is not a corner case, it is most of the tree. THE COST ESTIMATE IN THE TASK 7 REPORT IS WRONG and that is the part that matters: closing this does NOT need a re-parse-and-compare 'doubling the walk'. It is a string check on the CHANGED CHARACTERS ONLY — take each maximal run of changed offsets, extend across neighbouring changed/space chars, require that span's raw text to be comments and whitespace only. O(changed chars), no re-parse, sub-millisecond per file. A wrong cost estimate is what stops a thing ever being closed (#338)",
   "FRONTMATTER PARSER DIVERGENCE, STILL LIVE. `server/help-content.ts`'s parseFrontmatter splits on `indexOf(\":\")` and is last-wins, so an indented `  description:` or a spaced `description :` is still RENDERED as the article's description while `copy-truth.ts`'s claimSurfaces regex (`^([A-Za-z_][\\w-]*):`) does not match it — the field scores 0 gate faults and is invisible to every rule. A falsehood delivered that way ships green (#303)",
@@ -275,6 +277,81 @@ describe("billing help articles say what the resolver enforces", () => {
       qualified.length,
       "no block both states what happens to the rate and qualifies it — the guards above are passing on silence",
     ).toBeGreaterThan(0);
+  });
+});
+
+// The two KNOWN_GAPS entries #303 actually fixed — closed as real scans rather
+// than left as prose that merely LOOKS corrected. "Trust the code, not the
+// drifted line number" applies here too: `helpArticle`/`helpArticleBySlug`
+// throw on a missing/empty file, so a moved or emptied article reds instead of
+// silently scanning nothing.
+describe("billing/downgrade.md is gated too (#303)", () => {
+  const downgrade = helpArticle("downgrade");
+
+  it("never says the entry-fee rate reverts without the first-paid-entry lock", () => {
+    expect(unqualifiedFeeReversionFaults("downgrade.md", downgrade)).toEqual([]);
+  });
+
+  it("states the lock, rather than merely omitting the false claim", () => {
+    expect(feeLockStatedFaults("downgrade.md", downgrade)).toEqual([]);
+
+    // ANTI-VACUITY, same shape as the event-pass/plans check above.
+    const qualified = proseBlocks(downgrade)
+      .flatMap((block) => sentences(block))
+      .filter((sentence) => mentionsRateAfterPass(sentence) && statesFeeLock(sentence));
+    expect(
+      qualified.length,
+      "no block both states what happens to the rate and qualifies it — the guards above are passing on silence",
+    ).toBeGreaterThan(0);
+  });
+
+  it("quotes no retired per-division AI-run cap", () => {
+    expect(retiredRunCapProseFaults("downgrade.md", downgrade)).toEqual([]);
+  });
+
+  // MUTATION PROOF: the exact unqualified sentence #303 found at line 28
+  // ("back on Community the rate returns to 8%", no V312 qualifier) must red
+  // both guards above — this is what "the guard would have caught it" means,
+  // demonstrated rather than asserted.
+  it("reds on the exact unqualified sentence #303 found", () => {
+    const reverted = downgrade.replace(
+      /What changes is the platform fee[\s\S]*?while the rest of the org sits on Community\./,
+      "What changes is the platform fee: back on Community the rate returns to **8%**, where Pro is 2% and Pro Plus 1%. See the fee ladder.\n\n**Passed competitions keep their own rate.** A competition covered by an Event Pass stays at **5%** after the downgrade, and keeps everything else the pass grants — bigger limits, branded exports, sponsor tiers and packages — while the rest of the org sits on Community.",
+    );
+    expect(reverted, "the replacement never matched — the article moved").not.toBe(downgrade);
+    expect(unqualifiedFeeReversionFaults("x", reverted)).not.toEqual([]);
+    expect(feeLockStatedFaults("x", reverted)).not.toEqual([]);
+  });
+});
+
+describe("scheduling/ai-scheduling.md is gated too (#303)", () => {
+  const aiScheduling = helpArticleBySlug("scheduling/ai-scheduling");
+
+  it("quotes no retired per-division AI-run cap", () => {
+    expect(retiredRunCapProseFaults("ai-scheduling.md", aiScheduling)).toEqual([]);
+  });
+
+  it("never claims an AI run — schedule or officials — is unmetered", () => {
+    expect(unmeteredAiRunProseFaults("ai-scheduling.md", aiScheduling)).toEqual([]);
+  });
+
+  // MUTATION PROOF, both halves #303 found: the retired lifetime-quota table,
+  // and "Officials AI runs are not metered".
+  it("reds on the exact retired table and the exact unmetered claim #303 found", () => {
+    const oldTable = `## Run quotas
+
+AI Schedule needs no upgrade — it runs on **every plan, Community included**. What your plan sets is how many times you can run it: each **schedule generation** counts against a per-division quota.
+
+| Plan | AI schedule generations per division |
+| --- | --- |
+| Community | 5 |
+| Event Pass | 10 |
+| Pro | 20 |
+| Pro Plus | 50 |
+
+The quota is a **lifetime total per division** — it doesn't reset weekly or monthly, and a new division starts a fresh count. Refine and repair each use one generation. A run that fails or times out **does not** count. Separately, every plan has a burst brake of **5 AI runs per hour per division**. **Officials AI runs are not metered** — once you have automatic officials assignment, you can restaff as often as you like.`;
+    expect(retiredRunCapProseFaults("x", oldTable)).not.toEqual([]);
+    expect(unmeteredAiRunProseFaults("x", oldTable)).not.toEqual([]);
   });
 });
 
@@ -449,6 +526,23 @@ describe("the help-prose guards survive a rewording, not just a revert", () => {
     ).not.toEqual([]);
     expect(
       retiredRunCapProseFaults("x", "Community gets 5 AI schedule runs per division."),
+    ).not.toEqual([]);
+  });
+
+  // The second exemption (#303): the genuinely live HOURLY burst brake
+  // (`rateLimit('ai-plan:'+divisionId, {max:5, windowSeconds:3600})`,
+  // schedule-ai.ts) is shaped exactly like the retired lifetime table to the
+  // base vocabulary, and must be writable — but ONLY when the sentence actually
+  // names an hourly window. A day/week/month framing names no real mechanism
+  // and must still red, same as any other invented allowance.
+  it("lets prose state the live hourly burst brake, but not a monthly one", () => {
+    expect(
+      retiredRunCapProseFaults("x", "Every plan has a burst brake of 5 AI runs an hour per division."),
+      "the true hourly rate limit",
+    ).toEqual([]);
+    expect(
+      retiredRunCapProseFaults("x", "Community gets 5 AI schedule runs a month per division."),
+      "a monthly per-division allowance is not a real mechanism and must still red",
     ).not.toEqual([]);
   });
 

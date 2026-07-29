@@ -105,7 +105,7 @@ export async function DELETE(req: Request) {
     // Hand on (or shut down) every billing group this user PAYS for, before
     // org_members is emptied below — the heir is found through it.
     //
-    // Since V310 billing gates on subscriptions.owner_user_id, so a group left
+    // Since V314 billing gates on subscriptions.owner_user_id, so a group left
     // pointing at a deleted user is unmanageable by anyone: every billing route
     // 403s, nobody can cancel, and the card keeps being charged for ever. The
     // sole-owner 409 above does not cover this — an association can pay for

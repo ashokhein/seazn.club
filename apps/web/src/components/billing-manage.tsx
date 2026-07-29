@@ -14,6 +14,7 @@ import { useConfirm } from "@/components/ui/confirm-provider";
 import { useMsg } from "@/components/i18n/dict-provider";
 import { asCurrency, formatMinor } from "@/lib/currency";
 import { planLabel } from "@/lib/plan-label";
+import { orgScopeHeaders } from "@/lib/org-scope";
 import {
   TAX_ID_TYPES,
   type DiscountSummary,
@@ -32,7 +33,15 @@ import {
 async function post(path: string, body?: unknown) {
   const res = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      // WHICH organisation this write is for, from the console URL on
+      // screen rather than the `seazn_org` cookie the route would otherwise
+      // read — that cookie lags a navigation by one client effect, so a save
+      // made inside the window landed on the PREVIOUS billing group (v17 gap
+      // #334).
+      ...orgScopeHeaders(),
+    },
     body: JSON.stringify(body ?? {}),
   });
   return res.json();

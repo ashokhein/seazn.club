@@ -100,12 +100,42 @@ export async function groupAlreadyCapped(
   sql: ReturnType<typeof postgres>,
   subscriptionId: string,
 ): Promise<boolean> {
-  const [row] = await sql<{ one: number }[]>`
-    select 1 as one from pass_credit_redemptions
+  return (await describeCapStatus(sql, subscriptionId)) !== "free";
+}
+
+/**
+ * Which of the two opposite states the cap index is holding for this group,
+ * if any:
+ *   - "free" — no row counts against the cap, nothing to backfill/report.
+ *   - "capped_healthy" — a LIVE credit is holding the cap. This is the cap
+ *     doing exactly its job; healthy.
+ *   - "capped_undetermined" — the cap's one row is an UNDETERMINED reversal
+ *     (webhook fired, `reversed_at` stamped, but `reversal_undetermined_at`
+ *     says the money was never actually clawed back — V337 / #286 / #291).
+ *     BLOCKED, not healthy: nobody has decided what happens to that credit.
+ *
+ * #307: the backfill's summary used to fold both capped arms into a single
+ * "already capped" counter. That conflation makes an operator's run look
+ * clean when it is actually sitting on undecided money — this function is
+ * what lets the caller (the backfill's main loop) report the two states
+ * separately instead.
+ *
+ * `pass_credit_redemptions_group_cap` is a PARTIAL UNIQUE index over exactly
+ * this predicate, so at most one row per subscription can ever match either
+ * arm — `limit 1` is not a compromise, there is only ever one candidate.
+ */
+export async function describeCapStatus(
+  sql: ReturnType<typeof postgres>,
+  subscriptionId: string,
+): Promise<"free" | "capped_healthy" | "capped_undetermined"> {
+  const [row] = await sql<{ undetermined: boolean }[]>`
+    select (reversal_undetermined_at is not null) as undetermined
+    from pass_credit_redemptions
     where subscription_id = ${subscriptionId}
       and (reversed_at is null or reversal_undetermined_at is not null)
     limit 1`;
-  return !!row;
+  if (!row) return "free";
+  return row.undetermined ? "capped_undetermined" : "capped_healthy";
 }
 
 interface Candidate {
@@ -152,6 +182,7 @@ async function main(): Promise<void> {
     console.log(`Scanning ${subs.length} subscription(s) with a Stripe customer...\n`);
 
     let alreadyCapped = 0;
+    let undeterminedBlocked = 0;
     let candidatesFound = 0;
     let inserted = 0;
     let skippedNoCompetition = 0;
@@ -159,13 +190,27 @@ async function main(): Promise<void> {
     let skippedStripeUnreadable = 0;
     let skippedDbError = 0;
     const stackedGroups: string[] = [];
+    const undeterminedGroups: string[] = [];
     const truncatedCustomers: string[] = [];
 
     for (const sub of subs) {
       // Already capped — nothing to backfill, and nothing to even look at on
-      // Stripe for this group.
-      if (await groupAlreadyCapped(sql, sub.id)) {
+      // Stripe for this group. But WHICH of the two capped states this is
+      // matters for the summary (#307): a healthy live credit and an
+      // undetermined-blocked one are opposite operational states, so they are
+      // counted (and reported) separately rather than folded into one bucket.
+      const capStatus = await describeCapStatus(sql, sub.id);
+      if (capStatus === "capped_healthy") {
         alreadyCapped++;
+        continue;
+      }
+      if (capStatus === "capped_undetermined") {
+        undeterminedBlocked++;
+        undeterminedGroups.push(
+          `subscription=${sub.id}: lifetime-cap row is an UNDETERMINED reversal — the credit ` +
+            `was never actually clawed back. This group is BLOCKED pending manual staff ` +
+            `resolution (reversal_undetermined_at), NOT a healthy cap.`,
+        );
         continue;
       }
 
@@ -323,7 +368,8 @@ async function main(): Promise<void> {
 
     console.log("\n--- summary ---");
     console.log(`Subscriptions scanned: ${subs.length}`);
-    console.log(`Already capped (row exists): ${alreadyCapped}`);
+    console.log(`Already capped (healthy, live credit): ${alreadyCapped}`);
+    console.log(`BLOCKED — undetermined reversal, needs manual review: ${undeterminedBlocked}`);
     console.log(`Groups with a pre-V335 credit found: ${candidatesFound}`);
     console.log(`${WRITE ? "Inserted" : "Would insert"}: ${inserted}`);
     console.log(`Skipped — no matching competition_passes row: ${skippedNoCompetition}`);
@@ -338,6 +384,15 @@ async function main(): Promise<void> {
       console.log(`\nSTACKED GROUPS — ${stackedGroups.length} found, needs manual staff review:`);
       for (const line of stackedGroups) console.log(`  ${line}`);
     }
+    if (undeterminedGroups.length) {
+      console.log(
+        `\nUNDETERMINED-BLOCKED GROUPS — ${undeterminedGroups.length} found. The lifetime cap ` +
+          `is holding these on a reversal that was never resolved — the credit was never ` +
+          `actually clawed back. This is NOT the same as a healthy cap; needs manual staff ` +
+          `review, one inventory instead of one alert email at a time:`,
+      );
+      for (const line of undeterminedGroups) console.log(`  ${line}`);
+    }
     if (truncatedCustomers.length) {
       console.log(
         `\nTRUNCATED CUSTOMERS — ${truncatedCustomers.length} found. This run is INCOMPLETE ` +
@@ -350,10 +405,14 @@ async function main(): Promise<void> {
     if (!WRITE) {
       console.log("\nDry run complete. Nothing was written. Re-run with --write to apply.");
     }
-    // An incomplete run must not look identical to a complete one from the
-    // exit code alone — CI or a human running this unattended needs a signal
-    // that survives past the scrollback.
-    if (truncatedCustomers.length) {
+    // An incomplete run — OR one that found money nobody has decided about
+    // yet — must not look identical to a clean one from the exit code alone.
+    // CI or a human running this unattended needs a signal that survives past
+    // the scrollback. Undetermined-blocked groups (#307) get the same
+    // treatment as a truncated balance-transaction fetch: neither is
+    // something this script can fix by re-running it, but both are exactly
+    // the kind of state a silent 0 would hide.
+    if (truncatedCustomers.length || undeterminedGroups.length) {
       process.exitCode = 1;
     }
   } finally {

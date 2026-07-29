@@ -8,8 +8,29 @@ import { HttpError } from "@/lib/errors";
 import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 
 const FEE_KEY = "platform_fee_percent";
-const CACHE_KEY = "platform:fee_percent";
+const CACHE_KEY_PREFIX = "platform:fee_percent";
 const TTL_SECONDS = 300;
+
+/**
+ * Cache key, namespaced by DB_SCHEMA — the same env var lib/db.ts's
+ * connection options use to pick a schema (db.ts:49). A function, not a
+ * module-load-time const: entKey() in entitlements.ts already does this
+ * per-org, and computing it lazily (rather than freezing it at import time)
+ * is what lets a test flip DB_SCHEMA mid-run and observe a different key.
+ *
+ * #336: the old un-namespaced key meant every schema — every migrated test
+ * database, and a local dev database sitting alongside one — shared a single
+ * 300s Redis entry. A write under one schema's platform_settings row leaked
+ * straight into a read for another's.
+ */
+function cacheKey(): string {
+  return `${CACHE_KEY_PREFIX}:${process.env.DB_SCHEMA ?? "seazn_club"}`;
+}
+
+/** @internal — exported for tests (#336 cache-isolation regression). */
+export function __platformFeeCacheKeyForTests(): string {
+  return cacheKey();
+}
 
 function envFallback(): number {
   const raw = Number(process.env.PLATFORM_FEE_PERCENT ?? "5");
@@ -20,13 +41,13 @@ function envFallback(): number {
  *  platform_settings row → PLATFORM_FEE_PERCENT env → 5. Plans and per-org
  *  overrides sit ABOVE this default (see feePercentFor in registrations). */
 export async function platformFeeDefault(): Promise<number> {
-  const cached = await cacheGet<{ v: number }>(CACHE_KEY);
+  const cached = await cacheGet<{ v: number }>(cacheKey());
   if (cached) return cached.v;
   const [row] = await sql<{ value: unknown }[]>`
     select value from platform_settings where key = ${FEE_KEY}`;
   const parsed = Number(row?.value);
   const v = Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : envFallback();
-  await cacheSet(CACHE_KEY, { v }, TTL_SECONDS);
+  await cacheSet(cacheKey(), { v }, TTL_SECONDS);
   return v;
 }
 
@@ -40,5 +61,5 @@ export async function setPlatformFeeDefault(pct: number, actorId: string): Promi
     values (${FEE_KEY}, ${sql.json(pct)}, ${actorId})
     on conflict (key) do update
       set value = excluded.value, updated_at = now(), updated_by = excluded.updated_by`;
-  await cacheDelPattern(CACHE_KEY);
+  await cacheDelPattern(cacheKey());
 }

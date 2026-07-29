@@ -28,6 +28,8 @@ So adding a free club to a Pro Plus group takes that club from 8% to 1% the mome
 
 A group has exactly **one payer** — one card, one invoice, one billing address, one VAT number. The payer manages the plan, the card and cancellation for the whole group.
 
+**The payer can open that bill from any organisation on it**, whether or not they are a member of one — **Settings → Billing**, **Credits** and **Add-ons** are theirs on every organisation the group funds. What they reach there is the bill and nothing else: no competitions, no members, nothing about the club itself to change.
+
 An organisation inside a group **cannot pay for itself, or pay a share.** There is no way to split a single invoice between several people; that's a payments product, not a setting. An organisation that wants its own bill has to leave the group first — see below. That's also the answer for two clubs that are two separate registered charities: two legal entities need two VAT numbers and two invoices, so they need two groups.
 
 Ownership of an organisation and payment for it are separate things. If an organisation changes owner, its billing stays with the group; the new owner sees who is paying for them, and can leave.

@@ -21,11 +21,14 @@
 // `error`; changing that under all of them to serve one page is how a small
 // billing fix becomes an unrelated regression.
 //
-// No React, no `server-only`, no imports at all — so it unit-tests under the
-// node vitest env with a hand-rolled `fetch`, and a "use client" island can
-// import it. No `"use client"` directive, deliberately — same as
+// No React and no `server-only` — so it unit-tests under the node vitest env
+// with a hand-rolled `fetch`, and a "use client" island can import it. Its one
+// import (`lib/org-scope`) holds to the same rule for the same reason. No
+// `"use client"` directive, deliberately — same as
 // lib/billing-checkout-client.ts: the importing island already establishes the
 // boundary, and leaving it off keeps the module usable from either side.
+
+import { orgScopeHeaders } from "@/lib/org-scope";
 
 /** A POST that either produced `data` or did not, with everything a caller
  *  needs to CHOOSE ITS OWN COPY on the failure branch. */
@@ -58,17 +61,28 @@ const FALLBACK_ERROR = "Request failed.";
  * A body with `ok: false` is a failure even on a 2xx, matching `api()`.
  *
  * @param fetchFn injectable so the seam is testable without a DOM or a network.
+ * @param pathname likewise: the console path this write is being made from.
+ *   Defaults to the live location, which is what a browser caller wants.
  */
 export async function postJson<T = unknown>(
   url: string,
   json: unknown,
   fetchFn: typeof fetch = fetch,
+  pathname?: string | null,
 ): Promise<PostResult<T>> {
   let res: Response;
   try {
     res = await fetchFn(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        // WHICH organisation this write is for, taken from the URL the user is
+        // looking at rather than from the `seazn_org` cookie the server would
+        // otherwise read: that cookie is re-pointed by an effect running after
+        // the destination page paints, so a save inside the window was applied
+        // to the PREVIOUS billing group (v17 gap #334).
+        ...orgScopeHeaders(pathname),
+      },
       body: JSON.stringify(json),
     });
   } catch {

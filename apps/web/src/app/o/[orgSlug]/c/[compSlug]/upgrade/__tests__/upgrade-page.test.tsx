@@ -40,6 +40,10 @@ const h = vi.hoisted(() => ({
   // to a real group with no redemption, so every pre-existing "credit shown"
   // case keeps meaning what it meant.
   subscriptionId: "sub-1" as string | null,
+  // v17 gap #354: null means the org has not spent its one trial yet — the
+  // same column `checkoutTrialDays` reads to decide the checkout's own
+  // `trial_period_days`.
+  trialUsedAt: null as string | null,
   groupRedeemed: false as boolean,
   // v17 gap #326: an unresolved `pass_mint_refusals` row for this competition.
   passUnderReview: false as boolean,
@@ -89,7 +93,9 @@ vi.mock("@/lib/db", () => {
     if (text.includes("pass_credit_redemptions"))
       return Promise.resolve(h.groupRedeemed ? [{ one: 1 }] : []);
     if (text.includes("organizations"))
-      return Promise.resolve(h.subscriptionId ? [{ id: h.subscriptionId }] : []);
+      return Promise.resolve(
+        h.subscriptionId ? [{ id: h.subscriptionId, trial_used_at: h.trialUsedAt }] : [],
+      );
     void vals;
     return Promise.resolve([]);
   };
@@ -120,6 +126,12 @@ vi.mock("@/lib/billing", () => ({
     if (h.passUnderReviewThrows) throw new Error("relation \"pass_mint_refusals\" does not exist");
     return h.passUnderReview;
   },
+  // The real predicate (lib/billing.ts) — reproduced rather than imported so
+  // this module stays fully mocked like every other export here, but matching
+  // its exact shape: `sub?.trial_used_at ? 0 : 14`. v17 gap #354's fix reads
+  // this SAME function, so a test that faked the answer a different way could
+  // pass while the page called something else entirely.
+  checkoutTrialDays: (sub?: { trial_used_at: string | null }) => (sub?.trial_used_at ? 0 : 14),
 }));
 vi.mock("@/server/usecases/billing-manage", () => ({ getPassPurchases: async () => h.purchases }));
 // The picker is NOT mocked. Since v17 #294 it owns both prices, the buy
@@ -168,6 +180,7 @@ beforeEach(() => {
   h.purchases = [];
   h.reconciled = [];
   h.subscriptionId = "sub-1";
+  h.trialUsedAt = null;
   h.groupRedeemed = false;
   h.passUnderReview = false;
   h.passUnderReviewThrows = false;
@@ -707,5 +720,43 @@ describe("ended — the pass is on the record but has stopped applying", () => {
     const html = await render();
     expect(html).toContain("data-pass-active");
     expect(html).not.toContain("data-pass-ended");
+  });
+});
+
+describe("the Go Pro trial promise (v17 gap #354)", () => {
+  // `upgrade.proCard.cta` reads "Go Pro — 14-day free trial" and is rendered
+  // regardless of pass state (offer, owned, ceiling, ended) — every one of
+  // them renders <ProNext>. An org that already spent its one trial
+  // (`trial_used_at`, V304/#190) must never see that clause: the checkout
+  // itself decides via `checkoutTrialDays(sub)`, and this is the SAME read,
+  // not a second guess at it. Exercised on the "ended" state because that is
+  // the one W8 mounted onto orgs with a payment history — raising the odds
+  // the trial is already spent well above the baseline — but the CTA is the
+  // same element regardless of which pass state put it on screen.
+  function endedPass() {
+    h.passRow = {
+      purchased_at: new Date(Date.now() - 20 * 86_400_000).toISOString(),
+      stripe_payment_intent: "pi_live_1",
+      pass_key: "event_pass",
+      status: "completed",
+      ends_on: null,
+    };
+    h.purchases = [RECEIPT];
+  }
+
+  it("still promises the trial for an org that has not spent it", async () => {
+    endedPass();
+    h.trialUsedAt = null;
+    const html = await render();
+    expect(html).toContain(t(uiEn, "upgrade.proCard.cta"));
+  });
+
+  it("drops the trial clause once trial_used_at is set", async () => {
+    endedPass();
+    h.trialUsedAt = "2026-01-01T00:00:00.000Z";
+    const html = await render();
+    expect(html).not.toContain(t(uiEn, "upgrade.proCard.cta"));
+    expect(html).toContain(`${t(uiEn, "upgrade.proCard.ctaNoTrial")} →`);
+    expect(html).not.toContain("free trial");
   });
 });

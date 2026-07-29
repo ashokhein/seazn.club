@@ -20,7 +20,7 @@ export async function BillingBanner({ orgId }: Props) {
   // stay a single indexed read: the banner renders on org home, a hot path, and
   // a live Stripe call per page view is not acceptable.
   //
-  // The row is reached through organizations.subscription_id (V310) and may be
+  // The row is reached through organizations.subscription_id (V314) and may be
   // shared with sibling orgs; org_status comes from the ORG, because suspension
   // is per-org moderation and no longer touches the shared subscription.
   //

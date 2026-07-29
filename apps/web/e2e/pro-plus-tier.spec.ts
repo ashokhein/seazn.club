@@ -104,7 +104,7 @@ async function seedOrg(opts: {
       returning id`;
     await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${ownerId}, 'owner')`;
     if (opts.plan) {
-      // V310: org -> subscription, and this seeder writes raw SQL rather than
+      // V314: org -> subscription, and this seeder writes raw SQL rather than
       // going through createOrgForUser, so it owns both halves of the link.
       const [group] = await sql<{ id: string }[]>`
         insert into subscriptions (owner_user_id, plan_key, status)

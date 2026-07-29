@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireOrgPage } from "@/server/page-auth";
+import { requireBillingPage } from "@/server/page-auth";
 import { walletIdFor } from "@/lib/credits";
 import { creditHistory } from "@/server/usecases/credits-tab";
 
@@ -22,13 +22,18 @@ function csvEscape(v: string | number): string {
 
 /**
  * GET /o/[orgSlug]/settings/billing/credits.csv — the org's AI-credit run
- * history as CSV (SPEC-6 §A3 export). Session-authed via requireOrgPage (org
- * members only, non-members 404); reads the same wallet the Credits tab shows,
- * so a grouped org exports the shared pool it spends from.
+ * history as CSV (SPEC-6 §A3 export). Reads the same wallet the Credits tab
+ * shows, so a grouped org exports the shared pool it spends from.
+ *
+ * Session-authed via `requireBillingPage` — the SAME gate as the Credits tab
+ * that renders this link (v17 gap #333), so members and the group's payer get
+ * the file and everyone else 404s. On `requireOrgPage` the payer could open the
+ * tab and then 404 on its own Export button, which is the "solved it for one
+ * surface" failure the issue names.
  */
 export async function GET(_req: Request, { params }: { params: Promise<{ orgSlug: string }> }) {
   const { orgSlug } = await params;
-  const { org } = await requireOrgPage(orgSlug, { tail: "/settings/billing" });
+  const { org } = await requireBillingPage(orgSlug, { tail: "/settings/billing" });
   const walletId = await walletIdFor(org.id);
   const rows = await creditHistory(walletId, 1000);
 

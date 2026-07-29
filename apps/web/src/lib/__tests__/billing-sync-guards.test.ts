@@ -113,7 +113,7 @@ afterAll(async () => {
   if (tempPlanKeys.length) {
     // Subscriptions seeded onto the temp plans must go first — plans.key is
     // referenced by subscriptions_plan_key_fkey. Their orgs must let go of the
-    // group first, or organizations_subscription_fk (V310) blocks the delete.
+    // group first, or organizations_subscription_fk (V314) blocks the delete.
     await sql`
       update organizations set subscription_id = null
        where subscription_id in (select id from subscriptions
@@ -194,7 +194,7 @@ describe.skipIf(!HAS_DB)("syncSubscription — unknown-price guard (P1-5)", () =
     expect(s.plan_key).toBe("pro_plus");
   });
 
-  // V310: an org ALWAYS has a group (createOrgForUser mints one, the migration
+  // V314: an org ALWAYS has a group (createOrgForUser mints one, the migration
   // backfilled the rest), so "no row yet" is now "a never-synced community
   // group" — the shape a first checkout syncs onto.
   it("a never-synced community group with an unknown price still lands community", async () => {

@@ -33,11 +33,24 @@
 // `--write` is additionally gated behind RECONCILE_ALLOW=1 so that "staging
 // only" is enforced rather than merely documented (see `writeGateBlocked`).
 //
+// Every wallet routed to MANUAL REVIEW (#309) is ALSO written to a JSON
+// Lines artifact — one self-contained JSON object per line, `{wallet_id,
+// grant, pack, reason}` — so the rows needing a human decision can be worked
+// from a file instead of scraped from console.warn scrollback (see
+// `toManualReviewJsonl` for why JSONL over CSV/a single JSON array). This is
+// a local file write, independent of --write/RECONCILE_ALLOW: it never
+// touches the database, so it happens on every run including a dry run.
+// Defaults to `DEFAULT_MANUAL_REVIEW_OUT_PATH` in the current working
+// directory; override with `--out=<path>`.
+//
 //   node --env-file-if-exists=apps/web/.env.local --experimental-strip-types \
 //     scripts/reconcile-stranded-wallets.ts              # dry run
 //   RECONCILE_ALLOW=1 node --env-file-if-exists=apps/web/.env.local \
 //     --experimental-strip-types \
 //     scripts/reconcile-stranded-wallets.ts --write        # applies it
+//   node --env-file-if-exists=apps/web/.env.local --experimental-strip-types \
+//     scripts/reconcile-stranded-wallets.ts --out=/tmp/manual-review.jsonl
+import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
@@ -89,6 +102,38 @@ export function writeGateBlocked(write: boolean, allow: string | undefined): boo
   return write && allow !== "1";
 }
 
+/** Default path (relative to the process's cwd) for the manual-review
+ *  artifact; override with `--out=<path>`. */
+export const DEFAULT_MANUAL_REVIEW_OUT_PATH = "reconcile-stranded-wallets.manual-review.jsonl";
+
+/** One wallet the script could not (or should not) auto-merge, and why. */
+export interface ManualReviewRow {
+  wallet_id: string;
+  grant: number;
+  pack: number;
+  reason: string;
+}
+
+/**
+ * Serializes manual-review rows as JSON Lines — one self-contained JSON
+ * object per line — rather than CSV or a single top-level JSON array (#309).
+ *
+ *   - CSV needs column-escaping for `reason`, which is free text that can
+ *     itself carry commas/quotes (a Postgres error message, for instance);
+ *     JSON needs none.
+ *   - A single JSON array requires the whole array to close cleanly. This
+ *     script already treats "one bad wallet must not abort the rest" as load
+ *     bearing (the per-wallet try/catch below); JSONL carries that same
+ *     property into the artifact — every COMPLETE line stays parseable even
+ *     if the process is killed mid-run.
+ *
+ * Newline-terminated so a rerun's output can be safely `cat`-appended, and so
+ * the empty-input case is a clean empty string rather than a stray newline.
+ */
+export function toManualReviewJsonl(rows: ManualReviewRow[]): string {
+  return rows.map((row) => JSON.stringify(row)).join("\n") + (rows.length ? "\n" : "");
+}
+
 async function main(): Promise<void> {
   const url = process.env.DATABASE_URL;
   if (!url) {
@@ -96,6 +141,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const WRITE = process.argv.includes("--write");
+  const outArgPrefix = "--out=";
+  const outArg = process.argv.find((a) => a.startsWith(outArgPrefix));
+  const OUT_PATH = outArg ? outArg.slice(outArgPrefix.length) : DEFAULT_MANUAL_REVIEW_OUT_PATH;
   if (writeGateBlocked(WRITE, process.env.RECONCILE_ALLOW)) {
     console.error(
       "REFUSED: --write is gated behind RECONCILE_ALLOW=1.\n" +
@@ -136,6 +184,7 @@ async function main(): Promise<void> {
     let merged = 0;
     let noop = 0;
     let needsReview = 0;
+    const manualReviewRows: ManualReviewRow[] = [];
 
     for (const w of stranded) {
       // Indicative only: read outside any lock, so it is good enough to
@@ -146,6 +195,12 @@ async function main(): Promise<void> {
       try {
         if (classifyBucketAmounts(balances) === "no_positive_balance") {
           needsReview++;
+          manualReviewRows.push({
+            wallet_id: w.wallet_id,
+            grant: balances.grant,
+            pack: balances.pack,
+            reason: "no_positive_balance",
+          });
           console.warn(
             `MANUAL REVIEW: wallet=${w.wallet_id} grant=${balances.grant} pack=${balances.pack} ` +
               `— negative or zero positive balance, data integrity: no merge is possible.`,
@@ -160,6 +215,12 @@ async function main(): Promise<void> {
         const targetOrgId = chooseReconcileTarget(spenders);
         if (!targetOrgId) {
           needsReview++;
+          manualReviewRows.push({
+            wallet_id: w.wallet_id,
+            grant: balances.grant,
+            pack: balances.pack,
+            reason: "no_spend_attribution",
+          });
           console.warn(
             `MANUAL REVIEW: wallet=${w.wallet_id} grant=${balances.grant} pack=${balances.pack} ` +
               `— no spend attribution on this wallet, cannot determine an owning org.`,
@@ -171,6 +232,12 @@ async function main(): Promise<void> {
           select subscription_id, deleted_at from organizations where id = ${targetOrgId}`;
         if (!org || org.deleted_at) {
           needsReview++;
+          manualReviewRows.push({
+            wallet_id: w.wallet_id,
+            grant: balances.grant,
+            pack: balances.pack,
+            reason: "attributed_org_deleted",
+          });
           console.warn(
             `MANUAL REVIEW: wallet=${w.wallet_id} attributed org=${targetOrgId} no longer exists ` +
               `(deleted) — cannot determine a live wallet to merge into.`,
@@ -182,6 +249,12 @@ async function main(): Promise<void> {
           // Should be impossible (the wallet is provably stranded above), but
           // never merge a wallet into itself.
           needsReview++;
+          manualReviewRows.push({
+            wallet_id: w.wallet_id,
+            grant: balances.grant,
+            pack: balances.pack,
+            reason: "self_reference",
+          });
           console.warn(`MANUAL REVIEW: wallet=${w.wallet_id} resolves back to itself — skipping.`);
           continue;
         }
@@ -261,13 +334,21 @@ async function main(): Promise<void> {
       } catch (err) {
         // One bad wallet must not abort the remaining run.
         needsReview++;
+        const message = err instanceof Error ? err.message : String(err);
+        manualReviewRows.push({
+          wallet_id: w.wallet_id,
+          grant: balances.grant,
+          pack: balances.pack,
+          reason: `processing_error: ${message}`,
+        });
         console.warn(
-          `MANUAL REVIEW: wallet=${w.wallet_id} failed — ` +
-            `${err instanceof Error ? err.message : String(err)}. ` +
+          `MANUAL REVIEW: wallet=${w.wallet_id} failed — ${message}. ` +
             `Nothing was written for it (its transaction rolled back); investigate and re-run.`,
         );
       }
     }
+
+    writeFileSync(OUT_PATH, toManualReviewJsonl(manualReviewRows), "utf8");
 
     console.log("\n--- summary ---");
     console.log(`Stranded wallets found: ${stranded.length}`);
@@ -276,6 +357,10 @@ async function main(): Promise<void> {
     console.log(
       `Needs manual review (no attribution / stale org / no positive balance / failed): ` +
         `${needsReview}`,
+    );
+    console.log(
+      `Manual-review artifact: ${OUT_PATH} (${manualReviewRows.length} row(s), JSON Lines — ` +
+        `wallet_id, grant, pack, reason)`,
     );
     if (!WRITE) console.log("\nDry run complete. Nothing was written. Re-run with --write to apply.");
   } finally {

@@ -48,16 +48,28 @@ afterEach(() => {
 
 // grantMonthlyForAllWallets full-table-scans every subscription row with a
 // live org in the schema on each call, plus one resolver read per row. Run in
-// isolation that's instant, but inside the FULL vitest run (thousands of
-// fixture rows accumulated by every other suite in the same session) it can
-// comfortably exceed vitest's default 5s per-test timeout — not a regression
-// in the code path itself, just the cost of "every wallet" scaling with the
-// whole test session's row count. Every test here bumps its timeout
-// accordingly.
-const CRON_TEST_TIMEOUT = 20000;
+// isolation that's instant (the whole file is ~6.5s for all 12 tests), but
+// inside the FULL vitest run (thousands of fixture rows accumulated by every
+// other suite in the same session) it can comfortably exceed vitest's default
+// 5s per-test timeout — not a regression in the code path itself, just the
+// cost of "every wallet" scaling with the whole test session's row count.
+//
+// (#363) This USED TO be handled by pinning a per-test `{ timeout: N }` on
+// every `it(...)` here — which is exactly the wrong tool: a per-test timeout
+// OVERRIDES `--testTimeout` on the CLI, it does not merely raise the floor.
+// The repo-wide convention for slow-DB suites is the CLI flag (every gate/CI
+// invocation runs `vitest ... --testTimeout=30000`), so a 20000ms inline pin
+// here silently CAPPED this file below what every other suite in the same
+// run was given — under real load the CLI's 30s margin never took effect,
+// and the failure read as a hang ("Test timed out in 20000ms") rather than
+// what it was: quiet slack the file had denied itself. No test in this file
+// is individually slow enough to need its own bound (see the ~6.5s total
+// above) — the CLI flag alone is sufficient, so none is pinned inline.
+// Anyone tempted to re-add one: it will silently defeat `--testTimeout`
+// again, whatever value that flag is given.
 
 describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () => {
-  it("grants a paid wallet the scaled amount (monthly(plan) * quantity_paid)", { timeout: CRON_TEST_TIMEOUT }, async () => {
+  it("grants a paid wallet the scaled amount (monthly(plan) * quantity_paid)", async () => {
     const orgId = await seedOrg();
     const subId = await setOrgPlan(orgId, "pro");
     await sql`update subscriptions set quantity_paid = 3 where id = ${subId}`;
@@ -73,7 +85,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     expect(await balance(subId)).toBe(60 * 3);
   });
 
-  it("grants a community wallet the FLAT 10, ignoring quantity_paid", { timeout: CRON_TEST_TIMEOUT }, async () => {
+  it("grants a community wallet the FLAT 10, ignoring quantity_paid", async () => {
     const orgId = await seedOrg();
     const subId = await setOrgPlan(orgId, "community");
     // Even if quantity_paid were ever non-1 on a community group-of-one,
@@ -85,7 +97,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     expect(await balance(subId)).toBe(10);
   });
 
-  it("is a no-op on a second run in the same calendar month (idempotent per period)", { timeout: CRON_TEST_TIMEOUT }, async () => {
+  it("is a no-op on a second run in the same calendar month (idempotent per period)", async () => {
     const orgId = await seedOrg();
     const subId = await setOrgPlan(orgId, "pro_plus");
 
@@ -96,7 +108,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     expect(await balance(subId)).toBe(200);
   });
 
-  it("REGRESSION (#290): grants the resolved Community rate for a canceled (churned) subscription, not zero", { timeout: CRON_TEST_TIMEOUT }, async () => {
+  it("REGRESSION (#290): grants the resolved Community rate for a canceled (churned) subscription, not zero", async () => {
     const orgId = await seedOrg();
     // comped_at stays null (setOrgPlan's default) — orgPlanKey's `canceled`
     // arm degrades this to community, exactly like any other entitlement
@@ -112,7 +124,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     expect(await balance(subId)).toBe(10);
   });
 
-  it("REGRESSION (#290): grants the resolved Community rate for an incomplete (never-paid) subscription", { timeout: CRON_TEST_TIMEOUT }, async () => {
+  it("REGRESSION (#290): grants the resolved Community rate for an incomplete (never-paid) subscription", async () => {
     const orgId = await seedOrg();
     const subId = await setOrgPlan(orgId, "pro", "incomplete");
 
@@ -121,7 +133,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     expect(await balance(subId)).toBe(10);
   });
 
-  it("expires the prior period's unspent grant balance before granting the new period (D1)", { timeout: CRON_TEST_TIMEOUT }, async () => {
+  it("expires the prior period's unspent grant balance before granting the new period (D1)", async () => {
     const orgId = await seedOrg();
     const subId = await setOrgPlan(orgId, "pro");
     // Leftover from a prior period the wallet never spent.
@@ -137,7 +149,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     expect(await balance(subId)).toBe(60);
   });
 
-  it("a paid wallet's period is the calendar month, never current_period_end — a Stripe cycle change within the same month is a no-op", { timeout: CRON_TEST_TIMEOUT }, async () => {
+  it("a paid wallet's period is the calendar month, never current_period_end — a Stripe cycle change within the same month is a no-op", async () => {
     const orgId = await seedOrg();
     const subId = await setOrgPlan(orgId, "pro");
     const cycle1 = new Date("2026-07-05T00:00:00Z");
@@ -163,7 +175,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     expect(await balance(subId)).toBe(60);
   });
 
-  it("Community wallets grant on plain calendar month (no Stripe period at all)", { timeout: CRON_TEST_TIMEOUT }, async () => {
+  it("Community wallets grant on plain calendar month (no Stripe period at all)", async () => {
     const orgId = await seedOrg();
     const subId = await setOrgPlan(orgId, "community");
     const [row] = await sql<{ current_period_end: string | null }[]>`
@@ -177,7 +189,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     expect(await balance(subId)).toBe(10); // still idempotent via the calendar-month key
   });
 
-  it("REGRESSION (SPEC-2 §5.4 Cadence): an annual (yearly-renewing) Pro subscription still grants 12x/year, not a single lump", { timeout: 30000 }, async () => {
+  it("REGRESSION (SPEC-2 §5.4 Cadence): an annual (yearly-renewing) Pro subscription still grants 12x/year, not a single lump", async () => {
     // grantMonthlyForAllWallets scans every LIVE subscription row in the
     // schema each call; this test calls it across simulated months, which —
     // on a long-running local schema with many accumulated fixture rows —
@@ -229,7 +241,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     expect(await balance(subId)).toBe(60);
   });
 
-  it("REGRESSION (#291): a trialing group grants for the LIVE org count when quantity_paid is frozen below it", { timeout: CRON_TEST_TIMEOUT }, async () => {
+  it("REGRESSION (#291): a trialing group grants for the LIVE org count when quantity_paid is frozen below it", async () => {
     const orgId = await seedOrg();
     const subId = await setOrgPlan(orgId, "pro", "trialing");
     // #279 (syncGroupQuantity) freezes quantity_paid at its pre-trial
@@ -248,7 +260,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     expect(await balance(subId)).toBe(60 * 2);
   });
 
-  it("can be scoped to named wallets, so a parallel suite's wallets cannot move the answer (#351)", { timeout: CRON_TEST_TIMEOUT }, async () => {
+  it("can be scoped to named wallets, so a parallel suite's wallets cannot move the answer (#351)", async () => {
     const orgId = await seedOrg();
     const subId = await setOrgPlan(orgId, "pro");
     await sql`update subscriptions set quantity_paid = 2 where id = ${subId}`;
@@ -262,7 +274,7 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     expect(await balance(otherSub)).toBe(0); // untouched: not in scope
   });
 
-  it("REGRESSION (#291): a trialing group still grants for quantity_paid when it sits ABOVE the live org count", { timeout: CRON_TEST_TIMEOUT }, async () => {
+  it("REGRESSION (#291): a trialing group still grants for quantity_paid when it sits ABOVE the live org count", async () => {
     const orgId = await seedOrg();
     const subId = await setOrgPlan(orgId, "pro", "trialing");
     // The other direction of the max(): this customer PAID for 3 seats before

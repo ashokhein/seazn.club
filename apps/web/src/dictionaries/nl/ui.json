@@ -820,6 +820,7 @@
   "upgrade.perMonth": "/maand",
   "upgrade.proCard.body": "Pro upgradet elke competitie in {org}, niet alleen deze — en voegt het planningsbord, spelersstatistieken, officials en API-toegang toe die de pass nooit dekt.",
   "upgrade.proCard.cta": "Neem Pro — 14 dagen gratis proberen",
+  "upgrade.proCard.ctaNoTrial": "Word Pro",
   "upgrade.titleOwned": "Event Pass — “{name}”",
   "upgrade.titlePlan": "“{name}” met je abonnement",
   "upgrade.buyCta": "Koop de pass — {rung}",

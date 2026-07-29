@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 // itself payer-only. `lib/feature-copy.ts`'s 402 offer points customers here by
 // name — "Settings → Add-ons" — so routes.addOns and that sentence move
 // together.
-import { requireOrgPage } from "@/server/page-auth";
+import { requireBillingPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";
 import { BackLink } from "@/components/back-link";
 import { getAddOnsTab } from "@/server/usecases/add-ons-tab";
@@ -28,7 +28,9 @@ export default async function AddOnsSettingsPage({
   params: Promise<{ orgSlug: string }>;
 }) {
   const { orgSlug } = await params;
-  const { org, user } = await requireOrgPage(orgSlug, { tail: "/settings/add-ons" });
+  const { org, user, viaPayer } = await requireBillingPage(orgSlug, {
+    tail: "/settings/add-ons",
+  });
   const locale = await resolveLocale();
   const dict = await getDictionary(locale, "ui");
   const currency = await preferredCurrency(org.id);
@@ -45,11 +47,17 @@ export default async function AddOnsSettingsPage({
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-8">
-      <BackLink
-        href={routes.orgSettings(orgSlug)}
-        label={t(dict, "action.settings")}
-        emphasis="button"
-      />
+      {/* The org's own Settings index is member-gated, so a payer who is not a
+          member of this club would only 404 on it (v17 gap #333). They arrived
+          from the bill, not from the club, and have nothing to go back to
+          here. */}
+      {!viaPayer && (
+        <BackLink
+          href={routes.orgSettings(orgSlug)}
+          label={t(dict, "action.settings")}
+          emphasis="button"
+        />
+      )}
       <div className="mb-1 flex items-center gap-2">
         <h1 className="page-title">{t(dict, "settings.nav.addOns")}</h1>
         <Tip id="billing.addons.extra-org" small />

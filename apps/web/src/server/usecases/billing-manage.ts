@@ -1,9 +1,12 @@
 import "server-only";
 import type Stripe from "stripe";
+import { headers } from "next/headers";
 import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { getActiveOrgId, requireUser } from "@/lib/auth";
+import { ORG_SCOPE_HEADER } from "@/lib/org-scope";
+import { orgBySlug } from "@/server/slug-resolve";
 import {
   syncPaymentMethodFlag,
   syncPaymentMethodFlagFromCards,
@@ -64,7 +67,7 @@ interface SubRow {
   currency: string | null;
 }
 
-/** The billing GROUP behind an org (V310) — many orgs may share one row. */
+/** The billing GROUP behind an org (V314) — many orgs may share one row. */
 async function subRow(orgId: string): Promise<SubRow | null> {
   const [sub] = await sql<SubRow[]>`
     select s.id, s.owner_user_id, s.plan_key, s.status, s.stripe_customer_id,
@@ -108,9 +111,52 @@ export async function segmentsForGroup(subscriptionId: string): Promise<PayerSeg
 }
 
 /**
+ * The org this REQUEST is for, from its own `x-seazn-org` header (v17 gap
+ * #334), or null when it carries none.
+ *
+ * The header is stamped by the client seams from the console URL the user is
+ * actually looking at, so it cannot lag the way `seazn_org` does — the cookie
+ * is corrected by an effect that runs after the destination page has painted,
+ * and a save inside that window used to be applied to the PREVIOUS group.
+ *
+ * A header that names nothing is a 400, never a fall back to the cookie: a
+ * silent fall back is exactly the bug, and it would come back the moment a
+ * slug went stale. 400 is the same class, and carries the same remedy ("pick an
+ * organisation again"), as a stale cookie.
+ *
+ * This resolves WHICH group, and nothing else — `requireBillingOwner`'s payer
+ * gate below is unchanged, so a forged header can only ever name a group the
+ * caller already pays for.
+ */
+async function requestScopedOrgId(): Promise<string | null> {
+  let slug: string | null = null;
+  try {
+    slug = (await headers()).get(ORG_SCOPE_HEADER);
+  } catch {
+    // No request scope at all (a cron job, a script). Nothing to prefer.
+    return null;
+  }
+  if (!slug) return null;
+  const resolved = await orgBySlug(slug);
+  // A renamed slug still identifies the org — one more hop, because the client
+  // may have been rendered before the rename. Anything beyond that is a slug
+  // the product does not know.
+  const settled = resolved && "renamedTo" in resolved ? await orgBySlug(resolved.renamedTo) : resolved;
+  if (!settled || "renamedTo" in settled) {
+    throw new HttpError(400, "No billing account for the selected organization.");
+  }
+  return settled.id;
+}
+
+/**
  * Payer-gated context shared by every manage route. Session auth comes FIRST so
  * an unauthenticated caller (e.g. a developer API key — these routes never read
  * Authorization) gets a clean 401, not a 400 about org state.
+ *
+ * WHICH group comes from the REQUEST when it names one (`x-seazn-org`, v17 gap
+ * #334) and from the `seazn_org` cookie otherwise. The two answers differ for
+ * exactly as long as the cookie lags the URL, and during that window the
+ * cookie's answer is the wrong bill.
  *
  * Gates on `subscriptions.owner_user_id`, NOT on the active org's owner role.
  * Billing belongs to the GROUP: a county association may pay for eight member
@@ -128,7 +174,7 @@ export async function requireBillingOwner(): Promise<{
   subscriptionId: string;
 }> {
   const user = await requireUser();
-  const orgId = await getActiveOrgId();
+  const orgId = (await requestScopedOrgId()) ?? (await getActiveOrgId());
   if (!orgId) throw new HttpError(400, "No active organization");
   // NOT requireSubscriptionIdForOrg: that raises 500 ("no billing group"),
   // which is right for an internal invariant but wrong here — the org id comes

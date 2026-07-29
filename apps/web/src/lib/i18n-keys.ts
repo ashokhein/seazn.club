@@ -3379,6 +3379,7 @@ export type DictionaryKey =
   | "upgrade.pro.title"
   | "upgrade.proCard.body"
   | "upgrade.proCard.cta"
+  | "upgrade.proCard.ctaNoTrial"
   | "upgrade.proCard.title"
   | "upgrade.rung.l"
   | "upgrade.rung.m"

@@ -505,7 +505,7 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     expect(row.trial_used_at).toBeNull();
   });
 
-  // V310 replaced "no subscription row" with "no billing group", and every
+  // V314 replaced "no subscription row" with "no billing group", and every
   // staff path answers 404 for it — not 500. These are operator-supplied org
   // ids, so a 500 would both blame us and page someone for a data condition the
   // operator is looking straight at.
@@ -551,7 +551,7 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     expect(departed.trial_used_at).toEqual(stamped);
   });
 
-  // Blast radius (V310). Every staff action on the plan panel writes the SHARED
+  // Blast radius (V314). Every staff action on the plan panel writes the SHARED
   // subscriptions row, so a comp applied from one org's page moves the plan for
   // every org on that bill. The usecases were group-wide from the start; what
   // was missing was any way for staff to SEE it, and the panel can only warn
@@ -599,7 +599,7 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
   // Stripe before this fix); an org with no customer id was never the bug.
   it("planPanel makes no Stripe calls, even for an org with a stripe_customer_id", async () => {
     const { orgId } = await seedOrg();
-    // Unique per run: V310 puts a partial unique index on stripe_customer_id
+    // Unique per run: V314 puts a partial unique index on stripe_customer_id
     // (one Stripe customer belongs to one billing group, which is what makes the
     // webhook's customer-id fallback safe), and this schema is not torn down
     // between runs, so a hardcoded id collides with the previous run's row.

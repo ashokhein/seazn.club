@@ -16,17 +16,23 @@
 // tree, so it can simply be awaited and walked. Its dependencies are mocked at
 // the module boundary; the DICTIONARY is real, so a key that was never added to
 // en/ui.json renders as itself and fails these assertions.
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { walk, propsOf, textOf } from "@/components/__tests__/_hook-harness";
 import { ExtraOrgsControl } from "@/components/extra-orgs-control";
+import { BackLink } from "@/components/back-link";
 import type { AddOnsTabView } from "@/server/usecases/add-ons-tab";
 
+// `requireBillingPage`, not `requireOrgPage`: the billing tabs admit the
+// group's PAYER alongside the org's members (v17 gap #333), and `viaPayer` is
+// what tells the page which of the two it is rendering for.
+const pageAuthState = vi.hoisted(() => ({ viaPayer: false }));
 vi.mock("@/server/page-auth", () => ({
-  requireOrgPage: vi.fn(async () => ({
-    org: { id: "org-1", slug: "acme", role: "owner" },
+  requireBillingPage: vi.fn(async () => ({
+    org: { id: "org-1", slug: "acme", role: pageAuthState.viaPayer ? null : "owner" },
     user: { id: "user-1" },
     auth: { orgId: "org-1", userId: "user-1" },
-    canEdit: true,
+    canEdit: !pageAuthState.viaPayer,
+    viaPayer: pageAuthState.viaPayer,
   })),
 }));
 vi.mock("@/server/usecases/add-ons-tab", () => ({ getAddOnsTab: vi.fn() }));
@@ -299,5 +305,32 @@ describe("Add-ons page — the numbers it hands the control", () => {
     const { text } = await render({ orgCap: null, liveOrgCount: 4 });
     expect(text).toContain("Using 4 organisations on this bill");
     expect(text).not.toContain("null");
+  });
+});
+
+describe("Add-ons page — a payer who is not a member of this club (v17 gap #333)", () => {
+  beforeEach(() => {
+    pageAuthState.viaPayer = true;
+  });
+  afterEach(() => {
+    pageAuthState.viaPayer = false;
+  });
+
+  it("still gets the purchase control — it is their bill", async () => {
+    const { control } = await render();
+    expect(control).toBeDefined();
+  });
+
+  it("is not offered a back link into a Settings index that would 404 on them", async () => {
+    view.mockResolvedValue(makeView());
+    const tree = await AddOnsSettingsPage({ params: Promise.resolve({ orgSlug: "acme" }) });
+    expect(walk(tree).some((el) => el.type === BackLink)).toBe(false);
+  });
+
+  it("keeps that back link for a member, who can open it", async () => {
+    pageAuthState.viaPayer = false;
+    view.mockResolvedValue(makeView());
+    const tree = await AddOnsSettingsPage({ params: Promise.resolve({ orgSlug: "acme" }) });
+    expect(walk(tree).some((el) => el.type === BackLink)).toBe(true);
   });
 });

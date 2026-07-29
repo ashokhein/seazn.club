@@ -600,6 +600,15 @@ const KNOWN_POSITIVES: string[] = [
   "two schedule runs",
   "AI scheduling is limited to 5 attempts per division",
   "Each division may be scheduled by AI up to 20 times.",
+  // ── AI runs claimed unmetered/free (#303) ──
+  "Officials AI runs are not metered.",
+  "The schedule pass is unmetered.",
+  "You can restaff as often as you like.",
+  "Just run it as often as you like.",
+  "Run it as often as you like, at no cost.",
+  "Officials AI runs are free.",
+  "It costs nothing to restaff.",
+  "AI schedule runs are uncapped.",
   // ── Task 3's APPROVED FORMS (the help-tree allowlist) ──
   // These are positives in the opposite sense to everything else here: they are
   // the shapes the help copy is ALLOWED to use, so each one is a real sentence
@@ -686,6 +695,31 @@ const KNOWN_POSITIVES: string[] = [
   "elke maand credits",
   "iedere maand credits",
   "een terugkerende bijboeking",
+  // #338 item 3 — the same recurring falsehood, yearly/weekly/quarterly, in
+  // es/fr/nl (the English list already had this half; these three did not).
+  "créditos anuales",
+  "créditos al año",
+  "cada año recibes créditos",
+  "por año recibes créditos",
+  "créditos semanales",
+  "cada semana recibes créditos",
+  "créditos trimestrales",
+  "en cada renovación recibes créditos",
+  "des crédits annuels",
+  "des crédits par an",
+  "chaque année vous recevez des crédits",
+  "tous les ans vous recevez des crédits",
+  "des crédits hebdomadaires",
+  "chaque semaine vous recevez des crédits",
+  "des crédits trimestriels",
+  "à chaque renouvellement vous recevez des crédits",
+  "jaarlijkse credits",
+  "credits per jaar",
+  "elk jaar credits",
+  "wekelijkse credits",
+  "elke week credits",
+  "credits per kwartaal",
+  "bij elke verlenging credits",
   // ── The V312 fee lock and its reversion claim (task 3) ──
   "the platform fee returns to your plan's rate",
   "the fee reverts to whatever your plan charges",
@@ -1114,6 +1148,92 @@ describe.skipIf(!HAS_DB)("the four-locale dictionaries say what the resolver enf
       }),
       "a bare half-rate claim in an exempt key must red, in every locale",
     ).toEqual([]);
+  });
+
+  /**
+   * #338 item 2: DISCOVERY BEYOND ONE FILENAME SHAPE.
+   *
+   * Everything above this point discovers a new claim-making key only if it
+   * matches `pricing.faq.*.a` (the FAQ classification) or the `pricing.*`
+   * prefix (`PRICING_KEY_DISPOSITION`). Neither reaches `ui.json`, and neither
+   * reaches a `marketing.json` key outside the `pricing.` namespace — which is
+   * everywhere else: 408 marketing keys and the whole of `ui.json` at the time
+   * this was written. Demonstrated: adding `pricing.pass.note2` and
+   * `upgrade.footnote` in all four locales, carrying "Your pass has no use-by
+   * date and keeps working after the competition ends" (the exact reviewer
+   * probe from #338), shipped 40/40 green before this test existed.
+   *
+   * The fix is not a hand-written classification of every key — that is a list,
+   * and a list is the thing that must be remembered (the same lesson
+   * `describedEntries` recorded for the Stripe seed). Instead this scans EVERY
+   * value in BOTH dictionary files, in all four locales, with the SAME
+   * clause-scoped vocabularies the exempt-key re-scan above already trusts, and
+   * requires a hit to be on a PINNED key. A key nobody pinned that starts
+   * making one of these claims is discovered the moment it does — no filename
+   * shape required. Measured against the two dictionaries as they stand today:
+   * zero hits, so this costs nothing and reds the day either falsehood lands.
+   */
+  /** The scan itself, factored out so the mutation proof below calls the exact
+   *  code under test rather than a re-implementation of it. `extra` injects
+   *  additional {file,key,value} entries per locale, standing in for a key that
+   *  does not exist on disk yet — the only way to prove discovery reaches a key
+   *  nobody has written without actually writing one into the dictionaries. */
+  const scanWholeDictionary = (
+    extra: Array<{ file: "marketing" | "ui"; key: string; value: Record<DictionaryLocale, string> }> = [],
+  ): string[] => {
+    const pinned = new Set(APPROVED_DICTIONARY_COPY.map((e) => e.key));
+    const faults: string[] = [];
+    for (const locale of DICTIONARY_LOCALES) {
+      const claims = LOCALE_CLAIMS[locale];
+      for (const file of ["marketing", "ui"] as const) {
+        const dict = load(locale, file);
+        const entries = [
+          ...Object.entries(dict),
+          ...extra.filter((e) => e.file === file).map((e) => [e.key, e.value[locale]] as const),
+        ];
+        for (const [key, value] of entries) {
+          if (typeof value !== "string" || pinned.has(key)) continue;
+          if (claims.halfClaim.test(value) && !claims.atMostHalf.test(value)) {
+            faults.push(`${locale} ${file}.${key}: quotes half the base rate with no "no more than" qualifier`);
+          }
+          for (const clause of valueClauses(value)) {
+            if (!claims.passSubject.test(clause)) continue;
+            if (!claims.permanence.some((p) => p.test(clause))) continue;
+            faults.push(
+              `${locale} ${file}.${key}: unpinned, but "${clause.slice(0, 60)}" claims the pass has unbounded duration`,
+            );
+            break;
+          }
+          if (/\+\s*\d[\d,]*\s*AI\s+credits?/i.test(value) && claims.recurring.some((p) => p.test(value))) {
+            faults.push(`${locale} ${file}.${key}: unpinned, but sells an AI-credit grant as recurring`);
+          }
+        }
+      }
+    }
+    return faults;
+  };
+
+  it("discovers a new claim-making key ANYWHERE in marketing or ui, not just pricing.faq.*.a", () => {
+    expect(scanWholeDictionary()).toEqual([]);
+
+    // …and the scan FIRES, on the issue's own reviewer probe, injected as BRAND
+    // NEW keys in a shape none of the axes above recognise (not
+    // `pricing.faq.*.a`, not even `pricing.*`, and one of the two is in
+    // `ui.json`).
+    const NEW_KEY_PROBE: Record<DictionaryLocale, string> = {
+      en: "Your pass has no use-by date and keeps working after the competition ends.",
+      es: "Tu pase no tiene fecha de caducidad y sigue funcionando después de que termine la competición.",
+      fr: "Votre pass n'a pas de date limite et continue de fonctionner après la fin de la compétition.",
+      nl: "Je pass heeft geen houdbaarheidsdatum en blijft werken nadat de competitie is afgelopen.",
+    };
+    expect(
+      scanWholeDictionary([{ file: "marketing", key: "pricing.pass.note2", value: NEW_KEY_PROBE }]),
+      "a brand-new pricing.* key must still be caught even though it is not pricing.faq.*.a",
+    ).not.toEqual([]);
+    expect(
+      scanWholeDictionary([{ file: "ui", key: "upgrade.footnote", value: NEW_KEY_PROBE }]),
+      "a brand-new ui.json key must be caught too — this is the axis PRICING_KEY_DISPOSITION cannot reach",
+    ).not.toEqual([]);
   });
 
   /**
@@ -2479,6 +2599,34 @@ describe("the dictionary guards survive a rewording, in every locale", () => {
     }
   });
 
+  /**
+   * #338 item 3: `{es,fr,nl}.recurring` was MONTHLY-ONLY, so a yearly, weekly or
+   * quarterly framing of the same one-time-grant falsehood scored 0/9 — none of
+   * these nine phrasings, one per locale per cadence, tripped anything before
+   * this task widened the three lists. Reusing the issue's own nine examples
+   * rather than inventing new ones: "cada año", "anuales", "en cada renovación"
+   * (es); "chaque année", "annuels", "à chaque renouvellement" (fr); "elk jaar",
+   * "jaarlijks", "bij elke verlenging" (nl).
+   */
+  it("catches the recurring-grant claim beyond monthly, in es/fr/nl", () => {
+    for (const [locale, recurring] of [
+      ["es", "Recibe +25 créditos de IA cada año."],
+      ["es", "Créditos de IA anuales: +25."],
+      ["es", "En cada renovación, +25 créditos de IA."],
+      ["fr", "Recevez +25 crédits IA chaque année."],
+      ["fr", "Crédits IA annuels : +25."],
+      ["fr", "À chaque renouvellement, +25 crédits IA."],
+      ["nl", "Ontvang elk jaar +25 AI-credits."],
+      ["nl", "Jaarlijks +25 AI-credits."],
+      ["nl", "Bij elke verlenging +25 AI-credits."],
+    ] as Array<[DictionaryLocale, string]>) {
+      expect(
+        localeCreditGrantFaults(v(locale, recurring), PASS_CREDIT_GRANT).join(" "),
+        `${locale}: ${recurring}`,
+      ).toContain("sells the one-time grant as recurring");
+    }
+  });
+
   // ── The Pro Plus differentiators ───────────────────────────────────────────
 
   const SHARED = { community: true, pro: true, pro_plus: true };
@@ -2720,6 +2868,41 @@ describe("every pattern in @/lib/copy-truth does something", () => {
   // while the same byte in an exported pattern redded three tests.
   it("exports every top-level pattern, so none is exempt from the checks above", () => {
     expect(unexportedPatternFaults(MODULE_SOURCE)).toEqual([]);
+  });
+
+  /**
+   * #338 item 4 (second vacuity hole), mutation-proven. The OLD `PATTERN_SHAPED`
+   * required the pattern immediately after `=` and missed one wrapped in a
+   * container: `const ZZ_PROBE_LIST: RegExp[] = [/(?!x)x-inert/i];` — a real
+   * inert, unexported RegExp array — shipped clean because the `=` is followed
+   * by `[`, not `/`. Same failure for `new RegExp(...)` and `claim(...)` a
+   * bracket deep. All three must now red; a bare non-pattern const declaration
+   * (a Record of STRINGS, e.g. the module's own `CLAUSE_BREAK`/`SUBJECT_BREAK`
+   * shape) must still pass, or every plain lookup table in the file would need
+   * an unnecessary `export`.
+   */
+  it("catches a pattern hidden inside a container, not just bare after '='", () => {
+    expect(
+      unexportedPatternFaults('const ZZ_PROBE_LIST: RegExp[] = [/(?!x)x-inert/i];'),
+      "an array literal one bracket deep",
+    ).toEqual([
+      "ZZ_PROBE_LIST: a top-level pattern that is not exported — collectPatterns cannot see it, so it is exempt from every anti-vacuity rule below. Add `export`.",
+    ]);
+    expect(
+      unexportedPatternFaults("const ZZ_PROBE_MAP: Record<string, RegExp> = { a: new RegExp('x') };"),
+      "new RegExp(...) inside an object literal",
+    ).not.toEqual([]);
+    expect(
+      unexportedPatternFaults("const ZZ_PROBE_CLAIM: RegExp[] = [claim('x')];"),
+      "claim(...) inside an array literal",
+    ).not.toEqual([]);
+    // …and a plain lookup table of STRINGS — this module's own shape for
+    // CLAUSE_BREAK/SUBJECT_BREAK — must not be swept in: it holds no RegExp at
+    // all, so requiring `export` on it would be busywork, not a fix.
+    expect(
+      unexportedPatternFaults('const ZZ_NOT_A_PATTERN: Record<string, string> = { en: "x" };'),
+      "a plain string lookup table is not pattern-shaped",
+    ).toEqual([]);
   });
 
   // …and the control-character scan run over the RAW SOURCE, which reaches what

@@ -12,7 +12,7 @@ import type Stripe from "stripe";
 // Spy on the invalidation without touching the rest of the resolver — this is
 // the exact call the regression guards. (Sibling convention: billing-pass-revoke
 // mocks @/lib/email the same way.)
-// V310: the reconcile path drops the cache for the whole billing GROUP, so the
+// V314: the reconcile path drops the cache for the whole billing GROUP, so the
 // call it makes is invalidateEntitlementsForOrgGroup — still keyed by the org.
 const entMock = vi.hoisted(() => ({
   invalidate: vi.fn().mockResolvedValue(undefined),
@@ -92,7 +92,7 @@ afterAll(async () => {
   if (tempPlanKeys.length) {
     // Subscriptions seeded onto the temp plans must go first — plans.key is
     // referenced by subscriptions_plan_key_fkey. Their orgs must let go of the
-    // group first, or organizations_subscription_fk (V310) blocks the delete.
+    // group first, or organizations_subscription_fk (V314) blocks the delete.
     await sql`
       update organizations set subscription_id = null
        where subscription_id in (select id from subscriptions

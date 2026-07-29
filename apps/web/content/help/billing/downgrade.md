@@ -25,9 +25,9 @@ Pro-only features (your brand colour, branded exports, sponsor tiers and package
 
 One thing that does **not** switch off: **card entry fees keep working on Community.** Your Stripe connection stays linked, existing paid entries are untouched, and divisions collecting **Card at sign-up** keep taking new registrations exactly as before — a downgrade never closes a register panel for money reasons.
 
-What changes is the platform fee: back on Community the rate returns to **8%**, where Pro is 2% and Pro Plus 1%. See [the fee ladder](/help/billing/plans#the-platform-fee-on-entry-fees).
+What changes is the platform fee, for a competition that never took a paid card entry: on Community that's **8%**, where Pro is 2% and Pro Plus 1%. See [the fee ladder](/help/billing/plans#the-platform-fee-on-entry-fees).
 
-**Passed competitions keep their own rate.** A competition covered by an [Event Pass](/help/billing/event-pass) stays at **5%** after the downgrade, and keeps everything else the pass grants — bigger limits, branded exports, sponsor tiers and packages — while the rest of the org sits on Community.
+A competition that has already taken a paid card entry keeps that platform fee **locked** at the rate it was first charged, for every entry after it, whatever your plan does next — including a downgrade to Community. A competition that takes its **first paid entry** while covered by an [Event Pass](/help/billing/event-pass) **locks in** the pass's **5%** rate the same way, and keeps it after the downgrade along with everything else the pass grants — bigger limits, branded exports, sponsor tiers and packages — while the rest of the org sits on Community.
 
 ## Moving to a cheaper plan gives you credit, not a bill
 
