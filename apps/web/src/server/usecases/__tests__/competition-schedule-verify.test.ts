@@ -810,13 +810,44 @@ describe("verifyConfigFor (#350)", () => {
     ]);
     expect(cfg.constraints?.restMin).toBe(25);
     expect(cfg.constraints?.noBackToBack).toBe(true);
-    // The three deliberate neutralisations verifyConfig makes, kept verbatim:
-    // ISO startWindows would be compared against epoch ms, and fairness /
-    // parallelism / cross-person-hardness are placer policy, not legality.
-    expect(cfg.constraints?.startWindows).toEqual([]);
+    // startWindows are CONVERTED, not dropped (#350 fix round 1). The
+    // single-division mirror drops them on the grounds that the pack carries ISO
+    // strings and the engine wants epoch ms — but that is exactly the conversion
+    // the blackouts and sessionWindows above already do, and the drop made
+    // `start_window` a conflict class the whole joint product was blind to while
+    // the per-stage apply reported it. Bounds arrive as epoch ms like the rest.
+    expect(cfg.constraints?.startWindows).toEqual([
+      { target: { kind: "division", id: D1 }, notBefore: Date.parse(at("09:00")) },
+    ]);
+    // The neutralisations that DO stay: fairness and parallelism are placer
+    // policy rather than legality (and parallelism is load-bearing here — the
+    // joint draft feeds block-mode exclusivity asymmetrically), while
+    // cross-person hardness is re-applied at APPLY time by
+    // `applyCompetitionSchedule`, mirroring the single-division split where the
+    // plan path warns and the apply path refuses.
     expect(cfg.constraints?.fieldFairness).toBe("off");
     expect(cfg.constraints?.parallelism).toBe("mixed");
     expect(cfg.constraints?.crossPersonClash).toBe("warn");
+  });
+
+  it("drops a start-window target kind the engine does not know", () => {
+    // `PackStartWindow.target.kind` is a bare `string` (the pack is a wire
+    // shape). A cast would put a value the engine can never match into the
+    // config and hide that a settings row has drifted from the enum; dropping it
+    // keeps the config honest. The known kinds beside it must survive.
+    const d = division(D1, "Alpha", {
+      settings: settings({
+        constraints: constraints({
+          startWindows: [
+            { target: { kind: "galaxy", id: "x" }, notBefore: at("09:00") },
+            { target: { kind: "entrant", id: "e1" }, notAfter: at("12:00") },
+          ],
+        }),
+      }),
+    });
+    expect(verifyConfigFor(d).constraints?.startWindows).toEqual([
+      { target: { kind: "entrant", id: "e1" }, notAfter: Date.parse(at("12:00")) },
+    ]);
   });
 
   it("omits constraints entirely when the division has none", () => {

@@ -1946,11 +1946,27 @@ export const ApplyCompetitionScheduleRequest = z.object({
         expected_seq: z.number().int().nonnegative(),
         assignments: z
           .array(
-            z.object({
-              fixture_id: Uuid,
-              scheduled_at: IsoDateTime,
-              court_label: z.string().min(1).max(100),
-            }),
+            z
+              .object({
+                fixture_id: Uuid,
+                scheduled_at: IsoDateTime,
+                court_label: z.string().min(1).max(100),
+              })
+              /**
+               * `.strict()`, because the plan's own output is WIDER than this.
+               * `AiCompetitionPlanResponse.proposal` carries an optional
+               * `schedule_locked` (see above), and zod STRIPS unknown keys — so
+               * a plan asking to pin a fixture would apply 200 with no pin, and
+               * two schemas of one feature would disagree in silence. Strict
+               * makes that a loud 400.
+               *
+               * Deliberately not "support pinning": accepting the field would
+               * need the `scheduling.board` gate the per-stage apply puts on pin
+               * changes (schedule.ts:485-487). Nothing sends it today, so this
+               * costs no capability and leaves Task 7 free to add pinning as a
+               * decision rather than inherit it as an accident.
+               */
+              .strict(),
           )
           .min(1)
           .max(500),

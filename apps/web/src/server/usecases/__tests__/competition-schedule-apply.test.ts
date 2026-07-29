@@ -25,14 +25,36 @@ import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
 import { schedulingAiModel } from "../schedule-ai";
-import { JOINT_APPLY_EVENT, lastCompetitionAiApply } from "../competition-schedule-ai";
+import {
+  COMPETITION_MOVABLE_CAP,
+  JOINT_APPLY_EVENT,
+  lastCompetitionAiApply,
+} from "../competition-schedule-ai";
+import {
+  ApplyCompetitionScheduleRequest,
+  ApplyCompetitionScheduleResult,
+} from "@/server/api-v1/schemas";
 import {
   applyCompetitionSchedule,
   lockDivisions,
   lockOrder,
   type CompetitionApplyDivision,
+  type CompetitionApplyOut,
 } from "../competition-schedule-apply";
 import { seedOrg } from "./_seed";
+
+/**
+ * COMPILE-TIME half of the wire contract (the runtime half is the
+ * `ApplyCompetitionScheduleResult.parse` in the blackout test below).
+ *
+ * `tsc` is the only thing that can catch the usecase's return type drifting away
+ * from the schema the route publishes. Zod cannot: it STRIPS keys the schema
+ * does not declare, so a drift shows up as fields silently missing from a 200,
+ * never as an exception. Substituting `ScheduleConflict[]` for `Conflict[]` on
+ * either side must fail here.
+ */
+const _wireBridge: ApplyCompetitionScheduleResult = null as unknown as CompetitionApplyOut;
+void _wireBridge;
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -132,6 +154,37 @@ async function seedBoard(auth: AuthCtx): Promise<Board> {
   return { competitionId: comp.id, alpha, bravo };
 }
 
+/** Patch a division's stored `constraints` — the family the joint verifier reads
+ *  through `verifyConfigFor`. Written straight to the row: `putScheduleSettings`
+ *  would drag in the `scheduling.constraints` entitlement, which is not what
+ *  these tests are about. */
+async function setConstraints(
+  divisionId: string,
+  courts: string[],
+  constraints: object,
+): Promise<void> {
+  await sql`
+    update schedule_settings
+    set config = ${sql.json({ ...settingsConfig(courts), constraints } as never)}
+    where division_id = ${divisionId}`;
+}
+
+/** One person rostered into one entrant of each named fixture — the only way to
+ *  make a `person_overlap` conflict, within a division or across two. */
+async function sharePerson(orgId: string, fixtureIds: string[]): Promise<string> {
+  const [person] = await sql<{ id: string }[]>`
+    insert into persons (org_id, full_name)
+    values (${orgId}, ${"Shared Player " + randomUUID().slice(0, 6)}) returning id`;
+  for (const fixtureId of fixtureIds) {
+    const [row] = await sql<{ home_entrant_id: string }[]>`
+      select home_entrant_id from fixtures where id = ${fixtureId}`;
+    await sql`
+      insert into entrant_members (entrant_id, person_id, org_id)
+      values (${row!.home_entrant_id}, ${person!.id}, ${orgId})`;
+  }
+  return person!.id;
+}
+
 async function divisionSeq(divisionId: string): Promise<number> {
   const [row] = await sql<{ seq: string | number }[]>`
     select seq from divisions where id = ${divisionId}`;
@@ -195,6 +248,70 @@ const AI = {
   model: "not-the-model-that-ran",
   repair_rounds: 1,
 };
+
+// ---------------------------------------------------------------------------
+// No database needed. Kept out of the suite below so these do not pay its
+// per-test seeding — the house pattern for a pure helper (shouldFireMadePublic,
+// competitionLifecycleEvent).
+// ---------------------------------------------------------------------------
+describe("joint apply — pure contracts", () => {
+  it("locks are taken in sorted division-id order", async () => {
+    // Sorting is the DEADLOCK GUARD: two concurrent joint applies over
+    // overlapping division sets that lock in different orders deadlock.
+    const ids = [
+      "ffffffff-0000-4000-8000-000000000003",
+      "11111111-0000-4000-8000-000000000001",
+      "88888888-0000-4000-8000-000000000002",
+    ];
+    const sorted = [...ids].sort();
+    expect(lockOrder(ids)).toEqual(sorted);
+    // Duplicates collapse — a repeated division must not be locked twice.
+    expect(lockOrder([...ids, ids[0]!])).toEqual(sorted);
+    // The input is never mutated in place.
+    const copy = [...ids];
+    lockOrder(copy);
+    expect(copy).toEqual(ids);
+
+    // …and the statement the transaction actually emits follows that order.
+    const seen: unknown[] = [];
+    const fakeTx = ((_s: TemplateStringsArray, ...values: unknown[]) => {
+      seen.push(values[0]);
+      return Promise.resolve([]);
+    }) as unknown as postgres.TransactionSql;
+    await lockDivisions(fakeTx, ids);
+    expect(seen).toEqual(sorted.map((id) => `division:${id}`));
+  });
+
+  it("an assignment carrying schedule_locked is a 400, not a stripped 200", async () => {
+    // The plan's own `proposal` entries carry an optional `schedule_locked`, and
+    // zod strips unknown keys — so without `.strict()` a plan asking to pin a
+    // fixture applies cleanly and silently loses the pin. Loud beats silent.
+    const base = {
+      division_id: "11111111-0000-4000-8000-000000000001",
+      expected_seq: 0,
+      assignments: [
+        {
+          fixture_id: "22222222-0000-4000-8000-000000000002",
+          scheduled_at: "2026-08-01T09:00:00.000Z",
+          court_label: "Court 1",
+        },
+      ],
+    };
+    // The same body without the extra key parses, so the rejection below is the
+    // extra key and nothing else.
+    expect(() =>
+      ApplyCompetitionScheduleRequest.parse({ divisions: [base], source: "ai" }),
+    ).not.toThrow();
+    expect(() =>
+      ApplyCompetitionScheduleRequest.parse({
+        divisions: [
+          { ...base, assignments: [{ ...base.assignments[0]!, schedule_locked: true }] },
+        ],
+        source: "ai",
+      }),
+    ).toThrow();
+  });
+});
 
 afterAll(async () => {
   if (!HAS_DB) return;
@@ -470,36 +587,203 @@ describe.skipIf(!HAS_DB)("applyCompetitionSchedule (#350)", () => {
     for (const id of board.alpha.fixtureIds) {
       expect(blackouts.some((c) => c.fixtureId === id)).toBe(false);
     }
+
+    // RUNTIME half of the wire contract (the compile-time half is `_wireBridge`
+    // at the top of this file). This is the only test that produces a non-empty
+    // `conflicts`, so it is the only place a schema/usecase mismatch is visible
+    // at all: zod STRIPS undeclared keys, so declaring the wrong conflict shape
+    // would empty every warning into `{}` with no exception anywhere.
+    const parsed = ApplyCompetitionScheduleResult.parse(out);
+    expect(parsed.conflicts).toEqual(out.conflicts);
+    expect(parsed.conflicts.every((c) => typeof c.fixtureId === "string" && c.reason !== undefined))
+      .toBe(true);
   }, 60_000);
 
-  it("locks are taken in sorted division-id order", async () => {
-    // Sorting is the DEADLOCK GUARD: two concurrent joint applies over
-    // overlapping division sets that lock in different orders deadlock.
-    const ids = [
-      "ffffffff-0000-4000-8000-000000000003",
-      "11111111-0000-4000-8000-000000000001",
-      "88888888-0000-4000-8000-000000000002",
+  it("an org without scheduling.multi_division is refused, and nothing is written", async () => {
+    // The request carries client-supplied assignments, so this endpoint needs no
+    // prior plan run and no AI: it is a multi-division bulk write in its own
+    // right, reachable with a bare `manage` key. `scheduling.multi_division` is
+    // the paywall for exactly that capability. Community holds `scheduling.ai`
+    // and lacks this one, which is what makes it the right seed.
+    const { auth: community } = await seedOrg("community");
+    const free = await seedBoard(community);
+    const divisions = [
+      lineUp(free.alpha, await divisionSeq(free.alpha.id), "Court 1", 0),
+      lineUp(free.bravo, await divisionSeq(free.bravo.id), "Court 3", 0),
     ];
-    const sorted = [...ids].sort();
-    expect(lockOrder(ids)).toEqual(sorted);
-    // Duplicates collapse — a repeated division must not be locked twice.
-    expect(lockOrder([...ids, ids[0]!])).toEqual(sorted);
-    // The input is never mutated in place.
-    const copy = [...ids];
-    lockOrder(copy);
-    expect(copy).toEqual(ids);
+    await expect(
+      applyCompetitionSchedule(community, free.competitionId, {
+        divisions,
+        source: "ai",
+        ai: AI,
+      }),
+      // The FEATURE KEY, not the 402 — a bare status is what every paywall on
+      // this path answers with, including the frozen-competition one.
+    ).rejects.toMatchObject({ featureKey: "scheduling.multi_division" });
+    expect(unplaced(await slots(free.alpha.id))).toBe(true);
+    expect(unplaced(await slots(free.bravo.id))).toBe(true);
+  }, 90_000);
 
-    // …and the statement the transaction actually emits follows that order.
-    const seen: unknown[] = [];
-    const fakeTx = ((_s: TemplateStringsArray, ...values: unknown[]) => {
-      seen.push(values[0]);
-      return Promise.resolve([]);
-    }) as unknown as postgres.TransactionSql;
-    await lockDivisions(fakeTx, ids);
-    expect(seen).toEqual(sorted.map((id) => `division:${id}`));
-  });
+  it("crossPersonClash 'hard' blocks a person double-booking, 'warn' only reports it", async () => {
+    // The per-stage apply consults this setting (schedule.ts:553) and refuses.
+    // Riding bare `isBlocking` meant the same org with the same setting got a
+    // 409 from one endpoint and a written-through 200 from this one.
+    //
+    // Alpha's round 1 is two fixtures over four disjoint entrants: put one
+    // person in both, place them at the same instant on Alpha's two courts, and
+    // the only conflict on the board is a person overlap — no court clash.
+    await sharePerson(auth.orgId, [board.alpha.fixtureIds[0]!, board.alpha.fixtureIds[1]!]);
+    const overlapping = (expectedSeq: number): CompetitionApplyDivision => ({
+      division_id: board.alpha.id,
+      expected_seq: expectedSeq,
+      assignments: board.alpha.fixtureIds.map((fixture_id, i) => ({
+        fixture_id,
+        scheduled_at: i < 2 ? at(0) : at(i * 30),
+        court_label: i === 1 ? "Court 2" : "Court 1",
+      })),
+    });
+    const bravoOf = async (): Promise<CompetitionApplyDivision> =>
+      lineUp(board.bravo, await divisionSeq(board.bravo.id), "Court 3", 0);
+
+    // "warn" (the default — no constraints row at all): reported, not blocking.
+    const warned = await applyCompetitionSchedule(auth, board.competitionId, {
+      divisions: [overlapping(await divisionSeq(board.alpha.id)), await bravoOf()],
+      source: "ai",
+      ai: AI,
+    });
+    expect(warned.applied).toBe(9);
+    expect(warned.conflicts.some((c) => c.reason === "person_overlap")).toBe(true);
+    // The board really was written — so the "hard" refusal below is the setting
+    // and not some other property of this seed.
+    expect(unplaced(await slots(board.alpha.id))).toBe(false);
+
+    // Same board, same overlap, opted in: refused.
+    ({ auth } = await seedOrg("pro"));
+    board = await seedBoard(auth);
+    await sharePerson(auth.orgId, [board.alpha.fixtureIds[0]!, board.alpha.fixtureIds[1]!]);
+    await setConstraints(board.alpha.id, ["Court 1", "Court 2"], {
+      restMin: 0,
+      noBackToBack: false,
+      startWindows: [],
+      fieldFairness: "off",
+      parallelism: "mixed",
+      crossPersonClash: "hard",
+    });
+    await expect(
+      applyCompetitionSchedule(auth, board.competitionId, {
+        divisions: [overlapping(await divisionSeq(board.alpha.id)), await bravoOf()],
+        source: "ai",
+        ai: AI,
+      }),
+    ).rejects.toMatchObject({ code: "SCHEDULE_CONFLICT" });
+    expect(unplaced(await slots(board.alpha.id))).toBe(true);
+    expect(unplaced(await slots(board.bravo.id))).toBe(true);
+  }, 120_000);
+
+  it("a cross-division person clash blocks when EITHER division opted in", async () => {
+    // Person in Alpha and in Bravo; only Alpha is "hard". Alpha's own pass sees
+    // Bravo's proposed slot on the merged board and blocks. `Conflict` carries
+    // no division, so the pass that emitted it is the only possible attribution
+    // — and "hard if any involved division opted in" is the safe direction for
+    // an org that explicitly asked not to double-book its people.
+    await sharePerson(auth.orgId, [board.alpha.fixtureIds[0]!, board.bravo.fixtureIds[0]!]);
+    await setConstraints(board.alpha.id, ["Court 1", "Court 2"], {
+      restMin: 0,
+      noBackToBack: false,
+      startWindows: [],
+      fieldFairness: "off",
+      parallelism: "mixed",
+      crossPersonClash: "hard",
+    });
+    // Bravo keeps the default "warn" — its own pass would let this through.
+    const { alpha, bravo } = await clean();
+    await expect(
+      applyCompetitionSchedule(auth, board.competitionId, {
+        divisions: [alpha, bravo],
+        source: "ai",
+        ai: AI,
+      }),
+    ).rejects.toMatchObject({ code: "SCHEDULE_CONFLICT" });
+    expect(unplaced(await slots(board.alpha.id))).toBe(true);
+    expect(unplaced(await slots(board.bravo.id))).toBe(true);
+  }, 60_000);
+
+  it("a start-window violation is reported as a warning and still applies", async () => {
+    // `verifyConfigFor` used to hardcode startWindows: [], so `start_window` was
+    // a conflict class the whole joint product was blind to while the per-stage
+    // apply reported it. Warnings only: `isBlocking` does not cover it.
+    await setConstraints(board.bravo.id, ["Court 1", "Court 3"], {
+      restMin: 0,
+      noBackToBack: false,
+      // Division-targeted, which only works because the joint path stamps
+      // `divisionId` on every proposed assignment.
+      startWindows: [{ target: { kind: "division", id: board.bravo.id }, notBefore: at(240) }],
+      fieldFairness: "off",
+      parallelism: "mixed",
+      crossPersonClash: "warn",
+    });
+    const { alpha, bravo } = await clean();
+    const out = await applyCompetitionSchedule(auth, board.competitionId, {
+      divisions: [alpha, bravo],
+      source: "ai",
+      ai: AI,
+    });
+    // Applied, not refused.
+    expect(out.applied).toBe(9);
+    const windows = out.conflicts.filter((c) => c.reason === "start_window");
+    expect(windows.length).toBeGreaterThan(0);
+    // Bravo's window; Alpha, at the same instants, has none.
+    for (const c of windows) expect(board.bravo.fixtureIds).toContain(c.fixtureId);
+    expect((await slots(board.bravo.id)).every((r) => r.at !== null)).toBe(true);
+  }, 60_000);
+
+  it("more than 500 assignments in one call is refused before anything is read", async () => {
+    // The PLAN path caps a whole run at 500 movable fixtures. Without the same
+    // cap here the schema's 500-per-division x 20 divisions would admit 10 000
+    // single-row updates in one transaction holding 20 advisory locks.
+    const bulk = (n: number): CompetitionApplyDivision["assignments"] =>
+      Array.from({ length: n }, () => ({
+        fixture_id: randomUUID(),
+        scheduled_at: at(0),
+        court_label: "Court 1",
+      }));
+    const over = {
+      divisions: [
+        { division_id: board.alpha.id, expected_seq: 0, assignments: bulk(300) },
+        { division_id: board.bravo.id, expected_seq: 0, assignments: bulk(201) },
+      ],
+      source: "ai" as const,
+    };
+    expect(over.divisions.reduce((n, d) => n + d.assignments.length, 0)).toBe(
+      COMPETITION_MOVABLE_CAP + 1,
+    );
+    // The ids are fabricated, so every later guard would also refuse this —
+    // the CODE is what pins that the cap is the one that fired, and that it
+    // fired before any of them.
+    await expect(
+      applyCompetitionSchedule(auth, board.competitionId, over),
+    ).rejects.toMatchObject({ status: 409, code: "SCHEDULE_APPLY_TOO_LARGE" });
+
+    // One under the cap gets past it and is refused by the NEXT guard instead,
+    // which proves the boundary is 500 and not "any bulk request".
+    await expect(
+      applyCompetitionSchedule(auth, board.competitionId, {
+        ...over,
+        divisions: [over.divisions[0]!, { ...over.divisions[1]!, assignments: bulk(200) }],
+      }),
+    ).rejects.toMatchObject({ code: "SCHEDULE_APPLY_UNKNOWN_FIXTURE" });
+  }, 60_000);
 
   it("exactly one schedule.applied_multi competition event is written", async () => {
+    // Rename so the (name, slug) DOMAIN order is provably the REVERSE of the
+    // UUID order. Without this the ids are random, so a UUID sort would match
+    // the domain order about half the time and the assertion below would only
+    // catch the defect on a coin flip.
+    const byUuid = [board.alpha, board.bravo].sort((a, b) => (a.id < b.id ? -1 : 1));
+    await sql`update divisions set name = 'Zulu', slug = 'zulu' where id = ${byUuid[0]!.id}`;
+    await sql`update divisions set name = 'Alfa', slug = 'alfa' where id = ${byUuid[1]!.id}`;
+    const domainOrder = [byUuid[1]!.id, byUuid[0]!.id];
+
     const { alpha, bravo } = await clean();
     await applyCompetitionSchedule(auth, board.competitionId, {
       divisions: [alpha, bravo],
@@ -515,9 +799,16 @@ describe.skipIf(!HAS_DB)("applyCompetitionSchedule (#350)", () => {
     // coin flip.
     expect(rows).toHaveLength(1);
     expect(rows[0]!.payload.source).toBe("ai");
-    expect([...(rows[0]!.payload.division_ids ?? [])].sort()).toEqual(
-      [board.alpha.id, board.bravo.id].sort(),
-    );
+    // DOMAIN order, asserted as emitted. Re-sorting a copy here — which this
+    // test used to do — makes it blind to the UUID sort the module header
+    // forbids for anything that is not lock acquisition.
+    expect(rows[0]!.payload.division_ids).toEqual(domainOrder);
+    expect(rows[0]!.payload.division_ids).not.toEqual([...domainOrder].sort());
+    // …and the per-division rows carry the same list in the same order.
+    const [division] = await sql<{ payload: { joint?: { division_ids?: string[] } } }[]>`
+      select payload from division_events
+      where division_id = ${board.alpha.id} and type = 'schedule_applied'`;
+    expect(division!.payload.joint?.division_ids).toEqual(domainOrder);
   }, 60_000);
 
   it("ai-last returns the applied plan after a joint apply", async () => {

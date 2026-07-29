@@ -53,23 +53,48 @@ import "server-only";
 // board this module assembles is richer than a pack's — every untouched and
 // sibling fixture arrives through `toAssignment` with its people attached,
 // exactly as `applySchedule` builds them — so apply-time verification sees
-// strictly more than plan-time did. The extra it can find is rest and
-// person-overlap, both non-blocking, so the direction is safe: a plan that
-// verified clean can never be REFUSED here by something plan time could not see.
+// strictly more than plan-time did.
 //
-// R13: warnings come back in full. `isBlocking` covers only `court` and direct
-// `order`; blackout, session-window, rest and person-overlap violations do not
-// block, fire no repair round, and the prompt tells the model it will not be
-// asked to repair them. A joint plan can ship with a player double-booked
-// across two divisions and every automated gate reports success — the organiser
-// reading these conflicts is the last line of defence, so nothing here filters,
-// dedupes away or collapses them beyond the exact-duplicate collapse
-// `verifyJoint` itself does.
+// For a COMPLETE apply — every movable fixture the plan covered is listed — the
+// extra that richer board can find is rest and person-overlap, so the only new
+// refusal is the `crossPersonClash: "hard"` one below, which is the organiser's
+// own opt-in. A PARTIAL apply is a different case and the claim must not be
+// stretched over it: the board's `excludedFixtureIds` path (`ai-apply.ts:201`)
+// leaves the excluded fixtures at their OLD slots, where `untouched` turns them
+// into court occupancy that was not occupancy at plan time — so a partial apply
+// CAN be refused with a `court` conflict against a fixture the plan intended to
+// move. That behaviour is right (it really would be a double-booking); it was
+// the "can never be refused" phrasing that was too broad.
 //
-// This module charges NOTHING. The plan run was already priced and paid for at
-// `aiPlanForCompetition`; applying it is free.
+// R13: warnings come back in full. Blackout, session-window, start-window, rest
+// and — unless the division opted into `crossPersonClash: "hard"` —
+// person-overlap violations do not block, fire no repair round, and the prompt
+// tells the model it will not be asked to repair them. A joint plan can ship
+// with a player double-booked across two divisions and every automated gate
+// reports success, so the organiser reading these conflicts is the last line of
+// defence: nothing here filters, dedupes away or collapses them beyond the
+// exact-duplicate collapse `verifyJoint` itself does.
+//
+// BLOCKING IS NOT BARE `isBlocking`. `isBlocking` is the PLAN-time taxonomy
+// (court + direct order). The single-division APPLY additionally honours the
+// division's `constraints.crossPersonClash`: `applySchedule` hands it to
+// `mapConflicts` (schedule.ts:553) and a hand-placed person double-booking is
+// refused. Riding bare `isBlocking` meant the same org, with the same setting,
+// got a 409 from the per-stage apply and a written-through 200 from this one.
+// So the person-overlap rule is re-applied here, per division — which is the
+// only way it can be done, since `Conflict` carries no division and only the
+// pass that emitted it knows whose fixture it is.
+//
+// This module charges NOTHING — the plan run was already priced and paid for at
+// `aiPlanForCompetition`. It is still GATED, on `scheduling.multi_division` and
+// nothing else. The request carries full client-supplied assignments, so this
+// endpoint needs no prior plan run and no AI at all: it is a multi-division bulk
+// write in its own right, and `scheduling.multi_division` is the paywall for
+// exactly that capability. `scheduling.ai` is deliberately NOT required —
+// applying is not an AI action, and the plan endpoint already charged for the AI.
 import type postgres from "postgres";
 import { withTenant } from "@/lib/db";
+import { requireFeature } from "@/lib/entitlements";
 import { HttpError } from "@/lib/errors";
 import { EngineError } from "@seazn/engine/core";
 import { appendDivisionEvent } from "@/server/engine-db";
@@ -94,6 +119,7 @@ import {
 } from "./schedule";
 import { isBlocking, schedulingAiModel, type PackSettings } from "./schedule-ai";
 import {
+  COMPETITION_MOVABLE_CAP,
   JOINT_APPLY_EVENT,
   verifyConfigFor,
   type CompetitionPackDivision,
@@ -244,11 +270,12 @@ const packDivisionOf = (d: LoadedDivision): CompetitionPackDivision => ({
  * Persist a joint AI plan across several divisions of one competition, atomically.
  *
  * @throws HttpError 400 (no divisions / a division named twice), 404 (unknown
- *   competition, or a division that is not in it), 422 (a frozen division, a
- *   fixture that is not in the division it was offered under, a decided fixture,
- *   a fixture inside a locked scope, a fixture named twice),
- *   EngineError SEQ_CONFLICT (409) and SCHEDULE_CONFLICT (409, carrying the
- *   blocking conflicts), PaymentRequiredError (a competition frozen by
+ *   competition, or a division that is not in it), 409 SCHEDULE_APPLY_TOO_LARGE,
+ *   422 (a frozen division, a fixture that is not in the division it was offered
+ *   under, a decided fixture, a fixture inside a locked scope, a fixture named
+ *   twice), EngineError SEQ_CONFLICT (409) and SCHEDULE_CONFLICT (409, carrying
+ *   the blocking conflicts), PaymentRequiredError (402 — no
+ *   `scheduling.multi_division`, or a competition frozen by
  *   `competitions.max_active`).
  */
 export async function applyCompetitionSchedule(
@@ -256,12 +283,29 @@ export async function applyCompetitionSchedule(
   competitionId: string,
   input: CompetitionApplyInput,
 ): Promise<CompetitionApplyOut> {
+  // The capability gate, ahead of every read, every lock and every write — see
+  // the module header on why this endpoint needs one of its own and why it is
+  // this key rather than `scheduling.ai`.
+  await requireFeature(auth.orgId, "scheduling.multi_division");
+
   if (input.divisions.length === 0) {
     throw new HttpError(400, "no divisions to apply", "SCHEDULE_APPLY_NO_DIVISIONS");
   }
   const requestedIds = input.divisions.map((d) => d.division_id);
   if (new Set(requestedIds).size !== requestedIds.length) {
     throw new HttpError(400, "a division is listed more than once", "SCHEDULE_APPLY_DUPLICATE_DIVISION");
+  }
+  // The same 500 the PLAN path caps a whole run at. Without it the schema's
+  // per-division max of 500 across 20 divisions would admit 10 000 single-row
+  // updates in one transaction holding 20 advisory locks — a door 20x wider than
+  // anything a plan can produce. Checked on the request alone, before any read.
+  const total = input.divisions.reduce((n, d) => n + d.assignments.length, 0);
+  if (total > COMPETITION_MOVABLE_CAP) {
+    throw new HttpError(
+      409,
+      "too many fixtures in one apply — apply per division",
+      "SCHEDULE_APPLY_TOO_LARGE",
+    );
   }
   // Every fixture belongs to exactly one division and moves exactly once. Two
   // entries for one fixture would be written twice and verified as two bookings
@@ -421,11 +465,26 @@ export async function applyCompetitionSchedule(
 
     // ---- one pass per division, over the merged board ---------------------
     const seenConflict = new Set<string>();
+    const blockingKeys = new Set<string>();
     const found: Conflict[] = [];
+    const conflictKey = (c: Conflict): string => `${c.fixtureId}|${c.reason}|${c.detail ?? ""}`;
     for (const d of order) {
       const mine = proposed.filter((a) => a.divisionId === d.id);
       if (mine.length === 0) continue;
       const others = proposed.filter((a) => a.divisionId !== d.id);
+      // This division's own opt-in.
+      //
+      // Attribution is exact for THIS rule, and only because of which conflicts
+      // it covers. Every `person_overlap` the engine emits is keyed on
+      // `a.fixtureId` — a fixture of the pass's own `assignments`
+      // (calendar.ts:483,497) — so a person overlap reported here is always
+      // about one of `d`'s fixtures. That is NOT true of conflicts in general:
+      // the dependency loop (calendar.ts:506-517) resolves against
+      // `existing + assignments` and can name a fixture this pass does not own,
+      // which is exactly why the dedupe below exists. `Conflict` carries no
+      // division of its own, so per-pass attribution is the only way to reach a
+      // per-division setting at all — and it is sound for person overlap.
+      const personBlocks = d.settings.config.constraints?.crossPersonClash === "hard";
       for (const c of validateAssignments(
         mine,
         verifyConfigFor(packDivisionOf(d)),
@@ -437,14 +496,24 @@ export async function applyCompetitionSchedule(
         // order violation is re-reported verbatim by every other division's
         // pass. The two SIDES of a court clash differ on fixtureId and both
         // survive — either fixture can be the one that moves.
-        const key = `${c.fixtureId}|${c.reason}|${c.detail ?? ""}`;
+        const key = conflictKey(c);
+        // Decided BEFORE the dedupe `continue`, so the verdict is a property of
+        // the conflict rather than of which pass happened to reach it first —
+        // the same key genuinely can arrive from more than one pass (see the
+        // dependency loop noted above). Effective cross-division rule: HARD IF
+        // ANY INVOLVED DIVISION OPTED IN. That is the safe direction for an org
+        // that explicitly asked not to double-book its people, and both
+        // divisions belong to one org, so there is no fairness question.
+        if (isBlocking(c) || (c.reason === "person_overlap" && personBlocks)) {
+          blockingKeys.add(key);
+        }
         if (seenConflict.has(key)) continue;
         seenConflict.add(key);
         found.push(c);
       }
     }
     const conflicts = sortConflicts(found, order);
-    const blocking = conflicts.filter(isBlocking);
+    const blocking = conflicts.filter((c) => blockingKeys.has(conflictKey(c)));
     if (blocking.length > 0) {
       // Same EngineError the single-division apply raises, so the /api/v1 kernel
       // answers 409 with the conflict list attached and the board renders the
@@ -485,7 +554,10 @@ export async function applyCompetitionSchedule(
       const seq = await appendDivisionEvent(tx, d.id, "schedule_applied", {
         source: input.source,
         moves,
-        joint: { competition_id: competitionId, division_ids: order.map((x) => x.id).sort(cmp) },
+        // `order` is already the (name, slug) domain order — re-sorting these on
+        // the UUID would be the one thing this module's header says a UUID sort
+        // is NOT for. Lock acquisition is the sole exception, and this is output.
+        joint: { competition_id: competitionId, division_ids: order.map((x) => x.id) },
         ...(ai !== undefined ? { ai } : {}),
       });
       await tx`update divisions set seq = ${seq} where id = ${d.id}`;
@@ -501,7 +573,8 @@ export async function applyCompetitionSchedule(
       values (${competitionId}, ${auth.orgId}, ${JOINT_APPLY_EVENT},
               ${tx.json({
                 source: input.source,
-                division_ids: order.map((d) => d.id).sort(cmp),
+                // Domain order, like every other array this module emits.
+                division_ids: order.map((d) => d.id),
                 applied,
                 ...(ai !== undefined ? { ai } : {}),
               } as never)}, ${auth.userId})`;

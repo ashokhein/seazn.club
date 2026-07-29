@@ -820,10 +820,23 @@ export function jointFeedDependencies(pack: CompetitionPack): OrderDependency[] 
 }
 
 /** One division's verifier config — the per-division mirror of `verifyConfig`
- *  (schedule-ai.ts:914), reading `division.settings` instead of `pack.settings`
- *  and keeping every one of its deliberate drops:
+ *  (schedule-ai.ts:914), reading `division.settings` instead of `pack.settings`.
  *
- *    startWindows: []   the pack carries ISO strings, the engine wants epoch ms
+ *    startWindows       CONVERTED, not dropped. The single-division mirror
+ *                        drops these on the grounds that the pack carries ISO
+ *                        strings and the engine wants epoch ms — but that is a
+ *                        conversion excuse: the `blackouts` and `sessionWindows`
+ *                        lines below do exactly that conversion, with `ms()`.
+ *                        The drop made `start_window` a conflict class the whole
+ *                        joint product was blind to, at plan time AND apply
+ *                        time, while the per-stage apply reports it through
+ *                        `toSlotConfig` (schedule.ts:337-341).
+ *                        The engine matches a `kind: "division"` window on the
+ *                        assignment's `divisionId`, which the joint path is the
+ *                        only one that stamps — so these govern per division
+ *                        exactly as `restByGroup` does.
+ *                        WARNINGS ONLY: `isBlocking` does not cover
+ *                        `start_window`, and must not be taught to.
  *    fieldFairness: off
  *    parallelism: mixed  a PLACER preference, not a legality rule. Load-bearing
  *                        here in a way it is not single-division: the joint draft
@@ -831,8 +844,18 @@ export function jointFeedDependencies(pack: CompetitionPack): OrderDependency[] 
  *                        avoids the divisions drafted BEFORE it and never those
  *                        after), so honouring it in the verifier would turn a
  *                        build-order artefact into a verdict.
- *    crossPersonClash: warn   matches single-division semantics exactly — a
- *                        person clash is reported, never blocking. */
+ *    crossPersonClash: warn   matches the single-division AI PLAN path
+ *                        (`verifyConfig`, schedule-ai.ts:914) — this function's
+ *                        actual twin. It does NOT match the single-division
+ *                        APPLY path, and that asymmetry is deliberate on both
+ *                        sides: `applySchedule` hands the division's real
+ *                        setting to `mapConflicts` (schedule.ts:553) and refuses
+ *                        a hand-placed person double-booking, while the plan
+ *                        path warns and never asks the model to repair it.
+ *                        An earlier version of this comment claimed the two
+ *                        matched "exactly". They never did. The joint APPLY
+ *                        re-applies the setting itself rather than changing this
+ *                        line — see `applyCompetitionSchedule`. */
 export function verifyConfigFor(
   division: CompetitionPackDivision,
 ): Parameters<typeof validateAssignments>[1] {
@@ -848,7 +871,21 @@ export function verifyConfigFor(
               ? { restByGroup: s.constraints.restByGroup }
               : {}),
             noBackToBack: s.constraints.noBackToBack,
-            startWindows: [],
+            // `PackStartWindow.target.kind` is a bare `string` (the pack is a
+            // wire shape), so an unrecognised kind is DROPPED rather than cast
+            // through: the engine would silently never match it, and a cast
+            // would hide that a settings row has drifted from the enum.
+            startWindows: s.constraints.startWindows.flatMap((w) =>
+              w.target.kind === "entrant" || w.target.kind === "pool" || w.target.kind === "division"
+                ? [
+                    {
+                      target: { kind: w.target.kind, id: w.target.id },
+                      ...(w.notBefore !== undefined ? { notBefore: ms(w.notBefore) } : {}),
+                      ...(w.notAfter !== undefined ? { notAfter: ms(w.notAfter) } : {}),
+                    },
+                  ]
+                : [],
+            ),
             fieldFairness: "off" as const,
             parallelism: "mixed" as const,
             crossPersonClash: "warn" as const,
