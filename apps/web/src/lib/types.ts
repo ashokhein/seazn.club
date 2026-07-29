@@ -31,7 +31,18 @@ export const READ_ROLES = ["owner", "admin", "viewer"] as const;
 export const SCORER_SCOPE_TYPES = ["competition", "division", "fixture"] as const;
 export type ScorerScopeType = (typeof SCORER_SCOPE_TYPES)[number];
 
-export interface Organization {
+/**
+ * An organization as the IDENTITY lane sees it: nav, org switcher, page auth.
+ *
+ * Deliberately carries NO payout fields (#341). `payment_instructions` is free
+ * text an owner writes to tell offline entrants how to pay them — in practice
+ * bank details, IBANs, UPI IDs — and this shape is what `getUserOrgs` caches in
+ * Redis for 120s and what `GET /api/orgs`, a nav endpoint, returns to every
+ * member. The two places that genuinely need those columns read them
+ * themselves, scoped to the one org being edited or paid:
+ * `o/[orgSlug]/settings/connect/page.tsx` and `usecases/registrations.ts`.
+ */
+export interface OrgSummary {
   id: string;
   name: string;
   slug: string;
@@ -39,9 +50,6 @@ export interface Organization {
   created_at: string;
   logo_url: string | null;
   logo_storage_path: string | null;
-  payment_instructions: string | null;
-  /** Preselect for NEW division registration settings (spec 2026-07-12 §3). */
-  default_payment_method: "offline" | "stripe";
   /** `{ colors: { primary: "#hex" } }` — same shape as competitions.branding. */
   branding: unknown;
   /**
@@ -53,8 +61,15 @@ export interface Organization {
   timezone: string | null;
 }
 
+/** The identity shape plus the payout columns, for the org-settings lane. */
+export interface Organization extends OrgSummary {
+  payment_instructions: string | null;
+  /** Preselect for NEW division registration settings (spec 2026-07-12 §3). */
+  default_payment_method: "offline" | "stripe";
+}
+
 /** An organization paired with the current user's role in it. */
-export interface OrgMembership extends Organization {
+export interface OrgMembership extends OrgSummary {
   role: OrgRole;
 }
 

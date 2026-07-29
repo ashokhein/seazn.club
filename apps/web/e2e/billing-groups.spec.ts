@@ -286,6 +286,44 @@ test.describe.serial("billing groups", () => {
     await page.keyboard.press("Escape");
   });
 
+  test("a trialing payer is not told their bill goes up", async ({ page }) => {
+    // The THIRD attach body (#299 round 4, coverage gap #343). This case is the
+    // one `freeSlots` alone gets WRONG rather than merely vague:
+    // `syncGroupQuantity` freezes `quantity_paid` during a trial, so seats == orgs
+    // and `freeSlots` is 0 — identical to the charged case above, which is why a
+    // two-way choice handed a trialing payer "your bill goes up by …". Nothing is
+    // prorated on that path at all (`proration_behavior: "none"`,
+    // `previewAttachCharge` returns null), so the sentence was simply false.
+    //
+    // Seats are therefore left at 2 with 2 orgs on the bill DELIBERATELY: with a
+    // freed slot the free body would pass this test for the wrong reason.
+    await baseline();
+    // trial_end must be in the FUTURE: V332's backstop degrades a `trialing`
+    // group whose trial ended over a day ago to community, which would take the
+    // panel somewhere else entirely.
+    const trialEnd = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    await setOrgSubscriptionSql(orgA, {
+      plan_key: "pro",
+      status: "trialing",
+      trial_end: trialEnd,
+    });
+    await activate(page, orgA);
+    await page.goto("/settings/billing");
+    const panel = panelOf(page);
+    await expect(panel).toBeVisible({ timeout: 20_000 });
+
+    await panel.getByRole("button", { name: `Group C ${TAG}` }).click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("rides your free trial");
+    // Same discriminator the free case uses, and for the same reason: the trial
+    // body contains "nothing is added to a bill now", so a negative on "added to"
+    // would fail on true copy. "your bill goes up by" is the phrase that appears
+    // in BOTH charged bodies and in neither of the other two.
+    await expect(dialog).not.toContainText("your bill goes up by");
+    await page.keyboard.press("Escape");
+  });
+
   test("a full plan says so instead of offering a move it would refuse", async ({ page }) => {
     // groupOrgLimit resolves through the OLDEST org in the group, so the
     // override goes on A.
