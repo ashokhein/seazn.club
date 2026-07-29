@@ -24,6 +24,7 @@ import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import {
+  OTHER_DIVISION_LABEL,
   buildSchedulePack,
   zonedIso,
   type PackAssignment,
@@ -34,18 +35,24 @@ import {
   type PackSettings,
   type SchedulePack,
 } from "./schedule-ai";
+import type { Assignment } from "@seazn/engine/scheduling";
+
+const MS_PER_MIN = 60_000;
 
 /** Total movable fixtures across the whole joint pack. Over this the run is
  *  refused before any credit is reserved — the per-division builder keeps its
  *  own 500 cap (schedule-ai.ts:293), this one is on the SUM. */
 export const COMPETITION_MOVABLE_CAP = 500;
 
-/** The label buildSchedulePack stamps on a sibling division's placements
- *  (schedule-ai.ts:450). Siblings arrive carrying no division metadata at all —
- *  siblingAssignments (schedule.ts:271) returns bare engine assignments — so
- *  this label is the only marker that separates "another division's board" from
- *  "this division's own fixed fixtures" in a per-division pack. */
-const SIBLING_LABEL = "Other division";
+const TOO_LARGE = "AI_PLAN_TOO_LARGE";
+
+/** One too-large contract for the whole joint call. The per-division builder
+ *  refuses >500 with a 422 carrying this same code string; a caller of
+ *  buildCompetitionPack must never have to tell the two apart, so the
+ *  per-division refusal is re-thrown as this one. The per-division 422 is left
+ *  alone for the per-division callers. */
+const tooLarge = (): HttpError =>
+  new HttpError(409, "too large — schedule per division", TOO_LARGE);
 
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const ms = (iso: string): number => Date.parse(iso);
@@ -112,8 +119,11 @@ export interface BuildCompetitionPackOptions {
  *   the set the joint verifier rejects out-of-set assignments against.
  *
  * Throws 404 (unknown competition, or a division that is not in it) and
- * 409 AI_PLAN_TOO_LARGE when the summed movable count exceeds
- * {@link COMPETITION_MOVABLE_CAP}. The minimum-two-divisions rule is a caller
+ * 409 AI_PLAN_TOO_LARGE when the run is too big — whether that is the summed
+ * movable count exceeding {@link COMPETITION_MOVABLE_CAP} or a single division
+ * tripping the per-division cap first (that 422 is re-thrown as this 409, so a
+ * joint call has exactly one too-large contract). The minimum-two-divisions
+ * rule is a caller
  * gate (it exists to stop discount arbitrage, not to protect the pack), so it
  * is enforced by aiPlanForCompetition, not here.
  */
@@ -148,7 +158,14 @@ export async function buildCompetitionPack(
     (a, b) => cmp(nameById.get(a)!, nameById.get(b)!) || cmp(a, b),
   );
 
+  // Sequential accumulation. Each division's greedy draft additionally sees
+  // every slot the divisions BEFORE it just took, so the joint draft is legal
+  // across divisions on a shared court label rather than N independently-legal
+  // boards stacked on top of each other. Order is the stable (name, id) domain
+  // sort above, so accumulating is reproducible — the byte-identical-rebuild
+  // test is the guard that it stayed that way.
   const built: { id: string; pack: SchedulePack; movableIds: Set<string> }[] = [];
+  const drafted: Assignment[] = [];
   for (const id of order) {
     const prior = opts.prior
       ? {
@@ -162,20 +179,51 @@ export async function buildCompetitionPack(
             })),
         }
       : undefined;
-    const one = await buildSchedulePack(auth, id, {
-      mode: opts.mode,
-      instruction: opts.instruction,
-      ...(prior !== undefined ? { prior } : {}),
-    });
+    let one: { pack: SchedulePack; movableIds: Set<string> };
+    try {
+      one = await buildSchedulePack(auth, id, {
+        mode: opts.mode,
+        instruction: opts.instruction,
+        ...(prior !== undefined ? { prior } : {}),
+        extraExisting: drafted,
+      });
+    } catch (err) {
+      // A single oversized division refuses with the per-division 422. Inside a
+      // joint call that must read as the joint cap — same code, one status.
+      if (err instanceof HttpError && (err.code === TOO_LARGE || err.message === TOO_LARGE)) {
+        throw tooLarge();
+      }
+      throw err;
+    }
     built.push({ id, pack: one.pack, movableIds: one.movableIds });
+
+    // Feed this division's draft forward as court occupancy. entrants come
+    // along because they are free (they are on the fixture), but they can never
+    // clash across divisions — an entrant belongs to exactly one division.
+    // `people` is deliberately empty: a person rostered into one entrant of A
+    // and one of B is in NEITHER division's pack people map, so a per-division
+    // pack cannot supply cross-division person data. Cross-division person
+    // overlap is the joint VERIFIER's job (Task 3), not the draft's.
+    const minutes = one.pack.settings.matchMinutes;
+    const fixtureById = new Map(one.pack.fixtures.movable.map((f) => [f.id, f]));
+    for (const a of one.pack.draft) {
+      const startAt = ms(a.scheduled_at);
+      const f = fixtureById.get(a.fixture_id);
+      drafted.push({
+        fixtureId: a.fixture_id,
+        court: a.court_label,
+        startAt,
+        endAt: startAt + minutes * MS_PER_MIN,
+        entrants: [f?.home ?? null, f?.away ?? null].filter((e): e is string => e !== null),
+        people: [],
+      });
+    }
   }
 
   // The joint cap is on the SUM and is checked after the union — the caller
   // reserves credit only once this has passed.
   const movableIds = new Set(built.flatMap((b) => [...b.movableIds]));
-  if (movableIds.size > COMPETITION_MOVABLE_CAP) {
-    throw new HttpError(409, "too large — schedule per division", "AI_PLAN_TOO_LARGE");
-  }
+  if (movableIds.size > COMPETITION_MOVABLE_CAP) throw tooLarge();
 
   const divisions: CompetitionPackDivision[] = built.map((b) => ({
     id: b.pack.division.id,
@@ -209,7 +257,7 @@ export async function buildCompetitionPack(
   // Obstacles.
   //
   // A per-division pack's obstacle list is (its own fixed fixtures) + (EVERY
-  // sibling division's placements, flattened to the SIBLING_LABEL). When two
+  // sibling division's placements, flattened to the OTHER_DIVISION_LABEL). When two
   // siblings are both in this run each one's board arrives twice: once as its
   // own movable fixtures, once as the other's obstacles. Serving both would
   // hand the model a board where half its own work is already immovable.
@@ -228,7 +276,7 @@ export async function buildCompetitionPack(
       }
     }
     for (const o of b.pack.fixtures.obstacles) {
-      if (o.label !== SIBLING_LABEL) ownedSlots.add(`${o.court}|${ms(o.from)}`);
+      if (o.label !== OTHER_DIVISION_LABEL) ownedSlots.add(`${o.court}|${ms(o.from)}`);
     }
   }
 
@@ -240,7 +288,7 @@ export async function buildCompetitionPack(
   const collected: CompetitionPackObstacle[] = [];
   for (const b of built) {
     for (const o of b.pack.fixtures.obstacles) {
-      if (o.label !== SIBLING_LABEL) {
+      if (o.label !== OTHER_DIVISION_LABEL) {
         collected.push({ ...o, division_id: b.id });
         continue;
       }

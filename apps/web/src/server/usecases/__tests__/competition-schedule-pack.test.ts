@@ -13,6 +13,7 @@ import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
 import { buildCompetitionPack, COMPETITION_MOVABLE_CAP } from "../competition-schedule-ai";
+import { OTHER_DIVISION_LABEL } from "../schedule-ai";
 import { seedOrg } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -282,7 +283,9 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     expect(foreign.length).toBe(RR);
     for (const o of foreign) {
       expect(o.court).toBe("Court 4");
-      expect(o.label).toBe("Other division");
+      // The shared literal, imported — not a copy. A silent divergence here is
+      // what would stop sibling removal from recognising a foreign obstacle.
+      expect(o.label).toBe(OTHER_DIVISION_LABEL);
     }
     // …and no duplicates survived the union of two source packs.
     expect(new Set(foreign.map((o) => `${o.court}|${o.from}|${o.to}`)).size).toBe(RR);
@@ -301,6 +304,58 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     expect(bravo.settings.courts).toEqual(["Court 2", "Court 3"]);
     expect(alpha.tz).toBe(TZ);
     expect(alpha.sport).toBe("generic");
+  }, 60_000);
+
+  // The draft is the model's anchor, and credits buy a FIXED generation-token
+  // budget with no true-up (lib/ai-rung.ts). A draft that double-books a shared
+  // court anchors the model on an illegal board and burns repair rounds the org
+  // paid for — so the pack must not ship one. Two divisions, one shared court,
+  // nothing pre-placed: the ONLY thing that can keep them apart is the joint
+  // build feeding each division's greedy solve the drafts already committed by
+  // the divisions before it.
+  it("the joint draft never double-books a shared court across divisions", async () => {
+    const shared = await seedCompetition(auth, "Shared Court", [
+      { name: "Foxtrot", courts: ["Court 1"], matchMinutes: 30, entrants: 4, place: false, startOffsetMin: 0 },
+      { name: "Golf", courts: ["Court 1"], matchMinutes: 30, entrants: 4, place: false, startOffsetMin: 0 },
+    ]);
+    const { pack } = await buildCompetitionPack(
+      auth,
+      shared.competitionId,
+      shared.divisions.map((d) => d.id),
+      { mode: "generate", instruction: "x" },
+    );
+    expect(pack.courts).toEqual(["Court 1"]);
+    expect(pack.divergentCourts).toEqual([]);
+    // Both divisions must actually have drafted, or the overlap sweep below is
+    // vacuous — a builder that simply dropped the second division would pass.
+    expect(pack.draft.length).toBe(RR * 2);
+    for (const d of pack.divisions) {
+      expect(pack.draft.filter((a) => a.division_id === d.id).length).toBe(RR);
+    }
+    const minutes = new Map(pack.divisions.map((d) => [d.id, d.settings.matchMinutes]));
+    const spans = pack.draft.map((a) => {
+      const from = Date.parse(a.scheduled_at);
+      return {
+        court: a.court_label,
+        division_id: a.division_id,
+        fixture_id: a.fixture_id,
+        from,
+        to: from + minutes.get(a.division_id)! * MIN,
+      };
+    });
+    const clashes: string[] = [];
+    for (let i = 0; i < spans.length; i++) {
+      for (let j = i + 1; j < spans.length; j++) {
+        const x = spans[i]!;
+        const y = spans[j]!;
+        if (x.division_id === y.division_id) continue;
+        if (x.court !== y.court) continue;
+        if (x.from < y.to && y.from < x.to) {
+          clashes.push(`${x.court} ${new Date(x.from).toISOString()}: ${x.fixture_id} vs ${y.fixture_id}`);
+        }
+      }
+    }
+    expect(clashes).toEqual([]);
   }, 60_000);
 
   it("two builds of an identically seeded competition are byte-identical", async () => {
@@ -347,6 +402,26 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
       instruction: "Pack the day.",
     });
     expect(movableIds.size).toBe(COMPETITION_MOVABLE_CAP);
+  }, 120_000);
+
+  // One code, one status. The per-division builder refuses >500 with a 422
+  // (schedule-ai.ts:293) and the joint sum cap with a 409 — both spelling the
+  // code AI_PLAN_TOO_LARGE. Inside a joint call the caller must see exactly one
+  // contract, or the endpoint cannot present it coherently. "Aaa" sorts before
+  // "Bbb", so the oversized division is the FIRST one built and its 422 is what
+  // would otherwise escape.
+  it("a division over the per-division cap inside a joint call is the joint 409, not a 422", async () => {
+    const { auth } = await seedOrg("pro");
+    const comp = await createCompetition(auth, { name: "Cap One Big", visibility: "public", branding: {} });
+    const big = await seedBigDivision(auth, comp.id, "Aaa", 501);
+    const small = await seedBigDivision(auth, comp.id, "Bbb", 2);
+    await expect(
+      buildCompetitionPack(auth, comp.id, [big, small], { mode: "generate", instruction: "x" }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "AI_PLAN_TOO_LARGE",
+      message: "too large — schedule per division",
+    });
   }, 120_000);
 
   it("over the cap refuses with AI_PLAN_TOO_LARGE", async () => {

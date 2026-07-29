@@ -118,6 +118,17 @@ export function zonedIso(value: string | number | Date, tz: string): string {
 
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
+/** Label stamped on a sibling division's placements. `siblingAssignments`
+ *  (schedule.ts:271) returns bare engine assignments carrying no division
+ *  metadata, so every other division in the competition flattens to this one
+ *  string — deliberately, since a rival's roster must never leak into the pack.
+ *
+ *  Exported because that makes it the ONLY marker separating "another
+ *  division's board" from "this division's own fixed fixtures" in
+ *  `fixtures.obstacles`, and the #350 joint builder keys its sibling removal on
+ *  it. A copied literal there would diverge silently. */
+export const OTHER_DIVISION_LABEL = "Other division";
+
 // ---------------------------------------------------------------------------
 // Pack shape (design/v4/01 §2 + officials per design/v4/03 §2). JSON-serialisable.
 // ---------------------------------------------------------------------------
@@ -221,6 +232,19 @@ export interface BuildPackOptions {
     instruction: string;
     assignments: { fixture_id: string; scheduled_at: string; court_label: string }[];
   };
+  /** Extra court occupancy handed to the greedy draft solver, on top of this
+   *  division's own fixed fixtures and its siblings' persisted board.
+   *
+   *  Added for the #350 joint pack (competition-schedule-ai.ts): several
+   *  divisions of one competition are drafted in sequence, and each must see
+   *  the slots the divisions before it have just taken. `siblingAssignments`
+   *  only covers what is already PERSISTED, so without this the joint draft
+   *  double-books every shared court label — anchoring the model on an illegal
+   *  board and spending the run's FIXED token budget on repair rounds.
+   *
+   *  Optional and additive: it only widens `existing`, and `generate` is the
+   *  only mode that solves a draft, so no current caller is affected. */
+  extraExisting?: Assignment[];
 }
 
 /** Movable fixtures respect a repair `scope`: a fixture stays movable if it is
@@ -372,7 +396,9 @@ export async function buildSchedulePack(
       const result = slotFixtures({
         fixtures: schedulable,
         config: toSlotConfig(settings, 0),
-        existing: [...obstacleAssignments, ...siblings],
+        // extraExisting is the #350 joint pack's already-drafted divisions;
+        // empty for every single-division caller.
+        existing: [...obstacleAssignments, ...siblings, ...(opts.extraExisting ?? [])],
       });
       draft = result.assignments.map((a) => ({
         fixture_id: realIdByRank.get(a.fixtureId) ?? a.fixtureId,
@@ -447,7 +473,7 @@ export async function buildSchedulePack(
         court: a.court,
         from: zonedIso(a.startAt, tz),
         to: zonedIso(a.endAt, tz),
-        label: "Other division",
+        label: OTHER_DIVISION_LABEL,
       })),
     ].sort(
       (a, b) => cmp(a.court, b.court) || cmp(a.from, b.from) || cmp(a.to, b.to) || cmp(a.label, b.label),
