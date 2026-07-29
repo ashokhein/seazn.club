@@ -464,6 +464,26 @@ export async function countOrgsWithoutGroup(): Promise<number> {
 }
 
 /**
+ * The ids behind `countOrgsWithoutGroup`, capped.
+ *
+ * The count alone is an operational signal and a terrible assertion: it is a
+ * schema-wide aggregate, and the test suite runs files in parallel against ONE
+ * shared schema, so a sibling suite inserting a bare fixture org turns an exact
+ * count into a coin flip (#321). Tests assert membership of their own ids
+ * through this; the cron keeps using the count.
+ *
+ * Capped because the whole point of a non-zero answer is that the invariant is
+ * broken — the diagnostic must not become the outage.
+ */
+export async function orgsWithoutGroup(limit = 100): Promise<string[]> {
+  const rows = await sql<{ id: string }[]>`
+    select id from organizations
+     where subscription_id is null and deleted_at is null
+     order by created_at limit ${limit}`;
+  return rows.map((r) => r.id);
+}
+
+/**
  * Cancel a group ONLY if it is still empty.
  *
  * Two shapes have already failed here, and the reason is worth stating exactly,

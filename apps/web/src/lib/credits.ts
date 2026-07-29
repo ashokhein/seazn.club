@@ -412,11 +412,22 @@ export async function grantMonthly(
  * so the caller (the cron route, then `billing-grant.yml`) can warn on a
  * persistent per-wallet grant failure instead of it going unnoticed.
  */
-export async function grantMonthlyForAllWallets(): Promise<{
+export async function grantMonthlyForAllWallets(
+  opts: { walletIds?: readonly string[] } = {},
+): Promise<{
   wallets: number;
   granted: number;
   failed: number;
 }> {
+  // The cron calls this with NO scope — every wallet, which is the product
+  // behaviour and must stay that way. `walletIds` exists for tests: the
+  // assertions here are about what a SCHEMA-WIDE sweep did, and vitest runs
+  // files in parallel against one shared schema, so an unscoped sweep's answer
+  // depends on which sibling suite happened to be mid-fixture (#351). It also
+  // takes the sweep's cost from "every row the whole session accumulated" down
+  // to the rows the test made, which is what pushed these cases past their
+  // 20s timeout in full runs.
+  const ids = opts.walletIds ?? null;
   const rows = await sql<
     { id: string; status: string; quantity_paid: number; rep_org_id: string; live_org_count: number }[]
   >`
@@ -431,7 +442,8 @@ export async function grantMonthlyForAllWallets(): Promise<{
       cross join lateral (
         select count(*)::int as n from organizations o
          where o.subscription_id = s.id and o.deleted_at is null
-      ) live`;
+      ) live
+     ${ids ? sql`where s.id in ${sql(ids as string[])}` : sql``}`;
   let granted = 0;
   let failed = 0;
   for (const row of rows) {
