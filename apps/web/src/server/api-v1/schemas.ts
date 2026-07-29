@@ -1770,6 +1770,148 @@ export const AiOfficialsPlanResponse = z.object({
 });
 export type AiOfficialsPlanResponse = z.infer<typeof AiOfficialsPlanResponse>;
 
+// ---------------------------------------------------------------------------
+// #350 Multi-division JOINT AI scheduling — POST /competitions/{id}/schedule/
+// ai-plan. One model call over several divisions of one competition, priced as
+// a batch. The orchestrator is `aiPlanForCompetition`
+// (server/usecases/competition-schedule-ai.ts); these are the wire contracts.
+// ---------------------------------------------------------------------------
+
+export const AiCompetitionPlanRequest = z.object({
+  /**
+   * The divisions to solve together. The **>= 2 rule is deliberately NOT a
+   * `.min(2)` here** — it is the orchestrator's, which answers 400
+   * `AI_PLAN_SINGLE_DIVISION`.
+   *
+   * Zod cannot be the authority for it in either direction. It is not
+   * sufficient: `[d, d]` is two array entries and one division, and a division
+   * with nothing movable is DROPPED before the quote (ruling R6), so a
+   * three-id request can legitimately arrive at one solvable division. And it
+   * is not necessary: the orchestrator already de-duplicates and re-checks
+   * after the drop. Two mechanisms for one rule would also give the client two
+   * different 400s for the same mistake — a `VALIDATION` blob of zod issues,
+   * or the code the board renders "use the division schedule page" from.
+   *
+   * The ceiling stays here: 20 is a shape limit, and nothing downstream needs
+   * to have loaded a competition to enforce it.
+   */
+  division_ids: z.array(Uuid).min(1).max(20),
+  instruction: z.string().min(1).max(2000),
+  mode: z.enum(["generate", "refine", "repair"]).default("generate"),
+  /** Per-division rung override from the confirm card's segmented control.
+   *  Advisory — the server always recomputes the quote, and an entry naming a
+   *  division outside the run is ignored rather than rejected. */
+  rung_overrides: z.record(Uuid, RungLiteral).optional(),
+  prior: z
+    .object({
+      instruction: z.string(),
+      assignments: z.array(
+        z.object({
+          fixture_id: Uuid,
+          scheduled_at: IsoDateTime,
+          court_label: z.string(),
+          division_id: Uuid,
+        }),
+      ),
+    })
+    .optional(),
+});
+export type AiCompetitionPlanRequest = z.infer<typeof AiCompetitionPlanRequest>;
+
+export const AiCompetitionPlanResponse = z.object({
+  /** Every slot names the division the SERVER resolved it to — JOINT_RULES
+   *  tells the model not to emit one, so this is never an echo. */
+  proposal: z.array(
+    z.object({
+      fixture_id: z.string(),
+      scheduled_at: z.string(),
+      court_label: z.string(),
+      division_id: z.string(),
+      schedule_locked: z.boolean().optional(),
+    }),
+  ),
+  unschedulable: z.array(z.object({ fixture_id: z.string(), reason: z.string() })),
+  // The ENGINE verifier's camelCase Conflict, exactly as the single-division
+  // AiPlanResponse carries it — NOT the snake_case ScheduleConflict of the
+  // apply/validate endpoints. The orchestrator returns `Conflict[]` verbatim,
+  // so declaring the other shape here would strip every field of every warning
+  // and publish a contract the route does not honour.
+  warnings: z.array(AiPlanConflict),
+  blocking: z.array(AiPlanConflict),
+  diff: z.object({
+    moved: z.array(z.string()),
+    placed: z.array(z.string()),
+    unscheduled: z.array(z.string()),
+    unchanged: z.array(z.string()),
+  }),
+  explanations: z.array(z.object({ fixture_id: z.string(), note: z.string() })),
+  summary: z.string(),
+  /** Court labels not shared by every solved division. Cross-division court
+   *  identity is a string match and nothing else, so the board warns. */
+  divergent_courts: z.array(z.string()),
+  /** Requested divisions dropped before quoting (ruling R6) — the organiser is
+   *  told why a division they picked is missing rather than silently getting a
+   *  smaller board back. */
+  skipped_divisions: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      reason: z.literal("no_movable_fixtures"),
+    }),
+  ),
+  /** Public shape only — `cost_usd` stays on the ledger event. */
+  usage: z.object({
+    input_tokens: z.number().int(),
+    output_tokens: z.number().int(),
+    repair_rounds: z.number().int(),
+  }),
+  // ---------------------------------------------------------------------
+  // ORDER IS LOAD-BEARING. `AiRunPriceFields` declares its own `divisions`
+  // key — the meter stamp's per-division PRICE rows — and the override below
+  // MUST come after it. A joint response carries ONE `divisions` array
+  // holding both those price rows and the board's picker data (the division's
+  // name and movable count), exactly as `aiPlanForCompetition` builds it:
+  // two sibling arrays over one key would be a join every client redoes on
+  // every render.
+  //
+  // Getting the order wrong fails SILENTLY IN BOTH DIRECTIONS. TypeScript
+  // accepts either merged object type, and Zod does not error on the loser
+  // either — it STRIPS the keys the winning schema does not declare, so
+  // `name` and `movable` (or `rung` and `predicted_rung`) simply vanish from
+  // a 200 response with no exception and no warning. Neither this comment nor
+  // `tsc` nor an assertion on `divisions.length` can catch it; the guard is
+  // competition-schedule-ai-http.test.ts, which asserts BOTH sets of fields
+  // survive one parse of a real orchestrator result.
+  // ---------------------------------------------------------------------
+  ...AiRunPriceFields,
+  divisions: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      movable: z.number().int(),
+      rung: RungLiteral,
+      predicted_rung: RungLiteral,
+      underfunded: z.boolean(),
+    }),
+  ),
+});
+export type AiCompetitionPlanResponse = z.infer<typeof AiCompetitionPlanResponse>;
+
+/**
+ * GET /competitions/{id}/schedule/ai-last — what the run ledger preserved of
+ * the most recent joint run, or null when there has never been one.
+ *
+ * DERIVED from the plan response rather than declared separately, so the two
+ * cannot drift into different spellings of the same field. Every member is
+ * optional because the `schedule.ai_generated_multi` competition event stores
+ * a run's PRICE and USAGE, not its proposal: there is no persisted plan
+ * content to recall, and inventing empty `proposal`/`summary` values would let
+ * a client render "here is your last plan" over a run whose proposal was never
+ * written down. See `lastCompetitionAiPlan`.
+ */
+export const AiCompetitionLastPlan = AiCompetitionPlanResponse.partial().nullable();
+export type AiCompetitionLastPlan = z.infer<typeof AiCompetitionLastPlan>;
+
 // Custom points & rank control (Jul3/05, PROMPT-25) ---------------------------
 
 export const OverrideStandings = z.object({

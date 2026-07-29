@@ -1341,6 +1341,76 @@ export interface AiCompetitionPlanResponse
   usage: { input_tokens: number; output_tokens: number; repair_rounds: number };
 }
 
+/** The competition-level ledger event a successful joint run writes. Named
+ *  once so the writer below and {@link lastCompetitionAiPlan} cannot drift. */
+const JOINT_RUN_EVENT = "schedule.ai_generated_multi";
+
+/**
+ * GET /competitions/{id}/schedule/ai-last — recall the most recent joint run,
+ * or null.
+ *
+ * WHAT THIS CAN AND CANNOT RETURN, because the gap is a product fact and not an
+ * oversight: `schedule.ai_generated_multi` records what a run COST and what it
+ * spent — credits, the discount, the token budget and what was burned of it,
+ * plus the model usage. It does not record the proposal, the summary or the
+ * conflicts, and nothing else does either: the joint plan is propose-only and
+ * is never written down unless the organiser applies it. So this returns the
+ * price and usage block and nothing more, as a PARTIAL plan response rather
+ * than as a second shape — a caller reads the same field names it read off the
+ * plan itself, and the fields that were never persisted are absent rather than
+ * present-and-empty.
+ *
+ * The per-division `divisions` array is deliberately absent too. The event
+ * stamps `meterStamp`'s narrow rows (id + rung + predicted_rung + underfunded);
+ * the response's merged row also carries the division's `name` and its movable
+ * count AT THE TIME OF THE RUN. The name is joinable, the movable count is not
+ * — it is a snapshot, and today's count is a different number under the same
+ * key. Returning half a row, or a re-derived count, would be worse than
+ * returning none.
+ *
+ * Read scope: the recall exposes provenance that is already in the ledger.
+ */
+export async function lastCompetitionAiPlan(
+  auth: AuthCtx,
+  competitionId: string,
+): Promise<Partial<AiCompetitionPlanResponse> | null> {
+  const [row] = await withTenant(auth.orgId, (tx) =>
+    tx<{ payload: Record<string, unknown> }[]>`
+      select payload from competition_events
+       where competition_id = ${competitionId} and type = ${JOINT_RUN_EVENT}
+       order by created_at desc, id desc
+       limit 1`,
+  );
+  if (!row) return null;
+  const p = row.payload;
+  // `payload.usage` also carries `cost_usd` — our margin, not the tenant's
+  // business (the plan response drops it for the same reason). Picked field by
+  // field rather than spread so it cannot ride along.
+  const usage = (p.usage ?? {}) as {
+    input_tokens?: number;
+    output_tokens?: number;
+    repair_rounds?: number;
+  };
+  const num = (v: unknown): number | undefined => (typeof v === "number" ? v : undefined);
+  const bool = (v: unknown): boolean | undefined => (typeof v === "boolean" ? v : undefined);
+  return {
+    usage: {
+      input_tokens: usage.input_tokens ?? 0,
+      output_tokens: usage.output_tokens ?? 0,
+      repair_rounds: usage.repair_rounds ?? 0,
+    },
+    ...(num(p.credits) !== undefined ? { credits: num(p.credits)! } : {}),
+    ...(num(p.discount) !== undefined ? { discount: num(p.discount)! } : {}),
+    ...(num(p.budget) !== undefined ? { budget: num(p.budget)! } : {}),
+    ...(num(p.spent_tokens) !== undefined ? { spent_tokens: num(p.spent_tokens)! } : {}),
+    ...(num(p.est_tokens) !== undefined ? { est_tokens: num(p.est_tokens)! } : {}),
+    ...(bool(p.underfunded) !== undefined ? { underfunded: bool(p.underfunded)! } : {}),
+    ...(bool(p.stopped_on_budget) !== undefined
+      ? { stopped_on_budget: bool(p.stopped_on_budget)! }
+      : {}),
+  };
+}
+
 /**
  * POST /competitions/{id}/schedule/ai-plan orchestrator — the joint twin of
  * `aiPlanForDivision` (schedule-ai.ts:1585).
@@ -1648,7 +1718,7 @@ export async function aiPlanForCompetition(
   await withTenant(auth.orgId, async (tx) => {
     await tx`
       insert into competition_events (competition_id, org_id, type, payload, actor_id)
-      values (${competitionId}, ${auth.orgId}, 'schedule.ai_generated_multi',
+      values (${competitionId}, ${auth.orgId}, ${JOINT_RUN_EVENT},
               ${tx.json({
                 division_ids,
                 // R6: what the organiser asked for but the run did not solve —
