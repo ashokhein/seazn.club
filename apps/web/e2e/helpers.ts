@@ -7,18 +7,93 @@ import type { PassKey } from "../src/lib/currency";
 
 /**
  * v3/02 §4 viewport gate: the page-level rule is "no horizontal scroll,
- * ever" — anything wide must scroll inside its own container. Run on every
- * audited route in the mobile project.
+ * ever" — anything wide must scroll inside its OWN container (pattern 4,
+ * `.scroll-x` = `overflow-x-auto`; see globals.css:367 and the table note at
+ * globals.css:278).
+ *
+ * Measures GEOMETRY, not a scroll metric — but the real one, not a per-element
+ * brute-force scan. `globals.css:63` sets `overflow-x: clip` on `html, body`,
+ * which pins `document.documentElement.scrollWidth` to the viewport width no
+ * matter how far a child overflows — the previous implementation compared
+ * exactly `scrollWidth` to `clientWidth` and therefore could not fail (#325).
+ *
+ * The fix is NOT "walk every element and flag whichever has the widest
+ * `getBoundingClientRect().right`": every page with a sanctioned `.scroll-x`
+ * table (pricing's comparison table, the help-article tables at
+ * globals.css:278) has descendants that are legitimately wider than the
+ * viewport — that is the *point* of `overflow-x-auto`, and a scan blind to
+ * containment flags them as page overflow when they are not (confirmed
+ * empirically against /pricing: the comparison table's own cells report
+ * `rect.right` at 648px against a 375px viewport, yet the page's real
+ * `scrollWidth` — clip disabled — is exactly 375, because the `.scroll-x`
+ * ancestor clips/scrolls it internally and it never reaches the document).
+ *
+ * So this temporarily lifts the `clip` (both `html` and `body` carry it) and
+ * reads the browser's own `scrollWidth`, which already accounts for nested
+ * scroll containers correctly — a naked 900px probe on `body` (no scrolling
+ * ancestor) reports 900 against a 375px viewport; the pricing table reports
+ * 375. Only when a REAL overflow is found does it walk the DOM for a culprit,
+ * skipping anything contained by its own `overflow-x: auto|scroll|hidden`
+ * ancestor, so the failure message still names something actionable.
+ *
+ * `allowancePx` exists for sub-pixel rounding on transformed/scaled elements
+ * only. It is NOT a place to park a real overflow — raise it and you are
+ * turning the check back off.
  */
-export async function expectNoHorizontalScroll(page: Page): Promise<void> {
-  const { scrollWidth, clientWidth } = await page.evaluate(() => ({
-    scrollWidth: document.documentElement.scrollWidth,
-    clientWidth: document.documentElement.clientWidth,
-  }));
+export async function expectNoHorizontalScroll(
+  page: Page,
+  opts: { allowancePx?: number } = {},
+): Promise<void> {
+  const allowance = opts.allowancePx ?? 1;
+  const worst = await page.evaluate(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const vw = html.clientWidth;
+
+    const htmlPrev = html.style.overflowX;
+    const bodyPrev = body.style.overflowX;
+    html.style.overflowX = "visible";
+    body.style.overflowX = "visible";
+    const scrollWidth = html.scrollWidth;
+    html.style.overflowX = htmlPrev;
+    body.style.overflowX = bodyPrev;
+
+    const overflowPx = Math.max(0, scrollWidth - vw);
+    let culprit = "";
+    if (overflowPx > 0) {
+      // Find a human-readable offender: the widest element NOT contained by
+      // its own scrolling ancestor (a `.scroll-x` table is allowed to be wider
+      // than the viewport; only an un-contained element actually causes the
+      // page-level overflow measured above).
+      let widestRight = vw;
+      for (const el of Array.from(document.querySelectorAll<HTMLElement>("body *"))) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        let contained = false;
+        for (let node = el.parentElement; node && node !== body; node = node.parentElement) {
+          const ox = getComputedStyle(node).overflowX;
+          if (ox === "auto" || ox === "scroll" || ox === "hidden") {
+            contained = true;
+            break;
+          }
+        }
+        if (contained) continue;
+        if (rect.right > widestRight) {
+          widestRight = rect.right;
+          culprit = `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ""}${
+            el.className && typeof el.className === "string"
+              ? `.${el.className.trim().split(/\s+/).slice(0, 3).join(".")}`
+              : ""
+          }`;
+        }
+      }
+    }
+    return { overflowPx, culprit, vw };
+  });
   expect(
-    scrollWidth,
-    `page scrolls horizontally (${scrollWidth}px content in ${clientWidth}px viewport)`,
-  ).toBeLessThanOrEqual(clientWidth);
+    worst.overflowPx,
+    `page overflows horizontally by ${worst.overflowPx}px past the ${worst.vw}px viewport — widest offender: ${worst.culprit || "(unknown — no un-contained element found; check nested scroll containers)"}`,
+  ).toBeLessThanOrEqual(allowance);
 }
 
 /**
