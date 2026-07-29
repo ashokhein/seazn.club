@@ -40,7 +40,7 @@ export const dynamic = "force-dynamic";
 import { sql } from "@/lib/db";
 import { isPaidPlan, orgPlanKey, passLockReason, type PassLockReason } from "@/lib/entitlements";
 import { isPassKey, PASS_KEYS, type Currency, type PassKey } from "@/lib/currency";
-import { rungsExceedingPlan } from "@/lib/pass-vs-plan";
+import { sellablePassRungs } from "@/lib/pass-vs-plan";
 import { preferredCurrency } from "@/lib/currency-server";
 import { orgBySlug, compBySlug } from "@/server/slug-resolve";
 import { CompetitionPassProvider } from "@/components/competition-pass-provider";
@@ -64,11 +64,15 @@ export default async function CompetitionLayout({
   params: Promise<{ orgSlug: string; compSlug: string }>;
 }) {
   const { orgSlug, compSlug } = await params;
-  const { passKey, paidPlan, currency, lockReason } = await passState(orgSlug, compSlug);
+  const { passKey, paidPlan, sellableRungs, currency, lockReason } = await passState(
+    orgSlug,
+    compSlug,
+  );
   return (
     <CompetitionPassProvider
       passKey={passKey}
       paidPlan={paidPlan}
+      sellableRungs={sellableRungs}
       currency={currency}
       lockReason={lockReason}
     >
@@ -124,12 +128,16 @@ async function passState(
 ): Promise<{
   passKey: PassKey | null;
   paidPlan: boolean;
+  sellableRungs: PassKey[];
   currency: Currency;
   lockReason: PassLockReason | null;
 }> {
   const none = {
     passKey: null,
     paidPlan: false,
+    // Unresolvable org/competition: the child page owns the 404, and every rung
+    // stays nominally for sale, which is what shipped before #327.
+    sellableRungs: [...PASS_KEYS] as PassKey[],
     currency: "usd" as Currency,
     lockReason: null,
   };
@@ -158,11 +166,16 @@ async function passState(
   // for no extra query. A pass already held short-circuits it too: there is
   // nothing more to sell for that competition either way.
   const paid = isPaidPlan(planKey);
-  const covered =
-    paid && (pass ? true : (await rungsExceedingPlan(PASS_KEYS, planKey)).length === 0);
+  // Held pass short-circuits: nothing more is for sale on this competition
+  // either way (one pass per competition, forever — #248 Q4).
+  const sellableRungs = pass
+    ? []
+    : ((await sellablePassRungs(PASS_KEYS, planKey, paid)) as PassKey[]);
+  const covered = paid && sellableRungs.length === 0;
   return {
     passKey: pass ? (isPassKey(pass.pass_key) ? pass.pass_key : "event_pass") : null,
     paidPlan: covered,
+    sellableRungs,
     currency,
     // No pass, no lock: the reason is about a PURCHASE that has stopped
     // applying, not about the competition, so an archived competition with no

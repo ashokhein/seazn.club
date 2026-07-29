@@ -141,3 +141,23 @@ export async function rungsExceedingPlan(
     ),
   );
 }
+
+/**
+ * Which rungs this org may still be SOLD — the question every buy surface asks.
+ *
+ * On a free plan that is the whole ladder, and no query is run. On a paid plan
+ * it is only the rungs that beat it (#327) — which is what stops a Pro organiser
+ * being quoted "from $29" when the only thing they can actually buy is the $59
+ * L. Quoting one rung's price as the price of the product is precisely the
+ * mis-sale #294's "from" wording exists to prevent, and a price for a rung the
+ * checkout would refuse is a worse version of it.
+ *
+ * `planKey` must be the RESOLVED plan, for the reason `passExceedsPlan` gives.
+ */
+export async function sellablePassRungs(
+  passKeys: readonly string[],
+  planKey: string,
+  isPaid: boolean,
+): Promise<string[]> {
+  return isPaid ? rungsExceedingPlan(passKeys, planKey) : [...passKeys];
+}
