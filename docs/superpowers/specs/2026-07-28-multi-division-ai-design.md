@@ -111,7 +111,34 @@ Extends the existing Phase-A prompt (`schedule-ai-prompt.ts`):
 
 - `POST /api/v1/competitions/[id]/schedule/ai-plan` — body `{divisionIds, rungOverrides?}`. Server recomputes rungs + discount, validates the cap. Gates: `scheduling.ai` + `scheduling.multi_division` + wallet ≥ N.
 - **`divisionIds.length ≥ 2` required** (400 otherwise, "use the division schedule page") — prevents discount arbitrage where a single rung-2/3 division runs cheaper through the board (`max(1, rung−1)`) than through the division flow.
-- `GET /api/v1/competitions/[id]/schedule/ai-last` — last joint plan for the review UI.
+- `GET /api/v1/competitions/[id]/schedule/ai-last` — ~~last joint plan for the review UI.~~
+  **CORRECTED 2026-07-29 (ruling R15).** This line assumed the division flow persists a
+  proposal for later recall. **It does not.** `lastAiApply`
+  (`apps/web/src/server/usecases/schedule.ts:615-645`) reads the `schedule_applied`
+  division event where `payload->>'source' = 'ai'` and returns the last **applied** plan —
+  `{at, instruction, summary}`. No proposal-recall capability exists anywhere in the
+  product, so there was nothing for the joint endpoint to mirror. A propose-only run
+  writes down its price and usage, never its plan.
+
+  The joint endpoint therefore mirrors the twin's contract exactly:
+
+  ```
+  { last: { at, instruction, summary } | null, runs: { used, max: null } }
+  ```
+
+  `last` is sourced from the joint apply event (`JOINT_APPLY_EVENT` =
+  `"schedule.applied_multi"`), which **Task 6 writes** — so `last` is legitimately `null`
+  until the atomic apply lands. `runs.used` counts `schedule.ai_generated_multi` for the
+  competition; this also fixes a real gap, since `lastAiApply`'s counter is scoped to
+  `schedule.ai_generated` with a matching `division_id` and so never counts joint runs.
+
+  Rejected alternative: returning `AiCompetitionPlanResponse.partial()` (price + usage
+  only). It publishes a shape into `openapi/v1.public.json` that Task 6 would then have to
+  breaking-change, and it inlined the whole plan response into the public spec
+  (+714 lines per file).
+
+  The live proposal stays in board client state between run and apply — which is what the
+  division board already does.
 - Apply is server-side at plan end (mirrors per-division flow): **one transaction writes all divisions or nothing** — no partial competition apply.
 - Rate limit: `ai-plan-competition:{competitionId}` max 3/hour. Per-division 5/hr brakes untouched and not double-counted by joint runs.
 
