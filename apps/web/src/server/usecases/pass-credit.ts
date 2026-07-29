@@ -2,6 +2,7 @@ import "server-only";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
+import { HttpError } from "@/lib/errors";
 import { sendPassCreditReversalIncompleteAlertEmail } from "@/lib/email";
 import type { PassKey } from "@/lib/currency";
 
@@ -706,4 +707,294 @@ export async function reversePassCreditOnRefund(
       }).catch(() => {});
     }
   }
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * §6 — STAFF RESOLUTION of an undetermined reversal (#305, #286 phase 2)
+ *
+ * V337 (phase 1) made the undetermined branch hold `pass_credit_redemptions_
+ * group_cap` PERMANENTLY: `reversed_at` is stamped (it is still the webhook
+ * idempotency guard) but nothing was actually clawed back, so the widened
+ * partial index keeps treating the row as live. That is the right default —
+ * the customer provably still holds the £/$ credit, and freeing the cap would
+ * let the same group mint a SECOND one — but phase 1 shipped with no way out.
+ * Once staff settle the balance by hand in the Stripe dashboard, the row went
+ * on blocking the group forever and the alert email said so in as many words.
+ *
+ * This is the way out. Two design rules, both load-bearing:
+ *
+ *  1. **Both outcomes are expressible.** `clawed_back` ("I removed the credit
+ *     in Stripe") releases the cap; `kept` ("the customer keeps it") leaves
+ *     the cap held and records that a human decided so. A tool offering only
+ *     the first is a lever for handing out a second credit; one offering only
+ *     the second cannot resolve anything. Neither is the safe default, so
+ *     neither is a default — the caller must say which.
+ *  2. **Nothing here touches Stripe.** The claw-back this records ALREADY
+ *     HAPPENED, by hand, which is the only reason a human is in the loop at
+ *     all: the undetermined branch exists precisely because the balance pool
+ *     could not be attributed automatically. Creating a balance transaction
+ *     from here would debit a customer whose money was already taken back.
+ *
+ * The write and its `staff_audit_log` row commit TOGETHER (the admin-addons.ts
+ * / #272 adminAdjust pattern) — a crash between them could otherwise free a
+ * money-bearing cap with nobody's name against it, and the audit row is the
+ * ONLY record of who decided and which way (`reversal_undetermined_at` going
+ * NULL says the decision happened, not who made it).
+ *
+ * NO entitlement-cache invalidation is needed here, deliberately and checked:
+ * `pass_credit_redemptions` is read in exactly one place outside this file's
+ * own reversal lookup — `groupAlreadyRedeemed`, called live inside
+ * `creditPassTowardSubscription` on the checkout path. It feeds no
+ * `lib/entitlements.resolve()` branch and no `ent:<org>:*` cache key, so there
+ * is no TTL window in which a resolved row keeps behaving as unresolved.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * What a human concluded about an undetermined reversal.
+ *
+ * - `clawed_back` — staff removed the credit from the customer's Stripe
+ *   balance themselves. The money is back, so the group's lifetime cap must be
+ *   released: `reversal_undetermined_at` is cleared and `reversed_minor` is
+ *   corrected to what was actually taken.
+ * - `kept` — the customer keeps the credit (goodwill, un-splittable pool,
+ *   whatever finance decided). The cap must GO ON holding, exactly as before;
+ *   all that changes is that the row is no longer an unanswered question.
+ */
+export type PassCreditReversalResolution = "clawed_back" | "kept";
+
+/** `open` = nobody has decided yet. Otherwise the decision that was recorded. */
+export type PassCreditReversalStatus = "open" | PassCreditReversalResolution;
+
+/**
+ * `staff_audit_log.action` for a resolution. Exported so the admin surface and
+ * the tests agree on the string rather than each spelling it out — this is the
+ * only durable record of WHO decided, so a typo on one side silently splits
+ * the history in two.
+ */
+export const PASS_CREDIT_RESOLVE_ACTION = "pass_credit_reversal_resolve";
+
+export interface PassCreditReversalResolveInput {
+  resolution: PassCreditReversalResolution;
+  /**
+   * Minor units staff actually removed from the customer balance in Stripe.
+   * REQUIRED for `clawed_back` and bounded by the grant: the undetermined
+   * branch wrote `reversed_minor = 0` (nothing moved), and leaving that 0 while
+   * releasing the cap would leave the row claiming a reversal of nothing.
+   * Ignored for `kept`, where nothing moved and 0 is the truth.
+   */
+  reversedMinor?: number;
+  /** Free text — what staff checked, and where. Stored in the audit detail. */
+  reason: string;
+}
+
+/**
+ * Record a staff decision about ONE undetermined redemption.
+ *
+ * Unlike the other two exports in this file, this one THROWS: it is a staff
+ * action behind an admin route, not a webhook or checkout path, so a refusal
+ * must reach the operator as a typed error rather than be swallowed into a
+ * silent no-op.
+ *
+ * Idempotent on replay (double-clicked button, retried request): re-recording
+ * the decision the row already carries returns `{ resolved: false }` and writes
+ * NO second audit row — a duplicate there reads as two separate decisions.
+ * Changing one's mind is NOT a replay: a `kept` row can still be resolved
+ * `clawed_back` later when finance does take the money back, and that writes a
+ * second, genuine audit row.
+ *
+ * @returns whether this call actually recorded a decision.
+ * @throws HttpError 404 unknown redemption, 409 nothing undetermined to
+ *   resolve, 422 a claw-back amount that is not 0..grant.
+ */
+export async function resolveUndeterminedPassCreditReversal(
+  actorId: string,
+  redemptionId: string,
+  input: PassCreditReversalResolveInput,
+): Promise<{ resolved: boolean }> {
+  const { resolution, reason } = input;
+
+  return sql.begin(async (tx) => {
+    // `for update` serialises two operators (or one double-click) on the same
+    // row: without it both can read `reversal_undetermined_at` as set and both
+    // write an audit row for a single decision.
+    const [row] = await tx<
+      { id: string; org_id: string; amount_minor: number; reversal_undetermined_at: Date | null }[]
+    >`
+      select id, org_id, amount_minor, reversal_undetermined_at
+        from pass_credit_redemptions where id = ${redemptionId} for update`;
+    if (!row) throw new HttpError(404, "No such pass credit redemption.");
+
+    // The last decision recorded for this row, if any. There is no column for
+    // it — the audit log IS the record (see the §6 header) — so the replay
+    // guard reads it back from there.
+    const [prior] = await tx<{ resolution: string | null }[]>`
+      select detail->>'resolution' as resolution
+        from staff_audit_log
+       where action = ${PASS_CREDIT_RESOLVE_ACTION}
+         and detail->>'redemption_id' = ${redemptionId}
+       order by created_at desc, chain_seq desc
+       limit 1`;
+
+    if (row.reversal_undetermined_at === null) {
+      // Cap already free. Either this exact decision already landed (replay),
+      // or the row was never undetermined at all — an ordinary automatic
+      // reversal, which has nothing for a human to decide.
+      if (prior?.resolution === "clawed_back") return { resolved: false };
+      throw new HttpError(409, "This redemption has no undetermined reversal to resolve.");
+    }
+
+    let reversedMinor = 0;
+    if (resolution === "clawed_back") {
+      const claimed = input.reversedMinor;
+      if (!Number.isInteger(claimed) || claimed! < 0 || claimed! > row.amount_minor) {
+        throw new HttpError(
+          422,
+          `reversed_minor must be a whole number between 0 and the ${row.amount_minor} minor units originally granted.`,
+        );
+      }
+      reversedMinor = claimed!;
+      // THE release. `reversed_at` is deliberately untouched — it is the
+      // webhook-replay idempotency stamp, not a statement about money.
+      await tx`
+        update pass_credit_redemptions
+           set reversal_undetermined_at = null, reversed_minor = ${reversedMinor}
+         where id = ${redemptionId}`;
+    } else if (prior?.resolution === "kept") {
+      // Already reviewed and left standing — nothing changed, so nothing to log.
+      return { resolved: false };
+    }
+    // `kept` writes no column at all: the cap stays held exactly as V337 left
+    // it, and the audit row below is the whole of the change.
+
+    // Mirror logStaffAction's columns (lib/admin.ts) on THIS tx — never call
+    // logStaffAction itself here, it opens its own connection outside the tx.
+    // target_type 'org' / target_id the org: that is the entity an operator
+    // looks the decision up by, and the redemption is identified in `detail`.
+    await tx`
+      insert into staff_audit_log (actor_id, action, target_type, target_id, detail)
+      values (${actorId}, ${PASS_CREDIT_RESOLVE_ACTION}, 'org', ${row.org_id}, ${tx.json({
+        redemption_id: redemptionId,
+        resolution,
+        reversed_minor: reversedMinor,
+        granted_minor: row.amount_minor,
+        reason,
+      } as never)})`;
+    return { resolved: true };
+  });
+}
+
+/** One undetermined (or since-resolved) redemption, for the staff worklist. */
+export interface UndeterminedPassCreditReversal {
+  id: string;
+  paymentIntent: string;
+  orgId: string;
+  orgName: string | null;
+  competitionName: string | null;
+  subscriptionId: string;
+  amountMinor: number;
+  reversedMinor: number | null;
+  currency: string;
+  redeemedAt: string;
+  reversedAt: string | null;
+  /** NULL once resolved `clawed_back`; still set for `open` and for `kept`. */
+  undeterminedAt: string | null;
+  status: PassCreditReversalStatus;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  resolvedByName: string | null;
+  reason: string | null;
+}
+
+const UNDETERMINED_LIST_LIMIT = 200;
+
+/**
+ * The staff worklist the issue's inventory query (`select * from
+ * pass_credit_redemptions where reversal_undetermined_at is not null`) was a
+ * stand-in for, joined to the decision each row carries.
+ *
+ * Includes THREE states, not one:
+ *  - `open`        — still undetermined, nobody has decided. Cap held.
+ *  - `kept`        — decided: customer keeps the credit. Cap held ON PURPOSE.
+ *  - `clawed_back` — decided: staff took it back. Cap released.
+ *
+ * A `clawed_back` row no longer matches the inventory query at all, so it is
+ * reached through its audit row instead — dropping it would make the tool look
+ * like it had erased the record of its own most consequential action.
+ * Unresolved rows sort first: the whole value of the list is the queue.
+ */
+export async function listUndeterminedPassCreditReversals(): Promise<
+  UndeterminedPassCreditReversal[]
+> {
+  const rows = await sql<
+    {
+      id: string;
+      payment_intent: string;
+      org_id: string;
+      org_name: string | null;
+      competition_name: string | null;
+      subscription_id: string;
+      amount_minor: number;
+      reversed_minor: number | null;
+      currency: string;
+      redeemed_at: Date;
+      reversed_at: Date | null;
+      reversal_undetermined_at: Date | null;
+      resolution: string | null;
+      resolved_at: Date | null;
+      resolved_by: string | null;
+      resolved_by_name: string | null;
+      reason: string | null;
+    }[]
+  >`
+    select r.id, r.payment_intent, r.org_id, o.name as org_name,
+           c.name as competition_name, r.subscription_id, r.amount_minor,
+           r.reversed_minor, r.currency, r.redeemed_at, r.reversed_at,
+           r.reversal_undetermined_at,
+           a.detail->>'resolution' as resolution,
+           a.created_at as resolved_at,
+           a.actor_id::text as resolved_by,
+           coalesce(u.display_name, u.email) as resolved_by_name,
+           a.detail->>'reason' as reason
+      from pass_credit_redemptions r
+      left join organizations o on o.id = r.org_id
+      left join competitions c on c.id = r.competition_id
+      left join lateral (
+        select s.actor_id, s.created_at, s.detail
+          from staff_audit_log s
+         where s.action = ${PASS_CREDIT_RESOLVE_ACTION}
+           and s.detail->>'redemption_id' = r.id::text
+         order by s.created_at desc, s.chain_seq desc
+         limit 1
+      ) a on true
+      left join users u on u.id = a.actor_id
+     where r.reversal_undetermined_at is not null or a.actor_id is not null
+     order by (a.actor_id is not null),
+              coalesce(r.reversal_undetermined_at, a.created_at) desc
+     limit ${UNDETERMINED_LIST_LIMIT}`;
+
+  return rows.map((r) => ({
+    id: r.id,
+    paymentIntent: r.payment_intent,
+    orgId: r.org_id,
+    orgName: r.org_name,
+    competitionName: r.competition_name,
+    subscriptionId: r.subscription_id,
+    amountMinor: r.amount_minor,
+    reversedMinor: r.reversed_minor,
+    currency: r.currency,
+    redeemedAt: new Date(r.redeemed_at).toISOString(),
+    reversedAt: r.reversed_at ? new Date(r.reversed_at).toISOString() : null,
+    undeterminedAt: r.reversal_undetermined_at
+      ? new Date(r.reversal_undetermined_at).toISOString()
+      : null,
+    // An unrecognised stored value must not be dressed up as a decision.
+    status:
+      r.resolution === "clawed_back" || r.resolution === "kept"
+        ? (r.resolution as PassCreditReversalResolution)
+        : "open",
+    resolvedAt: r.resolved_at ? new Date(r.resolved_at).toISOString() : null,
+    resolvedBy: r.resolved_by,
+    resolvedByName: r.resolved_by_name,
+    reason: r.reason,
+  }));
 }
