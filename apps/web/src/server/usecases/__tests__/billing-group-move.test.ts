@@ -1144,6 +1144,139 @@ describe.skipIf(!HAS_DB)("detach leaves an audit trail for the wallet it does no
   });
 });
 
+// ---------------------------------------------------------------------------
+// The comp a ride_out hands out (#306)
+// ---------------------------------------------------------------------------
+
+/** The comp-grant audit row for `orgId`, newest first. */
+const compAudit = async (orgId: string) =>
+  (
+    await sql<
+      {
+        actor_id: string;
+        target_type: string;
+        detail: {
+          old_group_id?: string;
+          new_group_id?: string;
+          payer_user_id?: string;
+          plan_key?: string;
+          comped_until?: string;
+          inherited_from?: string;
+          mode?: string;
+        };
+      }[]
+    >`
+      select actor_id, target_type, detail from staff_audit_log
+       where target_id = ${orgId} and action = 'billing_group.detach_comp_granted'
+       order by created_at desc limit 1`
+  )[0];
+
+describe.skipIf(!HAS_DB)("detach audits the comp it hands out (#306)", () => {
+  it("records the ride_out comp, its expiry, and the payer it is charged against", async () => {
+    // A ride_out mints the leaver a free paid-plan period at the OLD payer's
+    // expense. Before #306 the only trace of that grant was a column value on a
+    // brand-new subscriptions row: no actor, no old group, no payer, nothing to
+    // answer "who took a month of Pro Plus off my subscription, and when".
+    // The wallet forfeit beside it has been audited since #285; a comped plan is
+    // the same class of silent, money-adjacent outcome.
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const group = await makeGroup(payer, {
+      plan: "pro_plus",
+      stripeSubId: "sub_comp_audit_" + uniq(),
+      quantityPaid: 2,
+      periodEndDays: 30,
+    });
+    stripeMock.state.quantity = 2;
+    await makeOrg(group, payer);
+    const orgId = await makeOrg(group, clubOwner);
+
+    const res = await detachOrgFromGroup({ actorUserId: clubOwner, orgId });
+
+    // The comp really was handed out (otherwise the audit assertions below are
+    // asserting about nothing).
+    const fresh = await readGroup(res.subscription_id);
+    expect(fresh.plan_key).toBe("pro_plus");
+    expect(fresh.comped_until).not.toBeNull();
+
+    const audit = await compAudit(orgId);
+    // An entitlement grant with an actor on it — the whole point of #306.
+    expect(audit?.actor_id).toBe(clubOwner);
+    expect(audit?.target_type).toBe("org");
+    expect(audit?.detail?.old_group_id).toBe(group);
+    expect(audit?.detail?.new_group_id).toBe(res.subscription_id);
+    // Whose subscription paid for it. The actor here is the club owner, NOT the
+    // payer, so a row that recorded only the actor would name the wrong party.
+    expect(audit?.detail?.payer_user_id).toBe(payer);
+    expect(audit?.detail?.plan_key).toBe("pro_plus");
+    // What was granted, and until when — the same instant that landed on the row.
+    expect(audit?.detail?.comped_until).toBe(fresh.comped_until?.toISOString());
+    expect(audit?.detail?.mode).toBe("ride_out");
+    // Which of the two dates it inherited. A staff comp and a paid period end
+    // are very different money, and the coalesce in detach hides which one won.
+    expect(audit?.detail?.inherited_from).toBe("current_period_end");
+  });
+
+  it("names the STAFF comp when that is the date the leaver rode out on", async () => {
+    // A staff-comped group has comped_until set and current_period_end NULL, so
+    // the leaver's free period is being taken off a comp somebody granted by
+    // hand rather than off a period a customer paid for. The trail has to be
+    // able to tell those apart; only this field can.
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const comped = await makeGroup(payer, {
+      plan: "pro",
+      stripeSubId: null,
+      periodEndDays: null,
+      compedUntilDays: 20,
+    });
+    await makeOrg(comped, payer);
+    const orgId = await makeOrg(comped, clubOwner);
+
+    const res = await detachOrgFromGroup({ actorUserId: clubOwner, orgId });
+    expect((await readGroup(res.subscription_id)).plan_key).toBe("pro");
+
+    const audit = await compAudit(orgId);
+    expect(audit?.detail?.inherited_from).toBe("comped_until");
+    expect(audit?.detail?.plan_key).toBe("pro");
+  });
+
+  it("writes NOTHING when no comp is handed out — a release, or a past_due group", async () => {
+    // The row must mark an actual grant, not "a detach happened". A trail that
+    // fires on every detach cannot be read as "these orgs got free plan time".
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const live = await makeGroup(payer, {
+      stripeSubId: "sub_comp_none_" + uniq(),
+      quantityPaid: 2,
+      periodEndDays: 30,
+    });
+    stripeMock.state.quantity = 2;
+    await makeOrg(live, payer);
+    const released = await makeOrg(live, clubOwner);
+
+    await detachOrgFromGroup({ actorUserId: clubOwner, orgId: released, mode: "release" });
+    expect((await readGroup((await orgGroup(released)) as string)).comped_until).toBeNull();
+    expect(await compAudit(released)).toBeUndefined();
+
+    // ride_out on a past_due group degrades to release (a dunning group cannot
+    // hand on a period it has not paid for), so there is no comp there either.
+    const dunning = await makeGroup(payer, {
+      status: "past_due",
+      stripeSubId: "sub_comp_dunning_" + uniq(),
+      quantityPaid: 2,
+      periodEndDays: 30,
+    });
+    stripeMock.state.quantity = 2;
+    await makeOrg(dunning, payer);
+    const degraded = await makeOrg(dunning, clubOwner);
+
+    await detachOrgFromGroup({ actorUserId: clubOwner, orgId: degraded });
+    expect((await readGroup((await orgGroup(degraded)) as string)).comped_until).toBeNull();
+    expect(await compAudit(degraded)).toBeUndefined();
+  });
+});
+
 describe.skipIf(!HAS_DB)("detach of the LAST org carries the wallet out (#304)", () => {
   it("hands the shared pool to the leaver when it empties the group", async () => {
     // The shape #285's default cannot cover. A payer's group holds exactly ONE
