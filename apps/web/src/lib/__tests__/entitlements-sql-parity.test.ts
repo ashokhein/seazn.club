@@ -11,7 +11,9 @@
 // Real Postgres required; skipped without DATABASE_URL. Seeds are run-unique.
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
+import type Stripe from "stripe";
 import { sql } from "@/lib/db";
+import { syncSubscription } from "@/lib/billing";
 import {
   getLimit,
   hasFeature,
@@ -106,11 +108,69 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
     expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
   });
 
+  // #314 (2): the comp-expiry guard is an AND of "comped_until lapsed" with
+  // "the subscription isn't genuinely live" (id null OR status outside
+  // LIVE_SUBSCRIPTION_STATUSES) — the row above only ever exercises the
+  // id-is-null disjunct. A PAYING org that was ALSO comped in the past (a
+  // staff grant layered on top of a real subscription) must keep resolving
+  // its own live plan once the comp lapses, not fall back to community —
+  // otherwise a real subscriber loses their paid plan the moment an old comp
+  // date passes.
+  it("keeps a LIVE paying subscription on plan after its OWN comp lapses", async () => {
+    await sql`
+      update subscriptions
+      set plan_key = 'pro', comped_until = now() - interval '1 day',
+          stripe_subscription_id = 'sub_live', status = 'active'
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime")).toBe(true);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(true);
+  });
+
   it("degrades past_due beyond the 14-day grace", async () => {
     await sql`
       update subscriptions
       set plan_key = 'pro', status = 'past_due',
           status_changed_at = now() - interval '15 days',
+          stripe_subscription_id = 'sub_test'
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime")).toBe(false);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
+  });
+
+  // #314 (1): the row above only proves the DEGRADE past 14 days — there was
+  // no positive case proving a past_due row WITHIN the grace still resolves
+  // its paid plan. Without this, an arm widened to degrade every past_due
+  // row (dropping the 14-day guard entirely) would ship green: nothing here
+  // pinned that dunning gets its grace period at all.
+  it("keeps a past_due subscription on plan WITHIN the 14-day grace", async () => {
+    await sql`
+      update subscriptions
+      set plan_key = 'pro', status = 'past_due',
+          status_changed_at = now() - interval '3 days',
+          stripe_subscription_id = 'sub_test'
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime")).toBe(true);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(true);
+  });
+
+  // #314 (3): both resolvers anchor the past_due grace on
+  // `coalesce(status_changed_at, updated_at)` specifically to cover rows the
+  // V291 backfill never saw (a status_changed_at of null on a row written
+  // before that migration). Every other past_due case in this file has a
+  // real status_changed_at, so the fallback itself has never been exercised
+  // here — a regression that dropped the coalesce (using status_changed_at
+  // bare) would silently stop degrading every pre-backfill row, since
+  // `null <= now() - interval '14 days'` is NULL, not true, in both SQL and
+  // the equivalent TS comparison.
+  it("degrades past_due via the updated_at fallback when status_changed_at is NULL", async () => {
+    await sql`
+      update subscriptions
+      set plan_key = 'pro', status = 'past_due',
+          status_changed_at = null,
+          updated_at = now() - interval '15 days',
           stripe_subscription_id = 'sub_test'
       where id = (select subscription_id from organizations o where o.id = ${orgId})`;
     await invalidateOrgEntitlements(orgId);
@@ -412,6 +472,50 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
     await invalidateOrgEntitlements(orgId);
     expect(await hasFeature(orgId, "realtime")).toBe(false);
     expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
+  });
+
+  // #314 (4): STATUS_MAP (lib/billing.ts) collapses Stripe's 'paused' status
+  // into our 'past_due' at write time, exactly like 'unpaid' (see the
+  // billing-grace-anchor audit) — the literal string 'paused' must never
+  // reach subscriptions.status. Neither resolver needs its own 'paused' arm
+  // BECAUSE of that translation, but nothing in this suite had proven the
+  // write actually happens before asking both resolvers to agree on the
+  // result. Fresh off a real transition, status_changed_at is stamped to
+  // now(), so the row lands WELL within the 14-day grace: both resolvers
+  // must still read the paid plan, not community.
+  it("STATUS_MAP maps a Stripe 'paused' sub to past_due, and both resolvers agree it's within grace", async () => {
+    const subId = `sub_paused_${uniq()}`;
+    // Live 'active' first so the write below is a genuine TRANSITION (the
+    // grace anchor only stamps status_changed_at on a status change).
+    await sql`
+      update subscriptions
+      set plan_key = 'pro', status = 'active', stripe_subscription_id = ${subId}
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
+    await syncSubscription(orgId, {
+      id: subId,
+      status: "paused",
+      trial_end: null,
+      cancel_at_period_end: false,
+      currency: "usd",
+      items: {
+        data: [
+          {
+            price: { id: "price_unknown" },
+            current_period_end: Math.floor(Date.now() / 1000) + 86_400,
+          },
+        ],
+      },
+    } as unknown as Stripe.Subscription);
+
+    const [row] = await sql<{ status: string }[]>`
+      select status from subscriptions
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
+    // The literal string 'paused' must never land in the column.
+    expect(row.status).toBe("past_due");
+
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime")).toBe(true);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(true);
   });
 
   // Coverage addition, not a regression: both resolvers already agreed a
