@@ -37,6 +37,8 @@ import type { AiSchedulePlan } from "../schedule-ai-prompt";
 // --- Fixed ids -------------------------------------------------------------
 const D1 = "d1111111-1111-4111-8111-111111111111"; // "Alpha"
 const D2 = "d2222222-2222-4222-8222-222222222222"; // "Beta"
+const D_ABSENT = "d9999999-9999-4999-8999-999999999999"; // never in pack.divisions
+const FOREIGN = "ffffffff-ffff-4fff-8fff-ffffffffffff"; // never in pack.fixtures.movable
 const F1 = "11111111-1111-4111-8111-111111111111";
 const F2 = "22222222-2222-4222-8222-222222222222";
 const F3 = "33333333-3333-4333-8333-333333333333";
@@ -44,6 +46,8 @@ const E1 = "e1111111-1111-4111-8111-111111111111";
 const E2 = "e2222222-2222-4222-8222-222222222222";
 const E3 = "e3333333-3333-4333-8333-333333333333";
 const E4 = "e4444444-4444-4444-8444-444444444444";
+const E5 = "e5555555-5555-4555-8555-555555555555";
+const E6 = "e6666666-6666-4666-8666-666666666666";
 const PERSON = "9a999999-9999-4999-8999-999999999999";
 
 const at = (hhmm: string): string => `2026-08-01T${hhmm}:00+01:00`;
@@ -191,6 +195,42 @@ describe("verifyJoint — cross-division occupancy (#350)", () => {
         p,
       ),
     ).toEqual([]);
+  });
+
+  it("an obstacle holds its court against every division's fixtures", () => {
+    // The complementary direction to "cross-division slots are visible": the
+    // OBSTACLES half of `existing`. Obstacles are the selected divisions' own
+    // immovable fixtures plus every out-of-run division's placements — real,
+    // already-scheduled things nobody in this run can move. Drop them and the
+    // verifier reports a clean board while the model has double-booked a court
+    // against a fixture that is actually happening.
+    //
+    // One obstacle per arm of toJointObstacleAssignments: an in-run one
+    // (division_id set) against Alpha, a foreign one (division_id null) against
+    // Beta. The two fixtures sit on DIFFERENT courts, so a cross-division clash
+    // cannot produce either conflict.
+    const obstacles: CompetitionPackObstacle[] = [
+      { court: "Court 1", from: at("09:00"), to: at("09:30"), label: "Alpha R1", division_id: D1 },
+      { court: "Court 2", from: at("09:00"), to: at("09:30"), label: "Other division", division_id: null },
+    ];
+    const movable = [
+      fixture(F1, D1, { home: E1, away: E2 }),
+      fixture(F2, D2, { home: E3, away: E4 }),
+    ];
+    const p = pack(
+      [
+        division(D1, "Alpha", { settings: settings({ courts: ["Court 1"] }) }),
+        division(D2, "Beta", { settings: settings({ courts: ["Court 2"] }) }),
+      ],
+      movable,
+      { fixtures: { movable, obstacles } },
+    );
+    const out = verifyJoint(
+      plan([assign(F1, at("09:00"), "Court 1"), assign(F2, at("09:00"), "Court 2")]),
+      p,
+    );
+    expect(out.map((c) => c.reason)).toEqual(["court", "court"]);
+    expect(new Set(out.map((c) => c.fixtureId))).toEqual(new Set([F1, F2]));
   });
 
   it("each division's own matchMinutes decides its fixture's end", () => {
@@ -402,6 +442,99 @@ describe("verifyJoint — cross-division occupancy (#350)", () => {
     expect(out[0]!.fixtureId).toBe(F1);
     expect(out[0]!.reason).toBe("court");
   });
+
+  it("reports conflicts in domain order — division, then round, then seq — never by fixture UUID", () => {
+    // The determinism contract (schedule-ai.ts:1-12) forbids ordering on a UUID.
+    // The seed is chosen so the two orders DISAGREE: sorted as strings the ids
+    // come out F1 < F2 < F3, but F1 belongs to Beta and F3 is Alpha's round 2.
+    // Domain order groups the report by division and then by playing order,
+    // which is also how the model reads it back on a repair round.
+    const p = pack(
+      [
+        division(D1, "Alpha", { settings: settings({ courts: ["Court 1"] }) }),
+        division(D2, "Beta", { settings: settings({ courts: ["Court 1"] }) }),
+      ],
+      [
+        // Six distinct entrants: a shared one would add rest/overlap conflicts
+        // and the assertion would stop being purely about ordering.
+        fixture(F3, D1, { round: 2, seq: 0, home: E1, away: E2 }),
+        fixture(F2, D1, { round: 1, seq: 0, home: E3, away: E4 }),
+        fixture(F1, D2, { round: 1, seq: 0, home: E5, away: E6 }),
+      ],
+    );
+    const out = verifyJoint(
+      plan([
+        assign(F1, at("09:00"), "Court 1"),
+        assign(F2, at("09:00"), "Court 1"),
+        assign(F3, at("09:00"), "Court 1"),
+      ]),
+      p,
+    );
+    expect(out.map((c) => c.reason)).toEqual(["court", "court", "court"]);
+    expect(out.map((c) => c.fixtureId)).toEqual([F2, F3, F1]);
+    // Guard against the assertion being satisfied by accident: string order is
+    // genuinely different.
+    expect([F2, F3, F1].slice().sort()).not.toEqual([F2, F3, F1]);
+  });
+});
+
+// ===========================================================================
+// The unresolvable-assignment invariant (fail loudly, never default)
+// ===========================================================================
+
+describe("verifyJoint refuses what it cannot attribute (#350)", () => {
+  const p = pack(
+    [
+      division(D1, "Alpha", { settings: settings({ courts: ["Court 1"] }) }),
+      division(D2, "Beta", { settings: settings({ courts: ["Court 2"] }) }),
+    ],
+    [fixture(F1, D1, { home: E1, away: E2 }), fixture(F2, D2, { home: E3, away: E4 })],
+  );
+
+  // Why a throw and not a default: an assignment with no resolvable division
+  // matches NO division's `mine` filter, so it is verified by nobody — while
+  // still being injected into every other pass's `existing` as a phantom
+  // zero-duration court booking. Silently wrong, and wrong in the direction that
+  // looks clean.
+  it("throws on an assignment naming a fixture outside the pack", () => {
+    expect(() =>
+      verifyJoint(
+        plan([
+          assign(F1, at("09:00"), "Court 1"),
+          assign(FOREIGN, at("09:00"), "Court 2"),
+        ]),
+        p,
+      ),
+    ).toThrow(/outside the pack/);
+  });
+
+  it("throws on a fixture whose division is not in the run", () => {
+    const orphaned = pack(
+      [
+        division(D1, "Alpha", { settings: settings({ courts: ["Court 1"] }) }),
+        division(D2, "Beta", { settings: settings({ courts: ["Court 2"] }) }),
+      ],
+      [fixture(F1, D1, { home: E1, away: E2 }), fixture(F2, D_ABSENT, { home: E3, away: E4 })],
+    );
+    expect(() =>
+      verifyJoint(
+        plan([assign(F1, at("09:00"), "Court 1"), assign(F2, at("09:00"), "Court 2")]),
+        orphaned,
+      ),
+    ).toThrow(/not in this run/);
+  });
+
+  it("carries a greppable code so a caller with client-supplied ids can translate it", () => {
+    const err = (() => {
+      try {
+        verifyJoint(plan([assign(FOREIGN, at("09:00"), "Court 1")]), p);
+      } catch (e) {
+        return e as { code?: string };
+      }
+      return null;
+    })();
+    expect(err?.code).toBe("AI_PLAN_INVALID_ASSIGNMENT");
+  });
 });
 
 // ===========================================================================
@@ -447,6 +580,140 @@ describe("jointStructuralCheck (#350)", () => {
     expect(jointStructuralCheck(plan([assign(F1, at("09:00"), "Court 1")]), movableIds, p)).toContain(
       F2,
     );
+  });
+
+  // The remaining return paths. These are verbatim copies of logic tested in
+  // schedule-ai.ts's own suite, and a COPY DOES NOT INHERIT COVERAGE: deleting
+  // any one of these branches here left the whole joint suite green.
+
+  it("rejects an assignment naming a fixture that is not movable", () => {
+    expect(
+      jointStructuralCheck(
+        plan([
+          assign(F1, at("09:00"), "Court 1"),
+          assign(F2, at("09:00"), "Court 3"),
+          assign(FOREIGN, at("09:00"), "Court 1"),
+        ]),
+        movableIds,
+        p,
+      ),
+    ).toContain(`non-movable fixture ${FOREIGN}`);
+  });
+
+  it("rejects the same fixture assigned twice", () => {
+    expect(
+      jointStructuralCheck(
+        plan([assign(F1, at("09:00"), "Court 1"), assign(F1, at("10:00"), "Court 1")]),
+        movableIds,
+        p,
+      ),
+    ).toContain("appears more than once");
+  });
+
+  it("rejects a movable fixture whose division is not in the run", () => {
+    // Not reachable from a model — the pack builder tags every fixture from a
+    // selected division. Reachable from a CALLER that hands verifyJoint a pack
+    // it assembled itself, which is what the apply path will do.
+    const orphaned = pack(
+      [
+        division(D1, "Alpha", { settings: settings({ courts: ["Court 1"] }) }),
+        division(D2, "Beta", { settings: settings({ courts: ["Court 3"] }) }),
+      ],
+      [fixture(F1, D_ABSENT, { home: E1, away: E2 })],
+    );
+    expect(
+      jointStructuralCheck(plan([assign(F1, at("09:00"), "Court 1")]), new Set([F1]), orphaned),
+    ).toContain("no division");
+  });
+
+  it("rejects an unschedulable entry naming a fixture that is not movable", () => {
+    expect(
+      jointStructuralCheck(
+        plan(
+          [assign(F1, at("09:00"), "Court 1"), assign(F2, at("09:00"), "Court 3")],
+          [{ fixture_id: FOREIGN, reason: "H2" }],
+        ),
+        movableIds,
+        p,
+      ),
+    ).toContain(`non-movable fixture ${FOREIGN}`);
+  });
+
+  it("rejects a fixture that is both assigned and marked unschedulable", () => {
+    expect(
+      jointStructuralCheck(
+        plan(
+          [assign(F1, at("09:00"), "Court 1"), assign(F2, at("09:00"), "Court 3")],
+          [{ fixture_id: F1, reason: "H2" }],
+        ),
+        movableIds,
+        p,
+      ),
+    ).toContain("appears more than once");
+  });
+
+  // Pinned = schedule-locked. Two reachable branches; the third (`must stay at
+  // its current slot`) is unreachable by construction and marked so in the
+  // implementation — a pinned id absent from both lists is caught by "is missing
+  // from the plan", and a pinned id in `unschedulable` by the branch below.
+  const pinnedPack = () => {
+    const movable = [
+      fixture(F1, D1, {
+        home: E1,
+        away: E2,
+        pinned: true,
+        current: { at: at("09:00"), court: "Court 1" },
+      }),
+      fixture(F2, D2, { home: E3, away: E4 }),
+    ];
+    return pack(
+      [
+        division(D1, "Alpha", { settings: settings({ courts: ["Court 1", "Court 2"] }) }),
+        division(D2, "Beta", { settings: settings({ courts: ["Court 3"] }) }),
+      ],
+      movable,
+    );
+  };
+
+  it("rejects a pinned fixture nudged off its current slot", () => {
+    const pp = pinnedPack();
+    // Moved in time…
+    expect(
+      jointStructuralCheck(
+        plan([assign(F1, at("10:00"), "Court 1"), assign(F2, at("09:00"), "Court 3")]),
+        movableIds,
+        pp,
+      ),
+    ).toContain("must not move");
+    // …and moved across courts, which the time check alone would wave through.
+    expect(
+      jointStructuralCheck(
+        plan([assign(F1, at("09:00"), "Court 2"), assign(F2, at("09:00"), "Court 3")]),
+        movableIds,
+        pp,
+      ),
+    ).toContain("must not move");
+    // Left exactly where it is → clean.
+    expect(
+      jointStructuralCheck(
+        plan([assign(F1, at("09:00"), "Court 1"), assign(F2, at("09:00"), "Court 3")]),
+        movableIds,
+        pp,
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects a pinned fixture marked unschedulable", () => {
+    // Dropping a schedule-locked fixture silently loses a slot the organiser
+    // deliberately froze, so it must fail before verification rather than show
+    // up as an absence in the diff.
+    expect(
+      jointStructuralCheck(
+        plan([assign(F2, at("09:00"), "Court 3")], [{ fixture_id: F1, reason: "H2" }]),
+        movableIds,
+        pinnedPack(),
+      ),
+    ).toContain("cannot be marked unschedulable");
   });
 });
 

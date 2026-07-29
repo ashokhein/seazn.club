@@ -663,7 +663,16 @@ export interface CompetitionPlanResult {
   usage: { input_tokens: number; output_tokens: number; repair_rounds: number; cost_usd: number | null };
 }
 
-/** Map the LLM proposal onto engine assignments. Two things differ from the
+/** Raised when a plan/proposal names a fixture this pack does not contain, or a
+ *  fixture whose division is not in the run. That is a CALLER bug, never
+ *  something a model can cause on the runner path (`jointStructuralCheck` gates
+ *  it first), so it fails loudly instead of being defaulted away — see
+ *  {@link toJointEngineAssignments}. A caller working from client-supplied
+ *  assignments (the Task 6 apply path) must validate ids against the pack before
+ *  reaching here, and translate this into its own 4xx. */
+export const JOINT_ASSIGNMENT_UNKNOWN = "AI_PLAN_INVALID_ASSIGNMENT";
+
+/** Map the LLM proposal onto engine assignments. Three things differ from the
  *  single-division `toEngineAssignments` (schedule-ai.ts:878):
  *
  *  * `endAt` uses EACH fixture's own division's matchMinutes. A shared duration
@@ -676,7 +685,21 @@ export interface CompetitionPlanResult {
  *    with that division's own constraints, a restByGroup entry keyed by a
  *    division now governs that division's own fixtures — which is what the field
  *    means. `poolId` is deliberately still NOT stamped, matching the
- *    single-division path exactly. */
+ *    single-division path exactly.
+ *  * An unresolvable assignment THROWS rather than defaulting.
+ *
+ *  That last one is the important one, and it is why there is no `?? 0` here.
+ *  An assignment whose fixture is unknown, or whose division is not in the run,
+ *  has no duration and no division. Defaulting it produces something far worse
+ *  than an error: a zero-length assignment carrying no `divisionId` matches NO
+ *  division's `mine` filter in `verifyJoint`, so it is verified by nobody while
+ *  still being injected into every other pass's `existing` as a phantom
+ *  zero-duration court booking. A wrong answer that looks like a right one.
+ *
+ *  The runner cannot reach this — `jointStructuralCheck` rejects foreign ids
+ *  before verification — but `verifyJoint` is a pure exported function and the
+ *  apply path is expected to reuse this shape over client-supplied assignments,
+ *  where no such gate exists. */
 export function toJointEngineAssignments(plan: AiSchedulePlan, pack: CompetitionPack): Assignment[] {
   const fixtureById = new Map(pack.fixtures.movable.map((f) => [f.id, f]));
   const minutesByDivision = new Map(pack.divisions.map((d) => [d.id, d.settings.matchMinutes]));
@@ -688,9 +711,23 @@ export function toJointEngineAssignments(plan: AiSchedulePlan, pack: Competition
   }
   return plan.assignments.map((a) => {
     const f = fixtureById.get(a.fixture_id);
-    const entrants = f ? [f.home, f.away].filter((e): e is string => e !== null) : [];
+    if (f === undefined) {
+      throw new HttpError(
+        500,
+        `assignment names a fixture outside the pack: ${a.fixture_id}`,
+        JOINT_ASSIGNMENT_UNKNOWN,
+      );
+    }
+    const minutes = minutesByDivision.get(f.division_id);
+    if (minutes === undefined) {
+      throw new HttpError(
+        500,
+        `fixture ${a.fixture_id} belongs to a division that is not in this run: ${f.division_id}`,
+        JOINT_ASSIGNMENT_UNKNOWN,
+      );
+    }
+    const entrants = [f.home, f.away].filter((e): e is string => e !== null);
     const startAt = ms(a.scheduled_at);
-    const minutes = f !== undefined ? minutesByDivision.get(f.division_id) ?? 0 : 0;
     return {
       fixtureId: a.fixture_id,
       court: a.court_label,
@@ -698,7 +735,7 @@ export function toJointEngineAssignments(plan: AiSchedulePlan, pack: Competition
       endAt: startAt + minutes * MS_PER_MIN,
       entrants,
       people: entrants.flatMap((e) => personsByEntrant.get(e) ?? []),
-      ...(f !== undefined ? { divisionId: f.division_id } : {}),
+      divisionId: f.division_id,
     };
   });
 }
@@ -801,12 +838,23 @@ export function verifyConfigFor(
  * with it and is reported. The other side of the same clash is reported by that
  * division's own pass.
  *
+ * `existing` also carries every OBSTACLE — the selected divisions' own immovable
+ * fixtures plus every out-of-run division's placements. Dropping them does not
+ * fail loudly: it makes the verifier call a board clean while the model has
+ * double-booked a court against a real, already-scheduled fixture nobody can
+ * move.
+ *
  * Deduplication is not cosmetic. `validateAssignments` resolves feed
  * dependencies against the whole board rather than the pass's own assignments,
  * so a within-division order violation is re-reported verbatim by every other
  * division's pass. Keyed on (fixtureId, reason, detail): the two SIDES of a
  * court clash differ on fixtureId and both survive, which is the intent — either
  * one can be the fixture that moves.
+ *
+ * @throws HttpError 500 AI_PLAN_INVALID_ASSIGNMENT (inherited from
+ *   {@link toJointEngineAssignments}) when the plan names a fixture outside the
+ *   pack — the invariant every entry has a resolvable `divisionId`, without
+ *   which an assignment would be verified by no pass at all.
  */
 export function verifyJoint(plan: AiSchedulePlan, pack: CompetitionPack): Conflict[] {
   const all = toJointEngineAssignments(plan, pack);
@@ -830,7 +878,32 @@ export function verifyJoint(plan: AiSchedulePlan, pack: CompetitionPack): Confli
       out.push(c);
     }
   }
-  return out.sort((a, b) => cmp(a.fixtureId, b.fixtureId) || cmp(a.reason, b.reason));
+  // Sort on DOMAIN keys, never on the fixture UUID (the determinism contract at
+  // schedule-ai.ts:1-12). Division order is the pack's own (name, slug) order, so
+  // the report also arrives grouped by division and then in playing order, which
+  // is how the model reads it back on a repair round.
+  const rank = new Map<string, [number, number, number, string]>();
+  const divisionIndex = new Map(pack.divisions.map((d, i) => [d.id, i]));
+  for (const f of pack.fixtures.movable) {
+    rank.set(f.id, [divisionIndex.get(f.division_id) ?? pack.divisions.length, f.round, f.seq, f.ext_key ?? ""]);
+  }
+  const UNRANKED: [number, number, number, string] = [Number.MAX_SAFE_INTEGER, 0, 0, ""];
+  return out.sort((a, b) => {
+    const ra = rank.get(a.fixtureId) ?? UNRANKED;
+    const rb = rank.get(b.fixtureId) ?? UNRANKED;
+    return (
+      ra[0] - rb[0] ||
+      ra[1] - rb[1] ||
+      ra[2] - rb[2] ||
+      cmp(ra[3], rb[3]) ||
+      cmp(a.reason, b.reason) ||
+      cmp(a.detail ?? "", b.detail ?? "") ||
+      // Last-resort only: two conflicts identical on every domain key. Reaching
+      // this means the seed has duplicate (round, seq, ext_key) within one
+      // division, which the fixture generator does not produce.
+      cmp(a.fixtureId, b.fixtureId)
+    );
+  });
 }
 
 /** Structural gate run before the engine verifier — the joint mirror of
@@ -882,6 +955,11 @@ export function jointStructuralCheck(
   for (const id of movableIds) {
     if (!seen.has(id)) return `movable fixture ${id} is missing from the plan`;
   }
+  // UNREACHABLE BY CONSTRUCTION, kept because schedule-ai.ts:870 keeps it and
+  // the two must not drift. Every pinned movable id has already been accounted
+  // for above: absent from both lists → "is missing from the plan"; in
+  // `unschedulable` → "cannot be marked unschedulable"; in `assignments` →
+  // `placed`. It only becomes live if one of those three guards is removed.
   for (const [id] of pinned) {
     if (movableIds.has(id) && !placed.has(id)) return `pinned fixture ${id} must stay at its current slot`;
   }
@@ -954,6 +1032,13 @@ async function callJointModel(
  * MAX_REPAIR_ROUNDS, same fewest-blocking best-so-far selection, same
  * usage-rides-on-the-422 contract. Takes the pack as data; never touches the DB.
  *
+ * PREFER {@link runCompetitionAiPlanLadder}. This function runs ONE model with
+ * no fallback; the ladder is what production wants and what the orchestrator
+ * must call. It is exported only because the ladder needs an attempt function
+ * and because the bench pins a single model. (The single-division twin avoids
+ * this ambiguity by keeping `runAiPlanLadder` module-private — it cannot here,
+ * since the orchestrator lives in a different module.)
+ *
  * What differs: the system prompt is SYSTEM_PROMPT + JOINT_RULES, and the two
  * checks are the joint ones.
  *
@@ -976,6 +1061,21 @@ export async function runCompetitionAiPlan(
 
   const conversation: AiTurn[] = [{ role: "user", content: JSON.stringify(pack) }];
   const divisionByFixture = new Map(pack.fixtures.movable.map((f) => [f.id, f.division_id]));
+  /** Same invariant as toJointEngineAssignments, and for the same reason: a
+   *  proposal entry with an empty division_id is a valid-looking lie that the
+   *  route would serialise straight to the client. `jointStructuralCheck` has
+   *  already rejected foreign ids by the time this runs. */
+  const divisionOf = (fixtureId: string): string => {
+    const d = divisionByFixture.get(fixtureId);
+    if (d === undefined) {
+      throw new HttpError(
+        500,
+        `assignment names a fixture outside the pack: ${fixtureId}`,
+        JOINT_ASSIGNMENT_UNKNOWN,
+      );
+    }
+    return d;
+  };
 
   let inputTokens = 0;
   let outputTokens = 0;
@@ -999,7 +1099,7 @@ export async function runCompetitionAiPlan(
       court_label: a.court_label,
       // Resolved server-side from the pack. JOINT_RULES tells the model NOT to
       // emit a division field, so this is never an echo of model output.
-      division_id: divisionByFixture.get(a.fixture_id) ?? "",
+      division_id: divisionOf(a.fixture_id),
       ...(a.schedule_locked !== undefined ? { schedule_locked: a.schedule_locked } : {}),
     })),
     unschedulable: chosen.plan.unschedulable,
@@ -1096,7 +1196,7 @@ export async function runCompetitionAiPlan(
       role: "user",
       content: JSON.stringify({
         verifier_conflicts: conflicts,
-        note: "Fix only these conflicts. Move as few fixtures as possible. Do not reintroduce earlier conflicts. A court conflict between two divisions is reported on both fixtures — move either one.",
+        note: "Fix only these conflicts. Move as few fixtures as possible. Do not reintroduce earlier conflicts. A court conflict between two divisions may be reported on both fixtures; where it is, moving either one resolves it.",
       }),
     });
   }

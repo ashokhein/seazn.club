@@ -556,6 +556,10 @@ export async function applyCompetitionSchedule(
 
 **Why this is new work:** today's apply is client-orchestrated (`apps/web/src/components/v2/board/ai-apply.ts:163`) and calls `POST /stages/{stageId}/schedule/apply` once per stage. `applySchedule` (`schedule.ts:463`) takes **one** division-level advisory lock, asserts **one** division's seq, and bumps **one** division's seq. Nothing today spans divisions. Spec §8 requires "one transaction writes all divisions or nothing".
 
+**R11 — the joint verifier can be strictly stricter than the per-division one on identical input.** `verifyConfigFor` carries `restByGroup`, and joint assignments are stamped with `divisionId`, so `effectiveRestMinutes` (`calendar.ts:83`) finds a division-keyed rest override that the single-division path never reaches. The direction is correct — that is what the field means — and the outcome is a `rest` *warning*, never blocking, so it costs no repair rounds. But **plan-time and apply-time must not disagree**: whatever this task validates with must match what `verifyJoint` used at plan time, or a plan that verified clean can fail at apply.
+
+**R12 — an assignment naming a fixture outside the pack is a caller bug: throw, do not tolerate it.** `verifyJoint` throws when an entry lacks `divisionId`. Do not reintroduce a `?? 0` / `?? ""` default here — a zero-length assignment matches no division's partition, so it is verified by nobody while still being injected as a phantom court booking into every pass's occupancy.
+
 **Implementation notes:**
 - One `withTenant(auth.orgId, tx => …)` transaction wrapping everything.
 - Take `pg_advisory_xact_lock(hashtext('division:' || id))` for **every** division, in **sorted division-id order**. Sorting is the deadlock guard — two concurrent joint applies over overlapping division sets that lock in different orders will deadlock.

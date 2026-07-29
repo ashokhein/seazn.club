@@ -84,11 +84,27 @@ if a wish was impossible.`;
 // constant so the single-division prompt above stays byte-frozen. Same register
 // as the H/S rules: terse, imperative, numbered J1-J7.
 //
-// The split matters as much as the rules. J1-J3 and J6 are mechanical and the
-// verifier enforces them, so they read as hard. J4-J5 are BALANCE goals: shipped
-// unconditionally they would outrank S1, which the frozen prompt says "outranks
-// everything except hard rules" — and they would collide with its own worked
-// example ("juniors always before 2pm") on a two-division board.
+// The split matters as much as the rules, and it must match `isBlocking`
+// (schedule-ai.ts), which blocks on `court` and direct `order` and NOTHING else:
+//   HARD (rejects the answer)  J1 (structural gate), J2, and the occupancy half
+//                              of J3 — matchMinutes/gapMinutes decide how long a
+//                              fixture holds a court, so a violation surfaces as
+//                              a `court` conflict.
+//   WARN (reported, ships)     the rest of J3 (blackouts → `blackout`, session
+//                              windows → `blackout`, perEntrantMinRest → `rest`)
+//                              and J7 (`person_overlap`). A joint plan whose only
+//                              flaw is one of these returns blocking:[] and fires
+//                              no repair round, so the preamble must NOT promise a
+//                              rejection — the model would reason from a repair
+//                              round that never arrives.
+//   GOAL                       J4-J5. Shipped as hard they would outrank S1, which
+//                              the frozen prompt says "outranks everything except
+//                              hard rules", and would collide with its own worked
+//                              example ("juniors always before 2pm").
+//   CONVENTION                 J6's emit-in-your-own-zone clause. `AiAssignment`
+//                              accepts any UTC offset and everything downstream
+//                              parses to instants, so it is unenforceable; the
+//                              rest of J6 is a READING instruction about the pack.
 //
 // J5 and J6 exist because of properties of the joint pack the model cannot infer
 // from the pack itself:
@@ -110,13 +126,20 @@ export const JOINT_RULES = `JOINT MODE — you are scheduling several divisions 
 shared board. The pack carries a divisions array in place of a single settings
 block, and every fixture, entrant, draft assignment and prior-proposal entry
 carries a division_id.
-J1, J2, J3 and J6 extend the HARD rules. The verifier checks each division's own
-fixtures against that division's own settings — one division's windows, blackouts
-and durations never govern another division's fixtures — while the court and
-person checks additionally see every division's fixtures as occupancy on the one
-shared board. A violation of any of them rejects the answer. J4 and J5 are GOALS —
-rank them among S1-S5, below the organiser's instruction, which still outranks
-everything except hard rules. J7 describes the shared-player map.
+J1 and J2 are HARD — the verifier rejects an answer that breaks them — and so is
+the occupancy half of J3: each division's own matchMinutes and gapMinutes decide
+how long its fixtures hold a court, so any overlap that follows from them is a
+hard court conflict. The rest of J3 — blackouts, session windows,
+perEntrantMinRest — and J7 are checked too, but reported as WARNINGS. They do not
+reject your answer and you will not be asked to repair them, so your first answer
+is the only chance to get them right: treat them as if they were hard. Throughout,
+the verifier checks each division's own fixtures against that division's own
+settings — one division's windows, blackouts and durations never govern another
+division's fixtures — while the court and person checks additionally see every
+division's fixtures, and every fixed obstacle, as occupancy on the one shared
+board. J4 and J5 are GOALS — rank them among S1-S5, below the organiser's
+instruction, which still outranks everything except hard rules. J6 is a timestamp
+convention, not a gate. J7 describes the shared-player map.
 J1. Every fixture carries a division_id. Its court_label must be a court that
     fixture's own division lists in divisions[].settings.courts. The top-level
     courts array is the union across divisions — it is not a licence to use a court
@@ -149,7 +172,9 @@ J6. Divisions may run in different timezones, so the pack is not in one clock. E
     with a null division_id comes from outside this run and is written in the first
     listed division's zone. Two equal-looking wall clock times may therefore be
     hours apart and the arrays need not be in clock order: compare instants, not
-    strings. Write each assignment's scheduled_at in its own division's zone.
+    strings. By convention, write each assignment's scheduled_at in its own
+    division's zone — any correct UTC offset is accepted and nothing rejects you
+    for the wrong one, but the organiser reads the board in division zones.
 J7. The shared-player map spans every selected division. It lists each person
     rostered into two or more entrants anywhere in this run, so it covers entrants
     in different divisions as well as entrants within one. Two entrants sharing a
@@ -158,7 +183,7 @@ J7. The shared-player map spans every selected division. It lists each person
 OUTPUT is unchanged, and H1-H7's accounting still holds across the union: every
 movable fixture of every division appears exactly once — in the one flat
 assignments array, or in unschedulable with a short honest reason citing the rule
-id (H1-H7, or J1-J3, J6) that blocked it. Do not add a division field to an
+id (H1-H7, or J1-J3) that blocked it. Do not add a division field to an
 assignment — the server resolves each fixture_id to its own division.`;
 
 export const AiAssignment = z.object({

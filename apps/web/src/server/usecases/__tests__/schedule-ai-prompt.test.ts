@@ -178,16 +178,53 @@ describe("JOINT_RULES (issue #350)", () => {
     // everything except hard rules", SYSTEM_PROMPT:52-54) and collides with that
     // prompt's own worked example, "juniors always before 2pm".
     const preamble = flat(JOINT_RULES.slice(0, JOINT_RULES.indexOf("J1.")));
-    expect(preamble).toMatch(/J1, J2, J3 and J6/);
-    expect(preamble).toMatch(/J4 and J5/);
-    expect(preamble).toMatch(/hard/i);
-    expect(preamble).toMatch(/goal/i);
+    expect(preamble).toMatch(/J1 and J2 are HARD/);
+    expect(preamble).toMatch(/J4 and J5 are GOALS/);
     // Pin the DIRECTION, not just the token. `/S1/` alone is satisfied by the
     // literal "S1-S5", so a rewrite to "ABOVE the organiser's instruction" —
     // the exact inversion this test exists to prevent — would still pass.
     expect(preamble).toMatch(/below the organiser's instruction/);
     // And J4 itself must yield to the instruction rather than dilute it.
     expect(rule("J4.", "J5.")).toMatch(/S1 wins/);
+  });
+
+  it("does not sell a warn-only check as a rejection", () => {
+    // `isBlocking` (schedule-ai.ts) blocks on `court` and direct `order` and
+    // nothing else. J3's blackouts / session windows / perEntrantMinRest surface
+    // as `blackout` and `rest`, and J7 as `person_overlap` — all warnings. A
+    // joint plan whose only flaw is a fixture sitting inside a division's
+    // blackout therefore returns blocking:[], fires NO repair round, and ships.
+    //
+    // The preamble used to say a violation of "J1, J2, J3 and J6" rejects the
+    // answer. That is a promise the pipeline cannot keep, and the model reasons
+    // from it: told a repair round will catch a blackout, it has less reason to
+    // avoid one on the first pass — the only pass that exists for that class.
+    const preamble = flat(JOINT_RULES.slice(0, JOINT_RULES.indexOf("J1.")));
+    expect(preamble).not.toMatch(/J1, J2, J3 and J6/);
+    expect(preamble).toMatch(/WARNING/);
+    for (const warned of ["blackout", "session window", "perEntrantMinRest"]) {
+      expect(preamble.toLowerCase()).toContain(warned.toLowerCase());
+    }
+    // …and it must say the consequence, not merely the label: no repair round,
+    // so the first answer is the only chance.
+    expect(preamble).toMatch(/not be asked to repair/i);
+    expect(preamble).toMatch(/first answer is the only chance/i);
+    // The hard half of J3 is still hard, and named as such.
+    expect(preamble).toMatch(/matchMinutes and gapMinutes/);
+    expect(preamble).toMatch(/hard court conflict/);
+  });
+
+  it("does not present J6's emit-zone clause as enforceable", () => {
+    // `AiAssignment` accepts any ISO-8601 with an offset and every consumer
+    // parses to an instant, so "write it in its own division's zone" cannot be
+    // rejected by anything. Shipped in the hard list it was a rule with no
+    // verifier — the class of instruction that teaches a model the hard list is
+    // approximate.
+    const preamble = flat(JOINT_RULES.slice(0, JOINT_RULES.indexOf("J1.")));
+    expect(preamble).toMatch(/J6 is a timestamp convention, not a gate/);
+    expect(rule("J6.", "J7.")).toMatch(/by convention/i);
+    // The OUTPUT clause must not offer J6 as a reason a fixture was blocked.
+    expect(tail("OUTPUT")).not.toMatch(/J1-J3, J6/);
   });
 
   it("scopes the verifier per division without implying an intersection-only board", () => {
