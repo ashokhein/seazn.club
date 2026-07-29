@@ -26,10 +26,11 @@ Copy these values verbatim. Every task's requirements implicitly include this se
 - **Every UI surface must be 375px-clean:** no horizontal page scroll; wide tables in an `overflow-x: auto` container.
 - **TDD is mandatory.** Write the failing test, run it, watch it fail for the right reason, then implement. Every change ships a test that fails without it.
 - **Three ways a "failing" test lies, all hit during execution — check for each:**
-  1. **A fresh `toMatchSnapshot()` always passes its own red step.** On a not-yet-existing value it writes `` = `undefined` `` into the `.snap` and matches it. Delete that entry before implementing, or the snapshot pins nothing. (Task 2.)
+  1. **A fresh `toMatchSnapshot()` both passes its own red step AND poisons the following green one.** On a not-yet-existing value it writes `` = `undefined` `` into the `.snap` and matches itself. Deleting that entry *before* the red run does not help — the red run simply rewrites it, and the next green run then fails `unmatched: 1`. Delete it **after** the red run, before implementing. Verify with `snapshot.unchecked: 0` in the JSON reporter, which is what proves no orphan key survives. (Task 2, twice.)
   2. **A test that restates the implementation's own predicate can only catch one direction of error.** Task 1's obstacle test asserted "no obstacle shares `(court, start)` with any selected movable" — the implementation's filter, restated. It caught under-removal, never over-removal, and it actively blocked the correct fix. Assert the *domain* property instead.
   3. **A test can stop being able to fail for the reason its title names.** Task 1's cap-ordering test was made vacuous by a later change that moved the check earlier — it still passed, now for a different reason, and read as coverage. When you move a guard, re-check the tests that named it.
 - **When a test's assertion could be satisfied by more than one constraint, neutralise the others.** Task 1's cross-person test only proves the person block because the two divisions sit on different courts with zero rest and no blackouts — otherwise a court clash would produce the same pass.
+- **Substring assertions against the prompt must survive its hard wrapping.** `SYSTEM_PROMPT` and `JOINT_RULES` wrap at ~80 columns, so a pinned phrase can straddle a `\n    ` and fail against text that genuinely contains it. Task 2 hit this: written test-last, it would have prompted "fixing" the prompt's wrapping to satisfy a broken test. Normalise whitespace in the assertion (Task 2 added `flat()`/`rule()` helpers); the exact bytes stay frozen by the snapshot, so the pins are not weakened.
 - **Verification commands** (run from `/Users/ashokhein/github/seazn-wt-359`):
   ```bash
   npm run typecheck --workspace apps/web
@@ -225,8 +226,10 @@ npx vitest run src/server/usecases/__tests__/schedule-ai-pack.test.ts
   - **J4** Balance prime slots across divisions. No division may be pushed entirely to the end of the day while another takes every early court.
   - **J5** The `draft` is a **legality** hint, not a balance hint (ruling R4). It is built division by division, so earlier divisions hold the early slots — rebalance it under J4 rather than anchoring on it. A division whose `draftPlaced` is below its movable count has a **partial** draft; place the remainder yourself (ruling R5).
   - **J6** Divisions may run in different timezones (ruling R8). Every `scheduled_at` carries its own division's UTC offset, so the arrays are not necessarily in clock order — compare instants, not strings.
+  - **J7** The shared-player map covers **within-division** sharing only — each division's map is filtered to its own entrants (`schedule-ai.ts:540-543`), so a person rostered into one entrant of A and one of B is in neither. The verifier additionally checks people across divisions, and a rejection names the person and both entrants (ruling R10). Without this the model is graded on data it does not hold, cannot act on the rejection, and re-proposes the same placement until the token budget stops it.
+  - **Ranking matters:** J1-J3, J6 and J7 are hard — the verifier rejects violations. **J4 and J5 are goals**, ranked with the soft goals and subordinate to S1 (the organiser's instruction), which `SYSTEM_PROMPT:52-54` says outranks everything except hard rules. Shipping J4 as a hard rule collides with the base prompt's own worked example, "juniors always before 2pm".
   - Output format is unchanged: one flat `assignments` array. Do not add a division field to the output — the server resolves each `fixture_id` to its division.
-- Label the rules `J1`–`J4` so they match the existing `H1`–`H7` / `S1`–`S5` convention that `schedule-ai-prompt.test.ts:26` asserts on.
+- Label the rules `J1`–`J7` so they match the existing `H1`–`H7` / `S1`–`S5` convention that `schedule-ai-prompt.test.ts:26` asserts on.
 
 - [ ] **Step 1: Write the failing tests** (append to `schedule-ai-prompt.test.ts`)
 
@@ -236,8 +239,8 @@ describe("JOINT_RULES (issue #350)", () => {
     expect(JOINT_RULES).toMatchSnapshot();
   });
 
-  it("labels every joint rule J1..J4", () => {
-    for (const id of ["J1", "J2", "J3", "J4"]) {
+  it("labels every joint rule J1..J7", () => {
+    for (const id of ["J1", "J2", "J3", "J4", "J5", "J6", "J7"]) {
       expect(JOINT_RULES).toContain(id);
     }
   });
@@ -267,6 +270,10 @@ describe("JOINT_RULES (issue #350)", () => {
 - Modify: `apps/web/src/server/usecases/competition-schedule-ai.ts`
 - Modify: `apps/web/src/server/usecases/schedule-ai.ts` — export what the joint module needs (`runLadder`, `planRungs`, `MAX_TOKENS`, `MAX_REPAIR_ROUNDS`, `isBlocking`, `aiReasoning`, `schedulingAiModel`, `ROUND_TIMEOUT_MS`). Export only; change no behaviour.
 - Test: `apps/web/src/server/usecases/__tests__/competition-schedule-verify.test.ts` (pure, no DB — model on `schedule-ai-run.test.ts`)
+
+**R10 — the cross-division person conflict MUST name the person and both entrants.** This is a contract, promised to the model in `JOINT_RULES` and required for the repair loop to converge.
+
+Each division's `packPeople` is filtered to that division's own entrants (`schedule-ai.ts:540-541`), so a person rostered into one entrant of A and one of B appears in **neither** source map — and H4 tells the model to avoid overlaps for *"two entrants sharing a person in the shared-player map"*, a map that is empty for exactly this case. The model therefore cannot avoid the collision from the data it holds. If `verifyJoint` reports a bare `person_overlap` with no names, the repair round has nothing to act on and the model will re-propose the same placement — an infinite thrash on a metered, credit-consuming path, terminated only by the token budget. `Conflict.detail` must carry the person id and both entrant ids. Add a test asserting that, not merely that a conflict is raised.
 
 **Interfaces:**
 - Consumes: `validateAssignments(assignments, config, existing, dependencies): Conflict[]` from `@seazn/engine` (`packages/engine/src/scheduling/calendar.ts:419`); `Assignment` has an optional `divisionId` field already (`calendar.ts:58`).
