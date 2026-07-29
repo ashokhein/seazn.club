@@ -15,18 +15,11 @@ import { sql, withTenant } from "@/lib/db";
 import { checkoutTrialDays } from "@/lib/billing";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t } from "@/lib/i18n";
-
-/** State-derived status nudge: published → live → completed as matches progress. */
-function suggestStatus(
-  status: string,
-  agg: { total: number; underway: number; done: number; scheduled: number },
-): string | null {
-  if (agg.total === 0) return null;
-  if (status === "live" && agg.done === agg.total) return "completed";
-  if ((status === "draft" || status === "published") && agg.underway > 0) return "live";
-  if (status === "draft" && agg.scheduled > 0) return "published";
-  return null;
-}
+// The status nudge lived here as a private function until v17 gap #362. It moved
+// to lib/ so the overview's wrap-up prompt and this page decide from ONE rule —
+// an organiser who follows the prompt here must not arrive to find settings
+// silent — and so the date arm is reachable from a unit test.
+import { suggestStatus } from "@/lib/competition-wrapup";
 
 export default async function CompetitionSettingsPage({
   params,
@@ -82,7 +75,7 @@ export default async function CompetitionSettingsPage({
       join divisions d on d.id = f.division_id
       where d.competition_id = ${id}`,
   );
-  const suggestedStatus = suggestStatus(competition.status, agg);
+  const suggestedStatus = suggestStatus(competition.status, competition.ends_on, agg);
 
   return (
     <>

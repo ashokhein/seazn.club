@@ -1569,7 +1569,7 @@
   "compset.status.archived": "archivé",
   "compset.statusHint.published": "Un calendrier est défini — le publier ?",
   "compset.statusHint.live": "Les matchs sont en cours — passer en direct ?",
-  "compset.statusHint.completed": "Tous les matchs sont décidés — marquer comme terminé ?",
+  "compset.statusHint.completed": "Ses matchs sont terminés, ou sa date de fin est passée — marquer comme terminé ?",
   "compset.statusHint.fallback": "On dirait que cela devrait être « {status} ».",
   "compset.tab.general": "Général",
   "compset.tab.branding": "Image de marque",
@@ -2721,5 +2721,11 @@
   "board.ai.trace.line.draftOfficials": "brouillon › {fixtures} matchs · {roles} rôles requis",
   "board.ai.trace.line.planOfficials": "plan › {count} affectations proposées",
   "board.ai.trace.line.verifyOfficials": "vérif › assignOfficials",
-  "board.ai.trace.line.blockingRemainOfficials": "{count} bloquant — à affecter manuellement"
+  "board.ai.trace.line.blockingRemainOfficials": "{count} bloquant — à affecter manuellement",
+  "comp.wrapUp.title": "La date de fin de cette compétition est passée",
+  "comp.wrapUp.body": "Elle devait se terminer le {date}. Marquez-la comme terminée, ou définissez une nouvelle date de fin si elle est toujours en cours.",
+  "comp.wrapUp.complete": "Marquer comme terminée",
+  "comp.wrapUp.completing": "Marquage en cours…",
+  "comp.wrapUp.changeDate": "Modifier la date de fin",
+  "comp.wrapUp.failed": "Impossible de mettre à jour le statut. Réessayez."
 }
