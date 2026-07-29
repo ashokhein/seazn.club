@@ -48,7 +48,7 @@ vi.mock("../ai-runs-admin", async (importOriginal) => {
 import { sql } from "@/lib/db";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
-import { AiCompetitionPlanResponse } from "@/server/api-v1/schemas";
+import { AiCompetitionLastResult, AiCompetitionPlanResponse } from "@/server/api-v1/schemas";
 import { ROUTES } from "@/server/api-v1/openapi";
 import { matchKeyRoute } from "@/server/api-v1/key-scopes";
 import { createApiKey } from "../api-keys";
@@ -412,8 +412,28 @@ describe.skipIf(!HAS_DB)("POST /competitions/{id}/schedule/ai-plan", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// ai-last mirrors the division twin `lastAiApply` (schedule.ts:607) exactly:
+// the last APPLIED plan (at + instruction + summary) plus a run counter. It is
+// not a proposal recall — the single-division board has never persisted a
+// proposal either, and a propose-only run writes no plan content anywhere.
+// ---------------------------------------------------------------------------
 describe.skipIf(!HAS_DB)("GET /competitions/{id}/schedule/ai-last", () => {
-  it("is null before any joint run, and is reachable with a READ key", async () => {
+  /** Seed a competition_events row directly. Used for the DECOY types the
+   *  counter must not count, and for the joint apply event Task 6 has not
+   *  written yet — the reader cannot otherwise be exercised at all. */
+  async function event(
+    orgId: string,
+    competitionId: string,
+    type: string,
+    payload: Record<string, unknown> = {},
+  ): Promise<void> {
+    await sql`
+      insert into competition_events (competition_id, org_id, type, payload)
+      values (${competitionId}, ${orgId}, ${type}, ${sql.json(payload as never)})`;
+  }
+
+  it("has no last apply and no runs before anything has happened, on a READ key", async () => {
     const { auth, competitionId } = await seedBoard();
     const secret = await keyFor(auth, ["read"]);
     const res = await lastRoute(
@@ -421,12 +441,16 @@ describe.skipIf(!HAS_DB)("GET /competitions/{id}/schedule/ai-last", () => {
       ctx(competitionId),
     );
     expect(res.status).toBe(200);
-    expect((await res.json()).data).toBeNull();
+    const data = (await res.json()).data;
+    expect(data).toEqual({ last: null, runs: { used: 0, max: null } });
+    expect(AiCompetitionLastResult.parse(data)).toEqual(data);
   });
 
-  it("recalls what the run ledger preserved of the last joint run", async () => {
+  it("counts JOINT runs in runs.used — not single-division ones, not failures", async () => {
     const { auth, competitionId, divisions } = await seedBoard();
     const manage = await keyFor(auth, ["manage"]);
+    // One REAL joint run, so the type the counter reads is the type the
+    // orchestrator actually writes rather than one this test made up…
     parse.mockResolvedValue(planResponse(jointPlan(divisions)));
     const planned = await planRoute(
       keyed(manage, "POST", `/competitions/${competitionId}/schedule/ai-plan`, {
@@ -437,7 +461,18 @@ describe.skipIf(!HAS_DB)("GET /competitions/{id}/schedule/ai-last", () => {
       ctx(competitionId),
     );
     expect(planned.status).toBe(200);
-    const plan = (await planned.json()).data;
+    // …plus a second joint run, so the expected count (2) can tell the joint
+    // type apart from the three decoys below. With one of each, EVERY wrong
+    // predicate would still return 1.
+    await event(auth.orgId, competitionId, "schedule.ai_generated_multi", { phase: "schedule" });
+    // Decoys: a SINGLE-division run on this same competition (the confusion
+    // this branch has already produced four defects from), a failed joint run,
+    // and an unrelated event.
+    await event(auth.orgId, competitionId, "schedule.ai_generated", {
+      division_id: divisions[0]!.id,
+    });
+    await event(auth.orgId, competitionId, "schedule.ai_failed_multi", { outcome: "failed" });
+    await event(auth.orgId, competitionId, "discovery.opt_in");
 
     const read = await keyFor(auth, ["read"]);
     const res = await lastRoute(
@@ -445,14 +480,47 @@ describe.skipIf(!HAS_DB)("GET /competitions/{id}/schedule/ai-last", () => {
       ctx(competitionId),
     );
     expect(res.status).toBe(200);
-    const last = (await res.json()).data;
-    expect(last).not.toBeNull();
-    // What the ledger event genuinely holds: the run's price and its usage.
-    expect(last.credits).toBe(plan.credits);
-    expect(last.discount).toBe(plan.discount);
-    expect(last.budget).toBe(plan.budget);
-    expect(last.spent_tokens).toBe(plan.spent_tokens);
-    expect(last.usage).toEqual(plan.usage);
+    const data = (await res.json()).data;
+    expect(data.runs).toEqual({ used: 2, max: null });
+    // A run is not an apply: planning twice leaves nothing to recall.
+    expect(data.last).toBeNull();
+  });
+
+  it("recalls the most recent joint APPLY once one exists", async () => {
+    // Task 6 writes this event; nothing does yet, so the rows are synthesised
+    // here. That makes this test the CONTRACT Task 6 has to honour — the type
+    // string, `source: "ai"`, and `ai.instruction` / `ai.summary` — not a
+    // restatement of code that already exists.
+    const { auth, competitionId } = await seedBoard();
+    await event(auth.orgId, competitionId, "schedule.applied_multi", {
+      source: "ai",
+      ai: { instruction: "the older one", summary: "older summary" },
+    });
+    await event(auth.orgId, competitionId, "schedule.applied_multi", {
+      source: "ai",
+      ai: { instruction: "spread the finals out", summary: "moved 4 fixtures across 2 divisions" },
+    });
+    // A MANUAL joint apply is not an AI recall — same event type, no `ai` block.
+    await event(auth.orgId, competitionId, "schedule.applied_multi", { source: "manual" });
+
+    const read = await keyFor(auth, ["read"]);
+    const res = await lastRoute(
+      keyed(read, "GET", `/competitions/${competitionId}/schedule/ai-last`),
+      ctx(competitionId),
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()).data;
+    expect(data.last).not.toBeNull();
+    expect(data.last.instruction).toBe("spread the finals out");
+    expect(data.last.summary).toBe("moved 4 fixtures across 2 divisions");
+    // The recall carries the applied plan and nothing else — no proposal, no
+    // price block. The whole envelope is asserted so a field cannot creep back.
+    expect(Object.keys(data.last).sort()).toEqual(["at", "instruction", "summary"]);
+    expect(data.runs).toEqual({ used: 0, max: null });
+    // …and it satisfies the schema the OpenAPI spec publishes, `at`'s
+    // ISO-with-offset format included. Nothing parses a response at runtime, so
+    // without this the declared contract is never checked against a real one.
+    expect(AiCompetitionLastResult.parse(data)).toEqual(data);
   });
 });
 

@@ -1341,73 +1341,87 @@ export interface AiCompetitionPlanResponse
   usage: { input_tokens: number; output_tokens: number; repair_rounds: number };
 }
 
-/** The competition-level ledger event a successful joint run writes. Named
- *  once so the writer below and {@link lastCompetitionAiPlan} cannot drift. */
+/** The competition-level ledger event a successful joint RUN writes. Named once
+ *  so the writer below and {@link lastCompetitionAiApply}'s counter cannot
+ *  drift — the whole `_multi` suffix exists to keep joint runs apart from
+ *  single-division ones, and a literal in two places is how they get mixed up. */
 const JOINT_RUN_EVENT = "schedule.ai_generated_multi";
 
 /**
- * GET /competitions/{id}/schedule/ai-last — recall the most recent joint run,
- * or null.
+ * The competition-level event a joint APPLY writes — **owned by Task 6**
+ * (`applyCompetitionSchedule`), which does not exist yet. Exported so that
+ * writer imports this constant instead of retyping the string; the reader below
+ * and the two payload keys it needs are the contract:
  *
- * WHAT THIS CAN AND CANNOT RETURN, because the gap is a product fact and not an
- * oversight: `schedule.ai_generated_multi` records what a run COST and what it
- * spent — credits, the discount, the token budget and what was burned of it,
- * plus the model usage. It does not record the proposal, the summary or the
- * conflicts, and nothing else does either: the joint plan is propose-only and
- * is never written down unless the organiser applies it. So this returns the
- * price and usage block and nothing more, as a PARTIAL plan response rather
- * than as a second shape — a caller reads the same field names it read off the
- * plan itself, and the fields that were never persisted are absent rather than
- * present-and-empty.
+ *   type    `schedule.applied_multi`
+ *   payload `{ source: "ai" | "manual", ai?: { instruction, summary } }`
  *
- * The per-division `divisions` array is deliberately absent too. The event
- * stamps `meterStamp`'s narrow rows (id + rung + predicted_rung + underfunded);
- * the response's merged row also carries the division's `name` and its movable
- * count AT THE TIME OF THE RUN. The name is joinable, the movable count is not
- * — it is a snapshot, and today's count is a different number under the same
- * key. Returning half a row, or a re-derived count, would be worse than
- * returning none.
+ * Mirrors the division twin's `schedule_applied` + `payload->>'source' = 'ai'`
+ * exactly (schedule.ts:618-622), for the same reason: the same event records a
+ * manual multi-division apply, and only an AI-sourced one is a recall.
+ */
+export const JOINT_APPLY_EVENT = "schedule.applied_multi";
+
+/**
+ * GET /competitions/{id}/schedule/ai-last — the joint twin of `lastAiApply`
+ * (schedule.ts:607), field for field.
+ *
+ * IT RECALLS THE LAST APPLY, NOT THE LAST PROPOSAL, and that is not a shortfall
+ * of the joint flow — the single-division board has never persisted a proposal
+ * either. An AI plan is propose-only: nothing about it is written down unless
+ * the organiser applies it, at which point the apply event carries the
+ * instruction that produced it and the model's own summary of what it did.
+ * Recalling that is what "what did the AI last do to my schedule?" means here.
+ *
+ * `last` is therefore legitimately null until Task 6 lands
+ * {@link JOINT_APPLY_EVENT} — no joint apply can have happened, so there is
+ * nothing to recall, and a plan run alone must not fill this in.
+ *
+ * `runs.used` counts joint runs on this competition. Note it is NOT the same
+ * counter as the division twin's: `lastAiApply` counts `schedule.ai_generated`
+ * rows carrying a matching `division_id`, which a joint run never writes, so a
+ * joint run does not and should not move a division's count. One counter per
+ * endpoint, each counting the runs its own endpoint bills for. `max` is null —
+ * joint runs are metered by the credit wallet, not by a run quota.
  *
  * Read scope: the recall exposes provenance that is already in the ledger.
  */
-export async function lastCompetitionAiPlan(
+export async function lastCompetitionAiApply(
   auth: AuthCtx,
   competitionId: string,
-): Promise<Partial<AiCompetitionPlanResponse> | null> {
-  const [row] = await withTenant(auth.orgId, (tx) =>
-    tx<{ payload: Record<string, unknown> }[]>`
-      select payload from competition_events
-       where competition_id = ${competitionId} and type = ${JOINT_RUN_EVENT}
+): Promise<{
+  last: { at: string; instruction: string; summary: string } | null;
+  runs: { used: number; max: number | null };
+}> {
+  const { rows, used } = await withTenant(auth.orgId, async (tx) => {
+    const rows = await tx<
+      { created_at: Date; payload: { ai?: { instruction?: string; summary?: string } } }[]
+    >`
+      select created_at, payload from competition_events
+       where competition_id = ${competitionId}
+         and type = ${JOINT_APPLY_EVENT}
+         and payload->>'source' = 'ai'
+       -- competition_events has no seq column (division_events does), so the
+       -- tie-break is the id. Two applies inside ONE transaction would share a
+       -- created_at; nothing writes two.
        order by created_at desc, id desc
-       limit 1`,
-  );
-  if (!row) return null;
-  const p = row.payload;
-  // `payload.usage` also carries `cost_usd` — our margin, not the tenant's
-  // business (the plan response drops it for the same reason). Picked field by
-  // field rather than spread so it cannot ride along.
-  const usage = (p.usage ?? {}) as {
-    input_tokens?: number;
-    output_tokens?: number;
-    repair_rounds?: number;
-  };
-  const num = (v: unknown): number | undefined => (typeof v === "number" ? v : undefined);
-  const bool = (v: unknown): boolean | undefined => (typeof v === "boolean" ? v : undefined);
+       limit 1`;
+    const [count] = await tx<{ n: number }[]>`
+      select count(*)::int as n from competition_events
+       where competition_id = ${competitionId} and type = ${JOINT_RUN_EVENT}`;
+    return { rows, used: count?.n ?? 0 };
+  });
+  const ai = rows[0]?.payload.ai ?? {};
   return {
-    usage: {
-      input_tokens: usage.input_tokens ?? 0,
-      output_tokens: usage.output_tokens ?? 0,
-      repair_rounds: usage.repair_rounds ?? 0,
-    },
-    ...(num(p.credits) !== undefined ? { credits: num(p.credits)! } : {}),
-    ...(num(p.discount) !== undefined ? { discount: num(p.discount)! } : {}),
-    ...(num(p.budget) !== undefined ? { budget: num(p.budget)! } : {}),
-    ...(num(p.spent_tokens) !== undefined ? { spent_tokens: num(p.spent_tokens)! } : {}),
-    ...(num(p.est_tokens) !== undefined ? { est_tokens: num(p.est_tokens)! } : {}),
-    ...(bool(p.underfunded) !== undefined ? { underfunded: bool(p.underfunded)! } : {}),
-    ...(bool(p.stopped_on_budget) !== undefined
-      ? { stopped_on_budget: bool(p.stopped_on_budget)! }
-      : {}),
+    last:
+      rows.length === 0
+        ? null
+        : {
+            at: new Date(rows[0]!.created_at).toISOString(),
+            instruction: ai.instruction ?? "",
+            summary: ai.summary ?? "",
+          },
+    runs: { used, max: null },
   };
 }
 

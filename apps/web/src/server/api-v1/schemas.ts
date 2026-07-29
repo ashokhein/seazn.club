@@ -1898,19 +1898,26 @@ export const AiCompetitionPlanResponse = z.object({
 export type AiCompetitionPlanResponse = z.infer<typeof AiCompetitionPlanResponse>;
 
 /**
- * GET /competitions/{id}/schedule/ai-last — what the run ledger preserved of
- * the most recent joint run, or null when there has never been one.
+ * GET /competitions/{id}/schedule/ai-last — the joint mirror of
+ * {@link AiLastResult}, field for field.
  *
- * DERIVED from the plan response rather than declared separately, so the two
- * cannot drift into different spellings of the same field. Every member is
- * optional because the `schedule.ai_generated_multi` competition event stores
- * a run's PRICE and USAGE, not its proposal: there is no persisted plan
- * content to recall, and inventing empty `proposal`/`summary` values would let
- * a client render "here is your last plan" over a run whose proposal was never
- * written down. See `lastCompetitionAiPlan`.
+ * A recall of the last APPLIED plan, not of the last proposal. An AI plan is
+ * propose-only and nothing about it is written down unless the organiser
+ * applies it — that has been true of the single-division board since v4, and it
+ * is why this is the twin's shape rather than a partial plan response. `last`
+ * stays null until a joint apply exists (#350 Task 6); `runs.used` counts joint
+ * runs on the competition, and `max` is null because joint runs are metered by
+ * the credit wallet rather than by a run quota. See `lastCompetitionAiApply`.
+ *
+ * Declared separately from `AiLastResult` rather than reusing it: the two
+ * endpoints count different events and are free to diverge, and `at` is pinned
+ * to an ISO instant here where the older schema left it a bare string.
  */
-export const AiCompetitionLastPlan = AiCompetitionPlanResponse.partial().nullable();
-export type AiCompetitionLastPlan = z.infer<typeof AiCompetitionLastPlan>;
+export const AiCompetitionLastResult = z.object({
+  last: z.object({ at: IsoDateTime, instruction: z.string(), summary: z.string() }).nullable(),
+  runs: z.object({ used: z.number().int(), max: z.number().int().nullable() }),
+});
+export type AiCompetitionLastResult = z.infer<typeof AiCompetitionLastResult>;
 
 // Custom points & rank control (Jul3/05, PROMPT-25) ---------------------------
 
