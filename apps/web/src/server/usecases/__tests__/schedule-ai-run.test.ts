@@ -20,6 +20,7 @@ vi.mock("@anthropic-ai/sdk", () => ({
 
 import { aiReasoningParams, runAiPlan } from "../schedule-ai";
 import type { SchedulePack } from "../schedule-ai";
+import { createTokenMeter } from "@/lib/ai-rung";
 
 // --- Fixed ids -------------------------------------------------------------
 const F1 = "11111111-1111-4111-8111-111111111111";
@@ -487,13 +488,14 @@ describe("runAiPlan (v4/00 §3-4)", () => {
   });
 });
 
-// Token-weighted AI credit rung (design ai-rung.ts): runAiPlan's optional 5th
-// param is the hard per-run token budget an escalation-aware caller enforces.
-// Omitted (every test above), behaviour is unchanged — these pin the opt-in path.
-describe("runAiPlan — hard token budget (design ai-rung.ts)", () => {
+// Token-weighted AI credit pricing (lib/ai-rung.ts): runAiPlan's optional 5th
+// param is the run's TokenMeter — one instance shared by every ladder rung, so
+// the hard budget spans the whole run. Omitted (every test above), an unmetered
+// meter is used and behaviour is unchanged; these pin the opt-in path.
+describe("runAiPlan — hard token budget (lib/ai-rung.ts)", () => {
   it("clamps the round's max_tokens to what's left of the budget", async () => {
     parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
-    await runAiPlan(pack, movableIds, undefined, undefined, { tokens: 3_000, spentBefore: 0 });
+    await runAiPlan(pack, movableIds, undefined, undefined, createTokenMeter(3_000));
     const body = parse.mock.calls[0]![0] as { max_tokens: number };
     expect(body.max_tokens).toBe(3_000);
   });
@@ -501,18 +503,54 @@ describe("runAiPlan — hard token budget (design ai-rung.ts)", () => {
   it("stops before a round that would exceed the budget and ships the best plan so far", async () => {
     // Round 1: a clash (blocking) that alone spends nearly the whole budget.
     parse.mockResolvedValueOnce(planResponse(clashingPlan, { input_tokens: 1000, output_tokens: 30_001 }));
-    const out = await runAiPlan(pack, movableIds, undefined, undefined, { tokens: 32_000, spentBefore: 0 });
+    const meter = createTokenMeter(32_000);
+    const out = await runAiPlan(pack, movableIds, undefined, undefined, meter);
     // The repair round never fires: 30,001 spent + the 2,000 reserve would
     // exceed the 32,000 budget, so only round 1 ran.
     expect(parse).toHaveBeenCalledTimes(1);
     expect(out.blocking.length).toBeGreaterThan(0); // degraded best-so-far, not a clean plan
     expect(out.usage.output_tokens).toBe(30_001);
+    expect(meter.stoppedOnBudget).toBe(true); // the ledger stamp that says "cut off"
   });
 
   it("fails without a model call when a later ladder rung inherits an already-exhausted budget", async () => {
-    await expect(
-      runAiPlan(pack, movableIds, undefined, undefined, { tokens: 10_000, spentBefore: 9_000 }),
-    ).rejects.toMatchObject({ code: "AI_PLAN_FAILED" });
+    const meter = createTokenMeter(10_000);
+    meter.add(9_000); // an earlier rung already spent this
+    await expect(runAiPlan(pack, movableIds, undefined, undefined, meter)).rejects.toMatchObject({
+      code: "AI_PLAN_FAILED",
+    });
     expect(parse).not.toHaveBeenCalled();
+  });
+
+  // The meter is charged BEFORE the refusal/parse-failure throws, so a round
+  // that spent tokens and then failed still counts against the budget — a run
+  // cannot loop past its cap on failures alone.
+  it("charges the meter for a round that spent tokens and then refused", async () => {
+    parse.mockResolvedValueOnce({
+      parsed_output: null,
+      stop_reason: "refusal",
+      usage: { input_tokens: 100, output_tokens: 7_000 },
+      content: [],
+    });
+    const meter = createTokenMeter(64_000);
+    await expect(runAiPlan(pack, movableIds, undefined, undefined, meter)).rejects.toMatchObject({
+      code: "AI_PLAN_FAILED",
+    });
+    expect(meter.spent).toBe(7_000);
+  });
+
+  // One meter, many rungs: the second rung starts where the first left off
+  // rather than resetting to a fresh budget.
+  it("carries spend from one rung into the next through the shared meter", async () => {
+    const meter = createTokenMeter(32_000);
+    parse.mockResolvedValueOnce(planResponse(finishBy18Plan, { input_tokens: 100, output_tokens: 25_000 }));
+    await runAiPlan(pack, movableIds, undefined, undefined, meter);
+    expect(meter.spent).toBe(25_000);
+    // A second rung on the SAME meter has 7,000 left — under the 2,000 reserve
+    // it still fits, but the round is clamped to what remains.
+    parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
+    await runAiPlan(pack, movableIds, undefined, undefined, meter);
+    const secondCall = parse.mock.calls[1]![0] as { max_tokens: number };
+    expect(secondCall.max_tokens).toBe(7_000);
   });
 });

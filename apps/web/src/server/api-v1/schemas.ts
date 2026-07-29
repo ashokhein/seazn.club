@@ -1545,6 +1545,50 @@ export const ScheduleShift = z.object({
   delta_minutes: z.number().int().min(-1440).max(1440),
 });
 
+// Token-weighted AI credit rung (lib/ai-rung.ts, issue #348).
+const RungLiteral = z.union([z.literal(1), z.literal(2), z.literal(3)]);
+
+/**
+ * What an AI run cost and what that bought, spread into every AI response so
+ * the confirm card reads one shape whatever endpoint answered it. Mirrors
+ * `RunMeterStamp` in lib/ai-rung.ts — the single builder both phases (and #350's
+ * joint solve) stamp their ledger event and response with.
+ *
+ * Optional so fixtures and clients written before this field set still satisfy
+ * the type; every real response sends `credits`, `budget`, `spent_tokens`,
+ * `underfunded`, `stopped_on_budget` and `est_tokens`. `rung`/`predicted_rung`
+ * are the single-division flat form; `divisions`/`discount` the joint form.
+ */
+const AiRunPriceFields = {
+  /** Credits actually charged (after any joint batch discount). */
+  credits: z.number().int().optional(),
+  /** Hard generation-token budget those credits bought. */
+  budget: z.number().int().optional(),
+  /** Generation tokens the run actually spent. */
+  spent_tokens: z.number().int().optional(),
+  /** Advisory pre-run estimate the confirm card showed. */
+  est_tokens: z.number().int().optional(),
+  /** A rung below the prediction was chosen. */
+  underfunded: z.boolean().optional(),
+  /** The run ended because the budget ran out, not because it was done. */
+  stopped_on_budget: z.boolean().optional(),
+  /** Single-division form. */
+  rung: RungLiteral.optional(),
+  predicted_rung: RungLiteral.optional(),
+  /** Joint (multi-division) form — issue #350. */
+  discount: z.number().int().optional(),
+  divisions: z
+    .array(
+      z.object({
+        id: z.string(),
+        rung: RungLiteral,
+        predicted_rung: RungLiteral,
+        underfunded: z.boolean(),
+      }),
+    )
+    .optional(),
+};
+
 // v4 AI Schedule Architect (design/v4/00-03) — Phase A propose-only endpoint.
 // The model proposes times+courts; the engine verifier is authoritative. This
 // contract carries the request instruction, an optional repair scope, an
@@ -1569,11 +1613,11 @@ export const AiPlanRequest = z.object({
     })
     .optional(),
   officials_policy: AssignPolicyBody.optional(),
-  // Token-weighted AI credit rung (design ai-rung.ts): defaults to the server
+  // Token-weighted AI credit rung (lib/ai-rung.ts): defaults to the server
   // prediction when omitted. A caller may pick below the prediction — the run
   // still executes, capped to the chosen rung's token budget, and the ledger
   // stamps `underfunded: true`.
-  rung: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  rung: RungLiteral.optional(),
 });
 export type AiPlanRequest = z.infer<typeof AiPlanRequest>;
 
@@ -1642,14 +1686,7 @@ export const AiPlanResponse = z.object({
       unfilled: z.array(z.object({ fixture_id: z.string(), role_key: z.string() })),
     })
     .nullable(),
-  // Token-weighted AI credit rung (design ai-rung.ts). Optional so older
-  // fixtures/clients built before this field set still satisfy the type —
-  // every real response always sends them.
-  rung: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
-  predicted_rung: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
-  budget: z.number().int().optional(),
-  spent_tokens: z.number().int().optional(),
-  underfunded: z.boolean().optional(),
+  ...AiRunPriceFields,
 });
 export type AiPlanResponse = z.infer<typeof AiPlanResponse>;
 
@@ -1678,9 +1715,11 @@ export const AiOfficialsPlanRequest = z.object({
       ),
     })
     .optional(),
-  // Token-weighted AI credit rung (design ai-rung.ts): defaults to the server
+  // Token-weighted AI credit rung (lib/ai-rung.ts): defaults to the server
   // prediction when omitted; see AiPlanRequest.rung for the full contract.
-  rung: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  // Ignored on the empty-instruction path, which makes no model call and is
+  // always priced at 1 credit.
+  rung: RungLiteral.optional(),
 });
 export type AiOfficialsPlanRequest = z.infer<typeof AiOfficialsPlanRequest>;
 
@@ -1727,14 +1766,7 @@ export const AiOfficialsPlanResponse = z.object({
     output_tokens: z.number().int(),
     repair_rounds: z.number().int(),
   }),
-  // Token-weighted AI credit rung (design ai-rung.ts). Optional so older
-  // fixtures/clients built before this field set still satisfy the type —
-  // every real response always sends them.
-  rung: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
-  predicted_rung: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
-  budget: z.number().int().optional(),
-  spent_tokens: z.number().int().optional(),
-  underfunded: z.boolean().optional(),
+  ...AiRunPriceFields,
 });
 export type AiOfficialsPlanResponse = z.infer<typeof AiOfficialsPlanResponse>;
 
