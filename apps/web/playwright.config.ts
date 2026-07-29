@@ -3,14 +3,17 @@ import { defineConfig, devices } from "@playwright/test";
 // E2E UI suite. Drives the real app in Chromium. Auth is provisioned once
 // (auth.setup.ts → storageState) and reused across specs.
 //
-// Server:  a PRE-COMPILED production server (`next build` + `next start`), never
-//          `next dev` — dev's per-request Turbopack compiles + half-RAM heap
-//          watchdog make a full run flaky (transient 404s, restarts). Local: a
-//          server on PLAYWRIGHT_BASE (:3000) must already be up against a
-//          migrated DB, else the webServer block builds + starts one. Because a
-//          prod build never dev-exposes `login_url`, local runs need
-//          E2E_PROD_TARGET=1 + DATABASE_URL so the auth helpers mint tokens in
-//          the DB (same as CI). CI: e2e.yml builds + starts against Postgres.
+// Server:  a PRE-COMPILED production server, never `next dev` — dev's
+//          per-request Turbopack compiles + half-RAM heap watchdog make a full
+//          run flaky (transient 404s, restarts). Starting it is an explicit
+//          PRECONDITION, not something this config does for you (#342, and the
+//          `webServer` note at the bottom of this file): a server must already
+//          be up on PLAYWRIGHT_BASE (:3000) against a migrated DB, and
+//          e2e/global-setup.ts aborts the run with the recipe if it is missing
+//          or broken. Because a prod build never dev-exposes `login_url`, local
+//          runs need E2E_PROD_TARGET=1 + DATABASE_URL so the auth helpers mint
+//          tokens in the DB (same as CI). Recipe: docs/runbooks/e2e-local.md.
+//          CI: e2e.yml builds + starts against Postgres.
 //
 // Two projects, two phases (see the test:e2e script):
 //   parallel — specs that only touch state they create (own competitions/
@@ -30,6 +33,9 @@ const SERIAL_SPECS =
 
 export default defineConfig({
   testDir: "./e2e",
+  // Runs before EVERY project, `setup` included: proves the server on BASE is a
+  // working build of this app, or aborts the whole run with the fix (#342).
+  globalSetup: "./e2e/global-setup.ts",
   fullyParallel: true, // parallel project only — the serial phase runs with --workers=1
   workers: process.env.CI ? 2 : 4,
   retries: process.env.CI ? 1 : 0,
@@ -79,24 +85,24 @@ export default defineConfig({
       dependencies: ["setup"],
     },
   ],
-  // A server is expected on BASE (CI starts one; locally you usually run your
-  // own). Reuse it if present, else build + start a production server — never
-  // `next dev`, never double-start. The long timeout covers a cold build.
-  webServer: {
-    command: "npm run build && npm run start",
-    url: `${BASE}/api/health`,
-    timeout: 300_000,
-    reuseExistingServer: true,
-    // v4 Task 17: point the AI Schedule Architect at the e2e model fixture
-    // server (ai-fixture-server.ts, started by the spec on AI_FIXTURE_PORT) and
-    // give the client a key so the resolved AI provider never 503s. Only affects a
-    // server Playwright itself starts; a reused server must be booted with these
-    // vars (the spec's local-run recipe does so). Harmless to every other spec.
-    env: {
-      SCHEDULING_AI_BASE_URL:
-        process.env.SCHEDULING_AI_BASE_URL ??
-        `http://127.0.0.1:${process.env.AI_FIXTURE_PORT ?? "4319"}`,
-      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "sk-ant-e2e-fixture",
-    },
-  },
+  // NO `webServer` BLOCK, deliberately (#342). It used to run
+  // `npm run build && npm run start`, which was wrong in three ways at once:
+  //
+  //   1. `next start` does not serve an `output: standalone` build. It prints
+  //      `⚠ "next start" does not work with "output: standalone" configuration`
+  //      and serves the non-standalone tree — i.e. not what production runs.
+  //   2. It could only ever fire when nothing was listening, at which point it
+  //      spent 5+ minutes building INSIDE a test run, mutating .next and
+  //      leaving a stale .next/lock behind when the run was killed.
+  //   3. It made the environment implicit. A run that quietly arranged its own
+  //      broken server is exactly how this suite reported a green that meant
+  //      nothing.
+  //
+  // The server is now a precondition you start yourself (docs/runbooks/e2e-local.md),
+  // and e2e/global-setup.ts turns a missing or broken one into an immediate,
+  // explicit abort instead of a build. Nothing in CI changes: e2e.yml starts its
+  // own server, so `reuseExistingServer` meant this block never ran there — and
+  // e2e.yml already sets SCHEDULING_AI_BASE_URL / ANTHROPIC_API_KEY (the v4 AI
+  // fixture vars this block used to inject) job-wide. A locally started server
+  // needs them too; the runbook lists them.
 });
