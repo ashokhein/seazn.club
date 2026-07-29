@@ -10,6 +10,7 @@ import { preferredCurrency } from "@/lib/currency-server";
 import { PASS_KEYS } from "@/lib/currency";
 import { routes } from "@/lib/routes";
 import { isPaidPlan, orgPlanKey, passLockReason } from "@/lib/entitlements";
+import { passExceedsPlan } from "@/lib/pass-vs-plan";
 
 const schema = z
   .object({
@@ -55,14 +56,21 @@ export async function POST(req: Request) {
     >`select slug, name, org_id, status, ends_on from competitions where id = ${competition_id}`;
     if (!comp || comp.org_id !== orgId) throw new HttpError(404, "competition not found");
 
-    // A paid org is refused a pass (v3/07 §3 interplay).
+    // A paid org is refused a pass that would lift NOTHING for it (v3/07 §3
+    // interplay, reopened by v17 gap #327).
     //
-    // The message says FEATURES, and stops there. It used to say the plan
-    // "covers everything an Event Pass adds", which stopped being true when the
-    // L rung shipped (v17 #294): Pro caps a division at 256 entrants and L caps
-    // it at nothing, so neither is a superset of the other. Whether a paid org
-    // should be ABLE to buy L is a pricing decision (#327) and this gate is
-    // deliberately unchanged — but a refusal may not rest on a falsehood.
+    // This used to refuse every paid org outright, on the premise that a plan
+    // was a strict superset of any pass. The L rung (#294) ended that: Pro caps
+    // a division at 256 entrants and L caps it at nothing, so a Pro organiser
+    // running one division of 300 had no self-serve path — refused here, and
+    // told by the upgrade page that their plan already covered it.
+    //
+    // Owner decision (2026-07-29): sell the rung when it genuinely exceeds the
+    // plan, and only then. `passExceedsPlan` computes that from
+    // `plan_entitlements` rather than naming L, so the gate reopens by itself if
+    // Pro's entrant cap is ever lifted and closes for a rung that stops adding
+    // anything. The resolver applies the pass on any plan as the BETTER of the
+    // two axes (#337), so what is sold here is what is delivered.
     //
     // Judged through the RESOLVER (main), not the raw `plan_key` column: the row
     // keeps saying 'pro' after a comp lapses or a subscription is cancelled,
@@ -78,8 +86,9 @@ export async function POST(req: Request) {
     >`select s.stripe_customer_id, s.owner_user_id from subscriptions s
        join organizations o on o.subscription_id = s.id
        where o.id = ${orgId}`;
-    if (isPaidPlan(await orgPlanKey(orgId))) {
-      throw new HttpError(400, "Your plan already includes every Event Pass feature.");
+    const planKey = await orgPlanKey(orgId);
+    if (isPaidPlan(planKey) && !(await passExceedsPlan(pass_key, planKey))) {
+      throw new HttpError(400, "Your plan already includes everything this Event Pass adds.");
     }
 
     // An Event Pass is genuinely ORG-scoped — one competition, one

@@ -5,6 +5,8 @@ import { walletIdFor } from "@/lib/credits";
 // Leaf module, NOT lib/billing.ts: billing imports invalidateOrgEntitlements
 // from here, so importing it back would close a cycle.
 import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscription-status";
+// The one place that knows which direction "better" runs in per feature (#327).
+import { betterInt } from "@/lib/pass-vs-plan";
 
 export { PaymentRequiredError } from "@/lib/errors";
 
@@ -339,16 +341,24 @@ async function resolveFromDb(
     where plan_key = ${planKey} and feature_key = ${featureKey}`;
   let base: Resolved | null = planRow ?? null;
 
-  // Event Pass (v3/07 §3): lifts a single competition for community orgs
-  // only — under any paid plan the pass is deliberately moot (Pro's matrix is
-  // a strict superset), which is also what lets it survive a later downgrade.
-  // Keys missing from the pass matrix fall through to the plan row, so
-  // Pro-only features stay Pro on a passed competition.
+  // Event Pass (v3/07 §3): lifts a single competition. Keys missing from the
+  // pass matrix fall through to the plan row, so Pro-only features stay Pro on
+  // a passed competition.
   //
-  // `isPaidPlan` is the same predicate the competition layout uses to decide
-  // whether to OFFER a pass, on purpose: "the pass does nothing here" and
-  // "stop selling the pass here" must never be able to disagree.
-  if (!isPaidPlan(planKey) && competitionId) {
+  // Applied under ANY plan since v17 gap #327/#337. It used to be gated on
+  // `!isPaidPlan(planKey)`, on the premise that Pro's matrix was a strict
+  // superset and the pass was therefore moot. The L rung (#294) ended that:
+  // `entrants.per_division.max` is unlimited on L and 256 on Pro. Under the old
+  // gate an L holder who subscribed to Pro silently lost unlimited entrants on
+  // the competition they had already paid to unlock (#337) — a PAID action that
+  // took something away, with no warning anywhere.
+  //
+  // The overlay below is therefore the BETTER of the two, per axis, and never
+  // the pass wholesale: L's 20-division cap must not claw back Pro's unlimited
+  // divisions on the way past. `betterInt` also knows the one key where better
+  // means smaller (`registration.fee_percent`), which a plain max would get
+  // backwards and charge a Pro organiser 5% instead of 2%.
+  if (competitionId) {
     // Also load the competition's lifecycle so a pass on an ARCHIVED or
     // long-ended competition stops applying (v17 SPEC-4 §7). Compute-at-read:
     // the competitions row is joined live, never a stored flag. The lock mirrors
@@ -363,16 +373,24 @@ async function resolveFromDb(
         on pe.plan_key = cp.pass_key and pe.feature_key = ${featureKey}
       where cp.competition_id = ${competitionId} and cp.org_id = ${orgId}`;
     if (pass && !isPassLocked(pass.status, pass.ends_on)) {
-      // Overlay field by field, EXACTLY as the override arm below and as the SQL
-      // resolver's coalesce (org_has_feature, V306): a null pass bool_value is no
-      // answer and falls THROUGH to the plan bool, never a deny. int_value stays
-      // wholesale — a null pass int is UNLIMITED, a load-bearing answer on that
-      // column, not "unset". Skipping the coalesce is what let TS deny a feature
-      // the plan grants while SQL allowed it (issue #209).
-      base = {
-        bool_value: pass.bool_value ?? base?.bool_value ?? null,
-        int_value: pass.int_value,
-      };
+      // Overlay field by field. A null pass bool_value is no answer and falls
+      // THROUGH to the plan bool, never a deny (org_has_feature, V306, does the
+      // same in SQL — skipping that coalesce is what once let TS deny a feature
+      // the plan granted, #209). Since #327 a pass bool only ever GRANTS: `false`
+      // on the pass cannot switch off something the plan says true, which is the
+      // difference between an overlay and a replacement now that the overlay
+      // runs under paid plans too.
+      //
+      // With NO plan row the pass is taken wholesale, as before. That is not the
+      // same as merging against a missing row: `betterInt` would read the
+      // absent side as null and call it unlimited, turning a 128-entrant pass
+      // cap into no cap at all.
+      base = base
+        ? {
+            bool_value: pass.bool_value === true ? true : base.bool_value,
+            int_value: betterInt(featureKey, pass.int_value, base.int_value),
+          }
+        : { bool_value: pass.bool_value, int_value: pass.int_value };
     }
   }
 
