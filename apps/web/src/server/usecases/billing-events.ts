@@ -1658,6 +1658,25 @@ async function handlePlatformDispute(
     // customer has since renewed/re-bought under a different (or no) dispute.
     await sql`update subscriptions set plan_key = 'community', status = 'canceled',
               updated_at = now() where id = ${subscriptionId} and dispute_id = ${dispute.id}`;
+    // The plan is one axis; recurring add-ons sit on TOP of it (#331). Losing a
+    // dispute is churn by another route — nothing else cancels these rows on
+    // this path, because syncOrgAddonsForSubscription runs only on
+    // `customer.subscription.updated`, which a dispute never emits — so the
+    // group kept `community base + N` on orgs.max_owned AND members.max, for
+    // ever and unpaid. Scoped exactly like the churn cancel: these two
+    // Stripe-billed families only, `stripe_item_id is not null` so an
+    // ADMIN-granted comp (SPEC-3, status='granted', null item id) survives, and
+    // FROZEN rather than deleted so the qty stays for history and a re-buy.
+    // Guarded on dispute_id like the update above — via `exists`, since the
+    // update may have to fire on a group whose plan row was already community —
+    // so a stale loss that clobbered no plan strips no capacity either.
+    await sql`
+      update org_addons set status = 'canceled'
+       where wallet_id = ${subscriptionId}
+         and feature_key in ${sql([ORG_ADDON_FEATURE_KEY, SEAT_ADDON.featureKey])}
+         and stripe_item_id is not null and status = 'active'
+         and exists (select 1 from subscriptions s
+                      where s.id = ${subscriptionId} and s.dispute_id = ${dispute.id})`;
     // A lost dispute cancels the plan for every org in the group.
     await invalidateGroupEntitlements(subscriptionId);
   }

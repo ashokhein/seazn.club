@@ -68,6 +68,43 @@ async function seedSubOrg(plan = "pro"): Promise<{ orgId: string; customer: stri
   return { orgId, customer };
 }
 
+/** The group's wallet — org_addons.wallet_id IS the subscription id. */
+async function walletFor(orgId: string): Promise<string> {
+  const [{ subscription_id }] = await sql<{ subscription_id: string }[]>`
+    select subscription_id from organizations where id = ${orgId}`;
+  return subscription_id;
+}
+
+/** A PURCHASED extra-org rider (+1 orgs.max_owned), billed as a Stripe item. */
+async function seedRiderAddon(walletId: string, itemId: string) {
+  await sql`
+    insert into org_addons (wallet_id, target_org_id, feature_key, delta_each, qty, status, stripe_item_id)
+    values (${walletId}, null, 'orgs.max_owned', 1, 1, 'active', ${itemId})`;
+}
+
+/** A PURCHASED extra seat (+1 members.max on one org), billed as a Stripe item. */
+async function seedSeatAddon(walletId: string, orgId: string, itemId: string) {
+  await sql`
+    insert into org_addons (wallet_id, target_org_id, feature_key, delta_each, qty, status, stripe_item_id)
+    values (${walletId}, ${orgId}, 'members.max', 1, 1, 'active', ${itemId})`;
+}
+
+/** An ADMIN-granted comp of the same cap (SPEC-3): no Stripe item, so nothing
+ *  Stripe-shaped may ever cancel it. */
+async function seedGrantedAddon(walletId: string) {
+  await sql`
+    insert into org_addons (wallet_id, target_org_id, feature_key, delta_each, qty, status)
+    values (${walletId}, null, 'orgs.max_owned', 1, 2, 'granted')`;
+}
+
+/** Every add-on row on the wallet, keyed by its Stripe item id ('granted' for
+ *  the comp row) — so an assertion names WHICH row moved, not just a count. */
+async function addonStatuses(walletId: string): Promise<Record<string, string>> {
+  const rows = await sql<{ stripe_item_id: string | null; status: string }[]>`
+    select stripe_item_id, status from org_addons where wallet_id = ${walletId}`;
+  return Object.fromEntries(rows.map((r) => [r.stripe_item_id ?? "granted", r.status]));
+}
+
 // A community org that bought an Event Pass for one competition. `passKey`
 // selects the rung (v17 #294) — the staff alert has to name the RIGHT product,
 // or a disputed $59 L purchase reads to staff as the $29 M one.
@@ -286,6 +323,58 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — subscription", () => {
       select disputed_at, dispute_id from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(cleared.disputed_at).toBeNull();
     expect(cleared.dispute_id).toBeNull();
+  });
+
+  // v17 gap #331: the plan is only ONE of the two axes the resolver adds up.
+  // Recurring add-ons sit on TOP of the plan base, and the loss branch was not
+  // touching them — syncOrgAddonsForSubscription only ever runs on
+  // `customer.subscription.updated`, which a dispute never emits. A group that
+  // lost a chargeback therefore kept `community base + N` on BOTH orgs.max_owned
+  // and members.max, indefinitely, having stopped paying.
+  it("closed lost cancels the Stripe-billed add-ons too, sparing an admin grant", async () => {
+    const { orgId, customer } = await seedSubOrg("pro");
+    const walletId = await walletFor(orgId);
+    const riderItem = `si_rider_${uniq()}`;
+    const seatItem = `si_seat_${uniq()}`;
+    await seedRiderAddon(walletId, riderItem);
+    await seedSeatAddon(walletId, orgId, seatItem);
+    await seedGrantedAddon(walletId); // comp: null stripe_item_id, status 'granted'
+
+    const did = "dp_" + uniq();
+    await processStripeEvent(subDisputeEvent("created", customer, did));
+    await processStripeEvent(subDisputeEvent("closed", customer, did, "lost"));
+
+    expect(await addonStatuses(walletId)).toEqual({
+      [riderItem]: "canceled", // the extra-org rider stops lifting orgs.max_owned
+      [seatItem]: "canceled", // and the seat row stops lifting members.max
+      granted: "granted", // capacity the group was GIVEN survives — Stripe never billed it
+    });
+  });
+
+  // The `exists` guard on the add-on cancel is not decoration: without it a
+  // stale loss that the plan update correctly ignored would still strip the
+  // capacity off a group that has since re-bought.
+  it("a stale loss (dispute_id mismatch) leaves plan AND add-ons untouched", async () => {
+    const { orgId, customer } = await seedSubOrg("pro");
+    const walletId = await walletFor(orgId);
+    const riderItem = `si_rider_${uniq()}`;
+    const seatItem = `si_seat_${uniq()}`;
+    await seedRiderAddon(walletId, riderItem);
+    await seedSeatAddon(walletId, orgId, seatItem);
+    const flagged = "dp_old_" + uniq();
+    await sql`update subscriptions set dispute_id = ${flagged}, disputed_at = now()
+              where id = ${walletId}`;
+
+    await processStripeEvent(subDisputeEvent("closed", customer, "dp_new_" + uniq(), "lost"));
+
+    const [s] = await sql<{ plan_key: string; status: string }[]>`
+      select plan_key, status from subscriptions where id = ${walletId}`;
+    expect(s.plan_key).toBe("pro");
+    expect(s.status).toBe("active");
+    expect(await addonStatuses(walletId)).toEqual({
+      [riderItem]: "active",
+      [seatItem]: "active",
+    });
   });
 
   it("real webhook charge id string resolves the customer via charges.retrieve", async () => {
