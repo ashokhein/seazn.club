@@ -8,7 +8,7 @@
 // own `nextAdvance`, and the shootout recorder. The strength chip stays
 // visible while any team-short suspension runs. Countdown hints are wall-
 // clock sugar — the fold trusts only start/release events (v6/00 §6.1).
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { SendEvent, SideInfo, SportInfo, LiveState } from "@/components/v2/fixture-console";
 import { useMsg } from "@/components/i18n/dict-provider";
 
@@ -97,17 +97,29 @@ export function PeriodPad({
   const classes = cfg.suspensions?.classes ?? null;
 
   // Wall-clock countdown hints: stamp suspensions we see appear. Display
-  // only — release is always the scorer's explicit action.
-  const stampsRef = useRef<Map<number, number>>(new Map());
+  // only — release is always the scorer's explicit action. Stamps live in
+  // state (not a ref) so `countdown()` below can read them during render
+  // without the "ref read during render" hazard: a ref mutation alone
+  // schedules no render, so anything that depended on it would go stale.
+  const [stamps, setStamps] = useState<Map<number, number>>(() => new Map());
   const [, forceTick] = useState(0);
   useEffect(() => {
-    const stamps = stampsRef.current;
-    suspensions.forEach((_, i) => {
-      if (!stamps.has(i)) stamps.set(i, Date.now());
+    setStamps((prev) => {
+      let next: Map<number, number> | null = null;
+      suspensions.forEach((_, i) => {
+        if (!prev.has(i)) {
+          next ??= new Map(prev);
+          next.set(i, Date.now());
+        }
+      });
+      for (const key of prev.keys()) {
+        if (key >= suspensions.length) {
+          next ??= new Map(prev);
+          next.delete(key);
+        }
+      }
+      return next ?? prev;
     });
-    for (const key of [...stamps.keys()]) {
-      if (key >= suspensions.length) stamps.delete(key);
-    }
   }, [suspensions]);
   useEffect(() => {
     if (suspensions.length === 0) return;
@@ -119,7 +131,7 @@ export function PeriodPad({
     if (classes === null) return null;
     const cls = classes[susp.classKey];
     if (!cls || cls.minutes === null) return susp.permanent ? msg("pad.pp.matchCountdown") : null;
-    const started = stampsRef.current.get(index);
+    const started = stamps.get(index);
     if (started === undefined) return `${cls.minutes}:00`;
     const left = Math.max(0, cls.minutes * 60 - Math.floor((Date.now() - started) / 1000));
     const mm = Math.floor(left / 60);
@@ -173,19 +185,6 @@ export function PeriodPad({
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
           <p className="mb-2 text-xs font-medium text-amber-800">{msg("pad.pp.runningPenalties")}</p>
           <ul className="space-y-1.5">
-            {/*
-              countdown() below reads stampsRef during render. The rule is right
-              about the pattern and wrong about the consequence HERE: the stamp is
-              written by an effect, so on the first render after a suspension
-              appears the read misses and returns the class's full duration rather
-              than a wrong number, and the 1s forceTick interval above is what
-              re-renders it thereafter. Fixing it properly means moving the
-              computation into the tick effect — a structural change to a
-              live-scoring display with no test coverage, which is not something to
-              do inside a lint sweep. #355 carries the tests and the restructure.
-              This is the ONE error the CI lint gate skips; nothing else may join it.
-            */}
-            {/* eslint-disable-next-line react-hooks/refs -- tracked as #355 */}
             {suspensions.map((susp, i) => {
               const side = sideInfo(susp.side);
               const hint = countdown(i, susp);

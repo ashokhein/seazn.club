@@ -134,10 +134,11 @@ function hookDispatcherSlot(): { H: HookDispatcher | null } {
  */
 export function renderIsland<P>(
   Component: (props: P) => ReactNode,
-  props: P,
+  initialProps: P,
   expand: (node: ReactNode) => ReactElement[] = (node) => walk(node),
 ) {
   const slot = hookDispatcherSlot();
+  let props = initialProps;
   const cells: Cell[] = [];
   let cursor = 0;
   let output: ReactNode = null;
@@ -212,5 +213,15 @@ export function renderIsland<P>(
   run();
   // Functions, not values: every interaction re-renders, and reading a stale
   // tree would let assertions pass against markup the user never saw.
-  return { tree: () => expand(output), text: () => textOf(output) };
+  return {
+    tree: () => expand(output),
+    text: () => textOf(output),
+    /** Re-render with new props, the way a parent handing down fresh data
+     *  would — hook state (cells, effect cleanups, memos) carries over, so an
+     *  effect keyed on a prop that changed re-runs exactly once. */
+    rerender: (nextProps: P) => {
+      props = nextProps;
+      run();
+    },
+  };
 }
