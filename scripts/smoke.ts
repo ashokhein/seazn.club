@@ -5718,10 +5718,16 @@ async function jointAiSuite(): Promise<void> {
       poor.status === 402 &&
         (poor.json.error as { feature_key?: string } | undefined)?.feature_key === "ai.credits",
     );
-    check(
-      "#350 joint/credits: the refusal happened before any model call",
-      (fixture?.calls.length ?? 0) === callsBeforeRefusal,
-    );
+    // GUARDED, not `(fixture?.calls.length ?? 0) === callsBeforeRefusal`: that
+    // form reads 0 on both sides with no fixture server and reports PASS for a
+    // property it never tested. A check that passes when it cannot run is worse
+    // than no check — it occupies the slot a real one would fill.
+    if (fixture) {
+      check(
+        "#350 joint/credits: the refusal happened before any model call",
+        fixture.calls.length === callsBeforeRefusal,
+      );
+    }
 
     if (!fixture) return;
 
@@ -5804,10 +5810,15 @@ async function jointAiSuite(): Promise<void> {
         v1data<{ applied: number }>(applied).applied ===
           byDivision.reduce((n, d) => n + d.assignments.length, 0),
     );
+    // EXACT counts, not `> 0`. A partial board is precisely what the atomic
+    // apply exists to prevent, and `> 0` cannot see one — it only catches a
+    // division that got nothing at all. The expected number per division is
+    // already in hand as that division's own assignment list.
     const scheduled = await scheduledCountsByDivision(divIds);
     check(
-      "#350 joint/apply: BOTH divisions came out scheduled, not just the first",
-      divIds.every((id) => (scheduled[id] ?? 0) > 0),
+      "#350 joint/apply: every division came out with its WHOLE board, not a partial one",
+      byDivision.every((d) => (scheduled[d.division_id] ?? 0) === d.assignments.length) &&
+        byDivision.every((d) => d.assignments.length > 0),
     );
 
     const last = await v1(s, `/api/v1/competitions/${compId}/schedule/ai-last`);

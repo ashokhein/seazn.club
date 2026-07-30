@@ -56,7 +56,12 @@ export function ConflictsBadge({
           {plural("board.conflicts.badge", count)}
         </button>
       )}
-      {checkFailed && <CheckUnavailable checking={checking} onRetry={onRetry} />}
+      {/* …but NOT while the panel is open. The panel renders the same notice,
+          with the same accessible name, so both together are two `role="status"`
+          regions announcing one sentence and two buttons answering to "Check
+          again" — a strict locator then resolves neither. The panel is the more
+          specific surface, so the toolbar yields to it. */}
+      {checkFailed && !open && <CheckUnavailable checking={checking} onRetry={onRetry} />}
     </span>
   );
 }

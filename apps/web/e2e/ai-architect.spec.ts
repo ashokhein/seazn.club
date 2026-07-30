@@ -7,6 +7,7 @@ import {
   activeOrg,
   setOrgPlanBySql,
   drainAiCredits,
+  aiCreditBalance,
   getAiScheduleApply,
   getFixtureScheduleSources,
 } from "./helpers";
@@ -309,6 +310,10 @@ test("the credits picker is a real radio group — arrows move the selection AND
 
   await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
   await openConsole(page);
+  // Brief first, credits second — the organiser's real order, and the CTA is
+  // `disabled` (so not a tab stop) until the instruction is long enough. The
+  // Tab assertion at the end needs a real next stop to name.
+  await page.locator("#ai-instruction").fill("Spread the matches across the day.");
 
   const card = page.getByRole("region", { name: "What this run costs" });
   await expect(card).toBeVisible();
@@ -350,9 +355,12 @@ test("the credits picker is a real radio group — arrows move the selection AND
   await expect(chips.nth(2)).toBeFocused();
 
   // Tab still LEAVES the group: the key handler returns early for anything it
-  // does not own, so the browser's own focus order is untouched.
+  // does not own, so the browser's own focus order is untouched. Asserted by
+  // NAMING the next stop — a bare `[role=radio]:focus` count of 0 is equally
+  // satisfied by the card having vanished (a navigation, a crash), which is not
+  // what this sentence claims. Every other assertion here names an element.
   await page.keyboard.press("Tab");
-  await expect(card.locator('[role="radio"]:focus')).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Generate schedule/ })).toBeFocused();
 
   // Below the prediction is allowed, and warned about in as many words.
   await chips.nth(0).click();
@@ -528,9 +536,25 @@ test("a move re-prices the open console before the server has even answered", as
 // #350 — the competition board's joint console
 // ---------------------------------------------------------------------------
 
-/** One competition, two plannable divisions on the SAME court names. Shared
- *  courts are matched by name and nothing else, so identical labels are what
- *  makes this a joint run rather than two runs on two venues. */
+/**
+ * One competition, two plannable divisions on the SAME court names — and
+ * DELIBERATELY DIFFERENT SIZES.
+ *
+ * Shared courts are matched by name and nothing else, so identical labels are
+ * what makes this a joint run rather than two runs on two venues. The sizes,
+ * though, must differ: two identical divisions make every per-row assertion
+ * satisfiable by a component that reads `lines[0]` for every row, and make the
+ * batch discount indistinguishable from a flat rule. They also make a DOWN-PICK
+ * impossible, since a rung-1 division has nothing below it.
+ *
+ * `sizeScore = movable + 0.5·entrants + 2·courts` (`lib/ai-rung.ts`, s1 = 60):
+ *   - big:   12 entrants → 66 fixtures → 66 + 6 + 6 = 78  → predicted rung 2
+ *   - small:  4 entrants →  6 fixtures →  6 + 2 + 6 = 14  → predicted rung 1
+ *
+ * Three courts and 20-minute slots over a 12-hour window give 108 placements
+ * for 72 fixtures, so the joint draft has room to place every one of them and
+ * the review's per-division counts are exact rather than "however many fitted".
+ */
 async function seedJointCompetition(
   request: APIRequestContext,
 ): Promise<{ competitionId: string; compSlug: string; divisionIds: string[] }> {
@@ -541,7 +565,10 @@ async function seedJointCompetition(
   });
   const competitionId = comp.data!.id;
   const divisionIds: string[] = [];
-  for (const name of ["Joint A", "Joint B"]) {
+  for (const [name, entrantCount] of [
+    ["Joint Big", 12],
+    ["Joint Small", 4],
+  ] as const) {
     const div = await apiJson<{ id: string }>(
       request,
       `/api/v1/competitions/${competitionId}/divisions`,
@@ -558,9 +585,9 @@ async function seedJointCompetition(
       request,
       `/api/v1/divisions/${divisionId}/entrants`,
       "POST",
-      ["Ada", "Bay", "Cy", "Dot"].map((n, i) => ({
+      Array.from({ length: entrantCount }, (_, i) => ({
         kind: "individual",
-        display_name: `${name} ${n}`,
+        display_name: `${name} ${i + 1}`,
         seed: i + 1,
       })),
     );
@@ -574,13 +601,13 @@ async function seedJointCompetition(
       tz: "UTC",
       config: {
         startAt: new Date(Date.UTC(2026, 8, 21, 9, 0)).toISOString(),
-        matchMinutes: 45,
-        gapMinutes: 5,
-        courts: ["Court A", "Court B"],
+        matchMinutes: 20,
+        gapMinutes: 0,
+        courts: ["Court A", "Court B", "Court C"],
         sessionWindows: [
           {
             from: new Date(Date.UTC(2026, 8, 21, 9, 0)).toISOString(),
-            to: new Date(Date.UTC(2026, 8, 21, 18, 0)).toISOString(),
+            to: new Date(Date.UTC(2026, 8, 21, 21, 0)).toISOString(),
           },
         ],
       },
@@ -592,13 +619,23 @@ async function seedJointCompetition(
 }
 
 /**
- * The whole joint flow on the competition board: picker → price → run →
- * review → apply.
+ * The whole joint flow on the competition board: picker → price → DOWN-PICK →
+ * run → review → apply, ending at the wallet.
  *
  * The price assertions are against LITERALS, never against another field of the
  * same payload. `max(1, Σ rungs − 1)` is the arithmetic a support ticket is
  * about, and a check that reads the total back out of the card proves only that
  * the attribute exists.
+ *
+ * The DOWN-PICK is the half a unit test cannot reach. `ai-joint-console-wiring`
+ * already pins the request body the console builds; what it cannot see is
+ * whether the server honours a cheaper rung and charges for it. So the big
+ * division is dropped from its predicted 2 to 1 before the run — a genuine
+ * below-recommendation pick, warning and all — and the assertion is the
+ * ORGANISATION'S WALLET, read from SQL. `plan.credits` renders nowhere on this
+ * board, so the wallet is the only observable that says what was actually
+ * charged; every on-screen number can only ever show the card agreeing with
+ * itself.
  */
 test("competition board: pick divisions → price the batch → run → review → apply", async ({
   page,
@@ -607,6 +644,7 @@ test("competition board: pick divisions → price the batch → run → review �
   fixture.reset();
   const org = await activateFreshProPlusOrgWithSlug(page, request);
   const { compSlug, divisionIds } = await seedJointCompetition(request);
+  const [bigDivision, smallDivision] = divisionIds as [string, string];
 
   await page.goto(`/o/${org.slug}/c/${compSlug}/schedule`);
   await page.getByRole("button", { name: "AI Schedule", exact: true }).click();
@@ -617,25 +655,35 @@ test("competition board: pick divisions → price the batch → run → review �
   const picker = dock.getByRole("region", { name: "Divisions to schedule together" });
   await expect(picker.locator("input[data-division-id]")).toHaveCount(2);
   await expect(picker.getByText("2 of 2 selected")).toBeVisible();
+  // Sized differently on purpose — a symmetric pair makes every per-row
+  // assertion below satisfiable by a card that renders row 0 twice.
+  await expect(picker.getByText("66 fixtures to place")).toBeVisible();
+  // `exact` because "6 fixtures to place" is a SUBSTRING of "66 fixtures to
+  // place" — getByText is a substring match, and the two rows are the whole
+  // point of an asymmetric seed.
+  await expect(picker.getByText("6 fixtures to place", { exact: true })).toBeVisible();
 
   // ---- PRICE: one receipt line per division, each with its own control.
   const card = dock.getByRole("region", { name: "What this run costs" });
   const groups = card.getByRole("radiogroup");
   await expect(groups).toHaveCount(2);
-  // Two rung-1 divisions: Σ = 2, charged max(1, 2−1) = 1, one credit forgiven.
-  await expect(card).toHaveAttribute("data-ai-credits", "1");
+  const rungs = card.locator("[data-ai-line-rung]");
+  // Predicted 2 and 1: Σ = 3, charged max(1, 3−1) = 2, one credit forgiven.
+  await expect(rungs.nth(0)).toHaveAttribute("data-ai-line-rung", "2");
+  await expect(rungs.nth(1)).toHaveAttribute("data-ai-line-rung", "1");
+  await expect(card).toHaveAttribute("data-ai-credits", "2");
   await expect(card.locator("[data-ai-discount]")).toHaveAttribute("data-ai-discount", "1");
 
   // Arrows are CONTAINED in a row: moving the first division's control leaves
   // the second's alone, and only the first line's amount moves.
   const rowOne = groups.nth(0).getByRole("radio");
   const rowTwo = groups.nth(1).getByRole("radio");
-  await rowOne.nth(0).focus();
+  await rowOne.nth(1).focus();
   await page.keyboard.press("End");
   await expect(rowOne.nth(2)).toBeFocused();
   await expect(rowTwo.nth(0)).toHaveAttribute("aria-checked", "true");
-  await expect(card.locator("[data-ai-line-rung]").nth(0)).toHaveAttribute("data-ai-line-rung", "3");
-  await expect(card.locator("[data-ai-line-rung]").nth(1)).toHaveAttribute("data-ai-line-rung", "1");
+  await expect(rungs.nth(0)).toHaveAttribute("data-ai-line-rung", "3");
+  await expect(rungs.nth(1)).toHaveAttribute("data-ai-line-rung", "1");
   // Σ = 4 → charged 3, and the CTA agrees with the receipt above it.
   await expect(card).toHaveAttribute("data-ai-credits", "3");
   await expect(dock.locator("[data-ai-joint-run]")).toHaveAttribute("data-ai-joint-cta-credits", "3");
@@ -644,40 +692,61 @@ test("competition board: pick divisions → price the batch → run → review �
   await page.keyboard.press("Tab");
   await expect(rowTwo.nth(0)).toBeFocused();
 
-  // Back to the recommendation before spending.
+  // ---- DOWN-PICK: the big division goes BELOW its recommendation.
+  await page.keyboard.press("Home"); // (row two, already at 1 — a no-op that must stay a no-op)
+  await expect(rungs.nth(1)).toHaveAttribute("data-ai-line-rung", "1");
   await rowOne.nth(0).click();
+  await expect(rungs.nth(0)).toHaveAttribute("data-ai-line-rung", "1");
+  await expect(
+    card.getByText("Below the recommended credits. This run may stop before a full schedule."),
+  ).toBeVisible();
+  // Σ = 2 → charged 1: strictly less than the 2 the recommendation would cost.
   await expect(card).toHaveAttribute("data-ai-credits", "1");
+  await expect(dock.locator("[data-ai-joint-run]")).toHaveAttribute("data-ai-joint-cta-credits", "1");
 
   // ---- RUN: ONE model call carrying BOTH divisions' movable fixtures.
+  const walletBefore = await aiCreditBalance(org.id);
   await page.locator("#ai-joint-instruction").fill("keep the divisions off each other's courts");
   await dock.locator("[data-ai-joint-run]").click();
   await expect(
     dock.getByText("Review the proposal, then apply it to every division at once."),
-  ).toBeVisible({ timeout: 30_000 });
+  ).toBeVisible({ timeout: 60_000 });
 
   const scheduleCalls = fixture.calls.filter((c) => c.phase === "schedule");
   expect(scheduleCalls).toHaveLength(1);
-  // 4 entrants each → 6 fixtures each. A per-division loop would have sent two
-  // calls of 6; one joint pack is the whole point of the feature.
-  expect(scheduleCalls[0]!.movable).toBe(12);
+  // 66 + 6. A per-division loop would have sent two calls; one joint pack is
+  // the whole point of the feature.
+  expect(scheduleCalls[0]!.movable).toBe(72);
 
-  // The review is a per-division ledger, in the picker's order.
+  // THE ASSERTION THE UNIT TESTS CANNOT MAKE: the server honoured the cheaper
+  // rung and billed it. 2 would mean the down-pick was dropped somewhere
+  // between the card and `spendCredit`; 3 would mean the earlier End press was.
+  expect(await aiCreditBalance(org.id)).toBe(walletBefore - 1);
+
+  // The review is a per-division ledger, in the picker's order, with each
+  // division's own count.
   await expect(dock.locator("[data-division-chip]")).toHaveCount(2);
-  await expect(dock.getByText("6 fixtures placed")).toHaveCount(2);
+  await expect(dock.getByText("66 fixtures placed")).toBeVisible();
+  await expect(dock.getByText("6 fixtures placed", { exact: true })).toBeVisible();
 
   // ---- APPLY: one action, every division.
   await dock.locator("[data-ai-joint-apply]").click();
-  await expect(dock.getByText("Applied to 2 divisions.")).toBeVisible({ timeout: 30_000 });
+  await expect(dock.getByText("Applied to 2 divisions.")).toBeVisible({ timeout: 60_000 });
   await expect(
     dock.getByText("A restore point was saved for each division — undo in one tap."),
   ).toBeVisible();
+  // Applying costs nothing — the run was already paid for.
+  expect(await aiCreditBalance(org.id)).toBe(walletBefore - 1);
 
-  // Persistence, per division — "applied" reporting a number is not the same as
-  // both boards being written, and the second one is where a loop-shaped apply
-  // fails.
-  for (const divisionId of divisionIds) {
+  // Persistence, per division and at the EXACT size — "applied" reporting a
+  // number is not the same as both boards being written, and a partial second
+  // board is what the atomic apply exists to prevent.
+  for (const [divisionId, expected] of [
+    [bigDivision, 66],
+    [smallDivision, 6],
+  ] as const) {
     const sources = await getFixtureScheduleSources(divisionId);
-    expect(sources.length).toBe(6);
+    expect(sources.length).toBe(expected);
     expect(sources.every((s) => s.schedule_source === "ai" && s.scheduled_at !== null)).toBe(true);
   }
 });

@@ -20,7 +20,7 @@ Every plan comes with a monthly grant that **resets on the 1st of each month** �
 
 The grant meter on the Credits tab shows how much of this month's grant you've used and when it resets. Unused grant credits don't roll over — the pool is topped back up to the full amount each month.
 
-If a run fails before it produces anything usable, its credits are refunded — the meter gives them back, so a failed run never counts against your grant. A run that finishes, including one that reached its thinking budget and handed back a partial timetable, is charged what the card quoted.
+If a run fails before it produces anything usable it is **not charged**: the hold on your wallet is released and the run history shows the credits coming straight back, so a failed run never counts against your grant. A run that finishes — including one that reached its thinking budget and handed back a partial timetable — is charged what the card quoted.
 
 If a subscription lapses — a payment more than 14 days overdue, a comp that has ended, or a cancelled plan — the monthly grant falls back to the Community 10 a month until it is back in good standing, and the Credits tab shows that lower figure.
 

@@ -59,6 +59,20 @@ describe("the budget table quotes tokenBudgetForCredits, not a remembered number
   it.each(PRICING_ARTICLES)("%s explains the budget, not just the price", (slug) => {
     expect(plainProse(helpArticleBySlug(slug))).toMatch(/thinking budget/i);
   });
+
+  /**
+   * `billing/credits.md` quotes the same ladder INLINE rather than as a table.
+   * A guard that ran on one article only would let a budget retune red one page
+   * while the other went on quoting last quarter's numbers — same anchor,
+   * different shape. The whole sentence is built from the code, so any of the
+   * three constants moving reds this too.
+   */
+  it("billing/credits.md's inline ladder is the same three numbers", () => {
+    const inline = `1 credit → up to ${asK(tokenBudgetForCredits(1))} tokens, 2 → ${asK(
+      tokenBudgetForCredits(2),
+    )}, 3 → ${asK(tokenBudgetForCredits(3))}`;
+    expect(plainProse(helpArticleBySlug("billing/credits"))).toContain(inline);
+  });
 });
 
 describe("the joint worked example is the arithmetic quoteRun actually does", () => {
@@ -128,6 +142,31 @@ const FLAT_RUN_PRICE_PATTERNS = [
 ];
 
 describe("no help article still sells a flat one-credit run", () => {
+  /**
+   * The OTHER half of "this scan is not vacuous", and the one the self-check
+   * below cannot give.
+   *
+   * The self-check proves the REGEX SET can fire. It says nothing about the
+   * CORPUS: stubbing `claimTexts()` to `[]` leaves the whole file green,
+   * because a scan over nothing finds nothing. `copy-truth.ts`'s own header
+   * makes the same point about its surface extraction, so this is not a
+   * hypothetical — a `claimSurfaces` change that stopped recognising a section
+   * would silently unscan these three articles.
+   *
+   * Asserted per article, and on SENTENCES rather than blocks: a corpus that
+   * survived on headings alone would still be one nobody's prose was read from.
+   */
+  it.each(PRICING_ARTICLES)("%s yields a corpus to scan at all", (slug) => {
+    const blocks = claimTexts(helpArticleBySlug(slug));
+    const all = blocks.flatMap(sentences);
+    expect(blocks.length, `${slug}: claimTexts() produced no blocks`).toBeGreaterThan(5);
+    expect(all.length, `${slug}: no sentences to scan`).toBeGreaterThan(15);
+    expect(
+      all.filter((s) => /\bcredits?\b/i.test(s)).length,
+      `${slug}: the corpus contains no sentence about credits — the scan below is over the wrong text`,
+    ).toBeGreaterThan(2);
+  });
+
   it.each(PRICING_ARTICLES)("%s", (slug) => {
     const faults: string[] = [];
     for (const block of claimTexts(helpArticleBySlug(slug))) {

@@ -67,6 +67,8 @@ export function useBoardActions(
   const [checkFailed, setCheckFailed] = useState(false);
   const [checking, setChecking] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Monotonic ticket per conflicts check — see `runValidate`. */
+  const validateSeq = useRef(0);
 
   // Optimistic-concurrency tokens (v3/11 gap 10): the seq each division was
   // rendered at, bumped locally per landed write (every schedule write appends
@@ -106,6 +108,21 @@ export function useBoardActions(
   }, [conflicts]);
 
   const runValidate = useCallback(async () => {
+    // LAST STARTED WINS, not last resolved.
+    //
+    // Two validates overlap routinely: the 400ms debounce fires while the
+    // organiser is pressing "check again", or a refresh queues one on top of a
+    // manual retry — and they settle in whatever order the network returns
+    // them. Without this counter a FAILING check that started first and
+    // answered last flips the notice back on over a SUCCEEDING one, telling an
+    // organiser the list is stale when it had just been refreshed. The calls
+    // are idempotent, so the only thing that needs ordering is which answer is
+    // allowed to land.
+    const seq = ++validateSeq.current;
+    // Any queued debounce is now redundant — this call supersedes it. (A
+    // clearTimeout on the timer that just fired is a no-op, so this is safe on
+    // the debounced path too.)
+    if (debounceRef.current) clearTimeout(debounceRef.current);
     setChecking(true);
     try {
       const results = await Promise.all(
@@ -115,6 +132,7 @@ export function useBoardActions(
           }),
         ),
       );
+      if (seq !== validateSeq.current) return;
       setConflicts(results.flatMap((r) => r.conflicts));
       setCheckFailed(false);
     } catch {
@@ -123,9 +141,10 @@ export function useBoardActions(
       // reading an empty conflicts list that was not an answer. Keep the last
       // known conflicts (they are still the best information available) and
       // record that they are no longer current, so the toolbar can say so.
+      if (seq !== validateSeq.current) return;
       setCheckFailed(true);
     } finally {
-      setChecking(false);
+      if (seq === validateSeq.current) setChecking(false);
     }
   }, [divisions]);
 

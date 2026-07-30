@@ -53,7 +53,7 @@ A credit does not buy "a run". It buys the model a **budget of thinking tokens**
 | 2 | up to 64K tokens |
 | 3 | up to 128K tokens |
 
-The price is fixed the moment you confirm. A run that needs less than its budget is not partly refunded, and a run that reaches the ceiling stops there rather than quietly costing more. A run that fails outright — no usable timetable at all — is **not charged**: the hold on your wallet is released.
+The price is fixed the moment you confirm. A run that needs less than its budget is not partly refunded, and a run that reaches the ceiling stops there rather than quietly costing more. A run that fails outright — no usable timetable at all — is **not charged**: the hold on your wallet is released and the run history shows the credits coming straight back.
 
 ### Choosing how many credits to spend
 

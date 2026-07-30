@@ -28,10 +28,18 @@ import type { Dict, Locale } from "@/lib/i18n-constants";
 import en from "@/dictionaries/en/ui.json";
 import { renderIsland } from "@/components/__tests__/_hook-harness";
 
-/** Every validate call the hook made, and the answer it gets next. */
+/**
+ * Every validate call the hook made, and the answer it gets next.
+ *
+ * `defer` parks a call instead of answering it, so a test can choose the ORDER
+ * two overlapping checks settle in. Nothing else can observe last-resolved-wins:
+ * with both promises already settled the interleaving is fixed.
+ */
 const net = vi.hoisted(() => ({
   calls: [] as string[],
   fail: false,
+  defer: false,
+  pending: [] as { ok: () => void; boom: () => void }[],
 }));
 
 vi.mock("@/lib/client-v1", async (importOriginal) => {
@@ -40,6 +48,14 @@ vi.mock("@/lib/client-v1", async (importOriginal) => {
     ...actual,
     apiV1: (url: string) => {
       net.calls.push(url);
+      if (net.defer) {
+        return new Promise((resolve, reject) => {
+          net.pending.push({
+            ok: () => resolve({ conflicts: [] }),
+            boom: () => reject(new Error("network is down")),
+          });
+        });
+      }
       if (net.fail) return Promise.reject(new Error("network is down"));
       return Promise.resolve({ conflicts: [] });
     },
@@ -92,6 +108,8 @@ describe("#230 item 5 — the hook remembers a failed conflicts check", () => {
   beforeEach(() => {
     net.calls = [];
     net.fail = false;
+    net.defer = false;
+    net.pending = [];
     vi.useFakeTimers();
   });
   afterEach(() => {
@@ -134,6 +152,40 @@ describe("#230 item 5 — the hook remembers a failed conflicts check", () => {
     await inflight;
 
     expect(actions().checkFailed).toBe(false);
+  });
+
+  /**
+   * The ordering hazard the ticket counter exists for.
+   *
+   * Two checks overlap all the time here — the 400ms debounce fires while the
+   * organiser is pressing "check again". If the answers are applied in the
+   * order they RESOLVE, a failing check that started first and answered last
+   * turns the notice back on over a fresh, successful one, and the organiser is
+   * told the list is stale immediately after refreshing it.
+   *
+   * The interleaving is forced rather than hoped for: the first call is parked
+   * and only released AFTER the second has already settled.
+   */
+  it("a stale failing check that answers LAST cannot overwrite the newer success", async () => {
+    net.defer = true;
+    const { actions } = driveHook();
+    await vi.advanceTimersByTimeAsync(400);
+    expect(net.pending).toHaveLength(1); // check #1 is parked, unanswered
+
+    // Check #2 starts and finishes while #1 is still in flight.
+    net.defer = false;
+    net.fail = false;
+    await actions().revalidate();
+    expect(net.calls).toHaveLength(2);
+    expect(actions().checkFailed).toBe(false);
+
+    // …and only now does the older one fail.
+    net.pending[0]!.boom();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(actions().checkFailed).toBe(false);
+    // The spinner belongs to the newer check too, which has already finished.
+    expect(actions().checking).toBe(false);
   });
 });
 
@@ -194,6 +246,27 @@ describe("#230 item 5 — the toolbar says so at ZERO conflicts", () => {
     );
     expect(html).toContain("2 conflicts");
     expect(html).toContain(FAILED);
+  });
+
+  /** With the panel open the SAME notice renders inside it. Both at once is two
+   *  `role="status"` regions announcing one sentence and two buttons answering
+   *  to "Check again" — a strict locator resolves neither, and a screen reader
+   *  hears it twice. The badge itself must stay, so this is not "render
+   *  nothing": the count is still the panel's toggle. */
+  it("yields the notice to the panel while the panel is open, keeping the count badge", () => {
+    const html = markup(
+      <ConflictsBadge
+        count={2}
+        open
+        onToggle={() => undefined}
+        checkFailed
+        checking={false}
+        onRetry={() => undefined}
+      />,
+    );
+    expect(html).toContain("2 conflicts");
+    expect(html).not.toContain(FAILED);
+    expect(html).not.toContain(RETRY);
   });
 
   it("disables the retry while a check is in flight", () => {
