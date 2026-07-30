@@ -188,9 +188,18 @@ export function AiOfficialsReview({
   // the claim below is exact rather than an inference: when it holds, both
   // requests carry an empty instruction and each is charged exactly 1.
   //
-  // It also cannot fail open. Corrupt `adoptInstruction` to "" and adopt sends
-  // "" too — the card and the charge move together, because this is the value
-  // that IS sent, not a signal about it. An earlier version keyed this on the
+  // It also cannot fail open — but read the scope of that claim precisely,
+  // because it is narrower than it first sounds. It is true of the FIELD:
+  // corrupt `state.officialsPriorInstruction` and adopt sends the corrupted
+  // value too, so the card and the charge move together, because this is the
+  // value that IS sent rather than a signal about it. It is NOT true of the
+  // PROP EXPRESSION at `ai-console.tsx:1393`, which is what wires the field to
+  // this component: a one-token edit there re-opens the under-quote, and the
+  // only thing that catches it is the step-level test that drives
+  // `OfficialsStep` from console state. That test is the guard, not this
+  // reasoning — do not delete it on the strength of this comment.
+  //
+  // An earlier version keyed this on the
   // plan's reported token usage; that is a proxy, and it fails open, because
   // both providers default a missing usage block to zero
   // (`anthropic-provider.ts` `response.usage?.input_tokens ?? 0`,
