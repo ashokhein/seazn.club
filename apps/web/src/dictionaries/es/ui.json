@@ -812,6 +812,7 @@
   "upgrade.backToCompetition": "Volver a la competición",
   "upgrade.pro.title": "Tu plan",
   "upgrade.pro.body": "Tu plan ya incluye todas las funciones del Event Pass, en todas las competiciones de {org} — no solo en esta.",
+  "upgrade.pro.bodyPassAdds": "Tu plan cubre todas las competiciones de {org}, no solo esta, y el Event Pass de esta competición eleva un límite que tu plan mantiene. Aquí se aplican los dos: gana el más alto.",
   "upgrade.intro": "Un solo pago mejora esta competición mientras está en curso — sin suscripción, y se mantiene aunque nunca pases a Pro.",
   "upgrade.eventPass": "Event Pass",
   "upgrade.oneTime": "pago único",
@@ -841,6 +842,8 @@
   "upgrade.buyError.stale": "Esta compra no puede continuar: puede que la página esté desactualizada. Recarga e inténtalo de nuevo.",
   "upgrade.buyError.generic": "El pago no está disponible ahora mismo. Inténtalo de nuevo.",
   "upgrade.slotNote": "Una competición con pase deja de contar en tus plazas de competición gratuitas.",
+  "upgrade.beyondPlan": "Tu plan {plan} ya cubre esta competición, con una excepción: el Event Pass de abajo eleva un límite que tu plan mantiene. Solo se aplica a esta competición y tu plan conserva todo lo demás.",
+  "upgrade.beyondPlanTable": "Cuando tu plan ya es superior, se aplica el número de tu plan: comprar un pase nunca reduce un límite que ya tienes.",
   "upgrade.owned.bought": "Comprado el {date}",
   "upgrade.owned.granted": "Concedido el {date} — no se cobró nada.",
   "upgrade.owned.receipt": "Ver recibo",
@@ -1569,7 +1572,7 @@
   "compset.status.archived": "archivada",
   "compset.statusHint.published": "Hay un horario definido, ¿publicarla?",
   "compset.statusHint.live": "Los partidos están en marcha, ¿marcarla como en vivo?",
-  "compset.statusHint.completed": "Todos los partidos están decididos, ¿marcarla como completada?",
+  "compset.statusHint.completed": "Sus partidos están terminados o su fecha de finalización ya pasó, ¿marcarla como completada?",
   "compset.statusHint.fallback": "Parece que esto debería ser “{status}”.",
   "compset.tab.general": "General",
   "compset.tab.branding": "Marca",
@@ -2789,5 +2792,11 @@
   "board.ai.joint.conflictAside": "Los partidos que apartaste mantienen su hora actual, así que siguen ocupando esas pistas. Vuelve a incluirlos o muévelos a mano primero.",
   "board.ai.joint.warningsTitle": "Avisos",
   "board.ai.joint.undoRetry": "Reintentar esas",
-  "board.ai.joint.undonePartialTitle": "Solo se han revertido algunas divisiones"
+  "board.ai.joint.undonePartialTitle": "Solo se han revertido algunas divisiones",
+  "comp.wrapUp.title": "La fecha de finalización de esta competición ya pasó",
+  "comp.wrapUp.body": "Debía terminar el {date}. Márcala como completada o establece una nueva fecha de finalización si sigue en curso.",
+  "comp.wrapUp.complete": "Marcar como completada",
+  "comp.wrapUp.completing": "Marcando como completada…",
+  "comp.wrapUp.changeDate": "Cambiar la fecha de finalización",
+  "comp.wrapUp.failed": "No se pudo actualizar el estado. Inténtalo de nuevo."
 }

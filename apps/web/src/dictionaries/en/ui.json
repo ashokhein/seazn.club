@@ -812,6 +812,7 @@
   "upgrade.backToCompetition": "Back to the competition",
   "upgrade.pro.title": "Your plan",
   "upgrade.pro.body": "Your plan already includes every Event Pass feature, on every competition in {org} — not just this one.",
+  "upgrade.pro.bodyPassAdds": "Your plan covers every competition in {org}, not just this one — and this competition's Event Pass raises a limit your plan caps. Both apply here: whichever is higher wins.",
   "upgrade.intro": "One payment upgrades this competition while it’s running — no subscription, and it stays in place even if you never go Pro.",
   "upgrade.eventPass": "Event Pass",
   "upgrade.oneTime": "one-time",
@@ -841,6 +842,8 @@
   "upgrade.buyError.stale": "This purchase can’t go ahead — the page may be out of date. Reload and try again.",
   "upgrade.buyError.generic": "Checkout is unavailable right now. Please try again.",
   "upgrade.slotNote": "A competition with a pass stops counting against your free competition slots.",
+  "upgrade.beyondPlan": "Your {plan} plan already covers this competition, with one exception: the Event Pass below raises a limit your plan caps. It applies to this competition only, and your plan keeps everything else.",
+  "upgrade.beyondPlanTable": "Where your plan is already higher, your plan's number applies — buying a pass never lowers a limit you have.",
   "upgrade.owned.bought": "Bought {date}",
   "upgrade.owned.granted": "Granted {date} — nothing was charged.",
   "upgrade.owned.receipt": "View receipt",
@@ -1569,7 +1572,7 @@
   "compset.status.archived": "archived",
   "compset.statusHint.published": "A timetable is set — publish it?",
   "compset.statusHint.live": "Matches are underway — mark it live?",
-  "compset.statusHint.completed": "Every match is decided — mark it completed?",
+  "compset.statusHint.completed": "Its matches are done, or its end date has passed — mark it completed?",
   "compset.statusHint.fallback": "Looks like this should be “{status}”.",
   "compset.tab.general": "General",
   "compset.tab.branding": "Branding",
@@ -2789,5 +2792,11 @@
   "board.ai.joint.conflictAside": "The fixtures you set aside kept their current times, so they are still holding those courts. Put them back in, or move them by hand first.",
   "board.ai.joint.warningsTitle": "Warnings",
   "board.ai.joint.undoRetry": "Try those again",
-  "board.ai.joint.undonePartialTitle": "Only some divisions were reverted"
+  "board.ai.joint.undonePartialTitle": "Only some divisions were reverted",
+  "comp.wrapUp.title": "This competition's end date has passed",
+  "comp.wrapUp.body": "It was due to end on {date}. Mark it completed, or set a new end date if it's still running.",
+  "comp.wrapUp.complete": "Mark it completed",
+  "comp.wrapUp.completing": "Marking completed…",
+  "comp.wrapUp.changeDate": "Change the end date",
+  "comp.wrapUp.failed": "Couldn't update the status. Try again."
 }

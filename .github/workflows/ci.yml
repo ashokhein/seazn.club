@@ -346,8 +346,8 @@ jobs:
       # `next dev` pins to HALF the machine's RAM — ~3.5 GB on the 7 GB
       # runner, vs ~16 GB on a dev laptop, which is why this only ever died
       # in CI). Near that ceiling Turbopack's on-demand route compiles also
-      # started 404ing transiently. `next start` has neither the watchdog nor
-      # per-request compiles — and it's what production runs anyway.
+      # started 404ing transiently. The standalone server has neither the
+      # watchdog nor per-request compiles — and it's what production runs.
 
       # Persist the compiler cache between runs so the production build only
       # pays for what changed (nextjs.org/docs/pages/guides/ci-build-caching).
@@ -367,17 +367,50 @@ jobs:
           # tsc gate already ran in the test job — don't type-check twice.
           SKIP_TYPECHECK: "1"
 
+      # Start the server PRODUCTION runs (#356). `next start` does not serve an
+      # `output: standalone` build at all — it warns and serves the
+      # non-standalone tree, so this job was exercising a serving path fly.toml
+      # never uses. It only appeared to work because the untraced `.next` tree
+      # is still on disk from the build step one line above.
+      #
+      # `.next/static` is NOT copied into the standalone output. Without it the
+      # server answers /api/health and page HTML 200 while every
+      # /_next/static/*.js 404s — the app renders and then does nothing (#342).
+      # The `rm -rf` is load-bearing: `cp -R src dst` with dst present copies
+      # INTO it, so a re-run yields .next/static/static/….
+      #
+      # Path note: outputFileTracingRoot is the monorepo root, so the server is
+      # at .next/standalone/apps/web/server.js — not the .next/standalone/
+      # server.js that Next's own warning names.
       - name: Start server
         run: |
-          npm run start --workspace apps/web > dev-server.log 2>&1 &
+          rm -rf apps/web/.next/standalone/apps/web/.next/static
+          cp -R apps/web/.next/static apps/web/.next/standalone/apps/web/.next/static
+          node apps/web/.next/standalone/apps/web/server.js > dev-server.log 2>&1 &
           echo "waiting for server…"
+          up=""
           for i in $(seq 1 90); do
             if curl -sf http://localhost:3000/api/health >/dev/null; then
-              echo "server up after ${i}s window"; exit 0
+              echo "server up after ${i}s window"; up=1; break
             fi
             sleep 2
           done
-          echo "server did not become healthy"; cat dev-server.log; exit 1
+          if [ -z "$up" ]; then
+            echo "server did not become healthy"; cat dev-server.log; exit 1
+          fi
+          # Health says the process is listening; it does NOT say the app can
+          # hydrate. Prove one real chunk serves, or a mis-staged static tree
+          # reaches the suite as product-shaped failures.
+          chunk=$(ls apps/web/.next/static/chunks/*.js 2>/dev/null | head -1)
+          if [ -z "$chunk" ]; then
+            echo "no built chunks found — build output is not where expected"; exit 1
+          fi
+          asset="/_next/${chunk#apps/web/.next/}"
+          if ! curl -sf "http://localhost:3000$asset" >/dev/null; then
+            echo "static asset $asset 404s — standalone tree not staged"
+            cat dev-server.log; exit 1
+          fi
+          echo "static assets serve ($asset)"
 
       - name: Run smoke test
         run: npm run test:smoke

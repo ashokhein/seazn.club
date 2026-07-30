@@ -2201,7 +2201,12 @@ async function passRungLSuite(): Promise<void> {
       (alreadyPassed.json.error ?? "").includes("already has an Event Pass"),
   );
 
-  // === The pro path — a pass is INERT on a paid plan, in both directions ===
+  // === The pro path — a pass and a paid plan are read TOGETHER (v17 #327/#337)
+  // Until V344 the overlay was skipped entirely under a paid plan, so an L
+  // holder who subscribed to Pro silently lost unlimited entrants on the
+  // competition they had already paid to unlock. Now the BETTER of the two
+  // applies per axis, and both directions of that are checked below: the plan
+  // wins on divisions, the pass wins on entrants. ===
   const pro = newSession();
   const proOrgId = (await signIn(pro, `passlpro_${tag}@example.com`)).org_id;
   await setPlan(proOrgId, "pro", pro);
@@ -2229,7 +2234,7 @@ async function passRungLSuite(): Promise<void> {
     else proDivIds.push(v1data<{ id: string }>(r).id);
   }
   check(
-    "pass L/pro: an L pass does not CAP a Pro competition at L's 20 divisions — the 21st still lands (the overlay is skipped for a paid plan)",
+    "pass L/pro: an L pass does not CAP a Pro competition at L's 20 divisions — the 21st still lands, because the PLAN wins on the axis where it is better (#327)",
     proDivisionsOk,
   );
 
@@ -2246,11 +2251,46 @@ async function passRungLSuite(): Promise<void> {
     "POST",
     entrants(1, 257, "R"),
   );
+  const pro300 = await v1(
+    pro,
+    `/api/v1/divisions/${proDivId}/entrants`,
+    "POST",
+    entrants(43, 258, "R"),
+  );
   check(
-    "pass L/pro: Pro's own 256-entrant ceiling still bites at 257 — L's unlimited did not LIFT a paid plan either",
-    pro256.status === 201 &&
-      pro257.status === 402 &&
-      featureKey(pro257) === "entrants.per_division.max",
+    "pass L/pro: L's unlimited entrants LIFT Pro's 256 ceiling on the passed competition — the 257th lands, and so does the 300th (#337)",
+    pro256.status === 201 && pro257.status === 201 && pro300.status === 201,
+  );
+
+  // The SELLING half of the same decision (#327): a paid org may buy a rung
+  // that beats its plan, and only that rung. On a competition with no pass yet,
+  // because a competition that holds one refuses any second purchase first.
+  const proGateComp = v1data<{ id: string }>(
+    await v1(pro, "/api/v1/competitions", "POST", {
+      name: `Rung L Pro Gate ${tag}`,
+      visibility: "unlisted",
+    }),
+  );
+  const proBuyM = await raw(pro, "/api/billing/pass-checkout", "POST", {
+    competition_id: proGateComp.id,
+    pass_key: "event_pass",
+  });
+  const proBuyL = await raw(pro, "/api/billing/pass-checkout", "POST", {
+    competition_id: proGateComp.id,
+    pass_key: "event_pass_l",
+  });
+  const coverageRefusal = (r: { status: number; json: { error?: string } }) =>
+    r.status === 400 && (r.json.error ?? "").includes("already includes everything");
+  check(
+    "pass L/pro: the M rung is refused to a Pro org — its plan already covers everything M adds (#327)",
+    coverageRefusal(proBuyM),
+  );
+  // NOT asserted as 200: the one-time price may be unsynced in this environment,
+  // which 503s. What must be true is that the COVERAGE gate did not fire — the
+  // sale is allowed to reach Stripe.
+  check(
+    "pass L/pro: the L rung is not refused on coverage — L beats Pro on entrants, so the sale is allowed through (#327)",
+    !coverageRefusal(proBuyL),
   );
 }
 

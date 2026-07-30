@@ -419,14 +419,17 @@ describe("owned, at the pass's ceiling", () => {
 });
 
 describe("already on a paid plan", () => {
-  it("offers no pass, at no price, in any form", async () => {
+  it("offers no pass, at no price, in any form, to a plan that covers them all", async () => {
     // THE regression this state exists to prevent (f70b8e52): every boolean the
-    // pass lifts is already true on pro, and the M rung's 128 entrants per
-    // division and 10 divisions sit UNDER pro's 256 and its uncapped division
-    // count — so an offer here sells a customer strictly less than they hold.
-    // (The L rung is the one exception, and it is why the paid-plan copy claims
-    // features rather than "everything"; see #327.)
-    h.planKey = "pro";
+    // pass lifts is already true on a paid plan, and the M rung's entrants and
+    // divisions sit UNDER Pro's — so an offer here sells a customer strictly
+    // less than they hold.
+    //
+    // Asserted on PRO PLUS since #327. Pro is no longer a plan that covers every
+    // rung (L lifts its 256-entrant ceiling), and pinning this on Pro would have
+    // meant pinning the dead end #327 removed. Pro Plus caps nothing L lifts, so
+    // it is the case this guard was always about.
+    h.planKey = "pro_plus";
     const html = await render();
     expect(html).not.toContain("data-pass-buy");
     expect(html).not.toContain("data-pass-cta");
@@ -468,17 +471,52 @@ describe("already on a paid plan", () => {
     expect(html).not.toContain("data-pass-buy");
   });
 
-  it("still says the pass is moot rather than pretending it is unavailable", async () => {
-    h.planKey = "pro";
+  it("still says the pass is moot where the plan really is a superset", async () => {
+    // Pro Plus caps nothing the pass lifts, so the panel — and its sentence —
+    // survive #327 unchanged. This is the case that keeps "paid orgs may now buy
+    // passes" from being the reading of that change.
+    h.planKey = "pro_plus";
     const html = await render();
     expect(html).toContain("already includes every Event Pass feature");
     // …and says it about FEATURES only. Pro is not a superset of the pass any
     // more (v17 #294): Pro caps a division at 256 entrants, the L rung caps it
     // at nothing at all, so "covers everything an Event Pass adds" — what this
     // panel said until this fix — is false to a reader who was about to buy L.
-    // Whether Pro *should* be able to buy L is #327, a pricing decision; what
-    // is not negotiable is that the refusal stops asserting a falsehood.
     expect(html).not.toMatch(/covers everything/i);
+  });
+
+  // v17 gap #327 — the decision underneath the copy fix above. A Pro organiser
+  // with one division over 256 entrants had no self-serve path: refused at the
+  // checkout, and told here that their plan already covered it.
+  it("offers the rung that beats the plan, and says why", async () => {
+    h.planKey = "pro";
+    const html = await render();
+    expect(html).toContain("data-pass-buy");
+    // The reason, in the reader's own words. Without it the page reads as an
+    // upsell to somebody who has already bought the bigger thing.
+    expect(html).toContain("raises a limit your plan caps");
+    // And NOT the panel's claim, which would now be false on this page.
+    expect(html).not.toContain("already includes every Event Pass feature");
+  });
+
+  it("does not offer a Pro org the rung its plan already covers", async () => {
+    // The other half, and the one that keeps this a rule rather than a special
+    // case for L: M grants 64 entrants and 10 divisions in this fixture, both
+    // under Pro's 256 and its uncapped count, so offering it would be the
+    // downgrade sale f70b8e52 removed.
+    h.planKey = "pro";
+    const html = await render();
+    expect(html).not.toContain(`data-compare-col="event_pass"`);
+    expect(html).toContain(`data-compare-col="event_pass_l"`);
+    expect(html).not.toContain("$29");
+  });
+
+  it("does not push a Pro org toward Pro", async () => {
+    // ProNext's whole content is "go Pro next", and the credit line under it
+    // promises a credit toward a first Pro invoice a subscriber will never have.
+    h.planKey = "pro";
+    const html = await render();
+    expect(html).not.toContain("data-pass-cta");
   });
 });
 

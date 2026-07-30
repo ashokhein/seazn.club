@@ -9,9 +9,15 @@ import {
   usePassGateState,
   usePassLockReason,
   usePassRung,
+  usePassSellableRungs,
 } from "@/components/competition-pass-provider";
-import { formatMinor, proPlusPrice, proPrice, type Currency } from "@/lib/currency";
-import { lowestPassRung, passActiveLabel, PASS_LOCK_REASON_KEY } from "@/lib/pass-ladder";
+import { formatMinor, passPrice, proPlusPrice, proPrice, type Currency } from "@/lib/currency";
+import {
+  lowestPassRung,
+  lowestPricedRung,
+  passActiveLabel,
+  PASS_LOCK_REASON_KEY,
+} from "@/lib/pass-ladder";
 import { PASS_FEATURES } from "@/lib/pass-features";
 import { routes } from "@/lib/routes";
 import { useDict, useMsg } from "@/components/i18n/dict-provider";
@@ -145,6 +151,7 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
   const heldRung = usePassRung();
   const currency = usePassCurrency();
   const lockReason = usePassLockReason();
+  const sellable = usePassSellableRungs();
   const passOwned = gate === "held";
   const passEnded = gate === "ended";
   const liftable = PASS_FEATURES.has(feature);
@@ -277,7 +284,17 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
     // price of a two-rung product is the mis-sale #294 exists to stop. The rung
     // is derived, never typed, so a discount or a third rung moves this number
     // with it (lib/pass-ladder.ts).
-    const passLabel = formatMinor(lowestPassRung(currency).amountMinor, currency);
+    // The floor of what is ACTUALLY for sale to THIS org, not the floor of the
+    // ladder (#327). They are the same thing on a free plan. On Pro they are
+    // not: only L beats Pro, so "from $29" would name a rung the checkout
+    // refuses and send the reader to a page selling one $59 option.
+    const passLabel = formatMinor(
+      sellable.length > 0
+        ? lowestPricedRung(sellable.map((key) => ({ key, amountMinor: passPrice(currency, key) })))
+            .amountMinor
+        : lowestPassRung(currency).amountMinor,
+      currency,
+    );
     const proLabel = `${formatMinor(proPrice("monthly", currency), currency)}/mo`;
     return (
       <div

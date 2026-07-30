@@ -64,3 +64,22 @@ export function hasLiveSubscription(
     LIVE_SUBSCRIPTION_STATUSES.includes(sub.status ?? "")
   );
 }
+
+/**
+ * Is a STRIPE status terminal — the subscription is over and will not bill again?
+ *
+ * The argument is a status straight off Stripe, BEFORE `STATUS_MAP` translates
+ * it, which is why `incomplete_expired` appears here and nowhere in the app's
+ * own vocabulary: STATUS_MAP folds it into `canceled`, so no row we write ever
+ * carries it (lib/billing.ts, #375).
+ *
+ * One definition, two callers phrasing it opposite ways: `isLiveStripeStatus` in
+ * usecases/billing-events.ts (the webhook write guard) and `sweepOrphanGroups`
+ * in usecases/billing-groups.ts ("did Stripe finish this off?"). They cannot
+ * import each other — billing-events already imports billing-groups — so it
+ * lives in this leaf module, which is also what stops the two from keeping
+ * hand-written copies of the same two strings.
+ */
+export function isTerminalStripeStatus(status: string): boolean {
+  return status === "canceled" || status === "incomplete_expired";
+}

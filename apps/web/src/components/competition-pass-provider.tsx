@@ -21,7 +21,7 @@
 // `competition_passes.stripe_payment_intent` is nullable — a staff-granted pass
 // carries no intent and is fully active. Nothing downstream may filter on it.
 import { createContext, useContext, useMemo, type ReactNode } from "react";
-import type { Currency, PassKey } from "@/lib/currency";
+import { PASS_KEYS, type Currency, type PassKey } from "@/lib/currency";
 import type { PassLockReason } from "@/lib/entitlements";
 
 interface PassContext {
@@ -57,6 +57,17 @@ interface PassContext {
    * the resolver drift apart again.
    */
   lockReason: PassLockReason | null;
+  /**
+   * The rungs this org may still BUY here (v17 #327). The whole ladder on a free
+   * plan; on a paid plan only the rungs that beat it, which today means L
+   * against Pro and nothing at all against Pro Plus.
+   *
+   * Carried so a buy surface can quote the floor of what is ACTUALLY for sale.
+   * Without it a Pro organiser at their entrant ceiling is offered "from $29"
+   * and lands on a page selling one $59 rung — a price for something the
+   * checkout would refuse, which is the #294 mis-sale in a new costume.
+   */
+  sellableRungs: readonly PassKey[];
 }
 
 const CompetitionPassContext = createContext<PassContext>({
@@ -64,6 +75,7 @@ const CompetitionPassContext = createContext<PassContext>({
   paidPlan: false,
   currency: "usd",
   lockReason: null,
+  sellableRungs: PASS_KEYS,
 });
 
 /**
@@ -111,17 +123,22 @@ export function CompetitionPassProvider({
   paidPlan = false,
   currency = "usd",
   lockReason = null,
+  // Defaults to the WHOLE ladder for the same reason `currency` defaults to usd:
+  // an omission has to degrade to the behaviour that shipped before #327, which
+  // is "every rung is for sale", never to "nothing is".
+  sellableRungs = PASS_KEYS,
   children,
 }: {
   passKey: PassKey | null;
   paidPlan?: boolean;
   currency?: Currency;
   lockReason?: PassLockReason | null;
+  sellableRungs?: readonly PassKey[];
   children: ReactNode;
 }) {
   const value = useMemo(
-    () => ({ passKey, paidPlan, currency, lockReason }),
-    [passKey, paidPlan, currency, lockReason],
+    () => ({ passKey, paidPlan, currency, lockReason, sellableRungs }),
+    [passKey, paidPlan, currency, lockReason, sellableRungs],
   );
   return (
     <CompetitionPassContext.Provider value={value}>{children}</CompetitionPassContext.Provider>
@@ -203,6 +220,11 @@ export function usePassLockReason(): PassLockReason | null {
  * a lock reason with no pass row stays "none" rather than inventing an ended
  * pass for a competition that never had one.
  */
+/** The rungs this org may still buy here (#327) — see `sellableRungs`. */
+export function usePassSellableRungs(): readonly PassKey[] {
+  return useContext(CompetitionPassContext).sellableRungs;
+}
+
 export function usePassGateState(): PassGateState {
   const { passKey, paidPlan, lockReason } = useContext(CompetitionPassContext);
   if (paidPlan) return "paid_plan";

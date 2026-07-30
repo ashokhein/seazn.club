@@ -177,8 +177,8 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   // shipped. The help article never got it; W8 then re-approved these two
   // digests with the stale clause still inside them, which is how a positional
   // gate freezes a falsehood faithfully.
-  "e40adfba29adb4be",
-  "fc7b7ca169471dc5",
+  "e5d3c0403b1876cc",
+  "7d8c341aa0ad14fe",
 ];
 
 /**

@@ -20,4 +20,6 @@ Every competition starts **Private** (only your team sees it). Switch to **Link 
 
 **Free plan limits?** Community orgs can run 10 active competitions at a time. Finished ones can be marked completed or archived to free a slot — and a competition covered by an [Event Pass](/help/billing/event-pass) doesn't use a slot at all.
 
+**Does a finished competition retire itself?** No — nothing changes a competition's status on your behalf. Once its end date is more than a week behind, its overview asks an organiser which happened: the event finished, or the date moved. Both answers take one click — **Mark it completed**, or change the end date in the competition's settings. We ask rather than decide, because a status you never chose is one you would have to undo, while correcting an optimistic end date simply puts things back.
+
 Next: [Add a division](/help/getting-started/add-a-division).

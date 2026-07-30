@@ -119,14 +119,24 @@ export async function requireUser(): Promise<User> {
 // Organizations / roles
 // ---------------------------------------------------------------------------
 
-/** Every organization the user belongs to, with their role, newest first. */
+/**
+ * Every organization the user belongs to, with their role, newest first.
+ *
+ * The select is the IDENTITY lane only — no `payment_instructions`, no
+ * `default_payment_method` (#341). This result is cached in Redis as plaintext
+ * JSON under `orgsKey(userId)` and handed back verbatim by `GET /api/orgs`, so
+ * every column here is copied into a second vendor and shipped to every member
+ * on a nav request. Payout free-text (bank details, IBANs, UPI handles) has no
+ * business in either, and no consumer of this list ever read it: the org
+ * settings page and the registration use-case each run their own scoped select.
+ */
 export async function getUserOrgs(userId: string): Promise<OrgMembership[]> {
   const cached = await cacheGet<OrgMembership[]>(orgsKey(userId));
   if (cached) return cached;
 
   const orgs = await sql<OrgMembership[]>`
     select o.id, o.name, o.slug, o.created_by, o.created_at,
-           o.logo_url, o.logo_storage_path, o.payment_instructions, o.default_payment_method, o.branding,
+           o.logo_url, o.logo_storage_path, o.branding,
            o.timezone, m.role
     from org_members m
     join organizations o on o.id = m.org_id

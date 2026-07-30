@@ -812,6 +812,7 @@
   "upgrade.backToCompetition": "Terug naar de competitie",
   "upgrade.pro.title": "Je abonnement",
   "upgrade.pro.body": "Je abonnement bevat al elke functie van de Event Pass, in elke competitie in {org} — niet alleen deze.",
+  "upgrade.pro.bodyPassAdds": "Je abonnement dekt elke competitie in {org}, niet alleen deze — en de Event Pass van deze competitie verhoogt een limiet die je abonnement begrenst. Beide gelden hier: de hoogste wint.",
   "upgrade.intro": "Eén betaling upgradet deze competitie zolang ze loopt — geen abonnement, en dat blijft zo, ook als je nooit Pro neemt.",
   "upgrade.eventPass": "Event Pass",
   "upgrade.oneTime": "eenmalig",
@@ -841,6 +842,8 @@
   "upgrade.buyError.stale": "Deze aankoop kan niet doorgaan — de pagina is mogelijk verouderd. Herlaad en probeer het opnieuw.",
   "upgrade.buyError.generic": "Afrekenen is nu niet beschikbaar. Probeer het opnieuw.",
   "upgrade.slotNote": "Een competitie met een pass telt niet meer mee voor je gratis competitieplekken.",
+  "upgrade.beyondPlan": "Je {plan}-abonnement dekt deze competitie al, met één uitzondering: de Event Pass hieronder verhoogt een limiet die je abonnement begrenst. Hij geldt alleen voor deze competitie; je abonnement houdt al het andere.",
+  "upgrade.beyondPlanTable": "Waar je abonnement al hoger ligt, geldt het getal van je abonnement — een pass kopen verlaagt nooit een limiet die je al hebt.",
   "upgrade.owned.bought": "Gekocht op {date}",
   "upgrade.owned.granted": "Toegekend op {date} — er is niets in rekening gebracht.",
   "upgrade.owned.receipt": "Bon bekijken",
@@ -1569,7 +1572,7 @@
   "compset.status.archived": "gearchiveerd",
   "compset.statusHint.published": "Er is een programma ingesteld — publiceren?",
   "compset.statusHint.live": "Wedstrijden zijn bezig — als live markeren?",
-  "compset.statusHint.completed": "Elke wedstrijd is beslist — als voltooid markeren?",
+  "compset.statusHint.completed": "De wedstrijden zijn afgelopen of de einddatum is verstreken — als voltooid markeren?",
   "compset.statusHint.fallback": "Dit zou waarschijnlijk “{status}” moeten zijn.",
   "compset.tab.general": "Algemeen",
   "compset.tab.branding": "Branding",
@@ -2789,5 +2792,11 @@
   "board.ai.joint.conflictAside": "De wedstrijden die je opzij zette, behielden hun huidige tijd en bezetten die banen dus nog. Neem ze weer mee of verplaats ze eerst handmatig.",
   "board.ai.joint.warningsTitle": "Waarschuwingen",
   "board.ai.joint.undoRetry": "Die opnieuw proberen",
-  "board.ai.joint.undonePartialTitle": "Slechts een deel van de divisies is teruggezet"
+  "board.ai.joint.undonePartialTitle": "Slechts een deel van de divisies is teruggezet",
+  "comp.wrapUp.title": "De einddatum van deze competitie is verstreken",
+  "comp.wrapUp.body": "Ze zou eindigen op {date}. Markeer ze als voltooid, of stel een nieuwe einddatum in als ze nog loopt.",
+  "comp.wrapUp.complete": "Als voltooid markeren",
+  "comp.wrapUp.completing": "Bezig met markeren…",
+  "comp.wrapUp.changeDate": "Einddatum wijzigen",
+  "comp.wrapUp.failed": "Kon de status niet bijwerken. Probeer opnieuw."
 }

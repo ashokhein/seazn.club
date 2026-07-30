@@ -812,6 +812,7 @@
   "upgrade.backToCompetition": "Retour à la compétition",
   "upgrade.pro.title": "Votre formule",
   "upgrade.pro.body": "Votre formule inclut déjà toutes les fonctionnalités de l’Event Pass, dans toutes les compétitions de {org} — pas seulement celle-ci.",
+  "upgrade.pro.bodyPassAdds": "Votre formule couvre toutes les compétitions de {org}, pas seulement celle-ci — et l’Event Pass de cette compétition relève une limite que votre formule plafonne. Les deux s’appliquent ici : la plus haute l’emporte.",
   "upgrade.intro": "Un seul paiement améliore cette compétition tant qu’elle est en cours — pas d’abonnement, et cela reste en place même si vous ne passez jamais à Pro.",
   "upgrade.eventPass": "Event Pass",
   "upgrade.oneTime": "paiement unique",
@@ -841,6 +842,8 @@
   "upgrade.buyError.stale": "Cet achat ne peut pas aboutir — la page n’est peut-être plus à jour. Rechargez et réessayez.",
   "upgrade.buyError.generic": "Le paiement est indisponible pour le moment. Veuillez réessayer.",
   "upgrade.slotNote": "Une compétition dotée d’un pass ne compte plus dans vos créneaux de compétition gratuits.",
+  "upgrade.beyondPlan": "Votre formule {plan} couvre déjà cette compétition, à une exception près : l’Event Pass ci-dessous relève une limite que votre formule plafonne. Il ne s’applique qu’à cette compétition, et votre formule conserve tout le reste.",
+  "upgrade.beyondPlanTable": "Là où votre formule est déjà supérieure, c’est son chiffre qui s’applique : acheter un pass ne réduit jamais une limite que vous avez.",
   "upgrade.owned.bought": "Acheté le {date}",
   "upgrade.owned.granted": "Accordé le {date} — rien n’a été facturé.",
   "upgrade.owned.receipt": "Voir le reçu",
@@ -1569,7 +1572,7 @@
   "compset.status.archived": "archivé",
   "compset.statusHint.published": "Un calendrier est défini — le publier ?",
   "compset.statusHint.live": "Les matchs sont en cours — passer en direct ?",
-  "compset.statusHint.completed": "Tous les matchs sont décidés — marquer comme terminé ?",
+  "compset.statusHint.completed": "Ses matchs sont terminés, ou sa date de fin est passée — marquer comme terminé ?",
   "compset.statusHint.fallback": "On dirait que cela devrait être « {status} ».",
   "compset.tab.general": "Général",
   "compset.tab.branding": "Image de marque",
@@ -2789,5 +2792,11 @@
   "board.ai.joint.conflictAside": "Les matchs que vous avez mis de côté ont gardé leur horaire actuel : ils occupent donc toujours ces terrains. Réintégrez-les ou déplacez-les à la main d’abord.",
   "board.ai.joint.warningsTitle": "Avertissements",
   "board.ai.joint.undoRetry": "Réessayer celles-ci",
-  "board.ai.joint.undonePartialTitle": "Seules certaines divisions ont été rétablies"
+  "board.ai.joint.undonePartialTitle": "Seules certaines divisions ont été rétablies",
+  "comp.wrapUp.title": "La date de fin de cette compétition est passée",
+  "comp.wrapUp.body": "Elle devait se terminer le {date}. Marquez-la comme terminée, ou définissez une nouvelle date de fin si elle est toujours en cours.",
+  "comp.wrapUp.complete": "Marquer comme terminée",
+  "comp.wrapUp.completing": "Marquage en cours…",
+  "comp.wrapUp.changeDate": "Modifier la date de fin",
+  "comp.wrapUp.failed": "Impossible de mettre à jour le statut. Réessayez."
 }

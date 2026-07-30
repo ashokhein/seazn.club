@@ -34,6 +34,7 @@ import {
   usePassGateState,
   usePassLockReason,
   usePassRung,
+  usePassSellableRungs,
 } from "@/components/competition-pass-provider";
 import CompetitionLayout from "../layout";
 
@@ -43,7 +44,7 @@ const uniq = () => randomUUID().slice(0, 8);
 function Probe() {
   return (
     <span id="p">
-      {`pass:${usePassActive()} state:${usePassGateState()} rung:${usePassRung()} currency:${usePassCurrency()} reason:${usePassLockReason()}`}
+      {`pass:${usePassActive()} state:${usePassGateState()} rung:${usePassRung()} currency:${usePassCurrency()} reason:${usePassLockReason()} sellable:${usePassSellableRungs().join("+") || "none"}`}
     </span>
   );
 }
@@ -147,44 +148,62 @@ describe.skipIf(!HAS_DB)("competition layout provides Event Pass state", () => {
     expect(otherId).not.toBe(rig.compId);
   });
 
-  it("reports 'paid_plan' for a Pro org, so no gate offers it the $29 pass", async () => {
-    // Task 17's deferred row. A Pro org has no pass ROW, so the boolean read
-    // false and the gate sold them a pass granting LESS than they hold: Pro's
-    // matrix is a superset of the pass's at every key the pass lifts.
+  // v17 #327 rewrote what "a paid plan" means here. It used to mean "no pass is
+  // offered at all", on the premise that Pro was a superset of every rung. The L
+  // rung ended that: L lifts Pro's 256-entrant ceiling, so a Pro org is offered
+  // L — and ONLY L. These four cases therefore assert on `sellable`, which is
+  // the sharper discriminator: a plan that resolved as COMMUNITY would report
+  // both rungs, so "event_pass_l" alone proves the resolver read Pro AND that
+  // the $29 rung is not on sale to them.
+  it("offers a Pro org the L rung only — never the $29 pass it already covers", async () => {
     const rig = await seed();
     await sql`update subscriptions set plan_key = 'pro', status = 'active'
               where id = (select subscription_id from organizations where id = ${rig.orgId})`;
     const html = await renderLayout(rig.orgSlug, rig.compSlug);
     expect(html).toContain("pass:false");
+    expect(html).toContain("sellable:event_pass_l");
+    expect(html).toContain("state:none");
+  });
+
+  it("offers NOTHING to Pro Plus, which really is a superset", async () => {
+    // The case the four below were always about, now that Pro is not it: Pro
+    // Plus caps nothing either rung lifts, so no pass is for sale and the gate
+    // goes quiet exactly as it did before #327.
+    const rig = await seed();
+    await sql`update subscriptions set plan_key = 'pro_plus', status = 'active'
+              where id = (select subscription_id from organizations where id = ${rig.orgId})`;
+    const html = await renderLayout(rig.orgSlug, rig.compSlug);
+    expect(html).toContain("sellable:none");
     expect(html).toContain("state:paid_plan");
   });
 
-  it("reports 'paid_plan' for a trialing org — a trial is a paid plan", async () => {
-    // 'trialing' is in LIVE_SUBSCRIPTION_STATUSES and carries the Pro matrix.
+  it("reads a trialing org as paid — a trial carries the Pro matrix", async () => {
+    // 'trialing' is in LIVE_SUBSCRIPTION_STATUSES and carries the Pro matrix, so
+    // the M rung must not be for sale.
     const rig = await seed();
     await sql`update subscriptions set plan_key = 'pro', status = 'trialing'
               where id = (select subscription_id from organizations where id = ${rig.orgId})`;
-    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:paid_plan");
+    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("sellable:event_pass_l");
   });
 
-  it("reports 'paid_plan' for a STAFF-COMPED org whose comp has not lapsed", async () => {
+  it("reads a STAFF-COMPED org whose comp has not lapsed as paid", async () => {
     // A comp conveys the plan with no Stripe subscription at all, so anything
     // testing stripe_subscription_id (hasLiveSubscription) would call this org
-    // unpaid and keep selling it the pass.
+    // unpaid and put the $29 rung back on sale.
     const rig = await seed();
     await sql`update subscriptions
               set plan_key = 'pro', status = 'active', stripe_subscription_id = null,
                   comped_until = now() + interval '30 days'
               where id = (select subscription_id from organizations where id = ${rig.orgId})`;
-    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:paid_plan");
+    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("sellable:event_pass_l");
   });
 
-  it("reports 'paid_plan' for past_due INSIDE the 14-day grace", async () => {
+  it("reads past_due INSIDE the 14-day grace as paid", async () => {
     const rig = await seed();
     await sql`update subscriptions
               set plan_key = 'pro', status = 'past_due', status_changed_at = now()
               where id = (select subscription_id from organizations where id = ${rig.orgId})`;
-    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:paid_plan");
+    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("sellable:event_pass_l");
   });
 
   it("reports 'none' for a LAPSED comp — the pass genuinely lifts them again", async () => {
