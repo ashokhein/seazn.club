@@ -139,7 +139,7 @@ describe("aiConsoleReducer", () => {
   });
 
   it("OFFICIALS_DONE stores the officials plan and shows it on the officials step", () => {
-    const s = aiConsoleReducer(withProposal(), { type: "OFFICIALS_DONE", plan: officialsPlan });
+    const s = aiConsoleReducer(withProposal(), { type: "OFFICIALS_DONE", plan: officialsPlan, instruction: "Senior ref on the final." });
     expect(s.officialsPlan).toBe(officialsPlan);
     expect(s.step).toBe("officials");
     expect(s.run).toBe("proposal");
@@ -166,7 +166,7 @@ describe("aiConsoleReducer", () => {
   });
 
   it("a fresh RUN_DONE drops a stale officials draft (assigned over the old times)", () => {
-    const withOfficials = aiConsoleReducer(withProposal(), { type: "OFFICIALS_DONE", plan: officialsPlan });
+    const withOfficials = aiConsoleReducer(withProposal(), { type: "OFFICIALS_DONE", plan: officialsPlan, instruction: "Senior ref on the final." });
     expect(withOfficials.officialsPlan).toBe(officialsPlan);
     const rerun = aiConsoleReducer(withOfficials, { type: "RUN_DONE", plan: schedulePlan });
     expect(rerun.officialsPlan).toBeNull();
@@ -199,7 +199,7 @@ describe("aiConsoleReducer", () => {
 
   it("RESET clears both plans and returns to the initial state", () => {
     const busy = aiConsoleReducer(
-      aiConsoleReducer(withProposal(), { type: "OFFICIALS_DONE", plan: officialsPlan }),
+      aiConsoleReducer(withProposal(), { type: "OFFICIALS_DONE", plan: officialsPlan, instruction: "Senior ref on the final." }),
       { type: "SET_INSTRUCTION", value: "leftover" },
     );
     const s = aiConsoleReducer(busy, { type: "RESET" });

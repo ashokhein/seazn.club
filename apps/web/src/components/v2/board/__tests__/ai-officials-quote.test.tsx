@@ -14,6 +14,7 @@ import {
   type RungInput,
 } from "@/lib/ai-rung";
 import en from "@/dictionaries/en/ui.json";
+import type { AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
 import { AiOfficialsReview } from "../ai-officials-review";
 import { quoteFor } from "../ai-quote-card";
 
@@ -27,18 +28,32 @@ const enText = en as unknown as Record<string, string>;
 // So a card that reached for the default weights costs twice as much.
 const PACK: RungInput = { movableFixtures: 100, entrants: 24, courts: 4 };
 
+/** A server plan. `tokens` is the whole point: it is the server's own record
+ *  of whether the last run called the model, and therefore of whether the
+ *  brief the adopt path will replay is chargeable. */
+function planWith(tokens: number): AiOfficialsPlanResponse {
+  return {
+    assignments: [],
+    conflicts: [],
+    diff: { changed: [], unchanged: [], unfilled: [] },
+    lazy_unfilled: [],
+    explanations: [],
+    summary: "",
+    usage: { input_tokens: tokens, output_tokens: tokens, repair_rounds: 0 },
+  } as unknown as AiOfficialsPlanResponse;
+}
+
 function render(
-  over: { instruction?: string; rung?: number | null; priorInstruction?: string } = {},
+  over: { instruction?: string; rung?: number | null; plan?: AiOfficialsPlanResponse | null } = {},
 ): string {
   return renderToStaticMarkup(
     <DictProvider dict={dict} locale="en">
       <AiOfficialsReview
-        plan={null}
+        plan={over.plan ?? null}
         placements={[]}
         quoteInput={PACK}
         rung={over.rung ?? null}
         onRung={() => {}}
-        priorInstruction={over.priorInstruction ?? ""}
         currency="usd"
         fixtures={[]}
         roster={[]}
@@ -119,19 +134,29 @@ describe("officials confirm card", () => {
   });
 
   it("does not claim 'free' while the adopt path would be charged", () => {
-    // The per-cell adopt re-runs on the instruction that produced the current
-    // proposal — NOT the textarea. Clear the box after a paid run and a card
-    // keyed only on the textarea reads "flat 1 credit" for a run the server
-    // prices. That is the one direction that bills more than the surface
-    // promised, so an empty box plus a non-empty prior must still show a price.
-    const cleared = render({ instruction: "", priorInstruction: "Senior ref on the final." });
+    // The per-cell adopt re-runs the brief that produced the current proposal —
+    // NOT the textarea. Clear the box after a paid run and a card keyed only on
+    // the textarea reads "flat 1 credit" for a run the server prices: the one
+    // direction that bills more than the surface promised.
+    //
+    // The signal is the PLAN's own token usage. It is the server's record of
+    // what it did, so unlike a client-side copy of the instruction it cannot
+    // drift from the charge — the previous version of this guard was satisfied
+    // by an echo the console recorded, and stayed green when that recording was
+    // deleted.
+    const cleared = render({ instruction: "", plan: planWith(4200) });
     expect(creditsShown(cleared)).toBe(1); // this pack is rung 1…
     expect(cardOnly(cleared)).not.toContain(enText["board.ai.quote.freeDraft"]);
     expect(cardOnly(cleared)).toContain('role="radiogroup"');
 
-    // Nothing on the screen is priced -> the free-draft state is correct.
-    const virgin = render({ instruction: "", priorInstruction: "" });
-    expect(cardOnly(virgin)).toContain(enText["board.ai.quote.freeDraft"]);
+    // A prior run that spent no tokens means the adopt path is free too, so an
+    // empty box legitimately shows the free-draft state.
+    const afterDraft = render({ instruction: "", plan: planWith(0) });
+    expect(cardOnly(afterDraft)).toContain(enText["board.ai.quote.freeDraft"]);
+    // …as does the very first entry, before any run at all.
+    expect(cardOnly(render({ instruction: "", plan: null }))).toContain(
+      enText["board.ai.quote.freeDraft"],
+    );
   });
 
   it("offers the rung control once there is an instruction to spend on", () => {
@@ -151,7 +176,6 @@ describe("officials confirm card", () => {
           quoteInput={{ movableFixtures: 300, entrants: 40, courts: 10 }}
           rung={1}
           onRung={() => {}}
-          priorInstruction=""
           currency="usd"
           fixtures={[]}
           roster={[]}

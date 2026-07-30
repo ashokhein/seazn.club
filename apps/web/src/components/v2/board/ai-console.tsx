@@ -177,12 +177,14 @@ export function schedulePlanBody(
 /** The Phase B (officials) request body — same reasoning, reading the
  *  `officialsRung` field Phase B's own card writes. */
 export function officialsPlanBody(
-  state: Pick<AiConsoleState, "officialsRung">,
+  state: Pick<AiConsoleState, "officialsRung" | "officialsPriorInstruction">,
   args: {
     instruction: string;
     schedule: NonNullable<AiOfficialsPlanRequest["schedule"]>;
     policy: AiOfficialsPlanRequest["policy"];
-    prior?: AiOfficialsPlanRequest["prior"] | null;
+    /** Round-tripped assignments; the brief they were produced under comes from
+     *  state, so the two halves of `prior` cannot describe different runs. */
+    priorAssignments?: AiOfficialsPlanResponse["assignments"] | null;
   },
 ): AiOfficialsPlanRequest {
   return {
@@ -190,7 +192,14 @@ export function officialsPlanBody(
     ...rungField(state.officialsRung),
     ...(args.schedule.length > 0 ? { schedule: args.schedule } : {}),
     policy: args.policy,
-    ...(args.prior ? { prior: args.prior } : {}),
+    ...(args.priorAssignments
+      ? {
+          prior: {
+            instruction: state.officialsPriorInstruction,
+            assignments: args.priorAssignments,
+          },
+        }
+      : {}),
   };
 }
 
@@ -481,17 +490,12 @@ export function AiConsole({
   // Instruction that produced the on-screen proposal — lets a refine turn send
   // the right `prior.instruction` when it round-trips the previous assignments.
   const priorInstruction = useRef("");
-  // Phase B equivalents: the instruction behind the current officials proposal,
-  // and whether that proposal was produced with a prior (so the grid knows when
-  // `diff.changed` means "changed vs prior" — a first draft has none).
-  const priorOfficialsInstruction = useRef("");
-  // …and a STATE mirror of it, for the same reason `officialsHadPrior` below is
-  // state: the officials confirm card reads this during render (the adopt path
-  // re-runs on it, so it changes the price), and a ref mutation alone schedules
-  // no re-render — react-hooks/refs correctly rejects a ref read at render
-  // time. Written in lockstep with the ref, immediately before the dispatch
-  // that re-renders anyway.
-  const [priorOfficialsText, setPriorOfficialsText] = useState("");
+  // Phase B's equivalent lives in the REDUCER (`officialsPriorInstruction`),
+  // not in a ref here: the officials confirm card prices the adopt path off it,
+  // so it is state the render depends on, and a ref written inside an async
+  // callback is both unobservable to the render and untestable without driving
+  // a network round-trip. `OFFICIALS_DONE` records it with the plan it belongs
+  // to. Whether that proposal had a prior stays local (grid tone only).
   // State, not a ref: it drives the `hadPrior` prop read during render
   // (OfficialsStep below) — react-hooks/refs correctly flags a ref read at
   // render time, since a ref mutation alone doesn't schedule the re-render
@@ -608,18 +612,18 @@ export function AiConsole({
         instruction: opts.instruction,
         schedule,
         policy: officialsPolicy ?? DEFAULT_OFFICIALS_POLICY,
-        prior: opts.priorAssignments
-          ? { instruction: priorOfficialsInstruction.current, assignments: opts.priorAssignments }
-          : null,
+        priorAssignments: opts.priorAssignments,
       });
       try {
         const plan = await apiV1<AiOfficialsPlanResponse>(
           `/api/v1/divisions/${divisionId}/officials/ai-plan`,
           { method: "POST", json: officialsBody, signal: ac.signal },
         );
-        priorOfficialsInstruction.current = opts.instruction;
-        setPriorOfficialsText(opts.instruction);
-        dispatch({ type: "OFFICIALS_DONE", plan });
+        // Recorded from the BODY that was actually sent, not from `opts`, so
+        // the brief we remember is by construction the brief the server was
+        // asked for. One action records it with the plan it produced, so the
+        // two cannot drift apart either.
+        dispatch({ type: "OFFICIALS_DONE", plan, instruction: officialsBody.instruction });
       } catch (err) {
         if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
         const status = err instanceof ApiV1Error ? err.status : 0;
@@ -678,7 +682,7 @@ export function AiConsole({
                 locked: a.locked ?? false,
               })),
               audit: {
-                instruction: priorOfficialsInstruction.current.slice(0, 500),
+                instruction: state.officialsPriorInstruction.slice(0, 500),
                 summary: state.officialsPlan.summary.slice(0, 600),
                 model: AI_APPLY_MODEL,
                 repair_rounds: state.officialsPlan.usage.repair_rounds,
@@ -742,6 +746,8 @@ export function AiConsole({
       state.excludedFixtures,
       state.instruction,
       state.officialsPlan,
+      // The officials audit line records the brief the assignments came from.
+      state.officialsPriorInstruction,
       state.schedulePlan,
     ],
   );
@@ -820,7 +826,6 @@ export function AiConsole({
         <OfficialsStep
           state={state}
           dispatch={dispatch}
-          priorInstruction={priorOfficialsText}
           currency={currency}
           fixtures={fixtures}
           roster={roster ?? []}
@@ -842,7 +847,7 @@ export function AiConsole({
               ...cur.filter((a) => !(a.fixtureId === fixtureId && a.roleKey === roleKey)),
               { fixtureId, officialId: candidateId, roleKey, locked: false },
             ];
-            void runOfficials({ instruction: priorOfficialsInstruction.current, priorAssignments: patched });
+            void runOfficials({ instruction: state.officialsPriorInstruction, priorAssignments: patched });
           }}
           onPulse={(ids) => onPulseRef.current?.(ids)}
         />
@@ -1332,7 +1337,6 @@ function ScheduleStep({
 export function OfficialsStep({
   state,
   dispatch,
-  priorInstruction,
   currency,
   fixtures,
   roster,
@@ -1348,9 +1352,6 @@ export function OfficialsStep({
 }: {
   state: AiConsoleState;
   dispatch: (a: Parameters<typeof aiConsoleReducer>[1]) => void;
-  /** The brief that produced the current proposal — what the ADOPT path
-   *  re-runs on, and therefore part of what this step can spend. */
-  priorInstruction: string;
   currency: Currency;
   fixtures: AiConsoleFixture[];
   roster: OfficialsRosterEntry[];
@@ -1376,12 +1377,6 @@ export function OfficialsStep({
       quoteInput={officialsQuoteInput(fixtures, placements)}
       rung={state.officialsRung}
       onRung={(rung) => dispatch({ type: "SET_OFFICIALS_RUNG", rung })}
-      // The instruction the ADOPT path re-runs on. Adopt replays the brief that
-      // produced the current proposal rather than reading the textarea, so the
-      // card has to know about it — otherwise it claims "flat 1 credit" for a
-      // run the server prices, the one direction that bills more than the
-      // surface promised.
-      priorInstruction={priorInstruction}
       currency={currency}
       fixtures={fixtures}
       roster={roster}

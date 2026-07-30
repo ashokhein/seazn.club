@@ -35,7 +35,8 @@ describe("aiPricingInputs", () => {
         fx({ id: "d", status: "postponed" }),
         fx({ id: "e", status: "in_play" }),
       ],
-      10,
+      "d1",
+      { d1: 10 },
     );
     expect(out.movableFixtures.map((f) => f.id)).toEqual(["a", "b"]);
   });
@@ -48,7 +49,8 @@ describe("aiPricingInputs", () => {
         fx({ id: "a", court_label: "Court 9", scheduled_at: "2026-08-01T09:00:00.000Z" }),
         fx({ id: "b", court_label: null, scheduled_at: null }),
       ],
-      4,
+      "d1",
+      { d1: 4 },
     );
     expect(out.movableFixtures).toEqual([
       { id: "a", scheduled_at: "2026-08-01T09:00:00.000Z", court_label: "Court 9" },
@@ -61,21 +63,31 @@ describe("aiPricingInputs", () => {
     // with `new Date(...).getTime()` and the console ships them as JSON.
     const out = aiPricingInputs(
       [fx({ id: "a", scheduled_at: new Date("2026-08-01T09:00:00.000Z") })],
-      4,
+      "d1",
+      { d1: 4 },
     );
     expect(out.movableFixtures[0].scheduled_at).toBe("2026-08-01T09:00:00.000Z");
   });
 
-  it("prices on the division's ACTIVE entrant count, passed in", () => {
-    // The number comes from the page's status-filtered count. It is emphatically
-    // NOT derivable from the board's `entrantNames` map, which is
-    // competition-wide and unfiltered.
-    expect(aiPricingInputs([fx({ id: "a" })], 12).activeEntrants).toBe(12);
-    expect(aiPricingInputs([fx({ id: "a" })], 0).activeEntrants).toBe(0);
+  it("SELECTS this division's active entrant count", () => {
+    // The count has to be CHOSEN here, not handed in. An earlier version took
+    // the number as a parameter, which put the assertion BELOW the expression
+    // that was wrong: restoring the original `Object.keys(entrantNames).length`
+    // bug above it stayed green, because the test was being given the answer.
+    //
+    // The record carries a decoy, so picking the wrong division — or counting
+    // the record instead of reading it — yields 99 or 2 rather than 12.
+    const counts = { d1: 12, d2: 99 };
+    expect(aiPricingInputs([fx({ id: "a" })], "d1", counts).activeEntrants).toBe(12);
+    expect(aiPricingInputs([fx({ id: "a" })], "d2", counts).activeEntrants).toBe(99);
   });
 
-  it("prices at zero rather than guessing when no count is available", () => {
-    expect(aiPricingInputs([fx({ id: "a" })], undefined).activeEntrants).toBe(0);
+  it("prices at zero rather than guessing when the division is unknown", () => {
+    // No division selected, and a division absent from the record. A confident
+    // wrong number here is a wrong charge.
+    expect(aiPricingInputs([fx({ id: "a" })], null, { d1: 12 }).activeEntrants).toBe(0);
+    expect(aiPricingInputs([fx({ id: "a" })], "nope", { d1: 12 }).activeEntrants).toBe(0);
+    expect(aiPricingInputs([fx({ id: "a" })], "d1", { d1: 0 }).activeEntrants).toBe(0);
   });
 
   it("reflects a drag immediately — the board's live court, not the server's", () => {
@@ -85,7 +97,7 @@ describe("aiPricingInputs", () => {
     // and under-quoting is the direction that bills people.
     const server = fx({ id: "a", court_label: "Court 1" });
     const dragged = { ...server, court_label: "Court 9" };
-    expect(aiPricingInputs([dragged], 4).movableFixtures[0].court_label).toBe("Court 9");
-    expect(aiPricingInputs([server], 4).movableFixtures[0].court_label).toBe("Court 1");
+    expect(aiPricingInputs([dragged], "d1", { d1: 4 }).movableFixtures[0].court_label).toBe("Court 9");
+    expect(aiPricingInputs([server], "d1", { d1: 4 }).movableFixtures[0].court_label).toBe("Court 1");
   });
 });

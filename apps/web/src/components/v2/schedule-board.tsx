@@ -71,7 +71,8 @@ function fstatusLabel(msg: (k: MessageKey) => string, s: string): string {
  */
 export function aiPricingInputs(
   divisionFixtures: BoardFixture[],
-  activeEntrantCount: number | undefined,
+  divisionId: string | null,
+  activeEntrantCounts: Record<string, number>,
 ): Pick<AiBriefContext, "movableFixtures" | "activeEntrants"> {
   return {
     // The fixtures themselves, not a count: a scoped repair is quoted on the
@@ -84,9 +85,13 @@ export function aiPricingInputs(
         scheduled_at: f.scheduled_at ? new Date(f.scheduled_at).toISOString() : null,
         court_label: f.court_label,
       })),
-    // No division selected (or no count supplied) prices at 0 rather than
-    // guessing — the console only opens on a single division today.
-    activeEntrants: activeEntrantCount ?? 0,
+    // SELECTS the count as well as returning it — deliberately. An earlier
+    // version took the number as a parameter, which put the boundary BELOW the
+    // expression that was wrong: restoring the original
+    // `Object.keys(entrantNames).length` bug left the test green, because the
+    // test was handed the answer. Choosing the count here is what makes it
+    // observable. No division (or no entry) prices at 0 rather than guessing.
+    activeEntrants: divisionId === null ? 0 : (activeEntrantCounts[divisionId] ?? 0),
   };
 }
 
@@ -140,13 +145,13 @@ function addDaysKey(key: string, n: number): string {
 export function ScheduleBoard({
   divisions,
   stages,
-  // Renamed on the way in, and used in exactly ONE place: the `useBoardActions`
-  // call below. Everything downstream must read `actions.board`, which layers
-  // the optimistic overrides a drag applies before the RSC refresh lands. That
-  // distinction is load-bearing for money now — the AI confirm card prices a
-  // scoped repair by narrowing on court and time — so the server-shaped list is
-  // given a name that cannot be reached for by accident.
-  fixtures: serverFixtures,
+  // `fixtures` is DELIBERATELY NOT DESTRUCTURED — see `props.fixtures` at the
+  // `useBoardActions` call, its only use. Everything downstream must read
+  // `actions.board`, which layers the optimistic overrides a drag applies
+  // before the RSC refresh lands, and that distinction now decides a credit
+  // charge (the confirm card prices a scoped repair by narrowing on court and
+  // time). Leaving the server-shaped list without a bare name means no
+  // consumer can reach for the wrong one by habit.
   entrantNames,
   activeEntrantCounts,
   feedLabels,
@@ -161,6 +166,7 @@ export function ScheduleBoard({
   venueCap = "Court",
   showSettings = true,
   officialsWithBlackout = 0,
+  ...props
 }: Props) {
   const msg = useMsg();
   const locale = useLocale();
@@ -252,7 +258,9 @@ export function ScheduleBoard({
   );
 
   // ------------------------------------------------------------- actions
-  const actions = useBoardActions(divisions, serverFixtures, entrantNames, feedLabels, canEdit);
+  // The ONLY read of the raw server list, and it is spelled out in full so it
+  // reads as a deliberate act rather than a convenient local.
+  const actions = useBoardActions(divisions, props.fixtures, entrantNames, feedLabels, canEdit);
 
   // Whole-division freeze toggle (Jul3/03 §4) — same endpoint the History
   // panel uses, surfaced where organisers actually are when it matters.
@@ -313,7 +321,7 @@ export function ScheduleBoard({
         cfg.perEntrantMinRest > 0 ||
         (cfg.roundMinutes ?? 0) > 0 ||
         Boolean((cfg as { constraints?: unknown }).constraints),
-      ...aiPricingInputs(divFixtures, single ? activeEntrantCounts[single.id] : undefined),
+      ...aiPricingInputs(divFixtures, single?.id ?? null, activeEntrantCounts),
       pinned: divFixtures.filter((f) => f.schedule_locked).length,
       entrants: Object.entries(entrantNames)
         .map(([id, name]) => ({ id, name }))

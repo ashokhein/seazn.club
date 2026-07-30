@@ -109,7 +109,6 @@ export function AiOfficialsReview({
   quoteInput,
   rung,
   onRung,
-  priorInstruction,
   currency,
   fixtures,
   roster,
@@ -137,9 +136,6 @@ export function AiOfficialsReview({
   /** Phase B's chosen rung; `null` follows the server's prediction. */
   rung: number | null;
   onRung: (rung: number | null) => void;
-  /** The brief that produced the current proposal. The per-cell ADOPT re-runs
-   *  on THIS, not on the textarea, so the quote has to account for it. */
-  priorInstruction: string;
   /** Org's locked billing currency — the shared out-of-credits block (A6)
    *  prices its Buy-credits ladder in it. */
   currency: Currency;
@@ -167,21 +163,33 @@ export function AiOfficialsReview({
   const plural = usePlural();
   // Phase B's quote. An EMPTY instruction is the deterministic solver pass —
   // no model call, flat 1 credit (`freeDraftQuote`; it DOES debit the wallet,
-  // "free" there means free of model cost) — so the card says so rather than
+  // "free" there means free of MODEL cost) — so the card says so rather than
   // sizing a run that spends no tokens.
   //
   // But this step has more than one spend path: Re-plan runs the TEXTAREA,
-  // while the per-cell adopt replays `priorInstruction` and never reads the
-  // textarea at all. So "free" has to mean "nothing reachable from this screen
-  // is priced" — otherwise clearing the box after a paid run makes the card
-  // read "flat 1 credit" while an adopt is charged 2-3.
+  // while the per-cell adopt replays the brief that produced the proposal and
+  // never reads the textarea at all. So "free" has to mean "nothing reachable
+  // from this screen is priced" — otherwise clearing the box after a paid run
+  // makes the card read "flat 1 credit" while an adopt is charged 2-3.
+  //
+  // "Was the last run priced?" is read off the PLAN's own token usage, not off
+  // a client-side copy of the instruction. The plan is the server's answer
+  // about what it actually did, so it cannot drift from what was charged; an
+  // echo we record ourselves can, and did — the guard was green with the
+  // recording deleted, because nothing but the recording could contradict it.
   //
   // The trade is deliberate and one-directional: in exactly that window
   // Re-plan alone would in fact be free, so the card OVER-quotes it.
   // Over-quoting is the safe error; under-quoting bills someone more than the
   // surface they confirmed, which is the failure this card exists to prevent.
+  // A plan with no tokens is the free solver pass. Two things read it: the
+  // localized draft note (instead of the server's fixed English summary), and
+  // the quote below — it is the server's own record of whether the last run
+  // called the model.
+  const isFreeDraft = plan !== null && plan.usage.input_tokens === 0 && plan.usage.output_tokens === 0;
   const officialsWeights = useMemo(() => officialsRungWeights(), []);
-  const freeDraft = instruction.trim() === "" && priorInstruction.trim() === "";
+  const priorWasPriced = plan !== null && !isFreeDraft;
+  const freeDraft = instruction.trim() === "" && !priorWasPriced;
   const quoteLines: QuoteCardLine[] = [
     { key: "officials", label: null, input: quoteInput, chosen: rung },
   ];
@@ -201,9 +209,6 @@ export function AiOfficialsReview({
     () => (plan ? buildOfficialsTrace(plan, roles.length, msg) : null),
     [plan, roles.length, msg],
   );
-  // A draft with no tokens is the free solver pass — show a localized note, not
-  // the server's fixed English summary.
-  const isFreeDraft = plan !== null && plan.usage.input_tokens === 0 && plan.usage.output_tokens === 0;
 
   return (
     <div className="space-y-3">

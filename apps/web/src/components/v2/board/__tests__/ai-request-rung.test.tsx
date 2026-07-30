@@ -11,12 +11,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { Dict } from "@/lib/i18n-constants";
 import { DictProvider } from "@/components/i18n/dict-provider";
 import en from "@/dictionaries/en/ui.json";
+import type { AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
 import {
   aiConsoleReducer,
   initialAiConsoleState,
   type AiConsoleState,
 } from "../ai-console-state";
 import { OfficialsStep, officialsPlanBody, rungField, schedulePlanBody } from "../ai-console";
+import { AiOfficialsReview } from "../ai-officials-review";
 
 const dict = en as unknown as Dict;
 const POLICY = {
@@ -58,6 +60,38 @@ const stateWith = (over: Partial<AiConsoleState> = {}): AiConsoleState => ({
   officialsRung: 1,
   ...over,
 });
+
+/** `OfficialsStep`'s props, with the console state as the only interesting
+ *  input — everything the step DERIVES from that state (which action it
+ *  dispatches, which instruction it prices on) is then observable by calling
+ *  the component as a function and reading the element it returns. */
+function officialsStepProps(
+  state: Partial<AiConsoleState> = {},
+  over: Partial<Parameters<typeof OfficialsStep>[0]> = {},
+): Parameters<typeof OfficialsStep>[0] {
+  return {
+    state: {
+      ...initialAiConsoleState,
+      step: "officials",
+      schedulePlan: { proposal: [] } as unknown as AiConsoleState["schedulePlan"],
+      ...state,
+    },
+    dispatch: () => {},
+    currency: "usd",
+    fixtures: [],
+    roster: [],
+    policyRoles: ["referee"],
+    hadPrior: false,
+    busy: false,
+    traceNonce: 0,
+    wishes: [],
+    onWishes: () => {},
+    onReplan: () => {},
+    onAdopt: () => {},
+    onPulse: () => {},
+    ...over,
+  };
+}
 
 describe("schedulePlanBody (Phase A)", () => {
   const base = { instruction: "Finish by 6pm", mode: "generate" as const };
@@ -124,39 +158,92 @@ describe("the two phases keep their rungs apart", () => {
     expect([c.rung, c.officialsRung]).toEqual([3, null]);
   });
 
+  it("the officials rung control dispatches SET_OFFICIALS_RUNG, not SET_RUNG", () => {
+    // Separate action TYPES make an omitted flag a compile error, but they do
+    // nothing about SUBSTITUTION: writing `{ type: "SET_RUNG", rung }` at this
+    // call site typechecks, and until this test it ran green — Phase B's
+    // control silently writing Phase A's rung.
+    //
+    // Reading which action is sent needs the actual callback, not the markup,
+    // so call the component as the plain function it is and read the element it
+    // returns. A reducer test cannot do this: it proves what an action MEANS,
+    // never which one was dispatched.
+    const sent: unknown[] = [];
+    const el = OfficialsStep(officialsStepProps({}, { dispatch: (a) => sent.push(a) }));
+    expect(el.type).toBe(AiOfficialsReview); // guards the props read below
+    const { onRung } = el.props as { onRung: (r: number | null) => void };
+    onRung(2);
+    onRung(null); // "back to the recommendation" is the same action
+    expect(sent).toEqual([
+      { type: "SET_OFFICIALS_RUNG", rung: 2 },
+      { type: "SET_OFFICIALS_RUNG", rung: null },
+    ]);
+  });
+
+  it("the request's prior carries the brief those assignments were produced under", () => {
+    // Both halves of `prior` come from one place: the assignments from the
+    // caller, the instruction from state. Passing them separately let the two
+    // describe different runs.
+    const body = officialsPlanBody(
+      stateWith({ officialsPriorInstruction: "Senior ref on the final." }),
+      {
+        instruction: "Swap the 3pm referee.",
+        schedule: [],
+        policy: POLICY,
+        priorAssignments: [
+          { fixtureId: "f1", officialId: "o1", roleKey: "referee", locked: false },
+        ],
+      },
+    );
+    expect(body.prior).toEqual({
+      instruction: "Senior ref on the final.",
+      assignments: [{ fixtureId: "f1", officialId: "o1", roleKey: "referee", locked: false }],
+    });
+    // No round-tripped assignments -> no prior at all.
+    expect(
+      "prior" in
+        officialsPlanBody(stateWith({ officialsPriorInstruction: "x" }), {
+          instruction: "y",
+          schedule: [],
+          policy: POLICY,
+        }),
+    ).toBe(false);
+  });
+
+  it("OFFICIALS_DONE records the brief that produced the plan", () => {
+    // One action records the plan AND the brief, so the instruction the adopt
+    // path replays cannot drift from the proposal it belongs to.
+    const done = aiConsoleReducer(initialAiConsoleState, {
+      type: "OFFICIALS_DONE",
+      plan: { assignments: [] } as unknown as AiOfficialsPlanResponse,
+      instruction: "Spread the load.",
+    });
+    expect(done.officialsPriorInstruction).toBe("Spread the load.");
+    // A free draft records the EMPTY brief — that is what lets the next card
+    // legitimately show its free-draft state instead of a price.
+    const draft = aiConsoleReducer(done, {
+      type: "OFFICIALS_DONE",
+      plan: { assignments: [] } as unknown as AiOfficialsPlanResponse,
+      instruction: "",
+    });
+    expect(draft.officialsPriorInstruction).toBe("");
+  });
+
   it("the officials step spends Phase B's rung, never Phase A's", () => {
     // The two are set DIFFERENTLY, so a card reading `state.rung` renders a
     // different control than one reading `state.officialsRung`. Phase A is 3,
     // Phase B is 1 — the card must show 1 checked.
-    const state: AiConsoleState = {
-      ...initialAiConsoleState,
-      step: "officials",
-      // Non-empty, or the card renders its free-draft state and offers no
-      // control at all — which would make the assertion below vacuous.
-      officialsInstruction: "Senior ref on the final.",
-      rung: 3,
-      officialsRung: 1,
-      schedulePlan: { proposal: [] } as unknown as AiConsoleState["schedulePlan"],
-    };
     const html = renderToStaticMarkup(
       <DictProvider dict={dict} locale="en">
-        <OfficialsStep
-          state={state}
-          dispatch={() => {}}
-          priorInstruction=""
-          currency="usd"
-          fixtures={[]}
-          roster={[]}
-          policyRoles={["referee"]}
-          hadPrior={false}
-          busy={false}
-          traceNonce={0}
-          wishes={[]}
-          onWishes={() => {}}
-          onReplan={() => {}}
-          onAdopt={() => {}}
-          onPulse={() => {}}
-        />
+        {OfficialsStep(
+          officialsStepProps({
+            // Non-empty, or the card renders its free-draft state and offers no
+            // control at all — which would make the assertion below vacuous.
+            officialsInstruction: "Senior ref on the final.",
+            rung: 3,
+            officialsRung: 1,
+          }),
+        )}
       </DictProvider>,
     );
     const checked = [...html.matchAll(/<button[^>]*role="radio"[^>]*>/g)]

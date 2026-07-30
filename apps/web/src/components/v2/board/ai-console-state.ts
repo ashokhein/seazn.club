@@ -59,6 +59,18 @@ export interface AiConsoleState {
    *  pack, so the two phases predict independently and one phase's choice must
    *  never be read as the other's. */
   officialsRung: number | null;
+  /**
+   * The Phase B brief that produced the officials proposal currently on screen.
+   *
+   * Reducer state rather than a ref, because it is a PRICE input and not
+   * bookkeeping: the per-cell adopt re-runs on this string rather than on the
+   * textarea, so an empty textarea with a non-empty value here still means a
+   * chargeable run is one click away. Living in the reducer means "what did the
+   * last run ask for" is written in exactly one place and can be asserted
+   * directly — a ref assigned inside an async callback cannot be, which is how
+   * the under-quote guard came to be untested.
+   */
+  officialsPriorInstruction: string;
   schedulePlan: AiPlanResponse | null; // Phase A result
   officialsPlan: AiOfficialsPlanResponse | null; // Phase B result
   /** Blocking fixtures the organiser unticked in the diff panel — they drop to
@@ -89,7 +101,10 @@ export type AiConsoleAction =
   | { type: "RUN_DONE"; plan: AiPlanResponse }
   | { type: "RUN_ERROR"; error: { status: number; message: string; key?: string } }
   | { type: "GOTO_STEP"; step: AiStep }
-  | { type: "OFFICIALS_DONE"; plan: AiOfficialsPlanResponse }
+  // Carries the instruction that produced `plan` — the officials confirm card
+  // prices the adopt path off it, so it must be recorded by the same action
+  // that records the plan rather than by a side-write nobody can observe.
+  | { type: "OFFICIALS_DONE"; plan: AiOfficialsPlanResponse; instruction: string }
   | { type: "TOGGLE_EXCLUDE"; fixtureId: string }
   | { type: "APPLY_START" }
   | { type: "APPLY_SEQ_CONFLICT" }
@@ -107,6 +122,7 @@ export const initialAiConsoleState: AiConsoleState = {
   scope: undefined,
   rung: null,
   officialsRung: null,
+  officialsPriorInstruction: "",
   schedulePlan: null,
   officialsPlan: null,
   excludedFixtures: [],
@@ -178,7 +194,17 @@ export function aiConsoleReducer(s: AiConsoleState, a: AiConsoleAction): AiConso
     }
 
     case "OFFICIALS_DONE":
-      return { ...s, officialsPlan: a.plan, run: "proposal", step: "officials", error: null };
+      // Recording the instruction alongside the plan is what makes the adopt
+      // path priceable: adopt replays THIS brief, not the textarea, so the
+      // confirm card reads it to decide whether a free draft is still on offer.
+      return {
+        ...s,
+        officialsPlan: a.plan,
+        officialsPriorInstruction: a.instruction,
+        run: "proposal",
+        step: "officials",
+        error: null,
+      };
 
     case "TOGGLE_EXCLUDE":
       // Per-row untick on a blocking fixture: toggle its membership in the
