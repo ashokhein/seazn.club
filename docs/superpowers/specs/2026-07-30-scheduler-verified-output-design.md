@@ -143,7 +143,7 @@ W5  review panel: preview, assumptions, #388 → needs W3 for the preview; the
 W6  z3 minimal-movement repair               → needs W2 + W3 (no window, no domain)
 ```
 
-W1 is the only wave touching a write path. W2 is the only one that changes what the
+W1 adds one index migration but no behavioural write change. W2 is the only one that changes what the
 model sees without changing what is enforced. W4 is the only one that changes what an
 organiser is permitted to do.
 
