@@ -65,12 +65,26 @@ joint runner can see it.
 registering two children uses one address for both; auto-linking on it would merge
 siblings into one person, which is worse than the bug being fixed.
 
+**And no safe key exists on the registration path today.** `RegistrationRow`
+(`registrations.ts:236-264`) carries `display_name`, `contact_email`, `dob`, `gender`
+and `guardian_*`; the insert (`:884-901`) captures no session user. Public
+registration is anonymous by design — identified by email plus an access-token hash
+(`V118__registrations.sql:71`). Neither `user_id` nor `external_ref` is available
+there. `persons.user_id` exists (`V204__persons.sql:12`) but is filled by the V276
+claim flow, after the fact.
+
+So "fix the cause at registration" cannot ship as originally written. The cause fix
+is narrowed to capturing a session `user_id` on registration when one exists, filed
+separately (§9), and it only ever helps signed-in registrants. The scheduling-only
+name guard therefore carries the load: it covers every registration, anonymous
+included.
+
 ## 2. Decisions
 
 | Decision | Choice |
 |---|---|
 | Capture shape | Index issue plus one child per wave, label `ai-schedule-gap`. Full spec and plan for W1 only; each later wave gets its own cycle. |
-| Identity | Fix the cause at registration (auto-link on `user_id` / `external_ref`, never bare email) **and** ship a scheduling-only name guard for historic data. |
+| Identity | Ship a scheduling-only name guard, which covers every registration including anonymous ones, plus the `persons(org_id, user_id)` partial unique index. The cause fix at registration is **deferred**: no deterministic key exists on that path today (§1.1), so capturing a session `user_id` is filed as its own issue. Never auto-link on bare email. |
 | Blocking | `person_overlap` and the new out-of-window reason block on both the AI apply path and the drag-drop board, **delta-based**: only conflicts a change introduces or worsens. |
 | Day boundary | One organisation timezone governs all temporal math. Per-division `tz` becomes display metadata. |
 | Solver | z3 minimal-movement repair is in this programme, sequenced last because its encoding cannot exist before the window and the typed constraints do. |
@@ -176,9 +190,8 @@ first time.
 ### 4.2 Identity flow
 
 ```
-registration confirm ─▶ resolvePerson(orgId, { user_id, external_ref, name, dob })
-                          hit  → reuse the persons row
-                          miss → insert (today's behaviour)
+registration confirm ─▶ unchanged in this programme — no deterministic key exists
+                        on the registration path (§1.1). Deferred to its own issue.
 scheduler pack       ─▶ entrant_members, ents.size ≥ 2            (real identity)
                      ─▶ name guard: identical normalised names, different person_ids,
                         same run → one synthetic PersonKey for person rules ONLY,
@@ -257,7 +270,7 @@ real payloads, frozen.
 | Wave | Rejection case | Acceptance case |
 |---|---|---|
 | W1 | two entrants, same name, different `person_id` → person conflict fires; **`persons` row count unchanged** | `participants(gf)` = all 7 entrants; `participants(lb-r0-i0)` = exactly `{d, e}` |
-| W1 | **guardian, two children, one `contact_email` → TWO persons rows** (anti-merge; must never regress) | same `user_id` registering twice → one persons row |
+| W1 | **guardian, two children, one `contact_email` → TWO persons rows** (anti-merge; must never regress) | the partial unique index rejects a second `persons` row with the same `(org_id, user_id)` |
 | W2 | epoch draft → 13 window violations | DST: New York 10:00 = 14:00 UTC in August, 15:00 UTC in January |
 | W2 | — | one-day window, 2/day cap, 13 fixtures → extends a week and records the assumption |
 | W3 | Stepladder original draft reproduces its exact violation set, **cross-division Fischer named** | badminton golden 7-day schedule verifies with **zero** violations |
@@ -368,12 +381,19 @@ push/pop, `buildDayIntervals`. Rework required:
 |---|---|
 | `sessionHours` shifts for a division whose tz differs from its org | Explicit `sessionWindows` are absolute instants and unaffected; documented as the escape hatch |
 | Delta-blocking mis-keys and locks an organiser out of a dirty board | Reuse the existing conflict key; acceptance test asserts a pre-existing conflict stays editable |
-| Registration auto-link merges two real people | Only `user_id` and `external_ref` auto-link; name and dob suggest and queue. Guardian anti-merge test is a permanent regression guard |
+| The name guard treats two different people as one | It is scheduling-only and non-persisted: it costs one unnecessary rest gap and writes nothing. The guardian anti-merge test is a permanent regression guard against ever making it a record merge |
+| Deferring the registration cause fix leaves duplicates accumulating | The name guard covers them for scheduling; the review queue and merge tool clear them later. Accepted knowingly, recorded in §9 |
 | Parse spend invisible in the ledger | Its own stamp line, tested (#387) |
 | z3 does not scale to 500 fixtures | Size gate plus measurement before the gate is raised; LLM repair remains |
 | Golden pack churn hides a real change | Updated exactly once per wave as a reviewed diff |
 
 ## 9. Out of scope
+
+Capturing a session `user_id` on registration (a nullable `registrations.user_id`,
+populated when the registrant is signed in, auto-linked in `materialise`). This is the
+cause fix for gap 8, deferred because it is new capability rather than a bug fix, it
+requires a migration and a public-route change, and it only ever helps signed-in
+registrants. Filed separately.
 
 Duplicate-person review queue, organiser-facing merge tool, and the production
 backfill of historic duplicates. Each is real work and each is a consequence of §1.1,
