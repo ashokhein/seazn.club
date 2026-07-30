@@ -15,6 +15,8 @@ import {
 } from "@/lib/ai-rung";
 import en from "@/dictionaries/en/ui.json";
 import type { AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
+import { initialAiConsoleState, type AiConsoleState } from "../ai-console-state";
+import { OfficialsStep } from "../ai-console";
 import { AiOfficialsReview } from "../ai-officials-review";
 import { quoteFor } from "../ai-quote-card";
 
@@ -28,9 +30,11 @@ const enText = en as unknown as Record<string, string>;
 // So a card that reached for the default weights costs twice as much.
 const PACK: RungInput = { movableFixtures: 100, entrants: 24, courts: 4 };
 
-/** A server plan. `tokens` is the whole point: it is the server's own record
- *  of whether the last run called the model, and therefore of whether the
- *  brief the adopt path will replay is chargeable. */
+/** A server plan. `tokens` is its REPORTED usage — deliberately not a price
+ *  input any more: both providers default a missing usage block to 0
+ *  (`anthropic-provider.ts` `response.usage?.input_tokens ?? 0`,
+ *  `openrouter-provider.ts` `usage.prompt_tokens ?? 0`), so a priced run whose
+ *  provider omits the block is indistinguishable from the solver draft. */
 function planWith(tokens: number): AiOfficialsPlanResponse {
   return {
     assignments: [],
@@ -44,7 +48,14 @@ function planWith(tokens: number): AiOfficialsPlanResponse {
 }
 
 function render(
-  over: { instruction?: string; rung?: number | null; plan?: AiOfficialsPlanResponse | null } = {},
+  over: {
+    instruction?: string;
+    /** The brief the per-cell adopt would re-run — the second spend path's
+     *  own input to the server's price. */
+    adoptInstruction?: string;
+    rung?: number | null;
+    plan?: AiOfficialsPlanResponse | null;
+  } = {},
 ): string {
   return renderToStaticMarkup(
     <DictProvider dict={dict} locale="en">
@@ -63,6 +74,7 @@ function render(
         traceNonce={0}
         error={null}
         instruction={over.instruction ?? "Give the final to the senior referee."}
+        adoptInstruction={over.adoptInstruction ?? ""}
         onInstruction={() => {}}
         wishes={[]}
         onWishes={() => {}}
@@ -75,6 +87,40 @@ function render(
     </DictProvider>,
   );
 }
+
+/** The same card reached through `OfficialsStep`, i.e. driven by CONSOLE STATE
+ *  rather than by props. Handing the card the value whose derivation is under
+ *  test would be one boundary too low: it would prove the card reads a prop,
+ *  never that the step feeds it the string the adopt path actually sends. */
+function stepHtml(state: Partial<AiConsoleState>): string {
+  return renderToStaticMarkup(
+    <DictProvider dict={dict} locale="en">
+      {OfficialsStep({
+        state: {
+          ...initialAiConsoleState,
+          step: "officials",
+          schedulePlan: { proposal: [] } as unknown as AiConsoleState["schedulePlan"],
+          ...state,
+        },
+        dispatch: () => {},
+        currency: "usd",
+        fixtures: [],
+        roster: [],
+        policyRoles: ["referee"],
+        hadPrior: false,
+        busy: false,
+        traceNonce: 0,
+        wishes: [],
+        onWishes: () => {},
+        onReplan: () => {},
+        onAdopt: () => {},
+        onPulse: () => {},
+      })}
+    </DictProvider>,
+  );
+}
+
+const FREE = enText["board.ai.quote.freeDraft"];
 
 const creditsShown = (html: string): number => Number(/data-ai-credits="(\d+)"/.exec(html)?.[1]);
 
@@ -134,29 +180,71 @@ describe("officials confirm card", () => {
   });
 
   it("does not claim 'free' while the adopt path would be charged", () => {
-    // The per-cell adopt re-runs the brief that produced the current proposal —
-    // NOT the textarea. Clear the box after a paid run and a card keyed only on
-    // the textarea reads "flat 1 credit" for a run the server prices: the one
-    // direction that bills more than the surface promised.
+    // The screen has TWO spend paths and the server prices each one on the
+    // instruction that request carries (`officials-ai.ts:1104` —
+    // `input.instruction.trim() === ""` picks `freeDraftQuote`, nothing else
+    // does): Re-plan sends the textarea, the per-cell adopt sends the brief
+    // that produced the proposal on screen. So the card may claim "flat 1
+    // credit" only when BOTH of those strings are empty — otherwise clearing
+    // the box after a paid run bills 2-3 for a run the surface confirmed at 1.
     //
-    // The signal is the PLAN's own token usage. It is the server's record of
-    // what it did, so unlike a client-side copy of the instruction it cannot
-    // drift from the charge — the previous version of this guard was satisfied
-    // by an echo the console recorded, and stayed green when that recording was
-    // deleted.
-    const cleared = render({ instruction: "", plan: planWith(4200) });
-    expect(creditsShown(cleared)).toBe(1); // this pack is rung 1…
-    expect(cardOnly(cleared)).not.toContain(enText["board.ai.quote.freeDraft"]);
-    expect(cardOnly(cleared)).toContain('role="radiogroup"');
+    // The credit COUNT cannot discriminate here (`freeDraftQuote` is also 1
+    // credit, and this pack is rung 1), so the free-draft copy and the rung
+    // control are the assertions with teeth.
+    const priced = (html: string) => {
+      expect(cardOnly(html)).not.toContain(FREE);
+      expect(cardOnly(html)).toContain('role="radiogroup"');
+    };
 
-    // A prior run that spent no tokens means the adopt path is free too, so an
-    // empty box legitimately shows the free-draft state.
-    const afterDraft = render({ instruction: "", plan: planWith(0) });
-    expect(cardOnly(afterDraft)).toContain(enText["board.ai.quote.freeDraft"]);
-    // …as does the very first entry, before any run at all.
-    expect(cardOnly(render({ instruction: "", plan: null }))).toContain(
-      enText["board.ai.quote.freeDraft"],
+    // Empty box, chargeable adopt brief — priced, whatever the plan reports.
+    priced(render({ instruction: "", adoptInstruction: "Senior ref.", plan: planWith(4200) }));
+    // …INCLUDING when the plan reports no tokens at all. That is not proof the
+    // last run was the solver draft: both providers default a missing usage
+    // block to 0, so a real priced run whose provider omitted usage lands here.
+    // Keying the guard on usage failed OPEN in exactly this cell.
+    priced(render({ instruction: "", adoptInstruction: "Senior ref.", plan: planWith(0) }));
+    // A non-empty textarea is priced on its own, with nothing to adopt.
+    priced(render({ instruction: "Spread the load.", adoptInstruction: "", plan: null }));
+
+    // Both briefs empty: every run reachable from this screen sends an empty
+    // instruction, so the server charges 1 for each and the claim is exact.
+    expect(cardOnly(render({ instruction: "", adoptInstruction: "", plan: null }))).toContain(FREE);
+    expect(cardOnly(render({ instruction: "", adoptInstruction: "", plan: planWith(0) }))).toContain(
+      FREE,
     );
+    // …and reported usage does not overrule it. A plan that spent tokens under
+    // an empty brief is not reachable server-side, but if it were, the adopt it
+    // enables still sends "" and is still charged 1 — quoting 2-3 there would
+    // over-quote for no reason, and would put a provider-omittable field back
+    // on the money path.
+    expect(
+      cardOnly(render({ instruction: "", adoptInstruction: "", plan: planWith(4200) })),
+    ).toContain(FREE);
+  });
+
+  it("prices the officials step on the brief the ADOPT path will re-run", () => {
+    // The card can only be as right as the string the step hands it. This is
+    // the wiring — `state.officialsPriorInstruction`, the very field
+    // `onAdopt` sends as the next run's `instruction` — so it is asserted
+    // through `OfficialsStep` from console state, not by handing the card the
+    // answer. Passing `""` here is the whole defect, and it is a one-token edit.
+    const chargeable = stepHtml({
+      officialsInstruction: "", // box cleared…
+      officialsPriorInstruction: "Senior ref on the final.", // …after a paid run
+      officialsPlan: planWith(0), // provider reported no usage
+    });
+    expect(chargeable).not.toContain(FREE);
+    expect(chargeable).toContain('role="radiogroup"');
+
+    // Contrast: same state, empty brief — the auto-run solver draft. Without
+    // this the assertion above is satisfied by a card that never claims free.
+    const draft = stepHtml({
+      officialsInstruction: "",
+      officialsPriorInstruction: "",
+      officialsPlan: planWith(0),
+    });
+    expect(draft).toContain(FREE);
+    expect(draft).not.toContain('role="radiogroup"');
   });
 
   it("offers the rung control once there is an instruction to spend on", () => {
@@ -185,6 +273,7 @@ describe("officials confirm card", () => {
           traceNonce={0}
           error={null}
           instruction="Spread the load."
+          adoptInstruction=""
           onInstruction={() => {}}
           wishes={[]}
           onWishes={() => {}}

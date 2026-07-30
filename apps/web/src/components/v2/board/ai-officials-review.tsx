@@ -118,6 +118,7 @@ export function AiOfficialsReview({
   traceNonce,
   error,
   instruction,
+  adoptInstruction,
   onInstruction,
   wishes,
   onWishes,
@@ -149,7 +150,13 @@ export function AiOfficialsReview({
   busy: boolean;
   traceNonce: number;
   error: { status: number; message: string; key?: string } | null;
+  /** The textarea — the instruction Re-plan will send. */
   instruction: string;
+  /** The instruction the per-cell ADOPT will send: the brief that produced the
+   *  proposal on screen (`state.officialsPriorInstruction`, replayed verbatim
+   *  by `onAdopt`). It is the second spend path's own input to the server's
+   *  price, which is why the card needs it and cannot infer it. */
+  adoptInstruction: string;
   onInstruction: (v: string) => void;
   wishes: OfficialsWish[];
   onWishes: (next: OfficialsWish[]) => void;
@@ -172,24 +179,37 @@ export function AiOfficialsReview({
   // from this screen is priced" — otherwise clearing the box after a paid run
   // makes the card read "flat 1 credit" while an adopt is charged 2-3.
   //
-  // "Was the last run priced?" is read off the PLAN's own token usage, not off
-  // a client-side copy of the instruction. The plan is the server's answer
-  // about what it actually did, so it cannot drift from what was charged; an
-  // echo we record ourselves can, and did — the guard was green with the
-  // recording deleted, because nothing but the recording could contradict it.
+  // WHY THIS IS THE EXACT PREDICATE, NOT A PROXY. The server's free path is a
+  // property of ONE string: `officials-ai.ts:1104` takes `freeDraftQuote` iff
+  // `input.instruction.trim() === ""`, and nothing else — not the prior, not
+  // the previous run — selects it. Each spend path supplies that string
+  // itself: Re-plan sends `instruction`, adopt sends `adoptInstruction`. So
+  // asking the same question of both is asking the server's own question, and
+  // the claim below is exact rather than an inference: when it holds, both
+  // requests carry an empty instruction and each is charged exactly 1.
   //
-  // The trade is deliberate and one-directional: in exactly that window
-  // Re-plan alone would in fact be free, so the card OVER-quotes it.
-  // Over-quoting is the safe error; under-quoting bills someone more than the
-  // surface they confirmed, which is the failure this card exists to prevent.
-  // A plan with no tokens is the free solver pass. Two things read it: the
-  // localized draft note (instead of the server's fixed English summary), and
-  // the quote below — it is the server's own record of whether the last run
-  // called the model.
-  const isFreeDraft = plan !== null && plan.usage.input_tokens === 0 && plan.usage.output_tokens === 0;
+  // It also cannot fail open. Corrupt `adoptInstruction` to "" and adopt sends
+  // "" too — the card and the charge move together, because this is the value
+  // that IS sent, not a signal about it. An earlier version keyed this on the
+  // plan's reported token usage; that is a proxy, and it fails open, because
+  // both providers default a missing usage block to zero
+  // (`anthropic-provider.ts` `response.usage?.input_tokens ?? 0`,
+  // `openrouter-provider.ts` `usage.prompt_tokens ?? 0`) — a priced run whose
+  // provider omitted usage then read as the solver draft and the card
+  // UNDER-quoted. Reported usage must never come back onto this line.
+  //
+  // The remaining trade is deliberate and one-directional: with a chargeable
+  // adopt brief and an empty box, Re-plan alone would in fact be free, so the
+  // card OVER-quotes it. Over-quoting is the safe error; under-quoting bills
+  // someone more than the surface they confirmed.
   const officialsWeights = useMemo(() => officialsRungWeights(), []);
-  const priorWasPriced = plan !== null && !isFreeDraft;
-  const freeDraft = instruction.trim() === "" && !priorWasPriced;
+  const freeDraft = instruction.trim() === "" && adoptInstruction.trim() === "";
+  // DISPLAY ONLY — never a price input (see above). A plan that reports no
+  // tokens is *usually* the solver pass, which is good enough to pick the
+  // localized draft note over the server's fixed English summary; it is not
+  // good enough to decide what a run costs.
+  const planIsSolverDraft =
+    plan !== null && plan.usage.input_tokens === 0 && plan.usage.output_tokens === 0;
   const quoteLines: QuoteCardLine[] = [
     { key: "officials", label: null, input: quoteInput, chosen: rung },
   ];
@@ -239,7 +259,7 @@ export function AiOfficialsReview({
               {msg("board.ai.summaryLabel")}
             </p>
             <p className="mt-1 text-sm leading-relaxed text-slate-700">
-              {isFreeDraft ? msg("board.ai.officials.draftNote") : plan.summary}
+              {planIsSolverDraft ? msg("board.ai.officials.draftNote") : plan.summary}
             </p>
             <div className="mt-2 flex flex-wrap gap-1">
               {(

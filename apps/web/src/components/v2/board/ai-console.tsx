@@ -1386,6 +1386,11 @@ export function OfficialsStep({
       traceNonce={traceNonce}
       error={state.run === "error" ? state.error : null}
       instruction={state.officialsInstruction}
+      // The second spend path's instruction, so the card can ask the server's
+      // own free/priced question of it. It must stay the SAME field `onAdopt`
+      // sends as the run's `instruction` — hand the card anything else (a "",
+      // a placeholder) and it will quote 1 credit for a run priced at 2-3.
+      adoptInstruction={state.officialsPriorInstruction}
       onInstruction={(v) => dispatch({ type: "SET_INSTRUCTION", officials: true, value: v })}
       wishes={wishes}
       onWishes={onWishes}

@@ -69,6 +69,19 @@ export interface AiConsoleState {
    * last run ask for" is written in exactly one place and can be asserted
    * directly — a ref assigned inside an async callback cannot be, which is how
    * the under-quote guard came to be untested.
+   *
+   * THIS VALUE TOUCHES MONEY. It has three consumers, and the first of them is
+   * a charge, not a record:
+   *   1. `ai-console.tsx` `onAdopt` sends it as the run's own `instruction` —
+   *      and `input.instruction.trim() === ""` is the single thing that picks
+   *      `freeDraftQuote` over `quoteRun` server-side (`officials-ai.ts:1104`,
+   *      spent at `:1130`). Empty here = charged 1; non-empty = charged 1/2/3.
+   *   2. `officialsPlanBody` puts it on the wire as `prior.instruction`.
+   *   3. the apply audit line.
+   * Because (1) both sets the price and is what the confirm card reads
+   * (`adoptInstruction`), the two cannot drift: a wrong value here changes the
+   * quote and the charge together. Anything that makes the card read a
+   * DIFFERENT string than `onAdopt` sends reopens the under-quote.
    */
   officialsPriorInstruction: string;
   schedulePlan: AiPlanResponse | null; // Phase A result
