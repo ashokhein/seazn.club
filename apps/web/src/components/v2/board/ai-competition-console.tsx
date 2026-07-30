@@ -721,6 +721,7 @@ export function AiCompetitionConsole({
   fixtures,
   onClose,
   onApplied,
+  onRefetch,
   onProposalChange,
 }: {
   competitionId: string;
@@ -735,6 +736,12 @@ export function AiCompetitionConsole({
   fixtures: AiConsoleFixture[];
   onClose: () => void;
   onApplied?: () => void;
+  /** Pull the board WITHOUT claiming a write landed. `divisions[].seq` is a
+   *  render-time token and `doApply` re-derives `expected_seq` from it, so a
+   *  stale-board refusal that does not refetch leaves the recovery button
+   *  re-sending the same stale seq — a 409 loop the organiser pays for every
+   *  lap, since the re-run spends. Same wire as the division console's. */
+  onRefetch?: () => void;
   /** Mirrors the current proposal to the board so it can paint grid ghosts. */
   onProposalChange?: (plan: JointProposalMirror | null) => void;
 }) {
@@ -833,7 +840,13 @@ export function AiCompetitionConsole({
     setApplying(false);
     setOutcome(result);
     if (result.status === "applied") onApplied?.();
-  }, [applying, competitionId, divisions, excluded, instruction, onApplied, plan]);
+    // The recovery branch below this offers a re-run that SPENDS, and the apply
+    // after it re-derives `expected_seq` from the `divisions` prop. Pull the
+    // fresh board now, or that lap is charged for a plan that can only 409
+    // again. Only for `seq_conflict`: a real court clash is not something a
+    // refresh fixes, and an applied board goes through `onApplied`.
+    if (result.status === "seq_conflict") onRefetch?.();
+  }, [applying, competitionId, divisions, excluded, instruction, onApplied, onRefetch, plan]);
 
   const undo = useCallback(async () => {
     if (!outcome || undoing) return;

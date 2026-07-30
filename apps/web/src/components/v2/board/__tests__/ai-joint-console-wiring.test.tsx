@@ -165,7 +165,9 @@ const APPLY_URL = "/api/v1/competitions/c1/schedule/apply";
 /** Let the console's awaited `run`/`doApply`/`undo` chains settle. */
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function mount(divisions: JointDivision[] = DIVISIONS) {
+type ConsoleProps = Parameters<typeof AiCompetitionConsole>[0];
+
+function mount(divisions: JointDivision[] = DIVISIONS, extra: Partial<ConsoleProps> = {}) {
   return renderIsland(AiCompetitionConsole, {
     competitionId: "c1",
     divisions,
@@ -173,7 +175,8 @@ function mount(divisions: JointDivision[] = DIVISIONS) {
     currency: "usd" as const,
     fixtures: [],
     onClose: () => {},
-  });
+    ...extra,
+  } as ConsoleProps);
 }
 
 /** The element carrying `marker` as a prop — `data-ai-joint-run`, etc. */
@@ -199,8 +202,8 @@ beforeEach(() => {
  * state the request has to carry, both entered the way an organiser enters
  * them, through the children's own callbacks.
  */
-function briefed() {
-  const island = mount();
+function briefed(extra: Partial<ConsoleProps> = {}) {
+  const island = mount(DIVISIONS, extra);
   const type = (value: string) =>
     (
       propsOf(typed(island.tree(), "textarea")).onChange as (e: {
@@ -389,5 +392,149 @@ describe("the review step is wired to the console's own state", () => {
     const step = propsOf(typed(island.tree(), JointReviewStep));
     expect(step.undone).toBe("partial");
     expect(step.undoFailed).toEqual(["d2"]);
+  });
+});
+
+describe("a stale board is pulled before the recovery button can charge for it again", () => {
+  // C-1. `doApply` derives `expected_seq` from the `divisions` PROP. The only
+  // thing that re-reads it is a board refresh, and the only trigger for one was
+  // `onApplied`, which fires on success alone. So a stale board refused the
+  // apply, the review step offered its re-run button, that button SPENT, and the
+  // apply that followed re-sent the very same stale seq — 409, again, for money,
+  // until the organiser happened to reload the page.
+  //
+  // The refresh has to arrive between the refusal and the next apply, which is
+  // why `onRefetch` here does the thing the real parent does (`router.refresh()`
+  // → new `divisions` prop) rather than merely counting calls: a test that
+  // re-rendered with fresh seqs by itself would pass with the callback unwired.
+
+  /** The same board, one edit later — d1 and d2 have both moved on. */
+  const FRESH: JointDivision[] = DIVISIONS.map((d) =>
+    d.id === "d1" ? { ...d, seq: 5 } : d.id === "d2" ? { ...d, seq: 12 } : d,
+  );
+
+  /** Checkpoints succeed, the atomic write refuses on a stale seq. */
+  function staleBoard() {
+    net.handler = async (url) => {
+      if (url.endsWith("/checkpoints")) return { id: `cp-${url.split("/")[4]}` };
+      if (url === APPLY_URL) throw new ApiV1Error("stale", 409, "SEQ_CONFLICT");
+      return PLAN;
+    };
+  }
+
+  /** A console that has planned once and is sitting on the review step. */
+  async function planned(extra: Partial<ConsoleProps> = {}) {
+    const ctx = briefed(extra);
+    net.handler = async () => PLAN;
+    ctx.type(BRIEF);
+    ctx.click("data-ai-joint-run");
+    await flush();
+    net.calls.length = 0;
+    return ctx;
+  }
+
+  const step = (island: { tree: () => ReactElement[] }) =>
+    propsOf(typed(island.tree(), JointReviewStep));
+
+  const seqsSent = (json: unknown) =>
+    (json as { divisions: { division_id: string; expected_seq: number }[] }).divisions.map(
+      (d) => [d.division_id, d.expected_seq] as const,
+    );
+
+  it("refetches the board when the apply is refused as stale", async () => {
+    const onRefetch = vi.fn();
+    const onApplied = vi.fn();
+    const { island } = await planned({ onRefetch, onApplied });
+    staleBoard();
+
+    (step(island).onApply as () => void)();
+    await flush();
+
+    expect(step(island).outcome).toMatchObject({ status: "seq_conflict" });
+    expect(onRefetch).toHaveBeenCalledTimes(1);
+    // Not the success path: `onApplied` is what the applied board uses, and
+    // firing it here would tell the page a write landed that never did.
+    expect(onApplied).not.toHaveBeenCalled();
+  });
+
+  it("leaves the board alone when the apply lands", async () => {
+    // The other side of the same wire. Without this, `onRefetch?.()` moved up
+    // out of the branch and fired on every outcome would still be green above.
+    const onRefetch = vi.fn();
+    const onApplied = vi.fn();
+    const { island } = await planned({ onRefetch, onApplied });
+    net.handler = async (url) => {
+      if (url.endsWith("/checkpoints")) return { id: `cp-${url.split("/")[4]}` };
+      return { applied: 2, conflicts: [] };
+    };
+
+    (step(island).onApply as () => void)();
+    await flush();
+
+    expect(step(island).outcome).toMatchObject({ status: "applied" });
+    expect(onApplied).toHaveBeenCalledTimes(1);
+    expect(onRefetch).not.toHaveBeenCalled();
+  });
+
+  it("does not refetch on a real court clash, which no refresh can fix", async () => {
+    const onRefetch = vi.fn();
+    const { island } = await planned({ onRefetch });
+    net.handler = async (url) => {
+      if (url.endsWith("/checkpoints")) return { id: `cp-${url.split("/")[4]}` };
+      throw new ApiV1Error("clash", 409, "SCHEDULE_CONFLICT");
+    };
+
+    (step(island).onApply as () => void)();
+    await flush();
+
+    expect(step(island).outcome).toMatchObject({ status: "conflict" });
+    expect(onRefetch).not.toHaveBeenCalled();
+  });
+
+  it("re-sends the SEQ the refresh delivered, so the paid recovery loop terminates", async () => {
+    // THE money assertion. Apply → 409 → re-run (charged) → apply. If the
+    // refusal did not pull the board, the second apply carries the same stale
+    // seq as the first and 409s identically — the organiser can go round this
+    // three times before the rate limit stops them, paying `max(1, Σ−1)`
+    // credits a lap for a plan that cannot land.
+    let island: ReturnType<typeof mount> | null = null;
+    const onRefetch = vi.fn(() => island?.rerender({
+      competitionId: "c1",
+      divisions: FRESH,
+      aiAllowed: true,
+      currency: "usd" as const,
+      fixtures: [],
+      onClose: () => {},
+      onRefetch,
+    } as ConsoleProps));
+
+    const ctx = await planned({ onRefetch });
+    island = ctx.island;
+    staleBoard();
+
+    (step(ctx.island).onApply as () => void)();
+    await flush();
+    const first = net.calls.find((c) => c.url === APPLY_URL);
+    expect(first).toBeDefined();
+    expect(seqsSent(first!.json)).toEqual([
+      ["d1", 4],
+      ["d2", 11],
+    ]);
+
+    // The recovery button the review step offers — a fully priced joint run.
+    net.calls.length = 0;
+    net.handler = async () => PLAN;
+    (step(ctx.island).onReRun as () => void)();
+    await flush();
+
+    staleBoard();
+    (step(ctx.island).onApply as () => void)();
+    await flush();
+    const second = net.calls.find((c) => c.url === APPLY_URL);
+    expect(second).toBeDefined();
+    expect(seqsSent(second!.json)).toEqual([
+      ["d1", 5],
+      ["d2", 12],
+    ]);
   });
 });

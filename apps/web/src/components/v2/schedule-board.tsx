@@ -1184,6 +1184,7 @@ export function ScheduleBoard({
             setAiProposal(null);
           }}
           onApplied={() => router.refresh()}
+          onRefetch={() => router.refresh()}
           onProposalChange={setAiProposal}
         />
       )}
