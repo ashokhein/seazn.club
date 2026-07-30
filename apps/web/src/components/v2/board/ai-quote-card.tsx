@@ -168,9 +168,14 @@ export function AiQuoteCard({
   const oversized = freeDraft
     ? []
     : quote.lines.filter((l) => l.estTokens > tokenBudgetForCredits(l.predictedRung));
-  const oversizedNames = oversized
-    .map((l) => lines.find((x) => x.key === l.key)?.label)
-    .filter((n): n is string => Boolean(n));
+  // EVERY oversized line gets a name. Dropping the unnamed ones instead
+  // (`.filter(Boolean)`) means a joint run whose oversized lines are all
+  // unlabelled yields an empty list and falls through to the singular
+  // "split the division" copy — the very bug the attribution replaced,
+  // reappearing through the back door.
+  const oversizedNames = oversized.map(
+    (l) => lines.find((x) => x.key === l.key)?.label ?? msg("board.ai.quote.thisDivision"),
+  );
   const predictedBudget = tokenBudgetForCredits(
     quote.lines.reduce((n, l) => n + l.predictedRung, 0),
   );
@@ -285,7 +290,7 @@ export function AiQuoteCard({
         {quote.underfunded && <Caution>{msg("board.ai.quote.underfunded")}</Caution>}
         {oversized.length > 0 && (
           <Caution>
-            {joint && oversizedNames.length > 0
+            {joint
               ? plural("board.ai.quote.veryLargeDivisions", oversizedNames.length, {
                   divisions: oversizedNames.join(", "),
                 })

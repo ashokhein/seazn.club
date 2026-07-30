@@ -20,11 +20,21 @@ export type AiRunState =
   | "error";
 export type AiMode = "generate" | "refine" | "repair";
 
-/** Optional narrowing for a run — a repair window, a court subset, or pools. */
+/**
+ * Optional narrowing for a run — a repair window and/or a court subset.
+ *
+ * `pool_ids` WAS DECLARED HERE and forwarded to the server, but nothing on the
+ * board could emit it: the sole scope producer (use-disruption-signals) returns
+ * `{courts?, from?}`. It is deliberately removed rather than left as a spare
+ * option, because the confirm card now mirrors the server's `inScope` to price a
+ * scoped repair and `MovableFixture` carries no `pool_id` — a pool scope would
+ * have narrowed the CHARGE while the card went on quoting the whole division.
+ * Re-adding it means adding `pool_id` to `MovableFixture` and the third
+ * predicate to `movableForRun` in the same change.
+ */
 export interface AiScope {
   from?: string;
   courts?: string[];
-  pool_ids?: string[];
 }
 
 export interface AiConsoleState {
@@ -67,7 +77,13 @@ export type AiConsoleAction =
   | { type: "SET_INSTRUCTION"; value: string; officials?: boolean }
   | { type: "SET_MODE"; mode: AiMode }
   | { type: "SET_SCOPE"; scope: AiScope | undefined }
-  | { type: "SET_RUNG"; rung: number | null; officials?: boolean }
+  // Two actions rather than one with an `officials?` flag: a dropped flag is a
+  // silent mis-wire (Phase B's card writes Phase A's rung, and the price the
+  // organiser confirmed is not the price sent), and no static-markup test can
+  // catch a missing property on a dispatch. Separate types make it a compile
+  // error instead of a test we do not have.
+  | { type: "SET_RUNG"; rung: number | null }
+  | { type: "SET_OFFICIALS_RUNG"; rung: number | null }
   | { type: "RUN_START" }
   | { type: "RUN_FLAGGED" }
   | { type: "RUN_DONE"; plan: AiPlanResponse }
@@ -114,8 +130,11 @@ export function aiConsoleReducer(s: AiConsoleState, a: AiConsoleAction): AiConso
       // Survives a run: the organiser's budget choice is about this division's
       // size, not about one attempt, so a refine after a generate keeps it.
       // RESET (closing the console) is what clears it back to the prediction.
+      return { ...s, rung: a.rung };
+
+    case "SET_OFFICIALS_RUNG":
       // Phase B keeps its own — same reasoning as `officialsInstruction`.
-      return a.officials ? { ...s, officialsRung: a.rung } : { ...s, rung: a.rung };
+      return { ...s, officialsRung: a.rung };
 
     case "RUN_START":
       // A fresh run clears the last error but keeps the current proposal on

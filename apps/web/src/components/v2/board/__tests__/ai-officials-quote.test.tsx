@@ -27,7 +27,9 @@ const enText = en as unknown as Record<string, string>;
 // So a card that reached for the default weights costs twice as much.
 const PACK: RungInput = { movableFixtures: 100, entrants: 24, courts: 4 };
 
-function render(over: { instruction?: string; rung?: number | null } = {}): string {
+function render(
+  over: { instruction?: string; rung?: number | null; priorInstruction?: string } = {},
+): string {
   return renderToStaticMarkup(
     <DictProvider dict={dict} locale="en">
       <AiOfficialsReview
@@ -36,6 +38,7 @@ function render(over: { instruction?: string; rung?: number | null } = {}): stri
         quoteInput={PACK}
         rung={over.rung ?? null}
         onRung={() => {}}
+        priorInstruction={over.priorInstruction ?? ""}
         currency="usd"
         fixtures={[]}
         roster={[]}
@@ -115,6 +118,22 @@ describe("officials confirm card", () => {
     expect(priced).toContain("Credits buy a thinking budget");
   });
 
+  it("does not claim 'free' while the adopt path would be charged", () => {
+    // The per-cell adopt re-runs on the instruction that produced the current
+    // proposal — NOT the textarea. Clear the box after a paid run and a card
+    // keyed only on the textarea reads "flat 1 credit" for a run the server
+    // prices. That is the one direction that bills more than the surface
+    // promised, so an empty box plus a non-empty prior must still show a price.
+    const cleared = render({ instruction: "", priorInstruction: "Senior ref on the final." });
+    expect(creditsShown(cleared)).toBe(1); // this pack is rung 1…
+    expect(cardOnly(cleared)).not.toContain(enText["board.ai.quote.freeDraft"]);
+    expect(cardOnly(cleared)).toContain('role="radiogroup"');
+
+    // Nothing on the screen is priced -> the free-draft state is correct.
+    const virgin = render({ instruction: "", priorInstruction: "" });
+    expect(cardOnly(virgin)).toContain(enText["board.ai.quote.freeDraft"]);
+  });
+
   it("offers the rung control once there is an instruction to spend on", () => {
     const html = render();
     expect(html).toContain('role="radiogroup"');
@@ -132,6 +151,7 @@ describe("officials confirm card", () => {
           quoteInput={{ movableFixtures: 300, entrants: 40, courts: 10 }}
           rung={1}
           onRung={() => {}}
+          priorInstruction=""
           currency="usd"
           fixtures={[]}
           roster={[]}

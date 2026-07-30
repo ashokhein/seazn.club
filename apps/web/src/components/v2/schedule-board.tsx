@@ -55,6 +55,41 @@ function fstatusLabel(msg: (k: MessageKey) => string, s: string): string {
   return label === key ? s.replace("_", " ") : label;
 }
 
+/**
+ * The two AI-pricing inputs the board derives, isolated from the component so
+ * they can be tested — `tsc` catches a MISSING prop on the console, never a
+ * wrong VALUE, and these two numbers are what the confirm card turns into a
+ * credit charge.
+ *
+ * Both must be read from `actions.board`, not from the `fixtures` prop:
+ * `actions.board` carries the optimistic overrides a drag applies before the
+ * RSC refresh lands, and the repair scope is derived from it too. Reading
+ * different sources was harmless when this was a plain count; it stopped being
+ * harmless once a scoped repair started narrowing on court and time, because a
+ * fixture dragged into the scoped court would be quoted against a stale label —
+ * and that under-quotes.
+ */
+export function aiPricingInputs(
+  divisionFixtures: BoardFixture[],
+  activeEntrantCount: number | undefined,
+): Pick<AiBriefContext, "movableFixtures" | "activeEntrants"> {
+  return {
+    // The fixtures themselves, not a count: a scoped repair is quoted on the
+    // fixtures actually in scope (`movableForRun`), and a count cannot be
+    // narrowed after the fact.
+    movableFixtures: divisionFixtures
+      .filter((f) => f.status === "scheduled")
+      .map((f) => ({
+        id: f.id,
+        scheduled_at: f.scheduled_at ? new Date(f.scheduled_at).toISOString() : null,
+        court_label: f.court_label,
+      })),
+    // No division selected (or no count supplied) prices at 0 rather than
+    // guessing — the console only opens on a single division today.
+    activeEntrants: activeEntrantCount ?? 0,
+  };
+}
+
 interface Props {
   divisions: BoardDivision[];
   stages: BoardStage[];
@@ -105,7 +140,13 @@ function addDaysKey(key: string, n: number): string {
 export function ScheduleBoard({
   divisions,
   stages,
-  fixtures,
+  // Renamed on the way in, and used in exactly ONE place: the `useBoardActions`
+  // call below. Everything downstream must read `actions.board`, which layers
+  // the optimistic overrides a drag applies before the RSC refresh lands. That
+  // distinction is load-bearing for money now — the AI confirm card prices a
+  // scoped repair by narrowing on court and time — so the server-shaped list is
+  // given a name that cannot be reached for by accident.
+  fixtures: serverFixtures,
   entrantNames,
   activeEntrantCounts,
   feedLabels,
@@ -153,39 +194,6 @@ export function ScheduleBoard({
   // Entry point is role-gated (not entitlement-gated) so a free org reaches the
   // in-dock paywall; the plan check happens inside the console via aiAllowed.
   const aiAvailable = (canManage ?? canEdit) && single !== null && aiFlagOn;
-
-  // Live brief inputs for the AI console (pre-flight card + chip pickers),
-  // derived from data the board already holds — config, this division's
-  // fixtures, entrant names. Officials come from a fetch-on-open in the console;
-  // only their blackout count is threaded (page-loaded, no client route).
-  const aiBrief = useMemo<AiBriefContext>(() => {
-    const divFixtures = single ? fixtures.filter((f) => f.division_id === single.id) : fixtures;
-    return {
-      courts: cfg.courts,
-      windows: cfg.sessionWindows.length,
-      blackouts: cfg.blackouts.length,
-      constraintsSet:
-        cfg.perEntrantMinRest > 0 ||
-        (cfg.roundMinutes ?? 0) > 0 ||
-        Boolean((cfg as { constraints?: unknown }).constraints),
-      // The fixtures themselves, not a count: a scoped repair has to be quoted
-      // on the fixtures actually in scope (see `movableForRun`), and a count
-      // cannot be narrowed after the fact.
-      movableFixtures: divFixtures
-        .filter((f) => f.status === "scheduled")
-        .map((f) => ({
-          id: f.id,
-          scheduled_at: f.scheduled_at ? new Date(f.scheduled_at).toISOString() : null,
-          court_label: f.court_label,
-        })),
-      pinned: divFixtures.filter((f) => f.schedule_locked).length,
-      entrants: Object.entries(entrantNames)
-        .map(([id, name]) => ({ id, name }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-      activeEntrants: single ? (activeEntrantCounts[single.id] ?? 0) : 0,
-      officialsWithBlackout,
-    };
-  }, [cfg, fixtures, entrantNames, activeEntrantCounts, single, officialsWithBlackout]);
 
   // ------------------------------------------------- division filter (?d=)
   const selectedSlugs = useMemo(() => {
@@ -244,7 +252,7 @@ export function ScheduleBoard({
   );
 
   // ------------------------------------------------------------- actions
-  const actions = useBoardActions(divisions, fixtures, entrantNames, feedLabels, canEdit);
+  const actions = useBoardActions(divisions, serverFixtures, entrantNames, feedLabels, canEdit);
 
   // Whole-division freeze toggle (Jul3/03 §4) — same endpoint the History
   // panel uses, surfaced where organisers actually are when it matters.
@@ -276,9 +284,55 @@ export function ScheduleBoard({
   // block and diff row show (§3). Built from the live board so the diff compares
   // against what is actually on screen. "Final" is a light heuristic (the sole
   // fixture in the last round); there is no junior signal in the board data.
+  // THE division's live fixtures — one definition, deliberately.
+  //
+  // The AI console's brief (which prices the run), the repair scope it is
+  // pre-armed with, and the ghost overlay must all describe the same board. They
+  // used to be derived separately, and once a scoped repair started narrowing on
+  // court and time, that divergence became a money bug: `aiBrief` read the
+  // `fixtures` PROP while the repair scope read `actions.board`, which carries
+  // the optimistic overrides a drag applies before the RSC refresh lands. A
+  // fixture dragged into the scoped court was then quoted against a stale label
+  // — and that under-quotes. Two consumers cannot disagree about one constant.
+  const divBoardFixtures = useMemo(
+    () => (single ? actions.board.filter((f) => f.division_id === single.id) : []),
+    [single, actions.board],
+  );
+
+  // Live brief inputs for the AI console (pre-flight card + chip pickers +
+  // the confirm card's price), derived from data the board already holds.
+  // Officials come from a fetch-on-open in the console; only their blackout
+  // count is threaded (page-loaded, no client route).
+  const aiBrief = useMemo<AiBriefContext>(() => {
+    const divFixtures = single ? divBoardFixtures : actions.board;
+    return {
+      courts: cfg.courts,
+      windows: cfg.sessionWindows.length,
+      blackouts: cfg.blackouts.length,
+      constraintsSet:
+        cfg.perEntrantMinRest > 0 ||
+        (cfg.roundMinutes ?? 0) > 0 ||
+        Boolean((cfg as { constraints?: unknown }).constraints),
+      ...aiPricingInputs(divFixtures, single ? activeEntrantCounts[single.id] : undefined),
+      pinned: divFixtures.filter((f) => f.schedule_locked).length,
+      entrants: Object.entries(entrantNames)
+        .map(([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      officialsWithBlackout,
+    };
+  }, [
+    cfg,
+    divBoardFixtures,
+    actions.board,
+    entrantNames,
+    activeEntrantCounts,
+    single,
+    officialsWithBlackout,
+  ]);
+
   const aiFixtures = useMemo<AiConsoleFixture[]>(() => {
     if (!single) return [];
-    const divFx = actions.board.filter((f) => f.division_id === single.id);
+    const divFx = divBoardFixtures;
     const maxRound = divFx.reduce((m, f) => Math.max(m, f.round_no), 0);
     const atMaxRound = divFx.filter((f) => f.round_no === maxRound).length;
     return divFx.map((f) => ({
@@ -297,17 +351,13 @@ export function ScheduleBoard({
       home_entrant_id: f.home_entrant_id,
       away_entrant_id: f.away_entrant_id,
     }));
-  }, [single, actions.board, entrantNames, feedLabels]);
+  }, [single, divBoardFixtures, entrantNames, feedLabels]);
 
   // ------------------------------------------------------- repair nudge (T16)
   // Client-derived disruptions over the LIVE board + config — a blackout a slot
   // now sits in, a court removed from settings, a match outside the play windows,
   // a postponed match still holding a slot. Zero server calls; the amber banner
   // and the console's repair scope both read this.
-  const divBoardFixtures = useMemo(
-    () => (single ? actions.board.filter((f) => f.division_id === single.id) : []),
-    [single, actions.board],
-  );
   const disruptions = useDisruptionSignals(divBoardFixtures, cfg);
   // Same gates as the launch button (role + single + flag) AND the paid read
   // (aiAllowed) — the nudge only shows when the console it opens is usable. It

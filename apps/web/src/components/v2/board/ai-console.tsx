@@ -14,7 +14,7 @@ import posthog from "posthog-js";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { track, EVENTS } from "@/lib/analytics";
 import { useMsg, usePlural } from "@/components/i18n/dict-provider";
-import { isRung } from "@/lib/ai-rung";
+import { isRung, type Rung } from "@/lib/ai-rung";
 import type { MessageKey } from "@/lib/messages";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { PlanBadge } from "@/components/plan-badge";
@@ -127,6 +127,71 @@ export function movableForRun(
     }
     return true;
   });
+}
+
+/**
+ * The rung a request may carry: 1|2|3, or ABSENT.
+ *
+ * `null` — the organiser left the control on the recommendation — must send no
+ * `rung` at all, so the server sizes the run from its own prediction rather
+ * than freezing a client-side estimate into the price. Anything that is not a
+ * rung is dropped rather than trusted, because the reducer's field is a plain
+ * `number`.
+ *
+ * Split out because it is the ONE line where a confirmed price becomes a sent
+ * price, and the render tests cannot see a request body.
+ */
+export function rungField(rung: number | null): { rung?: Rung } {
+  return rung !== null && isRung(rung) ? { rung } : {};
+}
+
+/**
+ * The Phase A (schedule) request body. Pure, and exported, because everything
+ * else about the confirm card is testable through the render and this is not:
+ * a card can show the right number while the request carries a different one
+ * (or none), and no static-markup assertion would notice.
+ */
+export function schedulePlanBody(
+  state: Pick<AiConsoleState, "rung" | "scope">,
+  args: {
+    instruction: string;
+    mode: AiMode;
+    officialsPolicy?: AiPlanRequest["officials_policy"] | null;
+    prior?: AiPlanRequest["prior"] | null;
+  },
+): AiPlanRequest {
+  return {
+    instruction: args.instruction,
+    mode: args.mode,
+    ...(state.scope ? { scope: state.scope } : {}),
+    // Reads `state.rung` ITSELF rather than accepting it as an argument. A
+    // rung parameter leaves a call site that can quietly pass the OTHER
+    // phase's field, and nothing short of driving a real request would catch
+    // it — three mutations of exactly that shape survived a full green suite.
+    ...rungField(state.rung),
+    ...(args.officialsPolicy ? { officials_policy: args.officialsPolicy } : {}),
+    ...(args.prior ? { prior: args.prior } : {}),
+  };
+}
+
+/** The Phase B (officials) request body — same reasoning, reading the
+ *  `officialsRung` field Phase B's own card writes. */
+export function officialsPlanBody(
+  state: Pick<AiConsoleState, "officialsRung">,
+  args: {
+    instruction: string;
+    schedule: NonNullable<AiOfficialsPlanRequest["schedule"]>;
+    policy: AiOfficialsPlanRequest["policy"];
+    prior?: AiOfficialsPlanRequest["prior"] | null;
+  },
+): AiOfficialsPlanRequest {
+  return {
+    instruction: args.instruction,
+    ...rungField(state.officialsRung),
+    ...(args.schedule.length > 0 ? { schedule: args.schedule } : {}),
+    policy: args.policy,
+    ...(args.prior ? { prior: args.prior } : {}),
+  };
 }
 
 /**
@@ -420,6 +485,13 @@ export function AiConsole({
   // and whether that proposal was produced with a prior (so the grid knows when
   // `diff.changed` means "changed vs prior" — a first draft has none).
   const priorOfficialsInstruction = useRef("");
+  // …and a STATE mirror of it, for the same reason `officialsHadPrior` below is
+  // state: the officials confirm card reads this during render (the adopt path
+  // re-runs on it, so it changes the price), and a ref mutation alone schedules
+  // no re-render — react-hooks/refs correctly rejects a ref read at render
+  // time. Written in lockstep with the ref, immediately before the dispatch
+  // that re-renders anyway.
+  const [priorOfficialsText, setPriorOfficialsText] = useState("");
   // State, not a ref: it drives the `hadPrior` prop read during render
   // (OfficialsStep below) — react-hooks/refs correctly flags a ref read at
   // render time, since a ref mutation alone doesn't schedule the re-render
@@ -465,32 +537,24 @@ export function AiConsole({
     abortRef.current = ac;
     setTraceNonce((n) => n + 1); // fresh trace animation for this run
     dispatch({ type: "RUN_START" });
-    const body: AiPlanRequest = {
+    const body = schedulePlanBody(state, {
       instruction,
       mode,
-      ...(state.scope ? { scope: state.scope } : {}),
-      // The confirm card's rung. Omitted when the organiser left the control
-      // alone (`null`) so the server sizes the run from its own prediction —
-      // sending a number we guessed would freeze a stale client-side estimate
-      // into the price. `isRung` is the boundary filter for the reducer's
-      // untyped `number`.
-      ...(state.rung !== null && isRung(state.rung) ? { rung: state.rung } : {}),
       // A dry officials-coverage preview rides along only when the division has a
       // saved policy (none is persisted today, so this is omitted — see the prop).
-      ...(officialsPolicy ? { officials_policy: officialsPolicy } : {}),
-      ...(mode === "refine" && state.schedulePlan && priorInstruction.current
-        ? {
-            prior: {
+      officialsPolicy,
+      prior:
+        mode === "refine" && state.schedulePlan && priorInstruction.current
+          ? {
               instruction: priorInstruction.current,
               assignments: state.schedulePlan.proposal.map((p) => ({
                 fixture_id: p.fixture_id,
                 scheduled_at: p.scheduled_at,
                 court_label: p.court_label,
               })),
-            },
-          }
-        : {}),
-    };
+            }
+          : null,
+    });
     try {
       const plan = await apiV1<AiPlanResponse>(
         `/api/v1/divisions/${divisionId}/schedule/ai-plan`,
@@ -512,7 +576,10 @@ export function AiConsole({
       const key = aiErrorKey(status, aiErrorCodeOf(err));
       dispatch({ type: "RUN_ERROR", error: { status, message: msg(key), key } });
     }
-  }, [busy, divisionId, msg, officialsPolicy, state.instruction, state.mode, state.rung, state.scope, state.schedulePlan]);
+    // `state` whole, not a field list: the body builder reads the state object
+    // itself (so a call site cannot hand it the wrong phase's rung), which means
+    // a field list would go stale the moment the builder reads a new one.
+  }, [busy, divisionId, msg, officialsPolicy, state]);
 
   // Phase B run. Empty instruction + no prior = the zero-token solver draft (the
   // auto-run on first entry); a non-empty instruction plans with the LLM; a
@@ -535,27 +602,23 @@ export function AiConsole({
         scheduled_at: p.scheduled_at,
         court_label: p.court_label,
       }));
-      const officialsBody: AiOfficialsPlanRequest = {
+      // Phase B's rung is read by the builder from `officialsRung` — never
+      // passed in, so this call site cannot hand it Phase A's.
+      const officialsBody = officialsPlanBody(state, {
         instruction: opts.instruction,
-        // Phase B's own rung, from its own confirm card. Omitted when the
-        // organiser left it on the recommendation, so the server sizes the run
-        // from its own prediction. The empty-instruction draft is quoted flat
-        // at 1 credit server-side (`freeDraftQuote`) and ignores this.
-        ...(state.officialsRung !== null && isRung(state.officialsRung)
-          ? { rung: state.officialsRung }
-          : {}),
-        ...(schedule.length > 0 ? { schedule } : {}),
+        schedule,
         policy: officialsPolicy ?? DEFAULT_OFFICIALS_POLICY,
-        ...(opts.priorAssignments
-          ? { prior: { instruction: priorOfficialsInstruction.current, assignments: opts.priorAssignments } }
-          : {}),
-      };
+        prior: opts.priorAssignments
+          ? { instruction: priorOfficialsInstruction.current, assignments: opts.priorAssignments }
+          : null,
+      });
       try {
         const plan = await apiV1<AiOfficialsPlanResponse>(
           `/api/v1/divisions/${divisionId}/officials/ai-plan`,
           { method: "POST", json: officialsBody, signal: ac.signal },
         );
         priorOfficialsInstruction.current = opts.instruction;
+        setPriorOfficialsText(opts.instruction);
         dispatch({ type: "OFFICIALS_DONE", plan });
       } catch (err) {
         if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
@@ -564,7 +627,8 @@ export function AiConsole({
         dispatch({ type: "RUN_ERROR", error: { status, message: msg(key), key } });
       }
     },
-    [busy, divisionId, msg, officialsPolicy, state.officialsRung, state.schedulePlan],
+    // See the note on `run`'s deps — the body builder reads `state` itself.
+    [busy, divisionId, msg, officialsPolicy, state],
   );
 
   // Auto-run the free solver draft the first time the organiser reaches the
@@ -756,6 +820,7 @@ export function AiConsole({
         <OfficialsStep
           state={state}
           dispatch={dispatch}
+          priorInstruction={priorOfficialsText}
           currency={currency}
           fixtures={fixtures}
           roster={roster ?? []}
@@ -1264,9 +1329,10 @@ function ScheduleStep({
 // schedule plan exists (reducer-gated); the auto-run in the parent fills it with
 // the free solver draft on first entry. The proposal's dry-run placements power
 // the grid's times so it reads consistently with the schedule step.
-function OfficialsStep({
+export function OfficialsStep({
   state,
   dispatch,
+  priorInstruction,
   currency,
   fixtures,
   roster,
@@ -1282,6 +1348,9 @@ function OfficialsStep({
 }: {
   state: AiConsoleState;
   dispatch: (a: Parameters<typeof aiConsoleReducer>[1]) => void;
+  /** The brief that produced the current proposal — what the ADOPT path
+   *  re-runs on, and therefore part of what this step can spend. */
+  priorInstruction: string;
   currency: Currency;
   fixtures: AiConsoleFixture[];
   roster: OfficialsRosterEntry[];
@@ -1306,7 +1375,13 @@ function OfficialsStep({
       placements={placements}
       quoteInput={officialsQuoteInput(fixtures, placements)}
       rung={state.officialsRung}
-      onRung={(rung) => dispatch({ type: "SET_RUNG", rung, officials: true })}
+      onRung={(rung) => dispatch({ type: "SET_OFFICIALS_RUNG", rung })}
+      // The instruction the ADOPT path re-runs on. Adopt replays the brief that
+      // produced the current proposal rather than reading the textarea, so the
+      // card has to know about it — otherwise it claims "flat 1 credit" for a
+      // run the server prices, the one direction that bills more than the
+      // surface promised.
+      priorInstruction={priorInstruction}
       currency={currency}
       fixtures={fixtures}
       roster={roster}

@@ -109,6 +109,7 @@ export function AiOfficialsReview({
   quoteInput,
   rung,
   onRung,
+  priorInstruction,
   currency,
   fixtures,
   roster,
@@ -136,6 +137,9 @@ export function AiOfficialsReview({
   /** Phase B's chosen rung; `null` follows the server's prediction. */
   rung: number | null;
   onRung: (rung: number | null) => void;
+  /** The brief that produced the current proposal. The per-cell ADOPT re-runs
+   *  on THIS, not on the textarea, so the quote has to account for it. */
+  priorInstruction: string;
   /** Org's locked billing currency — the shared out-of-credits block (A6)
    *  prices its Buy-credits ladder in it. */
   currency: Currency;
@@ -162,10 +166,22 @@ export function AiOfficialsReview({
   const msg = useMsg();
   const plural = usePlural();
   // Phase B's quote. An EMPTY instruction is the deterministic solver pass —
-  // no model call, flat 1 credit (`freeDraftQuote`) — so the card must say so
-  // rather than size a run that will spend nothing.
+  // no model call, flat 1 credit (`freeDraftQuote`; it DOES debit the wallet,
+  // "free" there means free of model cost) — so the card says so rather than
+  // sizing a run that spends no tokens.
+  //
+  // But this step has more than one spend path: Re-plan runs the TEXTAREA,
+  // while the per-cell adopt replays `priorInstruction` and never reads the
+  // textarea at all. So "free" has to mean "nothing reachable from this screen
+  // is priced" — otherwise clearing the box after a paid run makes the card
+  // read "flat 1 credit" while an adopt is charged 2-3.
+  //
+  // The trade is deliberate and one-directional: in exactly that window
+  // Re-plan alone would in fact be free, so the card OVER-quotes it.
+  // Over-quoting is the safe error; under-quoting bills someone more than the
+  // surface they confirmed, which is the failure this card exists to prevent.
   const officialsWeights = useMemo(() => officialsRungWeights(), []);
-  const freeDraft = instruction.trim() === "";
+  const freeDraft = instruction.trim() === "" && priorInstruction.trim() === "";
   const quoteLines: QuoteCardLine[] = [
     { key: "officials", label: null, input: quoteInput, chosen: rung },
   ];

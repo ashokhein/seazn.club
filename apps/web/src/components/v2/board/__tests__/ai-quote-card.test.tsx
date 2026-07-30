@@ -270,6 +270,28 @@ describe("AiQuoteCard", () => {
     expect(both).toContain("Under 12s, Under 16s are very large");
   });
 
+  it("never falls back to the singular copy on a joint card, even unlabelled", () => {
+    // `oversizedNames` used to DROP unlabelled lines, so a joint run whose
+    // oversized lines were all unlabelled produced an empty list and fell
+    // through to "This run is very large. Split the division" — the exact bug
+    // the attribution replaced, via the back door.
+    const html = render([line("a", SMALL), line("b", HUGE)]); // both labels null
+    expect(html).not.toContain(enText["board.ai.quote.veryLarge"]);
+    expect(html).toContain(`${enText["board.ai.quote.thisDivision"]} is very large`);
+  });
+
+  it("does not stack the two very-large warnings", () => {
+    // Two HUGE divisions are BOTH individually oversized AND together outgrow
+    // the 224K that 3+3 credits buy (~267K), so both conditions are live at
+    // once — which is what makes this a real test of the `oversized.length === 0`
+    // guard rather than of a case that could never fire.
+    const html = render([line("a", HUGE, null, "Alpha"), line("b", HUGE, null, "Bravo")]);
+    expect(html).toContain("Alpha, Bravo are very large");
+    // Naming the culprits is strictly better advice, so the generic line stays
+    // away: two warnings about one overrun is the noise attribution removed.
+    expect(html).not.toContain(enText["board.ai.quote.veryLargeJoint"]);
+  });
+
   it("tells a joint run to drop divisions when no single one is at fault", () => {
     // Each division fits its own rung-3 budget (est ~114K ≤ 128K), so naming
     // one and telling the organiser to split it would be wrong. Together they
