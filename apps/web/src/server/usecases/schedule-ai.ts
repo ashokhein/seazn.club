@@ -25,6 +25,14 @@ import { spendCredit, walletIdFor } from "@/lib/credits";
 import { rateLimit } from "@/lib/rate-limit";
 import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import { aiRunCostUsd } from "@/lib/ai-pricing";
+import {
+  createTokenMeter,
+  meterStamp,
+  quoteRun,
+  schedulingRungWeights,
+  unmeteredTokenMeter,
+  type TokenMeter,
+} from "@/lib/ai-rung";
 import { deferred } from "@/lib/deferred";
 import { maybeAlertExpensiveRun } from "@/server/usecases/ai-runs-admin";
 import {
@@ -109,6 +117,17 @@ export function zonedIso(value: string | number | Date, tz: string): string {
 }
 
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/** Label stamped on a sibling division's placements. `siblingAssignments`
+ *  (schedule.ts:271) returns bare engine assignments carrying no division
+ *  metadata, so every other division in the competition flattens to this one
+ *  string — deliberately, since a rival's roster must never leak into the pack.
+ *
+ *  Exported because that makes it the ONLY marker separating "another
+ *  division's board" from "this division's own fixed fixtures" in
+ *  `fixtures.obstacles`, and the #350 joint builder keys its sibling removal on
+ *  it. A copied literal there would diverge silently. */
+export const OTHER_DIVISION_LABEL = "Other division";
 
 // ---------------------------------------------------------------------------
 // Pack shape (design/v4/01 §2 + officials per design/v4/03 §2). JSON-serialisable.
@@ -213,6 +232,26 @@ export interface BuildPackOptions {
     instruction: string;
     assignments: { fixture_id: string; scheduled_at: string; court_label: string }[];
   };
+  /** Extra court occupancy handed to the greedy draft solver, on top of this
+   *  division's own fixed fixtures and its siblings' persisted board.
+   *
+   *  Added for the #350 joint pack (competition-schedule-ai.ts): several
+   *  divisions of one competition are drafted in sequence, and each must see
+   *  the slots the divisions before it have just taken. `siblingAssignments`
+   *  only covers what is already PERSISTED, so without this the joint draft
+   *  double-books every shared court label — anchoring the model on an illegal
+   *  board and spending the run's FIXED token budget on repair rounds.
+   *
+   *  Optional and additive: it only widens `existing`, and `generate` is the
+   *  only mode that solves a draft, so no current caller is affected. */
+  extraExisting?: Assignment[];
+  /** Divisions of the same competition to leave OUT of the sibling sweep, on
+   *  top of this one — see `siblingAssignments` (schedule.ts:271). #350: the
+   *  rest of a joint run is not fixed court occupancy, it is being re-planned in
+   *  the same pass, and sibling obstacles carry no division identity, so
+   *  anything surviving the sweep must be provably from outside the run.
+   *  Defaults to none, so no current caller is affected. */
+  excludeDivisionIds?: string[];
 }
 
 /** Movable fixtures respect a repair `scope`: a fixture stays movable if it is
@@ -306,7 +345,13 @@ export async function buildSchedulePack(
       (f) => !movableSet.has(f.id) && f.scheduled_at !== null && f.court_label !== null,
     );
     const obstacleAssignments = obstacleFixtures.map((f) => toAssignment(f, matchMinutes, people));
-    const siblings = await siblingAssignments(tx, divisionId, division.competition_id, matchMinutes);
+    const siblings = await siblingAssignments(
+      tx,
+      divisionId,
+      division.competition_id,
+      matchMinutes,
+      opts.excludeDivisionIds ?? [],
+    );
 
     // Draft: generate → greedy slotFixtures; refine → the prior proposal
     // verbatim; repair → the movable set's current persisted slots.
@@ -364,7 +409,9 @@ export async function buildSchedulePack(
       const result = slotFixtures({
         fixtures: schedulable,
         config: toSlotConfig(settings, 0),
-        existing: [...obstacleAssignments, ...siblings],
+        // extraExisting is the #350 joint pack's already-drafted divisions;
+        // empty for every single-division caller.
+        existing: [...obstacleAssignments, ...siblings, ...(opts.extraExisting ?? [])],
       });
       draft = result.assignments.map((a) => ({
         fixture_id: realIdByRank.get(a.fixtureId) ?? a.fixtureId,
@@ -439,7 +486,7 @@ export async function buildSchedulePack(
         court: a.court,
         from: zonedIso(a.startAt, tz),
         to: zonedIso(a.endAt, tz),
-        label: "Other division",
+        label: OTHER_DIVISION_LABEL,
       })),
     ].sort(
       (a, b) => cmp(a.court, b.court) || cmp(a.from, b.from) || cmp(a.to, b.to) || cmp(a.label, b.label),
@@ -626,15 +673,19 @@ export async function buildSchedulePack(
 // and only decides whether we receive the round. It does make repair rounds 2-3
 // reachable, and each round re-sends the prior round's output as input — so the
 // worst case gets more expensive even though the per-round cost is unchanged.
-const ROUND_TIMEOUT_MS = Number(process.env.SCHEDULING_AI_ROUND_TIMEOUT_MS) || 600_000;
-const MAX_REPAIR_ROUNDS = 2;
+// ROUND_TIMEOUT_MS / MAX_REPAIR_ROUNDS / MAX_TOKENS below are exported for the
+// #350 joint runner (competition-schedule-ai.ts), which drives the same round
+// loop over a multi-division pack and must not fork these numbers. Export only —
+// no caller behaviour changes.
+export const ROUND_TIMEOUT_MS = Number(process.env.SCHEDULING_AI_ROUND_TIMEOUT_MS) || 600_000;
+export const MAX_REPAIR_ROUNDS = 2;
 
 /** Output token ceiling per round. Configurable per environment (same
  *  philosophy as AI_PROVIDER) so a candidate that spends its whole budget on
  *  reasoning can be given more room without a code change. Default of
  *  32_000 is unchanged from the hardcoded value, so the shipped Anthropic
  *  path behaves identically unless this is explicitly overridden. */
-const MAX_TOKENS = Number(process.env.SCHEDULING_AI_MAX_TOKENS) || 32_000;
+export const MAX_TOKENS = Number(process.env.SCHEDULING_AI_MAX_TOKENS) || 32_000;
 
 /** The model every architect run uses (both phases import this — single
  *  source). Default measured live 2026-07-19 (17-fixture pack, adaptive
@@ -781,7 +832,10 @@ export interface AiPlanResult {
 // a court double-booking, or a direct feed scheduled before its source ends.
 // Same taxonomy as the drag-drop board (schedule.ts mapConflicts). Rest,
 // blackout, session-window, person-overlap and indirect order land in warnings.
-function isBlocking(c: Conflict): boolean {
+// Exported so the #350 joint runner classifies a joint conflict report with the
+// SAME taxonomy — a cross-division court clash must block exactly as a
+// within-division one does.
+export function isBlocking(c: Conflict): boolean {
   return c.reason === "court" || (c.reason === "order" && c.direct === true);
 }
 
@@ -944,6 +998,7 @@ async function callModel(
   provider: AiProvider,
   model: string,
   messages: AiTurn[],
+  maxTokens: number = MAX_TOKENS,
 ): Promise<AiChatResponse<AiSchedulePlan> | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ROUND_TIMEOUT_MS);
@@ -952,7 +1007,7 @@ async function callModel(
       model,
       system: SYSTEM_PROMPT,
       messages,
-      maxTokens: MAX_TOKENS,
+      maxTokens,
       reasoning: aiReasoning(model),
       schema: { name: "schedule_plan", zod: AiSchedulePlan },
       signal: controller.signal,
@@ -996,6 +1051,11 @@ export async function runAiPlan(
   movableIds: Set<string>,
   modelOverride?: string,
   providerName?: ProviderName,
+  /** The run's cumulative token meter (lib/ai-rung.ts). ONE instance is shared
+   *  by every ladder rung, so the hard budget spans the whole run instead of
+   *  resetting per rung. Defaults to an unmetered one — behaviour is unchanged
+   *  for callers that do not price a run. */
+  meter: TokenMeter = unmeteredTokenMeter(),
 ): Promise<AiPlanResult> {
   // One provider per run: reasoning blocks are provider-specific and replayed
   // verbatim on repair, so a run that resolved a provider per round could send
@@ -1034,10 +1094,45 @@ export async function runAiPlan(
     cost_usd: costUsd,
   });
 
+  const finalizeFrom = (chosen: NonNullable<typeof best>): AiPlanResult => ({
+    proposal: chosen.plan.assignments.map((a) => ({
+      fixture_id: a.fixture_id,
+      scheduled_at: a.scheduled_at,
+      court_label: a.court_label,
+      ...(a.schedule_locked !== undefined ? { schedule_locked: a.schedule_locked } : {}),
+    })),
+    unschedulable: chosen.plan.unschedulable,
+    warnings: chosen.warnings,
+    blocking: chosen.blocking,
+    diff: computeDiff(chosen.plan, pack),
+    explanations: chosen.plan.explanations,
+    ...(chosen.plan.constraint_suggestions !== undefined
+      ? { constraint_suggestions: chosen.plan.constraint_suggestions }
+      : {}),
+    summary: chosen.plan.summary,
+    usage: usageNow(),
+  });
+
   for (;;) {
+    // Hard token budget (design §5). The meter already holds every prior
+    // round's AND every prior ladder rung's output tokens, so there is nothing
+    // to add here. Below the reserve, stop asking for another round — ship the
+    // best plan already produced, or (nothing produced yet) fail in a way
+    // runLadder can recover from.
+    if (!meter.canStartRound()) {
+      if (best !== null) return finalizeFrom(best);
+      throw new HttpError(
+        422,
+        "AI scheduling stopped: token budget exhausted before a usable plan was produced",
+        "AI_PLAN_FAILED",
+        { usage: usageNow() },
+      );
+    }
+    const roundMaxTokens = meter.clampRound(MAX_TOKENS);
+
     let response: Awaited<ReturnType<typeof callModel>>;
     try {
-      response = await callModel(provider, model, conversation);
+      response = await callModel(provider, model, conversation, roundMaxTokens);
     } catch (err) {
       // A timed-out round still spent the earlier rounds' tokens — ride the
       // accumulated usage on the 422 so callers can meter it (same contract
@@ -1051,6 +1146,11 @@ export async function runAiPlan(
     const roundOutput = response?.usage?.outputTokens ?? 0;
     inputTokens += roundInput;
     outputTokens += roundOutput;
+    // Charge the run's meter the moment usage is known — BEFORE any of the
+    // throw paths below. A round that spent tokens and then refused/failed to
+    // parse must still count against the budget, or a run could loop past its
+    // cap on failures alone.
+    meter.add(roundOutput);
     // Prefer the cost the provider reports; fall back to a derived estimate
     // only when the round produced no reported cost. Never a guess.
     const roundCost =
@@ -1106,25 +1206,7 @@ export async function runAiPlan(
     }
 
     if (blocking.length === 0 || repairRounds >= MAX_REPAIR_ROUNDS) {
-      const chosen = best;
-      return {
-        proposal: chosen.plan.assignments.map((a) => ({
-          fixture_id: a.fixture_id,
-          scheduled_at: a.scheduled_at,
-          court_label: a.court_label,
-          ...(a.schedule_locked !== undefined ? { schedule_locked: a.schedule_locked } : {}),
-        })),
-        unschedulable: chosen.plan.unschedulable,
-        warnings: chosen.warnings,
-        blocking: chosen.blocking,
-        diff: computeDiff(chosen.plan, pack),
-        explanations: chosen.plan.explanations,
-        ...(chosen.plan.constraint_suggestions !== undefined
-          ? { constraint_suggestions: chosen.plan.constraint_suggestions }
-          : {}),
-        summary: chosen.plan.summary,
-        usage: usageNow(),
-      };
+      return finalizeFrom(best!);
     }
 
     // Blocking conflicts remain and rounds are left — send the report back and
@@ -1236,8 +1318,16 @@ function escalationWarningRatio(): number {
 /** Is a plan good enough to ship without re-running on the primary model?
  *  Blocking conflicts are never acceptable — the engine says the schedule is
  *  physically impossible. Warnings are soft (rest, blackout, session window,
- *  cross-person), so they are judged against pack size rather than absolutely. */
-function planIsAcceptable(result: AiPlanResult, movableCount: number): boolean {
+ *  cross-person), so they are judged against pack size rather than absolutely.
+ *
+ *  Exported for the #350 joint ladder, and its parameter widened from
+ *  AiPlanResult to the two fields it actually reads so a joint result (which
+ *  carries division-tagged proposals) satisfies it without a cast. No caller
+ *  behaviour changes — every existing AiPlanResult still matches. */
+export function planIsAcceptable(
+  result: Pick<AiPlanResult, "blocking" | "warnings">,
+  movableCount: number,
+): boolean {
   if (result.blocking.length > 0) return false;
   if (movableCount === 0) return true;
   return result.warnings.length / movableCount <= escalationWarningRatio();
@@ -1368,11 +1458,21 @@ function isRecoverable(err: unknown): boolean {
  * Pure over `attempt`/`acceptable` so it is unit-tested without a network.
  * Generic over the result so both phases reuse it — schedule (AiPlanResult) and
  * officials (OfficialsPlanResult) both carry a `usage` with the same shape.
+ *
+ * The hard token budget (lib/ai-rung.ts) needs NOTHING from this function: the
+ * caller closes over one `TokenMeter` and hands the same instance to every
+ * rung's runner, which charges it per round. Cross-rung accounting therefore
+ * cannot drift from the ladder's own `acc`, and a rung that throws without
+ * riding its usage on the error still has its tokens counted.
  */
 export async function runLadder<T extends { usage: Usage }>(
   rungs: LadderRung[],
   attempt: (rung: LadderRung) => Promise<T>,
   acceptable: (result: T) => boolean,
+  /** Asked BEFORE each rung after the first. Returning false stops escalation
+   *  without recording the rung — a budget-exhausted run must not list models
+   *  it never actually asked in `rungs_tried`. */
+  canEscalate?: () => boolean,
 ): Promise<T & { served_model: string; escalated_from?: string; rungs_tried: string[] }> {
   let acc: Usage = { input_tokens: 0, output_tokens: 0, repair_rounds: 0, cost_usd: 0 };
   const tried: string[] = [];
@@ -1394,9 +1494,34 @@ export async function runLadder<T extends { usage: Usage }>(
     rungs_tried: tried,
     ...(tried.length > 1 ? { escalated_from: tried[0] } : {}),
   });
+  // Exhausted (the ladder ran out of rungs, or escalation was stopped early).
+  // A usable (if degraded) plan beats any failure — ship it. Otherwise throw the
+  // last MEANINGFUL failure over a trailing unconfigured skip, carrying the
+  // accumulated spend + the model that raised it. HttpError.extra is read-only
+  // → rebuild it; provider errors take loose fields.
+  const exhaust = (err: unknown, model: string): never => {
+    const chosen = meaningful ?? { err, model };
+    if (chosen.err instanceof HttpError) {
+      throw new HttpError(chosen.err.status, chosen.err.message, chosen.err.code, {
+        ...(chosen.err.extra ?? {}),
+        usage: acc,
+        model: chosen.model,
+      });
+    }
+    (chosen.err as { usage?: Usage; model?: string }).usage = acc;
+    (chosen.err as { model?: string }).model = chosen.model;
+    throw chosen.err;
+  };
   for (let i = 0; i < rungs.length; i++) {
     const rung = rungs[i]!;
     const last = i === rungs.length - 1;
+    if (i > 0 && canEscalate && !canEscalate()) {
+      if (bestEffort) return finalize(bestEffort.result, bestEffort.model);
+      exhaust(
+        meaningful?.err ?? new HttpError(422, "AI planning stopped before a usable plan", "AI_PLAN_FAILED"),
+        tried[tried.length - 1] ?? rung.model,
+      );
+    }
     tried.push(rung.model);
     try {
       const result = await attempt(rung);
@@ -1410,23 +1535,8 @@ export async function runLadder<T extends { usage: Usage }>(
       const unconfigured = err instanceof HttpError && err.code === "AI_PROVIDER_NOT_CONFIGURED";
       if (!unconfigured) meaningful = { err, model: rung.model };
       if (last) {
-        // Exhausted. A usable (if degraded) plan beats any failure — ship it.
         if (bestEffort) return finalize(bestEffort.result, bestEffort.model);
-        // No plan at all: throw the last MEANINGFUL failure over a trailing
-        // unconfigured skip, carrying the accumulated spend + the model that
-        // raised it. HttpError.extra is read-only → rebuild it; provider errors
-        // take loose fields.
-        const chosen = meaningful ?? { err, model: rung.model };
-        if (chosen.err instanceof HttpError) {
-          throw new HttpError(chosen.err.status, chosen.err.message, chosen.err.code, {
-            ...(chosen.err.extra ?? {}),
-            usage: acc,
-            model: chosen.model,
-          });
-        }
-        (chosen.err as { usage?: Usage; model?: string }).usage = acc;
-        (chosen.err as { model?: string }).model = chosen.model;
-        throw chosen.err;
+        exhaust(err, rung.model);
       }
     }
   }
@@ -1435,15 +1545,24 @@ export async function runLadder<T extends { usage: Usage }>(
 }
 
 /** Wire the ladder to the real architect: each rung runs on its own provider,
- *  and a degraded plan escalates via the existing quality gate. */
+ *  and a degraded plan escalates via the existing quality gate. The `meter`
+ *  (lib/ai-rung.ts) is the SAME instance for every rung, so the run's hard
+ *  token budget spans the whole ladder rather than resetting per rung.
+ *
+ *  Escalation stops the moment the meter refuses a round: continuing would
+ *  enter each remaining rung only to have it throw before any network call,
+ *  which spends nothing but writes models into `rungs_tried` that were never
+ *  actually asked. */
 async function runAiPlanLadder(
   pack: SchedulePack,
   movableIds: Set<string>,
+  meter: TokenMeter,
 ): Promise<AiPlanResult & { served_model: string; escalated_from?: string; rungs_tried: string[] }> {
   return runLadder(
     planRungs(),
-    (rung) => runAiPlan(pack, movableIds, rung.model, rung.provider),
+    (rung) => runAiPlan(pack, movableIds, rung.model, rung.provider, meter),
     (result) => planIsAcceptable(result, movableIds.size),
+    () => !meter.stoppedOnBudget,
   );
 }
 
@@ -1517,15 +1636,40 @@ export async function aiPlanForDivision(
 
   const { pack, movableIds } = await buildSchedulePack(auth, divisionId, input);
 
+  // Token-weighted credit pricing (lib/ai-rung.ts). One line — a division is
+  // one unit of work — so `credits` is just its rung; #350's joint solve passes
+  // one line per division to the SAME function and gets the batch discount.
+  // The server always recomputes this: a client's displayed prediction, and its
+  // `rung` override, are advisory. A pick below the prediction is honoured and
+  // stamps `underfunded`.
+  const quote = quoteRun(
+    [
+      {
+        key: divisionId,
+        input: {
+          movableFixtures: movableIds.size,
+          entrants: pack.entrants.length,
+          courts: pack.settings.courts.length,
+        },
+        ...(input.rung !== undefined ? { chosen: input.rung } : {}),
+      },
+    ],
+    schedulingRungWeights(),
+  );
+  // One meter for the whole run — every ladder rung and repair round charges it.
+  // Sized by the movable fixtures so the per-round reserve is large enough to
+  // actually emit this pack's assignment list.
+  const meter = createTokenMeter(quote.budget, { units: movableIds.size });
+
   let result: AiPlanResult & { served_model: string; escalated_from?: string; rungs_tried: string[] };
   try {
-    // Reserve 1 credit → run the architect → settle on success / release on
-    // failure (SPEC-2 §5.2). PaymentRequiredError("ai.credits") from an empty
+    // Reserve `quote.credits` → run the architect → settle on success / release
+    // on failure (SPEC-2 §5.2). PaymentRequiredError("ai.credits") from an empty
     // wallet falls through the catch below untouched (it matches neither
     // planErr nor providerErr) and rethrows as the 402.
-    result = await spendCredit(walletId, auth.orgId, 1, async () => ({
+    result = await spendCredit(walletId, auth.orgId, quote.credits, async () => ({
       aiRunId: crypto.randomUUID(),
-      result: await runAiPlanLadder(pack, movableIds),
+      result: await runAiPlanLadder(pack, movableIds, meter),
     }));
   } catch (err) {
     // Meter a refused / un-correctable / timed-out run's token spend too —
@@ -1590,6 +1734,13 @@ export async function aiPlanForDivision(
                     // already computed, the same number already reported to
                     // PostHog as `fixtures`.
                     pack_units: movableIds.size,
+                    // Token-weighted credit pricing (lib/ai-rung.ts): what was
+                    // charged, what it bought, what the predictor said, how much
+                    // the run actually spent and whether the BUDGET cut it off
+                    // — even on a failed run the credits were reserved, so the
+                    // ledger stamps it here too. One helper builds this fragment
+                    // for every surface so they cannot drift.
+                    ...meterStamp(quote, meter),
                     // Provider diagnostics stay server-side (ops needs the real
                     // status; the tenant gets a bare 503).
                     ...(providerErr
@@ -1644,6 +1795,13 @@ export async function aiPlanForDivision(
                 // correct instrumentation ahead of any size-weighted pricing
                 // decision (deferred, SPEC-2 §5.1).
                 pack_units: movableIds.size,
+                // Token-weighted credit pricing (lib/ai-rung.ts): what was
+                // charged, what token budget it bought, what the predictor
+                // said, how much of the budget this run actually spent, whether
+                // the org picked below the prediction, and whether the budget
+                // cut the run short — the last is what makes a mispriced rung
+                // visible instead of looking like a merely degraded plan.
+                ...meterStamp(quote, meter),
                 // Ladder telemetry: which model was tried first and rejected,
                 // the full ordered chain of rungs attempted (so a 3-rung fall
                 // gemini→sonnet→grok is auditable — `model` above is only the
@@ -1732,5 +1890,10 @@ export async function aiPlanForDivision(
       repair_rounds: result.usage.repair_rounds,
     },
     officials_coverage,
+    // Token-weighted credit pricing (lib/ai-rung.ts) — what was charged, what
+    // the predictor said, whether the confirm card's warning applies, and
+    // whether the budget cut the run short, so the client can reconcile against
+    // its own (advisory) prediction.
+    ...meterStamp(quote, meter),
   };
 }

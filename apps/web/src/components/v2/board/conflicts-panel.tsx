@@ -15,27 +15,77 @@ import {
 import { useMsg, usePlural } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 
+/**
+ * The count badge, plus the state that only exists because the count can lie
+ * (#230 item 5).
+ *
+ * A failed check leaves `conflicts` at whatever the last successful one
+ * returned — often nothing at all, which renders identically to a clean board.
+ * So the unavailable notice has to survive `count === 0`, which is exactly
+ * where the badge itself returns `null`. Ordering the early return AFTER the
+ * failure check is the whole fix on this side; putting it back first hides the
+ * only signal an organiser ever gets.
+ */
 export function ConflictsBadge({
   count,
   open,
   onToggle,
+  checkFailed,
+  checking,
+  onRetry,
 }: {
   count: number;
   open: boolean;
   onToggle: () => void;
+  checkFailed: boolean;
+  checking: boolean;
+  onRetry: () => void;
 }) {
   const plural = usePlural();
-  if (count === 0) return null;
+  if (count === 0 && !checkFailed) return null;
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-expanded={open}
-      aria-label={plural("board.conflicts.badgeAria", count)}
-      className="inline-flex min-h-8 items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      {count > 0 && (
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          aria-label={plural("board.conflicts.badgeAria", count)}
+          className="inline-flex min-h-8 items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+        >
+          {plural("board.conflicts.badge", count)}
+        </button>
+      )}
+      {/* …but NOT while the panel is open. The panel renders the same notice,
+          with the same accessible name, so both together are two `role="status"`
+          regions announcing one sentence and two buttons answering to "Check
+          again" — a strict locator then resolves neither. The panel is the more
+          specific surface, so the toolbar yields to it. */}
+      {checkFailed && !open && <CheckUnavailable checking={checking} onRetry={onRetry} />}
+    </span>
+  );
+}
+
+/** "Conflict check unavailable · Check again" — one component so the toolbar
+ *  and the panel cannot drift into two different ways of saying it. */
+function CheckUnavailable({ checking, onRetry }: { checking: boolean; onRetry: () => void }) {
+  const msg = useMsg();
+  return (
+    <span
+      role="status"
+      className="inline-flex min-h-8 flex-wrap items-center gap-1.5 rounded-full border border-slate-300 bg-slate-50 px-2.5 py-1 text-xs text-slate-600"
     >
-      {plural("board.conflicts.badge", count)}
-    </button>
+      <span aria-hidden>⚠</span>
+      <span>{msg("board.conflicts.checkFailed")}</span>
+      <button
+        type="button"
+        onClick={onRetry}
+        disabled={checking}
+        className="font-semibold text-purple-700 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {msg("board.conflicts.retryCheck")}
+      </button>
+    </span>
   );
 }
 
@@ -47,6 +97,9 @@ export function ConflictsPanel({
   divisionNames,
   onJump,
   onClose,
+  checkFailed,
+  checking,
+  onRetryCheck,
 }: {
   conflicts: BoardConflict[];
   board: BoardFixture[];
@@ -55,6 +108,10 @@ export function ConflictsPanel({
   divisionNames: Record<string, string>;
   onJump: (fixtureId: string) => void;
   onClose: () => void;
+  /** #230 item 5 — a list nobody could refresh is not the same as a clean one. */
+  checkFailed: boolean;
+  checking: boolean;
+  onRetryCheck: () => void;
 }) {
   const msg = useMsg();
   const conflictLabel = (code: string) => {
@@ -96,6 +153,15 @@ export function ConflictsPanel({
           ✕
         </button>
       </div>
+      {/* The list dates itself. Without this line an empty panel is an
+          assertion ("nothing is wrong") that the app may have no evidence for. */}
+      <p className="mb-2 text-[11px] text-slate-500">
+        {checkFailed ? (
+          <CheckUnavailable checking={checking} onRetry={onRetryCheck} />
+        ) : (
+          msg("board.conflicts.checkedJustNow")
+        )}
+      </p>
       <ul className="space-y-2">
         {conflicts.map((c, i) => {
           const f = byId.get(c.fixture_id);

@@ -378,6 +378,28 @@ export async function drainAiCredits(orgId: string): Promise<void> {
   });
 }
 
+/**
+ * An org's AI-credit balance — the ledger summed, which is what
+ * `lib/credits.ts` treats as authoritative (`balance_after` is a per-row
+ * snapshot and the oversell guard, not the balance).
+ *
+ * The ONLY observable that proves what a run was actually charged. The plan
+ * response's `credits` is rendered nowhere on the board, so a UI assertion can
+ * only ever show that the CARD agreed with itself; the wallet is where the
+ * organiser's money went.
+ */
+export async function aiCreditBalance(orgId: string): Promise<number> {
+  return withDb(async (sql) => {
+    const [row] = await sql<{ bal: string | null }[]>`
+      select coalesce(sum(delta), 0)::text as bal
+        from ai_credit_ledger
+       where wallet_id = (
+         select coalesce(subscription_id, id)::text from organizations where id = ${orgId}
+       )`;
+    return Number(row?.bal ?? 0);
+  });
+}
+
 /** The most recent AI-sourced schedule apply audit for a division (v4 Task 17):
  *  the division_events 'schedule_applied' row with payload.source = 'ai'. */
 export async function getAiScheduleApply(

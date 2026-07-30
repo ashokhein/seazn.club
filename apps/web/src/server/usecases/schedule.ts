@@ -44,7 +44,10 @@ const iso = (t: number): string => new Date(t).toISOString();
 
 // Every schedule write invalidates both public cache layers (the same pattern
 // as scoring, doc 09 §3 / doc 12 §2) and refreshes any open boards.
-function afterScheduleWrite(
+// Exported for the #350 joint apply (competition-schedule-apply.ts), which fires
+// it once per written division AFTER its single transaction commits — same
+// placement as `applySchedule`, not a second copy of the invalidation list.
+export function afterScheduleWrite(
   divisionId: string,
   competitionId: string,
   reason: "schedule" | "publish" | "start",
@@ -59,7 +62,10 @@ function afterScheduleWrite(
 // rain-rescheduling touches remaining fixtures only).
 export const MOVABLE_STATUS = "scheduled";
 // Statuses that still occupy a court (cancelled/abandoned ones do not).
-const OCCUPYING = ["scheduled", "in_play", "decided", "finalized", "forfeited"];
+// Exported so the #350 joint builder derives its "fixed occupancy" set as
+// OCCUPYING minus MOVABLE_STATUS rather than copying the list — a copy would
+// drift silently the day a status is added here.
+export const OCCUPYING = ["scheduled", "in_play", "decided", "finalized", "forfeited"];
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -196,7 +202,9 @@ export function scopeLocked(
   );
 }
 
-async function divisionLockState(
+// Exported for the #350 joint apply: a locked division must abort a joint write
+// on exactly the terms it aborts a single-division one.
+export async function divisionLockState(
   tx: Tx,
   divisionId: string,
 ): Promise<{ frozen: boolean; scopes: LockedScope[] }> {
@@ -273,11 +281,23 @@ export async function siblingAssignments(
   divisionId: string,
   competitionId: string,
   fallbackMatchMinutes: number,
+  /** Further divisions to leave out, on top of `divisionId` itself.
+   *
+   *  Added for the #350 joint pack: when several divisions of a competition are
+   *  planned together the others are not "siblings" whose board is fixed — they
+   *  are in the same run and their movable fixtures are being re-placed. Serving
+   *  them here hands a division the rest of the run's own work as immovable
+   *  obstacles, and since siblings carry NO division identity a caller cannot
+   *  tell those entries from a genuinely-outside division's booking. Excluding
+   *  them at the source is what makes "this obstacle is from outside the run" a
+   *  fact instead of a slot-key guess. */
+  excludeDivisionIds: readonly string[] = [],
 ): Promise<Assignment[]> {
+  const excluded = [...new Set([divisionId, ...excludeDivisionIds])];
   const rows = await tx<FixtureLite[]>`
     select ${tx(FIXTURE_LITE_COLS)} from fixtures
     where division_id in (select id from divisions
-                          where competition_id = ${competitionId} and id <> ${divisionId})
+                          where competition_id = ${competitionId} and id not in ${tx(excluded)})
       and scheduled_at is not null and court_label is not null
       and status in ${tx(OCCUPYING)}`;
   if (rows.length === 0) return [];
@@ -644,7 +664,10 @@ export interface MoveInput {
 /** Optimistic-concurrency guard (v3/11 gap 10): schedule writes may carry the
  *  division seq the client rendered from; a stale token means another admin
  *  edited the board since — 409 with the current seq so the client resyncs. */
-async function assertFreshSeq(
+// Exported for the #350 joint apply, which asserts it once per division inside
+// ONE transaction: a stale token on any division must abort every division's
+// write, and that only holds if both sides raise the identical SEQ_CONFLICT.
+export async function assertFreshSeq(
   tx: Tx,
   divisionId: string,
   expectedSeq: number | undefined,

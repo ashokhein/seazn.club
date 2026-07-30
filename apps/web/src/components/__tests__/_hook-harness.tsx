@@ -49,6 +49,14 @@ interface HookDispatcher {
    *  re-runs every render — and if it sets state, that is an infinite loop.
    *  A harness that re-runs what production runs once is not a harness. */
   useMemo: (create: () => Cell, deps: Deps) => Cell;
+  /** Memoised by `deps` like `useMemo`, and kept in its own cell list. Only the
+   *  identity is memoised: the function returned on a render whose deps changed
+   *  must be the NEW one, or it closes over stale state for ever. */
+  useCallback: (fn: Cell, deps: Deps) => Cell;
+  /** The SAME mutable box on every render. A component's in-flight guard is a
+   *  ref precisely because state is read through a closure a second click can
+   *  beat; a box minted per render would let every such guard pass untested. */
+  useRef: (initial: Cell) => { current: Cell };
   /** The context's DEFAULT value — there is no provider tree here. That is the
    *  production path for the copy hooks (`useMsg` falls back to the English
    *  catalog outside a `DictProvider`), so the sentences a test reads are the
@@ -153,6 +161,14 @@ export function renderIsland<P>(
   // HookDispatcher for why this is not a straight-through call.
   const memos: { deps: Deps; value: Cell }[] = [];
   let memoCursor = 0;
+  // Callback cells get their own list rather than sharing the memo one: every
+  // hook type here is keyed by its OWN call order, and mixing two would make
+  // each list's indices depend on the other's call sites.
+  const callbacks: { deps: Deps; value: Cell }[] = [];
+  let callbackCursor = 0;
+  // Ref boxes are created once and never replaced — that identity IS the hook.
+  const refs: { current: Cell }[] = [];
+  let refCursor = 0;
 
   const dispatcher: HookDispatcher = {
     useState(initial) {
@@ -181,6 +197,17 @@ export function renderIsland<P>(
       if (depsChanged(before, deps)) memos[index] = { deps, value: create() };
       return memos[index]!.value;
     },
+    useCallback(fn, deps) {
+      const index = callbackCursor++;
+      const before = callbacks[index];
+      if (depsChanged(before, deps)) callbacks[index] = { deps, value: fn };
+      return callbacks[index]!.value;
+    },
+    useRef(initial) {
+      const index = refCursor++;
+      if (index >= refs.length) refs.push({ current: initial });
+      return refs[index]!;
+    },
     useContext(context) {
       return context._currentValue;
     },
@@ -190,6 +217,8 @@ export function renderIsland<P>(
     cursor = 0;
     effectCursor = 0;
     memoCursor = 0;
+    callbackCursor = 0;
+    refCursor = 0;
     pending = [];
     const previous = slot.H;
     slot.H = dispatcher;

@@ -1,8 +1,58 @@
 # Multi-Division AI Scheduling (Competition Board) — Design
 
 **Date:** 2026-07-28
+**Amended:** 2026-07-29 — §2/§6/§7 budget formula (see "Amendment" below)
 **Status:** Approved by owner (brainstorm session), pending implementation plan
 **Depends on:** Token-weighted AI credits design (`2026-07-28-ai-credit-token-weight-design.md`, issue #348) — this feature builds on its predictor, rung pricing, and budget meter.
+
+## Amendment — 2026-07-29 (owner-approved)
+
+The original §2 budget line, "32K × credits charged (discounted total)", was
+found to conflict with #348 and to make a joint run strictly worse than running
+the same divisions separately. Two corrections, both owner-approved, and both
+already implemented in `apps/web/src/lib/ai-rung.ts` (PR #359):
+
+**1. The budget curve is not linear.** #348 approved 1cr→32K, 2cr→64K,
+3cr→**128K**. `32K × credits` gives 96K at 3 credits — a cut to the largest
+single-division runs that nobody agreed to. The curve now keeps the approved
+values and extends past 3 at a flat step:
+
+```
+tokenBudgetForCredits(n) = n <= 3 ? {1: 32K, 2: 64K, 3: 128K}[n]
+                                  : 128K + 32K * (n - 3)
+```
+
+**2. The budget is sized from the UNDISCOUNTED rung total, not from the credits
+charged.** Under the original wording, two joint rung-1 divisions pay
+`max(1, 2−1) = 1` credit and would have received 32K — half the budget the same
+two divisions get when run separately. The batch discount is a margin gift, not
+a capability cut, so pricing and budget are now decoupled:
+
+```
+rungTotal = Σ chosen rungs                  // sizes the budget
+credits   = max(1, rungTotal − 1)           // what the org pays  (≥2 divisions)
+budget    = tokenBudgetForCredits(rungTotal)
+```
+
+Worked: Div A rung 1 + Div B rung 2 + Div C rung 3 → rungTotal 6 → **charge 5
+credits**, **budget 224K** (`128K + 32K×3`).
+
+The "credits buy a budget" invariant still holds from the buyer's side — what
+they buy is sized by the work they asked for; the discount reduces the price of
+that work, not the work itself.
+
+**Also landed ahead of this issue** (PR #359, so §7/§10 need no further design):
+- `quoteRun(lines, weights)` already takes one line per division and applies the
+  `max(1, Σ−1)` discount — the joint path calls the same function the division
+  path calls, with more lines.
+- `meterStamp()` already emits the joint payload shape §10 asks for
+  (`{credits, discount, budget, spent_tokens, divisions: [{id, rung,
+  predicted_rung, underfunded}]}`), plus `stopped_on_budget` — a stamp §10 did
+  not have, which distinguishes "the budget cut this run short" from "the plan
+  was merely degraded".
+- Every budget value is env-overridable (`AI_RUNG_BUDGET_1/2/3`,
+  `AI_RUNG_BUDGET_STEP`), so a mispriced joint run can be loosened in prod
+  without a deploy.
 
 ## 1. Problem
 
@@ -15,7 +65,7 @@ The competition-level schedule board (`/o/[orgSlug]/c/[compSlug]/schedule`, Pro-
 | Shape | **B — one joint solve.** All selected divisions' movable fixtures in a single AI run (rejected: sequential orchestration, hierarchical meta-pass). |
 | Size ceiling | **Block over cap.** >500 movable fixtures total → refuse with "too large — schedule per division". No silent fallback, no cap raise. |
 | Pricing | **Sum of division rungs − 1, min 1** (batch discount). Each division predicted individually by the #348 predictor; breakdown shown to user. |
-| Budget | **Follows charged credits**: total-run generation budget = 32K × credits charged (discounted total). Keeps the "credits buy budget" invariant; discount justified by shared context. |
+| Budget | ~~Follows charged credits: 32K × credits charged (discounted total).~~ **SUPERSEDED 2026-07-29** — sized from the UNDISCOUNTED rung total on the #348 curve: `tokenBudgetForCredits(Σ rungs)`. See Amendment above. |
 | Officials | Joint officials (Phase B) **out of scope** — stays per-division. |
 
 ## 3. Current state (file:line anchors)
@@ -46,21 +96,49 @@ Extends the existing Phase-A prompt (`schedule-ai-prompt.ts`):
 
 ## 6. Engine
 
-- Same escalation ladder and #348 cumulative token meter. Budget = 32K × credits charged.
+- Same escalation ladder and #348 cumulative token meter — one `TokenMeter` (`lib/ai-rung.ts`) shared by every rung and repair round of the joint run. Budget = `tokenBudgetForCredits(Σ rungs)` (Amendment).
+- The meter's per-round reserve is size-aware (`max(2_000, movableFixtures × 40)`), which matters more here than per-division: a joint pack's assignment list is the sum of every selected division's.
 - Repair-round validation runs `validateAssignments` over ALL selected divisions' assignments jointly, so cross-division double-booking is caught in-run, not at apply.
 
 ## 7. Pricing
 
-- Per-division rung via the #348 predictor (`ai-rung.ts`), then `credits = max(1, Σ rungs − 1)`.
-- Breakdown UI: "Div A 1 + Div B 2 + Div C 3 − 1 batch discount = 5 credits". Per-division rung chips adjustable 1-3 (same semantics as single-division; below-predicted picks stamp `underfunded` per division).
-- One `spendCredit(walletId, orgId, N)` reserve; one settle/release, atomic with the run. Grant-first order, wallet-only gating unchanged.
-- Margin note: discount gives back ≈ one credit per joint run; worst-case COGS remains well under the retail sum of the rungs.
+- Per-division rung via the #348 predictor, then `credits = max(1, Σ rungs − 1)`. **Already implemented**: `quoteRun(lines, schedulingRungWeights())` in `lib/ai-rung.ts` takes one `{key: divisionId, input, chosen?}` line per division and returns `{lines, rungTotal, credits, discount, budget, estTokens, underfunded}`. The division path calls the same function with one line — there is no second pricing code path to keep in sync.
+- Breakdown UI: "Div A 1 + Div B 2 + Div C 3 − 1 batch discount = 5 credits" — read straight off `quote.lines` / `quote.discount` / `quote.credits`. Per-division rung chips adjustable 1-3 (same semantics as single-division; below-predicted picks stamp `underfunded` per division, and `quote.underfunded` is the any-line roll-up).
+- One `spendCredit(walletId, orgId, quote.credits)` reserve; one settle/release, atomic with the run. Grant-first order, wallet-only gating unchanged.
+- Margin note: discount gives back ≈ one credit per joint run; worst-case COGS remains well under the retail sum of the rungs. Note the budget is NOT discounted (Amendment), so the COGS ceiling of a joint run is the undiscounted `tokenBudgetForCredits(Σ rungs)` — still bounded, and bounded by the same 500-fixture cap.
 
 ## 8. API
 
 - `POST /api/v1/competitions/[id]/schedule/ai-plan` — body `{divisionIds, rungOverrides?}`. Server recomputes rungs + discount, validates the cap. Gates: `scheduling.ai` + `scheduling.multi_division` + wallet ≥ N.
 - **`divisionIds.length ≥ 2` required** (400 otherwise, "use the division schedule page") — prevents discount arbitrage where a single rung-2/3 division runs cheaper through the board (`max(1, rung−1)`) than through the division flow.
-- `GET /api/v1/competitions/[id]/schedule/ai-last` — last joint plan for the review UI.
+- `GET /api/v1/competitions/[id]/schedule/ai-last` — ~~last joint plan for the review UI.~~
+  **CORRECTED 2026-07-29 (ruling R15).** This line assumed the division flow persists a
+  proposal for later recall. **It does not.** `lastAiApply`
+  (`apps/web/src/server/usecases/schedule.ts:615-645`) reads the `schedule_applied`
+  division event where `payload->>'source' = 'ai'` and returns the last **applied** plan —
+  `{at, instruction, summary}`. No proposal-recall capability exists anywhere in the
+  product, so there was nothing for the joint endpoint to mirror. A propose-only run
+  writes down its price and usage, never its plan.
+
+  The joint endpoint therefore mirrors the twin's contract exactly:
+
+  ```
+  { last: { at, instruction, summary } | null, runs: { used, max: null } }
+  ```
+
+  `last` is sourced from the joint apply event (`JOINT_APPLY_EVENT` =
+  `"schedule.applied_multi"`), which **Task 6 writes** — so `last` is legitimately `null`
+  until the atomic apply lands. `runs.used` counts `schedule.ai_generated_multi` for the
+  competition; this also fixes a real gap, since `lastAiApply`'s counter is scoped to
+  `schedule.ai_generated` with a matching `division_id` and so never counts joint runs.
+
+  Rejected alternative: returning `AiCompetitionPlanResponse.partial()` (price + usage
+  only). It publishes a shape into `openapi/v1.public.json` that Task 6 would then have to
+  breaking-change, and it inlined the whole plan response into the public spec
+  (+714 lines per file).
+
+  The live proposal stays in board client state between run and apply — which is what the
+  division board already does.
 - Apply is server-side at plan end (mirrors per-division flow): **one transaction writes all divisions or nothing** — no partial competition apply.
 - Rate limit: `ai-plan-competition:{competitionId}` max 3/hour. Per-division 5/hr brakes untouched and not double-counted by joint runs.
 

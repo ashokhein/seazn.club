@@ -1,9 +1,13 @@
 // Staff ledger of AI Schedule Architect runs (v4). Reads the competition audit
-// ledger cross-org on the superuser connection: 'schedule.ai_generated'
-// (Phase A successes — the quota-counted rows), 'schedule.ai_officials_generated'
-// (Phase B successes, incl. zero-token solver drafts) and 'schedule.ai_failed'
-// (metered failures/timeouts, both phases — never quota-counted). Older rows
-// predate the usage/cost payload and render as "—".
+// ledger cross-org on the superuser connection, over every type in
+// `AI_RUN_EVENT_TYPES` (ai-runs-admin.ts) — ONE list, because a run class listed
+// in one place and not the other books revenue against zero cost. Today that is
+// five: 'schedule.ai_generated' (Phase A successes) and its '_multi' twin
+// (#350's joint run, the costliest class on the platform),
+// 'schedule.ai_officials_generated' (Phase B successes, incl. zero-token solver
+// drafts), and 'schedule.ai_failed' / 'schedule.ai_failed_multi' (metered
+// failures and timeouts, never quota-counted). Older rows predate the
+// usage/cost payload and render as "—".
 import { requireStaff } from "@/lib/admin";
 import { listAiRuns, aiRunTotals, type AiRunRow } from "@/server/usecases/ai-runs-admin";
 

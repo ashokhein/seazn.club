@@ -20,11 +20,21 @@ export type AiRunState =
   | "error";
 export type AiMode = "generate" | "refine" | "repair";
 
-/** Optional narrowing for a run — a repair window, a court subset, or pools. */
+/**
+ * Optional narrowing for a run — a repair window and/or a court subset.
+ *
+ * `pool_ids` WAS DECLARED HERE and forwarded to the server, but nothing on the
+ * board could emit it: the sole scope producer (use-disruption-signals) returns
+ * `{courts?, from?}`. It is deliberately removed rather than left as a spare
+ * option, because the confirm card now mirrors the server's `inScope` to price a
+ * scoped repair and `MovableFixture` carries no `pool_id` — a pool scope would
+ * have narrowed the CHARGE while the card went on quoting the whole division.
+ * Re-adding it means adding `pool_id` to `MovableFixture` and the third
+ * predicate to `movableForRun` in the same change.
+ */
 export interface AiScope {
   from?: string;
   courts?: string[];
-  pool_ids?: string[];
 }
 
 export interface AiConsoleState {
@@ -37,6 +47,43 @@ export interface AiConsoleState {
    *  clobbers the other phase's text. */
   officialsInstruction: string;
   scope?: AiScope;
+  /** Credit rung the organiser picked on the confirm card (#348). `null` — the
+   *  initial state — means "follow the server's prediction", which is NOT the
+   *  same as picking 1: the request then omits `rung` entirely and the server
+   *  sizes the run itself. Only 1|2|3 are ever sent; the field is a plain
+   *  `number` so the reducer stays free of the Rung import and any junk value
+   *  is filtered at the request boundary rather than trusted here. */
+  rung: number | null;
+  /** Phase B's own rung. Separate from `rung` on purpose: officials packs are
+   *  priced with different weights (`officialsRungWeights`) over a different
+   *  pack, so the two phases predict independently and one phase's choice must
+   *  never be read as the other's. */
+  officialsRung: number | null;
+  /**
+   * The Phase B brief that produced the officials proposal currently on screen.
+   *
+   * Reducer state rather than a ref, because it is a PRICE input and not
+   * bookkeeping: the per-cell adopt re-runs on this string rather than on the
+   * textarea, so an empty textarea with a non-empty value here still means a
+   * chargeable run is one click away. Living in the reducer means "what did the
+   * last run ask for" is written in exactly one place and can be asserted
+   * directly — a ref assigned inside an async callback cannot be, which is how
+   * the under-quote guard came to be untested.
+   *
+   * THIS VALUE TOUCHES MONEY. It has three consumers, and the first of them is
+   * a charge, not a record:
+   *   1. `ai-console.tsx` `onAdopt` sends it as the run's own `instruction` —
+   *      and `input.instruction.trim() === ""` is the single thing that picks
+   *      `freeDraftQuote` over `quoteRun` server-side (`officials-ai.ts:1104`,
+   *      spent at `:1130`). Empty here = charged 1; non-empty = charged 1/2/3.
+   *   2. `officialsPlanBody` puts it on the wire as `prior.instruction`.
+   *   3. the apply audit line.
+   * Because (1) both sets the price and is what the confirm card reads
+   * (`adoptInstruction`), the two cannot drift: a wrong value here changes the
+   * quote and the charge together. Anything that makes the card read a
+   * DIFFERENT string than `onAdopt` sends reopens the under-quote.
+   */
+  officialsPriorInstruction: string;
   schedulePlan: AiPlanResponse | null; // Phase A result
   officialsPlan: AiOfficialsPlanResponse | null; // Phase B result
   /** Blocking fixtures the organiser unticked in the diff panel — they drop to
@@ -55,12 +102,22 @@ export type AiConsoleAction =
   | { type: "SET_INSTRUCTION"; value: string; officials?: boolean }
   | { type: "SET_MODE"; mode: AiMode }
   | { type: "SET_SCOPE"; scope: AiScope | undefined }
+  // Two actions rather than one with an `officials?` flag: a dropped flag is a
+  // silent mis-wire (Phase B's card writes Phase A's rung, and the price the
+  // organiser confirmed is not the price sent), and no static-markup test can
+  // catch a missing property on a dispatch. Separate types make it a compile
+  // error instead of a test we do not have.
+  | { type: "SET_RUNG"; rung: number | null }
+  | { type: "SET_OFFICIALS_RUNG"; rung: number | null }
   | { type: "RUN_START" }
   | { type: "RUN_FLAGGED" }
   | { type: "RUN_DONE"; plan: AiPlanResponse }
   | { type: "RUN_ERROR"; error: { status: number; message: string; key?: string } }
   | { type: "GOTO_STEP"; step: AiStep }
-  | { type: "OFFICIALS_DONE"; plan: AiOfficialsPlanResponse }
+  // Carries the instruction that produced `plan` — the officials confirm card
+  // prices the adopt path off it, so it must be recorded by the same action
+  // that records the plan rather than by a side-write nobody can observe.
+  | { type: "OFFICIALS_DONE"; plan: AiOfficialsPlanResponse; instruction: string }
   | { type: "TOGGLE_EXCLUDE"; fixtureId: string }
   | { type: "APPLY_START" }
   | { type: "APPLY_SEQ_CONFLICT" }
@@ -76,6 +133,9 @@ export const initialAiConsoleState: AiConsoleState = {
   instruction: "",
   officialsInstruction: "",
   scope: undefined,
+  rung: null,
+  officialsRung: null,
+  officialsPriorInstruction: "",
   schedulePlan: null,
   officialsPlan: null,
   excludedFixtures: [],
@@ -94,6 +154,16 @@ export function aiConsoleReducer(s: AiConsoleState, a: AiConsoleAction): AiConso
 
     case "SET_SCOPE":
       return { ...s, scope: a.scope };
+
+    case "SET_RUNG":
+      // Survives a run: the organiser's budget choice is about this division's
+      // size, not about one attempt, so a refine after a generate keeps it.
+      // RESET (closing the console) is what clears it back to the prediction.
+      return { ...s, rung: a.rung };
+
+    case "SET_OFFICIALS_RUNG":
+      // Phase B keeps its own — same reasoning as `officialsInstruction`.
+      return { ...s, officialsRung: a.rung };
 
     case "RUN_START":
       // A fresh run clears the last error but keeps the current proposal on
@@ -137,7 +207,17 @@ export function aiConsoleReducer(s: AiConsoleState, a: AiConsoleAction): AiConso
     }
 
     case "OFFICIALS_DONE":
-      return { ...s, officialsPlan: a.plan, run: "proposal", step: "officials", error: null };
+      // Recording the instruction alongside the plan is what makes the adopt
+      // path priceable: adopt replays THIS brief, not the textarea, so the
+      // confirm card reads it to decide whether a free draft is still on offer.
+      return {
+        ...s,
+        officialsPlan: a.plan,
+        officialsPriorInstruction: a.instruction,
+        run: "proposal",
+        step: "officials",
+        error: null,
+      };
 
     case "TOGGLE_EXCLUDE":
       // Per-row untick on a blocking fixture: toggle its membership in the
@@ -231,7 +311,10 @@ export function aiErrorKey(status: number, code?: string): AiErrorKey {
  * so the copy still reads as an apply failure. Pure — unit-tested without React.
  */
 export function applyErrorKey(
-  outcome: ApplyOutcome,
+  // The two fields it actually reads, so the JOINT apply's own outcome
+  // (ai-joint-apply.ts) resolves its copy through this same mapping rather than
+  // carrying a second, drifting copy of it.
+  outcome: Pick<ApplyOutcome, "errorStatus" | "errorCode">,
 ): AiErrorKey | "board.ai.apply.error" | "board.ai.apply.checkpointQuota" {
   // A 402 at the checkpoint step is the save-point quota (schedule.checkpoints.max),
   // not the AI grade — AI is already granted on this tier, so route it to the

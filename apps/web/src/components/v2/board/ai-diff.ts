@@ -4,7 +4,6 @@
 // provenance ("was Court 2 · 13:30 → Court 1 · 14:00", never on the grid block per
 // §3) and the board derives each ghost's state-palette tone from it. Pure and
 // React-free so the bucketing is unit-testable and asserted against the server diff.
-import type { AiPlanResponse } from "@/server/api-v1/schemas";
 import type { MessageKey } from "@/lib/messages";
 import { REASON_CODE } from "@/lib/schedule-board";
 
@@ -27,6 +26,15 @@ export interface AiConsoleFixture extends AiFixtureRef {
   /** Owning stage — the schedule apply route is stage-scoped, so Task 15 groups
    *  the accept payload by this before persisting (rejects cross-stage sets). */
   stage_id: string;
+  /** Fixture status, and the two entrants. Carried so the console can size the
+   *  PHASE B (officials) quote from exactly the fixtures the officials pack
+   *  will hold — "has a time and is not decided", with that pack's distinct
+   *  entrant and court counts (officials-ai.ts:172, :1112). Without them the
+   *  confirm card would price officials off a plausible-looking estimate rather
+   *  than the server's own inputs. */
+  status: string;
+  home_entrant_id: string | null;
+  away_entrant_id: string | null;
 }
 
 /** One court/time slot — the shared shape of a from/to/at position. */
@@ -79,7 +87,14 @@ function sameSlot(a: AiFixtureRef | AiDiffSlot, b: AiDiffSlot): boolean {
  * slot, `unchanged` when the slot is identical, else `moved`; a currently-placed
  * fixture absent from the proposal is `unscheduled`.
  */
-export function computeAiDiff(plan: AiPlanResponse, current: AiFixtureRef[]): AiDiff {
+export function computeAiDiff(
+  // The three fields it reads, not the whole response — so the JOINT plan
+  // (`AiCompetitionPlanResponse`, whose proposal carries an extra `division_id`
+  // and which has no `officials_coverage` at all) buckets through this same
+  // function rather than a second copy that could drift from it.
+  plan: { proposal: { fixture_id: string; scheduled_at: string; court_label: string | null }[] },
+  current: AiFixtureRef[],
+): AiDiff {
   const cur = new Map(current.map((f) => [f.id, f]));
   const proposedIds = new Set(plan.proposal.map((p) => p.fixture_id));
   const diff: AiDiff = { moved: [], placed: [], unscheduled: [], unchanged: [] };

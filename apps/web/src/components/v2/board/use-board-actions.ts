@@ -28,6 +28,16 @@ export interface BoardActions {
   notice: string | null;
   paywall: string | null;
   busy: boolean;
+  /** The LAST conflicts check failed (#230 item 5). The conflicts list is then
+   *  whatever the last successful check returned — possibly nothing, which is
+   *  byte-for-byte what a clean board looks like — so this is the only thing
+   *  that distinguishes "no conflicts" from "nobody could ask". */
+  checkFailed: boolean;
+  /** A conflicts check is in flight; the manual retry is disabled while it is. */
+  checking: boolean;
+  /** Re-run the check NOW, not on the 400ms debounce. A button whose effect
+   *  starts half a second later is indistinguishable from a dead one. */
+  revalidate: () => Promise<void>;
   setError: (e: string | null) => void;
   setNotice: (n: string | null) => void;
   moveCard: (fixtureId: string, atIso: string | null, court: string | null) => Promise<boolean>;
@@ -54,7 +64,11 @@ export function useBoardActions(
   const [notice, setNotice] = useState<string | null>(null);
   const [paywall, setPaywall] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [checkFailed, setCheckFailed] = useState(false);
+  const [checking, setChecking] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Monotonic ticket per conflicts check — see `runValidate`. */
+  const validateSeq = useRef(0);
 
   // Optimistic-concurrency tokens (v3/11 gap 10): the seq each division was
   // rendered at, bumped locally per landed write (every schedule write appends
@@ -94,6 +108,22 @@ export function useBoardActions(
   }, [conflicts]);
 
   const runValidate = useCallback(async () => {
+    // LAST STARTED WINS, not last resolved.
+    //
+    // Two validates overlap routinely: the 400ms debounce fires while the
+    // organiser is pressing "check again", or a refresh queues one on top of a
+    // manual retry — and they settle in whatever order the network returns
+    // them. Without this counter a FAILING check that started first and
+    // answered last flips the notice back on over a SUCCEEDING one, telling an
+    // organiser the list is stale when it had just been refreshed. The calls
+    // are idempotent, so the only thing that needs ordering is which answer is
+    // allowed to land.
+    const seq = ++validateSeq.current;
+    // Any queued debounce is now redundant — this call supersedes it. (A
+    // clearTimeout on the timer that just fired is a no-op, so this is safe on
+    // the debounced path too.)
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setChecking(true);
     try {
       const results = await Promise.all(
         divisions.map((d) =>
@@ -102,9 +132,19 @@ export function useBoardActions(
           }),
         ),
       );
+      if (seq !== validateSeq.current) return;
       setConflicts(results.flatMap((r) => r.conflicts));
+      setCheckFailed(false);
     } catch {
-      /* validation is advisory — never break the board */
+      // Validation stays ADVISORY — the board must never break because the
+      // check did. But #230 item 5: swallowing it silently left an organiser
+      // reading an empty conflicts list that was not an answer. Keep the last
+      // known conflicts (they are still the best information available) and
+      // record that they are no longer current, so the toolbar can say so.
+      if (seq !== validateSeq.current) return;
+      setCheckFailed(true);
+    } finally {
+      if (seq === validateSeq.current) setChecking(false);
     }
   }, [divisions]);
 
@@ -387,6 +427,9 @@ export function useBoardActions(
     notice,
     paywall,
     busy,
+    checkFailed,
+    checking,
+    revalidate: runValidate,
     setError,
     setNotice,
     moveCard,

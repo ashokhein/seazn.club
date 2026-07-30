@@ -1545,6 +1545,50 @@ export const ScheduleShift = z.object({
   delta_minutes: z.number().int().min(-1440).max(1440),
 });
 
+// Token-weighted AI credit rung (lib/ai-rung.ts, issue #348).
+const RungLiteral = z.union([z.literal(1), z.literal(2), z.literal(3)]);
+
+/**
+ * What an AI run cost and what that bought, spread into every AI response so
+ * the confirm card reads one shape whatever endpoint answered it. Mirrors
+ * `RunMeterStamp` in lib/ai-rung.ts — the single builder both phases (and #350's
+ * joint solve) stamp their ledger event and response with.
+ *
+ * Optional so fixtures and clients written before this field set still satisfy
+ * the type; every real response sends `credits`, `budget`, `spent_tokens`,
+ * `underfunded`, `stopped_on_budget` and `est_tokens`. `rung`/`predicted_rung`
+ * are the single-division flat form; `divisions`/`discount` the joint form.
+ */
+const AiRunPriceFields = {
+  /** Credits actually charged (after any joint batch discount). */
+  credits: z.number().int().optional(),
+  /** Hard generation-token budget those credits bought. */
+  budget: z.number().int().optional(),
+  /** Generation tokens the run actually spent. */
+  spent_tokens: z.number().int().optional(),
+  /** Advisory pre-run estimate the confirm card showed. */
+  est_tokens: z.number().int().optional(),
+  /** A rung below the prediction was chosen. */
+  underfunded: z.boolean().optional(),
+  /** The run ended because the budget ran out, not because it was done. */
+  stopped_on_budget: z.boolean().optional(),
+  /** Single-division form. */
+  rung: RungLiteral.optional(),
+  predicted_rung: RungLiteral.optional(),
+  /** Joint (multi-division) form — issue #350. */
+  discount: z.number().int().optional(),
+  divisions: z
+    .array(
+      z.object({
+        id: z.string(),
+        rung: RungLiteral,
+        predicted_rung: RungLiteral,
+        underfunded: z.boolean(),
+      }),
+    )
+    .optional(),
+};
+
 // v4 AI Schedule Architect (design/v4/00-03) — Phase A propose-only endpoint.
 // The model proposes times+courts; the engine verifier is authoritative. This
 // contract carries the request instruction, an optional repair scope, an
@@ -1569,6 +1613,11 @@ export const AiPlanRequest = z.object({
     })
     .optional(),
   officials_policy: AssignPolicyBody.optional(),
+  // Token-weighted AI credit rung (lib/ai-rung.ts): defaults to the server
+  // prediction when omitted. A caller may pick below the prediction — the run
+  // still executes, capped to the chosen rung's token budget, and the ledger
+  // stamps `underfunded: true`.
+  rung: RungLiteral.optional(),
 });
 export type AiPlanRequest = z.infer<typeof AiPlanRequest>;
 
@@ -1637,6 +1686,7 @@ export const AiPlanResponse = z.object({
       unfilled: z.array(z.object({ fixture_id: z.string(), role_key: z.string() })),
     })
     .nullable(),
+  ...AiRunPriceFields,
 });
 export type AiPlanResponse = z.infer<typeof AiPlanResponse>;
 
@@ -1665,6 +1715,11 @@ export const AiOfficialsPlanRequest = z.object({
       ),
     })
     .optional(),
+  // Token-weighted AI credit rung (lib/ai-rung.ts): defaults to the server
+  // prediction when omitted; see AiPlanRequest.rung for the full contract.
+  // Ignored on the empty-instruction path, which makes no model call and is
+  // always priced at 1 credit.
+  rung: RungLiteral.optional(),
 });
 export type AiOfficialsPlanRequest = z.infer<typeof AiOfficialsPlanRequest>;
 
@@ -1711,8 +1766,249 @@ export const AiOfficialsPlanResponse = z.object({
     output_tokens: z.number().int(),
     repair_rounds: z.number().int(),
   }),
+  ...AiRunPriceFields,
 });
 export type AiOfficialsPlanResponse = z.infer<typeof AiOfficialsPlanResponse>;
+
+// ---------------------------------------------------------------------------
+// #350 Multi-division JOINT AI scheduling — POST /competitions/{id}/schedule/
+// ai-plan. One model call over several divisions of one competition, priced as
+// a batch. The orchestrator is `aiPlanForCompetition`
+// (server/usecases/competition-schedule-ai.ts); these are the wire contracts.
+// ---------------------------------------------------------------------------
+
+export const AiCompetitionPlanRequest = z.object({
+  /**
+   * The divisions to solve together. The **>= 2 rule is deliberately NOT a
+   * `.min(2)` here** — it is the orchestrator's, which answers 400
+   * `AI_PLAN_SINGLE_DIVISION`.
+   *
+   * Zod cannot be the authority for it in either direction. It is not
+   * sufficient: `[d, d]` is two array entries and one division, and a division
+   * with nothing movable is DROPPED before the quote (ruling R6), so a
+   * three-id request can legitimately arrive at one solvable division. And it
+   * is not necessary: the orchestrator already de-duplicates and re-checks
+   * after the drop. Two mechanisms for one rule would also give the client two
+   * different 400s for the same mistake — a `VALIDATION` blob of zod issues,
+   * or the code the board renders "use the division schedule page" from.
+   *
+   * The ceiling stays here: 20 is a shape limit, and nothing downstream needs
+   * to have loaded a competition to enforce it.
+   */
+  division_ids: z.array(Uuid).min(1).max(20),
+  instruction: z.string().min(1).max(2000),
+  mode: z.enum(["generate", "refine", "repair"]).default("generate"),
+  /** Per-division rung override from the confirm card's segmented control.
+   *  Advisory — the server always recomputes the quote, and an entry naming a
+   *  division outside the run is ignored rather than rejected. */
+  rung_overrides: z.record(Uuid, RungLiteral).optional(),
+  prior: z
+    .object({
+      instruction: z.string(),
+      assignments: z.array(
+        z.object({
+          fixture_id: Uuid,
+          scheduled_at: IsoDateTime,
+          court_label: z.string(),
+          division_id: Uuid,
+        }),
+      ),
+    })
+    .optional(),
+});
+export type AiCompetitionPlanRequest = z.infer<typeof AiCompetitionPlanRequest>;
+
+export const AiCompetitionPlanResponse = z.object({
+  /** Every slot names the division the SERVER resolved it to — JOINT_RULES
+   *  tells the model not to emit one, so this is never an echo. */
+  proposal: z.array(
+    z.object({
+      fixture_id: z.string(),
+      scheduled_at: z.string(),
+      court_label: z.string(),
+      division_id: z.string(),
+      schedule_locked: z.boolean().optional(),
+    }),
+  ),
+  unschedulable: z.array(z.object({ fixture_id: z.string(), reason: z.string() })),
+  // The ENGINE verifier's camelCase Conflict, exactly as the single-division
+  // AiPlanResponse carries it — NOT the snake_case ScheduleConflict of the
+  // apply/validate endpoints. The orchestrator returns `Conflict[]` verbatim,
+  // so declaring the other shape here would strip every field of every warning
+  // and publish a contract the route does not honour.
+  warnings: z.array(AiPlanConflict),
+  blocking: z.array(AiPlanConflict),
+  diff: z.object({
+    moved: z.array(z.string()),
+    placed: z.array(z.string()),
+    unscheduled: z.array(z.string()),
+    unchanged: z.array(z.string()),
+  }),
+  explanations: z.array(z.object({ fixture_id: z.string(), note: z.string() })),
+  summary: z.string(),
+  /** Court labels not shared by every solved division. Cross-division court
+   *  identity is a string match and nothing else, so the board warns. */
+  divergent_courts: z.array(z.string()),
+  /** Requested divisions dropped before quoting (ruling R6) — the organiser is
+   *  told why a division they picked is missing rather than silently getting a
+   *  smaller board back. */
+  skipped_divisions: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      reason: z.literal("no_movable_fixtures"),
+    }),
+  ),
+  /** Public shape only — `cost_usd` stays on the ledger event. */
+  usage: z.object({
+    input_tokens: z.number().int(),
+    output_tokens: z.number().int(),
+    repair_rounds: z.number().int(),
+  }),
+  // ---------------------------------------------------------------------
+  // ORDER IS LOAD-BEARING. `AiRunPriceFields` declares its own `divisions`
+  // key — the meter stamp's per-division PRICE rows — and the override below
+  // MUST come after it. A joint response carries ONE `divisions` array
+  // holding both those price rows and the board's picker data (the division's
+  // name and movable count), exactly as `aiPlanForCompetition` builds it:
+  // two sibling arrays over one key would be a join every client redoes on
+  // every render.
+  //
+  // The two directions are NOT symmetric — measured, not assumed:
+  //
+  //   * Swapping this order (spread AFTER the override) does NOT compile:
+  //     1 x TS2783 "'divisions' is specified more than once", plus 4 x TS2339
+  //     and 7 x TS18048 knock-on. The wrong order cannot ship, and `tsc` is a
+  //     real net for THAT mistake specifically.
+  //   * The order as written is the SILENT one. Any later edit that keeps the
+  //     shapes structurally compatible — dropping a key from the merged row,
+  //     letting the two arrays drift apart — passes `tsc` clean, and Zod does
+  //     not error either: it STRIPS the keys the winning schema does not
+  //     declare, so `name`/`movable` (or `rung`/`predicted_rung`) simply
+  //     vanish from a 200 response with no exception and no warning.
+  //
+  // Neither this comment nor an assertion on `divisions.length` catches the
+  // silent case. The guard is competition-schedule-ai-http.test.ts, which
+  // asserts BOTH sets of fields survive one parse of a real orchestrator
+  // result.
+  // ---------------------------------------------------------------------
+  ...AiRunPriceFields,
+  divisions: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      movable: z.number().int(),
+      rung: RungLiteral,
+      predicted_rung: RungLiteral,
+      underfunded: z.boolean(),
+    }),
+  ),
+});
+export type AiCompetitionPlanResponse = z.infer<typeof AiCompetitionPlanResponse>;
+
+/**
+ * GET /competitions/{id}/schedule/ai-last — the joint mirror of
+ * {@link AiLastResult}, field for field.
+ *
+ * A recall of the last APPLIED plan, not of the last proposal. An AI plan is
+ * propose-only and nothing about it is written down unless the organiser
+ * applies it — that has been true of the single-division board since v4, and it
+ * is why this is the twin's shape rather than a partial plan response. `last`
+ * stays null until a joint apply exists (#350 Task 6); `runs.used` counts joint
+ * runs on the competition, and `max` is null because joint runs are metered by
+ * the credit wallet rather than by a run quota. See `lastCompetitionAiApply`.
+ *
+ * Declared separately from `AiLastResult` rather than reusing it: the two
+ * endpoints count different events and are free to diverge, and `at` is pinned
+ * to an ISO instant here where the older schema left it a bare string.
+ */
+export const AiCompetitionLastResult = z.object({
+  last: z.object({ at: IsoDateTime, instruction: z.string(), summary: z.string() }).nullable(),
+  runs: z.object({ used: z.number().int(), max: z.number().int().nullable() }),
+});
+export type AiCompetitionLastResult = z.infer<typeof AiCompetitionLastResult>;
+
+/**
+ * POST /competitions/{id}/schedule/apply — persist a joint plan across several
+ * divisions ATOMICALLY (#350 Task 6, spec §8). One transaction writes every
+ * division's board or none of it; the per-stage endpoint cannot do this, and
+ * calling it in a loop leaves half a board written on any mid-flight failure.
+ */
+export const ApplyCompetitionScheduleRequest = z.object({
+  divisions: z
+    .array(
+      z.object({
+        division_id: Uuid,
+        /** REQUIRED here, unlike the per-stage apply's optional token: a joint
+         *  write that skipped the check on one division would let a stale board
+         *  silently overwrite a concurrent edit there while every other
+         *  division was guarded. */
+        expected_seq: z.number().int().nonnegative(),
+        assignments: z
+          .array(
+            z
+              .object({
+                fixture_id: Uuid,
+                scheduled_at: IsoDateTime,
+                court_label: z.string().min(1).max(100),
+              })
+              /**
+               * `.strict()`, because the plan's own output is WIDER than this.
+               * `AiCompetitionPlanResponse.proposal` carries an optional
+               * `schedule_locked` (see above), and zod STRIPS unknown keys — so
+               * a plan asking to pin a fixture would apply 200 with no pin, and
+               * two schemas of one feature would disagree in silence. Strict
+               * makes that a loud 400.
+               *
+               * Deliberately not "support pinning": accepting the field would
+               * need the `scheduling.board` gate the per-stage apply puts on pin
+               * changes (schedule.ts:485-487). Nothing sends it today, so this
+               * costs no capability and leaves Task 7 free to add pinning as a
+               * decision rather than inherit it as an accident.
+               */
+              .strict(),
+          )
+          .min(1)
+          .max(500),
+      }),
+    )
+    /**
+     * `.min(1)`, NOT `.min(2)` — and that is not an oversight.
+     *
+     * The >= 2 rule on the PLAN endpoint exists to stop discount arbitrage: a
+     * joint run is priced at max(1, sum of rungs - 1), so a one-division "joint"
+     * run would buy a single-division solve at a discount. Applying costs
+     * nothing. Refusing a one-division apply would only mean the board had to
+     * decide, per outcome, which of two endpoints to post an already-paid-for
+     * plan to — and ruling R6 lets a run legitimately end up with fewer solved
+     * divisions than were requested.
+     *
+     * The ceiling matches the plan request's, since one apply can never span
+     * more divisions than one run planned.
+     */
+    .min(1)
+    .max(20),
+  /** "ai" only. Manual board edits stay on the per-stage endpoint: a hand edit
+   *  is one division by construction. */
+  source: z.literal("ai"),
+  /** Audit provenance (v4/03 §10) — stamped into every division's
+   *  `schedule_applied` row AND the one `schedule.applied_multi` row that
+   *  GET /competitions/{id}/schedule/ai-last recalls. `model` is overwritten
+   *  server-side with the model that actually ran. */
+  ai: AiApplyMeta.optional(),
+});
+export type ApplyCompetitionScheduleRequest = z.infer<typeof ApplyCompetitionScheduleRequest>;
+
+export const ApplyCompetitionScheduleResult = z.object({
+  applied: z.number().int(),
+  /** The ENGINE verifier's camelCase `Conflict`, exactly as the joint ai-plan
+   *  response carries it — NOT the snake_case `ScheduleConflict` of the
+   *  per-stage apply. `applyCompetitionSchedule` returns `Conflict[]` verbatim,
+   *  so declaring the other shape here would strip every field of every warning
+   *  down to `{}` and publish a contract the route does not honour. */
+  conflicts: z.array(AiPlanConflict),
+});
+export type ApplyCompetitionScheduleResult = z.infer<typeof ApplyCompetitionScheduleResult>;
 
 // Custom points & rank control (Jul3/05, PROMPT-25) ---------------------------
 

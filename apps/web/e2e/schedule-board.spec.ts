@@ -103,6 +103,55 @@ test.describe.serial("schedule board", () => {
     await expect(page.getByText("Bolt").first()).toBeVisible({ timeout: 20_000 });
   });
 
+  /**
+   * #230 item 5 — a conflicts check that FAILED must not read as "no conflicts".
+   *
+   * The board's re-validation used to swallow every failure in a bare `catch`,
+   * so a 500 or a dropped connection left the badge hidden and the panel empty
+   * — byte-for-byte what a clean board looks like. The organiser then drags a
+   * fixture onto an occupied court and is told nothing, because nobody asked.
+   *
+   * This is the only place the WHOLE loop is observable: the check has to
+   * actually fail (so the request is aborted here rather than mocked in a unit
+   * test), the notice has to survive a ZERO conflict count, and the retry has to
+   * put the board back to normal once the network recovers.
+   */
+  test("a failed conflicts check says so, and the retry clears it", async ({ page }) => {
+    let fail = true;
+    await page.route(`**/api/v1/divisions/${divisionId}/schedule/validate`, async (route) => {
+      if (fail) return route.abort("failed");
+      return route.continue();
+    });
+
+    await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+    // The board itself still works — validation is advisory and always was.
+    await expect(page.getByText("Bolt").first()).toBeVisible({ timeout: 20_000 });
+
+    // …but it now says the list is not an answer. This board has no conflicts,
+    // which is exactly the case the old code could not distinguish.
+    const notice = page.getByText("Conflict check unavailable");
+    await expect(notice).toBeVisible();
+    const retry = page.getByRole("button", { name: "Check again" });
+    await expect(retry).toBeVisible();
+    await page.screenshot({ path: "test-results/conflicts-check-unavailable-desktop.png" });
+
+    // 375px: the notice sits in the board toolbar, which must still not scroll.
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expect(notice).toBeVisible();
+    const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    expect(scrollWidth).toBeLessThanOrEqual(clientWidth + 1);
+    await page.screenshot({ path: "test-results/conflicts-check-unavailable-375.png" });
+
+    // Recovery: the retry re-runs the check immediately and the notice goes.
+    fail = false;
+    await retry.click();
+    await expect(notice).toHaveCount(0);
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  });
+
   test("double-booking a court is a blocking conflict", async ({ request }) => {
     const when = new Date(Date.UTC(2026, 8, 22, 10, 0)).toISOString();
     const clash = await apiJson<{ conflicts: { code: string; blocking: boolean }[] }>(

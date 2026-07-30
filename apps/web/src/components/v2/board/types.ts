@@ -115,6 +115,10 @@ export interface GhostBlock {
   tone: "moved" | "placed" | "unchanged" | "blocking";
   /** Referee just flagged this fixture — pulse red for ~1.5s (§0.3). */
   pulse?: boolean;
+  /** The owning division, on a JOINT (multi-division) proposal only (#350).
+   *  `null` on a single-division one, where every block would carry the same
+   *  name and the label would say nothing. */
+  division?: { id: string; name: string } | null;
 }
 
 /** Board density modes (v3/04 §2). Week view lives inside Board mode — the

@@ -296,4 +296,51 @@ describe("runLadder", () => {
     const out = await runLadder<AiPlanResult>(R, attempt, (r) => r.warnings.length === 0);
     expect(out.usage.cost_usd).toBeNull();
   });
+
+  // Token-weighted AI credit pricing (lib/ai-rung.ts): a budget-exhausted run
+  // must stop escalating. Without this, every remaining rung is entered only to
+  // throw before any network call — free, but it writes models into
+  // `rungs_tried` that were never actually asked.
+  describe("canEscalate", () => {
+    it("is never consulted before the first rung", async () => {
+      const canEscalate = vi.fn().mockReturnValue(false);
+      const attempt = vi.fn().mockResolvedValueOnce(fakeResult({}));
+      await runLadder<AiPlanResult>(R, attempt, () => true, canEscalate);
+      expect(canEscalate).not.toHaveBeenCalled();
+      expect(attempt).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops escalation and ships the degraded best-so-far without trying the next rung", async () => {
+      const attempt = vi.fn().mockResolvedValueOnce(fakeResult({ warnings: 9, usage: usage(200, 100, 0.02) }));
+      const out = await runLadder<AiPlanResult>(
+        R,
+        attempt,
+        (r) => r.warnings.length === 0, // rung 1's result is NOT acceptable
+        () => false, // ...but the budget is gone
+      );
+      expect(attempt).toHaveBeenCalledTimes(1);
+      expect(out.served_model).toBe(R[0]!.model);
+      expect(out.rungs_tried).toEqual([R[0]!.model]); // NOT polluted with rung 2
+    });
+
+    it("throws the earlier rung's failure when nothing usable was produced", async () => {
+      const attempt = vi
+        .fn()
+        .mockRejectedValueOnce(new HttpError(422, "no plan", "AI_PLAN_FAILED", { usage: usage(10, 20, 0.01) }));
+      const err = await runLadder<AiPlanResult>(R, attempt, () => true, () => false).catch((e) => e);
+      expect(attempt).toHaveBeenCalledTimes(1);
+      expect(err).toMatchObject({ code: "AI_PLAN_FAILED" });
+      expect((err as HttpError).extra?.usage).toMatchObject({ output_tokens: 20 });
+    });
+
+    it("keeps escalating while it returns true", async () => {
+      const attempt = vi
+        .fn()
+        .mockResolvedValueOnce(fakeResult({ warnings: 9, usage: usage(200, 100, 0.02) }))
+        .mockResolvedValueOnce(fakeResult({ usage: usage(300, 150, 0.05) }));
+      const out = await runLadder<AiPlanResult>(R, attempt, (r) => r.warnings.length === 0, () => true);
+      expect(attempt).toHaveBeenCalledTimes(2);
+      expect(out.served_model).toBe(R[1]!.model);
+    });
+  });
 });

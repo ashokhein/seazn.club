@@ -14,7 +14,9 @@
 // unit-tested against a constructed plan. The component is a renderer over it.
 import { useMemo, useState } from "react";
 import { timeLabel } from "@/lib/day-label";
-import { useMsg } from "@/components/i18n/dict-provider";
+import { useMsg, usePlural } from "@/components/i18n/dict-provider";
+import { officialsRungWeights, type RungInput } from "@/lib/ai-rung";
+import { AiQuoteCard, quoteFor, type QuoteCardLine } from "./ai-quote-card";
 import type { MessageKey } from "@/lib/messages";
 import type { AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
 import { OfficialAvatar } from "@/components/v2/officials-shared";
@@ -104,6 +106,9 @@ export function buildOfficialsTrace(
 export function AiOfficialsReview({
   plan,
   placements,
+  quoteInput,
+  rung,
+  onRung,
   currency,
   fixtures,
   roster,
@@ -113,6 +118,7 @@ export function AiOfficialsReview({
   traceNonce,
   error,
   instruction,
+  adoptInstruction,
   onInstruction,
   wishes,
   onWishes,
@@ -124,6 +130,13 @@ export function AiOfficialsReview({
 }: {
   plan: AiOfficialsPlanResponse | null;
   placements: OfficialsPlacement[];
+  /** The officials pack's own sizing, mirrored client-side by
+   *  `officialsQuoteInput` so this card prices on the numbers the SERVER will
+   *  price on — not on the division's totals, which the pack is a subset of. */
+  quoteInput: RungInput;
+  /** Phase B's chosen rung; `null` follows the server's prediction. */
+  rung: number | null;
+  onRung: (rung: number | null) => void;
   /** Org's locked billing currency — the shared out-of-credits block (A6)
    *  prices its Buy-credits ladder in it. */
   currency: Currency;
@@ -137,7 +150,13 @@ export function AiOfficialsReview({
   busy: boolean;
   traceNonce: number;
   error: { status: number; message: string; key?: string } | null;
+  /** The textarea — the instruction Re-plan will send. */
   instruction: string;
+  /** The instruction the per-cell ADOPT will send: the brief that produced the
+   *  proposal on screen (`state.officialsPriorInstruction`, replayed verbatim
+   *  by `onAdopt`). It is the second spend path's own input to the server's
+   *  price, which is why the card needs it and cannot infer it. */
+  adoptInstruction: string;
   onInstruction: (v: string) => void;
   wishes: OfficialsWish[];
   onWishes: (next: OfficialsWish[]) => void;
@@ -148,6 +167,69 @@ export function AiOfficialsReview({
   onPulse: (ids: string[]) => void;
 }) {
   const msg = useMsg();
+  const plural = usePlural();
+  // Phase B's quote. An EMPTY instruction is the deterministic solver pass —
+  // no model call, flat 1 credit (`freeDraftQuote`; it DOES debit the wallet,
+  // "free" there means free of MODEL cost) — so the card says so rather than
+  // sizing a run that spends no tokens.
+  //
+  // But this step has more than one spend path: Re-plan runs the TEXTAREA,
+  // while the per-cell adopt replays the brief that produced the proposal and
+  // never reads the textarea at all. So "free" has to mean "nothing reachable
+  // from this screen is priced" — otherwise clearing the box after a paid run
+  // makes the card read "flat 1 credit" while an adopt is charged 2-3.
+  //
+  // WHY THIS IS THE EXACT PREDICATE, NOT A PROXY. The server's free path is a
+  // property of ONE string: `officials-ai.ts:1104` takes `freeDraftQuote` iff
+  // `input.instruction.trim() === ""`, and nothing else — not the prior, not
+  // the previous run — selects it. Each spend path supplies that string
+  // itself: Re-plan sends `instruction`, adopt sends `adoptInstruction`. So
+  // asking the same question of both is asking the server's own question, and
+  // the claim below is exact rather than an inference: when it holds, both
+  // requests carry an empty instruction and each is charged exactly 1.
+  //
+  // It also cannot fail open — but read the scope of that claim precisely,
+  // because it is narrower than it first sounds. It is true of the FIELD:
+  // corrupt `state.officialsPriorInstruction` and adopt sends the corrupted
+  // value too, so the card and the charge move together, because this is the
+  // value that IS sent rather than a signal about it. It is NOT true of the
+  // PROP EXPRESSION at `ai-console.tsx:1393`, which is what wires the field to
+  // this component: a one-token edit there re-opens the under-quote, and the
+  // only thing that catches it is the step-level test that drives
+  // `OfficialsStep` from console state. That test is the guard, not this
+  // reasoning — do not delete it on the strength of this comment.
+  //
+  // An earlier version keyed this on the
+  // plan's reported token usage; that is a proxy, and it fails open, because
+  // both providers default a missing usage block to zero
+  // (`anthropic-provider.ts` `response.usage?.input_tokens ?? 0`,
+  // `openrouter-provider.ts` `usage.prompt_tokens ?? 0`) — a priced run whose
+  // provider omitted usage then read as the solver draft and the card
+  // UNDER-quoted. Reported usage must never come back onto this line.
+  //
+  // The remaining trade is deliberate and one-directional: with a chargeable
+  // adopt brief and an empty box, Re-plan alone would in fact be free, so the
+  // card OVER-quotes it. Over-quoting is the safe error; under-quoting bills
+  // someone more than the surface they confirmed.
+  const officialsWeights = useMemo(() => officialsRungWeights(), []);
+  const freeDraft = instruction.trim() === "" && adoptInstruction.trim() === "";
+  // DISPLAY ONLY — never a price input (see above). A plan that reports no
+  // tokens is *usually* the solver pass, which is good enough to pick the
+  // localized draft note over the server's fixed English summary; it is not
+  // good enough to decide what a run costs.
+  const planIsSolverDraft =
+    plan !== null && plan.usage.input_tokens === 0 && plan.usage.output_tokens === 0;
+  const quoteLines: QuoteCardLine[] = [
+    { key: "officials", label: null, input: quoteInput, chosen: rung },
+  ];
+  const replanCredits = quoteFor(quoteLines, {
+    weights: officialsWeights,
+    freeDraft,
+  }).credits;
+  const replanLabel = msg("board.ai.quote.cta", {
+    action: msg("board.ai.officials.replan"),
+    credits: plural("board.ai.quote.credits", replanCredits),
+  });
   const model = useMemo(
     () => (plan ? buildOfficialsGrid({ plan, placements, fixtures, roster, roles, hasPrior }) : null),
     [plan, placements, fixtures, roster, roles, hasPrior],
@@ -156,9 +238,6 @@ export function AiOfficialsReview({
     () => (plan ? buildOfficialsTrace(plan, roles.length, msg) : null),
     [plan, roles.length, msg],
   );
-  // A draft with no tokens is the free solver pass — show a localized note, not
-  // the server's fixed English summary.
-  const isFreeDraft = plan !== null && plan.usage.input_tokens === 0 && plan.usage.output_tokens === 0;
 
   return (
     <div className="space-y-3">
@@ -189,7 +268,7 @@ export function AiOfficialsReview({
               {msg("board.ai.summaryLabel")}
             </p>
             <p className="mt-1 text-sm leading-relaxed text-slate-700">
-              {isFreeDraft ? msg("board.ai.officials.draftNote") : plan.summary}
+              {planIsSolverDraft ? msg("board.ai.officials.draftNote") : plan.summary}
             </p>
             <div className="mt-2 flex flex-wrap gap-1">
               {(
@@ -269,6 +348,17 @@ export function AiOfficialsReview({
       {/* Refine turn — officials wish chips + instruction + Re-plan. */}
       <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-3">
         <OfficialsWishChips wishes={wishes} onChange={onWishes} roster={roster} />
+        {/* What the re-plan costs. Phase B was spending credits with no
+            pre-spend surface at all; this is the same #348 card at single-line
+            scale, priced with the OFFICIALS weights. */}
+        <AiQuoteCard
+          lines={quoteLines}
+          onChange={(_key, r) => onRung(r)}
+          msg={msg}
+          busy={busy}
+          weights={officialsWeights}
+          freeDraft={freeDraft}
+        />
         <div>
           <label htmlFor="ai-officials-instruction" className="label">
             {msg("board.ai.officials.instructionLabel")}
@@ -297,7 +387,7 @@ export function AiOfficialsReview({
           ) : (
             <>
               <span aria-hidden>✦</span>
-              {msg("board.ai.officials.replan")}
+              {replanLabel}
             </>
           )}
         </button>

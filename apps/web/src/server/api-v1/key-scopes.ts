@@ -80,6 +80,14 @@ const RULES: RouteRule[] = [
   { method: "POST", path: "/competitions/:id/divisions", scope: "manage", pin: "competition" },
   { method: "GET", path: "/competitions/:id/exports/timetable", scope: "read", pin: "competition" },
   { method: "GET", path: "/competitions/:id/exports/tickets", scope: "read", pin: "competition" },
+  // Joint multi-division AI scheduling (#350). Propose-only — nothing is
+  // written — but it SPENDS AI CREDITS off the org wallet, so it sits at manage
+  // with the other mutations, exactly like the per-division ai-plan.
+  { method: "POST", path: "/competitions/:id/schedule/ai-plan", scope: "manage", pin: "competition" },
+  { method: "GET", path: "/competitions/:id/schedule/ai-last", scope: "read", pin: "competition" },
+  // …and the atomic apply of what it planned: a WRITE across every selected
+  // division, so `manage`, pinned to the competition that owns them.
+  { method: "POST", path: "/competitions/:id/schedule/apply", scope: "manage", pin: "competition" },
 
   // divisions
   { method: "GET", path: "/divisions/:id", scope: "read", pin: "division" },

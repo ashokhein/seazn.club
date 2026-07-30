@@ -199,6 +199,13 @@ export default async function DivisionSchedulePage({
               stages={stages.map((s) => ({ id: s.id, division_id: id, seq: s.seq, kind: s.kind, name: s.name, status: s.status }))}
               fixtures={fixtures}
               entrantNames={Object.fromEntries(entrants.map((e) => [e.id, e.display_name]))}
+              // What an AI run is PRICED on — the same filter the server
+              // applies when it sizes the pack (schedule-ai.ts:505).
+              activeEntrantCounts={{
+                [id]: entrants.filter(
+                  (e) => e.status !== "withdrawn" && e.status !== "disqualified",
+                ).length,
+              }}
               feedLabels={feedLabels(feedRows)}
               settings={{ division_id: id, config: settings.config, tz: settings.tz }}
               canEdit={editable}

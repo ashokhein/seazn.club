@@ -13,7 +13,8 @@ import { usePathname } from "next/navigation";
 import posthog from "posthog-js";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { track, EVENTS } from "@/lib/analytics";
-import { useMsg } from "@/components/i18n/dict-provider";
+import { useMsg, usePlural } from "@/components/i18n/dict-provider";
+import { isRung, type Rung } from "@/lib/ai-rung";
 import type { MessageKey } from "@/lib/messages";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { PlanBadge } from "@/components/plan-badge";
@@ -38,6 +39,7 @@ import {
 } from "./ai-apply";
 import { AiWishChips } from "./ai-wish-chips";
 import { AiPreflight, AiLastRun, type PreflightInput } from "./ai-preflight";
+import { AiQuoteCard, quoteFor, type QuoteCardLine } from "./ai-quote-card";
 import { compileWishes, deriveFreeText, joinNonEmpty, type Wish } from "./wish-compile";
 import { compileOfficialsWishes, type OfficialsWish } from "./officials-wish-compile";
 import { AiTrace, type TraceEvent } from "./ai-trace";
@@ -69,14 +71,195 @@ export interface AiBriefContext {
   blackouts: number;
   /** Any non-default constraint knobs set (rest / grouping / v2 constraints). */
   constraintsSet: boolean;
-  /** Movable fixtures (status "scheduled") the AI would place. */
-  movable: number;
+  /** Movable fixtures (status "scheduled") the AI would place — the fixtures
+   *  themselves, not a count, because the confirm card has to narrow them by
+   *  `scope` exactly as `buildSchedulePack` does, or a scoped repair quotes the
+   *  whole division. `pool_id` is deliberately absent: the board's only scope
+   *  producer (use-disruption-signals) emits `{courts?, from?}`, so these two
+   *  fields are the complete mirror of the server's `inScope`. */
+  movableFixtures: MovableFixture[];
   /** Pinned fixtures (schedule_locked) the AI must not move. */
   pinned: number;
-  /** Entrants for the chip pickers, sorted by name. */
+  /** Entrants for the chip pickers, sorted by name. NOT a pricing input — this
+   *  list is competition-wide and unfiltered (it is built from the board's
+   *  `entrantNames` map), so pricing off it over-quotes a multi-division board
+   *  several times over. Use `activeEntrants`. */
   entrants: { id: string; name: string }[];
+  /** Entrants the SERVER prices on: this division's, `status not in
+   *  ('withdrawn','disqualified')` (schedule-ai.ts:505). */
+  activeEntrants: number;
   /** Officials with at least one blackout date (M in "N officials, M with …"). */
   officialsWithBlackout: number;
+}
+
+/** The fixture fields `inScope` reads — a structural subset of BoardFixture. */
+export interface MovableFixture {
+  id: string;
+  /** ISO string, or null while the fixture sits in the tray. */
+  scheduled_at: string | null;
+  court_label: string | null;
+}
+
+/**
+ * The client's mirror of `buildSchedulePack`'s movable-fixture selection
+ * (schedule-ai.ts:319 + its `inScope` at :260).
+ *
+ * Scope only narrows a REPAIR round; generate and refine re-plan the whole set.
+ * Getting this wrong is not cosmetic — a repair scoped to one court would
+ * otherwise be quoted at the whole division's size, which is a rung-3 card
+ * (3 credits) in front of a rung-1 charge.
+ *
+ * Pure and exported so the agreement with the server is testable without React.
+ */
+export function movableForRun(
+  fixtures: MovableFixture[],
+  mode: AiMode,
+  scope: AiScope | undefined,
+): MovableFixture[] {
+  if (mode !== "repair" || !scope) return fixtures;
+  return fixtures.filter((f) => {
+    if (scope.courts && !(f.court_label === null || scope.courts.includes(f.court_label))) {
+      return false;
+    }
+    if (scope.from) {
+      const from = new Date(scope.from).getTime();
+      if (!(f.scheduled_at === null || new Date(f.scheduled_at).getTime() >= from)) return false;
+    }
+    return true;
+  });
+}
+
+/**
+ * The rung a request may carry: 1|2|3, or ABSENT.
+ *
+ * `null` — the organiser left the control on the recommendation — must send no
+ * `rung` at all, so the server sizes the run from its own prediction rather
+ * than freezing a client-side estimate into the price. Anything that is not a
+ * rung is dropped rather than trusted, because the reducer's field is a plain
+ * `number`.
+ *
+ * Split out because it is the ONE line where a confirmed price becomes a sent
+ * price, and the render tests cannot see a request body.
+ */
+export function rungField(rung: number | null): { rung?: Rung } {
+  return rung !== null && isRung(rung) ? { rung } : {};
+}
+
+/**
+ * The Phase A (schedule) request body. Pure, and exported, because everything
+ * else about the confirm card is testable through the render and this is not:
+ * a card can show the right number while the request carries a different one
+ * (or none), and no static-markup assertion would notice.
+ */
+export function schedulePlanBody(
+  state: Pick<AiConsoleState, "rung" | "scope">,
+  args: {
+    instruction: string;
+    mode: AiMode;
+    officialsPolicy?: AiPlanRequest["officials_policy"] | null;
+    prior?: AiPlanRequest["prior"] | null;
+  },
+): AiPlanRequest {
+  return {
+    instruction: args.instruction,
+    mode: args.mode,
+    ...(state.scope ? { scope: state.scope } : {}),
+    // Reads `state.rung` ITSELF rather than accepting it as an argument. A
+    // rung parameter leaves a call site that can quietly pass the OTHER
+    // phase's field, and nothing short of driving a real request would catch
+    // it — three mutations of exactly that shape survived a full green suite.
+    ...rungField(state.rung),
+    ...(args.officialsPolicy ? { officials_policy: args.officialsPolicy } : {}),
+    ...(args.prior ? { prior: args.prior } : {}),
+  };
+}
+
+/** The Phase B (officials) request body — same reasoning, reading the
+ *  `officialsRung` field Phase B's own card writes. */
+export function officialsPlanBody(
+  state: Pick<AiConsoleState, "officialsRung" | "officialsPriorInstruction">,
+  args: {
+    instruction: string;
+    schedule: NonNullable<AiOfficialsPlanRequest["schedule"]>;
+    policy: AiOfficialsPlanRequest["policy"];
+    /** Round-tripped assignments; the brief they were produced under comes from
+     *  state, so the two halves of `prior` cannot describe different runs. */
+    priorAssignments?: AiOfficialsPlanResponse["assignments"] | null;
+  },
+): AiOfficialsPlanRequest {
+  return {
+    instruction: args.instruction,
+    ...rungField(state.officialsRung),
+    ...(args.schedule.length > 0 ? { schedule: args.schedule } : {}),
+    policy: args.policy,
+    ...(args.priorAssignments
+      ? {
+          prior: {
+            instruction: state.officialsPriorInstruction,
+            assignments: args.priorAssignments,
+          },
+        }
+      : {}),
+  };
+}
+
+/**
+ * The confirm card's line for a single-division (Phase A) run.
+ *
+ * Split out of `BriefStep` and exported because this — not the arithmetic — is
+ * where a client/server price divergence actually comes from: `quoteRun` is
+ * shared, so the only way the two sides can disagree is by being handed
+ * different `RungInput`s. Keeping it pure means the agreement is testable.
+ */
+export function scheduleQuoteLines(
+  divisionId: string,
+  brief: Pick<AiBriefContext, "movableFixtures" | "activeEntrants" | "courts">,
+  mode: AiMode,
+  scope: AiScope | undefined,
+  rung: number | null,
+): QuoteCardLine[] {
+  return [
+    {
+      key: divisionId,
+      label: null,
+      input: {
+        movableFixtures: movableForRun(brief.movableFixtures, mode, scope).length,
+        entrants: brief.activeEntrants,
+        courts: brief.courts.length,
+      },
+      chosen: rung,
+    },
+  ];
+}
+
+/**
+ * The client's mirror of the OFFICIALS pack's sizing inputs
+ * (officials-ai.ts:163-176 for the fixture selection, :1110-1116 for the three
+ * numbers it prices on).
+ *
+ * The pack holds every division fixture that has a time — taking the dry-run
+ * `schedule` (Phase A's proposal) as an override over the persisted slot — and
+ * is not already decided. Its entrant and court counts are the DISTINCT values
+ * across exactly those fixtures, not the division's totals.
+ *
+ * Pure and exported so the agreement with the server is testable without React.
+ */
+export function officialsQuoteInput(
+  fixtures: AiConsoleFixture[],
+  placements: { fixture_id: string; scheduled_at: string; court_label: string }[],
+): { movableFixtures: number; entrants: number; courts: number } {
+  const override = new Map(placements.map((p) => [p.fixture_id, p] as const));
+  const included = fixtures
+    .map((f) => {
+      const ov = override.get(f.id);
+      return { f, at: ov?.scheduled_at ?? f.scheduled_at, court: ov?.court_label ?? f.court_label };
+    })
+    .filter((x) => x.at !== null && x.f.status !== "decided");
+  const entrants = new Set(
+    included.flatMap((x) => [x.f.home_entrant_id, x.f.away_entrant_id]).filter((e) => e !== null),
+  );
+  const courts = new Set(included.map((x) => x.court).filter((c) => c !== null));
+  return { movableFixtures: included.length, entrants: entrants.size, courts: courts.size };
 }
 
 /**
@@ -297,7 +480,7 @@ export function AiConsole({
     windows: brief.windows,
     blackouts: brief.blackouts,
     constraintsSet: brief.constraintsSet,
-    movable: brief.movable,
+    movable: brief.movableFixtures.length,
     pinned: brief.pinned,
     officials: rosterCount,
     officialsBlackout: brief.officialsWithBlackout,
@@ -307,10 +490,12 @@ export function AiConsole({
   // Instruction that produced the on-screen proposal — lets a refine turn send
   // the right `prior.instruction` when it round-trips the previous assignments.
   const priorInstruction = useRef("");
-  // Phase B equivalents: the instruction behind the current officials proposal,
-  // and whether that proposal was produced with a prior (so the grid knows when
-  // `diff.changed` means "changed vs prior" — a first draft has none).
-  const priorOfficialsInstruction = useRef("");
+  // Phase B's equivalent lives in the REDUCER (`officialsPriorInstruction`),
+  // not in a ref here: the officials confirm card prices the adopt path off it,
+  // so it is state the render depends on, and a ref written inside an async
+  // callback is both unobservable to the render and untestable without driving
+  // a network round-trip. `OFFICIALS_DONE` records it with the plan it belongs
+  // to. Whether that proposal had a prior stays local (grid tone only).
   // State, not a ref: it drives the `hadPrior` prop read during render
   // (OfficialsStep below) — react-hooks/refs correctly flags a ref read at
   // render time, since a ref mutation alone doesn't schedule the re-render
@@ -356,26 +541,24 @@ export function AiConsole({
     abortRef.current = ac;
     setTraceNonce((n) => n + 1); // fresh trace animation for this run
     dispatch({ type: "RUN_START" });
-    const body: AiPlanRequest = {
+    const body = schedulePlanBody(state, {
       instruction,
       mode,
-      ...(state.scope ? { scope: state.scope } : {}),
       // A dry officials-coverage preview rides along only when the division has a
       // saved policy (none is persisted today, so this is omitted — see the prop).
-      ...(officialsPolicy ? { officials_policy: officialsPolicy } : {}),
-      ...(mode === "refine" && state.schedulePlan && priorInstruction.current
-        ? {
-            prior: {
+      officialsPolicy,
+      prior:
+        mode === "refine" && state.schedulePlan && priorInstruction.current
+          ? {
               instruction: priorInstruction.current,
               assignments: state.schedulePlan.proposal.map((p) => ({
                 fixture_id: p.fixture_id,
                 scheduled_at: p.scheduled_at,
                 court_label: p.court_label,
               })),
-            },
-          }
-        : {}),
-    };
+            }
+          : null,
+    });
     try {
       const plan = await apiV1<AiPlanResponse>(
         `/api/v1/divisions/${divisionId}/schedule/ai-plan`,
@@ -397,7 +580,10 @@ export function AiConsole({
       const key = aiErrorKey(status, aiErrorCodeOf(err));
       dispatch({ type: "RUN_ERROR", error: { status, message: msg(key), key } });
     }
-  }, [busy, divisionId, msg, officialsPolicy, state.instruction, state.mode, state.scope, state.schedulePlan]);
+    // `state` whole, not a field list: the body builder reads the state object
+    // itself (so a call site cannot hand it the wrong phase's rung), which means
+    // a field list would go stale the moment the builder reads a new one.
+  }, [busy, divisionId, msg, officialsPolicy, state]);
 
   // Phase B run. Empty instruction + no prior = the zero-token solver draft (the
   // auto-run on first entry); a non-empty instruction plans with the LLM; a
@@ -420,21 +606,24 @@ export function AiConsole({
         scheduled_at: p.scheduled_at,
         court_label: p.court_label,
       }));
-      const officialsBody: AiOfficialsPlanRequest = {
+      // Phase B's rung is read by the builder from `officialsRung` — never
+      // passed in, so this call site cannot hand it Phase A's.
+      const officialsBody = officialsPlanBody(state, {
         instruction: opts.instruction,
-        ...(schedule.length > 0 ? { schedule } : {}),
+        schedule,
         policy: officialsPolicy ?? DEFAULT_OFFICIALS_POLICY,
-        ...(opts.priorAssignments
-          ? { prior: { instruction: priorOfficialsInstruction.current, assignments: opts.priorAssignments } }
-          : {}),
-      };
+        priorAssignments: opts.priorAssignments,
+      });
       try {
         const plan = await apiV1<AiOfficialsPlanResponse>(
           `/api/v1/divisions/${divisionId}/officials/ai-plan`,
           { method: "POST", json: officialsBody, signal: ac.signal },
         );
-        priorOfficialsInstruction.current = opts.instruction;
-        dispatch({ type: "OFFICIALS_DONE", plan });
+        // Recorded from the BODY that was actually sent, not from `opts`, so
+        // the brief we remember is by construction the brief the server was
+        // asked for. One action records it with the plan it produced, so the
+        // two cannot drift apart either.
+        dispatch({ type: "OFFICIALS_DONE", plan, instruction: officialsBody.instruction });
       } catch (err) {
         if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
         const status = err instanceof ApiV1Error ? err.status : 0;
@@ -442,7 +631,8 @@ export function AiConsole({
         dispatch({ type: "RUN_ERROR", error: { status, message: msg(key), key } });
       }
     },
-    [busy, divisionId, msg, officialsPolicy, state.schedulePlan],
+    // See the note on `run`'s deps — the body builder reads `state` itself.
+    [busy, divisionId, msg, officialsPolicy, state],
   );
 
   // Auto-run the free solver draft the first time the organiser reaches the
@@ -492,7 +682,7 @@ export function AiConsole({
                 locked: a.locked ?? false,
               })),
               audit: {
-                instruction: priorOfficialsInstruction.current.slice(0, 500),
+                instruction: state.officialsPriorInstruction.slice(0, 500),
                 summary: state.officialsPlan.summary.slice(0, 600),
                 model: AI_APPLY_MODEL,
                 repair_rounds: state.officialsPlan.usage.repair_rounds,
@@ -556,6 +746,8 @@ export function AiConsole({
       state.excludedFixtures,
       state.instruction,
       state.officialsPlan,
+      // The officials audit line records the brief the assignments came from.
+      state.officialsPriorInstruction,
       state.schedulePlan,
     ],
   );
@@ -655,7 +847,7 @@ export function AiConsole({
               ...cur.filter((a) => !(a.fixtureId === fixtureId && a.roleKey === roleKey)),
               { fixtureId, officialId: candidateId, roleKey, locked: false },
             ];
-            void runOfficials({ instruction: priorOfficialsInstruction.current, priorAssignments: patched });
+            void runOfficials({ instruction: state.officialsPriorInstruction, priorAssignments: patched });
           }}
           onPulse={(ids) => onPulseRef.current?.(ids)}
         />
@@ -825,9 +1017,31 @@ function BriefStep({
   onFill: (value: string) => void;
   lastRun: AiLastResult | null;
 }) {
+  const plural = usePlural();
   const tooShort = state.instruction.trim().length < 3;
-  const runLabel = msg(`board.ai.run.${state.mode}` as MessageKey);
   const presetNums = [1, 2, 3] as const;
+  // ONE line — the division being planned. The joint competition console
+  // (#350) builds the same shape with one line per selected division; the card
+  // switches layout on the count, so there is no second card to keep in sync.
+  const quoteLines = scheduleQuoteLines(
+    preflight.divisionId,
+    brief,
+    state.mode,
+    state.scope,
+    state.rung,
+  );
+  // The CTA's count comes from the SAME quote the card renders — pricing the
+  // run twice is how a button and the card above it come to disagree. On a
+  // frozen board the count is suppressed for the same reason the card is
+  // hidden: there is no run to price, so naming a price would be quoting for
+  // something that is not on offer.
+  const runAction = msg(`board.ai.run.${state.mode}` as MessageKey);
+  const runLabel = scheduleFrozen
+    ? runAction
+    : msg("board.ai.quote.cta", {
+        action: runAction,
+        credits: plural("board.ai.quote.credits", quoteFor(quoteLines).credits),
+      });
   return (
     <div className="space-y-3">
       {/* Run type */}
@@ -920,6 +1134,18 @@ function BriefStep({
 
       {/* Pre-flight readiness — informational, never blocks the run. */}
       <AiPreflight {...preflight} />
+
+      {/* What the run costs, and the budget the organiser is buying. Hidden on
+          a frozen board: the run cannot happen, so quoting it would be a price
+          for something that is not on offer. */}
+      {!scheduleFrozen && (
+        <AiQuoteCard
+          lines={quoteLines}
+          onChange={(_key, rung) => dispatch({ type: "SET_RUNG", rung })}
+          msg={msg}
+          busy={busy}
+        />
+      )}
 
       {state.run === "error" && state.error && (
         state.error.key === "board.ai.error.outOfCredits" ? (
@@ -1108,7 +1334,7 @@ function ScheduleStep({
 // schedule plan exists (reducer-gated); the auto-run in the parent fills it with
 // the free solver draft on first entry. The proposal's dry-run placements power
 // the grid's times so it reads consistently with the schedule step.
-function OfficialsStep({
+export function OfficialsStep({
   state,
   dispatch,
   currency,
@@ -1148,6 +1374,9 @@ function OfficialsStep({
     <AiOfficialsReview
       plan={state.officialsPlan}
       placements={placements}
+      quoteInput={officialsQuoteInput(fixtures, placements)}
+      rung={state.officialsRung}
+      onRung={(rung) => dispatch({ type: "SET_OFFICIALS_RUNG", rung })}
       currency={currency}
       fixtures={fixtures}
       roster={roster}
@@ -1157,6 +1386,11 @@ function OfficialsStep({
       traceNonce={traceNonce}
       error={state.run === "error" ? state.error : null}
       instruction={state.officialsInstruction}
+      // The second spend path's instruction, so the card can ask the server's
+      // own free/priced question of it. It must stay the SAME field `onAdopt`
+      // sends as the run's `instruction` — hand the card anything else (a "",
+      // a placeholder) and it will quote 1 credit for a run priced at 2-3.
+      adoptInstruction={state.officialsPriorInstruction}
       onInstruction={(v) => dispatch({ type: "SET_INSTRUCTION", officials: true, value: v })}
       wishes={wishes}
       onWishes={onWishes}
