@@ -402,9 +402,23 @@ registrants. Filed separately.
 
 Duplicate-person review queue, organiser-facing merge tool, and the production
 backfill of historic duplicates. Each is real work and each is a consequence of §1.1,
-but none blocks the scheduling waves once the name guard is in place. They are filed
-separately.
+but none blocks the scheduling waves once the name guard is in place. Filed as #404.
 
-Also out of scope: re-verifying already-published schedules after an admin
-person-merge (the source document's §4.1 operational consequence). It becomes live
-only when the merge tool exists.
+Re-verifying already-published schedules after an admin person-merge (the source
+document's §4.1 operational consequence) belongs with that tool: a merge can *create*
+overlap violations in a board that was valid when published. Same verifier, another
+job. Tracked on #404.
+
+### 9.1 Data protection
+
+Reviewed rather than assumed; findings on #403. Three conclusions worth carrying:
+
+- **z3 requires no data-protection work.** It is an in-process WASM library — no
+  personal data leaves the process and it is not a sub-processor. The
+  sub-processor question applied to hosted solvers, which were rejected.
+- **The name guard is the one new processing activity** in the waves. Not Art. 22
+  automated decision-making — the effect is which time a match is played. Mitigated by
+  being non-persisted, scheduling-scoped and disclosed in `assumptions`.
+- **The merge tool is where the real exposure sits**, not the scheduling waves: it
+  changes records covering `dob`, photos and minors, so audit trail, reversibility and
+  restrictive-wins consent resolution must be designed in rather than retrofitted.
