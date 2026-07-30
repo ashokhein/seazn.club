@@ -9,7 +9,7 @@
 // looped for ever. Any assertion about how many times an island fetched, or
 // about state that an effect writes, was measuring the harness.
 import { describe, expect, it } from "vitest";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { propsOf, renderIsland, walk } from "./_hook-harness";
 
@@ -97,6 +97,119 @@ describe("_hook-harness useMemo (v17 gap #293 review)", () => {
     expect(island.text()).toContain("alpha|beta-0");
     clickButton(island.tree());
     expect(island.text()).toContain("alpha|beta-1");
+  });
+});
+
+describe("_hook-harness useRef (#350 Task 8)", () => {
+  it("hands back the SAME box on every render, so a value written to it survives", () => {
+    // A ref is the only in-flight guard that works: component state is read
+    // through a closure a second click can beat. A harness that minted a fresh
+    // box per render would show every double-spend guard on the branch passing
+    // — the box the second click reads would never be the one the first wrote.
+    const seen: { current: number }[] = [];
+
+    function Island() {
+      const [n, setN] = useState(0);
+      const box = useRef(0);
+      seen.push(box);
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            box.current += 1;
+            setN(n + 1);
+          }}
+        >
+          {`${n}:${box.current}`}
+        </button>
+      );
+    }
+
+    const island = renderIsland(Island, {});
+    expect(island.text()).toContain("0:0");
+    clickButton(island.tree());
+    // The write the click made is visible on the next render — which it is only
+    // if the box is the same object.
+    expect(island.text()).toContain("1:1");
+    clickButton(island.tree());
+    expect(island.text()).toContain("2:2");
+    expect(seen.every((b) => b === seen[0])).toBe(true);
+  });
+
+  it("keeps ref cells positional across sibling refs", () => {
+    // Two refs in one component share the cursor; swapping their cells would
+    // hand each the other's box, and a single-ref test cannot see it.
+    function Island() {
+      const [n, setN] = useState(0);
+      const a = useRef("alpha");
+      const b = useRef("beta");
+      return (
+        <button type="button" onClick={() => setN(n + 1)}>
+          {`${a.current}|${b.current}|${n}`}
+        </button>
+      );
+    }
+    const island = renderIsland(Island, {});
+    expect(island.text()).toContain("alpha|beta|0");
+    clickButton(island.tree());
+    expect(island.text()).toContain("alpha|beta|1");
+  });
+});
+
+describe("_hook-harness useCallback (#350 Task 8)", () => {
+  it("holds a callback across renders while its deps hold, and re-makes it when they change", () => {
+    // Same contract as useMemo, and it matters for the same reason: a callback
+    // handed to a child is an ordinary useEffect dependency. A harness that
+    // returned a new function every render would re-run every effect keyed on
+    // one, every render.
+    const seen: (() => number)[] = [];
+
+    function Island() {
+      // `n` never changes here — the click below moves the OTHER cell, which is
+      // what makes this render a deps-unchanged one.
+      const [n] = useState(0);
+      const [other, setOther] = useState(0);
+      const cb = useCallback(() => n, [n]);
+      seen.push(cb as () => number);
+      return (
+        <div>
+          <button type="button" onClick={() => setOther(other + 1)}>
+            {`${cb()}|${other}`}
+          </button>
+        </div>
+      );
+    }
+
+    const island = renderIsland(Island, {});
+    // A render that did NOT change `n` must reuse the identical function…
+    clickButton(island.tree());
+    expect(island.text()).toContain("0|1");
+    expect(seen[1]).toBe(seen[0]);
+    // …and the callback must still close over live state, not a frozen copy of
+    // the first render's — the direction "return the first value for ever"
+    // would be just as wrong and just as invisible.
+    expect(seen[1]()).toBe(0);
+  });
+
+  it("re-makes the callback when its deps change, so it never closes over stale state", () => {
+    const seen: (() => number)[] = [];
+
+    function Island() {
+      const [n, setN] = useState(0);
+      const cb = useCallback(() => n, [n]);
+      seen.push(cb as () => number);
+      return (
+        <button type="button" onClick={() => setN(n + 1)}>
+          {String(cb())}
+        </button>
+      );
+    }
+
+    const island = renderIsland(Island, {});
+    clickButton(island.tree());
+    expect(island.text()).toContain("1");
+    expect(seen[1]).not.toBe(seen[0]);
+    expect(seen[1]()).toBe(1);
   });
 });
 

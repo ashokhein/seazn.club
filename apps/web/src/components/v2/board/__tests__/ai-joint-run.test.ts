@@ -189,6 +189,31 @@ describe("runJointPlan — one intent must not spend twice", () => {
     expect(inFlight.current).toBe(false);
   });
 
+  it("does not latch the guard when onStart itself throws", async () => {
+    // `onStart` is the ONE statement that ran outside the try, so a throw there
+    // skipped `finally` and left the guard latched for the life of the mount:
+    // the console could never start another run, and the only remedy is a page
+    // reload. It is two React state setters today, but the property is "the
+    // guard is released on every path", not "today's callback happens not to
+    // throw". Nothing was posted, so nothing was spent either.
+    const { api, calls, settle } = deferredApi();
+    const inFlight = { current: false };
+    const boom = () => {
+      throw new Error("setState blew up");
+    };
+
+    const failed = await runJointPlan(input(), { inFlight, onStart: boom }, api);
+    expect(failed).toEqual({ status: "failed", httpStatus: 0 });
+    expect(calls).toHaveLength(0);
+    expect(inFlight.current).toBe(false);
+
+    // …and the next, healthy run is not refused by a guard nobody released.
+    const second = runJointPlan(input(), { inFlight }, api);
+    settle(PLAN);
+    expect(await second).toEqual({ status: "planned", plan: PLAN });
+    expect(calls).toHaveLength(1);
+  });
+
   it("prefers the paywall feature key over the generic 402 code", async () => {
     // "ai.credits" is what routes the console to the top-up block instead of
     // "upgrade to Pro" — AI is metered on every tier.

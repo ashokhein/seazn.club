@@ -82,7 +82,8 @@ export function jointRunBody(input: JointRunInput): AiCompetitionPlanRequest {
  * spinner or clear the error belonging to the run that is still going.
  *
  * The guard is released in `finally` — including on failure, or a 402 would
- * lock the organiser out of retrying after topping up.
+ * lock the organiser out of retrying after topping up, and including when
+ * `onStart` itself throws, which is why that call sits inside the `try`.
  */
 export async function runJointPlan(
   input: JointRunInput,
@@ -91,8 +92,13 @@ export async function runJointPlan(
 ): Promise<JointRunResult> {
   if (ctl.inFlight.current) return { status: "refused" };
   ctl.inFlight.current = true;
-  ctl.onStart?.();
   try {
+    // Inside the try, not before it: this was the only statement between
+    // setting the guard and the `finally` that releases it, so a throw here was
+    // the one path that could latch the guard and lock the organiser out for
+    // the life of the mount. Still AFTER the guard, so a refused second click
+    // cannot start a spinner or clear the error of the run still going.
+    ctl.onStart?.();
     const plan = await api<AiCompetitionPlanResponse>(
       `/api/v1/competitions/${input.competitionId}/schedule/ai-plan`,
       { method: "POST", json: jointRunBody(input) },

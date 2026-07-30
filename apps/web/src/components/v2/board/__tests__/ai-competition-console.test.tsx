@@ -423,6 +423,19 @@ describe("a person clash the plan only warns about but the apply refuses", () =>
     ).toEqual({ count: 0, divisions: [] });
   });
 
+  it("ignores a clash owned by a division that is not in the run", () => {
+    // The third filter, and the one the fixture above cannot exercise: it
+    // selects both divisions, so `chosen` is inert in every assertion there.
+    // `usableSelection` narrows the picks DURING render, so a refresh that
+    // freezes d2 under an open console drops it from the run while the plan on
+    // screen still carries its fixtures — and d2's rule cannot refuse a write
+    // the apply will never be asked to make.
+    expect(personClashRisk(clash, DIVISIONS, ["d1"])).toEqual({ count: 0, divisions: [] });
+    // The positive discriminator, so this cannot pass by the count being 0 for
+    // some other reason: put d2 back and the same plan threatens one refusal.
+    expect(personClashRisk(clash, DIVISIONS, ["d1", "d2"]).count).toBe(1);
+  });
+
   it("warns before Apply, naming the division whose rule refuses it", () => {
     const html = review({ plan: clash });
     expect(html).toContain(
@@ -456,11 +469,21 @@ describe("a person clash the plan only warns about but the apply refuses", () =>
 });
 
 describe("a run started from the review step", () => {
+  // The re-run button exists ONLY inside the stale-board branch, and a failed
+  // run leaves `outcome` exactly where it was — `run()` clears it on success and
+  // nowhere else. So the step returns at that branch and a re-run failure can
+  // surface at one mount and one only: the one below this panel.
+  //
+  // Rendering these with the default `outcome: null` pinned the main review
+  // body's mount instead, which a failed re-run cannot reach. Deleting the
+  // reachable mount left the whole suite green. Both are asserted here now, so
+  // the repoint does not trade one blind spot for another.
+  const stale = { status: "seq_conflict" as const, checkpoints: [], applied: 0, conflicts: [] };
+
   it("shows the re-run as in flight, so a second click is not the obvious move", () => {
     // The button is the AFFORDANCE (the guard is in runJointPlan); without it
     // the review step shows no change at all during a run that takes tens of
     // seconds, and a second click spends again.
-    const stale = { status: "seq_conflict" as const, checkpoints: [], applied: 0, conflicts: [] };
     const idle = review({ outcome: stale });
     expect(disabledButton(idle, "data-ai-joint-rerun")).toBe(false);
     const busy = review({ outcome: stale, running: true });
@@ -472,18 +495,24 @@ describe("a run started from the review step", () => {
     // `run()` leaves `plan` in place on failure, and the review step renders
     // whenever a plan exists — so without this a 402/403/500 changed NOTHING on
     // screen and the organiser had no idea the remedy had failed.
-    const html = review({
-      error: { message: "Too many runs just now.", key: "board.ai.error.rateLimited" },
-    });
-    expect(html).toContain("Too many runs just now.");
+    const err = { message: "Too many runs just now.", key: "board.ai.error.rateLimited" };
+    // The branch the failure actually lands on.
+    expect(review({ outcome: stale, error: err })).toContain("Too many runs just now.");
+    // Contrast on that same branch: the stale-board panel with nothing wrong
+    // says nothing.
+    expect(review({ outcome: stale })).not.toContain(enText["board.ai.errorLabel"]);
+    // …and the main review body still renders it, for the run that fails before
+    // any apply has been attempted.
+    expect(review({ error: err })).toContain("Too many runs just now.");
     expect(review({})).not.toContain(enText["board.ai.errorLabel"]);
   });
 
   it("routes an empty wallet to the top-up block, not to a red line", () => {
-    const html = review({
-      error: { message: "out", key: "board.ai.error.outOfCredits" },
-    });
-    expect(html).toContain(enText["board.ai.error.outOfCreditsTitle"]);
+    const err = { message: "out", key: "board.ai.error.outOfCredits" };
+    expect(review({ outcome: stale, error: err })).toContain(
+      enText["board.ai.error.outOfCreditsTitle"],
+    );
+    expect(review({ error: err })).toContain(enText["board.ai.error.outOfCreditsTitle"]);
   });
 });
 
