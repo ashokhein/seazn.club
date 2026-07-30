@@ -13,7 +13,7 @@
 // first-division-wins.
 //
 // Real Postgres required; skipped without DATABASE_URL.
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { sql } from "@/lib/db";
@@ -43,6 +43,29 @@ import {
   type CompetitionApplyOut,
 } from "../competition-schedule-apply";
 import { seedOrg } from "./_seed";
+
+/**
+ * Every `afterScheduleWrite` this module fires, in order.
+ *
+ * A RECORDING passthrough, not a stub: the real invalidation still runs, so the
+ * 21 tests that were green before this spy existed stay green for the same
+ * reasons. Firing it once per WRITTEN division is the whole point of an
+ * N-division apply — a division whose board changed but whose cache was never
+ * busted serves the pre-apply timetable to the public site until something else
+ * happens to invalidate it — and `for (const id of out.divisionIds)` narrowed to
+ * `.slice(0, 1)` left this suite at 21/0.
+ */
+const sched = vi.hoisted(() => ({ afterWrite: [] as [string, string, string][] }));
+vi.mock("../schedule", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../schedule")>();
+  return {
+    ...actual,
+    afterScheduleWrite: (divisionId: string, competitionId: string, reason: "schedule") => {
+      sched.afterWrite.push([divisionId, competitionId, reason]);
+      return actual.afterScheduleWrite(divisionId, competitionId, reason);
+    },
+  };
+});
 
 /**
  * COMPILE-TIME half of the wire contract (the runtime half is the
@@ -982,5 +1005,135 @@ describe.skipIf(!HAS_DB)("applyCompetitionSchedule (#350)", () => {
       expect(unplaced(await slots(board.alpha.id))).toBe(true);
       expect(unplaced(await slots(board.bravo.id))).toBe(true);
     }
+  }, 60_000);
+
+  // -------------------------------------------------------------------------
+  // The three request-level guards that could not fail (I-2).
+  //
+  // All three passed 21/0 under a mutation that removed them: `if (false)` for
+  // the duplicate-fixture loop, and `.slice(0, 1)` for the per-division
+  // invalidation. `SCHEDULE_APPLY_NO_DIVISIONS` and
+  // `SCHEDULE_APPLY_DUPLICATE_DIVISION` were unasserted anywhere in the repo —
+  // the only "appears more than once" assertions belong to
+  // `jointStructuralCheck` on the PLAN side, which is a different function.
+  // -------------------------------------------------------------------------
+
+  it("a fixture listed twice is refused by NAME, and nothing is written", async () => {
+    // Both shapes, because they are two different mistakes a client can make:
+    // the same fixture twice inside one division's list, and the same fixture
+    // claimed by two divisions of the run. One `seenFixture` set spans the whole
+    // request, so one guard has to catch both.
+    for (const shape of ["twice in one division", "claimed by two divisions"] as const) {
+      ({ auth } = await seedOrg("pro"));
+      board = await seedBoard(auth);
+      const dupId = board.alpha.fixtureIds[2]!;
+      const { alpha, bravo } = await clean();
+      // The extra entry sits on a court and slot nothing else uses, so a court
+      // clash cannot stand in for the guard under test.
+      const again = { fixture_id: dupId, scheduled_at: at(600), court_label: "Court 2" };
+      const divisions: CompetitionApplyDivision[] =
+        shape === "twice in one division"
+          ? [{ ...alpha, assignments: [...alpha.assignments, again] }, bravo]
+          : [alpha, { ...bravo, assignments: [...bravo.assignments, again] }];
+
+      let caught: unknown;
+      try {
+        await applyCompetitionSchedule(auth, board.competitionId, {
+          divisions,
+          source: "ai",
+          ai: AI,
+        });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught, shape).toBeInstanceOf(HttpError);
+      expect((caught as HttpError).status, shape).toBe(422);
+      // The MESSAGE names the offending fixture. Anchoring on the status alone
+      // would be satisfied by every other 422 on this path — a frozen division,
+      // a decided fixture, a fixture outside its division — and prove none of
+      // them. This guard has no error code, so the id is the discriminator.
+      expect((caught as HttpError).message, shape).toBe(
+        `fixture ${dupId} appears more than once`,
+      );
+
+      expect(unplaced(await slots(board.alpha.id)), shape).toBe(true);
+      expect(unplaced(await slots(board.bravo.id)), shape).toBe(true);
+    }
+  }, 120_000);
+
+  it("an empty or repeated division list is a 400 before anything is read", async () => {
+    // Both guards sit ahead of every read, lock and write, and both carry a code
+    // the route maps straight through. The usecase is called directly here on
+    // purpose: zod's `.min(1)` covers the wire, and a defence-in-depth check
+    // nothing exercises is a check that can be deleted unnoticed.
+    const { alpha } = await clean();
+
+    await expect(
+      applyCompetitionSchedule(auth, board.competitionId, {
+        divisions: [],
+        source: "ai",
+        ai: AI,
+      }),
+    ).rejects.toMatchObject({ status: 400, code: "SCHEDULE_APPLY_NO_DIVISIONS" });
+
+    await expect(
+      applyCompetitionSchedule(auth, board.competitionId, {
+        divisions: [alpha, { ...alpha, assignments: [alpha.assignments[0]!] }],
+        source: "ai",
+        ai: AI,
+      }),
+    ).rejects.toMatchObject({ status: 400, code: "SCHEDULE_APPLY_DUPLICATE_DIVISION" });
+
+    // A repeated division must be refused as a repeated DIVISION, not as a
+    // repeated fixture — the two guards are adjacent and the second list above
+    // shares fixture ids with the first, so without the code assertion the
+    // duplicate-fixture 422 would satisfy this test just as well.
+    expect(unplaced(await slots(board.alpha.id))).toBe(true);
+    expect(unplaced(await slots(board.bravo.id))).toBe(true);
+  }, 60_000);
+
+  it("invalidates every WRITTEN division exactly once, in domain order", async () => {
+    // Rename so the (name, slug) DOMAIN order is provably the REVERSE of the
+    // UUID order — the same trick the competition-event test uses. Without it a
+    // loop over `lockOrder` (which sorts by UUID, correctly, for deadlock
+    // avoidance) would match domain order on a coin flip.
+    const byUuid = [board.alpha, board.bravo].sort((a, b) => (a.id < b.id ? -1 : 1));
+    await sql`update divisions set name = 'Zulu', slug = 'zulu' where id = ${byUuid[0]!.id}`;
+    await sql`update divisions set name = 'Alfa', slug = 'alfa' where id = ${byUuid[1]!.id}`;
+    const domainOrder = [byUuid[1]!.id, byUuid[0]!.id];
+
+    const { alpha, bravo } = await clean();
+    sched.afterWrite.length = 0;
+    await applyCompetitionSchedule(auth, board.competitionId, {
+      divisions: [alpha, bravo],
+      source: "ai",
+      ai: AI,
+    });
+
+    // ONE call per division, no more and no fewer, each naming its OWN division
+    // and the competition it was applied under.
+    expect(sched.afterWrite).toEqual(
+      domainOrder.map((id) => [id, board.competitionId, "schedule"]),
+    );
+    expect(sched.afterWrite).not.toEqual(
+      [...domainOrder].sort().map((id) => [id, board.competitionId, "schedule"]),
+    );
+  }, 60_000);
+
+  it("invalidates nothing when the transaction rolls back", async () => {
+    // The other half of "once per WRITTEN division": the fire-and-forget loop
+    // runs AFTER the commit, so a refused apply must bust no cache at all.
+    // Hoisting it inside the transaction would publish a board update for a
+    // write that never landed.
+    const { alpha, bravo } = await clean();
+    sched.afterWrite.length = 0;
+    await expect(
+      applyCompetitionSchedule(auth, board.competitionId, {
+        divisions: [alpha, { ...bravo, expected_seq: bravo.expected_seq + 7 }],
+        source: "ai",
+        ai: AI,
+      }),
+    ).rejects.toMatchObject({ code: "SEQ_CONFLICT" });
+    expect(sched.afterWrite).toEqual([]);
   }, 60_000);
 });
