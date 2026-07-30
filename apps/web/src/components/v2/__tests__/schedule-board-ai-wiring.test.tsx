@@ -77,7 +77,6 @@ vi.mock("@/lib/client-v1", async (importOriginal) => {
 import { ScheduleBoard } from "../schedule-board";
 import { AiCompetitionConsole } from "../board/ai-competition-console";
 import { AiConsole } from "../board/ai-console";
-import { BoardGrid } from "../board/board-grid";
 
 // ---------------------------------------------------------------------------
 // A board whose three divisions agree about nothing
