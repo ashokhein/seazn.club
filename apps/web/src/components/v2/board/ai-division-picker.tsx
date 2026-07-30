@@ -21,15 +21,20 @@ export interface PickerDivision {
   name: string;
   /** Movable ("scheduled") fixtures the AI would place in this division. */
   movable: number;
+  /** The division's schedule is frozen. The plan endpoint answers 409
+   *  SCHEDULE_LOCKED for a single frozen division and refuses the WHOLE run —
+   *  so including one loses the run to a division nobody meant to change. */
+  locked?: boolean;
 }
 
 /** The joint solve needs at least this many distinct divisions, or the run is
  *  a single-division run wearing the joint run's batch discount. */
 export const MIN_JOINT_DIVISIONS = 2;
 
-/** Divisions a joint run can actually include — see ruling R6 above. */
+/** Divisions a joint run can actually include — see ruling R6 above, plus the
+ *  frozen-division refusal. */
 export function selectableDivisions(divisions: PickerDivision[]): PickerDivision[] {
-  return divisions.filter((d) => d.movable > 0);
+  return divisions.filter((d) => d.movable > 0 && d.locked !== true);
 }
 
 /** Default selection: everything with something to place. An organiser who
@@ -80,7 +85,7 @@ export function AiDivisionPicker({
 
       <ul className="divide-y divide-slate-100">
         {divisions.map((d) => {
-          const usable = d.movable > 0;
+          const usable = d.movable > 0 && d.locked !== true;
           return (
             <li key={d.id}>
               <label
@@ -100,9 +105,15 @@ export function AiDivisionPicker({
                   {d.name}
                 </span>
                 <span className="shrink-0 text-[11px] tabular-nums text-slate-500">
+                  {/* Two different reasons a division cannot join, said
+                      separately: one shared "can't use this" would send an
+                      organiser off to add fixtures to a division that only
+                      needs unfreezing. */}
                   {usable
                     ? plural("board.ai.picker.movable", d.movable)
-                    : msg("board.ai.picker.nothingToPlace")}
+                    : d.movable === 0
+                      ? msg("board.ai.picker.nothingToPlace")
+                      : msg("board.ai.picker.frozen")}
                 </span>
               </label>
             </li>

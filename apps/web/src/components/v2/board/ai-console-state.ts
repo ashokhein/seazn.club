@@ -311,7 +311,10 @@ export function aiErrorKey(status: number, code?: string): AiErrorKey {
  * so the copy still reads as an apply failure. Pure — unit-tested without React.
  */
 export function applyErrorKey(
-  outcome: ApplyOutcome,
+  // The two fields it actually reads, so the JOINT apply's own outcome
+  // (ai-joint-apply.ts) resolves its copy through this same mapping rather than
+  // carrying a second, drifting copy of it.
+  outcome: Pick<ApplyOutcome, "errorStatus" | "errorCode">,
 ): AiErrorKey | "board.ai.apply.error" | "board.ai.apply.checkpointQuota" {
   // A 402 at the checkpoint step is the save-point quota (schedule.checkpoints.max),
   // not the AI grade — AI is already granted on this tier, so route it to the

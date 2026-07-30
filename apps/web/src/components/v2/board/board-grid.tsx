@@ -8,6 +8,7 @@ import { dayKey } from "@/lib/schedule-board";
 import type { FeedLabelPair } from "@/lib/schedule-board";
 import { FixtureBlock } from "./fixture-block";
 import { timeLabel } from "@/lib/day-label";
+import { divisionInk, divisionTint } from "@/lib/division-hue";
 import { UNASSIGNED, type BoardConflict, type BoardFixture, type GhostBlock } from "./types";
 import { useMsg } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
@@ -192,6 +193,20 @@ function GhostBlockView({ ghost, msg }: { ghost: GhostBlock; msg: (k: MessageKey
     >
       <div className="flex items-center gap-1">
         <span className="font-mono text-[10px] font-semibold">{ghost.code}</span>
+        {/* Joint proposals only: the same division chip the real cards wear, so
+            a repainted competition board still reads as several divisions. */}
+        {ghost.division && (
+          <span
+            title={ghost.division.name}
+            className="shrink-0 truncate rounded px-1 text-[9px] font-semibold"
+            style={{
+              backgroundColor: divisionTint(ghost.division.id),
+              color: divisionInk(ghost.division.id),
+            }}
+          >
+            {ghost.division.name}
+          </span>
+        )}
         {marker && (
           <span
             className={`shrink-0 rounded px-1 text-[8px] font-bold leading-tight ${

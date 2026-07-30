@@ -24,6 +24,7 @@ import { BoardLanes } from "./board/board-lanes";
 import { BoardLegend } from "./board/board-legend";
 import { BoardTray } from "./board/board-tray";
 import { AiConsole, useAiSchedulingEnabled, type AiBriefContext } from "./board/ai-console";
+import { AiCompetitionConsole, type JointDivision } from "./board/ai-competition-console";
 import { AiRepairBanner } from "./board/ai-repair-banner";
 import { useDisruptionSignals } from "./board/use-disruption-signals";
 import type { AiScope } from "./board/ai-console-state";
@@ -41,7 +42,6 @@ import {
   type Density,
   type GhostBlock,
 } from "./board/types";
-import type { AiPlanResponse } from "@/server/api-v1/schemas";
 import { useBoardActions } from "./board/use-board-actions";
 
 export type { BoardConfig, BoardConflict, BoardDivision, BoardFixture, BoardStage } from "./board/types";
@@ -95,6 +95,184 @@ export function aiPricingInputs(
   };
 }
 
+/**
+ * The whole brief the AI console prices a SINGLE-division run from, derived from
+ * the board's own props.
+ *
+ * Split out of the component — and taking `divisions` + the live fixture list
+ * rather than a division id + a pre-filtered list — because the id was the part
+ * that could be wrong. Every `aiPricingInputs` test hands the function an id, so
+ * they prove it reads its argument and nothing about the board CHOOSING one:
+ * replacing the call site's `single?.id ?? null` with a bare `null` priced every
+ * run at 0 active entrants with the suite fully green. Deriving the division
+ * here means the id and the fixtures it filters can no longer describe different
+ * divisions, and "no division" is a case the tests assert on its own terms.
+ */
+export function buildAiBrief(input: {
+  cfg: BoardConfig;
+  /** The board's divisions. One → that division's brief; anything else has no
+   *  single division to price and the joint console prices per division. */
+  divisions: BoardDivision[];
+  /** The LIVE board (`actions.board`), carrying the optimistic overrides a drag
+   *  applies before the RSC refresh lands. Never the server-shaped prop. */
+  boardFixtures: BoardFixture[];
+  activeEntrantCounts: Record<string, number>;
+  entrantNames: Record<string, string>;
+  officialsWithBlackout: number;
+}): AiBriefContext {
+  const { cfg, divisions, boardFixtures, activeEntrantCounts } = input;
+  const single = divisions.length === 1 ? (divisions[0] as BoardDivision) : null;
+  const divFixtures = single
+    ? boardFixtures.filter((f) => f.division_id === single.id)
+    : boardFixtures;
+  return {
+    courts: cfg.courts,
+    windows: cfg.sessionWindows.length,
+    blackouts: cfg.blackouts.length,
+    constraintsSet:
+      cfg.perEntrantMinRest > 0 ||
+      (cfg.roundMinutes ?? 0) > 0 ||
+      Boolean((cfg as { constraints?: unknown }).constraints),
+    ...aiPricingInputs(divFixtures, single?.id ?? null, activeEntrantCounts),
+    pinned: divFixtures.filter((f) => f.schedule_locked).length,
+    entrants: Object.entries(input.entrantNames)
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    officialsWithBlackout: input.officialsWithBlackout,
+  };
+}
+
+/**
+ * The joint console's per-division inputs, derived from the board's own props.
+ *
+ * Two of these fields are money — each division's movable-fixture count and its
+ * active-entrant count are what the receipt prices, one line each, summed into
+ * one charge — so they go through the SAME `aiPricingInputs` the division
+ * console's brief does, filtered per division inside the loop. Reading the whole
+ * board for either would multiply the quote by the number of divisions.
+ *
+ * The other three are things the joint surface cannot infer and the division
+ * surface never needs: courts (matched across divisions BY NAME), the division's
+ * configured timezone, and `crossPersonClash` — the rule that decides whether
+ * the joint apply refuses a person clash the plan only warned about.
+ */
+export function jointDivisionsFor(
+  divisions: BoardDivision[],
+  boardFixtures: BoardFixture[],
+  activeEntrantCounts: Record<string, number>,
+  divisionSettings:
+    | Record<string, { courts: string[]; tz: string; crossPersonClash?: "warn" | "hard" }>
+    | undefined,
+): JointDivision[] {
+  return divisions.map((d) => {
+    const s = divisionSettings?.[d.id];
+    const priced = aiPricingInputs(
+      boardFixtures.filter((f) => f.division_id === d.id),
+      d.id,
+      activeEntrantCounts,
+    );
+    return {
+      id: d.id,
+      name: d.name,
+      seq: d.seq,
+      // Absent lock state reads as unfrozen — the server is the authority.
+      scheduleLocked: d.schedule_locked ?? false,
+      // A missing settings row means no courts, NOT another division's: a
+      // borrowed list would price capacity this division does not have and make
+      // the by-name divergence check agree where it should warn.
+      courts: s?.courts ?? [],
+      tz: s?.tz ?? "UTC",
+      personClashBlocks: s?.crossPersonClash === "hard",
+      movableFixtures: priced.movableFixtures.length,
+      activeEntrants: priced.activeEntrants,
+    };
+  });
+}
+
+/** Which AI console a board offers, if any. `null` hides the launch button. */
+export type AiEntryPoint = "division" | "competition" | null;
+
+/**
+ * The gate the launch button reads.
+ *
+ * It used to be `single !== null`, which is what kept multi-division boards
+ * without an AI console at all (#350). A multi-division board now opens the
+ * JOINT console — but only when it knows which competition it belongs to, which
+ * only the competition schedule page passes, and that page is itself behind
+ * `scheduling.multi_division` (it renders an UpgradeGate in place of the board
+ * without it). The entitlement gate is therefore structural here and re-checked
+ * server-side on all three joint endpoints; this is the second lock, not the
+ * only one.
+ */
+export function aiEntryPoint(input: {
+  /** Role + not frozen (`canManage ?? canEdit`), not the paid entitlement — a
+   *  free org still reaches the in-dock paywall. */
+  canManage: boolean;
+  /** The PostHog "ai-scheduling" kill switch, fail-open. */
+  aiFlagOn: boolean;
+  divisions: BoardDivision[];
+  competitionId: string | null;
+}): AiEntryPoint {
+  if (!input.canManage || !input.aiFlagOn) return null;
+  if (input.divisions.length === 1) return "division";
+  if (input.divisions.length > 1 && input.competitionId !== null) return "competition";
+  return null;
+}
+
+/** What the ghost overlay reads out of a proposal — the two fields BOTH the
+ *  per-division and the JOINT plan responses carry, so one derivation serves
+ *  both. `division_id` is present only on a joint one. */
+export interface GhostSource {
+  proposal: {
+    fixture_id: string;
+    scheduled_at: string;
+    court_label: string | null;
+    division_id?: string;
+  }[];
+  blocking: { fixtureId: string }[];
+}
+
+/**
+ * The proposal painted over the grid.
+ *
+ * Exported and pure because of the one thing it has to get right on a
+ * competition board and cannot on a division board: attributing each proposed
+ * placement to the division that owns it. The real cards carry that chip; a
+ * proposal that dropped it would repaint a multi-division board as a wall of
+ * anonymous blocks, and "did one age group get all the good slots?" is the
+ * question a joint run exists to answer.
+ */
+export function ghostBlocks(
+  plan: GhostSource,
+  fixtures: AiConsoleFixture[],
+  divisionNames: Record<string, string>,
+  pulseIds: string[],
+): GhostBlock[] {
+  const meta = new Map(fixtures.map((f) => [f.id, f]));
+  const diff = computeAiDiff(plan, fixtures);
+  const blocking = new Set(plan.blocking.map((b) => b.fixtureId));
+  const pulsing = new Set(pulseIds);
+  return plan.proposal.map((p) => {
+    const m = meta.get(p.fixture_id);
+    return {
+      id: p.fixture_id,
+      code: m?.code ?? p.fixture_id.slice(0, 6),
+      matchup: m?.matchup ?? "—",
+      isFinal: m?.isFinal ?? false,
+      isJunior: m?.isJunior ?? false,
+      at: new Date(p.scheduled_at).getTime(),
+      court: p.court_label ?? null,
+      tone: ghostToneFor(p.fixture_id, diff, blocking),
+      pulse: pulsing.has(p.fixture_id),
+      // A single-division proposal sends no division_id, and labelling every
+      // block with the one division would be noise rather than information.
+      division: p.division_id
+        ? { id: p.division_id, name: divisionNames[p.division_id] ?? p.division_id }
+        : null,
+    };
+  });
+}
+
 interface Props {
   divisions: BoardDivision[];
   stages: BoardStage[];
@@ -133,6 +311,20 @@ interface Props {
    *  availability), for the AI console pre-flight's "N officials, M with
    *  blackout dates" row. Optional so non-schedule-page callers can omit it. */
   officialsWithBlackout?: number;
+  /** The competition this board belongs to. ONLY the competition schedule page
+   *  passes it, and that page is behind `scheduling.multi_division` — so it is
+   *  what turns a multi-division board's AI entry point on (#350). Every other
+   *  caller leaves it undefined and keeps the per-division console. */
+  competitionId?: string;
+  /** Per-division schedule settings, keyed by division id — the joint console's
+   *  quote inputs (each division's own courts), the by-name court-divergence
+   *  check, the timezone spread (ruling R8) and the `crossPersonClash` rule that
+   *  decides whether the joint apply REFUSES a person clash it only warned
+   *  about. Supplied alongside `competitionId`. */
+  divisionSettings?: Record<
+    string,
+    { courts: string[]; tz: string; crossPersonClash?: "warn" | "hard" }
+  >;
 }
 
 /** Advance a YYYY-MM-DD key by n days (noon anchor dodges DST/midnight edges). */
@@ -166,6 +358,8 @@ export function ScheduleBoard({
   venueCap = "Court",
   showSettings = true,
   officialsWithBlackout = 0,
+  competitionId,
+  divisionSettings,
   ...props
 }: Props) {
   const msg = useMsg();
@@ -177,9 +371,10 @@ export function ScheduleBoard({
   const cfg = settings.config;
   const multi = divisions.length > 1;
 
-  // AI schedule console (v4): single-division boards only for now — a plan is
-  // per division. The PostHog "ai-scheduling" kill switch hides the entry point
-  // entirely when flipped off; it is fail-open (see the hook).
+  // AI schedule console. A one-division board opens the per-division wizard
+  // (v4); a multi-division board on the COMPETITION page opens the joint console
+  // (#350), which plans them together. The PostHog "ai-scheduling" kill switch
+  // hides both entry points when flipped off; it is fail-open (see the hook).
   const aiFlagOn = useAiSchedulingEnabled();
   const [aiOpen, setAiOpen] = useState(false);
   // Set by the repair nudge (Task 16) just before it opens the console, so the
@@ -187,7 +382,7 @@ export function ScheduleBoard({
   const [aiRepairScope, setAiRepairScope] = useState<AiScope | null>(null);
   // The verified proposal the console is showing (null = none) — drives the grid
   // ghost overlay. The console notifies us on each RUN_DONE and on close.
-  const [aiProposal, setAiProposal] = useState<AiPlanResponse | null>(null);
+  const [aiProposal, setAiProposal] = useState<GhostSource | null>(null);
   // Fixtures the referee just flagged — pulse red on the grid for ~1.5s (§0.3).
   const [pulseIds, setPulseIds] = useState<string[]>([]);
   const pulseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -199,7 +394,13 @@ export function ScheduleBoard({
   }, []);
   // Entry point is role-gated (not entitlement-gated) so a free org reaches the
   // in-dock paywall; the plan check happens inside the console via aiAllowed.
-  const aiAvailable = (canManage ?? canEdit) && single !== null && aiFlagOn;
+  const aiEntry = aiEntryPoint({
+    canManage: canManage ?? canEdit,
+    aiFlagOn,
+    divisions,
+    competitionId: competitionId ?? null,
+  });
+  const aiAvailable = aiEntry !== null;
 
   // ------------------------------------------------- division filter (?d=)
   const selectedSlugs = useMemo(() => {
@@ -311,36 +512,25 @@ export function ScheduleBoard({
   // the confirm card's price), derived from data the board already holds.
   // Officials come from a fetch-on-open in the console; only their blackout
   // count is threaded (page-loaded, no client route).
-  const aiBrief = useMemo<AiBriefContext>(() => {
-    const divFixtures = single ? divBoardFixtures : actions.board;
-    return {
-      courts: cfg.courts,
-      windows: cfg.sessionWindows.length,
-      blackouts: cfg.blackouts.length,
-      constraintsSet:
-        cfg.perEntrantMinRest > 0 ||
-        (cfg.roundMinutes ?? 0) > 0 ||
-        Boolean((cfg as { constraints?: unknown }).constraints),
-      ...aiPricingInputs(divFixtures, single?.id ?? null, activeEntrantCounts),
-      pinned: divFixtures.filter((f) => f.schedule_locked).length,
-      entrants: Object.entries(entrantNames)
-        .map(([id, name]) => ({ id, name }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-      officialsWithBlackout,
-    };
-  }, [
-    cfg,
-    divBoardFixtures,
-    actions.board,
-    entrantNames,
-    activeEntrantCounts,
-    single,
-    officialsWithBlackout,
-  ]);
+  const aiBrief = useMemo<AiBriefContext>(
+    () =>
+      buildAiBrief({
+        cfg,
+        divisions,
+        boardFixtures: actions.board,
+        activeEntrantCounts,
+        entrantNames,
+        officialsWithBlackout,
+      }),
+    [cfg, divisions, actions.board, entrantNames, activeEntrantCounts, officialsWithBlackout],
+  );
 
+  // The fixtures a proposal is diffed and ghosted against: THE division's on a
+  // division board, and the WHOLE board's on a competition board — a joint
+  // proposal spans every selected division, so narrowing to one would leave
+  // most of its ghosts without a code or a matchup.
   const aiFixtures = useMemo<AiConsoleFixture[]>(() => {
-    if (!single) return [];
-    const divFx = divBoardFixtures;
+    const divFx = single ? divBoardFixtures : actions.board;
     const maxRound = divFx.reduce((m, f) => Math.max(m, f.round_no), 0);
     const atMaxRound = divFx.filter((f) => f.round_no === maxRound).length;
     return divFx.map((f) => ({
@@ -359,7 +549,15 @@ export function ScheduleBoard({
       home_entrant_id: f.home_entrant_id,
       away_entrant_id: f.away_entrant_id,
     }));
-  }, [single, divBoardFixtures, entrantNames, feedLabels]);
+  }, [single, divBoardFixtures, actions.board, entrantNames, feedLabels]);
+
+  // The joint console's per-division inputs. Derived here (not in the console)
+  // so the money numbers come from the same live board every other consumer
+  // reads, and from the same `aiPricingInputs` the division brief uses.
+  const jointDivisions = useMemo<JointDivision[]>(
+    () => jointDivisionsFor(divisions, actions.board, activeEntrantCounts, divisionSettings),
+    [divisions, actions.board, activeEntrantCounts, divisionSettings],
+  );
 
   // ------------------------------------------------------- repair nudge (T16)
   // Client-derived disruptions over the LIVE board + config — a blackout a slot
@@ -395,27 +593,10 @@ export function ScheduleBoard({
   // Ghost blocks for the whole proposal, positioned by the PROPOSED slot and
   // toned by diff bucket (blocking wins). Unscheduled (dropped) fixtures are not
   // in the proposal, so they simply leave the grid — they live in the diff list.
-  const ghosts = useMemo<GhostBlock[] | null>(() => {
-    if (!aiProposal) return null;
-    const meta = new Map(aiFixtures.map((f) => [f.id, f]));
-    const diff = computeAiDiff(aiProposal, aiFixtures);
-    const blocking = new Set(aiProposal.blocking.map((b) => b.fixtureId));
-    const pulsing = new Set(pulseIds);
-    return aiProposal.proposal.map((p) => {
-      const m = meta.get(p.fixture_id);
-      return {
-        id: p.fixture_id,
-        code: m?.code ?? p.fixture_id.slice(0, 6),
-        matchup: m?.matchup ?? "—",
-        isFinal: m?.isFinal ?? false,
-        isJunior: m?.isJunior ?? false,
-        at: new Date(p.scheduled_at).getTime(),
-        court: p.court_label ?? null,
-        tone: ghostToneFor(p.fixture_id, diff, blocking),
-        pulse: pulsing.has(p.fixture_id),
-      };
-    });
-  }, [aiProposal, aiFixtures, pulseIds]);
+  const ghosts = useMemo<GhostBlock[] | null>(
+    () => (aiProposal ? ghostBlocks(aiProposal, aiFixtures, divisionNames, pulseIds) : null),
+    [aiProposal, aiFixtures, divisionNames, pulseIds],
+  );
 
   // ------------------------------------------------------- density modes
   const [density, setDensity] = useState<Density>("board");
@@ -927,6 +1108,25 @@ export function ScheduleBoard({
           divisionNames={divisionNames}
           onJump={jumpTo}
           onClose={() => setPanelOpen(false)}
+        />
+      )}
+
+      {/* The JOINT console (#350): every selected division planned in one run,
+          applied in one transaction. Mounted only where `aiEntryPoint` says so,
+          which needs the competition id the competition page alone supplies. */}
+      {aiOpen && aiEntry === "competition" && competitionId && (
+        <AiCompetitionConsole
+          competitionId={competitionId}
+          divisions={jointDivisions}
+          aiAllowed={aiAllowed}
+          currency={currency}
+          fixtures={aiFixtures}
+          onClose={() => {
+            setAiOpen(false);
+            setAiProposal(null);
+          }}
+          onApplied={() => router.refresh()}
+          onProposalChange={setAiProposal}
         />
       )}
 

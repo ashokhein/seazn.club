@@ -96,14 +96,28 @@ export default async function CompetitionSchedulePage({
   );
 
   // Grid config: first division's settings, courts unioned across divisions.
+  //
+  // The per-division pass is loaded ONCE and kept: the union feeds the grid's
+  // columns, and the joint AI console (#350) needs each division's own courts,
+  // timezone and `crossPersonClash` rule — courts because cross-division court
+  // identity is a name match and nothing else, the zone because the board
+  // renders in the reader's (ruling R8), and the clash rule because it decides
+  // whether the joint apply REFUSES a person clash the plan only warned about.
+  const perDivisionSettings = await Promise.all(
+    divisions.map(async (d) => [d.id, await getScheduleSettings(auth, d.id)] as const),
+  );
   const settings = await getScheduleSettings(auth, divisions[0]?.id ?? id);
-  const allCourts = [
-    ...new Set(
-      (
-        await Promise.all(divisions.map((d) => getScheduleSettings(auth, d.id)))
-      ).flatMap((s) => s.config.courts),
-    ),
-  ];
+  const allCourts = [...new Set(perDivisionSettings.flatMap(([, s]) => s.config.courts))];
+  const divisionSettings = Object.fromEntries(
+    perDivisionSettings.map(([divisionId, s]) => [
+      divisionId,
+      {
+        courts: s.config.courts,
+        tz: s.tz,
+        crossPersonClash: s.config.constraints?.crossPersonClash,
+      },
+    ]),
+  );
 
   const frozen = competition.frozen ?? false;
 
@@ -160,6 +174,13 @@ export default async function CompetitionSchedulePage({
           canManage={canEdit && !frozen}
           aiAllowed={aiAllowed}
           currency={currency}
+          // These two together are what un-gate the JOINT AI console (#350).
+          // This page is the only caller that passes them, and it already sits
+          // behind `scheduling.multi_division` above — so the entitlement gate
+          // is structural here, and re-checked server-side on all three joint
+          // endpoints.
+          competitionId={id}
+          divisionSettings={divisionSettings}
         />
       </main>
     </>
