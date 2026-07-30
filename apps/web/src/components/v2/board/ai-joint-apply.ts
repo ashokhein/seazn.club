@@ -170,17 +170,22 @@ export async function applyJointPlan(
 }
 
 /**
- * Restore every anchor the apply created. Returns false if any division refused.
+ * Restore every anchor it is handed, and NAME the divisions that refused.
  *
  * It keeps going after a failure on purpose: restore is per division and there
  * is no competition-scoped one, so stopping at the first refusal would leave
  * MORE divisions holding the AI board than carrying on does.
+ *
+ * The failing ids are returned rather than collapsed into a boolean, because
+ * both of the things the console then needs depend on them: telling the
+ * organiser WHICH divisions are still carrying the AI board, and retrying just
+ * those — the anchors stay valid, and a restore failure is often transient.
  */
 export async function undoJointApply(
   checkpoints: JointCheckpoint[],
   api: JointApplyApi = apiV1,
-): Promise<boolean> {
-  let ok = true;
+): Promise<{ ok: boolean; failed: string[] }> {
+  const failed: string[] = [];
   for (const cp of checkpoints) {
     try {
       await api(`/api/v1/divisions/${cp.divisionId}/restore`, {
@@ -188,8 +193,8 @@ export async function undoJointApply(
         json: { checkpoint_id: cp.checkpointId, confirm: true },
       });
     } catch {
-      ok = false;
+      failed.push(cp.divisionId);
     }
   }
-  return ok;
+  return { ok: failed.length === 0, failed };
 }

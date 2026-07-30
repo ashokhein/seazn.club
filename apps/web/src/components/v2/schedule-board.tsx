@@ -160,12 +160,13 @@ export function jointDivisionsFor(
   divisions: BoardDivision[],
   boardFixtures: BoardFixture[],
   activeEntrantCounts: Record<string, number>,
-  divisionSettings:
-    | Record<string, { courts: string[]; tz: string; crossPersonClash?: "warn" | "hard" }>
-    | undefined,
+  divisionSettings: Record<
+    string,
+    { courts: string[]; tz: string; crossPersonClash?: "warn" | "hard" }
+  >,
 ): JointDivision[] {
   return divisions.map((d) => {
-    const s = divisionSettings?.[d.id];
+    const s = divisionSettings[d.id];
     const priced = aiPricingInputs(
       boardFixtures.filter((f) => f.division_id === d.id),
       d.id,
@@ -217,6 +218,52 @@ export function aiEntryPoint(input: {
   if (input.divisions.length === 1) return "division";
   if (input.divisions.length > 1 && input.competitionId !== null) return "competition";
   return null;
+}
+
+/**
+ * The board's fixtures in the shape the AI console and the ghost overlay read
+ * (short code, matchup line, the JR/Final marker).
+ *
+ * "Final" is a heuristic — the sole fixture in the last round — and it has to be
+ * computed PER DIVISION. Taken across a competition board it marks only the
+ * longest division's last round, so every shorter division's final silently
+ * loses its marker; and a competition where two divisions happen to share a max
+ * round would mark neither, because the round then holds two matches.
+ */
+export function consoleFixtures(
+  boardFixtures: BoardFixture[],
+  entrantNames: Record<string, string>,
+  feedLabels: Record<string, FeedLabelPair>,
+): AiConsoleFixture[] {
+  const maxRoundOf = new Map<string, number>();
+  for (const f of boardFixtures) {
+    maxRoundOf.set(f.division_id, Math.max(maxRoundOf.get(f.division_id) ?? 0, f.round_no));
+  }
+  const atMaxRound = new Map<string, number>();
+  for (const f of boardFixtures) {
+    if (f.round_no === maxRoundOf.get(f.division_id)) {
+      atMaxRound.set(f.division_id, (atMaxRound.get(f.division_id) ?? 0) + 1);
+    }
+  }
+  return boardFixtures.map((f) => {
+    const maxRound = maxRoundOf.get(f.division_id) ?? 0;
+    return {
+      id: f.id,
+      stage_id: f.stage_id,
+      scheduled_at: f.scheduled_at ? new Date(f.scheduled_at).toISOString() : null,
+      court_label: f.court_label,
+      code: `R${f.round_no}·${f.seq_in_round}`,
+      matchup: cardTitle(f, entrantNames, feedLabels),
+      isFinal: maxRound > 0 && f.round_no === maxRound && atMaxRound.get(f.division_id) === 1,
+      isJunior: false,
+      // Carried for the PHASE B quote: the officials pack holds the fixtures
+      // that have a time and are not decided, priced on their distinct entrant
+      // and court counts (officialsQuoteInput mirrors it).
+      status: f.status,
+      home_entrant_id: f.home_entrant_id,
+      away_entrant_id: f.away_entrant_id,
+    };
+  });
 }
 
 /** What the ghost overlay reads out of a proposal — the two fields BOTH the
@@ -311,20 +358,33 @@ interface Props {
    *  availability), for the AI console pre-flight's "N officials, M with
    *  blackout dates" row. Optional so non-schedule-page callers can omit it. */
   officialsWithBlackout?: number;
-  /** The competition this board belongs to. ONLY the competition schedule page
-   *  passes it, and that page is behind `scheduling.multi_division` — so it is
-   *  what turns a multi-division board's AI entry point on (#350). Every other
-   *  caller leaves it undefined and keeps the per-division console. */
-  competitionId?: string;
-  /** Per-division schedule settings, keyed by division id — the joint console's
-   *  quote inputs (each division's own courts), the by-name court-divergence
-   *  check, the timezone spread (ruling R8) and the `crossPersonClash` rule that
-   *  decides whether the joint apply REFUSES a person clash it only warned
-   *  about. Supplied alongside `competitionId`. */
-  divisionSettings?: Record<
-    string,
-    { courts: string[]; tz: string; crossPersonClash?: "warn" | "hard" }
-  >;
+  /**
+   * The competition this board belongs to, and every division's own schedule
+   * settings — ONE prop, deliberately, because the two are useless apart and
+   * dangerous apart.
+   *
+   * The id is what turns a multi-division board's AI entry point on (#350);
+   * only the competition schedule page passes it, and that page is behind
+   * `scheduling.multi_division`. The settings are the joint console's quote
+   * inputs (each division's OWN courts), the by-name court-divergence check,
+   * the timezone spread (ruling R8), and the `crossPersonClash` rule that
+   * decides whether the joint apply REFUSES a person clash it only warned
+   * about.
+   *
+   * As two optional props, dropping the settings one typechecked and stayed
+   * green while every division silently fell back to `courts: []` (a PRICING
+   * input — fewer courts lowers the size score, so it under-quotes), `tz:
+   * "UTC"`, and `personClashBlocks: false`, and the court-divergence banner
+   * went quiet. Four safety surfaces failing open on one deleted line, the
+   * money one toward under-quoting. Bundled, the id cannot arrive without them.
+   */
+  competition?: {
+    id: string;
+    divisionSettings: Record<
+      string,
+      { courts: string[]; tz: string; crossPersonClash?: "warn" | "hard" }
+    >;
+  };
 }
 
 /** Advance a YYYY-MM-DD key by n days (noon anchor dodges DST/midnight edges). */
@@ -358,8 +418,7 @@ export function ScheduleBoard({
   venueCap = "Court",
   showSettings = true,
   officialsWithBlackout = 0,
-  competitionId,
-  divisionSettings,
+  competition,
   ...props
 }: Props) {
   const msg = useMsg();
@@ -398,7 +457,7 @@ export function ScheduleBoard({
     canManage: canManage ?? canEdit,
     aiFlagOn,
     divisions,
-    competitionId: competitionId ?? null,
+    competitionId: competition?.id ?? null,
   });
   const aiAvailable = aiEntry !== null;
 
@@ -529,34 +588,23 @@ export function ScheduleBoard({
   // division board, and the WHOLE board's on a competition board — a joint
   // proposal spans every selected division, so narrowing to one would leave
   // most of its ghosts without a code or a matchup.
-  const aiFixtures = useMemo<AiConsoleFixture[]>(() => {
-    const divFx = single ? divBoardFixtures : actions.board;
-    const maxRound = divFx.reduce((m, f) => Math.max(m, f.round_no), 0);
-    const atMaxRound = divFx.filter((f) => f.round_no === maxRound).length;
-    return divFx.map((f) => ({
-      id: f.id,
-      stage_id: f.stage_id,
-      scheduled_at: f.scheduled_at ? new Date(f.scheduled_at).toISOString() : null,
-      court_label: f.court_label,
-      code: `R${f.round_no}·${f.seq_in_round}`,
-      matchup: cardTitle(f, entrantNames, feedLabels),
-      isFinal: maxRound > 0 && f.round_no === maxRound && atMaxRound === 1,
-      isJunior: false,
-      // Carried for the PHASE B quote: the officials pack holds the fixtures
-      // that have a time and are not decided, priced on their distinct entrant
-      // and court counts (officialsQuoteInput mirrors it).
-      status: f.status,
-      home_entrant_id: f.home_entrant_id,
-      away_entrant_id: f.away_entrant_id,
-    }));
-  }, [single, divBoardFixtures, actions.board, entrantNames, feedLabels]);
+  const aiFixtures = useMemo<AiConsoleFixture[]>(
+    () => consoleFixtures(single ? divBoardFixtures : actions.board, entrantNames, feedLabels),
+    [single, divBoardFixtures, actions.board, entrantNames, feedLabels],
+  );
 
   // The joint console's per-division inputs. Derived here (not in the console)
   // so the money numbers come from the same live board every other consumer
   // reads, and from the same `aiPricingInputs` the division brief uses.
   const jointDivisions = useMemo<JointDivision[]>(
-    () => jointDivisionsFor(divisions, actions.board, activeEntrantCounts, divisionSettings),
-    [divisions, actions.board, activeEntrantCounts, divisionSettings],
+    () =>
+      jointDivisionsFor(
+        divisions,
+        actions.board,
+        activeEntrantCounts,
+        competition?.divisionSettings ?? {},
+      ),
+    [divisions, actions.board, activeEntrantCounts, competition?.divisionSettings],
   );
 
   // ------------------------------------------------------- repair nudge (T16)
@@ -565,9 +613,13 @@ export function ScheduleBoard({
   // a postponed match still holding a slot. Zero server calls; the amber banner
   // and the console's repair scope both read this.
   const disruptions = useDisruptionSignals(divBoardFixtures, cfg);
-  // Same gates as the launch button (role + single + flag) AND the paid read
-  // (aiAllowed) — the nudge only shows when the console it opens is usable. It
-  // also hides while the console is open and when nothing is disrupted.
+  // The repair nudge is a PER-DIVISION affordance: it opens the division console
+  // pre-armed with a repair scope, and the joint console has no repair mode. It
+  // is gated on the launch button's own gates (role + flag, via aiAvailable) and
+  // the paid read, so the nudge never opens a console that is not usable — and
+  // it stays off on a competition board by construction, because
+  // `divBoardFixtures` is empty when there is no single division, so
+  // `disruptions.fixtureIds` is too. It also hides while the console is open.
   const showRepairBanner =
     aiAvailable && aiAllowed && !aiOpen && disruptions.fixtureIds.length > 0;
   // "Shown" fires once per board load the first time the banner is visible; the
@@ -1114,9 +1166,9 @@ export function ScheduleBoard({
       {/* The JOINT console (#350): every selected division planned in one run,
           applied in one transaction. Mounted only where `aiEntryPoint` says so,
           which needs the competition id the competition page alone supplies. */}
-      {aiOpen && aiEntry === "competition" && competitionId && (
+      {aiOpen && aiEntry === "competition" && competition && (
         <AiCompetitionConsole
-          competitionId={competitionId}
+          competitionId={competition.id}
           divisions={jointDivisions}
           aiAllowed={aiAllowed}
           currency={currency}

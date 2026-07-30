@@ -2780,8 +2780,11 @@
   "board.ai.joint.applied.one": "Toegepast op {count} divisie.",
   "board.ai.joint.applied.other": "Toegepast op {count} divisies.",
   "board.ai.joint.savepoint": "Voor elke divisie is een herstelpunt bewaard — ongedaan maken met één tik.",
-  "board.ai.joint.undonePartial": "Sommige divisies konden niet worden teruggezet. Open hun eigen planningspagina’s om ze te herstellen.",
+  "board.ai.joint.undonePartial": "Deze divisies staan nog op het AI-schema: {divisions}. Probeer ze opnieuw of herstel ze via hun eigen planningspagina’s.",
   "board.ai.joint.conflict.one": "Het bord is niet opgeslagen: {count} wedstrijd zou een baan dubbel bezetten.",
   "board.ai.joint.conflict.other": "Het bord is niet opgeslagen: {count} wedstrijden zouden een baan dubbel bezetten.",
-  "board.ai.joint.conflictAside": "De wedstrijden die je opzij zette, behielden hun huidige tijd en bezetten die banen dus nog. Neem ze weer mee of verplaats ze eerst handmatig."
+  "board.ai.joint.conflictAside": "De wedstrijden die je opzij zette, behielden hun huidige tijd en bezetten die banen dus nog. Neem ze weer mee of verplaats ze eerst handmatig.",
+  "board.ai.joint.warningsTitle": "Waarschuwingen",
+  "board.ai.joint.undoRetry": "Die opnieuw proberen",
+  "board.ai.joint.undonePartialTitle": "Slechts een deel van de divisies is teruggezet"
 }

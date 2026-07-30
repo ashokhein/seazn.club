@@ -10,7 +10,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { Dict } from "@/lib/i18n-constants";
 import { DictProvider } from "@/components/i18n/dict-provider";
 import en from "@/dictionaries/en/ui.json";
-import { ghostBlocks } from "../schedule-board";
+import { consoleFixtures, ghostBlocks } from "../schedule-board";
 import { BoardGrid } from "../board/board-grid";
 import type { AiConsoleFixture } from "../board/ai-diff";
 
@@ -135,5 +135,44 @@ describe("the grid's ghost block", () => {
   it("shows the division on a joint proposal and nothing on a single-division one", () => {
     expect(grid({ id: "d1", name: "Under 12s" })).toContain("Under 12s");
     expect(grid(null)).not.toContain("Under 12s");
+  });
+});
+
+describe("consoleFixtures", () => {
+  const bf = (id: string, divisionId: string, round: number) => ({
+    id,
+    stage_id: "st-1",
+    division_id: divisionId,
+    round_no: round,
+    seq_in_round: 1,
+    home_entrant_id: "e1",
+    away_entrant_id: "e2",
+    scheduled_at: "2026-08-01T10:00:00.000Z",
+    venue: null,
+    court_label: "Court 1",
+    status: "scheduled",
+    schedule_source: "manual",
+    schedule_locked: false,
+    outcome: null,
+  });
+
+  it("marks each division's OWN last round as the final", () => {
+    // The two divisions run to different depths on purpose: a `maxRound`
+    // computed across the whole competition marks only the LONGER division's
+    // last round, so the shorter one's final never wears the marker on a
+    // competition board.
+    const marked = consoleFixtures(
+      [bf("a", "d1", 1), bf("b", "d1", 2), bf("c", "d2", 1), bf("d", "d2", 4)],
+      { e1: "Ada", e2: "Bea" },
+      {},
+    );
+    expect(marked.filter((f) => f.isFinal).map((f) => f.id)).toEqual(["b", "d"]);
+  });
+
+  it("marks nothing when a division's last round holds more than one match", () => {
+    // "Final" is a heuristic — the sole fixture in the last round — and two
+    // matches in that round means it cannot be one.
+    const marked = consoleFixtures([bf("a", "d1", 2), bf("b", "d1", 2)], {}, {});
+    expect(marked.some((f) => f.isFinal)).toBe(false);
   });
 });

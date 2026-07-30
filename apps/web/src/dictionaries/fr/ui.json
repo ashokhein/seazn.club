@@ -2780,8 +2780,11 @@
   "board.ai.joint.applied.one": "Appliqué à {count} division.",
   "board.ai.joint.applied.other": "Appliqué à {count} divisions.",
   "board.ai.joint.savepoint": "Un point de restauration a été enregistré pour chaque division — annulez en un geste.",
-  "board.ai.joint.undonePartial": "Certaines divisions n’ont pas pu être rétablies. Ouvrez leurs pages de planning pour les restaurer.",
+  "board.ai.joint.undonePartial": "Ces divisions sont encore sur le planning de l’IA : {divisions}. Réessayez, ou restaurez-les depuis leurs propres pages de planning.",
   "board.ai.joint.conflict.one": "Le tableau n’a pas été enregistré : {count} match occuperait un terrain déjà pris.",
   "board.ai.joint.conflict.other": "Le tableau n’a pas été enregistré : {count} matchs occuperaient un terrain déjà pris.",
-  "board.ai.joint.conflictAside": "Les matchs que vous avez mis de côté ont gardé leur horaire actuel : ils occupent donc toujours ces terrains. Réintégrez-les ou déplacez-les à la main d’abord."
+  "board.ai.joint.conflictAside": "Les matchs que vous avez mis de côté ont gardé leur horaire actuel : ils occupent donc toujours ces terrains. Réintégrez-les ou déplacez-les à la main d’abord.",
+  "board.ai.joint.warningsTitle": "Avertissements",
+  "board.ai.joint.undoRetry": "Réessayer celles-ci",
+  "board.ai.joint.undonePartialTitle": "Seules certaines divisions ont été rétablies"
 }

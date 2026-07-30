@@ -29,8 +29,8 @@ import {
   jointQuoteLines,
   personClashRisk,
   pickerDivisions,
-  rungOverrides,
   timezoneSpread,
+  usableSelection,
   type JointDivision,
 } from "../ai-competition-console";
 
@@ -114,6 +114,17 @@ function render(divisions = DIVISIONS): string {
   );
 }
 
+/**
+ * Is that button really disabled?
+ *
+ * Anchored on `disabled=""` — the attribute React actually emits for a `true`
+ * boolean — and NOT on the bare word, because every one of these buttons
+ * carries `disabled:cursor-not-allowed` in its className. A `[^>]*disabled`
+ * probe matches the class and is satisfied whatever the prop says.
+ */
+const disabledButton = (html: string, marker: string): boolean =>
+  new RegExp(`<button[^>]*${marker}[^>]*disabled=""`).test(html);
+
 /** The checkbox rows the picker rendered, in order. */
 function pickerRows(html: string) {
   return [...html.matchAll(/<input[^>]*data-division-id="(\w+)"[^>]*>/g)].map((m) => ({
@@ -156,7 +167,7 @@ describe("the divisions a joint run starts with", () => {
     // well, so the hint is the only thing that discriminates in the markup.
     const html = render([DIVISIONS[0], DIVISIONS[2], DIVISIONS[3]]);
     expect(html).toContain(enText["board.ai.picker.needTwo"]);
-    expect(/<button[^>]*data-ai-joint-run[^>]*disabled/.test(html)).toBe(true);
+    expect(disabledButton(html, "data-ai-joint-run")).toBe(true);
     expect(render()).not.toContain(enText["board.ai.picker.needTwo"]);
   });
 
@@ -265,30 +276,6 @@ describe("what the board cannot know about the divisions it is merging", () => {
   });
 });
 
-describe("rungOverrides — where a confirmed price becomes a sent price", () => {
-  it("sends only the rungs the organiser picked, for divisions actually in the run", () => {
-    // A per-division `chosen: null` means "server, size this one yourself", and
-    // must send NO entry — sending the client's guess freezes a stale estimate
-    // into the charge. An entry for a division that was deselected after being
-    // adjusted would price a division the run does not cover.
-    expect(
-      rungOverrides({ d1: 3, d2: null, d3: 2 }, ["d1", "d2"]),
-    ).toEqual({ rung_overrides: { d1: 3 } });
-  });
-
-  it("omits the field entirely when every line follows the prediction", () => {
-    // `{}` and an absent key are not the same over the wire.
-    expect("rung_overrides" in rungOverrides({ d1: null, d2: null }, ["d1", "d2"])).toBe(false);
-    expect("rung_overrides" in rungOverrides({}, ["d1", "d2"])).toBe(false);
-  });
-
-  it("drops a value that is not a rung rather than forwarding it", () => {
-    for (const junk of [0, 4, -1, 1.5, Number.NaN]) {
-      expect("rung_overrides" in rungOverrides({ d1: junk }, ["d1"]), String(junk)).toBe(false);
-    }
-  });
-});
-
 describe("pickerDivisions", () => {
   it("carries each division's own count and its own reason for being unusable", () => {
     expect(pickerDivisions(DIVISIONS)).toEqual([
@@ -348,6 +335,10 @@ function review(
         onUndo={() => {}}
         onBack={() => {}}
         onReRun={() => {}}
+        running={false}
+        error={null}
+        currency="usd"
+        undoFailed={[]}
         msg={(k, v) => tEn(k as string, v)}
         {...over}
       />
@@ -392,26 +383,44 @@ describe("jointApplyDivisions — the payload the apply is built from", () => {
 });
 
 describe("a person clash the plan only warns about but the apply refuses", () => {
+  // f1 is owned by d1 (crossPersonClash: "warn"), f2 by d2 ("hard"). The SERVER
+  // blocks a person overlap only when the division that OWNS the fixture is
+  // hard — "NOT a union over the request", in its own words
+  // (competition-schedule-apply.ts:511-521). So exactly one of these two
+  // overlaps will be refused, and a count that unions over the selection says
+  // two and tells the organiser a good plan will be rejected.
   const clash = plan({
     warnings: [
-      { fixtureId: "f1", reason: "person_overlap", detail: "Sam Reyes" },
+      { fixtureId: "f2", reason: "person_overlap", detail: "Sam Reyes" },
+      { fixtureId: "f1", reason: "person_overlap", detail: "Ali Khan" },
       { fixtureId: "f2", reason: "rest", detail: "20 minutes" },
     ],
   });
 
-  it("counts only the person clashes, and only when a selected division blocks them", () => {
-    // The rest warning is the decoy: a count that reads `warnings.length` says 2
-    // and is wrong about what Apply will refuse.
-    expect(personClashRisk(clash.warnings, DIVISIONS, ["d1", "d2"])).toEqual({
+  it("counts only the clashes owned by a division whose own rule refuses them", () => {
+    // The rest warning is one decoy — `warnings.length` says 3. The overlap in
+    // the WARN division is the other: unioning over the selection says 2. Only
+    // the owner-keyed count says 1.
+    expect(personClashRisk(clash, DIVISIONS, ["d1", "d2"])).toEqual({
       count: 1,
       divisions: ["Under 14s"],
     });
-    // Only d1 selected — nothing in the run blocks a person clash, so the
-    // warning stays a warning and Apply will not refuse it.
-    expect(personClashRisk(clash.warnings, DIVISIONS, ["d1"])).toEqual({
+  });
+
+  it("threatens nothing when every clash is owned by a division content to warn", () => {
+    // d2 is still selected and still `hard` — but it owns no overlap here, so
+    // Apply will accept all of them.
+    const softOwners = plan({
+      warnings: [{ fixtureId: "f1", reason: "person_overlap", detail: "Ali Khan" }],
+    });
+    expect(personClashRisk(softOwners, DIVISIONS, ["d1", "d2"])).toEqual({
       count: 0,
       divisions: [],
     });
+    // …and neither does a board where no selected division blocks at all.
+    expect(
+      personClashRisk(clash, DIVISIONS.map((d) => ({ ...d, personClashBlocks: false })), ["d1", "d2"]),
+    ).toEqual({ count: 0, divisions: [] });
   });
 
   it("warns before Apply, naming the division whose rule refuses it", () => {
@@ -419,9 +428,62 @@ describe("a person clash the plan only warns about but the apply refuses", () =>
     expect(html).toContain(
       tEn("board.ai.joint.personClash.one", { count: 1, divisions: "Under 14s" }),
     );
-    // Contrast: the same warnings with no blocking division must NOT raise it.
-    const soft = review({ plan: clash, divisions: DIVISIONS.map((d) => ({ ...d, personClashBlocks: false })) });
+    const soft = review({
+      plan: clash,
+      divisions: DIVISIONS.map((d) => ({ ...d, personClashBlocks: false })),
+    });
     expect(soft).not.toContain(tEn("board.ai.joint.personClash.one", { count: 1, divisions: "Under 14s" }));
+  });
+
+  it("lists every engine warning, so the count matches what is on screen", () => {
+    // A "3 warnings to review" line above two amber rows that are NOT warnings
+    // (the skipped division, the court-name mismatch) and one that is reads as
+    // a bug even when it is not. The fix is to show what is counted.
+    const html = review({ plan: clash });
+    expect(html).toContain(tEn("board.ai.joint.warnings.other", { count: 3 }));
+    expect(html).toContain(enText["board.ai.joint.warningsTitle"]);
+    // One row per warning, each naming its own fixture.
+    expect([...html.matchAll(/data-warning-row="([^"]*)"/g)].map((m) => m[1])).toEqual([
+      "f2",
+      "f1",
+      "f2",
+    ]);
+    // …and no box at all when the engine raised none.
+    expect(review({ plan: plan({ warnings: [] }) })).not.toContain(
+      enText["board.ai.joint.warningsTitle"],
+    );
+  });
+});
+
+describe("a run started from the review step", () => {
+  it("shows the re-run as in flight, so a second click is not the obvious move", () => {
+    // The button is the AFFORDANCE (the guard is in runJointPlan); without it
+    // the review step shows no change at all during a run that takes tens of
+    // seconds, and a second click spends again.
+    const stale = { status: "seq_conflict" as const, checkpoints: [], applied: 0, conflicts: [] };
+    const idle = review({ outcome: stale });
+    expect(disabledButton(idle, "data-ai-joint-rerun")).toBe(false);
+    const busy = review({ outcome: stale, running: true });
+    expect(disabledButton(busy, "data-ai-joint-rerun")).toBe(true);
+    expect(busy).toContain(enText["board.ai.joint.running"]);
+  });
+
+  it("shows a failed re-run instead of leaving the old proposal looking successful", () => {
+    // `run()` leaves `plan` in place on failure, and the review step renders
+    // whenever a plan exists — so without this a 402/403/500 changed NOTHING on
+    // screen and the organiser had no idea the remedy had failed.
+    const html = review({
+      error: { message: "Too many runs just now.", key: "board.ai.error.rateLimited" },
+    });
+    expect(html).toContain("Too many runs just now.");
+    expect(review({})).not.toContain(enText["board.ai.errorLabel"]);
+  });
+
+  it("routes an empty wallet to the top-up block, not to a red line", () => {
+    const html = review({
+      error: { message: "out", key: "board.ai.error.outOfCredits" },
+    });
+    expect(html).toContain(enText["board.ai.error.outOfCreditsTitle"]);
   });
 });
 
@@ -471,14 +533,54 @@ describe("the applied state", () => {
     expect(html).toContain(enText["board.ai.apply.undo"]);
   });
 
-  it("says so when only some divisions could be reverted", () => {
-    // Restore is per division and cannot be rolled back part-way, so "reverted"
-    // would be a lie for the divisions that refused.
-    expect(review({ outcome: applied, undone: "partial" })).toContain(
-      enText["board.ai.joint.undonePartial"],
-    );
+  it("does not claim a full revert when only some divisions were reverted", () => {
+    // The headline is what a scanning reader takes away. "Reverted to before
+    // the AI changes." above an amber line saying otherwise actively
+    // misinforms — the remaining divisions are still carrying the AI board.
+    const partial = review({ outcome: applied, undone: "partial", undoFailed: ["d2"] });
+    expect(partial).not.toContain(enText["board.ai.apply.reverted"]);
     expect(review({ outcome: applied, undone: "full" })).toContain(
       enText["board.ai.apply.reverted"],
     );
+  });
+
+  it("names the divisions that are still on the AI board, and offers to try them again", () => {
+    // Without the names the organiser has to open every division page to find
+    // out which. The anchors are still valid and a restore failure is often
+    // transient, so the retry is the remedy — the copy pointing at the division
+    // pages is the fallback, not the first answer.
+    const partial = review({ outcome: applied, undone: "partial", undoFailed: ["d2"] });
+    expect(partial).toContain(
+      tEn("board.ai.joint.undonePartial", { divisions: "Under 14s" }),
+    );
+    expect(partial).toContain(enText["board.ai.joint.undoRetry"]);
+    // A full revert has nothing to retry.
+    expect(review({ outcome: applied, undone: "full" })).not.toContain(
+      enText["board.ai.joint.undoRetry"],
+    );
+  });
+});
+
+describe("usableSelection", () => {
+  it("drops a division that stopped being selectable while the console was open", () => {
+    // The initial selection is computed once. A `router.refresh()` that freezes
+    // a division under an open console would otherwise leave it unchecked in
+    // the picker while the receipt still priced it and the run still sent it —
+    // an over-quote, then a 409 SCHEDULE_LOCKED on the WHOLE run.
+    const picker = pickerDivisions(DIVISIONS);
+    expect(usableSelection(["d1", "d2", "d3", "d4"], picker)).toEqual(["d1", "d2"]);
+    // An id the board no longer has at all goes too.
+    expect(usableSelection(["d1", "gone"], picker)).toEqual(["d1"]);
+  });
+});
+
+describe("DivisionChip", () => {
+  it("truncates a long division name, as its board-grid twin does", () => {
+    // Inside a 27rem dock, an untruncated chip pushes the row's own content out
+    // of the panel. The grid's ghost chip already truncates; this one did not.
+    const html = review({});
+    const chips = [...html.matchAll(/<span[^>]*data-division-chip[^>]*>/g)].map((m) => m[0]);
+    expect(chips.length).toBeGreaterThan(0);
+    expect(chips.every((c) => /truncate/.test(c) && /min-w-0/.test(c))).toBe(true);
   });
 });

@@ -2780,8 +2780,11 @@
   "board.ai.joint.applied.one": "Applied to {count} division.",
   "board.ai.joint.applied.other": "Applied to {count} divisions.",
   "board.ai.joint.savepoint": "A restore point was saved for each division — undo in one tap.",
-  "board.ai.joint.undonePartial": "Some divisions could not be reverted. Open their own schedule pages to restore them.",
+  "board.ai.joint.undonePartial": "These divisions are still on the AI schedule: {divisions}. Try them again, or restore them from their own schedule pages.",
   "board.ai.joint.conflict.one": "The board was not written: {count} fixture would double-book a court.",
   "board.ai.joint.conflict.other": "The board was not written: {count} fixtures would double-book a court.",
-  "board.ai.joint.conflictAside": "The fixtures you set aside kept their current times, so they are still holding those courts. Put them back in, or move them by hand first."
+  "board.ai.joint.conflictAside": "The fixtures you set aside kept their current times, so they are still holding those courts. Put them back in, or move them by hand first.",
+  "board.ai.joint.warningsTitle": "Warnings",
+  "board.ai.joint.undoRetry": "Try those again",
+  "board.ai.joint.undonePartialTitle": "Only some divisions were reverted"
 }

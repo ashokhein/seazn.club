@@ -189,16 +189,14 @@ describe("applyJointPlan — how a refusal comes back", () => {
 });
 
 describe("undoJointApply", () => {
+  const anchors = [
+    { divisionId: "d1", checkpointId: "cp-1" },
+    { divisionId: "d2", checkpointId: "cp-2" },
+  ];
+
   it("restores every anchor the apply created", async () => {
     const { api, calls } = recorder();
-    const ok = await undoJointApply(
-      [
-        { divisionId: "d1", checkpointId: "cp-1" },
-        { divisionId: "d2", checkpointId: "cp-2" },
-      ],
-      api,
-    );
-    expect(ok).toBe(true);
+    expect(await undoJointApply(anchors, api)).toEqual({ ok: true, failed: [] });
     expect(calls.map((c) => c.url)).toEqual([
       "/api/v1/divisions/d1/restore",
       "/api/v1/divisions/d2/restore",
@@ -207,26 +205,32 @@ describe("undoJointApply", () => {
     expect(calls[1].json).toEqual({ checkpoint_id: "cp-2", confirm: true });
   });
 
-  it("keeps restoring the rest when one division refuses, and says it was partial", async () => {
+  it("keeps restoring the rest when one division refuses, and NAMES the ones that failed", async () => {
     // Restore is per division and there is no competition-scoped one, so a
     // failure part-way cannot be rolled back — stopping would leave MORE
     // divisions on the AI board than carrying on does.
+    //
+    // The ids are the point. Collapsed into a boolean, the console can only say
+    // "some divisions", which sends the organiser to open every division page
+    // to find out which. The anchors stay valid either way, so naming them is
+    // also what makes a retry of just those divisions possible.
     const { api, calls } = recorder({
       "/api/v1/divisions/d1/restore": () => {
         throw new ApiV1Error("locked", 422, "SCHEDULE_LOCKED");
       },
     });
-    const ok = await undoJointApply(
-      [
-        { divisionId: "d1", checkpointId: "cp-1" },
-        { divisionId: "d2", checkpointId: "cp-2" },
-      ],
-      api,
-    );
-    expect(ok).toBe(false);
+    expect(await undoJointApply(anchors, api)).toEqual({ ok: false, failed: ["d1"] });
     expect(calls.map((c) => c.url)).toEqual([
       "/api/v1/divisions/d1/restore",
       "/api/v1/divisions/d2/restore",
     ]);
+  });
+
+  it("retries only the anchors it is handed, so a second attempt is not a full re-restore", async () => {
+    // The retry passes just the failures back in; re-restoring a division that
+    // already reverted would be a second write for no reason.
+    const { api, calls } = recorder();
+    expect(await undoJointApply([anchors[0]], api)).toEqual({ ok: true, failed: [] });
+    expect(calls.map((c) => c.url)).toEqual(["/api/v1/divisions/d1/restore"]);
   });
 });

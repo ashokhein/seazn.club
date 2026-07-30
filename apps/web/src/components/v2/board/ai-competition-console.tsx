@@ -25,12 +25,10 @@
 //     the reader's own (ruling R8);
 //   * a person clash is a WARNING at plan time and a REFUSAL at apply time, but
 //     only if one of the selected divisions opted into `crossPersonClash: hard`.
-import { useCallback, useMemo, useState } from "react";
-import { apiV1, ApiV1Error } from "@/lib/client-v1";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useMsg, usePlural } from "@/components/i18n/dict-provider";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { PlanBadge } from "@/components/plan-badge";
-import { isRung, type Rung } from "@/lib/ai-rung";
 import type { Currency } from "@/lib/currency";
 import type { MessageKey } from "@/lib/messages";
 import { divisionInk, divisionTint } from "@/lib/division-hue";
@@ -40,11 +38,13 @@ import {
   AiDivisionPicker,
   defaultSelectedDivisionIds,
   jointRunReady,
+  selectableDivisions,
   type PickerDivision,
 } from "./ai-division-picker";
 import { AiQuoteCard, quoteFor, type QuoteCardLine } from "./ai-quote-card";
 import { aiErrorKey, applyErrorKey } from "./ai-console-state";
 import { AI_APPLY_MODEL } from "./ai-apply";
+import { runJointPlan } from "./ai-joint-run";
 import {
   applyJointPlan,
   undoJointApply,
@@ -160,48 +160,57 @@ export function timezoneSpread(
  * The person clashes the APPLY will refuse, and which divisions' rule refuses
  * them.
  *
- * The joint plan reports a person double-booking as a warning; the joint apply
- * refuses it outright when any selected division sets `crossPersonClash: hard`.
- * Without this the organiser reads a badge, presses Apply, and meets a 409.
+ * The joint plan reports a person double-booking as a WARNING; the joint apply
+ * REFUSES it — but only when the division that OWNS the overlapping fixture
+ * sets `crossPersonClash: hard`. The server is explicit that this is "NOT a
+ * union over the request" (competition-schedule-apply.ts:511-521), so a count
+ * that unions over the selection tells the organiser that Apply will reject
+ * clashes it will happily accept, which invites abandoning a good plan.
  *
- * Counts ONLY person overlaps — a rest or blackout warning is not refused — and
- * only when a selected division actually blocks, so nothing is threatened on a
- * board where every division is content to warn.
+ * Two filters, therefore, and both are load-bearing: only `person_overlap`
+ * warnings (a rest or blackout warning is never refused), and only those whose
+ * owning division blocks. Ownership comes from the proposal's `division_id`,
+ * which the SERVER resolved.
  */
 export function personClashRisk(
-  warnings: { fixtureId: string; reason: string }[],
+  plan: {
+    proposal: { fixture_id: string; division_id: string }[];
+    warnings: { fixtureId: string; reason: string }[];
+  },
   divisions: JointDivision[],
   selected: string[],
 ): { count: number; divisions: string[] } {
   const chosen = new Set(selected);
-  const blockers = divisions.filter((d) => chosen.has(d.id) && d.personClashBlocks).map((d) => d.name);
-  if (blockers.length === 0) return { count: 0, divisions: [] };
-  return {
-    count: warnings.filter((w) => w.reason === "person_overlap").length,
-    divisions: blockers,
-  };
+  const blocks = new Map(
+    divisions.filter((d) => chosen.has(d.id)).map((d) => [d.id, d] as const),
+  );
+  const ownerOf = new Map(plan.proposal.map((p) => [p.fixture_id, p.division_id]));
+  const refused = plan.warnings.filter((w) => {
+    if (w.reason !== "person_overlap") return false;
+    const owner = ownerOf.get(w.fixtureId);
+    return owner !== undefined && blocks.get(owner)?.personClashBlocks === true;
+  });
+  if (refused.length === 0) return { count: 0, divisions: [] };
+  const names = [
+    ...new Set(refused.map((w) => blocks.get(ownerOf.get(w.fixtureId) as string)?.name ?? "")),
+  ].filter((n) => n !== "");
+  return { count: refused.length, divisions: names };
 }
 
 /**
- * The per-division rung picks a run request carries — the joint twin of
- * `rungField`.
+ * The selection, narrowed to what can still be run.
  *
- * A line left on the recommendation sends NO entry, so the server sizes that
- * division from its own prediction rather than freezing a client-side estimate
- * into the price; an entry for a division that is no longer selected would price
- * work the run does not cover. An all-defaults run omits the field entirely,
- * because `{}` and an absent key are not the same over the wire.
+ * The initial selection is computed once, at mount. A `router.refresh()` that
+ * freezes a division (or empties it) under an open console would otherwise
+ * leave that row displayed unchecked and outside "N of M selected" while
+ * `jointQuoteLines` went on pricing it and the run went on sending it — an
+ * over-quote, followed by a 409 SCHEDULE_LOCKED that refuses the WHOLE run.
+ * Deriving during render rather than syncing in an effect means the picker, the
+ * receipt and the request cannot disagree even for one frame.
  */
-export function rungOverrides(
-  rungs: Record<string, number | null>,
-  selected: string[],
-): { rung_overrides?: Record<string, Rung> } {
-  const out: Record<string, Rung> = {};
-  for (const id of selected) {
-    const r = rungs[id];
-    if (r !== null && r !== undefined && isRung(r)) out[id] = r;
-  }
-  return Object.keys(out).length > 0 ? { rung_overrides: out } : {};
+export function usableSelection(selected: string[], picker: PickerDivision[]): string[] {
+  const usable = new Set(selectableDivisions(picker).map((d) => d.id));
+  return selected.filter((id) => usable.has(id));
 }
 
 /** The three independent reasons a joint run cannot start, in one place so the
@@ -270,11 +279,37 @@ function Caution({ title, children }: { title?: string; children: React.ReactNod
 function DivisionChip({ id, name }: { id: string; name: string }) {
   return (
     <span
-      className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold"
+      data-division-chip
+      title={name}
+      // `min-w-0 truncate` and a ceiling, exactly as the ghost chip on the grid
+      // has (board-grid.tsx). Without them a long division name pushes the rest
+      // of the row out of a 27rem dock.
+      className="min-w-0 max-w-[9rem] shrink truncate rounded px-1.5 py-0.5 text-[10px] font-semibold"
       style={{ backgroundColor: divisionTint(id), color: divisionInk(id) }}
     >
       {name}
     </span>
+  );
+}
+
+/** A failed RUN (not a failed apply). Rendered in both steps, because the run
+ *  can be started from either — and an out-of-credits failure gets the top-up
+ *  block rather than a red line, since AI is metered on every tier. */
+function RunError({
+  error,
+  currency,
+  msg,
+}: {
+  error: { message: string; key: string } | null;
+  currency: Currency;
+  msg: ReturnType<typeof useMsg>;
+}) {
+  if (!error) return null;
+  if (error.key === "board.ai.error.outOfCredits") return <AiOutOfCredits currency={currency} />;
+  return (
+    <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+      <span className="font-semibold">{msg("board.ai.errorLabel")}</span> {error.message}
+    </p>
   );
 }
 
@@ -288,6 +323,10 @@ export function JointReviewStep({
   outcome,
   undoing,
   undone,
+  undoFailed,
+  running,
+  error,
+  currency,
   onToggleExclude,
   onApply,
   onDiscard,
@@ -307,6 +346,19 @@ export function JointReviewStep({
   outcome: JointApplyOutcome | null;
   undoing: boolean;
   undone: "no" | "full" | "partial";
+  /** Division ids a partial undo could not revert — they are still carrying the
+   *  AI board, and their anchors are still valid, so they are both what the
+   *  copy must name and what the retry sends. */
+  undoFailed: string[];
+  /** A plan run started from HERE (the stale-board re-run) is in flight. The
+   *  button's `disabled` is the affordance; `runJointPlan`'s in-flight ref is
+   *  the actual protection against spending twice. */
+  running: boolean;
+  /** A failed run. The review step renders whenever a plan exists, so without
+   *  this a 402/403/500 on the re-run changed nothing at all on screen and the
+   *  old proposal went on looking successful. */
+  error: { message: string; key: string } | null;
+  currency: Currency;
   onToggleExclude: (fixtureId: string) => void;
   onApply: () => void;
   onDiscard: () => void;
@@ -323,16 +375,41 @@ export function JointReviewStep({
 
   // Applied — the confirmation, then the restore point that makes it reversible.
   if (outcome?.status === "applied") {
-    if (undone !== "no") {
+    // A PARTIAL undo is not a revert, and must not wear the revert headline: a
+    // reader who scans the ✓ line would take away the opposite of what
+    // happened, while the divisions named below are still on the AI board. The
+    // anchors stay valid, so the first remedy offered is another attempt at
+    // exactly those divisions, not a trip to each division's own page.
+    if (undone === "partial") {
+      return (
+        <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-amber-900">
+            <span aria-hidden>⚠</span>
+            {msg("board.ai.joint.undonePartialTitle")}
+          </p>
+          <p className="text-[11px] text-amber-900">
+            {msg("board.ai.joint.undonePartial", {
+              divisions: undoFailed.map((id) => nameOf.get(id) ?? id).join(", "),
+            })}
+          </p>
+          <button
+            type="button"
+            disabled={undoing}
+            onClick={onUndo}
+            className="btn btn-ghost px-3 py-1.5 text-xs font-semibold text-violet-700 disabled:opacity-50"
+          >
+            {undoing ? msg("board.ai.apply.undoing") : msg("board.ai.joint.undoRetry")}
+          </button>
+        </div>
+      );
+    }
+    if (undone === "full") {
       return (
         <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
           <p className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
             <span aria-hidden>⟲</span>
             {msg("board.ai.apply.reverted")}
           </p>
-          {undone === "partial" && (
-            <p className="mt-1 text-[11px] text-amber-800">{msg("board.ai.joint.undonePartial")}</p>
-          )}
         </div>
       );
     }
@@ -374,18 +451,42 @@ export function JointReviewStep({
           <p className="mt-0.5 text-amber-700">{msg("board.ai.apply.stale")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* This button SPENDS. A joint run takes tens of seconds, so without
+              an in-flight state a second click is the obvious move — and the
+              plan endpoint has no idempotency key, so it is a second charge.
+              The `disabled` here is the affordance; the guard that actually
+              stops the double-spend is `runJointPlan`'s in-flight ref, which is
+              set synchronously and so also covers the click that beats this
+              re-render. */}
           <button
             type="button"
+            data-ai-joint-rerun
+            disabled={running}
             onClick={onReRun}
-            className="ai-run inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-110"
+            className="ai-run inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <span aria-hidden>✦</span>
-            {msg("board.ai.apply.reRunRefine")}
+            {running ? (
+              <>
+                <Spinner />
+                {msg("board.ai.joint.running")}
+              </>
+            ) : (
+              <>
+                <span aria-hidden>✦</span>
+                {msg("board.ai.apply.reRunRefine")}
+              </>
+            )}
           </button>
-          <button type="button" onClick={onDiscard} className="btn btn-ghost px-3 py-1.5 text-xs text-slate-500">
+          <button
+            type="button"
+            disabled={running}
+            onClick={onDiscard}
+            className="btn btn-ghost px-3 py-1.5 text-xs text-slate-500 disabled:opacity-50"
+          >
             {msg("board.ai.apply.discard")}
           </button>
         </div>
+        <RunError error={error} currency={currency} msg={msg} />
       </div>
     );
   }
@@ -397,7 +498,7 @@ export function JointReviewStep({
       placed: plan.proposal.filter((p) => p.division_id === id && !setAside.has(p.fixture_id)).length,
     }))
     .filter((d) => nameOf.has(d.id));
-  const clash = personClashRisk(plan.warnings, divisions, selected);
+  const clash = personClashRisk(plan, divisions, selected);
 
   return (
     <div className="space-y-3">
@@ -441,10 +542,51 @@ export function JointReviewStep({
         </Caution>
       )}
 
+      {/* The engine's own warnings, LISTED. A bare count sitting above amber
+          rows that are not warnings (the skipped division, the court-name
+          mismatch) reads as a number that disagrees with the screen — and it
+          also hid every warning that was not a person clash. Same row shape as
+          the blocked list, minus the set-aside control: these do not stop an
+          apply, so there is nothing to decide. */}
       {plan.warnings.length > 0 && (
-        <p className="text-[11px] text-slate-500">
-          {plural("board.ai.joint.warnings", plan.warnings.length)}
-        </p>
+        <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-800">
+            {msg("board.ai.joint.warningsTitle")}
+          </p>
+          <p className="mt-0.5 text-[11px] text-amber-800/80">
+            {plural("board.ai.joint.warnings", plan.warnings.length)}
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {plan.warnings.map((w, i) => {
+              const f = meta.get(w.fixtureId);
+              const divisionId = divisionOf.get(w.fixtureId);
+              return (
+                <li
+                  key={`${w.fixtureId}-${w.reason}-${i}`}
+                  data-warning-row={w.fixtureId}
+                  className="rounded-md border border-amber-100 bg-white px-2 py-1.5"
+                >
+                  {/* The MATCH is the subject and gets the full row; the
+                      division and the reason qualify it underneath. Chip-first
+                      crushed the matchup to three characters at 375px once a
+                      division had a real-world name. */}
+                  <p className="truncate text-xs text-slate-700">
+                    {f?.matchup ?? w.fixtureId.slice(0, 8)}
+                  </p>
+                  <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-amber-800">
+                    {divisionId && (
+                      <DivisionChip id={divisionId} name={nameOf.get(divisionId) ?? divisionId} />
+                    )}
+                    <span className="min-w-0 truncate">
+                      {msg(blockingConflictKey(w.reason))}
+                      {w.detail ? ` — ${w.detail}` : ""}
+                    </span>
+                  </p>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       )}
 
       {plan.blocking.length > 0 && (
@@ -463,12 +605,11 @@ export function JointReviewStep({
                   className="rounded-md border border-red-100 bg-white px-2 py-1.5"
                 >
                   <div className="flex items-center gap-2">
-                    {divisionId && (
-                      <DivisionChip id={divisionId} name={nameOf.get(divisionId) ?? divisionId} />
-                    )}
                     <span className="min-w-0 flex-1 truncate text-xs text-slate-700">
                       {f?.matchup ?? c.fixtureId.slice(0, 8)}
                     </span>
+                    {/* The only control in the list, so it keeps the row it
+                        acts on — the division and the reason go underneath. */}
                     <label className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-[11px] text-slate-600">
                       <input
                         type="checkbox"
@@ -480,9 +621,14 @@ export function JointReviewStep({
                       {msg("board.ai.joint.setAside")}
                     </label>
                   </div>
-                  <p className="mt-0.5 text-[11px] text-red-700">
-                    {msg(blockingConflictKey(c.reason))}
-                    {c.detail ? ` — ${c.detail}` : ""}
+                  <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-red-700">
+                    {divisionId && (
+                      <DivisionChip id={divisionId} name={nameOf.get(divisionId) ?? divisionId} />
+                    )}
+                    <span className="min-w-0 truncate">
+                      {msg(blockingConflictKey(c.reason))}
+                      {c.detail ? ` — ${c.detail}` : ""}
+                    </span>
                   </p>
                 </li>
               );
@@ -509,6 +655,11 @@ export function JointReviewStep({
           {msg(applyErrorKey(outcome) as MessageKey)}
         </p>
       )}
+
+      {/* A re-run started from here can fail, and this step renders whenever a
+          plan exists — so without this the old proposal simply sat there
+          looking successful while a 402 went unmentioned. */}
+      <RunError error={error} currency={currency} msg={msg} />
 
       <div className="flex flex-wrap items-center gap-2 pt-1">
         <button
@@ -590,7 +741,12 @@ export function AiCompetitionConsole({
   const msg = useMsg();
   const plural = usePlural();
   const picker = useMemo(() => pickerDivisions(divisions), [divisions]);
-  const [selected, setSelected] = useState<string[]>(() => defaultSelectedDivisionIds(picker));
+  // The organiser's picks, and then the picks NARROWED to what can still be
+  // run. Derived during render rather than synced in an effect, so the picker,
+  // the receipt and the request cannot disagree even for one frame when a
+  // refresh freezes a division under an open console.
+  const [picked, setPicked] = useState<string[]>(() => defaultSelectedDivisionIds(picker));
+  const selected = useMemo(() => usableSelection(picked, picker), [picked, picker]);
   const [instruction, setInstruction] = useState("");
   const [rungs, setRungs] = useState<Record<string, number | null>>({});
   const [plan, setPlan] = useState<AiCompetitionPlanResponse | null>(null);
@@ -601,6 +757,11 @@ export function AiCompetitionConsole({
   const [outcome, setOutcome] = useState<JointApplyOutcome | null>(null);
   const [undoing, setUndoing] = useState(false);
   const [undone, setUndone] = useState<"no" | "full" | "partial">("no");
+  const [undoFailed, setUndoFailed] = useState<string[]>([]);
+  // THE double-spend guard. A ref, not state: state is read through a closure a
+  // second click can beat, and this has to hold for exactly that click. See
+  // runJointPlan.
+  const inFlight = useRef(false);
   // The reader's own zone — the one the board's clock labels are rendered in.
   // Read lazily (the dock only ever mounts on a click, so there is no SSR pass
   // to disagree with) rather than threaded from the server.
@@ -622,53 +783,34 @@ export function AiCompetitionConsole({
 
   const run = useCallback(
     async (prior?: AiCompetitionPlanResponse | null) => {
-      const text = instruction.trim();
-      if (text.length < 3) return;
-      setRunning(true);
-      setError(null);
-      try {
-        const res = await apiV1<AiCompetitionPlanResponse>(
-          `/api/v1/competitions/${competitionId}/schedule/ai-plan`,
-          {
-            method: "POST",
-            json: {
-              division_ids: selected,
-              instruction: text,
-              mode: prior ? "refine" : "generate",
-              ...rungOverrides(rungs, selected),
-              ...(prior
-                ? {
-                    prior: {
-                      instruction: text,
-                      assignments: prior.proposal.map((p) => ({
-                        fixture_id: p.fixture_id,
-                        scheduled_at: p.scheduled_at,
-                        court_label: p.court_label,
-                        division_id: p.division_id,
-                      })),
-                    },
-                  }
-                : {}),
-            },
+      // Body-building, the POST and the in-flight guard all live in
+      // runJointPlan: this endpoint spends credits with no idempotency key, and
+      // what is SENT needs a test boundary as much as what is displayed.
+      const result = await runJointPlan(
+        { competitionId, selected, instruction, rungs, prior },
+        {
+          inFlight,
+          // Fires only after the guard passes, so a refused second click cannot
+          // clear the error or restart the spinner of the run still going.
+          onStart: () => {
+            setRunning(true);
+            setError(null);
           },
-        );
-        setPlan(res);
+        },
+      );
+      if (result.status === "refused") return; // the first run still owns the UI
+      setRunning(false);
+      if (result.status === "planned") {
+        setPlan(result.plan);
         setExcluded([]);
         setOutcome(null);
         setUndone("no");
-        onProposalChange?.(res);
-      } catch (err) {
-        const status = err instanceof ApiV1Error ? err.status : 0;
-        const code =
-          err instanceof ApiV1Error
-            ? typeof err.extra.feature_key === "string"
-              ? err.extra.feature_key
-              : err.code
-            : undefined;
-        const key = aiErrorKey(status, code);
-        setError({ message: msg(key), key });
+        setUndoFailed([]);
+        onProposalChange?.(result.plan);
+        return;
       }
-      setRunning(false);
+      const key = aiErrorKey(result.httpStatus, result.code);
+      setError({ message: msg(key), key });
     },
     [competitionId, instruction, msg, onProposalChange, rungs, selected],
   );
@@ -696,11 +838,20 @@ export function AiCompetitionConsole({
   const undo = useCallback(async () => {
     if (!outcome || undoing) return;
     setUndoing(true);
-    const ok = await undoJointApply(outcome.checkpoints);
+    // A retry sends ONLY the anchors that failed — the divisions that already
+    // reverted would otherwise be restored a second time for no reason. The
+    // anchors stay valid after a refusal, which is what makes the retry
+    // possible at all.
+    const pending =
+      undoFailed.length > 0
+        ? outcome.checkpoints.filter((c) => undoFailed.includes(c.divisionId))
+        : outcome.checkpoints;
+    const { ok, failed } = await undoJointApply(pending);
     setUndone(ok ? "full" : "partial");
+    setUndoFailed(failed);
     setUndoing(false);
     onApplied?.();
-  }, [onApplied, outcome, undoing]);
+  }, [onApplied, outcome, undoFailed, undoing]);
 
   const close = useCallback(() => {
     onProposalChange?.(null);
@@ -712,7 +863,7 @@ export function AiCompetitionConsole({
       <AiDivisionPicker
         divisions={picker}
         selected={selected}
-        onChange={setSelected}
+        onChange={setPicked}
         msg={msg}
         busy={running}
       />
@@ -758,14 +909,7 @@ export function AiCompetitionConsole({
         busy={running}
       />
 
-      {error &&
-        (error.key === "board.ai.error.outOfCredits" ? (
-          <AiOutOfCredits currency={currency} />
-        ) : (
-          <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-            <span className="font-semibold">{msg("board.ai.errorLabel")}</span> {error.message}
-          </p>
-        ))}
+      <RunError error={error} currency={currency} msg={msg} />
 
       <button
         type="button"
@@ -806,6 +950,10 @@ export function AiCompetitionConsole({
       outcome={outcome}
       undoing={undoing}
       undone={undone}
+      undoFailed={undoFailed}
+      running={running}
+      error={error}
+      currency={currency}
       onToggleExclude={(id) =>
         setExcluded((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]))
       }

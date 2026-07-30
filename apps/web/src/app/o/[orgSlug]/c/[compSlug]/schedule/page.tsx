@@ -174,13 +174,13 @@ export default async function CompetitionSchedulePage({
           canManage={canEdit && !frozen}
           aiAllowed={aiAllowed}
           currency={currency}
-          // These two together are what un-gate the JOINT AI console (#350).
-          // This page is the only caller that passes them, and it already sits
-          // behind `scheduling.multi_division` above — so the entitlement gate
-          // is structural here, and re-checked server-side on all three joint
-          // endpoints.
-          competitionId={id}
-          divisionSettings={divisionSettings}
+          // What un-gates the JOINT AI console (#350). One prop, so the id
+          // cannot arrive without the per-division settings the console prices
+          // and warns from. This page is the only caller that passes it, and it
+          // already sits behind `scheduling.multi_division` above — so the
+          // entitlement gate is structural here, and re-checked server-side on
+          // all three joint endpoints.
+          competition={{ id, divisionSettings }}
         />
       </main>
     </>
