@@ -6,7 +6,9 @@ order: 5
 
 ## What credits are
 
-AI features — **AI scheduling** and **AI officials** — spend **credits**. Each run costs one credit, on every plan. The **Credits** tab on your billing page (Plan & Billing → AI credits) is the home for your wallet: your balance, this month's grant, your packs, and the run history.
+AI features — **AI scheduling** and **AI officials** — spend **credits**, on every plan. What a run costs depends on how big the job is: credits buy the model a **thinking budget** (1 credit → up to 32K tokens, 2 → 64K, 3 → 128K), the console shows the price before anything is spent, and you can adjust it. Scheduling several divisions in one run gets a batch discount of one credit. [AI Schedule](/help/scheduling/ai-scheduling) explains the sizing in full.
+
+The **Credits** tab on your billing page (Plan & Billing → AI credits) is the home for your wallet: your balance, this month's grant, your packs, and the run history.
 
 ## Your monthly grant
 
@@ -18,7 +20,7 @@ Every plan comes with a monthly grant that **resets on the 1st of each month** �
 
 The grant meter on the Credits tab shows how much of this month's grant you've used and when it resets. Unused grant credits don't roll over — the pool is topped back up to the full amount each month.
 
-If a run fails before it finishes, its credits are refunded — the meter gives them back, so a failed run never counts against your grant.
+If a run fails before it produces anything usable, its credits are refunded — the meter gives them back, so a failed run never counts against your grant. A run that finishes, including one that reached its thinking budget and handed back a partial timetable, is charged what the card quoted.
 
 If a subscription lapses — a payment more than 14 days overdue, a comp that has ended, or a cancelled plan — the monthly grant falls back to the Community 10 a month until it is back in good standing, and the Credits tab shows that lower figure.
 

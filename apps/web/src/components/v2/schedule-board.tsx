@@ -901,6 +901,9 @@ export function ScheduleBoard({
           count={visibleConflicts.length}
           open={panelOpen}
           onToggle={() => setPanelOpen((o) => !o)}
+          checkFailed={actions.checkFailed}
+          checking={actions.checking}
+          onRetry={() => void actions.revalidate()}
         />
         {canEdit && single && single.status !== "active" && single.status !== "completed" && (
           <>
@@ -1160,6 +1163,9 @@ export function ScheduleBoard({
           divisionNames={divisionNames}
           onJump={jumpTo}
           onClose={() => setPanelOpen(false)}
+          checkFailed={actions.checkFailed}
+          checking={actions.checking}
+          onRetryCheck={() => void actions.revalidate()}
         />
       )}
 

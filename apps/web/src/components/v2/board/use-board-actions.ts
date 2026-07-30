@@ -28,6 +28,16 @@ export interface BoardActions {
   notice: string | null;
   paywall: string | null;
   busy: boolean;
+  /** The LAST conflicts check failed (#230 item 5). The conflicts list is then
+   *  whatever the last successful check returned — possibly nothing, which is
+   *  byte-for-byte what a clean board looks like — so this is the only thing
+   *  that distinguishes "no conflicts" from "nobody could ask". */
+  checkFailed: boolean;
+  /** A conflicts check is in flight; the manual retry is disabled while it is. */
+  checking: boolean;
+  /** Re-run the check NOW, not on the 400ms debounce. A button whose effect
+   *  starts half a second later is indistinguishable from a dead one. */
+  revalidate: () => Promise<void>;
   setError: (e: string | null) => void;
   setNotice: (n: string | null) => void;
   moveCard: (fixtureId: string, atIso: string | null, court: string | null) => Promise<boolean>;
@@ -54,6 +64,8 @@ export function useBoardActions(
   const [notice, setNotice] = useState<string | null>(null);
   const [paywall, setPaywall] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [checkFailed, setCheckFailed] = useState(false);
+  const [checking, setChecking] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Optimistic-concurrency tokens (v3/11 gap 10): the seq each division was
@@ -94,6 +106,7 @@ export function useBoardActions(
   }, [conflicts]);
 
   const runValidate = useCallback(async () => {
+    setChecking(true);
     try {
       const results = await Promise.all(
         divisions.map((d) =>
@@ -103,8 +116,16 @@ export function useBoardActions(
         ),
       );
       setConflicts(results.flatMap((r) => r.conflicts));
+      setCheckFailed(false);
     } catch {
-      /* validation is advisory — never break the board */
+      // Validation stays ADVISORY — the board must never break because the
+      // check did. But #230 item 5: swallowing it silently left an organiser
+      // reading an empty conflicts list that was not an answer. Keep the last
+      // known conflicts (they are still the best information available) and
+      // record that they are no longer current, so the toolbar can say so.
+      setCheckFailed(true);
+    } finally {
+      setChecking(false);
     }
   }, [divisions]);
 
@@ -387,6 +408,9 @@ export function useBoardActions(
     notice,
     paywall,
     busy,
+    checkFailed,
+    checking,
+    revalidate: runValidate,
     setError,
     setNotice,
     moveCard,
