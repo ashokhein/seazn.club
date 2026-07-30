@@ -370,8 +370,13 @@ push/pop, `buildDayIntervals`. Rework required:
 
 - The encoding is pairwise O(n²) integer disjunctions with a fresh `check()` per *k*.
   Our cap is 500 movable fixtures — 125k pairs. Their "milliseconds at tournament
-  scale" claim is unproven at our ceiling. Ship behind a size gate (~120 movable),
-  measure, and keep LLM repair as the fallback above it.
+  scale" claim is unproven at our ceiling. **Owner decision (2026-07-30): no
+  fixture-count gate — solve the full range, higher latency on large boards is
+  acceptable.** The binding constraint is not latency but *termination*: a generous
+  but finite wall-clock solver budget, falling back to LLM repair on timeout, with the
+  fallback visible in telemetry. If ascending-*k* rather than the encoding proves to be
+  the bottleneck, binary search over *k* keeps the same minimality guarantee with
+  logarithmically fewer `check()` calls.
 - Their engine places **all** fixtures and returns `infeasible` on overflow. Ours must
   retain drop-and-mark-unschedulable, which is a product decision belonging upstream.
 
@@ -384,7 +389,7 @@ push/pop, `buildDayIntervals`. Rework required:
 | The name guard treats two different people as one | It is scheduling-only and non-persisted: it costs one unnecessary rest gap and writes nothing. The guardian anti-merge test is a permanent regression guard against ever making it a record merge |
 | Deferring the registration cause fix leaves duplicates accumulating | The name guard covers them for scheduling; the review queue and merge tool clear them later. Accepted knowingly, recorded in §9 |
 | Parse spend invisible in the ledger | Its own stamp line, tested (#387) |
-| z3 does not scale to 500 fixtures | Size gate plus measurement before the gate is raised; LLM repair remains |
+| z3 does not terminate on a 500-fixture board | No size gate (owner decision); a finite wall-clock solver budget with fallback to LLM repair, and the fallback reported in telemetry rather than degrading silently |
 | Golden pack churn hides a real change | Updated exactly once per wave as a reviewed diff |
 
 ## 9. Out of scope
