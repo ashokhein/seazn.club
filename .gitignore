@@ -53,3 +53,26 @@ packages/engine/sim-report.json
 
 # Session screenshots keep landing in the repo root — never track them.
 /*.png
+
+# graphify knowledge graph. graph.json is ~14MB and rewritten whole on every
+# rebuild, so git cannot delta it — committing it would grow .git by that much
+# per run. All of it is derived from the source tree except cache/semantic/,
+# which holds the LLM doc extraction (~400k tokens to regenerate) as one
+# content-hashed file per doc; that IS tracked, so a fresh clone rebuilds free
+# and an edited doc adds one small blob instead of rewriting the set.
+#
+# cache/stat-index.json stays ignored — it records machine-local mtime_ns and
+# would conflict on every machine.
+#
+# The `dir/*` + `!dir/sub/` shape is required: git will not descend into a
+# directory excluded as `dir/`, so a negation inside it can never match.
+# graphify writes its output next to whatever path it was pointed at, so both
+# the repo-root and apps/ scopes are covered.
+graphify-out/*
+!graphify-out/cache/
+graphify-out/cache/*
+!graphify-out/cache/semantic/
+apps/graphify-out/*
+!apps/graphify-out/cache/
+apps/graphify-out/cache/*
+!apps/graphify-out/cache/semantic/
