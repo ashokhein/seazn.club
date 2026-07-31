@@ -45,11 +45,11 @@ invocation and complete it end to end.
 - Run relevant test suites with a RAW reporter and read real pass/fail
   counts and exit codes. Never trust wrapper/proxy summaries — `rtk`
   prints `PASS(0) FAIL(0)` for a suite that FAILED TO COLLECT, and
-  mangles `--reporter=json` on stdout. There is no `jq` on this
-  machine; write the report to a file and read it with node:
+  mangles `--reporter=json` on stdout, so route the report through a
+  FILE — not a pipe — and read it back:
 
       npx vitest run --reporter=json --outputFile=/tmp/r.json <paths>
-      node -e 'const r=require("/tmp/r.json");console.log(r.numTotalTests,r.numPassedTests,r.numFailedTests)'
+      jq '{total: .numTotalTests, passed: .numPassedTests, failed: .numFailedTests}' /tmp/r.json
 
   Pin `numTotalTests` too, not just failures — during a mutation sweep a
   mutant that fails to parse shrinks the total and reads as a survivor.
