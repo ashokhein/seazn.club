@@ -12,7 +12,7 @@ Everything is editable — entrants, seeds, format, schedule. Generate fixtures,
 
 ## Started
 
-Pressing **Start** locks entrants and format. From here the *results* are what change: score, finalize, progress through stages. Schedules stay editable ([with undo](/help/scheduling/undo)) — it's the draw that's fixed, not the timetable. Someone dropping out goes through [withdrawal](/help/entrants/withdrawals), which repairs fixtures honestly instead of pretending they were never there.
+Pressing **Start** locks entrants; the format locked earlier, the moment fixtures were generated ([division settings](/help/divisions/settings)). From here the *results* are what change: score, finalize, progress through stages. Schedules stay editable ([with undo](/help/scheduling/undo)) — it's the draw that's fixed, not the timetable. Someone dropping out goes through [withdrawal](/help/entrants/withdrawals), which repairs fixtures honestly instead of pretending they were never there.
 
 ## Completed
 
