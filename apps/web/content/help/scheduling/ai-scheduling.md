@@ -37,6 +37,20 @@ Your data stays yours: the brief is sent to one of our AI providers — Anthropi
 
 Every proposal is checked by the same engine that powers the drag-and-drop board. Blocking clashes (a double-booked court, a final before its feeder finishes) are repaired automatically for up to two rounds; anything left over is shown to you rather than hidden. Rest gaps, session windows and soft warnings are surfaced, never silently ignored.
 
+### Matches whose players aren't decided yet
+
+In a knockout, a later match carries no names until the rounds before it are played. A semi-final slot says "winner of match 3", and the final says nothing at all. A rule like "nobody plays two matches at once" had nothing to hold on to in those slots — so an undecided match could be put on at the same moment as a match one of its possible players was already in, which is exactly where a clash hurts most.
+
+Undecided slots are now checked against **everyone who could still reach them**. The engine follows the bracket backwards through the matches that feed the slot and treats every player who could still arrive there as if they were already in it. Two things are left out of that walk: **byes**, which are not matches anyone plays, and **rounds that are already finished**, where the result is known and the players who went out cannot turn up again.
+
+Because the list is everyone who *could* reach the slot rather than who will, the check is deliberately cautious. It can hold two undecided matches apart that, once the results are in, would have had nobody in common — costing you one more gap in the day. That is the trade we chose: an extra gap is an inconvenience, one player sent to two courts at the same time is a match that cannot be played.
+
+### Two people with the same name
+
+If the same name appears on two player records — the same person entered twice, or registered once by a club and once by themselves — the scheduler treats them as **one player** and keeps their matches apart. Nothing is merged: the two records stay separate on your rosters, results and reports, and nothing is written to them. The assumption lives only inside the run, for as long as it takes to lay out the timetable.
+
+So a clash warning may name a player who does not look like they are in that match. That is usually one of these two rules talking — an undecided slot they could still reach, or a second record under the same name — and it is not a bug. The warning is telling you the timetable is unsafe as it stands; if you know the two names really are different people, you can apply the schedule anyway.
+
 ## What a run costs
 
 AI Schedule needs no upgrade — it runs on **every plan, Community included**. There is no per-division run cap any more: every run is metered by your organisation's shared **AI credit wallet** instead. Generate, refine and repair are all metered the same way, and so is the officials pass.

@@ -12,7 +12,7 @@ import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
-import { buildSchedulePack } from "../schedule-ai";
+import { buildSchedulePack, toModelPayload } from "../schedule-ai";
 import { seedOrg } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -239,6 +239,26 @@ describe.skipIf(!HAS_DB)("buildSchedulePack (v4/01 §2)", () => {
   // only by hand-patching the API — so it shipped as three dead buttons for
   // anyone who reached it. The column survives (dormant) until a later
   // migration drops it; this proves nothing reads it any more.
+  it("pack carries participants for every movable fixture", async () => {
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Finish by 6pm.",
+    });
+    expect(Object.keys(pack.participants).sort()).toEqual(
+      pack.fixtures.movable.map((f) => f.id).sort(),
+    );
+    // Round-robin board: every fixture has both slots named, so participants
+    // is exactly the union of the two entrants' rosters.
+    const first = pack.fixtures.movable[0]!;
+    expect(pack.participants[first.id]!.length).toBeGreaterThan(0);
+  });
+
+  it("pack carries an assumptions array", async () => {
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Finish by 6pm.",
+    });
+    expect(Array.isArray(pack.assumptions)).toBe(true);
+  });
+
   it("packs a division regardless of the dormant scheduling_mode column", async () => {
     const comp = await createCompetition(auth, { name: "Flex", visibility: "public", branding: {} });
     const flex = await createDivision(auth, comp.id, {
@@ -281,7 +301,9 @@ describe.skipIf(!HAS_DB)("buildSchedulePack size limits", () => {
     });
     expect(movableIds.size).toBe(500);
     // Rough chars/4 heuristic proxy; the live AI_EVAL=1 test uses count_tokens.
-    expect(JSON.stringify(pack).length / 4).toBeLessThan(60_000);
+    // Measures the PAYLOAD, not the pack: `participants`/`assumptions` are
+    // enforcement inputs and never reach the model (see `toModelPayload`).
+    expect(JSON.stringify(toModelPayload(pack)).length / 4).toBeLessThan(60_000);
   });
 
   it("more than 500 movable fixtures is 422 AI_PLAN_TOO_LARGE", async () => {
@@ -290,5 +312,617 @@ describe.skipIf(!HAS_DB)("buildSchedulePack size limits", () => {
     await expect(
       buildSchedulePack(auth, divisionId, { mode: "generate", instruction: "x" }),
     ).rejects.toMatchObject({ status: 422, message: "AI_PLAN_TOO_LARGE" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Elimination-bracket seeders (#396). A round-robin board names both slots of
+// every fixture, so it cannot exercise the advancer recursion at all — these
+// build boards whose later fixtures are genuinely TBD.
+// ---------------------------------------------------------------------------
+
+/** Fresh pro org + competition + division + settings + one stage. */
+async function seedKoDivision(
+  name: string,
+): Promise<{ auth: AuthCtx; divisionId: string; stageId: string }> {
+  const { auth } = await seedOrg("pro");
+  const tag = randomUUID().slice(0, 6);
+  const comp = await createCompetition(auth, {
+    name: `${name} ${tag}`, visibility: "public", branding: {},
+  });
+  const division = await createDivision(auth, comp.id, {
+    name, slug: `${name.toLowerCase()}-${tag}`, sport_key: "generic",
+    variant_key: "score", config: GENERIC_CONFIG, eligibility: [],
+  });
+  await setSettings(division.id);
+  const [stage] = await createStages(auth, division.id, {
+    seq: 1, kind: "league", name: "KO", config: {},
+  });
+  return { auth, divisionId: division.id, stageId: stage!.id };
+}
+
+/** A fresh random UUID whose FIRST hex digit is `lead` — so two boards can be
+ *  seeded with fixture ids that sort opposite ways without ever colliding on the
+ *  primary key. Used to make "ordered on a raw UUID" a deterministic failure
+ *  rather than a coin flip. */
+function uuidLeading(lead: string): string {
+  return lead + randomUUID().slice(1);
+}
+
+/**
+ * 4 entrants, one person each, two semis feeding one final. The final's entrant
+ * slots are NULL — the shape today's named-entrant derivation reports as having
+ * nobody in it.
+ *
+ * `fixtureIds` forces the fixtures' primary keys instead of letting the DB pick
+ * them; the determinism test uses it to seed two logically identical boards
+ * whose raw UUIDs order the two feeders in opposite directions.
+ */
+async function seedSmallBracket(fixtureIds?: {
+  semi1: string;
+  semi2: string;
+  final: string;
+}): Promise<{
+  auth: AuthCtx;
+  divisionId: string;
+  ids: { personIds: string[]; fixtureIds: { semi1: string; semi2: string; final: string } };
+}> {
+  const { auth, divisionId, stageId } = await seedKoDivision("Bracket");
+  await createEntrants(
+    auth,
+    divisionId,
+    Array.from({ length: 4 }, (_, i) => ({
+      kind: "individual" as const, display_name: `K${i + 1}`, seed: i + 1, members: [],
+    })),
+  );
+  const ents = await sql<{ id: string }[]>`
+    select id from entrants where division_id = ${divisionId} order by seed`;
+  const personIds: string[] = [];
+  for (let i = 0; i < ents.length; i++) {
+    const [p] = await sql<{ id: string }[]>`
+      insert into persons (org_id, full_name)
+      values (${auth.orgId}, ${`Bracket Player ${i + 1}`}) returning id`;
+    personIds.push(p!.id);
+    await sql`insert into entrant_members (entrant_id, person_id, org_id)
+              values (${ents[i]!.id}, ${p!.id}, ${auth.orgId})`;
+  }
+
+  const forcedFinal = fixtureIds?.final ?? randomUUID();
+  const [final] = await sql<{ id: string }[]>`
+    insert into fixtures (id, stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status)
+    values (${forcedFinal}, ${stageId}, ${divisionId}, ${auth.orgId}, 2, 0, 'final', 'scheduled')
+    returning id`;
+  const semis: string[] = [];
+  for (let i = 0; i < 2; i++) {
+    const forcedSemi = (i === 0 ? fixtureIds?.semi1 : fixtureIds?.semi2) ?? randomUUID();
+    const [s] = await sql<{ id: string }[]>`
+      insert into fixtures (id, stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status,
+                            home_entrant_id, away_entrant_id, winner_to_fixture, winner_to_slot)
+      values (${forcedSemi}, ${stageId}, ${divisionId}, ${auth.orgId}, 1, ${i}, ${`semi-${i + 1}`},
+              'scheduled', ${ents[i * 2]!.id}, ${ents[i * 2 + 1]!.id}, ${final!.id}, ${i + 1})
+      returning id`;
+    semis.push(s!.id);
+  }
+  return {
+    auth,
+    divisionId,
+    ids: { personIds, fixtureIds: { semi1: semis[0]!, semi2: semis[1]!, final: final!.id } },
+  };
+}
+
+/** The same board with one semi already played — it leaves the movable set and
+ *  becomes a fixed obstacle, so the final's `feeds.after` dangles. */
+async function seedSmallBracketWithFinishedSemi(): Promise<{ auth: AuthCtx; divisionId: string }> {
+  const { auth, divisionId, ids } = await seedSmallBracket();
+  await sql`
+    update fixtures set status = 'finalized',
+      scheduled_at = ${new Date(T0).toISOString()}, court_label = 'Court 1'
+    where id = ${ids.fixtureIds.semi1}`;
+  return { auth, divisionId };
+}
+
+/**
+ * One movable final fed by TWO already-finished semis that carry NO `ext_key`.
+ * `fixtures.ext_key` is nullable, so both stripped-feeder assumptions keep a full
+ * raw UUID in their message body — and a text sort of those strings therefore
+ * orders on a per-seed random value. The semis' ids are forced so their UUID
+ * order (semi-B first) contradicts their board order (semi-A first, round 1
+ * seq 0), making that failure deterministic.
+ */
+async function seedNullExtKeyDanglingFeeders(): Promise<{
+  auth: AuthCtx;
+  divisionId: string;
+  semiA: string;
+  semiB: string;
+}> {
+  const { auth, divisionId, stageId } = await seedKoDivision("Dangle");
+  await createEntrants(
+    auth,
+    divisionId,
+    Array.from({ length: 4 }, (_, i) => ({
+      kind: "individual" as const, display_name: `D${i + 1}`, seed: i + 1, members: [],
+    })),
+  );
+  const ents = await sql<{ id: string }[]>`
+    select id from entrants where division_id = ${divisionId} order by seed`;
+  const [final] = await sql<{ id: string }[]>`
+    insert into fixtures (stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status)
+    values (${stageId}, ${divisionId}, ${auth.orgId}, 2, 0, 'final', 'scheduled') returning id`;
+  // semi-A sorts ABOVE semi-B as a raw string, but BELOW it on (round, seq).
+  const ids = [uuidLeading("f"), uuidLeading("0")];
+  for (let i = 0; i < 2; i++) {
+    await sql`
+      insert into fixtures (id, stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status,
+                            home_entrant_id, away_entrant_id, winner_to_fixture, winner_to_slot,
+                            scheduled_at, court_label)
+      values (${ids[i]!}, ${stageId}, ${divisionId}, ${auth.orgId}, 1, ${i}, null, 'finalized',
+              ${ents[i * 2]!.id}, ${ents[i * 2 + 1]!.id}, ${final!.id}, ${i + 1},
+              ${new Date(T0 + i * 30 * MIN).toISOString()}, 'Court 1')`;
+  }
+  return { auth, divisionId, semiA: ids[0]!, semiB: ids[1]! };
+}
+
+/**
+ * ONE stripped feeder that feeds TWO dependents — the double-elimination shape,
+ * where a single match legitimately feeds both the winners' and the losers'
+ * bracket. Both dependents carry a NULL `ext_key` (the column is nullable), so
+ * `stripByes` labels each of them by its raw UUID and both assumption messages
+ * keep a per-seed random value inside the text.
+ *
+ * `fixtureIds` forces the dependents' primary keys so two logically identical
+ * boards can order them in OPPOSITE directions as raw strings — which turns
+ * "ranked per feeder instead of per (dependent, feeder) pair" from a coin flip
+ * into a deterministic failure.
+ */
+async function seedSharedFeederTwoDependents(fixtureIds: {
+  winners: string;
+  losers: string;
+}): Promise<{ auth: AuthCtx; divisionId: string; winners: string; losers: string }> {
+  const { auth, divisionId, stageId } = await seedKoDivision("Dbl");
+  await createEntrants(
+    auth,
+    divisionId,
+    Array.from({ length: 2 }, (_, i) => ({
+      kind: "individual" as const, display_name: `X${i + 1}`, seed: i + 1, members: [],
+    })),
+  );
+  const ents = await sql<{ id: string }[]>`
+    select id from entrants where division_id = ${divisionId} order by seed`;
+  // The two TBD dependents, in board order: winners' bracket then losers'.
+  for (const [seq, id] of [fixtureIds.winners, fixtureIds.losers].entries()) {
+    await sql`
+      insert into fixtures (id, stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status)
+      values (${id}, ${stageId}, ${divisionId}, ${auth.orgId}, 2, ${seq}, null, 'scheduled')`;
+  }
+  // …and the single finished match that feeds BOTH of them.
+  await sql`
+    insert into fixtures (stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status,
+                          home_entrant_id, away_entrant_id,
+                          winner_to_fixture, winner_to_slot, loser_to_fixture, loser_to_slot,
+                          scheduled_at, court_label)
+    values (${stageId}, ${divisionId}, ${auth.orgId}, 1, 0, 'sf', 'finalized',
+            ${ents[0]!.id}, ${ents[1]!.id},
+            ${fixtureIds.winners}, 1, ${fixtureIds.losers}, 1,
+            ${new Date(T0).toISOString()}, 'Court 1')`;
+  return { auth, divisionId, winners: fixtureIds.winners, losers: fixtureIds.losers };
+}
+
+/**
+ * Two movable fixtures that TIE on (round_no, seq_in_round) and whose `ext_key`
+ * order contradicts their raw-UUID order. The only board shape on which the
+ * pack's fixture comparator and its `participants` key comparator can disagree.
+ */
+async function seedTiedSeqBoard(): Promise<{
+  auth: AuthCtx;
+  divisionId: string;
+  extA: string;
+  extB: string;
+}> {
+  const { auth, divisionId, stageId } = await seedKoDivision("Tied");
+  await createEntrants(
+    auth,
+    divisionId,
+    Array.from({ length: 4 }, (_, i) => ({
+      kind: "individual" as const, display_name: `T${i + 1}`, seed: i + 1, members: [],
+    })),
+  );
+  const ents = await sql<{ id: string }[]>`
+    select id from entrants where division_id = ${divisionId} order by seed`;
+  const ids = { "ext-a": uuidLeading("f"), "ext-b": uuidLeading("0") };
+  let i = 0;
+  for (const [extKey, id] of Object.entries(ids)) {
+    await sql`
+      insert into fixtures (id, stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status,
+                            home_entrant_id, away_entrant_id)
+      values (${id}, ${stageId}, ${divisionId}, ${auth.orgId}, 1, 0, ${extKey}, 'scheduled',
+              ${ents[i * 2]!.id}, ${ents[i * 2 + 1]!.id})`;
+    i++;
+  }
+  return { auth, divisionId, extA: ids["ext-a"], extB: ids["ext-b"] };
+}
+
+/**
+ * `n` bracket fixtures, heap-shaped: fixture g feeds fixture floor(g / 2), so
+ * fixture 1 is the final and every leaf carries two entrants with one person
+ * each. The worst realistic case for participant-set size — the root's set is
+ * every player in the division.
+ */
+async function seedBigBracket(n: number): Promise<{ auth: AuthCtx; divisionId: string }> {
+  const { auth, divisionId, stageId } = await seedKoDivision("BigKo");
+  const leafFrom = Math.floor(n / 2) + 1; // fixtures with no children
+  await sql`
+    insert into fixtures (stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status)
+    select ${stageId}, ${divisionId}, ${auth.orgId},
+           floor(log(2, g))::int, (g - power(2, floor(log(2, g))))::int,
+           'kob-' || lpad(g::text, 4, '0'), 'scheduled'
+    from generate_series(1, ${n}) g`;
+  // Wire the feed chain by ext_key — never by UUID.
+  await sql`
+    update fixtures f
+       set winner_to_fixture = p.id,
+           winner_to_slot = case when (substr(f.ext_key, 5)::int) % 2 = 0 then 1 else 2 end
+      from fixtures p
+     where f.division_id = ${divisionId} and p.division_id = ${divisionId}
+       and substr(f.ext_key, 5)::int >= 2
+       and p.ext_key = 'kob-' || lpad((substr(f.ext_key, 5)::int / 2)::text, 4, '0')`;
+  // Two entrants (one person each) on every leaf fixture.
+  await sql`
+    insert into entrants (division_id, org_id, kind, display_name, seed)
+    select ${divisionId}, ${auth.orgId}, 'individual',
+           'B' || lpad(g::text, 4, '0') || (case when s = 1 then 'a' else 'b' end),
+           (g - ${leafFrom}) * 2 + s
+    from generate_series(${leafFrom}::int, ${n}::int) g, generate_series(1, 2) s`;
+  await sql`
+    insert into persons (org_id, full_name)
+    select ${auth.orgId}, 'Big Player ' || e.display_name
+    from entrants e where e.division_id = ${divisionId}`;
+  await sql`
+    insert into entrant_members (entrant_id, person_id, org_id)
+    select e.id, p.id, ${auth.orgId}
+    from entrants e
+    join persons p on p.org_id = ${auth.orgId} and p.full_name = 'Big Player ' || e.display_name
+    where e.division_id = ${divisionId}`;
+  await sql`
+    update fixtures f
+       set home_entrant_id = h.id, away_entrant_id = a.id
+      from entrants h, entrants a
+     where f.division_id = ${divisionId}
+       and substr(f.ext_key, 5)::int >= ${leafFrom}
+       and h.division_id = ${divisionId} and a.division_id = ${divisionId}
+       and h.display_name = 'B' || substr(f.ext_key, 5) || 'a'
+       and a.display_name = 'B' || substr(f.ext_key, 5) || 'b'`;
+  return { auth, divisionId };
+}
+
+/**
+ * Two anonymous registrations by one human, plus the three cases the guard must
+ * treat differently. Five one-round fixtures, one entrant person each:
+ *   g1 Bobby Fischer #1 | g2 Bobby Fischer #2  → same raw name, two persons rows
+ *   g3 Cathy Case       | g4 "  cathy   CASE " → same name only once normalised
+ *   g5 ""               | "   "               → blank names must NOT bucket
+ * Exactly what the registration flow produces today: no backfill, no merge.
+ */
+async function seedTwoSameNamePlayers(): Promise<{ auth: AuthCtx; divisionId: string }> {
+  const { auth, divisionId, stageId } = await seedKoDivision("SameName");
+  const names = [
+    "Bobby Fischer", "Alice Alpha",
+    "Bobby Fischer", "Bravo Beta",
+    "Cathy Case", "Delta Dee",
+    "  cathy   CASE ", "Echo Eee",
+    "", "   ",
+  ];
+  await createEntrants(
+    auth,
+    divisionId,
+    names.map((_, i) => ({
+      kind: "individual" as const, display_name: `S${i + 1}`, seed: i + 1, members: [],
+    })),
+  );
+  const ents = await sql<{ id: string }[]>`
+    select id from entrants where division_id = ${divisionId} order by seed`;
+  for (let i = 0; i < names.length; i++) {
+    const [p] = await sql<{ id: string }[]>`
+      insert into persons (org_id, full_name) values (${auth.orgId}, ${names[i]!}) returning id`;
+    await sql`insert into entrant_members (entrant_id, person_id, org_id)
+              values (${ents[i]!.id}, ${p!.id}, ${auth.orgId})`;
+  }
+  for (let g = 0; g < names.length / 2; g++) {
+    await sql`
+      insert into fixtures (stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status,
+                            home_entrant_id, away_entrant_id)
+      values (${stageId}, ${divisionId}, ${auth.orgId}, 1, ${g}, ${`g${g + 1}`}, 'scheduled',
+              ${ents[g * 2]!.id}, ${ents[g * 2 + 1]!.id})`;
+  }
+  return { auth, divisionId };
+}
+
+async function personCount(orgId: string): Promise<number> {
+  const [row] = await sql<{ n: string }[]>`
+    select count(*)::text as n from persons where org_id = ${orgId}`;
+  return Number(row!.n);
+}
+
+describe.skipIf(!HAS_DB)("scheduling-only same-name guard (#396)", () => {
+  it("two entrants, same person name, different person_id ⇒ one participant key, persons untouched", async () => {
+    const { auth, divisionId } = await seedTwoSameNamePlayers();
+    const before = await personCount(auth.orgId);
+
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Finish by 6pm.",
+    });
+
+    const byExtKey = (k: string): string => pack.fixtures.movable.find((f) => f.ext_key === k)!.id;
+    const shared = pack.participants[byExtKey("g1")]!.filter((p) =>
+      pack.participants[byExtKey("g2")]!.includes(p),
+    );
+    expect(shared.length).toBe(1);
+    expect(shared[0]).toMatch(/^name:/);
+    expect(pack.assumptions.some((a) => a.includes("Bobby Fischer"))).toBe(true);
+
+    // The database is untouched — this is a scheduling key, never a merge.
+    expect(await personCount(auth.orgId)).toBe(before);
+    const [{ n }] = await sql<{ n: string }[]>`
+      select count(*)::text as n from persons
+      where org_id = ${auth.orgId} and full_name = 'Bobby Fischer'`;
+    expect(Number(n)).toBe(2);
+  });
+
+  it("collapses on the NORMALISED name (case and inner whitespace)", async () => {
+    const { auth, divisionId } = await seedTwoSameNamePlayers();
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Finish by 6pm.",
+    });
+    const byExtKey = (k: string): string => pack.fixtures.movable.find((f) => f.ext_key === k)!.id;
+    const shared = pack.participants[byExtKey("g3")]!.filter((p) =>
+      pack.participants[byExtKey("g4")]!.includes(p),
+    );
+    expect(shared).toEqual(["name:cathy case"]);
+  });
+
+  it("blank names never bucket together, and the key never reaches the wire", async () => {
+    const { auth, divisionId } = await seedTwoSameNamePlayers();
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Finish by 6pm.",
+    });
+    const blanks = pack.participants[
+      pack.fixtures.movable.find((f) => f.ext_key === "g5")!.id
+    ]!;
+    // "" and "   " normalise to the same empty string; collapsing them would
+    // book two unrelated humans as one player.
+    expect(blanks.length).toBe(2);
+    expect(blanks.filter((p) => p.startsWith("name:"))).toEqual([]);
+    expect(new Set(blanks).size).toBe(2);
+    // `people` (the wire array) keeps REAL person ids — the synthetic key lives
+    // only in `participants`, which never leaves the server.
+    expect(pack.people.filter((p) => p.person_id.startsWith("name:"))).toEqual([]);
+    expect(JSON.stringify(toModelPayload(pack))).not.toContain("name:");
+  });
+
+  it("two people with different names are never collapsed", async () => {
+    const { auth, divisionId } = await seedSmallBracket();
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Two rounds.",
+    });
+    expect(pack.participants).toBeDefined();
+    for (const list of Object.values(pack.participants)) {
+      expect(list.filter((p) => p.startsWith("name:"))).toEqual([]);
+    }
+    expect(pack.assumptions.some((a) => a.includes("no records were merged"))).toBe(false);
+  });
+
+  it("the same-name board rebuilds byte-identical when reseeded", async () => {
+    const a = await seedTwoSameNamePlayers();
+    const b = await seedTwoSameNamePlayers();
+    const packA = await buildSchedulePack(a.auth, a.divisionId, {
+      mode: "generate", instruction: "Finish by 6pm.",
+    });
+    const packB = await buildSchedulePack(b.auth, b.divisionId, {
+      mode: "generate", instruction: "Finish by 6pm.",
+    });
+    expect(packA.pack.assumptions.length).toBe(2);
+    expect(redact(packA.pack)).toEqual(redact(packB.pack));
+  });
+});
+
+describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", () => {
+  it("participants of a TBD fixture include every possible advancer", async () => {
+    const { auth, divisionId, ids } = await seedSmallBracket();
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Two rounds.",
+    });
+    const final = pack.fixtures.movable.find((f) => f.ext_key === "final")!;
+    expect(final.home).toBeNull();
+    expect(final.away).toBeNull();
+    // Today's named-entrant derivation would give zero people here.
+    expect(pack.participants[final.id]).toHaveLength(4);
+    expect(new Set(pack.participants[final.id])).toEqual(new Set(ids.personIds));
+  });
+
+  it("a feeder outside the movable set is stripped and recorded in assumptions", async () => {
+    const { auth, divisionId } = await seedSmallBracketWithFinishedSemi();
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Two rounds.",
+    });
+    expect(pack.assumptions.some((a) => a.includes("treated as completed"))).toBe(true);
+    for (const f of pack.fixtures.movable) {
+      for (const dep of f.feeds.after) {
+        expect(pack.fixtures.movable.some((m) => m.id === dep)).toBe(true);
+      }
+    }
+  });
+
+  it("rebuilds byte-identical for an identical BRACKET board reseeded", async () => {
+    // The existing double-seed test seeds a round-robin, where every
+    // `feeds.after` is empty and every slot is named — so it exercises neither
+    // `participants` nor `feeds.after` ordering. This board populates both, and
+    // carries a stripped-feeder assumption. Any array ordered on a raw UUID
+    // fails here, because redact() maps UUIDs to FIRST-SEEN placeholders.
+    const a = await seedSmallBracketWithFinishedSemi();
+    const b = await seedSmallBracketWithFinishedSemi();
+    const packA = await buildSchedulePack(a.auth, a.divisionId, {
+      mode: "generate", instruction: "Two rounds.",
+    });
+    const packB = await buildSchedulePack(b.auth, b.divisionId, {
+      mode: "generate", instruction: "Two rounds.",
+    });
+    expect(packA.pack.assumptions.length).toBeGreaterThan(0);
+    expect(packA.pack.fixtures.movable.some((f) => f.feeds.after.length > 0)).toBe(true);
+    expect(redact(packA.pack)).toEqual(redact(packB.pack));
+  });
+
+  it("a final that keeps TWO feeders orders feeds.after on the feeder's domain key, not its UUID", async () => {
+    // The test above seeds a board whose final has exactly ONE surviving feeder,
+    // so a one-element array can carry any comparator and `after.length > 0`
+    // cannot tell the difference. Here BOTH semis stay movable, and the two
+    // boards' fixture UUIDs are forced to sort in OPPOSITE directions:
+    //   board A: semi-1 ('f…') > semi-2 ('0…')
+    //   board B: semi-1 ('1…') < semi-2 ('e…')
+    // Ordering on the raw UUID (`.sort(cmp)`) therefore emits [semi-2, semi-1]
+    // for A and [semi-1, semi-2] for B, and — because redact() maps UUIDs to
+    // FIRST-SEEN placeholders and `participants` has already numbered the semis
+    // in board order — the redacted packs diverge. Ordering on the feeder's
+    // (round_no, seq_in_round, ext_key) keeps both at [semi-1, semi-2].
+    const a = await seedSmallBracket({
+      semi1: uuidLeading("f"), semi2: uuidLeading("0"), final: uuidLeading("7"),
+    });
+    const b = await seedSmallBracket({
+      semi1: uuidLeading("1"), semi2: uuidLeading("e"), final: uuidLeading("7"),
+    });
+    const packA = await buildSchedulePack(a.auth, a.divisionId, {
+      mode: "generate", instruction: "Two rounds.",
+    });
+    const packB = await buildSchedulePack(b.auth, b.divisionId, {
+      mode: "generate", instruction: "Two rounds.",
+    });
+    // The board really does exercise a multi-feeder array…
+    const finalA = packA.pack.fixtures.movable.find((f) => f.ext_key === "final")!;
+    expect(finalA.feeds.after.length).toBeGreaterThanOrEqual(2);
+    expect(packA.pack.fixtures.movable.some((f) => f.feeds.after.length >= 2)).toBe(true);
+    // …in the feeders' domain order, not their UUID order.
+    expect(finalA.feeds.after).toEqual([a.ids.fixtureIds.semi1, a.ids.fixtureIds.semi2]);
+    expect(redact(packA.pack)).toEqual(redact(packB.pack));
+  });
+
+  it("stripped-feeder assumptions order on the board, not on the UUID a null ext_key leaves in the text", async () => {
+    // `fixtures.ext_key` is NULLABLE, so the ext_key substitution leaves a full
+    // raw UUID inside both messages and a text sort orders on a per-seed random
+    // value — which redact()'s first-seen placeholders would then expose as a
+    // determinism failure. The dependent+feeder (round_no, seq_in_round) tuple
+    // puts them in board order regardless.
+    const { auth, divisionId, semiA, semiB } = await seedNullExtKeyDanglingFeeders();
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Final only.",
+    });
+    const dangling = pack.assumptions.filter((a) => a.includes("treated as completed"));
+    expect(dangling.length).toBe(2);
+    const at = (id: string): number => dangling.findIndex((a) => a.includes(id));
+    expect(at(semiA)).toBe(0);
+    expect(at(semiB)).toBe(1);
+    // The premise: a text sort would invert them.
+    expect(semiA > semiB).toBe(true);
+  });
+
+  it("ONE feeder feeding TWO dependents ranks per pair, not per feeder", async () => {
+    // The test above gives each dependent its own feeder, so a rank map keyed on
+    // the feeder alone is never overwritten and reads correct. Double
+    // elimination breaks that: one match feeds the winners' AND the losers'
+    // bracket, so both dependents strip the SAME feeder, the second write wins,
+    // and the two assumptions come out with identical ranks — falling through to
+    // `cmp(text)`. With a null `ext_key` on the dependents, that text is a raw
+    // per-seed UUID.
+    //
+    // Two logically identical boards whose dependent ids sort in OPPOSITE
+    // directions, so the failure is deterministic instead of 1-in-2:
+    //   board A: winners ('f…') > losers ('0…')
+    //   board B: winners ('0…') < losers ('f…')
+    const a = await seedSharedFeederTwoDependents({
+      winners: uuidLeading("f"), losers: uuidLeading("0"),
+    });
+    const b = await seedSharedFeederTwoDependents({
+      winners: uuidLeading("0"), losers: uuidLeading("f"),
+    });
+    const packA = await buildSchedulePack(a.auth, a.divisionId, {
+      mode: "generate", instruction: "Both brackets.",
+    });
+    const packB = await buildSchedulePack(b.auth, b.divisionId, {
+      mode: "generate", instruction: "Both brackets.",
+    });
+
+    // The board really is the shared-feeder shape…
+    const danglingA = packA.pack.assumptions.filter((x) => x.includes("treated as completed"));
+    expect(danglingA.length).toBe(2);
+    expect(packA.pack.fixtures.movable.map((f) => f.id)).toEqual([a.winners, a.losers]);
+    // …and the premise: a text sort would invert board A.
+    expect(a.winners > a.losers).toBe(true);
+    expect(b.winners < b.losers).toBe(true);
+
+    // Board order is (round_no, seq_in_round) of the DEPENDENT: winners first.
+    const at = (list: string[], id: string): number => list.findIndex((x) => x.includes(id));
+    expect(at(danglingA, a.winners)).toBe(0);
+    expect(at(danglingA, a.losers)).toBe(1);
+    // …and the two boards are byte-identical once UUIDs are redacted.
+    expect(redact(packA.pack)).toEqual(redact(packB.pack));
+  });
+
+  it("participants key order IS fixtures.movable order, not merely the same set", async () => {
+    // `participants` serialises BEFORE `fixtures`, so its key order is what
+    // assigns every fixture-id placeholder in the golden pack. Two comparators
+    // that merely happen to agree on today's board would silently renumber that
+    // snapshot the first time a board pulled them apart — so the two lists are
+    // pinned in ORDER, on a board built to pull them apart: `ext-a`/`ext-b` tie
+    // on (round_no, seq_in_round) and their raw UUIDs sort the other way, so any
+    // call site that drops `ext_key` (or keeps only the id) diverges here.
+    const tied = await seedTiedSeqBoard();
+    const rr = await seedRrBoard();
+    const { pack } = await buildSchedulePack(tied.auth, tied.divisionId, {
+      mode: "generate", instruction: "Tied seq.",
+    });
+    expect(pack.fixtures.movable.map((f) => f.ext_key)).toEqual(["ext-a", "ext-b"]);
+    expect(tied.extA > tied.extB).toBe(true); // …while the UUIDs sort the other way
+    expect(Object.keys(pack.participants)).toEqual(pack.fixtures.movable.map((f) => f.id));
+
+    const { pack: rrPack } = await buildSchedulePack(rr.auth, rr.divisionId, {
+      mode: "generate", instruction: "Finish by 6pm.",
+    });
+    expect(Object.keys(rrPack.participants)).toEqual(rrPack.fixtures.movable.map((f) => f.id));
+  });
+
+  it("participants stay within the token budget on a 500-fixture bracket", async () => {
+    const { auth, divisionId } = await seedBigBracket(500);
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Pack the day.",
+    });
+    // Measured 2026-08-02 on this board: the PAYLOAD is 51,341.5 proxy tokens
+    // (fixtures.movable 39,571.5 + entrants 10,598.25 + draft 998.5); the pack
+    // with `participants` inlined would be 100,252.5, of which participants is
+    // 48,902.75 across 4,490 person-id entries. That measurement is the evidence
+    // for the owner's decision to keep participants server-side: 500 bracket
+    // fixtures with 500 named entrants already sit at 86% of the ceiling before
+    // this wave adds anything.
+    expect(JSON.stringify(toModelPayload(pack)).length / 4).toBeLessThan(60_000);
+  });
+
+  it("participants and assumptions never reach the model, and stay complete on the pack", async () => {
+    // Pins the exclusion BOTH ways: a future refactor that re-inlines the pack
+    // must fail a test rather than silently blow a token budget on a bracket.
+    const { auth, divisionId } = await seedSmallBracket();
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Two rounds.",
+    });
+    const payload = toModelPayload(pack) as Record<string, unknown>;
+    expect("participants" in payload).toBe(false);
+    expect("assumptions" in payload).toBe(false);
+    expect(JSON.stringify(payload)).not.toContain("participants");
+    // …while the pack the placer and the referee read is still complete.
+    expect(Object.keys(pack.participants).sort()).toEqual(
+      pack.fixtures.movable.map((f) => f.id).sort(),
+    );
+    const final = pack.fixtures.movable.find((f) => f.ext_key === "final")!;
+    expect(pack.participants[final.id]).toHaveLength(4);
+    // Everything else survives the trim byte-for-byte.
+    const trimmed = Object.fromEntries(
+      Object.entries(pack).filter(([k]) => k !== "participants" && k !== "assumptions"),
+    );
+    expect(payload).toEqual(trimmed);
   });
 });

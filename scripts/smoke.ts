@@ -5414,8 +5414,92 @@ async function seedPlannableAiDivision(
   return { compId: comp.id, divId: div.id, stageId: stage.id };
 }
 
+/** A four-entrant knockout WITH a third-place playoff, one person per entrant —
+ *  the board that exercises the #396 participants recursion over HTTP.
+ *
+ *  Round 2 is two fixtures with no entrants at all: the final (fed by both semi
+ *  winners) and the third-place playoff (fed by both semi losers). Every one of
+ *  the four players can still reach EITHER of them, so the two are unsafe to
+ *  play at the same moment — and nothing on the fixture rows says so, because
+ *  both slots are null. Only walking the feeder graph behind those nulls finds
+ *  the people, which is exactly what this seed exists to prove is happening.
+ *
+ *  `members: [{ person_id }]` is load-bearing. An individual entrant created
+ *  from a bare `display_name` writes NO `entrant_members` row (entrants.ts), so
+ *  it has no person, and every person rule passes on it vacuously — the seed
+ *  would look right and assert nothing.
+ *
+ *  Its own competition, deliberately: a sibling division's applied board is fed
+ *  to the planner as fixed court occupancy, which would make this a
+ *  court-conflict test instead of a person one. */
+async function seedBracketAiDivision(
+  s: Session,
+  label: string,
+): Promise<{
+  divId: string;
+  personIds: string[];
+  fixtures: { id: string; home_entrant_id: string | null; away_entrant_id: string | null }[];
+}> {
+  const comp = v1data<{ id: string }>(
+    await v1(s, "/api/v1/competitions", "POST", { name: `${label} ${tag}` }),
+  );
+  const div = v1data<{ id: string }>(
+    await v1(s, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
+      name: "Cup",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  );
+  const personIds: string[] = [];
+  const entrants: unknown[] = [];
+  for (const [i, n] of ["A", "B", "C", "D"].entries()) {
+    const person = v1data<{ id: string }>(
+      await v1(s, "/api/v1/persons", "POST", {
+        full_name: `${label} Player ${n} ${tag}`,
+        consent: {},
+      }),
+    );
+    personIds.push(person.id);
+    entrants.push({
+      kind: "individual",
+      display_name: `${label} ${n}${tag}`,
+      seed: i + 1,
+      members: [{ person_id: person.id }],
+    });
+  }
+  await v1(s, `/api/v1/divisions/${div.id}/entrants`, "POST", entrants);
+  const stage = v1data<{ id: string }>(
+    await v1(s, `/api/v1/divisions/${div.id}/stages`, "POST", {
+      seq: 1,
+      kind: "knockout",
+      name: "Cup",
+      config: { thirdPlace: true },
+    }),
+  );
+  await v1(s, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
+    config: {
+      startAt: "2026-10-08T09:00:00.000Z",
+      matchMinutes: 30,
+      gapMinutes: 0,
+      courts: ["A", "B"],
+      perEntrantMinRest: 0,
+      blackouts: [],
+      sessionWindows: [],
+    },
+    tz: "UTC",
+  });
+  const gen = v1data<{
+    fixtures: { id: string; home_entrant_id: string | null; away_entrant_id: string | null }[];
+  }>(await v1(s, `/api/v1/stages/${stage.id}/generate`, "POST"));
+  return { divId: div.id, personIds, fixtures: gen.fixtures };
+}
+
 interface AiPlanResponseLite {
   proposal: { fixture_id: string; scheduled_at: string; court_label: string }[];
+  /** Engine `Conflict[]` — non-blocking verdicts the organiser is shown rather
+   *  than having repaired (`person_overlap` is one of these, not a blocker). */
+  warnings: { fixtureId: string; reason: string; detail?: string }[];
   diff: unknown;
   summary: string;
   usage: { input_tokens: number; output_tokens: number; repair_rounds: number };
@@ -5608,6 +5692,72 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
       check(
         'v4 AI/plus: schedule.ai_officials_generated ledger row stamps model "solver-draft"',
         !!offEvent && offEvent.model === "solver-draft",
+      );
+
+      // ---- #396: a to-be-decided bracket slot is checked against everyone who
+      // could still reach it ----
+      //
+      // `refine`, not `generate`, on purpose. Refine takes the organiser's own
+      // prior as the draft (schedule-ai.ts), the fixture model echoes it back,
+      // and person_overlap is a WARNING rather than a blocker — so nothing
+      // between here and the response is free to move the two cards apart. The
+      // board handed over deliberately plays the final and the third-place
+      // playoff at the same moment: legal on every rule that reads named
+      // entrants (both slots are still null), unsafe on the four people who can
+      // still reach them. Before #396 this run came back silent; the assertion
+      // below is the difference, and it reds if the recursion behind the null
+      // slots is removed, because an undecided fixture then carries no people
+      // at all.
+      const bracket = await seedBracketAiDivision(plus, "AI Bracket");
+      const tbdIds = new Set(
+        bracket.fixtures
+          .filter((f) => f.home_entrant_id === null && f.away_entrant_id === null)
+          .map((f) => f.id),
+      );
+      const decided = bracket.fixtures.filter(
+        (f) => f.home_entrant_id !== null && f.away_entrant_id !== null,
+      );
+      const clashingPrior = [
+        ...decided.map((f, i) => ({
+          fixture_id: f.id,
+          scheduled_at: "2026-10-08T09:00:00.000Z",
+          court_label: i === 0 ? "A" : "B",
+        })),
+        ...[...tbdIds].map((id, i) => ({
+          fixture_id: id,
+          scheduled_at: "2026-10-08T09:30:00.000Z",
+          court_label: i === 0 ? "A" : "B",
+        })),
+      ];
+      const refinedRes = await v1(
+        plus,
+        `/api/v1/divisions/${bracket.divId}/schedule/ai-plan`,
+        "POST",
+        {
+          instruction: "keep these kick-off times, they suit the venue",
+          mode: "refine",
+          prior: { instruction: "the organiser's own timetable", assignments: clashingPrior },
+        },
+      );
+      const refined = v1data<AiPlanResponseLite>(refinedRes);
+      const placedTbd = (refined?.proposal ?? []).filter((a) => tbdIds.has(a.fixture_id));
+      check(
+        // Guards the assertion below against going vacuous: it can only mean
+        // anything while both undecided fixtures really are in one time slot.
+        "v4 AI/bracket: refine keeps the clashing prior (final + 3rd-place playoff in one slot)",
+        refinedRes.status === 200 &&
+          tbdIds.size === 2 &&
+          placedTbd.length === 2 &&
+          placedTbd[0]!.scheduled_at === placedTbd[1]!.scheduled_at,
+      );
+      check(
+        "v4 AI/bracket: person_overlap fires on a to-be-decided slot, naming a player who could reach it (#396)",
+        (refined?.warnings ?? []).some(
+          (w) =>
+            w.reason === "person_overlap" &&
+            tbdIds.has(w.fixtureId) &&
+            bracket.personIds.some((id) => (w.detail ?? "").includes(id)),
+        ),
       );
     }
   } finally {

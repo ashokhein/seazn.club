@@ -9,3 +9,4 @@ export * from "./report.ts";
 export * from "./americano.ts";
 export * from "./feedgraph.ts";
 export * from "./bracket-layout.ts";
+export * from "./participants.ts";

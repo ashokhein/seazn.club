@@ -18,7 +18,7 @@ vi.mock("@anthropic-ai/sdk", () => ({
   },
 }));
 
-import { aiReasoningParams, runAiPlan } from "../schedule-ai";
+import { aiReasoningParams, runAiPlan, toModelPayload } from "../schedule-ai";
 import type { SchedulePack } from "../schedule-ai";
 import { createTokenMeter } from "@/lib/ai-rung";
 
@@ -29,6 +29,12 @@ const F3 = "33333333-3333-4333-8333-333333333333";
 const F4 = "44444444-4444-4444-8444-444444444444";
 const FOREIGN = "99999999-9999-4999-8999-999999999999";
 const E = (n: number) => `${n}${n}${n}${n}${n}${n}${n}${n}-${n}${n}${n}${n}-4${n}${n}${n}-8${n}${n}${n}-${n}${n}${n}${n}${n}${n}${n}${n}${n}${n}${n}${n}`;
+// #396 person ids for the payload-wiring test — fixed, so the assertion that
+// they never reach the wire is deterministic rather than seed-dependent.
+const PERSON_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const PERSON_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const PERSON_C = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const PERSON_D = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
 // --- A small legal pack: 4 independent fixtures, 2 courts, one 09:00-18:00
 //     session window, no feeds, no shared people. -------------------------
@@ -54,6 +60,11 @@ function makePack(overrides: Partial<SchedulePack> = {}): SchedulePack {
     },
     entrants: [],
     people: [],
+    // #396: keyed for every movable fixture. This pack has no persons at all,
+    // so every list is empty — the same `Assignment.people` the named-entrant
+    // derivation produced before participants existed.
+    participants: Object.fromEntries([F1, F2, F3, F4].map((id) => [id, [] as string[]])),
+    assumptions: [],
     fixtures: {
       movable: [F1, F2, F3, F4].map((id, i) => ({
         id,
@@ -136,6 +147,44 @@ beforeEach(() => {
 });
 
 describe("runAiPlan (v4/00 §3-4)", () => {
+  it("sends the pack as the first user turn, MINUS the server-side fields (#396)", async () => {
+    // The joint twin has exactly this test (competition-schedule-run.test.ts).
+    // `toModelPayload` is unit-tested on its own, but the WIRING was not:
+    // reverting this call site to `JSON.stringify({ ...pack })` survived every
+    // other test in the suite, and a bracket pack then goes over the wire at
+    // ~100,000 proxy tokens against a hard 60,000 ceiling — while leaking real
+    // person ids and the scheduling-only `name:` key into the prompt.
+    //
+    // The person sets are disjoint per fixture on purpose: a shared person
+    // would make the clean plan below fail verification and pull the run into a
+    // repair round that this assertion has no interest in.
+    const loaded = makePack({
+      participants: {
+        [F1]: [PERSON_A, "name:ada twin"],
+        [F2]: [PERSON_B, "name:bea twin"],
+        [F3]: [PERSON_C, "name:cal twin"],
+        [F4]: [PERSON_D, "name:dee twin"],
+      },
+      assumptions: [
+        "'Ada Twin' matches 2 person records by name — " +
+          "treated as one player for scheduling only; no records were merged",
+      ],
+    });
+    parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
+    const out = await runAiPlan(loaded, movableIds);
+    expect(out.blocking).toEqual([]);
+
+    const body = parse.mock.calls[0]![0] as { messages: { role: string; content: string }[] };
+    expect(body.messages[0]!.role).toBe("user");
+    expect(JSON.parse(body.messages[0]!.content)).toEqual(toModelPayload(loaded));
+    expect(body.messages[0]!.content).not.toContain("participants");
+    expect(body.messages[0]!.content).not.toContain("assumptions");
+    expect(body.messages[0]!.content).not.toContain("name:");
+    for (const p of [PERSON_A, PERSON_B, PERSON_C, PERSON_D]) {
+      expect(body.messages[0]!.content).not.toContain(p);
+    }
+  });
+
   it("court clash → one repair round → clean", async () => {
     parse
       .mockResolvedValueOnce(planResponse(clashingPlan))
