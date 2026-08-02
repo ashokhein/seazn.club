@@ -121,6 +121,58 @@ export function zonedIso(value: string | number | Date, tz: string): string {
 
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
+const normName = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+/**
+ * Scheduling-only identity guard (#396, design §4.2). Persons whose normalised
+ * names match but whose ids differ collapse to ONE synthetic key so person
+ * rules see one human. The key never leaves the pack (it lives in
+ * `participants`, which `toModelPayload` strips), nothing writes it, and
+ * nothing renders it as a merge.
+ *
+ * The asymmetry that justifies it holds for scheduling and NOT for records: a
+ * false merge costs one unnecessary rest gap; a false split books one human on
+ * two courts at the same time. It would be wrong in the database — merging two
+ * real different people corrupts stats, discipline history, photo and consent.
+ * Over-constrain the schedule, never the database.
+ *
+ * Blank names are skipped: "" and "   " normalise identically, so bucketing
+ * them would fuse every unnamed person in the division into one player.
+ *
+ * Exported so the joint (#350) builder reuses this resolver verbatim rather
+ * than growing a second, divergent notion of "same person".
+ */
+export function personKeyResolver(personNameById: ReadonlyMap<string, string>): {
+  keyOf: (personId: string) => string;
+  assumptions: string[];
+} {
+  const byName = new Map<string, string[]>();
+  for (const [id, name] of personNameById) {
+    const k = normName(name);
+    if (k === "") continue;
+    (byName.get(k) ?? byName.set(k, []).get(k)!).push(id);
+  }
+  const synthetic = new Map<string, string>();
+  const assumptions: string[] = [];
+  // Buckets in normalised-name order; person ids are per-seed UUIDs and the
+  // golden-pack test redacts UUIDs to FIRST-SEEN placeholders, so nothing here
+  // may order on (or embed a fragment of) an id.
+  for (const [norm, ids] of [...byName.entries()].sort(([a], [b]) => cmp(a, b))) {
+    if (ids.length < 2) continue;
+    for (const id of ids) synthetic.set(id, `name:${norm}`);
+    // `personNameById` iterates in DB row order, so the bucket's id order is not
+    // stable across reseeds. Display the lexicographically first RAW spelling —
+    // a choice that depends only on the names, never on which row came back
+    // first — so the assumption string is byte-identical on a reseed.
+    const display = ids.map((id) => personNameById.get(id) ?? "").sort(cmp)[0]!;
+    assumptions.push(
+      `'${display}' matches ${ids.length} person records by name — ` +
+        `treated as one player for scheduling only; no records were merged`,
+    );
+  }
+  return { keyOf: (id) => synthetic.get(id) ?? id, assumptions };
+}
+
 /** Label stamped on a sibling division's placements. `siblingAssignments`
  *  (schedule.ts:271) returns bare engine assignments carrying no division
  *  metadata, so every other division in the competition flattens to this one
@@ -380,6 +432,34 @@ export async function buildSchedulePack(
       .filter((e): e is string => e !== null);
     const people = await peopleByEntrant(tx, fixtureEntrantIds);
 
+    // #396 identity inputs, resolved before anything reads a person id. Person
+    // ids are per-seed UUIDs and the pack's determinism test maps UUIDs to
+    // FIRST-SEEN placeholders, so a UUID-ordered array breaks it: order on the
+    // person's name, with the id only as a last-resort tie-break.
+    const personIdsInPlay = [...new Set([...people.values()].flat())];
+    const personNameById = new Map<string, string>();
+    if (personIdsInPlay.length > 0) {
+      const nameRows = await tx<{ id: string; full_name: string }[]>`
+        select id, full_name from persons where id in ${tx(personIdsInPlay)}`;
+      for (const r of nameRows) personNameById.set(r.id, r.full_name);
+    }
+    // A synthetic `name:<normalised>` key has no row in `personNameById`, so it
+    // would otherwise sort under the empty name and drift as soon as a real
+    // person shares that bucket. Sort it on the normalised name it carries.
+    const personSortKey = (p: string): string =>
+      p.startsWith("name:") ? `${p.slice(5)}|${p}` : `${personNameById.get(p) ?? ""}|${p}`;
+
+    const identity = personKeyResolver(personNameById);
+    // Map every entrant's roster through the guard BEFORE the recursion, so a
+    // collapsed pair is one key everywhere it appears — in the leaf sets, in the
+    // advancer unions above them, in the placer and in the verifier alike. The
+    // obstacle assignments below read it too: a collapsed person's already-fixed
+    // court time must still clash with the movable fixture they could stand in,
+    // which it would not if one side carried a raw id and the other the key.
+    const guardedPeople = new Map<string, string[]>(
+      [...people].map(([entrantId, ids]) => [entrantId, [...new Set(ids.map(identity.keyOf))]]),
+    );
+
     // Pool id → key ('A', 'B', …) across this division's stages.
     const poolRows = await tx<{ id: string; key: string }[]>`
       select p.id, p.key from pools p
@@ -392,7 +472,7 @@ export async function buildSchedulePack(
     const obstacleFixtures = all.filter(
       (f) => !movableSet.has(f.id) && f.scheduled_at !== null && f.court_label !== null,
     );
-    const obstacleAssignments = obstacleFixtures.map((f) => toAssignment(f, matchMinutes, people));
+    const obstacleAssignments = obstacleFixtures.map((f) => toAssignment(f, matchMinutes, guardedPeople));
     const siblings = await siblingAssignments(
       tx,
       divisionId,
@@ -430,18 +510,6 @@ export async function buildSchedulePack(
     // included. Computed ONCE, above the draft, so the greedy placer, the pack
     // and the verifier all read the same map.
     //
-    // Person ids are per-seed UUIDs and the pack's determinism test maps UUIDs
-    // to FIRST-SEEN placeholders, so a UUID-ordered array breaks it: order on
-    // the person's name, with the id only as a last-resort tie-break.
-    const personIdsInPlay = [...new Set([...people.values()].flat())];
-    const personNameById = new Map<string, string>();
-    if (personIdsInPlay.length > 0) {
-      const nameRows = await tx<{ id: string; full_name: string }[]>`
-        select id, full_name from persons where id in ${tx(personIdsInPlay)}`;
-      for (const r of nameRows) personNameById.set(r.id, r.full_name);
-    }
-    const personSortKey = (p: string): string => `${personNameById.get(p) ?? ""}|${p}`;
-
     // Same order as `packMovable` below, so `participants` key order is the
     // pack's own fixture order and survives a reseed of the same board.
     const participantView: ParticipantFixture[] = [...movable]
@@ -464,7 +532,7 @@ export async function buildSchedulePack(
     // model cannot see, and the verifier must not be handed a dependency the
     // placer ignored.
     const afterByFixture = new Map(stripped.fixtures.map((f) => [f.id, [...f.feeds.after]]));
-    const participants = computeParticipants(stripped.fixtures, people, {
+    const participants = computeParticipants(stripped.fixtures, guardedPeople, {
       sortKey: personSortKey,
     });
     // `stripByes` names a stripped feeder by its raw id (it holds no fixture
@@ -475,9 +543,11 @@ export async function buildSchedulePack(
     // determinism test's redaction only matches whole uuids).
     const extKeyById = new Map(all.map((f) => [f.id, f.ext_key]));
     const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-    const assumptions = stripped.assumptions
-      .map((a) => a.replace(UUID_RE, (u) => extKeyById.get(u) ?? u))
-      .sort(cmp);
+    const assumptions = [
+      ...stripped.assumptions.map((a) => a.replace(UUID_RE, (u) => extKeyById.get(u) ?? u)).sort(cmp),
+      // Already ordered by normalised name inside the resolver.
+      ...identity.assumptions,
+    ];
 
     // Draft: generate → greedy slotFixtures; refine → the prior proposal
     // verbatim; repair → the movable set's current persisted slots.

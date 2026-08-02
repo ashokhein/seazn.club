@@ -455,6 +455,136 @@ async function seedBigBracket(n: number): Promise<{ auth: AuthCtx; divisionId: s
   return { auth, divisionId };
 }
 
+/**
+ * Two anonymous registrations by one human, plus the three cases the guard must
+ * treat differently. Five one-round fixtures, one entrant person each:
+ *   g1 Bobby Fischer #1 | g2 Bobby Fischer #2  → same raw name, two persons rows
+ *   g3 Cathy Case       | g4 "  cathy   CASE " → same name only once normalised
+ *   g5 ""               | "   "               → blank names must NOT bucket
+ * Exactly what the registration flow produces today: no backfill, no merge.
+ */
+async function seedTwoSameNamePlayers(): Promise<{ auth: AuthCtx; divisionId: string }> {
+  const { auth, divisionId, stageId } = await seedKoDivision("SameName");
+  const names = [
+    "Bobby Fischer", "Alice Alpha",
+    "Bobby Fischer", "Bravo Beta",
+    "Cathy Case", "Delta Dee",
+    "  cathy   CASE ", "Echo Eee",
+    "", "   ",
+  ];
+  await createEntrants(
+    auth,
+    divisionId,
+    names.map((_, i) => ({
+      kind: "individual" as const, display_name: `S${i + 1}`, seed: i + 1, members: [],
+    })),
+  );
+  const ents = await sql<{ id: string }[]>`
+    select id from entrants where division_id = ${divisionId} order by seed`;
+  for (let i = 0; i < names.length; i++) {
+    const [p] = await sql<{ id: string }[]>`
+      insert into persons (org_id, full_name) values (${auth.orgId}, ${names[i]!}) returning id`;
+    await sql`insert into entrant_members (entrant_id, person_id, org_id)
+              values (${ents[i]!.id}, ${p!.id}, ${auth.orgId})`;
+  }
+  for (let g = 0; g < names.length / 2; g++) {
+    await sql`
+      insert into fixtures (stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status,
+                            home_entrant_id, away_entrant_id)
+      values (${stageId}, ${divisionId}, ${auth.orgId}, 1, ${g}, ${`g${g + 1}`}, 'scheduled',
+              ${ents[g * 2]!.id}, ${ents[g * 2 + 1]!.id})`;
+  }
+  return { auth, divisionId };
+}
+
+async function personCount(orgId: string): Promise<number> {
+  const [row] = await sql<{ n: string }[]>`
+    select count(*)::text as n from persons where org_id = ${orgId}`;
+  return Number(row!.n);
+}
+
+describe.skipIf(!HAS_DB)("scheduling-only same-name guard (#396)", () => {
+  it("two entrants, same person name, different person_id ⇒ one participant key, persons untouched", async () => {
+    const { auth, divisionId } = await seedTwoSameNamePlayers();
+    const before = await personCount(auth.orgId);
+
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Finish by 6pm.",
+    });
+
+    const byExtKey = (k: string): string => pack.fixtures.movable.find((f) => f.ext_key === k)!.id;
+    const shared = pack.participants[byExtKey("g1")]!.filter((p) =>
+      pack.participants[byExtKey("g2")]!.includes(p),
+    );
+    expect(shared.length).toBe(1);
+    expect(shared[0]).toMatch(/^name:/);
+    expect(pack.assumptions.some((a) => a.includes("Bobby Fischer"))).toBe(true);
+
+    // The database is untouched — this is a scheduling key, never a merge.
+    expect(await personCount(auth.orgId)).toBe(before);
+    const [{ n }] = await sql<{ n: string }[]>`
+      select count(*)::text as n from persons
+      where org_id = ${auth.orgId} and full_name = 'Bobby Fischer'`;
+    expect(Number(n)).toBe(2);
+  });
+
+  it("collapses on the NORMALISED name (case and inner whitespace)", async () => {
+    const { auth, divisionId } = await seedTwoSameNamePlayers();
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Finish by 6pm.",
+    });
+    const byExtKey = (k: string): string => pack.fixtures.movable.find((f) => f.ext_key === k)!.id;
+    const shared = pack.participants[byExtKey("g3")]!.filter((p) =>
+      pack.participants[byExtKey("g4")]!.includes(p),
+    );
+    expect(shared).toEqual(["name:cathy case"]);
+  });
+
+  it("blank names never bucket together, and the key never reaches the wire", async () => {
+    const { auth, divisionId } = await seedTwoSameNamePlayers();
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Finish by 6pm.",
+    });
+    const blanks = pack.participants[
+      pack.fixtures.movable.find((f) => f.ext_key === "g5")!.id
+    ]!;
+    // "" and "   " normalise to the same empty string; collapsing them would
+    // book two unrelated humans as one player.
+    expect(blanks.length).toBe(2);
+    expect(blanks.filter((p) => p.startsWith("name:"))).toEqual([]);
+    expect(new Set(blanks).size).toBe(2);
+    // `people` (the wire array) keeps REAL person ids — the synthetic key lives
+    // only in `participants`, which never leaves the server.
+    expect(pack.people.filter((p) => p.person_id.startsWith("name:"))).toEqual([]);
+    expect(JSON.stringify(toModelPayload(pack))).not.toContain("name:");
+  });
+
+  it("two people with different names are never collapsed", async () => {
+    const { auth, divisionId } = await seedSmallBracket();
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Two rounds.",
+    });
+    expect(pack.participants).toBeDefined();
+    for (const list of Object.values(pack.participants)) {
+      expect(list.filter((p) => p.startsWith("name:"))).toEqual([]);
+    }
+    expect(pack.assumptions.some((a) => a.includes("no records were merged"))).toBe(false);
+  });
+
+  it("the same-name board rebuilds byte-identical when reseeded", async () => {
+    const a = await seedTwoSameNamePlayers();
+    const b = await seedTwoSameNamePlayers();
+    const packA = await buildSchedulePack(a.auth, a.divisionId, {
+      mode: "generate", instruction: "Finish by 6pm.",
+    });
+    const packB = await buildSchedulePack(b.auth, b.divisionId, {
+      mode: "generate", instruction: "Finish by 6pm.",
+    });
+    expect(packA.pack.assumptions.length).toBe(2);
+    expect(redact(packA.pack)).toEqual(redact(packB.pack));
+  });
+});
+
 describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", () => {
   it("participants of a TBD fixture include every possible advancer", async () => {
     const { auth, divisionId, ids } = await seedSmallBracket();
