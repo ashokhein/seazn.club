@@ -618,7 +618,24 @@ export async function buildCompetitionPack(
         startAt,
         endAt: startAt + minutes * MS_PER_MIN,
         entrants: [f?.home ?? null, f?.away ?? null].filter((e): e is string => e !== null),
-        people: participantsByFixture.get(a.fixture_id) ?? [],
+        // BOTH keyings, exactly as `fixedOccupancy` above emits raw AND guarded,
+        // and for the same reason: a later division's greedy pass keys its own
+        // fixtures on ITS OWN person map, which is raw wherever that division
+        // collapsed nothing internally. Handing on only the run-wide key makes
+        // a raw id on the other side stop matching — deleting a constraint that
+        // fired before #396 instead of adding one.
+        //
+        // Not `flatMap(p => [p, identity.keyOf(p)])` here: these ids are ALREADY
+        // run-guarded, so `keyOf` is the identity on them and the raw ids are
+        // unrecoverable from this list. The division's own `pack.participants`
+        // is where they survive, so the two maps are unioned. Both describe the
+        // same humans in different keyings, so the union can only ever add.
+        people: [
+          ...new Set([
+            ...(one.pack.participants[a.fixture_id] ?? []),
+            ...(participantsByFixture.get(a.fixture_id) ?? []),
+          ]),
+        ],
       });
     }
   }

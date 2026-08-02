@@ -201,6 +201,65 @@ async function seedFixedOccupancyBoard(): Promise<{
   return { auth, competitionId: comp.id, alphaId: alpha.id, bravoId: bravo.id, codyId: cody, moveId };
 }
 
+/**
+ * The fix-6 board — the SECOND `existing` list, `drafted`.
+ *
+ *   Alpha    (Court 1)  a-move : A-1 vs A-2   ← drafted FIRST, holds Erin(1)
+ *   Bravo    (Court 2)  b-move : B-1 vs B-2   ← drafted SECOND, holds Erin(1)
+ *   Charlie  (Court 3)  c-move : C-1 vs C-2   ← holds Erin(2)
+ *
+ * No fixed fixtures anywhere, so `fixedOccupancy` is empty and the feed-forward
+ * list is the only thing that can link Alpha's slot to Bravo's. `Erin(1)` is one
+ * row in Alpha AND Bravo; `Erin(2)` is a same-named row parked in CHARLIE, so
+ * neither Alpha nor Bravo collapses on its own while the run-wide resolver does.
+ * Bravo's greedy pass therefore compares a raw uuid against whatever Alpha's
+ * drafted slot carries.
+ */
+async function seedFeedForwardBoard(): Promise<{
+  auth: AuthCtx;
+  competitionId: string;
+  divisionIds: string[];
+  erinId: string;
+  aMoveId: string;
+  bMoveId: string;
+}> {
+  const { auth } = await seedOrg("pro");
+  const tag = randomUUID().slice(0, 6);
+  const comp = await createCompetition(auth, {
+    name: `Feed Forward ${tag}`,
+    visibility: "public",
+    branding: {},
+  });
+  const alpha = await makeDivision(auth, comp.id, "Alpha", `alpha-${tag}`, ["Court 1"], ["A-1", "A-2"]);
+  const bravo = await makeDivision(auth, comp.id, "Bravo", `bravo-${tag}`, ["Court 2"], ["B-1", "B-2"]);
+  const charlie = await makeDivision(auth, comp.id, "Charlie", `charlie-${tag}`, ["Court 3"], [
+    "C-1",
+    "C-2",
+  ]);
+
+  const erin = await addPerson(auth.orgId, "Erin Vale", [
+    alpha.entrantByName.get("A-1")!,
+    bravo.entrantByName.get("B-1")!,
+  ]);
+  await addPerson(auth.orgId, "erin  vale", [charlie.entrantByName.get("C-1")!]);
+  await addPerson(auth.orgId, "Solo A-2", [alpha.entrantByName.get("A-2")!]);
+  await addPerson(auth.orgId, "Solo B-2", [bravo.entrantByName.get("B-2")!]);
+  await addPerson(auth.orgId, "Solo C-2", [charlie.entrantByName.get("C-2")!]);
+
+  const aMoveId = await movableFixture(auth, alpha, "a-move", 0, "A-1", "A-2");
+  const bMoveId = await movableFixture(auth, bravo, "b-move", 0, "B-1", "B-2");
+  await movableFixture(auth, charlie, "c-move", 0, "C-1", "C-2");
+
+  return {
+    auth,
+    competitionId: comp.id,
+    divisionIds: [alpha.id, bravo.id, charlie.id],
+    erinId: erin,
+    aMoveId,
+    bMoveId,
+  };
+}
+
 afterAll(async () => {
   if (!HAS_DB) return;
   const globalForDb = globalThis as { _sql?: { end(): Promise<void> } };
@@ -251,4 +310,52 @@ describe.skipIf(!HAS_DB)("the joint pass's `existing` lists are raw AND guarded 
         "id is what Alpha's own greedy pass compares against",
     ).toBe(false);
   }, 180_000);
+
+  it("FEED-FORWARD: a division drafted earlier hands on its raw people, not only the run key", async () => {
+    const board = await seedFeedForwardBoard();
+
+    // Guards the guard: neither Alpha nor Bravo collapses on its own, so both
+    // key their own fixtures on the RAW person uuid.
+    for (const [divisionId, fixtureId] of [
+      [board.divisionIds[0]!, board.aMoveId],
+      [board.divisionIds[1]!, board.bMoveId],
+    ] as const) {
+      const solo = await buildSchedulePack(board.auth, divisionId, {
+        mode: "generate",
+        instruction: "One round.",
+      });
+      expect(solo.pack.participants[fixtureId]).toContain(board.erinId);
+      expect(solo.pack.assumptions.some((a) => a.includes("no records were merged"))).toBe(false);
+    }
+
+    const { pack } = await buildCompetitionPack(
+      board.auth,
+      board.competitionId,
+      board.divisionIds,
+      { mode: "generate", instruction: "One round each." },
+    );
+    // …while the run-wide resolver collapses the pair, which is what the
+    // feed-forward list carried — and only that — before this fix.
+    expect(pack.participants[board.aMoveId]).toContain("name:erin vale");
+    expect(pack.participants[board.aMoveId]).not.toContain(board.erinId);
+    // Nothing is fixed on this board, so `fixedOccupancy` cannot be the link…
+    expect(pack.fixtures.obstacles).toEqual([]);
+    // …and every division owns its own court, so no court rule can be either.
+    expect(pack.divergentCourts.sort()).toEqual(["Court 1", "Court 2", "Court 3"]);
+
+    const slot = (id: string): { from: number; to: number; court: string } => {
+      const a = pack.draft.find((d) => d.fixture_id === id);
+      expect(a, `joint draft is missing fixture ${id}`).toBeDefined();
+      const from = Date.parse(a!.scheduled_at);
+      return { from, to: from + 30 * MIN, court: a!.court_label };
+    };
+    const first = slot(board.aMoveId);
+    const second = slot(board.bMoveId);
+    expect(
+      overlaps(first.from, first.to, second.from, second.to),
+      `Alpha's fixture (${new Date(first.from).toISOString()} ${first.court}) overlaps Bravo's ` +
+        `(${new Date(second.from).toISOString()} ${second.court}) — both hold person ` +
+        `${board.erinId}, and Bravo's greedy pass only ever sees that raw id`,
+    ).toBe(false);
+  }, 240_000);
 });
