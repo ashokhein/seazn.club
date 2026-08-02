@@ -236,6 +236,42 @@ export interface SchedulePack {
   officials: PackOfficial[];
 }
 
+/**
+ * What actually goes on the wire to the model: the pack MINUS `participants`
+ * and `assumptions`.
+ *
+ * Both fields are server-side enforcement inputs, not prompt material. #396
+ * gives the referee and the greedy placer the full advancer sets; it does not
+ * change what the model is shown (design §3.1 — W2 is the only wave that moves
+ * the prompt boundary, and W3 §7.3 teaches the advancer RULE in five sentences).
+ *
+ * The cost of getting this wrong is measured, not guessed. On a 500-fixture
+ * elimination bracket (`schedule-ai-pack.test.ts`) the pack with `participants`
+ * inlined is 100,252 proxy tokens against a 60,000 ceiling; the payload without
+ * them is 51,341. (Even the flat 500-fixture league board saves 5,258: an empty
+ * participant list per fixture is still 500 uuid keys.) Inlining the pack here
+ * again re-breaks the budget on every bracket board, so send
+ * `toModelPayload(pack)` — never `pack`.
+ *
+ * Written field-by-field rather than as a rest-spread on purpose: the return
+ * type makes `tsc` fail here the moment `SchedulePack` gains a field, so what
+ * reaches the model is always a decision somebody made, never a default.
+ */
+export function toModelPayload(pack: SchedulePack): Omit<SchedulePack, "participants" | "assumptions"> {
+  return {
+    mode: pack.mode,
+    division: pack.division,
+    settings: pack.settings,
+    entrants: pack.entrants,
+    people: pack.people,
+    fixtures: pack.fixtures,
+    draft: pack.draft,
+    instruction: pack.instruction,
+    prior: pack.prior,
+    officials: pack.officials,
+  };
+}
+
 export interface BuildPackOptions {
   mode: "generate" | "refine" | "repair";
   instruction: string;
@@ -1154,7 +1190,7 @@ export async function runAiPlan(
   }
   const model = modelOverride ?? schedulingAiModel();
 
-  const conversation: AiTurn[] = [{ role: "user", content: JSON.stringify(pack) }];
+  const conversation: AiTurn[] = [{ role: "user", content: JSON.stringify(toModelPayload(pack)) }];
   const config = verifyConfig(pack);
   const obstacles = toObstacleAssignments(pack);
   const dependencies = packFeedDependencies(pack);

@@ -12,7 +12,7 @@ import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
-import { buildSchedulePack } from "../schedule-ai";
+import { buildSchedulePack, toModelPayload } from "../schedule-ai";
 import { seedOrg } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -301,7 +301,9 @@ describe.skipIf(!HAS_DB)("buildSchedulePack size limits", () => {
     });
     expect(movableIds.size).toBe(500);
     // Rough chars/4 heuristic proxy; the live AI_EVAL=1 test uses count_tokens.
-    expect(JSON.stringify(pack).length / 4).toBeLessThan(60_000);
+    // Measures the PAYLOAD, not the pack: `participants`/`assumptions` are
+    // enforcement inputs and never reach the model (see `toModelPayload`).
+    expect(JSON.stringify(toModelPayload(pack)).length / 4).toBeLessThan(60_000);
   });
 
   it("more than 500 movable fixtures is 422 AI_PLAN_TOO_LARGE", async () => {
@@ -504,16 +506,37 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
     const { pack } = await buildSchedulePack(auth, divisionId, {
       mode: "generate", instruction: "Pack the day.",
     });
-    const proxyTokens = JSON.stringify(pack).length / 4;
-    // KNOWN RED, awaiting an owner decision (#396, plan Task 5 Step 8) — do NOT
-    // weaken or delete this assertion. Measured 2026-08-02 on this board:
-    //   total 100,252.5 proxy tokens; participants 48,902.75 (4,490 person-id
-    //   entries), fixtures.movable 39,571.5, entrants 10,598.25, draft 998.5.
-    // The board is already 51,350 WITHOUT participants — 500 bracket fixtures
-    // with 500 named entrants sit at 86% of the budget before this wave. The
-    // plan's fallback (intern person keys per pack, ~6 chars instead of a
-    // 38-char uuid) lands the total near 58,000 — under, but with ~3% headroom
-    // — and it changes the wire contract, so it is the owner's call.
-    expect(proxyTokens).toBeLessThan(60_000);
+    // Measured 2026-08-02 on this board: the PAYLOAD is 51,341.5 proxy tokens
+    // (fixtures.movable 39,571.5 + entrants 10,598.25 + draft 998.5); the pack
+    // with `participants` inlined would be 100,252.5, of which participants is
+    // 48,902.75 across 4,490 person-id entries. That measurement is the evidence
+    // for the owner's decision to keep participants server-side: 500 bracket
+    // fixtures with 500 named entrants already sit at 86% of the ceiling before
+    // this wave adds anything.
+    expect(JSON.stringify(toModelPayload(pack)).length / 4).toBeLessThan(60_000);
+  });
+
+  it("participants and assumptions never reach the model, and stay complete on the pack", async () => {
+    // Pins the exclusion BOTH ways: a future refactor that re-inlines the pack
+    // must fail a test rather than silently blow a token budget on a bracket.
+    const { auth, divisionId } = await seedSmallBracket();
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Two rounds.",
+    });
+    const payload = toModelPayload(pack) as Record<string, unknown>;
+    expect("participants" in payload).toBe(false);
+    expect("assumptions" in payload).toBe(false);
+    expect(JSON.stringify(payload)).not.toContain("participants");
+    // …while the pack the placer and the referee read is still complete.
+    expect(Object.keys(pack.participants).sort()).toEqual(
+      pack.fixtures.movable.map((f) => f.id).sort(),
+    );
+    const final = pack.fixtures.movable.find((f) => f.ext_key === "final")!;
+    expect(pack.participants[final.id]).toHaveLength(4);
+    // Everything else survives the trim byte-for-byte.
+    const trimmed = Object.fromEntries(
+      Object.entries(pack).filter(([k]) => k !== "participants" && k !== "assumptions"),
+    );
+    expect(payload).toEqual(trimmed);
   });
 });
