@@ -422,6 +422,47 @@ async function seedSmallBracketWithFinishedSemi(): Promise<{ auth: AuthCtx; divi
 }
 
 /**
+ * One movable final fed by TWO already-finished semis that carry NO `ext_key`.
+ * `fixtures.ext_key` is nullable, so both stripped-feeder assumptions keep a full
+ * raw UUID in their message body — and a text sort of those strings therefore
+ * orders on a per-seed random value. The semis' ids are forced so their UUID
+ * order (semi-B first) contradicts their board order (semi-A first, round 1
+ * seq 0), making that failure deterministic.
+ */
+async function seedNullExtKeyDanglingFeeders(): Promise<{
+  auth: AuthCtx;
+  divisionId: string;
+  semiA: string;
+  semiB: string;
+}> {
+  const { auth, divisionId, stageId } = await seedKoDivision("Dangle");
+  await createEntrants(
+    auth,
+    divisionId,
+    Array.from({ length: 4 }, (_, i) => ({
+      kind: "individual" as const, display_name: `D${i + 1}`, seed: i + 1, members: [],
+    })),
+  );
+  const ents = await sql<{ id: string }[]>`
+    select id from entrants where division_id = ${divisionId} order by seed`;
+  const [final] = await sql<{ id: string }[]>`
+    insert into fixtures (stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status)
+    values (${stageId}, ${divisionId}, ${auth.orgId}, 2, 0, 'final', 'scheduled') returning id`;
+  // semi-A sorts ABOVE semi-B as a raw string, but BELOW it on (round, seq).
+  const ids = [uuidLeading("f"), uuidLeading("0")];
+  for (let i = 0; i < 2; i++) {
+    await sql`
+      insert into fixtures (id, stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status,
+                            home_entrant_id, away_entrant_id, winner_to_fixture, winner_to_slot,
+                            scheduled_at, court_label)
+      values (${ids[i]!}, ${stageId}, ${divisionId}, ${auth.orgId}, 1, ${i}, null, 'finalized',
+              ${ents[i * 2]!.id}, ${ents[i * 2 + 1]!.id}, ${final!.id}, ${i + 1},
+              ${new Date(T0 + i * 30 * MIN).toISOString()}, 'Court 1')`;
+  }
+  return { auth, divisionId, semiA: ids[0]!, semiB: ids[1]! };
+}
+
+/**
  * `n` bracket fixtures, heap-shaped: fixture g feeds fixture floor(g / 2), so
  * fixture 1 is the final and every leaf carries two entrants with one person
  * each. The worst realistic case for participant-set size — the root's set is
@@ -681,6 +722,25 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
     // …in the feeders' domain order, not their UUID order.
     expect(finalA.feeds.after).toEqual([a.ids.fixtureIds.semi1, a.ids.fixtureIds.semi2]);
     expect(redact(packA.pack)).toEqual(redact(packB.pack));
+  });
+
+  it("stripped-feeder assumptions order on the board, not on the UUID a null ext_key leaves in the text", async () => {
+    // `fixtures.ext_key` is NULLABLE, so the ext_key substitution leaves a full
+    // raw UUID inside both messages and a text sort orders on a per-seed random
+    // value — which redact()'s first-seen placeholders would then expose as a
+    // determinism failure. The dependent+feeder (round_no, seq_in_round) tuple
+    // puts them in board order regardless.
+    const { auth, divisionId, semiA, semiB } = await seedNullExtKeyDanglingFeeders();
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Final only.",
+    });
+    const dangling = pack.assumptions.filter((a) => a.includes("treated as completed"));
+    expect(dangling.length).toBe(2);
+    const at = (id: string): number => dangling.findIndex((a) => a.includes(id));
+    expect(at(semiA)).toBe(0);
+    expect(at(semiB)).toBe(1);
+    // The premise: a text sort would invert them.
+    expect(semiA > semiB).toBe(true);
   });
 
   it("participants stay within the token budget on a 500-fixture bracket", async () => {

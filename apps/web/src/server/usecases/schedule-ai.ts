@@ -536,15 +536,56 @@ export async function buildSchedulePack(
       sortKey: personSortKey,
     });
     // `stripByes` names a stripped feeder by its raw id (it holds no fixture
-    // outside the view) and then sorts the strings, so two dangling feeders
-    // would order on their UUIDs. Substitute each feeder's ext_key — the stable
-    // domain key the plan asks these strings to carry — and re-sort on that. A
-    // feeder with no ext_key keeps its FULL uuid (never a fragment: the
-    // determinism test's redaction only matches whole uuids).
+    // outside the view). Substitute each feeder's ext_key — the stable domain
+    // key the plan asks these strings to carry. A feeder with no ext_key keeps
+    // its FULL uuid (never a fragment: the determinism test's redaction only
+    // matches whole uuids).
     const extKeyById = new Map(all.map((f) => [f.id, f.ext_key]));
     const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+    // …and order the list on the BOARD, never on the rendered text.
+    // `fixtures.ext_key` is nullable, so a dependent or feeder without one keeps
+    // a raw UUID inside its message and a text sort would order two assumptions
+    // on a per-seed random value — exactly what `redact()`'s first-seen
+    // placeholders turn into a double-seed determinism failure. The sort key is
+    // the dependent's (round_no, seq_in_round) then the feeder's, which is
+    // stable across reseeds of the same logical board.
+    const OUT_OF_BOARD = Number.MAX_SAFE_INTEGER;
+    const assumptionRank = new Map<string, readonly [number, number, number, number]>();
+    for (const f of participantView) {
+      const dep = liteById.get(f.id);
+      for (const feederId of f.feeds.after) {
+        if (movableSet.has(feederId)) continue; // kept, so it raises no assumption
+        const feeder = liteById.get(feederId);
+        assumptionRank.set(feederId, [
+          dep?.round_no ?? OUT_OF_BOARD,
+          dep?.seq_in_round ?? OUT_OF_BOARD,
+          feeder?.round_no ?? OUT_OF_BOARD,
+          feeder?.seq_in_round ?? OUT_OF_BOARD,
+        ]);
+      }
+    }
+    // The stripped feeder is the only id in the message that is NOT movable, so
+    // it is the one `assumptionRank` can resolve — read it off the RAW string,
+    // before the ext_key substitution rewrites it.
+    const rankOf = (raw: string): readonly [number, number, number, number] => {
+      for (const u of raw.match(UUID_RE) ?? []) {
+        const hit = assumptionRank.get(u);
+        if (hit !== undefined) return hit;
+      }
+      return [OUT_OF_BOARD, OUT_OF_BOARD, OUT_OF_BOARD, OUT_OF_BOARD];
+    };
     const assumptions = [
-      ...stripped.assumptions.map((a) => a.replace(UUID_RE, (u) => extKeyById.get(u) ?? u)).sort(cmp),
+      ...stripped.assumptions
+        .map((a) => ({ rank: rankOf(a), text: a.replace(UUID_RE, (u) => extKeyById.get(u) ?? u) }))
+        .sort(
+          (x, y) =>
+            x.rank[0] - y.rank[0] ||
+            x.rank[1] - y.rank[1] ||
+            x.rank[2] - y.rank[2] ||
+            x.rank[3] - y.rank[3] ||
+            cmp(x.text, y.text),
+        )
+        .map((x) => x.text),
       // Already ordered by normalised name inside the resolver.
       ...identity.assumptions,
     ];
