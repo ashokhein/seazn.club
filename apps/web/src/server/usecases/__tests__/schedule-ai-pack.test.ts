@@ -463,6 +463,51 @@ async function seedNullExtKeyDanglingFeeders(): Promise<{
 }
 
 /**
+ * ONE stripped feeder that feeds TWO dependents — the double-elimination shape,
+ * where a single match legitimately feeds both the winners' and the losers'
+ * bracket. Both dependents carry a NULL `ext_key` (the column is nullable), so
+ * `stripByes` labels each of them by its raw UUID and both assumption messages
+ * keep a per-seed random value inside the text.
+ *
+ * `fixtureIds` forces the dependents' primary keys so two logically identical
+ * boards can order them in OPPOSITE directions as raw strings — which turns
+ * "ranked per feeder instead of per (dependent, feeder) pair" from a coin flip
+ * into a deterministic failure.
+ */
+async function seedSharedFeederTwoDependents(fixtureIds: {
+  winners: string;
+  losers: string;
+}): Promise<{ auth: AuthCtx; divisionId: string; winners: string; losers: string }> {
+  const { auth, divisionId, stageId } = await seedKoDivision("Dbl");
+  await createEntrants(
+    auth,
+    divisionId,
+    Array.from({ length: 2 }, (_, i) => ({
+      kind: "individual" as const, display_name: `X${i + 1}`, seed: i + 1, members: [],
+    })),
+  );
+  const ents = await sql<{ id: string }[]>`
+    select id from entrants where division_id = ${divisionId} order by seed`;
+  // The two TBD dependents, in board order: winners' bracket then losers'.
+  for (const [seq, id] of [fixtureIds.winners, fixtureIds.losers].entries()) {
+    await sql`
+      insert into fixtures (id, stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status)
+      values (${id}, ${stageId}, ${divisionId}, ${auth.orgId}, 2, ${seq}, null, 'scheduled')`;
+  }
+  // …and the single finished match that feeds BOTH of them.
+  await sql`
+    insert into fixtures (stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status,
+                          home_entrant_id, away_entrant_id,
+                          winner_to_fixture, winner_to_slot, loser_to_fixture, loser_to_slot,
+                          scheduled_at, court_label)
+    values (${stageId}, ${divisionId}, ${auth.orgId}, 1, 0, 'sf', 'finalized',
+            ${ents[0]!.id}, ${ents[1]!.id},
+            ${fixtureIds.winners}, 1, ${fixtureIds.losers}, 1,
+            ${new Date(T0).toISOString()}, 'Court 1')`;
+  return { auth, divisionId, winners: fixtureIds.winners, losers: fixtureIds.losers };
+}
+
+/**
  * Two movable fixtures that TIE on (round_no, seq_in_round) and whose `ext_key`
  * order contradicts their raw-UUID order. The only board shape on which the
  * pack's fixture comparator and its `participants` key comparator can disagree.
@@ -775,6 +820,48 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
     expect(at(semiB)).toBe(1);
     // The premise: a text sort would invert them.
     expect(semiA > semiB).toBe(true);
+  });
+
+  it("ONE feeder feeding TWO dependents ranks per pair, not per feeder", async () => {
+    // The test above gives each dependent its own feeder, so a rank map keyed on
+    // the feeder alone is never overwritten and reads correct. Double
+    // elimination breaks that: one match feeds the winners' AND the losers'
+    // bracket, so both dependents strip the SAME feeder, the second write wins,
+    // and the two assumptions come out with identical ranks — falling through to
+    // `cmp(text)`. With a null `ext_key` on the dependents, that text is a raw
+    // per-seed UUID.
+    //
+    // Two logically identical boards whose dependent ids sort in OPPOSITE
+    // directions, so the failure is deterministic instead of 1-in-2:
+    //   board A: winners ('f…') > losers ('0…')
+    //   board B: winners ('0…') < losers ('f…')
+    const a = await seedSharedFeederTwoDependents({
+      winners: uuidLeading("f"), losers: uuidLeading("0"),
+    });
+    const b = await seedSharedFeederTwoDependents({
+      winners: uuidLeading("0"), losers: uuidLeading("f"),
+    });
+    const packA = await buildSchedulePack(a.auth, a.divisionId, {
+      mode: "generate", instruction: "Both brackets.",
+    });
+    const packB = await buildSchedulePack(b.auth, b.divisionId, {
+      mode: "generate", instruction: "Both brackets.",
+    });
+
+    // The board really is the shared-feeder shape…
+    const danglingA = packA.pack.assumptions.filter((x) => x.includes("treated as completed"));
+    expect(danglingA.length).toBe(2);
+    expect(packA.pack.fixtures.movable.map((f) => f.id)).toEqual([a.winners, a.losers]);
+    // …and the premise: a text sort would invert board A.
+    expect(a.winners > a.losers).toBe(true);
+    expect(b.winners < b.losers).toBe(true);
+
+    // Board order is (round_no, seq_in_round) of the DEPENDENT: winners first.
+    const at = (list: string[], id: string): number => list.findIndex((x) => x.includes(id));
+    expect(at(danglingA, a.winners)).toBe(0);
+    expect(at(danglingA, a.losers)).toBe(1);
+    // …and the two boards are byte-identical once UUIDs are redacted.
+    expect(redact(packA.pack)).toEqual(redact(packB.pack));
   });
 
   it("participants key order IS fixtures.movable order, not merely the same set", async () => {

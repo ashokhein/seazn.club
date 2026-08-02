@@ -604,30 +604,59 @@ export async function buildSchedulePack(
     // placeholders turn into a double-seed determinism failure. The sort key is
     // the dependent's (round_no, seq_in_round) then the feeder's, which is
     // stable across reseeds of the same logical board.
+    //
+    // KEYED ON THE (dependent, feeder) PAIR, never on the feeder alone. In
+    // double elimination one match legitimately feeds BOTH the winners' and the
+    // losers' bracket, so two dependents strip the SAME feeder; a feeder-keyed
+    // entry is then overwritten by whichever dependent is written last and the
+    // two assumptions come out with identical ranks. They fall through to
+    // `cmp(text)` — and a dependent with a null `ext_key` still carries its raw
+    // UUID in that text, so the order becomes per-seed and the double-seed
+    // determinism test breaks.
     const OUT_OF_BOARD = Number.MAX_SAFE_INTEGER;
-    const assumptionRank = new Map<string, readonly [number, number, number, number]>();
+    type AssumptionRank = readonly [number, number, number, number];
+    const OUT_OF_BOARD_RANK: AssumptionRank = [
+      OUT_OF_BOARD,
+      OUT_OF_BOARD,
+      OUT_OF_BOARD,
+      OUT_OF_BOARD,
+    ];
+    // `stripByes` renders the dependent by its stable label (`ext_key ?? id`)
+    // and the feeder by its raw id, so those two tokens are what identifies a
+    // message — the pair key is built from the same two.
+    const labelOf = (id: string): string => extKeyById.get(id) ?? id;
+    const assumptionRank: { label: string; feederId: string; rank: AssumptionRank }[] = [];
     for (const f of participantView) {
       const dep = liteById.get(f.id);
       for (const feederId of f.feeds.after) {
         if (movableSet.has(feederId)) continue; // kept, so it raises no assumption
         const feeder = liteById.get(feederId);
-        assumptionRank.set(feederId, [
-          dep?.round_no ?? OUT_OF_BOARD,
-          dep?.seq_in_round ?? OUT_OF_BOARD,
-          feeder?.round_no ?? OUT_OF_BOARD,
-          feeder?.seq_in_round ?? OUT_OF_BOARD,
-        ]);
+        assumptionRank.push({
+          label: labelOf(f.id),
+          feederId,
+          rank: [
+            dep?.round_no ?? OUT_OF_BOARD,
+            dep?.seq_in_round ?? OUT_OF_BOARD,
+            feeder?.round_no ?? OUT_OF_BOARD,
+            feeder?.seq_in_round ?? OUT_OF_BOARD,
+          ],
+        });
       }
     }
-    // The stripped feeder is the only id in the message that is NOT movable, so
-    // it is the one `assumptionRank` can resolve — read it off the RAW string,
-    // before the ext_key substitution rewrites it.
-    const rankOf = (raw: string): readonly [number, number, number, number] => {
-      for (const u of raw.match(UUID_RE) ?? []) {
-        const hit = assumptionRank.get(u);
-        if (hit !== undefined) return hit;
+    // Read off the RAW string, before the ext_key substitution rewrites it: the
+    // stripped feeder appears there as its uuid. The LONGEST matching dependent
+    // label wins, so an ext_key that happens to be a substring of another
+    // ("final" inside "semi-final") cannot claim the wrong message.
+    const rankOf = (raw: string): AssumptionRank => {
+      let best: AssumptionRank | undefined;
+      let bestLabel = -1;
+      for (const e of assumptionRank) {
+        if (e.label.length <= bestLabel) continue;
+        if (!raw.includes(e.feederId) || !raw.includes(e.label)) continue;
+        best = e.rank;
+        bestLabel = e.label.length;
       }
-      return [OUT_OF_BOARD, OUT_OF_BOARD, OUT_OF_BOARD, OUT_OF_BOARD];
+      return best ?? OUT_OF_BOARD_RANK;
     };
     const assumptions = [
       ...stripped.assumptions
