@@ -54,25 +54,41 @@ packages/engine/sim-report.json
 # Session screenshots keep landing in the repo root — never track them.
 /*.png
 
-# graphify knowledge graph. graph.json is ~14MB and rewritten whole on every
-# rebuild, so git cannot delta it — committing it would grow .git by that much
-# per run. All of it is derived from the source tree except cache/semantic/,
-# which holds the LLM doc extraction (~400k tokens to regenerate) as one
-# content-hashed file per doc; that IS tracked, so a fresh clone rebuilds free
-# and an edited doc adds one small blob instead of rewriting the set.
+# graphify knowledge graph.
 #
-# cache/stat-index.json stays ignored — it records machine-local mtime_ns and
-# would conflict on every machine.
-#
-# The `dir/*` + `!dir/sub/` shape is required: git will not descend into a
-# directory excluded as `dir/`, so a negation inside it can never match.
-# graphify writes its output next to whatever path it was pointed at, so both
-# the repo-root and apps/ scopes are covered.
-graphify-out/*
-!graphify-out/cache/
-graphify-out/cache/*
-!graphify-out/cache/semantic/
-apps/graphify-out/*
-!apps/graphify-out/cache/
-apps/graphify-out/cache/*
-!apps/graphify-out/cache/semantic/
+# This reverses 8bd033bb, which ignored graph.json on the grounds that it is
+# ~14MB rewritten whole per rebuild. Two corrections. The size is a raw-bytes
+# figure: git zlib-compresses the blob, and the measured cost is 0.9MB per
+# revision, not 14MB. And "a fresh clone rebuilds free" only holds for the AST
+# and the cached doc extraction — community labelling is a separate LLM pass
+# (680 communities here), and dropping .graphify_labels.json means paying it
+# again on every clone. Tracking both is cheaper than re-deriving them.
+# Tracked (so a clone updates the graph instead of re-extracting it from scratch):
+#   graph.json, manifest.json, GRAPH_REPORT.md, cost.json,
+#   .graphify_labels.json, cache/semantic/  <- the LLM-extracted part, the only
+#   expensive artifact. Content-hash keyed, so it is portable across clones.
+# Everything below is machine-local, derived, or a temp from a build in flight.
+graphify-out/.graphify_python
+graphify-out/.graphify_root
+graphify-out/.graphify_chunk_*.json
+graphify-out/.graphify_detect.json
+graphify-out/.graphify_extract.json
+graphify-out/.graphify_ast.json
+graphify-out/.graphify_semantic.json
+graphify-out/.graphify_semantic_new.json
+graphify-out/.graphify_cached.json
+graphify-out/.graphify_uncached.txt
+graphify-out/.graphify_analysis.json
+graphify-out/.needs_update
+# stat-index keys on local size+mtime, so it is pure churn in a shared repo.
+graphify-out/cache/stat-index.json
+graphify-out/cache/last_query_stamp
+# AST cache regenerates with no LLM cost and is namespaced per graphify
+# version, so committing it churns the whole tree on every upgrade.
+graphify-out/cache/ast/
+# Derived viz — regenerate with `graphify export html`.
+graphify-out/graph.html
+# Superseded by the repo-root graphify-out/ (scan root moved apps/ -> repo root).
+apps/graphify-out/
+# Rollback copy of the cache entries keyed to the old apps/ scan root.
+graphify-out/cache/semantic/.pre-rekey-backup/
