@@ -80,6 +80,8 @@ graphify-out/.graphify_cached.json
 graphify-out/.graphify_uncached.txt
 graphify-out/.graphify_analysis.json
 graphify-out/.needs_update
+# Left behind by the post-commit rebuild hook; empty and stale once it exits.
+graphify-out/.rebuild.lock
 # stat-index keys on local size+mtime, so it is pure churn in a shared repo.
 graphify-out/cache/stat-index.json
 graphify-out/cache/last_query_stamp
