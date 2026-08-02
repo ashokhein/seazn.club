@@ -341,12 +341,28 @@ async function seedKoDivision(
   return { auth, divisionId: division.id, stageId: stage!.id };
 }
 
+/** A fresh random UUID whose FIRST hex digit is `lead` — so two boards can be
+ *  seeded with fixture ids that sort opposite ways without ever colliding on the
+ *  primary key. Used to make "ordered on a raw UUID" a deterministic failure
+ *  rather than a coin flip. */
+function uuidLeading(lead: string): string {
+  return lead + randomUUID().slice(1);
+}
+
 /**
  * 4 entrants, one person each, two semis feeding one final. The final's entrant
  * slots are NULL — the shape today's named-entrant derivation reports as having
  * nobody in it.
+ *
+ * `fixtureIds` forces the fixtures' primary keys instead of letting the DB pick
+ * them; the determinism test uses it to seed two logically identical boards
+ * whose raw UUIDs order the two feeders in opposite directions.
  */
-async function seedSmallBracket(): Promise<{
+async function seedSmallBracket(fixtureIds?: {
+  semi1: string;
+  semi2: string;
+  final: string;
+}): Promise<{
   auth: AuthCtx;
   divisionId: string;
   ids: { personIds: string[]; fixtureIds: { semi1: string; semi2: string; final: string } };
@@ -371,16 +387,19 @@ async function seedSmallBracket(): Promise<{
               values (${ents[i]!.id}, ${p!.id}, ${auth.orgId})`;
   }
 
+  const forcedFinal = fixtureIds?.final ?? randomUUID();
   const [final] = await sql<{ id: string }[]>`
-    insert into fixtures (stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status)
-    values (${stageId}, ${divisionId}, ${auth.orgId}, 2, 0, 'final', 'scheduled') returning id`;
+    insert into fixtures (id, stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status)
+    values (${forcedFinal}, ${stageId}, ${divisionId}, ${auth.orgId}, 2, 0, 'final', 'scheduled')
+    returning id`;
   const semis: string[] = [];
   for (let i = 0; i < 2; i++) {
+    const forcedSemi = (i === 0 ? fixtureIds?.semi1 : fixtureIds?.semi2) ?? randomUUID();
     const [s] = await sql<{ id: string }[]>`
-      insert into fixtures (stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status,
+      insert into fixtures (id, stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status,
                             home_entrant_id, away_entrant_id, winner_to_fixture, winner_to_slot)
-      values (${stageId}, ${divisionId}, ${auth.orgId}, 1, ${i}, ${`semi-${i + 1}`}, 'scheduled',
-              ${ents[i * 2]!.id}, ${ents[i * 2 + 1]!.id}, ${final!.id}, ${i + 1})
+      values (${forcedSemi}, ${stageId}, ${divisionId}, ${auth.orgId}, 1, ${i}, ${`semi-${i + 1}`},
+              'scheduled', ${ents[i * 2]!.id}, ${ents[i * 2 + 1]!.id}, ${final!.id}, ${i + 1})
       returning id`;
     semis.push(s!.id);
   }
@@ -628,6 +647,39 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
     });
     expect(packA.pack.assumptions.length).toBeGreaterThan(0);
     expect(packA.pack.fixtures.movable.some((f) => f.feeds.after.length > 0)).toBe(true);
+    expect(redact(packA.pack)).toEqual(redact(packB.pack));
+  });
+
+  it("a final that keeps TWO feeders orders feeds.after on the feeder's domain key, not its UUID", async () => {
+    // The test above seeds a board whose final has exactly ONE surviving feeder,
+    // so a one-element array can carry any comparator and `after.length > 0`
+    // cannot tell the difference. Here BOTH semis stay movable, and the two
+    // boards' fixture UUIDs are forced to sort in OPPOSITE directions:
+    //   board A: semi-1 ('f…') > semi-2 ('0…')
+    //   board B: semi-1 ('1…') < semi-2 ('e…')
+    // Ordering on the raw UUID (`.sort(cmp)`) therefore emits [semi-2, semi-1]
+    // for A and [semi-1, semi-2] for B, and — because redact() maps UUIDs to
+    // FIRST-SEEN placeholders and `participants` has already numbered the semis
+    // in board order — the redacted packs diverge. Ordering on the feeder's
+    // (round_no, seq_in_round, ext_key) keeps both at [semi-1, semi-2].
+    const a = await seedSmallBracket({
+      semi1: uuidLeading("f"), semi2: uuidLeading("0"), final: uuidLeading("7"),
+    });
+    const b = await seedSmallBracket({
+      semi1: uuidLeading("1"), semi2: uuidLeading("e"), final: uuidLeading("7"),
+    });
+    const packA = await buildSchedulePack(a.auth, a.divisionId, {
+      mode: "generate", instruction: "Two rounds.",
+    });
+    const packB = await buildSchedulePack(b.auth, b.divisionId, {
+      mode: "generate", instruction: "Two rounds.",
+    });
+    // The board really does exercise a multi-feeder array…
+    const finalA = packA.pack.fixtures.movable.find((f) => f.ext_key === "final")!;
+    expect(finalA.feeds.after.length).toBeGreaterThanOrEqual(2);
+    expect(packA.pack.fixtures.movable.some((f) => f.feeds.after.length >= 2)).toBe(true);
+    // …in the feeders' domain order, not their UUID order.
+    expect(finalA.feeds.after).toEqual([a.ids.fixtureIds.semi1, a.ids.fixtureIds.semi2]);
     expect(redact(packA.pack)).toEqual(redact(packB.pack));
   });
 
