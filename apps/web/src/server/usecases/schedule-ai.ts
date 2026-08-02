@@ -518,13 +518,33 @@ export async function buildSchedulePack(
       (f) => !movableSet.has(f.id) && f.scheduled_at !== null && f.court_label !== null,
     );
     const obstacleAssignments = obstacleFixtures.map((f) => toAssignment(f, matchMinutes, guardedPeople));
-    const siblings = await siblingAssignments(
+    const siblingsRaw = await siblingAssignments(
       tx,
       divisionId,
       division.competition_id,
       matchMinutes,
       opts.excludeDivisionIds ?? [],
     );
+    // BOTH the raw person id and its guarded key, deliberately — the same shape
+    // `buildCompetitionPack` uses for `fixedOccupancy`, and for the same reason.
+    // `siblingAssignments` reads `peopleByEntrant` directly, so it emits raw
+    // uuids, while the movable fixtures this list is compared against carry
+    // guarded keys. The moment the same-name guard collapses a person, the raw
+    // id on this side stops matching the key on that side and a constraint that
+    // fired BEFORE #396 disappears. Emitting both can only ever add.
+    //
+    // WHAT THIS DOES NOT ACHIEVE, honestly: `identity.keyOf` is built from THIS
+    // division's person map, so a person who exists only in a sibling division
+    // is never in a collapse bucket here and keeps their raw id. A human
+    // entered under two `persons` rows where one row appears solely in the
+    // sibling division therefore still does not collapse — the joint pack
+    // (`buildCompetitionPack`, which resolves identity over the whole run) is
+    // the path that sees that case. This restores the pre-#396 raw↔raw parity
+    // and nothing more; the wider case is a filed follow-up.
+    const siblings: Assignment[] = siblingsRaw.map((a) => ({
+      ...a,
+      people: [...new Set(a.people.flatMap((p) => [p, identity.keyOf(p)]))],
+    }));
 
     // feeds.after: the fixtures that must finish before each one starts. Built
     // HERE — above the draft — because the participant recursion below needs it
