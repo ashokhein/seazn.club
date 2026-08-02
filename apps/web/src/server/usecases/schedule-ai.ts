@@ -481,6 +481,16 @@ export async function buildSchedulePack(
     // A synthetic `name:<normalised>` key has no row in `personNameById`, so it
     // would otherwise sort under the empty name and drift as soon as a real
     // person shares that bucket. Sort it on the normalised name it carries.
+    //
+    // ACCEPTED RESIDUAL: the `|${p}` tail is a raw person UUID, so a tie on
+    // `full_name` falls through to a per-seed random value. The same-name guard
+    // (`personKeyResolver`) already collapses same-named persons to ONE key
+    // before this runs, so the only ties left are two persons whose names are
+    // blank or whitespace — which the guard deliberately skips rather than fuse
+    // every unnamed person in the org into one player. Two blank-named people
+    // can therefore order differently across reseeds; that is a strictly better
+    // trade than the alternative, and the redaction determinism test tolerates
+    // it because such a board has no stable domain key to offer.
     const personSortKey = (p: string): string =>
       p.startsWith("name:") ? `${p.slice(5)}|${p}` : `${personNameById.get(p) ?? ""}|${p}`;
 
