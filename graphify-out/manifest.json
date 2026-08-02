@@ -9155,7 +9155,7 @@
     "semantic_hash": "b3ed5a2a68c187040d3d7bca262bf408"
   },
   "package.json": {
-    "mtime": 1785491394.9515731,
+    "mtime": 1785678641.788448,
     "ast_hash": "cc1592bd796098e4a1fbfbca605fab22",
     "semantic_hash": "cc1592bd796098e4a1fbfbca605fab22"
   },
@@ -10150,14 +10150,14 @@
     "semantic_hash": "e60bc4ece277bc9c3b348eadd086cda7"
   },
   "apps/web/content/help/divisions/lifecycle.md": {
-    "mtime": 1785491319.1221533,
-    "ast_hash": "ba0a13fbe2d15d4c573637073279fb6b",
-    "semantic_hash": "ba0a13fbe2d15d4c573637073279fb6b"
+    "mtime": 1785678529.1939545,
+    "ast_hash": "2994e4bfe4a19766726cfab515154438",
+    "semantic_hash": "2994e4bfe4a19766726cfab515154438"
   },
   "apps/web/content/help/divisions/settings.md": {
-    "mtime": 1785491319.1225595,
-    "ast_hash": "40b184e3b270c775493173a03fd12a48",
-    "semantic_hash": "40b184e3b270c775493173a03fd12a48"
+    "mtime": 1785678529.1947236,
+    "ast_hash": "d02bd5face948256b20120533868558b",
+    "semantic_hash": "d02bd5face948256b20120533868558b"
   },
   "apps/web/content/help/entrants/duplicate-players.md": {
     "mtime": 1783970234.6183884,
