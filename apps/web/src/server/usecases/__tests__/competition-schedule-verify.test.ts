@@ -123,6 +123,30 @@ function pack(
   over: Partial<CompetitionPack> = {},
 ): CompetitionPack {
   const courts = [...new Set(divisions.flatMap((d) => d.settings.courts))].sort();
+  const people = over.people ?? [];
+  // These are hand-built packs, so they get the participants a NAMED-slot board
+  // would have: the persons of the named home/away entrants. That keeps every
+  // pre-existing case in this file meaning what it meant before #396 added the
+  // field. It deliberately does NOT model the advancer recursion — a hand-built
+  // map would prove only that the helper computed it. The recursion is proved
+  // against real `buildCompetitionPack` output in
+  // competition-schedule-participants-wiring.test.ts.
+  const personsByEntrant = new Map<string, string[]>();
+  for (const p of people) {
+    for (const e of p.entrant_ids) {
+      (personsByEntrant.get(e) ?? personsByEntrant.set(e, []).get(e)!).push(p.person_id);
+    }
+  }
+  const participants: Record<string, string[]> = {};
+  for (const f of movable) {
+    participants[f.id] = [
+      ...new Set(
+        [f.home, f.away]
+          .filter((e): e is string => e !== null)
+          .flatMap((e) => personsByEntrant.get(e) ?? []),
+      ),
+    ];
+  }
   return {
     mode: "generate",
     competition: { id: "c1", name: "Summer Open" },
@@ -133,7 +157,9 @@ function pack(
     courts,
     divergentCourts: courts.filter((c) => !divisions.every((d) => d.settings.courts.includes(c))),
     entrants: [],
-    people: [],
+    people,
+    participants,
+    assumptions: [],
     fixtures: { movable, obstacles: [] },
     draft: [],
     instruction: "Finish by 6pm.",

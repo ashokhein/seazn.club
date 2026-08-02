@@ -57,6 +57,7 @@ import {
   buildSchedulePack,
   isBlocking,
   planIsAcceptable,
+  personKeyResolver,
   planRungs,
   runLadder,
   schedulingAiModel,
@@ -96,6 +97,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 import { maybeAlertExpensiveRun } from "./ai-runs-admin";
 import {
+  computeParticipants,
   validateAssignments,
   type Assignment,
   type Conflict,
@@ -133,6 +135,24 @@ const FIXED_OCCUPYING = OCCUPYING.filter((s) => s !== MOVABLE_STATUS);
 
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const ms = (iso: string): number => Date.parse(iso);
+
+/**
+ * The shape `personKeyResolver` (schedule-ai.ts) renders a same-name grouping in.
+ *
+ * Every source pack ran that resolver over ITS OWN division's persons, so it
+ * raised an assumption for any pair that was already same-named inside one
+ * division. The joint resolver below runs over the whole run's person set, so
+ * its buckets are supersets of theirs and its message is the accurate one ("3
+ * person records", not two divisions each claiming two). Carrying both would
+ * hand the organiser two contradictory counts for one human, so the
+ * per-division ones are dropped here and identity is reported once, jointly.
+ *
+ * If the resolver's wording ever drifts from this pattern the only symptom is a
+ * duplicated identity line — the joint pack's participants are unaffected. The
+ * "one identity assumption for a within-division pair" test pins it.
+ */
+const IDENTITY_ASSUMPTION =
+  /^'.*' matches \d+ person records by name — treated as one player for scheduling only; no records were merged$/;
 
 // ---------------------------------------------------------------------------
 // Pack shape. Every per-division `Pack*` type is reused verbatim and widened
@@ -192,10 +212,58 @@ export interface CompetitionPack {
   divergentCourts: string[];
   entrants: (PackEntrant & { division_id: string })[];
   people: PackPerson[];
+  /** Every person who COULD stand in each movable fixture, including the
+   *  advancers behind a null slot (#396), resolved against the WHOLE run's
+   *  person set. Keyed for every movable fixture, in `fixtures.movable` order;
+   *  the source of `Assignment.people` for both the joint placer's feed-forward
+   *  and {@link toJointEngineAssignments}, so a draft cannot be legal under a
+   *  rule the joint referee applies differently. */
+  participants: Record<string, string[]>;
+  /** Deterministic preprocessing choices worth telling the organiser about:
+   *  stripped bye feeders (from each source pack) and the run-wide same-name
+   *  person grouping. Rendered at W5 (#400). */
+  assumptions: string[];
   fixtures: { movable: CompetitionPackFixture[]; obstacles: CompetitionPackObstacle[] };
   draft: CompetitionPackAssignment[];
   instruction: string;
   prior: { instruction: string; assignments: CompetitionPackAssignment[] } | null;
+}
+
+/**
+ * What actually goes on the wire to the model: the joint pack MINUS
+ * `participants` and `assumptions`. The joint twin of `toModelPayload`
+ * (schedule-ai.ts), and for the same reasons.
+ *
+ * Both fields are server-side enforcement inputs, not prompt material. #396
+ * gives the joint referee and the joint draft the full advancer sets; it does
+ * not change what the model is shown.
+ *
+ * The cost of getting it wrong is larger here than single-division, because a
+ * joint pack is several boards: the run is capped at 500 movable fixtures
+ * across every division against the same 60,000-token ceiling, so the pack that
+ * exactly fills the cap is the one that fails first. Send
+ * `toJointModelPayload(pack)` — never `pack`.
+ *
+ * Written field-by-field rather than as a rest-spread on purpose: the return
+ * type makes `tsc` fail HERE the moment `CompetitionPack` gains a field, so
+ * what reaches the model is always a decision somebody made, never a default.
+ */
+export function toJointModelPayload(
+  pack: CompetitionPack,
+): Omit<CompetitionPack, "participants" | "assumptions"> {
+  return {
+    mode: pack.mode,
+    competition: pack.competition,
+    divisions: pack.divisions,
+    courts: pack.courts,
+    divergentCourts: pack.divergentCourts,
+    entrants: pack.entrants,
+    people: pack.people,
+    fixtures: pack.fixtures,
+    draft: pack.draft,
+    instruction: pack.instruction,
+    prior: pack.prior,
+  };
 }
 
 export interface BuildCompetitionPackOptions {
@@ -229,7 +297,14 @@ export async function buildCompetitionPack(
     throw new HttpError(400, "no divisions selected", "AI_PLAN_NO_DIVISIONS");
   }
 
-  const { competition, divisionRows, movableCount, fixedRows, fixedPeople } = await withTenant(auth.orgId, async (tx) => {
+  const {
+    competition,
+    divisionRows,
+    movableCount,
+    fixedRows,
+    entrantPeople,
+    personNameById,
+  } = await withTenant(auth.orgId, async (tx) => {
     const [row] = await tx<{ id: string; name: string }[]>`
       select id, name from competitions where id = ${competitionId}`;
     if (!row) throw new HttpError(404, "competition not found");
@@ -278,19 +353,47 @@ export async function buildCompetitionPack(
         and f.status in ${tx(FIXED_OCCUPYING)}
         and f.scheduled_at is not null
         and f.court_label is not null`;
-    // …with their PEOPLE. Under `crossPersonClash: "hard"` slotFixtures rejects
-    // any placement overlapping someone already committed in `existing`
-    // (calendar.ts:275-283), so an empty people list silently disables that
-    // block and lets a draft double-book a person against a fixture nobody can
-    // move. This is the same call `siblingAssignments` makes for exactly this
-    // field, over the same kind of rows.
-    const fixedPeople = await peopleByEntrant(
+    // …and the run's PEOPLE, entrant by entrant, over every entrant named on any
+    // of its fixtures.
+    //
+    // Two consumers, one map, loaded once here because both need it before the
+    // per-division build loop starts:
+    //
+    //  * `fixedOccupancy` below. Under `crossPersonClash: "hard"` slotFixtures
+    //    rejects any placement overlapping someone already committed in
+    //    `existing` (calendar.ts:275-283), so an empty people list silently
+    //    disables that block and lets a draft double-book a person against a
+    //    fixture nobody can move.
+    //  * the #396 identity guard and participant recursion. Deliberately the
+    //    FULL entrant→persons map and not the pack's `people` display list: that
+    //    one keeps only persons rostered into 2+ entrants, which is exactly the
+    //    person a TBD slot inherits by recursion and nobody else.
+    const entrantRows = await tx<{ home_entrant_id: string | null; away_entrant_id: string | null }[]>`
+      select distinct home_entrant_id, away_entrant_id from fixtures
+      where division_id in ${tx(requested)} and status in ${tx(OCCUPYING)}`;
+    const entrantPeople = await peopleByEntrant(
       tx,
-      [...new Set(fixedRows.flatMap((r) => [r.home_entrant_id, r.away_entrant_id]))].filter(
+      [...new Set(entrantRows.flatMap((r) => [r.home_entrant_id, r.away_entrant_id]))].filter(
         (e): e is string => e !== null,
       ),
     );
-    return { competition: row, divisionRows, movableCount: count?.n ?? 0, fixedRows, fixedPeople };
+    // Person NAMES for the same-name guard. Names never leave this function —
+    // they resolve identity and render assumptions, and are never written back.
+    const personIdsInPlay = [...new Set([...entrantPeople.values()].flat())];
+    const personNameById = new Map<string, string>();
+    if (personIdsInPlay.length > 0) {
+      const nameRows = await tx<{ id: string; full_name: string }[]>`
+        select id, full_name from persons where id in ${tx(personIdsInPlay)}`;
+      for (const r of nameRows) personNameById.set(r.id, r.full_name);
+    }
+    return {
+      competition: row,
+      divisionRows,
+      movableCount: count?.n ?? 0,
+      fixedRows,
+      entrantPeople,
+      personNameById,
+    };
   });
 
   const nameById = new Map(divisionRows.map((d) => [d.id, d.name]));
@@ -314,6 +417,33 @@ export async function buildCompetitionPack(
   const byDivision = (a: string, b: string): number =>
     cmp(nameById.get(a) ?? "", nameById.get(b) ?? "") ||
     cmp(slugById.get(a) ?? "", slugById.get(b) ?? "");
+
+  // -------------------------------------------------------------------------
+  // #396 identity, resolved ONCE over the whole run, before anything reads a
+  // person id.
+  //
+  // This is the case the per-division resolver structurally cannot see: one
+  // human entered in two DIFFERENT divisions of the same competition under two
+  // separate `persons` rows. Inside either division each row stands alone, so
+  // neither pack collapses anything; only the joint person set has both. The
+  // resolver itself is IMPORTED from schedule-ai.ts rather than reimplemented —
+  // a second notion of "same person" here would diverge silently, and the
+  // synthetic `name:<normalised>` key has to be byte-identical on both sides or
+  // it groups nothing.
+  //
+  // Over-constrain the schedule, never the database: the key never leaves the
+  // server (`toJointModelPayload` strips `participants`), nothing writes it, and
+  // no `persons` row is touched.
+  const identity = personKeyResolver(personNameById);
+  const guardedPeople = new Map<string, string[]>(
+    [...entrantPeople].map(([entrantId, ids]) => [entrantId, [...new Set(ids.map(identity.keyOf))]]),
+  );
+  // A synthetic key has no row in `personNameById`, so it would otherwise sort
+  // under the empty name; sort it on the normalised name it carries. Person ids
+  // are per-seed UUIDs and the joint pack's byte-identical test redacts UUIDs to
+  // FIRST-SEEN placeholders, so a UUID-ordered array breaks it.
+  const personSortKey = (p: string): string =>
+    p.startsWith("name:") ? `${p.slice(5)}|${p}` : `${personNameById.get(p) ?? ""}|${p}`;
 
   // The run's fixed board as engine assignments — every division gets all of it
   // (minus its own, which buildSchedulePack already supplies internally), so the
@@ -345,9 +475,23 @@ export async function buildCompetitionPack(
         // so the person data IS available — and it is load-bearing: it is what
         // makes `crossPersonClash: "hard"` reject a draft that would commit
         // someone already playing in another division's fixed fixture.
+        //
+        // BOTH the raw id and its guarded key, deliberately. This list is handed
+        // to a per-division greedy pass whose own fixtures carry that division's
+        // OWN person keys, and a division that collapsed nothing internally
+        // compares raw ids. Emitting only the guarded key would make a raw id on
+        // the other side stop matching — silently DELETING a constraint that
+        // exists today rather than adding one. Emitting both can only ever add.
+        // (These assignments are placer input only: the joint verifier rebuilds
+        // obstacles through `toJointObstacleAssignments`, so this cannot double
+        // a conflict report.)
         people: [
-          ...(r.home_entrant_id !== null ? fixedPeople.get(r.home_entrant_id) ?? [] : []),
-          ...(r.away_entrant_id !== null ? fixedPeople.get(r.away_entrant_id) ?? [] : []),
+          ...new Set(
+            [
+              ...(r.home_entrant_id !== null ? entrantPeople.get(r.home_entrant_id) ?? [] : []),
+              ...(r.away_entrant_id !== null ? entrantPeople.get(r.away_entrant_id) ?? [] : []),
+            ].flatMap((p) => [p, identity.keyOf(p)]),
+          ),
         ],
         divisionId: r.division_id,
       };
@@ -360,6 +504,11 @@ export async function buildCompetitionPack(
   // header on why this is a legality hint only.
   const built: { id: string; pack: SchedulePack; movableIds: Set<string> }[] = [];
   const drafted: Assignment[] = [];
+  /** #396 participants, accumulated division by division as each one is built —
+   *  the feed-forward below needs the division's map before the next division
+   *  drafts, so it cannot wait for the union. Serialised into the pack in the
+   *  joint movable order further down. */
+  const participantsByFixture = new Map<string, string[]>();
   for (const id of order) {
     const prior = opts.prior
       ? {
@@ -426,21 +575,38 @@ export async function buildCompetitionPack(
     }
     built.push({ id, pack: one.pack, movableIds: one.movableIds });
 
+    // #396: who could stand in each of this division's fixtures — the advancers
+    // behind a null slot included — resolved against the WHOLE run's identity
+    // and its whole entrant→persons map, not the division's own.
+    //
+    // `pack.fixtures.movable` already carries the bye-stripped `feeds.after`
+    // (schedule-ai.ts strips them and records the assumption), so the recursion
+    // never walks into a feeder the model cannot see. Feeds are within-division,
+    // so computing per division is the same answer as computing over the union.
+    for (const [fixtureId, ids] of Object.entries(
+      computeParticipants(one.pack.fixtures.movable, guardedPeople, { sortKey: personSortKey }),
+    )) {
+      participantsByFixture.set(fixtureId, ids);
+    }
+
     // Feed the slots this division just drafted forward to the next ones. Its
     // fixed fixtures are already in `fixedOccupancy`, which every division sees.
     //
     // entrants ride along because they are free (they are on the fixture),
     // though they can never clash across divisions — an entrant belongs to
-    // exactly one division. `people` is empty because there is nothing to put
-    // in it HERE: a person rostered into one entrant of A and one of B is in
-    // NEITHER source pack's people map, so this feed-forward cannot supply
-    // cross-division person data even in principle.
+    // exactly one division. `people` is the participants map: it used to be
+    // empty, because a per-division pack's `people` keeps only persons in 2+ of
+    // ITS OWN entrants and so could not supply cross-division person data even
+    // in principle. The joint participants map can — it is built above from the
+    // run's full entrant→persons map — so the greedy draft now refuses to
+    // double-book a human across two divisions, including into a TBD bracket
+    // slot they can still advance to.
     //
-    // The joint pack's own `people` (built below over the run's whole entrant
-    // set) does cover it, so the MODEL can avoid these. The greedy DRAFT still
-    // cannot — each division's pass sees only its own people — so a draft may
-    // hand over a cross-division person overlap, and the joint verifier remains
-    // the backstop for it (Task 3).
+    // RESIDUAL, by design: a division's OWN greedy pass still keys its own
+    // fixtures on that division's person ids (buildSchedulePack owns that), so a
+    // cross-division SAME-NAME pair is collapsed for the pack and the verifier
+    // but not inside one division's placement search. The draft is a legality
+    // hint; the verifier is the verdict, and it sees the collapse.
     const minutes = one.pack.settings.matchMinutes;
     const fixtureById = new Map(one.pack.fixtures.movable.map((f) => [f.id, f]));
     for (const a of one.pack.draft) {
@@ -452,7 +618,7 @@ export async function buildCompetitionPack(
         startAt,
         endAt: startAt + minutes * MS_PER_MIN,
         entrants: [f?.home ?? null, f?.away ?? null].filter((e): e is string => e !== null),
-        people: [],
+        people: participantsByFixture.get(a.fixture_id) ?? [],
       });
     }
   }
@@ -488,6 +654,20 @@ export async function buildCompetitionPack(
         cmp(a.home ?? "", b.home ?? "") ||
         cmp(a.away ?? "", b.away ?? ""),
     );
+
+  // Keys inserted in the pack's OWN movable order, so `participants` and
+  // `fixtures.movable` agree and the object's serialised key order is a domain
+  // order rather than a per-seed one (the byte-identical test compares
+  // `JSON.stringify`, where key insertion order is load-bearing).
+  const participants: Record<string, string[]> = {};
+  for (const f of movable) participants[f.id] = participantsByFixture.get(f.id) ?? [];
+
+  // Bye-strip assumptions come from the source packs, in the emitted division
+  // order. Identity is reported once, jointly — see IDENTITY_ASSUMPTION.
+  const assumptions = [
+    ...built.flatMap((b) => b.pack.assumptions).filter((a) => !IDENTITY_ASSUMPTION.test(a)),
+    ...identity.assumptions,
+  ];
 
   // -------------------------------------------------------------------------
   // Obstacles.
@@ -629,6 +809,8 @@ export async function buildCompetitionPack(
     divergentCourts,
     entrants,
     people,
+    participants,
+    assumptions,
     fixtures: { movable, obstacles },
     draft,
     instruction: opts.instruction,
@@ -741,12 +923,6 @@ export const JOINT_ASSIGNMENT_UNKNOWN = "AI_PLAN_INVALID_ASSIGNMENT";
 export function toJointEngineAssignments(plan: AiSchedulePlan, pack: CompetitionPack): Assignment[] {
   const fixtureById = new Map(pack.fixtures.movable.map((f) => [f.id, f]));
   const minutesByDivision = new Map(pack.divisions.map((d) => [d.id, d.settings.matchMinutes]));
-  const personsByEntrant = new Map<string, string[]>();
-  for (const p of pack.people) {
-    for (const e of p.entrant_ids) {
-      (personsByEntrant.get(e) ?? personsByEntrant.set(e, []).get(e)!).push(p.person_id);
-    }
-  }
   return plan.assignments.map((a) => {
     const f = fixtureById.get(a.fixture_id);
     if (f === undefined) {
@@ -772,7 +948,12 @@ export function toJointEngineAssignments(plan: AiSchedulePlan, pack: Competition
       startAt,
       endAt: startAt + minutes * MS_PER_MIN,
       entrants,
-      people: entrants.flatMap((e) => personsByEntrant.get(e) ?? []),
+      // #396: participants, not the shared-player map — a TBD bracket slot
+      // carries whoever can still advance into it, which is what every person
+      // rule needs and what `pack.people` (persons in 2+ entrants) never had.
+      // No fallback to a named-entrant derivation on purpose: one would make
+      // this read green on a pack that never computed the map.
+      people: pack.participants[a.fixture_id] ?? [],
       divisionId: f.division_id,
     };
   });
@@ -1176,7 +1357,11 @@ export async function runCompetitionAiPlan(
   }
   const model = modelOverride ?? schedulingAiModel();
 
-  const conversation: AiTurn[] = [{ role: "user", content: JSON.stringify(pack) }];
+  // `toJointModelPayload(pack)`, never `pack`: `participants` and `assumptions`
+  // are server-side enforcement inputs and would blow the token budget.
+  const conversation: AiTurn[] = [
+    { role: "user", content: JSON.stringify(toJointModelPayload(pack)) },
+  ];
   const divisionByFixture = new Map(pack.fixtures.movable.map((f) => [f.id, f.division_id]));
   /** Same invariant as toJointEngineAssignments, and for the same reason: a
    *  proposal entry with an empty division_id is a valid-looking lie that the

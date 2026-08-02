@@ -472,6 +472,55 @@ describe.skipIf(!HAS_DB)("CompetitionPack.participants is wired into both joint 
     expect(rows).toHaveLength(2);
   }, 120_000);
 
+  it("a WITHIN-division same-name pair is reported once, by the joint resolver", async () => {
+    // Both source packs already ran the same-name guard over their own persons,
+    // so a pair inside one division raises an assumption twice — once in that
+    // division's pack, once in the run-wide resolver — and the two disagree on
+    // the count as soon as a third row elsewhere joins the bucket. The joint
+    // pack keeps the run-wide one. Pins the pattern the drop is keyed on.
+    const { auth } = await seedOrg("pro");
+    const tag = randomUUID().slice(0, 6);
+    const comp = await createCompetition(auth, {
+      name: `Twin Rows ${tag}`,
+      visibility: "public",
+      branding: {},
+    });
+    const one = await makeDivision(
+      auth, comp.id, "Ones", `ones-${tag}`, ["Court 1"], "2026-08-01T09:00:00.000Z",
+      ["O-1", "O-2"],
+    );
+    const two = await makeDivision(
+      auth, comp.id, "Twos", `twos-${tag}`, ["Court 2"], "2026-08-01T09:00:00.000Z",
+      ["T-1", "T-2"],
+    );
+    // Two rows in ONE division (Ones) — plus a third of the same name in Twos,
+    // so the per-division message ("2 person records") and the run-wide one
+    // ("3 person records") cannot both be right.
+    await addPerson(auth.orgId, "Ada Twin", [one.entrantByName.get("O-1")!]);
+    await addPerson(auth.orgId, "ada twin", [one.entrantByName.get("O-2")!]);
+    await addPerson(auth.orgId, "Ada  Twin", [two.entrantByName.get("T-1")!]);
+    await addPerson(auth.orgId, "Solo T-2", [two.entrantByName.get("T-2")!]);
+    for (const [d, ext, home, away] of [
+      [one, "ones-1", one.entrantByName.get("O-1")!, one.entrantByName.get("O-2")!],
+      [two, "twos-1", two.entrantByName.get("T-1")!, two.entrantByName.get("T-2")!],
+    ] as const) {
+      await sql`
+        insert into fixtures (stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status,
+                              home_entrant_id, away_entrant_id)
+        values (${d.stageId}, ${d.id}, ${auth.orgId}, 1, 0, ${ext}, 'scheduled', ${home}, ${away})`;
+    }
+
+    const { pack } = await buildCompetitionPack(auth, comp.id, [one.id, two.id], {
+      mode: "generate",
+      instruction: "One round each.",
+    });
+    const identityLines = pack.assumptions.filter((a) => a.includes("no records were merged"));
+    expect(identityLines).toEqual([
+      "'Ada  Twin' matches 3 person records by name — " +
+        "treated as one player for scheduling only; no records were merged",
+    ]);
+  }, 120_000);
+
   it("toJointModelPayload strips participants and assumptions, and that is what keeps the joint pack inside the token budget", async () => {
     const board = await seedMeasurementBoard(20);
     const { pack } = await buildCompetitionPack(
@@ -495,13 +544,15 @@ describe.skipIf(!HAS_DB)("CompetitionPack.participants is wired into both joint 
     expect(pack.fixtures.movable.length).toBe(2 * ((20 * 19) / 2));
 
     // The measurement the trim exists for. Proxy tokens = JSON bytes / 4.
+    // Measured 2026-08-02 on this board (380 of the 500-fixture joint cap, one
+    // person per entrant, every slot named so nothing is inherited): the pack
+    // with `participants` inlined is 49,794.5 proxy tokens against the 60,000
+    // ceiling; the payload is 38,481. A board that fills the cap, or a bracket
+    // where TBD slots inherit whole sub-trees, scales that gap up — which is why
+    // the field is stripped rather than trimmed.
     const withParticipants = JSON.stringify(pack).length / 4;
     const trimmed = JSON.stringify(payload).length / 4;
-    // eslint-disable-next-line no-console
-    console.log(
-      `[#396] joint payload proxy tokens — inlined ${withParticipants} / trimmed ${trimmed}`,
-    );
-    expect(trimmed).toBeLessThan(withParticipants);
+    expect(withParticipants - trimmed).toBeGreaterThan(10_000);
     expect(trimmed).toBeLessThan(60_000);
   }, 240_000);
 });

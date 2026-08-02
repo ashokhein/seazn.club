@@ -20,7 +20,11 @@ vi.mock("@anthropic-ai/sdk", () => ({
   },
 }));
 
-import { runCompetitionAiPlan, runCompetitionAiPlanLadder } from "../competition-schedule-ai";
+import {
+  runCompetitionAiPlan,
+  runCompetitionAiPlanLadder,
+  toJointModelPayload,
+} from "../competition-schedule-ai";
 import type { CompetitionPack } from "../competition-schedule-ai";
 import { JOINT_RULES, SYSTEM_PROMPT } from "../schedule-ai-prompt";
 import { createTokenMeter } from "@/lib/ai-rung";
@@ -73,6 +77,11 @@ function makePack(): CompetitionPack {
     divergentCourts: ["Court 2"],
     entrants: [],
     people: [],
+    // No rostered persons on this board, so every movable fixture's advancer set
+    // is empty — but the key must exist for each of them, exactly as
+    // buildCompetitionPack emits it (#396).
+    participants: { [F1]: [], [F2]: [] },
+    assumptions: [],
     fixtures: {
       movable: [
         {
@@ -160,12 +169,17 @@ describe("runCompetitionAiPlan (#350)", () => {
     });
   });
 
-  it("sends the joint pack as the first user turn", async () => {
+  it("sends the joint pack as the first user turn, MINUS the server-side fields", async () => {
     parse.mockResolvedValueOnce(planResponse(cleanPlan));
     await runCompetitionAiPlan(pack, movableIds);
     const body = parse.mock.calls[0]![0] as { messages: { role: string; content: string }[] };
     expect(body.messages[0]!.role).toBe("user");
-    expect(JSON.parse(body.messages[0]!.content)).toEqual(pack);
+    // #396: `participants` and `assumptions` are enforcement inputs for the
+    // placer and the referee, never prompt material — and inlining them re-breaks
+    // the joint token budget. Everything else goes over verbatim.
+    expect(JSON.parse(body.messages[0]!.content)).toEqual(toJointModelPayload(pack));
+    expect(body.messages[0]!.content).not.toContain("participants");
+    expect(body.messages[0]!.content).not.toContain("assumptions");
   });
 
   it("tags every proposal entry with its own division_id", async () => {
