@@ -239,6 +239,26 @@ describe.skipIf(!HAS_DB)("buildSchedulePack (v4/01 §2)", () => {
   // only by hand-patching the API — so it shipped as three dead buttons for
   // anyone who reached it. The column survives (dormant) until a later
   // migration drops it; this proves nothing reads it any more.
+  it("pack carries participants for every movable fixture", async () => {
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Finish by 6pm.",
+    });
+    expect(Object.keys(pack.participants).sort()).toEqual(
+      pack.fixtures.movable.map((f) => f.id).sort(),
+    );
+    // Round-robin board: every fixture has both slots named, so participants
+    // is exactly the union of the two entrants' rosters.
+    const first = pack.fixtures.movable[0]!;
+    expect(pack.participants[first.id]!.length).toBeGreaterThan(0);
+  });
+
+  it("pack carries an assumptions array", async () => {
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Finish by 6pm.",
+    });
+    expect(Array.isArray(pack.assumptions)).toBe(true);
+  });
+
   it("packs a division regardless of the dormant scheduling_mode column", async () => {
     const comp = await createCompetition(auth, { name: "Flex", visibility: "public", branding: {} });
     const flex = await createDivision(auth, comp.id, {
@@ -290,5 +310,210 @@ describe.skipIf(!HAS_DB)("buildSchedulePack size limits", () => {
     await expect(
       buildSchedulePack(auth, divisionId, { mode: "generate", instruction: "x" }),
     ).rejects.toMatchObject({ status: 422, message: "AI_PLAN_TOO_LARGE" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Elimination-bracket seeders (#396). A round-robin board names both slots of
+// every fixture, so it cannot exercise the advancer recursion at all — these
+// build boards whose later fixtures are genuinely TBD.
+// ---------------------------------------------------------------------------
+
+/** Fresh pro org + competition + division + settings + one stage. */
+async function seedKoDivision(
+  name: string,
+): Promise<{ auth: AuthCtx; divisionId: string; stageId: string }> {
+  const { auth } = await seedOrg("pro");
+  const tag = randomUUID().slice(0, 6);
+  const comp = await createCompetition(auth, {
+    name: `${name} ${tag}`, visibility: "public", branding: {},
+  });
+  const division = await createDivision(auth, comp.id, {
+    name, slug: `${name.toLowerCase()}-${tag}`, sport_key: "generic",
+    variant_key: "score", config: GENERIC_CONFIG, eligibility: [],
+  });
+  await setSettings(division.id);
+  const [stage] = await createStages(auth, division.id, {
+    seq: 1, kind: "league", name: "KO", config: {},
+  });
+  return { auth, divisionId: division.id, stageId: stage!.id };
+}
+
+/**
+ * 4 entrants, one person each, two semis feeding one final. The final's entrant
+ * slots are NULL — the shape today's named-entrant derivation reports as having
+ * nobody in it.
+ */
+async function seedSmallBracket(): Promise<{
+  auth: AuthCtx;
+  divisionId: string;
+  ids: { personIds: string[]; fixtureIds: { semi1: string; semi2: string; final: string } };
+}> {
+  const { auth, divisionId, stageId } = await seedKoDivision("Bracket");
+  await createEntrants(
+    auth,
+    divisionId,
+    Array.from({ length: 4 }, (_, i) => ({
+      kind: "individual" as const, display_name: `K${i + 1}`, seed: i + 1, members: [],
+    })),
+  );
+  const ents = await sql<{ id: string }[]>`
+    select id from entrants where division_id = ${divisionId} order by seed`;
+  const personIds: string[] = [];
+  for (let i = 0; i < ents.length; i++) {
+    const [p] = await sql<{ id: string }[]>`
+      insert into persons (org_id, full_name)
+      values (${auth.orgId}, ${`Bracket Player ${i + 1}`}) returning id`;
+    personIds.push(p!.id);
+    await sql`insert into entrant_members (entrant_id, person_id, org_id)
+              values (${ents[i]!.id}, ${p!.id}, ${auth.orgId})`;
+  }
+
+  const [final] = await sql<{ id: string }[]>`
+    insert into fixtures (stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status)
+    values (${stageId}, ${divisionId}, ${auth.orgId}, 2, 0, 'final', 'scheduled') returning id`;
+  const semis: string[] = [];
+  for (let i = 0; i < 2; i++) {
+    const [s] = await sql<{ id: string }[]>`
+      insert into fixtures (stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status,
+                            home_entrant_id, away_entrant_id, winner_to_fixture, winner_to_slot)
+      values (${stageId}, ${divisionId}, ${auth.orgId}, 1, ${i}, ${`semi-${i + 1}`}, 'scheduled',
+              ${ents[i * 2]!.id}, ${ents[i * 2 + 1]!.id}, ${final!.id}, ${i + 1})
+      returning id`;
+    semis.push(s!.id);
+  }
+  return {
+    auth,
+    divisionId,
+    ids: { personIds, fixtureIds: { semi1: semis[0]!, semi2: semis[1]!, final: final!.id } },
+  };
+}
+
+/** The same board with one semi already played — it leaves the movable set and
+ *  becomes a fixed obstacle, so the final's `feeds.after` dangles. */
+async function seedSmallBracketWithFinishedSemi(): Promise<{ auth: AuthCtx; divisionId: string }> {
+  const { auth, divisionId, ids } = await seedSmallBracket();
+  await sql`
+    update fixtures set status = 'finalized',
+      scheduled_at = ${new Date(T0).toISOString()}, court_label = 'Court 1'
+    where id = ${ids.fixtureIds.semi1}`;
+  return { auth, divisionId };
+}
+
+/**
+ * `n` bracket fixtures, heap-shaped: fixture g feeds fixture floor(g / 2), so
+ * fixture 1 is the final and every leaf carries two entrants with one person
+ * each. The worst realistic case for participant-set size — the root's set is
+ * every player in the division.
+ */
+async function seedBigBracket(n: number): Promise<{ auth: AuthCtx; divisionId: string }> {
+  const { auth, divisionId, stageId } = await seedKoDivision("BigKo");
+  const leafFrom = Math.floor(n / 2) + 1; // fixtures with no children
+  await sql`
+    insert into fixtures (stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status)
+    select ${stageId}, ${divisionId}, ${auth.orgId},
+           floor(log(2, g))::int, (g - power(2, floor(log(2, g))))::int,
+           'kob-' || lpad(g::text, 4, '0'), 'scheduled'
+    from generate_series(1, ${n}) g`;
+  // Wire the feed chain by ext_key — never by UUID.
+  await sql`
+    update fixtures f
+       set winner_to_fixture = p.id,
+           winner_to_slot = case when (substr(f.ext_key, 5)::int) % 2 = 0 then 1 else 2 end
+      from fixtures p
+     where f.division_id = ${divisionId} and p.division_id = ${divisionId}
+       and substr(f.ext_key, 5)::int >= 2
+       and p.ext_key = 'kob-' || lpad((substr(f.ext_key, 5)::int / 2)::text, 4, '0')`;
+  // Two entrants (one person each) on every leaf fixture.
+  await sql`
+    insert into entrants (division_id, org_id, kind, display_name, seed)
+    select ${divisionId}, ${auth.orgId}, 'individual',
+           'B' || lpad(g::text, 4, '0') || (case when s = 1 then 'a' else 'b' end),
+           (g - ${leafFrom}) * 2 + s
+    from generate_series(${leafFrom}::int, ${n}::int) g, generate_series(1, 2) s`;
+  await sql`
+    insert into persons (org_id, full_name)
+    select ${auth.orgId}, 'Big Player ' || e.display_name
+    from entrants e where e.division_id = ${divisionId}`;
+  await sql`
+    insert into entrant_members (entrant_id, person_id, org_id)
+    select e.id, p.id, ${auth.orgId}
+    from entrants e
+    join persons p on p.org_id = ${auth.orgId} and p.full_name = 'Big Player ' || e.display_name
+    where e.division_id = ${divisionId}`;
+  await sql`
+    update fixtures f
+       set home_entrant_id = h.id, away_entrant_id = a.id
+      from entrants h, entrants a
+     where f.division_id = ${divisionId}
+       and substr(f.ext_key, 5)::int >= ${leafFrom}
+       and h.division_id = ${divisionId} and a.division_id = ${divisionId}
+       and h.display_name = 'B' || substr(f.ext_key, 5) || 'a'
+       and a.display_name = 'B' || substr(f.ext_key, 5) || 'b'`;
+  return { auth, divisionId };
+}
+
+describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", () => {
+  it("participants of a TBD fixture include every possible advancer", async () => {
+    const { auth, divisionId, ids } = await seedSmallBracket();
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Two rounds.",
+    });
+    const final = pack.fixtures.movable.find((f) => f.ext_key === "final")!;
+    expect(final.home).toBeNull();
+    expect(final.away).toBeNull();
+    // Today's named-entrant derivation would give zero people here.
+    expect(pack.participants[final.id]).toHaveLength(4);
+    expect(new Set(pack.participants[final.id])).toEqual(new Set(ids.personIds));
+  });
+
+  it("a feeder outside the movable set is stripped and recorded in assumptions", async () => {
+    const { auth, divisionId } = await seedSmallBracketWithFinishedSemi();
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Two rounds.",
+    });
+    expect(pack.assumptions.some((a) => a.includes("treated as completed"))).toBe(true);
+    for (const f of pack.fixtures.movable) {
+      for (const dep of f.feeds.after) {
+        expect(pack.fixtures.movable.some((m) => m.id === dep)).toBe(true);
+      }
+    }
+  });
+
+  it("rebuilds byte-identical for an identical BRACKET board reseeded", async () => {
+    // The existing double-seed test seeds a round-robin, where every
+    // `feeds.after` is empty and every slot is named — so it exercises neither
+    // `participants` nor `feeds.after` ordering. This board populates both, and
+    // carries a stripped-feeder assumption. Any array ordered on a raw UUID
+    // fails here, because redact() maps UUIDs to FIRST-SEEN placeholders.
+    const a = await seedSmallBracketWithFinishedSemi();
+    const b = await seedSmallBracketWithFinishedSemi();
+    const packA = await buildSchedulePack(a.auth, a.divisionId, {
+      mode: "generate", instruction: "Two rounds.",
+    });
+    const packB = await buildSchedulePack(b.auth, b.divisionId, {
+      mode: "generate", instruction: "Two rounds.",
+    });
+    expect(packA.pack.assumptions.length).toBeGreaterThan(0);
+    expect(packA.pack.fixtures.movable.some((f) => f.feeds.after.length > 0)).toBe(true);
+    expect(redact(packA.pack)).toEqual(redact(packB.pack));
+  });
+
+  it("participants stay within the token budget on a 500-fixture bracket", async () => {
+    const { auth, divisionId } = await seedBigBracket(500);
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      mode: "generate", instruction: "Pack the day.",
+    });
+    const proxyTokens = JSON.stringify(pack).length / 4;
+    // KNOWN RED, awaiting an owner decision (#396, plan Task 5 Step 8) — do NOT
+    // weaken or delete this assertion. Measured 2026-08-02 on this board:
+    //   total 100,252.5 proxy tokens; participants 48,902.75 (4,490 person-id
+    //   entries), fixtures.movable 39,571.5, entrants 10,598.25, draft 998.5.
+    // The board is already 51,350 WITHOUT participants — 500 bracket fixtures
+    // with 500 named entrants sit at 86% of the budget before this wave. The
+    // plan's fallback (intern person keys per pack, ~6 chars instead of a
+    // 38-char uuid) lands the total near 58,000 — under, but with ~3% headroom
+    // — and it changes the wire contract, so it is the owner's call.
+    expect(proxyTokens).toBeLessThan(60_000);
   });
 });

@@ -20,7 +20,12 @@ import { describe, expect, it } from "vitest";
 import { runAiPlan, schedulingAiModel, zonedIso } from "../schedule-ai";
 import type { PackAssignment, PackFixture, PackPerson, SchedulePack } from "../schedule-ai";
 import { toSlotConfig } from "../schedule";
-import { slotFixtures, type SchedulableFixture } from "@seazn/engine/scheduling";
+import {
+  computeParticipants,
+  slotFixtures,
+  stripByes,
+  type SchedulableFixture,
+} from "@seazn/engine/scheduling";
 import { applyPolicy } from "../../ai/openrouter-policy";
 
 // vitest does not read .env.local; load just the keys we need if absent.
@@ -132,7 +137,10 @@ const uuid = (tag: string, n: number) =>
 // as `locked`, and only the fixtures the solver actually placed appear (an
 // unplaceable fixture is left for the model, exactly as in production). No DB,
 // no obstacles/siblings (synthetic packs have none), so `existing: []`.
-function withGreedyDraft(pack: SchedulePack): SchedulePack {
+/** A pack before its derived fields exist — see `withGreedyDraft`. */
+type PackDraft = Omit<SchedulePack, "participants" | "assumptions">;
+
+function withGreedyDraft(pack: PackDraft): SchedulePack {
   const tz = pack.division.tz;
   const personIdsByEntrant = new Map<string, string[]>();
   for (const p of pack.people) {
@@ -141,6 +149,22 @@ function withGreedyDraft(pack: SchedulePack): SchedulePack {
       list.push(p.person_id);
     }
   }
+  // #396: `participants` and `assumptions` are DERIVED, not authored — which is
+  // why the pack literals below omit them. Production computes them above the
+  // draft from the same entrant→persons map and feeds the placer from them, so
+  // deriving them here is what keeps this mirror exact: on the bracket pack the
+  // TBD fixtures now carry their possible advancers, and the live A/B measures
+  // the model against the constraints the referee will actually apply.
+  const stripped = stripByes(
+    pack.fixtures.movable.map((f) => ({
+      id: f.id,
+      ext_key: f.ext_key,
+      home: f.home,
+      away: f.away,
+      feeds: { after: f.feeds.after },
+    })),
+  );
+  const participants = computeParticipants(stripped.fixtures, personIdsByEntrant);
   const schedulable: SchedulableFixture[] = pack.fixtures.movable.map((f) => ({
     id: f.id,
     roundNo: f.round,
@@ -148,10 +172,7 @@ function withGreedyDraft(pack: SchedulePack): SchedulePack {
     divisionId: pack.division.id,
     ...(f.home !== null ? { home: f.home } : {}),
     ...(f.away !== null ? { away: f.away } : {}),
-    people: [
-      ...(f.home !== null ? personIdsByEntrant.get(f.home) ?? [] : []),
-      ...(f.away !== null ? personIdsByEntrant.get(f.away) ?? [] : []),
-    ],
+    people: participants[f.id] ?? [],
     ...(f.pinned && f.current.at !== null && f.current.court !== null
       ? { locked: { court: f.current.court, startAt: new Date(f.current.at).getTime() } }
       : {}),
@@ -180,7 +201,7 @@ function withGreedyDraft(pack: SchedulePack): SchedulePack {
       court_label: a.court,
     }))
     .sort((x, y) => (x.scheduled_at < y.scheduled_at ? -1 : x.scheduled_at > y.scheduled_at ? 1 : 0));
-  return { ...pack, draft };
+  return { ...pack, participants, assumptions: stripped.assumptions, draft };
 }
 
 // --- Pack A: 15 teams, 3 pools of 5, round robin within pool = 30 fixtures --
@@ -218,7 +239,7 @@ function teamsPack(): { pack: SchedulePack; movable: Set<string> } {
     }
   });
 
-  const pack: SchedulePack = {
+  const pack: PackDraft = {
     mode: "generate",
     division: {
       id: "ab-teams",
@@ -284,7 +305,7 @@ function individualsPack(): { pack: SchedulePack; movable: Set<string> } {
     entrant_ids: [uuid("e", k), uuid("e", k + 25)],
   }));
 
-  const pack: SchedulePack = {
+  const pack: PackDraft = {
     mode: "generate",
     division: {
       id: "ab-individuals",
@@ -408,7 +429,7 @@ function bracketPack(): { pack: SchedulePack; movable: Set<string> } {
     { person_id: uuid("p", 3), entrant_ids: [e(2), e(10)] }, // A-QF2 <-> B-QF2
   ];
 
-  const pack: SchedulePack = {
+  const pack: PackDraft = {
     mode: "generate",
     division: {
       id: "ab-bracket",

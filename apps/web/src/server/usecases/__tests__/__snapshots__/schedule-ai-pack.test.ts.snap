@@ -2,6 +2,7 @@
 
 exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 01 §2 shape 1`] = `
 {
+  "assumptions": [],
   "division": {
     "id": "<id:1>",
     "name": "Open",
@@ -732,6 +733,62 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       ],
     },
   ],
+  "participants": {
+    "<id:11>": [
+      "<id:10>",
+    ],
+    "<id:12>": [
+      "<id:10>",
+    ],
+    "<id:13>": [],
+    "<id:14>": [],
+    "<id:15>": [],
+    "<id:16>": [
+      "<id:10>",
+    ],
+    "<id:17>": [],
+    "<id:18>": [
+      "<id:10>",
+    ],
+    "<id:19>": [],
+    "<id:20>": [
+      "<id:10>",
+    ],
+    "<id:21>": [
+      "<id:10>",
+    ],
+    "<id:22>": [],
+    "<id:23>": [],
+    "<id:24>": [],
+    "<id:25>": [
+      "<id:10>",
+    ],
+    "<id:26>": [
+      "<id:10>",
+    ],
+    "<id:27>": [
+      "<id:10>",
+    ],
+    "<id:28>": [],
+    "<id:29>": [
+      "<id:10>",
+    ],
+    "<id:30>": [],
+    "<id:31>": [],
+    "<id:32>": [
+      "<id:10>",
+    ],
+    "<id:33>": [
+      "<id:10>",
+    ],
+    "<id:34>": [],
+    "<id:35>": [],
+    "<id:36>": [],
+    "<id:37>": [
+      "<id:10>",
+    ],
+    "<id:38>": [],
+  },
   "people": [
     {
       "entrant_ids": [

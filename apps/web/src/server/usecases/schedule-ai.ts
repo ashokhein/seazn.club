@@ -36,11 +36,14 @@ import {
 import { deferred } from "@/lib/deferred";
 import { maybeAlertExpensiveRun } from "@/server/usecases/ai-runs-admin";
 import {
+  computeParticipants,
   slotFixtures,
+  stripByes,
   validateAssignments,
   type Assignment,
   type Conflict,
   type OrderDependency,
+  type ParticipantFixture,
   type SchedulableFixture,
   type SchedulingConstraints,
   type SlotConfig,
@@ -217,6 +220,15 @@ export interface SchedulePack {
   settings: PackSettings;
   entrants: PackEntrant[];
   people: PackPerson[];
+  /** Every person who COULD stand in each movable fixture, including the
+   *  advancers behind a null slot (#396). Keyed for every movable fixture, in
+   *  `fixtures.movable` order; the source of `Assignment.people` for both the
+   *  greedy placer and the verifier, so a draft cannot be legal under a rule
+   *  the referee applies differently. */
+  participants: Record<string, string[]>;
+  /** Deterministic preprocessing choices worth telling the organiser about:
+   *  stripped bye feeders, same-name person grouping. Rendered at W5 (#400). */
+  assumptions: string[];
   fixtures: { movable: PackFixture[]; obstacles: PackObstacle[] };
   draft: PackAssignment[];
   instruction: string;
@@ -353,6 +365,84 @@ export async function buildSchedulePack(
       opts.excludeDivisionIds ?? [],
     );
 
+    // feeds.after: the fixtures that must finish before each one starts. Built
+    // HERE — above the draft — because the participant recursion below needs it
+    // and the greedy placer needs the participants.
+    const afterMap = new Map<string, string[]>();
+    for (const d of feedDependencies(all)) {
+      (afterMap.get(d.fixtureId) ?? afterMap.set(d.fixtureId, []).get(d.fixtureId)!).push(d.dependsOn);
+    }
+
+    // A feeder list ordered on the FEEDER's stable domain key. It used to sort
+    // on the raw feeder UUID, which no test could catch (the double-seed board
+    // is a round-robin, where every `after` is empty) — a bracket board would
+    // have shipped a reseed-unstable array inside the golden pack.
+    const liteById = new Map(all.map((f) => [f.id, f]));
+    const byFixtureOrder = (x: string, y: string): number => {
+      const a = liteById.get(x);
+      const b = liteById.get(y);
+      if (a === undefined || b === undefined) return cmp(x, y);
+      return (
+        a.round_no - b.round_no ||
+        a.seq_in_round - b.seq_in_round ||
+        cmp(a.ext_key ?? "", b.ext_key ?? "") ||
+        cmp(x, y)
+      );
+    };
+
+    // #396: who could stand in each fixture, advancers behind a null slot
+    // included. Computed ONCE, above the draft, so the greedy placer, the pack
+    // and the verifier all read the same map.
+    //
+    // Person ids are per-seed UUIDs and the pack's determinism test maps UUIDs
+    // to FIRST-SEEN placeholders, so a UUID-ordered array breaks it: order on
+    // the person's name, with the id only as a last-resort tie-break.
+    const personIdsInPlay = [...new Set([...people.values()].flat())];
+    const personNameById = new Map<string, string>();
+    if (personIdsInPlay.length > 0) {
+      const nameRows = await tx<{ id: string; full_name: string }[]>`
+        select id, full_name from persons where id in ${tx(personIdsInPlay)}`;
+      for (const r of nameRows) personNameById.set(r.id, r.full_name);
+    }
+    const personSortKey = (p: string): string => `${personNameById.get(p) ?? ""}|${p}`;
+
+    // Same order as `packMovable` below, so `participants` key order is the
+    // pack's own fixture order and survives a reseed of the same board.
+    const participantView: ParticipantFixture[] = [...movable]
+      .sort(
+        (a, b) =>
+          a.round_no - b.round_no ||
+          a.seq_in_round - b.seq_in_round ||
+          cmp(a.ext_key ?? "", b.ext_key ?? "") ||
+          cmp(a.id, b.id),
+      )
+      .map((f) => ({
+        id: f.id,
+        ext_key: f.ext_key,
+        home: f.home_entrant_id,
+        away: f.away_entrant_id,
+        feeds: { after: [...(afterMap.get(f.id) ?? [])].sort(byFixtureOrder) },
+      }));
+    const stripped = stripByes(participantView);
+    // ONE source of truth for `feeds.after`: the pack must not name a feeder the
+    // model cannot see, and the verifier must not be handed a dependency the
+    // placer ignored.
+    const afterByFixture = new Map(stripped.fixtures.map((f) => [f.id, [...f.feeds.after]]));
+    const participants = computeParticipants(stripped.fixtures, people, {
+      sortKey: personSortKey,
+    });
+    // `stripByes` names a stripped feeder by its raw id (it holds no fixture
+    // outside the view) and then sorts the strings, so two dangling feeders
+    // would order on their UUIDs. Substitute each feeder's ext_key — the stable
+    // domain key the plan asks these strings to carry — and re-sort on that. A
+    // feeder with no ext_key keeps its FULL uuid (never a fragment: the
+    // determinism test's redaction only matches whole uuids).
+    const extKeyById = new Map(all.map((f) => [f.id, f.ext_key]));
+    const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+    const assumptions = stripped.assumptions
+      .map((a) => a.replace(UUID_RE, (u) => extKeyById.get(u) ?? u))
+      .sort(cmp);
+
     // Draft: generate → greedy slotFixtures; refine → the prior proposal
     // verbatim; repair → the movable set's current persisted slots.
     let draft: PackAssignment[];
@@ -397,10 +487,10 @@ export async function buildSchedulePack(
         divisionId: f.division_id,
         ...(f.home_entrant_id !== null ? { home: f.home_entrant_id } : {}),
         ...(f.away_entrant_id !== null ? { away: f.away_entrant_id } : {}),
-        people: [
-          ...(f.home_entrant_id ? people.get(f.home_entrant_id) ?? [] : []),
-          ...(f.away_entrant_id ? people.get(f.away_entrant_id) ?? [] : []),
-        ],
+        // #396: participants, not named entrants — a TBD slot carries whoever
+        // can still advance into it, and the placer must respect that or it
+        // hands the referee a board the referee will reject.
+        people: participants[f.id] ?? [],
         // Pinned/scope-locked cards stay put — feed them to the solver as-is.
         ...(f.schedule_locked && f.scheduled_at !== null && f.court_label !== null
           ? { locked: { court: f.court_label, startAt: new Date(f.scheduled_at).getTime() } }
@@ -437,12 +527,6 @@ export async function buildSchedulePack(
     }
     draft.sort(byAssignment);
 
-    // feeds.after: the fixtures that must finish before each one starts.
-    const afterMap = new Map<string, string[]>();
-    for (const d of feedDependencies(all)) {
-      (afterMap.get(d.fixtureId) ?? afterMap.set(d.fixtureId, []).get(d.fixtureId)!).push(d.dependsOn);
-    }
-
     const packMovable: PackFixture[] = movable
       .map((f) => ({
         id: f.id,
@@ -454,7 +538,9 @@ export async function buildSchedulePack(
         away: f.away_entrant_id,
         feeds: {
           winner_to: f.winner_to_fixture,
-          after: [...(afterMap.get(f.id) ?? [])].sort(cmp),
+          // Bye/finished feeders already stripped, ordered on the feeder's
+          // domain key — see `afterByFixture` above.
+          after: [...(afterByFixture.get(f.id) ?? [])],
         },
         current: {
           at: f.scheduled_at !== null ? zonedIso(f.scheduled_at, tz) : null,
@@ -630,6 +716,8 @@ export async function buildSchedulePack(
       settings: settingsOut,
       entrants: packEntrants,
       people: packPeople,
+      participants,
+      assumptions,
       fixtures: { movable: packMovable, obstacles: packObstacles },
       draft,
       instruction: opts.instruction,
@@ -881,15 +969,9 @@ function structuralCheck(plan: AiSchedulePlan, movableIds: Set<string>, pack: Sc
 }
 
 /** Map the LLM proposal onto engine assignments (ISO → epoch ms). Entrants and
- *  shared people come from the pack so the verifier can catch overlaps. */
+ *  people come from the pack so the verifier can catch overlaps. */
 function toEngineAssignments(plan: AiSchedulePlan, pack: SchedulePack): Assignment[] {
   const fixtureById = new Map(pack.fixtures.movable.map((f) => [f.id, f]));
-  const personsByEntrant = new Map<string, string[]>();
-  for (const p of pack.people) {
-    for (const e of p.entrant_ids) {
-      (personsByEntrant.get(e) ?? personsByEntrant.set(e, []).get(e)!).push(p.person_id);
-    }
-  }
   const durMs = pack.settings.matchMinutes * MS_PER_MIN;
   return plan.assignments.map((a) => {
     const f = fixtureById.get(a.fixture_id);
@@ -901,7 +983,10 @@ function toEngineAssignments(plan: AiSchedulePlan, pack: SchedulePack): Assignme
       startAt,
       endAt: startAt + durMs,
       entrants,
-      people: entrants.flatMap((e) => personsByEntrant.get(e) ?? []),
+      // #396: participants, not the shared-player map — a TBD slot carries
+      // whoever can still advance into it, which is what every person rule
+      // needs and what `pack.people` (pairs sharing an entrant) never had.
+      people: pack.participants[a.fixture_id] ?? [],
     };
   });
 }

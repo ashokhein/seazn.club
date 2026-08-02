@@ -54,6 +54,11 @@ function makePack(overrides: Partial<SchedulePack> = {}): SchedulePack {
     },
     entrants: [],
     people: [],
+    // #396: keyed for every movable fixture. This pack has no persons at all,
+    // so every list is empty — the same `Assignment.people` the named-entrant
+    // derivation produced before participants existed.
+    participants: Object.fromEntries([F1, F2, F3, F4].map((id) => [id, [] as string[]])),
+    assumptions: [],
     fixtures: {
       movable: [F1, F2, F3, F4].map((id, i) => ({
         id,
