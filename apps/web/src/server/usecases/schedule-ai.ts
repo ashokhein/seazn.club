@@ -376,6 +376,41 @@ function byAssignment(a: PackAssignment, b: PackAssignment): number {
   return cmp(a.scheduled_at, b.scheduled_at) || cmp(a.court_label, b.court_label) || cmp(a.fixture_id, b.fixture_id);
 }
 
+/** The fields the pack's ONE fixture order reads. `PackFixture` satisfies it;
+ *  a `FixtureLite` gets there through {@link boardOrderOf}. */
+interface BoardOrdered {
+  round: number;
+  seq: number;
+  ext_key: string | null;
+  id: string;
+}
+
+const boardOrderOf = (f: FixtureLite): BoardOrdered => ({
+  round: f.round_no,
+  seq: f.seq_in_round,
+  ext_key: f.ext_key,
+  id: f.id,
+});
+
+/**
+ * THE fixture order for the whole pack — `participants` keys, `fixtures.movable`
+ * and every `feeds.after` list alike.
+ *
+ * It must stay a SINGLE comparator. `participants` serialises before `fixtures`,
+ * so its key order is what assigns every fixture-id placeholder in the golden
+ * pack; two comparators that merely happen to agree on today's board (they
+ * diverge as soon as `ext_key` order contradicts `id` order) would renumber the
+ * snapshot the first time a board pulled them apart.
+ */
+function byBoardOrder(a: BoardOrdered, b: BoardOrdered): number {
+  return (
+    a.round - b.round ||
+    a.seq - b.seq ||
+    cmp(a.ext_key ?? "", b.ext_key ?? "") ||
+    cmp(a.id, b.id)
+  );
+}
+
 /**
  * Build the deterministic Phase A context pack for a division.
  *
@@ -498,28 +533,18 @@ export async function buildSchedulePack(
       const a = liteById.get(x);
       const b = liteById.get(y);
       if (a === undefined || b === undefined) return cmp(x, y);
-      return (
-        a.round_no - b.round_no ||
-        a.seq_in_round - b.seq_in_round ||
-        cmp(a.ext_key ?? "", b.ext_key ?? "") ||
-        cmp(x, y)
-      );
+      return byBoardOrder(boardOrderOf(a), boardOrderOf(b));
     };
 
     // #396: who could stand in each fixture, advancers behind a null slot
     // included. Computed ONCE, above the draft, so the greedy placer, the pack
     // and the verifier all read the same map.
     //
-    // Same order as `packMovable` below, so `participants` key order is the
-    // pack's own fixture order and survives a reseed of the same board.
+    // The SAME comparator `packMovable` uses (`byBoardOrder`), so `participants`
+    // key order is the pack's own fixture order and survives a reseed of the
+    // same board.
     const participantView: ParticipantFixture[] = [...movable]
-      .sort(
-        (a, b) =>
-          a.round_no - b.round_no ||
-          a.seq_in_round - b.seq_in_round ||
-          cmp(a.ext_key ?? "", b.ext_key ?? "") ||
-          cmp(a.id, b.id),
-      )
+      .sort((a, b) => byBoardOrder(boardOrderOf(a), boardOrderOf(b)))
       .map((f) => ({
         id: f.id,
         ext_key: f.ext_key,
@@ -695,13 +720,8 @@ export async function buildSchedulePack(
         },
         pinned: f.schedule_locked,
       }))
-      .sort(
-        (a, b) =>
-          a.round - b.round ||
-          a.seq - b.seq ||
-          cmp(a.ext_key ?? "", b.ext_key ?? "") ||
-          cmp(a.id, b.id),
-      );
+      // Same comparator as `participantView` above — see `byBoardOrder`.
+      .sort(byBoardOrder);
 
     const packObstacles: PackObstacle[] = [
       ...obstacleFixtures.map((f) => {

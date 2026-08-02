@@ -463,6 +463,40 @@ async function seedNullExtKeyDanglingFeeders(): Promise<{
 }
 
 /**
+ * Two movable fixtures that TIE on (round_no, seq_in_round) and whose `ext_key`
+ * order contradicts their raw-UUID order. The only board shape on which the
+ * pack's fixture comparator and its `participants` key comparator can disagree.
+ */
+async function seedTiedSeqBoard(): Promise<{
+  auth: AuthCtx;
+  divisionId: string;
+  extA: string;
+  extB: string;
+}> {
+  const { auth, divisionId, stageId } = await seedKoDivision("Tied");
+  await createEntrants(
+    auth,
+    divisionId,
+    Array.from({ length: 4 }, (_, i) => ({
+      kind: "individual" as const, display_name: `T${i + 1}`, seed: i + 1, members: [],
+    })),
+  );
+  const ents = await sql<{ id: string }[]>`
+    select id from entrants where division_id = ${divisionId} order by seed`;
+  const ids = { "ext-a": uuidLeading("f"), "ext-b": uuidLeading("0") };
+  let i = 0;
+  for (const [extKey, id] of Object.entries(ids)) {
+    await sql`
+      insert into fixtures (id, stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status,
+                            home_entrant_id, away_entrant_id)
+      values (${id}, ${stageId}, ${divisionId}, ${auth.orgId}, 1, 0, ${extKey}, 'scheduled',
+              ${ents[i * 2]!.id}, ${ents[i * 2 + 1]!.id})`;
+    i++;
+  }
+  return { auth, divisionId, extA: ids["ext-a"], extB: ids["ext-b"] };
+}
+
+/**
  * `n` bracket fixtures, heap-shaped: fixture g feeds fixture floor(g / 2), so
  * fixture 1 is the final and every leaf carries two entrants with one person
  * each. The worst realistic case for participant-set size — the root's set is
@@ -741,6 +775,29 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
     expect(at(semiB)).toBe(1);
     // The premise: a text sort would invert them.
     expect(semiA > semiB).toBe(true);
+  });
+
+  it("participants key order IS fixtures.movable order, not merely the same set", async () => {
+    // `participants` serialises BEFORE `fixtures`, so its key order is what
+    // assigns every fixture-id placeholder in the golden pack. Two comparators
+    // that merely happen to agree on today's board would silently renumber that
+    // snapshot the first time a board pulled them apart — so the two lists are
+    // pinned in ORDER, on a board built to pull them apart: `ext-a`/`ext-b` tie
+    // on (round_no, seq_in_round) and their raw UUIDs sort the other way, so any
+    // call site that drops `ext_key` (or keeps only the id) diverges here.
+    const tied = await seedTiedSeqBoard();
+    const rr = await seedRrBoard();
+    const { pack } = await buildSchedulePack(tied.auth, tied.divisionId, {
+      mode: "generate", instruction: "Tied seq.",
+    });
+    expect(pack.fixtures.movable.map((f) => f.ext_key)).toEqual(["ext-a", "ext-b"]);
+    expect(tied.extA > tied.extB).toBe(true); // …while the UUIDs sort the other way
+    expect(Object.keys(pack.participants)).toEqual(pack.fixtures.movable.map((f) => f.id));
+
+    const { pack: rrPack } = await buildSchedulePack(rr.auth, rr.divisionId, {
+      mode: "generate", instruction: "Finish by 6pm.",
+    });
+    expect(Object.keys(rrPack.participants)).toEqual(rrPack.fixtures.movable.map((f) => f.id));
   });
 
   it("participants stay within the token budget on a 500-fixture bracket", async () => {
