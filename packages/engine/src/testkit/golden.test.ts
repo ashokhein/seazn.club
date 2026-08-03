@@ -15,11 +15,13 @@ import { compareSemver } from "../sport/registry.ts";
 import { builtinModules } from "../sports/index.ts";
 import {
   MIN_EVENTS,
+  REBASELINE_GOLDEN,
   UPDATE_GOLDEN,
   buildCorpus,
   eventTypesIn,
   payloadParseFailures,
   readCorpus,
+  rebaselineCorpus,
   recomputeStream,
   sportPayloads,
   stateMismatch,
@@ -33,6 +35,20 @@ if (UPDATE_GOLDEN) {
         const corpus = buildCorpus(module);
         writeCorpus(corpus);
         expect(corpus.streams.length).toBeGreaterThan(0);
+      });
+    }
+  });
+} else if (REBASELINE_GOLDEN) {
+  // Same ledger, recomputed fold (#429). Every recorded EVENT survives; only
+  // the derived states/outcome/summary/deltas move, so the commit diff is the
+  // behaviour change itself and nothing hides inside a fresh generator walk.
+  describe("golden corpus re-baseline (REBASELINE_GOLDEN=1)", () => {
+    for (const module of builtinModules) {
+      it(`re-folds ${module.key} without touching its events`, () => {
+        const before = readCorpus(module.key);
+        const after = rebaselineCorpus(module, before);
+        expect(after.streams.map((s) => s.events)).toEqual(before.streams.map((s) => s.events));
+        writeCorpus(after);
       });
     }
   });

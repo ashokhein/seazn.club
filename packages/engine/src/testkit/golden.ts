@@ -235,6 +235,50 @@ export function buildCorpus(module: AnySportModule): GoldenCorpus {
 
 export const UPDATE_GOLDEN = process.env.UPDATE_GOLDEN === "1";
 
+/** Refresh the DERIVED half of a corpus — states, outcome, summary, deltas —
+ *  leaving every recorded event byte-identical (#429: a re-baseline is
+ *  legitimate when it is deliberate, isolated in its own commit, and reviewed
+ *  as a state diff; a silent one is not). This is the only honest way to land
+ *  an intended fold change on a frozen corpus: the ledger is untouched, so the
+ *  diff IS the behaviour change and nothing hides inside a fresh generator
+ *  walk. `UPDATE_GOLDEN=1` re-records the events too and must stay reserved
+ *  for a corpus being built from nothing. */
+export const REBASELINE_GOLDEN = process.env.REBASELINE_GOLDEN === "1";
+
+export function rebaselineCorpus(module: AnySportModule, existing: GoldenCorpus): GoldenCorpus {
+  return {
+    ...existing,
+    streams: existing.streams.map((stream) => {
+      const fresh = recomputeStream(module, existing.configs[stream.config], stream.events);
+      return {
+        ...stream,
+        ...fresh,
+        states: fresh.states.map((state, i) => keepRecordedCfg(state, stream.states[i] as string)),
+      };
+    }),
+  };
+}
+
+/** A re-folded state carrying the cfg the corpus ORIGINALLY recorded.
+ *  `cfg` is compared as a subset precisely so an additive config knob cannot
+ *  red a corpus it cannot affect; letting a re-baseline bake the new key in
+ *  would quietly convert that tolerance into a frozen expectation, and would
+ *  put an unrelated config change into the same diff as the fold change the
+ *  re-baseline exists to show. Replacing a value leaves key order untouched. */
+function keepRecordedCfg(recomputed: string, recorded: string): string {
+  let fresh: unknown;
+  let old: unknown;
+  try {
+    fresh = JSON.parse(recomputed);
+    old = JSON.parse(recorded);
+  } catch {
+    return recomputed;
+  }
+  if (!isPlainObject(fresh) || !isPlainObject(old)) return recomputed;
+  if (!Object.hasOwn(fresh, "cfg") || !Object.hasOwn(old, "cfg")) return recomputed;
+  return JSON.stringify({ ...fresh, cfg: old.cfg });
+}
+
 export function readCorpus(key: string): GoldenCorpus {
   return JSON.parse(readFileSync(goldenPath(key), "utf8")) as GoldenCorpus;
 }

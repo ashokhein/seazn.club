@@ -121,9 +121,26 @@ describe("W4 audit — per-goal attribution log", () => {
   });
 
   it("a coarse goal carrying no attribution leaves goalLog absent (golden guard)", () => {
-    const state = foldIce([start, iceGoal(IH, { kind: "pp", assists: [a1] })]);
+    const state = foldIce([start, iceGoal(IH, { kind: "pp" })]);
     expect(state.goalLog).toBeUndefined();
     expect(Object.keys(JSON.parse(JSON.stringify(state)))).not.toContain("goalLog");
+  });
+
+  // W4 review item 7 — the log's trigger was `person || clockRef || emptyNet`,
+  // so an unattributed goal that named its ASSISTS produced no entry at all
+  // and the assists vanished from the state-side scoresheet. They still fed
+  // the player metrics off the ledger, which is what hid it. An assist is
+  // attribution; if it is recorded, the goal is a logged goal.
+  it("logs a goal attributed only by its assists", () => {
+    const state = foldIce([start, iceGoal(IH, { assists: [a1] })]);
+    expect(state.goalLog).toEqual([
+      { phase: "P1", by: "home", credited: "home", assists: [a1] },
+    ]);
+  });
+
+  it("keeps the assists on the log when the scorer is named too", () => {
+    const state = foldIce([start, iceGoal(IH, { person: scorer, assists: [a1] })]);
+    expect(state.goalLog?.[0]?.assists).toEqual([a1]);
   });
 
   it("surfaces the goal log in summary.detail only once it exists", () => {

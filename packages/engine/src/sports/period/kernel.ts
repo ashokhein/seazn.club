@@ -444,10 +444,15 @@ function applyGoal(state: PeriodState, payload: z.infer<typeof PeriodGoal>): Per
   // W4 — attributed goals join the log. The trigger is scoresheet DETAIL, not
   // the mere presence of a goal: a side-only goal is fully described by the
   // counters above, and gating on detail is what keeps pre-W4 folds identical.
+  // W4 review item 7 — `assists` is attribution too. Leaving it out of the
+  // trigger meant a goal recorded as "assisted by A1, scorer not named" logged
+  // nothing, so the state-side scoresheet lost the assists entirely; they only
+  // survived in the player metrics, which read the ledger.
   if (
     payload.person !== undefined ||
     payload.clockRef !== undefined ||
-    payload.emptyNet !== undefined
+    payload.emptyNet !== undefined ||
+    (payload.assists !== undefined && payload.assists.length > 0)
   ) {
     const entry: GoalLogEntry = {
       phase: payload.period ?? next.phase,
