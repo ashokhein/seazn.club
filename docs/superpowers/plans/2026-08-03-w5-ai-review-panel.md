@@ -865,6 +865,22 @@ npm test --workspace apps/web -- --reporter=json --outputFile=/tmp/w5-t6.json
 git add -A && git commit -m "feat(board): compiled-instruction preview with a confirm gate (#400)"
 ```
 
+### Task 6b — carried from the Task 6 review (`5302e723`..`b8d49ffb`, verdict *fix-then-ship*)
+
+**Sequenced after Task 7**, because both touch the four dictionaries. The headline guarantee was verified sound and is not in question: `canRun` lives in the reducer, is enforced again at the request site, `PREVIEW_DISMISS` fires no request and keeps state, `RUN_START` burns the id, both switches fail to compile on a seventh variant, and the two `assumptions` are not conflated.
+
+- [ ] **The failed-preview copy states the opposite of what happens.** `board.ai.preview.failed.hint` promises "the architect will read it, and nothing will check it", but with no `as_preference` wire field the fallback posts a run with no `preview_id`, and `schedule-ai.ts:2319` reads `confirmed === null` as compile-inline. Stage 1 runs again, and a retry that succeeds produces **hard constraints the organiser never saw and never approved** — the exact failure this wave exists to close, surviving on the one path where the compiler choked.
+
+  **Ruling: reword now, fix properly later.** Reword all four locales to promise only what is true — we read it again, and anything we can enforce, we will. Do **not** widen the server contract from a client task: `src/server/**` is settled and reviewed. **File a follow-up issue** for an `as_preference` request field so the fallback can be both honest *and* safe, and reference it from the reworded key's comment. Blocking the run outright on a failed compile was considered and rejected — it strands the organiser whenever the compiler chokes, which is worse than an honest fallback.
+
+- [ ] **English prose on the signature element.** `PER DAY` / `NOT BEFORE` / `NOT AFTER` / `WEEKDAY` (`ai-instruction-describe.ts:62-81`) and `PREFER` (`ai-instruction-preview.tsx:170`) are hardcoded English. The file header invokes the `CAP`/`FN`/`JR` precedent, but those are *abbreviations* and these are English words — a French organiser reads four of them on the element the plan calls the signature. Use locale-neutral forms (`MAX/DAY`, `≥ TIME`, `≤ TIME`, `DAY`) to keep the "same token in every locale" property without shipping English prose. `PREFER` is not one of the engine's six kinds at all, so the precedent does not reach it even in principle — give it a dictionary key or reuse the `~` glyph idiom from the assumptions rows.
+
+- [ ] **A dead confirm button.** `ai-instruction-preview.tsx:96,274` renders the confirm whenever `failed === false`, but the schema permits `failed: false` with `preview_id` absent; `canRun` is then false and the button does nothing with no feedback. Gate the confirm on `preview.preview_id`, or treat a missing id as the failed layout.
+
+- [ ] **The in-callback gate has no test.** Deleting the guard at `ai-console.tsx:588` leaves all 47 tests green — the reducer suite never calls `run`, so only the JSX path is pinned. Add a fetch-spy test that dispatches `SET_INSTRUCTION`, calls the confirm, and asserts **zero POSTs**. This is the wave's headline guarantee; it should not rest on an untested line.
+
+- [ ] **Minor** — `preview()` at `ai-console.tsx:548` guards on length/busy/loading but not `scheduleFrozen`; only the button's `disabled` attribute stops it, and a `disabled` prop is not a guarantee. Thread the prop or accept it explicitly. Also unexport `constraintScopeClause` (`ai-instruction-describe.ts:142`) until Task 7 needs it.
+
 ---
 
 ## Task 7 — The same gate on the joint console
