@@ -336,11 +336,23 @@ export interface RunMeterStamp {
   /** Joint runs only (#350): the per-division breakdown behind `credits`. */
   divisions?: { id: string; rung: Rung; predicted_rung: Rung; underfunded: boolean }[];
   discount?: number;
+  /** The stage-1 instruction compile (#398). It runs OUTSIDE `spendCredit` and
+   *  therefore outside `budget`, so it needs its own line or the spend is
+   *  invisible — the exact reconciliation complaint #387 makes. Deliberately NOT
+   *  folded into `spent_tokens`: that number must keep meaning "what the credit
+   *  bought", or reconciliation double-counts. Absent when no compile ran. */
+  parse_tokens?: number;
+  parse_failed?: boolean;
 }
 
 /** The `schedule.ai_generated` / `ai_failed` payload fragment and the API
  *  response fragment, built once so the call sites cannot drift. */
-export function meterStamp(quote: Quote, meter: TokenMeter): RunMeterStamp {
+export function meterStamp(
+  quote: Quote,
+  meter: TokenMeter,
+  /** The unpriced pre-flight compile (#398). Omit when none ran. */
+  parse?: { tokens: number; failed: boolean },
+): RunMeterStamp {
   const base = {
     credits: quote.credits,
     budget: quote.budget,
@@ -348,6 +360,7 @@ export function meterStamp(quote: Quote, meter: TokenMeter): RunMeterStamp {
     underfunded: quote.underfunded,
     stopped_on_budget: meter.stoppedOnBudget,
     est_tokens: quote.estTokens,
+    ...(parse !== undefined ? { parse_tokens: parse.tokens, parse_failed: parse.failed } : {}),
   };
   if (quote.lines.length === 1) {
     const only = quote.lines[0]!;

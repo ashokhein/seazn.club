@@ -73,7 +73,7 @@ import {
   type PackSettings,
   type SchedulePack,
 } from "./schedule-ai";
-import { AiSchedulePlan, JOINT_RULES, SYSTEM_PROMPT } from "./schedule-ai-prompt";
+import { AiSchedulePlan, INSTRUCTION_RULES, JOINT_RULES, SYSTEM_PROMPT } from "./schedule-ai-prompt";
 import { resolveProvider, selectProvider, type ProviderName } from "@/server/ai/select-provider";
 import {
   AiProviderError,
@@ -971,7 +971,7 @@ export async function buildCompetitionPack(
  *  be edited; JOINT_RULES is a separate constant appended to it here — this is
  *  its ONLY consumer, so this concatenation is what puts Task 2's rules on the
  *  wire. */
-export const JOINT_SYSTEM_PROMPT = `${SYSTEM_PROMPT}\n\n${JOINT_RULES}`;
+export const JOINT_SYSTEM_PROMPT = `${SYSTEM_PROMPT}\n\n${INSTRUCTION_RULES}\n\n${JOINT_RULES}`;
 
 export interface CompetitionPlanResult {
   /** Each entry carries the division the server resolved it to — the model is

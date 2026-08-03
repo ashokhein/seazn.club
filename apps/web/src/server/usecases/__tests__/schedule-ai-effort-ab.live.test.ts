@@ -255,6 +255,7 @@ function teamsPack(): { pack: SchedulePack; movable: Set<string> } {
     },
     window: { start: "2026-08-01T00:00:00+01:00", end: "2026-08-13T23:59:59+01:00" },
     sessionHours: { start: "08:00", end: "22:00" },
+    parsed: { hard: [], soft: [], unparsed: [] },
     division: {
       id: "ab-teams",
       name: "Saturday League",
@@ -335,6 +336,7 @@ function individualsPack(): { pack: SchedulePack; movable: Set<string> } {
     },
     window: { start: "2026-08-01T00:00:00+01:00", end: "2026-08-13T23:59:59+01:00" },
     sessionHours: { start: "08:00", end: "22:00" },
+    parsed: { hard: [], soft: [], unparsed: [] },
     division: {
       id: "ab-individuals",
       name: "Club Championship",
@@ -473,6 +475,7 @@ function bracketPack(): { pack: SchedulePack; movable: Set<string> } {
     },
     window: { start: "2026-08-01T00:00:00+01:00", end: "2026-08-13T23:59:59+01:00" },
     sessionHours: { start: "08:00", end: "22:00" },
+    parsed: { hard: [], soft: [], unparsed: [] },
     division: {
       id: "ab-bracket",
       name: "Knockout Cup",

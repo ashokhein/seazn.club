@@ -266,7 +266,12 @@ export interface ResolvedParse {
   /** Every interpretive choice made here, in the organiser's language. The
    *  organiser should SEE the reading we picked rather than suffer it. */
   assumptions: string[];
-  window: { start: string; end: string };
+  /** The window the instruction stated, as epoch ms, or null when it stated
+   *  none. Epoch ms rather than ISO on purpose: the pack builder owns window
+   *  RENDERING (it writes zoned offsets, not "Z"), and two renderers would
+   *  drift. `to` is the last whole second of the final day, matching what
+   *  `windowBounds` expects. */
+  windowMs: { from: number; to: number } | null;
 }
 
 const resolveDateRef = (ref: DateRef, clock: Clock): string =>
@@ -290,17 +295,16 @@ const MS_PER_DAY = 86_400_000;
 export function resolveParsed(
   raw: RawParsed | null,
   clock: Clock,
-  defaultWindow: { start: string; end: string },
   tz: string,
   hints: { fixtureCount?: number } = {},
 ): ResolvedParse {
   const assumptions: string[] = [];
   const hard: HardConstraint[] = [];
   if (raw === null) {
-    return { hard, soft: [], unparsed: [], assumptions, window: defaultWindow };
+    return { hard, soft: [], unparsed: [], assumptions, windowMs: null };
   }
 
-  let window = defaultWindow;
+  let windowMs: { from: number; to: number } | null = null;
   let ymd: { start: string; end: string } | null = null;
 
   // The end is the last whole SECOND of the final day — the shape W2's pack
@@ -309,9 +313,9 @@ export function resolveParsed(
   // or 25 hours long.
   const setWindow = (start: string, end: string): void => {
     ymd = { start, end };
-    window = {
-      start: new Date(zonedTimeToUtc(start, "00:00", tz)).toISOString(),
-      end: new Date(zonedTimeToUtc(ymdAddDays(end, 1), "00:00", tz) - 1_000).toISOString(),
+    windowMs = {
+      from: zonedTimeToUtc(start, "00:00", tz),
+      to: zonedTimeToUtc(ymdAddDays(end, 1), "00:00", tz) - 1_000,
     };
   };
 
@@ -361,5 +365,5 @@ export function resolveParsed(
     }
   }
 
-  return { hard, soft: raw.soft, unparsed: raw.unparsed, assumptions, window };
+  return { hard, soft: raw.soft, unparsed: raw.unparsed, assumptions, windowMs };
 }

@@ -19,7 +19,6 @@ const TZ = "Europe/London";
 // is 2026-08-07 — both resolved by the clock, never by the model.
 const NOW = Date.parse("2026-08-03T09:00:00Z");
 const CLOCK = makeClock(NOW, TZ);
-const WEEK = { start: "2026-08-03T00:00:00.000Z", end: "2026-08-09T22:59:59.000Z" };
 const CTX = { divisions: [{ id: "d1", name: "Open Singles" }], pools: [], entrants: [] };
 
 /** A provider that answers with a scripted body per call. `null` models the
@@ -204,33 +203,37 @@ describe("parseInstruction", () => {
 
 describe("resolveParsed", () => {
   it("resolves tomorrow..FRI against the clock, not the model", () => {
-    const r = resolveParsed(A_OUT, CLOCK, WEEK, TZ, { fixtureCount: 4 });
-    // 2026-08-04 00:00 London is 2026-08-03T23:00Z (BST).
-    expect(r.window.start).toBe("2026-08-03T23:00:00.000Z");
+    const r = resolveParsed(A_OUT, CLOCK, TZ, { fixtureCount: 4 });
+    // 2026-08-04 00:00 London is 2026-08-03T23:00Z (BST) — a wall-clock day
+    // boundary in the org zone, never startMs + 86_400_000.
+    expect(new Date(r.windowMs!.from).toISOString()).toBe("2026-08-03T23:00:00.000Z");
+    // Inclusive end: the last whole second of Friday 2026-08-07.
+    expect(new Date(r.windowMs!.to).toISOString()).toBe("2026-08-07T22:59:59.000Z");
     expect(r.assumptions.some((a) => a.includes("2026-08-04") && a.includes("2026-08-07"))).toBe(true);
   });
 
   it("does NOT emit the window as a hard constraint — it IS the pack window", () => {
-    const r = resolveParsed(A_OUT, CLOCK, WEEK, TZ, { fixtureCount: 4 });
+    const r = resolveParsed(A_OUT, CLOCK, TZ, { fixtureCount: 4 });
+    expect(r.windowMs).not.toBeNull();
     expect(r.hard.some((h) => (h as { type: string }).type === "window")).toBe(false);
     expect(r.hard.map((h) => h.type).sort()).toEqual(["max_fixtures_per_day", "min_rest_minutes"]);
   });
 
   it("bumps an infeasible window a week and SAYS SO", () => {
     // 2026-08-04..2026-08-07 is four days; at 2/day that holds 8, not 13.
-    const r = resolveParsed(A_OUT, CLOCK, WEEK, TZ, { fixtureCount: 13 });
+    const r = resolveParsed(A_OUT, CLOCK, TZ, { fixtureCount: 13 });
     expect(r.assumptions.some((a) => a.includes("13") && a.includes("2026-08-14"))).toBe(true);
-    expect(r.window.end > "2026-08-13").toBe(true);
+    expect(new Date(r.windowMs!.to).toISOString()).toBe("2026-08-14T22:59:59.000Z");
   });
 
   it("does NOT bump a window that already fits", () => {
-    const r = resolveParsed(A_OUT, CLOCK, WEEK, TZ, { fixtureCount: 8 });
+    const r = resolveParsed(A_OUT, CLOCK, TZ, { fixtureCount: 8 });
     expect(r.assumptions.some((a) => a.includes("following week"))).toBe(false);
   });
 
   it("does NOT bump when no per-day cap bounds the days", () => {
     const noCap: RawParsed = { ...A_OUT, hard: A_OUT.hard.filter((h) => h.type !== "max_fixtures_per_day") };
-    const r = resolveParsed(noCap, CLOCK, WEEK, TZ, { fixtureCount: 500 });
+    const r = resolveParsed(noCap, CLOCK, TZ, { fixtureCount: 500 });
     expect(r.assumptions.some((a) => a.includes("following week"))).toBe(false);
   });
 
@@ -247,7 +250,7 @@ describe("resolveParsed", () => {
       soft: [],
       unparsed: [],
     };
-    const r = resolveParsed(raw, CLOCK, WEEK, TZ);
+    const r = resolveParsed(raw, CLOCK, TZ);
     expect(r.assumptions.some((a) => a.includes("following week"))).toBe(true);
   });
 
@@ -264,44 +267,49 @@ describe("resolveParsed", () => {
       soft: [],
       unparsed: [],
     };
-    const r = resolveParsed(raw, CLOCK, WEEK, TZ);
+    const r = resolveParsed(raw, CLOCK, TZ);
     expect(r.hard[0]).toMatchObject({ type: "fixture_on_date", date: "2026-08-07" });
   });
 
   it("records the weekday reading it made for a weekday target", () => {
-    const r = resolveParsed(B_OUT, CLOCK, WEEK, TZ);
+    const r = resolveParsed(B_OUT, CLOCK, TZ);
     expect(r.assumptions.some((a) => a.includes("FRI") && a.includes("2026-08-07"))).toBe(true);
+  });
+
+  it("states no window when the instruction stated none", () => {
+    const raw: RawParsed = { hard: [], soft: [], unparsed: [] };
+    expect(resolveParsed(raw, CLOCK, TZ).windowMs).toBeNull();
   });
 
   it("keeps uncompilable wording verbatim and invents no rule from it", () => {
     const raw: RawParsed = { hard: [], soft: [], unparsed: ["keep the mornings relaxed pls"] };
-    const r = resolveParsed(raw, CLOCK, WEEK, TZ);
+    const r = resolveParsed(raw, CLOCK, TZ);
     expect(r.unparsed).toEqual(["keep the mornings relaxed pls"]);
     expect(r.hard).toEqual([]);
   });
 
   it("carries soft preferences through untouched", () => {
     const raw: RawParsed = { hard: [], soft: [{ note: "finals late", weight: 2 }], unparsed: [] };
-    expect(resolveParsed(raw, CLOCK, WEEK, TZ).soft).toEqual([{ note: "finals late", weight: 2 }]);
+    expect(resolveParsed(raw, CLOCK, TZ).soft).toEqual([{ note: "finals late", weight: 2 }]);
   });
 
-  it("falls back to the default window and assumes nothing when the parse failed", () => {
-    const r = resolveParsed(null, CLOCK, WEEK, TZ);
-    expect(r.window).toEqual(WEEK);
+  it("states no window and assumes nothing when the parse failed", () => {
+    const r = resolveParsed(null, CLOCK, TZ);
+    expect(r.windowMs).toBeNull();
     expect(r.hard).toEqual([]);
     expect(r.assumptions).toEqual([]);
     expect(r.unparsed).toEqual([]);
   });
 
   it("every resolved constraint is a valid engine HardConstraint", () => {
-    const r = resolveParsed(A_OUT, CLOCK, WEEK, TZ, { fixtureCount: 4 });
+    const r = resolveParsed(A_OUT, CLOCK, TZ, { fixtureCount: 4 });
     expect(r.hard.length).toBeGreaterThan(0);
     for (const h of r.hard) expect(HardConstraint.safeParse(h).success).toBe(true);
   });
 
   it("is deterministic — same inputs, byte-identical output", () => {
-    const a = resolveParsed(A_OUT, CLOCK, WEEK, TZ, { fixtureCount: 13 });
-    const b = resolveParsed(A_OUT, CLOCK, WEEK, TZ, { fixtureCount: 13 });
+    const a = resolveParsed(A_OUT, CLOCK, TZ, { fixtureCount: 13 });
+    const b = resolveParsed(A_OUT, CLOCK, TZ, { fixtureCount: 13 });
     expect(a).toEqual(b);
   });
 });

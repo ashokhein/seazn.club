@@ -4,6 +4,10 @@
 //
 // NOT server-only: pure Zod, shared with the OpenAPI generator script.
 import { z } from "zod";
+// #398: durable division rules speak the SAME vocabulary a compiled instruction
+// does, so the wire schema reuses the engine's zod rather than restating it —
+// a second declaration is a second thing to drift.
+import { HardConstraint } from "@seazn/engine/scheduling";
 
 // ---------------------------------------------------------------------------
 // Common
@@ -711,6 +715,16 @@ export const ScheduleConfig = z.object({
       fieldFairness: z.enum(["off", "balance", "rotate"]).default("off"),
       parallelism: z.enum(["block", "mixed"]).default("mixed"),
       crossPersonClash: z.enum(["warn", "hard"]).default("warn"),
+      /** Durable division rules (#398) in the SAME vocabulary a compiled
+       *  instruction produces — per-day caps, weekday and date targets,
+       *  earliest/latest starts, minimum rest. They merge with the compiled
+       *  instruction into one stream at `verifyConfig`, so a hard rule has
+       *  exactly one home and one enforcement.
+       *
+       *  Optional, never defaulted: this type is built as an object literal at
+       *  dozens of call sites, and a defaulted field is required in the zod
+       *  OUTPUT type. Read it as `constraints?.hard ?? []`. */
+      hard: z.array(HardConstraint).max(200).optional(),
     })
     .optional(),
 });

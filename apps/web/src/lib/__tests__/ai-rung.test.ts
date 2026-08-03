@@ -465,6 +465,38 @@ describe("meterStamp", () => {
     });
   });
 
+  // #398/#387: the stage-1 instruction compile runs OUTSIDE spendCredit, so its
+  // spend sits outside `budget`. Without its own line it is invisible in the
+  // ledger — which is precisely the reconciliation gap #387 reports.
+  it("carries the pre-flight parse on its own line", () => {
+    restore = withCleanEnv(BUDGET_ENV);
+    const q = quoteRun([sized("d1", 400, 1)], W);
+    const m = createTokenMeter(q.budget);
+    m.add(12_345);
+    const stamp = meterStamp(q, m, { tokens: 320, failed: false });
+    expect(stamp.parse_tokens).toBe(320);
+    expect(stamp.parse_failed).toBe(false);
+    // NOT folded into spent_tokens: that number must keep meaning "what the
+    // credit bought", or reconciliation double-counts the parse.
+    expect(stamp.spent_tokens).toBe(12_345);
+    expect(stamp.budget).toBe(32_000);
+  });
+
+  it("records a failed compile as spend that still happened", () => {
+    restore = withCleanEnv(BUDGET_ENV);
+    const q = quoteRun([sized("d1", 400, 1)], W);
+    const stamp = meterStamp(q, createTokenMeter(q.budget), { tokens: 240, failed: true });
+    expect(stamp).toMatchObject({ parse_tokens: 240, parse_failed: true });
+  });
+
+  it("omits the parse line entirely when no compile ran", () => {
+    restore = withCleanEnv(BUDGET_ENV);
+    const q = quoteRun([sized("d1", 400, 1)], W);
+    const stamp = meterStamp(q, createTokenMeter(q.budget));
+    expect(stamp.parse_tokens).toBeUndefined();
+    expect(stamp.parse_failed).toBeUndefined();
+  });
+
   it("emits the per-division breakdown and discount for a joint run", () => {
     restore = withCleanEnv(BUDGET_ENV);
     const q = quoteRun([sized("a", 10), sized("b", 400)], W);
