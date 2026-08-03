@@ -156,7 +156,12 @@ export const PeriodGoal = z.strictObject({
   person: PersonId.optional(),
   assists: z.array(PersonId).max(2).optional(),
   kind: z.string().min(1).optional(), // validated against cfg.goalKinds
-  period: z.string().min(1).optional(), // informational (coarse entry)
+  period: z.string().min(1).optional(), // the scorer's own period label for the log
+  // W4 (#407) — empty-net goal. Orthogonal to `kind`: IIHF situation codes
+  // stack (an SH-EN goal is both), and FIH sides also pull the keeper for an
+  // extra outfielder, so this rides beside the kind rather than inside it.
+  emptyNet: z.boolean().optional(),
+  clockRef: z.string().min(1).optional(), // scorer's clock note ("12:41"), display only
 });
 export const PeriodAdvance = z.strictObject({
   to: z.string().min(1), // must match the kernel's expected next phase
@@ -166,6 +171,11 @@ export const PeriodSuspensionStart = z.strictObject({
   person: PersonId.optional(),
   class: z.string().min(1),
   clockRef: z.string().min(1).optional(), // scorer's clock note, display only
+  // W4 (#407) — the rest of an IIHF penalty row / FIH card row. See
+  // SuspensionDetail in ./suspensions.ts for what each one is.
+  reason: z.string().min(1).optional(),
+  servedBy: PersonId.optional(),
+  minutes: z.number().int().positive().optional(),
 });
 export const PeriodSuspensionEnd = z.strictObject({
   by: EntrantId,
@@ -176,6 +186,8 @@ export const PeriodShootoutAttempt = z.strictObject({
   by: EntrantId,
   person: PersonId.optional(),
   scored: z.boolean(),
+  // W4 (#407) — the keeper facing the attempt; both sheets name him.
+  goalkeeper: PersonId.optional(),
   meta: z
     .strictObject({
       clockSeconds: z.number().int().positive().optional(), // FIH 8 s attempt
@@ -184,12 +196,32 @@ export const PeriodShootoutAttempt = z.strictObject({
     .optional(),
 });
 
+// W4 (#407) — a set piece AWARDED, converted or not: the FIH match record's
+// penalty-corner and penalty-stroke counts, and the IIHF penalty shot that the
+// goal kinds can only ever show once it beat the keeper. `kind` is validated
+// against the preset's setPieceKinds, so a sport that declares none rejects the
+// event outright.
+export const PeriodSetPiece = z.strictObject({
+  by: EntrantId, // the side awarded it
+  kind: z.string().min(1), // 'pc' | 'stroke' (FIH) · 'ps' (IIHF)
+  person: PersonId.optional(), // the taker
+  goalkeeper: PersonId.optional(), // the keeper defending it
+  converted: z.boolean().optional(), // true → a goal event carries the score
+  clockRef: z.string().min(1).optional(),
+});
+
+// NOTE (union order): branches are told apart structurally and the first match
+// wins, so every new branch goes LAST — a set-piece payload is a structural
+// subset of a goal and must never be able to displace one. `apply` dispatches
+// on the ENVELOPE type, so the union only has to stay a superset of every
+// legal payload; period-audit.test.ts pins both halves of that.
 export const PeriodEv = z.union([
   PeriodGoal,
   PeriodAdvance,
   PeriodSuspensionStart,
   PeriodSuspensionEnd,
   PeriodShootoutAttempt,
+  PeriodSetPiece,
 ]);
 export type PeriodEv = z.infer<typeof PeriodEv>;
 
@@ -205,6 +237,27 @@ export interface PeriodScore {
   away: number;
 }
 
+// W4 (#407) — one attributed goal as the scoresheet writes it. Appended only
+// when the goal names a person or carries scoresheet detail; a coarse goal
+// (side + kind only) adds nothing the counters do not already hold, and leaving
+// it out is what keeps `goalLog` ABSENT — and the frozen golden states
+// byte-identical — for streams recorded before this wave.
+export interface GoalLogEntry {
+  phase: string; // the scorer's `period`, else the phase the fold was in
+  by: Side; // the side whose player struck it
+  credited: Side; // differs from `by` for an own goal
+  person?: string;
+  assists?: string[]; // ordered: A1 then A2 (IIHF)
+  kind?: string;
+  emptyNet?: boolean;
+  clockRef?: string;
+}
+
+export interface SetPieceTally {
+  awarded: number;
+  converted: number;
+}
+
 export interface PeriodState {
   cfg: PeriodCfg;
   entrants: { home: string; away: string };
@@ -217,6 +270,11 @@ export interface PeriodState {
   shootout: { kicks: ShootoutKick[] } | null;
   outcome: MatchOutcome | null;
   replayFlagged: boolean;
+  /** W4 — attributed goals, in order. Absent until one goal carries detail. */
+  goalLog?: GoalLogEntry[];
+  /** W4 — set pieces awarded/converted per side per kind. Absent until one is
+   *  recorded. */
+  setPieces?: { home: Record<string, SetPieceTally>; away: Record<string, SetPieceTally> };
 }
 
 function opponent(side: Side): Side {
@@ -357,6 +415,28 @@ function applyGoal(state: PeriodState, payload: z.infer<typeof PeriodGoal>): Per
     const counts = { ...next.kindCounts[credited], [kind]: (next.kindCounts[credited][kind] ?? 0) + 1 };
     next = { ...next, kindCounts: { ...next.kindCounts, [credited]: counts } };
   }
+  // W4 — attributed goals join the log. The trigger is scoresheet DETAIL, not
+  // the mere presence of a goal: a side-only goal is fully described by the
+  // counters above, and gating on detail is what keeps pre-W4 folds identical.
+  if (
+    payload.person !== undefined ||
+    payload.clockRef !== undefined ||
+    payload.emptyNet !== undefined
+  ) {
+    const entry: GoalLogEntry = {
+      phase: payload.period ?? next.phase,
+      by,
+      credited,
+      ...(payload.person === undefined ? {} : { person: payload.person }),
+      ...(payload.assists === undefined || payload.assists.length === 0
+        ? {}
+        : { assists: payload.assists }),
+      ...(kind === undefined ? {} : { kind }),
+      ...(payload.emptyNet === undefined ? {} : { emptyNet: payload.emptyNet }),
+      ...(payload.clockRef === undefined ? {} : { clockRef: payload.clockRef }),
+    };
+    next = { ...next, goalLog: [...(next.goalLog ?? []), entry] };
+  }
   // Sudden-death overtime: the first goal ends it (IIHF Rule 84.1).
   if (inOvertime(next) && next.cfg.overtime?.kind === "sudden_death") {
     return decideWin(next, credited, "extra_time");
@@ -395,17 +475,26 @@ function applySuspensionStart(
   if (cls === undefined) {
     invalid(`unknown suspension class "${payload.class}"`, { class: payload.class });
   }
+  // W4 — the scoresheet detail rides along, and only when recorded: an
+  // undetailed card must still fold to exactly its pre-W4 shape.
+  const detail = {
+    ...(payload.reason === undefined ? {} : { reason: payload.reason }),
+    ...(payload.servedBy === undefined ? {} : { servedBy: payload.servedBy }),
+    ...(payload.minutes === undefined ? {} : { minutes: payload.minutes }),
+  };
   const active: ActiveSuspension = {
     side,
     ...(payload.person === undefined ? {} : { person: payload.person }),
     classKey: payload.class,
     teamShort: cls.teamShort,
     permanent: cls.permanent === true,
+    ...detail,
   };
   const record: CardRecordEntry = {
     side,
     ...(payload.person === undefined ? {} : { person: payload.person }),
     classKey: payload.class,
+    ...detail,
   };
   return {
     ...state,
@@ -454,10 +543,50 @@ function applyShootoutAttempt(
       expected: state.entrants[expected],
     });
   }
-  const kicks = [...state.shootout.kicks, { side, scored: payload.scored }];
+  // W4 — taker + defending keeper join the kick when recorded (absent keys keep
+  // the pre-W4 kick shape byte-identical).
+  const kick: ShootoutKick = {
+    side,
+    scored: payload.scored,
+    ...(payload.person === undefined ? {} : { person: payload.person }),
+    ...(payload.goalkeeper === undefined ? {} : { goalkeeper: payload.goalkeeper }),
+  };
+  const kicks = [...state.shootout.kicks, kick];
   const winnerSide = shootoutDecision(kicks, state.cfg.shootout.attempts);
   if (winnerSide === null) return { ...state, shootout: { kicks } };
   return { ...decideWin(state, winnerSide, "shootout"), shootout: { kicks } };
+}
+
+// W4 (#407) — a set piece awarded. `converted` is the scorer's own answer to
+// "did it go in"; the goal itself still arrives as a goal event, so the two
+// never double-count the score. The allowed kinds come from the PRESET, not
+// from cfg: cfg is folded into state and frozen by the golden corpus, so a new
+// cfg key would break replay for every recorded stream.
+function applySetPiece(
+  state: PeriodState,
+  payload: z.infer<typeof PeriodSetPiece>,
+  allowedKinds: readonly string[] | undefined,
+): PeriodState {
+  if (allowedKinds === undefined || allowedKinds.length === 0) {
+    invalid("this sport does not record set pieces");
+  }
+  if (!isPlayPhase(state)) {
+    wrongPhase(`set piece not allowed in phase "${state.phase}"`, { phase: state.phase });
+  }
+  const side = sideOf(state, payload.by);
+  if (!allowedKinds.includes(payload.kind)) {
+    invalid(`set piece kind "${payload.kind}" is not valid for this sport`, { kind: payload.kind });
+  }
+  const base = state.setPieces ?? { home: {}, away: {} };
+  const previous = base[side][payload.kind] ?? { awarded: 0, converted: 0 };
+  const tally: SetPieceTally = {
+    awarded: previous.awarded + 1,
+    converted: previous.converted + (payload.converted === true ? 1 : 0),
+  };
+  return {
+    ...state,
+    setPieces: { ...base, [side]: { ...base[side], [payload.kind]: tally } },
+  };
 }
 
 function applyForfeit(state: PeriodState, by: string): PeriodState {
@@ -532,6 +661,11 @@ export interface PeriodPreset {
   // (a superset/relabel of the suspension classes). Omitted → derived from the
   // suspension class keys; absent suspensions → no discipline descriptor.
   disciplineColors?: { key: string; label: string }[];
+  // W4 (#407) — the set pieces this sport records as AWARDED, not just scored
+  // (FIH penalty corner / stroke, IIHF penalty shot). Omitted → the sport has
+  // no `<key>.set_piece` event: it is absent from every fidelity tier and the
+  // fold rejects it.
+  setPieceKinds?: string[];
 }
 
 export function makePeriodModule(
@@ -543,20 +677,18 @@ export function makePeriodModule(
   const suspStartType = `${preset.key}.suspension.start`;
   const suspEndType = `${preset.key}.suspension.end`;
   const attemptType = `${preset.key}.shootout.attempt`;
+  const setPieceType = `${preset.key}.set_piece`;
+  const setPieceKinds = preset.setPieceKinds;
 
+  // Set pieces are attributed-scoring detail (who took it, did it convert), so
+  // they join tiers 2/3 only — a tier-0 scorer taps goals, not awards.
+  const attributed = [goalType, advanceType, attemptType, suspStartType, suspEndType];
+  const attributedTypes = setPieceKinds === undefined ? attributed : [...attributed, setPieceType];
   const fidelityTiers: FidelityTier[] = [
     { tier: 0, eventTypes: [goalType, advanceType, attemptType] },
     { tier: 1, eventTypes: [goalType, advanceType, attemptType] },
-    {
-      tier: 2,
-      eventTypes: [goalType, advanceType, attemptType, suspStartType, suspEndType],
-      entitlement: preset.timelineEntitlement,
-    },
-    {
-      tier: 3,
-      eventTypes: [goalType, advanceType, attemptType, suspStartType, suspEndType],
-      entitlement: preset.timelineEntitlement,
-    },
+    { tier: 2, eventTypes: attributedTypes, entitlement: preset.timelineEntitlement },
+    { tier: 3, eventTypes: attributedTypes, entitlement: preset.timelineEntitlement },
   ];
 
   // SPEC-1 — read-only card projection over the suspension.start events (voids
@@ -663,6 +795,8 @@ export function makePeriodModule(
             state,
             parsePayload(PeriodShootoutAttempt, ev.payload, ev.type),
           );
+        case setPieceType:
+          return applySetPiece(state, parsePayload(PeriodSetPiece, ev.payload, ev.type), setPieceKinds);
         case "core.forfeit":
           return applyForfeit(state, (ev.payload as { by: string }).by);
         case "core.abandon":
@@ -718,6 +852,10 @@ export function makePeriodModule(
           strength: chip,
           suspensions: state.suspensions,
           discipline: state.cardLog,
+          // W4 — attributed detail appears only once it exists, so a coarse
+          // match's summary is byte-identical to its pre-W4 shape.
+          ...(state.goalLog === undefined ? {} : { goalLog: state.goalLog }),
+          ...(state.setPieces === undefined ? {} : { setPieces: state.setPieces }),
           ...(preset.key === "hockey" ? { escalate: escalationHints(state.cardLog) } : {}),
           ...(tally === null ? {} : { shootout: tally }),
           ...(state.replayFlagged ? { abandoned: true } : {}),
@@ -808,7 +946,20 @@ export function makePeriodModule(
 
       if (state.phase === "SHOOTOUT" && state.shootout) {
         const expected = expectedKicker(state.shootout.kicks) ?? randomSide();
-        return { type: attemptType, payload: { by: sideId(expected), scored: rng() < 0.7 } };
+        const named = rng() < 0.5;
+        return {
+          type: attemptType,
+          payload: {
+            by: sideId(expected),
+            scored: rng() < 0.7,
+            ...(named
+              ? {
+                  person: `${sideId(expected)}-p3`,
+                  goalkeeper: `${sideId(opponent(expected))}-g1`,
+                }
+              : {}),
+          },
+        };
       }
 
       if (!isPlayPhase(state)) return null; // done / final / abandoned
@@ -823,12 +974,29 @@ export function makePeriodModule(
         const classKey = classes[Math.floor(rng() * classes.length)] as string;
         const side = randomSide();
         const person = rng() < 0.5 ? `${sideId(side)}-p1` : undefined;
+        const detailed = rng() < 0.4;
         return {
           type: suspStartType,
           payload: {
             by: sideId(side),
             class: classKey,
             ...(person === undefined ? {} : { person }),
+            ...(detailed
+              ? { reason: "obstruction", servedBy: `${sideId(side)}-p9`, minutes: 2 }
+              : {}),
+          },
+        };
+      }
+      if (roll < 0.22 && setPieceKinds !== undefined && setPieceKinds.length > 0) {
+        const side = randomSide();
+        const kind = setPieceKinds[Math.floor(rng() * setPieceKinds.length)] as string;
+        return {
+          type: setPieceType,
+          payload: {
+            by: sideId(side),
+            kind,
+            ...(rng() < 0.6 ? { person: `${sideId(side)}-p4` } : {}),
+            converted: rng() < 0.3,
           },
         };
       }
@@ -854,12 +1022,16 @@ export function makePeriodModule(
               ? "og"
               : undefined;
         const withAssists = state.cfg.assists && kind !== "og" && rng() < 0.4;
+        const attributed = rng() < 0.5;
         return {
           type: goalType,
           payload: {
             by: sideId(side),
             ...(kind === undefined ? {} : { kind }),
             ...(withAssists ? { assists: [`${sideId(side)}-p2`] } : {}),
+            ...(attributed
+              ? { person: `${sideId(side)}-p1`, clockRef: "10:00", emptyNet: rng() < 0.1 }
+              : {}),
           },
         };
       }
