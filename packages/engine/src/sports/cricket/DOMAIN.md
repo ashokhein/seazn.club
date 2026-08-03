@@ -163,15 +163,12 @@ coarse scoring must stay legal.
 
 Recorded, not acted on.
 
-1. **`src/stats/stats.ts` needs dotted-path support** in `PlayerStatMetric.field`
-   and `sumField` (e.g. `"runs.bat"`, `"wicket.fielder"`). It is a shared file
-   outside this family's blast radius, so it was not touched. Once it lands,
-   cricket can declare a `playerStats` model straight off `cricket.ball`:
-   runs (sum `runs.bat` by `striker`), balls faced (count by `striker`), balls
-   bowled and runs conceded (by `bowler`), wickets (by `bowler`,
-   `when: wicket.bowlerCredited`), catches / stumpings / run outs (by
-   `wicket.fielder`, `wicket.fielderAssist`). The fold already keeps all of
-   these per innings — only the projection is missing.
+1. ~~**`src/stats/stats.ts` needs dotted-path support**~~ — **DONE**, in W4's
+   shared stats pass. `PlayerStatMetric.field`/`sumField` now resolve dotted
+   payload paths, and cricket declares its leaderboards straight off
+   `cricket.ball` (see the `Player leaderboards from the ledger` row above):
+   runs, balls faced, balls bowled, runs conceded, wickets, catches, stumpings,
+   run outs. Arrays remain a leaf — no traversal, no query syntax.
 2. **`apps/web/src/lib/scoring-vocab.ts` does not know `hitballtwice`.** Its
    `WicketKind` union is closed at nine values; the humanising fallback will
    render it as "Hitballtwice" until a label is added (and translated into all
