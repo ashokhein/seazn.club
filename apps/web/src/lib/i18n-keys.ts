@@ -583,6 +583,8 @@ export type DictionaryKey =
   | "board.ai.preview.confirm"
   | "board.ai.preview.dismiss"
   | "board.ai.preview.empty"
+  | "board.ai.preview.error.free"
+  | "board.ai.preview.error.label"
   | "board.ai.preview.failed.asPreference"
   | "board.ai.preview.failed.edit"
   | "board.ai.preview.failed.hint"

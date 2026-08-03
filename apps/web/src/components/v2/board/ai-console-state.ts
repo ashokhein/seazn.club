@@ -239,7 +239,17 @@ export function aiConsoleReducer(s: AiConsoleState, a: AiConsoleAction): AiConso
 
     case "PREVIEW_ERROR":
       // The compile round-trip failed (rate limit, no credit, offline). Keep the
-      // brief; the console renders the same error block a failed run uses.
+      // brief, drop the slice, and record the error.
+      //
+      // `run` is deliberately NOT set to "error": it describes the architect
+      // run, and a free compile never started one — claiming otherwise would
+      // make `busy`/the stepper narrate a run that does not exist. The console
+      // therefore renders the failure off `preview.status === "error"`, next to
+      // the run's own error block and sharing its markup (ai-console.tsx
+      // `previewFailed`). That coupling is the whole contract of this case:
+      // an earlier version of this comment claimed the run block picked it up
+      // by itself, and it did not — every preview failure rendered NOTHING,
+      // for every status, in every language.
       return { ...s, preview: { ...IDLE_PREVIEW, status: "error" }, error: a.error };
 
     case "PREVIEW_DISMISS":

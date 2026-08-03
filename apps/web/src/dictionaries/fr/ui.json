@@ -45,6 +45,8 @@
   "board.ai.preview.failed.hint": "Nous l'avons lue deux fois sans en tirer de règle. Envoyez-la telle quelle : nous la relirons au lancement, et tout ce que nous pourrons transformer en règle sera imposé ; le reste, le planificateur se contentera de le lire.",
   "board.ai.preview.failed.asPreference": "L'envoyer telle quelle",
   "board.ai.preview.failed.edit": "Modifier les consignes",
+  "board.ai.preview.error.label": "Vérification impossible.",
+  "board.ai.preview.error.free": "Aucun crédit n'a été dépensé. Modifiez vos consignes ou relancez la vérification.",
   "board.ai.preview.scopedRule": "{rule} — {scope}",
   "board.ai.preview.scope.in": "dans {name}",
   "board.ai.preview.scope.for": "pour {name}",

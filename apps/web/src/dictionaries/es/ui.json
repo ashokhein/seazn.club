@@ -45,6 +45,8 @@
   "board.ai.preview.failed.hint": "La hemos leído dos veces y no hemos obtenido ninguna regla. Envíala tal cual y la volveremos a leer al iniciar la ejecución: lo que podamos convertir en regla, lo exigiremos; el resto solo lo leerá el planificador.",
   "board.ai.preview.failed.asPreference": "Enviarla tal cual",
   "board.ai.preview.failed.edit": "Editar las instrucciones",
+  "board.ai.preview.error.label": "No se pudo comprobar.",
+  "board.ai.preview.error.free": "No se gastó ningún crédito. Edita tus instrucciones o vuelve a comprobarlo.",
   "board.ai.preview.scopedRule": "{rule} — {scope}",
   "board.ai.preview.scope.in": "en {name}",
   "board.ai.preview.scope.for": "para {name}",

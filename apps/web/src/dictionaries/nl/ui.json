@@ -45,6 +45,8 @@
   "board.ai.preview.failed.hint": "We hebben hem twee keer gelezen en er geen regel uit gekregen. Stuur hem zoals hij er staat: bij de start lezen we hem opnieuw, alles wat we in een regel kunnen omzetten dwingen we af; de rest leest de planner alleen.",
   "board.ai.preview.failed.asPreference": "Versturen zoals geschreven",
   "board.ai.preview.failed.edit": "Opdracht bewerken",
+  "board.ai.preview.error.label": "Kon niet controleren.",
+  "board.ai.preview.error.free": "Er zijn geen credits gebruikt. Pas je opdracht aan of bekijk het opnieuw.",
   "board.ai.preview.scopedRule": "{rule} — {scope}",
   "board.ai.preview.scope.in": "in {name}",
   "board.ai.preview.scope.for": "voor {name}",

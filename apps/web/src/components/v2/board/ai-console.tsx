@@ -1048,7 +1048,11 @@ function Stepper({
 // -------------------------------------------------------------- brief step
 const MODES: AiMode[] = ["generate", "refine", "repair"];
 
-function BriefStep({
+/** Exported for the render tests, on the same terms as `ScheduleStep`: what the
+ *  brief step SAYS in each of its states — a failed compile above all — is only
+ *  observable by rendering it, and the console's own suites drive callbacks
+ *  rather than markup. */
+export function BriefStep({
   state,
   dispatch,
   run,
@@ -1105,6 +1109,12 @@ function BriefStep({
   //   compiled          → the receipt card, whose confirm starts the run
   //   fallback taken    → the ordinary run button, priced as always
   const checking = state.preview.status === "loading";
+  // The compile round-trip failed. Read here and nowhere else, so the error
+  // block and its label cannot come to different conclusions about which half
+  // of the gate broke. Takes precedence over `run === "error"` on purpose: a
+  // failed run followed by a failed check leaves BOTH set, and `state.error` is
+  // then the check's (PREVIEW_ERROR wrote it last).
+  const previewFailed = state.preview.status === "error";
   const cardVisible =
     !busy &&
     !scheduleFrozen &&
@@ -1226,12 +1236,31 @@ function BriefStep({
         />
       )}
 
-      {state.run === "error" && state.error && (
+      {/* One error surface for both halves of the gate.
+          A failed COMPILE lands here too. `PREVIEW_ERROR` deliberately leaves
+          `run` alone — that field describes the architect run, and a free
+          compile never starts one — so gating this block on `run === "error"`
+          alone silenced every preview failure (402, 409, 429, 5xx, offline):
+          the spinner stopped and nothing was said. The preview is the cheap
+          half of the gate, which makes its failures load-bearing, so it reuses
+          the run's own idiom rather than a second one. Only the label changes,
+          because the run is the one thing that did NOT happen. */}
+      {state.error && (previewFailed || state.run === "error") && (
         state.error.key === "board.ai.error.outOfCredits" ? (
           <AiOutOfCredits currency={currency} />
         ) : (
           <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-            <span className="font-semibold">{msg("board.ai.errorLabel")}</span> {state.error.message}
+            <span className="font-semibold">
+              {msg(previewFailed ? "board.ai.preview.error.label" : "board.ai.errorLabel")}
+            </span>{" "}
+            {state.error.message}
+            {/* The way out, stated: nothing was charged, the brief is still in
+                the box above, and the check below can be taken again. */}
+            {previewFailed && (
+              <span className="mt-1 block text-red-600/90">
+                {msg("board.ai.preview.error.free")}
+              </span>
+            )}
           </p>
         )
       )}

@@ -45,6 +45,8 @@
   "board.ai.preview.failed.hint": "We read it twice and got no rule out of it. Send it as written and we read it once more when the run starts: anything we can turn into a rule, we enforce — the rest, the architect only reads.",
   "board.ai.preview.failed.asPreference": "Send it as written",
   "board.ai.preview.failed.edit": "Edit the brief",
+  "board.ai.preview.error.label": "Couldn't check that.",
+  "board.ai.preview.error.free": "No credits were spent. Edit your brief, or check it again.",
   "board.ai.preview.scopedRule": "{rule} — {scope}",
   "board.ai.preview.scope.in": "in {name}",
   "board.ai.preview.scope.for": "for {name}",

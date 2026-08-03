@@ -1019,15 +1019,34 @@ test.describe("community credit gate", () => {
         "data-ai-stage",
         "check",
       );
-      // NOT ASSERTED, AND IT SHOULD BE: the out-of-credits copy
-      // ("You're out of AI credits for this billing period.") does not render
-      // on this path. `PREVIEW_ERROR` stores the error but the console's error
-      // block is gated on `state.run === "error"`, which a preview never sets
-      // (ai-console.tsx:1229, ai-console-state.ts:243) — so the organiser gets
-      // a spinner that stops and no explanation at all. That is a product gap
-      // in the gate, not a test gap; restore the copy assertion above with the
-      // fix. Reported out of Task 8.
+      // …and the organiser is TOLD, which is the half that was missing: the
+      // preview's error was stored but the console's error block was gated on
+      // `state.run === "error"`, which a free compile never sets, so a refused
+      // check showed a spinner that stopped and nothing else. Asserted on the
+      // copy an organiser reads, in the dock, not on a data attribute — the
+      // failure this guards is a silent surface.
+      const outOfCredits = consoleDock(page).getByRole("alert").filter({
+        hasText: "You're out of AI credits for this billing period.",
+      });
+      await expect(outOfCredits).toBeVisible({ timeout: 10_000 });
+      // Not a dead end: the recovery block's own CTAs, and the check still on
+      // offer underneath once the wallet is topped up.
+      await expect(outOfCredits.getByRole("button", { name: "Buy credits" })).toBeVisible();
+      await expect(outOfCredits.locator('[data-upgrade="pro_plus"]')).toBeVisible();
       await shot(page, "07-community-out-of-credits");
+
+      // The same block at the reference phone. Its three recovery CTAs stack
+      // (flex-col below sm) and the dock is the full width of the screen, so
+      // this is where a recovery block turns into a sideways scroll.
+      await page.setViewportSize({ width: 375, height: 812 });
+      await expect(outOfCredits).toBeVisible();
+      await expect(outOfCredits.getByRole("button", { name: "Buy credits" })).toBeVisible();
+      const spills = await page.evaluate(() => {
+        const el = document.scrollingElement!;
+        return el.scrollWidth > el.clientWidth;
+      });
+      expect(spills).toBe(false);
+      await shot(page, "07-community-out-of-credits-375");
     } finally {
       // Free the community org's single active-competition slot for the serial specs.
       await apiJson(request, `/api/v1/competitions/${competitionId}`, "PATCH", { status: "archived" });
