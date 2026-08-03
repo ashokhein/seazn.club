@@ -42952,6 +42952,13 @@
                         "summary": {
                           "type": "string"
                         },
+                        "assumptions": {
+                          "default": [],
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
                         "usage": {
                           "type": "object",
                           "properties": {
@@ -43150,6 +43157,7 @@
                         "diff",
                         "explanations",
                         "summary",
+                        "assumptions",
                         "usage",
                         "officials_coverage"
                       ],
@@ -43216,6 +43224,9 @@
                       }
                     ],
                     "summary": "example",
+                    "assumptions": [
+                      "example"
+                    ],
                     "usage": {
                       "input_tokens": -9007199254740991,
                       "output_tokens": -9007199254740991,
@@ -47041,6 +47052,13 @@
                         "summary": {
                           "type": "string"
                         },
+                        "assumptions": {
+                          "default": [],
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
                         "divergent_courts": {
                           "type": "array",
                           "items": {
@@ -47232,6 +47250,7 @@
                         "diff",
                         "explanations",
                         "summary",
+                        "assumptions",
                         "divergent_courts",
                         "skipped_divisions",
                         "usage",
@@ -47300,6 +47319,9 @@
                       }
                     ],
                     "summary": "example",
+                    "assumptions": [
+                      "example"
+                    ],
                     "divergent_courts": [
                       "example"
                     ],

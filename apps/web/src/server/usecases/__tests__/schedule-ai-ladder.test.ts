@@ -32,6 +32,8 @@ function fakeResult(over: { warnings?: number; blocking?: number; usage?: Usage 
     diff: { moved: [], placed: [], unscheduled: [], unchanged: [] },
     explanations: [],
     summary: "ok",
+    // W5 (#400): the architect's own assumptions, always an array.
+    assumptions: [],
     usage: over.usage ?? usage(100, 50, 0.01),
   };
 }

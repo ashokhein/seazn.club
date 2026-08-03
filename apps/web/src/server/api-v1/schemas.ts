@@ -1732,6 +1732,18 @@ export const AiPlanResponse = z.object({
   explanations: z.array(z.object({ fixture_id: Uuid, note: z.string() })),
   constraint_suggestions: AiConstraintSuggestions.optional(),
   summary: z.string(),
+  /**
+   * The ARCHITECT's own assumptions (stage 2, model-authored): what it assumed
+   * while placing. NOT the resolver's — those are stage 1, deterministic, and
+   * ride on `AiParsePreviewResponse.compiled.assumptions`, shown before a credit
+   * is spent. Two different arrays in two different responses; merging them
+   * would tell the organiser the machine assumed something it did not.
+   *
+   * `.default([])` rather than `.optional()`: the prompt schema makes the field
+   * optional and the model omits it routinely, while the review panel maps over
+   * it. `undefined` here is a client crash, not a cosmetic gap.
+   */
+  assumptions: z.array(z.string()).default([]),
   usage: z.object({
     input_tokens: z.number().int(),
     output_tokens: z.number().int(),
@@ -1910,6 +1922,11 @@ export const AiCompetitionPlanResponse = z.object({
   }),
   explanations: z.array(z.object({ fixture_id: z.string(), note: z.string() })),
   summary: z.string(),
+  /** The ARCHITECT's own assumptions (stage 2), exactly as
+   *  {@link AiPlanResponse.assumptions} carries them — never the resolver's,
+   *  which are stage 1 and ride on the preview response. `.default([])` because
+   *  the model omits the key routinely and the review panel maps over it. */
+  assumptions: z.array(z.string()).default([]),
   /** Court labels not shared by every solved division. Cross-division court
    *  identity is a string match and nothing else, so the board warns. */
   divergent_courts: z.array(z.string()),

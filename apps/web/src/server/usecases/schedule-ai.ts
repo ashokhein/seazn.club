@@ -1346,6 +1346,12 @@ export interface AiPlanResult {
   explanations: { fixture_id: string; note: string }[];
   constraint_suggestions?: Partial<SchedulingConstraints>;
   summary: string;
+  /** W5 (#400): the ARCHITECT's own assumptions — what it assumed while placing.
+   *  Produced on every run since v4 and dropped at the response build until now,
+   *  so the organiser reviewed a proposal without seeing the reading it was
+   *  built on. NOT the resolver's assumptions (stage 1, shown at the preview);
+   *  the two arrays are never merged. Always an array, never undefined. */
+  assumptions: string[];
   // cost_usd is the provider-reported cost when available, falling back to a
   // derived estimate per round; null only when neither is computable.
   usage: { input_tokens: number; output_tokens: number; repair_rounds: number; cost_usd: number | null };
@@ -1691,6 +1697,9 @@ export async function runAiPlan(
       ? { constraint_suggestions: chosen.plan.constraint_suggestions }
       : {}),
     summary: chosen.plan.summary,
+    // `.max(10).optional()` on the prompt schema — the model omits it routinely,
+    // and the review panel maps over the array.
+    assumptions: chosen.plan.assumptions ?? [],
     usage: usageNow(),
   });
 
@@ -2545,6 +2554,9 @@ export async function aiPlanForDivision(
       ? { constraint_suggestions: isoConstraintSuggestions(result.constraint_suggestions, pack.division.tz) }
       : {}),
     summary: result.summary,
+    // The ARCHITECT's assumptions (stage 2). The resolver's are a different
+    // array on a different response — see AiPlanResponse.assumptions.
+    assumptions: result.assumptions,
     // Public shape is pinned to AiPlanResponse.usage in api-v1/schemas.ts —
     // exactly these three fields. cost_usd lives on AiPlanResult["usage"] for
     // the ledger (competition_events insert above) but must not leak into the
