@@ -29,16 +29,22 @@ export const ENGINE_HTTP: Record<EngineErrorCode, number> = {
   ELIGIBILITY: 422,
   MODULE_NOT_FOUND: 422,
   MODULE_DUPLICATE: 500,
-  // W4a (#425) §7 — the core time model. The first three are all things the
-  // scorer typed and can retype: a stamp that went backwards, a 13-return
-  // expedite rally credited to the wrong side, a substitution past the window
-  // allowance. UNKNOWN_PHASE is not — it means a module declared a phase order
-  // that omits a period it nevertheless accepted an event in, which is an
-  // internal invariant the pad cannot act on, so it is a captured 500.
+  // W4a (#425) §7 — the core time model. All four are things the scorer typed
+  // and can retype: a stamp that went backwards, a 13-return expedite rally
+  // credited to the wrong side, a substitution past the window allowance, and a
+  // period this sport does not have. UNKNOWN_PHASE was briefly a captured 500
+  // on the reasoning that a phase order is a module-side invariant no client
+  // can reach — it is not. `at.period` is a free `z.string().min(1)` on the
+  // payload, so any pad posting an unrecognised period reached it, and a 500
+  // answered a typo by paging the on-call with nothing the scorer could act on.
+  // The write gate now rejects a client's unknown period as INVALID_EVENT
+  // before this code can be raised (engine core/events.ts); what remains is a
+  // module whose declared phase order and whose `apply()` order disagree —
+  // still one rejected event, still not worth a page.
   NON_MONOTONIC_TIME: 422,
   EXPEDITE_WRONG_WINNER: 422,
   SUB_WINDOW_EXCEEDED: 422,
-  UNKNOWN_PHASE: 500,
+  UNKNOWN_PHASE: 422,
 };
 
 // HTTP status → stable machine code for non-engine errors.
