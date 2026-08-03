@@ -1502,6 +1502,25 @@ export function makePeriodModule(
       const sideId = (side: Side) => state.entrants[side];
       const randomSide = (): Side => (rng() < 0.5 ? "home" : "away");
 
+      // W4a review — the generator emits `at`, so the conformance, chaos,
+      // undo-sweep and (once extended) golden streams actually exercise the
+      // wave's whole path: stamped payloads, lazy expiry, the carry,
+      // release-on-goal and `asOf`. Without it §9.6's coarse-equals-fine and
+      // every appended stream stayed on the pre-wave path, and "the goldens are
+      // byte-identical" was guaranteed by the generator's blind spot rather
+      // than by the change being additive.
+      //
+      // Derived from `state.asOf`, NOT from an rng draw. Two reasons, both
+      // load-bearing: a draw would shift every generated stream's walk for no
+      // benefit, and the stamp has to be MONOTONIC or the fold kernel's guard
+      // reds the run with NON_MONOTONIC_TIME for the wrong reason. One minute
+      // of game time per event, restarting at the top of each phase — the
+      // phase index carries the ordering across a boundary.
+      const stamp = (phase: string): GameTime => ({
+        period: phase,
+        elapsed: (state.asOf?.period === phase ? state.asOf.elapsed : 0) + 60,
+      });
+
       if (state.phase === "pre") return { type: "core.start", payload: {} };
 
       if (state.phase === "SHOOTOUT" && state.shootout) {
@@ -1512,6 +1531,7 @@ export function makePeriodModule(
           payload: {
             by: sideId(expected),
             scored: rng() < 0.7,
+            at: stamp("SHOOTOUT"),
             ...(named
               ? {
                   person: `${sideId(expected)}-p3`,
@@ -1540,6 +1560,7 @@ export function makePeriodModule(
           payload: {
             by: sideId(side),
             class: classKey,
+            at: stamp(state.phase),
             ...(person === undefined ? {} : { person }),
             ...(detailed
               ? { reason: "obstruction", servedBy: `${sideId(side)}-p9`, minutes: 2 }
@@ -1559,6 +1580,7 @@ export function makePeriodModule(
           payload: {
             by: sideId(side),
             kind,
+            at: stamp(state.phase),
             ...(rng() < 0.6 ? { person: `${sideId(side)}-p4` } : {}),
             // One draw, four tokens — the shared attempt vocabulary. Keeping it
             // to a single rng() call leaves every other generated stream on the
@@ -1575,6 +1597,7 @@ export function makePeriodModule(
           payload: {
             by: sideId(pick.side),
             class: pick.classKey,
+            at: stamp(state.phase),
             ...(pick.person === undefined ? {} : { person: pick.person }),
           },
         };
@@ -1594,6 +1617,7 @@ export function makePeriodModule(
           type: goalType,
           payload: {
             by: sideId(side),
+            at: stamp(state.phase),
             ...(kind === undefined ? {} : { kind }),
             ...(withAssists ? { assists: [`${sideId(side)}-p2`] } : {}),
             ...(attributed
@@ -1604,7 +1628,7 @@ export function makePeriodModule(
       }
       const to = expectedAdvance(state);
       if (to === null) return null;
-      return { type: advanceType, payload: { to } };
+      return { type: advanceType, payload: { to, at: stamp(state.phase) } };
     },
   };
 }

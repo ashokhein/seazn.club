@@ -25,7 +25,8 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
 import { foldMatch, type EventEnvelope } from "../../core/events.ts";
-import { defaultLineupPair, makeEnvelope } from "../../testkit/helpers.ts";
+import { compareGameTime, gameTimeOf } from "../../core/time.ts";
+import { buildStream, defaultLineupPair, makeEnvelope } from "../../testkit/helpers.ts";
 import type { ModuleEvent } from "../../sport/module.ts";
 import { icehockey } from "../icehockey/icehockey.ts";
 import { hockey } from "../hockey/hockey.ts";
@@ -651,6 +652,75 @@ describe("an entirely unstamped stream folds exactly as before", () => {
     const state = foldIce([start, iceGoal(IH, { at: at("P1", 761), clockRef: "12:41" })]);
     expect(state.goalLog?.[0]?.at).toEqual(at("P1", 761));
     expect(state.goalLog?.[0]?.clockRef).toBe("12:41");
+  });
+});
+
+// ------------------------------------------------------ generated coverage
+
+describe("the generator stamps what it emits, so the property runs exercise §9.6", () => {
+  // WITHOUT this the whole W4a path had ZERO generated coverage: `at` and the
+  // derived expiries were unreachable from `arbitraryEvent`, so conformance's
+  // coarse-equals-fine, the chaos and undo-sweep sweeps and every stream a
+  // future EXTEND_GOLDEN appends all stayed on the pre-wave path — and "the
+  // eleven goldens are byte-identical" was guaranteed by the generator's blind
+  // spot rather than by the change being additive.
+  const cases: [string, typeof icehockey | typeof hockey, unknown][] = [
+    ["icehockey", icehockey, {}],
+    ["hockey", hockey, {}],
+  ];
+
+  it.each(cases)("%s emits `at` on the stamped payloads", (_, mod, raw) => {
+    const cfg = mod.configSchema.parse(raw);
+    const lineups = defaultLineupPair(mod.positions);
+    // Scanned rather than pinned to one seed: a stream can end on the second
+    // event (a generated forfeit), and a single unlucky seed would make this
+    // assert nothing about the generator.
+    const events = Array.from({ length: 12 }, (_, i) =>
+      buildStream(mod as never, cfg as never, lineups, i + 1, 60),
+    ).flat();
+    const stamped = events.filter((e) => gameTimeOf(e.payload) !== null);
+    expect(events.length).toBeGreaterThan(20);
+    expect(stamped.length).toBeGreaterThan(10);
+    // Every module event carries one; only the unstamped core events do not.
+    for (const event of events) {
+      if (event.type.startsWith("core.")) continue;
+      expect(gameTimeOf(event.payload), `${event.type} must carry a stamp`).not.toBeNull();
+    }
+  });
+
+  it.each(cases)("%s emits them MONOTONICALLY, or the guard reds for the wrong reason", (_, mod, raw) => {
+    const cfg = mod.configSchema.parse(raw);
+    const lineups = defaultLineupPair(mod.positions);
+    for (let seed = 1; seed <= 12; seed++) {
+      const events = buildStream(mod as never, cfg as never, lineups, seed, 60);
+      const order = mod.playPhases?.(cfg as never) ?? [];
+      let high: ReturnType<typeof gameTimeOf> = null;
+      for (const event of events) {
+        const stamp = gameTimeOf(event.payload);
+        if (stamp === null) continue;
+        if (high !== null) {
+          expect(
+            compareGameTime(stamp, high, order),
+            `seed ${seed}: ${event.type} travels backwards`,
+          ).toBeGreaterThanOrEqual(0);
+        }
+        high = stamp;
+      }
+    }
+  });
+
+  it("and those streams actually reach a derived expiry, not just a stamped payload", () => {
+    // A stream that stamps but never expires anything would leave the sweep,
+    // the carry and release-on-goal exactly as uncovered as before.
+    const cfg = icehockey.configSchema.parse({});
+    const lineups = defaultLineupPair(icehockey.positions);
+    let sawExpiry = false;
+    for (let seed = 1; seed <= 40 && !sawExpiry; seed++) {
+      const events = buildStream(icehockey as never, cfg as never, lineups, seed, 60);
+      const state = foldMatch(icehockey, cfg, lineups, events) as PeriodState;
+      sawExpiry = state.cardLog.some((entry) => entry.expiresAt !== undefined);
+    }
+    expect(sawExpiry).toBe(true);
   });
 });
 
