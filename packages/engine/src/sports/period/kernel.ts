@@ -363,12 +363,48 @@ function otLabels(cfg: PeriodCfg): string[] {
   );
 }
 
-function playPhases(cfg: PeriodCfg): string[] {
+// The phases in which PLAY is running, so goals count and the clock is on.
+// Deliberately NOT the same list as `playPhases` below — "pre" and "SHOOTOUT"
+// are phases of the match without being phases of play, and conflating the two
+// is what made a stamped shootout card unorderable.
+function scoringPhases(cfg: PeriodCfg): string[] {
   return [...periodLabels(cfg), ...otLabels(cfg)];
 }
 
 function isPlayPhase(state: PeriodState): boolean {
-  return playPhases(state.cfg).includes(state.phase);
+  return scoringPhases(state.cfg).includes(state.phase);
+}
+
+/**
+ * THE phase order for this cfg — W4a (#425) §7. Every phase in which a STAMPED
+ * event may legally occur, in the order they occur, and nothing else.
+ *
+ * One function, two consumers, by contract: the fold kernel's monotonic guard
+ * reads it via `SportModule.playPhases`, and every `compareGameTime` call the
+ * module makes inside `apply()` passes this same function's result. Two lists
+ * that merely agree today is the defect this exists to prevent — an event the
+ * guard accepts is then backwards one layer down, and lazy expiry (§3.1) sweeps
+ * against an order nothing agrees on. `phases.test.ts` asserts the module holds
+ * this exact function reference, so a sport that builds its own copy fails.
+ *
+ * WIDER than `scoringPhases`, and that is the point:
+ *  - "pre" — a card before the opening whistle is legal (`suspensionAllowed`),
+ *    and so is a stoppage: a floodlight failure during the warm-up.
+ *  - "SHOOTOUT" — cards are legal there too, and it sorts LAST, after any
+ *    overtime, because that is when it happens. Listed only when this cfg can
+ *    reach it (`resolveEnd` enters it only when `cfg.shootout !== null`).
+ *  - "done" is excluded: nothing stamped is accepted once the match is decided.
+ *
+ * Exhaustive by obligation, not by construction — the fold treats a period
+ * outside this list as a bad payload field, so anything omitted here is an
+ * event the scorer cannot record.
+ */
+export function playPhases(cfg: PeriodCfg): string[] {
+  return [
+    "pre",
+    ...scoringPhases(cfg),
+    ...(cfg.shootout === null ? [] : ["SHOOTOUT"]),
+  ];
 }
 
 function inOvertime(state: PeriodState): boolean {
@@ -818,6 +854,11 @@ export function makePeriodModule(
     configSchema,
     eventSchema: PeriodEv,
     positions: preset.positions,
+    // W4a (#425) §7 — the fold's monotonic time guard orders stamps by this
+    // list. Handed over as the function itself, not as a wrapper computing its
+    // own: the module's `apply()` calls the same export, so the guard and the
+    // fold can never order against two different lists.
+    playPhases,
     // W4 (#407) — one implementation serves every period sport: when the
     // competition makes the keeper optional, the GK group's minimum drops to
     // zero while its maximum stays 1 (nobody fields two keepers). Absent ⇒ the
