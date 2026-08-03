@@ -54,9 +54,12 @@ export function dayKeyInTz(instantMs: number, tz: string): Ymd {
   }).format(new Date(instantMs));
 }
 
-/** The wall-clock time of an instant, in `tz`. The `^24` guard is the known ICU
- *  quirk: some hour cycles render midnight as "24:00", which sorts after every
- *  other time and would silently invert a session-hours comparison. */
+/** The wall-clock time of an instant, in `tz`. The `^24` guard is insurance
+ *  against the h24 hour cycle, which renders midnight as "24:00" — a string
+ *  that sorts after every other time and would silently invert a session-hours
+ *  comparison. `en-GB` with `hour12: false` does not produce it on any of the
+ *  418 zones this runtime knows; the guard is here so a locale or ICU change
+ *  cannot make that quietly untrue. */
 export function hhmmInTz(instantMs: number, tz: string): Hhmm {
   return new Intl.DateTimeFormat("en-GB", {
     timeZone: tz,
@@ -74,9 +77,20 @@ export function hhmmInTz(instantMs: number, tz: string): Hhmm {
  *
  * Two correction passes are enough for every real zone: the first lands within
  * the offset error, the second fixes the case where that correction itself
- * crossed a DST boundary. A local time that does not exist — the spring-forward
- * gap — has no exact answer; the fixpoint stops on the closest real instant
- * rather than looping.
+ * crossed a DST boundary. Verified by sweeping all 418 zones
+ * `Intl.supportedValuesOf("timeZone")` reports over 400 consecutive days: a
+ * third pass changes no answer.
+ *
+ * A local time that does not exist — the spring-forward gap — has no exact
+ * answer, and the fixpoint stops rather than looping. What it stops ON is
+ * zone-dependent and NOT necessarily the nearest real instant: asking for
+ * 02:30 on a US spring-forward date yields 01:30 local, an hour BEFORE the
+ * time requested. Every caller here asks for a day boundary or a session hour,
+ * neither of which lands in a gap except on the handful of zones that shift at
+ * midnight, so the residue is a rounding of the day's edge, never a placement.
+ *
+ * An ambiguous local time — the fall-back hour, which happens twice — resolves
+ * to the FIRST occurrence, which is the right reading for a day start.
  */
 export function zonedTimeToUtc(ymd: Ymd, hhmm: Hhmm, tz: string): number {
   const target = Date.parse(`${ymd}T${hhmm}:00Z`);

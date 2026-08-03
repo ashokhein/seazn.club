@@ -33,6 +33,8 @@ Your data stays yours: the brief is sent to one of our AI providers — Anthropi
 
 Every run is bounded by a **calendar window** — the days the competition is allowed to run. It is taken from the division's **start and end dates** in schedule settings. Set a start but no end and the window runs seven days from your start date; set neither and it falls back to **the next seven days**, beginning today in the organisation's timezone.
 
+The window also stretches to cover anything already on the board, so a repair run never reports the very matches it was asked to keep. Plan several divisions together and they share **one** window, wide enough for all of them — the earliest start and the latest end across everything you selected. No division is ever asked to squeeze inside another's dates.
+
 The window only ever **widens**, never narrows. Before the run it is stretched to cover:
 
 - **play hours you set explicitly**, if any of them fall outside those dates; and

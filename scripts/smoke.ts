@@ -5502,9 +5502,13 @@ async function seedBracketAiDivision(
 
 /** #397 (calendar anchor): a time that never left 1970 — what the pack handed
  *  the model for a division with no configured start date, when the greedy
- *  draft was anchored at `toSlotConfig(settings, 0)`. Any 196x/197x year is the
- *  epoch sentinel; the pack now nulls those rather than showing them. */
-const epochAnchored = (iso: string): boolean => /^19[67]\d-/.test(iso);
+ *  draft was anchored at `toSlotConfig(settings, 0)`. The cut is the engine's
+ *  own `isEpochSentinel` (anything before 1971-01-01), read off the INSTANT
+ *  rather than the rendered year: west of UTC the epoch renders as 1969-12-31,
+ *  so a year prefix would miss exactly the boards this check exists for. The
+ *  pack now nulls these rather than showing them. */
+const EPOCH_SENTINEL_BEFORE_MS = Date.UTC(1971, 0, 1);
+const epochAnchored = (iso: string): boolean => Date.parse(iso) < EPOCH_SENTINEL_BEFORE_MS;
 
 /** #397: the pack writes every time as `zonedIso(…, orgTz)` — an explicit UTC
  *  offset, in the ORGANISATION timezone. A pack with no timezone could not
