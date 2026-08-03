@@ -21,13 +21,14 @@ import {
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
-import { spendCredit, walletIdFor } from "@/lib/credits";
+import { balance, spendCredit, walletIdFor } from "@/lib/credits";
 import { rateLimit } from "@/lib/rate-limit";
 import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import { aiRunCostUsd } from "@/lib/ai-pricing";
 import {
   createTokenMeter,
   meterStamp,
+  minimumCredits,
   quoteRun,
   schedulingRungWeights,
   unmeteredTokenMeter,
@@ -48,12 +49,16 @@ import {
   type Assignment,
   type Clock,
   type Conflict,
+  type HardConstraint,
   type OrderDependency,
   type ParticipantFixture,
+  type RuleFixture,
   type SchedulableFixture,
   type SchedulingConstraints,
   type SlotConfig,
+  type VerifyConfig,
 } from "@seazn/engine/scheduling";
+import { parseInstruction, resolveParsed, type RawParsed } from "@/server/usecases/schedule-ai-parse";
 import {
   assignOfficials,
   type AssignPolicy,
@@ -62,7 +67,7 @@ import {
 } from "@seazn/engine/officials";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { AiPlanRequest, AiPlanResponse } from "@/server/api-v1/schemas";
-import { AiSchedulePlan, SYSTEM_PROMPT } from "./schedule-ai-prompt";
+import { AiSchedulePlan, SINGLE_SYSTEM_PROMPT } from "./schedule-ai-prompt";
 import {
   MOVABLE_STATUS,
   divisionFixtures,
@@ -208,6 +213,11 @@ export interface PackConstraints {
   fieldFairness: string;
   parallelism: string;
   crossPersonClash: string;
+  /** Durable division rules (#398), in the same vocabulary a compiled
+   *  instruction produces. Merged with `pack.parsed.hard` by `verifyConfig`, so
+   *  hard rules have exactly one home. Optional for the same reason the engine's
+   *  field is: this type is built as an object literal at many call sites. */
+  hard?: HardConstraint[];
 }
 
 export interface PackSettings {
@@ -323,6 +333,21 @@ export interface SchedulePack {
   /** Deterministic preprocessing choices worth telling the organiser about:
    *  stripped bye feeders, same-name person grouping. Rendered at W5 (#400). */
   assumptions: string[];
+  /** The organiser's instruction, compiled (#398).
+   *
+   *  PROMPT MATERIAL, unlike `participants` and `assumptions`: the model must
+   *  satisfy the same rules it will be verified against, or a repair round can
+   *  never converge on what was actually asked for.
+   *
+   *  The window a `window` instruction resolved to is deliberately NOT here — it
+   *  is `pack.window` above, which the verifier already checks. That is what
+   *  keeps every member of this union unit-free (minutes, counts, weekdays,
+   *  YYYY-MM-DD, HH:mm) and lets the engine and the pack share one type. */
+  parsed: {
+    hard: HardConstraint[];
+    soft: { note: string; weight: 1 | 2 | 3 }[];
+    unparsed: string[];
+  };
   fixtures: { movable: PackFixture[]; obstacles: PackObstacle[] };
   draft: PackDraftAssignment[];
   instruction: string;
@@ -362,6 +387,10 @@ export function toModelPayload(pack: SchedulePack): Omit<SchedulePack, "particip
     clock: pack.clock,
     window: pack.window,
     sessionHours: pack.sessionHours,
+    // #398: the compiled instruction IS prompt material — the model is verified
+    // against exactly these rules, so withholding them would leave the repair
+    // loop guessing at what it broke.
+    parsed: pack.parsed,
     settings: pack.settings,
     entrants: pack.entrants,
     people: pack.people,
@@ -381,6 +410,11 @@ export interface BuildPackOptions {
    *  are byte-identical and the golden pack tests stay reproducible. The only
    *  `Date.now()` on this path is at the runner entry. */
   now: number;
+  /** Stage-1 output (#398), or null when there was no instruction, the compile
+   *  failed, or the caller is a test or a replay. The BUILDER resolves it:
+   *  symbolic dates need the clock and the feasibility bump needs the fixture
+   *  count, and both live here rather than at the call site. */
+  raw?: RawParsed | null;
   scope?: { from?: string; courts?: string[]; pool_ids?: string[] };
   prior?: {
     instruction: string;
@@ -778,10 +812,28 @@ export async function buildSchedulePack(
       ...sessionMs.map((w) => w.to),
       ...occupiedMs.map((t) => t + matchMinutes * MS_PER_MIN),
     );
-    const window = {
-      start: zonedIso(dayStart(dayKeyInTz(windowStartMs, orgTz)), orgTz),
-      end: zonedIso(dayEnd(dayKeyInTz(windowEndMs, orgTz)), orgTz),
-    };
+    // #398: the compiled instruction resolves LAST and wins outright. Widening
+    // onto already-scheduled dates is right for an inferred window, but it would
+    // silently defeat "run all the matches from tomorrow till Friday" — the one
+    // window the organiser stated in words. Rendering stays here so there is a
+    // single writer of the pack's window strings.
+    const resolved = resolveParsed(opts.raw ?? null, clock, orgTz, { fixtureCount: movable.length });
+    const window =
+      resolved.windowMs !== null
+        ? {
+            start: zonedIso(dayStart(dayKeyInTz(resolved.windowMs.from, orgTz)), orgTz),
+            end: zonedIso(dayEnd(dayKeyInTz(resolved.windowMs.to, orgTz)), orgTz),
+          }
+        : {
+            start: zonedIso(dayStart(dayKeyInTz(windowStartMs, orgTz)), orgTz),
+            end: zonedIso(dayEnd(dayKeyInTz(windowEndMs, orgTz)), orgTz),
+          };
+    assumptions.push(...resolved.assumptions);
+    // The greedy draft anchors on the window the pack actually ships. Anchored
+    // on the inferred start instead, "from tomorrow till Friday" hands the model
+    // a draft that sits OUTSIDE `pack.window` — every card arrives pre-flagged,
+    // and the model is asked to repair a board we drew wrong.
+    const draftAnchorMs = resolved.windowMs?.from ?? windowStartMs;
 
     // Draft: generate → greedy slotFixtures; refine → the prior proposal
     // verbatim; repair → the movable set's current persisted slots.
@@ -845,7 +897,7 @@ export async function buildSchedulePack(
         // org zone.
         config: toSlotConfig(
           settings,
-          zonedTimeToUtc(dayKeyInTz(windowStartMs, orgTz), DEFAULT_SESSION_HOURS.start, orgTz),
+          zonedTimeToUtc(dayKeyInTz(draftAnchorMs, orgTz), DEFAULT_SESSION_HOURS.start, orgTz),
         ),
         // extraExisting is the #350 joint pack's already-drafted divisions;
         // empty for every single-division caller.
@@ -1058,6 +1110,10 @@ export async function buildSchedulePack(
             fieldFairness: config.constraints.fieldFairness,
             parallelism: config.constraints.parallelism,
             crossPersonClash: config.constraints.crossPersonClash,
+            // OMITTED when empty, never `[]`. Absence already means "no durable
+            // rules", and emitting an empty array on every pack would change the
+            // shape of every instruction-free run for no information.
+            ...(config.constraints.hard?.length ? { hard: config.constraints.hard } : {}),
           }
         : null,
     };
@@ -1074,6 +1130,7 @@ export async function buildSchedulePack(
       clock,
       window,
       sessionHours: { ...DEFAULT_SESSION_HOURS },
+      parsed: { hard: resolved.hard, soft: resolved.soft, unparsed: resolved.unparsed },
       settings: settingsOut,
       entrants: packEntrants,
       people: packPeople,
@@ -1364,14 +1421,32 @@ function toObstacleAssignments(pack: SchedulePack): Assignment[] {
   }));
 }
 
+/** The fixture metadata typed rules need and `Assignment` does not carry (#398).
+ *  `winnerTo` is the ONLY definition of terminal — never a round number, which
+ *  is a display label an elimination bracket numbers sparsely. */
+export function packRuleFixtures(pack: SchedulePack): RuleFixture[] {
+  return pack.fixtures.movable.map((f) => ({
+    id: f.id,
+    extKey: f.ext_key,
+    divisionId: pack.division.id,
+    ...(f.pool !== null ? { poolId: f.pool } : {}),
+    winnerTo: f.feeds.winner_to,
+  }));
+}
+
 /** Exported for the same reason the joint twin `verifyConfigFor` is: it is a
  *  pure derivation of the pack, and a test that asserts what the referee is
  *  handed must be able to build it the way the runner does. */
-export function verifyConfig(
-  pack: SchedulePack,
-): Pick<SlotConfig, "perEntrantMinRest" | "gapMinutes" | "blackouts" | "sessionWindows"> &
-  Partial<Pick<SlotConfig, "matchMinutes" | "constraints" | "window">> {
+export function verifyConfig(pack: SchedulePack): VerifyConfig {
   return {
+    // #398: the org zone plus ONE merged hard-rule stream. A rule compiled from
+    // the instruction and a durable division rule are the same vocabulary and
+    // the same enforcement, so the referee reads one list. No `restByDivision`
+    // here — a single-division run has only one division's rest to be the
+    // maximum of.
+    tz: pack.tz,
+    hard: [...pack.parsed.hard, ...(pack.settings.constraints?.hard ?? [])],
+    ruleFixtures: packRuleFixtures(pack),
     // Both rest sources, plus the match length noBackToBack needs: the engine's
     // effectiveRestMinutes takes the strictest, exactly as the solver does.
     perEntrantMinRest: pack.settings.perEntrantMinRest,
@@ -1471,7 +1546,7 @@ async function callModel(
   try {
     return await provider.chat({
       model,
-      system: SYSTEM_PROMPT,
+      system: SINGLE_SYSTEM_PROMPT,
       messages,
       maxTokens,
       reasoning: aiReasoning(model),
@@ -2070,11 +2145,14 @@ export async function aiPlanForDivision(
   // now (SPEC-2 §5.2/Task 4). This lookup only resolves the division's
   // competition + frozen state for the checks below.
   const gate = await withTenant(auth.orgId, async (tx) => {
-    const [division] = await tx<{ competition_id: string; schedule_locked: boolean }[]>`
-      select competition_id, schedule_locked from divisions where id = ${divisionId}`;
+    const [division] = await tx<{ competition_id: string; name: string; schedule_locked: boolean }[]>`
+      select competition_id, name, schedule_locked from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
     return {
       competitionId: division.competition_id,
+      // #398: the stage-1 compile is shown division names so a scoped
+      // instruction ("finals in the Open on Friday") can resolve to an id.
+      divisionName: division.name,
       frozen: division.schedule_locked ?? false,
     };
   });
@@ -2103,9 +2181,42 @@ export async function aiPlanForDivision(
   // The one wall-clock read on this path (#397). Everything downstream — the
   // pack builder, the clock, the window — takes the instant as a parameter, so
   // a run is reproducible from its inputs alone.
+  // Stage-1 compile (#398), OUTSIDE `spendCredit` and ahead of the quote. A
+  // credit buys a token BUDGET, not a number of rounds, so an extra LLM round
+  // must never mint one — and the confirm step W5 (#400) adds is only genuinely
+  // free to walk away from if this round is unpriced. Own meter, own ~1K
+  // ceiling; the abuse bound is the rate limit above, five runs an hour.
+  //
+  // A failure here is NOT fatal. The run continues with no compiled rules rather
+  // than presenting a rule as enforced while nothing enforces it.
+  //
+  // Skipped when the wallet cannot cover even the CHEAPEST this request could
+  // be. "402 before any model call" is a standing invariant of this path
+  // (schedule-ai-route.test.ts), and unpriced is not the same as free: an org
+  // that cannot pay for the run must not spend our tokens compiling for it.
+  // A lower bound, never an estimate — it can only decline to skip, never skip a
+  // run that would have gone through. The 402 itself still comes from
+  // `spendCredit` below, unchanged.
+  const canPay = (await balance(walletId)) >= minimumCredits([input.rung]);
+  const parse =
+    input.instruction.trim().length > 0 && canPay
+      ? await parseInstruction(input.instruction, {
+          divisions: [{ id: divisionId, name: gate.divisionName }],
+        })
+      : { raw: null, failed: false, tokens: 0, servedModel: null };
+
+  // OMITTED when no compile ran — an empty instruction, or a wallet that could
+  // not pay for one. Without this, `parse_failed: false` on the ledger doubles
+  // as "never attempted" and reconciliation cannot tell the two apart.
+  const parseStamp =
+    parse.servedModel !== null || parse.failed
+      ? { tokens: parse.tokens, failed: parse.failed }
+      : undefined;
+
   const { pack, movableIds } = await buildSchedulePack(auth, divisionId, {
     ...input,
     now: Date.now(),
+    raw: parse.raw,
   });
 
   // Token-weighted credit pricing (lib/ai-rung.ts). One line — a division is
@@ -2212,7 +2323,7 @@ export async function aiPlanForDivision(
                     // — even on a failed run the credits were reserved, so the
                     // ledger stamps it here too. One helper builds this fragment
                     // for every surface so they cannot drift.
-                    ...meterStamp(quote, meter),
+                    ...meterStamp(quote, meter, parseStamp),
                     // Provider diagnostics stay server-side (ops needs the real
                     // status; the tenant gets a bare 503).
                     ...(providerErr
@@ -2273,7 +2384,7 @@ export async function aiPlanForDivision(
                 // the org picked below the prediction, and whether the budget
                 // cut the run short — the last is what makes a mispriced rung
                 // visible instead of looking like a merely degraded plan.
-                ...meterStamp(quote, meter),
+                ...meterStamp(quote, meter, parseStamp),
                 // Ladder telemetry: which model was tried first and rejected,
                 // the full ordered chain of rungs attempted (so a 3-rung fall
                 // gemini→sonnet→grok is auditable — `model` above is only the
@@ -2366,6 +2477,6 @@ export async function aiPlanForDivision(
     // the predictor said, whether the confirm card's warning applies, and
     // whether the budget cut the run short, so the client can reconcile against
     // its own (advisory) prediction.
-    ...meterStamp(quote, meter),
+    ...meterStamp(quote, meter, parseStamp),
   };
 }

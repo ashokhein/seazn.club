@@ -34,6 +34,7 @@ import {
 } from "../competition-schedule-ai";
 import { isBlocking, planIsAcceptable, type PackConstraints, type PackSettings } from "../schedule-ai";
 import type { AiSchedulePlan } from "../schedule-ai-prompt";
+import type { Conflict } from "@seazn/engine/scheduling";
 
 // --- Fixed ids -------------------------------------------------------------
 const D1 = "d1111111-1111-4111-8111-111111111111"; // "Alpha"
@@ -163,6 +164,7 @@ function pack(
     },
     window: { start: "2026-08-01T00:00:00+01:00", end: "2026-08-13T23:59:59+01:00" },
     sessionHours: { start: "08:00", end: "22:00" },
+    parsed: { hard: [], soft: [], unparsed: [] },
     divisions: divisions.map((d) => ({
       ...d,
       movableIds: movable.filter((f) => f.division_id === d.id).map((f) => f.id),
@@ -938,5 +940,271 @@ describe("verifyConfigFor (#350)", () => {
     } finally {
       delete process.env.SCHEDULING_AI_ESCALATE_WARN_RATIO;
     }
+  });
+});
+
+// ===========================================================================
+// #398 — the compiled instruction, verified jointly
+//
+// Both directions for every rule: a board that satisfies the instruction must
+// come back clean, or the repair loop would chase a violation the organiser
+// never caused.
+// ===========================================================================
+
+const instrOf = (c: readonly Conflict[]): Conflict[] => c.filter((x) => x.reason === "instruction");
+
+describe("verifyJoint — compiled instruction (#398)", () => {
+  it("REJECTS a per-day cap breach, counted in the ORG zone across divisions", () => {
+    // Three fixtures on 2026-08-01 under a competition-wide 2/day cap. They
+    // span two divisions, so a per-division count would see 2 and 1 and pass —
+    // the cap is a COMPETITION rule and has to be bucketed once.
+    const p = pack(
+      [division(D1, "Alpha"), division(D2, "Beta", { settings: settings({ courts: ["Court 2"] }) })],
+      [fixture(F1, D1), fixture(F2, D1), fixture(F3, D2)],
+      {
+        parsed: {
+          hard: [{ type: "max_fixtures_per_day", count: 2, scope: { kind: "competition" } }],
+          soft: [],
+          unparsed: [],
+        },
+      },
+    );
+    const found = instrOf(
+      verifyJoint(
+        plan([
+          assign(F1, at("09:00"), "Court 1"),
+          assign(F2, at("11:00"), "Court 1"),
+          assign(F3, at("13:00"), "Court 2"),
+        ]),
+        p,
+      ),
+    );
+    expect(found.length).toBeGreaterThan(0);
+    expect(found.every((c) => c.detail?.includes("2026-08-01"))).toBe(true);
+    expect(found.every((c) => c.detail?.includes("2/day"))).toBe(true);
+  });
+
+  it("ACCEPTS the same three fixtures once they are spread over two days", () => {
+    const p = pack(
+      [division(D1, "Alpha"), division(D2, "Beta", { settings: settings({ courts: ["Court 2"] }) })],
+      [fixture(F1, D1), fixture(F2, D1), fixture(F3, D2)],
+      {
+        parsed: {
+          hard: [{ type: "max_fixtures_per_day", count: 2, scope: { kind: "competition" } }],
+          soft: [],
+          unparsed: [],
+        },
+      },
+    );
+    expect(
+      instrOf(
+        verifyJoint(
+          plan([
+            assign(F1, at("09:00"), "Court 1"),
+            assign(F2, at("11:00"), "Court 1"),
+            assign(F3, "2026-08-02T13:00:00+01:00", "Court 2"),
+          ]),
+          p,
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  it("bucketed in the ORG zone, never each division's own tz", () => {
+    // Both divisions declare Australia/Sydney, but the ORG is Europe/London and
+    // that is the only zone temporal maths uses (design §2.1). At 23:30 London
+    // on the 1st these two are the same London day and a different Sydney day,
+    // so a per-division-tz implementation would let the 1/day cap through.
+    const sydney = { tz: "Australia/Sydney" };
+    const p = pack(
+      [
+        division(D1, "Alpha", sydney),
+        division(D2, "Beta", { ...sydney, settings: settings({ courts: ["Court 2"] }) }),
+      ],
+      [fixture(F1, D1), fixture(F3, D2)],
+      {
+        parsed: {
+          hard: [{ type: "max_fixtures_per_day", count: 1, scope: { kind: "competition" } }],
+          soft: [],
+          unparsed: [],
+        },
+      },
+    );
+    const found = instrOf(
+      verifyJoint(
+        plan([assign(F1, at("09:00"), "Court 1"), assign(F3, at("23:30"), "Court 2")]),
+        p,
+      ),
+    );
+    expect(found.length).toBeGreaterThan(0);
+    expect(found.every((c) => c.detail?.includes("2026-08-01"))).toBe(true);
+  });
+
+  it("an unqualified 'final on Friday' binds EVERY division's terminal fixture", () => {
+    // F2 feeds F1, so F1 is Alpha's terminal; F3 is Beta's. 2026-08-01 is a
+    // Saturday, so both terminals are wrong and both must be named.
+    const p = pack(
+      [division(D1, "Alpha"), division(D2, "Beta", { settings: settings({ courts: ["Court 2"] }) })],
+      [
+        fixture(F1, D1, { feeds: { winner_to: null, after: [] } }),
+        fixture(F2, D1, { feeds: { winner_to: F1, after: [] } }),
+        fixture(F3, D2, { feeds: { winner_to: null, after: [] } }),
+      ],
+      {
+        parsed: {
+          hard: [
+            {
+              type: "fixture_on_weekday",
+              selector: { kind: "terminal" },
+              weekday: "FRI",
+              scope: { kind: "competition" },
+            },
+          ],
+          soft: [],
+          unparsed: [],
+        },
+      },
+    );
+    const found = instrOf(
+      verifyJoint(
+        plan([
+          assign(F1, at("09:00"), "Court 1"),
+          assign(F2, at("11:00"), "Court 1"),
+          assign(F3, at("13:00"), "Court 2"),
+        ]),
+        p,
+      ),
+    );
+    // F2 is NOT terminal — it feeds F1 — so it must not be named, even though
+    // it sits in the same round number.
+    expect(found.map((c) => c.fixtureId).sort()).toEqual([F1, F3].sort());
+  });
+
+  it("ACCEPTS both terminals once they are on the Friday", () => {
+    const p = pack(
+      [division(D1, "Alpha"), division(D2, "Beta", { settings: settings({ courts: ["Court 2"] }) })],
+      [
+        fixture(F1, D1, { feeds: { winner_to: null, after: [] } }),
+        fixture(F3, D2, { feeds: { winner_to: null, after: [] } }),
+      ],
+      {
+        parsed: {
+          hard: [
+            {
+              type: "fixture_on_weekday",
+              selector: { kind: "terminal" },
+              weekday: "FRI",
+              scope: { kind: "competition" },
+            },
+          ],
+          soft: [],
+          unparsed: [],
+        },
+      },
+    );
+    // 2026-08-07 is a Friday.
+    expect(
+      instrOf(
+        verifyJoint(
+          plan([
+            assign(F1, "2026-08-07T09:00:00+01:00", "Court 1"),
+            assign(F3, "2026-08-07T13:00:00+01:00", "Court 2"),
+          ]),
+          p,
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  it("merges a DURABLE division rule into the same stream", () => {
+    // Nothing was compiled from an instruction; the rule lives on the division's
+    // stored settings. Hard rules have exactly one home, so it must still fire.
+    const p = pack(
+      [
+        division(D1, "Alpha", {
+          settings: settings({
+            constraints: constraints({
+              hard: [{ type: "not_before", time: "10:00", scope: { kind: "competition" } }],
+            }),
+          }),
+        }),
+      ],
+      [fixture(F1, D1)],
+    );
+    const found = instrOf(verifyJoint(plan([assign(F1, at("09:00"), "Court 1")]), p));
+    expect(found).toHaveLength(1);
+    expect(found[0]!.detail).toContain("not_before 10:00");
+  });
+});
+
+describe("verifyJoint — cross-division rest is the MAX (#398)", () => {
+  // ONE human, entered in both divisions. Alpha rests 20 minutes, Beta rests
+  // 120. The pair sits 60 minutes apart on DIFFERENT courts, so neither a court
+  // clash nor an overlap can produce the conflict.
+  //
+  // This is the bug design §7.2 names: verifyJoint runs one pass per division
+  // with THAT division's own config, so before this change the pair was checked
+  // twice at two different rest values instead of once at the maximum, and the
+  // Alpha pass accepted it. A human's recovery does not care which bracket they
+  // are in.
+  const shared = () =>
+    pack(
+      [
+        division(D1, "Alpha", { settings: settings({ perEntrantMinRest: 20 }) }),
+        division(D2, "Beta", {
+          settings: settings({ perEntrantMinRest: 120, courts: ["Court 2"] }),
+        }),
+      ],
+      [fixture(F1, D1, { home: E1, away: E2 }), fixture(F3, D2, { home: E3, away: E4 })],
+      { people: [{ person_id: PERSON, entrant_ids: [E1, E3] }] },
+    );
+
+  it("REJECTS a 60-minute gap when the OTHER division's 120 is the binding one", () => {
+    const found = verifyJoint(
+      plan([assign(F1, at("09:00"), "Court 1"), assign(F3, at("10:30"), "Court 2")]),
+      shared(),
+    );
+    expect(found.some((c) => c.reason === "rest")).toBe(true);
+    expect(found.some((c) => c.reason === "court")).toBe(false);
+  });
+
+  it("ACCEPTS the pair once the gap clears the MAX of both", () => {
+    // 09:00 + 30 min ends 09:30; 11:40 is 130 minutes later, clear of 120.
+    const found = verifyJoint(
+      plan([assign(F1, at("09:00"), "Court 1"), assign(F3, at("11:40"), "Court 2")]),
+      shared(),
+    );
+    expect(found.some((c) => c.reason === "rest")).toBe(false);
+  });
+
+  it("a compiled 'at least 45 minutes' RAISES a stored rest of zero", () => {
+    const p = pack(
+      [
+        division(D1, "Alpha"),
+        division(D2, "Beta", { settings: settings({ courts: ["Court 2"] }) }),
+      ],
+      [fixture(F1, D1, { home: E1, away: E2 }), fixture(F3, D2, { home: E3, away: E4 })],
+      {
+        people: [{ person_id: PERSON, entrant_ids: [E1, E3] }],
+        parsed: {
+          hard: [
+            {
+              type: "min_rest_minutes",
+              minutes: 45,
+              rest_scope: "both",
+              scope: { kind: "competition" },
+            },
+          ],
+          soft: [],
+          unparsed: [],
+        },
+      },
+    );
+    // Both divisions store rest 0; only the instruction can produce this.
+    const found = verifyJoint(
+      plan([assign(F1, at("09:00"), "Court 1"), assign(F3, at("10:00"), "Court 2")]),
+      p,
+    );
+    expect(found.some((c) => c.reason === "rest")).toBe(true);
   });
 });

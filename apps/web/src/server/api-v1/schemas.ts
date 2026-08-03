@@ -4,6 +4,10 @@
 //
 // NOT server-only: pure Zod, shared with the OpenAPI generator script.
 import { z } from "zod";
+// #398: durable division rules speak the SAME vocabulary a compiled instruction
+// does, so the wire schema reuses the engine's zod rather than restating it —
+// a second declaration is a second thing to drift.
+import { HardConstraint } from "@seazn/engine/scheduling";
 
 // ---------------------------------------------------------------------------
 // Common
@@ -711,6 +715,16 @@ export const ScheduleConfig = z.object({
       fieldFairness: z.enum(["off", "balance", "rotate"]).default("off"),
       parallelism: z.enum(["block", "mixed"]).default("mixed"),
       crossPersonClash: z.enum(["warn", "hard"]).default("warn"),
+      /** Durable division rules (#398) in the SAME vocabulary a compiled
+       *  instruction produces — per-day caps, weekday and date targets,
+       *  earliest/latest starts, minimum rest. They merge with the compiled
+       *  instruction into one stream at `verifyConfig`, so a hard rule has
+       *  exactly one home and one enforcement.
+       *
+       *  Optional, never defaulted: this type is built as an object literal at
+       *  dozens of call sites, and a defaulted field is required in the zod
+       *  OUTPUT type. Read it as `constraints?.hard ?? []`. */
+      hard: z.array(HardConstraint).max(200).optional(),
     })
     .optional(),
 });
@@ -758,6 +772,11 @@ export const ScheduleConflict = z.object({
     // wave — W4 (#399) makes it blocking, and delta-based so a board that was
     // already outside its window stays editable.
     "warn.window",
+    // #398: breaks a rule compiled from the organiser's own instruction ("two
+    // matches per day", "final on Friday"), or a durable division rule in the
+    // same vocabulary. A warning this wave — W4 (#399) gives it rule code H8
+    // and decides what blocks.
+    "warn.instruction",
     "warn.no_slot",
     "warn.official_declined",
     "warn.official_unavailable",

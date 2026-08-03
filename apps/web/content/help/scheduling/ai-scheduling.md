@@ -29,18 +29,46 @@ It cannot see another organisation's schedule, roster or results — only that a
 
 Your data stays yours: the brief is sent to one of our AI providers — Anthropic (Claude), Google (Gemini) or xAI (Grok), some reached through the OpenRouter gateway — only to produce the proposal, and it is **not used to train AI models**. Requests routed through OpenRouter additionally carry zero-data-retention terms. Nothing beyond this division's scheduling brief ever leaves seazn.club — never your whole account, member emails or billing details. See our [sub-processors list](/legal/sub-processors) for the full set of AI providers.
 
+## What your instruction can ask for
+
+Before the timetable is built, your instruction is read once and turned into **rules the checker enforces** — not just advice the model may or may not follow. If the proposal breaks one, it comes back named in the warnings, and the AI is asked to fix it.
+
+These are the things it can turn into a rule:
+
+- **A limit on matches in a day** — "two matches per day". Counted by calendar day in your organisation's timezone, over all the divisions you selected together — and it counts matches **already** on that day, not only the ones this run is placing.
+- **A minimum gap** — "at least 45 minutes between matches". This only ever **raises** the rest you have set in schedule settings; it never lowers it. Ask for 40 minutes when your settings say 90 and you keep 90.
+- **A gap before the next round** — "40 minutes before the round it feeds". Measured from the end of a match to the start of the one its winner goes into.
+- **A day for a particular match** — "the final on Friday", or a specific date. "The final" means the match nothing advances out of. In a competition with several divisions it means **every** division's final, unless you name one.
+- **Earliest and latest starts** — "nothing before 9am", "nothing after 8pm", read as clock times where your organisation sits.
+- **A range of dates** — "from tomorrow till Friday". See [the dates a plan covers](#the-dates-a-plan-covers) below.
+
+**Dates are worked out here, never by the AI.** It is told the words you used — "tomorrow", "Friday" — and we resolve them against the real calendar, so a plan cannot be a day out because a model counted wrong.
+
+Two things it deliberately will **not** turn into a rule, because it could not enforce them honestly:
+
+- **A limit aimed at one player or one team** — "nobody plays more than twice a day". The day limit above counts the matches in a day, not the matches one person has, so reading it that way would give you a very different rule from the one you asked for. It comes back to you unread instead.
+- **A range of dates for one division only.** A run has a single calendar, so a range meant for one division would quietly shorten every other division's. State the dates for the whole run, or plan that division on its own.
+
+**Anything that cannot become a rule is shown back to you, in your own words.** A preference like "keep the mornings relaxed" is passed to the AI to take into account, and wording nobody can turn into a checkable rule is listed as-is. We never invent a rule you did not ask for, and never present something as enforced when nothing is enforcing it.
+
+If your instruction cannot be read at all, the run still goes ahead — as a plain-language request, the way it worked before — and you are told that is what happened.
+
+Reading your instruction is **free**. It happens before anything is charged, and it uses no credit.
+
 ## The dates a plan covers
 
 Every run is bounded by a **calendar window** — the days the competition is allowed to run. It is taken from the division's **start and end dates** in schedule settings. Set a start but no end and the window runs seven days from your start date; set neither and it falls back to **the next seven days**, beginning today in the organisation's timezone.
 
 The window also stretches to cover anything already on the board, so a repair run never reports the very matches it was asked to keep. Plan several divisions together and they share **one** window, wide enough for all of them — the earliest start and the latest end across everything you selected. No division is ever asked to squeeze inside another's dates.
 
-The window only ever **widens**, never narrows. Before the run it is stretched to cover:
+Where the dates are worked out for you, the window only ever **widens**, never narrows. Before the run it is stretched to cover:
 
 - **play hours you set explicitly**, if any of them fall outside those dates; and
 - **fixtures already on the board**, so a match you placed by hand is never treated as out of bounds.
 
-The dates are a floor, not a cage — you cannot accidentally shrink the window below work you have already done.
+Those dates are a floor, not a cage — you cannot accidentally shrink the window below work you have already done.
+
+**Unless you say otherwise in your instruction.** If you write dates into the instruction — "run everything from tomorrow till Friday" — that range is used exactly as written, instead of the worked-out one. Widening it onto dates you did not ask for would quietly undo the one thing you actually said. If matches then land outside it, you will see them as warnings, which is the point.
 
 A match the proposal puts **outside** the window comes back as a **warning**, listed with the other soft warnings for you to read. It blocks nothing: you can look at it and apply the schedule anyway. Usually it means the end date is earlier than the competition really runs, and the fix is to set the dates rather than to argue with the proposal.
 
@@ -117,6 +145,8 @@ Pick the divisions in the console, write one instruction covering all of them, a
 Undo works the other way round. Each division gets its own **before-AI** save point, and undo restores them one at a time rather than in a single step, so a restore that fails doesn't stop the rest going back. If any division is left on the AI schedule, the console names it and offers to try just those again — and the save points stay valid, so you can also restore any of them from its own schedule page later.
 
 **Shared courts are matched by name, and by nothing else.** There is no venue-wide court list behind the scenes: a court is the label you typed into each division's schedule settings. So "Court 1" in one division and "Court A" in another are **two different courts** as far as the run is concerned, and it will happily put a match on each at the same time. If the divisions you picked don't use the same names, the console warns you before the run — the fix is to make the names match in each division's schedule settings.
+
+**Somebody playing in two divisions gets the longer rest of the two.** If one division allows 20 minutes between matches and the other insists on 120, a player entered in both is given 120 either way round. A person's recovery does not depend on which draw the match happens to belong to.
 
 Two more limits worth knowing:
 

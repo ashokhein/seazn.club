@@ -22,6 +22,10 @@ export const REASON_CODE: Record<Conflict["reason"], ScheduleConflict["code"]> =
   // #397: outside the pack's resolved calendar window. Warn this wave; W4
   // (#399) promotes it to a delta-based block.
   window: "warn.window",
+  // #398: a rule compiled from the organiser's instruction, or a durable
+  // division rule in the same vocabulary. Warn this wave; W4 (#399) decides
+  // what blocks.
+  instruction: "warn.instruction",
   no_slot: "warn.no_slot",
   // Jul3/04 §3: an unsatisfiable start window is a hard bound, not a warning
   start_window: "conflict.start_window",

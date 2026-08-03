@@ -125,6 +125,35 @@ if a wish was impossible.`;
 // repair round. Fixed in the PACK rather than the prompt: buildCompetitionPack
 // now builds `people` over the run's whole entrant set, so the sharers are in the
 // map, H4 applies to them unchanged, and no engine semantics move.
+/** ADDITIVE (#398, design §7.3). `SYSTEM_PROMPT` above is byte-frozen behind a
+ *  golden snapshot, so new rules land in their own constant and are COMPOSED —
+ *  never spliced into it. Five sentences, each of which the verifier now
+ *  enforces, so the model is told the rules it will actually be graded on. */
+export const INSTRUCTION_RULES = `COMPILED INSTRUCTION AND ADVANCERS
+
+I1. \`parsed.hard\` is the organiser's own instruction, compiled into typed rules
+and checked after you answer. Satisfy every entry. \`parsed.soft\` are
+preferences; \`parsed.unparsed\` is wording nobody could compile — read it as
+context, never as a rule.
+
+I2. \`participants\` for a fixture is every person who could still stand in it,
+including behind an empty slot. Never reason "the slot is null, so nobody is
+there yet": an empty slot carries everyone who can still advance into it, and a
+rest or overlap rule binds all of them.
+
+I3. \`feeds.after\` is the sole ordering authority. \`round\` and \`seq\` are display
+labels — elimination brackets number sparsely, so never repair gaps in round
+numbers and never infer order from them.
+
+I4. When two fixtures in different divisions share a person, the rest between
+them is the MAX of both divisions' values, not either one alone.
+
+I5. An unqualified "the final" means EVERY division's terminal fixture — the one
+whose \`feeds.winner_to\` is null. It is never the highest round number.`;
+
+/** What the single-division architect is actually sent. */
+export const SINGLE_SYSTEM_PROMPT = `${SYSTEM_PROMPT}\n\n${INSTRUCTION_RULES}`;
+
 export const JOINT_RULES = `JOINT MODE — you are scheduling several divisions of one competition onto one
 shared board. The pack carries a divisions array in place of a single settings
 block, and every fixture, entrant, draft assignment and prior-proposal entry

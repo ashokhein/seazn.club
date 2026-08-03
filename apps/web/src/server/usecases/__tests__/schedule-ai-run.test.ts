@@ -56,6 +56,7 @@ function makePack(overrides: Partial<SchedulePack> = {}): SchedulePack {
     },
     window: { start: "2026-08-01T00:00:00+01:00", end: "2026-08-13T23:59:59+01:00" },
     sessionHours: { start: "08:00", end: "22:00" },
+    parsed: { hard: [], soft: [], unparsed: [] },
     settings: {
       matchMinutes: 30,
       gapMinutes: 0,

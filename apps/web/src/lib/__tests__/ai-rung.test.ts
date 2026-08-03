@@ -4,6 +4,7 @@ import {
   freeDraftQuote,
   isRung,
   meterStamp,
+  minimumCredits,
   minRoundReserve,
   officialsRungWeights,
   predictRung,
@@ -465,6 +466,38 @@ describe("meterStamp", () => {
     });
   });
 
+  // #398/#387: the stage-1 instruction compile runs OUTSIDE spendCredit, so its
+  // spend sits outside `budget`. Without its own line it is invisible in the
+  // ledger — which is precisely the reconciliation gap #387 reports.
+  it("carries the pre-flight parse on its own line", () => {
+    restore = withCleanEnv(BUDGET_ENV);
+    const q = quoteRun([sized("d1", 400, 1)], W);
+    const m = createTokenMeter(q.budget);
+    m.add(12_345);
+    const stamp = meterStamp(q, m, { tokens: 320, failed: false });
+    expect(stamp.parse_tokens).toBe(320);
+    expect(stamp.parse_failed).toBe(false);
+    // NOT folded into spent_tokens: that number must keep meaning "what the
+    // credit bought", or reconciliation double-counts the parse.
+    expect(stamp.spent_tokens).toBe(12_345);
+    expect(stamp.budget).toBe(32_000);
+  });
+
+  it("records a failed compile as spend that still happened", () => {
+    restore = withCleanEnv(BUDGET_ENV);
+    const q = quoteRun([sized("d1", 400, 1)], W);
+    const stamp = meterStamp(q, createTokenMeter(q.budget), { tokens: 240, failed: true });
+    expect(stamp).toMatchObject({ parse_tokens: 240, parse_failed: true });
+  });
+
+  it("omits the parse line entirely when no compile ran", () => {
+    restore = withCleanEnv(BUDGET_ENV);
+    const q = quoteRun([sized("d1", 400, 1)], W);
+    const stamp = meterStamp(q, createTokenMeter(q.budget));
+    expect(stamp.parse_tokens).toBeUndefined();
+    expect(stamp.parse_failed).toBeUndefined();
+  });
+
   it("emits the per-division breakdown and discount for a joint run", () => {
     restore = withCleanEnv(BUDGET_ENV);
     const q = quoteRun([sized("a", 10), sized("b", 400)], W);
@@ -488,5 +521,53 @@ describe("meterStamp", () => {
     m.add(q.budget);
     m.canStartRound();
     expect(meterStamp(q, m).stopped_on_budget).toBe(true);
+  });
+});
+
+describe("minimumCredits (#398 pre-flight gate)", () => {
+  // The stage-1 compile runs BEFORE the pack and therefore before the real
+  // quote. This is what lets it refuse to spend tokens on a run that is already
+  // provably unaffordable, without pricing a pack it has not built.
+  const sized = (n: number) => ({ movableFixtures: n, entrants: n, courts: 2 });
+
+  it("prices a line EXACTLY when the client chose its rung", () => {
+    expect(minimumCredits([3])).toBe(3);
+    // Two divisions at 2 and 3 cost max(1, 5 - 1) = 4 — the smoke case a wallet
+    // holding 3 must not be able to start.
+    expect(minimumCredits([2, 3])).toBe(4);
+  });
+
+  it("floors an unchosen line at rung 1", () => {
+    expect(minimumCredits([undefined])).toBe(1);
+    expect(minimumCredits([undefined, undefined])).toBe(1);
+    expect(minimumCredits([undefined, undefined, undefined])).toBe(2);
+  });
+
+  it("ignores a value that is not a rung, exactly as quoteRun does", () => {
+    expect(minimumCredits([9])).toBe(1);
+    expect(minimumCredits([0])).toBe(1);
+  });
+
+  it("is never above what the run actually costs", () => {
+    // The property that makes it safe: it can decline to skip, but it can never
+    // skip a run that would have gone through.
+    const W: RungWeights = officialsRungWeights();
+    for (const sizes of [[1], [40], [200], [5, 5], [200, 200], [3, 90, 400]]) {
+      for (const chosen of [
+        sizes.map(() => undefined),
+        sizes.map(() => 1 as number | undefined),
+        sizes.map((_, i) => ((i % 3) + 1) as number | undefined),
+      ]) {
+        const q = quoteRun(
+          sizes.map((n, i) => ({
+            key: `d${i}`,
+            input: sized(n),
+            ...(chosen[i] !== undefined ? { chosen: chosen[i]! } : {}),
+          })),
+          W,
+        );
+        expect(minimumCredits(chosen)).toBeLessThanOrEqual(q.credits);
+      }
+    }
   });
 });

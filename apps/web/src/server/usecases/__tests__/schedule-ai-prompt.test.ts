@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   SYSTEM_PROMPT,
+  INSTRUCTION_RULES,
+  SINGLE_SYSTEM_PROMPT,
   JOINT_RULES,
   AiSchedulePlan,
   AiConstraintDelta,
@@ -315,5 +317,42 @@ describe("JOINT_RULES (issue #350)", () => {
     expect(j6).not.toMatch(/different timezones/i);
     expect(j6).not.toMatch(/first listed division/i);
     expect(j6).not.toMatch(/instants,? not strings/i);
+  });
+});
+
+// #398: the five sentences land in a NEW additive constant. SYSTEM_PROMPT stays
+// byte-frozen behind its golden snapshot above — splicing them in would rewrite
+// a constant the whole ladder's behaviour is pinned to.
+describe("INSTRUCTION_RULES (#398)", () => {
+  it("is composed onto SYSTEM_PROMPT, never spliced into it", () => {
+    expect(SINGLE_SYSTEM_PROMPT.startsWith(SYSTEM_PROMPT)).toBe(true);
+    expect(SINGLE_SYSTEM_PROMPT).toContain(INSTRUCTION_RULES);
+    expect(SYSTEM_PROMPT).not.toContain(INSTRUCTION_RULES);
+  });
+
+  it("teaches all five sentences the wave owes the model", () => {
+    // 1. participants; 2. never reason from a null slot; 3. feeds.after is the
+    // ordering authority; 4. cross-division rest is the MAX; 5. the final means
+    // every division's terminal fixture. Matched on whitespace-normalised text:
+    // the constant is hard-wrapped, so a literal probe would pin the wrapping
+    // rather than the sentence.
+    const flat = INSTRUCTION_RULES.replace(/\s+/g, " ");
+    expect(flat).toContain("participants");
+    expect(flat).toContain('the slot is null, so nobody is there yet');
+    expect(flat).toContain("feeds.after");
+    expect(flat).toContain("MAX of both divisions");
+    expect(flat).toContain("terminal fixture");
+  });
+
+  it("tells the model that parsed.hard is checked and parsed.unparsed is not", () => {
+    const flat = INSTRUCTION_RULES.replace(/\s+/g, " ");
+    expect(flat).toContain("parsed.hard");
+    expect(flat).toContain("never as a rule");
+  });
+
+  it("warns the model off round numbers, which brackets number sparsely", () => {
+    const flat = INSTRUCTION_RULES.replace(/\s+/g, " ");
+    expect(flat).toContain("display labels");
+    expect(flat).toContain("never repair gaps in round numbers");
   });
 });

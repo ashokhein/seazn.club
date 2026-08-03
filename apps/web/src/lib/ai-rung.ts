@@ -222,6 +222,28 @@ export function quoteRun(lines: QuoteLineInput[], weights: RungWeights): Quote {
   };
 }
 
+/**
+ * The FEWEST credits a request could possibly cost, from what is known before
+ * the pack is built — one entry per line, holding that line's `chosen` override
+ * when the client sent one.
+ *
+ * A line's rung is `chosen` when it is a valid rung and the prediction
+ * otherwise, and a prediction is never below 1. So a supplied override prices
+ * that line exactly, and an absent one floors it at 1. The discount is applied
+ * exactly as `quoteRun` applies it, which keeps this a true lower bound rather
+ * than an approximation that happens to be close.
+ *
+ * Used by the stage-1 instruction compile (#398), which runs BEFORE the pack
+ * and therefore before the real quote: a run we can already prove is
+ * unaffordable must not spend tokens compiling for itself. Being a lower bound
+ * is what makes it safe — it can only ever decline to skip, never skip a run
+ * that would in fact have gone through.
+ */
+export function minimumCredits(chosen: readonly (number | undefined)[]): number {
+  const rungTotal = chosen.reduce<number>((n, c) => n + (c !== undefined && isRung(c) ? c : 1), 0);
+  return chosen.length > 1 ? Math.max(1, rungTotal - 1) : rungTotal;
+}
+
 /** A run that charges credits but makes no model call — Phase B's
  *  empty-instruction path returns the deterministic solver draft with zero
  *  tokens, and must never cost more than the 1 credit it cost before rung
@@ -336,11 +358,26 @@ export interface RunMeterStamp {
   /** Joint runs only (#350): the per-division breakdown behind `credits`. */
   divisions?: { id: string; rung: Rung; predicted_rung: Rung; underfunded: boolean }[];
   discount?: number;
+  /** The stage-1 instruction compile (#398). It runs OUTSIDE `spendCredit` and
+   *  therefore outside `budget`, so it needs its own line or the spend is
+   *  invisible — the exact reconciliation complaint #387 makes. Deliberately NOT
+   *  folded into `spent_tokens`: that number must keep meaning "what the credit
+   *  bought", or reconciliation double-counts. Both fields are ABSENT when no
+   *  compile ran — an empty instruction, or a wallet that could not pay for the
+   *  run it precedes — so `parse_failed: false` always means "compiled cleanly"
+   *  and never doubles as "never attempted". */
+  parse_tokens?: number;
+  parse_failed?: boolean;
 }
 
 /** The `schedule.ai_generated` / `ai_failed` payload fragment and the API
  *  response fragment, built once so the call sites cannot drift. */
-export function meterStamp(quote: Quote, meter: TokenMeter): RunMeterStamp {
+export function meterStamp(
+  quote: Quote,
+  meter: TokenMeter,
+  /** The unpriced pre-flight compile (#398). Omit when none ran. */
+  parse?: { tokens: number; failed: boolean },
+): RunMeterStamp {
   const base = {
     credits: quote.credits,
     budget: quote.budget,
@@ -348,6 +385,7 @@ export function meterStamp(quote: Quote, meter: TokenMeter): RunMeterStamp {
     underfunded: quote.underfunded,
     stopped_on_budget: meter.stoppedOnBudget,
     est_tokens: quote.estTokens,
+    ...(parse !== undefined ? { parse_tokens: parse.tokens, parse_failed: parse.failed } : {}),
   };
   if (quote.lines.length === 1) {
     const only = quote.lines[0]!;
