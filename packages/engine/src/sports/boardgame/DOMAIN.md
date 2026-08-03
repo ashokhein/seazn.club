@@ -58,6 +58,23 @@ Schema-path prefixes: `Ev.` = an event payload branch, `Cfg.` = config,
 **Row counts:** 12 modelled, 9 extended, 8 deferred (29 rows).
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
+## Why the pairing card is not `by` + `person`
+
+Every other module names the side with `by` and the player with `person`. The
+arbiter's pairing card uses `homePerson` / `awayPerson` instead, and W4's
+cross-family review left it that way on purpose.
+
+The card is one record of a **meeting**, not of an act by one side. `white` and
+`board` are properties of the PAIRING: who had White is a single fact about two
+players, and the board number is the pair's slot in the team match. Two
+`by`+`person` events would have to either drop those two facts or carry a copy
+of each on both halves — and two copies of "who had White" can disagree, which
+the atomic card cannot express. The home/away distinction survives either way;
+what does not survive is the pairing's own facts.
+
+W5 should render this as one pairing control with two name fields, not as the
+per-side control the other sports get.
+
 ## Variant differences
 
 Beyond the clock family, the FIDE laws differ between the three variants in

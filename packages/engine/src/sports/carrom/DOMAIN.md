@@ -57,6 +57,22 @@ Schema-path prefixes: `Ev.` = event payload branch, `Cfg.` = config,
 **Row counts:** 17 modelled, 4 extended, 6 deferred (27 rows).
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
+## The discipline projection, and the one thing it cannot say
+
+W4's cross-family review gave carrom a `discipline` descriptor (review item 7):
+`carrom.game.adjust` projects into `DisciplineCard` under the single colour
+`penalty`, always with the umpire's `reason` — which is *required* on the
+branch, so a carrom card always says why, and no other sport can promise that.
+
+`DisciplineCard.entrantSide` is the payload's `entrantId`: **the side whose
+game score moved**, which is exactly what `State.penalties[].side` already
+records next to `person`. Where the umpire wrote the row as a deduction against
+the offender (the Laws 51/55 write-off) that IS the offending side. Where a
+positive adjustment credits the opponent instead, the payload does not name the
+offender's side at all, so the projection reports the row as written and never
+guesses. Naming the offending side explicitly is a schema question for a later
+wave, not something the projection may invent.
+
 ## Downstream owed
 
 Recorded, not acted on:

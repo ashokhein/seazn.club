@@ -176,6 +176,29 @@ describe("boardgame: the arbiter's pairing card", () => {
     expect(state.colorOfHome).toBeNull();
   });
 
+  // W4 review item 6 — the house pattern for "which side did this" is `by` +
+  // `person`, and the pairing card uses `homePerson`/`awayPerson` instead.
+  // Deliberate, and this is the reason: the card is ONE arbiter record of a
+  // MEETING, and `white` and `board` are properties of the pairing, not of a
+  // side. Splitting it into two `by`+`person` events would either orphan those
+  // two facts or duplicate them onto both halves — and two copies of "who had
+  // White" can disagree, which is a contradiction the current shape cannot
+  // express. See DOMAIN.md.
+  it("holds both seats, the colour and the board number in ONE atomic record", () => {
+    const state = fold(stream(["core.start"], [...pairing]));
+    expect(state.players).toEqual({ home: "H-p1", away: "A-p1" });
+    expect(state.colorOfHome).toBe("B"); // `white: "A"` — a fact about the PAIR
+    expect(state.board).toBe(3);
+  });
+
+  it("has no per-side pairing branch — `by` + `person` is not accepted here", () => {
+    // If this ever starts parsing, the atomic card has grown a second, partial
+    // form and the two can disagree about White.
+    expect(() =>
+      fold(stream(["core.start"], ["boardgame.pairing", { by: "H", person: "H-p1" }])),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
+
   it("rejects an empty pairing card and one after the game is over", () => {
     expect(() => fold(stream(["core.start"], ["boardgame.pairing", {}]))).toThrowError(
       expect.objectContaining({ code: "INVALID_EVENT" }),
