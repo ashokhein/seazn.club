@@ -63,6 +63,7 @@ lack of time.
 | Sport-specific validity rules (a legal score, a maximum, a target) | all | entrant | — | deferred | **boundary.** The fallback cannot know them; the only invariants it enforces are internal consistency and a non-negative tally |
 
 **Row counts:** 9 modelled, 4 extended, 8 deferred (21 rows).
+Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## The boundary
 

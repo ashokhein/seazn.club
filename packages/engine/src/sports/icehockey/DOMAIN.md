@@ -72,6 +72,9 @@ state, `summary.` = `module.summary(state)`.
 | Rosters, captains, jersey numbers | all | persons | `positions`, `entrantModel.team{squadNumbers,captain}` | modelled | Layer 2 — lineups, not the event ledger. |
 | A penalty against a team official / the bench staff | all | person (non-player) | `Ev.PeriodSuspensionStart.person` / `.servedBy` | deferred | Nothing marks the named person as a non-player, so a coach's game misconduct lands in the player stat table. `servedBy` at least names who actually sits. A `role` discriminator needs a product decision on whether non-players exist in the person model at all. |
 
+**Row counts:** 23 modelled, 10 extended, 13 deferred (46 rows).
+Asserted against the table itself by `src/testkit/dossiers.test.ts`.
+
 ## Downstream owed
 
 1. **New event type `icehockey.set_piece`.** W5's pad needs a control ("penalty

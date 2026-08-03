@@ -159,6 +159,9 @@ coarse scoring must stay legal.
 
 ---
 
+**Row counts:** 36 modelled, 17 extended, 11 deferred (64 rows).
+Asserted against the table itself by `src/testkit/dossiers.test.ts`.
+
 ## Downstream owed
 
 Recorded, not acted on.

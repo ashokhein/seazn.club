@@ -56,6 +56,7 @@ Schema-path prefixes: `Ev.` = an event payload branch, `Cfg.` = config,
 | Abandonment (venue lost, round replayed) | all | entrant | `core.abandon` → `State.replayFlagged` | modelled | leaves the game undecided and flags it |
 
 **Row counts:** 12 modelled, 9 extended, 8 deferred (29 rows).
+Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Variant differences
 

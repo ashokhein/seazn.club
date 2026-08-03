@@ -52,7 +52,7 @@ is initialised with.
 | Second yellow, and the red that follows it | all | `person` | `Ev.FootballCard.color = "second_yellow"` → `State.squads[].sentOff` | modelled | Refused without a prior yellow for that person; the fold removes the player permanently. FIFA fair play scores it −3, a direct red −4, yellow + direct red −5. |
 | Direct red card | all | `person` | `Ev.FootballCard.color = "red"` | modelled | Legal pre-kickoff too (football.md §9). |
 | **The offence a card was shown for** | all | `person` | `Ev.FootballCard.reason` → `State.cards[].reason` | **extended** | New optional `CardReason` enum: the six Law 12.3 cautionable offences and the seven Law 12.4 sending-off offences. The suspension tariff is a function of *this*, not of the colour — violent conduct and a second caution are both reds and carry different bans. |
-| The offence reaching the discipline projection | all | `person` | `discipline.extractCards() → DisciplineCard` | deferred | `DisciplineCard` lives in `src/core/types.ts` and has no `reason` field; adding one is outside this family's blast radius. The offence is on `State.cards[]` and on the ledger event today. See §5 blockers. |
+| **The offence reaching the discipline projection** | all | `person` | `Ev.FootballCard.reason` / `Ev.FootballSinBin.reason` → `discipline.extractCards() → DisciplineCard.reason` | **extended** | Unblocked later in W4: `DisciplineCard.reason` (`src/core/types.ts`) plus the conditional spread in football's `extractCards` (`football.ts`), so the discipline usecase can vary a suspension by offence and not only by colour. `extractCards` projects a **sin bin** too, under the declared colour `sin_bin` — the return half of that branch is never a second sanction. |
 | FIFA fair-play deduction | all | `person` (anonymous cards deduct independently) | `Cfg.fairPlay`, `StandingsDelta.metrics.fair_play` | modelled | Worst applicable category per person. |
 | **Sin bin / temporary dismissal** | all — universal in `youth` and `small-sided`, and the FA runs it in `11-a-side` below NLS step 4 | `person` | `Ev.FootballSinBin` → `State.squads[].sinBin[]` | **extended** | New branch. Removes the player from the pitch **without** sending them off — the fact no existing branch could express, since `football.card`'s non-yellow path removes a player for good. Anonymous bins are recorded but never move the pitch, the same discipline anonymous cards get. |
 | A sin-binned player returning to the pitch | as above | `person` | `Ev.FootballSinBin.returned` | **extended** | Same branch carries both halves of the fact. An anonymous return closes the oldest anonymous dismissal. `playerStats.sin_bins` counts the dismissal and never the return. |
@@ -68,8 +68,8 @@ is initialised with.
 | Captain confirmed pre-match | all | one person | `Lineup.slots[].roles = ["captain"]`, `positions.roles` | modelled | Declared `unique: true`. |
 | Goalkeeper confirmed pre-match | all | one person | `Lineup.slots[].positionKey = "GK"` (`min:1, max:1`) | modelled | Enforced on the lineup — but `squadFromLineup` drops `positionKey`, so **State does not know who the keeper is**. See the next two rows. |
 | Goalkeeper change without a substitution | all | `person` | would be `Ev.FootballKeeper` | deferred | State drops `positionKey` at init, so a change-only event yields a keeper field that is `undefined` for every match where nobody swapped. Carrying the starting keeper in `init` changes the serialised State of every frozen stream and is therefore not additive. Blocked on W5's lineup model carrying positions into State. |
-| Shirt numbers | all | every squad member | `entrantModel.team.squadNumbers = true` | deferred | The flag declares the affordance; the number itself has no home — `LineupSlot` (core/types.ts) has no number field. Outside blast radius; see §5. |
-| Squad size per variant (5-, 7-, 9-a-side) | `small-sided` | 5–9 persons | `positions.lineup.size` is a single module-level `11` | deferred | **`PositionCatalog` is declared once per module, not per variant**, and `validateLineup` compares the starting count exactly — so a legal 7-a-side lineup is rejected today. Fixing it is a `SportModule` shape change. See §5 blockers. |
+| **Shirt numbers** | all | every squad member | `entrantModel.team.squadNumbers = true` + `LineupSlot.squadNumber` | **extended** | Unblocked later in W4: the number field landed on `LineupSlot` (`src/core/types.ts`), so the affordance the entrant model declares now has a home on the lineup. Optional, and the fold never reads it. |
+| **Squad size per variant (5-, 7-, 9-a-side)** | `small-sided` | 5–9 persons | `Cfg.teamSize` → `positionsFor(cfg)` → `resolvePositions` | **extended** | Unblocked later in W4: `SportModule.positionsFor?(cfg)` (`src/sport/module.ts`) and the `resolvePositions` accessor (`src/sport/catalog.ts`). Football declares `teamSize: 7` on `small-sided` (`football.ts`), so `validateLineup` now compares against the variant's own starting count. Lineup-only — never the fold. |
 | Bench size | all | up to 12 persons | `positions.lineup.benchMax = 12` | modelled | Same per-variant caveat as squad size. |
 | Two halves and half-time | all | n/a | `Ev.FootballPeriod.phase` `HT`/`FT` → `State.periods[]` | modelled | `Cfg.halves` is `z.literal(2)`. |
 | Half length | all | n/a | `Cfg.halfMinutes` | modelled | Variant presets: 45 / 30 / 20. |
@@ -78,7 +78,7 @@ is initialised with.
 | Quarters instead of halves | `youth` (mini-soccer age groups) | n/a | `Cfg.halves` is `z.literal(2)` | deferred | Needs three new `PlayPhase` values, two new period markers and a change to what triggers full time — a state-machine extension, not a field. The declared `youth` variant is 2×30 (FA U13+); quarters appear in U7–U10, which the module does not declare as a variant. Needs a product decision to declare a `mini-soccer` variant first. |
 | Kick-off, and which side kicks off | all | entrant | — | deferred | `core.start` is kernel-owned, carries no side, and is outside this family's blast radius; a `football.kickoff` would duplicate the start semantics. Needs a product decision. |
 | Ends changed at half-time | all | n/a | — | deferred | Not entered in a match record. |
-| Temporary suspension of play, then resumption | all | n/a | — | deferred | `core.abandon` is terminal — there is no way to record a stoppage that play resumed from. A resumable suspension needs a core event pair (`core.suspend`/`core.resume`) outside this family's blast radius. See §5. |
+| **Temporary suspension of play, then resumption** | all | n/a | `core.suspend` / `core.resume` (kernel-owned) | **extended** | Unblocked later in W4: the pair landed in `src/core/events.ts` and is folded inside `foldMatch`, so it never reaches a module's `apply` and no sport re-implements it. A suspension that is never resumed leaves the stoppage open; `core.abandon`/`core.forfeit` close it in the same step they decide. |
 | Abandonment | all | n/a | `core.abandon`, `Cfg.abandonPolicy` → `State.replayFlagged`, `summary.detail.abandoned` | modelled | `replay` leaves the fixture undecided; `award` decides for the leader (level ⇒ `no_result`). |
 | Forfeit / walkover | all | entrant | `core.forfeit`, `Cfg.awardScore` | modelled | Awards the configured score to the opponent. |
 | Kick from the penalty mark, and whether it scored | all, in knockout stages | kicker `person` | `Ev.FootballShootoutKick` → `State.shootout.kicks[]` | modelled | Kicker must be on the pitch; shootout kicks never touch `State.goals`. |
@@ -93,7 +93,8 @@ is initialised with.
 | Referee's written remarks | all | n/a | `core.note` | modelled | No state effect by contract. |
 | Attendance, weather, pitch condition | all | n/a | — | deferred | Fixture metadata, not a scorebook event — belongs on the fixture record, not in the ledger. |
 
-**Row counts — 26 `modelled`, 10 `extended`, 19 `deferred` (55 rows). No blank cells.**
+**Row counts:** 26 modelled, 15 extended, 14 deferred (55 rows). No blank cells.
+Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Per-variant divergence
 
@@ -127,8 +128,9 @@ Football sets the pattern the other families copy, so this is explicit.
 2. **The shootout kicker is validated but not retained.** `applyShootoutKick`
    checks `person` is on the pitch and then folds only `{side, scored}`. Shootout
    conversion is not attributable from State (it is from the ledger).
-3. **The own-goal scorer is retained but not counted.** `scorer` survives on the
-   ledger; the missing piece is only the `own_goals` metric — blocked, see §5.
+3. ~~**The own-goal scorer is retained but not counted.**~~ Closed later in W4:
+   `playerStats.own_goals` (`football.ts`) reads `football.goal.scorer` under
+   `{when: p.ownGoal === true}`. `goals` and `points` are unchanged.
 4. **Anonymous is always legal.** Every person field above except
    `football.sub`'s `off`/`on` is optional, and every fold has an anonymous path
    (cards, sin bins and penalties all record without touching the pitch).
@@ -163,24 +165,26 @@ Nothing here was acted on.
    drops every event with no score effect — the same reason `cards` has never
    been in the summary. A match report must read the ledger, not the summary.
 
-## Blockers — changes this family needed but did not make
+## Blockers — all five were raised, and all five are now cleared
 
-1. **`DisciplineCard` has no `reason` field** (`src/core/types.ts`). The Law 12
-   offence now exists on the event and in `State.cards[]`, but
-   `discipline.extractCards` cannot surface it, so the discipline usecase still
-   cannot vary a suspension by offence. One optional field on
-   `DisciplineCard` plus one conditional spread in football's `extractCards`.
-2. **`PositionCatalog` is per module, not per variant** (`src/sport/catalog.ts`,
-   `src/sport/module.ts`). `positions.lineup.size` is a single `11` and
-   `validateLineup` compares it exactly, so the declared `small-sided` variant
-   cannot have a legal lineup. Needs either per-variant `positions` on
-   `SportModule` or a `Cfg`-driven override read by `validateLineup`.
-3. **`LineupSlot` has no shirt-number field** (`src/core/types.ts`), while
-   `entrantModel.team.squadNumbers` declares the affordance.
-4. **No resumable suspension of play in the core event set**
-   (`src/core/events.ts`). `core.abandon` is terminal; there is no
-   `core.suspend`/`core.resume` pair, so a match stopped and restarted cannot be
-   recorded as such.
-5. **`src/stats/stats.test.ts:52` blocks an `own_goals` metric.** It asserts the
-   exact stat row for an own goal, so adding the metric reds a file outside this
-   family's blast radius.
+This section listed five shared-engine changes the football pass needed and was
+not allowed to make: they sat outside one sport family's blast radius. The
+shared-engine pass later in W4 made **every one of them**, on this same branch.
+Nothing in this dossier is blocked. The mapping-table rows that read `deferred`
+because of these are now `extended`, each naming what implements it.
+
+| was blocked on | now | where it lives |
+| --- | --- | --- |
+| `DisciplineCard` had no `reason` | done | `DisciplineCard.reason` in `src/core/types.ts`; the conditional spread in football's `extractCards` |
+| `PositionCatalog` was per module, not per variant | done | `SportModule.positionsFor?(cfg)` (`src/sport/module.ts`) + `resolvePositions` (`src/sport/catalog.ts`); football declares `Cfg.teamSize`, `small-sided` sets `7` |
+| `LineupSlot` had no shirt-number field | done | `LineupSlot.squadNumber` in `src/core/types.ts` — the same name the roster path already used (`src/sport/entrant-model.ts`) |
+| no resumable suspension in the core event set | done | `core.suspend` / `core.resume` in `src/core/events.ts`, folded inside `foldMatch` and never forwarded to a module's `apply` |
+| `src/stats/stats.test.ts` blocked an `own_goals` metric | done | `playerStats.own_goals` in `football.ts`; the closed-set assertion in `stats.test.ts` was widened to the new correct row |
+
+**Still genuinely deferred** (and still marked `deferred` in the table above):
+the goalkeeper is not named in `State`, so no keeper stat is derivable; the
+shootout kicker is validated but not retained in `State`; quarters instead of
+halves need three new `PlayPhase` values; the Law 12 direct-free-kick offence
+taxonomy behind a conceded penalty has no declared fidelity tier. Each of those
+needs a product decision or a state-machine extension, not a shared-engine
+field.

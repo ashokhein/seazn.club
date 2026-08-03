@@ -49,7 +49,8 @@ this audit records as a real, stated gap.
 | Remarks, injury notes | all | — | `core.note` | modelled | free text, no fold effect. |
 | Stroke / rally-length statistics | all | persons | — | deferred | not on the match sheet; Pro statistics, wrong fidelity for our tiers. |
 
-Counts: 16 `modelled`, 4 `extended`, 8 `deferred` — 28 rows.
+**Row counts:** 16 modelled, 4 extended, 8 deferred (28 rows).
+Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Downstream owed
 

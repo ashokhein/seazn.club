@@ -66,6 +66,9 @@ on the ice.
 | Circle penetrations, shots, possession, PC conversion % | all | entrant | — | deferred | FIH Pro League match reports carry them; wrong fidelity for our scoring tiers. PC conversion is now computable per fixture from `State.setPieces` without any new event. |
 | Rosters, captains, squad numbers | all | persons | `positions`, `entrantModel.team{squadNumbers,captain}` | modelled | Layer 2 — lineups, not the event ledger. |
 
+**Row counts:** 19 modelled, 9 extended, 8 deferred (36 rows).
+Asserted against the table itself by `src/testkit/dossiers.test.ts`.
+
 ## Downstream owed
 
 1. **New event type `hockey.set_piece`.** W5's pad needs controls for

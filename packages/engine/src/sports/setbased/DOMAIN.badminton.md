@@ -48,7 +48,8 @@ explicit rather than implicit.
 | A printed badminton scoresheet | all | — | — | deferred | only volleyball ships an `exportTemplates.scoresheet`; a badminton sheet is a print task for a later wave, not a schema gap. |
 | Rally length / stroke counts | all | persons | — | deferred | not on any scoresheet; a Pro statistics layer, wrong fidelity for our tiers. |
 
-Counts: 17 `modelled`, 3 `extended`, 7 `deferred` — 27 rows.
+**Row counts:** 17 modelled, 3 extended, 7 deferred (27 rows).
+Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Downstream owed
 

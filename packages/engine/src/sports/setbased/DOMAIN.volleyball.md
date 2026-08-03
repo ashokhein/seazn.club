@@ -51,7 +51,8 @@ a row that says the sport does **not** have a fact is enforced by the preset's
 | Referee / scorer / captain signatures | all | officials | `exportTemplates.scoresheet.signatures` | modelled | the printed sheet already carries the block. |
 | Remarks and injury notes | all | — | `core.note` | modelled | free text, no fold effect. |
 
-Counts: 15 `modelled`, 7 `extended`, 7 `deferred` — 29 rows.
+**Row counts:** 15 modelled, 7 extended, 7 deferred (29 rows).
+Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Downstream owed
 

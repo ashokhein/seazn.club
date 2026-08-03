@@ -55,6 +55,7 @@ Schema-path prefixes: `Ev.` = event payload branch, `Cfg.` = config,
 | Which side plays white coins / black coins | all | entrant | — | deferred | Law 43 gives white to the breaker, so it is derivable from `firstBreak` + the alternation already in state; storing it would duplicate state |
 
 **Row counts:** 17 modelled, 4 extended, 6 deferred (27 rows).
+Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Downstream owed
 

@@ -64,7 +64,8 @@ ticks and the signature line.
 | Remarks | all | — | `core.note` | modelled | free text, no fold effect. |
 | A printed tennis scorecard | all | — | — | deferred | only volleyball ships an `exportTemplates.scoresheet`; a tennis card is a print task for a later wave, not a schema gap. |
 
-Counts: 24 `modelled`, 5 `extended`, 10 `deferred` — 39 rows.
+**Row counts:** 24 modelled, 5 extended, 10 deferred (39 rows).
+Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Downstream owed
 

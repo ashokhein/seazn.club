@@ -41,12 +41,27 @@ export interface MappingRow {
   line: number; // 1-based, so a failure message can point into the file
 }
 
+/** The per-status tally a dossier writes under its mapping table. */
+export interface DeclaredCounts {
+  modelled: number;
+  extended: number;
+  deferred: number;
+  total: number;
+  line: number; // 1-based
+}
+
 export interface Dossier {
   key: string;
   path: string;
   text: string;
   /** Every mapping-table row carrying a declared status. */
   rows: MappingRow[];
+  /** The `**Row counts:** …` line, or null when the dossier omits it. Four of
+   *  the eleven dossiers carried a hand-maintained tally and football's had
+   *  already drifted from its own table; the test asserts this against `rows`
+   *  so a stale header is a build failure rather than a lie the next wave
+   *  reads. */
+  declaredCounts: DeclaredCounts | null;
   /** Mapping rows whose status cell is NOT one of DOSSIER_STATUSES — a typo'd
    *  or invented status. Silently dropping these would let a broken table pass
    *  on the strength of one surviving good row. */
@@ -95,6 +110,29 @@ function tableCells(line: string): string[] | null {
   return cells;
 }
 
+/** The canonical tally line, e.g.
+ *  `**Row counts:** 26 modelled, 15 extended, 14 deferred (55 rows).`
+ *  Backticks around a status word are tolerated — football wrote it that way —
+ *  but the order and the parenthesised total are fixed, so a dossier cannot
+ *  satisfy the check by declaring three numbers in some other arrangement. */
+const ROW_COUNTS_RE =
+  /\*\*Row counts:?\*\*?[^\n]*?(\d+)\s*`?modelled`?,\s*(\d+)\s*`?extended`?,\s*(\d+)\s*`?deferred`?\s*\((\d+)\s*rows?\)/;
+
+function parseDeclaredCounts(lines: string[]): DeclaredCounts | null {
+  for (const [i, line] of lines.entries()) {
+    const hit = ROW_COUNTS_RE.exec(line);
+    if (hit === null) continue;
+    return {
+      modelled: Number(hit[1]),
+      extended: Number(hit[2]),
+      deferred: Number(hit[3]),
+      total: Number(hit[4]),
+      line: i + 1,
+    };
+  }
+  return null;
+}
+
 function isMappingHeader(cells: string[]): boolean {
   return (
     cells.length === MAPPING_COLUMNS.length &&
@@ -122,7 +160,8 @@ export function readDossier(key: string): Dossier {
   // elsewhere in the file (carrom's variant table) could stand in for a
   // mapping table that is missing or malformed.
   let inMapping = false;
-  text.split("\n").forEach((line, i) => {
+  const lines = text.split("\n");
+  lines.forEach((line, i) => {
     const cells = tableCells(line);
     if (cells === null) return; // blank/prose lines end nothing: separators only
     if (isMappingHeader(cells)) {
@@ -144,5 +183,13 @@ export function readDossier(key: string): Dossier {
     rows.push({ fact, status: status as DossierStatus, line: i + 1 });
   });
 
-  return { key, path, text, rows, badStatusRows, hasMappingHeader };
+  return {
+    key,
+    path,
+    text,
+    rows,
+    declaredCounts: parseDeclaredCounts(lines),
+    badStatusRows,
+    hasMappingHeader,
+  };
 }

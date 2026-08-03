@@ -82,6 +82,30 @@ describe("every builtin sport module ships a domain dossier", () => {
             `(expected one of ${DOSSIER_STATUSES.join(" / ")})`,
         ).toEqual([]);
       });
+
+      // A hand-maintained tally under the mapping table is a claim about the
+      // table, and football's had already drifted from it (it said 10 extended
+      // / 19 deferred while the rows said 11 / 18). Seven dossiers declared no
+      // tally at all. Either the number is checked or it is a lie the next wave
+      // reads as fact — so every dossier declares one and this asserts it.
+      it(`declares a row tally that matches its own table (${module.key})`, () => {
+        dossier ??= readDossier(module.key);
+        const tally = { modelled: 0, extended: 0, deferred: 0 };
+        for (const row of dossier.rows) tally[row.status] += 1;
+        const actual = { ...tally, total: dossier.rows.length };
+        expect(
+          dossier.declaredCounts,
+          `dossier for "${module.key}" declares no row tally (${dossier.path}) — ` +
+            `expected a line reading "**Row counts:** ${actual.modelled} modelled, ` +
+            `${actual.extended} extended, ${actual.deferred} deferred (${actual.total} rows)."`,
+        ).not.toBeNull();
+        const declared = dossier.declaredCounts as NonNullable<Dossier["declaredCounts"]>;
+        expect(
+          { ...declared, line: undefined },
+          `dossier for "${module.key}" row tally is stale ` +
+            `(${dossier.path}:${declared.line})`,
+        ).toEqual({ ...actual, line: undefined });
+      });
     });
   }
 
