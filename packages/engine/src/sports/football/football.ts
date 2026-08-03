@@ -5,6 +5,7 @@ import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
 import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
+import { GameTime, addDuration, compareGameTime, gameTimeOf } from "../../core/time.ts";
 import {
   AttemptOutcome,
   EntrantId,
@@ -71,6 +72,15 @@ export const FootballCfg = z.object({
   // data and never touch scoring math. Optional with no default — absent ≡ 11,
   // which is what every stream recorded before W4 assumed.
   teamSize: z.number().int().min(2).max(11).optional(),
+  // W4a (#425) §5.2 (Law 3) — the competition's allowance of substitution
+  // WINDOWS, which is a different bound from `maxSubs` and applies alongside it:
+  // senior 11-a-side permits five substitutions taken in three windows, so a
+  // side that uses all five one at a time has broken the Law while never
+  // reaching the cap. A window is the set of substitutions sharing one `at` —
+  // the stoppage, not the player. Optional with NO default: absent = unlimited
+  // windows, which is what every stream recorded before this wave assumed, and
+  // a default would land in the cfg serialised into every frozen golden state.
+  subWindows: z.number().int().nonnegative().optional(),
   // engine/sports/football.md §8 — core.abandon policy: `replay` leaves the
   // fixture undecided (flagged for regeneration), `award` decides for the
   // current leader (level score ⇒ no_result).
@@ -84,13 +94,45 @@ export type FootballCfg = z.infer<typeof FootballCfg>;
 
 const PersonId = z.string().min(1);
 
+// W4a (#425) §5.2 — `at` beside the deprecated `minute`, on every payload a
+// scorer times.
+//
+// THE TWO ARE DIFFERENT UNITS, and that is the whole hazard: `minute` is
+// MINUTES of the match as a match report prints them, `GameTime.elapsed` is
+// SECONDS counted up from the start of the named period. `minute: 90` and
+// `at: { period: "H2", elapsed: 90 }` are three quarters of a match apart.
+// Nothing in this file converts between them — `core/time.ts`'s `parseElapsed`
+// deliberately refuses a bare number for exactly this reason, because football's
+// legacy field is literally called `minute` and a pad wiring a minute box to a
+// seconds helper records 1:30 as 90:00.
+//
+// WHERE BOTH ARE PRESENT, `at` WINS. It is the only one the fold derives
+// anything from (sin-bin expiry, §3.1; substitution windows, §5.2); `minute` is
+// kept verbatim as the display integer the scorer wrote and is never read by
+// the fold, never converted, and never overwritten. Two disagreeing values are
+// a question for the match report, not for the reducer.
+//
+// `minute` is NOT removed: removing it would break every frozen golden and the
+// additive-only tripwire that proves this wave is additive. It stays,
+// deprecated in comment, exactly as the period kernel keeps `clockRef`.
+//
+// Every `at` below is the `GameTime` schema VERBATIM (§8), never a hand-rolled
+// `z.object({ period, elapsed })` that looks like it. The kernel is fail-OPEN on
+// a malformed stamp — `gameTimeOf` safe-parses, so `{ period: "H1", elapsed: -1 }`
+// reads as UNSTAMPED rather than being rejected — which makes the payload's own
+// schema the only thing between a corrupt stamp and the ledger. Only the real
+// `GameTime` carries all four guards: non-negative, integer, non-empty period
+// label, and strict.
+
 export const FootballGoal = z.strictObject({
   by: EntrantId, // ownGoal: the side whose player struck it (credits opponent)
   scorer: PersonId.optional(),
   assist: PersonId.optional(), // Jul3/07 §3 — optional everywhere (own goals etc.)
+  /** @deprecated W4a §5.2 — MINUTES, display only. Prefer `at` (seconds). */
   minute: z.number().int().nonnegative().optional(), // optional everywhere: coarse scoring
   ownGoal: z.boolean().optional(),
   penalty: z.boolean().optional(), // in-play penalty kick, not a shootout kick
+  at: GameTime.optional(), // W4a §5.2 — elapsed-at-event; sweeps expired sin bins
 });
 export const CardColor = z.enum(["yellow", "red", "second_yellow"]);
 // W4 (Law 12 §3 cautions, §4 sending-off offences) — the offence category a
@@ -118,14 +160,21 @@ export const FootballCard = z.strictObject({
   by: EntrantId,
   person: PersonId.optional(),
   color: CardColor,
+  /** @deprecated W4a §5.2 — MINUTES, display only. Prefer `at` (seconds). */
   minute: z.number().int().nonnegative().optional(),
   reason: CardReason.optional(), // W4 — optional everywhere: coarse scoring
+  at: GameTime.optional(), // W4a §5.2 — retained on State.cards[].at
 });
 export const FootballSub = z.strictObject({
   by: EntrantId,
   off: PersonId,
   on: PersonId,
+  /** @deprecated W4a §5.2 — MINUTES, display only. Prefer `at` (seconds). */
   minute: z.number().int().nonnegative().optional(),
+  // W4a §5.2 — the stamp that identifies the substitution WINDOW. Substitutions
+  // sharing one `at` are one window (`Cfg.subWindows`); an UNSTAMPED
+  // substitution is in no window and consumes none.
+  at: GameTime.optional(),
 });
 export const FootballPeriod = z.strictObject({
   phase: z.enum(["HT", "FT", "ET_HT", "ET_FT"]),
@@ -179,13 +228,22 @@ export const FootballSinBinStart = z.strictObject({
   by: EntrantId,
   person: PersonId.optional(),
   minutes: z.number().int().positive().optional(), // defaults to cfg.sinBinMinutes
+  /** @deprecated W4a §5.2 — MINUTES, display only. Prefer `at` (seconds). */
   minute: z.number().int().nonnegative().optional(),
   reason: CardReason.optional(),
+  // W4a §5.2 — with a length (payload `minutes`, else `Cfg.sinBinMinutes`) this
+  // turns the dismissal into a TIMED suspension: the fold derives `expiresAt`
+  // and sweeps it at the next stamped event (§3.1). Without it — or without a
+  // length — the bin ends only on an explicit `football.sinbin.end`, exactly as
+  // it did before this wave.
+  at: GameTime.optional(),
 });
 export const FootballSinBinEnd = z.strictObject({
   by: EntrantId,
   person: PersonId.optional(), // absent = the oldest anonymous dismissal
+  /** @deprecated W4a §5.2 — MINUTES, display only. Prefer `at` (seconds). */
   minute: z.number().int().nonnegative().optional(),
+  at: GameTime.optional(), // W4a §5.2 — the return's own stamp
 });
 
 export const FootballEv = z.union([
@@ -215,6 +273,13 @@ interface SinBinRecord {
   minutes?: number;
   reason?: z.infer<typeof CardReason>;
   minute?: number;
+  // W4a (#425) §3.1 — present only when the dismissal was stamped. `expiresAt`
+  // additionally needs a length, so a stamped bin in a competition that has
+  // declared none carries `startedAt` alone and still ends only on an explicit
+  // return. Both absent until something populates them, so a pre-W4a stream
+  // serialises byte-identically.
+  startedAt?: GameTime;
+  expiresAt?: GameTime;
 }
 
 interface SquadState {
@@ -225,6 +290,11 @@ interface SquadState {
   // W4 — currently serving a temporary dismissal. Absent until the first sin
   // bin of the match, so `init` serialises exactly as it did before W4.
   sinBin?: SinBinRecord[];
+  // W4a (#425) §5.2 — the DISTINCT stamps at which this side has substituted,
+  // in order. One entry per window, however many players went on at it. Absent
+  // until the first STAMPED substitution: an unstamped one is in no window and
+  // must add nothing, or every stream recorded before this wave grows a field.
+  subWindows?: GameTime[];
 }
 
 interface CardRecord {
@@ -233,6 +303,7 @@ interface CardRecord {
   color: z.infer<typeof CardColor>;
   minute?: number;
   reason?: z.infer<typeof CardReason>; // W4 — Law 12 offence category
+  at?: GameTime; // W4a §5.2 — the stamp, when the pad recorded one
 }
 
 // W4 — a period entry gains Law 7 added time. Optional so that every stream
@@ -301,6 +372,110 @@ function parsePayload<T>(schema: z.ZodType<T>, payload: unknown, type: string): 
 
 function isPlayPhase(phase: Phase): phase is PlayPhase {
   return PLAY_PHASES.includes(phase);
+}
+
+/**
+ * THE phase order for this cfg — W4a (#425) §7. Every phase in which a STAMPED
+ * event may legally occur, in the order they occur, and nothing else.
+ *
+ * One function, two consumers, by contract: the fold kernel's monotonic guard
+ * reads it via `SportModule.playPhases`, and every `compareGameTime` call this
+ * module makes inside `apply()` passes this same function's result. Two lists
+ * that merely agree today is the defect this exists to prevent — an event the
+ * guard accepts is backwards one layer down, and the lazy sin-bin sweep (§3.1)
+ * runs against an order nothing agrees on. `football.time.test.ts` asserts the
+ * module holds this exact function reference, so a copy fails there.
+ *
+ * WIDER than `PLAY_PHASES`, and that is the point:
+ *  - "pre" — a card before the opening whistle is legal (`applyCard`, and
+ *    football.md §9 names a pre-kickoff red explicitly), so a stamped one has
+ *    to be orderable.
+ *  - "SHOOTOUT" — cards are legal there too, and it sorts LAST, after any extra
+ *    time, because that is when it happens.
+ *  - "done" / "final" / "abandoned" are excluded: nothing stamped is accepted
+ *    once the match is over.
+ *
+ * ET and the shootout are listed only when this cfg can actually REACH them —
+ * `resolveFullTime` enters `ET_H1` only under `cfg.extraTime.enabled` and
+ * `SHOOTOUT` only under `cfg.shootout` — so a scorer stamping `ET_H1` in a
+ * league fixture gets a fixable INVALID_EVENT naming the phases this sport has.
+ *
+ * Exhaustive by OBLIGATION, not by construction: the fold treats a period
+ * outside this list as a bad payload field, so anything omitted here is an event
+ * the scorer cannot record.
+ */
+export function playPhases(cfg: FootballCfg): string[] {
+  return [
+    "pre",
+    "H1",
+    "H2",
+    ...(cfg.extraTime.enabled ? ["ET_H1", "ET_H2"] : []),
+    ...(cfg.shootout ? ["SHOOTOUT"] : []),
+  ];
+}
+
+/**
+ * W4a (#425) §3.1 — has this dismissal run out, as of `now`?
+ *
+ * §3.2 IS THE SECOND CONDITION, not an optimisation. `addDuration` stays inside
+ * the named period, so a bin opened at 43:20 of the first half carries an
+ * `expiresAt` of `H1 3200` that no H1 stamp can reach once the half has ended.
+ * Comparing that against `H2 100` by phase index alone would say "expired" and
+ * return the player at the KICK-OFF of the second half — several minutes early,
+ * and silently. The engine cannot compute the true return time without a
+ * period-length table it does not require (`periodSeconds` is optional, §1.3),
+ * so the bin deliberately does not expire by time at all; the explicit
+ * `football.sinbin.end` still closes it, exactly as before this wave.
+ *
+ * Within the period the comparison is the ordinary one, and `elapsed` running
+ * past the nominal half length is FINE (§1.3): a stamp at `H1 3200` is added
+ * time, and it sweeps.
+ */
+function hasExpired(entry: SinBinRecord, now: GameTime, phases: readonly string[]): boolean {
+  if (entry.expiresAt === undefined) return false;
+  if (entry.expiresAt.period !== now.period) return false;
+  return compareGameTime(entry.expiresAt, now, phases) <= 0;
+}
+
+/**
+ * W4a (#425) §3.1 — expiry is LAZY, swept at the next stamped event.
+ *
+ * The fold's state is only ever observed at event boundaries, so sweeping there
+ * is sufficient; between events the pad renders the countdown from `expiresAt`
+ * itself. The pad and the fold therefore DISAGREE in the window between an
+ * expiry and the next stamped event. That is by design (§6 obligation 3 makes
+ * showing the fold's `asOf` a pad requirement), not a bug.
+ *
+ * An UNSTAMPED event sweeps nothing: it carries no clock reading, so it cannot
+ * be the moment the fold catches up. That is also what keeps every stream
+ * recorded before this wave folding unchanged.
+ *
+ * An anonymous bin (coarse scoring) closes without returning anybody to the
+ * pitch — it never moved the pitch when it opened, which is the same discipline
+ * `applySinBinEnd` and anonymous cards already get.
+ */
+function sweepExpired(state: FootballState, now: GameTime): FootballState {
+  const phases = playPhases(state.cfg);
+  let squads = state.squads;
+  for (const side of ["home", "away"] as const) {
+    const squad = squads[side];
+    const bin = squad.sinBin;
+    if (bin === undefined || bin.length === 0) continue;
+    const expired = bin.filter((entry) => hasExpired(entry, now, phases));
+    if (expired.length === 0) continue;
+    const returning = expired
+      .map((entry) => entry.person)
+      .filter((person): person is string => person !== undefined);
+    squads = {
+      ...squads,
+      [side]: {
+        ...squad,
+        onPitch: [...squad.onPitch, ...returning],
+        sinBin: bin.filter((entry) => !hasExpired(entry, now, phases)),
+      },
+    };
+  }
+  return squads === state.squads ? state : { ...state, squads };
 }
 
 // ---------------------------------------------------------------------------
@@ -469,6 +644,7 @@ function applyCard(state: FootballState, payload: z.infer<typeof FootballCard>):
     color: payload.color,
     ...(payload.minute === undefined ? {} : { minute: payload.minute }),
     ...(payload.reason === undefined ? {} : { reason: payload.reason }),
+    ...(payload.at === undefined ? {} : { at: payload.at }),
   };
   return { ...state, cards: [...state.cards, record], squads };
 }
@@ -495,8 +671,46 @@ function applySub(state: FootballState, payload: z.infer<typeof FootballSub>): F
       maxSubs: state.cfg.maxSubs,
     });
   }
+  // W4a (#425) §5.2 (Law 3) — substitution WINDOWS. The Law counts the
+  // stoppages a side substitutes at, not the players it substitutes: five subs
+  // taken in three windows is legal, the same five taken one at a time is not,
+  // and `maxSubs` alone cannot tell those apart. A window is the set of
+  // substitutions sharing one `at`, so a side sending three on at one stoppage
+  // spends one window.
+  //
+  // AN UNSTAMPED SUBSTITUTION IS IN NO WINDOW AND CONSUMES NONE. It has no `at`
+  // to share, and reading "no stamp" as "one shared window" was the trap: every
+  // unstamped sub in a match would have collapsed into a single window, which
+  // reads as legal — until a one-window allowance rejects the second one and
+  // every stream recorded before this wave becomes unfoldable. Recording them as
+  // a window EACH is the mirror of the same bug. Consuming nothing is the only
+  // reading under which an unstamped stream folds exactly as it does today.
+  //
+  // The bound applies ALONGSIDE `maxSubs`, never instead of it, and only when
+  // the competition declared one.
+  let subWindows = squad.subWindows;
+  if (payload.at !== undefined) {
+    const stamp = payload.at;
+    const windows = squad.subWindows ?? [];
+    // Same window = the same stamp, exactly. The monotonic guard means only the
+    // newest window can still be joined, but matching on the value keeps that a
+    // consequence rather than an assumption.
+    const known = windows.some(
+      (window) => window.period === stamp.period && window.elapsed === stamp.elapsed,
+    );
+    if (!known) {
+      if (state.cfg.subWindows !== undefined && windows.length >= state.cfg.subWindows) {
+        throw new EngineError(
+          "SUB_WINDOW_EXCEEDED",
+          `"${payload.by}" has used all ${state.cfg.subWindows} substitution windows`,
+          { by: payload.by, subWindows: state.cfg.subWindows, at: stamp, used: [...windows] },
+        );
+      }
+      subWindows = [...windows, stamp];
+    }
+  }
   const onPitch = [...squad.onPitch.filter((id) => id !== payload.off), payload.on];
-  const next: SquadState = rolling
+  const base: SquadState = rolling
     ? // Repeat substitution: the player who came off rejoins the bench and may
       // re-enter, so nothing lands in offUsed.
       { ...squad, onPitch, bench: [...squad.bench.filter((id) => id !== payload.on), payload.off] }
@@ -506,6 +720,9 @@ function applySub(state: FootballState, payload: z.infer<typeof FootballSub>): F
         bench: squad.bench.filter((id) => id !== payload.on),
         offUsed: [...squad.offUsed, payload.off],
       };
+  // Absent until the first STAMPED substitution — `base` already carries the
+  // key when the squad had one, so an unstamped stream never grows it.
+  const next: SquadState = subWindows === undefined ? base : { ...base, subWindows };
   return { ...state, squads: { ...state.squads, [side]: next } };
 }
 
@@ -586,11 +803,26 @@ function applySinBinStart(
     }
   }
   const minutes = payload.minutes ?? state.cfg.sinBinMinutes;
+  // W4a (#425) §3.1 — a stamped dismissal of a known length becomes a TIMED
+  // suspension: the fold derives when it runs out and sweeps it at the next
+  // stamped event. BOTH halves are required, and the gate is deliberate — it is
+  // what keeps the eleven frozen goldens byte-identical, since no recorded
+  // stream carries `at` and nothing therefore expires that did not expire
+  // before. `minutes` here is MINUTES (payload `minutes`, else
+  // `Cfg.sinBinMinutes`); `elapsed` is SECONDS, hence the ×60. The legacy
+  // `minute` field is never part of this arithmetic — it is a different unit
+  // measured from a different origin (§5.2).
+  const expiresAt =
+    payload.at === undefined || minutes === undefined
+      ? undefined
+      : addDuration(payload.at, minutes * 60);
   const record: SinBinRecord = {
     ...(payload.person === undefined ? {} : { person: payload.person }),
     ...(minutes === undefined ? {} : { minutes }),
     ...(payload.reason === undefined ? {} : { reason: payload.reason }),
     ...(payload.minute === undefined ? {} : { minute: payload.minute }),
+    ...(payload.at === undefined ? {} : { startedAt: payload.at }),
+    ...(expiresAt === undefined ? {} : { expiresAt }),
   };
   return withSquad({
     ...squad,
@@ -845,37 +1077,56 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
     };
   },
 
+  // W4a (#425) §7 — the SAME function the fold kernel's monotonic guard reads,
+  // handed over directly rather than as a copy of its output. `sweepExpired`
+  // calls it too, so the guard and this module order against one list.
+  playPhases,
+
   apply(state, ev: EventEnvelope<FootballEv | CoreEv>): FootballState {
+    // W4a (#425) §3.1 — expiry is lazy: BEFORE applying a stamped event, catch
+    // the fold up to that stamp and release every sin bin that has run out.
+    // Read structurally via `gameTimeOf`, the same safe-parse the kernel's guard
+    // used to accept this stamp, so the two can never disagree about whether
+    // this event carries a time. An unstamped event sweeps nothing, which is
+    // what keeps every pre-W4a stream folding unchanged.
+    //
+    // A consequence worth naming: a `football.sinbin.end` stamped at or after
+    // the derived expiry now finds the bin already swept and is refused as a
+    // stale duplicate. That is the honest reading of a fact the fold has already
+    // recorded, and §6 obligation 3 makes rendering the fold's position the
+    // pad's job rather than the scorer's.
+    const now = gameTimeOf(ev.payload);
+    const swept = now === null ? state : sweepExpired(state, now);
     switch (ev.type) {
       case "core.start":
-        if (state.phase !== "pre") wrongPhase("already started");
-        return pushPeriod(state, "H1");
+        if (swept.phase !== "pre") wrongPhase("already started");
+        return pushPeriod(swept, "H1");
       case "football.goal":
-        return applyGoal(state, parsePayload(FootballGoal, ev.payload, ev.type));
+        return applyGoal(swept, parsePayload(FootballGoal, ev.payload, ev.type));
       case "football.card":
-        return applyCard(state, parsePayload(FootballCard, ev.payload, ev.type));
+        return applyCard(swept, parsePayload(FootballCard, ev.payload, ev.type));
       case "football.sub":
-        return applySub(state, parsePayload(FootballSub, ev.payload, ev.type));
+        return applySub(swept, parsePayload(FootballSub, ev.payload, ev.type));
       case "football.period":
-        return applyPeriod(state, parsePayload(FootballPeriod, ev.payload, ev.type));
+        return applyPeriod(swept, parsePayload(FootballPeriod, ev.payload, ev.type));
       case "football.shootout.kick":
-        return applyShootoutKick(state, parsePayload(FootballShootoutKick, ev.payload, ev.type));
+        return applyShootoutKick(swept, parsePayload(FootballShootoutKick, ev.payload, ev.type));
       case "football.penalty":
-        return applyPenalty(state, parsePayload(FootballPenalty, ev.payload, ev.type));
+        return applyPenalty(swept, parsePayload(FootballPenalty, ev.payload, ev.type));
       case "football.sinbin.start":
-        return applySinBinStart(state, parsePayload(FootballSinBinStart, ev.payload, ev.type));
+        return applySinBinStart(swept, parsePayload(FootballSinBinStart, ev.payload, ev.type));
       case "football.sinbin.end":
-        return applySinBinEnd(state, parsePayload(FootballSinBinEnd, ev.payload, ev.type));
+        return applySinBinEnd(swept, parsePayload(FootballSinBinEnd, ev.payload, ev.type));
       case "core.forfeit":
-        return applyForfeit(state, (ev.payload as { by: string }).by);
+        return applyForfeit(swept, (ev.payload as { by: string }).by);
       case "core.abandon":
-        return applyAbandon(state);
+        return applyAbandon(swept);
       case "core.finalize":
-        if (state.outcome === null) wrongPhase("cannot finalize an undecided fixture");
-        return { ...state, phase: "final" };
+        if (swept.outcome === null) wrongPhase("cannot finalize an undecided fixture");
+        return { ...swept, phase: "final" };
       case "core.note":
       case "core.award":
-        return state;
+        return swept;
       default:
         invalid(`unknown event type "${ev.type}"`);
     }
