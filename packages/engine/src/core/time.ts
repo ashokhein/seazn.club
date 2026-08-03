@@ -111,10 +111,11 @@ function unknownPhase(period: string, phaseOrder: readonly string[]): EngineErro
  */
 export function addDuration(at: GameTime, seconds: number): GameTime {
   if (!Number.isFinite(seconds) || seconds < 0) {
-    throw new EngineError("INVALID_EVENT", `duration must be a non-negative finite number of seconds, got ${String(seconds)}`, {
-      seconds,
-      at,
-    });
+    throw new EngineError(
+      "INVALID_EVENT",
+      `duration must be a non-negative finite number of seconds, got ${String(seconds)}`,
+      { seconds, at },
+    );
   }
   return { period: at.period, elapsed: at.elapsed + Math.trunc(seconds) };
 }
@@ -133,10 +134,11 @@ export function addDuration(at: GameTime, seconds: number): GameTime {
  */
 export function remainingOf(at: GameTime, periodSeconds: number): number {
   if (!Number.isFinite(periodSeconds)) {
-    throw new EngineError("INVALID_EVENT", `period length must be a finite number of seconds, got ${String(periodSeconds)}`, {
-      periodSeconds,
-      at,
-    });
+    throw new EngineError(
+      "INVALID_EVENT",
+      `period length must be a finite number of seconds, got ${String(periodSeconds)}`,
+      { periodSeconds, at },
+    );
   }
   return Math.max(0, Math.trunc(periodSeconds) - at.elapsed);
 }
