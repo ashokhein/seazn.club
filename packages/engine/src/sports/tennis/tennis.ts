@@ -48,4 +48,43 @@ export const tennis = makeNestedModule({
   defaultTiebreakers: ["points", "set_ratio", "game_ratio", "h2h_points", "seed"],
   officialLabel: { scorer: "Chair Umpire" }, // ITF App VII
   rallyEntitlement: "scoring.rally_by_rally",
+  // Jul3/07 §3 — unlocked by W4's optional `server`/`winner` on the point.
+  // Aces and double faults are SERVING statistics, so both credit the server:
+  // a double fault is a point for the receiver but a fault by the server, which
+  // is exactly how the chair's card scores it.
+  playerStats: {
+    metrics: [
+      { key: "points", label: "Points won", from: "tennis.point", field: "scorer", agg: "count" },
+      {
+        key: "service_points",
+        label: "Service points",
+        from: "tennis.point",
+        field: "server",
+        agg: "count",
+      },
+      {
+        key: "aces",
+        label: "Aces",
+        from: "tennis.point",
+        field: "server",
+        agg: "count",
+        when: (p) => (p.meta as { kind?: string } | undefined)?.kind === "ace",
+      },
+      {
+        key: "double_faults",
+        label: "Double faults",
+        from: "tennis.point",
+        field: "server",
+        agg: "count",
+        when: (p) => (p.meta as { kind?: string } | undefined)?.kind === "double_fault",
+      },
+      {
+        key: "violations",
+        label: "Code violations",
+        from: "tennis.sanction",
+        field: "person",
+        agg: "count",
+      },
+    ],
+  },
 });

@@ -54,6 +54,40 @@ const playerStats: PlayerStatsModel = {
       key: "pen_match", label: "Match penalties", from: "icehockey.suspension.start",
       field: "person", agg: "count", when: (p) => p.class === "match",
     },
+    // W4 (#407) — the rest of the IIHF game sheet's per-player credit: the
+    // situation splits, the awarded penalty shot, the GWS pair, and the player
+    // who SERVES a penalty he did not earn (bench minor / goalkeeper penalty —
+    // those PIM stay charged to `person`, i.e. the team, per Rule 33).
+    {
+      key: "goals_pp", label: "PP goals", from: "icehockey.goal", field: "person", agg: "count",
+      when: (p) => p.kind === "pp",
+    },
+    {
+      key: "goals_sh", label: "SH goals", from: "icehockey.goal", field: "person", agg: "count",
+      when: (p) => p.kind === "sh",
+    },
+    {
+      key: "goals_ps", label: "Penalty-shot goals", from: "icehockey.goal", field: "person",
+      agg: "count", when: (p) => p.kind === "ps",
+    },
+    {
+      key: "goals_en", label: "Empty-net goals", from: "icehockey.goal", field: "person",
+      agg: "count", when: (p) => p.emptyNet === true,
+    },
+    { key: "ps_taken", label: "Penalty shots taken", from: "icehockey.set_piece", field: "person", agg: "count" },
+    { key: "so_attempts", label: "GWS attempts", from: "icehockey.shootout.attempt", field: "person", agg: "count" },
+    {
+      key: "so_goals", label: "GWS goals", from: "icehockey.shootout.attempt", field: "person",
+      agg: "count", when: (p) => p.scored === true,
+    },
+    {
+      key: "so_saves", label: "GWS saves", from: "icehockey.shootout.attempt", field: "goalkeeper",
+      agg: "count", when: (p) => p.scored !== true,
+    },
+    {
+      key: "pen_served", label: "Penalties served", from: "icehockey.suspension.start",
+      field: "servedBy", agg: "count",
+    },
   ],
   derived: [
     { key: "points", label: "Points", derive: (s) => (s.goals ?? 0) + (s.assists ?? 0) },
@@ -101,6 +135,7 @@ export const icehockey = makePeriodModule({
     },
   },
   positions,
+  keeperGroup: "G",
   entrantModel: { kinds: ["team"], defaultKind: "team", team: { squadNumbers: true, captain: true } },
   metrics: [
     { key: "gf", label: "GF", direction: "desc" },
@@ -128,4 +163,7 @@ export const icehockey = makePeriodModule({
     { key: "game_misconduct", label: "Game misconduct" },
     { key: "match", label: "Match penalty" },
   ],
+  // W4 (#407) — IIHF Rule 24: a penalty shot is awarded and recorded whether or
+  // not it beats the goalkeeper; the `ps` goal kind only shows the ones that did.
+  setPieceKinds: ["ps"],
 });

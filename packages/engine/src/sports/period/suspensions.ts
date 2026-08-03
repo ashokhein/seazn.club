@@ -49,7 +49,24 @@ export const HOCKEY_SUSPENSIONS: SuspensionClasses = {
   red: { minutes: null, teamShort: true, permanent: true },
 };
 
-export interface ActiveSuspension {
+// W4 (#407) — the scoresheet detail an IIHF penalty row / FIH card row carries
+// beyond "who and what colour". All three are optional and only ever present
+// when the scorer recorded them, so a coarse card folds to exactly the shape it
+// did before (the golden corpus pins that).
+export interface SuspensionDetail {
+  /** The infraction as the official called it — IIHF code or plain text
+   *  ("tripping", "dangerous play"). Never adjudicated, only recorded. */
+  reason?: string;
+  /** The player who SITS when he is not the player penalised: a bench minor,
+   *  a goalkeeper's penalty, a coach's card (IIHF Rule 33 / FIH Rule 14). */
+  servedBy?: string;
+  /** The duration the official actually awarded, when it differs from the
+   *  class nominal (an FIH yellow is a MINIMUM of 5 minutes — the umpire may
+   *  give 10). Pads count down from here in preference to the class. */
+  minutes?: number;
+}
+
+export interface ActiveSuspension extends SuspensionDetail {
   side: SuspSide;
   person?: string;
   classKey: string;
@@ -57,7 +74,7 @@ export interface ActiveSuspension {
   permanent: boolean;
 }
 
-export interface CardRecordEntry {
+export interface CardRecordEntry extends SuspensionDetail {
   side: SuspSide;
   person?: string;
   classKey: string;

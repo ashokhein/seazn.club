@@ -14,15 +14,54 @@ export type EntrantId = z.infer<typeof EntrantId>;
 // shown to (a card event's `by`). Named for how it reads on a card record.
 export type Side = EntrantId;
 
+// W4 review item 2 — how a single attempt at goal finished, shared by every
+// module that records one: football's open-play penalty (Law 14), the period
+// kernel's set piece (FIH penalty corner / stroke, IIHF penalty shot). The
+// wave shipped two shapes for this one fact — `outcome: saved|missed|post` and
+// `converted: boolean` — and a boolean cannot express "hit the post", so the
+// enum wins and the boolean's true case becomes the token `scored`.
+//
+// A module NARROWS this to the tokens its own branch may carry (football's
+// penalty branch excludes `scored`, because a converted penalty is already a
+// goal event and would otherwise be counted twice). The vocabulary is shared
+// so a pad renders ONE result control; the allowed subset is the sport's, the
+// same way each sport keeps its own sanction ladder.
+export const AttemptOutcome = z.enum(["scored", "saved", "missed", "post"]);
+export type AttemptOutcome = z.infer<typeof AttemptOutcome>;
+
 // SPEC-1 — a card projected from a fixture ledger, the read-only input to the
 // discipline fold (usecases/discipline.ts). Additive projection, same layer as
 // playerStats: zero reducer/replay/golden impact (D2). Anonymous cards
 // (personId undefined) are returned but never accumulate downstream.
 export interface DisciplineCard {
   personId?: string;
+  // INVARIANT (W4 review) — the OFFENDER's side: the side the sanction was
+  // shown to, never the side whose score moved because of it. When `personId`
+  // is present it MUST be a member of `entrantSide`; a producer that cannot
+  // reconcile the two omits `personId` rather than assert it against the wrong
+  // side. Every producer that names a `by` (football's card and sin bin, the
+  // period kernel's suspension, the set-based and nested sanctions) satisfies
+  // this by construction; carrom, whose payload names the side CREDITED by a
+  // Laws 51/55 penalty, resolves the offender before projecting. Downstream
+  // groups cards by side, so a card filed under the opponent is a card shown
+  // to the wrong team.
   entrantSide: Side;
   color: string; // module-declared key, e.g. "yellow" | "red"
   eventId: string;
+  // W4 (#407) — the offence as the official called it: football's Law 12
+  // category ("dissent", "violent_conduct"), an IIHF infraction code, an FIH
+  // umpire's note. The suspension tariff downstream is a function of THIS as
+  // much as of the colour — a second caution and violent conduct are both red
+  // cards and carry different bans — and an accumulation rule like "three
+  // cards for dissent" cannot be written without it. Optional everywhere:
+  // coarse scoring records a colour and nothing else.
+  reason?: string;
+  // W4 (#407) — the person who SERVES the sanction when that is not the person
+  // penalised: an IIHF bench minor or goalkeeper penalty (Rule 33), an FIH card
+  // shown to a team official. Absent ⇒ `personId` serves it himself. Without
+  // this, a bench minor accumulates against whoever happens to sit in
+  // `personId`, which is the wrong player.
+  servedBy?: string;
 }
 
 // SPEC-1 — the optional sport-module discipline descriptor: which colours the
@@ -130,6 +169,17 @@ export const LineupSlot = z.object({
   // validateLineup (spec 02 §3 "unique roles") checks them per fixture, so
   // the lineup carries the fixture-specific assignment.
   roles: z.array(z.string().min(1)).optional(),
+  // W4 (#407) — the squad number this person wears in THIS fixture.
+  // `entrantModel.team.squadNumbers` (src/sport/entrant-model.ts) already
+  // advertised the affordance, but the number itself had nowhere to live, so
+  // team sheets, scoresheets and match reports could not print it.
+  // NAMED `squadNumber`, not `shirtNumber`: the roster path got there first and
+  // one concept must not carry two names across the engine. Fixture-scoped
+  // rather than roster-scoped for the same reason `roles` is: numbers are
+  // reassigned between matches. Optional everywhere — sports without squad
+  // numbers simply omit it, and every lineup written before W4 stays valid.
+  // 0 is a legal number.
+  squadNumber: z.number().int().nonnegative().optional(),
 });
 export type LineupSlot = z.infer<typeof LineupSlot>;
 

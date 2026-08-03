@@ -1,7 +1,8 @@
 // Lineup validation against the position catalog — spec 02 §3, PROMPT-03 §1.
 import { describe, expect, it } from "vitest";
 import { EngineError } from "../core/errors.ts";
-import type { Lineup, LineupSlot } from "../core/types.ts";
+import { LineupSlot } from "../core/types.ts";
+import type { Lineup } from "../core/types.ts";
 import { assertLineup, validateLineup, type PositionCatalog } from "./catalog.ts";
 
 // Small football-shaped catalog: exactly one GK, at most two FW, captain
@@ -168,5 +169,68 @@ describe("assertLineup", () => {
 
   it("passes silently on a valid lineup", () => {
     expect(() => assertLineup(catalog, valid)).not.toThrow();
+  });
+});
+
+// W4 shared-engine item 3 — `entrantModel.team.squadNumbers` advertises squad
+// numbers, but a LineupSlot had nowhere to put one, so the number that appears
+// on every team sheet and scoresheet had no home in the engine.
+describe("squad numbers on a lineup slot (W4)", () => {
+  const numbered = lineup(
+    slot({ personId: "p1", positionKey: "GK", roles: ["keeper"], squadNumber: 1 }),
+    slot({ personId: "p2", positionKey: "DF", roles: ["captain"], squadNumber: 4 }),
+    slot({ personId: "p3", positionKey: "FW", squadNumber: 9 }),
+  );
+
+  it("survives the LineupSlot schema instead of being stripped", () => {
+    const parsed = LineupSlot.parse({
+      personId: "p1",
+      slot: "starting",
+      orderNo: 1,
+      squadNumber: 7,
+    });
+    expect(parsed.squadNumber).toBe(7);
+  });
+
+  it("accepts 0 as a squad number but rejects a negative one", () => {
+    expect(LineupSlot.safeParse({ personId: "p", slot: "starting", orderNo: 1, squadNumber: 0 })
+      .success).toBe(true);
+    expect(LineupSlot.safeParse({ personId: "p", slot: "starting", orderNo: 1, squadNumber: -1 })
+      .success).toBe(false);
+  });
+
+  it("validates a numbered lineup exactly as it validates an unnumbered one", () => {
+    expect(validateLineup(catalog, numbered)).toEqual([]);
+  });
+
+  it("still validates when the numbers are absent — the field is optional", () => {
+    expect(validateLineup(catalog, valid)).toEqual([]);
+    expect(valid.slots.every((s) => s.squadNumber === undefined)).toBe(true);
+  });
+
+  // W4 review item 7 — the engine had two names for one concept: the roster
+  // path advertises the affordance as `entrantModel.team.squadNumbers`
+  // (src/sport/entrant-model.ts, pre-W4), while the new lineup field was called
+  // `shirtNumber`. One concept, one name: the roster path is the incumbent, so
+  // the lineup field follows it. LineupSlot is a plain z.object, so the retired
+  // name is STRIPPED rather than rejected — which is exactly why this needs an
+  // assertion: a caller still writing `shirtNumber` loses the number silently.
+  it("uses the roster path's name for the number, and drops the retired one", () => {
+    const parsed = LineupSlot.parse({
+      personId: "p1",
+      slot: "starting",
+      orderNo: 1,
+      squadNumber: 7,
+    });
+    expect(parsed.squadNumber).toBe(7);
+
+    const legacy = LineupSlot.parse({
+      personId: "p1",
+      slot: "starting",
+      orderNo: 1,
+      shirtNumber: 7,
+    });
+    expect(Object.keys(legacy)).not.toContain("shirtNumber");
+    expect(Object.keys(legacy)).not.toContain("squadNumber");
   });
 });

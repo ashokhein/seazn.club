@@ -18,6 +18,7 @@ import {
 } from "../../core/types.ts";
 import type { PositionCatalog } from "../../sport/catalog.ts";
 import type { ModuleEvent, SportModule } from "../../sport/module.ts";
+import { resolvePayloadPath, type PlayerStatsModel } from "../../stats/stats.ts";
 import { dlsPar, dlsTarget, resources } from "./dls.ts";
 
 // ---------------------------------------------------------------------------
@@ -52,6 +53,11 @@ const CricketCfgBase = z.object({
     .object({ enabled: z.boolean(), lead: z.number().int().positive() })
     .optional(), // 2-innings only
   minOversForResult: z.number().int().nonnegative().default(5), // T20 5, ODI 20
+  // W4 domain audit — player-review (DRS) allowance per innings per side.
+  // Deliberately `.optional()` with NO default: an absent block means "no
+  // declared allowance" (reviews are still recordable, just uncapped), and it
+  // keeps every previously-parsed config byte-identical.
+  reviews: z.object({ perInnings: z.number().int().nonnegative() }).optional(),
 });
 
 export const CricketCfg = CricketCfgBase.refine(
@@ -100,9 +106,19 @@ export const CricketWicket = z.strictObject({
     "retired",
     "obstructed",
     "timedout",
+    // W4: Law 34 — the tenth mode of dismissal, credited to no bowler.
+    "hitballtwice",
   ]),
   out: PersonId,
+  /** The fielder who completed the dismissal: took the catch, broke the
+   *  wicket, or effected the stumping. */
   fielder: PersonId.optional(),
+  /** W4: the supporting fielder on a run out — the scorebook's
+   *  "run out (thrower/breaker)". Requires `fielder` and must differ from it. */
+  fielderAssist: PersonId.optional(),
+  /** W4: the batter who comes in. Law 25.1 leaves the order after the openers
+   *  entirely to the captain, so the lineup's orderNo is only the default. */
+  incoming: PersonId.optional(),
   bowlerCredited: z.boolean(),
 });
 
@@ -141,7 +157,15 @@ export const CricketToss = z.strictObject({
   elected: z.enum(["bat", "bowl"]),
 });
 export const CricketDeclare = z.strictObject({});
-export const CricketClose = z.strictObject({});
+// W4: a scorebook always says WHY an innings ended. The three auto-closes
+// (all out / overs complete / target reached) stay unstamped on purpose —
+// they are exactly the `autoClose` predicates and so are derivable from the
+// totals; stamping them would change every previously folded state.
+export const CricketClose = z.strictObject({
+  reason: z
+    .enum(["all_out", "overs_complete", "target_reached", "time", "weather", "forfeited", "other"])
+    .optional(),
+});
 export const CricketMatchClose = z.strictObject({}); // 2-innings time expiry ⇒ draw
 export const CricketInterruption = z.strictObject({
   kind: z.enum(["rain", "light", "other"]),
@@ -156,6 +180,39 @@ export const CricketRevise = z
     message: "revise needs oversPerSide and/or target",
   });
 export const CricketFollowOn = z.strictObject({});
+
+// W4 domain audit — facts a scorebook records that had no home before.
+//
+// Law 25.4: "retired out" is a dismissal credited to no bowler; a batter who
+// retires for any other reason ("retired not out" — hurt, ill, other) costs
+// the side no wicket and may resume the innings later. Modelling both through
+// the `wicket` grammar is impossible: that path always takes a wicket.
+export const CricketRetire = z.strictObject({
+  person: PersonId,
+  reason: z.enum(["hurt", "out", "other"]),
+  incoming: PersonId.optional(), // defaults to the next batter in the order
+});
+
+// Law 4.5 — the fielding captain may take a new ball after the prescribed
+// number of overs; the scorer marks the point at which it was taken.
+export const CricketNewBall = z.strictObject({});
+
+// Limited-overs fielding-restriction blocks. `kind` is deliberately disjoint
+// from CricketInterruption's so the structural union never confuses the two.
+export const CricketPowerplay = z.strictObject({
+  kind: z.enum(["mandatory", "batting", "bowling"]),
+  phase: z.enum(["start", "end"]),
+});
+
+// Player reviews (DRS). `by` is the side the review is recorded against; an
+// umpire review is recorded but never consumes that side's allowance.
+export const CricketReview = z.strictObject({
+  by: EntrantId,
+  kind: z.enum(["player", "umpire"]),
+  person: PersonId.optional(), // who called for it
+  against: PersonId.optional(), // the batter the decision concerned
+  outcome: z.enum(["upheld", "struck_down", "umpires_call"]),
+});
 
 // doc 14 §1 Tier 2 — post-match scorecard line, validated for sum-consistency
 // against the innings totals.
@@ -193,6 +250,13 @@ export const CricketEv = z.union([
   CricketRevise,
   CricketFollowOn,
   CricketPlayerLine,
+  // W4 branches are appended, never interleaved: z.union takes the first
+  // branch that parses, so every pre-wave payload still resolves to exactly
+  // the branch it resolved to before.
+  CricketRetire,
+  CricketNewBall,
+  CricketPowerplay,
+  CricketReview,
 ]);
 export type CricketEv = z.infer<typeof CricketEv>;
 
@@ -202,6 +266,28 @@ export type CricketEv = z.infer<typeof CricketEv>;
 // ---------------------------------------------------------------------------
 
 type Side = "home" | "away";
+
+/** W4 — per-fielder dismissal credit, the fielding half of a scorecard. */
+export interface FieldingCredit {
+  catches: number;
+  runOuts: number;
+  stumpings: number;
+}
+
+/** W4 — a powerplay block, measured in legal balls from the innings start.
+ *  `toBalls: null` = still open. */
+export interface PowerplayBlock {
+  kind: "mandatory" | "batting" | "bowling";
+  fromBalls: number;
+  toBalls: number | null;
+}
+
+/** W4 — reviews taken by each side during one innings, and how many of them
+ *  were spent (struck down). */
+export interface ReviewLedger {
+  taken: number;
+  lost: number;
+}
 
 interface FineInnings {
   striker: string | null; // null = awaiting replacement (super over only)
@@ -217,6 +303,12 @@ interface FineInnings {
   bowlerRuns: Record<string, number>;
   bowlerWickets: Record<string, number>;
   extras: number;
+  // W4 additions. Every one of them stays `undefined` until the fact it
+  // records actually occurs — JSON.stringify omits undefined-valued keys, so
+  // an innings that uses none of them serialises exactly as it did pre-wave
+  // (which is what the frozen golden corpus compares).
+  fielding?: Record<string, FieldingCredit> | undefined;
+  retiredNotOut?: string[] | undefined;
 }
 
 export interface InningsState {
@@ -229,6 +321,11 @@ export interface InningsState {
   closed: boolean;
   ballsLimit: number | null; // quota at this point (revise updates it)
   fine: FineInnings | null; // null = coarse innings
+  // W4 additions — same undefined-until-used discipline as FineInnings.
+  closeReason?: z.infer<typeof CricketClose>["reason"] | undefined;
+  newBallAt?: number[] | undefined;
+  powerplays?: PowerplayBlock[] | undefined;
+  reviews?: Record<Side, ReviewLedger> | undefined;
 }
 
 interface PlayerLineRec {
@@ -520,10 +617,19 @@ function decideAfterClose(state: CricketState): CricketState {
 // Close the open innings (auto or manual) and run the result table. `bpo`
 // balls-exhausted, all-out and target-passed closes flow through here from
 // both fidelities.
-function closeOpenInnings(state: CricketState, declared: boolean): CricketState {
+function closeOpenInnings(
+  state: CricketState,
+  declared: boolean,
+  reason?: z.infer<typeof CricketClose>["reason"],
+): CricketState {
   const open = openInnings(state);
   if (open === null) invalid("no innings in progress");
-  const closed: InningsState = { ...open.innings, declared, closed: true };
+  const closed: InningsState = {
+    ...open.innings,
+    declared,
+    closed: true,
+    ...(reason === undefined ? {} : { closeReason: reason }),
+  };
   return decideAfterClose(replaceInnings(state, open.index, closed));
 }
 
@@ -672,6 +778,120 @@ function applyAbandon(state: CricketState): CricketState {
 
 const BOWLER_CREDITED_KINDS = new Set(["bowled", "caught", "lbw", "stumped", "hitwicket"]);
 
+// W4 — which dismissals put a fielder in the scorebook, and under which column.
+const FIELDER_CREDIT_COLUMN: Record<string, keyof FieldingCredit> = {
+  caught: "catches",
+  stumped: "stumpings",
+  runout: "runOuts",
+  obstructed: "runOuts",
+};
+
+function bumpFielding(
+  fielding: Record<string, FieldingCredit> | undefined,
+  person: string,
+  column: keyof FieldingCredit,
+): Record<string, FieldingCredit> {
+  const existing = fielding?.[person] ?? { catches: 0, runOuts: 0, stumpings: 0 };
+  return { ...fielding, [person]: { ...existing, [column]: existing[column] + 1 } };
+}
+
+// Validates the fielders named on a dismissal and folds their credit. Returns
+// the previous map untouched when no fielder was named, so an innings that
+// never names one keeps `fielding` undefined.
+function creditFielding(
+  fielding: Record<string, FieldingCredit> | undefined,
+  wicket: z.infer<typeof CricketWicket>,
+  bowlingOrder: readonly string[],
+): Record<string, FieldingCredit> | undefined {
+  const { fielder, fielderAssist } = wicket;
+  if (fielderAssist !== undefined && fielder === undefined) {
+    invalid("fielderAssist needs a primary fielder");
+  }
+  if (fielderAssist !== undefined && fielderAssist === fielder) {
+    invalid("fielderAssist must differ from the primary fielder");
+  }
+  for (const person of [fielder, fielderAssist]) {
+    if (person !== undefined && !bowlingOrder.includes(person)) {
+      invalid(`fielder "${person}" is not in the fielding lineup`);
+    }
+  }
+  if (fielder === undefined) return fielding;
+  const column = FIELDER_CREDIT_COLUMN[wicket.kind];
+  if (column === undefined) return fielding; // named but not a fielding dismissal
+  let next = bumpFielding(fielding, fielder, column);
+  if (fielderAssist !== undefined) next = bumpFielding(next, fielderAssist, "runOuts");
+  return next;
+}
+
+// The next batter by lineup order, skipping anyone who is unavailable
+// (dismissed, at the crease, or retired not out). Pre-W4 streams never hit
+// the skip — the cursor is monotone and only ever pointed at a batter who had
+// not yet batted — so this is behaviour-identical for them.
+function nextBatterFrom(
+  order: readonly string[],
+  fromIndex: number,
+  unavailable: ReadonlySet<string>,
+): { person: string; index: number } | null {
+  for (let i = fromIndex; i < order.length; i++) {
+    const person = order[i] as string;
+    if (unavailable.has(person)) continue;
+    return { person, index: i + 1 };
+  }
+  return null;
+}
+
+/** Resolves who walks in after a batter leaves the crease, honouring an
+ *  explicitly named `incoming` (captain's choice, or a retired-not-out batter
+ *  resuming). Returns the replacement plus the advanced order cursor and the
+ *  remaining retired-not-out list. */
+function resolveIncoming(
+  incoming: string | undefined,
+  ctx: {
+    battingOrder: readonly string[];
+    dismissed: readonly string[];
+    retiredNotOut: readonly string[];
+    atCrease: readonly (string | null)[];
+    nextBatterIndex: number;
+  },
+): { person: string; index: number; retiredNotOut: string[] } {
+  const crease = ctx.atCrease.filter((p): p is string => p !== null);
+  if (incoming !== undefined) {
+    if (!ctx.battingOrder.includes(incoming)) {
+      invalid(`incoming batter "${incoming}" is not in the lineup`);
+    }
+    if (ctx.dismissed.includes(incoming)) {
+      invalid(`incoming batter "${incoming}" is already out`);
+    }
+    if (crease.includes(incoming)) {
+      invalid(`incoming batter "${incoming}" is already at the crease`);
+    }
+    return {
+      person: incoming,
+      index: ctx.nextBatterIndex,
+      retiredNotOut: ctx.retiredNotOut.filter((p) => p !== incoming),
+    };
+  }
+  const unavailable = new Set<string>([...ctx.dismissed, ...ctx.retiredNotOut, ...crease]);
+  const pick = nextBatterFrom(ctx.battingOrder, ctx.nextBatterIndex, unavailable);
+  if (pick !== null) {
+    return { person: pick.person, index: pick.index, retiredNotOut: [...ctx.retiredNotOut] };
+  }
+  // No batter is left who has not batted, so a retired-not-out batter resumes
+  // (Law 25.4.2). This keeps the count of available batters equal to the
+  // all-out threshold whatever the retirements were — which is what lets a
+  // COARSE fold of the same match, which never sees the retirements, close
+  // the innings at exactly the same wicket (§9.6).
+  const resuming = ctx.retiredNotOut.find(
+    (person) => !crease.includes(person) && !ctx.dismissed.includes(person),
+  );
+  if (resuming === undefined) invalid("batting order exhausted");
+  return {
+    person: resuming,
+    index: ctx.nextBatterIndex,
+    retiredNotOut: ctx.retiredNotOut.filter((person) => person !== resuming),
+  };
+}
+
 interface DeliveryCtx {
   battingOrder: readonly string[];
   bowlingOrder: readonly string[];
@@ -808,9 +1028,13 @@ function applyDelivery(
   let wickets = innings.wickets;
   let dismissed = fine.dismissed;
   let bowlerWickets = fine.bowlerWickets;
+  let fielding = fine.fielding;
   if (payload.wicket !== undefined) {
     wickets += 1;
     dismissed = [...dismissed, payload.wicket.out];
+    // W4 — the scorebook's fielding column. Validates the named fielders even
+    // when the mode of dismissal earns no credit.
+    fielding = creditFielding(fielding, payload.wicket, ctx.bowlingOrder);
     if (payload.wicket.bowlerCredited) {
       bowlerWickets = {
         ...bowlerWickets,
@@ -836,11 +1060,21 @@ function applyDelivery(
     const outPerson = payload.wicket.out;
     let replacement: string | null = null;
     let nextBatterIndex = fine.nextBatterIndex;
+    let retiredNotOut = fine.retiredNotOut;
     if (ctx.strictOrder) {
-      // spec §2.3 — dismissal → next batter by order.
-      replacement = ctx.battingOrder[nextBatterIndex] ?? null;
-      if (replacement === null) invalid("batting order exhausted");
-      nextBatterIndex += 1;
+      // spec §2.3 — dismissal → next batter by order, unless the ball names
+      // an `incoming` batter (W4: Law 25.1 puts the order in the captain's
+      // hands, and it is how a retired-not-out batter resumes).
+      const resolved = resolveIncoming(payload.wicket.incoming, {
+        battingOrder: ctx.battingOrder,
+        dismissed,
+        retiredNotOut: fine.retiredNotOut ?? [],
+        atCrease: [striker, nonStriker],
+        nextBatterIndex,
+      });
+      replacement = resolved.person;
+      nextBatterIndex = resolved.index;
+      retiredNotOut = resolved.retiredNotOut.length === 0 ? undefined : resolved.retiredNotOut;
     }
     if (striker === outPerson) striker = replacement;
     else if (nonStriker === outPerson) nonStriker = replacement;
@@ -856,6 +1090,8 @@ function applyDelivery(
       bowlerBalls,
       bowlerWickets,
       currentBowler,
+      fielding,
+      retiredNotOut,
     }, { legal, batRuns, extraRuns, wickets, whiteBall: ctx.whiteBall, bpo });
   }
 
@@ -870,6 +1106,7 @@ function applyDelivery(
     bowlerBalls,
     bowlerWickets,
     currentBowler,
+    fielding,
   }, { legal, batRuns, extraRuns, wickets, whiteBall: ctx.whiteBall, bpo });
 }
 
@@ -1158,6 +1395,132 @@ function applyPlayerLine(
 }
 
 // ---------------------------------------------------------------------------
+// W4 domain events — retirement, the new ball, powerplays, reviews.
+// All four fold into the open innings; none of them touch runs or balls, so
+// none of them can change a pre-wave replay.
+// ---------------------------------------------------------------------------
+
+function requireOpenInnings(
+  state: CricketState,
+  what: string,
+): { innings: InningsState; index: number } {
+  if (state.phase !== "live") wrongPhase(`${what} in phase "${state.phase}"`);
+  const open = openInnings(state);
+  if (open === null) invalid(`${what} needs an innings in progress`);
+  return open;
+}
+
+function applyRetire(state: CricketState, payload: z.infer<typeof CricketRetire>): CricketState {
+  const { innings, index } = requireOpenInnings(state, "retirement");
+  const fine = innings.fine;
+  if (fine === null) {
+    invalid("this innings is recorded at summary fidelity — retirements are not allowed");
+  }
+  const { person } = payload;
+  if (person !== fine.striker && person !== fine.nonStriker) {
+    invalid(`"${person}" is not at the crease`);
+  }
+  // Law 25.4.3: retired out is a dismissal (no bowler credited). Any other
+  // retirement leaves the batter not out and eligible to resume.
+  const retiredOut = payload.reason === "out";
+  const wickets = innings.wickets + (retiredOut ? 1 : 0);
+  const dismissed = retiredOut ? [...fine.dismissed, person] : fine.dismissed;
+  const standing = fine.retiredNotOut ?? [];
+  const retiredList = retiredOut ? [...standing] : [...standing, person];
+
+  let striker = fine.striker;
+  let nonStriker = fine.nonStriker;
+  let nextBatterIndex = fine.nextBatterIndex;
+  let retiredNotOut: string[] | undefined = retiredList.length === 0 ? undefined : retiredList;
+
+  if (wickets < allOutWickets(state, innings.battingSide)) {
+    const resolved = resolveIncoming(payload.incoming, {
+      battingOrder: state.orders[innings.battingSide],
+      dismissed,
+      retiredNotOut: retiredList,
+      atCrease: [striker, nonStriker],
+      nextBatterIndex,
+    });
+    nextBatterIndex = resolved.index;
+    retiredNotOut = resolved.retiredNotOut.length === 0 ? undefined : resolved.retiredNotOut;
+    if (striker === person) striker = resolved.person;
+    else nonStriker = resolved.person;
+  } else if (striker === person) {
+    striker = null;
+  } else {
+    nonStriker = null;
+  }
+
+  const updated: InningsState = {
+    ...innings,
+    wickets,
+    fine: { ...fine, striker, nonStriker, nextBatterIndex, dismissed, retiredNotOut },
+  };
+  return autoClose(replaceInnings(state, index, updated));
+}
+
+function applyNewBall(state: CricketState): CricketState {
+  const { innings, index } = requireOpenInnings(state, "new ball");
+  const taken = innings.newBallAt ?? [];
+  if (taken.includes(innings.legalBalls)) {
+    invalid("a new ball has already been taken at this point of the innings");
+  }
+  return replaceInnings(state, index, { ...innings, newBallAt: [...taken, innings.legalBalls] });
+}
+
+function applyPowerplay(
+  state: CricketState,
+  payload: z.infer<typeof CricketPowerplay>,
+): CricketState {
+  const { innings, index } = requireOpenInnings(state, "powerplay");
+  const blocks = innings.powerplays ?? [];
+  const openBlock = blocks.findIndex((block) => block.toBalls === null);
+  if (payload.phase === "start") {
+    if (openBlock >= 0) invalid("a powerplay block is already open");
+    const block: PowerplayBlock = {
+      kind: payload.kind,
+      fromBalls: innings.legalBalls,
+      toBalls: null,
+    };
+    return replaceInnings(state, index, { ...innings, powerplays: [...blocks, block] });
+  }
+  if (openBlock < 0) invalid("no powerplay block is open");
+  const block = blocks[openBlock] as PowerplayBlock;
+  if (block.kind !== payload.kind) {
+    invalid(`the open powerplay block is "${block.kind}", not "${payload.kind}"`);
+  }
+  return replaceInnings(state, index, {
+    ...innings,
+    powerplays: blocks.map((entry, i) =>
+      i === openBlock ? { ...entry, toBalls: innings.legalBalls } : entry,
+    ),
+  });
+}
+
+function applyReview(state: CricketState, payload: z.infer<typeof CricketReview>): CricketState {
+  const { innings, index } = requireOpenInnings(state, "review");
+  const side = sideOf(state, payload.by);
+  const ledger: Record<Side, ReviewLedger> = innings.reviews ?? {
+    home: { taken: 0, lost: 0 },
+    away: { taken: 0, lost: 0 },
+  };
+  const allowance = state.cfg.reviews?.perInnings;
+  if (payload.kind === "player" && allowance !== undefined && ledger[side].lost >= allowance) {
+    invalid(`"${payload.by}" has no reviews left in this innings`, { allowance });
+  }
+  // Only an unsuccessful player review is spent: umpire's call retains it
+  // (current ICC conditions) and an umpire review never counts against a side.
+  const spent = payload.kind === "player" && payload.outcome === "struck_down";
+  return replaceInnings(state, index, {
+    ...innings,
+    reviews: {
+      ...ledger,
+      [side]: { taken: ledger[side].taken + 1, lost: ledger[side].lost + (spent ? 1 : 0) },
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Generator internals — spec 03 §6 (rng-injected, no fast-check dependency).
 // ---------------------------------------------------------------------------
 
@@ -1190,6 +1553,9 @@ function randomDelivery(
   freeHitPending: boolean,
   whiteBall: boolean,
   rng: Rng,
+  // W4 — the fielding lineup, so generated dismissals can carry fielder credit
+  // (which is what makes the fielding fold reachable from chaos/undo sweeps).
+  fielders: readonly string[] = [],
 ): CricketBallEv {
   const freeHit = freeHitPending ? { freeHit: true as const } : {};
   const roll = rng();
@@ -1214,10 +1580,23 @@ function randomDelivery(
       : ((["bowled", "caught", "lbw", "runout", "stumped"] as const)[Math.floor(rng() * 5)] ??
         ("bowled" as const));
     const out = kind === "runout" && rng() < 0.4 ? base.nonStriker : base.striker;
+    const needsFielder = kind === "caught" || kind === "stumped" || kind === "runout";
+    const fielder = needsFielder && fielders.length > 0 ? pickFrom(fielders, rng) : undefined;
+    const assistPool = fielders.filter((person) => person !== fielder);
+    const assist =
+      fielder !== undefined && kind === "runout" && assistPool.length > 0 && rng() < 0.4
+        ? pickFrom(assistPool, rng)
+        : undefined;
     return {
       ...base,
       runs: { bat: kind === "runout" && rng() < 0.5 ? 1 : 0 },
-      wicket: { kind, out, bowlerCredited: BOWLER_CREDITED_KINDS.has(kind) },
+      wicket: {
+        kind,
+        out,
+        ...(fielder === undefined ? {} : { fielder }),
+        ...(assist === undefined ? {} : { fielderAssist: assist }),
+        bowlerCredited: BOWLER_CREDITED_KINDS.has(kind),
+      },
       ...freeHit,
     };
   }
@@ -1257,7 +1636,60 @@ function generateBall(state: CricketState, rng: Rng): CricketBallEv {
     fine.freeHitPending,
     state.cfg.ballsPerInnings !== null,
     rng,
+    bowlingOrder,
   );
+}
+
+// W4 review item 3 — a Tier-2 scorecard line for a closed FINE innings, built
+// from that innings' own ledger. `applyPlayerLine` compares every number
+// against the ledger, so anything else would be an event this generator's own
+// fold rejects. Returns null when there is nothing left to line: no closed
+// fine innings, or every person in it already has a line of that aspect.
+function generatePlayerLine(
+  state: CricketState,
+  rng: Rng,
+): z.infer<typeof CricketPlayerLine> | null {
+  const candidates: number[] = [];
+  state.innings.forEach((innings, i) => {
+    if (innings.closed && innings.fine !== null) candidates.push(i);
+  });
+  if (candidates.length === 0) return null;
+  const index = candidates[Math.floor(rng() * candidates.length)] as number;
+  const innings = state.innings[index] as InningsState;
+  const fine = innings.fine as FineInnings;
+  const number = index + 1;
+  const taken = state.playerLines.filter((line) => line.innings === number);
+
+  const batters = Object.keys(fine.batterBalls).filter(
+    (person) => !taken.some((line) => line.person === person && line.batting !== undefined),
+  );
+  const bowlers = Object.keys(fine.bowlerBalls).filter(
+    (person) => !taken.some((line) => line.person === person && line.bowling !== undefined),
+  );
+  const wantBowling = bowlers.length > 0 && (batters.length === 0 || rng() < 0.5);
+  if (wantBowling) {
+    const person = bowlers[Math.floor(rng() * bowlers.length)] as string;
+    return {
+      innings: number,
+      person,
+      bowling: {
+        legalBalls: fine.bowlerBalls[person] ?? 0,
+        runs: fine.bowlerRuns[person] ?? 0,
+        wickets: fine.bowlerWickets[person] ?? 0,
+      },
+    };
+  }
+  if (batters.length === 0) return null;
+  const person = batters[Math.floor(rng() * batters.length)] as string;
+  return {
+    innings: number,
+    person,
+    batting: {
+      runs: fine.batterRuns[person] ?? 0,
+      balls: fine.batterBalls[person] ?? 0,
+      ...(fine.dismissed.includes(person) ? { out: true } : {}),
+    },
+  };
 }
 
 function generateSoBall(state: CricketState, rng: Rng): CricketBallEv {
@@ -1298,6 +1730,7 @@ function generateSoBall(state: CricketState, rng: Rng): CricketBallEv {
     fine.freeHitPending,
     true,
     rng,
+    state.orders[opponent(battingSide)],
   );
 }
 
@@ -1346,6 +1779,81 @@ function sideLine(state: CricketState, side: Side): string {
     })
     .join(" & ");
 }
+
+// ---------------------------------------------------------------------------
+// Player leaderboards (Jul3/07 §3) — W4. Every credit a cricket scorebook
+// keeps is nested inside `cricket.ball`, so this model was undeclarable until
+// `PlayerStatMetric.field`/`sumField` learned dotted paths. Fine fidelity
+// only: `cricket.player.line` (Tier 2) carries the same numbers as an already
+// summed card, so reading both sources would double-count, and super-over
+// deliveries are excluded from player records by the same convention the ICC
+// applies.
+// ---------------------------------------------------------------------------
+
+/** Wides and no-balls are not legal deliveries — the same rule the fold's ball
+ *  legality check applies (§2.2), so leaderboards and the fold agree. */
+const legalDelivery = (p: Record<string, unknown>): boolean => {
+  const kind = resolvePayloadPath(p, "runs.extras.kind");
+  return kind !== "wide" && kind !== "noball";
+};
+/** Byes and leg byes are the keeper's, penalty runs the side's; only runs off
+ *  the bat and the wide/no-ball penalty are charged to the bowler. */
+const chargedToBowler = (p: Record<string, unknown>): boolean => {
+  const kind = resolvePayloadPath(p, "runs.extras.kind");
+  return kind === "wide" || kind === "noball";
+};
+const dismissedBy = (kind: string) => (p: Record<string, unknown>) =>
+  resolvePayloadPath(p, "wicket.kind") === kind;
+
+const CRICKET_PLAYER_STATS: PlayerStatsModel = {
+  metrics: [
+    // Batting.
+    {
+      key: "runs", label: "Runs", from: "cricket.ball", field: "striker",
+      agg: "sum", sumField: "runs.bat",
+    },
+    {
+      key: "balls_faced", label: "Balls faced", from: "cricket.ball", field: "striker",
+      agg: "count", when: legalDelivery,
+    },
+    // Bowling. `runs_conceded` is two metrics on one key — the fold bumps per
+    // metric, so bat runs and the wide/no-ball penalty add into the same total.
+    {
+      key: "balls_bowled", label: "Balls bowled", from: "cricket.ball", field: "bowler",
+      agg: "count", when: legalDelivery,
+    },
+    {
+      key: "runs_conceded", label: "Runs conceded", from: "cricket.ball", field: "bowler",
+      agg: "sum", sumField: "runs.bat",
+    },
+    {
+      key: "runs_conceded", label: "Runs conceded", from: "cricket.ball", field: "bowler",
+      agg: "sum", sumField: "runs.extras.runs", when: chargedToBowler,
+    },
+    {
+      key: "wickets", label: "Wickets", from: "cricket.ball", field: "bowler",
+      agg: "count", when: (p) => resolvePayloadPath(p, "wicket.bowlerCredited") === true,
+    },
+    // Fielding — new for the product. A run out credits the fielder who broke
+    // the wicket and the one who threw ("run out (Patel/Khan)"), one each.
+    {
+      key: "catches", label: "Catches", from: "cricket.ball", field: "wicket.fielder",
+      agg: "count", when: dismissedBy("caught"),
+    },
+    {
+      key: "stumpings", label: "Stumpings", from: "cricket.ball", field: "wicket.fielder",
+      agg: "count", when: dismissedBy("stumped"),
+    },
+    {
+      key: "run_outs", label: "Run outs", from: "cricket.ball", field: "wicket.fielder",
+      agg: "count", when: dismissedBy("runout"),
+    },
+    {
+      key: "run_outs", label: "Run outs", from: "cricket.ball", field: "wicket.fielderAssist",
+      agg: "count", when: dismissedBy("runout"),
+    },
+  ],
+};
 
 export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
   key: "cricket",
@@ -1451,9 +1959,18 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
       }
       case "cricket.innings.close": {
         if (state.phase !== "live") wrongPhase(`innings close in phase "${state.phase}"`);
-        parsePayload(CricketClose, ev.payload, ev.type);
-        return closeOpenInnings(state, false);
+        const payload = parsePayload(CricketClose, ev.payload, ev.type);
+        return closeOpenInnings(state, false, payload.reason);
       }
+      case "cricket.retire":
+        return applyRetire(state, parsePayload(CricketRetire, ev.payload, ev.type));
+      case "cricket.newball":
+        parsePayload(CricketNewBall, ev.payload, ev.type);
+        return applyNewBall(state);
+      case "cricket.powerplay":
+        return applyPowerplay(state, parsePayload(CricketPowerplay, ev.payload, ev.type));
+      case "cricket.review":
+        return applyReview(state, parsePayload(CricketReview, ev.payload, ev.type));
       case "cricket.match.close": {
         if (state.phase !== "live") wrongPhase(`match close in phase "${state.phase}"`);
         parsePayload(CricketMatchClose, ev.payload, ev.type);
@@ -1549,6 +2066,9 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
           legalBalls: innings.legalBalls,
           declared: innings.declared,
           closed: innings.closed,
+          // W4 — survives coarsening (the close event passes through), so the
+          // §9.6 coarse ≡ fine summary equality still holds.
+          ...(innings.closeReason === undefined ? {} : { closeReason: innings.closeReason }),
         })),
         ...(state.revisedTarget === null
           ? {}
@@ -1704,15 +2224,24 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
         "cricket.revise",
         "cricket.followon",
         "cricket.superover.ball",
+        // W4 — innings context a card-level scorer can mark without going
+        // ball-by-ball: the new ball, powerplay blocks and reviews.
+        "cricket.newball",
+        "cricket.powerplay",
+        "cricket.review",
       ],
     },
     { tier: 2, eventTypes: ["cricket.player.line"], entitlement: "stats.player" },
     {
       tier: 3,
-      eventTypes: ["cricket.ball", "cricket.superover.ball"],
+      // `cricket.retire` needs the crease to be tracked (it swaps a batter
+      // without a delivery), so it is a ball-by-ball event even though a
+      // retired-out shows up in a coarse innings' wicket column.
+      eventTypes: ["cricket.ball", "cricket.superover.ball", "cricket.retire"],
       entitlement: "scoring.ball_by_ball",
     },
   ],
+  playerStats: CRICKET_PLAYER_STATS,
   officialLabel: { scorer: "Umpire" }, // doc 13 §1
 
   // spec 03 §6 / PROMPT-05 §9 — generates only legal deliveries.
@@ -1754,6 +2283,14 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
         rng() < 0.5
       ) {
         return { type: "cricket.followon", payload: {} };
+      }
+      // W4 review item 3 — a Tier-2 scorecard line for a CLOSED fine innings.
+      // The fold validates it against the innings ledger exactly, so it is
+      // built FROM that ledger; a line that disagreed would be an event the
+      // generator's own fold rejects (spec 03 §6).
+      if (rng() < 0.25) {
+        const line = generatePlayerLine(state, rng);
+        if (line !== null) return { type: "cricket.player.line", payload: line };
       }
       if (rng() < 0.6) {
         // Coarse innings in one event.
@@ -1813,6 +2350,89 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
     ) {
       return { type: "cricket.innings.declare", payload: {} };
     }
+
+    // W4 domain events. They occupy their own bands of the roll so the
+    // pre-existing abandon/forfeit/revise/declare bands keep their rates.
+    if (roll >= 0.03 && roll < 0.036) {
+      const blocks = open.innings.powerplays ?? [];
+      const openBlock = blocks.find((block) => block.toBalls === null);
+      return openBlock === undefined
+        ? {
+            type: "cricket.powerplay",
+            payload: { kind: pick(["mandatory", "batting", "bowling"] as const), phase: "start" },
+          }
+        : { type: "cricket.powerplay", payload: { kind: openBlock.kind, phase: "end" } };
+    }
+    if (roll >= 0.036 && roll < 0.04) {
+      if (!(open.innings.newBallAt ?? []).includes(open.innings.legalBalls)) {
+        return { type: "cricket.newball", payload: {} };
+      }
+    }
+    if (roll >= 0.04 && roll < 0.046) {
+      const by = rng() < 0.5 ? state.entrants.home : state.entrants.away;
+      const side = sideOf(state, by);
+      const allowance = state.cfg.reviews?.perInnings;
+      const spent = open.innings.reviews?.[side].lost ?? 0;
+      if (allowance === undefined || spent < allowance) {
+        return {
+          type: "cricket.review",
+          payload: {
+            by,
+            kind: rng() < 0.2 ? "umpire" : "player",
+            outcome: pick(["upheld", "struck_down", "umpires_call"] as const),
+          },
+        };
+      }
+    }
+    // W4 review item 3 — the generator could not reach these two, so no
+    // corpus could hold them and no property run explored them.
+    if (roll >= 0.052 && roll < 0.056) {
+      return {
+        type: "cricket.interruption",
+        payload: {
+          kind: pick(["rain", "light", "other"] as const),
+          ...(rng() < 0.5 ? { oversLostEstimate: 1 + Math.floor(rng() * 6) } : {}),
+        },
+      };
+    }
+    if (roll >= 0.056 && roll < 0.058 && open.innings.legalBalls > 0) {
+      // An innings closed by the umpires rather than by a fold predicate: the
+      // three auto-closes are derivable from the totals, these are not.
+      return {
+        type: "cricket.innings.close",
+        payload: { reason: pick(["time", "weather", "other"] as const) },
+      };
+    }
+    if (roll >= 0.046 && roll < 0.052) {
+      const fine = open.innings.fine;
+      const person = rng() < 0.5 ? fine.striker : fine.nonStriker;
+      if (person !== null) {
+        // Only offer a retirement when a legal replacement exists, so the
+        // generator never emits an event its own fold would reject.
+        const unavailable = new Set<string>([
+          ...fine.dismissed,
+          ...(fine.retiredNotOut ?? []),
+          ...[fine.striker, fine.nonStriker].filter((p): p is string => p !== null),
+        ]);
+        const battingOrder = state.orders[open.innings.battingSide];
+        const byOrder = nextBatterFrom(battingOrder, fine.nextBatterIndex, unavailable);
+        if (byOrder !== null) {
+          // Half the time name the incoming batter explicitly (Law 25.1 —
+          // the order after the openers is the captain's), which is also how
+          // the coarsener learns who walked in.
+          const eligible = battingOrder.filter((p) => !unavailable.has(p));
+          const incoming = rng() < 0.5 ? pickFrom(eligible, rng) : undefined;
+          return {
+            type: "cricket.retire",
+            payload: {
+              person,
+              reason: rng() < 0.5 ? "hurt" : "out",
+              ...(incoming === undefined ? {} : { incoming }),
+            },
+          };
+        }
+      }
+    }
     return { type: "cricket.ball", payload: generateBall(state, rng) };
   },
 
@@ -1831,6 +2451,12 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
     const out: ModuleEvent<CricketEv>[] = [];
     let cur: Tracker | null = null;
     let dirty = false; // unflushed deliveries since the last snapshot
+    // W4 — a retirement swaps a batter with no delivery in between, so both
+    // ends of the crease can be "unseen" on the next ball without the innings
+    // having changed. The over/ball restart below is the reliable signal;
+    // this flag stops the (still useful) unseen-pair heuristic from firing on
+    // a retirement instead.
+    let retiredSinceBall = false;
     // Emit a cumulative partial snapshot at most once per set of new balls, so
     // a snapshot taken for a mid-innings pass-through (revise) isn't re-emitted
     // by the trailing flush as a post-decision duplicate.
@@ -1852,12 +2478,24 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
       switch (event.type) {
         case "cricket.ball": {
           const ball = event.payload as CricketBallEv;
-          // New innings when both crease batters are unseen (sides alternate;
-          // the follow-on boundary always carries an explicit event).
-          if (cur !== null && !cur.seen.has(ball.striker) && !cur.seen.has(ball.nonStriker)) {
+          // New innings when the over/ball cursor restarts after a legal
+          // delivery has been bowled (0.1 can only recur before the first
+          // legal ball of an innings), or when both crease batters are unseen
+          // (sides alternate; the follow-on boundary always carries an
+          // explicit event). The second signal is suppressed straight after a
+          // retirement, which can change both ends without a delivery.
+          const restarted = ball.over === 0 && ball.ballInOver === 1;
+          if (
+            cur !== null &&
+            ((restarted && cur.legalBalls > 0) ||
+              (!retiredSinceBall &&
+                !cur.seen.has(ball.striker) &&
+                !cur.seen.has(ball.nonStriker)))
+          ) {
             flush();
             cur = null;
           }
+          retiredSinceBall = false;
           cur ??= { runs: 0, wickets: 0, legalBalls: 0, boundaries: 0, seen: new Set() };
           const extras = ball.runs.extras;
           const legal =
@@ -1881,6 +2519,26 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
           cur = null;
           out.push({ type: event.type, payload: event.payload });
           break;
+        case "cricket.retire": {
+          // W4 — a retired-out is a wicket in the innings column; a retired
+          // not out is not. Both batters go into `seen` either way, so the
+          // innings-boundary heuristic above is not fooled by the swap.
+          const retire = event.payload as z.infer<typeof CricketRetire>;
+          cur ??= { runs: 0, wickets: 0, legalBalls: 0, boundaries: 0, seen: new Set() };
+          if (retire.reason === "out") {
+            cur.wickets += 1;
+            dirty = true;
+          }
+          cur.seen.add(retire.person);
+          if (retire.incoming !== undefined) cur.seen.add(retire.incoming);
+          retiredSinceBall = true;
+          break;
+        }
+        case "cricket.newball":
+        case "cricket.powerplay":
+        case "cricket.review":
+          break; // W4 innings context — no effect on totals, dropped like a
+        // player line; Tier 0 is the totals and nothing else.
         case "cricket.player.line":
           break; // Tier-2 attribution — dropped at coarse fidelity
         default:

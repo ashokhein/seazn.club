@@ -41,6 +41,7 @@ import {
   type Colour,
   type SwissStanding,
 } from "../scheduling/swiss.ts";
+import { resolvePositions } from "../sport/catalog.ts";
 import type { AnySportModule, ModuleEvent, TiebreakerKey } from "../sport/module.ts";
 import { lineupFromCatalog, TEST_INSTANT } from "./helpers.ts";
 
@@ -386,12 +387,12 @@ interface SimContext {
 function lineupPairFor(ctx: SimContext, home: EntrantId, away: EntrantId): LineupPair {
   let homeLineup = ctx.lineups.get(home);
   if (homeLineup === undefined) {
-    homeLineup = lineupFromCatalog(ctx.module.positions, home);
+    homeLineup = lineupFromCatalog(resolvePositions(ctx.module, ctx.cfg), home);
     ctx.lineups.set(home, homeLineup);
   }
   let awayLineup = ctx.lineups.get(away);
   if (awayLineup === undefined) {
-    awayLineup = lineupFromCatalog(ctx.module.positions, away);
+    awayLineup = lineupFromCatalog(resolvePositions(ctx.module, ctx.cfg), away);
     ctx.lineups.set(away, awayLineup);
   }
   return { home: homeLineup, away: awayLineup };

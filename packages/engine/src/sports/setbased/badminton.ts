@@ -41,4 +41,23 @@ export const badminton = makeSetBasedModule({
   coarseEventType: "game.summary",
   rallyEntitlement: "scoring.rally_by_rally", // doc 10 / badminton.md §3
   entrantModel: { kinds: ["individual", "pair"], defaultKind: "individual" },
+  // W4 (#407) — BWF play has NO timeouts (only the interval at 11 and the
+  // break between games) and NO substitutions; the umpire's sheet does carry
+  // the misconduct card ladder, which maps onto the kernel's four levels:
+  // yellow warning → `warning`, red fault → `penalty`, black → `disqualification`
+  // (`expulsion` stays available for referee removal from a game).
+  records: { sanctions: true },
+  playerStats: {
+    metrics: [
+      { key: "points", label: "Points", from: "badminton.rally", field: "scorer", agg: "count" },
+      { key: "serves", label: "Serves", from: "badminton.rally", field: "server", agg: "count" },
+      {
+        key: "sanctions",
+        label: "Cards",
+        from: "badminton.sanction",
+        field: "person",
+        agg: "count",
+      },
+    ],
+  },
 });

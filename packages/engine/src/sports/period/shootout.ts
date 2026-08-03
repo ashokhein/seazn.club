@@ -11,6 +11,13 @@ export type ShootoutSide = "home" | "away";
 export interface ShootoutKick {
   side: ShootoutSide;
   scored: boolean;
+  /** W4 (#407) — the taker. Both sheets name him: IIHF's GWS section lists the
+   *  shooting order, FIH App 12 the one-on-one attacker. Optional: coarse
+   *  scoring records only side + result. */
+  person?: string;
+  /** W4 (#407) — the goalkeeper who faced the attempt (IIHF GWS records the
+   *  goalie per shot; FIH's 8-second run is against a named keeper). */
+  goalkeeper?: string;
 }
 
 function opponent(side: ShootoutSide): ShootoutSide {

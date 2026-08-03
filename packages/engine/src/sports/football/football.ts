@@ -6,6 +6,7 @@ import { EngineError } from "../../core/errors.ts";
 import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
+  AttemptOutcome,
   EntrantId,
   type DisciplineCard,
   type LineupPair,
@@ -48,6 +49,28 @@ export const FootballCfg = z.object({
     .default({ win: 3, draw: 1, loss: 0 }),
   awardScore: z.object({ goals: z.number().int().positive() }).default({ goals: 3 }),
   fairPlay: z.boolean().default(true), // track cards for FIFA fair-play TB
+  // W4 (Law 3) — return ("rolling"/"flying") substitutions. 11-a-side under the
+  // Laws forbids a substituted player from returning; FA youth football and
+  // every small-sided/futsal code permits repeat substitutions. Optional with
+  // no default: absent ≡ the pre-W4 behaviour (returns forbidden).
+  rollingSubs: z.boolean().optional(),
+  // W4 (Law 3) — competition cap on substitutions per side (5 in senior
+  // 11-a-side since 2020; unlimited under rollingSubs). Absent = uncapped,
+  // which is what every stream recorded before W4 assumed.
+  maxSubs: z.number().int().nonnegative().optional(),
+  // W4 (Law 12 addendum, temporary dismissals) — the competition's sin-bin
+  // period in minutes, used when a `football.sinbin.start` event omits its own.
+  // The FA runs 10 minutes in 90-minute football and reduces it pro rata for
+  // shorter formats, so this is a competition setting, not a Law constant.
+  sinBinMinutes: z.number().int().positive().optional(),
+  // W4 (Law 3 §1, "a match is played by two teams, each of not more than
+  // eleven players") — the number of players a side fields. The Laws set 11 for
+  // the senior game; FA Mini-Soccer and the small-sided/futsal codes run 5, 7
+  // or 9 a side, and a competition may lower the minimum. Drives the resolved
+  // PositionCatalog (`positionsFor`) rather than the fold: positions are lineup
+  // data and never touch scoring math. Optional with no default — absent ≡ 11,
+  // which is what every stream recorded before W4 assumed.
+  teamSize: z.number().int().min(2).max(11).optional(),
   // engine/sports/football.md §8 — core.abandon policy: `replay` leaves the
   // fixture undecided (flagged for regeneration), `award` decides for the
   // current leader (level score ⇒ no_result).
@@ -70,11 +93,33 @@ export const FootballGoal = z.strictObject({
   penalty: z.boolean().optional(), // in-play penalty kick, not a shootout kick
 });
 export const CardColor = z.enum(["yellow", "red", "second_yellow"]);
+// W4 (Law 12 §3 cautions, §4 sending-off offences) — the offence category a
+// referee's match record names next to the card. The discipline usecase's
+// suspension tariff is a function of THIS, not of the colour: violent conduct
+// and a second caution are both red cards and carry different bans.
+export const CardReason = z.enum([
+  // Law 12.3 — cautionable offences.
+  "unsporting_behaviour",
+  "dissent",
+  "persistent_offences",
+  "delaying_restart",
+  "failure_to_respect_distance",
+  "entering_or_leaving_without_permission",
+  // Law 12.4 — sending-off offences.
+  "serious_foul_play",
+  "violent_conduct",
+  "spitting",
+  "denying_goal_by_handball",
+  "denying_obvious_goalscoring_opportunity",
+  "offensive_language",
+  "second_caution",
+]);
 export const FootballCard = z.strictObject({
   by: EntrantId,
   person: PersonId.optional(),
   color: CardColor,
   minute: z.number().int().nonnegative().optional(),
+  reason: CardReason.optional(), // W4 — optional everywhere: coarse scoring
 });
 export const FootballSub = z.strictObject({
   by: EntrantId,
@@ -84,11 +129,63 @@ export const FootballSub = z.strictObject({
 });
 export const FootballPeriod = z.strictObject({
   phase: z.enum(["HT", "FT", "ET_HT", "ET_FT"]),
+  // W4 (Law 7 §3, allowance for time lost) — minutes added to the period this
+  // marker CLOSES. A match report writes "90+3"; a bare integer `minute`
+  // cannot tell that apart from the 93rd minute of extra time.
+  addedMinutes: z.number().int().nonnegative().optional(),
 });
 export const FootballShootoutKick = z.strictObject({
   by: EntrantId,
   person: PersonId.optional(),
   scored: z.boolean(),
+});
+
+// W4 (Law 14) — a penalty kick awarded IN OPEN PLAY that did not produce a
+// goal. A converted penalty stays `football.goal { penalty: true }` so no
+// pre-W4 stream changes meaning; this branch exists purely for the kicks a
+// scorebook otherwise loses. `outcome` is required, which is also what keeps
+// the branch structurally distinct inside the union.
+//
+// W4 review item 2 — the tokens are the SHARED attempt vocabulary minus
+// `scored`, derived rather than re-typed so the two can never drift apart. A
+// scored penalty is the goal event, and accepting it here would let one kick
+// be counted twice.
+export const PenaltyOutcome = AttemptOutcome.exclude(["scored"]);
+export const FootballPenalty = z.strictObject({
+  by: EntrantId, // the side awarded the kick
+  taker: PersonId.optional(),
+  // W4 review item 1 — the DEFENDING keeper who faced it. `goalkeeper` is the
+  // shared name: the period kernel's shoot-out attempt and set piece already
+  // used it, and it matches the position groups the catalogs declare (FIH
+  // "GK", IIHF "G"). One fact, one key, one pad control.
+  goalkeeper: PersonId.optional(),
+  outcome: PenaltyOutcome,
+  minute: z.number().int().nonnegative().optional(),
+});
+
+// W4 (Law 12 addendum) — a temporary dismissal ("sin bin"). The FA operates
+// them below the National League System and across youth football; futsal and
+// most small-sided codes use a time penalty of the same shape. No existing
+// branch could express it: football.card's non-yellow path removes a player
+// permanently.
+//
+// W4 review item 3 — the dismissal and the return are TWO events, which is the
+// shape the period kernel already ships (`*.suspension.start` / `.end`). A
+// sin bin genuinely IS two scorer moments minutes apart, and folding them into
+// one branch behind a `returned: boolean` gave the pad one control with a
+// hidden mode. The sanction LADDER stays football's own (`sin_bin`,
+// `cfg.sinBinMinutes`); only the shape is shared.
+export const FootballSinBinStart = z.strictObject({
+  by: EntrantId,
+  person: PersonId.optional(),
+  minutes: z.number().int().positive().optional(), // defaults to cfg.sinBinMinutes
+  minute: z.number().int().nonnegative().optional(),
+  reason: CardReason.optional(),
+});
+export const FootballSinBinEnd = z.strictObject({
+  by: EntrantId,
+  person: PersonId.optional(), // absent = the oldest anonymous dismissal
+  minute: z.number().int().nonnegative().optional(),
 });
 
 export const FootballEv = z.union([
@@ -97,6 +194,9 @@ export const FootballEv = z.union([
   FootballSub,
   FootballPeriod,
   FootballShootoutKick,
+  FootballPenalty,
+  FootballSinBinStart,
+  FootballSinBinEnd,
 ]);
 export type FootballEv = z.infer<typeof FootballEv>;
 
@@ -108,11 +208,23 @@ type Side = "home" | "away";
 type PlayPhase = "H1" | "H2" | "ET_H1" | "ET_H2";
 type Phase = "pre" | PlayPhase | "SHOOTOUT" | "done" | "final" | "abandoned";
 
+// W4 — a live temporary dismissal. Anonymous entries (coarse scoring) are
+// recorded but never move the pitch, the same discipline anonymous cards get.
+interface SinBinRecord {
+  person?: string;
+  minutes?: number;
+  reason?: z.infer<typeof CardReason>;
+  minute?: number;
+}
+
 interface SquadState {
   onPitch: string[];
   bench: string[];
   offUsed: string[]; // substituted off — may not return
   sentOff: string[]; // red / second yellow — may not return or be subbed for
+  // W4 — currently serving a temporary dismissal. Absent until the first sin
+  // bin of the match, so `init` serialises exactly as it did before W4.
+  sinBin?: SinBinRecord[];
 }
 
 interface CardRecord {
@@ -120,6 +232,16 @@ interface CardRecord {
   person?: string;
   color: z.infer<typeof CardColor>;
   minute?: number;
+  reason?: z.infer<typeof CardReason>; // W4 — Law 12 offence category
+}
+
+// W4 — a period entry gains Law 7 added time. Optional so that every stream
+// recorded before W4 serialises byte-identically.
+interface PeriodRecord {
+  phase: PlayPhase;
+  home: number;
+  away: number;
+  addedMinutes?: number;
 }
 
 export interface FootballState {
@@ -129,12 +251,24 @@ export interface FootballState {
   goals: { home: number; away: number }; // regulation + ET (shootout excluded)
   // Per-period breakdown, in play order — the coarse "period summaries" view
   // (PROMPT-04 §9) and the summary.detail payload.
-  periods: { phase: PlayPhase; home: number; away: number }[];
+  periods: PeriodRecord[];
   cards: CardRecord[];
   squads: { home: SquadState; away: SquadState };
   shootout: { kicks: { side: Side; scored: boolean }[] } | null;
   outcome: MatchOutcome | null;
   replayFlagged: boolean; // abandonPolicy 'replay' — fixture to regenerate
+  // W4 (Law 14) — unconverted open-play penalties, in play order. Absent until
+  // the first one is recorded: `init` must keep serialising exactly as it did
+  // before W4 or every frozen golden stream reds.
+  penalties?: PenaltyRecord[];
+}
+
+interface PenaltyRecord {
+  side: Side;
+  outcome: z.infer<typeof PenaltyOutcome>;
+  taker?: string;
+  goalkeeper?: string;
+  minute?: number;
 }
 
 const PLAY_PHASES: readonly Phase[] = ["H1", "H2", "ET_H1", "ET_H2"];
@@ -263,6 +397,10 @@ function removeFromPitch(squad: SquadState, person: string, sentOff: boolean): S
     ...squad,
     onPitch: squad.onPitch.filter((id) => id !== person),
     sentOff: sentOff ? [...squad.sentOff, person] : squad.sentOff,
+    // W4 — a permanent dismissal ends any temporary one already being served.
+    ...(squad.sinBin === undefined
+      ? {}
+      : { sinBin: squad.sinBin.filter((entry) => entry.person !== person) }),
   };
 }
 
@@ -302,7 +440,10 @@ function applyCard(state: FootballState, payload: z.infer<typeof FootballCard>):
     const inLineup =
       squad.onPitch.includes(person) ||
       squad.bench.includes(person) ||
-      squad.offUsed.includes(person);
+      squad.offUsed.includes(person) ||
+      // W4 — a player serving a temporary dismissal is off the pitch but very
+      // much still cardable (a sin bin is frequently followed by a red).
+      (squad.sinBin ?? []).some((entry) => entry.person === person);
     if (squad.sentOff.includes(person)) {
       invalid(`"${person}" was already sent off`, { person });
     }
@@ -327,6 +468,7 @@ function applyCard(state: FootballState, payload: z.infer<typeof FootballCard>):
     ...(payload.person === undefined ? {} : { person: payload.person }),
     color: payload.color,
     ...(payload.minute === undefined ? {} : { minute: payload.minute }),
+    ...(payload.reason === undefined ? {} : { reason: payload.reason }),
   };
   return { ...state, cards: [...state.cards, record], squads };
 }
@@ -337,19 +479,158 @@ function applySub(state: FootballState, payload: z.infer<typeof FootballSub>): F
   }
   const side = sideOf(state, payload.by);
   const squad = state.squads[side];
+  const rolling = state.cfg.rollingSubs === true;
   if (!squad.onPitch.includes(payload.off)) {
     invalid(`"${payload.off}" is not on the pitch`, { off: payload.off });
   }
   if (!squad.bench.includes(payload.on)) {
     invalid(`"${payload.on}" is not an available bench player`, { on: payload.on });
   }
-  const next: SquadState = {
-    onPitch: [...squad.onPitch.filter((id) => id !== payload.off), payload.on],
-    bench: squad.bench.filter((id) => id !== payload.on),
-    offUsed: [...squad.offUsed, payload.off],
-    sentOff: squad.sentOff,
-  };
+  // W4 (Law 3) — the cap counts substitutions made, which is exactly the
+  // length of offUsed. Rolling substitutions are uncapped by definition, so
+  // the cap only bites on the return-forbidden path.
+  if (!rolling && state.cfg.maxSubs !== undefined && squad.offUsed.length >= state.cfg.maxSubs) {
+    invalid(`"${payload.by}" has used all ${state.cfg.maxSubs} substitutions`, {
+      by: payload.by,
+      maxSubs: state.cfg.maxSubs,
+    });
+  }
+  const onPitch = [...squad.onPitch.filter((id) => id !== payload.off), payload.on];
+  const next: SquadState = rolling
+    ? // Repeat substitution: the player who came off rejoins the bench and may
+      // re-enter, so nothing lands in offUsed.
+      { ...squad, onPitch, bench: [...squad.bench.filter((id) => id !== payload.on), payload.off] }
+    : {
+        ...squad,
+        onPitch,
+        bench: squad.bench.filter((id) => id !== payload.on),
+        offUsed: [...squad.offUsed, payload.off],
+      };
   return { ...state, squads: { ...state.squads, [side]: next } };
+}
+
+// W4 (Law 7) — stamp the marker's added time on the period it CLOSES, i.e. the
+// last entry in play order. Absent added time leaves the entry untouched, so
+// every pre-W4 stream serialises exactly as before.
+function stampAddedMinutes(state: FootballState, addedMinutes: number | undefined): FootballState {
+  if (addedMinutes === undefined || state.periods.length === 0) return state;
+  const last = state.periods.length - 1;
+  return {
+    ...state,
+    periods: state.periods.map((period, i) => (i === last ? { ...period, addedMinutes } : period)),
+  };
+}
+
+// W4 (Law 12 addendum) — the return that ends a temporary dismissal.
+function applySinBinEnd(
+  state: FootballState,
+  payload: z.infer<typeof FootballSinBinEnd>,
+): FootballState {
+  if (!isPlayPhase(state.phase)) {
+    wrongPhase(`sin bin not allowed in phase "${state.phase}"`, { phase: state.phase });
+  }
+  const side = sideOf(state, payload.by);
+  const squad = state.squads[side];
+  const bin = squad.sinBin ?? [];
+  // An anonymous return closes the oldest anonymous dismissal — the only entry
+  // it could possibly be about.
+  const index = bin.findIndex((entry) => entry.person === payload.person);
+  if (index < 0) {
+    invalid(
+      payload.person === undefined
+        ? `"${payload.by}" has no anonymous sin bin to end`
+        : `"${payload.person}" is not serving a sin bin`,
+      { by: payload.by, ...(payload.person === undefined ? {} : { person: payload.person }) },
+    );
+  }
+  const entry = bin[index] as SinBinRecord;
+  return {
+    ...state,
+    squads: {
+      ...state.squads,
+      [side]: {
+        ...squad,
+        onPitch: entry.person === undefined ? squad.onPitch : [...squad.onPitch, entry.person],
+        sinBin: bin.filter((_, i) => i !== index),
+      },
+    },
+  };
+}
+
+// W4 (Law 12 addendum) — a temporary dismissal begins.
+function applySinBinStart(
+  state: FootballState,
+  payload: z.infer<typeof FootballSinBinStart>,
+): FootballState {
+  if (!isPlayPhase(state.phase)) {
+    wrongPhase(`sin bin not allowed in phase "${state.phase}"`, { phase: state.phase });
+  }
+  const side = sideOf(state, payload.by);
+  const squad = state.squads[side];
+  const bin = squad.sinBin ?? [];
+  const withSquad = (next: SquadState): FootballState => ({
+    ...state,
+    squads: { ...state.squads, [side]: next },
+  });
+
+  if (payload.person !== undefined) {
+    const person = payload.person;
+    if (squad.sentOff.includes(person)) {
+      invalid(`"${person}" was already sent off`, { person });
+    }
+    if (bin.some((entry) => entry.person === person)) {
+      invalid(`"${person}" is already serving a sin bin`, { person });
+    }
+    if (!squad.onPitch.includes(person)) {
+      invalid(`"${person}" is not on the pitch for "${payload.by}"`, { person });
+    }
+  }
+  const minutes = payload.minutes ?? state.cfg.sinBinMinutes;
+  const record: SinBinRecord = {
+    ...(payload.person === undefined ? {} : { person: payload.person }),
+    ...(minutes === undefined ? {} : { minutes }),
+    ...(payload.reason === undefined ? {} : { reason: payload.reason }),
+    ...(payload.minute === undefined ? {} : { minute: payload.minute }),
+  };
+  return withSquad({
+    ...squad,
+    onPitch:
+      payload.person === undefined
+        ? squad.onPitch
+        : squad.onPitch.filter((id) => id !== payload.person),
+    sinBin: [...bin, record],
+  });
+}
+
+// W4 (Law 14) — an open-play penalty that was not converted. The score is
+// untouched by construction; the record is what a match report needs.
+function applyPenalty(state: FootballState, payload: z.infer<typeof FootballPenalty>): FootballState {
+  if (!isPlayPhase(state.phase)) {
+    wrongPhase(`penalty not allowed in phase "${state.phase}"`, { phase: state.phase });
+  }
+  const side = sideOf(state, payload.by);
+  if (payload.taker !== undefined && !state.squads[side].onPitch.includes(payload.taker)) {
+    invalid(`taker "${payload.taker}" is not on the pitch for "${payload.by}"`, {
+      taker: payload.taker,
+    });
+  }
+  // The goalkeeper facing the kick belongs to the DEFENDING side.
+  if (
+    payload.goalkeeper !== undefined &&
+    !state.squads[opponent(side)].onPitch.includes(payload.goalkeeper)
+  ) {
+    invalid(`goalkeeper "${payload.goalkeeper}" is not on the pitch for the defending side`, {
+      goalkeeper: payload.goalkeeper,
+    });
+  }
+  const record: PenaltyRecord = {
+    side,
+    outcome: payload.outcome,
+    ...(payload.taker === undefined ? {} : { taker: payload.taker }),
+    ...(payload.goalkeeper === undefined ? {} : { goalkeeper: payload.goalkeeper }),
+    ...(payload.minute === undefined ? {} : { minute: payload.minute }),
+  };
+  return { ...state, penalties: [...(state.penalties ?? []), record] };
 }
 
 function applyPeriod(state: FootballState, payload: z.infer<typeof FootballPeriod>): FootballState {
@@ -357,16 +638,16 @@ function applyPeriod(state: FootballState, payload: z.infer<typeof FootballPerio
   switch (marker) {
     case "HT":
       if (state.phase !== "H1") wrongPhase(`HT marker in phase "${state.phase}"`);
-      return pushPeriod(state, "H2");
+      return pushPeriod(stampAddedMinutes(state, payload.addedMinutes), "H2");
     case "FT":
       if (state.phase !== "H2") wrongPhase(`FT marker in phase "${state.phase}"`);
-      return resolveFullTime(state, "FT");
+      return resolveFullTime(stampAddedMinutes(state, payload.addedMinutes), "FT");
     case "ET_HT":
       if (state.phase !== "ET_H1") wrongPhase(`ET_HT marker in phase "${state.phase}"`);
-      return pushPeriod(state, "ET_H2");
+      return pushPeriod(stampAddedMinutes(state, payload.addedMinutes), "ET_H2");
     case "ET_FT":
       if (state.phase !== "ET_H2") wrongPhase(`ET_FT marker in phase "${state.phase}"`);
-      return resolveFullTime(state, "ET_FT");
+      return resolveFullTime(stampAddedMinutes(state, payload.addedMinutes), "ET_FT");
   }
 }
 
@@ -503,6 +784,14 @@ const positions: PositionCatalog = {
   lineup: { size: 11, benchMax: 12 },
 };
 
+// W4 (#407) — the catalog for a resolved config. Only the starting size moves:
+// every small-sided code still fields exactly one goalkeeper (FA Mini-Soccer
+// Rule 3, Futsal Law 3), and the position vocabulary is the same game.
+function positionsFor(cfg: FootballCfg): PositionCatalog {
+  if (cfg.teamSize === undefined || cfg.teamSize === positions.lineup.size) return positions;
+  return { ...positions, lineup: { ...positions.lineup, size: cfg.teamSize } };
+}
+
 // ---------------------------------------------------------------------------
 // Module
 // ---------------------------------------------------------------------------
@@ -525,12 +814,20 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
   configSchema: FootballCfg,
   eventSchema: FootballEv,
   positions,
+  positionsFor,
   entrantModel: { kinds: ["team"], defaultKind: "team", team: { squadNumbers: true, captain: true } },
   variants: {
     // spec 04 §1.1
     "11-a-side": {},
-    youth: { halfMinutes: 30 },
-    "small-sided": { halfMinutes: 20, halves: 2 },
+    // W4 — FA youth football and every small-sided/futsal code use repeat
+    // substitutions (Law 3 / FA Mini-Soccer + SSG rules); 11-a-side does not.
+    youth: { halfMinutes: 30, rollingSubs: true },
+    // W4 — the FA's Small-Sided Games run 5v5 (U7–U8), 7v7 (U9–U10) and 9v9
+    // (U11–U12); 7 is the middle rung and the one this preset names. A
+    // competition on another rung sets `teamSize` itself. Before W4 this
+    // variant declared no size at all, so it inherited the eleven-slot catalog
+    // and could not hold a legal lineup.
+    "small-sided": { halfMinutes: 20, halves: 2, rollingSubs: true, teamSize: 7 },
   },
 
   init(cfg, lineups: LineupPair): FootballState {
@@ -563,6 +860,12 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
         return applyPeriod(state, parsePayload(FootballPeriod, ev.payload, ev.type));
       case "football.shootout.kick":
         return applyShootoutKick(state, parsePayload(FootballShootoutKick, ev.payload, ev.type));
+      case "football.penalty":
+        return applyPenalty(state, parsePayload(FootballPenalty, ev.payload, ev.type));
+      case "football.sinbin.start":
+        return applySinBinStart(state, parsePayload(FootballSinBinStart, ev.payload, ev.type));
+      case "football.sinbin.end":
+        return applySinBinEnd(state, parsePayload(FootballSinBinEnd, ev.payload, ev.type));
       case "core.forfeit":
         return applyForfeit(state, (ev.payload as { by: string }).by);
       case "core.abandon":
@@ -602,6 +905,11 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
       detail: {
         periods: state.periods,
         ...(shootout === null ? {} : { shootout }),
+        // W4: unconverted penalties and sin bins deliberately do NOT appear
+        // here. §9.6 requires summary(coarse) === summary(fine), and coarsen
+        // drops every event with no score effect — same reason `cards` has
+        // never been in the summary. They live in State and in the ledger,
+        // which is what the match report reads.
         ...(state.replayFlagged ? { abandoned: true } : {}),
       },
     };
@@ -695,6 +1003,10 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
         "football.sub",
         "football.period",
         "football.shootout.kick",
+        // W4 — neither moves the score, so both stay out of tiers 0/1.
+        "football.penalty",
+        "football.sinbin.start",
+        "football.sinbin.end",
       ],
       entitlement: "scoring.match_timeline",
     },
@@ -706,6 +1018,9 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
         "football.sub",
         "football.period",
         "football.shootout.kick",
+        "football.penalty",
+        "football.sinbin.start",
+        "football.sinbin.end",
       ],
       entitlement: "scoring.match_timeline",
     },
@@ -728,6 +1043,28 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
         key: "red_cards", label: "Red cards", from: "football.card", field: "person",
         agg: "count", when: (p) => p.color === "red" || p.color === "second_yellow",
       },
+      // W4 — the facts the new branches make countable. `penalty_goals` is a
+      // subset of `goals`, so `points` (goals + assists) is unchanged.
+      {
+        key: "penalty_goals", label: "Penalty goals", from: "football.goal", field: "scorer",
+        agg: "count", when: (p) => p.penalty === true && p.ownGoal !== true,
+      },
+      {
+        key: "penalties_missed", label: "Penalties missed", from: "football.penalty",
+        field: "taker", agg: "count",
+      },
+      // The personal column only — the goal itself was already credited to the
+      // opponent by the fold, so `points` (goals + assists) is unchanged.
+      {
+        key: "own_goals", label: "Own goals", from: "football.goal", field: "scorer",
+        agg: "count", when: (p) => p.ownGoal === true,
+      },
+      {
+        // The START event alone: the end is the player coming back, not a
+        // second sanction. The pair makes that structural — no `when` guard.
+        key: "sin_bins", label: "Sin bins", from: "football.sinbin.start", field: "person",
+        agg: "count",
+      },
     ],
     derived: [
       { key: "points", label: "Points", derive: (s) => (s.goals ?? 0) + (s.assists ?? 0) },
@@ -743,10 +1080,35 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
       { key: "yellow", label: "Yellow card" },
       { key: "second_yellow", label: "Second yellow" },
       { key: "red", label: "Red card" },
+      // W4 — a temporary dismissal is a sanction, not a card grade, but the
+      // projection has exactly one axis and the rules editor prices sanctions
+      // off it. The period kernel already does this: its "colours" are the
+      // suspension CLASS keys (minor/major/misconduct), not card colours.
+      { key: "sin_bin", label: "Sin bin" },
     ],
     extractCards(ledger): DisciplineCard[] {
       const cards: DisciplineCard[] = [];
       for (const ev of resolveVoids(ledger)) {
+        // W4 review item 6 — a sin bin removes a player from the pitch and
+        // carries the same Law 12 `reason` a card does, so an accumulation
+        // rule ("three dissents in a season") has to see it. Filtering on
+        // `football.card` alone made it invisible to the discipline usecase,
+        // while every period-kernel sport projected its own suspension.
+        if (ev.type === "football.sinbin.start") {
+          const parsed = FootballSinBinStart.safeParse(ev.payload);
+          // Only the START: the end event is the player coming back, not a
+          // second sanction — projecting it would double every bin.
+          if (!parsed.success) continue;
+          const bin = parsed.data;
+          cards.push({
+            ...(bin.person === undefined ? {} : { personId: bin.person }),
+            entrantSide: bin.by,
+            color: "sin_bin",
+            eventId: ev.id,
+            ...(bin.reason === undefined ? {} : { reason: bin.reason }),
+          });
+          continue;
+        }
         if (ev.type !== "football.card") continue;
         const parsed = FootballCard.safeParse(ev.payload);
         if (!parsed.success) continue;
@@ -756,6 +1118,10 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
           entrantSide: card.by,
           color: card.color,
           eventId: ev.id,
+          // W4 — the Law 12 offence, when the referee recorded one. Football
+          // has no bench penalties, so no card is ever served by a substitute:
+          // `servedBy` stays absent for this sport.
+          ...(card.reason === undefined ? {} : { reason: card.reason }),
         });
       }
       return cards;
@@ -808,6 +1174,54 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
       }
       const color = rng() < 0.85 ? "yellow" : "red";
       return { type: "football.card", payload: { by: sideId(side), person, color } };
+    }
+    if (roll < 0.155) {
+      // W4 (Law 12 addendum) — a temporary dismissal, or the return that ends
+      // one. Returning is preferred whenever anybody is serving, so the pitch
+      // does not drain over a long generated stream.
+      const side = randomSide();
+      const bin = state.squads[side].sinBin ?? [];
+      const serving = bin[Math.floor(rng() * bin.length)];
+      if (serving !== undefined && rng() < 0.6) {
+        return {
+          type: "football.sinbin.end",
+          payload: {
+            by: sideId(side),
+            ...(serving.person === undefined ? {} : { person: serving.person }),
+          },
+        };
+      }
+      const binned = new Set(bin.map((entry) => entry.person));
+      const eligible = state.squads[side].onPitch.filter((person) => !binned.has(person));
+      const person = eligible[Math.floor(rng() * eligible.length)];
+      if (person !== undefined && eligible.length > 7) {
+        return {
+          type: "football.sinbin.start",
+          payload: { by: sideId(side), person, reason: "dissent" },
+        };
+      }
+      // Anonymous (coarse) dismissal — never moves the pitch, so cap how many
+      // can pile up; otherwise fall through to the next branch.
+      if (bin.length < 2) return { type: "football.sinbin.start", payload: { by: sideId(side) } };
+    }
+    if (roll < 0.17) {
+      // W4 (Law 14) — an open-play penalty that was not converted. The
+      // goalkeeper is the defending side's first player still on the pitch,
+      // which is the catalog's GK slot in the conformance lineups.
+      const side = randomSide();
+      const taker = state.squads[side].onPitch[Math.floor(rng() * state.squads[side].onPitch.length)];
+      const goalkeeper = rng() < 0.5 ? state.squads[opponent(side)].onPitch[0] : undefined;
+      const outcomes = PenaltyOutcome.options;
+      const outcome = outcomes[Math.floor(rng() * outcomes.length)] ?? "saved";
+      return {
+        type: "football.penalty",
+        payload: {
+          by: sideId(side),
+          ...(taker === undefined ? {} : { taker }),
+          ...(goalkeeper === undefined ? {} : { goalkeeper }),
+          outcome,
+        },
+      };
     }
     if (roll < 0.19) {
       const side = randomSide();
@@ -873,6 +1287,9 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
         }
         case "football.card":
         case "football.sub":
+        case "football.penalty":
+        case "football.sinbin.start":
+        case "football.sinbin.end":
           break; // no score effect — dropped at coarse fidelity
         default:
           out.push({ type: event.type, payload: event.payload });

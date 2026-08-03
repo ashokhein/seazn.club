@@ -14,6 +14,7 @@ import { EngineError } from "../../core/errors.ts";
 import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
+  AttemptOutcome,
   EntrantId,
   type DisciplineCard,
   type DisciplineModel,
@@ -79,7 +80,14 @@ export interface PeriodParams {
   abandonPolicy: "replay" | "award";
 }
 
-export type PeriodCfg = PeriodParams;
+// W4 (#407) — resolved-config knobs that are deliberately NOT PeriodParams
+// fields. `goalkeeper` is lineup data with no preset default. `setPieceKinds`
+// DOES have a preset default (W4 review item 4): the preset seeds the list, a
+// competition may replace it, and emptying it turns the event off.
+export type PeriodCfg = PeriodParams & {
+  goalkeeper?: "required" | "optional";
+  setPieceKinds: string[];
+};
 
 const SuspensionClassSchema: z.ZodType<SuspensionClass> = z.object({
   minutes: z.number().int().positive().nullable(),
@@ -88,8 +96,27 @@ const SuspensionClassSchema: z.ZodType<SuspensionClass> = z.object({
   permanent: z.boolean().optional(),
 });
 
-export function makePeriodConfigSchema(defaults: PeriodParams) {
+export function makePeriodConfigSchema(
+  defaults: PeriodParams,
+  setPieceKinds: readonly string[] = [],
+) {
   return z.object({
+    // W4 review item 4 — which restarts this competition records as AWARDED
+    // (FIH penalty corner / stroke, IIHF penalty shot). These used to be read
+    // off a compile-time preset field because a new cfg key was believed to
+    // break replay for every recorded stream; the golden has compared `cfg` as
+    // a SUBSET since W4, so a defaulted knob is additive and reds nothing.
+    // Seeded from the preset; an empty list means this sport records no set
+    // pieces and the fold refuses the event outright.
+    setPieceKinds: z.array(z.string().min(1)).default([...setPieceKinds]),
+    // W4 (#407) — FIH Rule 4 lets a team play with a goalkeeper, with a field
+    // player holding goalkeeping privileges, or with none at all; IIHF Rule 6
+    // lets a team pull its goaltender. The catalog forced GK min 1 max 1, so a
+    // side playing out with an empty net — the very situation the `emptyNet`
+    // goal kind records — could not be written down as a lineup. Lineup data
+    // only: it drives `positionsFor` and never the fold. Optional with no
+    // default so `state.cfg` serialises exactly as it did before W4.
+    goalkeeper: z.enum(["required", "optional"]).optional(),
     periods: z
       .object({
         count: z.number().int().min(1).max(4),
@@ -156,7 +183,12 @@ export const PeriodGoal = z.strictObject({
   person: PersonId.optional(),
   assists: z.array(PersonId).max(2).optional(),
   kind: z.string().min(1).optional(), // validated against cfg.goalKinds
-  period: z.string().min(1).optional(), // informational (coarse entry)
+  period: z.string().min(1).optional(), // the scorer's own period label for the log
+  // W4 (#407) — empty-net goal. Orthogonal to `kind`: IIHF situation codes
+  // stack (an SH-EN goal is both), and FIH sides also pull the keeper for an
+  // extra outfielder, so this rides beside the kind rather than inside it.
+  emptyNet: z.boolean().optional(),
+  clockRef: z.string().min(1).optional(), // scorer's clock note ("12:41"), display only
 });
 export const PeriodAdvance = z.strictObject({
   to: z.string().min(1), // must match the kernel's expected next phase
@@ -166,6 +198,11 @@ export const PeriodSuspensionStart = z.strictObject({
   person: PersonId.optional(),
   class: z.string().min(1),
   clockRef: z.string().min(1).optional(), // scorer's clock note, display only
+  // W4 (#407) — the rest of an IIHF penalty row / FIH card row. See
+  // SuspensionDetail in ./suspensions.ts for what each one is.
+  reason: z.string().min(1).optional(),
+  servedBy: PersonId.optional(),
+  minutes: z.number().int().positive().optional(),
 });
 export const PeriodSuspensionEnd = z.strictObject({
   by: EntrantId,
@@ -176,6 +213,8 @@ export const PeriodShootoutAttempt = z.strictObject({
   by: EntrantId,
   person: PersonId.optional(),
   scored: z.boolean(),
+  // W4 (#407) — the keeper facing the attempt; both sheets name him.
+  goalkeeper: PersonId.optional(),
   meta: z
     .strictObject({
       clockSeconds: z.number().int().positive().optional(), // FIH 8 s attempt
@@ -184,12 +223,37 @@ export const PeriodShootoutAttempt = z.strictObject({
     .optional(),
 });
 
+// W4 (#407) — a set piece AWARDED, converted or not: the FIH match record's
+// penalty-corner and penalty-stroke counts, and the IIHF penalty shot that the
+// goal kinds can only ever show once it beat the keeper. `kind` is validated
+// against `cfg.setPieceKinds` (seeded from the preset), so a competition that
+// declares none rejects the event outright.
+export const PeriodSetPiece = z.strictObject({
+  by: EntrantId, // the side awarded it
+  kind: z.string().min(1), // 'pc' | 'stroke' (FIH) · 'ps' (IIHF)
+  person: PersonId.optional(), // the taker
+  goalkeeper: PersonId.optional(), // the keeper defending it
+  // W4 review item 2 — the SHARED attempt vocabulary (core/types.ts), the same
+  // key football's open-play penalty carries. `scored` is what the pre-review
+  // `converted: true` meant; the goal itself still arrives as a goal event, so
+  // the two never double-count the score. ABSENT ⇒ the scorer recorded no
+  // result, which the tally reads exactly as it read `converted: false`.
+  outcome: AttemptOutcome.optional(),
+  clockRef: z.string().min(1).optional(),
+});
+
+// NOTE (union order): branches are told apart structurally and the first match
+// wins, so every new branch goes LAST — a set-piece payload is a structural
+// subset of a goal and must never be able to displace one. `apply` dispatches
+// on the ENVELOPE type, so the union only has to stay a superset of every
+// legal payload; period-audit.test.ts pins both halves of that.
 export const PeriodEv = z.union([
   PeriodGoal,
   PeriodAdvance,
   PeriodSuspensionStart,
   PeriodSuspensionEnd,
   PeriodShootoutAttempt,
+  PeriodSetPiece,
 ]);
 export type PeriodEv = z.infer<typeof PeriodEv>;
 
@@ -205,6 +269,29 @@ export interface PeriodScore {
   away: number;
 }
 
+// W4 (#407) — one attributed goal as the scoresheet writes it. Appended only
+// when the goal names a person or carries scoresheet detail; a coarse goal
+// (side + kind only) adds nothing the counters do not already hold, and leaving
+// it out is what keeps `goalLog` ABSENT — and the frozen golden states
+// byte-identical — for streams recorded before this wave.
+export interface GoalLogEntry {
+  phase: string; // the scorer's `period`, else the phase the fold was in
+  by: Side; // the side whose player struck it
+  credited: Side; // differs from `by` for an own goal
+  person?: string;
+  assists?: string[]; // ordered: A1 then A2 (IIHF)
+  kind?: string;
+  emptyNet?: boolean;
+  clockRef?: string;
+}
+
+export interface SetPieceTally {
+  awarded: number;
+  /** Attempts whose `outcome` was `scored` — the counter the FIH match record
+   *  prints beside the awarded count. Named for the token that feeds it. */
+  scored: number;
+}
+
 export interface PeriodState {
   cfg: PeriodCfg;
   entrants: { home: string; away: string };
@@ -217,10 +304,21 @@ export interface PeriodState {
   shootout: { kicks: ShootoutKick[] } | null;
   outcome: MatchOutcome | null;
   replayFlagged: boolean;
+  /** W4 — attributed goals, in order. Absent until one goal carries detail. */
+  goalLog?: GoalLogEntry[];
+  /** W4 — set pieces awarded/converted per side per kind. Absent until one is
+   *  recorded. */
+  setPieces?: { home: Record<string, SetPieceTally>; away: Record<string, SetPieceTally> };
 }
 
 function opponent(side: Side): Side {
   return side === "home" ? "away" : "home";
+}
+
+/** Generator helper: one rng draw → one shared attempt token, weighted so most
+ *  set pieces do not convert (FIH corners convert well under half the time). */
+function attemptOutcome(draw: number): AttemptOutcome {
+  return draw < 0.3 ? "scored" : draw < 0.6 ? "saved" : draw < 0.8 ? "missed" : "post";
 }
 
 function invalid(message: string, data?: unknown): never {
@@ -357,6 +455,33 @@ function applyGoal(state: PeriodState, payload: z.infer<typeof PeriodGoal>): Per
     const counts = { ...next.kindCounts[credited], [kind]: (next.kindCounts[credited][kind] ?? 0) + 1 };
     next = { ...next, kindCounts: { ...next.kindCounts, [credited]: counts } };
   }
+  // W4 — attributed goals join the log. The trigger is scoresheet DETAIL, not
+  // the mere presence of a goal: a side-only goal is fully described by the
+  // counters above, and gating on detail is what keeps pre-W4 folds identical.
+  // W4 review item 7 — `assists` is attribution too. Leaving it out of the
+  // trigger meant a goal recorded as "assisted by A1, scorer not named" logged
+  // nothing, so the state-side scoresheet lost the assists entirely; they only
+  // survived in the player metrics, which read the ledger.
+  if (
+    payload.person !== undefined ||
+    payload.clockRef !== undefined ||
+    payload.emptyNet !== undefined ||
+    (payload.assists !== undefined && payload.assists.length > 0)
+  ) {
+    const entry: GoalLogEntry = {
+      phase: payload.period ?? next.phase,
+      by,
+      credited,
+      ...(payload.person === undefined ? {} : { person: payload.person }),
+      ...(payload.assists === undefined || payload.assists.length === 0
+        ? {}
+        : { assists: payload.assists }),
+      ...(kind === undefined ? {} : { kind }),
+      ...(payload.emptyNet === undefined ? {} : { emptyNet: payload.emptyNet }),
+      ...(payload.clockRef === undefined ? {} : { clockRef: payload.clockRef }),
+    };
+    next = { ...next, goalLog: [...(next.goalLog ?? []), entry] };
+  }
   // Sudden-death overtime: the first goal ends it (IIHF Rule 84.1).
   if (inOvertime(next) && next.cfg.overtime?.kind === "sudden_death") {
     return decideWin(next, credited, "extra_time");
@@ -395,17 +520,26 @@ function applySuspensionStart(
   if (cls === undefined) {
     invalid(`unknown suspension class "${payload.class}"`, { class: payload.class });
   }
+  // W4 — the scoresheet detail rides along, and only when recorded: an
+  // undetailed card must still fold to exactly its pre-W4 shape.
+  const detail = {
+    ...(payload.reason === undefined ? {} : { reason: payload.reason }),
+    ...(payload.servedBy === undefined ? {} : { servedBy: payload.servedBy }),
+    ...(payload.minutes === undefined ? {} : { minutes: payload.minutes }),
+  };
   const active: ActiveSuspension = {
     side,
     ...(payload.person === undefined ? {} : { person: payload.person }),
     classKey: payload.class,
     teamShort: cls.teamShort,
     permanent: cls.permanent === true,
+    ...detail,
   };
   const record: CardRecordEntry = {
     side,
     ...(payload.person === undefined ? {} : { person: payload.person }),
     classKey: payload.class,
+    ...detail,
   };
   return {
     ...state,
@@ -454,10 +588,55 @@ function applyShootoutAttempt(
       expected: state.entrants[expected],
     });
   }
-  const kicks = [...state.shootout.kicks, { side, scored: payload.scored }];
+  // W4 — taker + defending keeper join the kick when recorded (absent keys keep
+  // the pre-W4 kick shape byte-identical).
+  const kick: ShootoutKick = {
+    side,
+    scored: payload.scored,
+    ...(payload.person === undefined ? {} : { person: payload.person }),
+    ...(payload.goalkeeper === undefined ? {} : { goalkeeper: payload.goalkeeper }),
+  };
+  const kicks = [...state.shootout.kicks, kick];
   const winnerSide = shootoutDecision(kicks, state.cfg.shootout.attempts);
   if (winnerSide === null) return { ...state, shootout: { kicks } };
   return { ...decideWin(state, winnerSide, "shootout"), shootout: { kicks } };
+}
+
+// W4 (#407) — a set piece awarded. `outcome` is the scorer's own answer to
+// "how did it finish"; the goal itself still arrives as a goal event, so the
+// two never double-count the score.
+//
+// The allowed kinds come from `cfg.setPieceKinds`, seeded from the preset
+// (W4 review item 4). They used to be a compile-time preset constant, on the
+// belief that "a new cfg key would break replay for every recorded stream" —
+// which stopped being true when the golden started comparing `cfg` as a SUBSET
+// (see testkit/golden.ts). An empty list means this sport records no set
+// pieces at all.
+function applySetPiece(
+  state: PeriodState,
+  payload: z.infer<typeof PeriodSetPiece>,
+): PeriodState {
+  const allowedKinds = state.cfg.setPieceKinds;
+  if (allowedKinds.length === 0) {
+    invalid("this sport does not record set pieces");
+  }
+  if (!isPlayPhase(state)) {
+    wrongPhase(`set piece not allowed in phase "${state.phase}"`, { phase: state.phase });
+  }
+  const side = sideOf(state, payload.by);
+  if (!allowedKinds.includes(payload.kind)) {
+    invalid(`set piece kind "${payload.kind}" is not valid for this sport`, { kind: payload.kind });
+  }
+  const base = state.setPieces ?? { home: {}, away: {} };
+  const previous = base[side][payload.kind] ?? { awarded: 0, scored: 0 };
+  const tally: SetPieceTally = {
+    awarded: previous.awarded + 1,
+    scored: previous.scored + (payload.outcome === "scored" ? 1 : 0),
+  };
+  return {
+    ...state,
+    setPieces: { ...base, [side]: { ...base[side], [payload.kind]: tally } },
+  };
 }
 
 function applyForfeit(state: PeriodState, by: string): PeriodState {
@@ -521,6 +700,11 @@ export interface PeriodPreset {
   defaults: PeriodParams;
   variants: Record<string, Partial<PeriodParams>>;
   positions: PositionCatalog;
+  // W4 (#407) — which `positions.groups` key is the goalkeeper, so the kernel
+  // can relax its minimum when a competition sets `goalkeeper: "optional"`.
+  // The vocabulary is the sport's, not the kernel's: FIH says GK, IIHF says G.
+  // Omitted ⇒ the sport has no keeper and the config knob does nothing.
+  keeperGroup?: string;
   metrics: MetricSpec[];
   defaultTiebreakers: TiebreakerKey[];
   officialLabel: { scorer: string };
@@ -532,31 +716,35 @@ export interface PeriodPreset {
   // (a superset/relabel of the suspension classes). Omitted → derived from the
   // suspension class keys; absent suspensions → no discipline descriptor.
   disciplineColors?: { key: string; label: string }[];
+  // W4 (#407) — the DEFAULT set pieces this sport records as AWARDED, not just
+  // scored (FIH penalty corner / stroke, IIHF penalty shot). Seeds
+  // `cfg.setPieceKinds`, which a competition may replace. Omitted → the sport
+  // has no `<key>.set_piece` event: it is absent from every fidelity tier, and
+  // the default empty list makes the fold reject it.
+  setPieceKinds?: string[];
 }
 
 export function makePeriodModule(
   preset: PeriodPreset,
 ): SportModule<PeriodCfg, PeriodEv, PeriodState> {
-  const configSchema = makePeriodConfigSchema(preset.defaults);
+  const configSchema = makePeriodConfigSchema(preset.defaults, preset.setPieceKinds ?? []);
   const goalType = `${preset.key}.goal`;
   const advanceType = `${preset.key}.period.advance`;
   const suspStartType = `${preset.key}.suspension.start`;
   const suspEndType = `${preset.key}.suspension.end`;
   const attemptType = `${preset.key}.shootout.attempt`;
+  const setPieceType = `${preset.key}.set_piece`;
+  const setPieceKinds = preset.setPieceKinds;
 
+  // Set pieces are attributed-scoring detail (who took it, did it convert), so
+  // they join tiers 2/3 only — a tier-0 scorer taps goals, not awards.
+  const attributed = [goalType, advanceType, attemptType, suspStartType, suspEndType];
+  const attributedTypes = setPieceKinds === undefined ? attributed : [...attributed, setPieceType];
   const fidelityTiers: FidelityTier[] = [
     { tier: 0, eventTypes: [goalType, advanceType, attemptType] },
     { tier: 1, eventTypes: [goalType, advanceType, attemptType] },
-    {
-      tier: 2,
-      eventTypes: [goalType, advanceType, attemptType, suspStartType, suspEndType],
-      entitlement: preset.timelineEntitlement,
-    },
-    {
-      tier: 3,
-      eventTypes: [goalType, advanceType, attemptType, suspStartType, suspEndType],
-      entitlement: preset.timelineEntitlement,
-    },
+    { tier: 2, eventTypes: attributedTypes, entitlement: preset.timelineEntitlement },
+    { tier: 3, eventTypes: attributedTypes, entitlement: preset.timelineEntitlement },
   ];
 
   // SPEC-1 — read-only card projection over the suspension.start events (voids
@@ -584,6 +772,12 @@ export function makePeriodModule(
                 entrantSide: card.by,
                 color: card.class,
                 eventId: ev.id,
+                // W4 — the scoresheet detail the fold already keeps in
+                // `cardLog` (SuspensionDetail) now reaches the projection too,
+                // so a suspension tariff can key on the infraction and a bench
+                // minor accumulates against the player who actually sits.
+                ...(card.reason === undefined ? {} : { reason: card.reason }),
+                ...(card.servedBy === undefined ? {} : { servedBy: card.servedBy }),
               });
             }
             return cards;
@@ -624,6 +818,20 @@ export function makePeriodModule(
     configSchema,
     eventSchema: PeriodEv,
     positions: preset.positions,
+    // W4 (#407) — one implementation serves every period sport: when the
+    // competition makes the keeper optional, the GK group's minimum drops to
+    // zero while its maximum stays 1 (nobody fields two keepers). Absent ⇒ the
+    // preset's own catalog, byte-for-byte.
+    positionsFor(cfg) {
+      const keeper = preset.keeperGroup;
+      if (cfg.goalkeeper !== "optional" || keeper === undefined) return preset.positions;
+      return {
+        ...preset.positions,
+        groups: preset.positions.groups.map((group) =>
+          group.key === keeper ? { ...group, min: 0 } : group,
+        ),
+      };
+    },
     variants: preset.variants,
 
     init(cfg, lineups: LineupPair): PeriodState {
@@ -663,6 +871,8 @@ export function makePeriodModule(
             state,
             parsePayload(PeriodShootoutAttempt, ev.payload, ev.type),
           );
+        case setPieceType:
+          return applySetPiece(state, parsePayload(PeriodSetPiece, ev.payload, ev.type));
         case "core.forfeit":
           return applyForfeit(state, (ev.payload as { by: string }).by);
         case "core.abandon":
@@ -718,6 +928,10 @@ export function makePeriodModule(
           strength: chip,
           suspensions: state.suspensions,
           discipline: state.cardLog,
+          // W4 — attributed detail appears only once it exists, so a coarse
+          // match's summary is byte-identical to its pre-W4 shape.
+          ...(state.goalLog === undefined ? {} : { goalLog: state.goalLog }),
+          ...(state.setPieces === undefined ? {} : { setPieces: state.setPieces }),
           ...(preset.key === "hockey" ? { escalate: escalationHints(state.cardLog) } : {}),
           ...(tally === null ? {} : { shootout: tally }),
           ...(state.replayFlagged ? { abandoned: true } : {}),
@@ -808,7 +1022,20 @@ export function makePeriodModule(
 
       if (state.phase === "SHOOTOUT" && state.shootout) {
         const expected = expectedKicker(state.shootout.kicks) ?? randomSide();
-        return { type: attemptType, payload: { by: sideId(expected), scored: rng() < 0.7 } };
+        const named = rng() < 0.5;
+        return {
+          type: attemptType,
+          payload: {
+            by: sideId(expected),
+            scored: rng() < 0.7,
+            ...(named
+              ? {
+                  person: `${sideId(expected)}-p3`,
+                  goalkeeper: `${sideId(opponent(expected))}-g1`,
+                }
+              : {}),
+          },
+        };
       }
 
       if (!isPlayPhase(state)) return null; // done / final / abandoned
@@ -823,12 +1050,36 @@ export function makePeriodModule(
         const classKey = classes[Math.floor(rng() * classes.length)] as string;
         const side = randomSide();
         const person = rng() < 0.5 ? `${sideId(side)}-p1` : undefined;
+        const detailed = rng() < 0.4;
         return {
           type: suspStartType,
           payload: {
             by: sideId(side),
             class: classKey,
             ...(person === undefined ? {} : { person }),
+            ...(detailed
+              ? { reason: "obstruction", servedBy: `${sideId(side)}-p9`, minutes: 2 }
+              : {}),
+          },
+        };
+      }
+      // The CONFIG's list, not the preset's — a competition may have replaced
+      // it, and a generator that emits an event its own fold rejects is worse
+      // than one that emits none (spec 03 §6).
+      const cfgKinds = state.cfg.setPieceKinds;
+      if (roll < 0.22 && cfgKinds.length > 0) {
+        const side = randomSide();
+        const kind = cfgKinds[Math.floor(rng() * cfgKinds.length)] as string;
+        return {
+          type: setPieceType,
+          payload: {
+            by: sideId(side),
+            kind,
+            ...(rng() < 0.6 ? { person: `${sideId(side)}-p4` } : {}),
+            // One draw, four tokens — the shared attempt vocabulary. Keeping it
+            // to a single rng() call leaves every other generated stream on the
+            // walk it was recorded on.
+            outcome: attemptOutcome(rng()),
           },
         };
       }
@@ -854,12 +1105,16 @@ export function makePeriodModule(
               ? "og"
               : undefined;
         const withAssists = state.cfg.assists && kind !== "og" && rng() < 0.4;
+        const attributed = rng() < 0.5;
         return {
           type: goalType,
           payload: {
             by: sideId(side),
             ...(kind === undefined ? {} : { kind }),
             ...(withAssists ? { assists: [`${sideId(side)}-p2`] } : {}),
+            ...(attributed
+              ? { person: `${sideId(side)}-p1`, clockRef: "10:00", emptyNet: rng() < 0.1 }
+              : {}),
           },
         };
       }

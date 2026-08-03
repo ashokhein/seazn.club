@@ -8,6 +8,7 @@ import fc from "fast-check";
 import { foldMatch, type EventEnvelope } from "../../core/events.ts";
 import { mulberry32 } from "../../core/rng.ts";
 import type { ModuleEvent } from "../../sport/module.ts";
+import { resolvePositions } from "../../sport/catalog.ts";
 import { defaultLineupPair, makeEnvelope } from "../../testkit/helpers.ts";
 import { badminton } from "./badminton.ts";
 import { tabletennis } from "./tabletennis.ts";
@@ -32,7 +33,8 @@ function ralliesTo(rallyType: string, h: number, a: number): ModuleEvent[] {
 
 function fold(module: typeof badminton, events: ModuleEvent[], cfg: unknown = {}) {
   const envs: EventEnvelope[] = events.map((e, i) => makeEnvelope(i, e));
-  return foldMatch(module, module.configSchema.parse(cfg), defaultLineupPair(module.positions), [
+  const parsed = module.configSchema.parse(cfg);
+  return foldMatch(module, parsed, defaultLineupPair(resolvePositions(module, parsed)), [
     makeEnvelope(0, { type: "core.start", payload: {} }),
     ...envs.map((e, i) => ({ ...e, seq: i + 1, id: `e-${i + 1}` })),
   ]);
@@ -194,7 +196,7 @@ describe("summary equals recount-from-events at every prefix", () => {
       fc.assert(
         fc.property(fc.integer({ min: 1, max: 10_000 }), (seed) => {
           const cfg = module.configSchema.parse({});
-          const pair = defaultLineupPair(module.positions);
+          const pair = defaultLineupPair(resolvePositions(module, cfg));
           const rng = mulberry32(seed);
           let state = module.init(cfg, pair);
           const events: EventEnvelope[] = [];

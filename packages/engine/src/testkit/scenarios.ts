@@ -15,6 +15,7 @@ import type { FixtureResult } from "../competition/standings.ts";
 import { assignOfficials } from "../officials/assign.ts";
 import type { AssignPolicy, OfficialFixture, OfficialSpec } from "../officials/types.ts";
 import { generateAmericano } from "../scheduling/americano.ts";
+import { resolvePositions } from "../sport/catalog.ts";
 import type { AnySportModule, ModuleEvent } from "../sport/module.ts";
 import { badminton } from "../sports/setbased/badminton.ts";
 import { tabletennis } from "../sports/setbased/tabletennis.ts";
@@ -69,7 +70,7 @@ export interface UndoStormStats {
 
 export function runUndoStorm(module: AnySportModule, seed: number): UndoStormStats {
   const cfg = moduleCfg(module);
-  const lineups = defaultLineupPair(module.positions);
+  const lineups = defaultLineupPair(resolvePositions(module, cfg));
   const label = (i: number, type: string) => `[undo-storm ${module.key}:${seed}] seq=${i} ${type}`;
 
   let stream: { events: EventEnvelope[] } | null = null;
@@ -211,7 +212,7 @@ export function runBoundaryMatrices(): BoundaryMatrixStats[] {
   const out: BoundaryMatrixStats[] = [];
   for (const matrix of MATRICES) {
     const cfg = matrix.module.configSchema.parse({});
-    const lineups = defaultLineupPair(matrix.module.positions);
+    const lineups = defaultLineupPair(resolvePositions(matrix.module, cfg));
     let cases = 0;
     const fold = (events: ModuleEvent[]) =>
       foldMatch(matrix.module, cfg, lineups, [
@@ -338,7 +339,7 @@ const CUSTOM_RULE = PointsRule.parse({
 
 export function runCustomPointsScenario(module: AnySportModule, seed: number): CustomPointsStats {
   const cfg = moduleCfg(module);
-  const lineups = defaultLineupPair(module.positions);
+  const lineups = defaultLineupPair(resolvePositions(module, cfg));
   let fixtures = 0;
   for (let s = 0; s < 4; s++) {
     const played = decidedStream(module, cfg, lineups, deriveSeed(seed + s, module.key, "points"));
@@ -423,8 +424,8 @@ export function runAmericanoScenario(module: AnySportModule, seed: number, playe
       const home = match.team1.join("+");
       const away = match.team2.join("+");
       const lineups: LineupPair = {
-        home: lineupFromCatalog(module.positions, home),
-        away: lineupFromCatalog(module.positions, away),
+        home: lineupFromCatalog(resolvePositions(module, cfg), home),
+        away: lineupFromCatalog(resolvePositions(module, cfg), away),
       };
       let played: { events: EventEnvelope[]; state: unknown } | null = null;
       for (let s = 0; s < 6 && played === null; s++) {
@@ -475,8 +476,8 @@ export function runLadderScenario(module: AnySportModule, seed: number, entrants
     const challenger = order[ci] as EntrantId;
     const target = order[ti] as EntrantId;
     const lineups: LineupPair = {
-      home: lineupFromCatalog(module.positions, target),
-      away: lineupFromCatalog(module.positions, challenger),
+      home: lineupFromCatalog(resolvePositions(module, cfg), target),
+      away: lineupFromCatalog(resolvePositions(module, cfg), challenger),
     };
     let played: { state: unknown } | null = null;
     for (let s = 0; s < 6 && played === null; s++) {

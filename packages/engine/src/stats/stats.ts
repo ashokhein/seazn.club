@@ -3,15 +3,52 @@
 // deterministic; voided events (and their assists) never count.
 import { resolveVoids, type EventEnvelope } from "../core/events.ts";
 
+/**
+ * Resolve a payload path — a plain dotted walk through objects, so a metric can
+ * name a nested credit (`"runs.bat"` for the striker, `"wicket.fielder"` for
+ * the catcher). Deliberately NOT a query language: no array indexing, no
+ * wildcards, no predicates.
+ *
+ * Three rules make it safe against real scoring payloads:
+ *
+ * 1. **A path that does not resolve returns `undefined`, never a throw.**
+ *    Payloads are heterogeneous by design — `wicket` is absent on every ball
+ *    that is not a dismissal — so a missing path is the normal case, not an
+ *    error. Walking through `undefined`, `null` or a scalar all land here.
+ * 2. **A literal key wins over the walk**, at every step. That is what keeps
+ *    every pre-existing single-segment lookup (`"scorer"`, `"person"`) byte-for
+ *    -byte identical, and it also makes a payload key that genuinely contains a
+ *    dot reachable rather than shadowed.
+ * 3. **Arrays are a leaf, not a step.** A resolved array still credits every
+ *    person in it (ice hockey's two assists — see below), but a path may not
+ *    index into one. An empty segment resolves to nothing rather than to the
+ *    object it was written on, so a typo can never credit a whole record.
+ */
+export function resolvePayloadPath(source: Record<string, unknown>, path: string): unknown {
+  let cursor: unknown = source;
+  let rest = path;
+  for (;;) {
+    if (typeof cursor !== "object" || cursor === null || Array.isArray(cursor)) return undefined;
+    const obj = cursor as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(obj, rest)) return obj[rest];
+    const dot = rest.indexOf(".");
+    if (dot <= 0) return undefined; // no separator left, or an empty leading segment
+    cursor = obj[rest.slice(0, dot)];
+    rest = rest.slice(dot + 1);
+  }
+}
+
 // Sport-declared stat model — the plugin mirror of the position catalog.
 export interface PlayerStatMetric {
   key: string; // 'goals'
   label: string; // 'Goals'
   from: string; // event type: 'football.goal'
-  /** Payload field carrying the person id (default 'person'). */
+  /** Payload path carrying the person id (default 'person'). Dotted paths walk
+   *  into nested objects: `'wicket.fielder'`. */
   field?: string;
   agg: "count" | "sum";
-  /** For agg:'sum' — the payload field holding the numeric value. */
+  /** For agg:'sum' — the payload path holding the numeric value, dotted like
+   *  `field` (`'runs.bat'`). */
   sumField?: string;
   /** Extra payload predicate (e.g. skip own goals, filter card colour). */
   when?: (payload: Record<string, unknown>) => boolean;
@@ -62,7 +99,7 @@ export function aggregatePlayerStats(
     for (const metric of model.metrics) {
       if (event.type !== metric.from) continue;
       if (metric.when !== undefined && !metric.when(payload)) continue;
-      const person = payload[metric.field ?? "person"];
+      const person = resolvePayloadPath(payload, metric.field ?? "person");
       // An array field credits every listed person once (ice-hockey assists:
       // up to two per goal, each worth one assist — v6/00 §3).
       const persons = Array.isArray(person)
@@ -74,7 +111,7 @@ export function aggregatePlayerStats(
       if (metric.agg === "count") {
         for (const p of persons) bump(p, metric.key, 1);
       } else {
-        const value = payload[metric.sumField ?? "value"];
+        const value = resolvePayloadPath(payload, metric.sumField ?? "value");
         if (typeof value === "number") for (const p of persons) bump(p, metric.key, value);
       }
     }

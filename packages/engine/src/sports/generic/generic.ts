@@ -44,7 +44,26 @@ export const GenericResult = z.strictObject({
   p2Score: z.number().int().nonnegative().optional(),
   isDraw: z.boolean().optional(),
 });
-export type GenericEv = z.infer<typeof GenericResult>;
+
+// W4 — one scoring action, the minimum a scorer of an UNMODELLED sport needs
+// beyond a final card: a running tally they can press during play, with
+// optional credit to the person who did it. Deliberately the only structure
+// generic owns — no periods, no possession, no turn order (see DOMAIN.md).
+// `points` may be negative to correct a mis-press; the fold refuses a tally
+// below zero. Branches are told apart structurally: a result card never
+// carries `by`, and the strict action branch rejects every result field.
+export const GenericScore = z.strictObject({
+  by: EntrantId,
+  points: z
+    .number()
+    .int()
+    .refine((points) => points !== 0, { message: "points must be non-zero" }),
+  person: z.string().min(1).optional(),
+});
+export type GenericScore = z.infer<typeof GenericScore>;
+
+export const GenericEvent = z.union([GenericResult, GenericScore]);
+export type GenericEv = z.infer<typeof GenericEvent>;
 
 export interface GenericState {
   phase: "pre" | "live" | "done" | "final";
@@ -52,6 +71,9 @@ export interface GenericState {
   entrants: { home: string; away: string };
   score: { home: number; away: number } | null;
   outcome: MatchOutcome | null;
+  // W4 — the live tally. Absent until a generic.score event lands, so a
+  // result-only stream folds to exactly the state it always did.
+  running?: { home: number; away: number };
 }
 
 type Side = "home" | "away";
@@ -73,14 +95,16 @@ function invalid(message: string, data?: unknown): never {
 // Cross-checks a generic.result payload against the config mode and returns
 // the decided state pieces. spec 04 §8; consistency rules mirror v1: a card
 // that contradicts itself (winnerId vs scores vs isDraw) is rejected.
-function applyResult(state: GenericState, payload: GenericEv): GenericState {
+function applyResult(state: GenericState, payload: z.infer<typeof GenericResult>): GenericState {
   const { resultMode, allowDraws } = state.cfg;
   const hasP1 = payload.p1Score !== undefined;
   const hasP2 = payload.p2Score !== undefined;
   if (hasP1 !== hasP2) invalid("p1Score and p2Score must be given together");
+  // W4 — a result card with no scores settles from the running tally when one
+  // was kept; the consistency rules below then apply to it unchanged.
   const score = hasP1
     ? { home: payload.p1Score as number, away: payload.p2Score as number }
-    : null;
+    : (state.running ?? null);
 
   let winnerSide: Side | null; // null = draw
   if (resultMode === "score") {
@@ -127,10 +151,25 @@ function applyResult(state: GenericState, payload: GenericEv): GenericState {
   return { ...state, phase: "done", score, outcome };
 }
 
+// W4 — one scoring action folded into the running tally. A tally that would go
+// below zero is a mis-entered correction, not a score.
+function applyScore(state: GenericState, payload: GenericScore): GenericState {
+  if (state.phase !== "pre" && state.phase !== "live") {
+    throw new EngineError("WRONG_PHASE", "match already over");
+  }
+  const side = sideOf(state, payload.by);
+  const base = state.running ?? { home: 0, away: 0 };
+  const next = base[side] + payload.points;
+  if (next < 0) invalid("a scoring correction cannot take a side below zero", { next });
+  return { ...state, running: { ...base, [side]: next } };
+}
+
 function sideLine(state: GenericState, side: Side): string {
   if (state.score) return String(state.score[side]);
   const outcome = state.outcome;
-  if (!outcome) return "—";
+  // A live tally renders while the fixture is undecided; a decided fixture
+  // always renders its result, never the tally.
+  if (!outcome) return state.running ? String(state.running[side]) : "—";
   switch (outcome.kind) {
     case "win":
       return outcome.winner === state.entrants[side] ? "W" : "L";
@@ -159,7 +198,7 @@ export const generic: SportModule<GenericCfg, GenericEv, GenericState> = {
   key: "generic",
   version: "1.0.0",
   configSchema: GenericCfg,
-  eventSchema: GenericResult,
+  eventSchema: GenericEvent,
   // spec 04 §8 / doc 02 §3 — generic tracks entrants, not people; adapters
   // pass a single placeholder slot per side (like chess: lineup size 1).
   positions: { groups: [], lineup: { size: 1, benchMax: 0 } },
@@ -205,6 +244,13 @@ export const generic: SportModule<GenericCfg, GenericEv, GenericState> = {
           invalid("invalid generic.result payload", { issues: parsed.error.issues });
         }
         return applyResult(state, parsed.data);
+      }
+      case "generic.score": {
+        const parsed = GenericScore.safeParse(ev.payload);
+        if (!parsed.success) {
+          invalid("invalid generic.score payload", { issues: parsed.error.issues });
+        }
+        return applyScore(state, parsed.data);
       }
       case "core.forfeit": {
         if (state.phase !== "pre" && state.phase !== "live") {
@@ -311,12 +357,25 @@ export const generic: SportModule<GenericCfg, GenericEv, GenericState> = {
     return [...new Set([cfg.points.w + cfg.points.l, cfg.points.d * 2])];
   },
 
-  // doc 14 §2 — generic tops out at Tier 1 (p1/p2 score); no Tier 2/3.
+  // doc 14 §2 — generic tops out at Tier 1; W4 puts the running tally there
+  // (tier 0 stays "one final card, nothing else").
   fidelityTiers: [
     { tier: 0, eventTypes: ["generic.result"] },
-    { tier: 1, eventTypes: ["generic.result"] },
+    { tier: 1, eventTypes: ["generic.result", "generic.score"] },
   ],
   officialLabel: { scorer: "Scorer" }, // doc 13 §1
+
+  // W4 — the only person credit the fallback offers: who performed a scoring
+  // action. Anything richer means the sport deserves its own module.
+  playerStats: {
+    metrics: [
+      {
+        key: "points", label: "Points", from: "generic.score", field: "person",
+        agg: "sum", sumField: "points",
+      },
+      { key: "scores", label: "Scoring actions", from: "generic.score", field: "person", agg: "count" },
+    ],
+  },
 
   // spec 03 §6 — valid-event generator for the conformance kit.
   arbitraryEvent(state, rng: Rng): ModuleEvent<GenericEv> | null {
@@ -328,6 +387,32 @@ export const generic: SportModule<GenericCfg, GenericEv, GenericState> = {
       return { type: "core.forfeit", payload: { by, reason: "walkover" } };
     }
     if (roll < 0.15) return { type: "core.abandon", payload: { reason: "rain" } };
+    // W4 — a scoring action on the running tally. Person ids follow the
+    // testkit lineup convention; generic holds no roster.
+    const tallyOne = (): ModuleEvent<GenericEv> => {
+      const side: Side = rng() < 0.5 ? "home" : "away";
+      return {
+        type: "generic.score",
+        payload: {
+          by: state.entrants[side],
+          points: 1 + Math.floor(rng() * 3),
+          person: `${state.entrants[side]}-p1`,
+        },
+      };
+    };
+    if (roll < 0.55) return tallyOne();
+
+    const running = state.running;
+    if (running !== undefined) {
+      // Settle from the tally — the result card must never contradict it.
+      const level = running.home === running.away;
+      if (level && !state.cfg.allowDraws) return tallyOne();
+      if (state.cfg.resultMode === "score") return { type: "generic.result", payload: {} };
+      if (level) return { type: "generic.result", payload: { isDraw: true } };
+      const leader: Side = running.home > running.away ? "home" : "away";
+      return { type: "generic.result", payload: { winnerId: state.entrants[leader] } };
+    }
+
     if (state.cfg.resultMode === "score") {
       const p1 = Math.floor(rng() * 6);
       let p2 = Math.floor(rng() * 6);

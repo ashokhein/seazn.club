@@ -95,7 +95,14 @@ describe("generateRoundRobin — invariants (spec 05 §6)", () => {
 
   // Heavy property test: sits near vitest's 5s default under full-suite
   // worker contention — budget it explicitly (chaos.test.ts precedent).
-  it("uniqueness: every pair meets exactly once per leg, ≤1 fixture per entrant per round", { timeout: 20_000 }, () => {
+  //
+  // 20s was still not enough. W4 (#415) saw it time out twice on a loaded
+  // machine and pass in the same run's quiet rerun, which is a flake reporting
+  // itself as a scheduling bug — the worst kind of red, because the next reader
+  // goes looking for one. The work here is O(n²) per case across a
+  // fast-check field, so its wall clock tracks how many other workers are
+  // running, not the code under test.
+  it("uniqueness: every pair meets exactly once per leg, ≤1 fixture per entrant per round", { timeout: 60_000 }, () => {
     fc.assert(
       fc.property(nArb, legsArb, (n, legs) => {
         const schedule = generateRoundRobin({ entrants: field(n), config: { legs } });

@@ -7,10 +7,11 @@
 // `scoring.strike_by_strike`), see CarromStrike below.
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
-import type { CoreEv, EventEnvelope } from "../../core/events.ts";
+import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
   EntrantId,
+  type DisciplineCard,
   type LineupPair,
   type MatchOutcome,
   type ScoreSummary,
@@ -70,10 +71,18 @@ export type CarromCfg = z.infer<typeof CarromCfg>;
 export const CarromToss = z.strictObject({ firstBreak: EntrantId });
 export type CarromToss = z.infer<typeof CarromToss>;
 
+const PersonId = z.string().min(1);
+
 export const CarromBoardSummary = z.strictObject({
   winner: EntrantId,
   opponentCoinsLeft: z.number().int().min(0).max(9), // winner's coin points ×pointsPerCoin (Law 53a)
   queenTo: EntrantId.nullable(), // who pocketed AND covered the queen (null = board lost with queen on… impossible, or untracked)
+  // W4 — the individual acts inside a board. The ICF scoresheet books points
+  // to a side, but Law 49 rotates the break through the players (four of them
+  // in doubles) and Law 53 credits the queen to the player who pocketed AND
+  // covered her. With a `pair` entrant the side alone loses the actor.
+  breaker: PersonId.optional(), // the striker who broke this board
+  queenBy: PersonId.optional(), // the player who pocketed and covered the queen
 });
 export type CarromBoardSummary = z.infer<typeof CarromBoardSummary>;
 
@@ -86,6 +95,17 @@ export const CarromGameAdjust = z.strictObject({
     .int()
     .refine((delta) => delta !== 0, { message: "delta must be non-zero" }),
   reason: z.string().min(1),
+  // W4 — the player whose act caused the adjustment (Laws 51/55 fouls are
+  // committed by a striker, not by a side). Optional: coarse scoring stays legal.
+  person: PersonId.optional(),
+  // W4 review — the OFFENDER's side, when the scorer knows it. `entrantId` is
+  // the side whose score moved, which is the offender only when the umpire
+  // wrote the row as a deduction; a Laws 51/55 penalty is usually a CREDIT to
+  // the opponent, and then the two are opposites. The scorer names the
+  // offender's side here when the adjustment is a penalty rather than a
+  // write-off. Additive and optional throughout — coarse scoring stays legal,
+  // and the projection falls back to the sign of the delta.
+  offendingEntrantId: EntrantId.optional(),
 });
 export type CarromGameAdjust = z.infer<typeof CarromGameAdjust>;
 
@@ -116,6 +136,17 @@ export interface CarromBoardRecord {
   queenTo: Side | null;
   queenScored: boolean; // queen bonus actually credited (cap + Law 53 rules)
   breaker: Side; // who broke this board (display / fine fidelity later)
+  // W4 person attribution — absent unless the board summary named the players,
+  // so a stream that never names one folds to exactly the state it always did.
+  breakerPerson?: string;
+  queenPerson?: string;
+}
+
+// W4 — an umpire adjustment that named the player it concerns (Laws 51/55).
+export interface CarromPenalty {
+  person: string;
+  side: Side; // the side whose game score moved
+  delta: number;
 }
 
 export interface CarromGameState {
@@ -134,6 +165,9 @@ export interface CarromState {
   gamesWon: { home: number; away: number };
   gamesDrawn: number;
   outcome: MatchOutcome | null;
+  // W4 — person-attributed umpire adjustments, in ledger order. Absent until
+  // one names a player (golden-safe).
+  penalties?: CarromPenalty[];
 }
 
 function opponent(side: Side): Side {
@@ -261,6 +295,11 @@ function applyBoard(state: CarromState, payload: CarromBoardSummary): CarromStat
   if (state.phase !== "live") wrongPhase(`board summary not allowed in phase "${state.phase}"`);
   const winnerSide = sideOf(state, payload.winner);
   const queenSide = payload.queenTo === null ? null : sideOf(state, payload.queenTo);
+  // A player can only be credited with the queen if a side covered her
+  // (Law 53) — `queenTo: null` means she went to nobody.
+  if (payload.queenBy !== undefined && queenSide === null) {
+    invalid("queenBy requires a side that covered the queen", { queenBy: payload.queenBy });
+  }
   const { game, index } = openGame(state);
 
   const preBoardScore = game.score[winnerSide];
@@ -280,6 +319,8 @@ function applyBoard(state: CarromState, payload: CarromBoardSummary): CarromStat
     queenTo: queenSide,
     queenScored,
     breaker: breakerOf(state.firstBreak, index, game.boards.length),
+    ...(payload.breaker === undefined ? {} : { breakerPerson: payload.breaker }),
+    ...(payload.queenBy === undefined ? {} : { queenPerson: payload.queenBy }),
   };
   const updated: CarromGameState = {
     ...game,
@@ -300,9 +341,14 @@ function applyAdjust(state: CarromState, payload: CarromGameAdjust): CarromState
   const score = game.score[side] + payload.delta;
   if (score < 0) invalid("adjustment would take the game score below zero", { score });
   const updated: CarromGameState = { ...game, score: { ...game.score, [side]: score } };
+  const penalties =
+    payload.person === undefined
+      ? state.penalties
+      : [...(state.penalties ?? []), { person: payload.person, side, delta: payload.delta }];
   const next = {
     ...state,
     games: state.games.map((entry, i) => (i === index ? updated : entry)),
+    ...(penalties === undefined ? {} : { penalties }),
   };
   return settle(next, index);
 }
@@ -383,6 +429,44 @@ export const CARROM_TIEBREAKERS: TiebreakerKey[] = [
   "h2h_points",
   "lots",
 ];
+
+// W4 review — every entrant id the ledger itself names, in first-seen order.
+// `extractCards` is handed EVENTS only: no config, no lineups, no folded state.
+// So this is the projection's only route to "who is the other side", which it
+// needs because a positive umpire adjustment credits the opponent and the
+// offender is therefore whoever `entrantId` is NOT. Reads the fields that carry
+// an entrant id and nothing else — a payload that fails to parse contributes
+// no identity.
+function entrantIdsIn(events: readonly EventEnvelope[]): string[] {
+  const seen: string[] = [];
+  const add = (value: unknown): void => {
+    if (typeof value === "string" && value.length > 0 && !seen.includes(value)) seen.push(value);
+  };
+  for (const ev of events) {
+    const payload = ev.payload;
+    if (typeof payload !== "object" || payload === null) continue;
+    const fields = payload as Record<string, unknown>;
+    switch (ev.type) {
+      case "carrom.toss":
+        add(fields.firstBreak);
+        break;
+      case "carrom.board.summary":
+        add(fields.winner);
+        add(fields.queenTo); // nullable — `add` ignores anything but a string
+        break;
+      case "carrom.game.adjust":
+        add(fields.entrantId);
+        add(fields.offendingEntrantId);
+        break;
+      case "core.forfeit":
+        add(fields.by);
+        break;
+      default:
+        break;
+    }
+  }
+  return seen;
+}
 
 // ---------------------------------------------------------------------------
 // Module
@@ -483,11 +567,14 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
             queenTo: board.queenTo === null ? null : state.entrants[board.queenTo],
             queenScored: board.queenScored,
             breaker: state.entrants[board.breaker],
+            ...(board.breakerPerson === undefined ? {} : { breakerPerson: board.breakerPerson }),
+            ...(board.queenPerson === undefined ? {} : { queenPerson: board.queenPerson }),
           })),
         })),
         firstBreak: state.entrants[state.firstBreak],
         ...(breaker === null ? {} : { breaker }),
         ...(state.phase === "abandoned" ? { abandoned: true } : {}),
+        ...(state.penalties === undefined ? {} : { penalties: state.penalties }),
       },
     };
   },
@@ -575,6 +662,75 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
   ],
   officialLabel: { scorer: "Umpire" }, // ICF laws officiate through an Umpire
 
+  // W4 — person credit off the board summary and the umpire adjustment. Board
+  // points stay a SIDE fact (Law 53a books them to the side that cleared), so
+  // there is no per-player points metric — see DOMAIN.md.
+  playerStats: {
+    metrics: [
+      { key: "breaks", label: "Breaks", from: "carrom.board.summary", field: "breaker", agg: "count" },
+      { key: "queens", label: "Queens", from: "carrom.board.summary", field: "queenBy", agg: "count" },
+      { key: "penalties", label: "Penalties", from: "carrom.game.adjust", field: "person", agg: "count" },
+    ],
+  },
+
+  // W4 review item 7 — the umpire's Laws 51/55 row reaches the shared
+  // discipline projection. Carrom folded a LOCAL penalty record in this wave
+  // (`State.penalties[]`) and shipped no `discipline` descriptor, so the only
+  // misconduct the module records could not be accumulated by the usecase that
+  // prices football's cards. The LADDER is carrom's own: the ICF Laws have one
+  // step, an umpire adjustment, not a graded card.
+  //
+  // `entrantSide` is the OFFENDER's side, never the side whose score moved —
+  // the invariant every other producer holds by passing the sanctioned side's
+  // `by` (core/types.ts). Carrom's payload names the side whose GAME SCORE
+  // moved, and a Laws 51/55 penalty usually credits the opponent, so the two
+  // are opposites exactly when the delta is positive. Resolution order:
+  //   1. `offendingEntrantId`, when the scorer recorded it;
+  //   2. `delta < 0` ⇒ the docked side is the offender ⇒ `entrantId`;
+  //   3. `delta > 0` ⇒ the credit went to the opponent ⇒ the OTHER entrant,
+  //      resolved from the entrant ids the ledger itself names;
+  //   4. no opponent resolvable ⇒ report `entrantId` and DROP `personId`,
+  //      because a person asserted against a side we could not reconcile is
+  //      worse than an anonymous row.
+  discipline: {
+    colors: [{ key: "penalty", label: "Umpire penalty" }],
+    extractCards(ledger): DisciplineCard[] {
+      const events = resolveVoids(ledger);
+      const entrants = entrantIdsIn(events);
+      // Carrom is always exactly two entrants, so "the other one" is well
+      // defined the moment the ledger has named both — and only then.
+      const opponentOf = (entrantId: string): string | undefined => {
+        const others = entrants.filter((id) => id !== entrantId);
+        return others.length === 1 ? others[0] : undefined;
+      };
+
+      const cards: DisciplineCard[] = [];
+      for (const ev of events) {
+        if (ev.type !== "carrom.game.adjust") continue;
+        const parsed = CarromGameAdjust.safeParse(ev.payload);
+        if (!parsed.success) continue;
+        const adjust = parsed.data;
+        const offender =
+          adjust.offendingEntrantId ??
+          (adjust.delta < 0 ? adjust.entrantId : opponentOf(adjust.entrantId));
+        cards.push({
+          // Only when the offending SIDE is known: `person` is a member of it,
+          // and filing him under an unreconciled side is the bug this fixes.
+          ...(adjust.person === undefined || offender === undefined
+            ? {}
+            : { personId: adjust.person }),
+          entrantSide: offender ?? adjust.entrantId,
+          color: "penalty",
+          eventId: ev.id,
+          // The umpire's own words: `reason` is required on the branch, so a
+          // carrom card always says why, which no other sport can promise.
+          reason: adjust.reason,
+        });
+      }
+      return cards;
+    },
+  },
+
   // spec 03 §6 — deterministic generator: optional toss, start, then boards
   // with occasional umpire adjustments, forfeits and abandonments.
   arbitraryEvent(state, rng: Rng): ModuleEvent<CarromEv> | null {
@@ -602,7 +758,13 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
       const delta = score > 0 && rng() < 0.5 ? -1 : 1;
       return {
         type: "carrom.game.adjust",
-        payload: { entrantId: state.entrants[side], delta, reason: "umpire penalty" },
+        payload: {
+          entrantId: state.entrants[side],
+          delta,
+          reason: "umpire penalty",
+          // W4 — the offending striker (testkit lineup convention).
+          person: `${state.entrants[opponent(side)]}-p1`,
+        },
       };
     }
     const winner = randomEntrant();
@@ -610,9 +772,20 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
     const queenRoll = rng();
     const queenTo = queenRoll < 0.55 ? winner : queenRoll < 0.75 ? loser : null;
     const opponentCoinsLeft = 1 + Math.floor(rng() * 9); // 1..9
+    // W4 — the individual acts: the striker who broke, and (only when a side
+    // covered her) the player who took the queen.
+    const gameIndex = Math.max(0, state.games.length - 1);
+    const boardIndex = state.games[gameIndex]?.boards.length ?? 0;
+    const breakSide = breakerOf(state.firstBreak, gameIndex, boardIndex);
     return {
       type: "carrom.board.summary",
-      payload: { winner, opponentCoinsLeft, queenTo },
+      payload: {
+        winner,
+        opponentCoinsLeft,
+        queenTo,
+        breaker: `${state.entrants[breakSide]}-p${(boardIndex % 2) + 1}`,
+        ...(queenTo === null ? {} : { queenBy: `${queenTo}-p1` }),
+      },
     };
   },
 };

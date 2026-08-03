@@ -41,6 +41,13 @@ export const CoreNote = z.strictObject({ text: z.string().min(1) }); // no state
 // Jul3/07 §4 — MOTM/MVP and friends: append-only, undoable via core.void,
 // no state effect on the match itself (a stats-layer fact).
 export const CoreAward = z.strictObject({ person: z.string().min(1), key: z.string().min(1) });
+// W4 (#407) — play stopped, and may restart. `core.abandon` is terminal and was
+// the only way to record that play had stopped, so a floodlight failure, a
+// thunderstorm, a serious injury or a crowd incident — every one of which is
+// routinely followed by a restart — was unrecordable in every sport. The reason
+// is what the official wrote in the match record; it is never adjudicated.
+export const CoreSuspend = z.strictObject({ reason: z.string().min(1).optional() });
+export const CoreResume = z.strictObject({}); // play restarts; the stoppage ends
 
 export const CORE_EVENT_SCHEMAS = {
   "core.start": CoreStart,
@@ -50,11 +57,15 @@ export const CORE_EVENT_SCHEMAS = {
   "core.finalize": CoreFinalize,
   "core.note": CoreNote,
   "core.award": CoreAward,
+  "core.suspend": CoreSuspend,
+  "core.resume": CoreResume,
 } as const;
 
 export type CoreEventType = keyof typeof CORE_EVENT_SCHEMAS;
 
 // Payload union modules see in apply(): EventEnvelope<Ev | CoreEv> (spec 03 §3).
+// core.void, core.suspend and core.resume are absent on purpose — the kernel
+// resolves all three before a module sees anything.
 export type CoreEv =
   | z.infer<typeof CoreStart>
   | z.infer<typeof CoreForfeit>
@@ -145,7 +156,34 @@ export interface FoldableModule<Cfg = unknown, State = unknown> {
 }
 
 // Core types always accepted post-decision: annotations and the finalize lock.
+// core.suspend is deliberately absent — a decided match cannot be suspended.
 const POST_DECISION_CORE: readonly string[] = ["core.note", "core.finalize", "core.award"];
+
+// W4 (#407) — the kernel owns core.suspend / core.resume exactly as it owns
+// core.void: it validates them, folds them, and NEVER forwards them to
+// module.apply. One implementation therefore serves all eleven sports (and
+// every future one), no module state moves, and no frozen golden shifts.
+
+/** An open stoppage: play has been suspended and not yet resumed. */
+export interface MatchStoppage {
+  /** As the official recorded it ("floodlight failure"); never adjudicated. */
+  reason?: string;
+  /** The `core.suspend` event that opened it — the read side's undo handle. */
+  eventId: string;
+}
+
+// The only types the ledger accepts while play is suspended: the annotations
+// (which have no play effect) and the events that end the stoppage one way or
+// the other. Everything else — every sport event, and core.start — is refused
+// with WRONG_PHASE, because it claims play happened while play was stopped.
+const DURING_STOPPAGE: readonly string[] = [
+  "core.resume",
+  "core.note",
+  "core.award",
+  "core.abandon",
+  "core.forfeit",
+  "core.finalize",
+];
 
 // The only state-derivation function in the system (spec 03 §2). Guarantees:
 //  1. determinism — referentially transparent, same inputs → deep-equal state;
@@ -155,18 +193,36 @@ const POST_DECISION_CORE: readonly string[] = ["core.note", "core.finalize", "co
 //     see anything;
 //  4. monotonic decision — once outcome(state) is non-null, further events are
 //     rejected (ALREADY_DECIDED) except core.note / core.finalize / the
-//     module's declared postDecisionTypes.
+//     module's declared postDecisionTypes;
+//  5. suspended play records nothing (W4) — between a core.suspend and its
+//     core.resume the ledger accepts only annotations and the events that end
+//     the stoppage; anything else is WRONG_PHASE. Both types are kernel-owned
+//     and never reach the module, so no sport had to change to gain them.
 export function foldMatch<Cfg, State>(
   module: FoldableModule<Cfg, State>,
   cfg: Cfg,
   lineups: LineupPair,
   events: readonly EventEnvelope[],
 ): State {
+  return foldMatchWithStoppage(module, cfg, lineups, events).state;
+}
+
+/** foldMatch plus guarantee 5: the open stoppage, if play is suspended right
+ *  now. Same fold, same errors — the state is byte-for-byte what foldMatch
+ *  returns, because core.suspend / core.resume never reach the module. */
+export function foldMatchWithStoppage<Cfg, State>(
+  module: FoldableModule<Cfg, State>,
+  cfg: Cfg,
+  lineups: LineupPair,
+  events: readonly EventEnvelope[],
+): { state: State; stoppage: MatchStoppage | null } {
   const active = resolveVoids(events);
   const postDecision = new Set([...POST_DECISION_CORE, ...(module.postDecisionTypes ?? [])]);
+  const duringStoppage = new Set(DURING_STOPPAGE);
 
   let state = module.init(cfg, lineups);
   let decided = false;
+  let stoppage: MatchStoppage | null = null;
   for (const event of active) {
     validateCoreEvent(event);
     if (decided && !postDecision.has(event.type)) {
@@ -176,8 +232,38 @@ export function foldMatch<Cfg, State>(
         { eventId: event.id },
       );
     }
+    if (stoppage !== null && !duringStoppage.has(event.type)) {
+      throw new EngineError(
+        "WRONG_PHASE",
+        `event "${event.type}" rejected: play is suspended — resume or abandon first`,
+        { eventId: event.id, stoppage },
+      );
+    }
+    if (event.type === "core.suspend") {
+      // Guarded by the branch above, so this can only be the first suspend.
+      const reason = (event.payload as z.infer<typeof CoreSuspend>).reason;
+      stoppage = { ...(reason === undefined ? {} : { reason }), eventId: event.id };
+      continue; // kernel-owned: the module never sees it
+    }
+    if (event.type === "core.resume") {
+      // A resume with no open stoppage is a NO-OP, not an error. Undo is void
+      // (guarantee 3): voiding a mis-entered core.suspend leaves the resume
+      // that followed it pointing at nothing, which is meaningless but not
+      // contradictory — refusing it made the whole match unfoldable until the
+      // scorer also voided the resume, which is not an undo anyone would find.
+      stoppage = null;
+      continue; // kernel-owned: the module never sees it
+    }
     state = module.apply(state, event);
-    if (!decided) decided = module.outcome(state) !== null;
+    if (!decided) {
+      decided = module.outcome(state) !== null;
+      // A decided match is not awaiting resumption. core.abandon and
+      // core.forfeit are both legal mid-stoppage and both decide, and
+      // core.resume is not a post-decision type — so a stoppage left open here
+      // could never be cleared, and the read side would show an abandoned
+      // match as "play suspended, awaiting restart" forever.
+      if (decided) stoppage = null;
+    }
   }
-  return state;
+  return { state, stoppage };
 }

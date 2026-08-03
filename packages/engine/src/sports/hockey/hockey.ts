@@ -39,6 +39,41 @@ const playerStats: PlayerStatsModel = {
       key: "red_cards", label: "Red cards", from: "hockey.suspension.start",
       field: "person", agg: "count", when: (p) => p.class === "red",
     },
+    // W4 (#407) — the FIH match record splits goals by origin and names the
+    // stroke taker and the shoot-out one-on-one pair.
+    {
+      key: "goals_pc", label: "PC goals", from: "hockey.goal", field: "person", agg: "count",
+      when: (p) => p.kind === "pc",
+    },
+    {
+      key: "goals_stroke", label: "Stroke goals", from: "hockey.goal", field: "person",
+      agg: "count", when: (p) => p.kind === "stroke",
+    },
+    {
+      key: "goals_en", label: "Empty-net goals", from: "hockey.goal", field: "person",
+      agg: "count", when: (p) => p.emptyNet === true,
+    },
+    {
+      key: "strokes_taken", label: "Strokes taken", from: "hockey.set_piece", field: "person",
+      agg: "count", when: (p) => p.kind === "stroke",
+    },
+    {
+      key: "pc_taken", label: "PCs taken", from: "hockey.set_piece", field: "person",
+      agg: "count", when: (p) => p.kind === "pc",
+    },
+    { key: "so_attempts", label: "SO attempts", from: "hockey.shootout.attempt", field: "person", agg: "count" },
+    {
+      key: "so_goals", label: "SO goals", from: "hockey.shootout.attempt", field: "person",
+      agg: "count", when: (p) => p.scored === true,
+    },
+    {
+      key: "so_saves", label: "SO saves", from: "hockey.shootout.attempt", field: "goalkeeper",
+      agg: "count", when: (p) => p.scored !== true,
+    },
+    {
+      key: "cards_served", label: "Suspensions served", from: "hockey.suspension.start",
+      field: "servedBy", agg: "count",
+    },
   ],
   awards: [{ key: "potm", label: "Player of the Match" }],
 };
@@ -70,6 +105,7 @@ export const hockey = makePeriodModule({
     youth: { periods: { count: 4, minutes: 10 } },
   },
   positions,
+  keeperGroup: "GK",
   entrantModel: { kinds: ["team"], defaultKind: "team", team: { squadNumbers: true, captain: true } },
   metrics: [
     { key: "gf", label: "GF", direction: "desc" },
@@ -93,4 +129,7 @@ export const hockey = makePeriodModule({
     { key: "yellow", label: "Yellow card" },
     { key: "red", label: "Red card" },
   ],
+  // W4 (#407) — FIH Rules 13/14: a penalty corner and a penalty stroke are
+  // recorded when AWARDED; the goal kinds only ever show the converted ones.
+  setPieceKinds: ["pc", "stroke"],
 });

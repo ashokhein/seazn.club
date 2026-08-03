@@ -12,7 +12,7 @@ import {
   type LineupPair,
   type StageCtx,
 } from "../core/types.ts";
-import { PositionCatalog, validateLineup } from "../sport/catalog.ts";
+import { PositionCatalog, resolvePositions, validateLineup } from "../sport/catalog.ts";
 import { FidelityTier, type SportModule } from "../sport/module.ts";
 import { parseSemver } from "../sport/registry.ts";
 import { buildStream, defaultLineupPair, makeEnvelope } from "./helpers.ts";
@@ -31,7 +31,11 @@ export function conformanceSuite<Cfg, Ev, State>(
   opts: ConformanceOpts = {},
 ): void {
   const cfg = module.configSchema.parse(opts.cfg ?? {});
-  const lineups = opts.lineups ?? defaultLineupPair(module.positions);
+  // W4 (#407) — the catalog that governs THIS config, not the module-wide
+  // one: a variant with its own lineup rules must be conformance-tested
+  // against the lineup it actually fields.
+  const catalog = resolvePositions(module, cfg);
+  const lineups = opts.lineups ?? defaultLineupPair(catalog);
   const stageCtxs = opts.stageCtxs ?? [{ kind: "league" as const }, { kind: "knockout" as const }];
   const numRuns = opts.numRuns ?? 300;
   const maxEvents = opts.maxEvents ?? 40;
@@ -58,6 +62,7 @@ export function conformanceSuite<Cfg, Ev, State>(
       expect(module.key.length).toBeGreaterThan(0);
       parseSemver(module.version); // throws on non-semver
       PositionCatalog.parse(module.positions);
+      PositionCatalog.parse(catalog);
       expect(module.fidelityTiers.length).toBeGreaterThan(0);
       for (const tier of module.fidelityTiers) FidelityTier.parse(tier);
       expect(module.officialLabel.scorer.length).toBeGreaterThan(0);
@@ -69,8 +74,8 @@ export function conformanceSuite<Cfg, Ev, State>(
     });
 
     it("accepts the conformance lineups against its own catalog (spec 02 §3)", () => {
-      expect(validateLineup(module.positions, lineups.home)).toEqual([]);
-      expect(validateLineup(module.positions, lineups.away)).toEqual([]);
+      expect(validateLineup(catalog, lineups.home)).toEqual([]);
+      expect(validateLineup(catalog, lineups.away)).toEqual([]);
     });
 
     // §9.1 — apply is pure & total on valid input.

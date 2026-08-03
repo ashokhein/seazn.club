@@ -36,6 +36,25 @@ export const PositionCatalog = z.object({
 });
 export type PositionCatalog = z.infer<typeof PositionCatalog>;
 
+// W4 (#407) — a catalog is per VARIANT, not per module. Football declares a
+// `small-sided` variant while its static `lineup.size` is 11; field hockey and
+// ice hockey force exactly one goalkeeper, so a side playing out with an empty
+// net has no legal lineup. Rather than reshape `SportModule.positions` (which
+// apps/web reads directly), a module MAY add `positionsFor(cfg)` and everything
+// that needs a catalog goes through `resolvePositions`.
+export interface PositionSource<Cfg = unknown> {
+  positions: PositionCatalog;
+  positionsFor?(cfg: Cfg): PositionCatalog;
+}
+
+/** The catalog that governs THIS fixture: the module's per-config override if
+ *  it declares one, else its static catalog. The single resolution point — no
+ *  caller should read `.positions` once it has a parsed config in hand. */
+export function resolvePositions<Cfg>(source: PositionSource<Cfg>, cfg: Cfg): PositionCatalog {
+  // Member-access optional call, so `positionsFor` keeps the module as `this`.
+  return source.positionsFor?.(cfg) ?? source.positions;
+}
+
 // Typed validation errors — PROMPT-03 §1: size, unique roles, group min/max.
 export type LineupIssue =
   | { kind: "starting_size"; expected: number; actual: number }
