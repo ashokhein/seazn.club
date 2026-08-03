@@ -77,13 +77,23 @@ export function StatsPanel({
   if (loading && !board) return <p className="text-sm text-slate-500">{msg("stats.loading")}</p>;
   if (!board) return null;
 
+  // The three settled states carry a test id: the copy is localised into four
+  // dictionaries, so an assertion on the English words silently detaches the
+  // moment the wording moves.
   if (board.requires_detailed_scoring) {
     return (
-      <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700">{msg("stats.requiresDetailed")}</p>
+      <p
+        data-testid="stats-requires-detailed"
+        className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700"
+      >
+        {msg("stats.requiresDetailed")}
+      </p>
     );
   }
   if (board.rows.length === 0) {
-    return <p className="text-sm text-slate-500">{msg("stats.empty")}</p>;
+    return (
+      <p data-testid="stats-empty" className="text-sm text-slate-500">{msg("stats.empty")}</p>
+    );
   }
 
   // Discipline report (v6/00 §5): the same board narrowed to the penalty/
@@ -94,7 +104,7 @@ export function StatsPanel({
   const showDiscipline = view === "discipline" && disciplineCols.length > 0;
   const cols = showDiscipline ? disciplineCols : board.metrics;
   return (
-    <div className="space-y-3">
+    <div data-testid="stats-board" className="space-y-3">
       {disciplineCols.length > 0 && (
         <div className="flex gap-1 text-xs">
           {(["all", "discipline"] as const).map((v) => (

@@ -1,19 +1,23 @@
 import { test, expect } from "@playwright/test";
 import { seedScoredDivision } from "./helpers";
 
-// PROMPT-27 player stats: the leaderboard tab renders with a sort control.
-// (generic scoring is result-level, so the panel shows the "requires detailed
-// scoring" notice — asserting the tab + control render is the UI smoke.)
-test("stats tab renders the leaderboard control", async ({ page, request }) => {
+// PROMPT-27 player stats: the leaderboard tab renders one of its settled
+// states. seedScoredDivision scores at result level, and W4 gave the generic
+// module a playerStats model (generic.score → person), so a result-only
+// division is exactly the case the "requires detailed scoring" notice exists
+// for — no per-person rows, decided fixtures, wrong zeros refused.
+//
+// The assertion anchors on the test id, not the copy: the strings live in four
+// dictionaries and the notice's wording ("stats require detailed") stopped
+// matching the old /requires detailed/i probe without failing anything, because
+// the panel was landing in the empty state until W4.
+test("stats tab renders the requires-detailed notice for result-level scoring", async ({
+  page,
+  request,
+}) => {
   const { divisionId } = await seedScoredDivision(request);
 
   await page.goto(`/divisions/${divisionId}?tab=stats`);
-  // the tab is selected and the panel mounted (either a table or the
-  // detailed-scoring notice — both are valid rendered states)
-  await expect(
-    page
-      .getByText(/sort by/i)
-      .or(page.getByText(/requires detailed/i))
-      .or(page.getByText(/no player stats/i)),
-  ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId("stats-requires-detailed")).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId("stats-board")).toHaveCount(0);
 });

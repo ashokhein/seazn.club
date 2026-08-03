@@ -4,6 +4,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { football } from "@seazn/engine/sports/football";
+import { generic } from "@seazn/engine/sports/generic";
 import { sql } from "@/lib/db";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -197,6 +198,66 @@ describe.skipIf(!HAS_DB)("player statistics (Jul3/07)", () => {
     const card = await personStats(auth, teamA[0]!.id);
     expect(card.divisions).toHaveLength(1);
     expect(card.divisions[0]!.stats.goals).toBe(1);
+  });
+
+  // W4 gave the generic fallback a playerStats model (generic.score → person),
+  // which flipped every result-level generic division out of the empty board
+  // and into the notice. Nothing asserted that branch, so the flip surfaced as
+  // a stale e2e text probe instead of a failing unit test — this is the guard.
+  it("result-level generic division flags requires_detailed_scoring, not an empty board", async () => {
+    const { auth } = await seedOrg();
+    await sql`
+      insert into sports (key, name, module_version, position_catalog)
+      values ('generic', 'Generic', ${generic.version}, ${sql.json(generic.positions as never)})
+      on conflict (key) do nothing`;
+    await sql`
+      insert into sport_variants (sport_key, key, name, config, is_system)
+      values ('generic', 'score', 'Score', ${sql.json(generic.variants.score as never)}, true)
+      on conflict do nothing`;
+    const comp = await createCompetition(auth, {
+      name: "Generic Cup",
+      visibility: "private",
+      branding: {},
+    });
+    const division = await createDivision(auth, comp.id, {
+      name: "Open",
+      slug: "open",
+      sport_key: "generic",
+      variant_key: "score",
+      config: {},
+      eligibility: [],
+    });
+    await createEntrants(
+      auth,
+      division.id,
+      ["A", "B"].map((display_name, i) => ({
+        kind: "individual" as const,
+        display_name,
+        seed: i + 1,
+        members: [],
+      })),
+    );
+    const [stage] = await createStages(auth, division.id, {
+      seq: 1,
+      kind: "league",
+      name: "L",
+      config: {},
+    });
+    const { fixtures } = await generateStageFixtures(auth, stage!.id);
+    await startDivision(auth, division.id);
+    const f = fixtures[0]!;
+    await scoreEvent(auth, f.id, { expected_seq: 0, type: "core.start", payload: {} });
+    await scoreEvent(auth, f.id, {
+      expected_seq: 1,
+      type: "generic.result",
+      payload: { p1Score: 2, p2Score: 0 },
+    });
+
+    const table = await divisionPlayerStats(auth, division.id, {});
+    // the model exists (metrics are declared) but no event named a person
+    expect(table.metrics.map((m) => m.key)).toContain("points");
+    expect(table.rows).toHaveLength(0);
+    expect(table.requires_detailed_scoring).toBe(true);
   });
 
   it("lineup read model carries squad numbers (Jul3/07 §5)", async () => {
