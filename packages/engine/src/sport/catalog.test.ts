@@ -1,7 +1,8 @@
 // Lineup validation against the position catalog — spec 02 §3, PROMPT-03 §1.
 import { describe, expect, it } from "vitest";
 import { EngineError } from "../core/errors.ts";
-import type { Lineup, LineupSlot } from "../core/types.ts";
+import { LineupSlot } from "../core/types.ts";
+import type { Lineup } from "../core/types.ts";
 import { assertLineup, validateLineup, type PositionCatalog } from "./catalog.ts";
 
 // Small football-shaped catalog: exactly one GK, at most two FW, captain
@@ -168,5 +169,42 @@ describe("assertLineup", () => {
 
   it("passes silently on a valid lineup", () => {
     expect(() => assertLineup(catalog, valid)).not.toThrow();
+  });
+});
+
+// W4 shared-engine item 3 — `entrantModel.team.squadNumbers` advertises squad
+// numbers, but a LineupSlot had nowhere to put one, so the number that appears
+// on every team sheet and scoresheet had no home in the engine.
+describe("shirt numbers on a lineup slot (W4)", () => {
+  const numbered = lineup(
+    slot({ personId: "p1", positionKey: "GK", roles: ["keeper"], shirtNumber: 1 }),
+    slot({ personId: "p2", positionKey: "DF", roles: ["captain"], shirtNumber: 4 }),
+    slot({ personId: "p3", positionKey: "FW", shirtNumber: 9 }),
+  );
+
+  it("survives the LineupSlot schema instead of being stripped", () => {
+    const parsed = LineupSlot.parse({
+      personId: "p1",
+      slot: "starting",
+      orderNo: 1,
+      shirtNumber: 7,
+    });
+    expect(parsed.shirtNumber).toBe(7);
+  });
+
+  it("accepts 0 as a shirt number but rejects a negative one", () => {
+    expect(LineupSlot.safeParse({ personId: "p", slot: "starting", orderNo: 1, shirtNumber: 0 })
+      .success).toBe(true);
+    expect(LineupSlot.safeParse({ personId: "p", slot: "starting", orderNo: 1, shirtNumber: -1 })
+      .success).toBe(false);
+  });
+
+  it("validates a numbered lineup exactly as it validates an unnumbered one", () => {
+    expect(validateLineup(catalog, numbered)).toEqual([]);
+  });
+
+  it("still validates when the numbers are absent — the field is optional", () => {
+    expect(validateLineup(catalog, valid)).toEqual([]);
+    expect(valid.slots.every((s) => s.shirtNumber === undefined)).toBe(true);
   });
 });
