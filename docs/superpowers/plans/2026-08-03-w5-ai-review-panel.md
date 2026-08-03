@@ -180,7 +180,7 @@ The exact ledger `kind` and helper names must be read from the W3 parse-stamp co
 
 ```bash
 cd /Users/ashokhein/github/seazn.club/.claude/worktrees/w5-review-panel
-npm test --workspace apps/web -- run --reporter=json --outputFile=/tmp/w5-t1.json
+npm test --workspace apps/web -- --reporter=json --outputFile=/tmp/w5-t1.json
 ```
 Expected: the new suite fails to resolve `previewScheduleAi`. Confirm from the JSON (`numFailedTests`), not from the terminal summary.
 
@@ -244,7 +244,7 @@ Both routes are thin. Read `apps/web/src/app/api/v1/divisions/[id]/schedule/ai-p
 - [ ] **Step 8: Run the tests to green**
 
 ```bash
-npm test --workspace apps/web -- run --reporter=json --outputFile=/tmp/w5-t1.json
+npm test --workspace apps/web -- --reporter=json --outputFile=/tmp/w5-t1.json
 node -e "const r=require('/tmp/w5-t1.json');console.log(r.numPassedTests,'/',r.numTotalTests,'failed',r.numFailedTests)"
 ```
 Expected: the three new tests pass and `numFailedTests` is 0. **The four SDK-mock suites must be untouched and still green** — if any of them moved, you added a round to the existing path.
@@ -314,7 +314,7 @@ it("does not consume a second rate-limit token when a preview is reused", async 
 
 - [ ] **Step 2: Run them and watch them fail**
 
-`npm test --workspace apps/web -- run --reporter=json --outputFile=/tmp/w5-t2.json`. Expected: `preview_id` is not a known request field.
+`npm test --workspace apps/web -- --reporter=json --outputFile=/tmp/w5-t2.json`. Expected: `preview_id` is not a known request field.
 
 - [ ] **Step 3: Add `preview_id` to both plan requests**
 
@@ -347,7 +347,7 @@ Skip the rate-limit consumption when `confirmed` is non-null — the preview alr
 
 - [ ] **Step 5: Run to green**
 
-`npm test --workspace apps/web -- run --reporter=json --outputFile=/tmp/w5-t2.json`, then read `numFailedTests` from the JSON. The four SDK-mock suites stay green and untouched.
+`npm test --workspace apps/web -- --reporter=json --outputFile=/tmp/w5-t2.json`, then read `numFailedTests` from the JSON. The four SDK-mock suites stay green and untouched.
 
 - [ ] **Step 6: Regenerate OpenAPI and commit**
 
@@ -405,7 +405,7 @@ assumptions: z.array(z.string()).default([]),
 - [ ] **Step 5: Run to green, regenerate OpenAPI, commit**
 
 ```bash
-npm test --workspace apps/web -- run --reporter=json --outputFile=/tmp/w5-t3.json
+npm test --workspace apps/web -- --reporter=json --outputFile=/tmp/w5-t3.json
 npm run openapi:gen && git add -A
 git commit -m "feat(scheduler): surface the architect's assumptions on both plan responses (#400)"
 ```
@@ -475,7 +475,7 @@ it("does not drop a row category when another is empty", () => {
 
 - [ ] **Step 2: Run and watch it fail**
 
-`npm test --workspace apps/web -- run --reporter=json --outputFile=/tmp/w5-t4.json`
+`npm test --workspace apps/web -- --reporter=json --outputFile=/tmp/w5-t4.json`
 
 - [ ] **Step 3: Implement `ai-review.ts`**
 
@@ -558,7 +558,7 @@ Expected: clean. `[i18n] missing key` lines from stub dicts are benign noise; an
 - [ ] **Step 8: Run to green and commit**
 
 ```bash
-npm test --workspace apps/web -- run --reporter=json --outputFile=/tmp/w5-t4.json
+npm test --workspace apps/web -- --reporter=json --outputFile=/tmp/w5-t4.json
 git add -A && git commit -m "feat(board): one shared review panel, one definition of the count (#400, #388)"
 ```
 
@@ -571,8 +571,23 @@ git add -A && git commit -m "feat(board): one shared review panel, one definitio
 - Test: `apps/web/src/components/v2/board/__tests__/ai-console-review.test.tsx`, and extend `ai-competition-console.test.tsx`
 
 **Interfaces:**
-- Consumes: `buildReviewRows`, `reviewRowCount`, `AiReviewPanel` from Task 4; `assumptions` from Task 3.
+- Consumes: `buildReviewRows`, `reviewRowCount`, `reviewRowFixtureIds`, `AiReviewPanel` from Task 4; `assumptions` from Task 3.
 - Produces: both consoles render the same panel from the same builder.
+
+### Must-fix, carried from the Task 4 review (commit `22d4e223`)
+
+These were found by reviewing Task 4 and are defects **in this task** if left undone.
+
+1. **Do NOT source `divisionFor` from `plan.proposal`.** `ai-competition-console.tsx:355` builds `divisionOf` from `plan.proposal`, but proposal and unschedulable are mutually exclusive — deduped at `schedule-ai.ts:1390-1393`. Wire the panel off that map and every unschedulable row silently loses its chip, on the one console where the chip is the only thing naming the division, for exactly the rows that most need it. `AiConsoleFixture` (`ai-diff.ts:21-37`) carries **no `division_id`**, so the index you need does not exist yet — build a fixture→division map from the console's per-division fixture lists (or widen `AiConsoleFixture`). Write the failing test first: an unschedulable fixture that is absent from `proposal` must still render its chip.
+2. **Delete `ai-competition-console.tsx:533-540`** — it still renders `plural("board.ai.joint.warnings", plan.warnings.length)` above the hand-rolled list. Retire the orphaned `board.ai.joint.warnings*` / `warningsTitle` keys from all four dictionaries, or the second count definition quietly returns and #388 is still live.
+3. **The pulse must not point at nothing.** `reviewRowFixtureIds` currently feeds unschedulable ids to a button labelled "Show these on the board", but an unschedulable fixture is unscheduled and sits in the **tray**, not on the grid. Either filter the pulse to placed fixtures, or make the tray respond. Say which in the commit message.
+4. **Lift `Marker` (JR/FINAL) into one module.** It is currently byte-identical in `ai-diff-panel.tsx:319-330` and `ai-review-panel.tsx:177-188` (Task 4 could not touch `ai-diff-panel.tsx`). The copies have not drifted, so the lift is mechanical and safe.
+
+Also tighten two tests the review flagged as half-toothless:
+- `ai-review-panel.test.tsx:96` — `enDict["board.conflict.warn.rest"]` is literally `"rest"`, identical to the fixture's raw token, so an implementation rendering `row.reason` raw passes that line. Use a reason whose localized label differs from its token.
+- `ai-review-panel.test.tsx:163` — `toContain("min-w-0 flex-1 truncate")` matches if *any one* element has it. Assert a count of 2, the way the chip probes do.
+
+**Sanctioned, do not "fix":** `ai-division-chip.tsx:19` carries `shrink`, not the `shrink-0` this plan's Task 4 Step 6 asked for. The verbatim-extraction rule outranked it and `shrink truncate max-w-[9rem]` is strictly better at 375px.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -613,7 +628,7 @@ Retire `board.ai.joint.warnings.one/other` and `board.ai.joint.warningsTitle` on
 - [ ] **Step 5: Run to green**
 
 ```bash
-npm test --workspace apps/web -- run --reporter=json --outputFile=/tmp/w5-t5.json
+npm test --workspace apps/web -- --reporter=json --outputFile=/tmp/w5-t5.json
 npm run i18n:gen-keys && npm run i18n:check
 ```
 
@@ -811,7 +826,7 @@ npm run i18n:gen-keys && npm run i18n:check
 - [ ] **Step 9: Run to green and commit**
 
 ```bash
-npm test --workspace apps/web -- run --reporter=json --outputFile=/tmp/w5-t6.json
+npm test --workspace apps/web -- --reporter=json --outputFile=/tmp/w5-t6.json
 git add -A && git commit -m "feat(board): compiled-instruction preview with a confirm gate (#400)"
 ```
 
@@ -850,7 +865,7 @@ Reuse `AiInstructionPreview` unchanged — it takes an `AiParsePreviewResponse` 
 - [ ] **Step 3: Run to green, i18n check, commit**
 
 ```bash
-npm test --workspace apps/web -- run --reporter=json --outputFile=/tmp/w5-t7.json
+npm test --workspace apps/web -- --reporter=json --outputFile=/tmp/w5-t7.json
 npm run i18n:gen-keys && npm run i18n:check
 git add -A && git commit -m "feat(board): confirm gate on the joint console (#400)"
 ```
@@ -923,7 +938,7 @@ Playwright MCP, both widths, **no horizontal page scroll at 375px** — verify b
 
 ```bash
 npm run typecheck && rtk proxy npm run lint
-npm test --workspace apps/web -- run --reporter=json --outputFile=/tmp/w5-final.json
+npm test --workspace apps/web -- --reporter=json --outputFile=/tmp/w5-final.json
 node -e "const r=require('/tmp/w5-final.json');console.log(r.numPassedTests,'/',r.numTotalTests,'failed',r.numFailedTests)"
 npm run i18n:gen-keys && npm run i18n:check
 npm run openapi:gen && git status --short openapi/
