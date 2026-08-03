@@ -144,14 +144,17 @@ export const LineupSlot = z.object({
   // validateLineup (spec 02 §3 "unique roles") checks them per fixture, so
   // the lineup carries the fixture-specific assignment.
   roles: z.array(z.string().min(1)).optional(),
-  // W4 (#407) — the squad/shirt number this person wears in THIS fixture.
-  // `entrantModel.team.squadNumbers` already advertised the affordance, but the
-  // number itself had nowhere to live, so team sheets, scoresheets and match
-  // reports could not print it. Fixture-scoped rather than roster-scoped for
-  // the same reason `roles` is: numbers are reassigned between matches.
-  // Optional everywhere — sports without squad numbers simply omit it, and
-  // every lineup written before W4 stays valid. 0 is a legal shirt number.
-  shirtNumber: z.number().int().nonnegative().optional(),
+  // W4 (#407) — the squad number this person wears in THIS fixture.
+  // `entrantModel.team.squadNumbers` (src/sport/entrant-model.ts) already
+  // advertised the affordance, but the number itself had nowhere to live, so
+  // team sheets, scoresheets and match reports could not print it.
+  // NAMED `squadNumber`, not `shirtNumber`: the roster path got there first and
+  // one concept must not carry two names across the engine. Fixture-scoped
+  // rather than roster-scoped for the same reason `roles` is: numbers are
+  // reassigned between matches. Optional everywhere — sports without squad
+  // numbers simply omit it, and every lineup written before W4 stays valid.
+  // 0 is a legal number.
+  squadNumber: z.number().int().nonnegative().optional(),
 });
 export type LineupSlot = z.infer<typeof LineupSlot>;
 
