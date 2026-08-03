@@ -5365,10 +5365,15 @@ async function latestCompetitionEvent(
 }
 
 /** A plannable division for the AI architect: 4 individual entrants, one league
- *  stage, two-court schedule settings, fixtures generated. Returns its ids. */
+ *  stage, two-court schedule settings, fixtures generated. Returns its ids.
+ *
+ *  `startAt` defaults to a fixed date; pass `null` for a division with NO
+ *  configured start date — the board #397 exists for, which used to be drafted
+ *  from the epoch (see the anchor checks in v4AiSuite). */
 async function seedPlannableAiDivision(
   s: Session,
   label: string,
+  startAt: string | null = "2026-10-01T09:00:00.000Z",
 ): Promise<{ compId: string; divId: string; stageId: string }> {
   const comp = v1data<{ id: string }>(
     await v1(s, "/api/v1/competitions", "POST", { name: `${label} ${tag}` }),
@@ -5400,7 +5405,7 @@ async function seedPlannableAiDivision(
   );
   await v1(s, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
     config: {
-      startAt: "2026-10-01T09:00:00.000Z",
+      ...(startAt !== null ? { startAt } : {}),
       matchMinutes: 30,
       gapMinutes: 0,
       courts: ["A", "B"],
@@ -5494,6 +5499,28 @@ async function seedBracketAiDivision(
   }>(await v1(s, `/api/v1/stages/${stage.id}/generate`, "POST"));
   return { divId: div.id, personIds, fixtures: gen.fixtures };
 }
+
+/** #397 (calendar anchor): a time that never left 1970 — what the pack handed
+ *  the model for a division with no configured start date, when the greedy
+ *  draft was anchored at `toSlotConfig(settings, 0)`. The cut is the engine's
+ *  own `isEpochSentinel` (anything before 1971-01-01), read off the INSTANT
+ *  rather than the rendered year: west of UTC the epoch renders as 1969-12-31,
+ *  so a year prefix would miss exactly the boards this check exists for. The
+ *  pack now nulls these rather than showing them. */
+const EPOCH_SENTINEL_BEFORE_MS = Date.UTC(1971, 0, 1);
+const epochAnchored = (iso: string): boolean => Date.parse(iso) < EPOCH_SENTINEL_BEFORE_MS;
+
+/** #397: the pack writes every time as `zonedIso(…, orgTz)` — an explicit UTC
+ *  offset, in the ORGANISATION timezone. A pack with no timezone could not
+ *  produce one, so the offset is the proof (over HTTP) that `pack.tz` is real.
+ *  Note `Z` is deliberately NOT accepted: `zonedIso` always writes ±HH:MM. */
+const zonedTime = (iso: string): boolean => /[+-]\d{2}:\d{2}$/.test(iso);
+
+/** Today−1 as YYYY-MM-DD in UTC. One day of slack covers every organisation
+ *  zone (±14h), so a draft dated on or after it cannot be epoch-anchored — or
+ *  anchored at any other stale instant. */
+const yesterdayUtcYmd = (): string =>
+  new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
 interface AiPlanResponseLite {
   proposal: { fixture_id: string; scheduled_at: string; court_label: string }[];
@@ -5612,6 +5639,21 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
       check(
         "v4 AI/plus: the fixture model served the schedule phase",
         fixture.calls.some((c) => c.phase === "schedule"),
+      );
+      // ---- #397: the pack's calendar anchor, over the one surface that shows
+      // it. `tz`, `clock`, `window` and `sessionHours` are pack-internal and
+      // never reach the wire — but the fixture model echoes the pack's own
+      // `draft` back verbatim (ai-fixture-server.ts), so on this path every
+      // `proposal` row IS a draft row and its time is the pack builder's
+      // `zonedIso(…, orgTz)` output. That makes the draft the projection of tz
+      // and window that HTTP can actually assert on.
+      check(
+        "v4 AI/anchor: every drafted time is written with a real zone offset (pack.tz, #397)",
+        plan.proposal.length > 0 && plan.proposal.every((a) => zonedTime(a.scheduled_at)),
+      );
+      check(
+        "v4 AI/anchor: no drafted time is stuck at the epoch (#397)",
+        plan.proposal.length > 0 && !plan.proposal.some((a) => epochAnchored(a.scheduled_at)),
       );
 
       const genEvent = await latestCompetitionEvent(compId, "schedule.ai_generated");
@@ -5758,6 +5800,41 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
             tbdIds.has(w.fixtureId) &&
             bracket.personIds.some((id) => (w.detail ?? "").includes(id)),
         ),
+      );
+
+      // ---- #397: the division with NO configured start date ----
+      //
+      // The board this wave exists for. Every division seeded above carries a
+      // `startAt`, so none of them can red on the actual defect: with no start
+      // date the pack drafted from `toSlotConfig(settings, 0)` and handed the
+      // model 1970-01-01 for every fixture. The window now opens at today in
+      // the organisation zone and the draft anchors on its first session hour,
+      // so a drafted date must be today or later. Read, again, through the
+      // proposal — the pack's own draft echoed back by the fixture model.
+      //
+      // Topped up first: this is one more metered run on the plus wallet, and
+      // an `ai.credits` 402 here would look like an anchor regression.
+      await topUpWallet(plusOrg, 3);
+      const undated = await seedPlannableAiDivision(plus, "AI Undated", null);
+      const undatedRes = await v1(
+        plus,
+        `/api/v1/divisions/${undated.divId}/schedule/ai-plan`,
+        "POST",
+        { instruction: "spread the fixtures across both courts", mode: "generate" },
+      );
+      const undatedTimes = (v1data<AiPlanResponseLite>(undatedRes)?.proposal ?? []).map(
+        (a) => a.scheduled_at,
+      );
+      check(
+        "v4 AI/anchor: a division with NO start date still drafts zoned, non-epoch times (#397)",
+        undatedRes.status === 200 &&
+          undatedTimes.length > 0 &&
+          undatedTimes.every((t) => zonedTime(t)) &&
+          !undatedTimes.some((t) => epochAnchored(t)),
+      );
+      check(
+        "v4 AI/anchor: its window opens today, not at the epoch — nothing drafted before yesterday (#397)",
+        undatedTimes.length > 0 && undatedTimes.every((t) => t.slice(0, 10) >= yesterdayUtcYmd()),
       );
     }
   } finally {

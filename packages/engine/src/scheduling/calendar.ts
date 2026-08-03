@@ -31,6 +31,13 @@ export interface SlotConfig {
   perEntrantMinRest: number; // minutes an entrant must rest between its matches
   blackouts?: readonly Blackout[];
   sessionWindows?: readonly SessionWindow[]; // when set, matches only inside these
+  /** The competition's resolved calendar window (#397). Absent means unbounded,
+   *  which is every pre-W2 caller. `from` is inclusive; `to` is EXCLUSIVE — the
+   *  instant the final day ends, so a match finishing exactly at midnight on
+   *  that day is inside. Built from wall-clock day boundaries in ONE zone at
+   *  the pack edge — never by adding 86_400_000, because a DST day is 23 or 25
+   *  hours long. */
+  window?: { from: number; to: number };
   horizonMinutes?: number; // how far past startAt to search before reporting no_slot
   /** Constraints v2 (Jul3/04 §3) — extends, never replaces, the base pass. */
   constraints?: SchedulingConstraints;
@@ -101,6 +108,7 @@ export type ConflictReason =
   | "blackout" // inside a blackout window / outside every session window (warn)
   | "person_overlap" // a person plays in two overlapping matches (warn — doc 06 §4.3)
   | "start_window" // Jul3/04 §3: no feasible slot inside the target's window (hard)
+  | "window" // outside the pack's resolved calendar window (#397 — warn; W4 blocks)
   | "order"; // scheduled before a fixture that feeds it (doc 12 §2; blocks when direct)
 
 export interface Conflict {
@@ -419,7 +427,7 @@ export function slotFixtures(input: SlotInput): SlotResult {
 export function validateAssignments(
   assignments: readonly Assignment[],
   config: Pick<SlotConfig, "perEntrantMinRest" | "gapMinutes" | "blackouts" | "sessionWindows"> &
-    Partial<Pick<SlotConfig, "matchMinutes" | "constraints">>,
+    Partial<Pick<SlotConfig, "matchMinutes" | "constraints" | "window">>,
   existing: readonly Assignment[] = [],
   dependencies: readonly OrderDependency[] = [],
 ): Conflict[] {
@@ -449,6 +457,18 @@ export function validateAssignments(
   };
 
   for (const a of assignments) {
+    // The pack window (#397): the whole occupancy must fall inside the days the
+    // competition actually runs. Only `assignments` are bound — `existing` is
+    // other divisions' board and outside bookings, which this run is not being
+    // asked to move. Warn-only until W4 makes it delta-blocking (#399).
+    const packWindow = config.window;
+    if (packWindow !== undefined && (a.startAt < packWindow.from || a.endAt > packWindow.to)) {
+      conflicts.push({
+        fixtureId: a.fixtureId,
+        reason: "window",
+        detail: "outside the competition window",
+      });
+    }
     // Bounds the START, matching the solver's `start > window.notAfter`.
     const window = windowFor(a);
     if (a.startAt < window.notBefore || a.startAt > window.notAfter) {

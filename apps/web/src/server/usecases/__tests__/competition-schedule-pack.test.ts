@@ -12,8 +12,8 @@ import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
-import { buildCompetitionPack, COMPETITION_MOVABLE_CAP } from "../competition-schedule-ai";
-import { buildSchedulePack, OTHER_DIVISION_LABEL } from "../schedule-ai";
+import { buildCompetitionPack, COMPETITION_MOVABLE_CAP, verifyJoint } from "../competition-schedule-ai";
+import { buildSchedulePack, isBlocking, OTHER_DIVISION_LABEL } from "../schedule-ai";
 import { seedOrg } from "./_seed";
 
 // A pass-through spy over the real implementation — it changes no behaviour and
@@ -25,6 +25,13 @@ vi.mock("../schedule-ai", async (importOriginal) => {
 });
 
 const HAS_DB = !!process.env.DATABASE_URL;
+
+// #397: the pack builder reads no clock — `now` is injected, so a frozen
+// instant here is what keeps the pack (and its golden snapshot) reproducible.
+// 2026-08-06T23:30Z is already Friday the 7th in London, which is the point:
+// the pack's "today" is a fact about the ORG zone, not about UTC.
+const NOW_W2 = Date.parse("2026-08-06T23:30:00Z");
+
 
 const GENERIC_CONFIG = {
   resultMode: "score",
@@ -113,6 +120,11 @@ async function seedCompetition(
   compName: string,
   specs: DivSpec[],
 ): Promise<{ competitionId: string; divisions: SeededDivision[] }> {
+  // The joint pack's ONE clock is the ORGANISATION zone (#397). These boards
+  // have always been London boards — they just said so on the division rows.
+  // Saying it on the org row keeps every existing offset assertion true, so the
+  // W2 diff is the four added fields and not a re-render of the whole pack.
+  await sql`update organizations set timezone = ${TZ} where id = ${auth.orgId}`;
   const comp = await createCompetition(auth, { name: compName, visibility: "public", branding: {} });
   const divisions: SeededDivision[] = [];
   for (const spec of specs) {
@@ -240,6 +252,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
 
   it("unions two divisions' movable fixtures and tags every one with its division", async () => {
     const { pack, movableIds } = await buildCompetitionPack(auth, competitionId, selected(), {
+      now: NOW_W2,
       mode: "generate",
       instruction: "Fit both divisions in the day.",
     });
@@ -263,6 +276,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
 
   it("courts is the union of both divisions' labels, sorted", async () => {
     const { pack } = await buildCompetitionPack(auth, competitionId, selected(), {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -271,6 +285,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
 
   it("divergentCourts names the labels that are not in every division", async () => {
     const { pack } = await buildCompetitionPack(auth, competitionId, selected(), {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -285,7 +300,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
       auth,
       same.competitionId,
       same.divisions.map((d) => d.id),
-      { mode: "generate", instruction: "x" },
+      { now: NOW_W2, mode: "generate", instruction: "x" },
     );
     expect(flat.pack.courts).toEqual(["Court 1", "Court 2"]);
     expect(flat.pack.divergentCourts).toEqual([]);
@@ -317,6 +332,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     const cup = await seedOverlapCup();
     const [hotel, india, juliet] = cup.divisions as [SeededDivision, SeededDivision, SeededDivision];
     const { pack } = await buildCompetitionPack(auth, cup.competitionId, [hotel.id, india.id], {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -354,6 +370,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     const cup = await seedOverlapCup();
     const [hotel, india] = cup.divisions as [SeededDivision, SeededDivision, SeededDivision];
     const { pack } = await buildCompetitionPack(auth, cup.competitionId, [hotel.id, india.id], {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -381,6 +398,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     ]);
     const [kilo, lima] = cup.divisions as [SeededDivision, SeededDivision];
     const { pack } = await buildCompetitionPack(auth, cup.competitionId, [kilo.id, lima.id], {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -393,6 +411,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
 
   it("an excluded division's placements are obstacles with a null division_id", async () => {
     const { pack } = await buildCompetitionPack(auth, competitionId, selected(), {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -411,6 +430,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
 
   it("per-division settings are carried verbatim, not merged", async () => {
     const { pack } = await buildCompetitionPack(auth, competitionId, selected(), {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -440,7 +460,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
       auth,
       shared.competitionId,
       shared.divisions.map((d) => d.id),
-      { mode: "generate", instruction: "x" },
+      { now: NOW_W2, mode: "generate", instruction: "x" },
     );
     expect(pack.courts).toEqual(["Court 1"]);
     expect(pack.divergentCourts).toEqual([]);
@@ -452,7 +472,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     }
     const minutes = new Map(pack.divisions.map((d) => [d.id, d.settings.matchMinutes]));
     const spans = pack.draft.map((a) => {
-      const from = Date.parse(a.scheduled_at);
+      const from = Date.parse(a.scheduled_at!);
       return {
         court: a.court_label,
         division_id: a.division_id,
@@ -497,7 +517,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
       auth,
       cup.competitionId,
       cup.divisions.map((d) => d.id),
-      { mode: "generate", instruction: "x" },
+      { now: NOW_W2, mode: "generate", instruction: "x" },
     );
     // The immovable fixture really is in the pack, tagged to its own division.
     const fixed = pack.fixtures.obstacles.filter(
@@ -515,7 +535,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     const overlaps: string[] = [];
     for (const a of pack.draft) {
       if (a.court_label !== "Court 1") continue;
-      const from = Date.parse(a.scheduled_at);
+      const from = Date.parse(a.scheduled_at!);
       const to = from + minutes.get(a.division_id)! * MIN;
       if (from < T0 + 30 * MIN && T0 < to) {
         overlaps.push(`${a.fixture_id} @ ${new Date(from).toISOString()}`);
@@ -550,6 +570,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
                 values (${e1!.id}, ${person}, ${auth.orgId})`;
     }
     const { pack } = await buildCompetitionPack(auth, cup.competitionId, [alphaP.id, bravoP.id], {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -565,7 +586,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     expect(alphaDraft.length).toBe(1);
     expect(alphaDraft[0]!.court_label).toBe("Court 1");
     // The shared person is committed until 09:30, so AlphaP cannot start at 09:00.
-    expect(Date.parse(alphaDraft[0]!.scheduled_at)).toBeGreaterThanOrEqual(T0 + 30 * MIN);
+    expect(Date.parse(alphaDraft[0]!.scheduled_at!)).toBeGreaterThanOrEqual(T0 + 30 * MIN);
   }, 60_000);
 
   // I2: sequential accumulation means a board that does not fit starves the
@@ -582,7 +603,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
       auth,
       cup.competitionId,
       cup.divisions.map((d) => d.id),
-      { mode: "generate", instruction: "x" },
+      { now: NOW_W2, mode: "generate", instruction: "x" },
     );
     const mike = pack.divisions.find((d) => d.name === "Mike")!;
     const november = pack.divisions.find((d) => d.name === "November")!;
@@ -598,6 +619,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     // A board that DOES fit reports a complete draft, so the signal is not
     // simply always-partial.
     const roomy = await buildCompetitionPack(auth, competitionId, selected(), {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -626,7 +648,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
       auth,
       cup.competitionId,
       cup.divisions.map((d) => d.id),
-      { mode: "generate", instruction: "x" },
+      { now: NOW_W2, mode: "generate", instruction: "x" },
     );
     expect(pack.people.length).toBe(1);
     const nameById = new Map(pack.entrants.map((e) => [e.id, e.name]));
@@ -661,7 +683,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     // Neither division's own pack can see them — the precondition, asserted so a
     // future change to the per-division builder cannot make this test vacuous.
     for (const d of cup.divisions) {
-      const one = await buildSchedulePack(auth, d.id, { mode: "generate", instruction: "x" });
+      const one = await buildSchedulePack(auth, d.id, { now: NOW_W2, mode: "generate", instruction: "x" });
       expect(one.pack.people.map((p) => p.person_id)).not.toContain(person);
     }
 
@@ -669,7 +691,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
       auth,
       cup.competitionId,
       cup.divisions.map((d) => d.id),
-      { mode: "generate", instruction: "x" },
+      { now: NOW_W2, mode: "generate", instruction: "x" },
     );
     const found = pack.people.find((p) => p.person_id === person);
     expect(found).toBeDefined();
@@ -686,13 +708,13 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
       boardA.auth,
       a.competitionId,
       [a.divisions[0]!.id, a.divisions[1]!.id],
-      { mode: "generate", instruction: "Finish by 6pm." },
+      { now: NOW_W2, mode: "generate", instruction: "Finish by 6pm." },
     );
     const packB = await buildCompetitionPack(
       boardB.auth,
       b.competitionId,
       [b.divisions[0]!.id, b.divisions[1]!.id],
-      { mode: "generate", instruction: "Finish by 6pm." },
+      { now: NOW_W2, mode: "generate", instruction: "Finish by 6pm." },
     );
     expect(JSON.stringify(redact(packA.pack))).toBe(JSON.stringify(redact(packB.pack)));
     // …and a rebuild of the same board is byte-identical to itself.
@@ -700,7 +722,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
       boardA.auth,
       a.competitionId,
       [a.divisions[0]!.id, a.divisions[1]!.id],
-      { mode: "generate", instruction: "Finish by 6pm." },
+      { now: NOW_W2, mode: "generate", instruction: "Finish by 6pm." },
     );
     expect(JSON.stringify(again.pack)).toBe(JSON.stringify(packA.pack));
   }, 120_000);
@@ -731,13 +753,13 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack ordering (#350)", () => {
       orgA.auth,
       seedA.competitionId,
       seedA.divisions.map((d) => d.id),
-      { mode: "generate", instruction: "x" },
+      { now: NOW_W2, mode: "generate", instruction: "x" },
     );
     const packB = await buildCompetitionPack(
       orgB.auth,
       seedB.competitionId,
       seedB.divisions.map((d) => d.id),
-      { mode: "generate", instruction: "x" },
+      { now: NOW_W2, mode: "generate", instruction: "x" },
     );
     const slugsOf = (
       seed: { divisions: SeededDivision[] },
@@ -761,6 +783,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
     const a = await seedBigDivision(auth, comp.id, "Aaa", 300);
     const b = await seedBigDivision(auth, comp.id, "Bbb", 200);
     const { movableIds } = await buildCompetitionPack(auth, comp.id, [a, b], {
+      now: NOW_W2,
       mode: "generate",
       instruction: "Pack the day.",
     });
@@ -783,7 +806,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
     const small = await seedBigDivision(auth, comp.id, "Bbb", 2);
     vi.mocked(buildSchedulePack).mockClear();
     await expect(
-      buildCompetitionPack(auth, comp.id, [big, small], { mode: "generate", instruction: "x" }),
+      buildCompetitionPack(auth, comp.id, [big, small], { now: NOW_W2, mode: "generate", instruction: "x" }),
     ).rejects.toMatchObject({
       status: 409,
       code: "AI_PLAN_TOO_LARGE",
@@ -804,7 +827,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
     const b = await seedBigDivision(auth, comp.id, "Bbb", 201);
     vi.mocked(buildSchedulePack).mockClear();
     await expect(
-      buildCompetitionPack(auth, comp.id, [a, b], { mode: "generate", instruction: "x" }),
+      buildCompetitionPack(auth, comp.id, [a, b], { now: NOW_W2, mode: "generate", instruction: "x" }),
     ).rejects.toMatchObject({ status: 409, code: "AI_PLAN_TOO_LARGE" });
     expect(vi.mocked(buildSchedulePack)).not.toHaveBeenCalled();
   }, 120_000);
@@ -815,7 +838,188 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
     const a = await seedBigDivision(auth, comp.id, "Aaa", 300);
     const b = await seedBigDivision(auth, comp.id, "Bbb", 201);
     await expect(
-      buildCompetitionPack(auth, comp.id, [a, b], { mode: "generate", instruction: "x" }),
+      buildCompetitionPack(auth, comp.id, [a, b], { now: NOW_W2, mode: "generate", instruction: "x" }),
     ).rejects.toMatchObject({ status: 409, code: "AI_PLAN_TOO_LARGE" });
   }, 120_000);
+});
+
+// ===========================================================================
+// W2 (#397) — the joint calendar anchor
+// ===========================================================================
+
+describe.skipIf(!HAS_DB)("joint pack calendar anchor (#397)", () => {
+  it("resolves ONE clock and ONE window across divisions in different zones", async () => {
+    // Under the one-clock decision the ORG zone wins for every division,
+    // whatever each division's own tz says (design §2.1).
+    const { auth } = await seedOrg("pro");
+    const { competitionId, divisions } = await seedCompetition(auth, "TZ Cup", BOARD.slice(0, 2));
+    await sql`
+      update schedule_settings set tz = 'America/New_York'
+      where division_id = ${divisions[1]!.id}`;
+
+    const { pack } = await buildCompetitionPack(
+      auth,
+      competitionId,
+      divisions.map((d) => d.id),
+      { now: NOW_W2, mode: "generate", instruction: "x" },
+    );
+
+    expect(pack.tz).toBe(TZ);
+    expect(pack.clock.today).toBe("2026-08-07");
+    expect(pack.sessionHours).toEqual({ start: "08:00", end: "22:00" });
+    // Divisions keep their own tz as a display label…
+    expect(pack.divisions.map((d) => d.tz)).toEqual([TZ, "America/New_York"]);
+    // …and every instant in the pack is nonetheless written in the org zone.
+    for (const d of pack.draft) {
+      if (d.scheduled_at !== null) expect(d.scheduled_at).toMatch(/\+01:00$/);
+    }
+    for (const o of pack.fixtures.obstacles) expect(o.from).toMatch(/\+01:00$/);
+    // ONE window for the run, not one per division.
+    expect(pack.window.start).toBe("2026-08-01T00:00:00+01:00");
+  });
+
+  // The union is a LOCKED decision (#397), and the board above cannot prove it:
+  // every division there shares one startAt and one sessionWindows, and every
+  // fixture is placed on 2026-08-01, so union, intersection, first and last all
+  // return the same instants. This board gives the three divisions genuinely
+  // different, non-overlapping date ranges — and leaves their fixtures
+  // unplaced, so nothing widens them back together.
+  it("takes the UNION of divergent division windows, not any one of them", async () => {
+    const { auth } = await seedOrg("pro");
+    const { competitionId, divisions } = await seedCompetition(
+      auth,
+      "Union Cup",
+      BOARD.map((d) => ({ ...d, place: false })),
+    );
+    // Widest START is Bravo's; widest END is Charlie's. Neither division owns
+    // both, so no single-division answer can pass.
+    const ranges = [
+      { start: "2026-08-03", end: "2026-08-04" }, // Alpha — built[0]
+      { start: "2026-08-01", end: "2026-08-02" }, // Bravo — earliest start
+      { start: "2026-08-06", end: "2026-08-09" }, // Charlie — latest end
+    ];
+    for (const [i, d] of divisions.entries()) {
+      const r = ranges[i]!;
+      await sql`update schedule_settings set config = ${sql.json({
+        ...settingsConfig(BOARD[i]!.courts, BOARD[i]!.matchMinutes),
+        startAt: `${r.start}T09:00:00.000Z`,
+        endAt: `${r.end}T18:00:00.000Z`,
+        sessionWindows: [{ from: `${r.start}T09:00:00.000Z`, to: `${r.start}T18:00:00.000Z` }],
+      })} where division_id = ${d.id}`;
+    }
+
+    const { pack } = await buildCompetitionPack(
+      auth,
+      competitionId,
+      divisions.map((d) => d.id),
+      { now: NOW_W2, mode: "generate", instruction: "x" },
+    );
+
+    expect(pack.window.start).toBe("2026-08-01T00:00:00+01:00"); // Bravo's day
+    expect(pack.window.end).toBe("2026-08-09T23:59:59+01:00"); // Charlie's day
+    // Explicitly not any single division's window, and not the intersection —
+    // both of which the previous fixture would have satisfied.
+    for (const [i, d] of divisions.entries()) {
+      const r = ranges[i]!;
+      const own = { start: `${r.start}T00:00:00+01:00`, end: `${r.end}T23:59:59+01:00` };
+      expect(`${own.start}..${own.end}`, `${d.name} must not own the joint window`).not.toBe(
+        `${pack.window.start}..${pack.window.end}`,
+      );
+    }
+  });
+
+  // `draftPlaced` is what J5 tells the model to read as "this division is
+  // already drafted". Since #397 a repair draft can carry `scheduled_at: null`
+  // — a sentinel the pack refused to pass off as a time — so counting rows
+  // rather than PLACEMENTS reports a division as fully drafted when not one of
+  // its fixtures holds a real slot.
+  it("counts only PLACED rows in draftPlaced when a board is all sentinels", async () => {
+    const { auth } = await seedOrg("pro");
+    const { competitionId, divisions } = await seedCompetition(auth, "Sentinel Cup", BOARD.slice(0, 2));
+    // Alpha's whole board predates 1971; Bravo's is untouched.
+    await sql`update fixtures set scheduled_at = '1970-01-01T00:00:00Z'
+              where division_id = ${divisions[0]!.id}`;
+
+    const { pack } = await buildCompetitionPack(
+      auth,
+      competitionId,
+      divisions.map((d) => d.id),
+      { now: NOW_W2, mode: "repair", instruction: "x" },
+    );
+
+    const alpha = pack.divisions.find((d) => d.name === "Alpha")!;
+    const bravo = pack.divisions.find((d) => d.name === "Bravo")!;
+    expect(alpha.draftPlaced).toBe(0);
+    expect(bravo.draftPlaced).toBeGreaterThan(0);
+    // The rows are still THERE — nulled, not dropped — so the model is told the
+    // fixtures exist and are unplaced rather than being told nothing at all.
+    const alphaRows = pack.draft.filter((d) => alpha.movableIds.includes(d.fixture_id));
+    expect(alphaRows.length).toBeGreaterThan(0);
+    expect(alphaRows.every((d) => d.scheduled_at === null)).toBe(true);
+  });
+
+  it("spans the window across every selected division's board", async () => {
+    // Bravo starts four hours after Alpha and Charlie eight; the window is the
+    // union, so no division is asked to fit inside another's day.
+    const { auth } = await seedOrg("pro");
+    const { competitionId, divisions } = await seedCompetition(auth, "Span Cup", BOARD);
+    const { pack } = await buildCompetitionPack(
+      auth,
+      competitionId,
+      divisions.map((d) => d.id),
+      { now: NOW_W2, mode: "generate", instruction: "x" },
+    );
+    const startMs = Date.parse(pack.window.start);
+    const endMs = Date.parse(pack.window.end);
+    for (const d of pack.draft) {
+      if (d.scheduled_at === null) continue;
+      expect(Date.parse(d.scheduled_at)).toBeGreaterThanOrEqual(startMs);
+      expect(Date.parse(d.scheduled_at)).toBeLessThanOrEqual(endMs);
+    }
+  });
+
+  it("verifies every division against the SHARED window", async () => {
+    const { auth } = await seedOrg("pro");
+    const { competitionId, divisions } = await seedCompetition(auth, "Win Cup", BOARD.slice(0, 2));
+    const { pack } = await buildCompetitionPack(
+      auth,
+      competitionId,
+      divisions.map((d) => d.id),
+      { now: NOW_W2, mode: "generate", instruction: "x" },
+    );
+    const target = pack.fixtures.movable[0]!;
+    const conflicts = verifyJoint(
+      {
+        assignments: [
+          {
+            fixture_id: target.id,
+            scheduled_at: "2027-03-01T10:00:00+00:00",
+            court_label: pack.courts[0]!,
+          },
+        ],
+        unschedulable: [],
+        summary: "",
+        assumptions: [],
+      } as unknown as Parameters<typeof verifyJoint>[0],
+      pack,
+    );
+    const windowed = conflicts.filter((c) => c.reason === "window");
+    expect(windowed).toHaveLength(1);
+    expect(windowed[0]!.fixtureId).toBe(target.id);
+    // Warn-only until W4 (#399) makes it delta-blocking.
+    expect(windowed.some(isBlocking)).toBe(false);
+  });
+
+  it("is byte-identical for two joint builds at the same injected instant", async () => {
+    const { auth } = await seedOrg("pro");
+    const { competitionId, divisions } = await seedCompetition(auth, "Det Cup", BOARD.slice(0, 2));
+    const ids = divisions.map((d) => d.id);
+    const a = await buildCompetitionPack(auth, competitionId, ids, {
+      now: NOW_W2, mode: "generate", instruction: "x",
+    });
+    const b = await buildCompetitionPack(auth, competitionId, ids, {
+      now: NOW_W2, mode: "generate", instruction: "x",
+    });
+    expect(JSON.stringify(a.pack)).toBe(JSON.stringify(b.pack));
+  });
 });

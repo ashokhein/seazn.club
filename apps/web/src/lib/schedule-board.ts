@@ -19,6 +19,9 @@ export const REASON_CODE: Record<Conflict["reason"], ScheduleConflict["code"]> =
   person_overlap: "warn.person_overlap",
   order: "warn.order",
   blackout: "warn.blackout",
+  // #397: outside the pack's resolved calendar window. Warn this wave; W4
+  // (#399) promotes it to a delta-based block.
+  window: "warn.window",
   no_slot: "warn.no_slot",
   // Jul3/04 §3: an unsatisfiable start window is a hard bound, not a warning
   start_window: "conflict.start_window",

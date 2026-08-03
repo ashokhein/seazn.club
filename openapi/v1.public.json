@@ -14894,6 +14894,7 @@
                                   "warn.person_overlap",
                                   "warn.order",
                                   "warn.blackout",
+                                  "warn.window",
                                   "warn.no_slot",
                                   "warn.official_declined",
                                   "warn.official_unavailable"
@@ -15278,6 +15279,7 @@
                                   "warn.person_overlap",
                                   "warn.order",
                                   "warn.blackout",
+                                  "warn.window",
                                   "warn.no_slot",
                                   "warn.official_declined",
                                   "warn.official_unavailable"
@@ -15660,6 +15662,7 @@
                                   "warn.person_overlap",
                                   "warn.order",
                                   "warn.blackout",
+                                  "warn.window",
                                   "warn.no_slot",
                                   "warn.official_declined",
                                   "warn.official_unavailable"

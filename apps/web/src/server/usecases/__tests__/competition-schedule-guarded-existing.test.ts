@@ -43,6 +43,13 @@ import { seedOrg } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
+// #397: the pack builder reads no clock — `now` is injected, so a frozen
+// instant here is what keeps the pack (and its golden snapshot) reproducible.
+// 2026-08-06T23:30Z is already Friday the 7th in London, which is the point:
+// the pack's "today" is a fact about the ORG zone, not about UTC.
+const NOW_W2 = Date.parse("2026-08-06T23:30:00Z");
+
+
 const GENERIC_CONFIG = {
   resultMode: "score",
   allowDraws: true,
@@ -275,6 +282,7 @@ describe.skipIf(!HAS_DB)("the joint pass's `existing` lists are raw AND guarded 
     // Guards the guard, both halves of the premise:
     //  (a) Alpha ALONE does not collapse — its greedy pass compares a raw uuid.
     const solo = await buildSchedulePack(board.auth, board.alphaId, {
+      now: NOW_W2,
       mode: "generate",
       instruction: "One round.",
     });
@@ -285,7 +293,7 @@ describe.skipIf(!HAS_DB)("the joint pass's `existing` lists are raw AND guarded 
       board.auth,
       board.competitionId,
       [board.alphaId, board.bravoId],
-      { mode: "generate", instruction: "One round each." },
+      { now: NOW_W2, mode: "generate", instruction: "One round each." },
     );
     //  (b) …while the RUN-WIDE resolver does collapse the pair.
     expect(pack.participants[board.moveId]).toContain("name:cody vale");
@@ -301,7 +309,7 @@ describe.skipIf(!HAS_DB)("the joint pass's `existing` lists are raw AND guarded 
 
     const a = pack.draft.find((d) => d.fixture_id === board.moveId);
     expect(a, "joint draft is missing Alpha's movable fixture").toBeDefined();
-    const from = Date.parse(a!.scheduled_at);
+    const from = Date.parse(a!.scheduled_at!);
     const to = from + 30 * MIN;
     expect(
       overlaps(from, to, FIXED_FROM, FIXED_TO),
@@ -321,6 +329,7 @@ describe.skipIf(!HAS_DB)("the joint pass's `existing` lists are raw AND guarded 
       [board.divisionIds[1]!, board.bMoveId],
     ] as const) {
       const solo = await buildSchedulePack(board.auth, divisionId, {
+        now: NOW_W2,
         mode: "generate",
         instruction: "One round.",
       });
@@ -332,7 +341,7 @@ describe.skipIf(!HAS_DB)("the joint pass's `existing` lists are raw AND guarded 
       board.auth,
       board.competitionId,
       board.divisionIds,
-      { mode: "generate", instruction: "One round each." },
+      { now: NOW_W2, mode: "generate", instruction: "One round each." },
     );
     // …while the run-wide resolver collapses the pair, which is what the
     // feed-forward list carried — and only that — before this fix.
@@ -346,7 +355,7 @@ describe.skipIf(!HAS_DB)("the joint pass's `existing` lists are raw AND guarded 
     const slot = (id: string): { from: number; to: number; court: string } => {
       const a = pack.draft.find((d) => d.fixture_id === id);
       expect(a, `joint draft is missing fixture ${id}`).toBeDefined();
-      const from = Date.parse(a!.scheduled_at);
+      const from = Date.parse(a!.scheduled_at!);
       return { from, to: from + 30 * MIN, court: a!.court_label };
     };
     const first = slot(board.aMoveId);

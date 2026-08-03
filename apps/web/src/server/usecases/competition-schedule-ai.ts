@@ -61,8 +61,11 @@ import {
   planRungs,
   runLadder,
   schedulingAiModel,
+  windowBounds,
   zonedIso,
   type PackAssignment,
+  type PackDraftAssignment,
+  DEFAULT_SESSION_HOURS,
   type PackEntrant,
   type PackFixture,
   type PackObstacle,
@@ -99,6 +102,7 @@ import { maybeAlertExpensiveRun } from "./ai-runs-admin";
 import {
   computeParticipants,
   validateAssignments,
+  type Clock,
   type Assignment,
   type Conflict,
   type OrderDependency,
@@ -199,9 +203,32 @@ export interface CompetitionPackAssignment extends PackAssignment {
   division_id: string;
 }
 
+/** The joint draft's row shape (#397) — the joint twin of
+ *  `PackDraftAssignment`. `scheduled_at` is nullable here and nowhere else: a
+ *  fixture whose persisted time is an epoch sentinel reaches the model as
+ *  UNPLACED rather than as 1970-01-01. `prior` keeps the placed shape. */
+export interface CompetitionPackDraftAssignment extends PackDraftAssignment {
+  division_id: string;
+}
+
 export interface CompetitionPack {
   mode: "generate" | "refine" | "repair";
   competition: { id: string; name: string };
+  /** The ORGANISATION zone (#397, design §2.1). ONE zone governs every temporal
+   *  decision in this pack — day boundaries, weekday targets, session hours and
+   *  the offset every timestamp is written in, INCLUDING foreign obstacles. A
+   *  division's own `tz` below is display metadata and drives nothing. */
+  tz: string;
+  /** The calendar anchor, from an instant the caller injected. One per RUN, so
+   *  two divisions cannot disagree about what "today" is. */
+  clock: Clock;
+  /** The days this competition runs: the union of every selected division's
+   *  window, so no division is asked to fit inside another's day. `end` is
+   *  inclusive. */
+  window: { start: string; end: string };
+  /** The daily fallback for a division with no `sessionWindows`, as "HH:MM" in
+   *  `tz`. */
+  sessionHours: { start: string; end: string };
   /** Sorted by name, then slug. */
   divisions: CompetitionPackDivision[];
   /** Union of every selected division's court labels, sorted. */
@@ -224,7 +251,7 @@ export interface CompetitionPack {
    *  person grouping. Rendered at W5 (#400). */
   assumptions: string[];
   fixtures: { movable: CompetitionPackFixture[]; obstacles: CompetitionPackObstacle[] };
-  draft: CompetitionPackAssignment[];
+  draft: CompetitionPackDraftAssignment[];
   instruction: string;
   prior: { instruction: string; assignments: CompetitionPackAssignment[] } | null;
 }
@@ -254,6 +281,11 @@ export function toJointModelPayload(
   return {
     mode: pack.mode,
     competition: pack.competition,
+    // #397: the calendar anchor IS prompt material — J6 is rewritten around it.
+    tz: pack.tz,
+    clock: pack.clock,
+    window: pack.window,
+    sessionHours: pack.sessionHours,
     divisions: pack.divisions,
     courts: pack.courts,
     divergentCourts: pack.divergentCourts,
@@ -269,6 +301,10 @@ export function toJointModelPayload(
 export interface BuildCompetitionPackOptions {
   mode: "generate" | "refine" | "repair";
   instruction: string;
+  /** The instant this run is happening, epoch ms. REQUIRED and always injected
+   *  (#397): forwarded verbatim to every per-division `buildSchedulePack`, so
+   *  the divisions of one run cannot disagree about what "today" is. */
+  now: number;
   prior?: { instruction: string; assignments: CompetitionPackAssignment[] };
 }
 
@@ -527,6 +563,9 @@ export async function buildCompetitionPack(
       one = await buildSchedulePack(auth, id, {
         mode: opts.mode,
         instruction: opts.instruction,
+        // ONE clock across the whole run (#397): the same injected instant
+        // reaches every division, so their windows and "today" agree.
+        now: opts.now,
         ...(prior !== undefined ? { prior } : {}),
         // This division's own fixed fixtures arrive internally as
         // obstacleAssignments, so only the rest of the run's are added here.
@@ -610,6 +649,10 @@ export async function buildCompetitionPack(
     const minutes = one.pack.settings.matchMinutes;
     const fixtureById = new Map(one.pack.fixtures.movable.map((f) => [f.id, f]));
     for (const a of one.pack.draft) {
+      // #397: an unplaced draft row carries no time. It takes no court slot, so
+      // it contributes nothing to the feed-forward occupancy the next division
+      // sees — skipping it is the honest reading, not a dropped constraint.
+      if (a.scheduled_at === null) continue;
       const startAt = ms(a.scheduled_at);
       const f = fixtureById.get(a.fixture_id);
       drafted.push({
@@ -652,8 +695,33 @@ export async function buildCompetitionPack(
     tz: b.pack.division.tz,
     settings: b.pack.settings,
     movableIds: b.pack.fixtures.movable.map((f) => f.id),
-    draftPlaced: b.pack.draft.length,
+    // PLACED, not present: since #397 a draft row can carry `scheduled_at:
+    // null` (an epoch sentinel the pack refused to pass off as a time), and
+    // counting it would report a division as fully drafted when nothing on it
+    // has a slot — the exact opposite of what J5 tells the model to do.
+    draftPlaced: b.pack.draft.filter((a) => a.scheduled_at !== null).length,
   }));
+
+  // The calendar anchor (#397). Taken FROM the sub-packs rather than recomputed,
+  // so the single-division and joint builders cannot drift: every division of
+  // one competition sits in one organisation, and each was handed the same
+  // injected `now`, so their `tz` and `clock` are identical by construction.
+  //
+  // The window is the UNION of the per-division windows — widest start, widest
+  // end. A run is one set of days; taking the intersection would ask a division
+  // that legitimately starts later to fit inside another division's day.
+  const orgTz = built[0]!.pack.tz;
+  const clock = built[0]!.pack.clock;
+  const window = {
+    start: built.reduce(
+      (acc, b) => (Date.parse(b.pack.window.start) < Date.parse(acc) ? b.pack.window.start : acc),
+      built[0]!.pack.window.start,
+    ),
+    end: built.reduce(
+      (acc, b) => (Date.parse(b.pack.window.end) > Date.parse(acc) ? b.pack.window.end : acc),
+      built[0]!.pack.window.end,
+    ),
+  };
 
   // Courts: a label is THE SAME COURT across divisions iff the string matches.
   const courtSets = built.map((b) => new Set(b.pack.settings.courts));
@@ -707,7 +775,11 @@ export async function buildCompetitionPack(
   // division in the emitted order) so the same excluded placement is one entry
   // with one spelling however many selected divisions reported it.
   // -------------------------------------------------------------------------
-  const canonicalTz = divisions[0]!.tz;
+  // #397: ONE organisation clock (design §2.1). The old rule — canonicalTz =
+  // divisions[0].tz — made the pack's zone depend on how the divisions happened
+  // to sort, so adding a division re-rendered every foreign obstacle. Ruling R8
+  // is superseded; J6 was rewritten to match.
+  const canonicalTz = orgTz;
   const collected: CompetitionPackObstacle[] = [];
   for (const b of built) {
     for (const o of b.pack.fixtures.obstacles) {
@@ -747,13 +819,31 @@ export async function buildCompetitionPack(
 
   // Instants, not strings: divisions may sit in different zones, so a
   // lexicographic compare over mixed-offset ISO is not chronological.
-  const byJointAssignment = (a: CompetitionPackAssignment, b: CompetitionPackAssignment): number =>
-    ms(a.scheduled_at) - ms(b.scheduled_at) ||
+  //
+  // #397: an unplaced row carries no instant at all, and sorts first as one
+  // stable block ahead of every placed card. Two unplaced rows are EQUAL on
+  // time and must fall through to the court — subtracting two -Infinity
+  // sentinels returns NaN, which only reaches the same place because NaN is
+  // falsy, and reads as though it returned 0.
+  const byJointTime = (
+    a: CompetitionPackDraftAssignment,
+    b: CompetitionPackDraftAssignment,
+  ): number => {
+    if (a.scheduled_at === null || b.scheduled_at === null) {
+      return (a.scheduled_at === null ? 0 : 1) - (b.scheduled_at === null ? 0 : 1);
+    }
+    return ms(a.scheduled_at) - ms(b.scheduled_at);
+  };
+  const byJointAssignment = (
+    a: CompetitionPackDraftAssignment,
+    b: CompetitionPackDraftAssignment,
+  ): number =>
+    byJointTime(a, b) ||
     cmp(a.court_label, b.court_label) ||
     byDivision(a.division_id, b.division_id) ||
     cmp(a.fixture_id, b.fixture_id);
 
-  const draft: CompetitionPackAssignment[] = built
+  const draft: CompetitionPackDraftAssignment[] = built
     .flatMap((b) => b.pack.draft.map((a) => ({ ...a, division_id: b.id })))
     .sort(byJointAssignment);
 
@@ -821,6 +911,10 @@ export async function buildCompetitionPack(
   const pack: CompetitionPack = {
     mode: opts.mode,
     competition: { id: competition.id, name: competition.name },
+    tz: orgTz,
+    clock,
+    window,
+    sessionHours: { ...DEFAULT_SESSION_HOURS },
     divisions,
     courts,
     divergentCourts,
@@ -1056,6 +1150,11 @@ export function jointFeedDependencies(pack: CompetitionPack): OrderDependency[] 
  *                        line — see `applyCompetitionSchedule`. */
 export function verifyConfigFor(
   division: CompetitionPackDivision,
+  /** The RUN's resolved calendar window, epoch ms (#397). Optional: the apply
+   *  path deliberately passes none, because apply-time blocking is W4 (#399)
+   *  and a window there today would turn every pre-existing board into a wall
+   *  of warnings. */
+  window?: { from: number; to: number },
 ): Parameters<typeof validateAssignments>[1] {
   const s = division.settings;
   return {
@@ -1118,6 +1217,9 @@ export function verifyConfigFor(
       to: ms(b.to),
     })),
     sessionWindows: s.sessionWindows.map((w) => ({ from: ms(w.from), to: ms(w.to) })),
+    // #397: the RUN's window, shared by every division's pass — one competition,
+    // one set of days. Warn-only; `isBlocking` is unchanged.
+    ...(window !== undefined ? { window } : {}),
   };
 }
 
@@ -1183,7 +1285,7 @@ export function verifyJoint(plan: AiSchedulePlan, pack: CompetitionPack): Confli
     const others = all.filter((a) => a.divisionId !== division.id);
     for (const c of validateAssignments(
       mine,
-      verifyConfigFor(division),
+      verifyConfigFor(division, windowBounds(pack.window)),
       [...others, ...obstacles],
       deps,
     )) {
@@ -1865,6 +1967,9 @@ export async function aiPlanForCompetition(
   const { pack, movableIds } = await buildCompetitionPack(auth, competitionId, kept, {
     mode: input.mode,
     instruction: input.instruction,
+    // The one wall-clock read on this path (#397). Everything downstream takes
+    // the instant as a parameter, so a run is reproducible from its inputs.
+    now: Date.now(),
     ...(input.prior !== undefined ? { prior: input.prior } : {}),
   });
 

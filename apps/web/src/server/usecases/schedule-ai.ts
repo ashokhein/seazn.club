@@ -37,10 +37,16 @@ import { deferred } from "@/lib/deferred";
 import { maybeAlertExpensiveRun } from "@/server/usecases/ai-runs-admin";
 import {
   computeParticipants,
+  dayKeyInTz,
+  isEpochSentinel,
+  makeClock,
   slotFixtures,
   stripByes,
   validateAssignments,
+  ymdAddDays,
+  zonedTimeToUtc,
   type Assignment,
+  type Clock,
   type Conflict,
   type OrderDependency,
   type ParticipantFixture,
@@ -266,9 +272,45 @@ export interface PackAssignment {
   court_label: string;
 }
 
+/** The draft's own row shape (#397). `scheduled_at` is nullable here and nowhere
+ *  else: a fixture whose persisted time is an epoch sentinel reaches the model
+ *  as UNPLACED rather than as 1970-01-01, which the model would anchor on.
+ *  `prior` keeps `PackAssignment` — a prior proposal is by definition placed. */
+export interface PackDraftAssignment {
+  fixture_id: string;
+  scheduled_at: string | null;
+  court_label: string;
+}
+
+/** No configured `endAt`: the window runs a week from its start. Seven is the
+ *  programme's unit — the design freezes a 7-day badminton golden schedule and
+ *  the "read the end as the following week" assumption on top of it (#397). */
+export const DEFAULT_WINDOW_DAYS = 7;
+
+/** `ScheduleConfig` has no daily-hours field, so the pack advertises this as the
+ *  fallback shape of a day for a division with no explicit `sessionWindows`.
+ *  Advisory in W2 — it anchors the greedy draft and tells the model what a
+ *  normal day looks like; the typed rules that enforce it land in W3/W4. */
+export const DEFAULT_SESSION_HOURS = { start: "08:00", end: "22:00" } as const;
+
 export interface SchedulePack {
   mode: "generate" | "refine" | "repair";
   division: { id: string; name: string; sport: string; tz: string };
+  /** The ORGANISATION zone (#397, design §2.1). ONE zone governs every temporal
+   *  decision in this pack — day boundaries, weekday targets, session hours and
+   *  the offset every timestamp below is written in. `division.tz` above is
+   *  display metadata and drives nothing. */
+  tz: string;
+  /** The calendar anchor, built from an instant the caller injected. Without it
+   *  "from tomorrow till Friday" has two readings a week apart and nothing
+   *  downstream can tell which one happened. */
+  clock: Clock;
+  /** The days this competition runs, resolved and never absent. `end` is
+   *  inclusive — the last instant a fixture may still be occupying. */
+  window: { start: string; end: string };
+  /** The daily fallback for a division with no `sessionWindows`, as "HH:MM" in
+   *  `tz`. */
+  sessionHours: { start: string; end: string };
   settings: PackSettings;
   entrants: PackEntrant[];
   people: PackPerson[];
@@ -282,7 +324,7 @@ export interface SchedulePack {
    *  stripped bye feeders, same-name person grouping. Rendered at W5 (#400). */
   assumptions: string[];
   fixtures: { movable: PackFixture[]; obstacles: PackObstacle[] };
-  draft: PackAssignment[];
+  draft: PackDraftAssignment[];
   instruction: string;
   prior: { instruction: string; assignments: PackAssignment[] } | null;
   officials: PackOfficial[];
@@ -313,6 +355,13 @@ export function toModelPayload(pack: SchedulePack): Omit<SchedulePack, "particip
   return {
     mode: pack.mode,
     division: pack.division,
+    // #397: the calendar anchor IS prompt material — W2 is the wave that moves
+    // the prompt boundary. The enforcement inputs (participants, assumptions)
+    // stay server-side.
+    tz: pack.tz,
+    clock: pack.clock,
+    window: pack.window,
+    sessionHours: pack.sessionHours,
     settings: pack.settings,
     entrants: pack.entrants,
     people: pack.people,
@@ -327,6 +376,11 @@ export function toModelPayload(pack: SchedulePack): Omit<SchedulePack, "particip
 export interface BuildPackOptions {
   mode: "generate" | "refine" | "repair";
   instruction: string;
+  /** The instant this run is happening, epoch ms. REQUIRED and always injected
+   *  (#397): the pack builder reads no clock, so two builds at the same `now`
+   *  are byte-identical and the golden pack tests stay reproducible. The only
+   *  `Date.now()` on this path is at the runner entry. */
+  now: number;
   scope?: { from?: string; courts?: string[]; pool_ids?: string[] };
   prior?: {
     instruction: string;
@@ -372,8 +426,15 @@ function inScope(f: FixtureLite, scope: BuildPackOptions["scope"]): boolean {
   return true;
 }
 
-function byAssignment(a: PackAssignment, b: PackAssignment): number {
-  return cmp(a.scheduled_at, b.scheduled_at) || cmp(a.court_label, b.court_label) || cmp(a.fixture_id, b.fixture_id);
+// Widened to the draft's row shape (#397): an unplaced draft row carries a null
+// time. Null sorts as "" — ahead of every placed card, as one stable block —
+// so the ordering stays total and the pack stays byte-reproducible.
+function byAssignment(a: PackDraftAssignment, b: PackDraftAssignment): number {
+  return (
+    cmp(a.scheduled_at ?? "", b.scheduled_at ?? "") ||
+    cmp(a.court_label, b.court_label) ||
+    cmp(a.fixture_id, b.fixture_id)
+  );
 }
 
 /** The fields the pack's ONE fixture order reads. `PackFixture` satisfies it;
@@ -437,7 +498,13 @@ export async function buildSchedulePack(
     if (!division) throw new HttpError(404, "division not found");
     const settings = await loadSettings(tx, divisionId);
     const config = settings.config;
+    // ONE clock (#397, design §2.1). `settings.tz` stays available as the
+    // division's DISPLAY zone — it is what `pack.division.tz` carries — but
+    // every instant below is rendered in, and every calendar question answered
+    // in, the ORGANISATION zone.
     const tz = settings.tz;
+    const orgTz = settings.orgTz;
+    const clock = makeClock(opts.now, orgTz);
     const courts = [...config.courts];
     const matchMinutes = config.matchMinutes;
 
@@ -674,9 +741,51 @@ export async function buildSchedulePack(
       ...identity.assumptions,
     ];
 
+    // The window (#397), in the org zone. Every boundary is a wall-clock day
+    // boundary converted with zonedTimeToUtc — NOT startMs + 86_400_000,
+    // because a DST day is 23 or 25 hours long.
+    const dayStart = (ymd: string): number => zonedTimeToUtc(ymd, "00:00", orgTz);
+    const dayEnd = (ymd: string): number =>
+      zonedTimeToUtc(ymdAddDays(ymd, 1), "00:00", orgTz) - 1000;
+
+    const baseStartMs = config.startAt
+      ? new Date(config.startAt).getTime()
+      : dayStart(clock.today);
+    const baseEndYmd = config.endAt
+      ? dayKeyInTz(new Date(config.endAt).getTime(), orgTz)
+      : ymdAddDays(dayKeyInTz(baseStartMs, orgTz), DEFAULT_WINDOW_DAYS - 1);
+
+    // Widen — never narrow — to cover what the organiser has already stated
+    // explicitly (sessionWindows are absolute instants they set by hand) or
+    // already scheduled. A repair round that reported every card it was handed
+    // would teach the organiser to ignore the reason. Epoch sentinels are
+    // excluded, or the window swallows 1970 and the bug this wave exists to
+    // kill becomes invisible again.
+    const occupiedMs = movable
+      .filter((f) => f.scheduled_at !== null)
+      .map((f) => new Date(f.scheduled_at as string | Date).getTime())
+      .filter((t) => !isEpochSentinel(t));
+    // A sessionWindow anchored at the epoch is the same input by another door,
+    // and widening onto it hides the defect just as thoroughly — a window that
+    // opens in 1970 can never be broken. Filtered on the pair so a half-epoch
+    // window cannot contribute one usable end and one sentinel.
+    const sessionMs = config.sessionWindows
+      .map((w) => ({ from: new Date(w.from).getTime(), to: new Date(w.to).getTime() }))
+      .filter((w) => !isEpochSentinel(w.from) && !isEpochSentinel(w.to));
+    const windowStartMs = Math.min(baseStartMs, ...sessionMs.map((w) => w.from), ...occupiedMs);
+    const windowEndMs = Math.max(
+      dayEnd(baseEndYmd),
+      ...sessionMs.map((w) => w.to),
+      ...occupiedMs.map((t) => t + matchMinutes * MS_PER_MIN),
+    );
+    const window = {
+      start: zonedIso(dayStart(dayKeyInTz(windowStartMs, orgTz)), orgTz),
+      end: zonedIso(dayEnd(dayKeyInTz(windowEndMs, orgTz)), orgTz),
+    };
+
     // Draft: generate → greedy slotFixtures; refine → the prior proposal
     // verbatim; repair → the movable set's current persisted slots.
-    let draft: PackAssignment[];
+    let draft: PackDraftAssignment[];
     if (opts.mode === "generate") {
       // Determinism (defect fix): the greedy solver breaks intra-round ties on
       // SchedulableFixture.id — which is a per-seed random fixture UUID — so an
@@ -729,14 +838,22 @@ export async function buildSchedulePack(
       }));
       const result = slotFixtures({
         fixtures: schedulable,
-        config: toSlotConfig(settings, 0),
+        // Was `0` — the epoch. `toSlotConfig` uses this only when the division
+        // has no configured startAt, and with 0 the model was handed
+        // 1970-01-01 as the draft time for every fixture (#397). The honest
+        // fallback is the first session hour of the window's first day, in the
+        // org zone.
+        config: toSlotConfig(
+          settings,
+          zonedTimeToUtc(dayKeyInTz(windowStartMs, orgTz), DEFAULT_SESSION_HOURS.start, orgTz),
+        ),
         // extraExisting is the #350 joint pack's already-drafted divisions;
         // empty for every single-division caller.
         existing: [...obstacleAssignments, ...siblings, ...(opts.extraExisting ?? [])],
       });
       draft = result.assignments.map((a) => ({
         fixture_id: realIdByRank.get(a.fixtureId) ?? a.fixtureId,
-        scheduled_at: zonedIso(a.startAt, tz),
+        scheduled_at: zonedIso(a.startAt, orgTz),
         court_label: a.court,
       }));
     } else if (opts.mode === "refine") {
@@ -744,7 +861,7 @@ export async function buildSchedulePack(
         .filter((a) => movableSet.has(a.fixture_id))
         .map((a) => ({
           fixture_id: a.fixture_id,
-          scheduled_at: zonedIso(a.scheduled_at, tz),
+          scheduled_at: zonedIso(a.scheduled_at, orgTz),
           court_label: a.court_label,
         }));
     } else {
@@ -752,10 +869,20 @@ export async function buildSchedulePack(
         .filter((f) => f.scheduled_at !== null && f.court_label !== null)
         .map((f) => ({
           fixture_id: f.id,
-          scheduled_at: zonedIso(f.scheduled_at as string | Date, tz),
+          scheduled_at: zonedIso(f.scheduled_at as string | Date, orgTz),
           court_label: f.court_label as string,
         }));
     }
+    // Sentinel kill (#397). A time that predates 1971 is not a fixture time — it
+    // is a division that was drafted at the epoch, or a row written before this
+    // fix. Null is an honest "unplaced"; 1970-01-01 is a lie, and the model
+    // anchors on it. Tested on the instant rather than the rendered string on
+    // purpose: west of UTC the epoch renders as 1969-12-31.
+    draft = draft.map((d) =>
+      d.scheduled_at !== null && isEpochSentinel(new Date(d.scheduled_at).getTime())
+        ? { ...d, scheduled_at: null }
+        : d,
+    );
     draft.sort(byAssignment);
 
     const packMovable: PackFixture[] = movable
@@ -774,7 +901,11 @@ export async function buildSchedulePack(
           after: [...(afterByFixture.get(f.id) ?? [])],
         },
         current: {
-          at: f.scheduled_at !== null ? zonedIso(f.scheduled_at, tz) : null,
+          at:
+            f.scheduled_at !== null &&
+            !isEpochSentinel(new Date(f.scheduled_at as string | Date).getTime())
+              ? zonedIso(f.scheduled_at, orgTz)
+              : null,
           court: f.court_label,
         },
         pinned: f.schedule_locked,
@@ -787,8 +918,8 @@ export async function buildSchedulePack(
         const start = new Date(f.scheduled_at as string | Date).getTime();
         return {
           court: f.court_label as string,
-          from: zonedIso(start, tz),
-          to: zonedIso(start + matchMinutes * MS_PER_MIN, tz),
+          from: zonedIso(start, orgTz),
+          to: zonedIso(start + matchMinutes * MS_PER_MIN, orgTz),
           label: `${division.name} · R${f.round_no}`,
         };
       }),
@@ -796,8 +927,8 @@ export async function buildSchedulePack(
       // context, so a generic label is enough (never leaks a rival's roster).
       ...siblings.map((a) => ({
         court: a.court,
-        from: zonedIso(a.startAt, tz),
-        to: zonedIso(a.endAt, tz),
+        from: zonedIso(a.startAt, orgTz),
+        to: zonedIso(a.endAt, orgTz),
         label: OTHER_DIVISION_LABEL,
       })),
     ].sort(
@@ -880,7 +1011,7 @@ export async function buildSchedulePack(
     const busyByOfficial = new Map<string, string[]>();
     for (const r of busyElsewhere) {
       (busyByOfficial.get(r.official_id) ?? busyByOfficial.set(r.official_id, []).get(r.official_id)!).push(
-        zonedIso(r.scheduled_at, tz),
+        zonedIso(r.scheduled_at, orgTz),
       );
     }
     const packOfficials: PackOfficial[] = officialRows
@@ -903,13 +1034,13 @@ export async function buildSchedulePack(
       // place court_label strings become venue-scoped (design/v15-venue).
       courts,
       sessionWindows: config.sessionWindows
-        .map((w) => ({ from: zonedIso(w.from, tz), to: zonedIso(w.to, tz) }))
+        .map((w) => ({ from: zonedIso(w.from, orgTz), to: zonedIso(w.to, orgTz) }))
         .sort((a, b) => cmp(a.from, b.from) || cmp(a.to, b.to)),
       blackouts: config.blackouts
         .map((b) => ({
           ...(b.court !== undefined ? { court: b.court } : {}),
-          from: zonedIso(b.from, tz),
-          to: zonedIso(b.to, tz),
+          from: zonedIso(b.from, orgTz),
+          to: zonedIso(b.to, orgTz),
         }))
         .sort((a, b) => cmp(a.court ?? "", b.court ?? "") || cmp(a.from, b.from) || cmp(a.to, b.to)),
       constraints: config.constraints
@@ -921,8 +1052,8 @@ export async function buildSchedulePack(
             noBackToBack: config.constraints.noBackToBack,
             startWindows: config.constraints.startWindows.map((w) => ({
               target: w.target,
-              ...(w.notBefore !== undefined ? { notBefore: zonedIso(w.notBefore, tz) } : {}),
-              ...(w.notAfter !== undefined ? { notAfter: zonedIso(w.notAfter, tz) } : {}),
+              ...(w.notBefore !== undefined ? { notBefore: zonedIso(w.notBefore, orgTz) } : {}),
+              ...(w.notAfter !== undefined ? { notAfter: zonedIso(w.notAfter, orgTz) } : {}),
             })),
             fieldFairness: config.constraints.fieldFairness,
             parallelism: config.constraints.parallelism,
@@ -939,6 +1070,10 @@ export async function buildSchedulePack(
         sport: division.sport_key,
         tz,
       },
+      tz: orgTz,
+      clock,
+      window,
+      sessionHours: { ...DEFAULT_SESSION_HOURS },
       settings: settingsOut,
       entrants: packEntrants,
       people: packPeople,
@@ -953,7 +1088,7 @@ export async function buildSchedulePack(
             assignments: opts.prior.assignments
               .map((a) => ({
                 fixture_id: a.fixture_id,
-                scheduled_at: zonedIso(a.scheduled_at, tz),
+                scheduled_at: zonedIso(a.scheduled_at, orgTz),
                 court_label: a.court_label,
               }))
               .sort(byAssignment),
@@ -1229,10 +1364,13 @@ function toObstacleAssignments(pack: SchedulePack): Assignment[] {
   }));
 }
 
-function verifyConfig(
+/** Exported for the same reason the joint twin `verifyConfigFor` is: it is a
+ *  pure derivation of the pack, and a test that asserts what the referee is
+ *  handed must be able to build it the way the runner does. */
+export function verifyConfig(
   pack: SchedulePack,
 ): Pick<SlotConfig, "perEntrantMinRest" | "gapMinutes" | "blackouts" | "sessionWindows"> &
-  Partial<Pick<SlotConfig, "matchMinutes" | "constraints">> {
+  Partial<Pick<SlotConfig, "matchMinutes" | "constraints" | "window">> {
   return {
     // Both rest sources, plus the match length noBackToBack needs: the engine's
     // effectiveRestMinutes takes the strictest, exactly as the solver does.
@@ -1266,7 +1404,24 @@ function verifyConfig(
       to: toMs(b.to),
     })),
     sessionWindows: pack.settings.sessionWindows.map((w) => ({ from: toMs(w.from), to: toMs(w.to) })),
+    // #397: the resolved window, in the engine's epoch-ms unit. Warn-only —
+    // `isBlocking` still covers court and direct order alone, and W4 (#399) is
+    // what turns this into a delta-based block.
+    window: windowBounds(pack.window),
   };
+}
+
+/**
+ * The pack renders the window's end as the last whole SECOND of the final day
+ * (`…T23:59:59`) — the form a model reads correctly. The engine compares an
+ * ms-resolution `endAt` against it, so the bound it needs is the EXCLUSIVE
+ * instant after that second: a 22:30 match of 90 minutes ends at exactly
+ * 00:00:00.000 and occupies only days inside the window, but `endAt > to`
+ * against 23:59:59.000 reports it against the very day it legally sits on.
+ * Shared with the joint verifier so the two cannot drift.
+ */
+export function windowBounds(window: { start: string; end: string }): { from: number; to: number } {
+  return { from: toMs(window.start), to: toMs(window.end) + 1000 };
 }
 
 /** feeds.after are direct winner/loser feeds (schedule.ts feedDependencies);
@@ -1945,7 +2100,13 @@ export async function aiPlanForDivision(
 
   await rateLimit(`ai-plan:${divisionId}`, { max: 5, windowSeconds: 3600 });
 
-  const { pack, movableIds } = await buildSchedulePack(auth, divisionId, input);
+  // The one wall-clock read on this path (#397). Everything downstream — the
+  // pack builder, the clock, the window — takes the instant as a parameter, so
+  // a run is reproducible from its inputs alone.
+  const { pack, movableIds } = await buildSchedulePack(auth, divisionId, {
+    ...input,
+    now: Date.now(),
+  });
 
   // Token-weighted credit pricing (lib/ai-rung.ts). One line — a division is
   // one unit of work — so `credits` is just its rung; #350's joint solve passes

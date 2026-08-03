@@ -101,17 +101,20 @@ if a wish was impossible.`;
 //                              the frozen prompt says "outranks everything except
 //                              hard rules", and would collide with its own worked
 //                              example ("juniors always before 2pm").
-//   CONVENTION                 J6's emit-in-your-own-zone clause. `AiAssignment`
-//                              accepts any UTC offset and everything downstream
-//                              parses to instants, so it is unenforceable; the
-//                              rest of J6 is a READING instruction about the pack.
+//   CONVENTION                 J6's write-in-tz clause. `AiAssignment` accepts
+//                              any UTC offset and everything downstream parses
+//                              to instants, so it is unenforceable; the rest of
+//                              J6 is a READING instruction about the pack.
 //
 // J5 and J6 exist because of properties of the joint pack the model cannot infer
 // from the pack itself:
 //   J5 — the draft is built division by division, so it is biased toward whichever
 //        division was built first (ruling R4) and may be partial (ruling R5).
-//   J6 — each division renders its own timestamps in its own zone (ruling R8),
-//        while foreign obstacles are re-rendered in canonicalTz = divisions[0].tz.
+//   J6 — #397 replaced the per-division clocks with ONE organisation clock
+//        (design §2.1), superseding ruling R8. Every instant in the pack, and the
+//        window bounds, are written in `tz`; a division's own tz is display
+//        metadata. The model cannot infer that from the pack, which still carries
+//        a per-division tz field for the console's benefit.
 //
 // J7 is a plain statement of fact, and says nothing the server does not deliver.
 // An earlier draft warned that the shared-player map could not see across
@@ -165,16 +168,21 @@ J5. The draft is a legality hint, not a balance hint. It is built one division a
     absent from the draft entirely, so place them yourself. Where they go is a
     goal; that they are accounted for is not — every one of them still has to
     appear under OUTPUT.
-J6. Divisions may run in different timezones, so the pack is not in one clock. Each
-    division's settings and windows, and the scheduled_at of every draft and prior
-    proposal entry, are written in that division's zone; an obstacle's from/to is
-    written in the zone of the division named by its division_id, and an obstacle
-    with a null division_id comes from outside this run and is written in the first
-    listed division's zone. Two equal-looking wall clock times may therefore be
-    hours apart and the arrays need not be in clock order: compare instants, not
-    strings. By convention, write each assignment's scheduled_at in its own
-    division's zone — any correct UTC offset is accepted and nothing rejects you
-    for the wrong one, but the organiser reads the board in division zones.
+J6. The pack is in ONE clock. tz is the organisation timezone, and every instant
+    in the pack is written in it: each division's settings and windows, every
+    obstacle's from/to, the scheduled_at of every draft and prior proposal entry,
+    and the window bounds. A division's own tz is a display label and governs
+    nothing — two equal-looking wall clock times are the same moment, and the
+    arrays are in clock order. A draft entry whose scheduled_at is null is
+    UNPLACED: it has no time, rather than a time of zero, and those entries lead
+    the array as one block ahead of every placed card. Treat each as a fixture
+    still to be placed under J5; never read the block's position as an early slot.
+    By convention, write each assignment's scheduled_at in tz as well — any
+    correct UTC offset is accepted and nothing rejects you for the wrong one, but
+    the organiser reads the board in the organisation's zone.
+    clock.today, clock.tomorrow and clock.nextWeekday resolve the organiser's
+    relative dates in that same zone, and window.start..window.end are the days
+    this competition runs: a fixture must start and finish inside them.
 J7. The shared-player map spans every selected division. It lists each person
     rostered into two or more entrants anywhere in this run, so it covers entrants
     in different divisions as well as entrants within one. Two entrants sharing a

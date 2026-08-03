@@ -12,10 +12,18 @@ import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
-import { buildSchedulePack, toModelPayload } from "../schedule-ai";
+import { validateAssignments } from "@seazn/engine/scheduling";
+import { buildSchedulePack, isBlocking, toModelPayload, verifyConfig } from "../schedule-ai";
 import { seedOrg } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
+
+// #397: the pack builder reads no clock — `now` is injected, so a frozen
+// instant here is what keeps the pack (and its golden snapshot) reproducible.
+// 2026-08-06T23:30Z is already Friday the 7th in London, which is the point:
+// the pack's "today" is a fact about the ORG zone, not about UTC.
+const NOW_W2 = Date.parse("2026-08-06T23:30:00Z");
+
 
 const GENERIC_CONFIG = {
   resultMode: "score",
@@ -67,12 +75,54 @@ async function setSettings(divisionId: string): Promise<void> {
     on conflict (division_id) do update set config = excluded.config, tz = excluded.tz`;
 }
 
+/** Override the org and/or division zone for one board (#397 tests). */
+async function setZones(
+  auth: AuthCtx,
+  divisionId: string,
+  zones: { org?: string | null; division?: string | null },
+): Promise<void> {
+  if (zones.org !== undefined) {
+    await sql`update organizations set timezone = ${zones.org} where id = ${auth.orgId}`;
+  }
+  if (zones.division !== undefined) {
+    await sql`update schedule_settings set tz = ${zones.division} where division_id = ${divisionId}`;
+  }
+}
+
+/** Replace the settings config wholesale — used to drop startAt/sessionWindows. */
+async function setConfig(divisionId: string, config: object): Promise<void> {
+  await sql`update schedule_settings set config = ${sql.json(
+    config as Parameters<typeof sql.json>[0],
+  )} where division_id = ${divisionId}`;
+}
+
+/** The division's fixtures in board order, so a test can name one. */
+async function fixtureIds(divisionId: string): Promise<string[]> {
+  const rows = await sql<{ id: string }[]>`
+    select id from fixtures where division_id = ${divisionId}
+    order by round_no, seq_in_round`;
+  return rows.map((r) => r.id);
+}
+
+/** Unschedule the whole board — the state a division is in before its first
+ *  auto-schedule, and the one that used to produce 1970 draft times. */
+async function clearBoard(divisionId: string): Promise<void> {
+  await sql`update fixtures set scheduled_at = null, court_label = null
+            where division_id = ${divisionId}`;
+}
+
 // Seed one full RR board (2 courts, 8 entrants, a shared player, an officials
 // roster) in a FRESH pro org. Everything is persisted on STABLE domain keys —
 // never fixture UUIDs — so re-seeding an identical board yields the same logical
 // pack. Returns the org auth + division so a caller can reseed for determinism.
 async function seedRrBoard(): Promise<{ auth: AuthCtx; divisionId: string }> {
   const { auth } = await seedOrg("pro");
+  // The pack's ONE clock is the ORGANISATION zone (#397). This board has always
+  // been a London board — it just said so on the division row. Saying it on the
+  // org row too keeps the golden pack's offsets where they were, so the W2
+  // snapshot diff is the four added keys and nothing else. The divergent-zone
+  // case gets its own test rather than being smeared across the golden pack.
+  await sql`update organizations set timezone = ${TZ} where id = ${auth.orgId}`;
   const comp = await createCompetition(auth, { name: "AI Arch", visibility: "public", branding: {} });
   const division = await createDivision(auth, comp.id, {
     name: "Open", slug: "open", sport_key: "generic", variant_key: "score",
@@ -155,17 +205,19 @@ describe.skipIf(!HAS_DB)("buildSchedulePack (v4/01 §2)", () => {
     const boardA = await seedRrBoard();
     const boardB = await seedRrBoard();
     const packA = await buildSchedulePack(boardA.auth, boardA.divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Finish by 6pm.",
     });
     const packB = await buildSchedulePack(boardB.auth, boardB.divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Finish by 6pm.",
     });
     expect(redact(packA.pack)).toEqual(redact(packB.pack));
   });
 
   it("pack is deterministic and matches the 01 §2 shape", async () => {
-    const a = await buildSchedulePack(auth, divisionId, { mode: "generate", instruction: "Finish by 6pm." });
-    const b = await buildSchedulePack(auth, divisionId, { mode: "generate", instruction: "Finish by 6pm." });
+    const a = await buildSchedulePack(auth, divisionId, { now: NOW_W2, mode: "generate", instruction: "Finish by 6pm." });
+    const b = await buildSchedulePack(auth, divisionId, { now: NOW_W2, mode: "generate", instruction: "Finish by 6pm." });
     expect(JSON.stringify(a.pack)).toBe(JSON.stringify(b.pack));
     expect(redact(a.pack)).toMatchSnapshot();
     expect(a.pack.officials.length).toBeGreaterThan(0);
@@ -179,13 +231,14 @@ describe.skipIf(!HAS_DB)("buildSchedulePack (v4/01 §2)", () => {
     expect(a.pack.people[0]!.entrant_ids.length).toBe(2);
     // Every movable fixture is present; times carry the division tz offset.
     expect(a.pack.fixtures.movable.length).toBe(RR);
-    expect(a.pack.draft.every((d) => /[+-]\d{2}:\d{2}$/.test(d.scheduled_at))).toBe(true);
+    expect(a.pack.draft.every((d) => /[+-]\d{2}:\d{2}$/.test(String(d.scheduled_at)))).toBe(true);
     expect(a.pack.settings.constraints?.crossPersonClash).toBe("hard");
     expect(a.movableIds.size).toBe(RR);
   });
 
   it("repair scope excludes out-of-scope fixtures from movable and adds them as obstacles", async () => {
     const { pack, movableIds } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "repair", instruction: "Court 2 flooded", scope: { courts: ["Court 2"] },
     });
     for (const f of pack.fixtures.movable) {
@@ -199,6 +252,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack (v4/01 §2)", () => {
 
   it("repair draft is the movable set's current persisted slots", async () => {
     const { pack } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "repair", instruction: "reflow", scope: { courts: ["Court 2"] },
     });
     expect(pack.draft.length).toBe(pack.fixtures.movable.length);
@@ -206,11 +260,16 @@ describe.skipIf(!HAS_DB)("buildSchedulePack (v4/01 §2)", () => {
   });
 
   it("refine mode uses the prior proposal verbatim as the draft", async () => {
-    const gen = await buildSchedulePack(auth, divisionId, { mode: "generate", instruction: "x" });
-    const prior = gen.pack.draft.map((d) => ({
-      fixture_id: d.fixture_id, scheduled_at: d.scheduled_at, court_label: d.court_label,
-    }));
+    const gen = await buildSchedulePack(auth, divisionId, { now: NOW_W2, mode: "generate", instruction: "x" });
+    // A prior proposal is by definition PLACED — #397 made only the DRAFT row
+    // nullable, so an unplaced row is filtered out rather than coerced.
+    const prior = gen.pack.draft
+      .filter((d): d is typeof d & { scheduled_at: string } => d.scheduled_at !== null)
+      .map((d) => ({
+        fixture_id: d.fixture_id, scheduled_at: d.scheduled_at, court_label: d.court_label,
+      }));
     const { pack } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "refine", instruction: "later", prior: { instruction: "x", assignments: prior },
     });
     expect(pack.mode).toBe("refine");
@@ -221,6 +280,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack (v4/01 §2)", () => {
   it("rejects a scope court that is not in settings.courts (400)", async () => {
     await expect(
       buildSchedulePack(auth, divisionId, {
+        now: NOW_W2,
         mode: "repair", instruction: "x", scope: { courts: ["Court 9"] },
       }),
     ).rejects.toMatchObject({ status: 400 });
@@ -229,6 +289,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack (v4/01 §2)", () => {
   it("repair scope matching nothing is 422 AI_PLAN_EMPTY_SCOPE", async () => {
     await expect(
       buildSchedulePack(auth, divisionId, {
+        now: NOW_W2,
         mode: "repair", instruction: "x", scope: { from: "2099-01-01T00:00:00.000Z" },
       }),
     ).rejects.toMatchObject({ status: 422, message: "AI_PLAN_EMPTY_SCOPE" });
@@ -241,6 +302,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack (v4/01 §2)", () => {
   // migration drops it; this proves nothing reads it any more.
   it("pack carries participants for every movable fixture", async () => {
     const { pack } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Finish by 6pm.",
     });
     expect(Object.keys(pack.participants).sort()).toEqual(
@@ -254,6 +316,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack (v4/01 §2)", () => {
 
   it("pack carries an assumptions array", async () => {
     const { pack } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Finish by 6pm.",
     });
     expect(Array.isArray(pack.assumptions)).toBe(true);
@@ -269,7 +332,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack (v4/01 §2)", () => {
     // It used to throw 409 AI_PLAN_UNSUPPORTED before reading anything else.
     // Now it packs the division like any other — an empty one, since this
     // fixture has no fixtures — which is the proof the guard is gone.
-    const pack = await buildSchedulePack(auth, flex.id, { mode: "generate", instruction: "x" });
+    const pack = await buildSchedulePack(auth, flex.id, { now: NOW_W2, mode: "generate", instruction: "x" });
     expect(pack.pack.division.name).toBe("Flexi");
   });
 });
@@ -297,6 +360,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack size limits", () => {
     const { auth } = await seedOrg("pro");
     const divisionId = await seedBigDivision(auth, 500);
     const { pack, movableIds } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Pack the day.",
     });
     expect(movableIds.size).toBe(500);
@@ -310,7 +374,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack size limits", () => {
     const { auth } = await seedOrg("pro");
     const divisionId = await seedBigDivision(auth, 501);
     await expect(
-      buildSchedulePack(auth, divisionId, { mode: "generate", instruction: "x" }),
+      buildSchedulePack(auth, divisionId, { now: NOW_W2, mode: "generate", instruction: "x" }),
     ).rejects.toMatchObject({ status: 422, message: "AI_PLAN_TOO_LARGE" });
   });
 });
@@ -648,6 +712,7 @@ describe.skipIf(!HAS_DB)("scheduling-only same-name guard (#396)", () => {
     const before = await personCount(auth.orgId);
 
     const { pack } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Finish by 6pm.",
     });
 
@@ -670,6 +735,7 @@ describe.skipIf(!HAS_DB)("scheduling-only same-name guard (#396)", () => {
   it("collapses on the NORMALISED name (case and inner whitespace)", async () => {
     const { auth, divisionId } = await seedTwoSameNamePlayers();
     const { pack } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Finish by 6pm.",
     });
     const byExtKey = (k: string): string => pack.fixtures.movable.find((f) => f.ext_key === k)!.id;
@@ -682,6 +748,7 @@ describe.skipIf(!HAS_DB)("scheduling-only same-name guard (#396)", () => {
   it("blank names never bucket together, and the key never reaches the wire", async () => {
     const { auth, divisionId } = await seedTwoSameNamePlayers();
     const { pack } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Finish by 6pm.",
     });
     const blanks = pack.participants[
@@ -701,6 +768,7 @@ describe.skipIf(!HAS_DB)("scheduling-only same-name guard (#396)", () => {
   it("two people with different names are never collapsed", async () => {
     const { auth, divisionId } = await seedSmallBracket();
     const { pack } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Two rounds.",
     });
     expect(pack.participants).toBeDefined();
@@ -714,9 +782,11 @@ describe.skipIf(!HAS_DB)("scheduling-only same-name guard (#396)", () => {
     const a = await seedTwoSameNamePlayers();
     const b = await seedTwoSameNamePlayers();
     const packA = await buildSchedulePack(a.auth, a.divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Finish by 6pm.",
     });
     const packB = await buildSchedulePack(b.auth, b.divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Finish by 6pm.",
     });
     expect(packA.pack.assumptions.length).toBe(2);
@@ -728,6 +798,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
   it("participants of a TBD fixture include every possible advancer", async () => {
     const { auth, divisionId, ids } = await seedSmallBracket();
     const { pack } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Two rounds.",
     });
     const final = pack.fixtures.movable.find((f) => f.ext_key === "final")!;
@@ -741,6 +812,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
   it("a feeder outside the movable set is stripped and recorded in assumptions", async () => {
     const { auth, divisionId } = await seedSmallBracketWithFinishedSemi();
     const { pack } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Two rounds.",
     });
     expect(pack.assumptions.some((a) => a.includes("treated as completed"))).toBe(true);
@@ -760,9 +832,11 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
     const a = await seedSmallBracketWithFinishedSemi();
     const b = await seedSmallBracketWithFinishedSemi();
     const packA = await buildSchedulePack(a.auth, a.divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Two rounds.",
     });
     const packB = await buildSchedulePack(b.auth, b.divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Two rounds.",
     });
     expect(packA.pack.assumptions.length).toBeGreaterThan(0);
@@ -789,9 +863,11 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
       semi1: uuidLeading("1"), semi2: uuidLeading("e"), final: uuidLeading("7"),
     });
     const packA = await buildSchedulePack(a.auth, a.divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Two rounds.",
     });
     const packB = await buildSchedulePack(b.auth, b.divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Two rounds.",
     });
     // The board really does exercise a multi-feeder array…
@@ -811,6 +887,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
     // puts them in board order regardless.
     const { auth, divisionId, semiA, semiB } = await seedNullExtKeyDanglingFeeders();
     const { pack } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Final only.",
     });
     const dangling = pack.assumptions.filter((a) => a.includes("treated as completed"));
@@ -842,9 +919,11 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
       winners: uuidLeading("0"), losers: uuidLeading("f"),
     });
     const packA = await buildSchedulePack(a.auth, a.divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Both brackets.",
     });
     const packB = await buildSchedulePack(b.auth, b.divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Both brackets.",
     });
 
@@ -875,6 +954,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
     const tied = await seedTiedSeqBoard();
     const rr = await seedRrBoard();
     const { pack } = await buildSchedulePack(tied.auth, tied.divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Tied seq.",
     });
     expect(pack.fixtures.movable.map((f) => f.ext_key)).toEqual(["ext-a", "ext-b"]);
@@ -882,6 +962,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
     expect(Object.keys(pack.participants)).toEqual(pack.fixtures.movable.map((f) => f.id));
 
     const { pack: rrPack } = await buildSchedulePack(rr.auth, rr.divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Finish by 6pm.",
     });
     expect(Object.keys(rrPack.participants)).toEqual(rrPack.fixtures.movable.map((f) => f.id));
@@ -890,6 +971,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
   it("participants stay within the token budget on a 500-fixture bracket", async () => {
     const { auth, divisionId } = await seedBigBracket(500);
     const { pack } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Pack the day.",
     });
     // Measured 2026-08-02 on this board: the PAYLOAD is 51,341.5 proxy tokens
@@ -907,6 +989,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
     // must fail a test rather than silently blow a token budget on a bracket.
     const { auth, divisionId } = await seedSmallBracket();
     const { pack } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "generate", instruction: "Two rounds.",
     });
     const payload = toModelPayload(pack) as Record<string, unknown>;
@@ -924,5 +1007,242 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
       Object.entries(pack).filter(([k]) => k !== "participants" && k !== "assumptions"),
     );
     expect(payload).toEqual(trimmed);
+  });
+});
+
+// ===========================================================================
+// W2 (#397) — the calendar anchor
+// ===========================================================================
+//
+// A frozen instant: 2026-08-06T23:30Z is already Friday 2026-08-07 in London,
+// which is the whole point — the pack's "today" is a fact about the ORG zone,
+// not about UTC.
+const NOW = NOW_W2;
+const OPTS = { mode: "generate" as const, instruction: "", now: NOW };
+
+// SETTINGS_CONFIG with no startAt and no sessionWindows — the state that
+// produced the 1970 drafts. Everything else is unchanged, so only the anchor
+// moves.
+const NO_ANCHOR_CONFIG = (() => {
+  const { startAt: _startAt, ...rest } = SETTINGS_CONFIG;
+  return { ...rest, sessionWindows: [] };
+})();
+
+describe.skipIf(!HAS_DB)("pack calendar anchor (#397)", () => {
+  it("carries the ORG zone, a clock, a window and session hours", async () => {
+    const { auth, divisionId } = await seedRrBoard();
+    await setConfig(divisionId, NO_ANCHOR_CONFIG);
+    await clearBoard(divisionId);
+    const { pack } = await buildSchedulePack(auth, divisionId, OPTS);
+
+    expect(pack.tz).toBe("Europe/London");
+    expect(pack.clock.now).toBe("2026-08-06T23:30:00.000Z");
+    expect(pack.clock.today).toBe("2026-08-07");
+    expect(pack.clock.tomorrow).toBe("2026-08-08");
+    expect(pack.clock.nextWeekday.FRI).toBe("2026-08-14"); // never today
+    expect(pack.sessionHours).toEqual({ start: "08:00", end: "22:00" });
+    // No configured startAt/endAt: today plus the default 7-day horizon, in the
+    // org zone — 00:00 BST is 23:00Z the day before.
+    expect(pack.window.start).toBe("2026-08-07T00:00:00+01:00");
+    expect(pack.window.end).toBe("2026-08-13T23:59:59+01:00");
+  });
+
+  // The widening excludes epoch sentinels from the already-scheduled board for
+  // one reason: a window that reaches back to 1970 can never be broken, so the
+  // very defect this wave exists to surface goes invisible again. A configured
+  // sessionWindow is the same input by another door and must be filtered too.
+  it("does not let an epoch sessionWindow drag the window back to 1970", async () => {
+    const { auth, divisionId } = await seedRrBoard();
+    await setConfig(divisionId, {
+      ...NO_ANCHOR_CONFIG,
+      sessionWindows: [{ from: "1970-01-01T00:00:00.000Z", to: "1970-01-01T18:00:00.000Z" }],
+    });
+    await clearBoard(divisionId);
+    const { pack } = await buildSchedulePack(auth, divisionId, OPTS);
+
+    expect(pack.window.start).toBe("2026-08-07T00:00:00+01:00");
+    expect(pack.window.end).toBe("2026-08-13T23:59:59+01:00");
+  });
+
+  it("keeps the division zone as display metadata and renders in the org zone", async () => {
+    // The accepted cost of the one-clock decision (design §2.1): a Madrid
+    // division under a London org is written in London time. division.tz stays
+    // in the pack because the console still labels the board with it.
+    const { auth, divisionId } = await seedRrBoard();
+    await setZones(auth, divisionId, { division: "Europe/Madrid" });
+    const { pack } = await buildSchedulePack(auth, divisionId, OPTS);
+
+    expect(pack.division.tz).toBe("Europe/Madrid");
+    expect(pack.tz).toBe("Europe/London");
+    for (const d of pack.draft) expect(d.scheduled_at).toMatch(/\+01:00$/);
+    for (const f of pack.fixtures.movable) {
+      if (f.current.at !== null) expect(f.current.at).toMatch(/\+01:00$/);
+    }
+  });
+
+  it("no longer emits 1970 draft times for a division with no configured start", async () => {
+    // The bug #397 exists to kill: toSlotConfig(settings, 0) anchored the greedy
+    // draft at the epoch, so the model was handed 1970-01-01 for every fixture.
+    const { auth, divisionId } = await seedRrBoard();
+    await setConfig(divisionId, NO_ANCHOR_CONFIG);
+    await clearBoard(divisionId);
+    const { pack } = await buildSchedulePack(auth, divisionId, OPTS);
+
+    expect(pack.draft.length).toBeGreaterThan(0);
+    for (const d of pack.draft) {
+      expect(d.scheduled_at).not.toBeNull();
+      expect(d.scheduled_at!.slice(0, 3)).not.toBe("197");
+      expect(d.scheduled_at!.slice(0, 3)).not.toBe("196");
+    }
+    // The anchor is the first session hour of the window's first day in the org
+    // zone — not midnight, and not the epoch.
+    expect(pack.draft[0]!.scheduled_at).toBe("2026-08-07T08:00:00+01:00");
+  });
+
+  it("nulls an epoch sentinel already persisted on a fixture", async () => {
+    // A repair round over a board written before this fix. A null draft time is
+    // an honest 'unplaced'; 1970-01-01 is a lie the model anchors on.
+    const { auth, divisionId } = await seedRrBoard();
+    const ids = await fixtureIds(divisionId);
+    await sql`update fixtures set scheduled_at = ${new Date(0).toISOString()}
+              where id = ${ids[0]!}`;
+
+    const { pack } = await buildSchedulePack(auth, divisionId, { ...OPTS, mode: "repair" });
+
+    const row = pack.draft.find((d) => d.fixture_id === ids[0]);
+    expect(row === undefined || row.scheduled_at === null).toBe(true);
+    expect(pack.fixtures.movable.find((f) => f.id === ids[0])!.current.at).toBeNull();
+    // …and the sentinel must not have dragged the window back to 1970.
+    expect(pack.window.start.slice(0, 4)).toBe("2026");
+  });
+
+  it("widens the window to cover a board already scheduled beyond the horizon", async () => {
+    // A repair round must not report every card it was asked to keep. Widening
+    // is one-directional: the default horizon can only grow.
+    const { auth, divisionId } = await seedRrBoard();
+    await setConfig(divisionId, NO_ANCHOR_CONFIG);
+    await clearBoard(divisionId);
+    const ids = await fixtureIds(divisionId);
+    await sql`update fixtures
+              set scheduled_at = '2026-09-20T10:00:00Z', court_label = 'Court 1'
+              where id = ${ids[0]!}`;
+
+    const { pack } = await buildSchedulePack(auth, divisionId, { ...OPTS, mode: "repair" });
+    expect(pack.window.start).toBe("2026-08-07T00:00:00+01:00");
+    expect(pack.window.end).toBe("2026-09-20T23:59:59+01:00");
+  });
+
+  it("is byte-identical for two builds at the same injected instant", async () => {
+    // The determinism contract: `now` is a parameter, so the pack does not move
+    // between two builds a millisecond apart.
+    const { auth, divisionId } = await seedRrBoard();
+    const a = await buildSchedulePack(auth, divisionId, OPTS);
+    const b = await buildSchedulePack(auth, divisionId, OPTS);
+    expect(JSON.stringify(a.pack)).toBe(JSON.stringify(b.pack));
+  });
+
+  it("sends the anchor to the model but never the enforcement inputs", async () => {
+    const { auth, divisionId } = await seedRrBoard();
+    const { pack } = await buildSchedulePack(auth, divisionId, OPTS);
+    const payload = toModelPayload(pack) as Record<string, unknown>;
+    expect(payload.tz).toBe("Europe/London");
+    expect(payload.clock).toEqual(pack.clock);
+    expect(payload.window).toEqual(pack.window);
+    expect(payload.sessionHours).toEqual(pack.sessionHours);
+    expect("participants" in payload).toBe(false);
+    expect("assumptions" in payload).toBe(false);
+  });
+});
+
+describe.skipIf(!HAS_DB)("verifyConfig carries the pack window (#397)", () => {
+  it("reports a model assignment outside the window, without blocking it", async () => {
+    const { auth, divisionId } = await seedRrBoard();
+    const { pack } = await buildSchedulePack(auth, divisionId, OPTS);
+    const conflicts = validateAssignments(
+      [
+        {
+          fixtureId: pack.fixtures.movable[0]!.id,
+          court: pack.settings.courts[0]!,
+          startAt: Date.parse("2027-03-01T10:00:00Z"),
+          endAt: Date.parse("2027-03-01T10:30:00Z"),
+          entrants: [],
+          people: [],
+        },
+      ],
+      verifyConfig(pack),
+    );
+    const windowed = conflicts.filter((c) => c.reason === "window");
+    expect(windowed).toHaveLength(1);
+    // Warn-only until W4 (#399) makes it delta-blocking.
+    expect(windowed.some(isBlocking)).toBe(false);
+  });
+
+  // The reject case above passes against a degenerate or inverted window too —
+  // everything is outside an empty interval. This is the other direction: an
+  // assignment the organiser's own settings put INSIDE the window must come
+  // back clean THROUGH verifyConfig, not just through a hand-built config.
+  it("reports nothing for an assignment inside the window", async () => {
+    const { auth, divisionId } = await seedRrBoard();
+    const { pack } = await buildSchedulePack(auth, divisionId, OPTS);
+    const startAt = Date.parse(pack.window.start) + 10 * 60 * 60_000; // 10:00 on day one
+    const conflicts = validateAssignments(
+      [
+        {
+          fixtureId: pack.fixtures.movable[0]!.id,
+          court: pack.settings.courts[0]!,
+          startAt,
+          endAt: startAt + pack.settings.matchMinutes * 60_000,
+          entrants: [],
+          people: [],
+        },
+      ],
+      verifyConfig(pack),
+    );
+    expect(conflicts.filter((c) => c.reason === "window")).toEqual([]);
+  });
+
+  // The pack renders the window's end as the last whole SECOND of the final day
+  // (23:59:59). A match that ends exactly at midnight — 22:30 plus a 90-minute
+  // match — occupies only days INSIDE the window, so it must not be reported.
+  // Comparing an ms-resolution endAt against a second-resolution bound flags it.
+  it("accepts a match on the final day that ends exactly at midnight", async () => {
+    const { auth, divisionId } = await seedRrBoard();
+    const { pack } = await buildSchedulePack(auth, divisionId, OPTS);
+    const endAt = Date.parse(pack.window.end) + 1000; // the instant the day ends
+    const conflicts = validateAssignments(
+      [
+        {
+          fixtureId: pack.fixtures.movable[0]!.id,
+          court: pack.settings.courts[0]!,
+          startAt: endAt - 90 * 60_000,
+          endAt,
+          entrants: [],
+          people: [],
+        },
+      ],
+      verifyConfig(pack),
+    );
+    expect(conflicts.filter((c) => c.reason === "window")).toEqual([]);
+  });
+
+  // …and one millisecond past it is genuinely the next day, so it still fires.
+  it("still reports a match that runs a millisecond past the final day", async () => {
+    const { auth, divisionId } = await seedRrBoard();
+    const { pack } = await buildSchedulePack(auth, divisionId, OPTS);
+    const endAt = Date.parse(pack.window.end) + 1001;
+    const conflicts = validateAssignments(
+      [
+        {
+          fixtureId: pack.fixtures.movable[0]!.id,
+          court: pack.settings.courts[0]!,
+          startAt: endAt - 90 * 60_000,
+          endAt,
+          entrants: [],
+          people: [],
+        },
+      ],
+      verifyConfig(pack),
+    );
+    expect(conflicts.filter((c) => c.reason === "window")).toHaveLength(1);
   });
 });

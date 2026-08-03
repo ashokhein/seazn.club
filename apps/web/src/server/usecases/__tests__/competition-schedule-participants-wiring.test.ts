@@ -43,6 +43,11 @@ import { seedOrg } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
+// #397: the pack builder reads no clock — `now` is injected, so a frozen
+// instant keeps the pack reproducible.
+const NOW_W2 = Date.parse("2026-08-06T23:30:00Z");
+
+
 const GENERIC_CONFIG = {
   resultMode: "score",
   allowDraws: true,
@@ -330,7 +335,7 @@ describe.skipIf(!HAS_DB)("CompetitionPack.participants is wired into both joint 
       board.auth,
       board.competitionId,
       [board.alphaId, board.bravoId],
-      { mode: "generate", instruction: "Two rounds." },
+      { now: NOW_W2, mode: "generate", instruction: "Two rounds." },
     );
     const byId = new Map(pack.fixtures.movable.map((f) => [f.id, f]));
     const final = byId.get(board.fixtureIds.final)!;
@@ -365,14 +370,14 @@ describe.skipIf(!HAS_DB)("CompetitionPack.participants is wired into both joint 
       board.auth,
       board.competitionId,
       [board.alphaId, board.bravoId],
-      { mode: "generate", instruction: "Two rounds." },
+      { now: NOW_W2, mode: "generate", instruction: "Two rounds." },
     );
     const minutesOf = (divisionId: string): number =>
       pack.divisions.find((d) => d.id === divisionId)!.settings.matchMinutes;
     const slot = (id: string): { from: number; to: number; court: string } => {
       const a = pack.draft.find((d) => d.fixture_id === id);
       expect(a, `joint draft is missing fixture ${id}`).toBeDefined();
-      const from = Date.parse(a!.scheduled_at);
+      const from = Date.parse(a!.scheduled_at!);
       return { from, to: from + minutesOf(a!.division_id) * MIN, court: a!.court_label };
     };
     const final = slot(board.fixtureIds.final);
@@ -395,7 +400,7 @@ describe.skipIf(!HAS_DB)("CompetitionPack.participants is wired into both joint 
       board.auth,
       board.competitionId,
       [board.alphaId, board.bravoId],
-      { mode: "generate", instruction: "Two rounds." },
+      { now: NOW_W2, mode: "generate", instruction: "Two rounds." },
     );
     // Legal on every other axis: no court double-book (disjoint courts), both
     // semis finish before the final starts, everything inside its own division's
@@ -434,7 +439,7 @@ describe.skipIf(!HAS_DB)("CompetitionPack.participants is wired into both joint 
       board.auth,
       board.competitionId,
       board.divisionIds,
-      { mode: "generate", instruction: "One round each." },
+      { now: NOW_W2, mode: "generate", instruction: "One round each." },
     );
     const KEY = "name:bobby fischer";
     // Neither row is in `pack.people` (it keeps persons in 2+ entrants), and no
@@ -511,6 +516,7 @@ describe.skipIf(!HAS_DB)("CompetitionPack.participants is wired into both joint 
     }
 
     const { pack } = await buildCompetitionPack(auth, comp.id, [one.id, two.id], {
+      now: NOW_W2,
       mode: "generate",
       instruction: "One round each.",
     });
@@ -527,7 +533,7 @@ describe.skipIf(!HAS_DB)("CompetitionPack.participants is wired into both joint 
       board.auth,
       board.competitionId,
       board.divisionIds,
-      { mode: "generate", instruction: "Pack the day." },
+      { now: NOW_W2, mode: "generate", instruction: "Pack the day." },
     );
     const payload = toJointModelPayload(pack) as Record<string, unknown>;
     expect("participants" in payload).toBe(false);

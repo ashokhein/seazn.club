@@ -40,6 +40,13 @@ import { seedOrg } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
+// #397: the pack builder reads no clock — `now` is injected, so a frozen
+// instant here is what keeps the pack (and its golden snapshot) reproducible.
+// 2026-08-06T23:30Z is already Friday the 7th in London, which is the point:
+// the pack's "today" is a fact about the ORG zone, not about UTC.
+const NOW_W2 = Date.parse("2026-08-06T23:30:00Z");
+
+
 const GENERIC_CONFIG = {
   resultMode: "score",
   allowDraws: true,
@@ -267,6 +274,7 @@ describe.skipIf(!HAS_DB)("the greedy pass's `existing` list is guarded too (#396
   it("SIBLINGS: a collapsed person already committed in a sibling division still blocks the slot", async () => {
     const { auth, plannedId, danaId, moveId } = await seedSiblingCollapseBoard();
     const { pack } = await buildSchedulePack(auth, plannedId, {
+      now: NOW_W2,
       mode: "generate",
       instruction: "One round.",
     });
@@ -285,7 +293,7 @@ describe.skipIf(!HAS_DB)("the greedy pass's `existing` list is guarded too (#396
 
     const a = pack.draft.find((d) => d.fixture_id === moveId);
     expect(a, "draft is missing the movable fixture").toBeDefined();
-    const from = Date.parse(a!.scheduled_at);
+    const from = Date.parse(a!.scheduled_at!);
     const to = from + pack.settings.matchMinutes * MIN;
     expect(
       overlaps(from, to, FIXED_FROM, FIXED_TO),
@@ -298,6 +306,7 @@ describe.skipIf(!HAS_DB)("the greedy pass's `existing` list is guarded too (#396
   it("OBSTACLES: a collapsed person on this division's own fixed fixture still blocks the slot", async () => {
     const { auth, divisionId, moveId } = await seedObstacleCollapseBoard();
     const { pack } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "generate",
       instruction: "One round.",
     });
@@ -312,7 +321,7 @@ describe.skipIf(!HAS_DB)("the greedy pass's `existing` list is guarded too (#396
 
     const a = pack.draft.find((d) => d.fixture_id === moveId);
     expect(a, "draft is missing the movable fixture").toBeDefined();
-    const from = Date.parse(a!.scheduled_at);
+    const from = Date.parse(a!.scheduled_at!);
     const to = from + pack.settings.matchMinutes * MIN;
     expect(
       overlaps(from, to, FIXED_FROM, FIXED_TO),

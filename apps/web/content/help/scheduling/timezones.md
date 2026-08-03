@@ -42,6 +42,18 @@ Your choice is saved to your account, so it follows you across devices. It only 
 - Leave it unset and schedules are shown in **UTC**.
 - Changing it re-labels existing fixtures: the stored instant does not move, but the wall-clock time you see does. Set it before you publish a timetable.
 
+## One clock for scheduling
+
+Everything the scheduler works out in time runs on **one clock: the organisation's scheduling timezone**. Day boundaries, what counts as "Saturday", your play hours and the times written onto the board are all resolved in that single zone, for every division in the organisation.
+
+This matters if a division still carries a timezone of its own. Some do — saved before the setting moved up to the organisation — and such a zone is now only a **label**. It still decides how that division's times are spelled out on screen, but it no longer decides what the scheduler treats as a day, a weekday or an evening.
+
+The honest consequence: a division whose own zone differs from its organisation's has its matches land **shifted by the difference between the two offsets**. Ask for "Saturday evenings" in a division labelled three hours ahead of the organisation and the plan is built around the *organisation's* Saturday evening, not that division's.
+
+One clock is deliberate — a competition running to two sets of day boundaries produces timetables nobody can reconcile — but the shift is real, so it is worth knowing before you plan across zones.
+
+**The way round it is to state the hours instead of describing them.** Play hours you set by hand are fixed points on the calendar rather than "6pm in whichever zone", so none of the above moves them. If a division genuinely runs in a different zone from the rest of the organisation, set its play hours explicitly and the plan will honour exactly the hours you picked.
+
 ## Finding a zone in the picker
 
 Both pickers work the same way. Click, then **type** — the list narrows as you go, and matches on the city, the country, or the country code. Every row shows the country and the **current local time**, so you can confirm you have the right one before you commit.
