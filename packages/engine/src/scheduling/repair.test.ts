@@ -6,7 +6,13 @@ import {
   type OrderDependency,
   type VerifyConfig,
 } from "./calendar.ts";
-import { repairSchedule, type RepairResult } from "./repair.ts";
+import {
+  repairSchedule,
+  BLOCKING_FAMILIES,
+  REPAIR_FAMILIES,
+  type RepairFamily,
+  type RepairResult,
+} from "./repair.ts";
 import { resetZ3, z3LoadCount } from "./z3-load.ts";
 import {
   assign,
@@ -64,6 +70,21 @@ function clashedGolden(): Assignment[] {
 
 /** Everything but the wall clock, which is measured and cannot repeat. */
 const stable = (r: RepairResult): string => JSON.stringify({ ...r, elapsedMs: 0 });
+
+// #401's Task 4 interface names these on `repair.ts`. They are DEFINED in
+// `repair-domain.ts` — the domain builder is what decides which family a bound
+// belongs to — so the import above is the contract under test, not decoration.
+describe("the family vocabulary", () => {
+  it("is reachable from repair.ts, and every blocking family is one of them", () => {
+    expect(REPAIR_FAMILIES).toContain("court");
+    // Relaxable, because `isBlockingConflict` ignores an indirect feed.
+    expect(REPAIR_FAMILIES).toContain("order_soft");
+    expect(BLOCKING_FAMILIES).not.toContain("order_soft");
+    for (const f of BLOCKING_FAMILIES) {
+      expect(REPAIR_FAMILIES as readonly RepairFamily[]).toContain(f);
+    }
+  });
+});
 
 describe("minimal movement", () => {
   it(

@@ -290,6 +290,11 @@ describe("repairAndVerify", () => {
       expect(typeof mod.repairSchedule).toBe("function");
       expect(typeof mod.buildDomains).toBe("function");
       expect(typeof mod.loadZ3).toBe("function");
+      // `repair.ts` re-exports these from `repair-domain.ts` and the barrel
+      // `export *`s both files. Same declaration, so the name resolves rather
+      // than going ambiguous — which is the thing worth a test.
+      expect(mod.REPAIR_FAMILIES).toContain("order_soft");
+      expect(mod.BLOCKING_FAMILIES).toContain("court");
       expect(z3.z3LoadCount()).toBe(0);
     });
   });
