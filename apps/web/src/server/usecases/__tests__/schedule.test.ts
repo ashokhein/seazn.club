@@ -548,3 +548,55 @@ describe.skipIf(!HAS_DB)("official conflicts on the board", () => {
     expect(conflicts.find((c) => c.code === "warn.official_declined")!.blocking).toBe(false);
   });
 });
+
+// W2 (#397): ONE organisation timezone governs every temporal decision in the
+// AI scheduling pack, while a division that already holds its own tz keeps
+// winning for DISPLAY. Both answers have to be available on the settings row or
+// the pack cannot honour the rule.
+describe.skipIf(!HAS_DB)("loadSettings resolves the organisation zone separately (#397)", () => {
+  async function seedDivisionWithOrgTz(orgTz: string | null): Promise<{
+    auth: AuthCtx;
+    divisionId: string;
+  }> {
+    const { auth } = await seedOrg("pro");
+    await sql`update organizations set timezone = ${orgTz} where id = ${auth.orgId}`;
+    const comp = await createCompetition(auth, {
+      name: "TZ Cup",
+      visibility: "public",
+      branding: {},
+    });
+    const division = await createDivision(auth, comp.id, {
+      name: "Open",
+      slug: "open",
+      sport_key: "generic",
+      variant_key: "score",
+      config: DIVISION_CONFIG,
+      eligibility: [],
+    });
+    return { auth, divisionId: division.id };
+  }
+
+  it("returns the org zone in orgTz even when the division overrides tz", async () => {
+    const { auth, divisionId } = await seedDivisionWithOrgTz("Europe/London");
+    await sql`
+      insert into schedule_settings (division_id, config, tz, updated_at)
+      values (${divisionId}, ${sql.json({})}, 'Europe/Madrid', now())
+      on conflict (division_id) do update set tz = excluded.tz`;
+
+    const settings = await getScheduleSettings(auth, divisionId);
+    expect(settings.tz).toBe("Europe/Madrid"); // display lane, unchanged
+    expect(settings.orgTz).toBe("Europe/London"); // governing lane, new
+  });
+
+  it("falls back to UTC when the organisation has no timezone", async () => {
+    const { auth, divisionId } = await seedDivisionWithOrgTz(null);
+    const settings = await getScheduleSettings(auth, divisionId);
+    expect(settings.orgTz).toBe("UTC");
+  });
+
+  it("falls back to UTC when the organisation timezone is not a valid IANA id", async () => {
+    const { auth, divisionId } = await seedDivisionWithOrgTz("Pacific/Atlantis");
+    const settings = await getScheduleSettings(auth, divisionId);
+    expect(settings.orgTz).toBe("UTC");
+  });
+});

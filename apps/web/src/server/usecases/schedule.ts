@@ -76,6 +76,11 @@ export interface ScheduleSettingsOut {
   config: ScheduleConfig;
   /** RESOLVED venue zone (V305): stored division tz → org timezone → 'UTC'. */
   tz: string;
+  /** The ORGANISATION zone, resolved independently of the division's own (#397).
+   *  W2 makes this the one clock all temporal math runs in — day boundaries,
+   *  weekday targets, session hours, output offsets — while `tz` above stays the
+   *  display lane a division may override. */
+  orgTz: string;
   updated_at: string;
 }
 
@@ -155,6 +160,10 @@ export async function loadSettings(tx: Tx, divisionId: string): Promise<Schedule
     // A division that already holds its own tz keeps winning, silently and
     // forever — the console can no longer set one, but it must never move.
     tz: resolveVenueTz(row?.tz, row?.org_tz),
+    // Deliberately NOT resolveVenueTz(row?.tz, …): the division override must not
+    // leak into the governing clock, or two divisions of one competition would
+    // disagree about which calendar day a fixture is on (#397, design §2.1).
+    orgTz: resolveVenueTz(null, row?.org_tz),
     updated_at: row?.updated_at ?? new Date(0).toISOString(),
   };
 }
