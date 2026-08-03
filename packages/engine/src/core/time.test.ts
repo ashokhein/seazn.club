@@ -82,9 +82,48 @@ describe("addDuration", () => {
     });
   });
 
-  it("is total — the result is always a valid GameTime", () => {
-    expect(GameTime.safeParse(addDuration({ period: "P1", elapsed: 10 }, -100)).success).toBe(true);
-    expect(addDuration({ period: "P1", elapsed: 10 }, -100).elapsed).toBe(0);
+  it("truncates a fractional duration — seconds are the engine's only unit", () => {
+    expect(addDuration({ period: "P1", elapsed: 10 }, 120.7)).toEqual({
+      period: "P1",
+      elapsed: 130,
+    });
+  });
+
+  it("THROWS on a negative duration rather than flooring to the period start", () => {
+    // Flooring produced `elapsed: 0` — an expiresAt at the period start, swept
+    // as expired by the very next stamp. A penalty that silently never runs is
+    // strictly worse than a rejected event, and nothing legitimately asks for a
+    // negative duration: every caller is a suspension length.
+    for (const seconds of [-1, -100, -0.5]) {
+      let caught: unknown;
+      try {
+        addDuration({ period: "P1", elapsed: 10 }, seconds);
+        expect.unreachable(`addDuration should have rejected ${seconds}`);
+      } catch (err) {
+        caught = err;
+      }
+      expect(EngineError.is(caught, "INVALID_EVENT")).toBe(true);
+    }
+  });
+
+  it("THROWS on a non-finite duration", () => {
+    // Math.trunc(Infinity) is Infinity, which GameTime then rejects — so the
+    // "always a valid GameTime" claim was false anyway. Fail where the bad
+    // number entered, not two layers later.
+    for (const seconds of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(() => addDuration({ period: "P1", elapsed: 10 }, seconds)).toThrow(EngineError);
+    }
+    expect(() =>
+      addDuration({ period: "P1", elapsed: 10 }, undefined as unknown as number),
+    ).toThrow(EngineError);
+  });
+
+  it("returns a valid GameTime for every duration it accepts", () => {
+    for (const seconds of [0, 1, 120, 7530]) {
+      expect(GameTime.safeParse(addDuration({ period: "P1", elapsed: 10 }, seconds)).success).toBe(
+        true,
+      );
+    }
   });
 });
 

@@ -17,9 +17,17 @@
 //     intervened, because penalty time only runs while play runs (§1.2). Real
 //     elapsed time remains available from the envelope's `recordedAt` delta.
 //
-// Every export is pure and total: no throws except the one documented
-// `UNKNOWN_PHASE`, no I/O, no hidden state, and a defined result for every
-// input the type system admits.
+// Every export is pure: no I/O, no hidden state, same inputs → same result.
+// Most are total; three deliberately are NOT, and each throws an `EngineError`
+// rather than coercing, because the coerced value was silently wrong rather
+// than merely imprecise:
+//
+//   compareGameTime  UNKNOWN_PHASE  — a period outside the declared order
+//   addDuration      INVALID_EVENT  — a negative or non-finite duration
+//   remainingOf      INVALID_EVENT  — a non-finite period length
+//
+// `formatElapsed` and `parseElapsed` stay total: they are the manual-entry
+// display and input path (§4), where junk is an expected input.
 import { z } from "zod";
 import { EngineError } from "./errors.ts";
 
@@ -90,10 +98,25 @@ function unknownPhase(period: string, phaseOrder: readonly string[]): EngineErro
  * needs `periodSeconds` to become required — a product decision this wave does
  * not force.
  *
- * Floors at zero so the result is always a valid `GameTime` (totality).
+ * THROWS `INVALID_EVENT` for a negative or non-finite duration, rather than
+ * coercing. This is the one place totality is the wrong trade. Flooring a
+ * negative result at zero produced an `expiresAt` at the *period start*, which
+ * the very next stamp sweeps as already expired — a penalty that silently never
+ * runs, invisible in the state and invisible in a golden. And the claim of
+ * totality was never true for `Infinity` anyway: `Math.trunc(Infinity)` is
+ * `Infinity`, which `GameTime` rejects two layers later, far from the caller
+ * that produced it. Nothing legitimately passes either: every caller is a
+ * suspension length. A fractional duration is truncated — seconds are the
+ * engine's only unit (§2).
  */
 export function addDuration(at: GameTime, seconds: number): GameTime {
-  return { period: at.period, elapsed: Math.max(0, at.elapsed + Math.trunc(seconds || 0)) };
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    throw new EngineError("INVALID_EVENT", `duration must be a non-negative finite number of seconds, got ${String(seconds)}`, {
+      seconds,
+      at,
+    });
+  }
+  return { period: at.period, elapsed: at.elapsed + Math.trunc(seconds) };
 }
 
 /**
