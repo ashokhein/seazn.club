@@ -115,7 +115,11 @@ describe("slotFixtures — greedy placement (spec 05 §2.6)", () => {
       config: baseConfig({ horizonMinutes: 10 }),
     });
     expect(assignments).toHaveLength(1);
-    expect(conflicts).toEqual([{ fixtureId: "f2", reason: "no_slot", detail: expect.any(String) }]);
+    // `rule: "CAP"` since #399: nothing was placed because capacity ran out, and
+    // no single rule was broken — CAP says exactly that.
+    expect(conflicts).toEqual([
+      { fixtureId: "f2", reason: "no_slot", detail: expect.any(String), rule: "CAP" },
+    ]);
   });
 });
 

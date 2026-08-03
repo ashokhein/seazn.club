@@ -117,12 +117,76 @@ export type ConflictReason =
   | "instruction"
   | "order"; // scheduled before a fixture that feeds it (doc 12 §2; blocks when direct)
 
+/** The rule vocabulary the scheduling prompts teach (H1–H8), so a repair round
+ *  is handed the token it was taught rather than a word of our own. `CAP` is not
+ *  a rule: when demand exceeds capacity no single rule is broken — the schedule
+ *  simply cannot exist — so `no_slot` and unschedulable rows carry it instead of
+ *  a code that would misdirect the repair (#399, design §4.1). */
+export type RuleCode = "H2" | "H3" | "H4" | "H5" | "H6" | "H8" | "CAP";
+
+/** Fixed and exhaustive, defined once beside the union rather than at each call
+ *  site — the `Record<ConflictReason, …>` key type is what keeps a new reason
+ *  from shipping code-less. */
+export const RULE_BY_REASON: Record<ConflictReason, RuleCode> = {
+  court: "H2",
+  blackout: "H3",
+  window: "H3",
+  rest: "H4",
+  person_overlap: "H4",
+  start_window: "H5",
+  order: "H6",
+  instruction: "H8",
+  no_slot: "CAP",
+};
+
 export interface Conflict {
   fixtureId: string;
   reason: ConflictReason;
   detail?: string;
   /** `order` only: true when the dependency is a direct feed (blocks, doc 12 §2). */
   direct?: boolean;
+  /** The rule the prompt taught for this reason (#399). Stamped at one choke
+   *  point per producer, never at the push site. */
+  rule?: RuleCode;
+}
+
+/** Stamped where a producer RETURNS, not where it pushes: a new
+ *  `conflicts.push` would otherwise ship without a code and the repair round
+ *  would quietly fall back to interpreting prose. */
+const withRule = (c: Conflict): Conflict => ({ ...c, rule: RULE_BY_REASON[c.reason] });
+
+/** Stable conflict identity — the key `verifyJoint`'s dedupe and the joint apply
+ *  gate already use. `detail` is deliberately part of it: a worse breach writes a
+ *  different detail string, so "worsened" needs no second comparison. */
+export const conflictKey = (c: Conflict): string => `${c.fixtureId}|${c.reason}|${c.detail ?? ""}`;
+
+/**
+ * The conflicts a change INTRODUCED OR WORSENED — a multiset difference, not a
+ * set one. Two instances of a key after and one before means the change added a
+ * second, and one instance is returned.
+ *
+ * This is what keeps a dirty board editable (#399). Boards published before this
+ * wave may carry person overlaps, because those were warnings all along. Under
+ * an absolute rule the organiser's next edit to such a board would 409 and they
+ * would be stuck — unable to fix anything precisely because it is already wrong.
+ */
+export function deltaConflicts(
+  before: readonly Conflict[],
+  after: readonly Conflict[],
+): Conflict[] {
+  const budget = new Map<string, number>();
+  for (const c of before) {
+    const key = conflictKey(c);
+    budget.set(key, (budget.get(key) ?? 0) + 1);
+  }
+  const out: Conflict[] = [];
+  for (const c of after) {
+    const key = conflictKey(c);
+    const left = budget.get(key) ?? 0;
+    if (left > 0) budget.set(key, left - 1);
+    else out.push(c);
+  }
+  return out;
 }
 
 /** Bracket dependency for order validation: `fixtureId` must not start before
@@ -422,7 +486,7 @@ export function slotFixtures(input: SlotInput): SlotResult {
     commit(f, best.court, best.start);
   }
 
-  return { assignments: placed, conflicts };
+  return { assignments: placed, conflicts: conflicts.map(withRule) };
 }
 
 // Full conflict report over a fixed board (the drag-and-drop validate pass, doc
@@ -675,7 +739,7 @@ if (tz !== undefined) {
     }
   }
 }
-  return conflicts;
+  return conflicts.map(withRule);
 }
 
 export function validateAssignments(
@@ -838,5 +902,5 @@ export function validateAssignments(
       });
     }
   }
-  return conflicts;
+  return conflicts.map(withRule);
 }
