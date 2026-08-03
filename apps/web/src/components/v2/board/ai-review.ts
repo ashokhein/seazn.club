@@ -88,7 +88,17 @@ export function reviewRowCount(rows: ReviewRow[]): number {
   return rows.length;
 }
 
-/** The rows that point at a fixture — what the grid pulse can highlight. */
-export function reviewRowFixtureIds(rows: ReviewRow[]): string[] {
-  return rows.flatMap((r) => (r.kind === "assumption" ? [] : [r.fixtureId]));
+/**
+ * The fixtures the grid pulse can actually light up.
+ *
+ * Warnings only, and that is the whole point. The pulse highlights BLOCKS on
+ * the grid, which exist for fixtures the plan placed: a warning is the verifier
+ * flagging a placement, so it has one. An unschedulable fixture is by
+ * definition not in the proposal (the server dedupes the two against each
+ * other) and stays in the tray — the review card says so in as many words — and
+ * an assumption is about no fixture at all. Feeding either to a button labelled
+ * "Show these on the board" is a control that points at nothing.
+ */
+export function reviewRowPulseIds(rows: ReviewRow[]): string[] {
+  return rows.flatMap((r) => (r.kind === "warning" ? [r.fixtureId] : []));
 }

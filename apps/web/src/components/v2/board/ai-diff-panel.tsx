@@ -18,6 +18,7 @@ import {
   type AiConsoleFixture,
   type AiDiffSlot,
 } from "./ai-diff";
+import { Marker } from "./ai-marker";
 import { CONFLICT_LABEL } from "./types";
 
 export function AiDiffPanel({
@@ -312,19 +313,5 @@ function DiffRow({
       <div className="mt-0.5 flex flex-wrap items-center gap-1.5 pl-0.5 text-[11px]">{children}</div>
       {note && <p className="mt-0.5 text-[11px] italic text-slate-400">{note}</p>}
     </li>
-  );
-}
-
-/** The persistent JR/Final marker (§3) — independent of diff colour. */
-function Marker({ kind }: { kind: string }) {
-  const isFinal = kind === "FN";
-  return (
-    <span
-      className={`shrink-0 rounded px-1 text-[9px] font-bold leading-tight ${
-        isFinal ? "bg-purple-100 text-purple-700" : "bg-sky-100 text-sky-700"
-      }`}
-    >
-      {isFinal ? "FINAL" : "JR"}
-    </span>
   );
 }

@@ -6,7 +6,12 @@
 // drifting — a count read off `plan.warnings.length` is the same bug with a
 // bigger number.
 import { describe, expect, it } from "vitest";
-import { buildReviewRows, reviewRowCount, type ReviewSource } from "../ai-review";
+import {
+  buildReviewRows,
+  reviewRowCount,
+  reviewRowPulseIds,
+  type ReviewSource,
+} from "../ai-review";
 
 const plan: ReviewSource = {
   warnings: [{ fixtureId: "f1", reason: "rest", detail: "18 min short of 45" }],
@@ -74,5 +79,26 @@ describe("reviewRowCount", () => {
 
   it("is zero for no rows", () => {
     expect(reviewRowCount([])).toBe(0);
+  });
+});
+
+describe("reviewRowPulseIds", () => {
+  // W5 Task 5 must-fix 3. The pulse highlights blocks on the GRID. A warning is
+  // about a fixture the plan placed, so it has a block to light up; an
+  // unschedulable fixture is by definition not placed and sits in the tray, and
+  // an assumption is about no fixture at all. Feeding either to "Show these on
+  // the board" is a button that points at nothing.
+  it("offers only the fixtures the plan actually placed", () => {
+    expect(reviewRowPulseIds(buildReviewRows(plan))).toEqual(["f1"]);
+  });
+
+  it("is empty when nothing on the card is on the grid", () => {
+    const rows = buildReviewRows({
+      warnings: [],
+      unschedulable: plan.unschedulable,
+      assumptions: ["Read 'the weekend' as Sat + Sun."],
+    });
+    expect(rows).toHaveLength(2);
+    expect(reviewRowPulseIds(rows)).toEqual([]);
   });
 });

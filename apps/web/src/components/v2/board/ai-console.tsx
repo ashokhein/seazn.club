@@ -44,6 +44,8 @@ import { compileWishes, deriveFreeText, joinNonEmpty, type Wish } from "./wish-c
 import { compileOfficialsWishes, type OfficialsWish } from "./officials-wish-compile";
 import { AiTrace, type TraceEvent } from "./ai-trace";
 import { AiDiffPanel } from "./ai-diff-panel";
+import { AiReviewPanel } from "./ai-review-panel";
+import { buildReviewRows } from "./ai-review";
 import { AiOfficialsReview, type OfficialsRosterEntry } from "./ai-officials-review";
 import type { AiConsoleFixture } from "./ai-diff";
 import {
@@ -1252,7 +1254,11 @@ function buildScheduleTrace(
   return { events, flaggedIds };
 }
 
-function ScheduleStep({
+/** Exported for the render tests: its inputs are a raw plan and the board's
+ *  fixtures, and everything worth pinning — what the review card counts, what
+ *  it names — is derived from them, so calling it directly still pins the
+ *  derivation rather than handing the component its own answer. */
+export function ScheduleStep({
   state,
   dispatch,
   msg,
@@ -1276,6 +1282,10 @@ function ScheduleStep({
     () => (plan ? buildScheduleTrace(plan, courts, msg) : { events: [], flaggedIds: [] }),
     [plan, courts, msg],
   );
+  // One array for the review card and its count — built here so the panel and
+  // the number above it are the same list (#388). Before the early return: this
+  // is a hook.
+  const reviewRows = useMemo(() => (plan ? buildReviewRows(plan) : []), [plan]);
   if (!plan) return <Empty msg={msg} k="board.ai.schedule.empty" />;
 
   return (
@@ -1295,6 +1305,17 @@ function ScheduleStep({
         fixtures={fixtures}
         excluded={state.excludedFixtures}
         onToggleExclude={(fixtureId) => dispatch({ type: "TOGGLE_EXCLUDE", fixtureId })}
+      />
+
+      {/* Everything the run flagged, could not place, or assumed — one card,
+          one count (#388). It sits ABOVE the review note and the buttons
+          because it is the last thing the organiser should read before
+          choosing to apply, and below the diff because the diff is what
+          happened and this is what to look at. */}
+      <AiReviewPanel
+        rows={reviewRows}
+        fixtures={fixtures}
+        onPulse={(ids) => onPulse(ids)}
       />
 
       <p className="text-[11px] text-slate-500">{msg("board.ai.schedule.reviewNote")}</p>

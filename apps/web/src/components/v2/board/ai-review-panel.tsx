@@ -19,7 +19,8 @@ import { useMemo } from "react";
 import { useMsg, usePlural } from "@/components/i18n/dict-provider";
 import { blockingConflictCode, blockingConflictKey, type AiConsoleFixture } from "./ai-diff";
 import { DivisionChip } from "./ai-division-chip";
-import { reviewRowCount, reviewRowFixtureIds, type ReviewRow } from "./ai-review";
+import { Marker } from "./ai-marker";
+import { reviewRowCount, reviewRowPulseIds, type ReviewRow } from "./ai-review";
 import { CONFLICT_LABEL } from "./types";
 
 export function AiReviewPanel({
@@ -34,7 +35,8 @@ export function AiReviewPanel({
   fixtures: AiConsoleFixture[];
   /** Joint console only. Returns null when the division is unknown — never guess. */
   divisionFor?: (fixtureId: string) => { id: string; name: string } | null;
-  /** Highlight this card's fixtures on the grid. */
+  /** Highlight this card's PLACED fixtures on the grid. Offered only when the
+   *  card holds at least one — see `reviewRowPulseIds`. */
   onPulse?: (fixtureIds: string[]) => void;
 }) {
   const msg = useMsg();
@@ -43,6 +45,10 @@ export function AiReviewPanel({
   // Read once, from the array below. Every number this card shows is this one,
   // so the header and the list cannot disagree (#388).
   const count = reviewRowCount(rows);
+  // What "Show these on the board" would actually highlight. Empty means the
+  // card is all tray fixtures and assumptions, and the button is withheld
+  // rather than shown pointing at nothing.
+  const pulseIds = reviewRowPulseIds(rows);
 
   // A card with no rows is not an empty state worth drawing — a clean run has
   // nothing to review, and an empty amber box would say the opposite.
@@ -81,11 +87,11 @@ export function AiReviewPanel({
       data-review-count={count}
       className="rounded-lg border border-amber-200 bg-amber-50/60 p-3"
     >
-      {onPulse ? (
+      {onPulse && pulseIds.length > 0 ? (
         <button
           type="button"
           data-review-pulse="1"
-          onClick={() => onPulse(reviewRowFixtureIds(rows))}
+          onClick={() => onPulse(pulseIds)}
           className="flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 rounded text-left text-[11px] font-semibold uppercase tracking-wide text-amber-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
         >
           <span className="flex min-w-0 items-center gap-1.5">{headline}</span>
@@ -168,21 +174,5 @@ export function AiReviewPanel({
         })}
       </ul>
     </section>
-  );
-}
-
-/** The persistent JR/Final marker, as the diff panel draws it. Duplicated here
- *  rather than imported because `ai-diff-panel.tsx` keeps it private; W5 Task 5
- *  is the place to lift it into one module if it earns a third caller. */
-function Marker({ kind }: { kind: string }) {
-  const isFinal = kind === "FN";
-  return (
-    <span
-      className={`shrink-0 rounded px-1 text-[9px] font-bold leading-tight ${
-        isFinal ? "bg-purple-100 text-purple-700" : "bg-sky-100 text-sky-700"
-      }`}
-    >
-      {isFinal ? "FINAL" : "JR"}
-    </span>
   );
 }

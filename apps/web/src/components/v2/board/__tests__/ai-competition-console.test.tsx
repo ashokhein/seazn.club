@@ -20,6 +20,7 @@ import { DictProvider } from "@/components/i18n/dict-provider";
 import en from "@/dictionaries/en/ui.json";
 import { quoteRun, schedulingRungWeights } from "@/lib/ai-rung";
 import type { AiCompetitionPlanResponse } from "@/server/api-v1/schemas";
+import type { AiConsoleFixture } from "../ai-diff";
 import {
   AiCompetitionConsole,
   JointReviewStep,
@@ -314,6 +315,26 @@ const plan = (over: Partial<AiCompetitionPlanResponse> = {}): AiCompetitionPlanR
     ...over,
   }) as AiCompetitionPlanResponse;
 
+/** One fixture as the competition board hands it to the console — including the
+ *  division that owns it, which is the ONLY source for the chip on a row the
+ *  proposal never touched. */
+function jointFixture(id: string, divisionId: string, matchup: string): AiConsoleFixture {
+  return {
+    id,
+    division_id: divisionId,
+    stage_id: "st-1",
+    scheduled_at: null,
+    court_label: null,
+    code: "R1·1",
+    matchup,
+    isFinal: false,
+    isJunior: false,
+    status: "scheduled",
+    home_entrant_id: "en-a",
+    away_entrant_id: "en-b",
+  };
+}
+
 function review(
   over: Partial<Parameters<typeof JointReviewStep>[0]> = {},
 ): string {
@@ -453,18 +474,89 @@ describe("a person clash the plan only warns about but the apply refuses", () =>
     // (the skipped division, the court-name mismatch) and one that is reads as
     // a bug even when it is not. The fix is to show what is counted.
     const html = review({ plan: clash });
-    expect(html).toContain(tEn("board.ai.joint.warnings.other", { count: 3 }));
-    expect(html).toContain(enText["board.ai.joint.warningsTitle"]);
-    // One row per warning, each naming its own fixture.
-    expect([...html.matchAll(/data-warning-row="([^"]*)"/g)].map((m) => m[1])).toEqual([
-      "f2",
-      "f1",
-      "f2",
+    expect(html).toContain('data-review-count="3"');
+    // One row per warning, in the order the engine raised them.
+    expect([...html.matchAll(/data-review-row="([^"]*)"/g)].map((m) => m[1])).toEqual([
+      "warning",
+      "warning",
+      "warning",
     ]);
-    // …and no box at all when the engine raised none.
-    expect(review({ plan: plan({ warnings: [] }) })).not.toContain(
-      enText["board.ai.joint.warningsTitle"],
+    // …and no card at all when the engine raised none.
+    expect(review({ plan: plan({ warnings: [] }) })).not.toContain('data-review-count="');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The one count (#388)
+// ---------------------------------------------------------------------------
+
+describe("what the joint review says there is to review", () => {
+  const u1 = { fixture_id: "f7", reason: "no court free in the window", rule: "CAP" as const };
+
+  /** Just the review card. The division LEDGER above it wears a chip per
+   *  selected division, so an unscoped `data-division-chip` probe is answered
+   *  by the ledger and says nothing about the rows. The card is the step's only
+   *  `<section>`. */
+  function card(html: string): string {
+    const from = html.indexOf("<section");
+    expect(from).toBeGreaterThan(-1);
+    return html.slice(from, html.indexOf("</section>", from));
+  }
+
+  // #388 in one assertion. The old header read `plan.warnings.length` and said
+  // "1 warning to review" while three amber rows sat underneath it — the
+  // warning, the fixture nobody could place, and the architect's assumption.
+  it("counts assumptions and unschedulable fixtures, not just warnings", () => {
+    const html = review({
+      plan: plan({
+        warnings: [{ fixtureId: "f1", reason: "rest", detail: "20 minutes" }],
+        unschedulable: [u1],
+        assumptions: ["Read 'the weekend' as Sat + Sun."],
+      } as Partial<AiCompetitionPlanResponse>),
+    });
+    expect(html).toContain('data-review-count="3"');
+    // The literal sentence the old header rendered — `board.ai.joint.warnings.*`
+    // is retired, so resolving it through the dict would only echo the key back
+    // and assert nothing.
+    expect(html).not.toContain("1 warning to review");
+    // Exactly one number on the card, and it is that one.
+    expect(html.match(/data-review-count="/g) ?? []).toHaveLength(1);
+    expect([...html.matchAll(/data-review-row="([^"]*)"/g)].map((m) => m[1])).toEqual([
+      "warning",
+      "unschedulable",
+      "assumption",
+    ]);
+  });
+
+  // Must-fix 1. `plan.proposal` and `plan.unschedulable` are mutually exclusive
+  // — the server dedupes one against the other — so a division map built from
+  // the proposal returns null for every unschedulable row. On the joint console
+  // the chip is the ONLY thing naming a row's division, so those rows would
+  // lose the one piece of context they most need. f7 is deliberately absent
+  // from the proposal and present on the board.
+  it("names the division of a fixture the plan could not place", () => {
+    const row = card(
+      review({
+        plan: plan({ unschedulable: [u1] } as Partial<AiCompetitionPlanResponse>),
+        fixtures: [jointFixture("f7", "d2", "Osei vs Pereira")],
+      }),
     );
+    expect(row).toContain('data-division-chip="');
+    expect(row).toContain("Under 14s");
+    expect(row).toContain("Osei vs Pereira");
+  });
+
+  // Never guessed. A fixture the board does not hold has no honest division, so
+  // the row renders without a chip rather than borrowing a neighbour's.
+  it("omits the chip when the board does not know the fixture's division", () => {
+    const row = card(
+      review({
+        plan: plan({ unschedulable: [u1] } as Partial<AiCompetitionPlanResponse>),
+        fixtures: [],
+      }),
+    );
+    expect(row).toContain('data-review-count="1"');
+    expect(row).not.toContain('data-division-chip="');
   });
 });
 

@@ -250,6 +250,10 @@ export function consoleFixtures(
     return {
       id: f.id,
       stage_id: f.stage_id,
+      // Carried for the JOINT review card, whose chip is the only thing naming
+      // a row's division — including for fixtures the plan could not place,
+      // which are absent from the proposal it used to be read from.
+      division_id: f.division_id,
       scheduled_at: f.scheduled_at ? new Date(f.scheduled_at).toISOString() : null,
       court_label: f.court_label,
       code: `R${f.round_no}·${f.seq_in_round}`,

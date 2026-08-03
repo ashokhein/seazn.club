@@ -21,8 +21,12 @@ const frDict = fr as Record<string, string>;
 const F1 = "11111111-1111-1111-1111-111111111111";
 const F2 = "22222222-2222-2222-2222-222222222222";
 
+// `person_overlap`, not `rest`: `board.conflict.warn.rest` is literally the
+// string "rest", identical to the engine's own token, so an implementation that
+// rendered `row.reason` raw would satisfy a localization assertion made against
+// it. "person overlap" ≠ "person_overlap", so the assertion has teeth.
 const source: ReviewSource = {
-  warnings: [{ fixtureId: F1, reason: "rest", detail: "18 min short of 45" }],
+  warnings: [{ fixtureId: F1, reason: "person_overlap", detail: "18 min short of 45" }],
   unschedulable: [{ fixture_id: F2, reason: "no court free in the window", rule: "CAP" }],
   assumptions: ["Read 'the weekend' as Sat + Sun."],
 };
@@ -92,12 +96,18 @@ describe("AiReviewPanel", () => {
     // The engine hands us the raw camelCase token `rest`. Rendering it would
     // leak English into fr/es/nl — the diff panel's own regression (#N/A, v4
     // Task 13 review) reproduced on a new surface.
+    const key = "board.conflict.warn.person_overlap";
+    // The label must differ from the raw token, or rendering `row.reason`
+    // untouched would pass this test in every locale.
+    expect(enDict[key]).not.toBe("person_overlap");
+
     const enHtml = render(<AiReviewPanel rows={rows} fixtures={fixtures} />);
-    expect(enHtml).toContain(enDict["board.conflict.warn.rest"]!);
+    expect(enHtml).toContain(enDict[key]!);
+    expect(enHtml).not.toContain("person_overlap");
 
     const frHtml = render(<AiReviewPanel rows={rows} fixtures={fixtures} />, frDict, "fr");
-    expect(frDict["board.conflict.warn.rest"]).not.toBe(enDict["board.conflict.warn.rest"]);
-    expect(frHtml).toContain(frDict["board.conflict.warn.rest"]!);
+    expect(frDict[key]).not.toBe(enDict[key]);
+    expect(frHtml).toContain(frDict[key]!);
   });
 
   it("says what happens to an unschedulable fixture, and names the rule", () => {
@@ -140,6 +150,25 @@ describe("AiReviewPanel", () => {
     expect(without).not.toContain('data-review-pulse="');
   });
 
+  // Must-fix 3. "Show these on the board" has to point at something. An
+  // unschedulable fixture is not on the grid — the card's own copy says it
+  // stays in the tray — and an assumption is about no fixture at all, so a card
+  // holding only those offers no pulse rather than a button that lights nothing.
+  it("withholds the pulse when nothing on the card is on the grid", () => {
+    const trayOnly = buildReviewRows({
+      warnings: [],
+      unschedulable: source.unschedulable,
+      assumptions: source.assumptions,
+    });
+    const html = render(
+      <AiReviewPanel rows={trayOnly} fixtures={fixtures} onPulse={() => {}} />,
+    );
+    // The card is still there — there are two things to review.
+    expect(html).toContain('data-review-count="2"');
+    expect(html).not.toContain('data-review-pulse="');
+    expect(html).not.toContain(enDict["board.ai.review.pulse"]!);
+  });
+
   it("falls back to a short id when the fixture is not on the board", () => {
     const html = render(<AiReviewPanel rows={rows} fixtures={[]} />);
     expect(html).toContain(F1.slice(0, 8));
@@ -160,7 +189,9 @@ describe("AiReviewPanel", () => {
     const items = html.match(/<li[^>]*class="([^"]*)"/g) ?? [];
     expect(items).toHaveLength(3);
     for (const li of items) expect(li).toContain("flex items-start");
-    expect(html).toContain("min-w-0 flex-1 truncate");
+    // Both fixture rows, not "at least one somewhere" — a `toContain` here was
+    // satisfied by a single element and said nothing about the other row.
+    expect(html.match(/min-w-0 flex-1 truncate/g) ?? []).toHaveLength(2);
     // The rule chip must not be squeezed to nothing by a long matchup.
     expect(html).toMatch(/class="shrink-0[^"]*"[^>]*>CAP</);
   });

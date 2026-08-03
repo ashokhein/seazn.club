@@ -52,6 +52,8 @@ import {
   type JointApplyOutcome,
 } from "./ai-joint-apply";
 import { blockingConflictKey, type AiConsoleFixture } from "./ai-diff";
+import { AiReviewPanel } from "./ai-review-panel";
+import { buildReviewRows } from "./ai-review";
 
 /** One division as the competition board holds it. Everything here is either a
  *  pricing input, a gate the server enforces, or something the reader has to be
@@ -352,7 +354,22 @@ export function JointReviewStep({
   const plural = usePlural();
   const nameOf = new Map(divisions.map((d) => [d.id, d.name]));
   const meta = new Map(fixtures.map((f) => [f.id, f]));
-  const divisionOf = new Map(plan.proposal.map((p) => [p.fixture_id, p.division_id]));
+  // Which division owns a fixture. The BOARD first, then the proposal.
+  //
+  // The proposal alone is not enough and never was: it carries `division_id`
+  // for everything it placed, and the server dedupes `unschedulable` against
+  // exactly that list — so a proposal-derived map answers null for every row on
+  // the review card that the run could not place, which on this console is the
+  // only surface where the chip is the sole thing naming the division. The
+  // board holds every fixture, placed or not, so it answers those. The
+  // proposal stays as the fallback for a fixture the board no longer holds.
+  const divisionOf = new Map<string, string>(plan.proposal.map((p) => [p.fixture_id, p.division_id]));
+  for (const f of fixtures) if (f.division_id) divisionOf.set(f.id, f.division_id);
+  /** Never guessed: a fixture whose division is unknown gets no chip at all. */
+  const divisionFor = (fixtureId: string): { id: string; name: string } | null => {
+    const id = divisionOf.get(fixtureId);
+    return id ? { id, name: nameOf.get(id) ?? id } : null;
+  };
   const setAside = new Set(excluded);
 
   // Applied — the confirmation, then the restore point that makes it reversible.
@@ -481,6 +498,10 @@ export function JointReviewStep({
     }))
     .filter((d) => nameOf.has(d.id));
   const clash = personClashRisk(plan, divisions, selected);
+  // One array for the review card and its count — the same builder the division
+  // console uses, so the two consoles cannot say different things about the
+  // same run.
+  const reviewRows = buildReviewRows(plan);
 
   return (
     <div className="space-y-3">
@@ -524,52 +545,12 @@ export function JointReviewStep({
         </Caution>
       )}
 
-      {/* The engine's own warnings, LISTED. A bare count sitting above amber
-          rows that are not warnings (the skipped division, the court-name
-          mismatch) reads as a number that disagrees with the screen — and it
-          also hid every warning that was not a person clash. Same row shape as
-          the blocked list, minus the set-aside control: these do not stop an
-          apply, so there is nothing to decide. */}
-      {plan.warnings.length > 0 && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-800">
-            {msg("board.ai.joint.warningsTitle")}
-          </p>
-          <p className="mt-0.5 text-[11px] text-amber-800/80">
-            {plural("board.ai.joint.warnings", plan.warnings.length)}
-          </p>
-          <ul className="mt-2 space-y-1.5">
-            {plan.warnings.map((w, i) => {
-              const f = meta.get(w.fixtureId);
-              const divisionId = divisionOf.get(w.fixtureId);
-              return (
-                <li
-                  key={`${w.fixtureId}-${w.reason}-${i}`}
-                  data-warning-row={w.fixtureId}
-                  className="rounded-md border border-amber-100 bg-white px-2 py-1.5"
-                >
-                  {/* The MATCH is the subject and gets the full row; the
-                      division and the reason qualify it underneath. Chip-first
-                      crushed the matchup to three characters at 375px once a
-                      division had a real-world name. */}
-                  <p className="truncate text-xs text-slate-700">
-                    {f?.matchup ?? w.fixtureId.slice(0, 8)}
-                  </p>
-                  <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-amber-800">
-                    {divisionId && (
-                      <DivisionChip id={divisionId} name={nameOf.get(divisionId) ?? divisionId} />
-                    )}
-                    <span className="min-w-0 truncate">
-                      {msg(blockingConflictKey(w.reason))}
-                      {w.detail ? ` — ${w.detail}` : ""}
-                    </span>
-                  </p>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
+      {/* Everything the run flagged, could not place, or assumed — the SAME
+          card the division console draws, from the same builder, with the same
+          count (#388). It replaced a hand-rolled warnings list whose header
+          read `plan.warnings.length`, so the number spoke for one of the three
+          kinds of row underneath it. */}
+      <AiReviewPanel rows={reviewRows} fixtures={fixtures} divisionFor={divisionFor} />
 
       {plan.blocking.length > 0 && (
         <div className="rounded-lg border border-red-200 bg-red-50/60 p-3">
