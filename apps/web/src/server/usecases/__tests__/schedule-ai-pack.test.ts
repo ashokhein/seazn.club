@@ -1099,6 +1099,39 @@ describe.skipIf(!HAS_DB)("pack calendar anchor (#397)", () => {
     expect(pack.draft[0]!.scheduled_at).toBe("2026-08-07T08:00:00+01:00");
   });
 
+  it("anchors the draft inside a window the INSTRUCTION stated, not the inferred one (#398)", async () => {
+    // A compiled date range replaces the inferred window. Anchored on the
+    // inferred start, every drafted card arrives outside `pack.window` — the
+    // model is then asked to repair a board we drew wrong.
+    const { auth, divisionId } = await seedRrBoard();
+    await setConfig(divisionId, NO_ANCHOR_CONFIG);
+    await clearBoard(divisionId);
+    const { pack } = await buildSchedulePack(auth, divisionId, {
+      ...OPTS,
+      instruction: "run everything from tomorrow till Friday",
+      raw: {
+        hard: [
+          {
+            type: "window",
+            start: { kind: "tomorrow" },
+            end: { kind: "weekday", weekday: "FRI" },
+            scope: { kind: "competition" },
+          },
+        ],
+        soft: [],
+        unparsed: [],
+      },
+    });
+
+    expect(pack.draft.length).toBeGreaterThan(0);
+    for (const d of pack.draft) {
+      expect(d.scheduled_at).not.toBeNull();
+      expect(d.scheduled_at! >= pack.window.start).toBe(true);
+    }
+    // The first draft sits on the window's first day, at the first session hour.
+    expect(pack.draft[0]!.scheduled_at!.slice(0, 10)).toBe(pack.window.start.slice(0, 10));
+  });
+
   it("nulls an epoch sentinel already persisted on a fixture", async () => {
     // A repair round over a board written before this fix. A null draft time is
     // an honest 'unplaced'; 1970-01-01 is a lie the model anchors on.

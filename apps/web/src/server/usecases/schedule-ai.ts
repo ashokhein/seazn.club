@@ -828,6 +828,11 @@ export async function buildSchedulePack(
             end: zonedIso(dayEnd(dayKeyInTz(windowEndMs, orgTz)), orgTz),
           };
     assumptions.push(...resolved.assumptions);
+    // The greedy draft anchors on the window the pack actually ships. Anchored
+    // on the inferred start instead, "from tomorrow till Friday" hands the model
+    // a draft that sits OUTSIDE `pack.window` — every card arrives pre-flagged,
+    // and the model is asked to repair a board we drew wrong.
+    const draftAnchorMs = resolved.windowMs?.from ?? windowStartMs;
 
     // Draft: generate → greedy slotFixtures; refine → the prior proposal
     // verbatim; repair → the movable set's current persisted slots.
@@ -891,7 +896,7 @@ export async function buildSchedulePack(
         // org zone.
         config: toSlotConfig(
           settings,
-          zonedTimeToUtc(dayKeyInTz(windowStartMs, orgTz), DEFAULT_SESSION_HOURS.start, orgTz),
+          zonedTimeToUtc(dayKeyInTz(draftAnchorMs, orgTz), DEFAULT_SESSION_HOURS.start, orgTz),
         ),
         // extraExisting is the #350 joint pack's already-drafted divisions;
         // empty for every single-division caller.
