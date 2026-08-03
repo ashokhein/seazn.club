@@ -53,3 +53,6 @@ packages/engine/sim-report.json
 
 # Session screenshots keep landing in the repo root — never track them.
 /*.png
+
+# Turborepo
+.turbo
