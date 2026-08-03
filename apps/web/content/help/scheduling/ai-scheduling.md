@@ -51,9 +51,31 @@ Two things it deliberately will **not** turn into a rule, because it could not e
 
 **Anything that cannot become a rule is shown back to you, in your own words.** A preference like "keep the mornings relaxed" is passed to the AI to take into account, and wording nobody can turn into a checkable rule is listed as-is. We never invent a rule you did not ask for, and never present something as enforced when nothing is enforcing it.
 
-If your instruction cannot be read at all, the run still goes ahead — as a plain-language request, the way it worked before — and you are told that is what happened.
+## Check what this means
 
-Reading your instruction is **free**. It happens before anything is charged, and it uses no credit.
+You never have to pay to find out how your sentence was read. The console's first button is **Check what this means**: it reads your instruction and shows you the result, and **no credit is spent**. Only the card it opens can start a run.
+
+The card is a receipt with up to five parts:
+
+- **Read as** — the rules the checker will enforce. A proposal that breaks one comes back named in the warnings and the AI is asked to fix it. This is the part that binds.
+- **Passed on, never checked** — the wishes. We hand these to the AI word for word, and then nothing afterwards checks whether it listened. A timetable that ignores one still passes. It is deliberately not called a rule.
+- **Couldn't use** — your own words, quoted exactly as you typed them. This became no rule at all. We quote rather than paraphrase, because rewriting something we failed to understand would suggest we understood it.
+- **Assumed** — the readings we had to choose. "Friday" means any Friday in the run, and we name which one is next; a date range too tight for a per-day limit is read as running a week longer, and says so.
+- **Window** — the dates your instruction claimed, in your organisation's timezone. It is blank when your instruction claimed none, and is never quietly back-filled with the run's default dates.
+
+Then you choose:
+
+- **Run with these rules** starts the run and charges the credits named on the button — the same number the Run cost card above it shows.
+- **Back to the brief** spends nothing at all. Nothing is sent, nothing is charged, and your sentence is still in the box to edit.
+
+**What you confirm is what runs.** The run uses the reading you were shown rather than reading your sentence a second time, so the rules cannot change between the card and the timetable. Edit the brief after checking it and the card steps aside: you are asked to check the new sentence rather than having a different set of rules run behind a confirmation you gave for the old one.
+
+Two cases the card says out loud rather than hiding:
+
+- **Nothing in your instruction can be enforced.** The AI still reads your words, but no rule will be checked. Better to know before the run than to wonder afterwards why nothing held.
+- **We couldn't read it at all.** You are offered **Send it as written** — the instruction goes to the AI as a plain-language request, the way it worked before, with nothing pretending to be enforced — or you can edit and try again. We never take that fallback for you.
+
+Checking uses no credit, but it is not weightless: each check uses one of your **five scheduling runs an hour** for that division, because it does put your sentence in front of a model.
 
 ## The dates a plan covers
 
@@ -103,6 +125,20 @@ Because the list is everyone who *could* reach the slot rather than who will, th
 If the same name appears on two player records — the same person entered twice, or registered once by a club and once by themselves — the scheduler treats them as **one player** and keeps their matches apart. Nothing is merged: the two records stay separate on your rosters, results and reports, and nothing is written to them. The assumption lives only inside the run, for as long as it takes to lay out the timetable.
 
 So a clash warning may name a player who does not look like they are in that match. That is usually one of these two rules talking — an undecided slot they could still reach, or a second record under the same name — and it is not a bug. The warning is telling you the timetable is unsafe as it stands; if you know the two names really are different people, you can apply the schedule anyway.
+
+## What to review after a run
+
+Under the proposal is a **To review** panel, headed with the number of things in it. That count is the length of the list beneath it and nothing else, so it can never disagree with what you can see. None of these rows block the apply — they are the things worth a look before you write the timetable to the board.
+
+Three kinds of row appear there:
+
+- **Warnings** — the checker flagged a placement but is letting it through: a match outside the window, a rest gap shorter than you asked for, a soft clash. Each names the fixture, and one tap highlights them all on the board.
+- **Left out — stays in the tray** — a fixture the run could not place anywhere legal, with the reason and the rule it ran out of. Applying does **not** invent a slot for it: it stays unscheduled in the tray exactly as it was, and you can place it by hand, widen the window or play hours, and run again. A schedule that came back with three fixtures left out puts three matches back in the tray, not on the board.
+- **Assumed** — what the AI assumed while it was placing, in its own words.
+
+The **Assumed** rows here are not the ones on the preview card. The card's are ours, worked out before anything ran — how we read "Friday", which week your dates landed in. These are the AI's, about the timetable it just built. They live in different places because they were decided at different times, by different things.
+
+On the competition board the same panel carries a **division chip** on every row, so a warning about one division is never read as a warning about the one next to it.
 
 ## What a run costs
 

@@ -6,7 +6,11 @@
 // must be the same one the target server uses.
 import { createHmac } from "node:crypto";
 import postgres from "postgres";
-import { startAiFixtureServer, type AiFixtureServer } from "../apps/web/e2e/ai-fixture-server.ts";
+import {
+  startAiFixtureServer,
+  FIXTURE_COMPILE_BRIEF,
+  type AiFixtureServer,
+} from "../apps/web/e2e/ai-fixture-server.ts";
 
 const BASE = process.env.SMOKE_BASE ?? "http://localhost:3000";
 
@@ -5542,6 +5546,19 @@ interface AiPlanResponseLite {
   officials_coverage: unknown;
 }
 
+/** W5 (#400): `AiParsePreviewResponse`, as much of it as smoke asserts on. */
+interface AiPreviewLite {
+  preview_id?: string;
+  failed: boolean;
+  compiled: {
+    hard: { type: string }[];
+    soft: { note: string; weight: number }[];
+    unparsed: string[];
+    assumptions: string[];
+  };
+  window: { start: string; end: string; tz: string } | null;
+}
+
 /** design/v4 (Task 18): the AI Schedule Architect end-to-end over HTTP.
  *
  *  A fresh Pro Plus org walks the two-phase happy path — schedule ai-plan
@@ -5600,6 +5617,23 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
         (capped.json.error as { feature_key?: string } | undefined)?.feature_key === "ai.credits",
     );
 
+    // W5 (#400): the preview spends no CREDIT, but it does spend our parse
+    // tokens, so it carries the run's own affordability gate ahead of the
+    // model. Keyless-safe for the same reason the run's 402 is: an org that
+    // provably cannot pay is turned away before anything is called.
+    const cappedPreview = await v1(
+      free,
+      `/api/v1/divisions/${freeDivIds.divId}/schedule/ai-preview`,
+      "POST",
+      { instruction: "spread the fixtures across both courts" },
+    );
+    check(
+      "W5 preview/free: an exhausted wallet 402s the preview before any model call (#400)",
+      cappedPreview.status === 402 &&
+        (cappedPreview.json.error as { feature_key?: string } | undefined)?.feature_key ===
+          "ai.credits",
+    );
+
     // ---- Topping the wallet back up admits the next run (needs model) ----
     await topUpWallet(freeOrg, 1);
     if (fixture) {
@@ -5632,6 +5666,62 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
       // ("two matches per day"), so the pre-flight compile actually runs on this
       // path and its ledger line is not vacuously present.
       const instruction = "finish by 6pm, keep both courts busy, two matches per day";
+
+      // ---- W5 (#400): the compiled-instruction preview, ahead of any run ----
+      // The gate's whole claim is that an organiser can see the rules BEFORE a
+      // credit moves, so the wallet is read either side of the call. The brief
+      // is the one the fixture server compiles for real
+      // (`FIXTURE_COMPILE_BRIEF`); against any other sentence the canned model
+      // answers "nothing compiled", and `hard.length > 0` would be asserting
+      // the fixture rather than the endpoint.
+      const creditsBeforePreview = await walletBalance(plusOrg);
+      const pv = await v1(plus, `/api/v1/divisions/${divId}/schedule/ai-preview`, "POST", {
+        instruction: FIXTURE_COMPILE_BRIEF,
+      });
+      const preview = v1data<AiPreviewLite>(pv);
+      check(
+        "W5 preview: an instruction compiles to typed rules and a reusable id (#400)",
+        pv.status === 200 &&
+          preview.failed === false &&
+          typeof preview.preview_id === "string" &&
+          preview.compiled.hard.length > 0 &&
+          preview.compiled.soft.length > 0 &&
+          preview.compiled.unparsed.length > 0 &&
+          // Resolved against the ORG clock, not left symbolic on the wire.
+          preview.window !== null &&
+          /^\d{4}-\d{2}-\d{2}$/.test(preview.window.start),
+      );
+      check(
+        "W5 preview: compiling spends NO credit — the point of the gate (#400)",
+        (await walletBalance(plusOrg)) === creditsBeforePreview,
+      );
+      // Unpriced, but never invisible: the compile has its own ledger line under
+      // the same field names a run stamps (#387/#398).
+      const previewEvent = await latestCompetitionEvent(compId, "schedule.ai_previewed");
+      check(
+        "W5 preview: the compile books its own unpriced ledger line (schedule.ai_previewed)",
+        !!previewEvent &&
+          typeof previewEvent.parse_tokens === "number" &&
+          previewEvent.parse_tokens > 0 &&
+          previewEvent.parse_failed === false,
+      );
+      // The reuse gate. A confirmation is a confirmation of THAT sentence: an
+      // edited brief must be refused, not silently recompiled behind the
+      // agreement the organiser already gave.
+      const stale = await v1(plus, `/api/v1/divisions/${divId}/schedule/ai-plan`, "POST", {
+        instruction: "a completely different sentence",
+        preview_id: preview.preview_id,
+        mode: "generate",
+      });
+      check(
+        "W5 preview: a changed instruction 409s rather than recompiling behind the confirm (#400)",
+        stale.status === 409,
+      );
+      check(
+        "W5 preview: the refused reuse charged nothing either",
+        (await walletBalance(plusOrg)) === creditsBeforePreview,
+      );
+
       const planRes = await v1(plus, `/api/v1/divisions/${divId}/schedule/ai-plan`, "POST", {
         instruction,
         mode: "generate",
@@ -5972,8 +6062,10 @@ interface JointPlanLite {
  * tell "refused before spending" from "spent, then refused".
  *
  * Rate limit: the joint endpoint allows 3 runs an hour per COMPETITION, and
- * this suite makes two rate-limited requests (the 402 and the real run) — the
- * single-division 400 is refused before the limiter.
+ * this suite now makes exactly THREE rate-limited requests (the 402, the W5
+ * preview and the real run) — the single-division 400 is refused before the
+ * limiter. That is the ceiling, not room under it: a fourth would 429, so a new
+ * joint call here needs one of these three to go, or a second competition.
  */
 async function jointAiSuite(): Promise<void> {
   const aiConfigured = !!process.env.SCHEDULING_AI_BASE_URL;
@@ -6042,6 +6134,26 @@ async function jointAiSuite(): Promise<void> {
     // ---- The priced run ----
     await topUpWallet(orgId, 20);
     const balanceBefore = await walletBalance(orgId);
+
+    // W5 (#400): the same gate over a JOINT scope. It is priced from the same
+    // `rung_overrides` the run will use — a preview that priced itself at the
+    // prediction would refuse (or admit) a run nobody was about to make — and
+    // it moves no money.
+    const jointPreview = await v1(s, `/api/v1/competitions/${compId}/schedule/ai-preview`, "POST", {
+      division_ids: divIds,
+      instruction: FIXTURE_COMPILE_BRIEF,
+      rung_overrides,
+    });
+    const jpv = v1data<AiPreviewLite>(jointPreview);
+    check(
+      "W5 preview/joint: a joint instruction compiles over both divisions without spending (#400)",
+      jointPreview.status === 200 &&
+        jpv.failed === false &&
+        typeof jpv.preview_id === "string" &&
+        jpv.compiled.hard.length > 0 &&
+        (await walletBalance(orgId)) === balanceBefore,
+    );
+
     const runRes = await v1(s, `/api/v1/competitions/${compId}/schedule/ai-plan`, "POST", {
       division_ids: divIds,
       instruction,
