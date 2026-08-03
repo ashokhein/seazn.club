@@ -40,14 +40,22 @@ import {
   buildDomains,
   candidatePairs,
   dayBuckets,
+  maxSeparationMinutes,
   repairCourts,
   repairUniverse,
   sortFamilies,
+  BLOCKING_FAMILIES,
   REPAIR_FAMILIES,
   type RepairFamily,
 } from "./repair-domain.ts";
 import { dayKeyInTz } from "./tz.ts";
 import { loadZ3 } from "./z3-load.ts";
+
+/** #401's Task 4 interface names these on `repair.ts`; they are DEFINED in
+ *  `repair-domain.ts` because the domain builder is what decides which family a
+ *  bound belongs to. Re-exported rather than redeclared — the same bindings, so
+ *  the scheduling barrel's two `export *` resolve to one declaration each. */
+export { BLOCKING_FAMILIES, REPAIR_FAMILIES, type RepairFamily };
 
 const MS_PER_MIN = 60_000;
 const MS_PER_DAY = 86_400_000;
@@ -59,13 +67,6 @@ export const REPAIR_GRID_MINUTES = 5;
 /** Wall-clock ceiling on one solve. Provisional until #401's bench (Task 6)
  *  measures 50/120/250/500 movable and replaces this with the measured number. */
 export const DEFAULT_REPAIR_BUDGET_MS = 15_000;
-
-/** The families that make a board PHYSICALLY IMPOSSIBLE rather than merely
- *  uncomfortable — the same four `isBlockingConflict` names. When the full rule
- *  set has no solution, these are what the solver falls back to, and everything
- *  it dropped is reported as `relaxed` so the caller never mistakes a partial
- *  repair for a clean one. */
-const BLOCKING_FAMILIES: readonly RepairFamily[] = ["window", "court", "person", "order"];
 
 export interface RepairInput {
   proposal: readonly Assignment[]; // the fixtures this run may move
@@ -99,17 +100,40 @@ export type RepairResult =
   | { status: "infeasible"; families: readonly RepairFamily[]; elapsedMs: number; checks: number }
   | { status: "timeout"; lastK: number; elapsedMs: number; checks: number };
 
-/** Thrown when a "repaired" schedule fails the REAL verifier. An impossible
- *  event that occurs should be loud: the alternative is shipping a board the
- *  organiser cannot then edit. */
+/**
+ * Which way the solver and the verifier disagreed.
+ *
+ *   `verifier_rejected` — the solve finished, moved cards, and the REAL verifier
+ *     still rejects the board. Caught by `repairAndVerify`.
+ *   `encoding_drift` — the solver found a model in which NOTHING moves, on a
+ *     board the verifier had already rejected before z3 was loaded. Zero moves
+ *     is only reachable when the encoding lost a constraint, so this one is
+ *     raised inside `repairSchedule` itself: returning `status: "clean"` there
+ *     laundered a missing constraint past every caller that uses
+ *     `repairSchedule` directly rather than `repairAndVerify` — and both web
+ *     runners do.
+ */
+export type RepairFailureKind = "verifier_rejected" | "encoding_drift";
+
+/** Thrown when a "repaired" schedule fails the REAL verifier, or when the
+ *  encoding provably lost a constraint. An impossible event that occurs should
+ *  be loud: the alternative is shipping a board the organiser cannot then
+ *  edit. */
 export class RepairVerificationError extends Error {
   readonly conflicts: readonly Conflict[];
   readonly result: RepairResult;
-  constructor(message: string, conflicts: readonly Conflict[], result: RepairResult) {
+  readonly kind: RepairFailureKind;
+  constructor(
+    message: string,
+    conflicts: readonly Conflict[],
+    result: RepairResult,
+    kind: RepairFailureKind = "verifier_rejected",
+  ) {
     super(message);
     this.name = "RepairVerificationError";
     this.conflicts = conflicts;
     this.result = result;
+    this.kind = kind;
   }
 }
 
@@ -132,6 +156,20 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
   const existing = input.existing ?? [];
   const dependencies = input.dependencies ?? [];
 
+  // The budget covers the WHOLE call, not just `check()`. Booting the WASM and
+  // walking the O(n²) encode are both real wall-clock, and with the first budget
+  // test after all of it a `budgetMs: 15_000` call could return `timeout` having
+  // burned far more. `checks` and `timeout` are hoisted above the encode so the
+  // early exits can use them.
+  let checks = 0;
+  const timeout = (lastK: number): RepairResult => ({
+    status: "timeout",
+    lastK,
+    elapsedMs: elapsed(),
+    checks,
+  });
+  const overBudget = (): boolean => elapsed() >= budgetMs;
+
   // 1. A board that already verifies is answered WITHOUT loading the WASM.
   const pre = validateAssignments(proposal, config, existing, dependencies);
   if (pre.length === 0) {
@@ -146,6 +184,9 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
     };
   }
 
+  // Loading the WASM is ~160 ms cold and is not free to a caller who has already
+  // spent its budget verifying.
+  if (overBudget()) return timeout(0);
   const { Z3 } = await loadZ3();
   const solver = new Z3.Solver();
 
@@ -195,10 +236,16 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
     const d = domains[i]!;
     const s = start[i]!;
 
-    // An UNCONDITIONAL bound keeps the model finite, but it is deliberately far
-    // wider than the pack window: the real window lives under `fam_window`, and
-    // if this bound were the window then relaxing that family would buy no room
-    // and the unsat core would never name it.
+    // A FINITE-MODEL GUARD, and nothing else. Without it z3 is free to answer
+    // with the year 90210, so every start carries an unconditional bound.
+    //
+    // It does NOT compete with the pack window: `window` sits in
+    // `BLOCKING_FAMILIES` and is therefore never relaxed, so there is no
+    // fallback path on which this bound is the only thing left holding a start
+    // inside the competition. Where it actually binds is the config with no pack
+    // window AND no session windows — `repairUniverse` then returns the board's
+    // own extent widened by a week, `byFamily.window` is absent entirely, and
+    // this ±30 days is the only bound on the integer.
     solver.add(
       s.ge(floorMin(universe.from - 30 * MS_PER_DAY)),
       s.le(ceilMin(universe.to + 30 * MS_PER_DAY)),
@@ -238,9 +285,17 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
   }
 
   // --- movable × movable ----------------------------------------------------
-  // `candidatePairs` has already dropped every pair whose domains cannot
-  // intersect; this is the O(n²) loop the pruner exists for.
-  for (const [i, j] of candidatePairs(domains)) {
+  // `candidatePairs` has already dropped every pair that cannot come within the
+  // separation it might owe; this is the O(n²) loop the pruner exists for. The
+  // slack is what stops it dropping a pair that never overlaps but still owes
+  // rest.
+  const pairs = candidatePairs(domains, maxSeparationMinutes(config) * MS_PER_MIN);
+  for (let p = 0; p < pairs.length; p++) {
+    // 125k pairs at the 500-fixture cap, each one several z3 term allocations.
+    // Sampled rather than tested every iteration: `performance.now()` in the
+    // hot loop would itself be a measurable share of the encode.
+    if ((p & 0x3ff) === 0 && overBudget()) return timeout(0);
+    const [i, j] = pairs[p]!;
     const ai = proposalById.get(domains[i]!.fixtureId)!;
     const aj = proposalById.get(domains[j]!.fixtureId)!;
     const sep = (r: number): Bool<"repair"> =>
@@ -264,11 +319,16 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
 
   // --- movable × immovable --------------------------------------------------
   for (let i = 0; i < domains.length; i++) {
+    if ((i & 0x3f) === 0 && overBudget()) return timeout(0);
     const d = domains[i]!;
-    if (d.span === null) continue;
     const ai = proposalById.get(d.fixtureId)!;
-    const spanFrom = ceilMin(d.span.from);
-    const spanTo = floorMin(d.span.to);
+    // A `null` span means the blocking families alone leave this fixture nowhere
+    // to stand — which is a reason to encode it MORE carefully, not to skip it.
+    // Skipping was how a fixture with an unsatisfiable instruction reached z3
+    // carrying no court or person constraint at all. Only the PRUNE below needs
+    // a span; without one every immovable is encoded.
+    const spanFrom = d.span === null ? null : ceilMin(d.span.from);
+    const spanTo = d.span === null ? null : floorMin(d.span.to);
     for (const e of existing) {
       const eStart = roundMin(e.startAt);
       const eEnd = roundMin(e.endAt);
@@ -278,7 +338,13 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
       // infeasible on a board the verifier passes.
       const rest = sharesParticipant(ai, e) ? pairRest(ai, e) : 0;
       const reach = Math.max(gapMin, rest);
-      if (spanFrom >= eEnd + reach || spanTo + durMin[i]! + reach <= eStart) continue;
+      if (
+        spanFrom !== null &&
+        spanTo !== null &&
+        (spanFrom >= eEnd + reach || spanTo + durMin[i]! + reach <= eStart)
+      ) {
+        continue;
+      }
       const clear = (r: number): Bool<"repair"> =>
         Z3.Or(start[i]!.ge(eEnd + r), start[i]!.le(eStart - durMin[i]! - r));
       const ci = courtIndex.get(e.court);
@@ -322,9 +388,22 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
     // A dependency whose source is not on the board constrains nothing yet —
     // the same skip `validateAssignments` makes.
     if (target === undefined || source === undefined) continue;
-    if (!idx.has(dep.fixtureId) && !idx.has(dep.dependsOn)) continue;
+    // A dep with BOTH ends immovable used to be skipped. `validateAssignments`
+    // still reports it — its `byId` covers `existing` too — so the skip handed
+    // back a "repaired" board carrying a blocking `order` conflict and
+    // `repairAndVerify` threw on an input nothing could have fixed. Encoded
+    // instead: both sides are constants, `geq` collapses to true or false, and a
+    // genuinely impossible pre-existing order becomes an honest `infeasible`
+    // naming `order` rather than an exception.
     const rest = effectiveRestMinutes(config, target);
-    assume("order", geq(startExpr(dep.fixtureId), plus(endExpr(dep.dependsOn), rest)));
+    // Indirect feeds are NOT blocking to the verifier (`isBlockingConflict`
+    // covers `order` only when `direct === true`), so they go under their own
+    // relaxable literal. Under `order` they made the relaxed path report
+    // `infeasible` over a conflict the verifier merely warns about.
+    assume(
+      dep.direct === true ? "order" : "order_soft",
+      geq(startExpr(dep.fixtureId), plus(endExpr(dep.dependsOn), rest)),
+    );
   }
 
   // --- typed instruction rules ---------------------------------------------
@@ -407,7 +486,6 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
   }
 
   // --- search ---------------------------------------------------------------
-  let checks = 0;
   type CheckOutcome = "sat" | "unsat" | "budget";
   const check = async (assumptions: readonly Bool<"repair">[]): Promise<CheckOutcome> => {
     const remaining = budgetMs - elapsed();
@@ -423,12 +501,6 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
     const names = new Set([...solver.unsatCore()].map((e) => e.toString()));
     return sortFamilies(REPAIR_FAMILIES.filter((f) => names.has(famLiteralName(f))));
   };
-  const timeout = (lastK: number): RepairResult => ({
-    status: "timeout",
-    lastK,
-    elapsedMs: elapsed(),
-    checks,
-  });
 
   // 3. Feasibility probe FIRST, with no `AtMost` bound. A genuinely impossible
   // board fails here instead of walking every k to discover the same thing.
@@ -496,7 +568,38 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
       const assignments = proposal.map((a) => solved.get(a.fixtureId) ?? a);
       const elapsedMs = elapsed();
       if (moved.length === 0) {
-        return { status: "clean", assignments, moved: [], k: 0, elapsedMs, checks, relaxed };
+        // Step 1 already proved this board DIRTY, so a model in which nothing
+        // moves is never a clean board. Two ways to arrive here, and they are
+        // not the same event:
+        //
+        //   * `relaxed` is empty — every family was in play, the model satisfies
+        //     all of them, and the verifier rejects the board anyway. The
+        //     encoding lost a constraint. Thrown, not returned: `status:
+        //     "clean"` here laundered exactly that past both web runners, which
+        //     call `repairSchedule` rather than `repairAndVerify`.
+        //   * `relaxed` is non-empty — what is left is confined to families that
+        //     were dropped (a rest breach nothing can fix, say). Zero moves
+        //     genuinely IS the minimum under the blocking rules, and `relaxed`
+        //     tells the caller what was given up.
+        const zeroMove: RepairResult = {
+          status: "repaired",
+          assignments,
+          moved: [],
+          k: 0,
+          elapsedMs,
+          checks,
+          relaxed,
+        };
+        if (relaxed.length === 0) {
+          throw new RepairVerificationError(
+            "repair encoding drift: the solver satisfied every family with nothing moved, " +
+              `on a board the verifier rejects with ${pre.length} conflict(s)`,
+            pre,
+            zeroMove,
+            "encoding_drift",
+          );
+        }
+        return zeroMove;
       }
       return { status: "repaired", assignments, moved, k: moved.length, elapsedMs, checks, relaxed };
     }

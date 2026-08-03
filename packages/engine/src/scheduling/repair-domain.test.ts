@@ -5,7 +5,13 @@ import {
   type Assignment,
   type VerifyConfig,
 } from "./calendar.ts";
-import { buildDomains, candidatePairs, dayBuckets } from "./repair-domain.ts";
+import {
+  buildDomains,
+  candidatePairs,
+  dayBuckets,
+  maxSeparationMinutes,
+  type FixtureDomain,
+} from "./repair-domain.ts";
 import { assign, at, BADMINTON, BASE_CONFIG, SOLO } from "./payload-fixtures.ts";
 
 const H = 3_600_000;
@@ -132,7 +138,61 @@ describe("buildDomains", () => {
 });
 
 describe("candidatePairs", () => {
-  it("prunes pairs whose domains cannot intersect", () => {
+  // Hand-built rather than round-tripped through `buildDomains`, because the
+  // thing under test is the pruning predicate and the spans it reads. A domain
+  // built from a config would have to manufacture the geometry through a rule,
+  // and the only families that can legally narrow a span are the blocking ones.
+  const day = at("2026-08-10T09:00:00Z");
+  const domain = (fixtureId: string, from: number, to: number): FixtureDomain => ({
+    fixtureId,
+    durationMs: 40 * MIN,
+    origStartAt: from,
+    origCourt: "C1",
+    byFamily: {},
+    courtsByFamily: {},
+    courtIntervals: {},
+    empty: [],
+    span: { from, to },
+  });
+
+  it("prunes a pair that can neither overlap nor crowd the other", () => {
+    // a occupies [09:00, 09:40]; b cannot start before 10:00. No separation is
+    // owed, so nothing connects them.
+    const domains = [domain("a", day, day), domain("b", day + 60 * MIN, day + 60 * MIN)];
+    expect(candidatePairs(domains)).toEqual([]);
+  });
+
+  it("keeps a pair that can still collide", () => {
+    const domains = [domain("a", day, day + 4 * H), domain("b", day, day + 4 * H)];
+    expect(candidatePairs(domains)).toEqual([[0, 1]]);
+  });
+
+  // The pruner tested OCCUPANCY overlap only, while the constraint it prunes
+  // away is separation: a pair 20 minutes apart that owes 45 minutes of rest
+  // does not overlap and was dropped, so the encoder never bounded it and the
+  // verifier then rejected the "repaired" board.
+  it("keeps a pair that owes more separation than the gap between their domains", () => {
+    const domains = [domain("a", day, day), domain("b", day + 60 * MIN, day + 60 * MIN)];
+    expect(candidatePairs(domains, 0)).toEqual([]);
+    expect(candidatePairs(domains, 45 * MIN)).toEqual([[0, 1]]);
+  });
+
+  // A relaxable family emptying a domain is the C1 regression at unit level:
+  // `instruction` is dropped whole on the fallback path, so a `null` span is a
+  // reason to encode the pair, never to drop it.
+  it("keeps every pair a null-span fixture is party to", () => {
+    const domains = [
+      { ...domain("a", day, day), span: null },
+      domain("b", day + 60 * MIN, day + 60 * MIN),
+    ];
+    expect(candidatePairs(domains)).toEqual([[0, 1]]);
+  });
+
+  // Same regression from the other end: the span must not narrow when a
+  // relaxable family does. Two fixtures pinned to different days by an
+  // instruction still owe each other a court, because the instruction is exactly
+  // what the fallback path drops.
+  it("does not let an instruction-pinned pair be pruned", () => {
     const window = { from: at("2026-08-10T08:00:00Z"), to: at("2026-08-17T08:00:00Z") };
     const proposal = assign(BADMINTON, SOLO, [
       ["wb-r0-i1", "2026-08-10T09:00:00Z", "C1"],
@@ -165,20 +225,57 @@ describe("candidatePairs", () => {
         ],
       },
     });
-    expect(candidatePairs(domains)).toEqual([]); // pinned to different days
+    // The instruction still narrows the DOMAIN — it just no longer narrows the
+    // span the pruner reads.
+    expect(domains[0]!.byFamily.instruction).toHaveLength(1);
+    expect(candidatePairs(domains)).toEqual([[0, 1]]);
+  });
+});
+
+describe("maxSeparationMinutes", () => {
+  it("takes the strictest of every source a pair can draw on", () => {
+    expect(
+      maxSeparationMinutes({
+        ...BASE_CONFIG,
+        gapMinutes: 5,
+        perEntrantMinRest: 10,
+        constraints: {
+          restMin: 20,
+          restByGroup: { "pool-a": 35, d2: 15 },
+          noBackToBack: false,
+          startWindows: [],
+          fieldFairness: "off",
+          parallelism: "mixed",
+          crossPersonClash: "warn",
+        },
+        restByDivision: { d1: 50 },
+        hard: [
+          {
+            type: "min_rest_minutes",
+            minutes: 75,
+            rest_scope: "per_person",
+            scope: { kind: "competition" },
+          },
+        ],
+      }),
+    ).toBe(75);
   });
 
-  it("keeps a pair that can still collide", () => {
-    const window = { from: at("2026-08-10T08:00:00Z"), to: at("2026-08-11T08:00:00Z") };
-    const proposal = assign(BADMINTON, SOLO, [
-      ["wb-r0-i1", "2026-08-10T09:00:00Z", "C1"],
-      ["wb-r0-i2", "2026-08-10T09:00:00Z", "C1"],
-    ]);
-    const domains = buildDomains({
-      proposal,
-      config: { ...BASE_CONFIG, tz: "UTC", window, courts: ["C1"] },
-    });
-    expect(candidatePairs(domains)).toEqual([[0, 1]]);
+  it("counts noBackToBack, which is a whole fixture plus the turnaround", () => {
+    expect(
+      maxSeparationMinutes({
+        ...BASE_CONFIG,
+        matchMinutes: 40,
+        gapMinutes: 5,
+        constraints: {
+          noBackToBack: true,
+          startWindows: [],
+          fieldFairness: "off",
+          parallelism: "mixed",
+          crossPersonClash: "warn",
+        },
+      }),
+    ).toBe(45);
   });
 });
 

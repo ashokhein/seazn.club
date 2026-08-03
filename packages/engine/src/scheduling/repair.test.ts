@@ -301,6 +301,91 @@ describe("when no schedule exists", () => {
   );
 });
 
+/**
+ * The relaxation path, which had no test teeth at all before this block.
+ *
+ * `instruction`, `blackout`, `start_window` and `rest` are DROPPED when the full
+ * rule set has no solution, so a domain narrowed — or emptied — by one of them
+ * says nothing about where the fixture may end up. Pruning on one is therefore
+ * unsound, and the review reproduced exactly what that costs: a fixture whose
+ * instruction cannot be satisfied got `span: null`, was skipped by both the
+ * movable×movable pruner and the movable×immovable loop, and reached z3 carrying
+ * no court, person or rest constraint whatsoever. The solver answered `sat` at
+ * k=0 and `repairSchedule` reported `clean` on a board the verifier scores as
+ * two blocking court clashes.
+ */
+describe("a relaxable family that empties a domain", () => {
+  const relaxWindow = { from: at("2026-08-10T08:00:00Z"), to: at("2026-08-11T08:00:00Z") };
+  const impossibleInstruction: VerifyConfig & { courts: readonly string[] } = {
+    ...BASE_CONFIG,
+    tz: "UTC",
+    window: relaxWindow,
+    courts,
+    ruleFixtures: [
+      { id: "wb-r0-i1", extKey: "wb-r0-i1", winnerTo: "wb-r1-i0" },
+      { id: "wb-r0-i2", extKey: "wb-r0-i2", winnerTo: "wb-r1-i1" },
+      { id: "wb-r0-i3", extKey: "wb-r0-i3", winnerTo: "wb-r1-i1" },
+    ],
+    hard: [
+      {
+        // No bucket carries this date — the window is a single day in August —
+        // so `byFamily.instruction` comes back empty for `wb-r0-i1`.
+        type: "fixture_on_date",
+        date: "2026-09-01",
+        selector: { kind: "id", fixtureId: "wb-r0-i1" },
+        scope: { kind: "competition" },
+      },
+    ],
+  };
+  // i1 and i2 are double-booked on C1; i3 sits clear. The clash is deliberately
+  // on the fixture the instruction empties, because that is the pair the old
+  // pruner dropped.
+  const clashOnTheEmptiedFixture = (): Assignment[] =>
+    assign(BADMINTON, SOLO, [
+      ["wb-r0-i1", "2026-08-10T09:00:00Z", "C1"],
+      ["wb-r0-i2", "2026-08-10T09:00:00Z", "C1"],
+      ["wb-r0-i3", "2026-08-10T11:00:00Z", "C1"],
+    ]);
+
+  it(
+    "still encodes the court constraint the emptied fixture is party to",
+    async () => {
+      const proposal = clashOnTheEmptiedFixture();
+      const before = validateAssignments(proposal, impossibleInstruction);
+      expect(before.filter(isBlockingConflict)).toHaveLength(2);
+
+      const r = await repairSchedule({
+        proposal,
+        config: impossibleInstruction,
+        budgetMs: 60_000,
+      });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      // The instruction is what could not hold, and the caller is told so.
+      expect(r.relaxed).toContain("instruction");
+      expect(r.moved.length).toBeGreaterThan(0);
+      // The relaxed families are gone; the BLOCKING ones are not negotiable.
+      expect(
+        validateAssignments(r.assignments, impossibleInstruction).filter(isBlockingConflict),
+      ).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "never reports a board the verifier rejects as clean",
+    async () => {
+      const r = await repairSchedule({
+        proposal: clashOnTheEmptiedFixture(),
+        config: impossibleInstruction,
+        budgetMs: 60_000,
+      });
+      expect(r.status).not.toBe("clean");
+    },
+    SOLVE_TIMEOUT,
+  );
+});
+
 describe("the budget", () => {
   it(
     "returns timeout rather than running forever",
