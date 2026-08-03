@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { foldMatch, type EventEnvelope } from "../../core/events.ts";
 import type { Lineup, LineupPair } from "../../core/types.ts";
+import { aggregatePlayerStats } from "../../stats/stats.ts";
 import { lineupFromCatalog, makeEnvelope } from "../../testkit/index.ts";
 import { football, type FootballCfg } from "./football.ts";
 
@@ -411,5 +412,153 @@ describe("temporary dismissals / sin bins (Law 12 addendum)", () => {
     expect(football.summary(some)).toEqual(football.summary(none));
     const coarse = football.coarsen!(started as EventEnvelope<never>[]);
     expect(coarse.map((e) => e.type)).toEqual(["core.start"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Union disambiguation. `FootballEv` is a z.union of strict branches with no
+// discriminator inside the payload, so z.union accepts the FIRST branch that
+// parses. W4 widened two branches (card, period) and added two (penalty,
+// sinbin); each one is a chance to start swallowing a sibling's payload.
+// ---------------------------------------------------------------------------
+
+describe("event union disambiguation", () => {
+  const canonical: Record<string, Record<string, unknown>> = {
+    "football.goal": { by: "H", scorer: "H-p9", assist: "H-p10", minute: 12, penalty: true },
+    "football.card": { by: "H", person: "H-p5", color: "yellow", minute: 30, reason: "dissent" },
+    "football.sub": { by: "H", off: "H-p1", on: "H-b1", minute: 60 },
+    "football.period": { phase: "HT", addedMinutes: 2 },
+    "football.shootout.kick": { by: "H", person: "H-p9", scored: true },
+    "football.penalty": { by: "H", taker: "H-p9", keeper: "A-p1", outcome: "saved", minute: 27 },
+    "football.sinbin": { by: "H", person: "H-p6", minutes: 10, reason: "dissent", minute: 21 },
+  };
+
+  it("round-trips every branch's canonical payload through the union unchanged", () => {
+    for (const [type, payload] of Object.entries(canonical)) {
+      const parsed = football.eventSchema.safeParse(payload);
+      expect(parsed.success, `${type} must parse`).toBe(true);
+      // Zod strips silently when a branch is narrower than the payload — an
+      // equality round-trip is the only way to see it.
+      expect(parsed.success && parsed.data, `${type} round-trip`).toEqual(payload);
+    }
+  });
+
+  it("keeps every branch structurally distinct once it is fully attributed", () => {
+    // A shootout kick, a sin bin and a card are all { by, person?, … } shapes,
+    // so each schema must reject the others outright.
+    const kick = canonical["football.shootout.kick"]!;
+    const card = canonical["football.card"]!;
+    const bin = canonical["football.sinbin"]!;
+    const pen = canonical["football.penalty"]!;
+    // Cards are extracted with FootballCard.safeParse inside discipline —
+    // a kick or a sin bin leaking through there would invent suspensions.
+    for (const other of [kick, bin, pen]) {
+      expect(football.discipline!.extractCards([
+        makeEnvelope(0, { type: "football.card", payload: other }),
+      ])).toEqual([]);
+    }
+    expect(
+      football.discipline!.extractCards([makeEnvelope(0, { type: "football.card", payload: card })]),
+    ).toHaveLength(1);
+  });
+
+  it("makes the envelope type the discriminator for the ambiguous minimal shape", () => {
+    // { by, minute } satisfies BOTH the goal branch and the sin-bin branch.
+    // The union alone cannot tell them apart; apply() dispatches on the
+    // envelope's type string, and that is what actually decides.
+    const ambiguous = { by: "H", minute: 12 };
+    expect(football.eventSchema.safeParse(ambiguous).success).toBe(true);
+
+    const asGoal = fold(cfgOf({}), [
+      makeEnvelope(0, { type: "core.start", payload: {} }),
+      makeEnvelope(1, { type: "football.goal", payload: ambiguous }),
+    ]);
+    expect(asGoal.goals).toEqual({ home: 1, away: 0 });
+    expect(asGoal.squads.home.sinBin).toBeUndefined();
+
+    const asBin = fold(cfgOf({}), [
+      makeEnvelope(0, { type: "core.start", payload: {} }),
+      makeEnvelope(1, { type: "football.sinbin", payload: ambiguous }),
+    ]);
+    expect(asBin.goals).toEqual({ home: 0, away: 0 });
+    expect(asBin.squads.home.sinBin).toEqual([{ minute: 12 }]);
+  });
+
+  it("folds every canonical payload through its own dispatch case", () => {
+    const kick = cfgOf({ shootout: true });
+    const opened = stream(["core.start"]);
+    const one = (cfg: FootballCfg, before: EventEnvelope[], type: string) =>
+      fold(cfg, [...before, makeEnvelope(before.length, { type, payload: canonical[type]! })]);
+
+    expect(one(cfgOf({}), opened, "football.goal").goals).toEqual({ home: 1, away: 0 });
+    expect(one(cfgOf({}), opened, "football.card").cards).toHaveLength(1);
+    expect(one(cfgOf({}), opened, "football.sub").squads.home.offUsed).toEqual(["H-p1"]);
+    expect(one(cfgOf({}), opened, "football.period").periods).toHaveLength(2);
+    expect(one(cfgOf({}), opened, "football.penalty").penalties).toHaveLength(1);
+    expect(one(cfgOf({}), opened, "football.sinbin").squads.home.sinBin).toHaveLength(1);
+
+    const atShootout = stream(
+      ["core.start"],
+      ["football.period", { phase: "HT" }],
+      ["football.period", { phase: "FT" }],
+    );
+    expect(one(kick, atShootout, "football.shootout.kick").shootout?.kicks).toEqual([
+      { side: "home", scored: true },
+    ]);
+  });
+
+  it("keeps every fidelity-tier event type dispatchable", () => {
+    const declared = new Set(football.fidelityTiers.flatMap((t) => t.eventTypes));
+    for (const type of declared) {
+      expect(Object.keys(canonical), `tier type ${type} has no canonical payload`).toContain(type);
+    }
+    expect(declared).toEqual(new Set(Object.keys(canonical)));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The stat models the new branches make possible (Jul3/07 §3).
+// ---------------------------------------------------------------------------
+
+describe("player stats from the W4 branches", () => {
+  const model = football.playerStats!;
+  const keys = new Set(model.metrics.map((m) => m.key));
+
+  it("counts converted penalties without double-counting them as goals", () => {
+    expect(keys).toContain("penalty_goals");
+    const rows = aggregatePlayerStats(
+      [
+        makeEnvelope(0, { type: "football.goal", payload: { by: "H", scorer: "p9", penalty: true } }),
+        makeEnvelope(1, { type: "football.goal", payload: { by: "H", scorer: "p9" } }),
+      ],
+      model,
+    );
+    expect(rows).toEqual([
+      { personId: "p9", stats: { goals: 2, penalty_goals: 1, points: 2 } },
+    ]);
+  });
+
+  it("counts missed penalties against the taker", () => {
+    const rows = aggregatePlayerStats(
+      [
+        makeEnvelope(0, {
+          type: "football.penalty",
+          payload: { by: "H", taker: "p9", keeper: "k1", outcome: "saved" },
+        }),
+      ],
+      model,
+    );
+    expect(rows).toEqual([{ personId: "p9", stats: { penalties_missed: 1, points: 0 } }]);
+  });
+
+  it("counts a sin bin once — the dismissal, never the return", () => {
+    const rows = aggregatePlayerStats(
+      [
+        makeEnvelope(0, { type: "football.sinbin", payload: { by: "H", person: "p6", minutes: 10 } }),
+        makeEnvelope(1, { type: "football.sinbin", payload: { by: "H", person: "p6", returned: true } }),
+      ],
+      model,
+    );
+    expect(rows).toEqual([{ personId: "p6", stats: { sin_bins: 1, points: 0 } }]);
   });
 });
