@@ -8,6 +8,13 @@ import { loginUi, apiJson, TAG, setEntitlementOverrideSql } from "./helpers";
 // the always-visible breadcrumb org dropdown (`OrgCrumb`), which is what a
 // user reaches for on any page.
 //
+// The wait after each switch MUST name org B's slug. `/\/o\/[^/]+(\/|$)/`
+// matches the PRE-CLICK url (`/o/<A>/settings`) too, so it resolves instantly
+// and `networkidle` then settles on the OLD page while the switch navigation
+// is still in flight — the settings switcher POSTs `/api/orgs/active` before
+// `window.location.assign`, so its nav starts a round-trip late. Solo that
+// races green; at 4 workers it read org A's url 12 times out of 16.
+//
 // Runs in its own context (own two-org user); no shared storageState.
 test.use({ storageState: { cookies: [], origins: [] } });
 
@@ -49,7 +56,7 @@ test("settings OrgSwitcher stays on the settings page under the new org", async 
   // The popover lists org B by name — click its row.
   await page.getByRole("menu").getByText(orgB.slug, { exact: true }).click();
 
-  await page.waitForURL(/\/o\/[^/]+(\/|$)/, { timeout: 20_000 });
+  await page.waitForURL((u) => u.pathname.startsWith(`/o/${orgB.slug}`), { timeout: 20_000 });
   await page.waitForLoadState("networkidle");
   expect(page.url(), "settings switch should stay on /settings under org B").toContain(
     `/o/${orgB.slug}/settings`,
@@ -65,7 +72,7 @@ test("breadcrumb org dropdown stays on the same page under the new org", async (
   await page.getByRole("button", { name: orgA.name }).click();
   await page.getByRole("menuitem", { name: orgB.name }).click();
 
-  await page.waitForURL(/\/o\/[^/]+(\/|$)/, { timeout: 20_000 });
+  await page.waitForURL((u) => u.pathname.startsWith(`/o/${orgB.slug}`), { timeout: 20_000 });
   await page.waitForLoadState("networkidle");
   expect(page.url(), "breadcrumb switch from settings should stay on settings under org B").toContain(
     `/o/${orgB.slug}/settings`,
