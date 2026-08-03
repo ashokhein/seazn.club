@@ -21,6 +21,7 @@ import {
   readCorpus,
   recomputeStream,
   sportPayloads,
+  stateMismatch,
   writeCorpus,
 } from "./golden.ts";
 
@@ -114,8 +115,15 @@ if (UPDATE_GOLDEN) {
           const label = `${module.key} config=${stream.config} seed=${stream.seed}`;
           const actual = recomputeStream(module, raw, stream.events);
           for (let i = 0; i < stream.states.length; i++) {
-            expect(actual.states[i], `${label} state after event ${i} (${stream.events[i]?.type})`)
-              .toBe(stream.states[i]);
+            // Exact everywhere except `cfg`, which is compared as a subset: a
+            // new OPTIONAL config knob is additive and must not red a corpus it
+            // cannot affect (W4 item 5). A changed value on a recorded cfg key,
+            // and every fold change, still reds — golden-compare.test.ts pins
+            // that both ways.
+            expect(
+              stateMismatch(actual.states[i] as string, stream.states[i] as string),
+              `${label} state after event ${i} (${stream.events[i]?.type})`,
+            ).toBeNull();
           }
           expect(actual.outcome, `${label} outcome`).toBe(stream.outcome);
           expect(actual.summary, `${label} summary`).toBe(stream.summary);

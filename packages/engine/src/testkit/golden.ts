@@ -242,6 +242,90 @@ export function writeCorpus(corpus: GoldenCorpus): void {
   writeFileSync(goldenPath(corpus.key), `${JSON.stringify(corpus, null, 0)}\n`);
 }
 
+// ------------------------------------------------------------- comparison
+//
+// W4 (#407) — the recorded state carries the module's parsed `cfg` inside it,
+// so comparing the two JSON strings byte-for-byte made the harness reject a
+// change it exists to bless: adding an OPTIONAL config knob with a zod
+// `.default()` shifts the resolved cfg and would red every stream for that
+// module, though it cannot change a single fold. That pushed the period family
+// into a compile-time preset field instead of a config field — a workaround for
+// a harness defect.
+//
+// So `cfg` is compared as a SUBSET: every key the golden recorded must still be
+// present with an identical value, while new keys are allowed. Everything else
+// — key order included — stays exact string equality, because that is the fold
+// itself.
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** First path at which `expected` is not reproduced by `actual`, or null.
+ *  Objects are subsets (extra keys in `actual` are fine); arrays must match
+ *  element for element; leaves must be identical. */
+function subsetMismatch(actual: unknown, expected: unknown, path: string): string | null {
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual)) return `${path}: expected an array, got ${JSON.stringify(actual)}`;
+    if (actual.length !== expected.length) {
+      return `${path}: expected ${expected.length} entries, got ${actual.length}`;
+    }
+    for (let i = 0; i < expected.length; i++) {
+      const hit = subsetMismatch(actual[i], expected[i], `${path}[${i}]`);
+      if (hit !== null) return hit;
+    }
+    return null;
+  }
+  if (isPlainObject(expected)) {
+    if (!isPlainObject(actual)) return `${path}: expected an object, got ${JSON.stringify(actual)}`;
+    for (const [key, value] of Object.entries(expected)) {
+      if (!Object.hasOwn(actual, key)) return `${path}.${key}: recorded key is gone`;
+      const hit = subsetMismatch(actual[key], value, `${path}.${key}`);
+      if (hit !== null) return hit;
+    }
+    return null;
+  }
+  return Object.is(actual, expected)
+    ? null
+    : `${path}: recorded ${JSON.stringify(expected)}, replayed ${JSON.stringify(actual)}`;
+}
+
+/** Everything but `cfg`, re-serialised in the order it was parsed — so the
+ *  non-config half of the state stays an exact string comparison. */
+function withoutCfg(state: Record<string, unknown>): string {
+  return JSON.stringify(Object.fromEntries(Object.entries(state).filter(([k]) => k !== "cfg")));
+}
+
+/** Why a replayed state differs from the recorded one, or null if it does not.
+ *  Exact everywhere except `cfg`, which is a subset (see the note above). */
+export function stateMismatch(actual: string, expected: string): string | null {
+  if (actual === expected) return null;
+
+  let parsedActual: unknown;
+  let parsedExpected: unknown;
+  try {
+    parsedActual = JSON.parse(actual);
+    parsedExpected = JSON.parse(expected);
+  } catch {
+    return `state is not JSON: recorded ${expected}, replayed ${actual}`;
+  }
+  // Only a state that RECORDED a cfg gets the subset rule; anything else is a
+  // plain fold and must reproduce byte for byte.
+  if (
+    !isPlainObject(parsedActual) ||
+    !isPlainObject(parsedExpected) ||
+    !Object.hasOwn(parsedExpected, "cfg")
+  ) {
+    return `recorded ${expected}, replayed ${actual}`;
+  }
+
+  const rest = withoutCfg(parsedActual);
+  const expectedRest = withoutCfg(parsedExpected);
+  if (rest !== expectedRest) return `state outside cfg: recorded ${expectedRest}, replayed ${rest}`;
+
+  return subsetMismatch(parsedActual.cfg, parsedExpected.cfg, "cfg");
+}
+
 /** Every non-core payload in the corpus, for the additive-only tripwire. */
 export function sportPayloads(corpus: GoldenCorpus): { type: string; payload: unknown }[] {
   return corpus.streams
