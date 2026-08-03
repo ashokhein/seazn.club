@@ -716,6 +716,12 @@ export function makePeriodModule(
                 entrantSide: card.by,
                 color: card.class,
                 eventId: ev.id,
+                // W4 — the scoresheet detail the fold already keeps in
+                // `cardLog` (SuspensionDetail) now reaches the projection too,
+                // so a suspension tariff can key on the infraction and a bench
+                // minor accumulates against the player who actually sits.
+                ...(card.reason === undefined ? {} : { reason: card.reason }),
+                ...(card.servedBy === undefined ? {} : { servedBy: card.servedBy }),
               });
             }
             return cards;

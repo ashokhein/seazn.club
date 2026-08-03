@@ -1019,6 +1019,10 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
           entrantSide: card.by,
           color: card.color,
           eventId: ev.id,
+          // W4 — the Law 12 offence, when the referee recorded one. Football
+          // has no bench penalties, so no card is ever served by a substitute:
+          // `servedBy` stays absent for this sport.
+          ...(card.reason === undefined ? {} : { reason: card.reason }),
         });
       }
       return cards;

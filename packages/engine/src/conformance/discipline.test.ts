@@ -7,7 +7,10 @@
 import { describe, expect, it } from "vitest";
 import type { EventEnvelope } from "../core/events.ts";
 import { builtinModules } from "../sports/index.ts";
-import { buildStream, defaultLineupPair } from "../testkit/helpers.ts";
+import { football } from "../sports/football/index.ts";
+import { hockey } from "../sports/hockey/index.ts";
+import { icehockey } from "../sports/icehockey/index.ts";
+import { buildStream, defaultLineupPair, makeEnvelope } from "../testkit/helpers.ts";
 import type { AnySportModule } from "../sport/module.ts";
 
 // A module emits cards iff any fidelity tier declares a card/suspension/penalty
@@ -59,4 +62,94 @@ describe("SPEC-1 discipline descriptor", () => {
       });
     });
   }
+});
+
+// W4 shared-engine item 1 — a DisciplineCard must be able to say WHY the card
+// was shown and WHO serves it. Without that, an accumulation rule keyed on the
+// offence ("three cards for dissent") or a bench penalty served by a nominated
+// player cannot be expressed downstream, because the offence stops at the
+// sport schema and never reaches the discipline projection.
+describe("SPEC-1 discipline card detail (W4)", () => {
+  const ledger = (type: string, payload: unknown): EventEnvelope[] => [
+    makeEnvelope(0, { type, payload }) as EventEnvelope,
+  ];
+
+  it("football projects the Law 12 offence onto the card", () => {
+    const [card] = football.discipline!.extractCards(
+      ledger("football.card", {
+        by: "H",
+        person: "H-p7",
+        color: "yellow",
+        reason: "dissent",
+      }),
+    );
+    expect(card).toMatchObject({ personId: "H-p7", color: "yellow", reason: "dissent" });
+  });
+
+  it("football omits reason entirely when the scorer did not record one", () => {
+    const [card] = football.discipline!.extractCards(
+      ledger("football.card", { by: "H", person: "H-p7", color: "red" }),
+    );
+    expect(card).toBeDefined();
+    expect(Object.hasOwn(card as object, "reason")).toBe(false);
+  });
+
+  it("hockey projects the infraction reason onto the card", () => {
+    const [card] = hockey.discipline!.extractCards(
+      ledger("hockey.suspension.start", {
+        by: "H",
+        person: "H-p3",
+        class: "green",
+        reason: "dangerous play",
+      }),
+    );
+    expect(card).toMatchObject({ personId: "H-p3", color: "green", reason: "dangerous play" });
+  });
+
+  it("ice hockey names the player who serves a bench minor", () => {
+    const [card] = icehockey.discipline!.extractCards(
+      ledger("icehockey.suspension.start", {
+        by: "A",
+        class: "bench_minor",
+        reason: "too many men",
+        servedBy: "A-p9",
+      }),
+    );
+    expect(card).toMatchObject({
+      entrantSide: "A",
+      color: "bench_minor",
+      reason: "too many men",
+      servedBy: "A-p9",
+    });
+    // A bench minor has no offender, only a server.
+    expect(Object.hasOwn(card as object, "personId")).toBe(false);
+  });
+
+  it("ice hockey omits servedBy when the penalised player serves it himself", () => {
+    const [card] = icehockey.discipline!.extractCards(
+      ledger("icehockey.suspension.start", { by: "A", person: "A-p4", class: "minor" }),
+    );
+    expect(card).toBeDefined();
+    expect(Object.hasOwn(card as object, "servedBy")).toBe(false);
+    expect(Object.hasOwn(card as object, "reason")).toBe(false);
+  });
+
+  it("lets an accumulation rule count cards by offence, not just by colour", () => {
+    const cards = football.discipline!.extractCards([
+      makeEnvelope(0, {
+        type: "football.card",
+        payload: { by: "H", person: "H-p7", color: "yellow", reason: "dissent" },
+      }) as EventEnvelope,
+      makeEnvelope(1, {
+        type: "football.card",
+        payload: { by: "H", person: "H-p7", color: "yellow", reason: "unsporting_behaviour" },
+      }) as EventEnvelope,
+      makeEnvelope(2, {
+        type: "football.card",
+        payload: { by: "H", person: "H-p7", color: "yellow", reason: "dissent" },
+      }) as EventEnvelope,
+    ]);
+    const dissent = cards.filter((c) => c.reason === "dissent");
+    expect(dissent).toHaveLength(2);
+  });
 });
