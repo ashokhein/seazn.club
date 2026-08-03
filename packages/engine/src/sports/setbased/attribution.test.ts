@@ -140,6 +140,40 @@ describe("set-based sanctions", () => {
   it("leaves `sanctions` absent until one is issued", () => {
     expect(fold(volleyball, [rally(volleyball, { wonBy: "H" })]).sanctions).toBeUndefined();
   });
+
+  // W4 review — the branch could not say WHY. The whole rationale for
+  // `DisciplineCard.reason` is an accumulation rule keyed on the offence, and
+  // the FIVB sanction box is a free-text field on the sheet, so the fact was
+  // recordable on paper and not in the ledger.
+  it("carries the referee's reason without moving the fold", () => {
+    const withReason = fold(volleyball, [
+      { type: "volleyball.sanction", payload: { by: "H", level: "penalty", reason: "dissent" } },
+    ]);
+    const without = fold(volleyball, [
+      { type: "volleyball.sanction", payload: { by: "H", level: "penalty" } },
+    ]);
+    // A discipline fact, not a scoring one: `reason` reaches the projection,
+    // never the state record (which is what the frozen corpora pin).
+    expect(withReason.sanctions).toEqual(without.sanctions);
+    expect(
+      volleyball.discipline!.extractCards([
+        makeEnvelope(0, {
+          type: "volleyball.sanction",
+          payload: { by: "H", person: "H-p6", level: "penalty", reason: "dissent" },
+        }),
+      ]),
+    ).toEqual([
+      { personId: "H-p6", entrantSide: "H", color: "penalty", eventId: "e-0", reason: "dissent" },
+    ]);
+  });
+
+  it("rejects an empty reason", () => {
+    expect(() =>
+      fold(volleyball, [
+        { type: "volleyball.sanction", payload: { by: "H", level: "warning", reason: "" } },
+      ]),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -211,6 +245,10 @@ describe("set-based event union stays unambiguous", () => {
     ["entrant-keyed summary", { by: "H", forBy: 25, forOpp: 20 }],
     ["timeout", { by: "H", technical: true }],
     ["sanction", { by: "H", level: "warning", person: "H-p1" }],
+    // W4 review — the WIDENED sanction branch, fully attributed. z.union takes
+    // the first branch that parses and zod strips silently, so only an equality
+    // round-trip can prove `reason` landed on the branch that declares it.
+    ["sanction with a reason", { by: "H", level: "warning", person: "H-p1", reason: "dissent" }],
     ["substitution", { by: "H", on: "H-p6", off: "H-p2" }],
   ];
 

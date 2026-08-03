@@ -44,10 +44,10 @@ ticks and the signature line.
 | Ace | all | person (the server) | `Ev.Point.meta.kind = "ace"` + `Ev.Point.server` → `State.persons[id].aces` | extended | the shot type was already modelled; W4 makes it attributable. |
 | Double fault | all | person (the server) | `Ev.Point.meta.kind = "double_fault"` + `Ev.Point.server` → `State.persons[id].doubleFaults` | extended | credited to the **server** even though the receiver wins the point — that is how the card scores it. |
 | Winner / unforced error | all | person `scorer` | `Ev.Point.meta.kind`, `Ev.Point.scorer` | modelled | the shot type already existed; attribution now rides with it. |
-| Code violation ladder: warning → point penalty → game penalty → default | all | entrant + optional person | `Ev.Sanction.level`, `.person` → `State.sanctions[]`, `summary.detail.sanctions` | extended | new `tennis.sanction` event; never moves the score. |
+| Code violation ladder: warning → point penalty → game penalty → default | all | entrant + optional person | `Ev.Sanction.level`, `.person`, `.reason` → `State.sanctions[]`, `summary.detail.sanctions`, `discipline.extractCards` | extended | new `tennis.sanction` event; never moves the score. `reason` is optional free text and reaches the discipline projection only — the fold never reads it, so no recorded state moves. |
 | The point a **point penalty** concedes | all | entrant | recorded as a `tennis.point` for the opponent | modelled | as the chair writes it into the card. |
 | The game a **game penalty** concedes | all | entrant | — | deferred | there is no "award a game" event, and adding one would be a new scoring path rather than an additive field. A scorer can enter the four points; a proper fix needs a product decision. |
-| The specific code-violation offence (racquet abuse, audible obscenity, coaching, time violation, …) | all | person | — | deferred | the ITF offence list is long and tour-specific. The pad can carry it as a `core.note` until someone decides the taxonomy is worth an enum. |
+| The specific code-violation offence (racquet abuse, audible obscenity, coaching, time violation, …) | all | person | `Ev.Sanction.reason` (free text) | deferred | still deferred as a *taxonomy*: the ITF offence list is long and tour-specific, and a closed enum needs a product decision plus four locale dictionaries. W4's review added the free-text `reason` so the chair's own words reach `DisciplineCard.reason` — which is what an accumulation rule keyed on the offence ("three for racquet abuse") actually needs. Carrom's dossier records the same compromise. |
 | Break of serve | all | entrant | derived from `State.serving` + `State.games` | modelled | the card marks it; the ledger already determines it. |
 | First serve vs second serve | all | person | — | deferred | the chair's card records only the outcome (a double fault). First-serve percentage is a broadcast statistic, wrong fidelity for our tiers. |
 | Lets | all | — | — | deferred | a let is replayed and nothing is written — there is no scoresheet fact to record. |
@@ -76,6 +76,11 @@ Asserted against the table itself by `src/testkit/dossiers.test.ts`.
   default`. `apps/web/src/lib/scoring-vocab.ts` humanises unknown values, so
   nothing breaks, but a label set is owed — and `default` in particular reads
   badly unlabelled.
+- **`tennis.sanction.reason`** (W4 review) — optional free text, the chair's own
+  words for the offence. It reaches `DisciplineCard.reason` and nothing else:
+  the fold never reads it, so no recorded state and no golden moves. A pad
+  should offer it as a free-text field beside the ladder step, not as a picker,
+  until the taxonomy row above is resolved.
 - **New payload fields** `tennis.point.server` and `.scorer`. A doubles pad must
   offer both members of each pair, and should default `server` from
   `summary.detail.serving` plus the pair's order.

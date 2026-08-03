@@ -174,6 +174,14 @@ export const NestedSanction = z.strictObject({
   by: EntrantId,
   level: NestedSanctionLevel,
   person: PersonId.optional(), // absent = the pair/team, not a named player
+  // W4 review — WHICH code violation. The rationale for `DisciplineCard.reason`
+  // (core/types.ts) is an accumulation rule keyed on the offence rather than
+  // the ladder step, and it applies verbatim here: racquet abuse and coaching
+  // are both warnings and are not the same repeat offence. The chair writes it
+  // on the card; this branch could not. Optional, free text (the ITF offence
+  // list is long and tour-specific — see the dossier), and the fold never
+  // reads it.
+  reason: z.string().min(1).optional(),
 });
 export type NestedSanction = z.infer<typeof NestedSanction>;
 
@@ -726,6 +734,10 @@ export function makeNestedModule(
           entrantSide: sanction.by,
           color: sanction.level,
           eventId: ev.id,
+          // W4 review — the offence, when the chair recorded one, the way
+          // football and the period kernel already pass it. Absent stays
+          // absent: "no offence recorded" is not an offence.
+          ...(sanction.reason === undefined ? {} : { reason: sanction.reason }),
         });
       }
       return cards;

@@ -233,6 +233,78 @@ describe("SPEC-1 discipline reaches every sanction-bearing family (W4 item 7)", 
     });
   });
 
+  // W4 review — `DisciplineCard.reason` exists so an accumulation rule can be
+  // keyed on the OFFENCE ("three cards for dissent"), which is the whole
+  // rationale on core/types.ts. Two of the five producers could not carry it:
+  // the set-based and nested sanction branches had no `reason` at all, though
+  // the rule applies verbatim to an ITF racquet-abuse violation and to an FIVB
+  // expulsion for repeated misconduct.
+  it("volleyball projects the referee's reason onto the card", () => {
+    const [card] = volleyball.discipline!.extractCards(
+      ledger("volleyball.sanction", {
+        by: "H",
+        person: "H-p6",
+        level: "expulsion",
+        reason: "repeated misconduct",
+      }),
+    );
+    expect(card).toMatchObject({
+      personId: "H-p6",
+      entrantSide: "H",
+      color: "expulsion",
+      reason: "repeated misconduct",
+    });
+  });
+
+  it("tennis projects the ITF offence onto the card", () => {
+    const [card] = tennis.discipline!.extractCards(
+      ledger("tennis.sanction", {
+        by: "H",
+        person: "H-p1",
+        level: "point_penalty",
+        reason: "racquet abuse",
+      }),
+    );
+    expect(card).toMatchObject({
+      personId: "H-p1",
+      color: "point_penalty",
+      reason: "racquet abuse",
+    });
+  });
+
+  it("omits reason in both families when the official recorded none", () => {
+    for (const [module, type] of [
+      [volleyball, "volleyball.sanction"],
+      [tennis, "tennis.sanction"],
+    ] as const) {
+      const [card] = module.discipline!.extractCards(
+        ledger(type, { by: "H", person: "H-p1", level: "warning" }),
+      );
+      expect(card, module.key).toBeDefined();
+      expect(Object.hasOwn(card as object, "reason"), module.key).toBe(false);
+    }
+  });
+
+  it("counts tennis violations by offence, not just by ladder step", () => {
+    const cards = tennis.discipline!.extractCards([
+      makeEnvelope(0, {
+        type: "tennis.sanction",
+        payload: { by: "H", person: "H-p1", level: "warning", reason: "racquet abuse" },
+      }) as EventEnvelope,
+      makeEnvelope(1, {
+        type: "tennis.sanction",
+        payload: { by: "H", person: "H-p1", level: "warning", reason: "coaching" },
+      }) as EventEnvelope,
+      makeEnvelope(2, {
+        type: "tennis.sanction",
+        payload: { by: "H", person: "H-p1", level: "point_penalty", reason: "racquet abuse" },
+      }) as EventEnvelope,
+    ]);
+    // Same ladder step twice, same offence twice — different pairs. Only
+    // `reason` can tell the second story.
+    expect(cards.filter((c) => c.reason === "racquet abuse")).toHaveLength(2);
+  });
+
   // A void must un-count a sanction in every family, the way it already does
   // for a football card — otherwise a corrected mis-entry keeps suspending.
   it("respects voids in every newly-projecting family", () => {

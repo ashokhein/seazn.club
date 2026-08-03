@@ -151,6 +151,13 @@ export const SetBasedSanction = z.strictObject({
   by: EntrantId,
   level: SetBasedSanctionLevel,
   person: PersonId.optional(), // absent = a team sanction
+  // W4 review — the offence as the official called it. The whole rationale for
+  // `DisciplineCard.reason` (core/types.ts) is an accumulation rule keyed on
+  // the offence rather than the ladder step — "three for dissent" — and this
+  // branch could not express one, though the FIVB/BWF/ITTF sheets all leave a
+  // free-text sanction note. Optional: coarse scoring records a step and
+  // nothing else, and the fold never reads it (discipline does).
+  reason: z.string().min(1).optional(),
 });
 export type SetBasedSanction = z.infer<typeof SetBasedSanction>;
 
@@ -644,6 +651,11 @@ export function makeSetBasedModule(
                 // kernel projects its suspension CLASS keys.
                 color: sanction.level,
                 eventId: ev.id,
+                // W4 review — the offence, when the official recorded one, the
+                // way football and the period kernel already pass it. Absent
+                // stays absent: an accumulation rule must be able to tell "no
+                // offence recorded" from an offence named.
+                ...(sanction.reason === undefined ? {} : { reason: sanction.reason }),
               });
             }
             return cards;

@@ -152,6 +152,42 @@ describe("tennis code violations", () => {
   it("leaves `sanctions` absent until one is issued", () => {
     expect(fold([point({ by: H })]).sanctions).toBeUndefined();
   });
+
+  // W4 review — the branch could not say WHICH violation. The ITF ladder is
+  // cumulative on the offence as much as on the step, and the whole rationale
+  // for `DisciplineCard.reason` (core/types.ts) is an accumulation rule keyed
+  // on it. The chair writes the offence on the card; the ledger could not.
+  it("carries the chair's offence without moving the fold", () => {
+    const withReason = fold([
+      { type: "tennis.sanction", payload: { by: H, level: "warning", reason: "racquet abuse" } },
+    ]);
+    const without = fold([{ type: "tennis.sanction", payload: { by: H, level: "warning" } }]);
+    // A discipline fact, not a scoring one: `reason` reaches the projection,
+    // never the state record (which is what the frozen corpus pins).
+    expect(withReason.sanctions).toEqual(without.sanctions);
+    expect(
+      tennis.discipline!.extractCards([
+        makeEnvelope(0, {
+          type: "tennis.sanction",
+          payload: { by: H, person: "H-p1", level: "warning", reason: "racquet abuse" },
+        }),
+      ]),
+    ).toEqual([
+      {
+        personId: "H-p1",
+        entrantSide: H,
+        color: "warning",
+        eventId: "e-0",
+        reason: "racquet abuse",
+      },
+    ]);
+  });
+
+  it("rejects an empty offence", () => {
+    expect(() =>
+      fold([{ type: "tennis.sanction", payload: { by: H, level: "warning", reason: "" } }]),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -166,6 +202,10 @@ describe("nested event union stays unambiguous", () => {
     ["set summary", { home: 6, away: 4 }],
     ["tie-break set summary", { home: 7, away: 6, tb: { home: 7, away: 5 } }],
     ["sanction", { by: H, level: "warning", person: "H-p1" }],
+    // W4 review — the WIDENED sanction branch, fully attributed. `NestedPoint`
+    // comes FIRST in the union and zod strips silently, so only an equality
+    // round-trip can prove `reason` landed on the branch that declares it.
+    ["sanction with an offence", { by: H, level: "warning", person: "H-p1", reason: "coaching" }],
   ];
 
   for (const [label, payload] of canonical) {
