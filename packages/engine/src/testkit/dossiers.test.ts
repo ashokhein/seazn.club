@@ -1,0 +1,101 @@
+// W4 shared-engine item 6 (#407) — "audited" must be a checkable property.
+//
+// W4 audited all eleven sport modules against their real scorebooks and wrote
+// each result up as a domain dossier. That claim lived in commit messages and
+// nowhere else: nothing in the build could tell an audited module from an
+// unaudited one, so the twelfth sport would ship with no dossier and no one
+// would notice. This suite makes the dossier part of the contract.
+//
+// Purity: dossiers.ts touches node:fs and is deliberately NOT exported from
+// testkit/index.ts — @seazn/engine ships zero runtime dependencies and the
+// barrel is a published entrypoint. golden.ts set that precedent; this follows
+// it, and the last test here holds the line.
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import { builtinModules } from "../sports/index.ts";
+import {
+  DOSSIER_STATUSES,
+  MAPPING_COLUMNS,
+  dossierPath,
+  readDossier,
+  type Dossier,
+} from "./dossiers.ts";
+
+/** A dossier this thin is a placeholder, not an audit. */
+const MIN_CHARS = 2000;
+const MIN_ROWS = 1;
+
+describe("every builtin sport module ships a domain dossier", () => {
+  it("covers all eleven builtins", () => {
+    expect(builtinModules.length).toBe(11);
+  });
+
+  it("names the sport key when a dossier is missing", () => {
+    // The failure message is the product here: a bare ENOENT on an absolute
+    // path does not tell the next author which sport they forgot.
+    expect(() => readDossier("kabaddi")).toThrowError(/kabaddi/);
+  });
+
+  for (const module of builtinModules) {
+    describe(module.key, () => {
+      let dossier: Dossier;
+
+      it(`has a dossier on disk (${module.key})`, () => {
+        expect(() => {
+          dossier = readDossier(module.key);
+        }, `sport module "${module.key}" has no domain dossier`).not.toThrow();
+      });
+
+      it(`is non-trivial (${module.key})`, () => {
+        dossier ??= readDossier(module.key);
+        expect(
+          dossier.text.length,
+          `dossier for "${module.key}" is a stub (${dossier.path})`,
+        ).toBeGreaterThan(MIN_CHARS);
+        expect(dossier.text, `dossier for "${module.key}" has no heading`).toMatch(/^#\s+\S/m);
+      });
+
+      it(`carries a mapping table (${module.key})`, () => {
+        dossier ??= readDossier(module.key);
+        expect(
+          dossier.hasMappingHeader,
+          `dossier for "${module.key}" has no mapping table header ` +
+            `(expected columns: ${MAPPING_COLUMNS.join(" | ")}) — ${dossier.path}`,
+        ).toBe(true);
+      });
+
+      it(`maps at least one fact with a declared status (${module.key})`, () => {
+        dossier ??= readDossier(module.key);
+        expect(
+          dossier.rows.length,
+          `dossier for "${module.key}" maps no facts (${dossier.path})`,
+        ).toBeGreaterThanOrEqual(MIN_ROWS);
+        for (const row of dossier.rows) {
+          expect(
+            DOSSIER_STATUSES as readonly string[],
+            `${module.key} row at ${dossier.path}:${row.line}`,
+          ).toContain(row.status);
+        }
+      });
+    });
+  }
+
+  it("puts each dossier next to its module, by the golden path convention", () => {
+    const paths = builtinModules.map((m) => dossierPath(m.key));
+    expect(new Set(paths).size, "two modules share one dossier file").toBe(paths.length);
+    // The setbased trio share a directory, so the KEY has to be in the file
+    // name; every other module owns its directory and uses a bare DOMAIN.md.
+    expect(dossierPath("badminton").endsWith("setbased/DOMAIN.badminton.md")).toBe(true);
+    expect(dossierPath("football").endsWith("football/DOMAIN.md")).toBe(true);
+  });
+
+  // Structural, not cosmetic: node:fs must never reach @seazn/engine/testkit.
+  it("keeps node:fs out of the published testkit barrel", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const barrel = readFileSync(join(here, "index.ts"), "utf8");
+    expect(barrel).not.toMatch(/dossiers/);
+    expect(barrel).not.toMatch(/golden/);
+  });
+});

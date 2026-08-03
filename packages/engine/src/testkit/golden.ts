@@ -67,7 +67,7 @@ const EXTRA_CONFIGS: Record<string, Record<string, unknown>> = {
 
 // Where each module's golden lives: next to its implementation. The setbased
 // trio share one directory, so the file name (not the directory) is the key.
-const SPORT_DIRS: Record<string, string> = {
+export const SPORT_DIRS: Record<string, string> = {
   football: "football",
   cricket: "cricket",
   boardgame: "boardgame",
