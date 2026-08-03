@@ -1,9 +1,10 @@
 // v1 kernel: envelope, EngineError→HTTP map, cursor pagination (doc 08 §1/§4).
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { EngineError } from "@seazn/engine/core";
+import { EngineError, EngineErrorCode } from "@seazn/engine/core";
 import { AuthError, HttpError, PaymentRequiredError } from "@/lib/errors";
 import {
+  ENGINE_HTTP,
   v1,
   reply,
   parseBody,
@@ -42,6 +43,14 @@ describe("v1 envelope", () => {
     ["ALREADY_DECIDED", 422],
     ["STAGE_NOT_READY", 422],
     ["CONFIG_INVALID", 422],
+    // W4a (#425) §7 — the core time model's four codes. The first three are
+    // things a scorer typed; UNKNOWN_PHASE is an internal invariant (a module
+    // declared a phase order that does not contain a period it accepted), so
+    // it is a 500 and gets captured, not a 422 the pad is asked to explain.
+    ["NON_MONOTONIC_TIME", 422],
+    ["EXPEDITE_WRONG_WINNER", 422],
+    ["SUB_WINDOW_EXCEEDED", 422],
+    ["UNKNOWN_PHASE", 500],
   ] as const)("maps EngineError %s → %d", async (code, status) => {
     const res = await v1(async () => {
       throw new EngineError(code, "boom");
@@ -50,6 +59,15 @@ describe("v1 envelope", () => {
     const json = await body(res);
     expect(json.ok).toBe(false);
     expect((json.error as { code: string }).code).toBe(code);
+  });
+
+  // The `?? 422` fallback in v1Inner means a code missing from ENGINE_HTTP
+  // still answers 200-something plausible, so nothing at runtime notices the
+  // omission — and the exhaustive Record only fails `tsc`, which is PR-only
+  // for this workspace. Assert the map covers the enum here too.
+  it("maps EVERY EngineErrorCode explicitly — no code rides the ?? 422 fallback", () => {
+    const unmapped = EngineErrorCode.options.filter((code) => ENGINE_HTTP[code] === undefined);
+    expect(unmapped).toEqual([]);
   });
 
   it("SEQ_CONFLICT carries current_seq (doc 08 §4)", async () => {
