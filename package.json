@@ -7,6 +7,7 @@
     "apps/*",
     "packages/*"
   ],
+  "packageManager": "npm@11.17.0",
   "scripts": {
     "dev": "npm run dev --workspace apps/web",
     "build": "npm run build --workspace apps/web",
@@ -37,5 +38,8 @@
     "openapi:gen": "node --experimental-strip-types scripts/openapi-gen.ts",
     "check:rls": "node --experimental-strip-types scripts/check-rls.ts",
     "backfill:pass-credit-redemptions": "node --env-file-if-exists=apps/web/.env.local --experimental-strip-types scripts/backfill-pass-credit-redemptions.ts"
+  },
+  "devDependencies": {
+    "turbo": "^2.10.8"
   }
 }

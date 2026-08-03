@@ -1,0 +1,56 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+
+  // Artifacts are HMAC-SHA256 signed before upload and verified on download;
+  // anything that fails verification is treated as a cache miss rather than
+  // trusted. Requires TURBO_REMOTE_CACHE_SIGNATURE_KEY (32+ bytes) to be the
+  // SAME value on every machine that reads or writes the cache — CI and every
+  // dev box. A mismatched key is not an error: turbo silently misses forever.
+  "remoteCache": {
+    "signature": true
+  },
+
+  // Package tasks hash only their own package's files. These three tasks all
+  // read root-level sources that live outside apps/web and packages/engine:
+  //
+  //   * apps/web `typecheck` is `tsc --noEmit && tsc -p ../../tsconfig.scripts.json`
+  //     — the second half type-checks the whole of scripts/.
+  //
+  // Without these, editing scripts/ leaves a stale typecheck cached green.
+  "globalDependencies": ["tsconfig.scripts.json", "scripts/**"],
+
+  "tasks": {
+    // apps/web is the only package with a build; @seazn/engine ships raw TS via
+    // exports and has no build script, so `^build` is a no-op edge that exists
+    // to keep the ordering correct if the engine ever gains one. The dependency
+    // graph (`"@seazn/engine": "*"`) already makes an engine source change
+    // invalidate the web build.
+    "build": {
+      "dependsOn": ["^build"],
+      // .next/cache is Next's own incremental compiler cache and is restored
+      // separately by actions/cache in ci.yml — keep it out of the artifact.
+      "outputs": [".next/**", "!.next/cache/**"],
+      // NEXT_PUBLIC_* is inlined into the client bundle at build time, so it
+      // MUST be part of the hash. Turborepo's framework inference adds that
+      // prefix automatically for Next packages; it is listed anyway so the
+      // contract is readable here rather than implied.
+      "env": [
+        "NEXT_PUBLIC_*",
+        "NEXT_TELEMETRY_DISABLED",
+        "SENTRY_ORG",
+        "SENTRY_PROJECT",
+        "SENTRY_AUTH_TOKEN",
+        "SKIP_TYPECHECK"
+      ]
+    },
+
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+
+    "lint": {
+      "outputs": []
+    }
+  }
+}

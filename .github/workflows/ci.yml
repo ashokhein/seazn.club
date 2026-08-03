@@ -14,6 +14,21 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Turborepo Remote Cache (Vercel personal scope — `turbo link` writes the team
+# id to .turbo/config.json, which is gitignored, so CI has to be told).
+#
+# Fork PRs get an EMPTY TURBO_TOKEN because secrets are withheld from them.
+# That is not an error: turbo drops to the local cache and every task still
+# runs. Verified 2026-08-03 with both vars empty — 2 tasks successful.
+#
+# The signature key is checked on download; a mismatch is a SILENT permanent
+# cache miss, not a failure. So a wrong/absent key costs speed, never
+# correctness — but it also means CI will never tell you the key is wrong.
+env:
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAMID: team_YHIpnOtgzPbKRRZIePMhWVtG
+  TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
+
 jobs:
   # -------------------------------------------------------------------------
   # Fast, DB-free gate: typecheck + the full unit / property / grid suite.
@@ -44,8 +59,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run typecheck --workspace apps/web
-      - run: npm run typecheck --workspace packages/engine
+      # Both workspaces in one graph-ordered pass, restored from the Remote
+      # Cache when neither TS tree changed. turbo.json's globalDependencies
+      # pull in scripts/** + tsconfig.scripts.json, which apps/web's typecheck
+      # reads via its second `tsc -p ../../tsconfig.scripts.json` half — without
+      # that, a scripts/ edit would restore a stale green.
+      - run: npx turbo run typecheck
       - run: npm run engine:boundary
       # v3/03 §6: retired plan tier must never reappear in UI copy.
       - name: Plan-scrub grep gate (PROMPT-32)
@@ -85,7 +104,7 @@ jobs:
       # during render on a live-scoring countdown with no test coverage) and it
       # names the issue that will remove it: #355. Nothing else may join it.
       - name: eslint
-        run: npm run lint
+        run: npx turbo run lint
 
       - run: npm test --workspace apps/web
       # Live-Stripe tier probe (sk_test, test-mode): confirms our plan/tier
@@ -361,8 +380,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
 
+      # On a cache hit turbo restores apps/web/.next/** (minus .next/cache,
+      # which the actions/cache step above owns) — including the standalone
+      # tree the "Start server" step copies .next/static into.
+      #
+      # SKIP_TYPECHECK is declared in turbo.json's `build.env`, so a run with
+      # it set hashes differently from one without: a cached build can never
+      # be silently reused across the type-checked / not-type-checked split.
       - name: Build (production)
-        run: npm run build --workspace apps/web
+        run: npx turbo run build
         env:
           # tsc gate already ran in the test job — don't type-check twice.
           SKIP_TYPECHECK: "1"
