@@ -42,4 +42,21 @@ export const tabletennis = makeSetBasedModule({
   coarseEventType: "game.summary",
   rallyEntitlement: "scoring.rally_by_rally", // doc 10 / table-tennis.md §3
   entrantModel: { kinds: ["individual", "pair"], defaultKind: "individual" },
+  // W4 (#407) — the ITTF match sheet carries one timeout per player per match
+  // and the umpire's card ladder (yellow warning → `warning`, red penalty →
+  // `penalty`, removal → `expulsion`/`disqualification`). No substitutions.
+  records: { timeouts: true, sanctions: true },
+  playerStats: {
+    metrics: [
+      { key: "points", label: "Points", from: "tabletennis.rally", field: "scorer", agg: "count" },
+      { key: "serves", label: "Serves", from: "tabletennis.rally", field: "server", agg: "count" },
+      {
+        key: "sanctions",
+        label: "Cards",
+        from: "tabletennis.sanction",
+        field: "person",
+        agg: "count",
+      },
+    ],
+  },
 });

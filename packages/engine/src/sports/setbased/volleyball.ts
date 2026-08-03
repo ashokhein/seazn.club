@@ -57,6 +57,26 @@ export const volleyball = makeSetBasedModule({
     defaultKind: "team",
     team: { squadNumbers: true, captain: true },
   },
+  // W4 (#407) — the FIVB scoresheet carries all three: team + technical
+  // timeouts, the substitution boxes (in/out numbers, six a set indoor) and
+  // the sanction ladder (warning / penalty / expulsion / disqualification).
+  records: { timeouts: true, sanctions: true, substitutions: true },
+  // Jul3/07 §3 — unlocked by the rally's optional `server`/`scorer`. The
+  // FIVB point-by-point grid records the serving player's number, so `serves`
+  // is a scoresheet fact; `scorer` credits the terminating action.
+  playerStats: {
+    metrics: [
+      { key: "points", label: "Points", from: "volleyball.rally", field: "scorer", agg: "count" },
+      { key: "serves", label: "Serves", from: "volleyball.rally", field: "server", agg: "count" },
+      {
+        key: "sanctions",
+        label: "Sanctions",
+        from: "volleyball.sanction",
+        field: "person",
+        agg: "count",
+      },
+    ],
+  },
 });
 
 // Jul3/06 §3 — the 12-Jun scoresheet: point-by-point columns per set,

@@ -20,6 +20,7 @@ import {
 } from "../../core/types.ts";
 import type { PositionCatalog } from "../../sport/catalog.ts";
 import type { EntrantModel } from "../../sport/entrant-model.ts";
+import type { PlayerStatsModel } from "../../stats/stats.ts";
 import type {
   FidelityTier,
   ModuleEvent,
@@ -77,7 +78,21 @@ export type SetBasedCfg = SetBasedParams;
 // Events — spec 04 §3.2 / §4 / §5
 // ---------------------------------------------------------------------------
 
-export const SetBasedRally = z.strictObject({ wonBy: EntrantId });
+// W4 (#407) — person attribution. `PersonId` mirrors the football convention
+// (a plain non-empty id); EVERY person field is optional so a coarse scorer who
+// records nothing but `wonBy` stays legal and folds exactly as before.
+export const PersonId = z.string().min(1);
+
+// The FIVB scoresheet's point-by-point grid records the SERVING player's
+// number, and the BWF / ITTF umpire sheets track the server through the service
+// rotation — so `server` is a genuine scorebook field, not broadcast trivia.
+// `scorer` is the player credited with the terminating action (kill/block/ace/
+// winner); only pads that ask for it will send it.
+export const SetBasedRally = z.strictObject({
+  wonBy: EntrantId,
+  server: PersonId.optional(),
+  scorer: PersonId.optional(),
+});
 export type SetBasedRally = z.infer<typeof SetBasedRally>;
 
 // Coarse fidelity. Two accepted shapes fold identically:
@@ -102,19 +117,99 @@ export const SetSummaryByEntrant = z.strictObject({
 export const SetBasedSummary = z.union([SetSummaryPositional, SetSummaryByEntrant]);
 export type SetBasedSummary = z.infer<typeof SetBasedSummary>;
 
-export const SetBasedEv = z.union([SetBasedRally, SetBasedSummary]);
+// W4 (#407) — the interruptions a set-based scoresheet actually carries.
+// Which of the three a sport records is declared per preset (`records`): FIVB
+// keeps timeouts, sanctions and substitutions; the ITTF sheet keeps timeouts
+// and cards; BWF has no timeouts and no substitutions at all.
+//
+// NONE of these touches the score. A volleyball penalty concedes a rally and an
+// ITTF penalty card awards a point, but the scoresheet writes that point into
+// the point-by-point grid — so the point arrives as a rally and this row is the
+// record of the misconduct, exactly as on paper.
+
+/** FIVB's four-step sanction ladder. The BWF card ladder (yellow warning / red
+ *  fault / black disqualification) and the ITTF yellow/red cards map onto it —
+ *  each sport's dossier records the mapping. */
+export const SetBasedSanctionLevel = z.enum([
+  "warning",
+  "penalty",
+  "expulsion",
+  "disqualification",
+]);
+export type SetBasedSanctionLevel = z.infer<typeof SetBasedSanctionLevel>;
+
+export const SetBasedTimeout = z.strictObject({
+  by: EntrantId,
+  /** FIVB technical timeout (automatic at 8/16 in a non-deciding set). */
+  technical: z.boolean().optional(),
+});
+export type SetBasedTimeout = z.infer<typeof SetBasedTimeout>;
+
+export const SetBasedSanction = z.strictObject({
+  by: EntrantId,
+  level: SetBasedSanctionLevel,
+  person: PersonId.optional(), // absent = a team sanction
+});
+export type SetBasedSanction = z.infer<typeof SetBasedSanction>;
+
+export const SetBasedSub = z.strictObject({
+  by: EntrantId,
+  in: PersonId.optional(),
+  out: PersonId.optional(),
+});
+export type SetBasedSub = z.infer<typeof SetBasedSub>;
+
+// Branch order matters: z.union takes the FIRST branch that parses, so the new
+// branches are APPENDED and every pre-existing payload still lands on the
+// branch it always did (rally needs `wonBy`, the summaries need home/away or
+// forBy+forOpp — none of which the new strict branches accept).
+// A bare `{by}` is accepted by both the timeout and the substitution branch;
+// that overlap is inert because `apply` dispatches on the ENVELOPE type and
+// parses with the one branch that type names.
+export const SetBasedEv = z.union([
+  SetBasedRally,
+  SetBasedSummary,
+  SetBasedTimeout,
+  SetBasedSanction,
+  SetBasedSub,
+]);
 export type SetBasedEv = z.infer<typeof SetBasedEv>;
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
-type Side = "home" | "away";
+export type Side = "home" | "away";
 
 export interface SetState {
   home: number;
   away: number;
   closed: boolean;
+}
+
+/** Per-person tallies folded out of attributed rallies (W4). */
+export interface SetBasedPersonTally {
+  points: number; // rallies won by this player's terminating action
+  serves: number; // rallies this player served
+}
+
+export interface SetBasedSanctionRec {
+  by: Side;
+  level: SetBasedSanctionLevel;
+  person?: string;
+}
+
+export interface SetBasedSubRec {
+  by: Side;
+  in?: string;
+  out?: string;
+}
+
+export interface SetBasedSubState {
+  home: number; // match totals
+  away: number;
+  thisSet: { home: number; away: number }; // reset when a set closes
+  log: SetBasedSubRec[];
 }
 
 export interface SetBasedState {
@@ -125,6 +220,14 @@ export interface SetBasedState {
   setsWon: { home: number; away: number };
   outcome: MatchOutcome | null;
   replayFlagged: boolean;
+  // ---- W4 (#407) additive extensions. Every one of these is ABSENT until the
+  // event that fills it arrives, so a stream recorded before W4 folds to a
+  // byte-identical state (the golden corpus compares JSON.stringify(state)).
+  // Never initialise them in `init`.
+  persons?: Record<string, SetBasedPersonTally>;
+  timeouts?: { home: number; away: number };
+  sanctions?: SetBasedSanctionRec[];
+  subs?: SetBasedSubState;
 }
 
 function opponent(side: Side): Side {
@@ -223,12 +326,36 @@ function totalPoints(state: SetBasedState, side: Side): number {
   return state.sets.reduce((sum, set) => sum + set[side], 0);
 }
 
+// W4 — credit optional person fields onto the tally map. Returns the SAME
+// reference when nothing is credited, so an unattributed stream never
+// materialises the `persons` key (golden byte-identity) and `apply` stays pure.
+function creditPersons(
+  persons: Record<string, SetBasedPersonTally> | undefined,
+  credits: ReadonlyArray<readonly [string | undefined, keyof SetBasedPersonTally]>,
+): Record<string, SetBasedPersonTally> | undefined {
+  const named = credits.filter((entry): entry is readonly [string, keyof SetBasedPersonTally] =>
+    entry[0] !== undefined,
+  );
+  if (named.length === 0) return persons;
+  const next: Record<string, SetBasedPersonTally> = { ...(persons ?? {}) };
+  for (const [personId, key] of named) {
+    const prev = next[personId] ?? { points: 0, serves: 0 };
+    next[personId] = { ...prev, [key]: prev[key] + 1 };
+  }
+  return next;
+}
+
 // Closes the set at `index` for `winnerSide`, banks the set win and decides the
 // match when a side reaches ⌈bestOf/2⌉ sets (spec 04 §3.3). No draws, ever.
 function bankSet(state: SetBasedState, index: number, winnerSide: Side): SetBasedState {
   const closed: SetState = { ...(state.sets[index] as SetState), closed: true };
   const setsWon = { ...state.setsWon, [winnerSide]: state.setsWon[winnerSide] + 1 };
   let next: SetBasedState = { ...replaceSet(state, index, closed), setsWon };
+  // A new set means a fresh substitution allowance (indoor volleyball counts
+  // six a SET, not a match) — the match totals keep running.
+  if (next.subs !== undefined) {
+    next = { ...next, subs: { ...next.subs, thisSet: { home: 0, away: 0 } } };
+  }
   if (setsWon[winnerSide] >= majority(state.cfg.bestOf)) {
     next = {
       ...next,
@@ -252,7 +379,11 @@ function applyRally(state: SetBasedState, payload: SetBasedRally): SetBasedState
   if (state.phase !== "live") wrongPhase(`rally not allowed in phase "${state.phase}"`);
   const side = sideOf(state, payload.wonBy);
 
-  let next = state;
+  const persons = creditPersons(state.persons, [
+    [payload.scorer, "points"],
+    [payload.server, "serves"],
+  ]);
+  let next = persons === state.persons ? state : { ...state, persons };
   let open = openSet(next);
   if (open === null) {
     next = { ...next, sets: [...next.sets, { home: 0, away: 0, closed: false }] };
@@ -326,6 +457,48 @@ function applySummary(state: SetBasedState, payload: SetBasedSummary): SetBasedS
   return bankSet(withSet, index, winner);
 }
 
+// ---------------------------------------------------------------------------
+// W4 (#407) — scoresheet interruptions. None of them touches the set ledger,
+// so they are legal at any live moment and leave the score exactly as it was.
+// ---------------------------------------------------------------------------
+
+function applyTimeout(state: SetBasedState, payload: SetBasedTimeout): SetBasedState {
+  if (state.phase !== "live") wrongPhase(`timeout not allowed in phase "${state.phase}"`);
+  const side = sideOf(state, payload.by);
+  const timeouts = state.timeouts ?? { home: 0, away: 0 };
+  return { ...state, timeouts: { ...timeouts, [side]: timeouts[side] + 1 } };
+}
+
+function applySanction(state: SetBasedState, payload: SetBasedSanction): SetBasedState {
+  if (state.phase !== "live") wrongPhase(`sanction not allowed in phase "${state.phase}"`);
+  const record: SetBasedSanctionRec = {
+    by: sideOf(state, payload.by),
+    level: payload.level,
+    ...(payload.person === undefined ? {} : { person: payload.person }),
+  };
+  return { ...state, sanctions: [...(state.sanctions ?? []), record] };
+}
+
+function applySub(state: SetBasedState, payload: SetBasedSub): SetBasedState {
+  if (state.phase !== "live") wrongPhase(`substitution not allowed in phase "${state.phase}"`);
+  const side = sideOf(state, payload.by);
+  const subs = state.subs ?? { home: 0, away: 0, thisSet: { home: 0, away: 0 }, log: [] };
+  const record: SetBasedSubRec = {
+    by: side,
+    ...(payload.in === undefined ? {} : { in: payload.in }),
+    ...(payload.out === undefined ? {} : { out: payload.out }),
+  };
+  return {
+    ...state,
+    subs: {
+      ...subs,
+      [side]: subs[side] + 1,
+      thisSet: { ...subs.thisSet, [side]: subs.thisSet[side] + 1 },
+      log: [...subs.log, record],
+    },
+  };
+}
+
 // Forfeit — spec 04 §3 / volleyball.md §7: award the match to the opponent;
 // completed sets already stand in the ledger.
 function applyForfeit(state: SetBasedState, by: string): SetBasedState {
@@ -391,6 +564,12 @@ export interface SetBasedPreset {
   coarseEventType: "set.summary" | "game.summary";
   rallyEntitlement: string; // doc 10 FeatureKey for Tier-2/3 rally scoring
   entrantModel?: EntrantModel;
+  // W4 (#407) — which interruptions THIS sport's scoresheet carries. A sport
+  // that does not declare one refuses the event outright rather than silently
+  // recording a fact its laws have no concept of (badminton has no timeouts
+  // and no substitutions; only indoor volleyball substitutes).
+  records?: { timeouts?: boolean; sanctions?: boolean; substitutions?: boolean };
+  playerStats?: PlayerStatsModel; // Jul3/07 §3 — unlocked by person attribution
 }
 
 function makeMetrics(unit: { one: string; many: string }): MetricSpec[] {
@@ -415,13 +594,28 @@ export function makeSetBasedModule(
   const configSchema = makeConfigSchema(preset.defaults);
   const rallyType = `${preset.key}.rally`;
   const summaryType = `${preset.key}.${preset.coarseEventType}`;
+  const timeoutType = `${preset.key}.timeout`;
+  const sanctionType = `${preset.key}.sanction`;
+  const subType = `${preset.key}.sub`;
+  const records = preset.records ?? {};
   const coarsenParams = preset.defaults; // spec 04 §9.6 conformance runs at default cfg
 
+  // W4 — the interruption types this sport actually records. `coarsen` treats
+  // them as transparent, so they never split a rally set.
+  const extensionTypes = [
+    ...(records.timeouts === true ? [timeoutType] : []),
+    ...(records.sanctions === true ? [sanctionType] : []),
+    ...(records.substitutions === true ? [subType] : []),
+  ];
+  const isExtensionType = (type: string): boolean => extensionTypes.includes(type);
+
+  // Tiers 0/1 stay a bare final score; the attributed timeline (who served, who
+  // scored, cards, timeouts, subs) rides with rally scoring at tiers 2/3.
   const fidelityTiers: FidelityTier[] = [
     { tier: 0, eventTypes: [summaryType] },
     { tier: 1, eventTypes: [summaryType] },
-    { tier: 2, eventTypes: [rallyType], entitlement: preset.rallyEntitlement },
-    { tier: 3, eventTypes: [rallyType], entitlement: preset.rallyEntitlement },
+    { tier: 2, eventTypes: [rallyType, ...extensionTypes], entitlement: preset.rallyEntitlement },
+    { tier: 3, eventTypes: [rallyType, ...extensionTypes], entitlement: preset.rallyEntitlement },
   ];
 
   // Award/forfeit points = a clean-sweep win pair: "*" (or the first entry).
@@ -452,6 +646,7 @@ export function makeSetBasedModule(
     positions: preset.positions,
     variants: preset.variants,
     ...(preset.entrantModel === undefined ? {} : { entrantModel: preset.entrantModel }),
+    ...(preset.playerStats === undefined ? {} : { playerStats: preset.playerStats }),
 
     init(cfg, lineups: LineupPair): SetBasedState {
       return {
@@ -474,6 +669,21 @@ export function makeSetBasedModule(
           return applyRally(state, parsePayload(SetBasedRally, ev.payload, ev.type));
         case summaryType:
           return applySummary(state, parsePayload(SetBasedSummary, ev.payload, ev.type));
+        case timeoutType:
+          if (records.timeouts !== true) {
+            invalid(`"${preset.key}" does not record timeouts`);
+          }
+          return applyTimeout(state, parsePayload(SetBasedTimeout, ev.payload, ev.type));
+        case sanctionType:
+          if (records.sanctions !== true) {
+            invalid(`"${preset.key}" does not record sanctions`);
+          }
+          return applySanction(state, parsePayload(SetBasedSanction, ev.payload, ev.type));
+        case subType:
+          if (records.substitutions !== true) {
+            invalid(`"${preset.key}" does not record substitutions`);
+          }
+          return applySub(state, parsePayload(SetBasedSub, ev.payload, ev.type));
         case "core.forfeit":
           return applyForfeit(state, (ev.payload as { by: string }).by);
         case "core.abandon":
@@ -517,6 +727,17 @@ export function makeSetBasedModule(
           sets: state.sets.map((set) => ({ home: set.home, away: set.away, closed: set.closed })),
           points,
           ...(state.replayFlagged ? { abandoned: true } : {}),
+          // W4 — interruption counters survive coarsening (they pass straight
+          // through it), so exposing them here keeps §9.6 coarse ≡ fine. Per-
+          // PERSON tallies deliberately do NOT appear: coarsening collapses
+          // rallies into set summaries and discards attribution, so a summary
+          // that carried `persons` could never satisfy §9.6. They live in
+          // state (and in the playerStats fold over the ledger) instead.
+          ...(state.timeouts === undefined ? {} : { timeouts: state.timeouts }),
+          ...(state.sanctions === undefined ? {} : { sanctions: state.sanctions }),
+          ...(state.subs === undefined
+            ? {}
+            : { subs: { home: state.subs.home, away: state.subs.away, thisSet: state.subs.thisSet } }),
         },
       };
     },
@@ -583,17 +804,40 @@ export function makeSetBasedModule(
       if (state.phase !== "live") return null;
 
       const randomEntrant = () => (rng() < 0.5 ? state.entrants.home : state.entrants.away);
+      // W4 — the testkit's lineups are `${entrantId}-p{n}` (helpers.ts), so the
+      // generator can name people the way a real pad would.
+      const randomPerson = (entrantId: string) => `${entrantId}-p${1 + Math.floor(rng() * 3)}`;
+      // Occasional interruptions, so conformance actually walks the new
+      // branches (and §9.6 proves coarsen stays transparent to them).
+      if (extensionTypes.length > 0 && rng() < 0.05) {
+        const by = randomEntrant();
+        const type = extensionTypes[Math.floor(rng() * extensionTypes.length)] as string;
+        if (type === timeoutType) return { type, payload: { by, technical: rng() < 0.3 } };
+        if (type === sanctionType) {
+          const levels = SetBasedSanctionLevel.options;
+          const level = levels[Math.floor(rng() * levels.length)] as (typeof levels)[number];
+          return { type, payload: { by, level, person: randomPerson(by) } };
+        }
+        return { type, payload: { by, in: randomPerson(by), out: randomPerson(by) } };
+      }
+      // Half of all rallies carry attribution — the other half keep the coarse
+      // (entrant-only) shape legal and exercised.
+      const rallyPayload = (): SetBasedRally => {
+        const wonBy = randomEntrant();
+        if (rng() < 0.5) return { wonBy };
+        return { wonBy, server: randomPerson(randomEntrant()), scorer: randomPerson(wonBy) };
+      };
       const open = openSet(state);
       if (open !== null) {
         // A rally set is mid-flight — keep rallying it to a finish.
-        return { type: rallyType, payload: { wonBy: randomEntrant() } };
+        return { type: rallyType, payload: rallyPayload() };
       }
       const roll = rng();
       if (roll < 0.02) {
         return { type: "core.forfeit", payload: { by: randomEntrant(), reason: "walkover" } };
       }
       if (roll < 0.04) return { type: "core.abandon", payload: { reason: "venue closed" } };
-      if (roll < 0.14) return { type: rallyType, payload: { wonBy: randomEntrant() } };
+      if (roll < 0.14) return { type: rallyType, payload: rallyPayload() };
       const target = setTarget(state.cfg, state.sets.length);
       const [hi, lo] = generateSetScore(target, state.cfg.winBy, state.cfg.cap, rng);
       const homeWins = rng() < 0.5;
@@ -660,6 +904,14 @@ export function makeSetBasedModule(
             setsPlayed += 1;
             resetSet();
           }
+          continue;
+        }
+        // W4 — an interruption (timeout / sanction / substitution) is
+        // TRANSPARENT: it neither scores nor ends a set, so flushing the open
+        // set here would split one rally set into two coarse summaries and
+        // break §9.6. Pass it through and keep counting the set.
+        if (isExtensionType(event.type)) {
+          out.push({ type: event.type, payload: event.payload });
           continue;
         }
         // Non-rally: flush the open set, then pass through. A completed

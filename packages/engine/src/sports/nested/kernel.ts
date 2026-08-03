@@ -31,6 +31,7 @@ import type {
   TiebreakerKey,
 } from "../../sport/module.ts";
 import type { EntrantModel } from "../../sport/entrant-model.ts";
+import type { PlayerStatsModel } from "../../stats/stats.ts";
 
 // ---------------------------------------------------------------------------
 // Cfg — v6/00 §2
@@ -115,8 +116,21 @@ export const NestedPointMeta = z.strictObject({
   // Recorded for the record; no fold effect.
   receiverSide: z.enum(["deuce", "ad"]).optional(),
 });
+// W4 (#407) — person attribution. The chair umpire's card records who served
+// every point and, in doubles, which of the pair won it; the entrant-only point
+// could express neither. Both fields are OPTIONAL so coarse scoring stays
+// legal and a pre-W4 payload folds unchanged.
+//
+// Name overlap, deliberately kept: `NestedPoint.winner` is the PERSON who won
+// the point, while `NestedPointMeta.kind === "winner"` is the SHOT TYPE. They
+// sit on different levels of the payload and both follow their sport's own
+// vocabulary — renaming either would read wrong to a tennis scorer.
+export const PersonId = z.string().min(1);
+
 export const NestedPoint = z.strictObject({
   by: EntrantId,
+  server: PersonId.optional(),
+  winner: PersonId.optional(),
   meta: NestedPointMeta.optional(),
 });
 export type NestedPoint = z.infer<typeof NestedPoint>;
@@ -136,14 +150,36 @@ export const NestedSetSummary = z.strictObject({
 });
 export type NestedSetSummary = z.infer<typeof NestedSetSummary>;
 
-export const NestedEv = z.union([NestedPoint, NestedSetSummary]);
+// W4 (#407) — code violations. The ITF penalty ladder is cumulative within a
+// match: warning → point penalty → game penalty → default. The SCORE
+// consequence is entered as points (as the chair writes it into the card); this
+// row is the record of the violation itself, so the fold never moves the score.
+export const NestedSanctionLevel = z.enum([
+  "warning",
+  "point_penalty",
+  "game_penalty",
+  "default",
+]);
+export type NestedSanctionLevel = z.infer<typeof NestedSanctionLevel>;
+
+export const NestedSanction = z.strictObject({
+  by: EntrantId,
+  level: NestedSanctionLevel,
+  person: PersonId.optional(), // absent = the pair/team, not a named player
+});
+export type NestedSanction = z.infer<typeof NestedSanction>;
+
+// Appended, never reordered: `{by, level}` cannot parse as a point (strict
+// branches reject the extra key) and a summary needs home+away, so every
+// pre-W4 payload still lands on the branch it always did.
+export const NestedEv = z.union([NestedPoint, NestedSetSummary, NestedSanction]);
 export type NestedEv = z.infer<typeof NestedEv>;
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
-type Side = "home" | "away";
+export type Side = "home" | "away";
 
 export type GamePoints =
   | { kind: "standard"; home: number; away: number; advantage: Side | null } // 0..3 = 0/15/30/40
@@ -173,6 +209,27 @@ export interface NestedState {
   pointsWon: { home: number; away: number };
   outcome: MatchOutcome | null;
   replayFlagged: boolean;
+  // ---- W4 (#407) additive extensions. ABSENT until the event that fills them
+  // arrives: the golden corpus compares JSON.stringify(state), so initialising
+  // either of these in `init` would break every frozen stream. Never do it.
+  persons?: Record<string, NestedPersonTally>;
+  sanctions?: NestedSanctionRec[];
+}
+
+/** Per-person tallies folded out of attributed points (W4). Aces and double
+ *  faults credit the SERVER — a double fault is a point for the receiver but a
+ *  serving statistic for the server, which is how the card records it. */
+export interface NestedPersonTally {
+  points: number;
+  serves: number;
+  aces: number;
+  doubleFaults: number;
+}
+
+export interface NestedSanctionRec {
+  by: Side;
+  level: NestedSanctionLevel;
+  person?: string;
 }
 
 function opponent(side: Side): Side {
@@ -410,17 +467,57 @@ function applyTbPoint(state: NestedState, side: Side, mtb: boolean): NestedState
   });
 }
 
+// W4 — fold the point's optional person fields onto the tally map. Returns the
+// SAME reference when the point names nobody, so an unattributed stream never
+// materialises the `persons` key.
+function creditPersons(
+  state: NestedState,
+  payload: NestedPoint,
+): Record<string, NestedPersonTally> | undefined {
+  const { server, winner } = payload;
+  if (server === undefined && winner === undefined) return state.persons;
+  const next: Record<string, NestedPersonTally> = { ...(state.persons ?? {}) };
+  const tally = (id: string): NestedPersonTally =>
+    next[id] ?? { points: 0, serves: 0, aces: 0, doubleFaults: 0 };
+  if (winner !== undefined) {
+    next[winner] = { ...tally(winner), points: tally(winner).points + 1 };
+  }
+  if (server !== undefined) {
+    const kind = payload.meta?.kind;
+    const prev = tally(server);
+    next[server] = {
+      ...prev,
+      serves: prev.serves + 1,
+      aces: prev.aces + (kind === "ace" ? 1 : 0),
+      doubleFaults: prev.doubleFaults + (kind === "double_fault" ? 1 : 0),
+    };
+  }
+  return next;
+}
+
 function applyPoint(state: NestedState, payload: NestedPoint): NestedState {
   if (state.phase !== "live") wrongPhase(`point not allowed in phase "${state.phase}"`);
   const side = sideOf(state, payload.by);
-  switch (state.points.kind) {
+  const persons = creditPersons(state, payload);
+  const scored = persons === state.persons ? state : { ...state, persons };
+  switch (scored.points.kind) {
     case "standard":
-      return applyStandardPoint(state, side);
+      return applyStandardPoint(scored, side);
     case "tiebreak":
-      return applyTbPoint(state, side, false);
+      return applyTbPoint(scored, side, false);
     case "matchTiebreak":
-      return applyTbPoint(state, side, true);
+      return applyTbPoint(scored, side, true);
   }
+}
+
+function applySanction(state: NestedState, payload: NestedSanction): NestedState {
+  if (state.phase !== "live") wrongPhase(`sanction not allowed in phase "${state.phase}"`);
+  const record: NestedSanctionRec = {
+    by: sideOf(state, payload.by),
+    level: payload.level,
+    ...(payload.person === undefined ? {} : { person: payload.person }),
+  };
+  return { ...state, sanctions: [...(state.sanctions ?? []), record] };
 }
 
 // ---------------------------------------------------------------------------
@@ -579,6 +676,7 @@ export interface NestedPreset {
   officialLabel: { scorer: string };
   rallyEntitlement: string; // FeatureKey for tier-2/3 point-by-point scoring
   entrantModel?: EntrantModel;
+  playerStats?: PlayerStatsModel; // Jul3/07 §3 — unlocked by person attribution
 }
 
 const METRICS: MetricSpec[] = [
@@ -595,12 +693,15 @@ export function makeNestedModule(
   const configSchema = makeNestedConfigSchema(preset.defaults);
   const pointType = `${preset.key}.point`;
   const summaryType = `${preset.key}.set_summary`;
+  const sanctionType = `${preset.key}.sanction`;
 
+  // Tiers 0/1 stay a bare set score; the attributed timeline (who served, who
+  // won the point, code violations) rides with point scoring at tiers 2/3.
   const fidelityTiers: FidelityTier[] = [
     { tier: 0, eventTypes: [summaryType] },
     { tier: 1, eventTypes: [summaryType] },
-    { tier: 2, eventTypes: [pointType], entitlement: preset.rallyEntitlement },
-    { tier: 3, eventTypes: [pointType], entitlement: preset.rallyEntitlement },
+    { tier: 2, eventTypes: [pointType, sanctionType], entitlement: preset.rallyEntitlement },
+    { tier: 3, eventTypes: [pointType, sanctionType], entitlement: preset.rallyEntitlement },
   ];
 
   const sideMetrics = (state: NestedState, side: Side): Record<string, number> => {
@@ -651,6 +752,8 @@ export function makeNestedModule(
           return applyPoint(state, parsePayload(NestedPoint, ev.payload, ev.type));
         case summaryType:
           return applySetSummary(state, parsePayload(NestedSetSummary, ev.payload, ev.type));
+        case sanctionType:
+          return applySanction(state, parsePayload(NestedSanction, ev.payload, ev.type));
         case "core.forfeit":
           return applyForfeit(state, (ev.payload as { by: string }).by);
         case "core.abandon":
@@ -713,6 +816,11 @@ export function makeNestedModule(
           gameKind: state.points.kind,
           serving: state.phase === "live" ? state.serving : null,
           ...(state.replayFlagged ? { abandoned: true } : {}),
+          // W4 — attribution rides in the summary here (unlike the set-based
+          // kernel) because tennis declares no `coarsen` hook: there is no
+          // coarse fold that would have to agree with it under §9.6.
+          ...(state.persons === undefined ? {} : { persons: state.persons }),
+          ...(state.sanctions === undefined ? {} : { sanctions: state.sanctions }),
         },
       };
     },
@@ -754,6 +862,7 @@ export function makeNestedModule(
     fidelityTiers,
     officialLabel: preset.officialLabel,
     ...(preset.entrantModel === undefined ? {} : { entrantModel: preset.entrantModel }),
+    ...(preset.playerStats === undefined ? {} : { playerStats: preset.playerStats }),
 
     // spec 03 §6 — deterministic generator. Summary-dominant so matches decide
     // within the conformance event budget; point bursts exercise the rally
@@ -763,16 +872,53 @@ export function makeNestedModule(
       if (state.phase !== "live") return null;
 
       const randomEntrant = () => (rng() < 0.5 ? state.entrants.home : state.entrants.away);
+      // W4 — the testkit's lineups are `${entrantId}-p{n}` (helpers.ts), so the
+      // generator can name people the way a real pad would.
+      const randomPerson = (entrantId: string) => `${entrantId}-p1`;
+      const serverId = () =>
+        state.serving === "home" ? randomPerson(state.entrants.home) : randomPerson(state.entrants.away);
+      // Half of all points carry attribution — the other half keep the coarse
+      // (entrant-only) shape exercised.
+      const pointPayload = (): NestedPoint => {
+        const by = randomEntrant();
+        if (rng() < 0.5) return { by };
+        const kindRoll = rng();
+        const kind =
+          kindRoll < 0.15
+            ? ("ace" as const)
+            : kindRoll < 0.3
+              ? ("double_fault" as const)
+              : undefined;
+        return {
+          by,
+          server: serverId(),
+          winner: randomPerson(by),
+          ...(kind === undefined ? {} : { meta: { kind } }),
+        };
+      };
+      // Occasional code violations, so conformance walks the new branch.
+      if (rng() < 0.04) {
+        const levels = NestedSanctionLevel.options;
+        const by = randomEntrant();
+        return {
+          type: sanctionType,
+          payload: {
+            by,
+            level: levels[Math.floor(rng() * levels.length)] as (typeof levels)[number],
+            person: randomPerson(by),
+          },
+        };
+      }
       if (setInProgress(state)) {
         // A rally set is mid-flight — keep playing points to a finish.
-        return { type: pointType, payload: { by: randomEntrant() } };
+        return { type: pointType, payload: pointPayload() };
       }
       const roll = rng();
       if (roll < 0.02) {
         return { type: "core.forfeit", payload: { by: randomEntrant(), reason: "walkover" } };
       }
       if (roll < 0.04) return { type: "core.abandon", payload: { reason: "rain" } };
-      if (roll < 0.14) return { type: pointType, payload: { by: randomEntrant() } };
+      if (roll < 0.14) return { type: pointType, payload: pointPayload() };
 
       // Valid random set summary under the rules of the set about to start.
       const rules = rulesFor(state);
