@@ -173,9 +173,13 @@ J6. The pack is in ONE clock. tz is the organisation timezone, and every instant
     obstacle's from/to, the scheduled_at of every draft and prior proposal entry,
     and the window bounds. A division's own tz is a display label and governs
     nothing — two equal-looking wall clock times are the same moment, and the
-    arrays are in clock order. By convention, write each assignment's scheduled_at
-    in tz as well — any correct UTC offset is accepted and nothing rejects you for
-    the wrong one, but the organiser reads the board in the organisation's zone.
+    arrays are in clock order. A draft entry whose scheduled_at is null is
+    UNPLACED: it has no time, rather than a time of zero, and those entries lead
+    the array as one block ahead of every placed card. Treat each as a fixture
+    still to be placed under J5; never read the block's position as an early slot.
+    By convention, write each assignment's scheduled_at in tz as well — any
+    correct UTC offset is accepted and nothing rejects you for the wrong one, but
+    the organiser reads the board in the organisation's zone.
     clock.today, clock.tomorrow and clock.nextWeekday resolve the organiser's
     relative dates in that same zone, and window.start..window.end are the days
     this competition runs: a fixture must start and finish inside them.
