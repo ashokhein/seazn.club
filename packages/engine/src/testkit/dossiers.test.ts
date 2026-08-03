@@ -72,15 +72,37 @@ describe("every builtin sport module ships a domain dossier", () => {
           dossier.rows.length,
           `dossier for "${module.key}" maps no facts (${dossier.path})`,
         ).toBeGreaterThanOrEqual(MIN_ROWS);
-        for (const row of dossier.rows) {
-          expect(
-            DOSSIER_STATUSES as readonly string[],
-            `${module.key} row at ${dossier.path}:${row.line}`,
-          ).toContain(row.status);
-        }
+        // Asserting `rows` all carry a declared status would assert the parser
+        // against its own filter — readDossier only collects rows that already
+        // passed it. The check that can actually fail is the rejects list: a
+        // typo'd or invented status in a mapping row.
+        expect(
+          dossier.badStatusRows.map((r) => `${dossier.path}:${r.line} "${r.status}"`),
+          `dossier for "${module.key}" has mapping rows with an undeclared status ` +
+            `(expected one of ${DOSSIER_STATUSES.join(" / ")})`,
+        ).toEqual([]);
       });
     });
   }
+
+  // GFM lets a cell hold a literal pipe as `\|`, and football's dossier does
+  // it inside a code span (`State.periods[].home\|away`). Splitting naively
+  // gave that row an extra cell and shifted its status out of column five,
+  // which silently dropped every football row once row scoping was added.
+  it("reads cells across an escaped pipe inside a mapping row", () => {
+    const football = readDossier("football");
+    expect(football.text, "fixture assumption: football still escapes a pipe").toContain("\\|");
+    expect(football.rows.length).toBeGreaterThan(20);
+    expect(football.badStatusRows).toEqual([]);
+  });
+
+  it("finds a substantial mapping table in every dossier, not just one row", () => {
+    // MIN_ROWS is the contract; this pins that the parser is not limping.
+    for (const module of builtinModules) {
+      const dossier = readDossier(module.key);
+      expect(dossier.rows.length, `${module.key} mapping rows`).toBeGreaterThan(10);
+    }
+  });
 
   it("puts each dossier next to its module, by the golden path convention", () => {
     const paths = builtinModules.map((m) => dossierPath(m.key));

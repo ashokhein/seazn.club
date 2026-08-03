@@ -120,6 +120,20 @@ describe("stateMismatch — cfg is a subset, everything else is exact", () => {
     expect(stateMismatch(JSON.stringify({ phase: "live", goals: 1, extra: 0 }), a)).not.toBeNull();
   });
 
+  // A module gaining or losing `cfg` in its state IS a fold change, so the
+  // subset rule must not swallow either direction.
+  it("still reds when the golden recorded no cfg but the replay has one", () => {
+    const golden = JSON.stringify({ phase: "live" });
+    const actual = JSON.stringify({ cfg: { halfMinutes: 45 }, phase: "live" });
+    expect(stateMismatch(actual, golden)).not.toBeNull();
+  });
+
+  it("still reds when the golden recorded a cfg but the replay dropped it", () => {
+    const golden = JSON.stringify({ cfg: { halfMinutes: 45 }, phase: "live" });
+    const actual = JSON.stringify({ phase: "live" });
+    expect(stateMismatch(actual, golden)).not.toBeNull();
+  });
+
   it("reds when cfg stops being an object", () => {
     const actual = replayed((s) => {
       s.cfg = null;

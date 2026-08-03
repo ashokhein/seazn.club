@@ -45,8 +45,12 @@ export interface Dossier {
   key: string;
   path: string;
   text: string;
-  /** Every table row whose status cell carries a declared status. */
+  /** Every mapping-table row carrying a declared status. */
   rows: MappingRow[];
+  /** Mapping rows whose status cell is NOT one of DOSSIER_STATUSES — a typo'd
+   *  or invented status. Silently dropping these would let a broken table pass
+   *  on the strength of one surviving good row. */
+  badStatusRows: { fact: string; status: string; line: number }[];
   /** Did the file repeat the canonical mapping-table header at least once? */
   hasMappingHeader: boolean;
 }
@@ -67,20 +71,26 @@ export function dossierPath(key: string): string {
 
 /** Cells of a markdown table row, `**bold**` stripped and trimmed. Returns null
  *  for a non-table line and for the `| --- |` separator (which cricket writes
- *  without spaces and everyone else writes with them). */
+ *  without spaces and everyone else writes with them).
+ *
+ *  Splits on UNESCAPED pipes only: GFM lets a cell contain a literal `|` as
+ *  `\|`, and football's dossier does exactly that inside a code span
+ *  (`State.periods[].home\|away`). Splitting naively gave that row seven cells
+ *  and shifted its status out of column five. */
 function tableCells(line: string): string[] | null {
   const trimmed = line.trim();
   if (!trimmed.startsWith("|")) return null;
-  const cells = trimmed
-    .replace(/^\|/, "")
-    .replace(/\|$/, "")
-    .split("|")
-    .map((cell) =>
-      cell
-        .trim()
-        .replace(/^\*\*(.*)\*\*$/, "$1")
-        .trim(),
-    );
+  const parts = trimmed.split(/(?<!\\)\|/);
+  parts.shift(); // text before the leading pipe (always empty)
+  if (parts.length > 0 && (parts[parts.length - 1] as string).trim() === "") parts.pop();
+  const cells = parts.map((cell) =>
+    cell
+      .replace(/\\\|/g, "|")
+      .trim()
+      .replace(/^\*\*(.*)\*\*$/, "$1")
+      .trim(),
+  );
+  if (cells.length === 0) return null;
   if (cells.every((cell) => /^:?-{2,}:?$/.test(cell))) return null;
   return cells;
 }
@@ -105,19 +115,34 @@ export function readDossier(key: string): Dossier {
   }
 
   const rows: MappingRow[] = [];
+  const badStatusRows: { fact: string; status: string; line: number }[] = [];
   let hasMappingHeader = false;
+  // Rows only count once a mapping header has been seen, and only when they
+  // have the mapping table's exact column count — otherwise an unrelated table
+  // elsewhere in the file (carrom's variant table) could stand in for a
+  // mapping table that is missing or malformed.
+  let inMapping = false;
   text.split("\n").forEach((line, i) => {
     const cells = tableCells(line);
-    if (cells === null) return;
+    if (cells === null) return; // blank/prose lines end nothing: separators only
     if (isMappingHeader(cells)) {
       hasMappingHeader = true;
+      inMapping = true;
       return;
     }
-    if (cells.length <= STATUS_COLUMN) return; // e.g. carrom's variant table
+    if (cells.length !== MAPPING_COLUMNS.length) {
+      inMapping = false; // a different table started
+      return;
+    }
+    if (!inMapping) return;
+    const fact = cells[0] as string;
     const status = (cells[STATUS_COLUMN] as string).toLowerCase();
-    if (!(DOSSIER_STATUSES as readonly string[]).includes(status)) return;
-    rows.push({ fact: cells[0] as string, status: status as DossierStatus, line: i + 1 });
+    if (!(DOSSIER_STATUSES as readonly string[]).includes(status)) {
+      badStatusRows.push({ fact, status, line: i + 1 });
+      return;
+    }
+    rows.push({ fact, status: status as DossierStatus, line: i + 1 });
   });
 
-  return { key, path, text, rows, hasMappingHeader };
+  return { key, path, text, rows, badStatusRows, hasMappingHeader };
 }
