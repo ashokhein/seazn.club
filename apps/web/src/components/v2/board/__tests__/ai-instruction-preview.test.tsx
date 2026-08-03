@@ -155,6 +155,21 @@ describe("AiInstructionPreview", () => {
     expect(html).toContain('data-preview-dismiss="1"');
   });
 
+  // #400 Task 6b. `AiParsePreviewResponse` permits `failed: false` with no
+  // `preview_id` — the schema does not tie the two together. The confirm used
+  // to render on `failed === false` alone, and `canRun` reads the id, so the
+  // organiser got a live-looking button that did nothing and said nothing.
+  // A compile with no reusable id is a compile there is nothing to confirm.
+  it("treats a compile with no reusable id as a failure, not a live confirm", () => {
+    const html = render(card({ ...PREVIEW, preview_id: undefined }));
+    expect(html).toContain('data-preview-state="failed"');
+    expect(html).not.toContain('data-preview-confirm="');
+    // …and the organiser is not stranded: the fallback and the edit are both
+    // on screen, exactly as on an outright failed compile.
+    expect(html).toContain('data-preview-as-preference="1"');
+    expect(html).toContain('data-preview-dismiss="1"');
+  });
+
   it("names the price at the confirm", () => {
     const html = render(card(PREVIEW));
     expect(html).toContain('data-preview-confirm="1"');

@@ -83,7 +83,14 @@ export function AiInstructionPreview({
   const ctx = { msg, plural, names: names ?? (() => null), locale };
 
   const { hard, soft, unparsed, assumptions } = preview.compiled;
-  const failed = preview.failed;
+  // `failed` and a missing `preview_id` are the SAME thing to this card, and the
+  // schema does not tie them together: `AiParsePreviewResponse` permits
+  // `failed: false` with the id absent. `canRun` reads the id, so rendering the
+  // confirm on `failed === false` alone drew a live-looking button that did
+  // nothing and gave no reason (#400 Task 6b). Nothing to confirm is a failure,
+  // whatever the flag says — and the fallback is still offered, so the
+  // organiser is never stranded.
+  const failed = preview.failed || !preview.preview_id;
   // Hard AND soft empty is a compile that produced nothing. An empty list would
   // render as a success, so the card says the words out loud instead.
   const nothingEnforceable = !failed && hard.length === 0 && soft.length === 0;
