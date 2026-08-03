@@ -36,18 +36,23 @@ on the ice.
 | Penalty-corner goal | all | person | `Ev.PeriodGoal.kind = "pc"` → `State.kindCounts`, `standingsDelta.metrics.goals_pc`, `playerStats.goals_pc` | modelled | The sheet always splits FG / PC / PS; person-level split added this wave, the team metric already existed. |
 | Penalty-stroke goal | all | person | `Ev.PeriodGoal.kind = "stroke"` → `metrics.goals_stroke`, `playerStats.goals_stroke` | modelled | As above. |
 | Own goal | all | entrant (+ the striking side) | `Ev.PeriodGoal.kind = "og"` | modelled | Credits the opponent; `State.goalLog[].by` keeps the side whose player struck it. |
-| Quarter and clock time of a goal | all | — | `Ev.PeriodGoal.period` → `State.goalLog[].phase`; `Ev.PeriodGoal.clockRef` | extended | `period` was parsed and discarded; it now labels the log entry, while the goal still lands in the current quarter's bucket. `clockRef` is free text, display only — the engine has no clock (v6/00 §6.1). |
+| Quarter and clock time of a goal | all | — | `Ev.PeriodGoal.period` → `State.goalLog[].phase`; `Ev.PeriodGoal.at` → `State.goalLog[].at` | extended | `period` was parsed and discarded; it now labels the log entry, while the goal still lands in the current quarter's bucket. W4a (#425) adds `at` — `{period, elapsed}` in seconds counted UP from the start of the quarter — which is what the fold orders and expires against. `clockRef` stays beside it, deprecated and display-only; where both are present `at` wins. |
 | Empty-net goal (keeper withdrawn for an extra outfielder) | all | person | `Ev.PeriodGoal.emptyNet` → `State.goalLog[].emptyNet`, `playerStats.goals_en` | extended | A boolean beside `kind`, not a fourth kind: a PC can also be scored into an empty net, and widening `Cfg.goalKinds` would have changed the config every frozen golden stream carries inside its state. |
 | **Penalty corners AWARDED** (not just converted) | all | entrant, person (taker) | `Ev.PeriodSetPiece{kind:"pc"}` → `State.setPieces.<side>.pc.{awarded,scored}`, `summary.detail.setPieces`, `playerStats.pc_taken` | extended | New event type `hockey.set_piece`. PCs awarded is the headline field-hockey team statistic and was entirely invisible: only a CONVERTED corner existed, as a goal kind. `outcome` is the scorer's own answer (the shared attempt vocabulary — `scored` is what `converted: true` meant); the goal itself still arrives as a goal event, so the two never double-count the score. The allowed kinds are `Cfg.setPieceKinds`, seeded from the preset (`["pc", "stroke"]`); emptying the list turns the event off. |
 | Penalty strokes awarded and their outcome | all | person (taker), person (goalkeeper) | `Ev.PeriodSetPiece{kind:"stroke"}` → `State.setPieces.<side>.stroke`, `playerStats.strokes_taken` | extended | Same event; a saved stroke was previously unrecordable. |
 | Green card — 2 minutes | all | person | `Ev.PeriodSuspensionStart.class = "green"` → `State.suspensions[]`, `State.cardLog[]` | modelled | |
-| Yellow card — a MINIMUM of 5 minutes | all | person | `class = "yellow"` plus `Ev.PeriodSuspensionStart.minutes` | extended | The class carries the nominal 5; the umpire's actual award (10 minutes is common) had nowhere to go and now lands on `State.suspensions[].minutes` and `State.cardLog[].minutes`, which is what a pad counts down from. |
+| Yellow card — a MINIMUM of 5 minutes | all | person | `class = "yellow"` plus `Ev.PeriodSuspensionStart.minutes` | extended | The class carries the nominal 5; the umpire's actual award (10 minutes is common) had nowhere to go and now lands on `State.suspensions[].minutes` and `State.cardLog[].minutes`. W4a makes it COUNT: the awarded minutes beat the class nominal when the fold derives `expiresAt`, so a 10-minute yellow is not released after 5. |
 | Red card — permanent exclusion | all | person | `class = "red"`, `permanent: true` | modelled | Cannot be released by a `suspension.end`; the team stays short to full time. |
 | The team plays short on EVERY card (Rule 14) | all | entrant | `teamShort: true` on green / yellow / red → `summary.detail.strength` | modelled | `11v10`, `11v9`. This is the sharpest divergence from football, where a yellow costs nothing. |
 | The offence behind a card | all | — | `Ev.PeriodSuspensionStart.reason` → `State.suspensions[].reason`, `State.cardLog[].reason` | extended | Free text. Recorded, never adjudicated. |
-| Time a card was shown | all | — | `Ev.PeriodSuspensionStart.clockRef` | modelled | Display only. |
-| End of a temporary suspension | all | person | `Ev.PeriodSuspensionEnd` | modelled | Scorer-driven; the engine has no clock, so the release is always an event. |
+| Time a card was shown | all | — | `Ev.PeriodSuspensionStart.at` → `State.suspensions[].startedAt` | extended | W4a. `clockRef` folded to nothing; `at` makes the card TIMED — the fold derives `State.suspensions[].expiresAt` from it and the minutes the umpire awarded. An unstamped card behaves exactly as before: nothing expires. |
+| End of a temporary suspension | all | person | `Ev.PeriodSuspensionEnd.at`; `State.suspensions[].expiresAt` | extended | W4a. Still scorer-driven where no stamp exists, but a stamped card now also ends by ARITHMETIC: start + awarded minutes, swept at the next stamped event and at the quarter whistle. An explicit release at or after the derived expiry is still accepted — the release applies before the sweep, so a scorer who records both is not refused. |
 | Progressive escalation — a player already carrying a green | all | person | `summary.detail.escalate` | modelled | Hockey-only hint (`escalationHints`), keyed on `preset.key === "hockey"`. |
+| A card runs out by TIME, not only by an event | all | entrant | `Ev.PeriodSuspensionStart.at` + `.minutes` → `State.suspensions[].expiresAt` | extended | W4a §3.1. Expiry is LAZY: swept at the next stamped event and at every quarter whistle, because state is only ever observed at event boundaries. Between an expiry and the next event the pad (counting down) and the fold (a record of facts) legitimately disagree — a `PadSpec` obligation for W5, not a bug. |
+| A card shown near the buzzer keeps running in the next quarter | all | entrant | `Cfg.periodSeconds` → `State.suspensions[].expiresAt.period` | extended | W4a. A 5-minute yellow at 14:10 of a 15-minute quarter still has 4:10 to run in Q3. Deferring this was not a partial answer but the wrong one: an expiry left in Q2 sorts BEFORE every Q3 stamp, so the first stamped Q3 event swept it and the card was UNDER-served — the opposite of "does not expire by time". |
+| The same carry where the competition declares no quarter length | all | entrant | `Cfg.periodSeconds` absent | deferred | **Named limitation.** `periodSeconds` is optional with no default (a default would put a new key inside every frozen golden state's cfg), so with no length there is nothing to subtract: the expiry stays in-quarter and the whistle sweeps it, under-serving whatever crossed the buzzer. Declaring `periodSeconds` fixes it per competition; making it required, or defaulting it from `Cfg.periods.minutes`, is a product decision this wave does not force. |
+| A goal does NOT release a carded player | all | entrant | `Cfg.suspensions.classes` (no `releaseOnGoal`) | modelled | The sharpest divergence from ice hockey's Rule 20.4, and now an explicit fact rather than an absence: the kernel's release-on-goal fires only for classes that opt in, and no FIH card does. |
+| As of when the folded state is true | all | — | `State.asOf` | extended | W4a §6 obligation 3. The newest stamp the fold applied, absent until the first one. Without it a strength chip is a number with no instant attached and every consumer re-scans the raw payloads to find one. |
 | A card shown to a team official / coach | all | person (non-player) | `Ev.PeriodSuspensionStart.person` / `.servedBy` | deferred | Nothing marks the named person as a non-player, so a manager's yellow lands in the player stat table, and whether the team also plays short varies by regulation. `servedBy` at least names who leaves the pitch. A `role` discriminator needs a product decision on whether non-players exist in the person model. |
 | Four quarters | all | entrant | `Cfg.periods{count:4,minutes:15}`, `Ev.PeriodAdvance.to`, `State.periods[]` | modelled | Q1 → Q2 → Q3 → Q4 → FT. |
 | Quarter and half-time breaks | all | — | — | deferred | Not a scorable fact; the advance event is the only phase boundary the ledger needs. |
@@ -66,7 +71,7 @@ on the ice.
 | Circle penetrations, shots, possession, PC conversion % | all | entrant | — | deferred | FIH Pro League match reports carry them; wrong fidelity for our scoring tiers. PC conversion is now computable per fixture from `State.setPieces` without any new event. |
 | Rosters, captains, squad numbers | all | persons | `positions`, `entrantModel.team{squadNumbers,captain}` | modelled | Layer 2 — lineups, not the event ledger. |
 
-**Row counts:** 19 modelled, 9 extended, 8 deferred (36 rows).
+**Row counts:** 18 modelled, 14 extended, 9 deferred (41 rows).
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Downstream owed
@@ -99,3 +104,22 @@ Asserted against the table itself by `src/testkit/dossiers.test.ts`.
    A side that plays out its last minutes with eleven outfielders — the very
    situation `emptyNet` records — cannot be represented as a lineup. Worth a
    catalog decision before the pad ships.
+
+8. **W4a (#425) — the time model.** New payload key `at` on the goal, the card
+   start and end, the set piece and the period advance (`clockRef` is
+   deprecated but stays). New state keys `State.suspensions[].startedAt` /
+   `.expiresAt` and `State.asOf`, all ABSENT until a stamp exists — consumers
+   must treat them as optional, never as a zero time. New cfg key
+   `Cfg.periodSeconds` (quarter label → seconds), optional with no default;
+   without it a card crossing the buzzer is under-served.
+9. **Pad obligations this creates for W5.** The yellow-duration picker (5 or
+   10) now changes when the card EXPIRES, not just what is printed. A pad
+   rendering a countdown must show `State.asOf`, because the pad and the fold
+   legitimately disagree between an expiry and the next stamped event. Stamps
+   must be submitted in non-decreasing order or the fold answers
+   `NON_MONOTONIC_TIME`; correcting one is void-then-re-append, in that order.
+10. **No e2e coverage this wave, by decision.** W4a ships no `apps/web`
+   surface, so there is nothing to drive; e2e is deferred to **W10 (#421)**,
+   where the pad first meets the API. Smoke is owed and handed to the wave's
+   smoke task, on the ice-hockey scenario (a minor expiring by fold, a
+   powerplay release, one penalty crossing the buzzer).

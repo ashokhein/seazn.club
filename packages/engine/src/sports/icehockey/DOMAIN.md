@@ -29,7 +29,7 @@ state, `summary.` = `module.summary(state)`.
 | Goal scorer | all | person (scorer) | `Ev.PeriodGoal.person` → `State.goalLog[].person` | extended | The field existed but the fold dropped it — the scorer was recoverable only by re-reading the ledger through `playerStats`. Now every attributed goal appends a `GoalLogEntry`. |
 | Assists, A1 then A2 | all | persons (up to 2) | `Ev.PeriodGoal.assists` → `State.goalLog[].assists`, `playerStats.assists` | modelled | `Cfg.assists = true`; array order is A1, A2 and is preserved. Both count one assist each; the sheet's primary/secondary split is display, not arithmetic. |
 | Period a goal was scored in | all | — | `Ev.PeriodGoal.period` → `State.goalLog[].phase` | extended | The field was parsed and discarded. It now labels the log entry; the goal still lands in the CURRENT period bucket, so a back-dated goal is reported honestly rather than silently rewriting `State.periods`. |
-| Clock time of a goal | all | — | `Ev.PeriodGoal.clockRef` → `State.goalLog[].clockRef` | extended | Free-text ("12:41"), display only — the engine has no clock by design (v6/00 §6.1). |
+| Clock time of a goal | all | — | `Ev.PeriodGoal.at` → `State.goalLog[].at` (was `clockRef`) | extended | W4a (#425): `{period, elapsed}` in seconds, counted UP from the start of the period, and it is what the fold orders and expires against. `clockRef` stays beside it, deprecated and display-only, because removing it would break the frozen goldens; where both are present `at` wins. |
 | Even-strength goal | all | entrant | `Ev.PeriodGoal.kind` omitted or `"fg"` | modelled | EV is the absence of a situation code. |
 | Powerplay goal | all | entrant, person | `Ev.PeriodGoal.kind = "pp"` → `State.kindCounts`, `standingsDelta.metrics.goals_pp`, `playerStats.goals_pp` | modelled | Person-level split added this wave; the team metric already existed. |
 | Shorthanded goal | all | entrant, person | `Ev.PeriodGoal.kind = "sh"` → `metrics.goals_sh`, `playerStats.goals_sh` | modelled | As above. |
@@ -43,11 +43,16 @@ state, `summary.` = `module.summary(state)`.
 | Penalty: class and its recorded minutes | all | entrant | `Ev.PeriodSuspensionStart.class` against `Cfg.suspensions.classes` | modelled | minor 2 · bench minor 2 · double minor 4 · major 5 · misconduct 10 · game misconduct 20 · match 25 PIM. |
 | Penalty: the player who SERVES it | all | person | `Ev.PeriodSuspensionStart.servedBy` → `State.suspensions[].servedBy`, `playerStats.pen_served` | extended | Bench minors (Rule 33) and goalkeeper penalties are served by a team-mate. Before this, the only slot for him was `person`, which charged him the PIM he did not earn. Existing `pen_*` metrics still read `person` — the convention is now: `person` = penalised, `servedBy` = sits. |
 | Penalty: a duration different from the class nominal | all | — | `Ev.PeriodSuspensionStart.minutes` | extended | Rare on ice, the norm in field hockey; the field lives in the shared kernel. Pads prefer it over the class minutes for a countdown. |
-| Penalty start time | all | — | `Ev.PeriodSuspensionStart.clockRef` | modelled | Display only. |
-| Penalty end time | all | — | — | deferred | The release is an event (`icehockey.suspension.end`), not a clock reading; start time + class duration reconstruct the box time. A second clock string would fold to nothing. |
+| Penalty start time | all | — | `Ev.PeriodSuspensionStart.at` → `State.suspensions[].startedAt` | extended | W4a. `clockRef` folded to nothing; `at` makes the penalty TIMED — the fold derives `State.suspensions[].expiresAt` from it and the awarded minutes. Unstamped starts keep the old behaviour exactly: nothing expires. |
+| Penalty end time | all | — | `Ev.PeriodSuspensionEnd.at`; `State.suspensions[].expiresAt` | extended | W4a. Both halves the sheet prints: the DERIVED end (start + awarded minutes) and, when the scorer releases the player explicitly, the stamp on that release. An explicit end at or after the derived expiry is still accepted — the fold applies the release before sweeping, so a pad that correctly records both is not refused. |
 | The team plays short while a penalty runs | all | entrant | `State.suspensions[].teamShort` → `summary.detail.strength` | modelled | 5v4, 5v3. Two coincidental minors fold to 4v4 with no special case. |
 | Penalties beyond 5-on-3 stack without reducing further | all | entrant | `Cfg.strength.min = 3` | modelled | |
-| Early release of a minor on a powerplay goal | all | entrant | `Ev.PeriodSuspensionEnd` | deferred | The scorer must send the release explicitly. Making a goal auto-release the opponent's running minor would change how an already-recorded goal payload folds, which the wave's additive rule forbids outright. A pad should prompt for it. |
+| Early release of a minor on a powerplay goal | all | entrant | `Ev.PeriodGoal.at` + `Cfg.suspensions.classes.minor.releaseOnGoal` | extended | W4a §3.4 (Rule 20.4). A stamped goal releases the CONCEDING side's earliest-started running minor. Gated on BOTH the goal and the suspension carrying a stamp, which is what makes it additive: no recorded stream carries `at`, so no recorded goal releases anything it did not release before. The conceding side is the opponent of the side CREDITED, not of the side that struck it — the two disagree on an own goal. |
+| A penalty runs out by TIME, not only by an event | all | entrant | `Ev.PeriodSuspensionStart.at` + `.minutes` → `State.suspensions[].expiresAt` | extended | W4a §3.1. Expiry is LAZY: the fold sweeps at the next stamped event and at every phase whistle, because state is only ever observed at event boundaries. Between an expiry and the next event the pad (counting down) and the fold (a record of facts) legitimately disagree — a `PadSpec` obligation for W5, not a bug. |
+| A penalty awarded near the buzzer keeps running in the next period | all | entrant | `Cfg.periodSeconds` → `State.suspensions[].expiresAt.period` | extended | W4a. A 2:00 minor at 19:10 of a 20-minute period expires 70 s into P2. Deferring this was not a partial answer but the wrong one: an expiry left at `{P1, 1270}` sorts BEFORE every P2 stamp, so the first stamped P2 event swept it and the penalty was UNDER-served. The carry walks the PLAY phases only, so it may cross into overtime and never into the shootout. |
+| The same carry where the competition declares no period length | all | entrant | `Cfg.periodSeconds` absent | deferred | **Named limitation.** `periodSeconds` is optional with no default (a default would put a new key inside every frozen golden state's cfg), and with no length there is nothing to subtract, so the expiry stays in-period and the phase whistle sweeps it — the penalty is under-served by whatever crossed the buzzer. A competition that wants boundary-accurate penalties declares `periodSeconds`. Promoting it to required, or defaulting it from `Cfg.periods.minutes`, is a product decision this wave does not force. |
+| A double minor's FIRST half ends on a powerplay goal | all | person | `Cfg.suspensions.classes.double_minor` (no `releaseOnGoal`) | deferred | Rule 20.4 ends the first 2:00 and starts the second running. That is two suspensions, not one shortened by half, so flagging the 4:00 class releasable would wipe the 2:00 the offender still owes. Splitting it needs its own state and a pad affordance. |
+| As of when the folded state is true | all | — | `State.asOf` | extended | W4a §6 obligation 3. The newest stamp the fold applied, absent until the first one. A strength chip without it is a number with no instant attached, and every consumer would otherwise re-scan the raw payloads to find one. |
 | Delayed penalty | all | — | `core.note` | deferred | Documented kernel design (v6/00 §6.4): the module records the scorer's decision, it does not adjudicate penalty law. |
 | Penalty shot AWARDED, converted or not | all | person (taker), person (goalkeeper) | `Ev.PeriodSetPiece{kind:"ps"}` → `State.setPieces.<side>.ps.{awarded,scored}`, `summary.detail.setPieces`, `playerStats.ps_taken` | extended | New event type `icehockey.set_piece` (Rule 24). The `ps` goal kind could only ever show the shots that beat the keeper. The allowed kinds are `Cfg.setPieceKinds`, seeded from the preset (`["ps"]`); emptying the list turns the event off. |
 | Goalkeeper changes; pulled goalie | all | person | — | deferred | On-ice personnel rather than a scoring fact — the module deliberately has no substitution event. The scoring consequence, an empty net, is now captured by `Ev.PeriodGoal.emptyNet`. |
@@ -72,7 +77,7 @@ state, `summary.` = `module.summary(state)`.
 | Rosters, captains, jersey numbers | all | persons | `positions`, `entrantModel.team{squadNumbers,captain}` | modelled | Layer 2 — lineups, not the event ledger. |
 | A penalty against a team official / the bench staff | all | person (non-player) | `Ev.PeriodSuspensionStart.person` / `.servedBy` | deferred | Nothing marks the named person as a non-player, so a coach's game misconduct lands in the player stat table. `servedBy` at least names who actually sits. A `role` discriminator needs a product decision on whether non-players exist in the person model at all. |
 
-**Row counts:** 23 modelled, 10 extended, 13 deferred (46 rows).
+**Row counts:** 22 modelled, 16 extended, 13 deferred (51 rows).
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Downstream owed
@@ -102,3 +107,21 @@ Asserted against the table itself by `src/testkit/dossiers.test.ts`.
    this sport and would be a tier-4 conversation, not an extension of tier 3.
 8. **`Cfg.overtime.skaters` is dead config** until the 3-on-3 strength question
    above is decided. Anything reading it today gets a number the fold ignores.
+
+9. **W4a (#425) — the time model.** New payload key `at` on the goal, the
+   suspension start and end, the set piece and the period advance (`clockRef`
+   is deprecated but stays). New state keys `State.suspensions[].startedAt` /
+   `.expiresAt` and `State.asOf`, all ABSENT until a stamp exists — consumers
+   must treat them as optional, never as a zero time. New cfg key
+   `Cfg.periodSeconds` (phase label → seconds), optional with no default.
+10. **Pad obligations this creates for W5.** A pad rendering a countdown must
+   show `State.asOf`, because the pad and the fold legitimately disagree
+   between an expiry and the next stamped event. A pad offering
+   remaining-basis entry must declare `periodSeconds`. Stamps must be
+   submitted in non-decreasing order or the fold answers
+   `NON_MONOTONIC_TIME`; correcting one is void-then-re-append, in that order.
+11. **No e2e coverage this wave, by decision.** W4a ships no `apps/web`
+   surface, so there is nothing to drive; e2e is deferred to **W10 (#421)**,
+   where the pad first meets the API. Smoke IS owed and is handed to the
+   wave's smoke task: a timed match where a minor expires by fold, a
+   powerplay goal releases another, and one penalty crosses the buzzer.
