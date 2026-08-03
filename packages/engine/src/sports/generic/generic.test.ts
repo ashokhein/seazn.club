@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { foldMatch, type EventEnvelope } from "../../core/events.ts";
 import type { LineupPair, StageCtx } from "../../core/types.ts";
+import { aggregatePlayerStats } from "../../stats/stats.ts";
 import { conformanceSuite, makeEnvelope } from "../../testkit/index.ts";
 import { generic, type GenericCfg } from "./generic.ts";
 
@@ -137,6 +138,106 @@ describe("generic — contract declarations", () => {
     expect(generic.supportsDraws(scoreCfg, "knockout")).toBe(false);
     expect(generic.supportsDraws(scoreCfg, "stepladder")).toBe(false);
     expect(generic.supportsDraws(winLossCfg, "league")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W4 domain audit — the escape hatch could record only a FINAL card, so a
+// scorer of an unmodelled sport had nothing to press until the match ended.
+// generic.score adds a running tally with optional person credit; the terminal
+// result still decides. Nothing else about an arbitrary sport is modelled.
+// ---------------------------------------------------------------------------
+describe("generic — running tally (W4)", () => {
+  it("tallies while the match is live and shows it in the summary", () => {
+    const state = fold(
+      scoreCfg,
+      stream(
+        ["core.start"],
+        ["generic.score", { by: "H", points: 2 }],
+        ["generic.score", { by: "A", points: 1 }],
+        ["generic.score", { by: "H", points: 1 }],
+      ),
+    );
+    expect(state.running).toEqual({ home: 3, away: 1 });
+    expect(state.outcome).toBeNull();
+    expect(generic.summary(state).headline).toBe("3 — 1");
+  });
+
+  it("settles from the running tally when the result card carries no scores", () => {
+    const state = fold(
+      scoreCfg,
+      stream(
+        ["generic.score", { by: "H", points: 2 }],
+        ["generic.score", { by: "A", points: 5 }],
+        ["generic.result", {}],
+      ),
+    );
+    expect(state.outcome).toEqual({ kind: "win", winner: "A", loser: "H", method: "regulation" });
+    const [home, away] = generic.standingsDelta(state.outcome!, scoreCfg, league, state);
+    expect(home.metrics).toEqual({ for: 2, against: 5, diff: -3 });
+    expect(away.metrics).toEqual({ for: 5, against: 2, diff: 3 });
+  });
+
+  it("still requires explicit scores in score mode when nothing was tallied", () => {
+    expect(() => fold(scoreCfg, stream(["generic.result", {}]))).toThrowError(
+      expect.objectContaining({ code: "INVALID_EVENT" }),
+    );
+  });
+
+  it("rejects a zero-point action and a correction below zero", () => {
+    expect(() => fold(scoreCfg, stream(["generic.score", { by: "H", points: 0 }]))).toThrowError(
+      expect.objectContaining({ code: "INVALID_EVENT" }),
+    );
+    expect(() =>
+      fold(
+        scoreCfg,
+        stream(["generic.score", { by: "H", points: 1 }], ["generic.score", { by: "H", points: -2 }]),
+      ),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+    // A correction the tally can absorb is legal.
+    const corrected = fold(
+      scoreCfg,
+      stream(["generic.score", { by: "H", points: 3 }], ["generic.score", { by: "H", points: -1 }]),
+    );
+    expect(corrected.running).toEqual({ home: 2, away: 0 });
+  });
+
+  it("never lets the tally override a recorded result", () => {
+    const state = fold(
+      scoreCfg,
+      stream(["generic.score", { by: "H", points: 4 }], ["core.forfeit", { by: "H", reason: "no-show" }]),
+    );
+    expect(state.outcome).toEqual({ kind: "award", winner: "A" });
+    expect(generic.summary(state).headline).toBe("L — W/O");
+  });
+
+  it("credits the person who scored", () => {
+    const events = stream(
+      ["generic.score", { by: "H", points: 2, person: "h1" }],
+      ["generic.score", { by: "H", points: 3, person: "h1" }],
+      ["generic.score", { by: "A", points: 1, person: "a1" }],
+    );
+    expect(aggregatePlayerStats(events, generic.playerStats!)).toEqual([
+      { personId: "a1", stats: { points: 1, scores: 1 } },
+      { personId: "h1", stats: { points: 5, scores: 2 } },
+    ]);
+  });
+});
+
+describe("generic — event union stays unambiguous (W4)", () => {
+  it("parses a result card as a result and a scoring action as an action", () => {
+    expect(generic.eventSchema.parse({ winnerId: "H" })).toEqual({ winnerId: "H" });
+    expect(generic.eventSchema.parse({ by: "H", points: 1 })).toEqual({ by: "H", points: 1 });
+    expect(generic.eventSchema.safeParse({ by: "H" }).success).toBe(false);
+  });
+
+  it("folds each branch to its own effect", () => {
+    const tallied = fold(scoreCfg, stream(["generic.score", { by: "H", points: 1 }]));
+    expect(tallied.outcome).toBeNull();
+    expect(tallied.score).toBeNull();
+    const decided = fold(scoreCfg, stream(["generic.result", { p1Score: 1, p2Score: 0 }]));
+    expect(decided.outcome).toMatchObject({ kind: "win", winner: "H" });
+    expect(decided.running).toBeUndefined();
   });
 });
 

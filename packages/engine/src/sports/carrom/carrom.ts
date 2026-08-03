@@ -70,10 +70,18 @@ export type CarromCfg = z.infer<typeof CarromCfg>;
 export const CarromToss = z.strictObject({ firstBreak: EntrantId });
 export type CarromToss = z.infer<typeof CarromToss>;
 
+const PersonId = z.string().min(1);
+
 export const CarromBoardSummary = z.strictObject({
   winner: EntrantId,
   opponentCoinsLeft: z.number().int().min(0).max(9), // winner's coin points ×pointsPerCoin (Law 53a)
   queenTo: EntrantId.nullable(), // who pocketed AND covered the queen (null = board lost with queen on… impossible, or untracked)
+  // W4 — the individual acts inside a board. The ICF scoresheet books points
+  // to a side, but Law 49 rotates the break through the players (four of them
+  // in doubles) and Law 53 credits the queen to the player who pocketed AND
+  // covered her. With a `pair` entrant the side alone loses the actor.
+  breaker: PersonId.optional(), // the striker who broke this board
+  queenBy: PersonId.optional(), // the player who pocketed and covered the queen
 });
 export type CarromBoardSummary = z.infer<typeof CarromBoardSummary>;
 
@@ -86,6 +94,9 @@ export const CarromGameAdjust = z.strictObject({
     .int()
     .refine((delta) => delta !== 0, { message: "delta must be non-zero" }),
   reason: z.string().min(1),
+  // W4 — the player whose act caused the adjustment (Laws 51/55 fouls are
+  // committed by a striker, not by a side). Optional: coarse scoring stays legal.
+  person: PersonId.optional(),
 });
 export type CarromGameAdjust = z.infer<typeof CarromGameAdjust>;
 
@@ -116,6 +127,17 @@ export interface CarromBoardRecord {
   queenTo: Side | null;
   queenScored: boolean; // queen bonus actually credited (cap + Law 53 rules)
   breaker: Side; // who broke this board (display / fine fidelity later)
+  // W4 person attribution — absent unless the board summary named the players,
+  // so a stream that never names one folds to exactly the state it always did.
+  breakerPerson?: string;
+  queenPerson?: string;
+}
+
+// W4 — an umpire adjustment that named the player it concerns (Laws 51/55).
+export interface CarromPenalty {
+  person: string;
+  side: Side; // the side whose game score moved
+  delta: number;
 }
 
 export interface CarromGameState {
@@ -134,6 +156,9 @@ export interface CarromState {
   gamesWon: { home: number; away: number };
   gamesDrawn: number;
   outcome: MatchOutcome | null;
+  // W4 — person-attributed umpire adjustments, in ledger order. Absent until
+  // one names a player (golden-safe).
+  penalties?: CarromPenalty[];
 }
 
 function opponent(side: Side): Side {
@@ -261,6 +286,11 @@ function applyBoard(state: CarromState, payload: CarromBoardSummary): CarromStat
   if (state.phase !== "live") wrongPhase(`board summary not allowed in phase "${state.phase}"`);
   const winnerSide = sideOf(state, payload.winner);
   const queenSide = payload.queenTo === null ? null : sideOf(state, payload.queenTo);
+  // A player can only be credited with the queen if a side covered her
+  // (Law 53) — `queenTo: null` means she went to nobody.
+  if (payload.queenBy !== undefined && queenSide === null) {
+    invalid("queenBy requires a side that covered the queen", { queenBy: payload.queenBy });
+  }
   const { game, index } = openGame(state);
 
   const preBoardScore = game.score[winnerSide];
@@ -280,6 +310,8 @@ function applyBoard(state: CarromState, payload: CarromBoardSummary): CarromStat
     queenTo: queenSide,
     queenScored,
     breaker: breakerOf(state.firstBreak, index, game.boards.length),
+    ...(payload.breaker === undefined ? {} : { breakerPerson: payload.breaker }),
+    ...(payload.queenBy === undefined ? {} : { queenPerson: payload.queenBy }),
   };
   const updated: CarromGameState = {
     ...game,
@@ -300,9 +332,14 @@ function applyAdjust(state: CarromState, payload: CarromGameAdjust): CarromState
   const score = game.score[side] + payload.delta;
   if (score < 0) invalid("adjustment would take the game score below zero", { score });
   const updated: CarromGameState = { ...game, score: { ...game.score, [side]: score } };
+  const penalties =
+    payload.person === undefined
+      ? state.penalties
+      : [...(state.penalties ?? []), { person: payload.person, side, delta: payload.delta }];
   const next = {
     ...state,
     games: state.games.map((entry, i) => (i === index ? updated : entry)),
+    ...(penalties === undefined ? {} : { penalties }),
   };
   return settle(next, index);
 }
@@ -483,11 +520,14 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
             queenTo: board.queenTo === null ? null : state.entrants[board.queenTo],
             queenScored: board.queenScored,
             breaker: state.entrants[board.breaker],
+            ...(board.breakerPerson === undefined ? {} : { breakerPerson: board.breakerPerson }),
+            ...(board.queenPerson === undefined ? {} : { queenPerson: board.queenPerson }),
           })),
         })),
         firstBreak: state.entrants[state.firstBreak],
         ...(breaker === null ? {} : { breaker }),
         ...(state.phase === "abandoned" ? { abandoned: true } : {}),
+        ...(state.penalties === undefined ? {} : { penalties: state.penalties }),
       },
     };
   },
@@ -575,6 +615,17 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
   ],
   officialLabel: { scorer: "Umpire" }, // ICF laws officiate through an Umpire
 
+  // W4 — person credit off the board summary and the umpire adjustment. Board
+  // points stay a SIDE fact (Law 53a books them to the side that cleared), so
+  // there is no per-player points metric — see DOMAIN.md.
+  playerStats: {
+    metrics: [
+      { key: "breaks", label: "Breaks", from: "carrom.board.summary", field: "breaker", agg: "count" },
+      { key: "queens", label: "Queens", from: "carrom.board.summary", field: "queenBy", agg: "count" },
+      { key: "penalties", label: "Penalties", from: "carrom.game.adjust", field: "person", agg: "count" },
+    ],
+  },
+
   // spec 03 §6 — deterministic generator: optional toss, start, then boards
   // with occasional umpire adjustments, forfeits and abandonments.
   arbitraryEvent(state, rng: Rng): ModuleEvent<CarromEv> | null {
@@ -602,7 +653,13 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
       const delta = score > 0 && rng() < 0.5 ? -1 : 1;
       return {
         type: "carrom.game.adjust",
-        payload: { entrantId: state.entrants[side], delta, reason: "umpire penalty" },
+        payload: {
+          entrantId: state.entrants[side],
+          delta,
+          reason: "umpire penalty",
+          // W4 — the offending striker (testkit lineup convention).
+          person: `${state.entrants[opponent(side)]}-p1`,
+        },
       };
     }
     const winner = randomEntrant();
@@ -610,9 +667,20 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
     const queenRoll = rng();
     const queenTo = queenRoll < 0.55 ? winner : queenRoll < 0.75 ? loser : null;
     const opponentCoinsLeft = 1 + Math.floor(rng() * 9); // 1..9
+    // W4 — the individual acts: the striker who broke, and (only when a side
+    // covered her) the player who took the queen.
+    const gameIndex = Math.max(0, state.games.length - 1);
+    const boardIndex = state.games[gameIndex]?.boards.length ?? 0;
+    const breakSide = breakerOf(state.firstBreak, gameIndex, boardIndex);
     return {
       type: "carrom.board.summary",
-      payload: { winner, opponentCoinsLeft, queenTo },
+      payload: {
+        winner,
+        opponentCoinsLeft,
+        queenTo,
+        breaker: `${state.entrants[breakSide]}-p${(boardIndex % 2) + 1}`,
+        ...(queenTo === null ? {} : { queenBy: `${queenTo}-p1` }),
+      },
     };
   },
 };

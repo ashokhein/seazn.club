@@ -53,6 +53,17 @@ export type BoardgameCfg = z.infer<typeof BoardgameCfg>;
 // Ev — spec 04 §6.2 (a single terminal event; undo = void it)
 // ---------------------------------------------------------------------------
 
+const PersonId = z.string().min(1);
+
+// W4 domain audit — the FIDE result vocabulary a scoresheet/arbiter report
+// distinguishes. The first nine are PROMPT-07's; the tail is additive (FIDE
+// Laws of Chess 2023 Art. 5.2, 7.5.5, 9.2/9.3/9.6):
+//   repetition    — threefold/fivefold repetition (Art. 9.2 / 9.6.1)
+//   fifty_move    — the 50-move claim / 75-move automatic draw (9.3 / 9.6.2)
+//   dead_position — no legal sequence of moves can mate (5.2.2); wider than
+//                   `insufficient`, which is the flag-fall material rule (6.9)
+//   illegal_move  — the loss an arbiter awards for a repeated illegal move
+//                   (7.5.5; immediate in blitz, Appendix B.3.2)
 export const BoardgameMethod = z.enum([
   "checkmate",
   "resign",
@@ -63,6 +74,10 @@ export const BoardgameMethod = z.enum([
   "forfeit",
   "adjudication",
   "double_forfeit",
+  "repetition",
+  "fifty_move",
+  "dead_position",
+  "illegal_move",
 ]);
 export type BoardgameMethod = z.infer<typeof BoardgameMethod>;
 
@@ -71,10 +86,37 @@ export type BoardgameMethod = z.infer<typeof BoardgameMethod>;
 export const BoardgameResult = z.strictObject({
   winner: EntrantId.nullable(),
   method: BoardgameMethod.optional(),
+  // W4: move number the scoresheet finished on (Art. 8.1 — each player records
+  // every move). The game length, not the moves themselves; per-ply recording
+  // is deliberately out of scope (see DOMAIN.md).
+  moves: z.number().int().nonnegative().optional(),
+  // W4: the player who won the board. In an individual event the entrant IS
+  // the player; in a team match (board order, chess.md §5) the entrant is the
+  // club and the person is what a stat model needs. Always optional.
+  winnerPerson: PersonId.optional(),
 });
 export type BoardgameResult = z.infer<typeof BoardgameResult>;
 
-export const BoardgameEv = BoardgameResult;
+// W4: the arbiter's pairing card — the facts a scoresheet header carries and
+// the module could not previously hold. `white` is the entrant with White
+// (Swiss alternates colours, so home is NOT always White); homePerson /
+// awayPerson name who actually sat down; board is the board number in a team
+// match. Every field optional, at least one required.
+export const BoardgamePairing = z
+  .strictObject({
+    white: EntrantId.optional(),
+    homePerson: PersonId.optional(),
+    awayPerson: PersonId.optional(),
+    board: z.number().int().positive().optional(),
+  })
+  .refine((card) => Object.values(card).some((value) => value !== undefined), {
+    message: "a pairing card must record at least one fact",
+  });
+export type BoardgamePairing = z.infer<typeof BoardgamePairing>;
+
+// Branches are told apart structurally (spec 03 §2): a result always carries
+// `winner`, which the strict pairing branch rejects, and vice versa.
+export const BoardgameEv = z.union([BoardgameResult, BoardgamePairing]);
 export type BoardgameEv = z.infer<typeof BoardgameEv>;
 
 // ---------------------------------------------------------------------------
@@ -94,6 +136,14 @@ export interface BoardgameState {
   forfeited: boolean;
   outcome: MatchOutcome | null;
   replayFlagged: boolean;
+  // W4 pairing-card facts — absent until a boardgame.pairing event records
+  // them, so a stream that never pairs folds to exactly the state it always
+  // did (the golden corpus is byte-identical).
+  players?: { home?: string; away?: string };
+  board?: number;
+  // W4 result facts — absent unless the result event carried them.
+  moves?: number;
+  winnerPerson?: string;
 }
 
 function opponent(side: Side): Side {
@@ -128,14 +178,22 @@ function decideResult(
   state: BoardgameState,
   winner: string | null,
   method: BoardgameMethod | undefined,
+  extra: { moves?: number; winnerPerson?: string } = {},
 ): BoardgameState {
   if (state.phase !== "live") wrongPhase(`result not allowed in phase "${state.phase}"`);
+  // A person can only be credited with a decisive board — a draw credits both
+  // players a half point, which is a stats-model join, not a result field.
+  if (extra.winnerPerson !== undefined && winner === null) {
+    invalid("winnerPerson requires a decisive winner", { winnerPerson: extra.winnerPerson });
+  }
   const forfeited = method === "forfeit" || method === "double_forfeit";
   const base = {
     ...state,
     phase: "done" as const,
     method: method ?? null,
     forfeited,
+    ...(extra.moves === undefined ? {} : { moves: extra.moves }),
+    ...(extra.winnerPerson === undefined ? {} : { winnerPerson: extra.winnerPerson }),
   };
   if (winner === null) {
     // Double forfeit ⇒ no result (both default); otherwise an ordinary draw.
@@ -151,6 +209,32 @@ function decideResult(
       loser: state.entrants[opponent(winnerSide)],
       method: method ?? "regulation",
     },
+  };
+}
+
+// W4 — the arbiter's pairing card. Recordable before or during the game (an
+// arbiter corrects a mis-set board); refused once the game is over.
+function applyPairing(state: BoardgameState, card: BoardgamePairing): BoardgameState {
+  if (state.phase !== "pre" && state.phase !== "live") {
+    wrongPhase(`pairing not allowed in phase "${state.phase}"`);
+  }
+  let colorOfHome = state.colorOfHome;
+  if (card.white !== undefined) {
+    if (state.cfg.colors === false) {
+      invalid("this division plays without colours", { white: card.white });
+    }
+    colorOfHome = sideOf(state, card.white) === "home" ? "W" : "B";
+  }
+  const players = {
+    ...state.players,
+    ...(card.homePerson === undefined ? {} : { home: card.homePerson }),
+    ...(card.awayPerson === undefined ? {} : { away: card.awayPerson }),
+  };
+  return {
+    ...state,
+    colorOfHome,
+    ...(Object.keys(players).length === 0 ? {} : { players }),
+    ...(card.board === undefined ? {} : { board: card.board }),
   };
 }
 
@@ -247,8 +331,13 @@ export const boardgame: SportModule<BoardgameCfg, BoardgameEv, BoardgameState> =
         return { ...state, phase: "live" };
       case "boardgame.result": {
         const payload = parsePayload(BoardgameResult, ev.payload, ev.type);
-        return decideResult(state, payload.winner, payload.method);
+        return decideResult(state, payload.winner, payload.method, {
+          ...(payload.moves === undefined ? {} : { moves: payload.moves }),
+          ...(payload.winnerPerson === undefined ? {} : { winnerPerson: payload.winnerPerson }),
+        });
       }
+      case "boardgame.pairing":
+        return applyPairing(state, parsePayload(BoardgamePairing, ev.payload, ev.type));
       case "core.forfeit": {
         if (state.phase !== "live") wrongPhase(`forfeit not allowed in phase "${state.phase}"`);
         const by = (ev.payload as { by: string }).by;
@@ -298,6 +387,12 @@ export const boardgame: SportModule<BoardgameCfg, BoardgameEv, BoardgameState> =
         ...(state.method === null ? {} : { method: state.method }),
         ...(state.colorOfHome === null ? {} : { colorOfHome: state.colorOfHome }),
         ...(state.replayFlagged ? { abandoned: true } : {}),
+        // W4 pairing/result facts — only when recorded, so a stream that never
+        // used them summarises exactly as it always did.
+        ...(state.players === undefined ? {} : { players: state.players }),
+        ...(state.board === undefined ? {} : { board: state.board }),
+        ...(state.moves === undefined ? {} : { moves: state.moves }),
+        ...(state.winnerPerson === undefined ? {} : { winnerPerson: state.winnerPerson }),
       },
     };
   },
@@ -370,14 +465,46 @@ export const boardgame: SportModule<BoardgameCfg, BoardgameEv, BoardgameState> =
   // upload + exports, not extra event granularity).
   fidelityTiers: [
     { tier: 0, eventTypes: ["boardgame.result"] },
-    { tier: 1, eventTypes: ["boardgame.result"] },
+    // W4: tier 1 adds the arbiter's pairing card (colours, players, board no.).
+    { tier: 1, eventTypes: ["boardgame.result", "boardgame.pairing"] },
   ],
   officialLabel: { scorer: "Arbiter" }, // doc 13 §1
+
+  // W4 — person credit. `games` fires once per named player on the pairing
+  // card (the two fields never name the same person), `wins` off the result.
+  // Per-person half points for a draw need a pairing↔result join that
+  // aggregatePlayerStats cannot express — see DOMAIN.md "downstream owed".
+  playerStats: {
+    metrics: [
+      { key: "games", label: "Games", from: "boardgame.pairing", field: "homePerson", agg: "count" },
+      { key: "games", label: "Games", from: "boardgame.pairing", field: "awayPerson", agg: "count" },
+      { key: "wins", label: "Wins", from: "boardgame.result", field: "winnerPerson", agg: "count" },
+    ],
+  },
 
   // spec 03 §6 — deterministic generator: start, then a single result
   // (win/draw/forfeit) that decides the fixture.
   arbitraryEvent(state, rng: Rng): ModuleEvent<BoardgameEv> | null {
-    if (state.phase === "pre") return { type: "core.start", payload: {} };
+    // Person ids follow the testkit lineup convention (`<entrantId>-p1`) —
+    // the module holds no roster, so the generator synthesises them.
+    const personOf = (side: Side) => `${state.entrants[side]}-p1`;
+    if (state.phase === "pre") {
+      // W4 — the arbiter's pairing card, once, before the clocks start.
+      if (state.players === undefined && rng() < 0.5) {
+        return {
+          type: "boardgame.pairing",
+          payload: {
+            ...(state.cfg.colors
+              ? { white: state.entrants[rng() < 0.5 ? "home" : "away"] }
+              : {}),
+            homePerson: personOf("home"),
+            awayPerson: personOf("away"),
+            board: 1,
+          },
+        };
+      }
+      return { type: "core.start", payload: {} };
+    }
     if (state.phase !== "live") return null;
     const roll = rng();
     if (roll < 0.05) {
@@ -389,8 +516,24 @@ export const boardgame: SportModule<BoardgameCfg, BoardgameEv, BoardgameState> =
     if (roll < 0.4) {
       return { type: "boardgame.result", payload: { winner: null, method: "agreement" } };
     }
-    const winner = state.entrants[rng() < 0.5 ? "home" : "away"];
+    if (roll < 0.45) {
+      // W4 — the widened drawing vocabulary (repetition / 50-move / dead).
+      const drawn = ["repetition", "fifty_move", "dead_position"] as const;
+      const method = drawn[Math.min(2, Math.floor(rng() * 3))] as BoardgameMethod;
+      return { type: "boardgame.result", payload: { winner: null, method, moves: 40 } };
+    }
+    const winnerSide: Side = rng() < 0.5 ? "home" : "away";
+    const winner = state.entrants[winnerSide];
     const method = rng() < 0.5 ? "checkmate" : "resign";
-    return { type: "boardgame.result", payload: { winner, method } };
+    return {
+      type: "boardgame.result",
+      payload: {
+        winner,
+        method,
+        moves: 20 + Math.floor(rng() * 40),
+        // Credit the player when the pairing card named one.
+        ...(state.players === undefined ? {} : { winnerPerson: personOf(winnerSide) }),
+      },
+    };
   },
 };

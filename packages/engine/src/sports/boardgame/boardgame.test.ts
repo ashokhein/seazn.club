@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { foldMatch, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { LineupPair, StageCtx } from "../../core/types.ts";
+import { aggregatePlayerStats } from "../../stats/stats.ts";
 import { conformanceSuite, defaultLineupPair, makeEnvelope } from "../../testkit/index.ts";
 import { boardgame, BOARDGAME_TIEBREAKERS, type BoardgameState } from "./boardgame.ts";
 
@@ -110,6 +111,138 @@ describe("boardgame contract declarations", () => {
     expect(() =>
       boardgame.apply(live, asEv(makeEnvelope(9, { type: "core.finalize", payload: {} }))),
     ).toThrowError(expect.objectContaining({ code: "WRONG_PHASE" }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W4 domain audit — FIDE Laws of Chess (2023) Articles 5, 7, 8, 9.
+// ---------------------------------------------------------------------------
+
+describe("boardgame: how the game ended (FIDE Art. 5 + 9)", () => {
+  // Art. 9.2/9.3/9.6 — the drawing methods a scoresheet distinguishes.
+  const drawn = ["repetition", "fifty_move", "dead_position"] as const;
+  for (const method of drawn) {
+    it(`records a draw by ${method}`, () => {
+      const state = fold(stream(["core.start"], ["boardgame.result", { winner: null, method }]));
+      expect(state.method).toBe(method);
+      expect(state.outcome).toEqual({ kind: "draw" });
+      expect(boardgame.summary(state).detail).toMatchObject({ method });
+    });
+  }
+
+  // Art. 7.5.5 — the loss an arbiter records for a repeated illegal move.
+  it("records a loss by illegal move", () => {
+    const state = fold(
+      stream(["core.start"], ["boardgame.result", { winner: "H", method: "illegal_move" }]),
+    );
+    expect(state.outcome).toMatchObject({ kind: "win", winner: "H", method: "illegal_move" });
+  });
+});
+
+describe("boardgame: the arbiter's pairing card", () => {
+  const pairing = ["boardgame.pairing", { white: "A", homePerson: "H-p1", awayPerson: "A-p1", board: 3 }] as const;
+
+  it("assigns White to the entrant the pairing names, not always the home side", () => {
+    const state = fold(
+      stream(["core.start"], [...pairing], ["boardgame.result", { winner: "H", method: "resign" }]),
+    );
+    expect(state.colorOfHome).toBe("B");
+    const [home, away] = boardgame.standingsDelta(state.outcome!, cfg, league, state);
+    expect(home.metrics).toMatchObject({ white: 0, black: 1 });
+    expect(away.metrics).toMatchObject({ white: 1, black: 0 });
+  });
+
+  it("records who sat at the board and which board it was", () => {
+    const state = fold(stream(["core.start"], [...pairing]));
+    expect(state.players).toEqual({ home: "H-p1", away: "A-p1" });
+    expect(state.board).toBe(3);
+    expect(boardgame.summary(state).detail).toMatchObject({
+      players: { home: "H-p1", away: "A-p1" },
+      board: 3,
+    });
+  });
+
+  it("rejects a colour assignment when the division plays without colours", () => {
+    const noColor = boardgame.configSchema.parse({ colors: false });
+    expect(() =>
+      fold(stream(["core.start"], ["boardgame.pairing", { white: "A" }]), noColor),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+    // …but the players may still be recorded.
+    const state = fold(
+      stream(["core.start"], ["boardgame.pairing", { homePerson: "H-p1" }]),
+      noColor,
+    );
+    expect(state.players).toEqual({ home: "H-p1" });
+    expect(state.colorOfHome).toBeNull();
+  });
+
+  it("rejects an empty pairing card and one after the game is over", () => {
+    expect(() => fold(stream(["core.start"], ["boardgame.pairing", {}]))).toThrowError(
+      expect.objectContaining({ code: "INVALID_EVENT" }),
+    );
+    const decided = fold(stream(["core.start"], ["boardgame.result", { winner: "H" }]));
+    expect(() =>
+      boardgame.apply(
+        decided,
+        makeEnvelope(9, { type: "boardgame.pairing", payload: { board: 1 } }) as EventEnvelope<never>,
+      ),
+    ).toThrowError(expect.objectContaining({ code: "WRONG_PHASE" }));
+  });
+});
+
+describe("boardgame: game length and the winning player", () => {
+  it("records the move count the scoresheet finished on (Art. 8.1)", () => {
+    const state = fold(
+      stream(["core.start"], ["boardgame.result", { winner: "H", method: "checkmate", moves: 41 }]),
+    );
+    expect(state.moves).toBe(41);
+    expect(boardgame.summary(state).detail).toMatchObject({ moves: 41 });
+  });
+
+  it("credits the player who won the board in a team match", () => {
+    const state = fold(
+      stream(["core.start"], ["boardgame.result", { winner: "H", winnerPerson: "H-p1" }]),
+    );
+    expect(state.winnerPerson).toBe("H-p1");
+    expect(boardgame.summary(state).detail).toMatchObject({ winnerPerson: "H-p1" });
+  });
+
+  it("rejects a winning player on a drawn game", () => {
+    expect(() =>
+      fold(stream(["core.start"], ["boardgame.result", { winner: null, winnerPerson: "H-p1" }])),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
+
+  it("folds person credit into a games/wins leaderboard", () => {
+    const events = stream(
+      ["core.start"],
+      ["boardgame.pairing", { homePerson: "H-p1", awayPerson: "A-p1" }],
+      ["boardgame.result", { winner: "H", method: "checkmate", winnerPerson: "H-p1" }],
+    );
+    expect(aggregatePlayerStats(events, boardgame.playerStats!)).toEqual([
+      { personId: "A-p1", stats: { games: 1 } },
+      { personId: "H-p1", stats: { games: 1, wins: 1 } },
+    ]);
+  });
+});
+
+describe("boardgame: event union stays unambiguous", () => {
+  it("parses each branch as itself and rejects an empty payload", () => {
+    expect(boardgame.eventSchema.parse({ winner: null, method: "agreement" })).toEqual({
+      winner: null,
+      method: "agreement",
+    });
+    expect(boardgame.eventSchema.parse({ white: "A" })).toEqual({ white: "A" });
+    expect(boardgame.eventSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("folds a pairing payload as a pairing and a result payload as a result", () => {
+    const paired = fold(stream(["core.start"], ["boardgame.pairing", { white: "A" }]));
+    expect(paired.phase).toBe("live");
+    expect(paired.outcome).toBeNull();
+    const decided = fold(stream(["core.start"], ["boardgame.result", { winner: null }]));
+    expect(decided.outcome).toEqual({ kind: "draw" });
+    expect(decided.colorOfHome).toBe("W");
   });
 });
 

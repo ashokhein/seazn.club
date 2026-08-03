@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { EngineError } from "../../core/errors.ts";
 import { foldMatch, type EventEnvelope } from "../../core/events.ts";
 import type { LineupPair, StageCtx } from "../../core/types.ts";
+import { aggregatePlayerStats } from "../../stats/stats.ts";
 import { conformanceSuite, defaultLineupPair, makeEnvelope } from "../../testkit/index.ts";
 import { carrom, CARROM_TIEBREAKERS, type CarromState } from "./carrom.ts";
 
@@ -298,6 +299,101 @@ describe("carrom: board validation", () => {
       "h2h_points",
       "lots",
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W4 domain audit — person attribution. The ICF scoresheet books points to a
+// SIDE, but Laws 49 (break rotation) and 53 (the queen is pocketed AND covered
+// by a player) and 51/55 (a player commits the foul) are individual acts, and
+// in doubles the entrant is a pair, so the side alone loses the actor.
+// ---------------------------------------------------------------------------
+describe("carrom: who struck (Laws 49, 51, 53)", () => {
+  it("records the player who broke the board and the player who covered the queen", () => {
+    const state = fold(
+      stream(["core.start"], [
+        "carrom.board.summary",
+        { winner: "H", opponentCoinsLeft: 5, queenTo: "H", breaker: "H-p2", queenBy: "H-p1" },
+      ]),
+    );
+    const board = state.games[0]!.boards[0]!;
+    expect(board).toMatchObject({ breakerPerson: "H-p2", queenPerson: "H-p1", queenScored: true });
+    const detail = carrom.summary(state).detail as {
+      games: { boards: { breakerPerson?: string; queenPerson?: string }[] }[];
+    };
+    expect(detail.games[0]!.boards[0]).toMatchObject({
+      breakerPerson: "H-p2",
+      queenPerson: "H-p1",
+    });
+  });
+
+  it("rejects a queen credited to a player when no side covered the queen", () => {
+    expect(() =>
+      fold(
+        stream(["core.start"], [
+          "carrom.board.summary",
+          { winner: "H", opponentCoinsLeft: 5, queenTo: null, queenBy: "H-p1" },
+        ]),
+      ),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
+
+  it("records the player an umpire adjustment concerns", () => {
+    const state = fold(
+      stream(["core.start"], [
+        "carrom.game.adjust",
+        { entrantId: "H", delta: 3, reason: "opponent foul", person: "A-p1" },
+      ]),
+    );
+    expect(state.penalties).toEqual([{ person: "A-p1", side: "home", delta: 3 }]);
+    expect(carrom.summary(state).detail).toMatchObject({
+      penalties: [{ person: "A-p1", side: "home", delta: 3 }],
+    });
+  });
+
+  it("folds person credit into a breaks/queens/penalties leaderboard", () => {
+    const events = stream(
+      ["core.start"],
+      [
+        "carrom.board.summary",
+        { winner: "H", opponentCoinsLeft: 5, queenTo: "H", breaker: "H-p1", queenBy: "H-p1" },
+      ],
+      [
+        "carrom.board.summary",
+        { winner: "A", opponentCoinsLeft: 4, queenTo: null, breaker: "A-p1" },
+      ],
+      ["carrom.game.adjust", { entrantId: "A", delta: 1, reason: "foul", person: "H-p1" }],
+    );
+    expect(aggregatePlayerStats(events, carrom.playerStats!)).toEqual([
+      { personId: "A-p1", stats: { breaks: 1 } },
+      { personId: "H-p1", stats: { breaks: 1, queens: 1, penalties: 1 } },
+    ]);
+  });
+});
+
+describe("carrom: event union stays unambiguous", () => {
+  it("parses each of the three branches as itself", () => {
+    const toss = { firstBreak: "H" };
+    const board = { winner: "H", opponentCoinsLeft: 5, queenTo: null, breaker: "H-p1" };
+    const adjust = { entrantId: "H", delta: -1, reason: "foul", person: "H-p1" };
+    for (const payload of [toss, board, adjust]) {
+      expect(carrom.eventSchema.parse(payload)).toEqual(payload);
+    }
+  });
+
+  it("folds a canonical payload of each branch to that branch's effect", () => {
+    const state = fold(
+      stream(
+        ["carrom.toss", { firstBreak: "A" }],
+        ["core.start"],
+        ["carrom.board.summary", { winner: "H", opponentCoinsLeft: 5, queenTo: null, breaker: "H-p1" }],
+        ["carrom.game.adjust", { entrantId: "H", delta: 2, reason: "due points", person: "A-p1" }],
+      ),
+    );
+    expect(state.firstBreak).toBe("away");
+    expect(state.games[0]!.score).toEqual({ home: 7, away: 0 });
+    expect(state.games[0]!.boards).toHaveLength(1);
+    expect(state.penalties).toHaveLength(1);
   });
 });
 
