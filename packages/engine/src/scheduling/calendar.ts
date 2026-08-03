@@ -531,12 +531,36 @@ export function resolveSelector(
  * inside `validateAssignments` instead, so one too-short gap is reported once as
  * `rest` and not twice.
  */
+/** The typed rules in force, from BOTH homes: the ones a run compiled from the
+ *  organiser's instruction (`hard`) and the ones stored durably on the division
+ *  (`constraints.hard`, written through the API). A rule that binds on one entry
+ *  point and not the other is the worst kind — the board shows it enforced on
+ *  Monday and silently not on Tuesday. */
+function effectiveHard(config: Pick<VerifyConfig, "hard" | "constraints">): readonly HardConstraint[] {
+  const stored = config.constraints?.hard ?? [];
+  const compiled = config.hard ?? [];
+  if (stored.length === 0) return compiled;
+  if (compiled.length === 0) return stored;
+  return [...compiled, ...stored];
+}
+
 export function validateInstructionRules(
   assignments: readonly Assignment[],
-  config: Pick<VerifyConfig, "tz" | "hard" | "ruleFixtures">,
+  config: Pick<VerifyConfig, "tz" | "hard" | "ruleFixtures" | "constraints">,
+  /** The rest of the board: other divisions' cards, immovable fixtures, and
+   *  obstacles. COUNTING rules (a per-day cap) have to see it — a 2/day cap is
+   *  not satisfied by placing two more on a day that already holds three.
+   *  PLACEMENT rules do not: this run is not being asked to move a fixture it
+   *  does not own.
+   *
+   *  Only entries that are KNOWN FIXTURES (present in `ruleFixtures`) are
+   *  counted. Callers pass obstacles in here too, and an outside booking or a
+   *  court blackout is not a fixture — counting one under "how many fixtures run
+   *  that day" would invent a cap breach out of a closed court. */
+  existing: readonly Assignment[] = [],
 ): Conflict[] {
   const conflicts: Conflict[] = [];
-  const hard = config.hard ?? [];
+  const hard = effectiveHard(config);
   const fixtureById = new Map((config.ruleFixtures ?? []).map((f) => [f.id, f]));
   // Typed instruction rules (#398). Warn-only in this wave. Every rule here
 // needs a day boundary or a wall-clock time, so all of them need the org zone;
@@ -546,27 +570,64 @@ const placedById = new Map(assignments.map((a) => [a.fixtureId, a]));
 const tz = config.tz;
 if (tz !== undefined) {
   for (const h of hard) {
-    // min_rest_minutes is folded into `restFor` above — it raises the rest
-    // bound rather than producing a rule violation of its own, so a single
-    // too-short gap is reported once as `rest`, not twice.
-    if (h.type === "min_rest_minutes") continue;
+    if (h.type === "min_rest_minutes") {
+      // The per-person half is folded into `restFor` — it raises the rest bound
+      // rather than producing a rule of its own, so one too-short gap is
+      // reported once as `rest`, not twice. The feeder→dependent half has no
+      // such home: `gapMinutes` is a court turnaround and the `order` check only
+      // asks that a feeder has FINISHED. Left unenforced, "40 minutes before the
+      // round it feeds" compiles, displays as a rule, and binds nothing.
+      if (h.rest_scope === "per_person") continue;
+      for (const f of ruleFixtures) {
+        if (f.winnerTo === null) continue;
+        const feeder = placedById.get(f.id);
+        if (feeder === undefined) continue;
+        for (const d of ruleFixtures) {
+          // The feed edge, by the same ext_key the bracket is wired with, and
+          // within one division — two divisions can reuse a key like "SF1".
+          if (d.extKey !== f.winnerTo || d.divisionId !== f.divisionId) continue;
+          const dependent = placedById.get(d.id);
+          if (dependent === undefined) continue;
+          if (!scopeCoversFixture(h.scope, f, feeder) && !scopeCoversFixture(h.scope, d, dependent)) continue;
+          // Only a dependent placed AFTER its feeder is measured here. One
+          // placed before is an ordering violation, already reported as
+          // `order` — a rest row on top of it teaches the repair round nothing.
+          if (dependent.startAt < feeder.endAt) continue;
+          const gapMin = (dependent.startAt - feeder.endAt) / MS_PER_MIN;
+          if (gapMin < h.minutes) {
+            conflicts.push({
+              fixtureId: d.id,
+              reason: "instruction",
+              detail: `starts ${Math.round(gapMin)} min after its feeder, instruction requires ${h.minutes}`,
+            });
+          }
+        }
+      }
+      continue;
+    }
 
     if (h.type === "max_fixtures_per_day") {
-      const perDay = new Map<string, Assignment[]>();
-      for (const a of assignments) {
+      // Counted over the WHOLE board. A cap is a statement about how busy a day
+      // is, and a day is exactly as busy as everything already on it.
+      const perDay = new Map<string, { movable: Assignment[]; total: number }>();
+      for (const a of [...existing.filter((e) => fixtureById.has(e.fixtureId)), ...assignments]) {
         if (!scopeCoversFixture(h.scope, fixtureById.get(a.fixtureId), a)) continue;
         const key = dayKeyInTz(a.startAt, tz);
-        const bucket = perDay.get(key);
-        if (bucket === undefined) perDay.set(key, [a]);
-        else bucket.push(a);
+        const bucket = perDay.get(key) ?? { movable: [], total: 0 };
+        bucket.total++;
+        if (placedById.has(a.fixtureId)) bucket.movable.push(a);
+        perDay.set(key, bucket);
       }
-      for (const [day, list] of perDay) {
-        if (list.length <= h.count) continue;
-        for (const a of list) {
+      for (const [day, { movable, total }] of perDay) {
+        if (total <= h.count) continue;
+        // Reported on the cards this run can actually move. A day pushed over
+        // by immovable fixtures alone yields no row — there is nothing here to
+        // repair, and a conflict on a card nobody can drag is noise.
+        for (const a of movable) {
           conflicts.push({
             fixtureId: a.fixtureId,
             reason: "instruction",
-            detail: `${list.length} fixtures on ${day} exceed the ${h.count}/day cap`,
+            detail: `${total} fixtures on ${day} exceed the ${h.count}/day cap`,
           });
         }
       }
@@ -631,7 +692,7 @@ export function validateAssignments(
   const byId = new Map(board.map((a) => [a.fixtureId, a]));
 
   // --- typed instruction rules (#398) -------------------------------------
-  const hard = config.hard ?? [];
+  const hard = effectiveHard(config);
   const fixtureById = new Map((config.ruleFixtures ?? []).map((f) => [f.id, f]));
 
   /** The strictest rest that applies to a PAIR: this division's resolved value,
@@ -758,7 +819,7 @@ export function validateAssignments(
     }
   }
 
-  conflicts.push(...validateInstructionRules(assignments, config));
+  conflicts.push(...validateInstructionRules(assignments, config, existing));
 
   // Feed order (doc 12 §2 warn.order): a fixture may not start before a
   // fixture that feeds it has finished. Direct feeds block; the API layer maps

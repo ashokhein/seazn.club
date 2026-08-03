@@ -15,7 +15,7 @@ import {
   type VerifyConfig,
 } from "./calendar.ts";
 import type { HardConstraint } from "./constraints.ts";
-import { assign, BADMINTON, BASE_CONFIG, SHARED, SOLO, STEP } from "./payload-fixtures.ts";
+import { assign, at, BADMINTON, BASE_CONFIG, SHARED, SOLO, STEP } from "./payload-fixtures.ts";
 
 const TZ = "Europe/London";
 
@@ -400,7 +400,161 @@ describe("scoping", () => {
         ruleFixtures: STEP_RF,
       }),
     );
-    expect(found).toHaveLength(2);
+    // Pinned by id, not just counted: a 2 that came from the wrong division
+    // would pass a bare length check and prove nothing about scoping.
+    expect(found.map((c) => c.fixtureId).sort()).toEqual(["sl-g2-d1", "sl-g2-d2"]);
+  });
+
+  it("counts fixtures ALREADY on the day, not just the ones this run placed", () => {
+    // The cap is broken by the day's total. Counted over `assignments` alone, a
+    // run that adds two to a day already holding two passes a 2/day cap that the
+    // day plainly breaks.
+    const placed = assign(BADMINTON, SOLO, [
+      ["wb-r0-i1", "2026-08-03T10:00:00Z", "Court 1"],
+      ["wb-r0-i2", "2026-08-03T12:00:00Z", "Court 2"],
+    ]);
+    const alreadyThere = assign(BADMINTON, SOLO, [["wb-r0-i3", "2026-08-03T16:00:00Z", "Court 3"]]);
+    const found = instr(validateAssignments(placed, cfg([CAP2]), alreadyThere));
+    // Reported on the two cards this run can move, never on the third — a
+    // conflict on a fixture nobody can drag is noise the repair round cannot use.
+    expect(found.map((c) => c.fixtureId).sort()).toEqual(["wb-r0-i1", "wb-r0-i2"]);
+    expect(details(found)[0]).toContain("3 fixtures");
+  });
+
+  it("does NOT count an obstacle as a fixture", () => {
+    // Outside bookings and blackouts arrive in the same `existing` array as
+    // immovable fixtures. A closed court is not a fixture, and counting one
+    // would invent a cap breach out of a court being unavailable.
+    const placed = assign(BADMINTON, SOLO, [
+      ["wb-r0-i1", "2026-08-03T10:00:00Z", "Court 1"],
+      ["wb-r0-i2", "2026-08-03T12:00:00Z", "Court 2"],
+    ]);
+    const obstacle: Assignment = {
+      fixtureId: "obstacle:x:0",
+      court: "Court 4",
+      startAt: at("2026-08-03T18:00:00Z"),
+      endAt: at("2026-08-03T19:00:00Z"),
+      entrants: [],
+      people: [],
+    };
+    expect(instr(validateAssignments(placed, cfg([CAP2]), [obstacle]))).toEqual([]);
+  });
+
+  it("enforces a rule stored durably on the division, not only a compiled one", () => {
+    // `constraints.hard` is the API's home for a rule (ScheduleConfig), `hard`
+    // is the compiled instruction's. A rule that binds on one entry point and
+    // not the other shows as enforced on Monday and silently is not on Tuesday.
+    const board = assign(BADMINTON, SOLO, [
+      ["wb-r0-i1", "2026-08-03T10:00:00Z", "Court 1"],
+      ["wb-r0-i2", "2026-08-03T12:00:00Z", "Court 2"],
+      ["wb-r0-i3", "2026-08-03T14:00:00Z", "Court 3"],
+    ]);
+    const stored = validateAssignments(board, {
+      ...BASE_CONFIG,
+      tz: TZ,
+      ruleFixtures: BAD_RF,
+      constraints: {
+        noBackToBack: false,
+        startWindows: [],
+        fieldFairness: "off" as const,
+        parallelism: "mixed" as const,
+        crossPersonClash: "warn" as const,
+        hard: [CAP2],
+      },
+    });
+    expect(instr(stored)).toHaveLength(3);
+    // And identical to the compiled route, so neither home is the special case.
+    expect(instr(validateAssignments(board, cfg([CAP2])))).toEqual(instr(stored));
+  });
+
+  describe("feeder_to_dependent rest (payload B: stepladder)", () => {
+    // "40 minutes before the round it feeds" is a rest between a fixture and the
+    // one its winner advances into — NOT between a player's own matches. Nothing
+    // else in the verifier covers it: `gapMinutes` is a court turnaround, and
+    // `order` only asks that the feeder has finished.
+    const feedRest = (rest_scope: "feeder_to_dependent" | "per_person" | "both"): HardConstraint => ({
+      type: "min_rest_minutes",
+      minutes: 40,
+      rest_scope,
+      scope: { kind: "competition" },
+    });
+    // g1 ends 10:30. Courts differ so a `court` clash can never be the proof.
+    const board = (dependentIso: string): Assignment[] =>
+      assign(
+        STEP,
+        SHARED,
+        [
+          ["sl-g1-d1", "2026-07-24T10:00:00Z", "Court 1"],
+          ["sl-g2-d1", dependentIso, "Court 2"],
+        ],
+        30,
+      ).map((a) => ({ ...a, divisionId: "d1" }));
+    const verify = (b: Assignment[], h: HardConstraint): Conflict[] =>
+      instr(validateAssignments(b, { ...BASE_CONFIG, tz: TZ, matchMinutes: 30, hard: [h], ruleFixtures: STEP_RF }));
+
+    it("REJECTS a dependent that starts 20 minutes after its feeder ends", () => {
+      const found = verify(board("2026-07-24T10:50:00Z"), feedRest("feeder_to_dependent"));
+      expect(found.map((c) => c.fixtureId)).toEqual(["sl-g2-d1"]);
+      expect(found[0]?.detail).toBe("starts 20 min after its feeder, instruction requires 40");
+    });
+
+    it("ACCEPTS a 45-minute gap", () => {
+      expect(verify(board("2026-07-24T11:15:00Z"), feedRest("feeder_to_dependent"))).toEqual([]);
+    });
+
+    it("'both' enforces the feed gap as well as the per-person bound", () => {
+      expect(verify(board("2026-07-24T10:50:00Z"), feedRest("both")).map((c) => c.fixtureId)).toEqual([
+        "sl-g2-d1",
+      ]);
+    });
+
+    it("'per_person' does NOT produce a feed row — that half is the rest bound", () => {
+      expect(verify(board("2026-07-24T10:50:00Z"), feedRest("per_person"))).toEqual([]);
+    });
+
+    it("stays quiet when the dependent is placed BEFORE its feeder — that is `order`", () => {
+      // Reported once, as an ordering violation, by the dependency pass. A rest
+      // row stacked on top teaches the repair round nothing.
+      const early = board("2026-07-24T08:00:00Z");
+      expect(verify(early, feedRest("feeder_to_dependent"))).toEqual([]);
+      const withDeps = validateAssignments(
+        early,
+        { ...BASE_CONFIG, tz: TZ, matchMinutes: 30, hard: [feedRest("both")], ruleFixtures: STEP_RF },
+        [],
+        [{ fixtureId: "sl-g2-d1", dependsOn: "sl-g1-d1", direct: true }],
+      );
+      expect(withDeps.filter((c) => c.reason === "order")).toHaveLength(1);
+    });
+
+    it("does not cross divisions on a reused ext_key", () => {
+      // Two divisions can both wire an "sl-g2-d1"-shaped key; a feed edge is only
+      // an edge within one division's bracket.
+      const crossed: RuleFixture[] = [
+        { id: "sl-g1-d1", extKey: "SF1", winnerTo: "F", divisionId: "d1" },
+        { id: "sl-g2-d2", extKey: "F", winnerTo: null, divisionId: "d2" },
+      ];
+      const b = [
+        ...assign(STEP, SHARED, [["sl-g1-d1", "2026-07-24T10:00:00Z", "Court 1"]], 30).map((a) => ({
+          ...a,
+          divisionId: "d1",
+        })),
+        ...assign(STEP, SHARED, [["sl-g2-d2", "2026-07-24T10:50:00Z", "Court 2"]], 30).map((a) => ({
+          ...a,
+          divisionId: "d2",
+        })),
+      ];
+      expect(
+        instr(
+          validateAssignments(b, {
+            ...BASE_CONFIG,
+            tz: TZ,
+            matchMinutes: 30,
+            hard: [feedRest("feeder_to_dependent")],
+            ruleFixtures: crossed,
+          }),
+        ),
+      ).toEqual([]);
+    });
   });
 
   it("no rules at all leaves the report byte-identical to a pre-W3 run", () => {

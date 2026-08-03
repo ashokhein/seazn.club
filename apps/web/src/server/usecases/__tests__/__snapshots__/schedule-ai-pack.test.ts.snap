@@ -747,6 +747,11 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       ],
     },
   ],
+  "parsed": {
+    "hard": [],
+    "soft": [],
+    "unparsed": [],
+  },
   "participants": {
     "<id:11>": [
       "<id:10>",

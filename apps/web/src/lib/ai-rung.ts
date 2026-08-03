@@ -340,7 +340,10 @@ export interface RunMeterStamp {
    *  therefore outside `budget`, so it needs its own line or the spend is
    *  invisible — the exact reconciliation complaint #387 makes. Deliberately NOT
    *  folded into `spent_tokens`: that number must keep meaning "what the credit
-   *  bought", or reconciliation double-counts. Absent when no compile ran. */
+   *  bought", or reconciliation double-counts. Both fields are ABSENT when no
+   *  compile ran — an empty instruction, or a wallet that could not pay for the
+   *  run it precedes — so `parse_failed: false` always means "compiled cleanly"
+   *  and never doubles as "never attempted". */
   parse_tokens?: number;
   parse_failed?: boolean;
 }

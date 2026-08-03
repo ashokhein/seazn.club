@@ -35,13 +35,19 @@ Before the timetable is built, your instruction is read once and turned into **r
 
 These are the things it can turn into a rule:
 
-- **A limit on matches in a day** — "two matches per day". Counted by calendar day in your organisation's timezone, over all the divisions you selected together.
+- **A limit on matches in a day** — "two matches per day". Counted by calendar day in your organisation's timezone, over all the divisions you selected together — and it counts matches **already** on that day, not only the ones this run is placing.
 - **A minimum gap** — "at least 45 minutes between matches". This only ever **raises** the rest you have set in schedule settings; it never lowers it. Ask for 40 minutes when your settings say 90 and you keep 90.
+- **A gap before the next round** — "40 minutes before the round it feeds". Measured from the end of a match to the start of the one its winner goes into.
 - **A day for a particular match** — "the final on Friday", or a specific date. "The final" means the match nothing advances out of. In a competition with several divisions it means **every** division's final, unless you name one.
 - **Earliest and latest starts** — "nothing before 9am", "nothing after 8pm", read as clock times where your organisation sits.
 - **A range of dates** — "from tomorrow till Friday". See [the dates a plan covers](#the-dates-a-plan-covers) below.
 
 **Dates are worked out here, never by the AI.** It is told the words you used — "tomorrow", "Friday" — and we resolve them against the real calendar, so a plan cannot be a day out because a model counted wrong.
+
+Two things it deliberately will **not** turn into a rule, because it could not enforce them honestly:
+
+- **A limit aimed at one player or one team** — "nobody plays more than twice a day". The day limit above counts the matches in a day, not the matches one person has, so reading it that way would give you a very different rule from the one you asked for. It comes back to you unread instead.
+- **A range of dates for one division only.** A run has a single calendar, so a range meant for one division would quietly shorten every other division's. State the dates for the whole run, or plan that division on its own.
 
 **Anything that cannot become a rule is shown back to you, in your own words.** A preference like "keep the mornings relaxed" is passed to the AI to take into account, and wording nobody can turn into a checkable rule is listed as-is. We never invent a rule you did not ask for, and never present something as enforced when nothing is enforcing it.
 

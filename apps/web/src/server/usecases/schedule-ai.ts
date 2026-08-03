@@ -21,7 +21,7 @@ import {
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
-import { spendCredit, walletIdFor } from "@/lib/credits";
+import { balance, spendCredit, walletIdFor } from "@/lib/credits";
 import { rateLimit } from "@/lib/rate-limit";
 import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import { aiRunCostUsd } from "@/lib/ai-pricing";
@@ -1104,7 +1104,10 @@ export async function buildSchedulePack(
             fieldFairness: config.constraints.fieldFairness,
             parallelism: config.constraints.parallelism,
             crossPersonClash: config.constraints.crossPersonClash,
-            hard: config.constraints.hard ?? [],
+            // OMITTED when empty, never `[]`. Absence already means "no durable
+            // rules", and emitting an empty array on every pack would change the
+            // shape of every instruction-free run for no information.
+            ...(config.constraints.hard?.length ? { hard: config.constraints.hard } : {}),
           }
         : null,
     };
@@ -2176,18 +2179,32 @@ export async function aiPlanForDivision(
   // credit buys a token BUDGET, not a number of rounds, so an extra LLM round
   // must never mint one — and the confirm step W5 (#400) adds is only genuinely
   // free to walk away from if this round is unpriced. Own meter, own ~1K
-  // ceiling; the abuse bound is the rate limit above, three runs an hour.
+  // ceiling; the abuse bound is the rate limit above, five runs an hour.
   //
   // A failure here is NOT fatal. The run continues with no compiled rules rather
   // than presenting a rule as enforced while nothing enforces it.
+  //
+  // Skipped outright on an empty wallet. "402 before any model call" is a
+  // standing invariant of this path (schedule-ai-route.test.ts), and unpriced is
+  // not the same as free: an org that cannot pay for the run it precedes must
+  // not be able to spend our tokens compiling for it. The 402 itself still comes
+  // from `spendCredit` below, unchanged — a wallet that merely cannot afford
+  // THIS run's rung is refused there exactly as before.
+  const canPay = (await balance(walletId)) > 0;
   const parse =
-    input.instruction.trim().length > 0
+    input.instruction.trim().length > 0 && canPay
       ? await parseInstruction(input.instruction, {
           divisions: [{ id: divisionId, name: gate.divisionName }],
-          pools: [],
-          entrants: [],
         })
       : { raw: null, failed: false, tokens: 0, servedModel: null };
+
+  // OMITTED when no compile ran — an empty instruction, or a wallet that could
+  // not pay for one. Without this, `parse_failed: false` on the ledger doubles
+  // as "never attempted" and reconciliation cannot tell the two apart.
+  const parseStamp =
+    parse.servedModel !== null || parse.failed
+      ? { tokens: parse.tokens, failed: parse.failed }
+      : undefined;
 
   const { pack, movableIds } = await buildSchedulePack(auth, divisionId, {
     ...input,
@@ -2299,7 +2316,7 @@ export async function aiPlanForDivision(
                     // — even on a failed run the credits were reserved, so the
                     // ledger stamps it here too. One helper builds this fragment
                     // for every surface so they cannot drift.
-                    ...meterStamp(quote, meter, { tokens: parse.tokens, failed: parse.failed }),
+                    ...meterStamp(quote, meter, parseStamp),
                     // Provider diagnostics stay server-side (ops needs the real
                     // status; the tenant gets a bare 503).
                     ...(providerErr
@@ -2360,7 +2377,7 @@ export async function aiPlanForDivision(
                 // the org picked below the prediction, and whether the budget
                 // cut the run short — the last is what makes a mispriced rung
                 // visible instead of looking like a merely degraded plan.
-                ...meterStamp(quote, meter, { tokens: parse.tokens, failed: parse.failed }),
+                ...meterStamp(quote, meter, parseStamp),
                 // Ladder telemetry: which model was tried first and rejected,
                 // the full ordered chain of rungs attempted (so a 3-rung fall
                 // gemini→sonnet→grok is auditable — `model` above is only the
@@ -2453,6 +2470,6 @@ export async function aiPlanForDivision(
     // the predictor said, whether the confirm card's warning applies, and
     // whether the budget cut the run short, so the client can reconcile against
     // its own (advisory) prediction.
-    ...meterStamp(quote, meter, { tokens: parse.tokens, failed: parse.failed }),
+    ...meterStamp(quote, meter, parseStamp),
   };
 }

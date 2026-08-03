@@ -37,6 +37,25 @@ const { parse, isServerFeatureEnabled, captureServer, incrWindow, rlCounts, Mock
     };
   });
 
+// The stage-1 instruction compiler (#398) makes its own LLM call, BEFORE the
+// architect's. This suite drives the architect through a mocked SDK whose queue
+// is 1:1 with architect calls, so an un-neutralised pre-flight silently eats the
+// first queued response and every count below shifts by one. The compiler has
+// its own suites (schedule-ai-parse.test.ts, calendar-instruction.test.ts); here
+// it must simply not exist.
+const { parseInstructionMock } = vi.hoisted(() => ({
+  parseInstructionMock: vi.fn(async () => ({
+    raw: null,
+    failed: false,
+    tokens: 0,
+    servedModel: null,
+  })),
+}));
+vi.mock("../schedule-ai-parse", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../schedule-ai-parse")>();
+  return { ...actual, parseInstruction: parseInstructionMock };
+});
+
 vi.mock("@anthropic-ai/sdk", () => ({
   default: Object.assign(
     class Anthropic {
@@ -242,6 +261,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   parse.mockReset();
+  parseInstructionMock.mockClear();
   isServerFeatureEnabled.mockReset().mockResolvedValue(true);
   captureServer.mockReset().mockResolvedValue(undefined);
   maybeAlertExpensiveRun.mockClear();
@@ -284,6 +304,11 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, credit-metered v17
       featureKey: "ai.credits",
     });
     expect(parse).toHaveBeenCalledTimes(2); // the exhausted run never reaches the LLM
+    // ...and neither does the stage-1 compiler (#398). It is UNPRICED, which is
+    // not the same as free: an org that cannot pay for the run must not be able
+    // to spend our tokens compiling an instruction for it. Two funded runs
+    // compiled; the exhausted third did not.
+    expect(parseInstructionMock).toHaveBeenCalledTimes(2);
   });
 
   it("real runs record schedule.ai_generated events; a credit-exhausted run records nothing", async () => {

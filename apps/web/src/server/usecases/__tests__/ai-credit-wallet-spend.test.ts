@@ -17,6 +17,25 @@ import { randomUUID } from "node:crypto";
 import type { AiChatResponse } from "@/server/ai/provider";
 
 const { chat } = vi.hoisted(() => ({ chat: vi.fn() }));
+// The stage-1 instruction compiler (#398) makes its own LLM call, BEFORE the
+// architect's. This suite drives the architect through a mocked SDK whose queue
+// is 1:1 with architect calls, so an un-neutralised pre-flight silently eats the
+// first queued response and every count below shifts by one. The compiler has
+// its own suites (schedule-ai-parse.test.ts, calendar-instruction.test.ts); here
+// it must simply not exist.
+const { parseInstructionMock } = vi.hoisted(() => ({
+  parseInstructionMock: vi.fn(async () => ({
+    raw: null,
+    failed: false,
+    tokens: 0,
+    servedModel: null,
+  })),
+}));
+vi.mock("../schedule-ai-parse", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../schedule-ai-parse")>();
+  return { ...actual, parseInstruction: parseInstructionMock };
+});
+
 vi.mock("@/server/ai/select-provider", () => {
   const provider = { id: "anthropic" as const, isConfigured: () => true, chat };
   return {

@@ -95,7 +95,7 @@ import {
   type Rung,
   type TokenMeter,
 } from "@/lib/ai-rung";
-import { spendCredit, walletIdFor } from "@/lib/credits";
+import { balance, spendCredit, walletIdFor } from "@/lib/credits";
 import { deferred } from "@/lib/deferred";
 import { requireFeature } from "@/lib/entitlements";
 import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
@@ -1363,7 +1363,9 @@ export function verifyJoint(plan: AiSchedulePlan, pack: CompetitionPack): Confli
     ruleFixtures,
     restByDivision,
   };
-  for (const c of validateInstructionRules(all, { tz: pack.tz, hard, ruleFixtures })) {
+  // `obstacles` as the third argument: a per-day cap counts what is already on
+  // the day, and an outside booking occupies a court just as surely as a fixture.
+  for (const c of validateInstructionRules(all, { tz: pack.tz, hard, ruleFixtures }, obstacles)) {
     const key = `${c.fixtureId}|${c.reason}|${c.detail ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -2059,14 +2061,24 @@ export async function aiPlanForCompetition(
   // not a number of rounds. The model is shown every kept division's id and
   // name, so "finals in the Open on Friday" can compile to a scoped rule; a
   // failure is not fatal and simply leaves the run with no compiled rules.
+  // Skipped on an empty wallet, for the reason the single-division path states:
+  // unpriced is not free, and "402 before the model is called" is an invariant
+  // of this path too. The 402 still comes from `spendCredit`.
+  const canPay = (await balance(walletId)) > 0;
   const parse =
-    input.instruction.trim().length > 0
+    input.instruction.trim().length > 0 && canPay
       ? await parseInstruction(input.instruction, {
           divisions: kept.map((id) => ({ id, name: byId.get(id)!.name })),
-          pools: [],
-          entrants: [],
         })
       : { raw: null, failed: false, tokens: 0, servedModel: null };
+
+  // OMITTED when no compile ran — an empty instruction, or a wallet that could
+  // not pay for one. Without this, `parse_failed: false` on the ledger doubles
+  // as "never attempted" and reconciliation cannot tell the two apart.
+  const parseStamp =
+    parse.servedModel !== null || parse.failed
+      ? { tokens: parse.tokens, failed: parse.failed }
+      : undefined;
 
   // The summed 500-fixture cap lives in here — still before any reserve.
   const { pack, movableIds } = await buildCompetitionPack(auth, competitionId, kept, {
@@ -2174,7 +2186,7 @@ export async function aiPlanForCompetition(
                     // breakdown behind the discount — stamped on the failure row
                     // too, so a run that cost real tokens for nothing is priced
                     // in the ledger exactly like one that worked.
-                    ...meterStamp(quote, meter, { tokens: parse.tokens, failed: parse.failed }),
+                    ...meterStamp(quote, meter, parseStamp),
                     ...(providerErr
                       ? {
                           provider_status: providerCause?.status ?? null,
@@ -2245,7 +2257,7 @@ export async function aiPlanForCompetition(
                 // credits, discount, budget, spent_tokens, stopped_on_budget,
                 // underfunded and the per-division breakdown — one builder, so
                 // the event and the API response cannot drift.
-                ...meterStamp(quote, meter, { tokens: parse.tokens, failed: parse.failed }),
+                ...meterStamp(quote, meter, parseStamp),
                 ...(result.escalated_from
                   ? {
                       escalated_from: result.escalated_from,
@@ -2319,7 +2331,7 @@ export async function aiPlanForCompetition(
       output_tokens: result.usage.output_tokens,
       repair_rounds: result.usage.repair_rounds,
     },
-    ...meterStamp(quote, meter, { tokens: parse.tokens, failed: parse.failed }),
+    ...meterStamp(quote, meter, parseStamp),
     // AFTER the stamp, deliberately: the stamp carries its own narrow
     // `divisions` breakdown and this merged one replaces it (see the field's
     // doc comment). Every solved division has a quote line — they are built
