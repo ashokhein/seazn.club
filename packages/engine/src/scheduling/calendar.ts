@@ -6,7 +6,8 @@
 // occupancy and warns on per-person overlaps. No wall-clock reads — all times
 // are injected (the same unit throughout, e.g. epoch ms); durations are minutes.
 import type { EntrantId } from "../core/types.ts";
-import type { SchedulingConstraints } from "./constraints.ts";
+import type { ConstraintScope, FixtureSelector, HardConstraint, SchedulingConstraints } from "./constraints.ts";
+import { dayKeyInTz, hhmmInTz, weekdayOfYmd } from "./tz.ts";
 
 const MS_PER_MIN = 60_000;
 
@@ -109,6 +110,11 @@ export type ConflictReason =
   | "person_overlap" // a person plays in two overlapping matches (warn — doc 06 §4.3)
   | "start_window" // Jul3/04 §3: no feasible slot inside the target's window (hard)
   | "window" // outside the pack's resolved calendar window (#397 — warn; W4 blocks)
+  // A rule compiled from the organiser's own instruction, or a durable division
+  // rule in the same vocabulary (#398). Warn-only here: `isBlocking` still
+  // covers `court` and direct `order` alone, and W4 (#399) is what turns this
+  // into a delta-based block and gives it rule code H8.
+  | "instruction"
   | "order"; // scheduled before a fixture that feeds it (doc 12 §2; blocks when direct)
 
 export interface Conflict {
@@ -424,10 +430,92 @@ export function slotFixtures(input: SlotInput): SlotResult {
 // violations, per-person overlaps, and feed-order violations against the given
 // bracket dependencies (block when direct). Pure — the same inputs always give
 // the same report.
+/** The fixture metadata a typed rule needs and an `Assignment` does not carry:
+ *  which fixture is terminal, and what its stable external key is. Supplied by
+ *  the pack, never re-derived here — `winnerTo === null` is the ONLY definition
+ *  of terminal. Round numbers are display labels and elimination brackets number
+ *  sparsely, so nothing below may reason from one. */
+export interface RuleFixture {
+  id: string;
+  extKey: string | null;
+  divisionId?: string;
+  poolId?: string;
+  winnerTo: string | null;
+}
+
+/** Everything `validateAssignments` reads. Named (#398) because three call sites
+ *  build it — `verifyConfig`, `verifyConfigFor` and the apply path — and a bare
+ *  structural type in the signature gives none of them a name to annotate. */
+export type VerifyConfig = Pick<
+  SlotConfig,
+  "perEntrantMinRest" | "gapMinutes" | "blackouts" | "sessionWindows"
+> &
+  Partial<Pick<SlotConfig, "matchMinutes" | "constraints" | "window">> & {
+    /** The ORG zone (#397). Day buckets, weekday targets and HH:mm bounds are
+     *  meaningless without it, so a rule that needs one is SKIPPED when it is
+     *  absent rather than silently bucketed in UTC — reporting a violation the
+     *  organiser never expressed is worse than reporting none. */
+    tz?: string;
+    /** Compiled instruction rules plus durable division rules, ONE merged
+     *  stream, so hard rules have exactly one home (design §4.1). */
+    hard?: readonly HardConstraint[];
+    ruleFixtures?: readonly RuleFixture[];
+    /** Every division's own `perEntrantMinRest`, keyed by division id, so a
+     *  cross-division pair is rested at the MAX of both rather than at whichever
+     *  pass happened to see it. Our joint verifier runs one pass per division
+     *  with that division's own config, so without this a shared human is
+     *  checked twice at two different values instead of once at the maximum —
+     *  and their recovery does not care which bracket they are in (design §7.2). */
+    restByDivision?: Readonly<Record<string, number>>;
+  };
+
+/** Does a scoped rule bind this assignment? `person` is the bridge that makes
+ *  person-scoped rules expressible at all: `people` is participants (#396), so a
+ *  rule about a human reaches the TBD slots they can still advance into. */
+export function scopeCoversFixture(
+  scope: ConstraintScope,
+  f: RuleFixture | undefined,
+  a: Assignment,
+): boolean {
+  switch (scope.kind) {
+    case "competition":
+      return true;
+    case "division":
+      return (f?.divisionId ?? a.divisionId) === scope.divisionId;
+    case "pool":
+      return (f?.divisionId ?? a.divisionId) === scope.divisionId && (f?.poolId ?? a.poolId) === scope.pool;
+    case "entrant":
+      return a.entrants.includes(scope.entrantId);
+    case "person":
+      return a.people.includes(scope.personKey);
+  }
+}
+
+/** Which fixtures a selector names. `terminal` is `winnerTo === null`, resolved
+ *  per division in scope — never a round number, never a naming convention. An
+ *  unqualified terminal target therefore covers EVERY division's final. */
+export function resolveSelector(
+  sel: FixtureSelector,
+  scope: ConstraintScope,
+  fixtures: readonly RuleFixture[],
+): RuleFixture[] {
+  switch (sel.kind) {
+    case "terminal": {
+      const divisionId = scope.kind === "division" || scope.kind === "pool" ? scope.divisionId : null;
+      return fixtures.filter((f) => f.winnerTo === null && (divisionId === null || f.divisionId === divisionId));
+    }
+    case "ext_key":
+      return fixtures.filter(
+        (f) => f.extKey === sel.extKey && (sel.divisionId === undefined || f.divisionId === sel.divisionId),
+      );
+    case "id":
+      return fixtures.filter((f) => f.id === sel.fixtureId);
+  }
+}
+
 export function validateAssignments(
   assignments: readonly Assignment[],
-  config: Pick<SlotConfig, "perEntrantMinRest" | "gapMinutes" | "blackouts" | "sessionWindows"> &
-    Partial<Pick<SlotConfig, "matchMinutes" | "constraints" | "window">>,
+  config: VerifyConfig,
   existing: readonly Assignment[] = [],
   dependencies: readonly OrderDependency[] = [],
 ): Conflict[] {
@@ -437,6 +525,30 @@ export function validateAssignments(
   const conflicts: Conflict[] = [];
   const board = [...existing, ...assignments];
   const byId = new Map(board.map((a) => [a.fixtureId, a]));
+
+  // --- typed instruction rules (#398) -------------------------------------
+  const hard = config.hard ?? [];
+  const fixtureById = new Map((config.ruleFixtures ?? []).map((f) => [f.id, f]));
+
+  /** The strictest rest that applies to a PAIR: this division's resolved value,
+   *  the other division's own value, and any instruction rule covering EITHER
+   *  side. A lower bound only — "at least N minutes" can raise a stored setting,
+   *  never lower it. */
+  const restFor = (a: Assignment, other: Assignment): number => {
+    let minutes = effectiveRestMinutes(config, a);
+    const otherDivision = other.divisionId;
+    if (otherDivision !== undefined) {
+      minutes = Math.max(minutes, config.restByDivision?.[otherDivision] ?? 0);
+    }
+    for (const h of hard) {
+      if (h.type !== "min_rest_minutes" || h.rest_scope === "feeder_to_dependent") continue;
+      const covers =
+        scopeCoversFixture(h.scope, fixtureById.get(a.fixtureId), a) ||
+        scopeCoversFixture(h.scope, fixtureById.get(other.fixtureId), other);
+      if (covers) minutes = Math.max(minutes, h.minutes);
+    }
+    return minutes;
+  };
 
   // startWindows (Jul3/04 §3) are a hard bound the solver refuses to place
   // outside — so the verifier has to know them too, or the same rule holds for
@@ -502,18 +614,118 @@ export function validateAssignments(
         if (overlaps(a.startAt, a.endAt, other.startAt, other.endAt)) {
           conflicts.push({ fixtureId: a.fixtureId, reason: "person_overlap", detail: `entrant ${e} overlap` });
         } else {
-          // Resolved per assignment: restByGroup can differ pool to pool.
-          const restMs = effectiveRestMinutes(config, a) * MS_PER_MIN;
+          // Resolved per PAIR: restByGroup can differ pool to pool, the other
+          // division's own rest may be the binding one, and a compiled
+          // instruction can raise both (#398).
+          const restMs = restFor(a, other) * MS_PER_MIN;
           const gap = a.startAt >= other.endAt ? a.startAt - other.endAt : other.startAt - a.endAt;
           if (gap < restMs) {
             conflicts.push({ fixtureId: a.fixtureId, reason: "rest", detail: `entrant ${e} below rest` });
           }
         }
       }
-      for (const p of a.people) {
-        if (!other.people.includes(p)) continue;
+      const sharedPeople = a.people.filter((p) => other.people.includes(p));
+      if (sharedPeople.length > 0) {
         if (overlaps(a.startAt, a.endAt, other.startAt, other.endAt)) {
-          conflicts.push({ fixtureId: a.fixtureId, reason: "person_overlap", detail: `person ${p} overlap` });
+          for (const p of sharedPeople) {
+            conflicts.push({ fixtureId: a.fixtureId, reason: "person_overlap", detail: `person ${p} overlap` });
+          }
+        } else if (!a.entrants.some((e) => other.entrants.includes(e))) {
+          // Rest between two fixtures sharing a PERSON but no entrant — the case
+          // the entrant loop above cannot see, and the only one in which a
+          // cross-division or TBD-slot pair is rested at all (#396 gave us the
+          // participants; #398 is what makes rest read them). Skipped when the
+          // pair also shares an entrant, so an entrant-sharing pair still
+          // reports exactly the conflicts it did before. Reported ONCE for the
+          // pair rather than once per shared person: a grand final shares seven
+          // people with its feeders and seven identical rows teach the repair
+          // round nothing.
+          const restMs = restFor(a, other) * MS_PER_MIN;
+          const gap = a.startAt >= other.endAt ? a.startAt - other.endAt : other.startAt - a.endAt;
+          if (gap < restMs) {
+            conflicts.push({
+              fixtureId: a.fixtureId,
+              reason: "rest",
+              detail: `person ${sharedPeople.join("/")} below rest`,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // Typed instruction rules (#398). Warn-only in this wave. Every rule here
+  // needs a day boundary or a wall-clock time, so all of them need the org zone;
+  // without one the whole block is SKIPPED rather than bucketed in UTC.
+  const ruleFixtures = config.ruleFixtures ?? [];
+  const placedById = new Map(assignments.map((a) => [a.fixtureId, a]));
+  const tz = config.tz;
+  if (tz !== undefined) {
+    for (const h of hard) {
+      // min_rest_minutes is folded into `restFor` above — it raises the rest
+      // bound rather than producing a rule violation of its own, so a single
+      // too-short gap is reported once as `rest`, not twice.
+      if (h.type === "min_rest_minutes") continue;
+
+      if (h.type === "max_fixtures_per_day") {
+        const perDay = new Map<string, Assignment[]>();
+        for (const a of assignments) {
+          if (!scopeCoversFixture(h.scope, fixtureById.get(a.fixtureId), a)) continue;
+          const key = dayKeyInTz(a.startAt, tz);
+          const bucket = perDay.get(key);
+          if (bucket === undefined) perDay.set(key, [a]);
+          else bucket.push(a);
+        }
+        for (const [day, list] of perDay) {
+          if (list.length <= h.count) continue;
+          for (const a of list) {
+            conflicts.push({
+              fixtureId: a.fixtureId,
+              reason: "instruction",
+              detail: `${list.length} fixtures on ${day} exceed the ${h.count}/day cap`,
+            });
+          }
+        }
+        continue;
+      }
+
+      if (h.type === "fixture_on_weekday" || h.type === "fixture_on_date") {
+        for (const f of resolveSelector(h.selector, h.scope, ruleFixtures)) {
+          const a = placedById.get(f.id);
+          // Absence is not a violation of THIS rule — an unplaced fixture is
+          // reported by the no_slot / unschedulable path instead.
+          if (a === undefined) continue;
+          if (!scopeCoversFixture(h.scope, f, a)) continue;
+          const day = dayKeyInTz(a.startAt, tz);
+          if (h.type === "fixture_on_weekday" && weekdayOfYmd(day) !== h.weekday) {
+            conflicts.push({
+              fixtureId: f.id,
+              reason: "instruction",
+              detail: `is on ${weekdayOfYmd(day)} ${day}, instruction requires ${h.weekday}`,
+            });
+          }
+          if (h.type === "fixture_on_date" && day !== h.date) {
+            conflicts.push({
+              fixtureId: f.id,
+              reason: "instruction",
+              detail: `is on ${day}, instruction requires ${h.date}`,
+            });
+          }
+        }
+        continue;
+      }
+
+      // not_before / not_after — wall-clock bounds on the START, in the org zone.
+      for (const a of assignments) {
+        if (!scopeCoversFixture(h.scope, fixtureById.get(a.fixtureId), a)) continue;
+        const start = hhmmInTz(a.startAt, tz);
+        const bad = h.type === "not_before" ? start < h.time : start > h.time;
+        if (bad) {
+          conflicts.push({
+            fixtureId: a.fixtureId,
+            reason: "instruction",
+            detail: `starts ${start}, violating ${h.type} ${h.time}`,
+          });
         }
       }
     }

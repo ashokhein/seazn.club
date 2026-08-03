@@ -67,6 +67,7 @@ export const CONFLICT_LABEL: Record<string, string> = {
   "warn.order": "plays before feeder",
   "warn.blackout": "blackout",
   "warn.window": "outside dates",
+  "warn.instruction": "breaks your instruction",
   "warn.no_slot": "no slot",
   "warn.official_declined": "umpire declined",
   "warn.official_unavailable": "umpire unavailable",
@@ -81,6 +82,8 @@ export const CONFLICT_HELP: Record<string, string> = {
   "warn.blackout": "This time falls inside a blackout period.",
   "warn.window":
     "This match falls outside the dates the competition runs — change the schedule dates in Settings, or move the match inside them.",
+  "warn.instruction":
+    "This match breaks a rule from your scheduling instruction — such as a limit on matches per day, or a match you asked to be played on a particular day.",
   "warn.no_slot": "There's no free slot for this match at that time.",
   "warn.official_declined": "An assigned official has declined — re-assign this match.",
   "warn.official_unavailable": "An assigned official is unavailable at this time.",

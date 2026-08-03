@@ -758,6 +758,11 @@ export const ScheduleConflict = z.object({
     // wave — W4 (#399) makes it blocking, and delta-based so a board that was
     // already outside its window stays editable.
     "warn.window",
+    // #398: breaks a rule compiled from the organiser's own instruction ("two
+    // matches per day", "final on Friday"), or a durable division rule in the
+    // same vocabulary. A warning this wave — W4 (#399) gives it rule code H8
+    // and decides what blocks.
+    "warn.instruction",
     "warn.no_slot",
     "warn.official_declined",
     "warn.official_unavailable",
