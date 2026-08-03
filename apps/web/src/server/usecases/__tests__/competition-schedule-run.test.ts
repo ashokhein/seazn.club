@@ -26,7 +26,7 @@ import {
   toJointModelPayload,
 } from "../competition-schedule-ai";
 import type { CompetitionPack } from "../competition-schedule-ai";
-import { JOINT_RULES, SYSTEM_PROMPT } from "../schedule-ai-prompt";
+import { INSTRUCTION_RULES, JOINT_RULES, SYSTEM_PROMPT } from "../schedule-ai-prompt";
 import { createTokenMeter } from "@/lib/ai-rung";
 
 const D1 = "d1111111-1111-4111-8111-111111111111"; // "Alpha"
@@ -175,11 +175,17 @@ beforeEach(() => {
 });
 
 describe("runCompetitionAiPlan (#350)", () => {
-  it("sends SYSTEM_PROMPT followed by JOINT_RULES as the system prompt", () => {
+  // #398 inserts INSTRUCTION_RULES between the two. Asserted as the exact whole
+  // string, not as three `toContain`s: the ORDER and the separators are what
+  // this test exists to pin — a prompt assembled in the wrong order is still
+  // sent, and still contains every part.
+  it("sends SYSTEM_PROMPT, then INSTRUCTION_RULES, then JOINT_RULES", () => {
     parse.mockResolvedValueOnce(planResponse(cleanPlan));
     return runCompetitionAiPlan(pack, movableIds).then(() => {
       const body = parse.mock.calls[0]![0] as { system: { text: string }[] };
-      expect(body.system[0]!.text).toBe(`${SYSTEM_PROMPT}\n\n${JOINT_RULES}`);
+      expect(body.system[0]!.text).toBe(
+        `${SYSTEM_PROMPT}\n\n${INSTRUCTION_RULES}\n\n${JOINT_RULES}`,
+      );
     });
   });
 

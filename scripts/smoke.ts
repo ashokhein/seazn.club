@@ -5339,6 +5339,12 @@ async function latestCompetitionEvent(
     output_tokens: number;
     repair_rounds: number;
   };
+  /** #398: the stage-1 instruction compile, metered on its own line because it
+   *  runs outside `spendCredit` and outside `budget`. */
+  parse_tokens?: number;
+  parse_failed?: boolean;
+  spent_tokens?: number;
+  budget?: number;
 } | null> {
   const sql = smokeDb();
   try {
@@ -5619,7 +5625,10 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
         role_keys: ["referee"],
       });
 
-      const instruction = "finish by 6pm, keep both courts busy";
+      // #398: carries a phrase the stage-1 compiler can turn into a typed rule
+      // ("two matches per day"), so the pre-flight compile actually runs on this
+      // path and its ledger line is not vacuously present.
+      const instruction = "finish by 6pm, keep both courts busy, two matches per day";
       const planRes = await v1(plus, `/api/v1/divisions/${divId}/schedule/ai-plan`, "POST", {
         instruction,
         mode: "generate",
@@ -5663,6 +5672,23 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
           typeof genEvent.model === "string" &&
           !!genEvent.usage &&
           typeof genEvent.cost_usd === "number",
+      );
+
+      // #398/#387: the compile runs OUTSIDE spendCredit, so its spend is
+      // invisible unless it has its own ledger line. Asserted as a real number
+      // rather than truthiness — 0 is a legitimate value and must still stamp.
+      check(
+        "v4 AI/parse: schedule.ai_generated carries the pre-flight compile on its own line (#398)",
+        !!genEvent && typeof genEvent.parse_tokens === "number" && typeof genEvent.parse_failed === "boolean",
+      );
+      // The parse must NOT be folded into what the credit bought, or
+      // reconciliation double-counts it.
+      check(
+        "v4 AI/parse: parse spend is NOT added into spent_tokens (#398)",
+        !!genEvent &&
+          typeof genEvent.spent_tokens === "number" &&
+          (genEvent.parse_tokens ?? 0) >= 0 &&
+          genEvent.spent_tokens === (genEvent.usage?.output_tokens ?? genEvent.spent_tokens),
       );
 
       const applied = await v1(plus, `/api/v1/stages/${stageId}/schedule/apply`, "POST", {
