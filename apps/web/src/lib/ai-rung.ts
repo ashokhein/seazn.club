@@ -222,6 +222,28 @@ export function quoteRun(lines: QuoteLineInput[], weights: RungWeights): Quote {
   };
 }
 
+/**
+ * The FEWEST credits a request could possibly cost, from what is known before
+ * the pack is built — one entry per line, holding that line's `chosen` override
+ * when the client sent one.
+ *
+ * A line's rung is `chosen` when it is a valid rung and the prediction
+ * otherwise, and a prediction is never below 1. So a supplied override prices
+ * that line exactly, and an absent one floors it at 1. The discount is applied
+ * exactly as `quoteRun` applies it, which keeps this a true lower bound rather
+ * than an approximation that happens to be close.
+ *
+ * Used by the stage-1 instruction compile (#398), which runs BEFORE the pack
+ * and therefore before the real quote: a run we can already prove is
+ * unaffordable must not spend tokens compiling for itself. Being a lower bound
+ * is what makes it safe — it can only ever decline to skip, never skip a run
+ * that would in fact have gone through.
+ */
+export function minimumCredits(chosen: readonly (number | undefined)[]): number {
+  const rungTotal = chosen.reduce<number>((n, c) => n + (c !== undefined && isRung(c) ? c : 1), 0);
+  return chosen.length > 1 ? Math.max(1, rungTotal - 1) : rungTotal;
+}
+
 /** A run that charges credits but makes no model call — Phase B's
  *  empty-instruction path returns the deterministic solver draft with zero
  *  tokens, and must never cost more than the 1 credit it cost before rung

@@ -28,6 +28,7 @@ import { aiRunCostUsd } from "@/lib/ai-pricing";
 import {
   createTokenMeter,
   meterStamp,
+  minimumCredits,
   quoteRun,
   schedulingRungWeights,
   unmeteredTokenMeter,
@@ -2189,13 +2190,14 @@ export async function aiPlanForDivision(
   // A failure here is NOT fatal. The run continues with no compiled rules rather
   // than presenting a rule as enforced while nothing enforces it.
   //
-  // Skipped outright on an empty wallet. "402 before any model call" is a
-  // standing invariant of this path (schedule-ai-route.test.ts), and unpriced is
-  // not the same as free: an org that cannot pay for the run it precedes must
-  // not be able to spend our tokens compiling for it. The 402 itself still comes
-  // from `spendCredit` below, unchanged — a wallet that merely cannot afford
-  // THIS run's rung is refused there exactly as before.
-  const canPay = (await balance(walletId)) > 0;
+  // Skipped when the wallet cannot cover even the CHEAPEST this request could
+  // be. "402 before any model call" is a standing invariant of this path
+  // (schedule-ai-route.test.ts), and unpriced is not the same as free: an org
+  // that cannot pay for the run must not spend our tokens compiling for it.
+  // A lower bound, never an estimate — it can only decline to skip, never skip a
+  // run that would have gone through. The 402 itself still comes from
+  // `spendCredit` below, unchanged.
+  const canPay = (await balance(walletId)) >= minimumCredits([input.rung]);
   const parse =
     input.instruction.trim().length > 0 && canPay
       ? await parseInstruction(input.instruction, {

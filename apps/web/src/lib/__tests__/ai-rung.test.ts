@@ -4,6 +4,7 @@ import {
   freeDraftQuote,
   isRung,
   meterStamp,
+  minimumCredits,
   minRoundReserve,
   officialsRungWeights,
   predictRung,
@@ -520,5 +521,53 @@ describe("meterStamp", () => {
     m.add(q.budget);
     m.canStartRound();
     expect(meterStamp(q, m).stopped_on_budget).toBe(true);
+  });
+});
+
+describe("minimumCredits (#398 pre-flight gate)", () => {
+  // The stage-1 compile runs BEFORE the pack and therefore before the real
+  // quote. This is what lets it refuse to spend tokens on a run that is already
+  // provably unaffordable, without pricing a pack it has not built.
+  const sized = (n: number) => ({ movableFixtures: n, entrants: n, courts: 2 });
+
+  it("prices a line EXACTLY when the client chose its rung", () => {
+    expect(minimumCredits([3])).toBe(3);
+    // Two divisions at 2 and 3 cost max(1, 5 - 1) = 4 — the smoke case a wallet
+    // holding 3 must not be able to start.
+    expect(minimumCredits([2, 3])).toBe(4);
+  });
+
+  it("floors an unchosen line at rung 1", () => {
+    expect(minimumCredits([undefined])).toBe(1);
+    expect(minimumCredits([undefined, undefined])).toBe(1);
+    expect(minimumCredits([undefined, undefined, undefined])).toBe(2);
+  });
+
+  it("ignores a value that is not a rung, exactly as quoteRun does", () => {
+    expect(minimumCredits([9])).toBe(1);
+    expect(minimumCredits([0])).toBe(1);
+  });
+
+  it("is never above what the run actually costs", () => {
+    // The property that makes it safe: it can decline to skip, but it can never
+    // skip a run that would have gone through.
+    const W: RungWeights = officialsRungWeights();
+    for (const sizes of [[1], [40], [200], [5, 5], [200, 200], [3, 90, 400]]) {
+      for (const chosen of [
+        sizes.map(() => undefined),
+        sizes.map(() => 1 as number | undefined),
+        sizes.map((_, i) => ((i % 3) + 1) as number | undefined),
+      ]) {
+        const q = quoteRun(
+          sizes.map((n, i) => ({
+            key: `d${i}`,
+            input: sized(n),
+            ...(chosen[i] !== undefined ? { chosen: chosen[i]! } : {}),
+          })),
+          W,
+        );
+        expect(minimumCredits(chosen)).toBeLessThanOrEqual(q.credits);
+      }
+    }
   });
 });

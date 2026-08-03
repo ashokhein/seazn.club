@@ -88,6 +88,7 @@ import { aiRunCostUsd } from "@/lib/ai-pricing";
 import {
   createTokenMeter,
   meterStamp,
+  minimumCredits,
   quoteRun,
   schedulingRungWeights,
   unmeteredTokenMeter,
@@ -2061,10 +2062,14 @@ export async function aiPlanForCompetition(
   // not a number of rounds. The model is shown every kept division's id and
   // name, so "finals in the Open on Friday" can compile to a scoped rule; a
   // failure is not fatal and simply leaves the run with no compiled rules.
-  // Skipped on an empty wallet, for the reason the single-division path states:
-  // unpriced is not free, and "402 before the model is called" is an invariant
-  // of this path too. The 402 still comes from `spendCredit`.
-  const canPay = (await balance(walletId)) > 0;
+  // Skipped when the wallet cannot cover the cheapest this request could be, for
+  // the reason the single-division path states: unpriced is not free, and "the
+  // refusal happened before any model call" is an invariant of this path too
+  // (smoke.ts, #350 joint/credits). With per-division overrides supplied the
+  // bound is the exact price; without them each line floors at rung 1. The 402
+  // still comes from `spendCredit`.
+  const canPay =
+    (await balance(walletId)) >= minimumCredits(kept.map((id) => input.rung_overrides?.[id]));
   const parse =
     input.instruction.trim().length > 0 && canPay
       ? await parseInstruction(input.instruction, {
