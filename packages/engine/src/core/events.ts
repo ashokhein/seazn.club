@@ -181,6 +181,40 @@ export interface FoldableModule<Cfg = unknown, State = unknown> {
   playPhases?(cfg: Cfg): readonly string[];
 }
 
+/**
+ * A module that declares `playPhases` must declare a usable list (§7). Both
+ * failures below are facts about the module and its cfg — knowable before the
+ * first event, wrong for every event after it — so they are refused once, at
+ * fold start, as CONFIG_INVALID.
+ *
+ * EMPTY is not "declares nothing". Read that way it would silently drop the
+ * sport onto the derive-from-the-stream fallback, which is the strictly weaker
+ * path §3.3 exists to close, for precisely the cfg whose list came out empty.
+ * Read as declared-and-exhaustive it was worse: every stamped event in the
+ * sport was refused. Both readings hide the module bug; this surfaces it.
+ *
+ * DUPLICATES orphan the later entry, because `compareGameTime` orders by
+ * `indexOf` (time.ts) — two phases the module says are distinct then sort as
+ * one, and every comparison against the orphan is quietly wrong with nothing in
+ * the state or the goldens to show it.
+ */
+function validateDeclaredPhases(phases: readonly string[]): void {
+  if (phases.length === 0) {
+    throw new EngineError(
+      "CONFIG_INVALID",
+      "module declared an empty phase order — declare every phase a stamp may name, or declare none at all",
+      { phaseOrder: [] },
+    );
+  }
+  if (new Set(phases).size !== phases.length) {
+    throw new EngineError(
+      "CONFIG_INVALID",
+      `module declared a duplicated phase order (${phases.join(", ")}) — phase order is matched by index, so a repeat is unorderable`,
+      { phaseOrder: [...phases] },
+    );
+  }
+}
+
 // Core types always accepted post-decision: annotations and the finalize lock.
 // core.suspend is deliberately absent — a decided match cannot be suspended.
 const POST_DECISION_CORE: readonly string[] = ["core.note", "core.finalize", "core.award"];
@@ -272,9 +306,14 @@ export function foldMatchWithStoppage<Cfg, State>(
   //     event the guard accepted could then be backwards one layer down, and
   //     lazy expiry (§3.1) would sweep against an order nothing agrees on.
   //
-  // Declared order is exhaustive by construction, so a stamp in a phase the
-  // module does not list is UNKNOWN_PHASE — checked on EVERY stamp, including
-  // the first, where there is no high-water mark to compare against yet.
+  // A declared order is treated as EXHAUSTIVE — every phase in which a stamped
+  // event may legally occur, including the ones where play is not running (a
+  // pre-kickoff card, a shootout card). Nothing about the type makes that true;
+  // it is an obligation on the module (§7), and the two ways a module can break
+  // it are refused below rather than absorbed. A stamp naming a phase outside
+  // the list is then INVALID_EVENT — the scorer picked a period this sport does
+  // not have, which is payload validation, checked on EVERY stamp including the
+  // first, where there is no high-water mark to compare against yet.
   //
   // FALLBACK, only when the module declares nothing: derive order of first
   // appearance, as above. Strictly weaker, and kept solely so a module that has
@@ -282,6 +321,7 @@ export function foldMatchWithStoppage<Cfg, State>(
   // On that path a period is registered before it is compared, so UNKNOWN_PHASE
   // can never escape the fold.
   const declaredPhases = module.playPhases?.(cfg);
+  if (declaredPhases !== undefined) validateDeclaredPhases(declaredPhases);
   const phaseOrder: string[] = declaredPhases === undefined ? [] : [...declaredPhases];
   let highWater: GameTime | null = null;
 
@@ -327,9 +367,15 @@ export function foldMatchWithStoppage<Cfg, State>(
     if (at !== null) {
       if (!phaseOrder.includes(at.period)) {
         if (declaredPhases !== undefined) {
+          // INVALID_EVENT, not UNKNOWN_PHASE. `at.period` is a free string the
+          // client supplies, so this is a typo or a stale pad sending a period
+          // this sport does not have — the same class of mistake as any other
+          // bad payload field, and the scorer can retype it. Raising the
+          // internal-invariant code here made a typo a 500 and a page; naming
+          // the valid phases makes it fixable at the pad instead.
           throw new EngineError(
-            "UNKNOWN_PHASE",
-            `event "${event.type}" is stamped in period "${at.period}", which is not a declared play phase`,
+            "INVALID_EVENT",
+            `event "${event.type}" is stamped in period "${at.period}", which this sport does not have — expected one of ${phaseOrder.join(", ")}`,
             { eventId: event.id, seq: event.seq, period: at.period, phaseOrder: [...phaseOrder] },
           );
         }

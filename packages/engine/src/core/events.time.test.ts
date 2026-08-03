@@ -134,11 +134,14 @@ describe("fold — monotonic time guard (§3.3)", () => {
     expect(foldDeclared([ev(at("P2", 900)), ev(at("P3", 5)), ev(at("OT", 0))]).applied).toBe(3);
   });
 
-  it("rejects a stamp in a phase the module never declared (UNKNOWN_PHASE)", () => {
-    // A declared order is exhaustive by construction. A period outside it means
-    // the module accepted an event in a phase it does not list — an internal
-    // invariant, not something the scorer typed, so it is UNKNOWN_PHASE rather
-    // than a silent arbitrary sort that would make lazy expiry wrong.
+  it("rejects a stamp in a phase the module never declared, as INVALID_EVENT", () => {
+    // `at.period` is a free `z.string().min(1)`, so this is the commonest thing
+    // a client can get wrong, not a module-side invariant: the scorer picked or
+    // typed a period this sport does not have. INVALID_EVENT is what the rest
+    // of the payload-validation layer answers with, and it is what lets the pad
+    // say "retype it" instead of surfacing an internal-error page. UNKNOWN_PHASE
+    // stays what `compareGameTime` raises when a CALLER's own list is missing a
+    // period — a disagreement between two lists, not a typo.
     let caught: unknown;
     try {
       foldDeclared([ev(at("SO", 0))]);
@@ -148,9 +151,98 @@ describe("fold — monotonic time guard (§3.3)", () => {
     }
     // Caught on the FIRST stamp, before any high-water mark exists — otherwise
     // the very first event in a stream could smuggle in an unorderable phase.
-    expect(EngineError.is(caught, "UNKNOWN_PHASE")).toBe(true);
+    expect(EngineError.is(caught, "INVALID_EVENT")).toBe(true);
+    expect(EngineError.is(caught, "UNKNOWN_PHASE")).toBe(false);
+    // The declared phases travel with the error, or the pad cannot tell the
+    // scorer which periods this sport actually has.
+    expect((caught as EngineError).data).toMatchObject({
+      period: "SO",
+      phaseOrder: ["P1", "P2", "P3", "OT"],
+    });
+    expect((caught as EngineError).message).toContain("SO");
     // ...and on a later one too.
-    expect(() => foldDeclared([ev(at("P1", 0)), ev(at("SO", 0))])).toThrow(EngineError);
+    let later: unknown;
+    try {
+      foldDeclared([ev(at("P1", 0)), ev(at("SO", 0))]);
+      expect.unreachable("an undeclared phase must be rejected");
+    } catch (err) {
+      later = err;
+    }
+    expect(EngineError.is(later, "INVALID_EVENT")).toBe(true);
+  });
+
+  it("rejects the bad stamp BEFORE dispatch, so the module never sees it", () => {
+    const dispatched: string[] = [];
+    const spy: FoldableModule<Record<string, never>, TickState> = {
+      ...declaring,
+      apply(state, event) {
+        dispatched.push(event.id);
+        return toy.apply(state, event);
+      },
+    };
+    const events = [ev(at("P1", 0)), ev(at("SO", 0))];
+    expect(() => foldMatch(spy, {}, lineups, events)).toThrow(EngineError);
+    expect(dispatched).toEqual([events[0]?.id]);
+  });
+
+  // A declared order is only exhaustive if the module actually lists every
+  // phase a stamp may name — nothing about `playPhases` makes that true by
+  // construction. Two degenerate declarations made the guard silently useless
+  // rather than loud, and neither was reachable by anything a scorer types, so
+  // both are CONFIG_INVALID at fold start: they are facts about the module and
+  // its cfg, knowable before the first event, and they stay wrong for every
+  // event in the stream.
+  describe("a degenerate declared order is refused, not tolerated", () => {
+    const withPhases = (phases: readonly string[]): FoldableModule<
+      Record<string, never>,
+      TickState
+    > => ({ ...toy, playPhases: () => phases });
+
+    it("EMPTY: rejected rather than read as 'declares nothing'", () => {
+      // Treating `[]` as absent would silently drop the module onto the
+      // derive-from-the-stream fallback — the strictly weaker path §3.3 exists
+      // to close — for exactly the cfg whose phase list came out empty. Read as
+      // declared-and-exhaustive it was worse still: EVERY stamped event was
+      // refused. Both readings hide a module bug; refusing it does not.
+      let caught: unknown;
+      try {
+        foldMatch(withPhases([]), {}, lineups, [ev(at("P1", 10))]);
+        expect.unreachable("an empty declared phase order must be rejected");
+      } catch (err) {
+        caught = err;
+      }
+      expect(EngineError.is(caught, "CONFIG_INVALID")).toBe(true);
+    });
+
+    it("EMPTY: refused at fold start, even for a stream with no stamps at all", () => {
+      // The declaration is broken whether or not this particular stream happens
+      // to exercise it. Failing only once a stamp arrives leaves the sport
+      // working right up to the first pad that sends `at`.
+      expect(() => foldMatch(withPhases([]), {}, lineups, [ev({ note: "x" })])).toThrow(
+        EngineError,
+      );
+      expect(() => foldMatch(withPhases([]), {}, lineups, [])).toThrow(EngineError);
+    });
+
+    it("DUPLICATE: rejected, because indexOf orphans the later entry", () => {
+      // `compareGameTime` orders by `indexOf`, so the second "P1" can never be
+      // matched: two phases the module says are distinct sort as one, and every
+      // comparison against the orphan is quietly wrong in a way no stream shows.
+      let caught: unknown;
+      try {
+        foldMatch(withPhases(["P1", "P2", "P1"]), {}, lineups, [ev(at("P2", 10))]);
+        expect.unreachable("a duplicated phase must be rejected");
+      } catch (err) {
+        caught = err;
+      }
+      expect(EngineError.is(caught, "CONFIG_INVALID")).toBe(true);
+      expect((caught as EngineError).data).toMatchObject({ phaseOrder: ["P1", "P2", "P1"] });
+    });
+
+    it("still folds a healthy declaration untouched", () => {
+      // Over-rejection guard: the check must not fire on the normal case.
+      expect(foldMatch(withPhases(["P1", "P2"]), {}, lineups, [ev(at("P2", 1))]).applied).toBe(1);
+    });
   });
 
   it("FALLBACK ONLY: derives order of first appearance when the module declares none", () => {
