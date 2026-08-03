@@ -12,6 +12,7 @@
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
 import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
+import { GameTime, addDuration, compareGameTime, gameTimeOf } from "../../core/time.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
   AttemptOutcome,
@@ -87,6 +88,15 @@ export interface PeriodParams {
 export type PeriodCfg = PeriodParams & {
   goalkeeper?: "required" | "optional";
   setPieceKinds: string[];
+  // W4a (#425) §1.3/§3.2 — nominal length of each phase, in SECONDS, keyed by
+  // the phase label ("P1", "Q3", "OT"). Optional with NO default: a defaulted
+  // key would appear in the cfg serialised into every frozen state string.
+  //
+  // A SOFT bound, never enforced — football's 90+3 is elapsed 2880 against a
+  // nominal 2700 and the fold accepts it. Its one fold-visible job is the
+  // CARRY: without a length the engine cannot work out how much of a penalty
+  // awarded at 19:10 is still owed after the buzzer.
+  periodSeconds?: Record<string, number>;
 };
 
 const SuspensionClassSchema: z.ZodType<SuspensionClass> = z.object({
@@ -94,6 +104,8 @@ const SuspensionClassSchema: z.ZodType<SuspensionClass> = z.object({
   teamShort: z.boolean(),
   pim: z.number().int().nonnegative().optional(),
   permanent: z.boolean().optional(),
+  // W4a (#425) §3.4 — an opposition goal ends it early (IIHF minors).
+  releaseOnGoal: z.boolean().optional(),
 });
 
 export function makePeriodConfigSchema(
@@ -117,6 +129,13 @@ export function makePeriodConfigSchema(
     // only: it drives `positionsFor` and never the fold. Optional with no
     // default so `state.cfg` serialises exactly as it did before W4.
     goalkeeper: z.enum(["required", "optional"]).optional(),
+    // W4a (#425) — phase label → nominal seconds. Optional with NO default:
+    // this is the one cfg knob the fold reads for the cross-period carry, and a
+    // default would put a new key inside every frozen golden state's cfg.
+    // A competition that does not declare it keeps the pre-wave behaviour, in
+    // which a penalty awarded near the buzzer cannot be carried (see
+    // `expiryOf`), which is a documented limitation rather than a guess.
+    periodSeconds: z.record(z.string().min(1), z.number().int().positive()).optional(),
     periods: z
       .object({
         count: z.number().int().min(1).max(4),
@@ -188,26 +207,51 @@ export const PeriodGoal = z.strictObject({
   // stack (an SH-EN goal is both), and FIH sides also pull the keeper for an
   // extra outfielder, so this rides beside the kind rather than inside it.
   emptyNet: z.boolean().optional(),
+  /** @deprecated W4a (#425) — superseded by `at`, kept because removing it
+   *  would break the frozen goldens and the additive-only tripwire. Free text
+   *  the fold derives nothing from; where both are present, `at` wins. */
   clockRef: z.string().min(1).optional(), // scorer's clock note ("12:41"), display only
+  // W4a (#425) §5.1 — elapsed-at-event. The GameTime schema VERBATIM, never a
+  // look-alike `z.object({period, elapsed})`: the fold is deliberately
+  // fail-OPEN on a malformed stamp (`gameTimeOf` safe-parses and returns null,
+  // so a corrupt stamp reads as UNSTAMPED rather than being rejected), which
+  // makes this schema the only thing between a bad stamp and the ledger. Only
+  // the real GameTime carries all four guards: non-negative, integer, non-empty
+  // label, and strict — a widened object is not a GameTime.
+  at: GameTime.optional(),
 });
 export const PeriodAdvance = z.strictObject({
   to: z.string().min(1), // must match the kernel's expected next phase
+  // W4a — when the whistle went. The phase boundary sweeps expired suspensions
+  // whether or not it is stamped; the stamp additionally advances the fold's
+  // `asOf` and the kernel's monotonic high-water mark.
+  at: GameTime.optional(),
 });
 export const PeriodSuspensionStart = z.strictObject({
   by: EntrantId,
   person: PersonId.optional(),
   class: z.string().min(1),
+  /** @deprecated W4a — superseded by `at`; see PeriodGoal.clockRef. */
   clockRef: z.string().min(1).optional(), // scorer's clock note, display only
   // W4 (#407) — the rest of an IIHF penalty row / FIH card row. See
   // SuspensionDetail in ./suspensions.ts for what each one is.
   reason: z.string().min(1).optional(),
   servedBy: PersonId.optional(),
   minutes: z.number().int().positive().optional(),
+  // W4a — the stamp that turns a recorded card into a TIMED one: with it the
+  // fold derives `expiresAt` and releases the suspension lazily; without it
+  // nothing expires and the release stays an explicit event, as before.
+  at: GameTime.optional(),
 });
 export const PeriodSuspensionEnd = z.strictObject({
   by: EntrantId,
   person: PersonId.optional(),
   class: z.string().min(1).optional(),
+  // W4a — the end time. This payload never had a `clockRef`, on the reasoning
+  // that the release "is an event, not a clock reading"; that is exactly what
+  // `at` records, and it also lets the sweep run at the right moment when a
+  // scorer sends an explicit release alongside an expiry.
+  at: GameTime.optional(),
 });
 export const PeriodShootoutAttempt = z.strictObject({
   by: EntrantId,
@@ -239,7 +283,10 @@ export const PeriodSetPiece = z.strictObject({
   // the two never double-count the score. ABSENT ⇒ the scorer recorded no
   // result, which the tally reads exactly as it read `converted: false`.
   outcome: AttemptOutcome.optional(),
+  /** @deprecated W4a — superseded by `at`; see PeriodGoal.clockRef. */
   clockRef: z.string().min(1).optional(),
+  // W4a — when it was awarded.
+  at: GameTime.optional(),
 });
 
 // NOTE (union order): branches are told apart structurally and the first match
@@ -282,7 +329,11 @@ export interface GoalLogEntry {
   assists?: string[]; // ordered: A1 then A2 (IIHF)
   kind?: string;
   emptyNet?: boolean;
+  /** @deprecated W4a — the free-text note; `at` is the machine-readable one. */
   clockRef?: string;
+  /** W4a — elapsed-at-event, when the goal carried one. Absent otherwise, so a
+   *  pre-wave goal log is byte-identical. */
+  at?: GameTime;
 }
 
 export interface SetPieceTally {
@@ -309,6 +360,20 @@ export interface PeriodState {
   /** W4 — set pieces awarded/converted per side per kind. Absent until one is
    *  recorded. */
   setPieces?: { home: Record<string, SetPieceTally>; away: Record<string, SetPieceTally> };
+  /**
+   * W4a (#425) §6 obligation 3 — the newest stamp this fold has applied, i.e.
+   * AS OF WHEN everything above is true. Absent until the first stamped event,
+   * matching the `goalLog` / `setPieces` precedent, so a pre-wave state
+   * serialises exactly as it did.
+   *
+   * It exists because lazy expiry (§3.1) means the pad and the fold
+   * legitimately disagree between an expiry and the next event: a pad drawing
+   * a strength chip needs to say what instant that chip is true as of, and
+   * without this every consumer would have to re-scan the raw payloads to find
+   * out. Only events that reach the module update it — the kernel-owned
+   * core.suspend / core.resume pair never does.
+   */
+  asOf?: GameTime;
 }
 
 function opponent(side: Side): Side {
@@ -411,6 +476,144 @@ function inOvertime(state: PeriodState): boolean {
   return otLabels(state.cfg).includes(state.phase);
 }
 
+// ---------------------------------------------------------------------------
+// Game time — W4a (#425) §3. Durations and elapsed-at-event; the pad ticks.
+//
+// Every comparison below orders against `playPhases(cfg)` — the SAME exported
+// function the module hands the fold kernel (§7 obligation 3). Not a local
+// list, however obviously equal: two lists that agree today is the defect the
+// obligation exists to prevent, and lazy expiry sweeping against an order
+// nothing agrees on is how it would surface.
+// ---------------------------------------------------------------------------
+
+/**
+ * When a suspension started at `startedAt` runs out.
+ *
+ * `minutes` is the AWARDED duration — `SuspensionDetail.minutes` where the
+ * official gave one, else the class nominal. The award wins because an FIH
+ * yellow is a MINIMUM of 5 minutes and the umpire may give 10; counting down
+ * the class nominal would release a player who still owes five minutes.
+ *
+ * CROSS-PERIOD CARRY. A 2-minute minor at 19:10 of a 20-minute period runs into
+ * the next period, and leaving it as `{P1, 1270}` is not a harmless
+ * approximation — it is ACTIVELY WRONG under lazy expiry, because `{P1, 1270}`
+ * sorts before every P2 stamp, so the first stamped P2 event sweeps a penalty
+ * that still has 70 seconds to run. The remainder therefore carries, using
+ * `cfg.periodSeconds`.
+ *
+ * The carry walks `scoringPhases`, not `playPhases`: penalty time runs only
+ * while play runs, so it may cross P1→P2 and regulation→overtime, and must
+ * never spill into "SHOOTOUT", where there is no match clock at all.
+ *
+ * THE LIMITATION, named rather than guessed: where `cfg.periodSeconds` has no
+ * entry for the phase, the engine has no length to subtract and the expiry
+ * stays in-period. A competition that wants boundary-accurate penalties
+ * declares `periodSeconds`.
+ *
+ * Returns `undefined` where no expiry can exist: a rest-of-match class
+ * (`minutes: null` reaches here as `null`), or a start stamped in a phase where
+ * no play clock runs ("pre", "SHOOTOUT").
+ */
+function expiryOf(cfg: PeriodCfg, startedAt: GameTime, minutes: number | null): GameTime | undefined {
+  if (minutes === null || !Number.isFinite(minutes) || minutes <= 0) return undefined;
+  const play = scoringPhases(cfg);
+  if (!play.includes(startedAt.period)) return undefined;
+  const lengths = cfg.periodSeconds;
+  let { period, elapsed } = addDuration(startedAt, minutes * 60);
+  for (;;) {
+    const length = lengths?.[period];
+    if (length === undefined || elapsed <= length) return { period, elapsed };
+    const index = play.indexOf(period);
+    const next = index < 0 ? undefined : play[index + 1];
+    if (next === undefined) return { period, elapsed }; // no more play to carry into
+    elapsed -= length;
+    period = next;
+  }
+}
+
+/**
+ * LAZY SWEEP (§3.1) — release every suspension whose derived expiry is at or
+ * before `now`. Run when a stamped event arrives, because the fold's state is
+ * only ever observed at event boundaries; between events the pad renders the
+ * countdown from `expiresAt` itself.
+ *
+ * NEVER THROWS `UNKNOWN_PHASE`, and that is a correctness requirement rather
+ * than defensiveness: cfg is read LIVE from `division.config` at fold time
+ * (`apps/web/src/server/engine-db/fold.ts`), so renaming a period or dropping
+ * overtime AFTER a match was scored makes a recorded phase label unknown. A
+ * throwing sweep would make that fixture permanently unviewable, not merely
+ * stale. An unrecognised phase is read as "cannot be ordered, so does not
+ * expire" — the conservative direction: a suspension that outlives its time is
+ * visible and correctable, one silently erased is neither.
+ */
+function sweepExpired(state: PeriodState, now: GameTime): PeriodState {
+  if (state.suspensions.length === 0) return state;
+  const order = playPhases(state.cfg);
+  if (!order.includes(now.period)) return state;
+  const kept = state.suspensions.filter((s) => {
+    if (s.expiresAt === undefined) return true;
+    if (!order.includes(s.expiresAt.period)) return true;
+    return compareGameTime(s.expiresAt, now, order) > 0;
+  });
+  return kept.length === state.suspensions.length ? state : { ...state, suspensions: kept };
+}
+
+/**
+ * THE WHISTLE SWEEPS TOO — a suspension whose expiry falls inside the phase
+ * being left is over, whether or not another stamped event ever arrived.
+ *
+ * Without this, a penalty that expired late in a period with nothing stamped
+ * after it survives into the FINAL state, and `strengthOf` / `strengthChip`
+ * then render a side short-handed at full time. Every summary and every tally
+ * over `state.suspensions` would read wrong, systematically and silently.
+ *
+ * Ordered by phase index rather than by `compareGameTime`, because "the end of
+ * P1" is not a stamp the fold has: an expiry anywhere in a completed phase is
+ * in the past once that phase closes, regardless of elapsed. Same list, same
+ * unknown-phase tolerance as the lazy sweep.
+ */
+function sweepThroughPhase(state: PeriodState, leaving: string): PeriodState {
+  if (state.suspensions.length === 0) return state;
+  const order = playPhases(state.cfg);
+  const closing = order.indexOf(leaving);
+  if (closing < 0) return state;
+  const kept = state.suspensions.filter((s) => {
+    if (s.expiresAt === undefined) return true;
+    const index = order.indexOf(s.expiresAt.period);
+    if (index < 0) return true;
+    return index > closing;
+  });
+  return kept.length === state.suspensions.length ? state : { ...state, suspensions: kept };
+}
+
+/**
+ * RELEASE-ON-GOAL (§3.4) — the IIHF powerplay rule. A goal releases the
+ * earliest-started running suspension of the CONCEDING side whose class carries
+ * `releaseOnGoal` and which leaves the team short.
+ *
+ * Gated on the suspension carrying `startedAt`, and called only when the goal
+ * itself carries `at`. Both halves of that gate are what keep the eleven frozen
+ * goldens byte-identical: no recorded stream carries a stamp, so no recorded
+ * goal releases anything it did not release before this wave.
+ *
+ * "Earliest" is push order, which is start order — the monotonic guard refuses
+ * a stamp that travels backwards, so the two cannot disagree.
+ */
+function releaseForGoal(state: PeriodState, conceding: Side): PeriodState {
+  const suspensions = state.cfg.suspensions;
+  if (suspensions === null) return state;
+  const index = state.suspensions.findIndex(
+    (s) =>
+      s.side === conceding &&
+      s.startedAt !== undefined &&
+      s.teamShort &&
+      !s.permanent &&
+      suspensions.classes[s.classKey]?.releaseOnGoal === true,
+  );
+  if (index < 0) return state;
+  return { ...state, suspensions: state.suspensions.filter((_, i) => i !== index) };
+}
+
 // The one `to` value the next period.advance may carry from this phase; "FT"
 // closes the final regulation/OT period and resolves the result.
 export function expectedAdvance(state: PeriodState): string | null {
@@ -501,6 +704,7 @@ function applyGoal(state: PeriodState, payload: z.infer<typeof PeriodGoal>): Per
   if (
     payload.person !== undefined ||
     payload.clockRef !== undefined ||
+    payload.at !== undefined ||
     payload.emptyNet !== undefined ||
     (payload.assists !== undefined && payload.assists.length > 0)
   ) {
@@ -515,8 +719,17 @@ function applyGoal(state: PeriodState, payload: z.infer<typeof PeriodGoal>): Per
       ...(kind === undefined ? {} : { kind }),
       ...(payload.emptyNet === undefined ? {} : { emptyNet: payload.emptyNet }),
       ...(payload.clockRef === undefined ? {} : { clockRef: payload.clockRef }),
+      ...(payload.at === undefined ? {} : { at: payload.at }),
     };
     next = { ...next, goalLog: [...(next.goalLog ?? []), entry] };
+  }
+  // W4a §3.4 — a stamped goal ends the conceding side's earliest releasable
+  // running minor. `credited` is the side that GOT the goal, so the side that
+  // conceded is its opponent — which is NOT `opponent(by)`: for an own goal
+  // `by` (who struck it) and `credited` (who got it) disagree, and taking the
+  // wrong one would release a penalty against the side that just scored.
+  if (payload.at !== undefined) {
+    next = releaseForGoal(next, opponent(credited));
   }
   // Sudden-death overtime: the first goal ends it (IIHF Rule 84.1).
   if (inOvertime(next) && next.cfg.overtime?.kind === "sudden_death") {
@@ -533,8 +746,12 @@ function applyAdvance(state: PeriodState, payload: z.infer<typeof PeriodAdvance>
   if (payload.to !== expected) {
     invalid(`expected advance to "${expected}", got "${payload.to}"`, { expected, to: payload.to });
   }
-  if (expected !== "FT") return pushPeriod(state, expected);
-  return resolveEnd(state, inOvertime(state) ? "overtime" : "regulation");
+  // W4a — the whistle closes this phase, so anything whose expiry fell inside
+  // it is over even if no stamped event ever arrived to sweep it. Runs on the
+  // full-time advance too, or a side reads short-handed in the FINAL state.
+  const swept = sweepThroughPhase(state, state.phase);
+  if (expected !== "FT") return pushPeriod(swept, expected);
+  return resolveEnd(swept, inOvertime(swept) ? "overtime" : "regulation");
 }
 
 function suspensionAllowed(state: PeriodState): boolean {
@@ -563,6 +780,15 @@ function applySuspensionStart(
     ...(payload.servedBy === undefined ? {} : { servedBy: payload.servedBy }),
     ...(payload.minutes === undefined ? {} : { minutes: payload.minutes }),
   };
+  // W4a §3.1 — a stamped start makes this a TIMED suspension: the awarded
+  // minutes (the umpire's, else the class nominal) fix when it runs out, and
+  // the fold releases it lazily at the next stamped event. Both keys are absent
+  // for an unstamped card, which is what keeps a pre-wave fold identical.
+  const startedAt = payload.at;
+  const expiresAt =
+    startedAt === undefined
+      ? undefined
+      : expiryOf(state.cfg, startedAt, payload.minutes ?? cls.minutes);
   const active: ActiveSuspension = {
     side,
     ...(payload.person === undefined ? {} : { person: payload.person }),
@@ -570,6 +796,8 @@ function applySuspensionStart(
     teamShort: cls.teamShort,
     permanent: cls.permanent === true,
     ...detail,
+    ...(startedAt === undefined ? {} : { startedAt }),
+    ...(expiresAt === undefined ? {} : { expiresAt }),
   };
   const record: CardRecordEntry = {
     side,
@@ -848,6 +1076,41 @@ export function makePeriodModule(
     return out;
   };
 
+  // The event dispatch, unchanged since W4. `apply` below wraps it in the
+  // game-time frame (validate the stamp, sweep, dispatch, record `asOf`)
+  // rather than threading a stamp through every case.
+  const applyEvent = (state: PeriodState, ev: EventEnvelope<PeriodEv | CoreEv>): PeriodState => {
+    switch (ev.type) {
+      case "core.start":
+        if (state.phase !== "pre") wrongPhase("already started");
+        return pushPeriod(state, periodLabels(state.cfg)[0] as string);
+      case goalType:
+        return applyGoal(state, parsePayload(PeriodGoal, ev.payload, ev.type));
+      case advanceType:
+        return applyAdvance(state, parsePayload(PeriodAdvance, ev.payload, ev.type));
+      case suspStartType:
+        return applySuspensionStart(state, parsePayload(PeriodSuspensionStart, ev.payload, ev.type));
+      case suspEndType:
+        return applySuspensionEnd(state, parsePayload(PeriodSuspensionEnd, ev.payload, ev.type));
+      case attemptType:
+        return applyShootoutAttempt(state, parsePayload(PeriodShootoutAttempt, ev.payload, ev.type));
+      case setPieceType:
+        return applySetPiece(state, parsePayload(PeriodSetPiece, ev.payload, ev.type));
+      case "core.forfeit":
+        return applyForfeit(state, (ev.payload as { by: string }).by);
+      case "core.abandon":
+        return applyAbandon(state);
+      case "core.finalize":
+        if (state.outcome === null) wrongPhase("cannot finalize an undecided fixture");
+        return { ...state, phase: "final" };
+      case "core.note":
+      case "core.award":
+        return state;
+      default:
+        invalid(`unknown event type "${ev.type}"`);
+    }
+  };
+
   return {
     key: preset.key,
     version: preset.version,
@@ -892,41 +1155,37 @@ export function makePeriodModule(
     },
 
     apply(state, ev: EventEnvelope<PeriodEv | CoreEv>): PeriodState {
-      switch (ev.type) {
-        case "core.start":
-          if (state.phase !== "pre") wrongPhase("already started");
-          return pushPeriod(state, periodLabels(state.cfg)[0] as string);
-        case goalType:
-          return applyGoal(state, parsePayload(PeriodGoal, ev.payload, ev.type));
-        case advanceType:
-          return applyAdvance(state, parsePayload(PeriodAdvance, ev.payload, ev.type));
-        case suspStartType:
-          return applySuspensionStart(
-            state,
-            parsePayload(PeriodSuspensionStart, ev.payload, ev.type),
+      // W4a (#425) §3 — the game-time frame around every event.
+      //
+      // `gameTimeOf` is the same structural safe-parse the fold kernel's
+      // monotonic guard uses, so the module and the guard read one stamp, not
+      // two interpretations of one payload.
+      const at = gameTimeOf(ev.payload);
+      if (at !== null) {
+        // §7, module half. The fold guard already refuses an undeclared period,
+        // but `apply` must not depend on having been called through it: the
+        // same list, the same error code, and a message that names the phases
+        // so a scorer can retype rather than a 500 that pages the on-call.
+        const order = playPhases(state.cfg);
+        if (!order.includes(at.period)) {
+          invalid(
+            `event "${ev.type}" is stamped in period "${at.period}", which this sport does not have — expected one of ${order.join(", ")}`,
+            { period: at.period, phaseOrder: order },
           );
-        case suspEndType:
-          return applySuspensionEnd(state, parsePayload(PeriodSuspensionEnd, ev.payload, ev.type));
-        case attemptType:
-          return applyShootoutAttempt(
-            state,
-            parsePayload(PeriodShootoutAttempt, ev.payload, ev.type),
-          );
-        case setPieceType:
-          return applySetPiece(state, parsePayload(PeriodSetPiece, ev.payload, ev.type));
-        case "core.forfeit":
-          return applyForfeit(state, (ev.payload as { by: string }).by);
-        case "core.abandon":
-          return applyAbandon(state);
-        case "core.finalize":
-          if (state.outcome === null) wrongPhase("cannot finalize an undecided fixture");
-          return { ...state, phase: "final" };
-        case "core.note":
-        case "core.award":
-          return state;
-        default:
-          invalid(`unknown event type "${ev.type}"`);
+        }
       }
+      // Sweep BEFORE applying, so an event at 03:00 sees the strength that was
+      // on the ice at 03:00. The one exception is an explicit release: sweeping
+      // first would remove the suspension the end event names and the fold
+      // would then reject a scorer who correctly recorded both the expiry and
+      // the release, so that one applies first and sweeps after.
+      const sweepsFirst = at !== null && ev.type !== suspEndType;
+      const base = sweepsFirst ? sweepExpired(state, at as GameTime) : state;
+      const applied = applyEvent(base, ev);
+      if (at === null) return applied;
+      const swept = ev.type === suspEndType ? sweepExpired(applied, at) : applied;
+      // §6 obligation 3 — as of when everything above is true.
+      return { ...swept, asOf: at };
     },
 
     outcome: (state) => state.outcome,
