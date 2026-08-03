@@ -13,6 +13,19 @@ The **schedule board** is where fixtures meet the clock: courts across the top, 
 - **Filter chips** show just the divisions you care about; the filter lives in the page URL so a filtered view can be bookmarked or shared.
 - **Conflicts** — double-booked courts, impossible back-to-backs — appear as badges on the offending cards, with a full report in the conflicts panel.
 
+## What the board refuses
+
+Some things cannot happen, so the board will not save them. A move is rejected when it would:
+
+- put two matches on the same court at the same time;
+- have one person playing in two matches at once;
+- start a match before the one that feeds it has finished — plus the rest that player is owed;
+- place a match outside the dates the competition runs.
+
+Everything else — a short rest gap, a blackout, a rule from your scheduling instruction — is a badge you can act on or ignore.
+
+The rejection is about the **change you just made**, not about the state of the board. If a clash is already there, it stays a badge, and you can keep editing around it. That is deliberate: a board that refused every edit because it was already imperfect would be a board you could never repair. Fix the clash and the badge clears.
+
 ## Editing together
 
 If a colleague moves a match while you're looking at the board, your next change is rejected rather than silently overwriting theirs — the board refreshes and tells you.
