@@ -21,6 +21,7 @@ import { describe, expect, it } from "vitest";
 import { EngineError } from "../../core/errors.ts";
 import { foldMatch, type EventEnvelope } from "../../core/events.ts";
 import type { GameTime } from "../../core/time.ts";
+import { aggregatePlayerStats, type PlayerStatsModel } from "../../stats/stats.ts";
 import { buildStream, defaultLineupPair, makeEnvelope } from "../../testkit/helpers.ts";
 import type { ModuleEvent } from "../../sport/module.ts";
 import { tennis } from "../tennis/tennis.ts";
@@ -176,6 +177,32 @@ describe("tennis.interruption — the chair's break record", () => {
       messageOf(() => fold(cfgFor(), [start, interruption({ kind: "medical", by: "ZZ" })])),
     ).toBe('INVALID_EVENT: unknown entrant "ZZ"');
   });
+
+  it("refuses a named person with no side to charge it to", () => {
+    // The allowance is per SIDE, and the ITF medical limit is per PLAYER — so a
+    // break naming a player but no side credits `medical_timeouts` to that
+    // player while the count allowance does not bite, which is precisely the
+    // case the rule is about. The fold cannot derive the side: `NestedState`
+    // holds the two entrant ids and no lineup, and putting the lineup in the
+    // state would add an always-present key to every frozen golden.
+    expect(
+      messageOf(() =>
+        fold(cfgFor(), [start, interruption({ kind: "medical", person: `${H}-p1` })]),
+      ),
+    ).toBe(
+      'INVALID_EVENT: an interruption naming a person must also name the side it is charged to ("by"), because the allowance is per side',
+    );
+    // Both together is the normal case, and a side with no named person (a
+    // doubles pair's break) stays legal.
+    expect(
+      codeOf(() =>
+        fold(cfgFor(), [start, interruption({ kind: "medical", by: H, person: `${H}-p1` })]),
+      ),
+    ).toBe("no-throw");
+    expect(codeOf(() => fold(cfgFor(), [start, interruption({ kind: "medical", by: H })]))).toBe(
+      "no-throw",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -183,11 +210,31 @@ describe("tennis.interruption — the chair's break record", () => {
 // ---------------------------------------------------------------------------
 
 describe("NestedEv union (§8)", () => {
+  // Every branch at its NARROWEST and its WIDEST, because the shapes in between
+  // are what a widened branch swallows. A hand-written list is still a sample:
+  // exclusivity is asserted for these payloads, not proved for the whole
+  // product of optional fields, so a branch widened in a direction none of
+  // these probes is not caught here. The narrow/wide pairing is the cheapest
+  // cover for that — a widening that swallows anything at all almost always
+  // swallows the minimal shape of one of its neighbours.
   const shapes: [string, Record<string, unknown>][] = [
-    ["point", { by: H, server: `${H}-p1`, scorer: `${H}-p1` }],
-    ["set_summary", { home: 6, away: 4 }],
-    ["sanction", { by: H, level: "warning", person: `${H}-p1` }],
-    ["interruption", { kind: "medical", by: H, person: `${H}-p1`, duration: 180, at: S1(900) }],
+    ["point (minimal)", { by: H }],
+    ["point (full)", { by: H, server: `${H}-p1`, scorer: `${H}-p1`, meta: { kind: "ace" } }],
+    ["set_summary (minimal)", { home: 6, away: 4 }],
+    ["set_summary (tie-break)", { home: 7, away: 6, tb: { home: 7, away: 5 } }],
+    ["sanction (minimal)", { by: H, level: "warning" }],
+    [
+      "sanction (full)",
+      { by: H, level: "point_penalty", person: `${H}-p1`, reason: "racquet abuse" },
+    ],
+    ["interruption (minimal)", { kind: "other" }],
+    ["interruption (stamp only)", { kind: "heat", at: S1(900) }],
+    ["interruption (duration only)", { kind: "toilet", duration: 180 }],
+    ["interruption (side only)", { kind: "medical", by: H }],
+    [
+      "interruption (full)",
+      { kind: "medical", by: H, person: `${H}-p1`, duration: 180, at: S1(900) },
+    ],
   ];
 
   it.each(shapes)("%s parses against exactly ONE branch", (_name, payload) => {
@@ -289,6 +336,42 @@ describe("nested phase order (§7)", () => {
       ),
     ).toBe("no-throw");
   });
+
+  // `apply()` is called DIRECTLY, without the fold kernel in front of it, by
+  // `testkit/conformance.ts` and `testkit/simulation.ts` — and by anything else
+  // that drives a module rather than a match. The kernel's own period check
+  // therefore is not a guarantee `apply` may lean on, and the period kernel
+  // re-validates for exactly this reason. Whatever reaches `compareGameTime`
+  // with an undeclared period gets `UNKNOWN_PHASE`, which §7 reserves for two
+  // phase lists that disagree — an internal fault, nothing a scorer can fix.
+  describe("apply() re-validates the stamp itself (§3.3, §7)", () => {
+    const live = () => fold(cfgFor(), [start]);
+    const applyDirect = (state: NestedState, payload: Record<string, unknown>) =>
+      tennis.apply(state as never, makeEnvelope(9, interruption(payload)) as never);
+
+    it("refuses an undeclared period as INVALID_EVENT, naming the periods it has", () => {
+      const message = messageOf(() => applyDirect(live(), { kind: "heat", at: { period: "H1", elapsed: 60 } }));
+      expect(message).toContain("INVALID_EVENT");
+      expect(message).toContain("pre, S1, S2, S3");
+    });
+
+    it("refuses a fold that has run past the last declared set, rather than raising UNKNOWN_PHASE", () => {
+      // `here` is derived from the fold's own set index and is compared against
+      // the SAME list — nothing checks it belongs there. A cfg whose `bestOf`
+      // no longer covers the sets already banked lands exactly here.
+      const past: NestedState = {
+        ...live(),
+        sets: [
+          { home: 6, away: 4 },
+          { home: 4, away: 6 },
+          { home: 6, away: 4 },
+        ],
+      };
+      const message = messageOf(() => applyDirect(past, { kind: "heat", at: S1(60) }));
+      expect(message).toContain("INVALID_EVENT");
+      expect(message).not.toContain("UNKNOWN_PHASE");
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -367,21 +450,42 @@ describe("stamped tennis and the monotonic guard (§3.3)", () => {
 describe("interruption allowances (§5.4)", () => {
   const oneMedical = { interruptions: { medical: { count: 1, seconds: 180 } } };
 
-  it("rejects a break beyond the per-set count allowance", () => {
+  it("FLAGS a break beyond the per-set count allowance instead of refusing it", () => {
     const cfg = cfgFor(undefined, oneMedical);
-    // On the message, not the code: `apply`'s unknown-type branch also throws
-    // INVALID_EVENT, so a code-only assertion passed before the event existed.
-    expect(
-      messageOf(() =>
-        fold(cfg, [
-          start,
-          interruption({ kind: "medical", by: H }),
-          interruption({ kind: "medical", by: H }),
-        ]),
-      ),
-    ).toBe(
-      'INVALID_EVENT: home has already taken 1 medical break in set 1, which is all this competition allows',
-    );
+    const state = fold(cfg, [
+      start,
+      interruption({ kind: "medical", by: H }),
+      interruption({ kind: "medical", by: H }),
+    ]);
+    // Both stand; the second carries the flag, the first does not have the key
+    // at all (the goldens compare JSON.stringify(state)).
+    expect(state.interruptions).toEqual([
+      { kind: "medical", set: 1, by: "home" },
+      { kind: "medical", set: 1, by: "home", overCount: true },
+    ]);
+    expect(Object.hasOwn(state.interruptions?.[0] as object, "overCount")).toBe(false);
+  });
+
+  it("keeps an already-recorded fixture readable after the count allowance is LOWERED", () => {
+    // THE FIXTURE-BRICKING CASE. cfg is read live from `division.config` and the
+    // whole stream replays from `init` on EVERY read — state, score page,
+    // standings. A refusal computed from cfg therefore fires on replay, on
+    // events already in the ledger, and there is no event to void: the fixture
+    // is permanently unviewable and no scorer action recovers it. Nothing
+    // derived from cfg may throw on the replay path.
+    const stream = [
+      start,
+      interruption({ kind: "medical", by: H }),
+      interruption({ kind: "medical", by: H }),
+    ];
+    const asRecorded = fold(cfgFor(undefined, { interruptions: { medical: { count: 2 } } }), stream);
+    expect(asRecorded.interruptions).toHaveLength(2);
+    expect(asRecorded.interruptions?.every((rec) => rec.overCount === undefined)).toBe(true);
+
+    // The organiser edits the division config down to one. The SAME stream:
+    const lowered = fold(cfgFor(undefined, oneMedical), stream);
+    expect(lowered.interruptions).toHaveLength(2);
+    expect(lowered.interruptions?.map((rec) => rec.overCount)).toEqual([undefined, true]);
   });
 
   it("counts the allowance per side and per set", () => {
@@ -430,6 +534,35 @@ describe("interruption allowances (§5.4)", () => {
       interruption({ kind: "medical" }),
     ]);
     expect(state.interruptions).toHaveLength(2);
+    expect(state.interruptions?.every((rec) => rec.overCount === undefined)).toBe(true);
+  });
+
+  it("re-derives both verdicts from the cfg in force AT READ TIME — they are projections, not payload facts", () => {
+    // `overran` and `overCount` are computed during the fold, from a cfg read
+    // live out of `division.config`. So the SAME stream, replayed after an
+    // organiser edits the allowance, legitimately reports a different verdict
+    // against an identical `duration` — and that is the CORRECT behaviour, not
+    // a hazard: the alternative is freezing the verdict into the payload beside
+    // the input it was computed from, which is the two-fields-that-can-disagree
+    // bug this wave rejected everywhere else. One fold can never disagree with
+    // itself, because the whole stream replays from `init` on every read.
+    const stream = [
+      start,
+      interruption({ kind: "medical", by: H, duration: 240 }),
+      interruption({ kind: "medical", by: H, duration: 240 }),
+    ];
+    const strict = fold(cfgFor(undefined, { interruptions: { medical: { count: 1, seconds: 180 } } }), stream);
+    expect(strict.interruptions).toEqual([
+      { kind: "medical", set: 1, by: "home", duration: 240, overran: true },
+      { kind: "medical", set: 1, by: "home", duration: 240, overran: true, overCount: true },
+    ]);
+    // Same events, same durations, a laxer allowance — both verdicts flip off
+    // and the recorded facts are untouched.
+    const lax = fold(cfgFor(undefined, { interruptions: { medical: { count: 2, seconds: 300 } } }), stream);
+    expect(lax.interruptions).toEqual([
+      { kind: "medical", set: 1, by: "home", duration: 240 },
+      { kind: "medical", set: 1, by: "home", duration: 240 },
+    ]);
   });
 
   it("takes no default — the shipped variants declare no allowance at all", () => {
@@ -479,6 +612,35 @@ describe("tennis.interruption is wired everywhere a new type must be (§5.6)", (
     }
   });
 
+  it("stamps a generated break from the START OF THE SET, so `elapsed` restarts at a set boundary", () => {
+    // The dossier row says `elapsed` counts from the start of the SET. A
+    // match-wide base satisfies the monotonic guard just as well and looks
+    // right in the state, so nothing else in this suite tells the two apart —
+    // and the frozen corpus is about to be EXTENDED with generated streams,
+    // which would freeze whichever one ships. A match-wide base never
+    // restarts, so this is the property that discriminates.
+    const cfg = cfgFor();
+    let stamped = 0;
+    let restarts = 0;
+    for (let seed = 1; seed <= 80; seed++) {
+      const stamps = buildStream(tennis, cfg, lineups, seed, 400)
+        .filter((event) => event.type === "tennis.interruption")
+        .map((event) => (event.payload as { at?: GameTime }).at)
+        .filter((at): at is GameTime => at !== undefined);
+      stamped += stamps.length;
+      for (let i = 1; i < stamps.length; i++) {
+        const prev = stamps[i - 1] as GameTime;
+        const here = stamps[i] as GameTime;
+        // Within one set the stamp still only moves forward — the kernel's
+        // guard rejects the stream otherwise, and "folds" above proves it.
+        if (here.period === prev.period) expect(here.elapsed).toBeGreaterThanOrEqual(prev.elapsed);
+        else if (here.elapsed < prev.elapsed) restarts++;
+      }
+    }
+    expect(stamped).toBeGreaterThan(0);
+    expect(restarts).toBeGreaterThan(0);
+  });
+
   it("changes summary().detail once a break is recorded, and not before", () => {
     const clean = tennis.summary(fold(cfgFor(), [start, point(H)]) as never);
     expect(Object.hasOwn(clean.detail as object, "interruptions")).toBe(false);
@@ -490,10 +652,30 @@ describe("tennis.interruption is wired everywhere a new type must be (§5.6)", (
     ]);
   });
 
-  it("credits the named player through playerStats", () => {
-    const metric = tennis.playerStats?.metrics.find((m) => m.from === "tennis.interruption");
-    expect(metric).toBeDefined();
+  it("credits the named player through playerStats — MEDICAL breaks only", () => {
+    // Aggregated for real, not inspected. A shape check ("a metric exists whose
+    // `field` is person") is green with the `when` predicate, the `key` or the
+    // `label` deleted, so it says nothing about whether the leaderboard counts
+    // the right thing. The predicate is what makes "medical timeouts" mean
+    // medical timeouts rather than "times this player left the court".
+    const model = tennis.playerStats as PlayerStatsModel;
+    const metric = model.metrics.find((m) => m.key === "medical_timeouts");
+    expect(metric?.from).toBe("tennis.interruption");
     expect(metric?.field).toBe("person");
+    expect(metric?.label).toBe("Medical timeouts");
+
+    const events = [
+      start,
+      interruption({ kind: "medical", by: H, person: `${H}-p1`, duration: 180 }),
+      interruption({ kind: "toilet", by: H, person: `${H}-p1`, duration: 90 }),
+      interruption({ kind: "heat", by: H, person: `${H}-p1` }),
+    ];
+    // A legal stream first, so the tally is over events the fold accepts.
+    expect(fold(cfgFor(), events).interruptions).toHaveLength(3);
+
+    const rows = aggregatePlayerStats(envelopes(events), model);
+    const player = rows.find((row) => row.personId === `${H}-p1`);
+    expect(player?.stats.medical_timeouts).toBe(1);
   });
 });
 
