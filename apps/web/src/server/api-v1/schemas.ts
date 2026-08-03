@@ -794,6 +794,11 @@ export const ScheduleConflict = z.object({
   /** The rule this conflict breaks, in the vocabulary the AI prompts teach
    *  (#399) — so a refusal, a badge and a repair round all cite one token. */
   rule: RuleCode.optional(),
+  /** How far a MEASURED breach falls short, in minutes (#399). Carried beside
+   *  the conflict rather than inside `detail`, because `detail` is part of the
+   *  conflict's identity and a number in there would move that identity every
+   *  time the card moved. */
+  shortfall_minutes: z.number().int().optional(),
 });
 export type ScheduleConflict = z.infer<typeof ScheduleConflict>;
 
@@ -1672,6 +1677,9 @@ const AiPlanConflict = z.object({
    *  handed the token it knows instead of a word we invented. Declared here or
    *  zod strips it and the model goes back to interpreting prose. */
   rule: RuleCode.optional(),
+  /** How short a measured breach falls, in minutes — the number a repair round
+   *  needs to know how far to move the card (#399). */
+  shortfallMinutes: z.number().int().optional(),
 });
 
 // A durable constraints delta the architect inferred from the instruction —

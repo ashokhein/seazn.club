@@ -334,12 +334,22 @@ export async function siblingAssignments(
 export function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotConfig {
   const c = settings.config;
   const window = applyWindow(settings);
+  const startAtMs = c.startAt ? ms(c.startAt) : now;
   return {
-    startAt: c.startAt ? ms(c.startAt) : now,
+    startAt: startAtMs,
     // #399: the days the competition actually runs, so a card dragged outside
     // them is refused instead of badged. Delta-gated at the write, so a board
     // already sitting outside its dates stays editable.
     ...(window !== undefined ? { window } : {}),
+    // The SOLVER has to respect the same bound, or the auto pass proposes a
+    // board the apply gate then refuses: `slotFixtures` searches to
+    // `startAt + horizonMinutes` (365 days by default) and cannot emit a
+    // `window` conflict of its own, so an over-subscribed division would come
+    // back with cards past its end date and 409 on apply. Bounded here, it
+    // reports `no_slot` (CAP) instead — which is the truth.
+    ...(window !== undefined && Number.isFinite(window.to)
+      ? { horizonMinutes: Math.max(0, Math.ceil((window.to - startAtMs) / MS_PER_MIN)) }
+      : {}),
     matchMinutes: c.matchMinutes,
     gapMinutes: c.gapMinutes,
     courts: [...c.courts],
@@ -379,30 +389,27 @@ export function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotCo
 // panel maps blocking-row reasons through the exact same map client-side.
 // ---------------------------------------------------------------------------
 
-function mapConflicts(
-  conflicts: readonly Conflict[],
-  /** The SAME verifier run over the board as it stands TODAY (#399). A conflict
-   *  already present is a badge, never a refusal: boards published before this
-   *  wave may hold person overlaps, because those were warnings all along, and
-   *  under an absolute rule the first edit to such a board would 409 — leaving
-   *  the organiser unable to fix the very thing that is wrong. Defaults to
-   *  empty, which reads as "everything here is new" — right for the auto pass,
-   *  whose proposal has no prior state of its own. */
-  baseline: readonly Conflict[] = [],
-): ScheduleConflict[] {
-  // Only what this change INTRODUCED OR WORSENED can refuse the write.
-  const introduced = new Set(deltaConflicts(baseline, conflicts).map(conflictKey));
+/**
+ * `blocking` means PHYSICALLY IMPOSSIBLE, on every path (#399) — a court booked
+ * twice, a human on two courts at once, a slot outside the competition's days, a
+ * fixture before its feeder is done resting. It is the engine's one answer
+ * (`isBlockingConflict`), so the board's red badges and the AI pipeline's
+ * verdicts cannot drift apart the way they had.
+ *
+ * It deliberately does NOT mean "this write was refused". That is the DELTA, and
+ * it lives in `assertNoNewBlocking` below. Folding the two together made a
+ * report of an impossible board come back entirely in amber, because nothing in
+ * a read-only report is ever newly introduced.
+ */
+function mapConflicts(conflicts: readonly Conflict[]): ScheduleConflict[] {
   return conflicts.map((c) => ({
     fixture_id: c.fixtureId,
     code: REASON_CODE[c.reason],
     // The rule the prompt teaches, carried through so the organiser's 409 and a
     // repair round cite the same token (#399).
     ...(c.rule !== undefined ? { rule: c.rule } : {}),
-    // Physically impossible AND newly so. `isBlockingConflict` is the engine's
-    // single answer to the first half — the board and the AI pipeline used to
-    // keep separate copies, which is how a person double-booking came to block
-    // on one path and badge on the other.
-    blocking: isBlockingConflict(c) && introduced.has(conflictKey(c)),
+    ...(c.shortfallMinutes !== undefined ? { shortfall_minutes: c.shortfallMinutes } : {}),
+    blocking: isBlockingConflict(c),
     ...(c.detail !== undefined ? { detail: c.detail } : {}),
   }));
 }
@@ -436,11 +443,21 @@ export function applyWindow(
   };
 }
 
-function assertNoBlocking(conflicts: ScheduleConflict[]): void {
-  const blocking = conflicts.filter((c) => c.blocking);
-  if (blocking.length > 0) {
+/**
+ * The write gate (#399). Refuses only what THIS change introduced or worsened,
+ * measured by running the identical verifier pass over the board as it stands
+ * and taking the difference on conflict identity.
+ *
+ * Delta rather than absolute, because boards published before this wave may
+ * legitimately carry person overlaps — they were warnings all along. Under an
+ * absolute rule the organiser's next edit to such a board would 409 and they
+ * would be stuck, unable to fix the very thing that is wrong.
+ */
+function assertNoNewBlocking(before: readonly Conflict[], after: readonly Conflict[]): void {
+  const refused = deltaConflicts(before, after).filter(isBlockingConflict);
+  if (refused.length > 0) {
     throw new EngineError("SCHEDULE_CONFLICT", "schedule change hits a blocking conflict", {
-      conflicts: blocking,
+      conflicts: mapConflicts(refused),
     });
   }
 }
@@ -618,11 +635,9 @@ export async function applySchedule(
       .filter((f) => f.scheduled_at !== null && f.court_label !== null)
       .map((f) => toAssignment(f, settings.config.matchMinutes, people));
     const baseline = validateAssignments(currentSlots, slotConfig, board, deps);
-    const conflicts = mapConflicts(
-      validateAssignments(proposed, slotConfig, board, deps),
-      baseline,
-    );
-    assertNoBlocking(conflicts);
+    const found = validateAssignments(proposed, slotConfig, board, deps);
+    assertNoNewBlocking(baseline, found);
+    const conflicts = mapConflicts(found);
 
     const moves: { fixture: string; from: unknown; to: unknown }[] = [];
     for (const a of input.assignments) {
@@ -833,11 +848,9 @@ export async function moveFixture(
           ? [toAssignment(fixture, settings.config.matchMinutes, people)]
           : [];
       const baseline = validateAssignments(currentSlot, slotConfig, board, deps);
-      conflicts = mapConflicts(
-        validateAssignments([proposed], slotConfig, board, deps),
-        baseline,
-      );
-      assertNoBlocking(conflicts);
+      const found = validateAssignments([proposed], slotConfig, board, deps);
+      assertNoNewBlocking(baseline, found);
+      conflicts = mapConflicts(found);
     }
 
     const values: Record<string, unknown> = {};
@@ -973,19 +986,15 @@ export async function validateSchedule(
         -- scoped to one division, so bind it rather than re-joining.
         and oa.date = (f.scheduled_at at time zone ${settings.tz})::date`;
 
-    // A REPORT of the board as it stands — nothing is being written, so nothing
-    // is introduced and nothing here may claim to block (#399). Handing the
-    // conflicts in as their own baseline says exactly that, and keeps one
-    // definition of `blocking` instead of a second flag for read paths.
-    const boardConflicts = validateAssignments(
-      assignments,
-      toSlotConfig(settings, 0),
-      siblings,
-      feedDependencies(all),
-    );
+    // A REPORT of the board as it stands. `blocking` here says "impossible", not
+    // "refused" (#399) — the board paints those cards red, and it must keep
+    // doing so for a court double-booking that is already on the timetable.
+    // Nothing is written on this path, so no delta applies.
     return {
       conflicts: [
-        ...mapConflicts(boardConflicts, boardConflicts),
+        ...mapConflicts(
+          validateAssignments(assignments, toSlotConfig(settings, 0), siblings, feedDependencies(all)),
+        ),
         ...officialConflicts.map((c) => ({ fixture_id: c.fixture_id, code: c.code as ScheduleConflict["code"], blocking: false })),
       ],
     };

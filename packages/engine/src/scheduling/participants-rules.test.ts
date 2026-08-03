@@ -114,7 +114,10 @@ describe("participants across divisions (payload B: Stepladder Showcase)", () =>
     });
     expect(personConflicts(conflicts)).toBeGreaterThan(0);
     expect(conflicts.every((c) => c.reason === "person_overlap")).toBe(true);
-    expect(conflicts.some((c) => c.detail === "person p-fischer overlap")).toBe(true);
+    // #399 names the fixture the human is also in: without it a SWAP (this
+    // fixture clashing with a DIFFERENT one) keys identically and the delta
+    // gate waves a brand-new clash through as pre-existing.
+    expect(conflicts.some((c) => c.detail === "person p-fischer overlap with sl-g2-d2")).toBe(true);
   });
 
   it("ACCEPTS the same pair once they are far enough apart", () => {

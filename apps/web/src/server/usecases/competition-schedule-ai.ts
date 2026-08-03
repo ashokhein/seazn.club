@@ -1183,10 +1183,11 @@ export function jointFeedDependencies(pack: CompetitionPack): OrderDependency[] 
  *                        line — see `applyCompetitionSchedule`. */
 export function verifyConfigFor(
   division: CompetitionPackDivision,
-  /** The RUN's resolved calendar window, epoch ms (#397). Optional: the apply
-   *  path deliberately passes none, because apply-time blocking is W4 (#399)
-   *  and a window there today would turn every pre-existing board into a wall
-   *  of warnings. */
+  /** The RUN's resolved calendar window, epoch ms (#397). Optional, but the
+   *  apply path DOES pass one since #399 — `applyWindow(d.settings)`, the
+   *  division's own configured dates rather than the pack's widened window.
+   *  What keeps a pre-existing out-of-window board from becoming a wall of
+   *  refusals is the delta, not the absence of the bound. */
   window?: { from: number; to: number },
   /** The run-wide typed-rule inputs (#398). Optional for the same reason
    *  `window` is: the apply path passes none, because apply-time blocking is

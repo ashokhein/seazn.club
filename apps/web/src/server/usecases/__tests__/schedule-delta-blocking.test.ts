@@ -173,11 +173,14 @@ describe.skipIf(!HAS_DB)("delta-based blocking (#399)", () => {
       select scheduled_at from fixtures where id = ${unrelated.id}`;
     expect(moved!.scheduled_at.toISOString()).toBe(at(600));
 
-    // And the pre-existing overlap is still REPORTED — as a badge, not a wall.
+    // And the pre-existing overlap is still REPORTED. `blocking` on a report
+    // means IMPOSSIBLE, not "refused" (#399): the board paints that card red,
+    // which is honest — and the edit above proves red does not mean frozen.
     const report = await validateSchedule(board.auth, board.divisionId);
     const overlaps = report.conflicts.filter((c) => c.code === "warn.person_overlap");
     expect(overlaps.length).toBeGreaterThan(0);
-    expect(overlaps.every((c) => !c.blocking)).toBe(true);
+    expect(overlaps.every((c) => c.blocking)).toBe(true);
+    expect(overlaps.every((c) => c.rule === "H4")).toBe(true);
   });
 
   it("re-applies a dirty board unchanged rather than 409ing on its own history", async () => {
@@ -194,7 +197,6 @@ describe.skipIf(!HAS_DB)("delta-based blocking (#399)", () => {
       source: "manual",
     });
     expect(out.applied).toBe(board.fixtures.length);
-    expect(out.conflicts.filter((c) => c.blocking)).toHaveLength(0);
     expect(out.conflicts.some((c) => c.code === "warn.person_overlap")).toBe(true);
   });
 
@@ -243,6 +245,43 @@ describe.skipIf(!HAS_DB)("delta-based blocking (#399)", () => {
     const [moved] = await sql<{ scheduled_at: Date }[]>`
       select scheduled_at from fixtures where id = ${stray.id}`;
     expect(moved!.scheduled_at.toISOString()).toBe(at(60 * 24 * 5 + 90));
+  });
+
+  it("REFUSES a SWAP that double-books a different fixture on the same court", async () => {
+    // The subtle leak: a fixture already clashing on Court 1 with B, dragged to
+    // a slot where it clashes with C instead. Both are "court double-booked" on
+    // the same card and the same court — so a conflict identity that named only
+    // the court would key them the same and write a BRAND-NEW double-booking
+    // through as pre-existing, on the one reason that blocked absolutely before
+    // this wave.
+    const board = await seedBoard();
+    const [first, second, third] = [board.fixtures[0]!, board.fixtures[1]!, board.fixtures[2]!];
+    // Pre-existing: `second` sits on top of `first`.
+    await forceSlot(second.id, first.at, first.court);
+    // Now drag it onto `third` instead — same court, different victim.
+    await expect(
+      moveFixture(board.auth, second.id, { scheduled_at: third.at, court_label: third.court }),
+    ).rejects.toSatisfy((err: unknown) => EngineError.is(err, "SCHEDULE_CONFLICT"));
+  });
+
+  it("REFUSES a SWAP that double-books a different person", async () => {
+    // Same leak, the person lane: entrant A already overlapping with one
+    // fixture, moved to overlap with another. Different clash, same card.
+    const board = await seedBoard();
+    const [anchor, sharer] = sharingPair(board);
+    await forceSlot(sharer.id, anchor.at, "Court 2");
+    const otherSharer = board.fixtures.find(
+      (f) =>
+        f.id !== anchor.id &&
+        f.id !== sharer.id &&
+        (f.home === sharer.home || f.away === sharer.home || f.home === sharer.away || f.away === sharer.away),
+    )!;
+    await expect(
+      moveFixture(board.auth, sharer.id, {
+        scheduled_at: otherSharer.at,
+        court_label: "Court 3",
+      }),
+    ).rejects.toSatisfy((err: unknown) => EngineError.is(err, "SCHEDULE_CONFLICT"));
   });
 
   it("still refuses a court double-booking, delta or not", async () => {

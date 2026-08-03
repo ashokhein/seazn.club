@@ -148,6 +148,13 @@ export interface Conflict {
   /** The rule the prompt taught for this reason (#399). Stamped at one choke
    *  point per producer, never at the push site. */
   rule?: RuleCode;
+  /** How far a MEASURED breach falls short, in minutes (#399). Deliberately not
+   *  part of `conflictKey`, and the reason is the delta: a card dragged from 30
+   *  minutes short to 10 minutes short is repairing the board, and a key that
+   *  moved with the number would report that repair as a new conflict and
+   *  refuse it. The size travels beside the key instead, so `deltaConflicts` can
+   *  tell "worse" from "better" without either being a different conflict. */
+  shortfallMinutes?: number;
 }
 
 /** Stamped where a producer RETURNS, not where it pushes: a new
@@ -199,16 +206,31 @@ export function deltaConflicts(
   after: readonly Conflict[],
 ): Conflict[] {
   const budget = new Map<string, number>();
+  /** The worst instance of each key beforehand, for the measured reasons. */
+  const worstBefore = new Map<string, number>();
   for (const c of before) {
     const key = conflictKey(c);
     budget.set(key, (budget.get(key) ?? 0) + 1);
+    if (c.shortfallMinutes !== undefined) {
+      worstBefore.set(key, Math.max(worstBefore.get(key) ?? 0, c.shortfallMinutes));
+    }
   }
   const out: Conflict[] = [];
   for (const c of after) {
     const key = conflictKey(c);
     const left = budget.get(key) ?? 0;
-    if (left > 0) budget.set(key, left - 1);
-    else out.push(c);
+    if (left > 0) {
+      budget.set(key, left - 1);
+      // Matched an existing conflict — but a MEASURED one can still have got
+      // worse without changing identity. A bigger shortfall is a worsening;
+      // a smaller one is the organiser repairing the board and must never be
+      // refused.
+      if (c.shortfallMinutes !== undefined && c.shortfallMinutes > (worstBefore.get(key) ?? 0)) {
+        out.push(c);
+      }
+      continue;
+    }
+    out.push(c);
   }
   return out;
 }
@@ -846,7 +868,21 @@ export function validateAssignments(
     // Court clash / blackout — check against everything else on the board.
     const others = board.filter((o) => o !== a);
     if (courtBlocked(a.court, a.startAt, a.endAt - a.startAt, gapMs, others, blackouts) === "court") {
-      conflicts.push({ fixtureId: a.fixtureId, reason: "court", detail: `court ${a.court} double-booked` });
+      // The OTHER fixture is part of the identity, not decoration (#399). A
+      // fixture already clashing with B, dragged to a slot where it clashes
+      // with C instead, is a brand-new double-booking — and with a detail that
+      // named only the court, the two keyed identically and the delta gate
+      // waved the new one through as pre-existing.
+      const hit = others.find(
+        (o) =>
+          o.court === a.court &&
+          overlaps(a.startAt - gapMs, a.endAt + gapMs, o.startAt, o.endAt),
+      );
+      conflicts.push({
+        fixtureId: a.fixtureId,
+        reason: "court",
+        detail: `court ${a.court} double-booked with ${hit?.fixtureId ?? "another fixture"}`,
+      });
     }
     for (const bo of blackouts) {
       if (bo.court !== undefined && bo.court !== a.court) continue;
@@ -865,7 +901,11 @@ export function validateAssignments(
       for (const e of a.entrants) {
         if (!other.entrants.includes(e)) continue;
         if (overlaps(a.startAt, a.endAt, other.startAt, other.endAt)) {
-          conflicts.push({ fixtureId: a.fixtureId, reason: "person_overlap", detail: `entrant ${e} overlap` });
+          conflicts.push({
+            fixtureId: a.fixtureId,
+            reason: "person_overlap",
+            detail: `entrant ${e} overlap with ${other.fixtureId}`,
+          });
         } else {
           // Resolved per PAIR: restByGroup can differ pool to pool, the other
           // division's own rest may be the binding one, and a compiled
@@ -881,7 +921,11 @@ export function validateAssignments(
       if (sharedPeople.length > 0) {
         if (overlaps(a.startAt, a.endAt, other.startAt, other.endAt)) {
           for (const p of sharedPeople) {
-            conflicts.push({ fixtureId: a.fixtureId, reason: "person_overlap", detail: `person ${p} overlap` });
+            conflicts.push({
+              fixtureId: a.fixtureId,
+              reason: "person_overlap",
+              detail: `person ${p} overlap with ${other.fixtureId}`,
+            });
           }
         } else if (!a.entrants.some((e) => other.entrants.includes(e))) {
           // Rest between two fixtures sharing a PERSON but no entrant — the case
@@ -931,13 +975,24 @@ export function validateAssignments(
       // delta gate keys on `detail`: one string for both would let a newly
       // introduced rest breach hide behind a pre-existing ordering violation.
       const before = target.startAt < source.endAt;
+      const gapMin = (target.startAt - source.endAt) / MS_PER_MIN;
       conflicts.push({
         fixtureId: dep.fixtureId,
         reason: "order",
+        // Two distinct details on purpose: they are different failures, and one
+        // string for both would let a newly introduced rest breach hide behind
+        // a pre-existing ordering violation.
+        //
+        // NEITHER carries the measured gap. `conflictKey` includes `detail`, so
+        // a number in here would move the identity every time the card moved —
+        // and dragging a dependent from 10 minutes short to 20 would read as a
+        // NEW conflict and be refused, which is the exact lock-out this wave
+        // exists to prevent. The size rides in `shortfallMinutes` instead.
         detail: before
           ? `starts before feeder ${dep.dependsOn} ends`
-          : `starts ${Math.round((target.startAt - source.endAt) / MS_PER_MIN)} min after feeder ${dep.dependsOn} ends, needs ${restMinutes}`,
+          : `starts inside feeder ${dep.dependsOn}'s ${restMinutes} min rest`,
         direct: dep.direct === true,
+        shortfallMinutes: Math.max(0, Math.round(restMinutes - gapMin)),
       });
     }
   }

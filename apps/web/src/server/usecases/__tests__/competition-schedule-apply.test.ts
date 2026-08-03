@@ -808,6 +808,37 @@ describe.skipIf(!HAS_DB)("applyCompetitionSchedule (#350)", () => {
     expect(unplaced(await slots(board.alpha.id))).toBe(false);
   }, 60_000);
 
+  it("REFUSES a joint apply that puts a fixture outside the competition's dates", async () => {
+    // #399 wires `applyWindow` into both joint passes. The bound is the
+    // division's OWN configured dates — deliberately not the AI pack's resolved
+    // window, which widens onto whatever is already scheduled and could
+    // therefore never be broken.
+    await sql`
+      update schedule_settings
+      set config = ${sql.json({ ...settingsConfig(["Court 1", "Court 2"]), endAt: at(600) } as never)}
+      where division_id = ${board.alpha.id}`;
+    const strayDay = new Date(T0 + 9 * 24 * 60 * MIN).toISOString();
+    await expect(
+      applyCompetitionSchedule(auth, board.competitionId, {
+        divisions: [
+          {
+            division_id: board.alpha.id,
+            expected_seq: await divisionSeq(board.alpha.id),
+            assignments: board.alpha.fixtureIds.map((fixture_id, i) => ({
+              fixture_id,
+              scheduled_at: i === 0 ? strayDay : at(i * 30),
+              court_label: "Court 1",
+            })),
+          },
+          lineUp(board.bravo, await divisionSeq(board.bravo.id), "Court 3", 0),
+        ],
+        source: "ai",
+        ai: AI,
+      }),
+    ).rejects.toMatchObject({ code: "SCHEDULE_CONFLICT" });
+    expect(unplaced(await slots(board.alpha.id))).toBe(true);
+  }, 60_000);
+
   it("a cross-division person clash blocks when EITHER division opted in", async () => {
     // Person in Alpha and in Bravo; only Alpha is "hard". Alpha's own pass sees
     // Bravo's proposed slot on the merged board and blocks. `Conflict` carries

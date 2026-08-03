@@ -41,7 +41,11 @@ describe("feeder rest (#399)", () => {
     expect(conflicts[0]!.fixtureId).toBe(DEPENDENT);
     expect(conflicts[0]!.direct).toBe(true);
     expect(conflicts[0]!.rule).toBe("H6");
-    expect(conflicts[0]!.detail).toContain("needs 45");
+    expect(conflicts[0]!.detail).toContain("45 min rest");
+    // The measured size rides BESIDE the key, never inside it (#399): a detail
+    // carrying the gap would move the identity every time the card moved, and
+    // dragging this dependent later — an improvement — would read as new.
+    expect(conflicts[0]!.shortfallMinutes).toBe(45);
   });
 
   it("accepts the same pair once the rest is honoured", () => {
@@ -92,6 +96,7 @@ describe("feeder rest (#399)", () => {
       deps,
     ).filter((c) => c.reason === "order");
     expect(conflicts).toHaveLength(1);
-    expect(conflicts[0]!.detail).toContain("needs 30");
+    expect(conflicts[0]!.detail).toContain("30 min rest");
+    expect(conflicts[0]!.shortfallMinutes).toBe(10);
   });
 });

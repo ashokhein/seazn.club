@@ -140,4 +140,87 @@ describe("deltaConflicts (#399)", () => {
     const board = [conflict("f1", "rest", "entrant e1 below rest"), conflict("f2", "blackout", "x")];
     expect(deltaConflicts(board, board)).toEqual([]);
   });
+
+  // --- the two ways a stable key can lie -----------------------------------
+
+  it("reports a breach that got WORSE at the same key", () => {
+    // Some conflicts are measured, not binary: a feeder rest breach is 10
+    // minutes short before and 30 minutes short after. The key has to stay
+    // stable (see the lock-out case below) so the SIZE travels beside it.
+    const before = { ...conflict("f1", "order", "inside the feeder rest"), shortfallMinutes: 10 };
+    const after = { ...conflict("f1", "order", "inside the feeder rest"), shortfallMinutes: 30 };
+    expect(deltaConflicts([before], [after])).toEqual([after]);
+  });
+
+  it("does NOT report a breach that got SMALLER but has not cleared", () => {
+    // The lock-out this wave exists to prevent, in its subtlest form: dragging a
+    // card from 10 minutes short to 30 minutes short of the rest it owes is an
+    // IMPROVEMENT. Reporting it as introduced would refuse the very edit that is
+    // repairing the board.
+    const before = { ...conflict("f1", "order", "inside the feeder rest"), shortfallMinutes: 30 };
+    const after = { ...conflict("f1", "order", "inside the feeder rest"), shortfallMinutes: 10 };
+    expect(deltaConflicts([before], [after])).toEqual([]);
+  });
+
+  it("treats an equal breach as unchanged", () => {
+    const same = { ...conflict("f1", "order", "inside the feeder rest"), shortfallMinutes: 10 };
+    expect(deltaConflicts([same], [{ ...same }])).toEqual([]);
+  });
+});
+
+describe("conflict identity names the counterparty (#399)", () => {
+  // Without it, a SWAP is invisible to the delta: the same fixture, the same
+  // reason, the same court — but a different victim — keys identically, and a
+  // brand-new double-booking writes through as "pre-existing".
+  const MIN = 60_000;
+  const a = (fixtureId: string, court: string, startAt: number, entrants: string[], people: string[]) => ({
+    fixtureId,
+    court,
+    startAt,
+    endAt: startAt + 30 * MIN,
+    entrants,
+    people,
+  });
+
+  it("keys a court clash on the fixture it collides with", () => {
+    const clashWith = (otherId: string) =>
+      validateAssignments(
+        [a("f1", "C1", AT, ["e1"], [])],
+        cfg,
+        [a(otherId, "C1", AT, ["e9"], [])],
+      ).filter((c) => c.reason === "court");
+
+    const [withB] = clashWith("fB");
+    const [withC] = clashWith("fC");
+    expect(withB).toBeDefined();
+    expect(conflictKey(withB!)).not.toBe(conflictKey(withC!));
+  });
+
+  it("keys a person overlap on the fixture the human is also in", () => {
+    const overlapWith = (otherId: string) =>
+      validateAssignments(
+        [a("f1", "C1", AT, ["e1"], ["p1"])],
+        cfg,
+        [a(otherId, "C2", AT, ["e9"], ["p1"])],
+      ).filter((c) => c.reason === "person_overlap");
+
+    const [withB] = overlapWith("fB");
+    const [withC] = overlapWith("fC");
+    expect(withB).toBeDefined();
+    expect(conflictKey(withB!)).not.toBe(conflictKey(withC!));
+  });
+
+  it("keys an entrant overlap on the other fixture too", () => {
+    const overlapWith = (otherId: string) =>
+      validateAssignments(
+        [a("f1", "C1", AT, ["e1"], [])],
+        cfg,
+        [a(otherId, "C2", AT, ["e1"], [])],
+      ).filter((c) => c.reason === "person_overlap");
+
+    const [withB] = overlapWith("fB");
+    const [withC] = overlapWith("fC");
+    expect(withB).toBeDefined();
+    expect(conflictKey(withB!)).not.toBe(conflictKey(withC!));
+  });
 });

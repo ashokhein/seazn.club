@@ -21311,6 +21311,11 @@
                                   "H8",
                                   "CAP"
                                 ]
+                              },
+                              "shortfall_minutes": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
                               }
                             },
                             "required": [
@@ -21709,6 +21714,11 @@
                                   "H8",
                                   "CAP"
                                 ]
+                              },
+                              "shortfall_minutes": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
                               }
                             },
                             "required": [
@@ -22105,6 +22115,11 @@
                                   "H8",
                                   "CAP"
                                 ]
+                              },
+                              "shortfall_minutes": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
                               }
                             },
                             "required": [
@@ -56885,6 +56900,11 @@
                                   "H8",
                                   "CAP"
                                 ]
+                              },
+                              "shortfallMinutes": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
                               }
                             },
                             "required": [
@@ -56922,6 +56942,11 @@
                                   "H8",
                                   "CAP"
                                 ]
+                              },
+                              "shortfallMinutes": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
                               }
                             },
                             "required": [
@@ -58241,6 +58266,11 @@
                                   "H8",
                                   "CAP"
                                 ]
+                              },
+                              "shortfallMinutes": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
                               }
                             },
                             "required": [
@@ -58278,6 +58308,11 @@
                                   "H8",
                                   "CAP"
                                 ]
+                              },
+                              "shortfallMinutes": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
                               }
                             },
                             "required": [
@@ -59507,6 +59542,11 @@
                                   "H8",
                                   "CAP"
                                 ]
+                              },
+                              "shortfallMinutes": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
                               }
                             },
                             "required": [

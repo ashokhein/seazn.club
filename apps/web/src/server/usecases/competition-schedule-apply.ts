@@ -142,23 +142,6 @@ const ms = (v: string | Date): number => new Date(v).getTime();
 const iso = (t: number): string => new Date(t).toISOString();
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-/** Collapse exact duplicates by conflict identity — the same collapse the pass
- *  below does on its own stream. The pre-apply board is verified once per
- *  division too, so a within-division order violation arrives from every
- *  division's pass; without this the delta would read N re-reports of one old
- *  conflict as N-1 new ones. */
-function dedupeConflicts(list: readonly Conflict[]): Conflict[] {
-  const seen = new Set<string>();
-  const out: Conflict[] = [];
-  for (const c of list) {
-    const key = conflictKey(c);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(c);
-  }
-  return out;
-}
-
 // ---------------------------------------------------------------------------
 // Wire shapes
 // ---------------------------------------------------------------------------
@@ -568,9 +551,12 @@ export async function applyCompetitionSchedule(
     // delta runs over the deduped, sorted list rather than the raw per-pass
     // stream, because `before` is deduped by the same identity — a conflict
     // re-reported by three divisions' passes must not read as three new ones.
-    const introduced = new Set(
-      deltaConflicts(dedupeConflicts(before), conflicts).map(conflictKey),
-    );
+    // `before` goes in RAW, not deduped. `conflicts` is already collapsed to one
+    // instance per identity, so extra copies on the before side only add budget
+    // for a key that genuinely existed — and they carry the WORST
+    // `shortfallMinutes` of that key with them, which is what stops a measured
+    // breach that actually improved from reading as introduced.
+    const introduced = new Set(deltaConflicts(before, conflicts).map(conflictKey));
     const blocking = conflicts.filter(
       (c) => blockingKeys.has(conflictKey(c)) && introduced.has(conflictKey(c)),
     );
