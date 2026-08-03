@@ -114,7 +114,13 @@ export const SchedulingConstraints = z.object({
   /** Durable division rules, in the SAME vocabulary a compiled instruction
    *  produces (#398), so hard rules have exactly one home and the referee reads
    *  one list. Defaults to [] so every pre-W3 persisted
-   *  `schedule_settings.constraints` row still parses — no migration. */
-  hard: z.array(HardConstraint).default([]),
+   *  `schedule_settings.constraints` row still parses — no migration.
+   *
+   *  `.optional()` rather than `.default([])` on purpose: this type is what
+   *  `SlotConfig.constraints` is, and dozens of call sites build it as an object
+   *  literal. A defaulted field is REQUIRED in the output type, so a default
+   *  here would break every one of them for a field they have no opinion
+   *  about. Read it as `constraints?.hard ?? []`. */
+  hard: z.array(HardConstraint).optional(),
 });
 export type SchedulingConstraints = z.infer<typeof SchedulingConstraints>;

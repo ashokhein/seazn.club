@@ -256,8 +256,12 @@ describe("typed instruction constraints (#398)", () => {
     expect(ConstraintScope.safeParse({ kind: "person", personKey: "p-1" }).success).toBe(true);
   });
 
-  it("defaults SchedulingConstraints.hard to [] so pre-W3 rows still parse", () => {
-    expect(SchedulingConstraints.parse({}).hard).toEqual([]);
+  it("leaves SchedulingConstraints.hard absent so pre-W3 rows still parse", () => {
+    // Absent, not [] — a defaulted field is REQUIRED in the zod OUTPUT type,
+    // which would break every existing `SlotConfig.constraints` object literal.
+    const parsed = SchedulingConstraints.parse({});
+    expect(parsed.hard).toBeUndefined();
+    expect(parsed.hard ?? []).toEqual([]);
   });
 
   it("carries a durable division rule through SchedulingConstraints", () => {

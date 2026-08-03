@@ -4,76 +4,11 @@
 // stay quiet on a legal board. Every REJECT case below puts its two fixtures on
 // DIFFERENT courts, so a `court` clash can never be mistaken for the proof.
 import { describe, expect, it } from "vitest";
-import { validateAssignments, type Assignment } from "./calendar";
-import { computeParticipants, stripByes, type ParticipantFixture } from "./participants";
+import { validateAssignments, type Assignment } from "./calendar.ts";
+import { computeParticipants, stripByes } from "./participants.ts";
+import { assign, at, BADMINTON, BASE_CONFIG as CONFIG, SHARED, SOLO, STEP } from "./payload-fixtures.ts";
 
 const MIN = 60_000;
-const at = (iso: string): number => Date.parse(iso);
-
-const fx = (
-  id: string,
-  home: string | null,
-  away: string | null,
-  after: string[],
-): ParticipantFixture => ({ id, ext_key: id, home, away, feeds: { after } });
-
-// --- payload A: badminton double elimination, single division -------------
-const BADMINTON: ParticipantFixture[] = [
-  fx("wb-r0-i1", "e", "d", []),
-  fx("wb-r0-i2", "c", "f", []),
-  fx("wb-r0-i3", "g", "b", []),
-  fx("wb-r1-i0", "a", null, ["wb-r0-i1", "BYE-1"]),
-  fx("wb-r1-i1", null, null, ["wb-r0-i2", "wb-r0-i3"]),
-  fx("wb-r2-i0", null, null, ["wb-r1-i1", "wb-r1-i0"]),
-  fx("lb-r0-i0", null, null, ["wb-r0-i1", "BYE-1"]),
-  fx("lb-r0-i1", null, null, ["wb-r0-i2", "wb-r0-i3"]),
-  fx("lb-r1-i0", null, null, ["wb-r1-i0", "lb-r0-i0"]),
-  fx("lb-r1-i1", null, null, ["lb-r0-i1", "wb-r1-i1"]),
-  fx("lb-r2-i0", null, null, ["lb-r1-i1", "lb-r1-i0"]),
-  fx("lb-r3-i0", null, null, ["wb-r2-i0", "lb-r2-i0"]),
-  fx("gf", null, null, ["wb-r2-i0", "lb-r3-i0"]),
-];
-const SOLO = new Map<string, string[]>(
-  ["a", "b", "c", "d", "e", "f", "g"].map((e) => [e, [`p-${e}`]]),
-);
-
-// The exact subset `validateAssignments` picks off `SlotConfig`: rest, gap,
-// blackouts, session windows, plus optional matchMinutes/constraints. `startAt`
-// and `courts` are slotFixtures-only and are NOT accepted here. Empty
-// `blackouts` / `sessionWindows` mean unbounded — the verifier skips the
-// session check entirely when `sessionWindows.length === 0`, which is what
-// makes the ACCEPT cases clean.
-const CONFIG = {
-  matchMinutes: 40,
-  gapMinutes: 0,
-  perEntrantMinRest: 0,
-  blackouts: [] as { from: number; to: number }[],
-  sessionWindows: [] as { from: number; to: number }[],
-};
-
-/** Build engine assignments the way the pack does: `people` from participants. */
-function assign(
-  fixtures: ParticipantFixture[],
-  personsByEntrant: Map<string, string[]>,
-  slots: [string, string, string][], // [fixtureId, ISO start, court]
-  matchMinutes = 40,
-): Assignment[] {
-  const stripped = stripByes(fixtures).fixtures;
-  const participants = computeParticipants(stripped, personsByEntrant);
-  const byId = new Map(stripped.map((f) => [f.id, f]));
-  return slots.map(([id, iso, court]) => {
-    const f = byId.get(id)!;
-    const startAt = at(iso);
-    return {
-      fixtureId: id,
-      court,
-      startAt,
-      endAt: startAt + matchMinutes * MIN,
-      entrants: [f.home, f.away].filter((e): e is string => e !== null),
-      people: participants[id] ?? [],
-    };
-  });
-}
 
 // `person_overlap` is what a simultaneous shared-person pair on different
 // courts actually produces: the entrant loop only fires on a SHARED entrant id
@@ -163,23 +98,6 @@ describe("participants make person rules fire on brackets (payload A: badminton)
 
 // --- payload B: Stepladder Showcase, two divisions, one shared human -------
 describe("participants across divisions (payload B: Stepladder Showcase)", () => {
-  const STEP: ParticipantFixture[] = [
-    fx("sl-g1-d1", "fischer-1", "kasparov-1", []),
-    fx("sl-g2-d1", "hou-1", null, ["sl-g1-d1"]),
-    fx("sl-g2-d2", "polgar-2", "fischer-2", []),
-    fx("sl-g3-d2", "magnus-2", null, ["sl-g2-d2"]),
-  ];
-  // The same human holds ONE person id here — what W1's name guard produces
-  // for the pack, and what a clean database produces on its own.
-  const SHARED = new Map<string, string[]>([
-    ["fischer-1", ["p-fischer"]],
-    ["kasparov-1", ["p-kasparov"]],
-    ["hou-1", ["p-hou"]],
-    ["polgar-2", ["p-polgar"]],
-    ["fischer-2", ["p-fischer"]],
-    ["magnus-2", ["p-magnus"]],
-  ]);
-
   it("participants(sl-g2-d1) = {fischer, hou, kasparov} via advancer recursion", () => {
     const p = computeParticipants(stripByes(STEP).fixtures, SHARED);
     expect(p["sl-g2-d1"]).toEqual(["p-fischer", "p-hou", "p-kasparov"]);
