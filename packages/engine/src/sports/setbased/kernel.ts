@@ -94,6 +94,32 @@ export const SetBasedRally = z.strictObject({
   wonBy: EntrantId,
   server: PersonId.optional(),
   scorer: PersonId.optional(),
+  // W4a (#425) §5.3 — the ITTF expedite system (Law 2.15.2). READ THE UNIT:
+  // this is the count of the RECEIVER'S good returns, NOT the rally's stroke
+  // count and NOT the number of shots the server played. The receiver takes
+  // the point on their thirteenth, so the two readings differ by exactly the
+  // amount that decides a rally. Only meaningful once expedite is in force;
+  // recorded (and inert) before that.
+  returns: z.number().int().nonnegative().optional(),
+  // The SIDE that served this rally — an `EntrantId`, like `wonBy`.
+  //
+  // THIS IS NOT `server`. `server` directly above is a `PersonId`: the player
+  // who served. They are adjacent, similarly named, differently typed, and in
+  // doubles they routinely disagree (a person on the receiving pair can be
+  // named in `server` by a pad recording the previous rally's server, and the
+  // side that served is still the other one). `DisciplineCard.entrantSide`
+  // shipped that exact confusion once already, so expedite enforcement reads
+  // `serving` and never `server`, and `expedite.test.ts` pins a rally where
+  // the two point at different entrants.
+  //
+  // WHY IT IS ON THE PAYLOAD AT ALL: the set-based kernel holds no serving
+  // state — `server` feeds a `serves` tally and nothing else — so the engine
+  // cannot name the receiver from what it stores. Deriving the ITTF rotation
+  // would break on doubles order and lineup changes (spec §5.3). The pad
+  // already knows who is serving, because it is drawing the service
+  // indicator, so it sends it. Optional: where it is absent the 13-return
+  // rule is UNENFORCEABLE and the rally stands (see `applyRally`).
+  serving: EntrantId.optional(),
 });
 export type SetBasedRally = z.infer<typeof SetBasedRally>;
 
@@ -171,6 +197,19 @@ export const SetBasedSub = z.strictObject({
 });
 export type SetBasedSub = z.infer<typeof SetBasedSub>;
 
+// W4a (#425) §5.3 — expedite is introduced, per ITTF Law 2.15.1, when a game
+// reaches ten minutes unfinished (or earlier if both players agree), unless
+// both have already scored nine. The TEN-MINUTE TRIGGER IS THE PAD'S: the
+// engine owns no clock, and this event is the record that the umpire called it.
+//
+// EMPTY BY DESIGN, and the emptiness is the rule. Law 2.15.4 runs expedite to
+// the end of the MATCH, not the end of the game, so there is no game number to
+// carry — and because there is none, a second `expedite.start` is simply an
+// invalid event rather than a re-scoping (`applyExpedite`). Scoping this per
+// game would have been the wrong model, quietly.
+export const SetBasedExpediteStart = z.strictObject({});
+export type SetBasedExpediteStart = z.infer<typeof SetBasedExpediteStart>;
+
 // Branch order matters: z.union takes the FIRST branch that parses, so the new
 // branches are APPENDED and every pre-existing payload still lands on the
 // branch it always did (rally needs `wonBy`, the summaries need home/away or
@@ -178,12 +217,16 @@ export type SetBasedSub = z.infer<typeof SetBasedSub>;
 // A bare `{by}` is accepted by both the timeout and the substitution branch;
 // that overlap is inert because `apply` dispatches on the ENVELOPE type and
 // parses with the one branch that type names.
+// `SetBasedExpediteStart` is LAST and matches only `{}` — every other branch
+// requires at least one key, so it can steal nothing from a sibling; placed
+// first it would still steal nothing, but the rule is the rule (§8).
 export const SetBasedEv = z.union([
   SetBasedRally,
   SetBasedSummary,
   SetBasedTimeout,
   SetBasedSanction,
   SetBasedSub,
+  SetBasedExpediteStart,
 ]);
 export type SetBasedEv = z.infer<typeof SetBasedEv>;
 
@@ -240,7 +283,22 @@ export interface SetBasedState {
   timeouts?: { home: number; away: number };
   sanctions?: SetBasedSanctionRec[];
   subs?: SetBasedSubState;
+  // ---- W4a (#425) §5.3 — expedite. MATCH-scoped (ITTF 2.15.4): `bankSet`
+  // deliberately does NOT clear this, unlike `subs.thisSet`.
+  expedite?: boolean;
+  /** Rallies the 13-return rule could not be checked against, because they
+   *  carried `returns` but no `serving` (spec §5.3). Recorded rather than
+   *  hidden: a count of zero and a count of forty mean very different things
+   *  about how much of an expedited match the engine actually validated.
+   *  Deliberately NOT surfaced in `summary` — coarsening discards `returns`
+   *  entirely, so a coarse fold could never reproduce it and §9.6 would break
+   *  (the same reason `persons` stays out of the summary). */
+  expediteUnchecked?: number;
 }
+
+/** ITTF Law 2.15.2 — the receiver wins the point on their thirteenth good
+ *  return. Not configurable: it is the law, not a competition setting. */
+const EXPEDITE_RETURNS = 13;
 
 function opponent(side: Side): Side {
   return side === "home" ? "away" : "home";
@@ -387,15 +445,61 @@ function bankSet(state: SetBasedState, index: number, winnerSide: Side): SetBase
 // Event application
 // ---------------------------------------------------------------------------
 
+// W4a (#425) §5.3 — ITTF Law 2.15.2 under expedite: thirteen good returns by
+// the RECEIVER and the point is theirs, so a 13-return rally credited to the
+// SERVING side contradicts the rule and is refused.
+//
+// Enforcement is CONDITIONAL on the rally naming `serving`, and that is a
+// stated limitation, not an oversight. The kernel holds no serving state, so
+// with `serving` absent there is no receiver to compare `wonBy` against.
+// Rejecting those rallies would make coarse-tier expedited scoring — a pad
+// that records `returns` off the umpire's sheet but not the service indicator
+// — impossible to record at all. So the rally stands and the fold COUNTS it
+// (`expediteUnchecked`) rather than pretending it was validated.
+function checkExpedite(
+  state: SetBasedState,
+  payload: SetBasedRally,
+  winner: Side,
+): number | undefined {
+  if (state.expedite !== true) return state.expediteUnchecked;
+  if (payload.returns === undefined || payload.returns < EXPEDITE_RETURNS) {
+    return state.expediteUnchecked;
+  }
+  if (payload.serving === undefined) return (state.expediteUnchecked ?? 0) + 1;
+  // `serving`, never `server`: one is the side, the other is a person, and in
+  // doubles they disagree.
+  if (sideOf(state, payload.serving) === winner) {
+    throw new EngineError(
+      "EXPEDITE_WRONG_WINNER",
+      `under expedite the receiver wins the point on their ${EXPEDITE_RETURNS}th good return — ` +
+        `this rally records ${payload.returns} returns but credits the serving side`,
+      { wonBy: payload.wonBy, serving: payload.serving, returns: payload.returns },
+    );
+  }
+  return state.expediteUnchecked;
+}
+
 function applyRally(state: SetBasedState, payload: SetBasedRally): SetBasedState {
   if (state.phase !== "live") wrongPhase(`rally not allowed in phase "${state.phase}"`);
   const side = sideOf(state, payload.wonBy);
+  // Validate the serving side even where the rule does not bite, so a typo'd
+  // entrant id is caught on the rally that carries it rather than on whichever
+  // later rally happens to reach thirteen returns.
+  if (payload.serving !== undefined) sideOf(state, payload.serving);
+  const expediteUnchecked = checkExpedite(state, payload, side);
 
   const persons = creditPersons(state.persons, [
     [payload.scorer, "points"],
     [payload.server, "serves"],
   ]);
-  let next = persons === state.persons ? state : { ...state, persons };
+  let next =
+    persons === state.persons && expediteUnchecked === state.expediteUnchecked
+      ? state
+      : {
+          ...state,
+          ...(persons === undefined ? {} : { persons }),
+          ...(expediteUnchecked === undefined ? {} : { expediteUnchecked }),
+        };
   let open = openSet(next);
   if (open === null) {
     next = { ...next, sets: [...next.sets, { home: 0, away: 0, closed: false }] };
@@ -511,6 +615,21 @@ function applySub(state: SetBasedState, payload: SetBasedSub): SetBasedState {
   };
 }
 
+// W4a (#425) §5.3 — the umpire introduced expedite (ITTF 2.15.1). It touches
+// no score; it changes how every subsequent rally is judged, for the rest of
+// the MATCH (2.15.4). `bankSet` closing a game leaves `expedite` alone, which
+// is the whole point of holding it here rather than on the open set.
+function applyExpedite(state: SetBasedState): SetBasedState {
+  if (state.phase !== "live") wrongPhase(`expedite not allowed in phase "${state.phase}"`);
+  if (state.expedite === true) {
+    invalid(
+      "expedite is already in force — ITTF 2.15.4 runs it to the end of the match, so there is " +
+        "nothing a second introduction could scope",
+    );
+  }
+  return { ...state, expedite: true };
+}
+
 // Forfeit — spec 04 §3 / volleyball.md §7: award the match to the opponent;
 // completed sets already stand in the ledger.
 function applyForfeit(state: SetBasedState, by: string): SetBasedState {
@@ -580,7 +699,15 @@ export interface SetBasedPreset {
   // that does not declare one refuses the event outright rather than silently
   // recording a fact its laws have no concept of (badminton has no timeouts
   // and no substitutions; only indoor volleyball substitutes).
-  records?: { timeouts?: boolean; sanctions?: boolean; substitutions?: boolean };
+  // W4a (#425) §5.3 — `expedite` is table tennis's alone (ITTF Law 2.15);
+  // volleyball and badminton have no such rule, so the kernel refuses
+  // `<key>.expedite.start` for them exactly as it refuses `badminton.timeout`.
+  records?: {
+    timeouts?: boolean;
+    sanctions?: boolean;
+    substitutions?: boolean;
+    expedite?: boolean;
+  };
   playerStats?: PlayerStatsModel; // Jul3/07 §3 — unlocked by person attribution
 }
 
@@ -609,6 +736,10 @@ export function makeSetBasedModule(
   const timeoutType = `${preset.key}.timeout`;
   const sanctionType = `${preset.key}.sanction`;
   const subType = `${preset.key}.sub`;
+  // Dotted like the period kernel's `<key>.suspension.start` — the `.start`
+  // suffix is load-bearing shorthand for "there is no `.end`": expedite runs to
+  // the end of the match (ITTF 2.15.4) and nothing ever stops it.
+  const expediteType = `${preset.key}.expedite.start`;
   const records = preset.records ?? {};
   const coarsenParams = preset.defaults; // spec 04 §9.6 conformance runs at default cfg
 
@@ -618,6 +749,7 @@ export function makeSetBasedModule(
     ...(records.timeouts === true ? [timeoutType] : []),
     ...(records.sanctions === true ? [sanctionType] : []),
     ...(records.substitutions === true ? [subType] : []),
+    ...(records.expedite === true ? [expediteType] : []),
   ];
   const isExtensionType = (type: string): boolean => extensionTypes.includes(type);
 
@@ -739,6 +871,14 @@ export function makeSetBasedModule(
             invalid(`"${preset.key}" does not record substitutions`);
           }
           return applySub(state, parsePayload(SetBasedSub, ev.payload, ev.type));
+        case expediteType:
+          if (records.expedite !== true) {
+            invalid(`"${preset.key}" has no expedite system`);
+          }
+          // Parsed for its own sake: the payload is empty and the strict schema
+          // is what refuses a `game` key, i.e. the per-game scoping mistake.
+          parsePayload(SetBasedExpediteStart, ev.payload, ev.type);
+          return applyExpedite(state);
         case "core.forfeit":
           return applyForfeit(state, (ev.payload as { by: string }).by);
         case "core.abandon":
@@ -788,6 +928,10 @@ export function makeSetBasedModule(
           // rallies into set summaries and discards attribution, so a summary
           // that carried `persons` could never satisfy §9.6. They live in
           // state (and in the playerStats fold over the ledger) instead.
+          // W4a §5.3 — expedite survives coarsening (it is an extension type,
+          // passed straight through), so it can appear here without breaking
+          // §9.6. `expediteUnchecked` cannot and deliberately does not.
+          ...(state.expedite === undefined ? {} : { expedite: state.expedite }),
           ...(state.timeouts === undefined ? {} : { timeouts: state.timeouts }),
           ...(state.sanctions === undefined ? {} : { sanctions: state.sanctions }),
           ...(state.subs === undefined
@@ -866,21 +1010,42 @@ export function makeSetBasedModule(
       // branches (and §9.6 proves coarsen stays transparent to them).
       if (extensionTypes.length > 0 && rng() < 0.05) {
         const by = randomEntrant();
-        const type = extensionTypes[Math.floor(rng() * extensionTypes.length)] as string;
+        // Expedite is introduced ONCE per match (ITTF 2.15.4), so drop it from
+        // the pool the moment it is in force — a second one is a rejected
+        // event and the generator must only emit legal streams.
+        const choices =
+          state.expedite === true
+            ? extensionTypes.filter((type) => type !== expediteType)
+            : extensionTypes;
+        const type = choices[Math.floor(rng() * choices.length)];
+        if (type === expediteType) return { type, payload: {} };
         if (type === timeoutType) return { type, payload: { by, technical: rng() < 0.3 } };
         if (type === sanctionType) {
           const levels = SetBasedSanctionLevel.options;
           const level = levels[Math.floor(rng() * levels.length)] as (typeof levels)[number];
           return { type, payload: { by, level, person: randomPerson(by) } };
         }
-        return { type, payload: { by, off: randomPerson(by), on: randomPerson(by) } };
+        if (type === subType) {
+          return { type, payload: { by, off: randomPerson(by), on: randomPerson(by) } };
+        }
+        // `choices` was emptied (expedite was this sport's only extension) —
+        // fall through and rally instead.
       }
       // Half of all rallies carry attribution — the other half keep the coarse
       // (entrant-only) shape legal and exercised.
       const rallyPayload = (): SetBasedRally => {
         const wonBy = randomEntrant();
-        if (rng() < 0.5) return { wonBy };
-        return { wonBy, server: randomPerson(randomEntrant()), scorer: randomPerson(wonBy) };
+        const base: SetBasedRally =
+          rng() < 0.5
+            ? { wonBy }
+            : { wonBy, server: randomPerson(randomEntrant()), scorer: randomPerson(wonBy) };
+        // Under expedite, exercise the 13-return path — and only ever LEGALLY:
+        // the receiver takes the point on the thirteenth, so the serving side
+        // is by construction the side that did not win it (Law 2.15.2).
+        if (state.expedite !== true || rng() < 0.5) return base;
+        const serving =
+          wonBy === state.entrants.home ? state.entrants.away : state.entrants.home;
+        return { ...base, serving, returns: EXPEDITE_RETURNS };
       };
       const open = openSet(state);
       if (open !== null) {

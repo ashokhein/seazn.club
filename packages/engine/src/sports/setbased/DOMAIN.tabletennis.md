@@ -14,7 +14,8 @@ the "T" timeout mark, the expedite mark, the card box and the signature block.
 Read alongside `DOMAIN.volleyball.md` and `DOMAIN.badminton.md`: all three are
 presets of one kernel. Table tennis's distinguishing facts are the uncapped
 deuce endgame, the single timeout per player, and the expedite system — which
-this audit records as a real, stated gap.
+W4 recorded as a real, stated gap and **W4a (#425) §5.3 closed**, with one
+limitation stated in the table rather than buried in the code.
 
 ## Mapping table
 
@@ -36,7 +37,11 @@ this audit records as a real, stated gap.
 | The point(s) a red card concedes | all | entrant | recorded as `tabletennis.rally` for the opponent | modelled | the point goes in the score column, the card in the card box — as on paper. |
 | Serve rotation: every 2 points (every 5 at 21, every point at deuce) | all | person | — | deferred | fully derivable from the points played once `server` is recorded. A stored rotation cursor could disagree with the ledger. |
 | Doubles serve and receive order | all | persons | — | deferred | the fixed ITTF rotation is derivable from the pair's declared order plus the service history; enforcing it is a lineup-layer validation, not an event field. |
-| The expedite system | all | — | — | deferred | **a real gap.** Expedite turns on after 10 minutes (or by agreement) and then the receiver wins the rally if the server makes 13 good returns. The kernel has neither a clock nor a return counter, so it cannot decide such a rally; recording only the sheet's expedite mark would be a fact the fold cannot honour. Needs a product decision on whether we score expedited play at all. |
+| The expedite system is introduced (Law 2.15.1) | all | — | `Ev.ExpediteStart` (`tabletennis.expedite.start`, empty payload) → `State.expedite`, `summary.detail.expedite` | extended | W4a (#425) §5.3 closed W4's stated gap. The **ten-minute trigger stays the pad's** — the engine owns no clock (spec §1.2), so this event is the record that the umpire called it, matching the sheet's expedite mark. |
+| Expedite runs to the end of the MATCH, not the game (Law 2.15.4) | all | — | `State.expedite` (never cleared by `bankSet`) | extended | why the payload is EMPTY: with no game number there is nothing a second introduction could re-scope, so a second `tabletennis.expedite.start` is an `INVALID_EVENT`. Scoping it per game is the error this row exists to prevent. |
+| Receiver wins the point on their 13th good return (Law 2.15.2) | all | entrant | `Ev.Rally.returns` + `Ev.Rally.serving`; a violation is `EXPEDITE_WRONG_WINNER` (422) | extended | `returns` counts the **receiver's** good returns, not the rally's stroke count. **Enforcement is conditional and this is a stated limitation, not an oversight:** the kernel holds no serving state (`server` is a PERSON feeding a `serves` tally), so where a rally carries `returns` but no `serving` there is no receiver to compare `wonBy` against. Such a rally is **recorded, not rejected**, and counted in `State.expediteUnchecked` — rejecting it would make coarse-tier expedited scoring unrecordable. |
+| Which SIDE served the rally | all | entrant | `Ev.Rally.serving` (an `EntrantId`) | extended | distinct from `Ev.Rally.server`, which is a `PersonId`. Adjacent, similarly named, differently typed, and in doubles they disagree — the `DisciplineCard.entrantSide` shape. Expedite enforcement reads `serving` and never `server`; `expedite.test.ts` pins a rally where the two name different entrants. |
+| Service alternates every point under expedite | all | person | — | deferred | the alternation is derivable from the point sequence once expedite is in force, and the kernel stores no service cursor to enforce it against. Same reasoning as the two-point rotation row above. |
 | Lets (net service, interruption) | all | — | — | deferred | the umpire calls a let and the rally is replayed; nothing is written on the match sheet. |
 | Change of ends between games, and at 5 in the deciding game | all | — | — | deferred | procedural and derivable from the game index and the running score. |
 | Substitutions | all | — | `records.substitutions` is unset | modelled | table tennis has no substitutions; the kernel refuses `tabletennis.sub`. |
@@ -49,7 +54,7 @@ this audit records as a real, stated gap.
 | Remarks, injury notes | all | — | `core.note` | modelled | free text, no fold effect. |
 | Stroke / rally-length statistics | all | persons | — | deferred | not on the match sheet; Pro statistics, wrong fidelity for our tiers. |
 
-**Row counts:** 16 modelled, 4 extended, 8 deferred (28 rows).
+**Row counts:** 16 modelled, 8 extended, 8 deferred (32 rows).
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Downstream owed
@@ -66,7 +71,22 @@ Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 - **`playerStats` now exists** (`points`, `serves`, `sanctions` labelled
   "Cards"), so table tennis leaderboards stop reporting
   `requires_detailed_scoring`.
-- **Expedite is the one substantive unmet fact in this sport.** It needs a
-  product decision before any schema work: either the pad refuses to score
-  expedited play, or the kernel gains a return counter and a per-rally
-  "expedited" flag whose fold can hand the rally to the receiver.
+- **Expedite (W4a #425 §5.3 — was the one substantive unmet fact, now shipped).**
+  A pad owes four things:
+  1. the **ten-minute game clock** and the "unless both have reached 9" guard
+     (Law 2.15.1) — both live in the pad, not the engine, which owns no clock;
+  2. a `tabletennis.expedite.start` control that fires **once per match** and
+     then disables itself (a second one is rejected);
+  3. a **returns counter on the receiver**, reset each rally, labelled so the
+     umpire cannot read it as a stroke count;
+  4. `serving` on every rally once expedite is in force. Without it the engine
+     cannot check the 13-return rule at all — it counts the rally in
+     `State.expediteUnchecked` and lets it stand. A pad that draws a service
+     indicator already knows this value; one that does not should say so rather
+     than let a scorer believe the rule is being enforced.
+- **New error code `EXPEDITE_WRONG_WINNER`** (422) — surfaced verbatim; the
+  scorer's fix is to correct `wonBy` or `serving`, never to retry.
+- **e2e for expedited scoring is DEFERRED**, not owed by this wave: there is no
+  ScoringPad surface to drive yet (#416 / W5). The engine-side proof is
+  `expedite.test.ts` plus the golden corpus; the first pad to expose the
+  control owes the browser test.

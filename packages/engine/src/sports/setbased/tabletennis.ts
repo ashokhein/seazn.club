@@ -45,7 +45,11 @@ export const tabletennis = makeSetBasedModule({
   // W4 (#407) — the ITTF match sheet carries one timeout per player per match
   // and the umpire's card ladder (yellow warning → `warning`, red penalty →
   // `penalty`, removal → `expulsion`/`disqualification`). No substitutions.
-  records: { timeouts: true, sanctions: true },
+  // W4a (#425) §5.3 — and the expedite system (ITTF Law 2.15), which is table
+  // tennis's alone: `tabletennis.expedite.start` records that the umpire
+  // introduced it, and every later rally carrying `returns` + `serving` is
+  // judged against the receiver's thirteenth good return.
+  records: { timeouts: true, sanctions: true, expedite: true },
   playerStats: {
     metrics: [
       { key: "points", label: "Points", from: "tabletennis.rally", field: "scorer", agg: "count" },
