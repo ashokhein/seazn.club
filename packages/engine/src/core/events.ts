@@ -2,6 +2,7 @@
 // foldMatch is the ONLY state-derivation function in the system.
 import { z } from "zod";
 import { EngineError } from "./errors.ts";
+import { compareGameTime, gameTimeOf, type GameTime } from "./time.ts";
 import { EntrantId, type LineupPair, type MatchOutcome } from "./types.ts";
 
 // spec 03 §2 — ids and time are injected (uuid in prod, `e-${n}` in tests);
@@ -198,6 +199,10 @@ const DURING_STOPPAGE: readonly string[] = [
 //     core.resume the ledger accepts only annotations and the events that end
 //     the stoppage; anything else is WRONG_PHASE. Both types are kernel-owned
 //     and never reach the module, so no sport had to change to gain them.
+//  6. monotonic game time (W4a #425 §3.3) — an event carrying a `GameTime` at
+//     `payload.at` may not be stamped earlier than the newest accepted stamp
+//     (NON_MONOTONIC_TIME). Equal stamps are legal; unstamped events are
+//     unconstrained, so every stream recorded before this wave is unaffected.
 export function foldMatch<Cfg, State>(
   module: FoldableModule<Cfg, State>,
   cfg: Cfg,
@@ -223,6 +228,26 @@ export function foldMatchWithStoppage<Cfg, State>(
   let state = module.init(cfg, lineups);
   let decided = false;
   let stoppage: MatchStoppage | null = null;
+
+  // W4a (#425) §3.3 — monotonic time guard. A timer only moves forward, but a
+  // manually typed time (§4) can go anywhere, and an out-of-order stamp makes
+  // lazy expiry silently wrong: a suspension started at seq 4 / 05:00 would
+  // "expire" after one started at seq 3 / 08:00. Guarding here means all eleven
+  // modules inherit it from one place and none of them changes.
+  //
+  // PHASE ORDER, the one non-obvious decision. compareGameTime needs a phase
+  // list, and the kernel knows no sport's phases — `playPhases` lives on the
+  // period module, not on FoldableModule, and widening that contract for this
+  // would touch every sport. So the order is derived generically, as the order
+  // of FIRST APPEARANCE of `period` across the stamped events in this stream:
+  // a period never seen before is appended, and is therefore later than every
+  // period seen so far. That is exactly the semantics wanted — play moves into
+  // a new period, never back into an old one — it is sport-agnostic, it needs
+  // no module API change, and because a period is registered before it is
+  // compared, UNKNOWN_PHASE can never escape this fold.
+  const phaseOrder: string[] = [];
+  let highWater: GameTime | null = null;
+
   for (const event of active) {
     validateCoreEvent(event);
     if (decided && !postDecision.has(event.type)) {
@@ -253,6 +278,26 @@ export function foldMatchWithStoppage<Cfg, State>(
       // scorer also voided the resume, which is not an undo anyone would find.
       stoppage = null;
       continue; // kernel-owned: the module never sees it
+    }
+    // Two carve-outs, both load-bearing (§3.3):
+    //  - An UNSTAMPED event is unconstrained. gameTimeOf returns null for every
+    //    payload written before this wave, so no recorded stream changes
+    //    meaning — this null is what makes the wave additive. It is neither
+    //    checked against the high-water mark nor allowed to advance it.
+    //  - An EQUAL stamp is legal. core.suspend and its core.resume share one
+    //    (§1.2), and so do two penalties awarded at a single whistle. Only a
+    //    strictly earlier stamp throws.
+    const at = gameTimeOf(event.payload);
+    if (at !== null) {
+      if (!phaseOrder.includes(at.period)) phaseOrder.push(at.period);
+      if (highWater !== null && compareGameTime(at, highWater, phaseOrder) < 0) {
+        throw new EngineError(
+          "NON_MONOTONIC_TIME",
+          `event "${event.type}" is stamped ${at.period} ${at.elapsed}s, before the newest accepted stamp ${highWater.period} ${highWater.elapsed}s`,
+          { eventId: event.id, seq: event.seq, at, previous: highWater },
+        );
+      }
+      highWater = at;
     }
     state = module.apply(state, event);
     if (!decided) {
