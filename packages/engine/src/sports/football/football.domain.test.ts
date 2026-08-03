@@ -290,3 +290,126 @@ describe("penalties in open play (Law 14)", () => {
     expect(coarse.map((e) => e.type)).toEqual(["core.start", "football.goal"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Law 12 addendum — temporary dismissals ("sin bins"). The FA runs them at
+// every level below the National League System and throughout youth football;
+// futsal and most small-sided codes use time penalties of the same shape.
+// A sin-binned player leaves the pitch and comes BACK, which no existing
+// branch could express: football.card's non-yellow path sends off for good.
+// ---------------------------------------------------------------------------
+
+describe("temporary dismissals / sin bins (Law 12 addendum)", () => {
+  const bin = (payload: unknown): [string, unknown] => ["football.sinbin", payload];
+  const started = stream(
+    ["core.start"],
+    bin({ by: "H", person: "H-p6", minutes: 10, reason: "dissent", minute: 21 }),
+  );
+
+  it("takes the player off the pitch without sending them off", () => {
+    const state = fold(cfgOf({}), started);
+    expect(state.squads.home.onPitch).not.toContain("H-p6");
+    expect(state.squads.home.sentOff).toEqual([]);
+    expect(state.squads.home.sinBin).toEqual([
+      { person: "H-p6", minutes: 10, reason: "dissent", minute: 21 },
+    ]);
+  });
+
+  it("puts the player back on the pitch on the return record", () => {
+    const state = fold(cfgOf({}), [
+      ...started,
+      makeEnvelope(2, {
+        type: "football.sinbin",
+        payload: { by: "H", person: "H-p6", returned: true, minute: 31 },
+      }),
+    ]);
+    expect(state.squads.home.onPitch).toContain("H-p6");
+    expect(state.squads.home.sinBin).toEqual([]);
+  });
+
+  it("falls back to cfg.sinBinMinutes when the event omits a duration", () => {
+    const state = fold(
+      cfgOf({ sinBinMinutes: 8 }),
+      stream(["core.start"], bin({ by: "A", person: "A-p3" })),
+    );
+    expect(state.squads.away.sinBin).toEqual([{ person: "A-p3", minutes: 8 }]);
+  });
+
+  it("keeps the player optional — an anonymous sin bin is recorded, pitch untouched", () => {
+    const state = fold(cfgOf({}), stream(["core.start"], bin({ by: "H", minute: 12 })));
+    expect(state.squads.home.onPitch).toHaveLength(11);
+    expect(state.squads.home.sinBin).toEqual([{ minute: 12 }]);
+  });
+
+  it("returns the oldest anonymous entry when the return names nobody", () => {
+    const state = fold(cfgOf({}), [
+      ...stream(["core.start"], bin({ by: "H" })),
+      makeEnvelope(2, { type: "football.sinbin", payload: { by: "H", returned: true } }),
+    ]);
+    expect(state.squads.home.sinBin).toEqual([]);
+  });
+
+  it("refuses to bin a player who is not on the pitch", () => {
+    expect(() =>
+      fold(cfgOf({}), stream(["core.start"], bin({ by: "H", person: "A-p6" }))),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
+
+  it("refuses to bin a player who is already in the bin", () => {
+    expect(() =>
+      fold(cfgOf({}), [...started, makeEnvelope(2, { type: "football.sinbin", payload: { by: "H", person: "H-p6" } })]),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
+
+  it("refuses to bin a player who has been sent off", () => {
+    expect(() =>
+      fold(
+        cfgOf({}),
+        stream(
+          ["core.start"],
+          ["football.card", { by: "H", person: "H-p7", color: "red" }],
+          bin({ by: "H", person: "H-p7" }),
+        ),
+      ),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
+
+  it("refuses a return for a player who is not in the bin", () => {
+    expect(() =>
+      fold(
+        cfgOf({}),
+        stream(["core.start"], bin({ by: "H", person: "H-p6", returned: true })),
+      ),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
+
+  it("refuses a sin bin outside a period of play", () => {
+    expect(() => fold(cfgOf({}), stream(bin({ by: "H", person: "H-p6" })))).toThrowError(
+      expect.objectContaining({ code: "WRONG_PHASE" }),
+    );
+  });
+
+  it("lets a sin-binned player be sent off for good while off the pitch", () => {
+    const state = fold(cfgOf({}), [
+      ...started,
+      makeEnvelope(2, { type: "football.card", payload: { by: "H", person: "H-p6", color: "red" } }),
+    ]);
+    expect(state.squads.home.sentOff).toEqual(["H-p6"]);
+  });
+
+  it("is reachable from the attributed fidelity tiers only", () => {
+    const types = (tier: number) =>
+      football.fidelityTiers.find((t) => t.tier === tier)?.eventTypes ?? [];
+    expect(types(2)).toContain("football.sinbin");
+    expect(types(3)).toContain("football.sinbin");
+    expect(types(0)).not.toContain("football.sinbin");
+  });
+
+  it("is dropped by coarsen and stays out of the summary", () => {
+    const none = fold(cfgOf({}), stream(["core.start"]));
+    const some = fold(cfgOf({}), started);
+    expect(football.summary(some)).toEqual(football.summary(none));
+    const coarse = football.coarsen!(started as EventEnvelope<never>[]);
+    expect(coarse.map((e) => e.type)).toEqual(["core.start"]);
+  });
+});
