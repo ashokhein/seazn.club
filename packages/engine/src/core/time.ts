@@ -157,27 +157,28 @@ export function formatElapsed(seconds: number): string {
 // mm:ss with the seconds field always two digits — "1:5" is ambiguous (five
 // seconds? fifty?) and is rejected rather than guessed.
 const MMSS = /^(\d+):([0-5]\d)$/;
-const BARE = /^\d+$/;
 
 /**
- * `"12:41" | "1:05" | "761"` → seconds; anything else → `null`. Never throws:
- * this is the manual-entry input path (§4), so junk is an expected input, not
- * an exceptional one.
+ * `"12:41" | "1:05"` → seconds; anything else, including a bare number →
+ * `null`. Never throws: this is the manual-entry input path (§4), so junk is an
+ * expected input, not an exceptional one.
+ *
+ * A BARE NUMBER IS DELIBERATELY REJECTED. `"90"` used to parse as 90 seconds,
+ * but football's legacy display field is literally called `minute`
+ * (`football.ts:124`), so a scorer typing 90 into a pad's minute box means
+ * minute 90 — and a pad wiring this helper to that box recorded 1:30 as 90:00.
+ * A 60x error that validates cleanly, folds cleanly, and is invisible in state
+ * is worse than a rejected input, and the unit has to travel in the text for
+ * the helper to know which one was meant. A pad offering minute-only entry
+ * multiplies by 60 itself, where the unit is unambiguous (§4).
  */
 export function parseElapsed(text: string): number | null {
   if (typeof text !== "string") return null;
-  const trimmed = text.trim();
-  const mmss = MMSS.exec(trimmed);
-  if (mmss) {
-    // Both groups are digit-only, so Number() cannot be NaN here.
-    const seconds = Number(mmss[1]) * 60 + Number(mmss[2]);
-    return Number.isSafeInteger(seconds) ? seconds : null;
-  }
-  if (BARE.test(trimmed)) {
-    const seconds = Number(trimmed);
-    return Number.isSafeInteger(seconds) ? seconds : null;
-  }
-  return null;
+  const mmss = MMSS.exec(text.trim());
+  if (!mmss) return null;
+  // Both groups are digit-only, so Number() cannot be NaN here.
+  const seconds = Number(mmss[1]) * 60 + Number(mmss[2]);
+  return Number.isSafeInteger(seconds) ? seconds : null;
 }
 
 /**

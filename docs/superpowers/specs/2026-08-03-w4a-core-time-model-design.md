@@ -119,15 +119,18 @@ export const GameTime = z.strictObject({
 export type GameTime = z.infer<typeof GameTime>;
 ```
 
-Helpers, all pure and total:
+Helpers, all pure. Three are deliberately **not total** — they throw rather than
+coerce, because in each case the coerced value was silently wrong (an expiry at
+the period start, a "period over" reading for an unknown period length) rather
+than merely imprecise:
 
 | Export | Behaviour |
 |---|---|
 | `compareGameTime(a, b, phaseOrder)` | `-1 \| 0 \| 1`. Phase index first, then `elapsed`. Throws `UNKNOWN_PHASE` for a period not in `phaseOrder`. |
-| `addDuration(at, seconds)` | `{ period, elapsed: elapsed + seconds }`. Never rolls into the next period — see §3.2. |
-| `remainingOf(at, periodSeconds)` | `max(0, periodSeconds − elapsed)`. Pad display. |
+| `addDuration(at, seconds)` | `{ period, elapsed: elapsed + seconds }`. Never rolls into the next period — see §3.2. Throws `INVALID_EVENT` for a negative or non-finite duration. |
+| `remainingOf(at, periodSeconds)` | `max(0, periodSeconds − elapsed)`. Pad display. Throws `INVALID_EVENT` for a non-finite `periodSeconds`. |
 | `formatElapsed(seconds)` | `"12:41"`, `"125:30"` past the hour. Minutes unbounded. |
-| `parseElapsed(text)` | `"12:41" \| "1:05" \| "761"` → seconds, else `null`. |
+| `parseElapsed(text)` | `"12:41" \| "1:05"` → seconds, else `null`. **`mm:ss` only** — see §4. |
 | `gameTimeOf(payload)` | Structural safe-parse for the core guard. `GameTime \| null`. |
 
 `formatElapsed`/`parseElapsed` are the migration path off free-text `clockRef`
@@ -221,7 +224,7 @@ is therefore a pad input mode, not an engine feature, and the majority of real
 clubs will use it (paper sheet keyed in after the match; arena board read by
 eye).
 
-It has exactly two consequences for this spec:
+It has exactly three consequences for this spec:
 
 1. **`periodSeconds` is required whenever the pad offers remaining-basis
    entry.** `07:19 remaining` cannot be converted to `elapsed 761` without it.
@@ -229,6 +232,13 @@ It has exactly two consequences for this spec:
    obligation for W5, not an engine constraint.
 2. **`NON_MONOTONIC_TIME` (§3.3) exists because of it.** The timer path could
    never produce a backwards stamp.
+3. **`parseElapsed` accepts `mm:ss` only, and the pad owns the unit.** A bare
+   number is rejected. `"90"` as 90 seconds is a 60x hazard the moment a pad
+   wires the helper to a minute box — and football's legacy field is literally
+   named `minute` (§5.2), so that box exists. A pad offering minute-only entry
+   multiplies by 60 itself, where the unit is unambiguous; a pad offering
+   free-text entry formats to `mm:ss` first. Recorded as a `PadSpec` obligation
+   for W5 alongside `periodSeconds`.
 
 Correcting a stamp uses the existing `voids` machinery on the envelope. No new
 mechanism.
@@ -384,17 +394,21 @@ corpus will not catch, because it only replays what was recorded.
 
 ## 6. What W5 inherits
 
-Three obligations recorded here so `PadSpec` (#416) does not have to rediscover
+Four obligations recorded here so `PadSpec` (#416) does not have to rediscover
 them:
 
 1. A pad that offers remaining-basis manual entry **must** declare
-   `periodSeconds` (§4).
-2. A pad rendering a countdown **must** show what the fold is folded *as of*
+   `periodSeconds` (§4). `remainingOf` throws rather than pretending an unknown
+   period length is a finished period.
+2. A pad **must** convert to seconds itself for any minute-basis input;
+   `parseElapsed` takes `mm:ss` only (§4).
+3. A pad rendering a countdown **must** show what the fold is folded *as of*
    (`asOf`), because the pad and the fold legitimately disagree between an
    expiry and the next event (§3.1). Without it a scorer reads a stale strength
    chip as a bug.
-3. A pad **must** submit stamps in non-decreasing order or handle
-   `NON_MONOTONIC_TIME` (§3.3).
+4. A pad **must** submit stamps in non-decreasing order or handle
+   `NON_MONOTONIC_TIME` (§3.3). Correcting a stamp is void + re-append, in that
+   order (§4).
 
 Working models, both implementing the proposed fold for real:
 

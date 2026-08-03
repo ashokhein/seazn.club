@@ -188,9 +188,15 @@ describe("parseElapsed", () => {
     expect(parseElapsed("0:00")).toBe(0);
   });
 
-  it("accepts bare seconds", () => {
-    expect(parseElapsed("761")).toBe(761);
-    expect(parseElapsed("0")).toBe(0);
+  it("REJECTS a bare number — it is a 60x hazard, not a convenience", () => {
+    // "90" was 90 SECONDS. Football's legacy display field is literally called
+    // `minute` (football.ts:124), so a scorer typing 90 into a pad's minute box
+    // means minute 90 — and a pad wiring this helper to that box recorded 1:30
+    // as 90:00, a 60x error that validates cleanly and is invisible in state.
+    // The unit has to be in the input, so mm:ss is now the only accepted form.
+    expect(parseElapsed("761")).toBeNull();
+    expect(parseElapsed("90")).toBeNull();
+    expect(parseElapsed("0")).toBeNull();
   });
 
   it("round-trips with formatElapsed", () => {
