@@ -12,8 +12,8 @@ import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
-import { buildCompetitionPack, COMPETITION_MOVABLE_CAP } from "../competition-schedule-ai";
-import { buildSchedulePack, OTHER_DIVISION_LABEL } from "../schedule-ai";
+import { buildCompetitionPack, COMPETITION_MOVABLE_CAP, verifyJoint } from "../competition-schedule-ai";
+import { buildSchedulePack, isBlocking, OTHER_DIVISION_LABEL } from "../schedule-ai";
 import { seedOrg } from "./_seed";
 
 // A pass-through spy over the real implementation — it changes no behaviour and
@@ -120,6 +120,11 @@ async function seedCompetition(
   compName: string,
   specs: DivSpec[],
 ): Promise<{ competitionId: string; divisions: SeededDivision[] }> {
+  // The joint pack's ONE clock is the ORGANISATION zone (#397). These boards
+  // have always been London boards — they just said so on the division rows.
+  // Saying it on the org row keeps every existing offset assertion true, so the
+  // W2 diff is the four added fields and not a re-render of the whole pack.
+  await sql`update organizations set timezone = ${TZ} where id = ${auth.orgId}`;
   const comp = await createCompetition(auth, { name: compName, visibility: "public", branding: {} });
   const divisions: SeededDivision[] = [];
   for (const spec of specs) {
@@ -836,4 +841,105 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
       buildCompetitionPack(auth, comp.id, [a, b], { now: NOW_W2, mode: "generate", instruction: "x" }),
     ).rejects.toMatchObject({ status: 409, code: "AI_PLAN_TOO_LARGE" });
   }, 120_000);
+});
+
+// ===========================================================================
+// W2 (#397) — the joint calendar anchor
+// ===========================================================================
+
+describe.skipIf(!HAS_DB)("joint pack calendar anchor (#397)", () => {
+  it("resolves ONE clock and ONE window across divisions in different zones", async () => {
+    // Under the one-clock decision the ORG zone wins for every division,
+    // whatever each division's own tz says (design §2.1).
+    const { auth } = await seedOrg("pro");
+    const { competitionId, divisions } = await seedCompetition(auth, "TZ Cup", BOARD.slice(0, 2));
+    await sql`
+      update schedule_settings set tz = 'America/New_York'
+      where division_id = ${divisions[1]!.id}`;
+
+    const { pack } = await buildCompetitionPack(
+      auth,
+      competitionId,
+      divisions.map((d) => d.id),
+      { now: NOW_W2, mode: "generate", instruction: "x" },
+    );
+
+    expect(pack.tz).toBe(TZ);
+    expect(pack.clock.today).toBe("2026-08-07");
+    expect(pack.sessionHours).toEqual({ start: "08:00", end: "22:00" });
+    // Divisions keep their own tz as a display label…
+    expect(pack.divisions.map((d) => d.tz)).toEqual([TZ, "America/New_York"]);
+    // …and every instant in the pack is nonetheless written in the org zone.
+    for (const d of pack.draft) {
+      if (d.scheduled_at !== null) expect(d.scheduled_at).toMatch(/\+01:00$/);
+    }
+    for (const o of pack.fixtures.obstacles) expect(o.from).toMatch(/\+01:00$/);
+    // ONE window for the run, not one per division.
+    expect(pack.window.start).toBe("2026-08-01T00:00:00+01:00");
+  });
+
+  it("spans the window across every selected division's board", async () => {
+    // Bravo starts four hours after Alpha and Charlie eight; the window is the
+    // union, so no division is asked to fit inside another's day.
+    const { auth } = await seedOrg("pro");
+    const { competitionId, divisions } = await seedCompetition(auth, "Span Cup", BOARD);
+    const { pack } = await buildCompetitionPack(
+      auth,
+      competitionId,
+      divisions.map((d) => d.id),
+      { now: NOW_W2, mode: "generate", instruction: "x" },
+    );
+    const startMs = Date.parse(pack.window.start);
+    const endMs = Date.parse(pack.window.end);
+    for (const d of pack.draft) {
+      if (d.scheduled_at === null) continue;
+      expect(Date.parse(d.scheduled_at)).toBeGreaterThanOrEqual(startMs);
+      expect(Date.parse(d.scheduled_at)).toBeLessThanOrEqual(endMs);
+    }
+  });
+
+  it("verifies every division against the SHARED window", async () => {
+    const { auth } = await seedOrg("pro");
+    const { competitionId, divisions } = await seedCompetition(auth, "Win Cup", BOARD.slice(0, 2));
+    const { pack } = await buildCompetitionPack(
+      auth,
+      competitionId,
+      divisions.map((d) => d.id),
+      { now: NOW_W2, mode: "generate", instruction: "x" },
+    );
+    const target = pack.fixtures.movable[0]!;
+    const conflicts = verifyJoint(
+      {
+        assignments: [
+          {
+            fixture_id: target.id,
+            scheduled_at: "2027-03-01T10:00:00+00:00",
+            court_label: pack.courts[0]!,
+          },
+        ],
+        unschedulable: [],
+        summary: "",
+        assumptions: [],
+      } as unknown as Parameters<typeof verifyJoint>[0],
+      pack,
+    );
+    const windowed = conflicts.filter((c) => c.reason === "window");
+    expect(windowed).toHaveLength(1);
+    expect(windowed[0]!.fixtureId).toBe(target.id);
+    // Warn-only until W4 (#399) makes it delta-blocking.
+    expect(windowed.some(isBlocking)).toBe(false);
+  });
+
+  it("is byte-identical for two joint builds at the same injected instant", async () => {
+    const { auth } = await seedOrg("pro");
+    const { competitionId, divisions } = await seedCompetition(auth, "Det Cup", BOARD.slice(0, 2));
+    const ids = divisions.map((d) => d.id);
+    const a = await buildCompetitionPack(auth, competitionId, ids, {
+      now: NOW_W2, mode: "generate", instruction: "x",
+    });
+    const b = await buildCompetitionPack(auth, competitionId, ids, {
+      now: NOW_W2, mode: "generate", instruction: "x",
+    });
+    expect(JSON.stringify(a.pack)).toBe(JSON.stringify(b.pack));
+  });
 });

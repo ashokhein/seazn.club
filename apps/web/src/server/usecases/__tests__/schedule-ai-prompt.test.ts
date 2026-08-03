@@ -299,22 +299,21 @@ describe("JOINT_RULES (issue #350)", () => {
     expect(j5).toMatch(/still (has to|have to|must)|OUTPUT accounting|accounted for/i);
   });
 
-  it("J6 tells the model divisions may differ in timezone — compare instants", () => {
+  it("J6 tells the model there is ONE clock, and names it", () => {
+    // Rewritten, not extended (#397, design §2.1). The old J6 told the model
+    // each division's times were written in that division's own zone and that
+    // it had to compare instants rather than strings. Under one organisation
+    // clock that instruction is wrong, and a model acting on it would convert
+    // times that need no conversion.
     const j6 = rule("J6.", "J7.");
     expect(j6.length).toBeGreaterThan(0);
-    expect(j6).toMatch(/timezone/i);
-    expect(j6).toMatch(/instants,? not strings/i);
-    // Name the fields that actually carry a time. PackObstacle is
-    // {court, from, to, label} — it has no scheduled_at, so citing one there
-    // sends the model looking for a field that does not exist.
+    expect(j6).toMatch(/one clock/i);
+    expect(j6).toContain("tz");
     expect(j6).toContain("scheduled_at");
-    expect(j6).toContain("from/to");
-    // A foreign obstacle (division_id: null) is re-rendered in canonicalTz —
-    // divisions[0].tz — NOT in "its own division's" zone, which it has none of.
-    expect(j6).toMatch(/null division_id/);
-    expect(j6).toMatch(/first listed division/i);
-    // …and which zone to EMIT in, since SYSTEM_PROMPT:33's "the division
-    // timezone" is singular and becomes per-fixture in joint mode.
-    expect(j6).toMatch(/write each assignment/i);
+    expect(j6).toMatch(/window/i);
+    // The claims that are no longer true must be GONE, not merely contradicted.
+    expect(j6).not.toMatch(/different timezones/i);
+    expect(j6).not.toMatch(/first listed division/i);
+    expect(j6).not.toMatch(/instants,? not strings/i);
   });
 });
