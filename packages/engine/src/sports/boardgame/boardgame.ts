@@ -43,8 +43,34 @@ export const BoardgameCfg = z.object({
   byeScore: z.number().int().nonnegative().default(2),
   // Clock family — metadata only, no scoring effect (chess.md §2).
   variant: z.enum(["classical", "rapid", "blitz"]).default("classical"),
+  // Time control. Still metadata only: the board game has no clock in the fold,
+  // the engine never reads a clock inside a fold, and none of these fields
+  // changes any fold behaviour. What they record is WHICH control was in force,
+  // so a pad can drive the right countdown (W4a §5.5).
+  //
+  // `increment` and `delay` are two DIFFERENT clocks, and they are independent
+  // knobs — a control may carry both, either, or neither:
+  //
+  //   increment  Fischer. When the move is completed, `increment` is ADDED to
+  //              that player's clock. Time not used on the move is BANKED and
+  //              accumulates over the game. ("90+30")
+  //   delay      Bronstein / simple (US) delay. The clock is WITHHELD for
+  //              `delay` at the start of the move and only starts running once
+  //              it elapses. Unused delay is NOT banked — it does not carry to
+  //              the next move, so the base time can only ever go down. ("G/5 d3")
+  //   neither    Sudden death: `base` for the whole game.
+  //
+  // `increment` and `delay` are in the same unit as `base`. Both optional with
+  // NO default — cfg is serialised into the frozen golden state strings (§8),
+  // and `increment` was widened to optional so a delay-only or sudden-death
+  // control is expressible without inventing a zero increment that reads as a
+  // deliberate Fischer setting.
   clock: z
-    .object({ base: z.number().int().nonnegative(), increment: z.number().int().nonnegative() })
+    .object({
+      base: z.number().int().nonnegative(),
+      increment: z.number().int().nonnegative().optional(),
+      delay: z.number().int().nonnegative().optional(),
+    })
     .optional(),
 });
 export type BoardgameCfg = z.infer<typeof BoardgameCfg>;

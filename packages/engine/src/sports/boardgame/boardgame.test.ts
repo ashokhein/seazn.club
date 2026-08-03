@@ -269,5 +269,65 @@ describe("boardgame: event union stays unambiguous", () => {
   });
 });
 
+// W4a §5.5 — the time control is metadata, but INCREMENT and DELAY are two
+// different clocks and a pad that conflates them counts down wrongly:
+// increment BANKS unused time, delay does not. They are independent knobs, so
+// each of the four combinations has to survive a parse.
+describe("boardgame: increment and delay are independent clock facts", () => {
+  const clockOf = (clock: unknown) => boardgame.configSchema.parse({ clock }).clock;
+
+  it("round-trips a delay, and does not silently drop it", () => {
+    // z.object STRIPS unknown keys, so an unmodelled `delay` parses "fine" and
+    // vanishes — the assertion has to be on the round-tripped value.
+    expect(clockOf({ base: 900, increment: 10, delay: 5 })).toEqual({
+      base: 900,
+      increment: 10,
+      delay: 5,
+    });
+  });
+
+  it("accepts a delay-only control (US delay: nothing is banked)", () => {
+    const clock = clockOf({ base: 300, delay: 3 });
+    expect(clock).toEqual({ base: 300, delay: 3 });
+    expect(clock?.increment).toBeUndefined();
+  });
+
+  it("accepts an increment-only control (Fischer: unused time is banked)", () => {
+    const clock = clockOf({ base: 180, increment: 2 });
+    expect(clock).toEqual({ base: 180, increment: 2 });
+    expect(clock?.delay).toBeUndefined();
+  });
+
+  it("accepts a control with neither (sudden death)", () => {
+    expect(clockOf({ base: 5400 })).toEqual({ base: 5400 });
+  });
+
+  it("refuses a negative or fractional delay", () => {
+    // `increment` is supplied so the ONLY thing that can reject these is the
+    // delay itself — otherwise a stripped `delay` plus a missing `increment`
+    // fails the parse and the test passes without modelling anything.
+    const bad = (delay: number) =>
+      boardgame.configSchema.safeParse({ clock: { base: 300, increment: 0, delay } }).success;
+    expect(bad(-1)).toBe(false);
+    expect(bad(1.5)).toBe(false);
+  });
+
+  // The additive proof at cfg level (§8): cfg is serialised into the frozen
+  // golden state strings, so a DEFAULT on any clock field would re-baseline
+  // all eleven goldens. This passed before the change and must keep passing.
+  it("leaves a cfg with no clock byte-identical", () => {
+    const parsed = boardgame.configSchema.parse({});
+    expect(Object.keys(parsed).sort()).toEqual(["byeScore", "colors", "scoring", "variant"]);
+    expect(JSON.stringify(parsed)).toBe(
+      JSON.stringify({
+        scoring: { win: 2, draw: 1, loss: 0 },
+        colors: true,
+        byeScore: 2,
+        variant: "classical",
+      }),
+    );
+  });
+});
+
 // PROMPT-07 acceptance — conformance green.
 conformanceSuite(boardgame);
