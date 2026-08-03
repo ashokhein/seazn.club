@@ -121,10 +121,24 @@ export function addDuration(at: GameTime, seconds: number): GameTime {
 
 /**
  * Seconds left in the period, floored at zero. Pad display only —
- * `periodSeconds` is a SOFT bound the fold never enforces (§1.3).
+ * `periodSeconds` is a SOFT bound the fold never enforces (§1.3), so a stamp
+ * past the nominal length reads `0`, not a negative.
+ *
+ * THROWS `INVALID_EVENT` for a non-finite `periodSeconds`. `NaN` used to return
+ * `0`, which a pad draws as "0:00 — period over"; an UNKNOWN period length is
+ * not a finished period, and collapsing the two into one reading is how a
+ * scorer comes to trust a clock that is not running. `Infinity` used to pass
+ * straight through unguarded. A pad that does not know the period length must
+ * not call this at all — §6 obligation 1 is exactly that declaration.
  */
 export function remainingOf(at: GameTime, periodSeconds: number): number {
-  return Math.max(0, Math.trunc(periodSeconds || 0) - at.elapsed);
+  if (!Number.isFinite(periodSeconds)) {
+    throw new EngineError("INVALID_EVENT", `period length must be a finite number of seconds, got ${String(periodSeconds)}`, {
+      periodSeconds,
+      at,
+    });
+  }
+  return Math.max(0, Math.trunc(periodSeconds) - at.elapsed);
 }
 
 /**

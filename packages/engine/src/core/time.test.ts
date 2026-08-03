@@ -134,6 +134,30 @@ describe("remainingOf", () => {
     // §1.3 — football's 90+3 overruns the nominal length; never negative.
     expect(remainingOf({ period: "H2", elapsed: 2880 }, 2700)).toBe(0);
   });
+
+  it("THROWS on a non-finite period length rather than rendering 'period over'", () => {
+    // NaN returned 0, which a pad draws as "0:00 — period over". An unknown
+    // period length is not a finished period, and the two must not collapse
+    // into the same reading. Infinity passed straight through unguarded, so
+    // the previous "coerces non-finite" claim held for neither direction.
+    for (const periodSeconds of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      let caught: unknown;
+      try {
+        remainingOf({ period: "P2", elapsed: 761 }, periodSeconds);
+        expect.unreachable(`remainingOf should have rejected ${String(periodSeconds)}`);
+      } catch (err) {
+        caught = err;
+      }
+      expect(EngineError.is(caught, "INVALID_EVENT")).toBe(true);
+    }
+    expect(() =>
+      remainingOf({ period: "P2", elapsed: 761 }, undefined as unknown as number),
+    ).toThrow(EngineError);
+  });
 });
 
 describe("formatElapsed", () => {
