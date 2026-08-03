@@ -259,3 +259,103 @@ describe("SPEC-1 discipline reaches every sanction-bearing family (W4 item 7)", 
     }
   });
 });
+
+// W4 review — `DisciplineCard.entrantSide` is the OFFENDER's side in every
+// other producer (football, the period kernel, setbased, nested all pass the
+// sanctioned side's `by`), so `personId` is always a member of `entrantSide`.
+// Carrom passed `entrantId`, which is the side whose SCORE MOVED — and a
+// positive delta credits the opponent, so an attributed penalty named the
+// offender against the side he plays AGAINST. W5's pad groups discipline by
+// side, so a card filed under the opponent is a card shown to the wrong team.
+describe("carrom resolves the offending side, not the side that gained (W4)", () => {
+  const adjust = (payload: Record<string, unknown>, seq: number): EventEnvelope =>
+    makeEnvelope(seq, { type: "carrom.game.adjust", payload }) as EventEnvelope;
+
+  // extractCards is handed EVENTS, never lineups, so both entrants have to be
+  // visible in the ledger before an opponent can be named at all.
+  const twoSided = (payload: Record<string, unknown>): EventEnvelope[] => [
+    makeEnvelope(0, { type: "carrom.toss", payload: { firstBreak: "H" } }) as EventEnvelope,
+    makeEnvelope(1, {
+      type: "carrom.board.summary",
+      payload: { winner: "A", opponentCoinsLeft: 3, queenTo: null },
+    }) as EventEnvelope,
+    adjust(payload, 2),
+  ];
+
+  const only = (ledger: EventEnvelope[]) => carrom.discipline!.extractCards(ledger)[0];
+
+  it("credits to the opponent ⇒ the OTHER entrant committed the foul", () => {
+    // The umpire awarded A two points because H fouled. The card is H's.
+    expect(
+      only(twoSided({ entrantId: "A", delta: 2, reason: "Law 55 penalty", person: "H-p1" })),
+    ).toEqual({
+      personId: "H-p1",
+      entrantSide: "H",
+      color: "penalty",
+      eventId: "e-2",
+      reason: "Law 55 penalty",
+    });
+  });
+
+  it("a deduction still names the side the umpire docked", () => {
+    // delta < 0: the docked side IS the offender, so the opponent lookup must
+    // not fire even though an opponent is resolvable here.
+    expect(
+      only(twoSided({ entrantId: "H", delta: -1, reason: "Law 51 due", person: "H-p1" })),
+    ).toMatchObject({ personId: "H-p1", entrantSide: "H" });
+  });
+
+  it("an explicit offendingEntrantId beats the sign of the delta", () => {
+    // A deduction the umpire wrote against the OTHER side's foul (Law 51 due
+    // coins are returned by the offender, not always docked from him).
+    expect(
+      only(
+        twoSided({
+          entrantId: "H",
+          delta: -1,
+          reason: "Law 51 due",
+          offendingEntrantId: "A",
+          person: "A-p2",
+        }),
+      ),
+    ).toMatchObject({ personId: "A-p2", entrantSide: "A" });
+    // …and it beats the opponent lookup on a credit too.
+    expect(
+      only(
+        twoSided({
+          entrantId: "A",
+          delta: 2,
+          reason: "self-reported",
+          offendingEntrantId: "A",
+          person: "A-p1",
+        }),
+      ),
+    ).toMatchObject({ personId: "A-p1", entrantSide: "A" });
+  });
+
+  it("drops the person rather than assert him against an unreconciled side", () => {
+    // A one-event ledger names one entrant, so the opponent is unknowable. The
+    // row is still projected — it happened — but nothing is claimed about who.
+    const card = only([adjust({ entrantId: "A", delta: 2, reason: "Law 55 penalty", person: "H-p1" }, 0)]);
+    expect(card).toEqual({
+      entrantSide: "A",
+      color: "penalty",
+      eventId: "e-0",
+      reason: "Law 55 penalty",
+    });
+    expect(Object.hasOwn(card as object, "personId")).toBe(false);
+  });
+
+  it("keeps the invariant every other producer already holds", () => {
+    // The whole point: personId belongs to entrantSide. `H-p1` is H's player,
+    // so no projected card may file him under A.
+    for (const payload of [
+      { entrantId: "A", delta: 2, reason: "r", person: "H-p1" },
+      { entrantId: "H", delta: -1, reason: "r", person: "H-p1" },
+      { entrantId: "A", delta: 3, reason: "r", person: "H-p1", offendingEntrantId: "H" },
+    ]) {
+      const card = only(twoSided(payload));
+      expect(card?.entrantSide, JSON.stringify(payload)).toBe("H");
+    }
+  });
+});

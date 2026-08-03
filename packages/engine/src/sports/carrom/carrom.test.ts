@@ -376,9 +376,31 @@ describe("carrom: event union stays unambiguous", () => {
     const toss = { firstBreak: "H" };
     const board = { winner: "H", opponentCoinsLeft: 5, queenTo: null, breaker: "H-p1" };
     const adjust = { entrantId: "H", delta: -1, reason: "foul", person: "H-p1" };
-    for (const payload of [toss, board, adjust]) {
+    // W4 review — the adjust branch was WIDENED with `offendingEntrantId`, and
+    // z.union takes the first branch that parses, so the fully attributed shape
+    // has to round-trip too: zod strips a key a narrower branch never declared,
+    // silently, and only an equality round-trip can see it.
+    const attributed = { ...adjust, offendingEntrantId: "A" };
+    for (const payload of [toss, board, adjust, attributed]) {
       expect(carrom.eventSchema.parse(payload)).toEqual(payload);
     }
+    // …and the widened branch must not have started swallowing its siblings.
+    expect(carrom.eventSchema.parse(toss)).toEqual(toss);
+    expect(carrom.eventSchema.safeParse({ entrantId: "H", offendingEntrantId: "A" }).success).toBe(
+      false,
+    );
+  });
+
+  it("takes an offending side without moving the score", () => {
+    // The offender is a DISCIPLINE fact; the delta is the score fact. Naming
+    // the first must not change the second.
+    const events = (extra: Record<string, unknown>): Array<[string, unknown]> => [
+      ["carrom.game.adjust", { entrantId: "H", delta: 2, reason: "Law 55 penalty", ...extra }],
+    ];
+    const plain = fold(stream(["core.start"], ...events({})));
+    const named = fold(stream(["core.start"], ...events({ offendingEntrantId: "A" })));
+    expect(named.games[0]!.score).toEqual(plain.games[0]!.score);
+    expect(named.penalties).toBeUndefined();
   });
 
   it("folds a canonical payload of each branch to that branch's effect", () => {
