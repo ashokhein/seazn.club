@@ -1952,6 +1952,75 @@ export const AiCompetitionPlanResponse = z.object({
 });
 export type AiCompetitionPlanResponse = z.infer<typeof AiCompetitionPlanResponse>;
 
+// ---------------------------------------------------------------------------
+// W5 (#400) — the parse-only preview that precedes either run
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /divisions/{id}/schedule/ai-preview and
+ * POST /competitions/{id}/schedule/ai-preview.
+ *
+ * One request body for both routes. It runs stage 1 ONLY — the instruction
+ * compile — and returns what was compiled without spending a credit or calling
+ * the architect, so the organiser can see the rules before paying for a run
+ * against them. Declining is a client no-op.
+ */
+export const AiParsePreviewRequest = z.object({
+  instruction: z.string().min(1).max(2000),
+  /** Joint route only: the divisions in scope, so the resolver reads the same
+   *  window the run will. Omitted on the single-division route, where the
+   *  division is the path parameter. */
+  division_ids: z.array(Uuid).optional(),
+  /** Single-division route only. Advisory, exactly as on {@link AiPlanRequest} —
+   *  it is here so the affordability refusal below prices the SAME run the
+   *  confirm will start. Without it a rung-3 run would be previewed against a
+   *  rung-1 floor and an org that cannot pay would be compiled for anyway. */
+  rung: RungLiteral.optional(),
+  /** Joint route only. The twin of `rung`, per {@link AiCompetitionPlanRequest}. */
+  rung_overrides: z.record(Uuid, RungLiteral).optional(),
+});
+export type AiParsePreviewRequest = z.infer<typeof AiParsePreviewRequest>;
+
+export const AiParsePreviewResponse = z.object({
+  /** Reuse token for the run. ABSENT when the compile failed schema twice —
+   *  there is nothing to confirm then, only a fallback to choose. */
+  preview_id: Uuid.optional(),
+  /** True when stage 1 failed schema twice. The client must offer the explicit
+   *  preference fallback and must NEVER fall back on its own: presenting a rule
+   *  as enforced while nothing enforces it is the failure this wave closes. */
+  failed: z.boolean(),
+  compiled: z.object({
+    /** Engine constraints, already resolved against the org clock — the rules
+     *  the referee will actually check. */
+    hard: z.array(HardConstraint),
+    soft: z.array(
+      z.object({ note: z.string(), weight: z.union([z.literal(1), z.literal(2), z.literal(3)]) }),
+    ),
+    /** Verbatim. Never converted into a rule. Carries the whole instruction back
+     *  when `failed` is true, so the card always has something honest to show. */
+    unparsed: z.array(z.string()),
+    /** RESOLVER assumptions (stage 1, deterministic, pre-credit) — how we read
+     *  the window and the weekdays. NOT the architect's own assumptions, which
+     *  are stage 2 and ride on the plan response. The two are different arrays
+     *  and must never be merged. */
+    assumptions: z.array(z.string()),
+  }),
+  /** The calendar window the INSTRUCTION stated, in the org timezone, as
+   *  YYYY-MM-DD — null when it stated none.
+   *
+   *  Null rather than the run's default window on purpose: the default is
+   *  computed by the pack builder from settings, already-scheduled instants and
+   *  session windows, and there is exactly one writer of it
+   *  (`buildSchedulePack`). Recomputing a second copy here to fill this field
+   *  would be a renderer that can drift from the one the run uses. */
+  window: z.object({ start: z.string(), end: z.string(), tz: z.string() }).nullable(),
+  /** When this preview stops being reusable. A stale preview is stale by
+   *  wall-clock as well as by content: the org's clock may have crossed a day
+   *  boundary, and "tomorrow" with it. */
+  expires_at: IsoDateTime,
+});
+export type AiParsePreviewResponse = z.infer<typeof AiParsePreviewResponse>;
+
 /**
  * GET /competitions/{id}/schedule/ai-last — the joint mirror of
  * {@link AiLastResult}, field for field.

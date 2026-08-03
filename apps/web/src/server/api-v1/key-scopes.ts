@@ -84,6 +84,11 @@ const RULES: RouteRule[] = [
   // written — but it SPENDS AI CREDITS off the org wallet, so it sits at manage
   // with the other mutations, exactly like the per-division ai-plan.
   { method: "POST", path: "/competitions/:id/schedule/ai-plan", scope: "manage", pin: "competition" },
+  // W5 (#400). Spends no credit, but it makes an LLM call on our account, burns
+  // a slot in the run's rate-limit bucket and writes a durable preview row a
+  // later run executes from — so `manage`, exactly like the ai-plan it gates.
+  // Read-scoping it would let a read-only key drive our token spend.
+  { method: "POST", path: "/competitions/:id/schedule/ai-preview", scope: "manage", pin: "competition" },
   { method: "GET", path: "/competitions/:id/schedule/ai-last", scope: "read", pin: "competition" },
   // …and the atomic apply of what it planned: a WRITE across every selected
   // division, so `manage`, pinned to the competition that owns them.
@@ -120,6 +125,9 @@ const RULES: RouteRule[] = [
   { method: "PUT", path: "/divisions/:id/schedule-settings", scope: "manage", pin: "division" },
   { method: "GET", path: "/divisions/:id/schedule/report", scope: "read", pin: "division" },
   { method: "POST", path: "/divisions/:id/schedule/ai-plan", scope: "manage", pin: "division" },
+  // W5 (#400) — see the competition twin above for why the parse-only preview
+  // is `manage` and not `read`.
+  { method: "POST", path: "/divisions/:id/schedule/ai-preview", scope: "manage", pin: "division" },
   { method: "GET", path: "/divisions/:id/schedule/ai-last", scope: "read", pin: "division" },
   { method: "POST", path: "/divisions/:id/schedule/validate", scope: "read", pin: "division" },
   { method: "GET", path: "/divisions/:id/stages", scope: "read", pin: "division" },

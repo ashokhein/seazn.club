@@ -1,0 +1,336 @@
+import "server-only";
+// W5 (#400) — the parse-only preview that precedes an AI schedule run.
+//
+// Until now the organiser typed a sentence and the next thing that happened was
+// a credit leaving the wallet. What their words had actually compiled into was
+// only visible AFTER the architect had run against it. This endpoint splits
+// that in two: it runs stage 1 (the instruction compile, W3/#398) and stops,
+// returning the rules, the preferences, the wording nobody could compile and
+// the readings the resolver had to pick. The run is a second, deliberate
+// request.
+//
+// Three properties make that split honest, and each is asserted by
+// __tests__/schedule-ai-preview.test.ts:
+//
+//   1. NOTHING IS SPENT. No `spendCredit`, no architect call. Walking away
+//      costs the organiser nothing, which is the entire point — a confirm gate
+//      that had already charged would be a receipt, not a gate.
+//   2. UNPRICED IS NOT FREE. An org that cannot pay for the run this precedes is
+//      refused HERE, with the run's own 402, before we spend our tokens
+//      compiling for it. The bound is `minimumCredits`, never `balance > 0`: a
+//      3-credit wallet and a 4-credit joint run walk straight through the
+//      latter.
+//   3. THE SPEND IS VISIBLE. The compile costs real output tokens outside any
+//      credit budget, so it is stamped on the ledger under the SAME
+//      `parse_tokens` / `parse_failed` field names a run stamps
+//      (lib/ai-rung.ts RunMeterStamp) — one vocabulary, not two.
+//
+// The gate ORDER below mirrors `aiPlanForDivision` / `aiPlanForCompetition`
+// deliberately: kill switch → paid gate → frozen → rate limit → affordability →
+// compile. A preview that refused later than the run does would tell the
+// organiser a run is possible and then refuse it at confirm; one that refused
+// earlier would hide a run that would in fact have gone through.
+//
+// The rate-limit bucket is SHARED with the run, unchanged, because the preview
+// IS the LLM call the limit exists to bound. A second bucket would double the
+// abuse surface it was sized for (#391).
+import { createHash, randomUUID } from "node:crypto";
+import { dayKeyInTz, makeClock, type HardConstraint } from "@seazn/engine/scheduling";
+import { HttpError, PaymentRequiredError } from "@/lib/errors";
+import { balance, walletIdFor } from "@/lib/credits";
+import { minimumCredits } from "@/lib/ai-rung";
+import { rateLimit } from "@/lib/rate-limit";
+import { isServerFeatureEnabled } from "@/lib/posthog-server";
+import { requireFeature } from "@/lib/entitlements";
+import { withTenant } from "@/lib/db";
+import type { AuthCtx } from "@/server/api-v1/auth";
+import type { AiParsePreviewRequest, AiParsePreviewResponse } from "@/server/api-v1/schemas";
+import { parseInstruction, resolveParsed } from "@/server/usecases/schedule-ai-parse";
+import { assertCompetitionNotFrozen } from "./entitlement-freeze";
+import { MOVABLE_STATUS } from "./schedule";
+import { resolveVenueTz } from "@/lib/tz";
+
+/** Which endpoint asked. A preview is only ever valid for its own scope: the
+ *  joint resolver sees every selected division's fixture count, so the same
+ *  sentence can resolve a different window on the two routes. */
+export type AiPreviewScope = { kind: "division" | "competition"; id: string };
+
+/** How long a preview stays reusable. Long enough that reading the card and
+ *  thinking about it is not a race; short enough that the org clock cannot
+ *  cross a day boundary — and "tomorrow" with it — while the preview waits. */
+export const PREVIEW_TTL_MS = 30 * 60_000;
+
+/**
+ * The instruction, reduced to what it MEANS rather than how it was typed.
+ * Leading/trailing space and a double space between two words are not a
+ * different instruction; a different word is.
+ *
+ * Exported because Task 2's run gate compares against it — two normalisers
+ * would mean a preview that can never be matched, or worse, one that matches a
+ * sentence it did not compile.
+ */
+export function hashInstruction(instruction: string): string {
+  return createHash("sha256").update(instruction.trim().replace(/\s+/g, " ")).digest("hex");
+}
+
+const SINGLE_DIVISION = "AI_PLAN_SINGLE_DIVISION";
+
+/** Everything the scope resolution had to look up, so the compile and the
+ *  ledger stamp below never re-query for it. */
+interface ResolvedScope {
+  competitionId: string;
+  /** Shown to the compiler so a scoped instruction ("finals in the Open on
+   *  Friday") can resolve to a real division id. Divisions ONLY — the parser's
+   *  `Scope` cannot express anything narrower. */
+  divisions: { id: string; name: string }[];
+  /** The GOVERNING zone: the organisation's, never a division override. Two
+   *  divisions of one competition must not disagree about which day it is
+   *  (#397). */
+  orgTz: string;
+  /** Movable fixtures across the scope, feeding the resolver's feasibility
+   *  reading of an ambiguous window. Queried rather than defaulted to 0: the
+   *  run passes the real count, and a preview that showed a different window
+   *  from the run it authorises would be precisely the drift this wave exists
+   *  to close. */
+  fixtureCount: number;
+  /** The per-line rungs this run would be priced at — one entry per priced
+   *  line, in the shape `minimumCredits` takes. */
+  chosenRungs: (number | undefined)[];
+  /** The rate-limit key the RUN uses. Shared on purpose; see the file header. */
+  rateLimitKey: string;
+  rateLimitMax: number;
+}
+
+async function resolveDivisionScope(
+  auth: AuthCtx,
+  divisionId: string,
+  input: AiParsePreviewRequest,
+): Promise<ResolvedScope> {
+  return withTenant(auth.orgId, async (tx) => {
+    const [division] = await tx<
+      { competition_id: string; name: string; schedule_locked: boolean | null; org_tz: string | null }[]
+    >`
+      select d.competition_id, d.name, d.schedule_locked, o.timezone as org_tz
+        from divisions d
+        left join organizations o on o.id = d.org_id
+       where d.id = ${divisionId}`;
+    if (!division) throw new HttpError(404, "division not found");
+    // A frozen division rejects every applied plan, so previewing one would
+    // invite a confirm that can only end in a refusal. Same 409 the run raises,
+    // and for the same reason — except here it costs nothing at all.
+    if (division.schedule_locked === true) {
+      throw new HttpError(
+        409,
+        "the division schedule is frozen — unfreeze it to plan with AI",
+        "SCHEDULE_LOCKED",
+      );
+    }
+    const [{ n }] = await tx<{ n: number }[]>`
+      select count(*)::int as n from fixtures
+       where division_id = ${divisionId} and status = ${MOVABLE_STATUS}`;
+    return {
+      competitionId: division.competition_id,
+      divisions: [{ id: divisionId, name: division.name }],
+      orgTz: resolveVenueTz(null, division.org_tz),
+      fixtureCount: n,
+      chosenRungs: [input.rung],
+      rateLimitKey: `ai-plan:${divisionId}`,
+      rateLimitMax: 5,
+    };
+  });
+}
+
+async function resolveCompetitionScope(
+  auth: AuthCtx,
+  competitionId: string,
+  input: AiParsePreviewRequest,
+): Promise<ResolvedScope> {
+  // The joint run needs to know WHICH divisions are in scope before it can
+  // resolve a window, so the preview does too. Without them it would compile
+  // against a different set than the run and hand back a window the run never
+  // uses.
+  const requested = [...new Set(input.division_ids ?? [])];
+  if (requested.length < 2) {
+    throw new HttpError(400, "use the division schedule page to plan a single division", SINGLE_DIVISION);
+  }
+  return withTenant(auth.orgId, async (tx) => {
+    const [comp] = await tx<{ id: string }[]>`
+      select id from competitions where id = ${competitionId}`;
+    if (!comp) throw new HttpError(404, "competition not found");
+    await assertCompetitionNotFrozen(auth.orgId, competitionId, tx);
+    const rows = await tx<
+      { id: string; name: string; schedule_locked: boolean | null; movable: number; org_tz: string | null }[]
+    >`
+      select d.id, d.name, d.schedule_locked,
+             (select count(*)::int from fixtures f
+               where f.division_id = d.id and f.status = ${MOVABLE_STATUS}) as movable,
+             o.timezone as org_tz
+        from divisions d
+        left join organizations o on o.id = d.org_id
+       where d.competition_id = ${competitionId} and d.id in ${tx(requested)}`;
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    // REQUEST order, so the error a caller gets is a function of the request
+    // alone and never of row order out of Postgres.
+    for (const id of requested) {
+      if (!byId.has(id)) throw new HttpError(404, `division not in competition: ${id}`);
+    }
+    for (const id of requested) {
+      const row = byId.get(id)!;
+      if (row.schedule_locked === true) {
+        throw new HttpError(
+          409,
+          `the schedule for division "${row.name}" is frozen — unfreeze it to plan with AI`,
+          "SCHEDULE_LOCKED",
+        );
+      }
+    }
+    // Ruling R6: a division with nothing movable is dropped before the price,
+    // so it is dropped before the affordability bound too.
+    const kept = requested.filter((id) => byId.get(id)!.movable > 0);
+    if (kept.length < 2) {
+      throw new HttpError(400, "use the division schedule page to plan a single division", SINGLE_DIVISION);
+    }
+    return {
+      competitionId,
+      divisions: kept.map((id) => ({ id, name: byId.get(id)!.name })),
+      orgTz: resolveVenueTz(null, rows[0]?.org_tz ?? null),
+      fixtureCount: kept.reduce((n, id) => n + byId.get(id)!.movable, 0),
+      chosenRungs: kept.map((id) => input.rung_overrides?.[id]),
+      rateLimitKey: `ai-plan-competition:${competitionId}`,
+      rateLimitMax: 3,
+    };
+  });
+}
+
+/**
+ * Compile `input.instruction` and return what it compiled to, spending no
+ * credit and making no architect call.
+ *
+ * @throws HttpError 403 FEATURE_DISABLED (kill switch), 402 (the paid gate, or
+ *   a wallet that cannot afford the run this precedes), 404, 409
+ *   SCHEDULE_LOCKED, 400 AI_PLAN_SINGLE_DIVISION (joint scope with fewer than
+ *   two solvable divisions), 429 (the run's own rate limit).
+ *
+ * A failed compile is NOT among them. It comes back as `failed: true` with the
+ * organiser's own words in `compiled.unparsed` and no `preview_id`, because it
+ * is a state the card renders — an explicit "run it as a preference instead?" —
+ * and not an error. Throwing here would leave the client with a dead brief and
+ * nothing to choose.
+ */
+export async function previewScheduleAi(
+  auth: AuthCtx,
+  scope: AiPreviewScope,
+  input: AiParsePreviewRequest,
+): Promise<AiParsePreviewResponse> {
+  const distinctId = auth.userId ?? `org:${auth.orgId}`;
+  // Fail-open, exactly as the run does: an unconfigured or unreachable PostHog
+  // must never block a paying customer.
+  if (!(await isServerFeatureEnabled("ai-scheduling", distinctId, { orgId: auth.orgId, fallback: true }))) {
+    throw new HttpError(403, "AI scheduling is currently turned off", "FEATURE_DISABLED");
+  }
+  await requireFeature(auth.orgId, "scheduling.ai");
+  if (scope.kind === "competition") await requireFeature(auth.orgId, "scheduling.multi_division");
+
+  const resolved =
+    scope.kind === "division"
+      ? await resolveDivisionScope(auth, scope.id, input)
+      : await resolveCompetitionScope(auth, scope.id, input);
+
+  const walletId = await walletIdFor(auth.orgId);
+  await rateLimit(resolved.rateLimitKey, { max: resolved.rateLimitMax, windowSeconds: 3600 });
+
+  // THE MONEY GATE. `minimumCredits` is a lower bound on what the confirmed run
+  // would cost — it can only ever decline to compile a run that would have been
+  // refused anyway, never refuse one that would have gone through. The run's own
+  // 402 comes from `spendCredit` and is unchanged; this one exists so an org
+  // that provably cannot pay does not get our tokens spent compiling for it.
+  // Same PaymentRequiredError("ai.credits") the reserve raises, so the client's
+  // existing paywall handling covers it without a second code to learn.
+  if ((await balance(walletId)) < minimumCredits(resolved.chosenRungs)) {
+    throw new PaymentRequiredError("ai.credits");
+  }
+
+  // Stage 1. Its own meter, its own ~1K ceiling, no provider argument: the
+  // compiler resolves its provider from the MODEL SLUG (`schedule-ai-parse.ts`),
+  // never from a global AI_PROVIDER, because its default is a bare Anthropic id
+  // and a bare id sent to OpenRouter is a 404 that path silently swallows.
+  const parse = await parseInstruction(input.instruction, { divisions: resolved.divisions });
+
+  // The unpriced spend, on the ledger under the run's own field names. Written
+  // BEFORE the response is built and on the failed path too: an un-stamped
+  // compile is exactly the invisible spend #387 complains about, and a failure
+  // is the case that spends the MOST (two attempts, no usable result).
+  await withTenant(auth.orgId, async (tx) => {
+    await tx`
+      insert into competition_events (competition_id, org_id, type, payload, actor_id)
+      values (${resolved.competitionId}, ${auth.orgId}, 'schedule.ai_previewed',
+              ${tx.json({
+                scope: scope.kind,
+                ...(scope.kind === "division"
+                  ? { division_id: scope.id }
+                  : { division_ids: resolved.divisions.map((d) => d.id) }),
+                model: parse.servedModel,
+                parse_tokens: parse.tokens,
+                parse_failed: parse.failed,
+              } as never)}, ${auth.userId})`;
+  });
+
+  const expiresAt = new Date(Date.now() + PREVIEW_TTL_MS).toISOString();
+
+  // Failed twice against the schema. Not an error — a state. No `preview_id`,
+  // because there is nothing to confirm; the organiser's own sentence comes back
+  // in `unparsed` so the card can show what we could not read, and the client
+  // offers the preference fallback as an EXPLICIT choice. Silent fallback is
+  // refused: it would present a rule as enforced while nothing enforces it.
+  if (parse.failed || parse.raw === null) {
+    return {
+      failed: true,
+      compiled: { hard: [], soft: [], unparsed: [input.instruction], assumptions: [] },
+      window: null,
+      expires_at: expiresAt,
+    };
+  }
+
+  // Deterministic resolution: symbolic date refs become real days against the
+  // ORG clock, and every interpretive choice lands in `assumptions`.
+  const clock = makeClock(Date.now(), resolved.orgTz);
+  const compiled = resolveParsed(parse.raw, clock, resolved.orgTz, {
+    fixtureCount: resolved.fixtureCount,
+  });
+
+  const previewId = randomUUID();
+  await withTenant(auth.orgId, async (tx) => {
+    await tx`
+      insert into ai_parse_previews
+        (id, org_id, scope, scope_id, instruction_hash, instruction, resolved, raw,
+         failed, output_tokens, served_model, expires_at)
+      values (${previewId}, ${auth.orgId}, ${scope.kind}, ${scope.id},
+              ${hashInstruction(input.instruction)}, ${input.instruction},
+              ${tx.json(compiled as never)}, ${tx.json(parse.raw as never)},
+              false, ${parse.tokens}, ${parse.servedModel}, ${expiresAt})`;
+  });
+
+  return {
+    preview_id: previewId,
+    failed: false,
+    compiled: {
+      // Already resolved against the clock — these are the rules the referee
+      // will check, not the model's symbolic answer.
+      hard: compiled.hard as HardConstraint[],
+      soft: compiled.soft,
+      unparsed: compiled.unparsed,
+      // The RESOLVER's assumptions. The architect's own are stage 2 and ride on
+      // the plan response; the two arrays must never be merged.
+      assumptions: compiled.assumptions,
+    },
+    window:
+      compiled.windowMs !== null
+        ? {
+            start: dayKeyInTz(compiled.windowMs.from, resolved.orgTz),
+            end: dayKeyInTz(compiled.windowMs.to, resolved.orgTz),
+            tz: resolved.orgTz,
+          }
+        : null,
+    expires_at: expiresAt,
+  };
+}
