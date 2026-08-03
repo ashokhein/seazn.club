@@ -144,10 +144,37 @@ describe("AiReviewPanel", () => {
       <AiReviewPanel rows={rows} fixtures={fixtures} onPulse={() => {}} />,
     );
     expect(withPulse).toContain('data-review-pulse="1"');
-    expect(withPulse).toContain(enDict["board.ai.review.pulse"]!);
+    expect(withPulse).toContain(enDict["board.ai.review.pulse.one"]!);
 
     const without = render(<AiReviewPanel rows={rows} fixtures={fixtures} />);
     expect(without).not.toContain('data-review-pulse="');
+  });
+
+  // Carried from the Task 5 review. The control is filtered to the rows that
+  // have a grid block to light, so on a card holding three rows it lights ONE —
+  // and "Show these on the board" said "these" about a subset and nothing about
+  // which. The count is the fix: the label names what will actually flash, and
+  // the header's own number stays what it always was.
+  it("names how many fixtures the pulse will light, which is not the row count", () => {
+    const html = render(<AiReviewPanel rows={rows} fixtures={fixtures} onPulse={() => {}} />);
+    // Three rows to review; one of them is on the grid.
+    expect(html).toContain('data-review-count="3"');
+    expect(html).toContain(enDict["board.ai.review.pulse.one"]!);
+    expect(html).not.toContain(enDict["board.ai.review.pulse.other"]!.replace("{count}", "3"));
+
+    // Two warnings, two lit — the number tracks the filtered subset rather than
+    // being frozen at one, which a hardcoded singular would also satisfy above.
+    const twoFlagged = buildReviewRows({
+      warnings: [
+        { fixtureId: F1, reason: "person_overlap", detail: "18 min short of 45" },
+        { fixtureId: F2, reason: "rest", detail: "20 minutes" },
+      ],
+      unschedulable: source.unschedulable,
+      assumptions: source.assumptions,
+    });
+    const two = render(<AiReviewPanel rows={twoFlagged} fixtures={fixtures} onPulse={() => {}} />);
+    expect(two).toContain('data-review-count="4"');
+    expect(two).toContain(enDict["board.ai.review.pulse.other"]!.replace("{count}", "2"));
   });
 
   // Must-fix 3. "Show these on the board" has to point at something. An
@@ -166,7 +193,8 @@ describe("AiReviewPanel", () => {
     // The card is still there — there are two things to review.
     expect(html).toContain('data-review-count="2"');
     expect(html).not.toContain('data-review-pulse="');
-    expect(html).not.toContain(enDict["board.ai.review.pulse"]!);
+    expect(html).not.toContain(enDict["board.ai.review.pulse.one"]!);
+    expect(html).not.toContain(enDict["board.ai.review.pulse.other"]!.replace("{count}", "2"));
   });
 
   it("falls back to a short id when the fixture is not on the board", () => {

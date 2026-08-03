@@ -39,6 +39,13 @@ export interface AiConsoleFixture extends AiFixtureRef {
    * Optional because the division console has no use for it and several
    * consumers build fixtures without one. Absent means "not known" and the
    * caller must omit the chip rather than guess a division.
+   *
+   * LOAD-BEARING, and enforced by nothing. Exactly one production builder
+   * populates it — `consoleFixtures` in `components/v2/schedule-board.tsx` —
+   * and because the field is optional, a second builder that forgets it drops
+   * every chip off the joint review card with no type error and no red test.
+   * If you add another producer of `AiConsoleFixture` for a joint surface, it
+   * owes this field.
    */
   division_id?: string;
   /** Fixture status, and the two entrants. Carried so the console can size the

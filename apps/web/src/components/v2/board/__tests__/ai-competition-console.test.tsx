@@ -608,12 +608,20 @@ describe("a person clash the plan only warns about but the apply refuses", () =>
 describe("what the joint review says there is to review", () => {
   const u1 = { fixture_id: "f7", reason: "no court free in the window", rule: "CAP" as const };
 
-  /** Just the review card. The division LEDGER above it wears a chip per
-   *  selected division, so an unscoped `data-division-chip` probe is answered
-   *  by the ledger and says nothing about the rows. The card is the step's only
-   *  `<section>`. */
+  /**
+   * Just the review card. The division LEDGER above it wears a chip per
+   * selected division, so an unscoped `data-division-chip` probe is answered by
+   * the ledger and says nothing about the rows.
+   *
+   * Anchored on `data-review-count`, NOT on the first `<section>`. The card
+   * being the step's only section was true by accident and stopped being true
+   * the moment this console grew a preview card (W5 #400) — a `<section>` above
+   * the panel silently retargets every assertion below without failing one.
+   */
   function card(html: string): string {
-    const from = html.indexOf("<section");
+    const anchor = html.indexOf('data-review-count="');
+    expect(anchor).toBeGreaterThan(-1);
+    const from = html.lastIndexOf("<section", anchor);
     expect(from).toBeGreaterThan(-1);
     return html.slice(from, html.indexOf("</section>", from));
   }
@@ -630,17 +638,42 @@ describe("what the joint review says there is to review", () => {
       } as Partial<AiCompetitionPlanResponse>),
     });
     expect(html).toContain('data-review-count="3"');
-    // The literal sentence the old header rendered — `board.ai.joint.warnings.*`
-    // is retired, so resolving it through the dict would only echo the key back
-    // and assert nothing.
-    expect(html).not.toContain("1 warning to review");
-    // Exactly one number on the card, and it is that one.
+    // The count IS the rows on screen — the property #388 exists to protect.
+    // `plan.warnings.length` is 1 here, so the old header would read "1" while
+    // three rows sat under it; this fails for any number keyed on one kind.
+    const kinds = [...html.matchAll(/data-review-row="([^"]*)"/g)].map((m) => m[1]);
+    expect(html).toContain(`data-review-count="${kinds.length}"`);
+    // Exactly one number on the card, and it is that one. This is the guard
+    // that would fail if a second count were reintroduced anywhere on the step.
     expect(html.match(/data-review-count="/g) ?? []).toHaveLength(1);
-    expect([...html.matchAll(/data-review-row="([^"]*)"/g)].map((m) => m[1])).toEqual([
-      "warning",
-      "unschedulable",
-      "assumption",
-    ]);
+    expect(kinds).toEqual(["warning", "unschedulable", "assumption"]);
+  });
+
+  // Carried from the Task 5 review. `skipped_divisions` and `divergent_courts`
+  // are division-level facts about the run's SCOPE, not per-fixture findings —
+  // Task 4's three review categories do not include them. Sitting in the same
+  // amber band as the counted card, they read as rows the count had missed.
+  // The ruling was to demote them, not to count them: folding them in would
+  // make one number mean two different units.
+  it("keeps the division-level notes out of the counted amber band", () => {
+    const html = review({
+      plan: plan({
+        warnings: [{ fixtureId: "f1", reason: "rest", detail: "20 minutes" }],
+        skipped_divisions: [{ id: "d3", name: "Under 16s", reason: "nothing to place" }],
+        divergent_courts: ["Court 3"],
+      } as Partial<AiCompetitionPlanResponse>),
+    });
+    // Still said, and still where the ledger they are about is.
+    expect(html).toContain(tEn("board.ai.joint.skipped", { divisions: "Under 16s" }));
+    expect(html).toContain(tEn("board.ai.joint.courtsDivergent", { courts: "Court 3" }));
+    expect(html.match(/data-scope-note="1"/g) ?? []).toHaveLength(2);
+    // Not amber, so the eye does not group them with the counted rows…
+    const notes = [...html.matchAll(/<div data-scope-note="1" class="([^"]*)"/g)].map((m) => m[1]);
+    expect(notes).toHaveLength(2);
+    expect(notes.every((c) => !c.includes("amber"))).toBe(true);
+    // …and not counted, because a court-name mismatch is not a fixture.
+    expect(html).toContain('data-review-count="1"');
+    expect(html.match(/data-review-count="/g) ?? []).toHaveLength(1);
   });
 
   // Must-fix 1. `plan.proposal` and `plan.unschedulable` are mutually exclusive

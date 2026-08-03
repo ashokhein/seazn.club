@@ -45,9 +45,12 @@ export function AiReviewPanel({
   // Read once, from the array below. Every number this card shows is this one,
   // so the header and the list cannot disagree (#388).
   const count = reviewRowCount(rows);
-  // What "Show these on the board" would actually highlight. Empty means the
-  // card is all tray fixtures and assumptions, and the button is withheld
-  // rather than shown pointing at nothing.
+  // What the pulse would actually highlight, and — since it is a strict subset
+  // of the rows whenever the card also holds tray fixtures or assumptions — the
+  // number the control has to name. "Show these on the board" over a card of
+  // three rows that lights two of them says "these" about a subset and nothing
+  // about which. Filtering is right (an unschedulable fixture has no grid block
+  // to light), so the label carries the count instead.
   const pulseIds = reviewRowPulseIds(rows);
 
   // A card with no rows is not an empty state worth drawing — a clean run has
@@ -96,7 +99,7 @@ export function AiReviewPanel({
         >
           <span className="flex min-w-0 items-center gap-1.5">{headline}</span>
           <span className="shrink-0 text-[10px] font-medium normal-case tracking-normal text-amber-700 underline decoration-dotted underline-offset-2">
-            {msg("board.ai.review.pulse")}
+            {plural("board.ai.review.pulse", pulseIds.length)}
           </span>
         </button>
       ) : (
