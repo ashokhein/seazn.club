@@ -60,7 +60,13 @@ import {
   type SlotConfig,
   type VerifyConfig,
 } from "@seazn/engine/scheduling";
-import { parseInstruction, resolveParsed, type RawParsed } from "@/server/usecases/schedule-ai-parse";
+import {
+  parseInstruction,
+  resolveParsed,
+  type RawParsed,
+  type ResolvedParse,
+} from "@/server/usecases/schedule-ai-parse";
+import { consumePreview, PREVIEW_STALE } from "@/server/usecases/schedule-ai-preview";
 import {
   assignOfficials,
   type AssignPolicy,
@@ -417,6 +423,14 @@ export interface BuildPackOptions {
    *  symbolic dates need the clock and the feasibility bump needs the fixture
    *  count, and both live here rather than at the call site. */
   raw?: RawParsed | null;
+  /** W5 (#400): a resolution the caller already has and the organiser has
+   *  already SEEN — the stored `ai_parse_previews.resolved` of a confirmed
+   *  preview. Wins over `raw` outright. `resolveParsed` reads the org clock, so
+   *  re-deriving it here minutes after the preview can land a symbolic
+   *  "tomorrow" on a different date and quietly run the architect under rules
+   *  nobody approved. Absent on every other path, which resolves `raw` as
+   *  before. */
+  resolved?: ResolvedParse | null;
   scope?: { from?: string; courts?: string[]; pool_ids?: string[] };
   prior?: {
     instruction: string;
@@ -819,7 +833,8 @@ export async function buildSchedulePack(
     // silently defeat "run all the matches from tomorrow till Friday" — the one
     // window the organiser stated in words. Rendering stays here so there is a
     // single writer of the pack's window strings.
-    const resolved = resolveParsed(opts.raw ?? null, clock, orgTz, { fixtureCount: movable.length });
+    const resolved =
+      opts.resolved ?? resolveParsed(opts.raw ?? null, clock, orgTz, { fixtureCount: movable.length });
     const window =
       resolved.windowMs !== null
         ? {
@@ -2201,7 +2216,37 @@ export async function aiPlanForDivision(
   // never touches the wallet at all.
   const walletId = await walletIdFor(auth.orgId);
 
-  await rateLimit(`ai-plan:${divisionId}`, { max: 5, windowSeconds: 3600 });
+  // W5 (#400). A confirmed compile is the one that executes. The organiser was
+  // shown what their sentence compiled into and pressed "run with these rules";
+  // compiling again here would hand the architect a SECOND, independently
+  // non-deterministic answer and run it under a confirmation given for the
+  // first — the exact failure this wave exists to close. So a mismatch refuses
+  // instead of guessing, and the claim is atomic and single-use (see
+  // `consumePreview` for why each of its six refusals is the same 409).
+  //
+  // Claimed BEFORE the rate limit, so an unusable preview_id costs the organiser
+  // neither a slot nor a token; and a valid one skips the limiter entirely,
+  // because the preview already spent that slot on the LLM round the limit
+  // exists to bound. Charging twice would make looking before you leap cost a
+  // run.
+  const confirmed =
+    input.preview_id !== undefined
+      ? await consumePreview(input.preview_id, {
+          orgId: auth.orgId,
+          scope: "division",
+          scopeId: divisionId,
+          instruction: input.instruction,
+        })
+      : null;
+  if (input.preview_id !== undefined && confirmed === null) {
+    throw new HttpError(
+      409,
+      "that preview no longer matches this request — check the instruction again",
+      PREVIEW_STALE,
+    );
+  }
+
+  if (confirmed === null) await rateLimit(`ai-plan:${divisionId}`, { max: 5, windowSeconds: 3600 });
 
   // The one wall-clock read on this path (#397). Everything downstream — the
   // pack builder, the clock, the window — takes the instant as a parameter, so
@@ -2222,17 +2267,25 @@ export async function aiPlanForDivision(
   // A lower bound, never an estimate — it can only decline to skip, never skip a
   // run that would have gone through. The 402 itself still comes from
   // `spendCredit` below, unchanged.
-  const canPay = (await balance(walletId)) >= minimumCredits([input.rung]);
+  //
+  // Skipped outright on a confirmed preview: that compile already happened, was
+  // already metered on its own ledger row, and its affordability gate already
+  // ran. Re-running any of it here would double-count the spend.
+  const canPay = confirmed !== null || (await balance(walletId)) >= minimumCredits([input.rung]);
   const parse =
-    input.instruction.trim().length > 0 && canPay
-      ? await parseInstruction(input.instruction, {
-          divisions: [{ id: divisionId, name: gate.divisionName }],
-        })
-      : { raw: null, failed: false, tokens: 0, servedModel: null };
+    confirmed !== null
+      ? { raw: confirmed.raw, failed: false, tokens: 0, servedModel: null }
+      : input.instruction.trim().length > 0 && canPay
+        ? await parseInstruction(input.instruction, {
+            divisions: [{ id: divisionId, name: gate.divisionName }],
+          })
+        : { raw: null, failed: false, tokens: 0, servedModel: null };
 
-  // OMITTED when no compile ran — an empty instruction, or a wallet that could
-  // not pay for one. Without this, `parse_failed: false` on the ledger doubles
-  // as "never attempted" and reconciliation cannot tell the two apart.
+  // OMITTED when no compile ran on THIS request — an empty instruction, a wallet
+  // that could not pay for one, or a reused preview whose tokens are already
+  // stamped on its own `schedule.ai_previewed` row. Without this,
+  // `parse_failed: false` on the ledger doubles as "never attempted" (or, worse,
+  // bills the same compile twice) and reconciliation cannot tell them apart.
   const parseStamp =
     parse.servedModel !== null || parse.failed
       ? { tokens: parse.tokens, failed: parse.failed }
@@ -2242,6 +2295,11 @@ export async function aiPlanForDivision(
     ...input,
     now: Date.now(),
     raw: parse.raw,
+    // The RESOLVED parse as the organiser saw it, not a re-resolution of `raw`.
+    // `resolveParsed` reads the org clock, so re-running it minutes later can
+    // move a symbolic "tomorrow" onto a different date — a run under rules
+    // nobody approved, arrived at without a single extra model call.
+    ...(confirmed !== null ? { resolved: confirmed.resolved } : {}),
   });
 
   // Token-weighted credit pricing (lib/ai-rung.ts). One line — a division is

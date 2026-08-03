@@ -45,7 +45,12 @@ import { requireFeature } from "@/lib/entitlements";
 import { withTenant } from "@/lib/db";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { AiParsePreviewRequest, AiParsePreviewResponse } from "@/server/api-v1/schemas";
-import { parseInstruction, resolveParsed } from "@/server/usecases/schedule-ai-parse";
+import {
+  parseInstruction,
+  resolveParsed,
+  type RawParsed,
+  type ResolvedParse,
+} from "@/server/usecases/schedule-ai-parse";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 import { MOVABLE_STATUS } from "./schedule";
 import { resolveVenueTz } from "@/lib/tz";
@@ -71,6 +76,69 @@ export const PREVIEW_TTL_MS = 30 * 60_000;
  */
 export function hashInstruction(instruction: string): string {
   return createHash("sha256").update(instruction.trim().replace(/\s+/g, " ")).digest("hex");
+}
+
+/** The 409 both run orchestrators raise when a `preview_id` cannot be honoured.
+ *  Exported so the two call sites and their tests name it once. */
+export const PREVIEW_STALE = "preview_stale";
+
+/**
+ * Claim a preview for the run that is about to execute, atomically.
+ *
+ * Returns the compiled parse, or `null` when the preview cannot be honoured —
+ * which the callers turn into a 409 {@link PREVIEW_STALE}. All six refusals are
+ * deliberately one answer, because they are one fact: *this run may not proceed
+ * on this confirmation.*
+ *
+ *   * no such row — a fabricated or long-swept id;
+ *   * another org's row. Honouring it would be a cross-tenant read of somebody
+ *     else's compiled instruction, so `org_id` is in the predicate and not a
+ *     post-hoc check;
+ *   * another scope's row. A preview taken against one division resolved its
+ *     window from that division's fixture count; the joint run's is a different
+ *     number, so the same sentence is a different compile. Scope is part of a
+ *     preview's identity;
+ *   * a different instruction. This is the one this wave exists for: recompiling
+ *     silently would run — and charge — the architect under rules the organiser
+ *     never saw. The comparison is on the NORMALISED hash, so retyped
+ *     whitespace is still the same sentence;
+ *   * already consumed. A preview is single-use, so a double-submitted confirm
+ *     buys one run, not two;
+ *   * expired. Thirty minutes is short enough that the org clock cannot cross a
+ *     day boundary — and "tomorrow" with it — while the card sits open, but a
+ *     backgrounded tab can outlive it, and a preview that is stale by wall
+ *     clock is as wrong as one that is stale by content.
+ *
+ * ONE statement, deliberately. A read-then-update would let two concurrent
+ * submits both pass the read and both spend a credit; `update … where
+ * consumed_at is null returning` cannot. And putting the hash in the predicate
+ * rather than comparing after the claim means a mismatched submit refuses
+ * WITHOUT consuming the preview the organiser actually confirmed — otherwise a
+ * stray stale request would destroy a valid confirmation and force them to pay
+ * for another compile.
+ */
+export async function consumePreview(
+  previewId: string,
+  where: { orgId: string; scope: AiPreviewScope["kind"]; scopeId: string; instruction: string },
+): Promise<{ raw: RawParsed; resolved: ResolvedParse } | null> {
+  return withTenant(where.orgId, async (tx) => {
+    const [row] = await tx<{ raw: RawParsed | null; resolved: ResolvedParse }[]>`
+      update ai_parse_previews
+         set consumed_at = now()
+       where id = ${previewId}
+         and org_id = ${where.orgId}
+         and scope = ${where.scope}
+         and scope_id = ${where.scopeId}
+         and instruction_hash = ${hashInstruction(where.instruction)}
+         and consumed_at is null
+         and expires_at > now()
+         and failed = false
+      returning raw, resolved`;
+    // `raw` is nullable on the table (a failed compile persists none) but a
+    // failed compile never gets a row at all, so this is belt-and-braces: a
+    // preview with no parse in it has nothing for the run to reuse.
+    return row && row.raw !== null ? { raw: row.raw, resolved: row.resolved } : null;
+  });
 }
 
 const SINGLE_DIVISION = "AI_PLAN_SINGLE_DIVISION";

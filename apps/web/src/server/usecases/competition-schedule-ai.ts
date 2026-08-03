@@ -75,7 +75,13 @@ import {
   type SchedulePack,
 } from "./schedule-ai";
 import { AiSchedulePlan, INSTRUCTION_RULES, JOINT_RULES, SYSTEM_PROMPT } from "./schedule-ai-prompt";
-import { parseInstruction, resolveParsed, type RawParsed } from "./schedule-ai-parse";
+import {
+  parseInstruction,
+  resolveParsed,
+  type RawParsed,
+  type ResolvedParse,
+} from "./schedule-ai-parse";
+import { consumePreview, PREVIEW_STALE } from "./schedule-ai-preview";
 import { validateInstructionRules } from "@seazn/engine/scheduling";
 import type { HardConstraint, RuleCode, RuleFixture, VerifyConfig } from "@seazn/engine/scheduling";
 import { resolveProvider, selectProvider, type ProviderName } from "@/server/ai/select-provider";
@@ -326,6 +332,11 @@ export interface BuildCompetitionPackOptions {
    *  feasibility bump must see the JOINT fixture count or it would extend a
    *  window per division on partial counts. */
   raw?: RawParsed | null;
+  /** W5 (#400): the stored resolution of a confirmed preview, which wins over
+   *  `raw`. The joint twin of {@link BuildPackOptions.resolved} — and it is
+   *  deliberately NOT forwarded to the per-division sub-packs, which resolve
+   *  nothing (only the joint resolve below reads it). */
+  resolved?: ResolvedParse | null;
   prior?: { instruction: string; assignments: CompetitionPackAssignment[] };
 }
 
@@ -779,7 +790,8 @@ export async function buildCompetitionPack(
   // joint movable count. A window the organiser stated in words REPLACES the
   // union above — the union is the right default for windows we inferred, but
   // it would quietly widen the one window they actually asked for.
-  const resolved = resolveParsed(opts.raw ?? null, clock, orgTz, { fixtureCount: movable.length });
+  const resolved =
+    opts.resolved ?? resolveParsed(opts.raw ?? null, clock, orgTz, { fixtureCount: movable.length });
   if (resolved.windowMs !== null) {
     window.start = zonedIso(resolved.windowMs.from, orgTz);
     window.end = zonedIso(resolved.windowMs.to, orgTz);
@@ -1775,6 +1787,10 @@ export interface AiCompetitionPlanRequest {
    *  ignored by `quoteRun` rather than being an error. */
   rung_overrides?: Record<string, number>;
   prior?: { instruction: string; assignments: CompetitionPackAssignment[] };
+  /** W5 (#400): a confirmed compile from the joint preview endpoint. Optional —
+   *  a run without one compiles inline exactly as before, which is what smoke,
+   *  e2e and every external consumer do. */
+  preview_id?: string;
 }
 
 /**
@@ -2060,9 +2076,38 @@ export async function aiPlanForCompetition(
   // the reserve itself happens below, right around the model call, so a
   // rate-limited or too-large request never touches the wallet.
   const walletId = await walletIdFor(auth.orgId);
+
+  // W5 (#400), the joint twin of the single-division gate: a confirmed compile
+  // is the one that executes, and a `preview_id` that no longer matches this
+  // request refuses rather than silently recompiling behind a confirmation the
+  // organiser already gave. Scoped to the COMPETITION, so a preview taken
+  // against one division — whose window resolved from that division's fixture
+  // count alone — cannot authorise a joint run. Claimed before the limiter for
+  // the reasons stated on `aiPlanForDivision`.
+  const confirmed =
+    input.preview_id !== undefined
+      ? await consumePreview(input.preview_id, {
+          orgId: auth.orgId,
+          scope: "competition",
+          scopeId: competitionId,
+          instruction: input.instruction,
+        })
+      : null;
+  if (input.preview_id !== undefined && confirmed === null) {
+    throw new HttpError(
+      409,
+      "that preview no longer matches this request — check the instruction again",
+      PREVIEW_STALE,
+    );
+  }
+
   // Its OWN key namespace. Sharing `ai-plan:{divisionId}` would let one joint
-  // run burn a slot in every selected division's per-division bucket.
-  await rateLimit(`ai-plan-competition:${competitionId}`, { max: 3, windowSeconds: 3600 });
+  // run burn a slot in every selected division's per-division bucket. Skipped on
+  // a confirmed preview: that request already spent this bucket's token on the
+  // LLM round the limit exists to bound.
+  if (confirmed === null) {
+    await rateLimit(`ai-plan-competition:${competitionId}`, { max: 3, windowSeconds: 3600 });
+  }
 
   // Stage-1 compile (#398), OUTSIDE `spendCredit` and ahead of the quote — the
   // joint twin of the single-division pre-flight. A credit buys a token BUDGET,
@@ -2075,18 +2120,27 @@ export async function aiPlanForCompetition(
   // (smoke.ts, #350 joint/credits). With per-division overrides supplied the
   // bound is the exact price; without them each line floors at rung 1. The 402
   // still comes from `spendCredit`.
+  //
+  // Skipped outright on a confirmed preview: that compile already happened, was
+  // already metered on its own ledger row, and its affordability gate already
+  // ran.
   const canPay =
+    confirmed !== null ||
     (await balance(walletId)) >= minimumCredits(kept.map((id) => input.rung_overrides?.[id]));
   const parse =
-    input.instruction.trim().length > 0 && canPay
-      ? await parseInstruction(input.instruction, {
-          divisions: kept.map((id) => ({ id, name: byId.get(id)!.name })),
-        })
-      : { raw: null, failed: false, tokens: 0, servedModel: null };
+    confirmed !== null
+      ? { raw: confirmed.raw, failed: false, tokens: 0, servedModel: null }
+      : input.instruction.trim().length > 0 && canPay
+        ? await parseInstruction(input.instruction, {
+            divisions: kept.map((id) => ({ id, name: byId.get(id)!.name })),
+          })
+        : { raw: null, failed: false, tokens: 0, servedModel: null };
 
-  // OMITTED when no compile ran — an empty instruction, or a wallet that could
-  // not pay for one. Without this, `parse_failed: false` on the ledger doubles
-  // as "never attempted" and reconciliation cannot tell the two apart.
+  // OMITTED when no compile ran on THIS request — an empty instruction, a wallet
+  // that could not pay for one, or a reused preview whose tokens are already
+  // stamped on its own `schedule.ai_previewed` row. Without this,
+  // `parse_failed: false` on the ledger doubles as "never attempted" (or bills
+  // one compile twice) and reconciliation cannot tell them apart.
   const parseStamp =
     parse.servedModel !== null || parse.failed
       ? { tokens: parse.tokens, failed: parse.failed }
@@ -2097,6 +2151,9 @@ export async function aiPlanForCompetition(
     mode: input.mode,
     instruction: input.instruction,
     raw: parse.raw,
+    // The resolution the organiser actually saw, not a re-resolution against a
+    // clock that has moved since. See BuildPackOptions.resolved.
+    ...(confirmed !== null ? { resolved: confirmed.resolved } : {}),
     // The one wall-clock read on this path (#397). Everything downstream takes
     // the instant as a parameter, so a run is reproducible from its inputs.
     now: Date.now(),

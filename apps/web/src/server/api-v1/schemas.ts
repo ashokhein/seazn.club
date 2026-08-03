@@ -1657,6 +1657,19 @@ export const AiPlanRequest = z.object({
   // still executes, capped to the chosen rung's token budget, and the ledger
   // stamps `underfunded: true`.
   rung: RungLiteral.optional(),
+  /**
+   * W5 (#400): the confirmed compile from `POST .../schedule/ai-preview`. When
+   * present the run reuses that stored parse instead of compiling a second
+   * time, so the rules the organiser approved are the rules the architect
+   * executes under — and a `preview_id` whose stored instruction no longer
+   * matches this request's is a 409 `preview_stale` rather than a silent
+   * recompile.
+   *
+   * OPTIONAL, and it must stay that way: smoke, the e2e API paths and every
+   * external consumer post a run without one, and compile inline exactly as
+   * they always have.
+   */
+  preview_id: Uuid.optional(),
 });
 export type AiPlanRequest = z.infer<typeof AiPlanRequest>;
 
@@ -1861,6 +1874,11 @@ export const AiCompetitionPlanRequest = z.object({
       ),
     })
     .optional(),
+  /** W5 (#400): the confirmed compile from `POST .../schedule/ai-preview`. The
+   *  joint twin of {@link AiPlanRequest.preview_id}, and scoped the same way —
+   *  a preview taken against ONE division is refused here, because its window
+   *  was resolved from a different fixture count than this run's. */
+  preview_id: Uuid.optional(),
 });
 export type AiCompetitionPlanRequest = z.infer<typeof AiCompetitionPlanRequest>;
 
