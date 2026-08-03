@@ -55,6 +55,32 @@ export const AI_FIXTURE_URL =
 /** The magic instruction substring that forces a model refusal (error path). */
 export const FIXTURE_REFUSE = "FIXTURE_REFUSE";
 
+/**
+ * W5 (#400) — the one brief this server actually COMPILES.
+ *
+ * Stage 1 is a model call like any other, so against the canned `{}` below
+ * every preview card renders "nothing in this instruction can be enforced" —
+ * and the gate's whole point is the rules it shows before a credit moves. This
+ * brief is therefore compiled for real: a per-day cap, a weekday rule on the
+ * final, a date range, a wish we only pass on, and a clause we admit we could
+ * not use. Every one of those five is a sentence the organiser actually typed,
+ * because the card quotes `unparsed` verbatim and a fixture that invented the
+ * words would be testing a lie.
+ *
+ * Matched by the distinctive `at most 2 matches a day` substring and NOTHING
+ * else. Any other instruction still compiles to `{}`, which is what keeps a
+ * real constraint out of the happy-path runs: a compiled rule is reused by the
+ * confirmed run and enforced by the verifier, so a fixture that compiled
+ * "finish by 6pm" for everybody could turn a CLEAN schedule red.
+ */
+export const FIXTURE_COMPILE_BRIEF =
+  "between today and Friday, at most 2 matches a day, final on Friday, " +
+  "keep the show court busy, and make it feel fair";
+/** The clause `FIXTURE_COMPILE_BRIEF` compiles to a passed-on wish. */
+export const FIXTURE_COMPILE_SOFT = "keep the show court busy";
+/** The clause `FIXTURE_COMPILE_BRIEF` compiles to nothing at all. */
+export const FIXTURE_COMPILE_UNPARSED = "and make it feel fair";
+
 export interface FixtureCall {
   phase: "schedule" | "officials" | "parse" | "unknown";
   refusal: boolean;
@@ -117,9 +143,23 @@ function buildSchedulePlan(pack: SchedulePackLite): unknown {
 /** Every field of `RawParsed` (schedule-ai-parse.ts) defaults, so `{}` is a
  *  schema-valid "nothing compiled" answer under both dialects' zod validation
  *  — the fixture doesn't need to actually honor free-text wishes as hard
- *  constraints to keep the schedule/officials phases deterministic. */
-function buildParsePlan(): unknown {
-  return {};
+ *  constraints to keep the schedule/officials phases deterministic.
+ *
+ *  W5 (#400): except for `FIXTURE_COMPILE_BRIEF`, which compiles for real so
+ *  the preview card has rules to show. Symbolic, exactly as the prompt demands
+ *  — `resolveParsed` owns the calendar, and a fixture that resolved dates
+ *  itself would skip the half of stage 1 the assumptions come from. */
+function buildParsePlan(instruction: string): unknown {
+  if (!instruction.includes("at most 2 matches a day")) return {};
+  return {
+    hard: [
+      { type: "window", start: { kind: "today" }, end: { kind: "weekday", weekday: "FRI" }, scope: { kind: "competition" } },
+      { type: "max_fixtures_per_day", count: 2, scope: { kind: "competition" } },
+      { type: "fixture_on_weekday", selector: { kind: "terminal" }, weekday: "FRI", scope: { kind: "competition" } },
+    ],
+    soft: [{ note: FIXTURE_COMPILE_SOFT, weight: 2 }],
+    unparsed: [FIXTURE_COMPILE_UNPARSED],
+  };
 }
 
 function buildOfficialsPlan(pack: OfficialsPackLite): unknown {
@@ -179,7 +219,7 @@ function generatePlan(
       Array.isArray((pack as ParseRequestLite).context?.divisions)
     ) {
       phase = "parse";
-      plan = buildParsePlan();
+      plan = buildParsePlan((pack as ParseRequestLite).instruction ?? "");
     } else {
       phase = "schedule";
       movable = pack.fixtures?.movable?.length ?? 0;
