@@ -33,6 +33,7 @@ afterAll(async () => {
 const SOLVE_TIMEOUT = 120_000;
 
 const MIN = 60_000;
+const DAY = 86_400_000;
 const courts = ["C1", "C2"];
 const window = { from: at("2026-08-10T08:00:00Z"), to: at("2026-08-17T08:00:00Z") };
 const badmintonConfig: VerifyConfig & { courts: readonly string[] } = {
@@ -386,6 +387,264 @@ describe("a relaxable family that empties a domain", () => {
   );
 });
 
+/**
+ * The rule families that had no end-to-end test at all: session windows, court
+ * blackouts, a per-day cap and a feeder→dependent rest instruction. Each is
+ * encoded by a branch of `repair.ts` nothing exercised, so each could have been
+ * asserting the wrong thing — or nothing — without a failing test anywhere.
+ */
+describe("the rule families, end to end", () => {
+  const dayKey = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+
+  it(
+    "keeps BOTH the pack window and the session windows",
+    async () => {
+      // The session runs two hours past the pack window's close. The verifier
+      // enforces the pack window as a BLOCKING `window` conflict whether or not
+      // sessions exist, so a solver that let the session replace it hands back a
+      // start the verifier rejects — which is what it used to do.
+      const config: VerifyConfig & { courts: readonly string[] } = {
+        ...BASE_CONFIG,
+        tz: "UTC",
+        courts: ["C1"],
+        window: { from: at("2026-08-10T08:00:00Z"), to: at("2026-08-10T12:00:00Z") },
+        sessionWindows: [{ from: at("2026-08-10T09:00:00Z"), to: at("2026-08-10T14:00:00Z") }],
+      };
+      const proposal = assign(BADMINTON, SOLO, [["wb-r0-i1", "2026-08-10T12:00:00Z", "C1"]]);
+      expect(validateAssignments(proposal, config).filter(isBlockingConflict)).toHaveLength(1);
+
+      const r = await repairSchedule({ proposal, config, budgetMs: 60_000 });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      expect(r.relaxed).toEqual([]);
+      expect(r.moved).toEqual(["wb-r0-i1"]);
+      // Inside the session AND inside the pack window — the intersection, not
+      // whichever of the two the encoder happened to keep.
+      const start = r.assignments[0]!.startAt;
+      expect(start).toBeGreaterThanOrEqual(at("2026-08-10T09:00:00Z"));
+      expect(start).toBeLessThanOrEqual(at("2026-08-10T11:20:00Z"));
+      expect(validateAssignments(r.assignments, config)).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "treats a court blackout as court-scoped, not board-wide",
+    async () => {
+      // C1 is closed for the whole window; C2 is free. A blackout read as
+      // board-wide leaves nowhere to go and reports infeasible.
+      const window = { from: at("2026-08-10T08:00:00Z"), to: at("2026-08-10T18:00:00Z") };
+      const config: VerifyConfig & { courts: readonly string[] } = {
+        ...BASE_CONFIG,
+        tz: "UTC",
+        window,
+        courts,
+        blackouts: [{ court: "C1", from: window.from, to: window.to }],
+      };
+      const proposal = assign(BADMINTON, SOLO, [["wb-r0-i1", "2026-08-10T09:00:00Z", "C1"]]);
+      expect(validateAssignments(proposal, config)).not.toEqual([]);
+
+      const r = await repairSchedule({ proposal, config, budgetMs: 60_000 });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      // C2 is the only usable court, and reaching it is one move. The START is
+      // deliberately NOT pinned: moving the court and moving the hour are both
+      // one move, so which the solver picks is a tie-break, not a rule.
+      expect(r.moved).toEqual(["wb-r0-i1"]);
+      expect(r.assignments[0]!.court).toBe("C2");
+      expect(validateAssignments(r.assignments, config)).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "spreads a day that breaks max_fixtures_per_day",
+    async () => {
+      const config: VerifyConfig & { courts: readonly string[] } = {
+        ...BASE_CONFIG,
+        tz: "UTC",
+        courts,
+        window: { from: at("2026-08-10T00:00:00Z"), to: at("2026-08-13T00:00:00Z") },
+        ruleFixtures: [
+          { id: "wb-r0-i1", extKey: "wb-r0-i1", winnerTo: "wb-r1-i0" },
+          { id: "wb-r0-i2", extKey: "wb-r0-i2", winnerTo: "wb-r1-i1" },
+          { id: "wb-r0-i3", extKey: "wb-r0-i3", winnerTo: "wb-r1-i1" },
+        ],
+        hard: [{ type: "max_fixtures_per_day", count: 1, scope: { kind: "competition" } }],
+      };
+      // Three fixtures, three days, a 1/day cap: two of the three must move.
+      const proposal = assign(BADMINTON, SOLO, [
+        ["wb-r0-i1", "2026-08-10T09:00:00Z", "C1"],
+        ["wb-r0-i2", "2026-08-10T11:00:00Z", "C1"],
+        ["wb-r0-i3", "2026-08-10T13:00:00Z", "C1"],
+      ]);
+      expect(validateAssignments(proposal, config)).toHaveLength(3);
+
+      const r = await repairSchedule({ proposal, config, budgetMs: 60_000 });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      expect(r.relaxed).toEqual([]);
+      expect(r.moved).toHaveLength(2);
+      expect(new Set(r.assignments.map((a) => dayKey(a.startAt))).size).toBe(3);
+      expect(validateAssignments(r.assignments, config)).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "honours a feeder→dependent min_rest_minutes instruction",
+    async () => {
+      const config: VerifyConfig & { courts: readonly string[] } = {
+        ...BASE_CONFIG,
+        tz: "UTC",
+        courts,
+        window: { from: at("2026-08-10T08:00:00Z"), to: at("2026-08-10T20:00:00Z") },
+        ruleFixtures: STEP_RULE_FIXTURES.map((f) => ({ ...f })),
+        hard: [
+          {
+            type: "min_rest_minutes",
+            minutes: 90,
+            rest_scope: "feeder_to_dependent",
+            scope: { kind: "competition" },
+          },
+        ],
+      };
+      // The dependent starts 20 minutes after its feeder ends; the instruction
+      // asks for 90. `gapMinutes` and the `order` check are both satisfied, so
+      // this rule is the only thing that binds.
+      const proposal = assign(STEP, SHARED, [
+        ["sl-g1-d1", "2026-08-10T09:00:00Z", "C1"],
+        ["sl-g2-d1", "2026-08-10T10:00:00Z", "C2"],
+      ]);
+      const deps: OrderDependency[] = [
+        { fixtureId: "sl-g2-d1", dependsOn: "sl-g1-d1", direct: true },
+      ];
+      expect(validateAssignments(proposal, config, [], deps)).toHaveLength(1);
+
+      const r = await repairSchedule({ proposal, config, dependencies: deps, budgetMs: 60_000 });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      expect(r.relaxed).toEqual([]);
+      const byId = new Map(r.assignments.map((a) => [a.fixtureId, a]));
+      const feeder = byId.get("sl-g1-d1")!;
+      const dependent = byId.get("sl-g2-d1")!;
+      expect(dependent.startAt - feeder.endAt).toBeGreaterThanOrEqual(90 * MIN);
+      expect(validateAssignments(r.assignments, config, [], deps)).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "stays finite with no pack window and no session windows",
+    async () => {
+      // The ONLY configuration in which the unconditional ±30-day bound on every
+      // start is load-bearing: with neither window family present `repairUniverse`
+      // falls back to the board's own extent and nothing else bounds the integer.
+      const config: VerifyConfig & { courts: readonly string[] } = {
+        ...BASE_CONFIG,
+        tz: "UTC",
+        courts: ["C1"],
+      };
+      const proposal = assign(BADMINTON, SOLO, [
+        ["wb-r0-i1", "2026-08-10T09:00:00Z", "C1"],
+        ["wb-r0-i2", "2026-08-10T09:00:00Z", "C1"],
+      ]);
+      expect(validateAssignments(proposal, config).filter(isBlockingConflict)).toHaveLength(2);
+
+      const r = await repairSchedule({ proposal, config, budgetMs: 60_000 });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      expect(r.moved).toHaveLength(1);
+      expect(validateAssignments(r.assignments, config)).toEqual([]);
+      // Not the year 90210: the board's extent widened by a week, then by the
+      // guard's thirty days.
+      const lo = at("2026-08-10T09:00:00Z") - 37 * DAY;
+      const hi = at("2026-08-10T09:40:00Z") + 37 * DAY;
+      for (const a of r.assignments) {
+        expect(a.startAt).toBeGreaterThanOrEqual(lo);
+        expect(a.startAt).toBeLessThanOrEqual(hi);
+      }
+    },
+    SOLVE_TIMEOUT,
+  );
+});
+
+/**
+ * A dependency with BOTH ends immovable used to be skipped by the encoder while
+ * `validateAssignments` went on reporting it — its `byId` covers `existing` too
+ * — so the solver handed back a board carrying an order conflict it had never
+ * seen. Encoded now: both sides are constants and the assertion collapses to
+ * true or false.
+ *
+ * Which literal it collapses under is the other half. `isBlockingConflict`
+ * covers `order` only when `direct === true`, so an INDIRECT dependency asserted
+ * under the never-relaxed `order` family reported the whole board `infeasible`
+ * over something the verifier merely warns about.
+ */
+describe("an order dependency the solver cannot move", () => {
+  const config: VerifyConfig & { courts: readonly string[] } = {
+    ...BASE_CONFIG,
+    tz: "UTC",
+    courts,
+    window: { from: at("2026-08-10T08:00:00Z"), to: at("2026-08-10T20:00:00Z") },
+  };
+  // Two immovables on C2 whose feed order is already violated — the dependent
+  // starts inside its source. Neither is in `proposal`, so no move can fix it.
+  const obstacle = (fixtureId: string, iso: string): Assignment => ({
+    fixtureId,
+    court: "C2",
+    startAt: at(iso),
+    endAt: at(iso) + 40 * MIN,
+    entrants: [`e-${fixtureId}`],
+    people: [`p-${fixtureId}`],
+  });
+  const existing = [obstacle("ob-a", "2026-08-10T09:00:00Z"), obstacle("ob-b", "2026-08-10T09:20:00Z")];
+  const clashing = (): Assignment[] =>
+    assign(BADMINTON, SOLO, [
+      ["wb-r0-i1", "2026-08-10T15:00:00Z", "C1"],
+      ["wb-r0-i2", "2026-08-10T15:00:00Z", "C1"],
+    ]);
+
+  it(
+    "relaxes an INDIRECT one and repairs the rest of the board",
+    async () => {
+      const deps: OrderDependency[] = [{ fixtureId: "ob-b", dependsOn: "ob-a", direct: false }];
+      const proposal = clashing();
+      const before = validateAssignments(proposal, config, existing, deps);
+      expect(before.some((c) => c.reason === "order")).toBe(true);
+      expect(before.filter(isBlockingConflict)).toHaveLength(2); // the court clash only
+
+      const r = await repairSchedule({ proposal, config, existing, dependencies: deps, budgetMs: 60_000 });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      expect(r.relaxed).toContain("order_soft");
+      expect(r.moved).toHaveLength(1);
+      expect(
+        validateAssignments(r.assignments, config, existing, deps).filter(isBlockingConflict),
+      ).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "reports a DIRECT one as infeasible rather than handing back a board it broke",
+    async () => {
+      const deps: OrderDependency[] = [{ fixtureId: "ob-b", dependsOn: "ob-a", direct: true }];
+      const r = await repairSchedule({
+        proposal: clashing(),
+        config,
+        existing,
+        dependencies: deps,
+        budgetMs: 60_000,
+      });
+      expect(r.status).toBe("infeasible");
+      if (r.status !== "infeasible") return;
+      expect(r.families).toContain("order");
+    },
+    SOLVE_TIMEOUT,
+  );
+});
+
 describe("the budget", () => {
   it(
     "returns timeout rather than running forever",
@@ -412,6 +671,29 @@ describe("the budget", () => {
         config: badmintonConfig,
       });
       expect(r.status).toBe("clean");
+      expect(z3LoadCount()).toBe(0);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "covers the WASM boot and the encode, not just check()",
+    async () => {
+      // The budget used to be tested only inside `check()`, so `loadZ3` and the
+      // whole O(n²) encode ran outside it: at 500 movable the first test happened
+      // after every constraint had been built, and a 15 s call could burn far
+      // more before reporting `timeout`.
+      await resetZ3();
+      expect(z3LoadCount()).toBe(0);
+      const r = await repairSchedule({
+        proposal: clashedGolden(), // DIRTY — step 1 does not answer this one
+        dependencies: badmintonFeedDeps(),
+        budgetMs: 0,
+        config: badmintonConfig,
+      });
+      expect(r.status).toBe("timeout");
+      if (r.status !== "timeout") return;
+      expect(r.checks).toBe(0);
       expect(z3LoadCount()).toBe(0);
     },
     SOLVE_TIMEOUT,
