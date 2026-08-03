@@ -296,6 +296,68 @@ describe("fold — monotonic time guard (§3.3)", () => {
     expect(fold([early, late, voidLate, ev(at("P1", 200))]).applied).toBe(2);
   });
 
+  // The guard shares a loop with two older rejections, and on a stream where
+  // two of them apply at once exactly one error reaches the scorer. Which one
+  // is a contract — "play is suspended" and "the match is over" are both facts
+  // about the stream that make the stamp irrelevant, so they win. Nothing
+  // pinned this before; moving the guard up the loop would silently swap the
+  // message a pad renders.
+  describe("precedence against the older rejections", () => {
+    // Decides the moment anything reaches apply().
+    const deciding: FoldableModule<Record<string, never>, TickState> = {
+      ...toy,
+      outcome: (state) =>
+        state.applied > 0 ? { kind: "win" as const, winner: "H", loser: "A" } : null,
+    };
+
+    it("ALREADY_DECIDED beats NON_MONOTONIC_TIME", () => {
+      const events = [ev(at("P1", 900)), ev(at("P1", 100))];
+      let caught: unknown;
+      try {
+        foldMatch(deciding, {}, lineups, events);
+        expect.unreachable("a post-decision event must be rejected");
+      } catch (err) {
+        caught = err;
+      }
+      // Both conditions hold on the second event. The outcome is the older,
+      // stronger fact: retyping the stamp would not make the event acceptable.
+      expect(EngineError.is(caught, "ALREADY_DECIDED")).toBe(true);
+      expect(EngineError.is(caught, "NON_MONOTONIC_TIME")).toBe(false);
+    });
+
+    it("WRONG_PHASE (play suspended) beats NON_MONOTONIC_TIME", () => {
+      const events = [ev(at("P1", 900)), ev({ reason: "rain" }, "core.suspend"), ev(at("P1", 100))];
+      let caught: unknown;
+      try {
+        fold(events);
+        expect.unreachable("a sport event during a stoppage must be rejected");
+      } catch (err) {
+        caught = err;
+      }
+      // "resume or abandon first" is actionable; "your stamp went backwards"
+      // sends the scorer to fix the wrong thing.
+      expect(EngineError.is(caught, "WRONG_PHASE")).toBe(true);
+      expect(EngineError.is(caught, "NON_MONOTONIC_TIME")).toBe(false);
+    });
+
+    it("INVALID_EVENT (core payload) beats NON_MONOTONIC_TIME", () => {
+      // validateCoreEvent is first in the loop, and stays first: a payload that
+      // is not a valid core event has no meaningful stamp to compare.
+      const events = [
+        ev(at("P1", 900)),
+        { ...ev({ at: { period: "P1", elapsed: 100 }, bogus: true }, "core.resume") },
+      ];
+      let caught: unknown;
+      try {
+        fold(events);
+        expect.unreachable("an invalid core payload must be rejected");
+      } catch (err) {
+        caught = err;
+      }
+      expect(EngineError.is(caught, "INVALID_EVENT")).toBe(true);
+    });
+  });
+
   // §4 says "correcting a stamp uses the existing `voids` machinery. No new
   // mechanism." The ledger is hash-chained append-only, so a correction is
   // void + re-append and the replacement lands LAST carrying an EARLIER `at`.
