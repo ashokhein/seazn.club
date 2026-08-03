@@ -14,6 +14,21 @@ export type EntrantId = z.infer<typeof EntrantId>;
 // shown to (a card event's `by`). Named for how it reads on a card record.
 export type Side = EntrantId;
 
+// W4 review item 2 — how a single attempt at goal finished, shared by every
+// module that records one: football's open-play penalty (Law 14), the period
+// kernel's set piece (FIH penalty corner / stroke, IIHF penalty shot). The
+// wave shipped two shapes for this one fact — `outcome: saved|missed|post` and
+// `converted: boolean` — and a boolean cannot express "hit the post", so the
+// enum wins and the boolean's true case becomes the token `scored`.
+//
+// A module NARROWS this to the tokens its own branch may carry (football's
+// penalty branch excludes `scored`, because a converted penalty is already a
+// goal event and would otherwise be counted twice). The vocabulary is shared
+// so a pad renders ONE result control; the allowed subset is the sport's, the
+// same way each sport keeps its own sanction ladder.
+export const AttemptOutcome = z.enum(["scored", "saved", "missed", "post"]);
+export type AttemptOutcome = z.infer<typeof AttemptOutcome>;
+
 // SPEC-1 — a card projected from a fixture ledger, the read-only input to the
 // discipline fold (usecases/discipline.ts). Additive projection, same layer as
 // playerStats: zero reducer/replay/golden impact (D2). Anonymous cards

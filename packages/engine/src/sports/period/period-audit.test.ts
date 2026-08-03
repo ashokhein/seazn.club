@@ -13,6 +13,8 @@
 import { describe, expect, it } from "vitest";
 import { EngineError } from "../../core/errors.ts";
 import { foldMatch, type EventEnvelope } from "../../core/events.ts";
+import { AttemptOutcome } from "../../core/types.ts";
+import { PenaltyOutcome } from "../football/football.ts";
 import { defaultLineupPair, makeEnvelope } from "../../testkit/helpers.ts";
 import type { ModuleEvent } from "../../sport/module.ts";
 import { aggregatePlayerStats } from "../../stats/stats.ts";
@@ -264,13 +266,13 @@ describe("W4 audit — awarded vs converted set pieces", () => {
     const state = foldFih([
       start,
       { type: "hockey.set_piece", payload: { by: FH, kind: "pc" } },
-      { type: "hockey.set_piece", payload: { by: FH, kind: "pc", converted: true } },
+      { type: "hockey.set_piece", payload: { by: FH, kind: "pc", outcome: "scored" } },
       { type: "hockey.set_piece", payload: { by: FH, kind: "pc" } },
       { type: "hockey.set_piece", payload: { by: FA, kind: "stroke", person: "fa-8" } },
     ]);
     expect(state.setPieces).toEqual({
-      home: { pc: { awarded: 3, converted: 1 } },
-      away: { stroke: { awarded: 1, converted: 0 } },
+      home: { pc: { awarded: 3, scored: 1 } },
+      away: { stroke: { awarded: 1, scored: 0 } },
     });
     const detail = hockey.summary(state).detail as { setPieces: unknown };
     expect(detail.setPieces).toEqual(state.setPieces);
@@ -281,7 +283,7 @@ describe("W4 audit — awarded vs converted set pieces", () => {
       start,
       {
         type: "hockey.set_piece",
-        payload: { by: FA, kind: "stroke", person: "fa-8", goalkeeper: "fh-1", converted: false },
+        payload: { by: FA, kind: "stroke", person: "fa-8", goalkeeper: "fh-1", outcome: "saved" },
       },
     ] as ModuleEvent[];
     const rows = aggregatePlayerStats(envelopes(events), hockey.playerStats!);
@@ -294,7 +296,7 @@ describe("W4 audit — awarded vs converted set pieces", () => {
       { type: "icehockey.set_piece", payload: { by: IH, kind: "ps", person: "ih-7" } },
     ] as ModuleEvent[];
     const state = foldIce(events);
-    expect(state.setPieces?.home?.ps).toEqual({ awarded: 1, converted: 0 });
+    expect(state.setPieces?.home?.ps).toEqual({ awarded: 1, scored: 0 });
     const rows = aggregatePlayerStats(envelopes(events), icehockey.playerStats!);
     expect(rows.find((r) => r.personId === "ih-7")?.stats.ps_taken).toBe(1);
     expect(() =>
@@ -306,6 +308,48 @@ describe("W4 audit — awarded vs converted set pieces", () => {
     expect(() =>
       foldFih([{ type: "hockey.set_piece", payload: { by: FH, kind: "pc" } }]),
     ).toThrowError(EngineError);
+  });
+
+  // W4 review item 2 — an attempt's RESULT had two shapes in one wave: the
+  // period kernel's `converted: boolean` and football's `outcome: saved |
+  // missed | post`. A boolean cannot say "hit the post", so `outcome` wins and
+  // the boolean's true case becomes the token `scored`. The vocabulary is
+  // shared (core/types.ts) so W5 renders ONE result control; each sport still
+  // declares which tokens its own branch accepts.
+  describe("one name and one vocabulary for an attempt's result", () => {
+    it("counts a set piece as scored from `outcome`, football's key", () => {
+      const state = foldFih([
+        start,
+        { type: "hockey.set_piece", payload: { by: FH, kind: "pc" } },
+        { type: "hockey.set_piece", payload: { by: FH, kind: "pc", outcome: "scored" } },
+        { type: "hockey.set_piece", payload: { by: FH, kind: "pc", outcome: "saved" } },
+      ]);
+      expect(state.setPieces).toEqual({ home: { pc: { awarded: 3, scored: 1 } }, away: {} });
+    });
+
+    it("rejects the pre-unification `converted` boolean outright", () => {
+      expect(() =>
+        foldFih([
+          start,
+          { type: "hockey.set_piece", payload: { by: FH, kind: "pc", converted: true } },
+        ]),
+      ).toThrowError(EngineError);
+    });
+
+    it("keeps an unrecorded result absent — awarded still counts, scored does not", () => {
+      // Absence is the honest reading of "the scorer did not say": the goal, if
+      // there was one, arrives as a goal event, so nothing is lost.
+      const state = foldFih([start, { type: "hockey.set_piece", payload: { by: FA, kind: "stroke" } }]);
+      expect(state.setPieces?.away?.stroke).toEqual({ awarded: 1, scored: 0 });
+    });
+
+    it("shares the vocabulary with football's penalty, which cannot say `scored`", () => {
+      expect(AttemptOutcome.options).toEqual(["scored", "saved", "missed", "post"]);
+      // A converted football penalty is already `football.goal { penalty: true }`,
+      // so its branch takes the same tokens MINUS the one that would double-count.
+      expect(PenaltyOutcome.options.every((o) => AttemptOutcome.options.includes(o))).toBe(true);
+      expect(PenaltyOutcome.options).not.toContain("scored");
+    });
   });
 
   // W4 review item 4 — the allowed kinds were read off a compile-time PRESET
@@ -330,7 +374,7 @@ describe("W4 audit — awarded vs converted set pieces", () => {
         { type: "hockey.set_piece", payload: { by: FH, kind: "penalty_corner_rebound" } },
       ]);
       expect(state.setPieces).toEqual({
-        home: { penalty_corner_rebound: { awarded: 1, converted: 0 } },
+        home: { penalty_corner_rebound: { awarded: 1, scored: 0 } },
         away: {},
       });
     });
@@ -386,7 +430,7 @@ describe("W4 audit — event union stays disambiguated", () => {
     {
       name: "set_piece",
       schema: PeriodSetPiece,
-      payload: { by: FH, kind: "pc", person: "fh-3", goalkeeper: "fa-1", converted: true },
+      payload: { by: FH, kind: "pc", person: "fh-3", goalkeeper: "fa-1", outcome: "scored" },
     },
   ] as const;
 
@@ -441,7 +485,7 @@ describe("W4 audit — event union stays disambiguated", () => {
     expect(PeriodGoal.safeParse({ by: IA, class: "minor" }).success).toBe(false);
     expect(PeriodGoal.safeParse({ to: "P2" }).success).toBe(false);
     expect(PeriodGoal.safeParse({ by: IH, scored: true }).success).toBe(false);
-    expect(PeriodGoal.safeParse({ by: IH, converted: true }).success).toBe(false);
+    expect(PeriodGoal.safeParse({ by: IH, outcome: "scored" }).success).toBe(false);
   });
 
   it("each canonical payload folds under its own event type to the expected state", () => {

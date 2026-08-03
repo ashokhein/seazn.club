@@ -14,6 +14,7 @@ import { EngineError } from "../../core/errors.ts";
 import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
+  AttemptOutcome,
   EntrantId,
   type DisciplineCard,
   type DisciplineModel,
@@ -232,7 +233,12 @@ export const PeriodSetPiece = z.strictObject({
   kind: z.string().min(1), // 'pc' | 'stroke' (FIH) · 'ps' (IIHF)
   person: PersonId.optional(), // the taker
   goalkeeper: PersonId.optional(), // the keeper defending it
-  converted: z.boolean().optional(), // true → a goal event carries the score
+  // W4 review item 2 — the SHARED attempt vocabulary (core/types.ts), the same
+  // key football's open-play penalty carries. `scored` is what the pre-review
+  // `converted: true` meant; the goal itself still arrives as a goal event, so
+  // the two never double-count the score. ABSENT ⇒ the scorer recorded no
+  // result, which the tally reads exactly as it read `converted: false`.
+  outcome: AttemptOutcome.optional(),
   clockRef: z.string().min(1).optional(),
 });
 
@@ -281,7 +287,9 @@ export interface GoalLogEntry {
 
 export interface SetPieceTally {
   awarded: number;
-  converted: number;
+  /** Attempts whose `outcome` was `scored` — the counter the FIH match record
+   *  prints beside the awarded count. Named for the token that feeds it. */
+  scored: number;
 }
 
 export interface PeriodState {
@@ -305,6 +313,12 @@ export interface PeriodState {
 
 function opponent(side: Side): Side {
   return side === "home" ? "away" : "home";
+}
+
+/** Generator helper: one rng draw → one shared attempt token, weighted so most
+ *  set pieces do not convert (FIH corners convert well under half the time). */
+function attemptOutcome(draw: number): AttemptOutcome {
+  return draw < 0.3 ? "scored" : draw < 0.6 ? "saved" : draw < 0.8 ? "missed" : "post";
 }
 
 function invalid(message: string, data?: unknown): never {
@@ -588,9 +602,9 @@ function applyShootoutAttempt(
   return { ...decideWin(state, winnerSide, "shootout"), shootout: { kicks } };
 }
 
-// W4 (#407) — a set piece awarded. `converted` is the scorer's own answer to
-// "did it go in"; the goal itself still arrives as a goal event, so the two
-// never double-count the score.
+// W4 (#407) — a set piece awarded. `outcome` is the scorer's own answer to
+// "how did it finish"; the goal itself still arrives as a goal event, so the
+// two never double-count the score.
 //
 // The allowed kinds come from `cfg.setPieceKinds`, seeded from the preset
 // (W4 review item 4). They used to be a compile-time preset constant, on the
@@ -614,10 +628,10 @@ function applySetPiece(
     invalid(`set piece kind "${payload.kind}" is not valid for this sport`, { kind: payload.kind });
   }
   const base = state.setPieces ?? { home: {}, away: {} };
-  const previous = base[side][payload.kind] ?? { awarded: 0, converted: 0 };
+  const previous = base[side][payload.kind] ?? { awarded: 0, scored: 0 };
   const tally: SetPieceTally = {
     awarded: previous.awarded + 1,
-    converted: previous.converted + (payload.converted === true ? 1 : 0),
+    scored: previous.scored + (payload.outcome === "scored" ? 1 : 0),
   };
   return {
     ...state,
@@ -1062,7 +1076,10 @@ export function makePeriodModule(
             by: sideId(side),
             kind,
             ...(rng() < 0.6 ? { person: `${sideId(side)}-p4` } : {}),
-            converted: rng() < 0.3,
+            // One draw, four tokens — the shared attempt vocabulary. Keeping it
+            // to a single rng() call leaves every other generated stream on the
+            // walk it was recorded on.
+            outcome: attemptOutcome(rng()),
           },
         };
       }

@@ -6,6 +6,7 @@ import { EngineError } from "../../core/errors.ts";
 import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
+  AttemptOutcome,
   EntrantId,
   type DisciplineCard,
   type LineupPair,
@@ -144,7 +145,12 @@ export const FootballShootoutKick = z.strictObject({
 // pre-W4 stream changes meaning; this branch exists purely for the kicks a
 // scorebook otherwise loses. `outcome` is required, which is also what keeps
 // the branch structurally distinct inside the union.
-export const PenaltyOutcome = z.enum(["saved", "missed", "post"]);
+//
+// W4 review item 2 — the tokens are the SHARED attempt vocabulary minus
+// `scored`, derived rather than re-typed so the two can never drift apart. A
+// scored penalty is the goal event, and accepting it here would let one kick
+// be counted twice.
+export const PenaltyOutcome = AttemptOutcome.exclude(["scored"]);
 export const FootballPenalty = z.strictObject({
   by: EntrantId, // the side awarded the kick
   taker: PersonId.optional(),
