@@ -129,6 +129,18 @@ export interface CardRecordEntry extends SuspensionDetail {
   side: SuspSide;
   person?: string;
   classKey: string;
+  /**
+   * W4a (#425) — the same two stamps the active entry carries, kept here
+   * because the card log is the immutable scoresheet row and both times are
+   * printed on it.
+   *
+   * They are also the only record left once the fold sweeps the suspension out
+   * of `state.suspensions`, which is what lets a LATER explicit release be
+   * reconciled against it rather than refused (kernel `alreadyRunOut`). Absent
+   * for every unstamped card, so a pre-wave card log is byte-identical.
+   */
+  startedAt?: GameTime;
+  expiresAt?: GameTime;
 }
 
 /** PIM recorded for one suspension class (defaults to its minutes). */
