@@ -4,11 +4,14 @@
 import { describe, expect, it } from "vitest";
 import { EngineError } from "./errors.ts";
 import {
+  CoreResume,
+  CoreSuspend,
   foldMatch,
   foldMatchWithStoppage,
   type EventEnvelope,
   type FoldableModule,
 } from "./events.ts";
+import { GameTime } from "./time.ts";
 import type { LineupPair } from "./types.ts";
 
 interface TickState {
@@ -415,6 +418,40 @@ describe("fold — monotonic time guard (§3.3)", () => {
         fold([ev(at("P1", 900)), suspend({ reason: "rain" }), resume({}), ev(at("P1", 950))])
           .applied,
       ).toBe(2);
+    });
+  });
+
+  // §8 — a malformed stamp is fail-OPEN in the kernel: `gameTimeOf` returns
+  // null for `{ period: "P1", elapsed: -1 }`, so the guard treats it as an
+  // unstamped event rather than rejecting it. That is deliberate (core learns no
+  // sport payload shapes), but it means the ONLY thing standing between a
+  // corrupt stamp and the ledger is the schema on the payload that declared
+  // `at`. So the contract is: reuse `GameTime` verbatim, never a hand-rolled
+  // shape. These assertions hold today — they are here to keep holding, because
+  // the two core payloads are the pattern the sport payloads copy (§5.x).
+  describe("a payload that declares `at` uses the GameTime schema verbatim", () => {
+    it("is the same schema object, not a look-alike", () => {
+      expect(CoreSuspend.shape.at.unwrap()).toBe(GameTime);
+      expect(CoreResume.shape.at.unwrap()).toBe(GameTime);
+    });
+
+    it.each([
+      ["a negative elapsed", { period: "P1", elapsed: -1 }],
+      ["a fractional elapsed", { period: "P1", elapsed: 1.5 }],
+      ["an empty period label", { period: "", elapsed: 1 }],
+      ["an extra key (GameTime is strict)", { period: "P1", elapsed: 1, half: 2 }],
+      ["a string elapsed", { period: "P1", elapsed: "12:41" }],
+    ])("refuses %s outright rather than folding it as unstamped", (_, bad) => {
+      let caught: unknown;
+      try {
+        fold([ev({ at: bad }, "core.suspend")]);
+        expect.unreachable("a malformed stamp must be refused by the payload schema");
+      } catch (err) {
+        caught = err;
+      }
+      // INVALID_EVENT, from validateCoreEvent — NOT silently accepted as an
+      // unstamped event, which is what a hand-rolled `z.object` would do.
+      expect(EngineError.is(caught, "INVALID_EVENT")).toBe(true);
     });
   });
 

@@ -169,15 +169,23 @@ export interface FoldableModule<Cfg = unknown, State = unknown> {
   // Sport-declared types still accepted after the outcome is decided
   // (spec 03 §2 guarantee 4).
   postDecisionTypes?: readonly string[];
-  // W4a (#425) §7 — the sport's phases in PLAY ORDER, for this cfg. The single
-  // source of order for game-time comparison: the kernel's monotonic guard and
-  // the module's own `compareGameTime` calls inside apply() must agree, or an
-  // event the guard accepted could be "backwards" one layer down.
+  // W4a (#425) §7 — every phase in which a STAMPED event may legally occur, in
+  // the order they occur, for this cfg. Wider than "the phases where play is
+  // running": a card before the opening whistle and a card in the shootout are
+  // both stampable, so both phases belong here or the fold refuses them.
+  //
+  // The single source of order for game-time comparison, and the obligation on
+  // a sport is to hand over the SAME FUNCTION its `apply()` passes to
+  // `compareGameTime` — not an equal-looking list. Two lists that agree today
+  // is the defect this replaces: an event the guard accepted is then backwards
+  // one layer down. Ice hockey and hockey supply `playPhases` from
+  // `sports/period/kernel.ts`, and `sports/period/phases.test.ts` asserts the
+  // module holds that exact reference.
   //
   // Optional, and absent means "derive it" (see foldMatchWithStoppage) — a
   // deliberately weaker fallback that keeps every module that has not declared
-  // one working unchanged. Period sports supply `playPhases`
-  // (sports/period/kernel.ts:366).
+  // one working unchanged. An empty or duplicated list is neither: both are
+  // refused as CONFIG_INVALID (validateDeclaredPhases).
   playPhases?(cfg: Cfg): readonly string[];
 }
 

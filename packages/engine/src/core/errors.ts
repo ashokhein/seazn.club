@@ -29,7 +29,15 @@ export const EngineErrorCode = z.enum([
   // order is asserted in errors.test.ts and read by the API's code → HTTP map.
   // A stamped event's `at` precedes the newest accepted stamp (spec §3.3).
   "NON_MONOTONIC_TIME",
-  // compareGameTime received a period absent from the declared phase order.
+  // `compareGameTime` (core/time.ts) received a period absent from the phase
+  // order it was handed. TWO call paths reach it, and naming only the first
+  // sent a reader looking in the wrong file: a module's own comparisons inside
+  // `apply()` (the sweep, release-on-goal), and the fold kernel's monotonic
+  // guard, which compares each stamp against the high-water mark. It is
+  // therefore a disagreement between two lists, never a scorer's typo — an
+  // `at.period` the module does not declare is refused earlier, by the fold, as
+  // INVALID_EVENT. Still a 422: it rejects one event, and paging the on-call
+  // gives the scorer nothing.
   "UNKNOWN_PHASE",
   // Expedite in force, `serving` recorded, and a 13-return rally credited to
   // the serving side (spec §5.3). Declared here, thrown by the set-based
