@@ -40,8 +40,8 @@ export const EngineErrorCode = z.enum([
   // gives the scorer nothing.
   "UNKNOWN_PHASE",
   // Expedite in force, `serving` recorded, and a 13-return rally credited to
-  // the serving side (spec §5.3). Declared here, thrown by the set-based
-  // kernel in a later task.
+  // the serving side (spec §5.3). Thrown by `checkExpedite` in
+  // `sports/setbased/kernel.ts` — its only throw site.
   "EXPEDITE_WRONG_WINNER",
   // Football substitution beyond `subWindows` or `cfg.maxSubs` (spec §5.2).
   // Declared here, thrown by the football module in a later task.

@@ -40,7 +40,7 @@ limitation stated in the table rather than buried in the code.
 | The expedite system is introduced (Law 2.15.1) | all | — | `Ev.ExpediteStart` (`tabletennis.expedite.start`, empty payload) → `State.expedite`, `summary.detail.expedite` | extended | W4a (#425) §5.3 closed W4's stated gap. The **ten-minute trigger stays the pad's** — the engine owns no clock (spec §1.2), so this event is the record that the umpire called it, matching the sheet's expedite mark. |
 | Expedite runs to the end of the MATCH, not the game (Law 2.15.4) | all | — | `State.expedite` (never cleared by `bankSet`) | extended | why the payload is EMPTY: with no game number there is nothing a second introduction could re-scope, so a second `tabletennis.expedite.start` is an `INVALID_EVENT`. Scoping it per game is the error this row exists to prevent. |
 | Receiver wins the point on their 13th good return (Law 2.15.2) | all | entrant | `Ev.Rally.returns` + `Ev.Rally.serving`; a violation is `EXPEDITE_WRONG_WINNER` (422) | extended | `returns` counts the **receiver's** good returns, not the rally's stroke count. **Enforcement is conditional and this is a stated limitation, not an oversight:** the kernel holds no serving state (`server` is a PERSON feeding a `serves` tally), so where a rally carries `returns` but no `serving` there is no receiver to compare `wonBy` against. Such a rally is **recorded, not rejected**, and counted in `State.expediteUnchecked` — rejecting it would make coarse-tier expedited scoring unrecordable. |
-| Which SIDE served the rally | all | entrant | `Ev.Rally.serving` (an `EntrantId`) | extended | distinct from `Ev.Rally.server`, which is a `PersonId`. Adjacent, similarly named, differently typed, and in doubles they disagree — the `DisciplineCard.entrantSide` shape. Expedite enforcement reads `serving` and never `server`; `expedite.test.ts` pins a rally where the two name different entrants. |
+| Which SIDE served the rally | all | entrant | `Ev.Rally.serving` (an `EntrantId`) | extended | distinct from `Ev.Rally.server`, which is a `PersonId`. Adjacent, similarly named, differently typed, and in doubles they disagree — the `DisciplineCard.entrantSide` shape. Expedite enforcement reads `serving` and never `server`. `expedite.test.ts` pins the case that actually has teeth: a rally whose `server` is a string that is ALSO a legal `EntrantId` and names the OTHER side, in both the accept and the reject direction — so a kernel reading `server` resolves it successfully and reaches the wrong verdict. A person-shaped `server` cannot pin this; it kills only by dying in `sideOf`. |
 | Service alternates every point under expedite | all | person | — | deferred | the alternation is derivable from the point sequence once expedite is in force, and the kernel stores no service cursor to enforce it against. Same reasoning as the two-point rotation row above. |
 | Lets (net service, interruption) | all | — | — | deferred | the umpire calls a let and the rally is replayed; nothing is written on the match sheet. |
 | Change of ends between games, and at 5 in the deciding game | all | — | — | deferred | procedural and derivable from the game index and the running score. |
@@ -83,7 +83,12 @@ Asserted against the table itself by `src/testkit/dossiers.test.ts`.
      cannot check the 13-return rule at all — it counts the rally in
      `State.expediteUnchecked` and lets it stand. A pad that draws a service
      indicator already knows this value; one that does not should say so rather
-     than let a scorer believe the rule is being enforced.
+     than let a scorer believe the rule is being enforced. **The counter is
+     readable:** it is deliberately absent from `summary.detail` (coarsening
+     discards `returns`, so exposing it there would break §9.6), but the whole
+     folded state is persisted as `match_states.state` and returned raw by
+     `GET /api/v1/fixtures/:id/state` — the field the pad page already reads.
+     No new engine export is owed for the warning in point 4.
 - **New error code `EXPEDITE_WRONG_WINNER`** (422) — surfaced verbatim; the
   scorer's fix is to correct `wonBy` or `serving`, never to retry.
 - **e2e for expedited scoring is DEFERRED**, not owed by this wave: there is no
