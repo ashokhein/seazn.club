@@ -29,6 +29,29 @@ It cannot see another organisation's schedule, roster or results — only that a
 
 Your data stays yours: the brief is sent to one of our AI providers — Anthropic (Claude), Google (Gemini) or xAI (Grok), some reached through the OpenRouter gateway — only to produce the proposal, and it is **not used to train AI models**. Requests routed through OpenRouter additionally carry zero-data-retention terms. Nothing beyond this division's scheduling brief ever leaves seazn.club — never your whole account, member emails or billing details. See our [sub-processors list](/legal/sub-processors) for the full set of AI providers.
 
+## The dates a plan covers
+
+Every run is bounded by a **calendar window** — the days the competition is allowed to run. It is taken from the division's **start and end dates** in schedule settings. Set a start but no end and the window runs seven days from your start date; set neither and it falls back to **the next seven days**, beginning today in the organisation's timezone.
+
+The window only ever **widens**, never narrows. Before the run it is stretched to cover:
+
+- **play hours you set explicitly**, if any of them fall outside those dates; and
+- **fixtures already on the board**, so a match you placed by hand is never treated as out of bounds.
+
+The dates are a floor, not a cage — you cannot accidentally shrink the window below work you have already done.
+
+A match the proposal puts **outside** the window comes back as a **warning**, listed with the other soft warnings for you to read. It blocks nothing: you can look at it and apply the schedule anyway. Usually it means the end date is earlier than the competition really runs, and the fix is to set the dates rather than to argue with the proposal.
+
+### Divisions with no start date
+
+A division with no start date used to reach the planner as though it sat at the very beginning of the calendar — drafts came back stamped **1 January 1970**, and the model then reasoned outwards from that date.
+
+An undated division now **anchors on the first planning hour of the window's first day**, 08:00 in the organisation's timezone. That anchor only gives the planner somewhere sensible to start counting from; your play hours still decide where matches may actually go.
+
+Any fixture still carrying one of those impossibly old dates now reaches the planner as **not yet placed** rather than as a real date, so it gets scheduled properly instead of being read as already settled.
+
+All of this is resolved in **one zone — your organisation's scheduling timezone**. See [timezones](/help/scheduling/timezones) for what that means when a division sits in a different zone from its organisation.
+
 ## Generate, refine, repair
 
 - **Generate** builds a fresh timetable from your instruction.
