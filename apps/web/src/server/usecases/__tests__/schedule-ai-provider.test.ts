@@ -21,6 +21,20 @@ function makePack(overrides: Partial<import("../schedule-ai").SchedulePack> = {}
   return {
     mode: "generate",
     division: { id: "d1", name: "Open", sport: "generic", tz: "Europe/London" },
+    // #397: the calendar anchor. The org zone matches the division zone here,
+    // so this fixture pack keeps every offset it had.
+    tz: "Europe/London",
+    clock: {
+      now: "2026-08-06T23:30:00.000Z",
+      today: "2026-08-07",
+      tomorrow: "2026-08-08",
+      nextWeekday: {
+        SUN: "2026-08-09", MON: "2026-08-10", TUE: "2026-08-11", WED: "2026-08-12",
+        THU: "2026-08-13", FRI: "2026-08-14", SAT: "2026-08-08",
+      },
+    },
+    window: { start: "2026-08-01T00:00:00+01:00", end: "2026-08-13T23:59:59+01:00" },
+    sessionHours: { start: "08:00", end: "22:00" },
     settings: {
       matchMinutes: 30,
       gapMinutes: 0,

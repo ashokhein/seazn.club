@@ -44,6 +44,13 @@ import { seedOrg } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
+// #397: the pack builder reads no clock — `now` is injected, so a frozen
+// instant here is what keeps the pack (and its golden snapshot) reproducible.
+// 2026-08-06T23:30Z is already Friday the 7th in London, which is the point:
+// the pack's "today" is a fact about the ORG zone, not about UTC.
+const NOW_W2 = Date.parse("2026-08-06T23:30:00Z");
+
+
 const GENERIC_CONFIG = {
   resultMode: "score",
   allowDraws: true,
@@ -191,6 +198,7 @@ describe.skipIf(!HAS_DB)("pack.participants is wired into both consumers (#396)"
     // feed edge, the two tests below would pass for the wrong reason.
     const { auth, divisionId, sharedPersonId, fixtureIds } = await seedRecursionClashBoard();
     const { pack } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "generate",
       instruction: "Two rounds.",
     });
@@ -215,6 +223,7 @@ describe.skipIf(!HAS_DB)("pack.participants is wired into both consumers (#396)"
   it("PLACER: the generated draft never co-schedules the TBD final with the unrelated fixture", async () => {
     const { auth, divisionId, fixtureIds } = await seedRecursionClashBoard();
     const { pack } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "generate",
       instruction: "Two rounds.",
     });
@@ -222,7 +231,7 @@ describe.skipIf(!HAS_DB)("pack.participants is wired into both consumers (#396)"
     const slot = (id: string): { from: number; to: number; court: string } => {
       const a = pack.draft.find((d) => d.fixture_id === id);
       expect(a, `draft is missing fixture ${id}`).toBeDefined();
-      const from = Date.parse(a!.scheduled_at);
+      const from = Date.parse(a!.scheduled_at!);
       return { from, to: from + durMs, court: a!.court_label };
     };
     const final = slot(fixtureIds.final);
@@ -242,6 +251,7 @@ describe.skipIf(!HAS_DB)("pack.participants is wired into both consumers (#396)"
   it("VERIFIER: a proposal that DOES co-schedule them comes back with a person_overlap conflict", async () => {
     const { auth, divisionId, sharedPersonId, fixtureIds } = await seedRecursionClashBoard();
     const { pack, movableIds } = await buildSchedulePack(auth, divisionId, {
+      now: NOW_W2,
       mode: "generate",
       instruction: "Two rounds.",
     });

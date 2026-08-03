@@ -241,6 +241,20 @@ function teamsPack(): { pack: SchedulePack; movable: Set<string> } {
 
   const pack: PackDraft = {
     mode: "generate",
+    // #397: the calendar anchor. Frozen, like every other instant in this
+    // bench, so two runs of the same scenario send the model the same pack.
+    tz: "Europe/London",
+    clock: {
+      now: "2026-08-06T23:30:00.000Z",
+      today: "2026-08-07",
+      tomorrow: "2026-08-08",
+      nextWeekday: {
+        SUN: "2026-08-09", MON: "2026-08-10", TUE: "2026-08-11", WED: "2026-08-12",
+        THU: "2026-08-13", FRI: "2026-08-14", SAT: "2026-08-08",
+      },
+    },
+    window: { start: "2026-08-01T00:00:00+01:00", end: "2026-08-13T23:59:59+01:00" },
+    sessionHours: { start: "08:00", end: "22:00" },
     division: {
       id: "ab-teams",
       name: "Saturday League",
@@ -307,6 +321,20 @@ function individualsPack(): { pack: SchedulePack; movable: Set<string> } {
 
   const pack: PackDraft = {
     mode: "generate",
+    // #397: the calendar anchor. Frozen, like every other instant in this
+    // bench, so two runs of the same scenario send the model the same pack.
+    tz: "Europe/London",
+    clock: {
+      now: "2026-08-06T23:30:00.000Z",
+      today: "2026-08-07",
+      tomorrow: "2026-08-08",
+      nextWeekday: {
+        SUN: "2026-08-09", MON: "2026-08-10", TUE: "2026-08-11", WED: "2026-08-12",
+        THU: "2026-08-13", FRI: "2026-08-14", SAT: "2026-08-08",
+      },
+    },
+    window: { start: "2026-08-01T00:00:00+01:00", end: "2026-08-13T23:59:59+01:00" },
+    sessionHours: { start: "08:00", end: "22:00" },
     division: {
       id: "ab-individuals",
       name: "Club Championship",
@@ -431,6 +459,20 @@ function bracketPack(): { pack: SchedulePack; movable: Set<string> } {
 
   const pack: PackDraft = {
     mode: "generate",
+    // #397: the calendar anchor. Frozen, like every other instant in this
+    // bench, so two runs of the same scenario send the model the same pack.
+    tz: "Europe/London",
+    clock: {
+      now: "2026-08-06T23:30:00.000Z",
+      today: "2026-08-07",
+      tomorrow: "2026-08-08",
+      nextWeekday: {
+        SUN: "2026-08-09", MON: "2026-08-10", TUE: "2026-08-11", WED: "2026-08-12",
+        THU: "2026-08-13", FRI: "2026-08-14", SAT: "2026-08-08",
+      },
+    },
+    window: { start: "2026-08-01T00:00:00+01:00", end: "2026-08-13T23:59:59+01:00" },
+    sessionHours: { start: "08:00", end: "22:00" },
     division: {
       id: "ab-bracket",
       name: "Knockout Cup",

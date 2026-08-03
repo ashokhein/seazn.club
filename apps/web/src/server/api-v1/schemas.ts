@@ -754,6 +754,10 @@ export const ScheduleConflict = z.object({
     "warn.person_overlap",
     "warn.order",
     "warn.blackout",
+    // #397: outside the competition's resolved calendar window. A warning this
+    // wave — W4 (#399) makes it blocking, and delta-based so a board that was
+    // already outside its window stays editable.
+    "warn.window",
     "warn.no_slot",
     "warn.official_declined",
     "warn.official_unavailable",

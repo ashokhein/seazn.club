@@ -63,6 +63,7 @@ import {
   schedulingAiModel,
   zonedIso,
   type PackAssignment,
+  type PackDraftAssignment,
   type PackEntrant,
   type PackFixture,
   type PackObstacle,
@@ -199,6 +200,14 @@ export interface CompetitionPackAssignment extends PackAssignment {
   division_id: string;
 }
 
+/** The joint draft's row shape (#397) — the joint twin of
+ *  `PackDraftAssignment`. `scheduled_at` is nullable here and nowhere else: a
+ *  fixture whose persisted time is an epoch sentinel reaches the model as
+ *  UNPLACED rather than as 1970-01-01. `prior` keeps the placed shape. */
+export interface CompetitionPackDraftAssignment extends PackDraftAssignment {
+  division_id: string;
+}
+
 export interface CompetitionPack {
   mode: "generate" | "refine" | "repair";
   competition: { id: string; name: string };
@@ -224,7 +233,7 @@ export interface CompetitionPack {
    *  person grouping. Rendered at W5 (#400). */
   assumptions: string[];
   fixtures: { movable: CompetitionPackFixture[]; obstacles: CompetitionPackObstacle[] };
-  draft: CompetitionPackAssignment[];
+  draft: CompetitionPackDraftAssignment[];
   instruction: string;
   prior: { instruction: string; assignments: CompetitionPackAssignment[] } | null;
 }
@@ -269,6 +278,10 @@ export function toJointModelPayload(
 export interface BuildCompetitionPackOptions {
   mode: "generate" | "refine" | "repair";
   instruction: string;
+  /** The instant this run is happening, epoch ms. REQUIRED and always injected
+   *  (#397): forwarded verbatim to every per-division `buildSchedulePack`, so
+   *  the divisions of one run cannot disagree about what "today" is. */
+  now: number;
   prior?: { instruction: string; assignments: CompetitionPackAssignment[] };
 }
 
@@ -527,6 +540,9 @@ export async function buildCompetitionPack(
       one = await buildSchedulePack(auth, id, {
         mode: opts.mode,
         instruction: opts.instruction,
+        // ONE clock across the whole run (#397): the same injected instant
+        // reaches every division, so their windows and "today" agree.
+        now: opts.now,
         ...(prior !== undefined ? { prior } : {}),
         // This division's own fixed fixtures arrive internally as
         // obstacleAssignments, so only the rest of the run's are added here.
@@ -610,6 +626,10 @@ export async function buildCompetitionPack(
     const minutes = one.pack.settings.matchMinutes;
     const fixtureById = new Map(one.pack.fixtures.movable.map((f) => [f.id, f]));
     for (const a of one.pack.draft) {
+      // #397: an unplaced draft row carries no time. It takes no court slot, so
+      // it contributes nothing to the feed-forward occupancy the next division
+      // sees — skipping it is the honest reading, not a dropped constraint.
+      if (a.scheduled_at === null) continue;
       const startAt = ms(a.scheduled_at);
       const f = fixtureById.get(a.fixture_id);
       drafted.push({
@@ -747,13 +767,19 @@ export async function buildCompetitionPack(
 
   // Instants, not strings: divisions may sit in different zones, so a
   // lexicographic compare over mixed-offset ISO is not chronological.
-  const byJointAssignment = (a: CompetitionPackAssignment, b: CompetitionPackAssignment): number =>
-    ms(a.scheduled_at) - ms(b.scheduled_at) ||
+  const byJointAssignment = (
+    a: CompetitionPackDraftAssignment,
+    b: CompetitionPackDraftAssignment,
+  ): number =>
+    // #397: unplaced rows carry no instant. -Infinity sorts them first, as one
+    // stable block ahead of every placed card, keeping the order total.
+    (a.scheduled_at === null ? -Infinity : ms(a.scheduled_at)) -
+      (b.scheduled_at === null ? -Infinity : ms(b.scheduled_at)) ||
     cmp(a.court_label, b.court_label) ||
     byDivision(a.division_id, b.division_id) ||
     cmp(a.fixture_id, b.fixture_id);
 
-  const draft: CompetitionPackAssignment[] = built
+  const draft: CompetitionPackDraftAssignment[] = built
     .flatMap((b) => b.pack.draft.map((a) => ({ ...a, division_id: b.id })))
     .sort(byJointAssignment);
 
@@ -1865,6 +1891,9 @@ export async function aiPlanForCompetition(
   const { pack, movableIds } = await buildCompetitionPack(auth, competitionId, kept, {
     mode: input.mode,
     instruction: input.instruction,
+    // The one wall-clock read on this path (#397). Everything downstream takes
+    // the instant as a parameter, so a run is reproducible from its inputs.
+    now: Date.now(),
     ...(input.prior !== undefined ? { prior: input.prior } : {}),
   });
 

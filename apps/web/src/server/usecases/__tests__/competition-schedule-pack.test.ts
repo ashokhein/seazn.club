@@ -26,6 +26,13 @@ vi.mock("../schedule-ai", async (importOriginal) => {
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
+// #397: the pack builder reads no clock — `now` is injected, so a frozen
+// instant here is what keeps the pack (and its golden snapshot) reproducible.
+// 2026-08-06T23:30Z is already Friday the 7th in London, which is the point:
+// the pack's "today" is a fact about the ORG zone, not about UTC.
+const NOW_W2 = Date.parse("2026-08-06T23:30:00Z");
+
+
 const GENERIC_CONFIG = {
   resultMode: "score",
   allowDraws: true,
@@ -240,6 +247,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
 
   it("unions two divisions' movable fixtures and tags every one with its division", async () => {
     const { pack, movableIds } = await buildCompetitionPack(auth, competitionId, selected(), {
+      now: NOW_W2,
       mode: "generate",
       instruction: "Fit both divisions in the day.",
     });
@@ -263,6 +271,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
 
   it("courts is the union of both divisions' labels, sorted", async () => {
     const { pack } = await buildCompetitionPack(auth, competitionId, selected(), {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -271,6 +280,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
 
   it("divergentCourts names the labels that are not in every division", async () => {
     const { pack } = await buildCompetitionPack(auth, competitionId, selected(), {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -285,7 +295,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
       auth,
       same.competitionId,
       same.divisions.map((d) => d.id),
-      { mode: "generate", instruction: "x" },
+      { now: NOW_W2, mode: "generate", instruction: "x" },
     );
     expect(flat.pack.courts).toEqual(["Court 1", "Court 2"]);
     expect(flat.pack.divergentCourts).toEqual([]);
@@ -317,6 +327,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     const cup = await seedOverlapCup();
     const [hotel, india, juliet] = cup.divisions as [SeededDivision, SeededDivision, SeededDivision];
     const { pack } = await buildCompetitionPack(auth, cup.competitionId, [hotel.id, india.id], {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -354,6 +365,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     const cup = await seedOverlapCup();
     const [hotel, india] = cup.divisions as [SeededDivision, SeededDivision, SeededDivision];
     const { pack } = await buildCompetitionPack(auth, cup.competitionId, [hotel.id, india.id], {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -381,6 +393,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     ]);
     const [kilo, lima] = cup.divisions as [SeededDivision, SeededDivision];
     const { pack } = await buildCompetitionPack(auth, cup.competitionId, [kilo.id, lima.id], {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -393,6 +406,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
 
   it("an excluded division's placements are obstacles with a null division_id", async () => {
     const { pack } = await buildCompetitionPack(auth, competitionId, selected(), {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -411,6 +425,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
 
   it("per-division settings are carried verbatim, not merged", async () => {
     const { pack } = await buildCompetitionPack(auth, competitionId, selected(), {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -440,7 +455,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
       auth,
       shared.competitionId,
       shared.divisions.map((d) => d.id),
-      { mode: "generate", instruction: "x" },
+      { now: NOW_W2, mode: "generate", instruction: "x" },
     );
     expect(pack.courts).toEqual(["Court 1"]);
     expect(pack.divergentCourts).toEqual([]);
@@ -452,7 +467,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     }
     const minutes = new Map(pack.divisions.map((d) => [d.id, d.settings.matchMinutes]));
     const spans = pack.draft.map((a) => {
-      const from = Date.parse(a.scheduled_at);
+      const from = Date.parse(a.scheduled_at!);
       return {
         court: a.court_label,
         division_id: a.division_id,
@@ -497,7 +512,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
       auth,
       cup.competitionId,
       cup.divisions.map((d) => d.id),
-      { mode: "generate", instruction: "x" },
+      { now: NOW_W2, mode: "generate", instruction: "x" },
     );
     // The immovable fixture really is in the pack, tagged to its own division.
     const fixed = pack.fixtures.obstacles.filter(
@@ -515,7 +530,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     const overlaps: string[] = [];
     for (const a of pack.draft) {
       if (a.court_label !== "Court 1") continue;
-      const from = Date.parse(a.scheduled_at);
+      const from = Date.parse(a.scheduled_at!);
       const to = from + minutes.get(a.division_id)! * MIN;
       if (from < T0 + 30 * MIN && T0 < to) {
         overlaps.push(`${a.fixture_id} @ ${new Date(from).toISOString()}`);
@@ -550,6 +565,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
                 values (${e1!.id}, ${person}, ${auth.orgId})`;
     }
     const { pack } = await buildCompetitionPack(auth, cup.competitionId, [alphaP.id, bravoP.id], {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -565,7 +581,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     expect(alphaDraft.length).toBe(1);
     expect(alphaDraft[0]!.court_label).toBe("Court 1");
     // The shared person is committed until 09:30, so AlphaP cannot start at 09:00.
-    expect(Date.parse(alphaDraft[0]!.scheduled_at)).toBeGreaterThanOrEqual(T0 + 30 * MIN);
+    expect(Date.parse(alphaDraft[0]!.scheduled_at!)).toBeGreaterThanOrEqual(T0 + 30 * MIN);
   }, 60_000);
 
   // I2: sequential accumulation means a board that does not fit starves the
@@ -582,7 +598,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
       auth,
       cup.competitionId,
       cup.divisions.map((d) => d.id),
-      { mode: "generate", instruction: "x" },
+      { now: NOW_W2, mode: "generate", instruction: "x" },
     );
     const mike = pack.divisions.find((d) => d.name === "Mike")!;
     const november = pack.divisions.find((d) => d.name === "November")!;
@@ -598,6 +614,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     // A board that DOES fit reports a complete draft, so the signal is not
     // simply always-partial.
     const roomy = await buildCompetitionPack(auth, competitionId, selected(), {
+      now: NOW_W2,
       mode: "generate",
       instruction: "x",
     });
@@ -626,7 +643,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
       auth,
       cup.competitionId,
       cup.divisions.map((d) => d.id),
-      { mode: "generate", instruction: "x" },
+      { now: NOW_W2, mode: "generate", instruction: "x" },
     );
     expect(pack.people.length).toBe(1);
     const nameById = new Map(pack.entrants.map((e) => [e.id, e.name]));
@@ -661,7 +678,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
     // Neither division's own pack can see them — the precondition, asserted so a
     // future change to the per-division builder cannot make this test vacuous.
     for (const d of cup.divisions) {
-      const one = await buildSchedulePack(auth, d.id, { mode: "generate", instruction: "x" });
+      const one = await buildSchedulePack(auth, d.id, { now: NOW_W2, mode: "generate", instruction: "x" });
       expect(one.pack.people.map((p) => p.person_id)).not.toContain(person);
     }
 
@@ -669,7 +686,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
       auth,
       cup.competitionId,
       cup.divisions.map((d) => d.id),
-      { mode: "generate", instruction: "x" },
+      { now: NOW_W2, mode: "generate", instruction: "x" },
     );
     const found = pack.people.find((p) => p.person_id === person);
     expect(found).toBeDefined();
@@ -686,13 +703,13 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
       boardA.auth,
       a.competitionId,
       [a.divisions[0]!.id, a.divisions[1]!.id],
-      { mode: "generate", instruction: "Finish by 6pm." },
+      { now: NOW_W2, mode: "generate", instruction: "Finish by 6pm." },
     );
     const packB = await buildCompetitionPack(
       boardB.auth,
       b.competitionId,
       [b.divisions[0]!.id, b.divisions[1]!.id],
-      { mode: "generate", instruction: "Finish by 6pm." },
+      { now: NOW_W2, mode: "generate", instruction: "Finish by 6pm." },
     );
     expect(JSON.stringify(redact(packA.pack))).toBe(JSON.stringify(redact(packB.pack)));
     // …and a rebuild of the same board is byte-identical to itself.
@@ -700,7 +717,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack (#350)", () => {
       boardA.auth,
       a.competitionId,
       [a.divisions[0]!.id, a.divisions[1]!.id],
-      { mode: "generate", instruction: "Finish by 6pm." },
+      { now: NOW_W2, mode: "generate", instruction: "Finish by 6pm." },
     );
     expect(JSON.stringify(again.pack)).toBe(JSON.stringify(packA.pack));
   }, 120_000);
@@ -731,13 +748,13 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack ordering (#350)", () => {
       orgA.auth,
       seedA.competitionId,
       seedA.divisions.map((d) => d.id),
-      { mode: "generate", instruction: "x" },
+      { now: NOW_W2, mode: "generate", instruction: "x" },
     );
     const packB = await buildCompetitionPack(
       orgB.auth,
       seedB.competitionId,
       seedB.divisions.map((d) => d.id),
-      { mode: "generate", instruction: "x" },
+      { now: NOW_W2, mode: "generate", instruction: "x" },
     );
     const slugsOf = (
       seed: { divisions: SeededDivision[] },
@@ -761,6 +778,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
     const a = await seedBigDivision(auth, comp.id, "Aaa", 300);
     const b = await seedBigDivision(auth, comp.id, "Bbb", 200);
     const { movableIds } = await buildCompetitionPack(auth, comp.id, [a, b], {
+      now: NOW_W2,
       mode: "generate",
       instruction: "Pack the day.",
     });
@@ -783,7 +801,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
     const small = await seedBigDivision(auth, comp.id, "Bbb", 2);
     vi.mocked(buildSchedulePack).mockClear();
     await expect(
-      buildCompetitionPack(auth, comp.id, [big, small], { mode: "generate", instruction: "x" }),
+      buildCompetitionPack(auth, comp.id, [big, small], { now: NOW_W2, mode: "generate", instruction: "x" }),
     ).rejects.toMatchObject({
       status: 409,
       code: "AI_PLAN_TOO_LARGE",
@@ -804,7 +822,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
     const b = await seedBigDivision(auth, comp.id, "Bbb", 201);
     vi.mocked(buildSchedulePack).mockClear();
     await expect(
-      buildCompetitionPack(auth, comp.id, [a, b], { mode: "generate", instruction: "x" }),
+      buildCompetitionPack(auth, comp.id, [a, b], { now: NOW_W2, mode: "generate", instruction: "x" }),
     ).rejects.toMatchObject({ status: 409, code: "AI_PLAN_TOO_LARGE" });
     expect(vi.mocked(buildSchedulePack)).not.toHaveBeenCalled();
   }, 120_000);
@@ -815,7 +833,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
     const a = await seedBigDivision(auth, comp.id, "Aaa", 300);
     const b = await seedBigDivision(auth, comp.id, "Bbb", 201);
     await expect(
-      buildCompetitionPack(auth, comp.id, [a, b], { mode: "generate", instruction: "x" }),
+      buildCompetitionPack(auth, comp.id, [a, b], { now: NOW_W2, mode: "generate", instruction: "x" }),
     ).rejects.toMatchObject({ status: 409, code: "AI_PLAN_TOO_LARGE" });
   }, 120_000);
 });
