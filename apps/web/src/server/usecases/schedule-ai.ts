@@ -19,7 +19,7 @@ import {
   type AiTurn,
 } from "@/server/ai/provider";
 import { withTenant } from "@/lib/db";
-import { HttpError } from "@/lib/errors";
+import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
 import { balance, spendCredit, walletIdFor } from "@/lib/credits";
 import { rateLimit } from "@/lib/rate-limit";
@@ -60,7 +60,13 @@ import {
   type SlotConfig,
   type VerifyConfig,
 } from "@seazn/engine/scheduling";
-import { parseInstruction, resolveParsed, type RawParsed } from "@/server/usecases/schedule-ai-parse";
+import {
+  parseInstruction,
+  resolveParsed,
+  type RawParsed,
+  type ResolvedParse,
+} from "@/server/usecases/schedule-ai-parse";
+import { consumePreview, PREVIEW_STALE, releasePreview } from "@/server/usecases/schedule-ai-preview";
 import {
   assignOfficials,
   type AssignPolicy,
@@ -417,6 +423,14 @@ export interface BuildPackOptions {
    *  symbolic dates need the clock and the feasibility bump needs the fixture
    *  count, and both live here rather than at the call site. */
   raw?: RawParsed | null;
+  /** W5 (#400): a resolution the caller already has and the organiser has
+   *  already SEEN — the stored `ai_parse_previews.resolved` of a confirmed
+   *  preview. Wins over `raw` outright. `resolveParsed` reads the org clock, so
+   *  re-deriving it here minutes after the preview can land a symbolic
+   *  "tomorrow" on a different date and quietly run the architect under rules
+   *  nobody approved. Absent on every other path, which resolves `raw` as
+   *  before. */
+  resolved?: ResolvedParse | null;
   scope?: { from?: string; courts?: string[]; pool_ids?: string[] };
   prior?: {
     instruction: string;
@@ -819,7 +833,8 @@ export async function buildSchedulePack(
     // silently defeat "run all the matches from tomorrow till Friday" — the one
     // window the organiser stated in words. Rendering stays here so there is a
     // single writer of the pack's window strings.
-    const resolved = resolveParsed(opts.raw ?? null, clock, orgTz, { fixtureCount: movable.length });
+    const resolved =
+      opts.resolved ?? resolveParsed(opts.raw ?? null, clock, orgTz, { fixtureCount: movable.length });
     const window =
       resolved.windowMs !== null
         ? {
@@ -1331,6 +1346,12 @@ export interface AiPlanResult {
   explanations: { fixture_id: string; note: string }[];
   constraint_suggestions?: Partial<SchedulingConstraints>;
   summary: string;
+  /** W5 (#400): the ARCHITECT's own assumptions — what it assumed while placing.
+   *  Produced on every run since v4 and dropped at the response build until now,
+   *  so the organiser reviewed a proposal without seeing the reading it was
+   *  built on. NOT the resolver's assumptions (stage 1, shown at the preview);
+   *  the two arrays are never merged. Always an array, never undefined. */
+  assumptions: string[];
   // cost_usd is the provider-reported cost when available, falling back to a
   // derived estimate per round; null only when neither is computable.
   usage: { input_tokens: number; output_tokens: number; repair_rounds: number; cost_usd: number | null };
@@ -1676,6 +1697,9 @@ export async function runAiPlan(
       ? { constraint_suggestions: chosen.plan.constraint_suggestions }
       : {}),
     summary: chosen.plan.summary,
+    // `.max(10).optional()` on the prompt schema — the model omits it routinely,
+    // and the review panel maps over the array.
+    assumptions: chosen.plan.assumptions ?? [],
     usage: usageNow(),
   });
 
@@ -2153,6 +2177,59 @@ export async function aiPlanForDivision(
   divisionId: string,
   input: AiPlanRequest,
 ): Promise<AiPlanResponse> {
+  // W5 (#400) Task 2b/H3. The confirmation is claimed early — before the pack,
+  // the quote and the reserve — because an atomic single-use claim is the only
+  // thing that makes a double-submitted confirm buy ONE run under READ
+  // COMMITTED. The claim therefore has to be given back when the run never got
+  // as far as reserving a credit, or an empty wallet or an unplannable division
+  // would silently cost the organiser their confirmation and a second compile.
+  //
+  // The test is "was anything BOUGHT", not "did the reserve succeed" — the two
+  // differ on every failure of the architect itself, which `spendCredit`
+  // refunds. `creditConsumed` is therefore set inside the callback and unset
+  // again by `onHoldReleased`; a settle failure leaves it set, because there the
+  // run happened and the credit really is gone.
+  const claim: PreviewClaim = { previewId: null, creditConsumed: false };
+  try {
+    return await planForDivision(auth, divisionId, input, claim);
+  } catch (err) {
+    if (claim.previewId !== null && !claim.creditConsumed) {
+      await releasePreviewQuietly(claim.previewId, auth.orgId);
+    }
+    throw err;
+  }
+}
+
+/** Mutable out-parameter for the release above: what this run claimed, and
+ *  whether the organiser ended up paying for it. */
+export interface PreviewClaim {
+  previewId: string | null;
+  creditConsumed: boolean;
+}
+
+/**
+ * Hand a confirmation back without ever displacing the error that caused it.
+ *
+ * Both wrappers call this from a `catch`, so an unhandled throw here would
+ * replace the 402/422 the caller has to see with a database error about a
+ * bookkeeping detail. The worst case of swallowing it is the state we already
+ * had before this fix — a preview that stays claimed — which is strictly better
+ * than losing the real refusal.
+ */
+export async function releasePreviewQuietly(previewId: string, orgId: string): Promise<void> {
+  try {
+    await releasePreview(previewId, orgId);
+  } catch (err) {
+    console.error(`[schedule-ai] could not release preview ${previewId} after a failed run`, err);
+  }
+}
+
+async function planForDivision(
+  auth: AuthCtx,
+  divisionId: string,
+  input: AiPlanRequest,
+  claim: PreviewClaim,
+): Promise<AiPlanResponse> {
   // Stable analytics id: the user, or an org: synthetic when a key drives the
   // call (auth.userId is null for API-key auth — CaptureArgs convention).
   const distinctId = auth.userId ?? `org:${auth.orgId}`;
@@ -2201,7 +2278,45 @@ export async function aiPlanForDivision(
   // never touches the wallet at all.
   const walletId = await walletIdFor(auth.orgId);
 
-  await rateLimit(`ai-plan:${divisionId}`, { max: 5, windowSeconds: 3600 });
+  // W5 (#400). A confirmed compile is the one that executes. The organiser was
+  // shown what their sentence compiled into and pressed "run with these rules";
+  // compiling again here would hand the architect a SECOND, independently
+  // non-deterministic answer and run it under a confirmation given for the
+  // first — the exact failure this wave exists to close. So a mismatch refuses
+  // instead of guessing, and the claim is atomic and single-use (see
+  // `consumePreview` for why each of its six refusals is the same 409).
+  //
+  // Claimed BEFORE the rate limit, so an unusable preview_id costs the organiser
+  // neither a slot nor a token; and a valid one skips the limiter entirely,
+  // because the preview already spent that slot on the LLM round the limit
+  // exists to bound. Charging twice would make looking before you leap cost a
+  // run.
+  const confirmed =
+    input.preview_id !== undefined
+      ? await consumePreview(input.preview_id, {
+          orgId: auth.orgId,
+          scope: "division",
+          scopeId: divisionId,
+          // Redundant here — a division preview's scope_id IS this id — and
+          // written anyway, so the predicate is one unconditional array
+          // equality on both paths rather than a shape the joint path alone
+          // has to remember (V346).
+          divisionIds: [divisionId],
+          instruction: input.instruction,
+        })
+      : null;
+  if (input.preview_id !== undefined && confirmed === null) {
+    throw new HttpError(
+      409,
+      "that preview no longer matches this request — check the instruction again",
+      PREVIEW_STALE,
+    );
+  }
+  // Held from here on: everything below may throw, and until a credit is
+  // actually reserved this confirmation is owed back to the organiser.
+  if (confirmed !== null) claim.previewId = input.preview_id!;
+
+  if (confirmed === null) await rateLimit(`ai-plan:${divisionId}`, { max: 5, windowSeconds: 3600 });
 
   // The one wall-clock read on this path (#397). Everything downstream — the
   // pack builder, the clock, the window — takes the instant as a parameter, so
@@ -2222,17 +2337,30 @@ export async function aiPlanForDivision(
   // A lower bound, never an estimate — it can only decline to skip, never skip a
   // run that would have gone through. The 402 itself still comes from
   // `spendCredit` below, unchanged.
+  //
+  // The COMPILE is skipped on a confirmed preview — that round already happened
+  // and was already metered on its own ledger row — but the affordability bound
+  // is NOT (Task 2b/H3). The preview checked it minutes ago; a wallet emptied by
+  // another run in between makes this run a 402, and finding that out at the
+  // reserve costs the confirmation as well as the run. Checking it here refuses
+  // before the pack is built, and the release above hands the confirmation back
+  // so the retry is free.
   const canPay = (await balance(walletId)) >= minimumCredits([input.rung]);
+  if (confirmed !== null && !canPay) throw new PaymentRequiredError("ai.credits");
   const parse =
-    input.instruction.trim().length > 0 && canPay
-      ? await parseInstruction(input.instruction, {
-          divisions: [{ id: divisionId, name: gate.divisionName }],
-        })
-      : { raw: null, failed: false, tokens: 0, servedModel: null };
+    confirmed !== null
+      ? { raw: confirmed.raw, failed: false, tokens: 0, servedModel: null }
+      : input.instruction.trim().length > 0 && canPay
+        ? await parseInstruction(input.instruction, {
+            divisions: [{ id: divisionId, name: gate.divisionName }],
+          })
+        : { raw: null, failed: false, tokens: 0, servedModel: null };
 
-  // OMITTED when no compile ran — an empty instruction, or a wallet that could
-  // not pay for one. Without this, `parse_failed: false` on the ledger doubles
-  // as "never attempted" and reconciliation cannot tell the two apart.
+  // OMITTED when no compile ran on THIS request — an empty instruction, a wallet
+  // that could not pay for one, or a reused preview whose tokens are already
+  // stamped on its own `schedule.ai_previewed` row. Without this,
+  // `parse_failed: false` on the ledger doubles as "never attempted" (or, worse,
+  // bills the same compile twice) and reconciliation cannot tell them apart.
   const parseStamp =
     parse.servedModel !== null || parse.failed
       ? { tokens: parse.tokens, failed: parse.failed }
@@ -2242,6 +2370,11 @@ export async function aiPlanForDivision(
     ...input,
     now: Date.now(),
     raw: parse.raw,
+    // The RESOLVED parse as the organiser saw it, not a re-resolution of `raw`.
+    // `resolveParsed` reads the org clock, so re-running it minutes later can
+    // move a symbolic "tomorrow" onto a different date — a run under rules
+    // nobody approved, arrived at without a single extra model call.
+    ...(confirmed !== null ? { resolved: confirmed.resolved } : {}),
   });
 
   // Token-weighted credit pricing (lib/ai-rung.ts). One line — a division is
@@ -2275,10 +2408,23 @@ export async function aiPlanForDivision(
     // on failure (SPEC-2 §5.2). PaymentRequiredError("ai.credits") from an empty
     // wallet falls through the catch below untouched (it matches neither
     // planErr nor providerErr) and rethrows as the 402.
-    result = await spendCredit(walletId, auth.orgId, quote.credits, async () => ({
-      aiRunId: crypto.randomUUID(),
-      result: await runAiPlanLadder(pack, movableIds, meter),
-    }));
+    result = await spendCredit(
+      walletId,
+      auth.orgId,
+      quote.credits,
+      async () => {
+        // The hold exists by the time this runs. Provisionally consumed…
+        claim.creditConsumed = true;
+        return {
+          aiRunId: crypto.randomUUID(),
+          result: await runAiPlanLadder(pack, movableIds, meter),
+        };
+      },
+      // …and un-consumed again if the ladder throws, because `spendCredit`
+      // refunds the hold in that case: a timed-out or refused run costs the
+      // organiser nothing, so it must not cost them their confirmation either.
+      { onHoldReleased: () => (claim.creditConsumed = false) },
+    );
   } catch (err) {
     // Meter a refused / un-correctable / timed-out run's token spend too —
     // usage rides on the 422 extra so a failed architect call is not invisible
@@ -2487,6 +2633,9 @@ export async function aiPlanForDivision(
       ? { constraint_suggestions: isoConstraintSuggestions(result.constraint_suggestions, pack.division.tz) }
       : {}),
     summary: result.summary,
+    // The ARCHITECT's assumptions (stage 2). The resolver's are a different
+    // array on a different response — see AiPlanResponse.assumptions.
+    assumptions: result.assumptions,
     // Public shape is pinned to AiPlanResponse.usage in api-v1/schemas.ts —
     // exactly these three fields. cost_usd lives on AiPlanResult["usage"] for
     // the ledger (competition_events insert above) but must not leak into the

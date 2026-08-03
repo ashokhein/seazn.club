@@ -27,6 +27,7 @@ import type {
   AiOfficialsPlanRequest,
   AiOfficialsPlanResponse,
   AiLastResult,
+  AiParsePreviewResponse,
   ScheduleConfig,
 } from "@/server/api-v1/schemas";
 import {
@@ -44,12 +45,16 @@ import { compileWishes, deriveFreeText, joinNonEmpty, type Wish } from "./wish-c
 import { compileOfficialsWishes, type OfficialsWish } from "./officials-wish-compile";
 import { AiTrace, type TraceEvent } from "./ai-trace";
 import { AiDiffPanel } from "./ai-diff-panel";
+import { AiReviewPanel } from "./ai-review-panel";
+import { AiInstructionPreview } from "./ai-instruction-preview";
+import { buildReviewRows } from "./ai-review";
 import { AiOfficialsReview, type OfficialsRosterEntry } from "./ai-officials-review";
 import type { AiConsoleFixture } from "./ai-diff";
 import {
   aiConsoleReducer,
   aiErrorKey,
   applyErrorKey,
+  canRun,
   initialAiConsoleState,
   type AiConsoleState,
   type AiMode,
@@ -152,7 +157,7 @@ export function rungField(rung: number | null): { rung?: Rung } {
  * (or none), and no static-markup assertion would notice.
  */
 export function schedulePlanBody(
-  state: Pick<AiConsoleState, "rung" | "scope">,
+  state: Pick<AiConsoleState, "rung" | "scope" | "preview">,
   args: {
     instruction: string;
     mode: AiMode;
@@ -169,6 +174,16 @@ export function schedulePlanBody(
     // phase's field, and nothing short of driving a real request would catch
     // it — three mutations of exactly that shape survived a full green suite.
     ...rungField(state.rung),
+    // W5 (#400): the compile the organiser confirmed. Read off `state.preview`
+    // itself for exactly the reason `rung` is — a call site handed the id as an
+    // argument is a call site that can pass the wrong one, and this one decides
+    // whether the run executes under the rules that were shown or under a
+    // second, unseen compile.
+    //
+    // Absent on the preference fallback, and that is the honest wire shape:
+    // there is no stored parse to reuse, so the server compiles inline exactly
+    // as it did before this wave and nothing claims the sentence is enforced.
+    ...(state.preview.id ? { preview_id: state.preview.id } : {}),
     ...(args.officialsPolicy ? { officials_policy: args.officialsPolicy } : {}),
     ...(args.prior ? { prior: args.prior } : {}),
   };
@@ -529,9 +544,55 @@ export function AiConsole({
   const [traceNonce, setTraceNonce] = useState(0);
   const [officialsTraceNonce, setOfficialsTraceNonce] = useState(0);
 
+  // W5 (#400) — stage 1 only. Compiles the sentence, spends no credit and makes
+  // no architect call, so the organiser can read the rules before paying to run
+  // against them. Declining the result is a pure client action (PREVIEW_DISMISS)
+  // and fires no request at all: that is the entire gate.
+  const preview = useCallback(async () => {
+    const instruction = state.instruction.trim();
+    // `scheduleFrozen` is checked HERE, not only on the button's `disabled`
+    // attribute: a disabled prop is a hint to a pointer, and this request is not
+    // weightless — it takes a rate-limit slot and runs an affordability check
+    // against a run the server would refuse with 409 SCHEDULE_LOCKED anyway.
+    // Same reasoning as the confirm gate inside `run` below (#400 Task 6b).
+    if (instruction.length < 3 || busy || scheduleFrozen || state.preview.status === "loading") {
+      return;
+    }
+    dispatch({ type: "PREVIEW_START" });
+    try {
+      const compiled = await apiV1<AiParsePreviewResponse>(
+        `/api/v1/divisions/${divisionId}/schedule/ai-preview`,
+        {
+          method: "POST",
+          // The SAME rung the confirm will run at, so the affordability refusal
+          // prices the run that is actually on offer.
+          json: {
+            instruction,
+            ...(state.rung !== null && isRung(state.rung) ? { rung: state.rung } : {}),
+          },
+        },
+      );
+      dispatch({ type: "PREVIEW_READY", preview: compiled });
+    } catch (err) {
+      const status = err instanceof ApiV1Error ? err.status : 0;
+      const key = aiErrorKey(status, aiErrorCodeOf(err));
+      dispatch({ type: "PREVIEW_ERROR", error: { status, message: msg(key), key } });
+    }
+  }, [busy, divisionId, msg, scheduleFrozen, state.instruction, state.preview.status, state.rung]);
+
   const run = useCallback(async (opts?: { mode?: AiMode }) => {
     const instruction = state.instruction.trim();
     if (instruction.length < 3 || busy) return;
+    // The confirm gate, enforced where the request is made rather than only on
+    // the button that makes it. `canRun` is the reducer's own predicate, so the
+    // card, the button and this guard cannot disagree about whether the
+    // organiser has agreed to anything.
+    //
+    // Scoped to the brief step on purpose: the seq-conflict recovery
+    // (`reRunAsRefine`) re-runs from the apply step over a proposal that was
+    // already previewed and paid for, and has no brief in front of it to
+    // confirm.
+    if (state.step === "brief" && !canRun(state)) return;
     // The seq-conflict recovery re-runs Phase A as a refine over the current
     // proposal regardless of the mode toggle's async state — an explicit override
     // wins over state.mode for both the request mode and the prior round-trip.
@@ -798,6 +859,7 @@ export function AiConsole({
           state={state}
           dispatch={dispatch}
           run={run}
+          preview={preview}
           busy={busy}
           msg={msg}
           currency={currency}
@@ -986,10 +1048,15 @@ function Stepper({
 // -------------------------------------------------------------- brief step
 const MODES: AiMode[] = ["generate", "refine", "repair"];
 
-function BriefStep({
+/** Exported for the render tests, on the same terms as `ScheduleStep`: what the
+ *  brief step SAYS in each of its states — a failed compile above all — is only
+ *  observable by rendering it, and the console's own suites drive callbacks
+ *  rather than markup. */
+export function BriefStep({
   state,
   dispatch,
   run,
+  preview,
   busy,
   msg,
   currency,
@@ -1004,6 +1071,8 @@ function BriefStep({
   state: AiConsoleState;
   dispatch: (a: Parameters<typeof aiConsoleReducer>[1]) => void;
   run: () => void;
+  /** W5 (#400) — compile the instruction without spending anything. */
+  preview: () => void;
   busy: boolean;
   /** Frozen board — the server refuses the run with 409 SCHEDULE_LOCKED, so
    *  never offer it. */
@@ -1035,6 +1104,26 @@ function BriefStep({
   // frozen board the count is suppressed for the same reason the card is
   // hidden: there is no run to price, so naming a price would be quoting for
   // something that is not on offer.
+  // W5 (#400). Three states, one button plus one card between them:
+  //   nothing compiled  → "Check what this means" (spends nothing)
+  //   compiled          → the receipt card, whose confirm starts the run
+  //   fallback taken    → the ordinary run button, priced as always
+  const checking = state.preview.status === "loading";
+  // The compile round-trip failed. Read here and nowhere else, so the error
+  // block and its label cannot come to different conclusions about which half
+  // of the gate broke. Takes precedence over `run === "error"` on purpose: a
+  // failed run followed by a failed check leaves BOTH set, and `state.error` is
+  // then the check's (PREVIEW_ERROR wrote it last).
+  const previewFailed = state.preview.status === "error";
+  const cardVisible =
+    !busy &&
+    !scheduleFrozen &&
+    state.preview.status === "ready" &&
+    state.preview.data !== null &&
+    !state.preview.asPreference;
+  // Reads the reducer's own predicate — the button cannot come to a different
+  // conclusion about whether the organiser has agreed to anything.
+  const confirmed = canRun(state, { scheduleFrozen });
   const runAction = msg(`board.ai.run.${state.mode}` as MessageKey);
   const runLabel = scheduleFrozen
     ? runAction
@@ -1147,12 +1236,31 @@ function BriefStep({
         />
       )}
 
-      {state.run === "error" && state.error && (
+      {/* One error surface for both halves of the gate.
+          A failed COMPILE lands here too. `PREVIEW_ERROR` deliberately leaves
+          `run` alone — that field describes the architect run, and a free
+          compile never starts one — so gating this block on `run === "error"`
+          alone silenced every preview failure (402, 409, 429, 5xx, offline):
+          the spinner stopped and nothing was said. The preview is the cheap
+          half of the gate, which makes its failures load-bearing, so it reuses
+          the run's own idiom rather than a second one. Only the label changes,
+          because the run is the one thing that did NOT happen. */}
+      {state.error && (previewFailed || state.run === "error") && (
         state.error.key === "board.ai.error.outOfCredits" ? (
           <AiOutOfCredits currency={currency} />
         ) : (
           <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-            <span className="font-semibold">{msg("board.ai.errorLabel")}</span> {state.error.message}
+            <span className="font-semibold">
+              {msg(previewFailed ? "board.ai.preview.error.label" : "board.ai.errorLabel")}
+            </span>{" "}
+            {state.error.message}
+            {/* The way out, stated: nothing was charged, the brief is still in
+                the box above, and the check below can be taken again. */}
+            {previewFailed && (
+              <span className="mt-1 block text-red-600/90">
+                {msg("board.ai.preview.error.free")}
+              </span>
+            )}
           </p>
         )
       )}
@@ -1171,24 +1279,50 @@ function BriefStep({
         </p>
       )}
 
-      <button
-        type="button"
-        onClick={run}
-        disabled={tooShort || busy || scheduleFrozen}
-        className="ai-run inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {busy ? (
-          <>
-            <Spinner />
-            {state.run === "flagged" ? msg("board.ai.flagged") : msg("board.ai.running")}
-          </>
-        ) : (
-          <>
-            <span aria-hidden>✦</span>
-            {runLabel}
-          </>
-        )}
-      </button>
+      {/* W5 (#400) — the confirm gate. The first click COMPILES the sentence
+          (stage 1, no credit, no architect call) and the card below is the
+          receipt for it; only the card's own confirm starts a chargeable run.
+          Declining dispatches PREVIEW_DISMISS and fires no request, which is
+          what makes "declining spends no credit" a fact rather than a claim.
+
+          The card is withheld once the organiser has taken the preference
+          fallback: they have already answered its question, and leaving it up
+          would ask again. */}
+      {cardVisible && state.preview.data && (
+        <AiInstructionPreview
+          preview={state.preview.data}
+          credits={quoteFor(quoteLines).credits}
+          onConfirm={run}
+          onDismiss={() => dispatch({ type: "PREVIEW_DISMISS" })}
+          onAsPreference={() => dispatch({ type: "PREVIEW_AS_PREFERENCE" })}
+        />
+      )}
+
+      {!cardVisible && (
+        <button
+          type="button"
+          onClick={confirmed ? run : preview}
+          data-ai-stage={confirmed ? "run" : "check"}
+          disabled={tooShort || busy || scheduleFrozen || checking}
+          className="ai-run inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {busy || checking ? (
+            <>
+              <Spinner />
+              {checking
+                ? msg("board.ai.preview.checking")
+                : state.run === "flagged"
+                  ? msg("board.ai.flagged")
+                  : msg("board.ai.running")}
+            </>
+          ) : (
+            <>
+              <span aria-hidden>✦</span>
+              {confirmed ? runLabel : msg("board.ai.preview.check")}
+            </>
+          )}
+        </button>
+      )}
       {/* Below the button, not inside it: a per-second counter on a gradient
           fill would jitter the label, and gray would not read on violet.
           Mounted only while busy — the unmount is what resets the clock. */}
@@ -1252,7 +1386,11 @@ function buildScheduleTrace(
   return { events, flaggedIds };
 }
 
-function ScheduleStep({
+/** Exported for the render tests: its inputs are a raw plan and the board's
+ *  fixtures, and everything worth pinning — what the review card counts, what
+ *  it names — is derived from them, so calling it directly still pins the
+ *  derivation rather than handing the component its own answer. */
+export function ScheduleStep({
   state,
   dispatch,
   msg,
@@ -1276,6 +1414,10 @@ function ScheduleStep({
     () => (plan ? buildScheduleTrace(plan, courts, msg) : { events: [], flaggedIds: [] }),
     [plan, courts, msg],
   );
+  // One array for the review card and its count — built here so the panel and
+  // the number above it are the same list (#388). Before the early return: this
+  // is a hook.
+  const reviewRows = useMemo(() => (plan ? buildReviewRows(plan) : []), [plan]);
   if (!plan) return <Empty msg={msg} k="board.ai.schedule.empty" />;
 
   return (
@@ -1295,6 +1437,17 @@ function ScheduleStep({
         fixtures={fixtures}
         excluded={state.excludedFixtures}
         onToggleExclude={(fixtureId) => dispatch({ type: "TOGGLE_EXCLUDE", fixtureId })}
+      />
+
+      {/* Everything the run flagged, could not place, or assumed — one card,
+          one count (#388). It sits ABOVE the review note and the buttons
+          because it is the last thing the organiser should read before
+          choosing to apply, and below the diff because the diff is what
+          happened and this is what to look at. */}
+      <AiReviewPanel
+        rows={reviewRows}
+        fixtures={fixtures}
+        onPulse={(ids) => onPulse(ids)}
       />
 
       <p className="text-[11px] text-slate-500">{msg("board.ai.schedule.reviewNote")}</p>

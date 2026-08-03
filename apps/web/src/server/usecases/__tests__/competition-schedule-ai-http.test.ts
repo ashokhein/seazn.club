@@ -318,6 +318,8 @@ describe("AiCompetitionPlanResponse — the `divisions` collision", () => {
     diff: { moved: ["m1"], placed: ["p1"], unscheduled: ["u1"], unchanged: ["c1"] },
     explanations: [{ fixture_id: "11111111-1111-1111-1111-111111111111", note: "prime slot" }],
     summary: "two divisions solved",
+    // W5 (#400): the architect's own assumptions (stage 2), always an array.
+    assumptions: [],
     divergent_courts: ["Court 4"],
     skipped_divisions: [
       {

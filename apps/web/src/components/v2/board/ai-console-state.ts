@@ -6,7 +6,11 @@
 // (you can't reach officials without a schedule plan; apply is reachable
 // straight from schedule; an error never discards the proposal you're looking
 // at) is unit-testable in isolation. Tasks 12–16 consume these types verbatim.
-import type { AiPlanResponse, AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
+import type {
+  AiPlanResponse,
+  AiOfficialsPlanResponse,
+  AiParsePreviewResponse,
+} from "@/server/api-v1/schemas";
 import type { ApplyOutcome } from "./ai-apply";
 
 export type AiStep = "brief" | "schedule" | "officials" | "apply";
@@ -91,6 +95,34 @@ export interface AiConsoleState {
    *  apply (02 §6). Task 15's accept reads this; Task 13 only wires it. Cleared
    *  whenever a fresh proposal lands. */
   excludedFixtures: string[];
+  /**
+   * W5 (#400) — the compiled-instruction preview, and the gate that makes
+   * "declining spends no credit" a fact rather than a claim.
+   *
+   * The organiser's first click compiles their sentence (stage 1 only, no
+   * credit, no architect call) and lands the result here. Only then does
+   * {@link canRun} return true. The gate lives in this reducer, NOT in the
+   * button's `disabled` attribute: a JSX-only gate is one refactor away from
+   * vanishing with nothing red to show for it, and what it guards is money.
+   */
+  preview: {
+    status: "idle" | "loading" | "ready" | "error";
+    /** What the compiler produced, as the card renders it. */
+    data: AiParsePreviewResponse | null;
+    /** Reuse token for the run. Null on a failed compile — there is nothing to
+     *  confirm then, only a fallback to choose. */
+    id: string | null;
+    /** Set ONLY by an explicit organiser choice after a failed compile
+     *  (`PREVIEW_AS_PREFERENCE`). The run then posts without a `preview_id`, so
+     *  the server compiles inline exactly as it did before this wave and
+     *  nothing pretends the sentence is enforced. Never set by the reducer on
+     *  its own — a silent fallback is the failure this wave exists to close. */
+    asPreference: boolean;
+    /** The TRIMMED instruction this preview was taken for. `canRun` compares it
+     *  with the current one, so rules confirmed for one sentence can never run
+     *  another even if some future action forgets to clear the slice. */
+    instruction: string | null;
+  };
   /** The last failed run/apply. `key` is the copy key aiErrorKey/applyErrorKey
    *  resolved to (the render reads it to enrich the `ai.credits` out-of-credits
    *  state into an action block); it's optional so the reducer's callers can omit
@@ -109,6 +141,15 @@ export type AiConsoleAction =
   // error instead of a test we do not have.
   | { type: "SET_RUNG"; rung: number | null }
   | { type: "SET_OFFICIALS_RUNG"; rung: number | null }
+  // W5 (#400) — the two-stage gate. PREVIEW_AS_PREFERENCE is deliberately its
+  // own action rather than a flag on PREVIEW_READY: it is the organiser saying
+  // "send it unenforced anyway", and it must be impossible to reach by any path
+  // other than their own click on the failed card.
+  | { type: "PREVIEW_START" }
+  | { type: "PREVIEW_READY"; preview: AiParsePreviewResponse }
+  | { type: "PREVIEW_ERROR"; error: { status: number; message: string; key?: string } }
+  | { type: "PREVIEW_DISMISS" }
+  | { type: "PREVIEW_AS_PREFERENCE" }
   | { type: "RUN_START" }
   | { type: "RUN_FLAGGED" }
   | { type: "RUN_DONE"; plan: AiPlanResponse }
@@ -126,6 +167,17 @@ export type AiConsoleAction =
   | { type: "RESET" }
   | { type: "PREFILL_REPAIR"; scope?: AiScope };
 
+/** No compile in hand. Written in one place so every path that drops a
+ *  preview — declining, editing, running, resetting — drops all of it, and a
+ *  half-cleared slice cannot leave a stale id behind to be posted. */
+const IDLE_PREVIEW: AiConsoleState["preview"] = {
+  status: "idle",
+  data: null,
+  id: null,
+  asPreference: false,
+  instruction: null,
+};
+
 export const initialAiConsoleState: AiConsoleState = {
   step: "brief",
   run: "idle",
@@ -139,15 +191,76 @@ export const initialAiConsoleState: AiConsoleState = {
   schedulePlan: null,
   officialsPlan: null,
   excludedFixtures: [],
+  preview: IDLE_PREVIEW,
   error: null,
 };
 
 export function aiConsoleReducer(s: AiConsoleState, a: AiConsoleAction): AiConsoleState {
   switch (a.type) {
     case "SET_INSTRUCTION":
-      return a.officials
-        ? { ...s, officialsInstruction: a.value }
-        : { ...s, instruction: a.value };
+      // Phase B's brief is a different sentence for a different run — it must
+      // never invalidate (or validate) Phase A's compile.
+      if (a.officials) return { ...s, officialsInstruction: a.value };
+      // Editing the sentence drops the rules compiled from the old one.
+      // Compared TRIMMED, so adding a trailing space does not send the
+      // organiser back to re-check a preview that still describes their text.
+      return {
+        ...s,
+        instruction: a.value,
+        preview:
+          s.preview.instruction !== null && s.preview.instruction !== a.value.trim()
+            ? IDLE_PREVIEW
+            : s.preview,
+      };
+
+    case "PREVIEW_START":
+      // Records the sentence being compiled at the moment the request goes out,
+      // so the response can only ever be attached to the text it was asked about.
+      return {
+        ...s,
+        preview: { ...IDLE_PREVIEW, status: "loading", instruction: s.instruction.trim() },
+        error: null,
+      };
+
+    case "PREVIEW_READY":
+      // `id` comes off the response and nowhere else: a failed compile carries
+      // no preview_id, which is exactly what keeps `canRun` false until the
+      // organiser explicitly takes the preference fallback below.
+      return {
+        ...s,
+        preview: {
+          status: "ready",
+          data: a.preview,
+          id: a.preview.preview_id ?? null,
+          asPreference: false,
+          instruction: s.preview.instruction ?? s.instruction.trim(),
+        },
+      };
+
+    case "PREVIEW_ERROR":
+      // The compile round-trip failed (rate limit, no credit, offline). Keep the
+      // brief, drop the slice, and record the error.
+      //
+      // `run` is deliberately NOT set to "error": it describes the architect
+      // run, and a free compile never started one — claiming otherwise would
+      // make `busy`/the stepper narrate a run that does not exist. The console
+      // therefore renders the failure off `preview.status === "error"`, next to
+      // the run's own error block and sharing its markup (ai-console.tsx
+      // `previewFailed`). That coupling is the whole contract of this case:
+      // an earlier version of this comment claimed the run block picked it up
+      // by itself, and it did not — every preview failure rendered NOTHING,
+      // for every status, in every language.
+      return { ...s, preview: { ...IDLE_PREVIEW, status: "error" }, error: a.error };
+
+    case "PREVIEW_DISMISS":
+      // Declining. A pure client action: no request, nothing spent, and the
+      // brief the organiser wrote is still on screen.
+      return { ...s, preview: IDLE_PREVIEW };
+
+    case "PREVIEW_AS_PREFERENCE":
+      // The only writer of `asPreference`, reachable only from the failed card's
+      // own button.
+      return { ...s, preview: { ...s.preview, asPreference: true } };
 
     case "SET_MODE":
       return { ...s, mode: a.mode };
@@ -168,7 +281,13 @@ export function aiConsoleReducer(s: AiConsoleState, a: AiConsoleAction): AiConso
     case "RUN_START":
       // A fresh run clears the last error but keeps the current proposal on
       // screen until the new one lands (refine/repair read as an in-place update).
-      return { ...s, run: "running", error: null };
+      //
+      // It also SPENDS the preview. The server marks the row consumed, so a
+      // second POST carrying the same id is a 409 — holding the id here would
+      // leave the console offering a token that can no longer be redeemed. The
+      // run callback reads `state.preview.id` from its own closure before
+      // dispatching this, so clearing it here cannot empty the request body.
+      return { ...s, run: "running", preview: IDLE_PREVIEW, error: null };
 
     case "RUN_FLAGGED":
       // The engine flagged the model's draft and a repair round is underway.
@@ -258,6 +377,34 @@ export function aiConsoleReducer(s: AiConsoleState, a: AiConsoleAction): AiConso
       return _never;
     }
   }
+}
+
+/**
+ * W5 (#400) — may this state start a chargeable run?
+ *
+ * ONE definition, consumed by the single-division `BriefStep` and by the joint
+ * console's brief alike, so the gate cannot hold on one surface and leak on the
+ * other. Every clause below is a refusal that happens BEFORE any money moves:
+ *
+ *  - too short / busy / frozen — the pre-existing conditions, unchanged.
+ *  - no ready preview — the organiser has not been shown what their sentence
+ *    compiles to, so they cannot have agreed to it.
+ *  - a preview for a DIFFERENT sentence — rules confirmed for one instruction
+ *    must never execute another.
+ *  - a failed compile with no explicit fallback — nothing to confirm, and
+ *    falling back silently is the misreading this wave exists to stop.
+ */
+export function canRun(state: AiConsoleState, opts?: { scheduleFrozen?: boolean }): boolean {
+  const instruction = state.instruction.trim();
+  if (instruction.length < 3) return false;
+  if (state.run === "running" || state.run === "flagged") return false;
+  if (opts?.scheduleFrozen) return false;
+
+  const p = state.preview;
+  if (p.status !== "ready") return false;
+  if (p.instruction !== instruction) return false;
+  // A reusable compile, or an explicit "send it as a preference anyway".
+  return p.id !== null || p.asPreference;
 }
 
 /** ui-catalog copy keys for a failed run. */

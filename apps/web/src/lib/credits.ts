@@ -1266,12 +1266,25 @@ export async function release(holdId: string): Promise<number> {
  * real COGS — releasing in that case would hand back a credit for consumed
  * work, exactly what `release()`'s not-yet-settled guard exists to prevent.
  * So that failure is only logged and rethrown, never released.
+ *
+ * `onHoldReleased` reports THAT distinction to the caller. "The reserve
+ * succeeded" and "the organiser was charged" are different facts, and the gap
+ * between them is exactly the released-hold case above: a caller that spent
+ * something else on the strength of this run — W5's single-use instruction
+ * preview (#400) — has to give it back when the credit came back, and must NOT
+ * give it back when settle fails, because there the credit is genuinely gone.
+ * Only this function knows which happened.
  */
 export async function spendCredit<T>(
   walletId: string,
   orgId: string,
   cost: number,
   fn: () => Promise<{ aiRunId: string; result: T }>,
+  opts: {
+    /** Called after the hold is refunded and before the error is rethrown —
+     *  i.e. exactly when this run cost the org nothing. */
+    onHoldReleased?: () => void;
+  } = {},
 ): Promise<T> {
   const holdId = await reserve(walletId, orgId, cost);
   let ran: { aiRunId: string; result: T };
@@ -1279,6 +1292,7 @@ export async function spendCredit<T>(
     ran = await fn();
   } catch (err) {
     await release(holdId);
+    opts.onHoldReleased?.();
     throw err;
   }
   try {

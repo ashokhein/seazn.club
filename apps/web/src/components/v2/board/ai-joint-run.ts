@@ -17,7 +17,12 @@
 //     prediction. What is DISPLAYED was pinned; what is SENT was not.
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { isRung, type Rung } from "@/lib/ai-rung";
-import type { AiCompetitionPlanRequest, AiCompetitionPlanResponse } from "@/server/api-v1/schemas";
+import type {
+  AiCompetitionPlanRequest,
+  AiCompetitionPlanResponse,
+  AiParsePreviewRequest,
+  AiParsePreviewResponse,
+} from "@/server/api-v1/schemas";
 
 export type JointApi = <T>(
   url: string,
@@ -30,7 +35,25 @@ export interface JointRunInput {
   instruction: string;
   rungs: Record<string, number | null>;
   prior?: AiCompetitionPlanResponse | null;
+  /** W5 (#400): the compile the organiser confirmed. Sending it is what makes
+   *  the rules they were shown the rules that run — and what stops the server
+   *  paying for a second parse round. Absent when they took the preference
+   *  fallback after a failed compile, which is the one path where nothing was
+   *  confirmed and the server compiles inline exactly as it did before. */
+  previewId?: string | null;
 }
+
+/** What a joint compile is asked about. Deliberately the run's own inputs minus
+ *  the ones that only a run has: stage 1 costs nothing and calls no architect. */
+export type JointPreviewInput = Pick<
+  JointRunInput,
+  "competitionId" | "selected" | "instruction" | "rungs"
+>;
+
+export type JointPreviewResult =
+  | { status: "refused" }
+  | { status: "compiled"; preview: AiParsePreviewResponse }
+  | { status: "failed"; httpStatus: number; code?: string };
 
 export type JointRunResult =
   | { status: "refused" }
@@ -49,6 +72,27 @@ export function rungOverrides(
   return Object.keys(out).length > 0 ? { rung_overrides: out } : {};
 }
 
+/**
+ * The COMPILE request — stage 1 only, and the joint route's own shape.
+ *
+ * `division_ids` is the load-bearing field and the reason this is not the
+ * single-division body with a different URL: the resolver reads the window from
+ * the divisions in scope, so a compile taken over two divisions describes a
+ * different run from one taken over three. The server agrees — a `preview_id`
+ * minted for another set is refused 409 PREVIEW_STALE — so a compile posted
+ * without them is a receipt for a run nobody asked for.
+ *
+ * The rungs ride along for the same reason they ride on the run: the
+ * affordability refusal must price the run that is actually on offer.
+ */
+export function jointPreviewBody(input: JointPreviewInput): AiParsePreviewRequest {
+  return {
+    instruction: input.instruction.trim(),
+    division_ids: input.selected,
+    ...rungOverrides(input.rungs, input.selected),
+  };
+}
+
 export function jointRunBody(input: JointRunInput): AiCompetitionPlanRequest {
   const text = input.instruction.trim();
   return {
@@ -56,6 +100,7 @@ export function jointRunBody(input: JointRunInput): AiCompetitionPlanRequest {
     instruction: text,
     mode: input.prior ? "refine" : "generate",
     ...rungOverrides(input.rungs, input.selected),
+    ...(input.previewId ? { preview_id: input.previewId } : {}),
     ...(input.prior
       ? {
           prior: {
@@ -70,6 +115,38 @@ export function jointRunBody(input: JointRunInput): AiCompetitionPlanRequest {
         }
       : {}),
   };
+}
+
+/**
+ * Compile the instruction, at most once at a time.
+ *
+ * Spends nothing: no credit moves and no architect is called, which is what
+ * makes declining the result free. It still takes the SAME in-flight box as the
+ * run, because the two are alternatives — a compile and a chargeable run must
+ * never be in the air together for one intent, and the guard that stops the
+ * second click of a run is the guard that stops the second click of a compile.
+ */
+export async function runJointPreview(
+  input: JointPreviewInput,
+  ctl: { inFlight: { current: boolean }; onStart?: () => void },
+  api: JointApi = apiV1,
+): Promise<JointPreviewResult> {
+  if (ctl.inFlight.current) return { status: "refused" };
+  ctl.inFlight.current = true;
+  try {
+    ctl.onStart?.();
+    const preview = await api<AiParsePreviewResponse>(
+      `/api/v1/competitions/${input.competitionId}/schedule/ai-preview`,
+      { method: "POST", json: jointPreviewBody(input) },
+    );
+    return { status: "compiled", preview };
+  } catch (err) {
+    if (!(err instanceof ApiV1Error)) return { status: "failed", httpStatus: 0 };
+    const code = typeof err.extra.feature_key === "string" ? err.extra.feature_key : err.code;
+    return { status: "failed", httpStatus: err.status, code };
+  } finally {
+    ctl.inFlight.current = false;
+  }
 }
 
 /**

@@ -19,11 +19,14 @@ import type { Dict } from "@/lib/i18n-constants";
 import { DictProvider } from "@/components/i18n/dict-provider";
 import en from "@/dictionaries/en/ui.json";
 import { quoteRun, schedulingRungWeights } from "@/lib/ai-rung";
-import type { AiCompetitionPlanResponse } from "@/server/api-v1/schemas";
+import type { AiCompetitionPlanResponse, AiParsePreviewResponse } from "@/server/api-v1/schemas";
+import type { AiConsoleFixture } from "../ai-diff";
 import {
   AiCompetitionConsole,
+  IDLE_JOINT_PREVIEW,
   JointReviewStep,
   canRunJoint,
+  type JointPreview,
   divergentCourts,
   jointApplyDivisions,
   jointQuoteLines,
@@ -172,15 +175,128 @@ describe("the divisions a joint run starts with", () => {
   });
 
   it("gates the run on the selection independently of the brief", () => {
-    // The half the render cannot show: with a perfectly good brief, one division
-    // still cannot start a joint run.
-    const brief = "Finish every division by 6pm.";
-    expect(canRunJoint({ selected: ["d1"], instruction: brief, running: false })).toBe(false);
-    expect(canRunJoint({ selected: ["d1", "d1"], instruction: brief, running: false })).toBe(false);
-    expect(canRunJoint({ selected: ["d1", "d2"], instruction: brief, running: false })).toBe(true);
+    // The half the render cannot show: with a perfectly good brief AND a
+    // confirmed compile, one division still cannot start a joint run.
+    const ok = { instruction: BRIEF, running: false, preview: confirmedPreview() };
+    expect(canRunJoint({ ...ok, selected: ["d1"] })).toBe(false);
+    expect(canRunJoint({ ...ok, selected: ["d1", "d1"] })).toBe(false);
+    expect(canRunJoint({ ...ok, selected: ["d1", "d2"] })).toBe(true);
     // …and the other two reasons, each on its own.
-    expect(canRunJoint({ selected: ["d1", "d2"], instruction: "  ", running: false })).toBe(false);
-    expect(canRunJoint({ selected: ["d1", "d2"], instruction: brief, running: true })).toBe(false);
+    expect(canRunJoint({ ...ok, selected: ["d1", "d2"], instruction: "  " })).toBe(false);
+    expect(canRunJoint({ ...ok, selected: ["d1", "d2"], running: true })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The confirm gate (W5 #400, Task 7)
+// ---------------------------------------------------------------------------
+
+const BRIEF = "Finish every division by 6pm.";
+
+const COMPILED = {
+  preview_id: "0f3a1c26-9f21-4c2e-8f0e-2b7c1f2d4a55",
+  failed: false,
+  compiled: {
+    hard: [{ type: "max_fixtures_per_day", count: 2, scope: { kind: "competition" } }],
+    soft: [],
+    unparsed: [],
+    assumptions: ["Read 'by 6pm' as the venue's own clock."],
+  },
+  window: null,
+  expires_at: "2026-08-03T12:00:00.000Z",
+} as unknown as AiParsePreviewResponse;
+
+/** A compile the organiser has been shown, for THIS sentence and THESE
+ *  divisions — the only state from which a joint run may start. */
+function confirmedPreview(over: Partial<JointPreview["slice"]> = {}): JointPreview {
+  return {
+    slice: {
+      status: "ready",
+      data: COMPILED,
+      id: COMPILED.preview_id ?? null,
+      asPreference: false,
+      instruction: BRIEF,
+      ...over,
+    },
+    divisionIds: ["d1", "d2"],
+  };
+}
+
+describe("the joint run will not start before the compile is confirmed", () => {
+  // THE gate. The joint console spends exactly as the division console does, so
+  // it must refuse to spend for the same reason: nobody has yet seen what the
+  // sentence compiled to.
+  it("refuses a run on a good brief with no compile in hand", () => {
+    expect(
+      canRunJoint({
+        selected: ["d1", "d2"],
+        instruction: BRIEF,
+        running: false,
+        preview: IDLE_JOINT_PREVIEW,
+      }),
+    ).toBe(false);
+    // The positive discriminator: the SAME brief and selection, once compiled.
+    expect(
+      canRunJoint({
+        selected: ["d1", "d2"],
+        instruction: BRIEF,
+        running: false,
+        preview: confirmedPreview(),
+      }),
+    ).toBe(true);
+  });
+
+  it("reads the division console's own gate rather than a second copy of it", () => {
+    // One definition, so the two consoles cannot come to different conclusions
+    // about whether the organiser has agreed to anything. Every case below is
+    // `canRun`'s, exercised through the joint wrapper.
+    const state = (preview: JointPreview) => ({
+      selected: ["d1", "d2"],
+      instruction: BRIEF,
+      running: false,
+      preview,
+    });
+    // A compile that failed schema twice carries no reusable id — and taking
+    // the preference fallback is the organiser's explicit choice, not ours.
+    const failed = confirmedPreview({ id: null, data: { ...COMPILED, failed: true } });
+    expect(canRunJoint(state(failed))).toBe(false);
+    expect(canRunJoint(state({ ...failed, slice: { ...failed.slice, asPreference: true } }))).toBe(
+      true,
+    );
+    // Still compiling.
+    expect(canRunJoint(state(confirmedPreview({ status: "loading" })))).toBe(false);
+    // Rules confirmed for one sentence can never run another.
+    expect(canRunJoint(state(confirmedPreview({ instruction: "Something else entirely." })))).toBe(
+      false,
+    );
+  });
+
+  it("refuses a compile taken against a different set of divisions", () => {
+    // Task 2b made this a 409 PREVIEW_STALE on the server, because the resolved
+    // WINDOW depends on which divisions are in scope: a preview minted for two
+    // divisions describes a different run from the one three would make. The
+    // client must not offer a confirm it knows the server will refuse.
+    const narrower = { ...confirmedPreview(), divisionIds: ["d1"] };
+    expect(
+      canRunJoint({ selected: ["d1", "d2"], instruction: BRIEF, running: false, preview: narrower }),
+    ).toBe(false);
+    // Order is not identity — the same two divisions in either order is the
+    // same run, and re-checking the picker after a reorder is noise.
+    const reordered = { ...confirmedPreview(), divisionIds: ["d2", "d1"] };
+    expect(
+      canRunJoint({ selected: ["d1", "d2"], instruction: BRIEF, running: false, preview: reordered }),
+    ).toBe(true);
+  });
+
+  it("shows the compile button first, and the run only after the confirm", () => {
+    // The markup half: a fresh console offers "Check what this means", not a
+    // button that spends. Anchored on `="` — React serialises an omitted prop
+    // as `"$undefined"`, so a bare `data-ai-joint-stage` probe passes in both
+    // states.
+    const html = render();
+    expect(html).toContain('data-ai-joint-stage="check"');
+    expect(html).not.toContain('data-ai-joint-stage="run"');
+    expect(html).toContain(enText["board.ai.preview.check"]);
   });
 });
 
@@ -313,6 +429,26 @@ const plan = (over: Partial<AiCompetitionPlanResponse> = {}): AiCompetitionPlanR
     ],
     ...over,
   }) as AiCompetitionPlanResponse;
+
+/** One fixture as the competition board hands it to the console — including the
+ *  division that owns it, which is the ONLY source for the chip on a row the
+ *  proposal never touched. */
+function jointFixture(id: string, divisionId: string, matchup: string): AiConsoleFixture {
+  return {
+    id,
+    division_id: divisionId,
+    stage_id: "st-1",
+    scheduled_at: null,
+    court_label: null,
+    code: "R1·1",
+    matchup,
+    isFinal: false,
+    isJunior: false,
+    status: "scheduled",
+    home_entrant_id: "en-a",
+    away_entrant_id: "en-b",
+  };
+}
 
 function review(
   over: Partial<Parameters<typeof JointReviewStep>[0]> = {},
@@ -453,18 +589,122 @@ describe("a person clash the plan only warns about but the apply refuses", () =>
     // (the skipped division, the court-name mismatch) and one that is reads as
     // a bug even when it is not. The fix is to show what is counted.
     const html = review({ plan: clash });
-    expect(html).toContain(tEn("board.ai.joint.warnings.other", { count: 3 }));
-    expect(html).toContain(enText["board.ai.joint.warningsTitle"]);
-    // One row per warning, each naming its own fixture.
-    expect([...html.matchAll(/data-warning-row="([^"]*)"/g)].map((m) => m[1])).toEqual([
-      "f2",
-      "f1",
-      "f2",
+    expect(html).toContain('data-review-count="3"');
+    // One row per warning, in the order the engine raised them.
+    expect([...html.matchAll(/data-review-row="([^"]*)"/g)].map((m) => m[1])).toEqual([
+      "warning",
+      "warning",
+      "warning",
     ]);
-    // …and no box at all when the engine raised none.
-    expect(review({ plan: plan({ warnings: [] }) })).not.toContain(
-      enText["board.ai.joint.warningsTitle"],
+    // …and no card at all when the engine raised none.
+    expect(review({ plan: plan({ warnings: [] }) })).not.toContain('data-review-count="');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The one count (#388)
+// ---------------------------------------------------------------------------
+
+describe("what the joint review says there is to review", () => {
+  const u1 = { fixture_id: "f7", reason: "no court free in the window", rule: "CAP" as const };
+
+  /**
+   * Just the review card. The division LEDGER above it wears a chip per
+   * selected division, so an unscoped `data-division-chip` probe is answered by
+   * the ledger and says nothing about the rows.
+   *
+   * Anchored on `data-review-count`, NOT on the first `<section>`. The card
+   * being the step's only section was true by accident and stopped being true
+   * the moment this console grew a preview card (W5 #400) — a `<section>` above
+   * the panel silently retargets every assertion below without failing one.
+   */
+  function card(html: string): string {
+    const anchor = html.indexOf('data-review-count="');
+    expect(anchor).toBeGreaterThan(-1);
+    const from = html.lastIndexOf("<section", anchor);
+    expect(from).toBeGreaterThan(-1);
+    return html.slice(from, html.indexOf("</section>", from));
+  }
+
+  // #388 in one assertion. The old header read `plan.warnings.length` and said
+  // "1 warning to review" while three amber rows sat underneath it — the
+  // warning, the fixture nobody could place, and the architect's assumption.
+  it("counts assumptions and unschedulable fixtures, not just warnings", () => {
+    const html = review({
+      plan: plan({
+        warnings: [{ fixtureId: "f1", reason: "rest", detail: "20 minutes" }],
+        unschedulable: [u1],
+        assumptions: ["Read 'the weekend' as Sat + Sun."],
+      } as Partial<AiCompetitionPlanResponse>),
+    });
+    expect(html).toContain('data-review-count="3"');
+    // The count IS the rows on screen — the property #388 exists to protect.
+    // `plan.warnings.length` is 1 here, so the old header would read "1" while
+    // three rows sat under it; this fails for any number keyed on one kind.
+    const kinds = [...html.matchAll(/data-review-row="([^"]*)"/g)].map((m) => m[1]);
+    expect(html).toContain(`data-review-count="${kinds.length}"`);
+    // Exactly one number on the card, and it is that one. This is the guard
+    // that would fail if a second count were reintroduced anywhere on the step.
+    expect(html.match(/data-review-count="/g) ?? []).toHaveLength(1);
+    expect(kinds).toEqual(["warning", "unschedulable", "assumption"]);
+  });
+
+  // Carried from the Task 5 review. `skipped_divisions` and `divergent_courts`
+  // are division-level facts about the run's SCOPE, not per-fixture findings —
+  // Task 4's three review categories do not include them. Sitting in the same
+  // amber band as the counted card, they read as rows the count had missed.
+  // The ruling was to demote them, not to count them: folding them in would
+  // make one number mean two different units.
+  it("keeps the division-level notes out of the counted amber band", () => {
+    const html = review({
+      plan: plan({
+        warnings: [{ fixtureId: "f1", reason: "rest", detail: "20 minutes" }],
+        skipped_divisions: [{ id: "d3", name: "Under 16s", reason: "no_movable_fixtures" }],
+        divergent_courts: ["Court 3"],
+      } as Partial<AiCompetitionPlanResponse>),
+    });
+    // Still said, and still where the ledger they are about is.
+    expect(html).toContain(tEn("board.ai.joint.skipped", { divisions: "Under 16s" }));
+    expect(html).toContain(tEn("board.ai.joint.courtsDivergent", { courts: "Court 3" }));
+    expect(html.match(/data-scope-note="1"/g) ?? []).toHaveLength(2);
+    // Not amber, so the eye does not group them with the counted rows…
+    const notes = [...html.matchAll(/<div data-scope-note="1" class="([^"]*)"/g)].map((m) => m[1]);
+    expect(notes).toHaveLength(2);
+    expect(notes.every((c) => !c.includes("amber"))).toBe(true);
+    // …and not counted, because a court-name mismatch is not a fixture.
+    expect(html).toContain('data-review-count="1"');
+    expect(html.match(/data-review-count="/g) ?? []).toHaveLength(1);
+  });
+
+  // Must-fix 1. `plan.proposal` and `plan.unschedulable` are mutually exclusive
+  // — the server dedupes one against the other — so a division map built from
+  // the proposal returns null for every unschedulable row. On the joint console
+  // the chip is the ONLY thing naming a row's division, so those rows would
+  // lose the one piece of context they most need. f7 is deliberately absent
+  // from the proposal and present on the board.
+  it("names the division of a fixture the plan could not place", () => {
+    const row = card(
+      review({
+        plan: plan({ unschedulable: [u1] } as Partial<AiCompetitionPlanResponse>),
+        fixtures: [jointFixture("f7", "d2", "Osei vs Pereira")],
+      }),
     );
+    expect(row).toContain('data-division-chip="');
+    expect(row).toContain("Under 14s");
+    expect(row).toContain("Osei vs Pereira");
+  });
+
+  // Never guessed. A fixture the board does not hold has no honest division, so
+  // the row renders without a chip rather than borrowing a neighbour's.
+  it("omits the chip when the board does not know the fixture's division", () => {
+    const row = card(
+      review({
+        plan: plan({ unschedulable: [u1] } as Partial<AiCompetitionPlanResponse>),
+        fixtures: [],
+      }),
+    );
+    expect(row).toContain('data-review-count="1"');
+    expect(row).not.toContain('data-division-chip="');
   });
 });
 

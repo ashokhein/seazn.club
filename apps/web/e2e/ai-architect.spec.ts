@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
+import { test, expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 import {
   TAG,
   apiJson,
@@ -11,7 +11,14 @@ import {
   getAiScheduleApply,
   getFixtureScheduleSources,
 } from "./helpers";
-import { startAiFixtureServer, FIXTURE_REFUSE, type AiFixtureServer } from "./ai-fixture-server";
+import {
+  startAiFixtureServer,
+  FIXTURE_REFUSE,
+  FIXTURE_COMPILE_BRIEF,
+  FIXTURE_COMPILE_SOFT,
+  FIXTURE_COMPILE_UNPARSED,
+  type AiFixtureServer,
+} from "./ai-fixture-server";
 
 // v4 Task 17 — the full AI Schedule Architect wizard, end to end, against a
 // canned model (ai-fixture-server.ts). Scenarios:
@@ -22,6 +29,9 @@ import { startAiFixtureServer, FIXTURE_REFUSE, type AiFixtureServer } from "./ai
 //      opens in a scoped repair.
 //   4. Community org at its 5-runs/division quota → 402 → quota copy, no model call.
 //   5. 390px viewport: the happy flow, no horizontal scroll.
+//   6. #400 (W5): the confirm gate. Every run above now goes brief → compile →
+//      receipt card → confirm, and the wave's acceptance case is the one that
+//      DECLINES the receipt and proves the credit ledger did not move.
 //
 // Serial in one worker: the fixture server binds a fixed port (AI_FIXTURE_PORT),
 // so the file must not fan out across workers (each would re-bind and collide).
@@ -148,6 +158,31 @@ async function openConsole(page: Page): Promise<void> {
   await expect(page.getByRole("region", { name: "AI Schedule" })).toBeVisible();
 }
 
+/** The docked single-division console. */
+function consoleDock(page: Page): Locator {
+  return page.getByRole("region", { name: "AI Schedule" });
+}
+
+/**
+ * W5 (#400) — a run is TWO clicks now, and this is both of them.
+ *
+ * The first COMPILES the sentence (stage 1: no credit, no architect call) and
+ * the card that comes back is the receipt for it; only that card's own confirm
+ * starts a chargeable run. There is no "Generate schedule" button to click
+ * until something has been confirmed, so every scenario below routes through
+ * here.
+ *
+ * Everything is scoped to the console, and the card's assertions to
+ * `[data-preview-*]` — the brief textarea still holds the organiser's own
+ * sentence a few hundred pixels above, so a page-wide getByText for anything
+ * the card renders matches the textarea too and passes for the wrong reason.
+ */
+async function compileAndConfirm(page: Page, scope: Locator = consoleDock(page)): Promise<void> {
+  await scope.getByRole("button", { name: "Check what this means" }).click();
+  await expect(scope.locator('[data-preview-state="ready"]')).toBeVisible({ timeout: 20_000 });
+  await scope.locator("[data-preview-confirm]").click();
+}
+
 /** Add the "Finish by 18:00" wish chip and confirm it compiled into the brief. */
 async function addFinishByWish(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Finish by", exact: true }).click();
@@ -178,8 +213,8 @@ test("pro: brief → run → CLEAN → officials → apply → undo", async ({ p
   await addFinishByWish(page);
   await shot(page, "01-brief");
 
-  // Run Phase A → the referee trace reaches CLEAN.
-  await page.getByRole("button", { name: "Generate schedule" }).click();
+  // Run Phase A, through the W5 gate → the referee trace reaches CLEAN.
+  await compileAndConfirm(page);
   await expect(page.getByText(/CLEAN · 0 blocking/)).toBeVisible({ timeout: 20_000 });
   await shot(page, "02-schedule-clean");
 
@@ -220,6 +255,79 @@ test("pro: brief → run → CLEAN → officials → apply → undo", async ({ p
   await expect(page.getByText("Reverted to before the AI changes.")).toBeVisible({ timeout: 20_000 });
   const afterUndo = await getFixtureScheduleSources(divisionId);
   expect(afterUndo.every((s) => s.scheduled_at === null)).toBe(true);
+});
+
+// ---------------------------------------------------------------------------
+// #400 (W5) — the confirm gate
+// ---------------------------------------------------------------------------
+
+/**
+ * THE ACCEPTANCE CASE FOR THE WHOLE WAVE.
+ *
+ * An organiser types a sentence, is shown what the machine made of it, and
+ * decides not to run. The claim being tested is that this cost them nothing —
+ * and it is a claim about MONEY, so it is read from the credit ledger by SQL
+ * and not from anything on screen. Every on-screen number in this console is
+ * rendered by the same component tree that would be wrong; the wallet is the
+ * only observable that can disagree with it.
+ *
+ * The card assertions come first and are not decoration: a "declining spends
+ * nothing" test that never establishes there was something to decline passes
+ * just as well against a card that failed to compile, which is the state that
+ * spends nothing by accident. So the fixture compiles this brief for real
+ * (`FIXTURE_COMPILE_BRIEF`) and the card is checked to be the full receipt —
+ * two enforced rules, one passed-on wish, one clause we could not use, the
+ * reading of the calendar, and the window — before the decline is taken.
+ */
+test("pro: declining the compiled instruction spends no credit", async ({ page, request }) => {
+  fixture.reset();
+  const orgId = await activateFreshProPlusOrg(page, request);
+  const { divisionId } = await seedAiDivision(request);
+
+  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await openConsole(page);
+  const dock = consoleDock(page);
+  const before = await aiCreditBalance(orgId);
+
+  await page.locator("#ai-instruction").fill(FIXTURE_COMPILE_BRIEF);
+  await dock.getByRole("button", { name: "Check what this means" }).click();
+
+  const card = dock.locator('[data-preview-state="ready"]');
+  await expect(card).toBeVisible({ timeout: 20_000 });
+
+  // The receipt, scoped to the card. The per-day cap and the weekday rule on
+  // the final are the two that BIND; the window is not among them (it becomes
+  // the run's calendar, which the verifier already checks) and renders on its
+  // own line, which is why the ledger holds two rows and not three.
+  await expect(card.locator('[data-preview-rule="hard"]')).toHaveCount(2);
+  await expect(card.getByText("at most 2 matches a day")).toBeVisible();
+  await expect(card.locator('[data-preview-rule="soft"]')).toHaveCount(1);
+  await expect(card.getByText(FIXTURE_COMPILE_SOFT)).toBeVisible();
+  // Quoted VERBATIM — the one section where a paraphrase would be a lie.
+  await expect(card.locator("[data-preview-unparsed]")).toHaveText([FIXTURE_COMPILE_UNPARSED]);
+  await expect(card.locator("[data-preview-assumption]").first()).toBeVisible();
+  await expect(card.locator("[data-preview-window]")).toBeVisible();
+
+  // Stage 1 and nothing else: the architect was never called. `every` alone is
+  // vacuous on an empty log, so the length is pinned too.
+  expect(fixture.calls).toHaveLength(1);
+  expect(fixture.calls[0]!.phase).toBe("parse");
+  await shot(page, "11-preview-ready");
+
+  // DECLINE. A pure client action — no request is made at all.
+  await dock.getByRole("button", { name: "Back to the brief" }).click();
+  await expect(dock.locator('[data-preview-state="ready"]')).toHaveCount(0);
+  // The organiser's sentence survives the decline (they are meant to edit it) …
+  await expect(page.locator("#ai-instruction")).toHaveValue(FIXTURE_COMPILE_BRIEF);
+  // … and the CTA is back to the gate rather than armed to run.
+  await expect(dock.locator("[data-ai-stage]")).toHaveAttribute("data-ai-stage", "check");
+
+  // THE POINT OF THE WAVE.
+  expect(await aiCreditBalance(orgId)).toBe(before);
+  // Nor was anything quietly scheduled: declining is not a run with no receipt.
+  const sources = await getFixtureScheduleSources(divisionId);
+  expect(sources.length).toBe(6);
+  expect(sources.every((s) => s.scheduled_at === null)).toBe(true);
 });
 
 // ---------------------------------------------------------------------------
@@ -334,10 +442,11 @@ test("the credits picker is a real radio group — arrows move the selection AND
   await expect(chips.nth(2)).toHaveAttribute("tabindex", "0");
   await expect(chips.nth(1)).toHaveAttribute("aria-checked", "false");
   await expect(chips.nth(1)).toHaveAttribute("tabindex", "-1");
-  // …and the price the organiser is about to confirm follows, on the card and
-  // on the button.
+  // …and the price the organiser is about to confirm follows on the card.
+  // W5 (#400) moved the priced button behind the gate: the CTA at this point
+  // compiles, it does not run, so it names no price. The price the organiser
+  // actually presses is asserted at the end of this test, on the confirm.
   await expect(card).toHaveAttribute("data-ai-credits", "3");
-  await expect(page.getByRole("button", { name: /Generate schedule.*3 credits/ })).toBeVisible();
 
   // Wrapping, at both ends.
   await page.keyboard.press("ArrowRight");
@@ -360,7 +469,7 @@ test("the credits picker is a real radio group — arrows move the selection AND
   // satisfied by the card having vanished (a navigation, a crash), which is not
   // what this sentence claims. Every other assertion here names an element.
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("button", { name: /Generate schedule/ })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Check what this means" })).toBeFocused();
 
   // Below the prediction is allowed, and warned about in as many words.
   await chips.nth(0).click();
@@ -373,6 +482,16 @@ test("the credits picker is a real radio group — arrows move the selection AND
   await chips.nth(1).click();
   await expect(card.getByText("Below the recommended credits.", { exact: false })).toHaveCount(0);
   await expect(card).toHaveAttribute("data-ai-credits", "2");
+
+  // W5 (#400): the picked price has to survive the gate. The button that
+  // actually spends is the confirm INSIDE the preview card, so that is where
+  // the number the organiser agreed to must appear — a receipt card that
+  // quotes 2 above a confirm that spends 3 is the defect this asserts against.
+  await page.getByRole("button", { name: "Check what this means" }).click();
+  const confirm = page.locator("[data-preview-confirm]");
+  await expect(confirm).toBeVisible({ timeout: 20_000 });
+  await expect(confirm).toHaveAttribute("data-ai-credits", "2");
+  await expect(confirm).toHaveText(/Run with these rules.*2 credits/);
 });
 
 /**
@@ -395,7 +514,7 @@ test("the officials step prices itself: free draft with no picker, priced once a
   await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
   await openConsole(page);
   await page.locator("#ai-instruction").fill("Spread the matches across the day.");
-  await page.getByRole("button", { name: "Generate schedule" }).click();
+  await compileAndConfirm(page);
   await expect(page.getByText(/CLEAN · 0 blocking/)).toBeVisible({ timeout: 20_000 });
   await page.getByRole("button", { name: "Assign officials" }).click();
   await expect(page.getByLabel("Officials by fixture")).toBeVisible({ timeout: 20_000 });
@@ -707,7 +826,13 @@ test("competition board: pick divisions → price the batch → run → review �
   // ---- RUN: ONE model call carrying BOTH divisions' movable fixtures.
   const walletBefore = await aiCreditBalance(org.id);
   await page.locator("#ai-joint-instruction").fill("keep the divisions off each other's courts");
+  // W5 (#400): the same gate, on this console. The CTA compiles first — and
+  // the down-picked price has to reach the button that actually spends, or the
+  // wallet assertion below would be checking a number nobody was shown.
   await dock.locator("[data-ai-joint-run]").click();
+  await expect(dock.locator('[data-preview-state="ready"]')).toBeVisible({ timeout: 60_000 });
+  await expect(dock.locator("[data-preview-confirm]")).toHaveAttribute("data-ai-credits", "1");
+  await dock.locator("[data-preview-confirm]").click();
   await expect(
     dock.getByText("Review the proposal, then apply it to every division at once."),
   ).toBeVisible({ timeout: 60_000 });
@@ -765,7 +890,23 @@ test("a model refusal surfaces the AI_PLAN_FAILED copy (and proves the model was
   // The magic instruction makes the fixture server answer stop_reason:"refusal"
   // with empty content, which schedule-ai.ts maps to 422 AI_PLAN_FAILED.
   await page.locator("#ai-instruction").fill(`${FIXTURE_REFUSE} — do the impossible.`);
-  await page.getByRole("button", { name: "Generate schedule" }).click();
+  const dock = consoleDock(page);
+
+  // W5 (#400): the compile hits the same refusal first, so this is also the
+  // ONLY e2e that walks the failed-compile card and its fallback. The card
+  // must NOT offer a confirm — there is nothing to confirm and no preview_id
+  // to reuse — and taking "Send it as written" is an EXPLICIT choice that
+  // hands the sentence to the architect as a preference. Nothing falls back on
+  // the organiser's behalf.
+  await dock.getByRole("button", { name: "Check what this means" }).click();
+  await expect(dock.locator('[data-preview-state="failed"]')).toBeVisible({ timeout: 20_000 });
+  await expect(dock.locator("[data-preview-confirm]")).toHaveCount(0);
+  await expect(dock.locator("[data-preview-unparsed]")).toContainText(FIXTURE_REFUSE);
+  await shot(page, "12-preview-failed");
+  await page.getByRole("button", { name: "Send it as written" }).click();
+  // Only now is there a priced run button, and it is the ordinary one.
+  await expect(dock.locator("[data-ai-stage]")).toHaveAttribute("data-ai-stage", "run");
+  await page.getByRole("button", { name: /Generate schedule/ }).click();
 
   // aiErrorKey(422, "AI_PLAN_FAILED") → board.ai.error.invalid.
   await expect(
@@ -855,14 +996,57 @@ test.describe("community credit gate", () => {
       await openConsole(page);
       // The community org CAN open the wizard (scheduling.ai is granted) …
       await page.locator("#ai-instruction").fill("Spread the matches across the day.");
-      await page.getByRole("button", { name: "Generate schedule" }).click();
+      // W5 (#400): the refusal now happens one step EARLIER. The preview runs
+      // its own affordability check before spending our parse tokens, so an
+      // empty wallet is turned away before the compile — the run's 402 is
+      // unchanged behind it, but this click is the one an organiser makes now.
+      const refused = page.waitForResponse(
+        (r) => r.url().includes("/schedule/ai-preview") && r.status() === 402,
+        { timeout: 20_000 },
+      );
+      await page.getByRole("button", { name: "Check what this means" }).click();
 
-      // … but the run is refused with the out-of-credits copy, and no model call fires.
-      await expect(
-        page.getByText("You're out of AI credits for this billing period.", { exact: false }),
-      ).toBeVisible({ timeout: 20_000 });
+      // … and it IS a refusal, asserted on the response rather than on the
+      // absence of a card: "no card appeared" is equally satisfied by a request
+      // that never fired, which is the opposite of what this test claims.
+      await refused;
+      // No compile, so no model call — the whole point of checking the wallet
+      // before the parse round rather than after it.
       expect(fixture.calls.length).toBe(0);
+      // Nothing was compiled, so there is nothing to confirm and no run armed.
+      await expect(page.locator("[data-preview-state]")).toHaveCount(0);
+      await expect(consoleDock(page).locator("[data-ai-stage]")).toHaveAttribute(
+        "data-ai-stage",
+        "check",
+      );
+      // …and the organiser is TOLD, which is the half that was missing: the
+      // preview's error was stored but the console's error block was gated on
+      // `state.run === "error"`, which a free compile never sets, so a refused
+      // check showed a spinner that stopped and nothing else. Asserted on the
+      // copy an organiser reads, in the dock, not on a data attribute — the
+      // failure this guards is a silent surface.
+      const outOfCredits = consoleDock(page).getByRole("alert").filter({
+        hasText: "You're out of AI credits for this billing period.",
+      });
+      await expect(outOfCredits).toBeVisible({ timeout: 10_000 });
+      // Not a dead end: the recovery block's own CTAs, and the check still on
+      // offer underneath once the wallet is topped up.
+      await expect(outOfCredits.getByRole("button", { name: "Buy credits" })).toBeVisible();
+      await expect(outOfCredits.locator('[data-upgrade="pro_plus"]')).toBeVisible();
       await shot(page, "07-community-out-of-credits");
+
+      // The same block at the reference phone. Its three recovery CTAs stack
+      // (flex-col below sm) and the dock is the full width of the screen, so
+      // this is where a recovery block turns into a sideways scroll.
+      await page.setViewportSize({ width: 375, height: 812 });
+      await expect(outOfCredits).toBeVisible();
+      await expect(outOfCredits.getByRole("button", { name: "Buy credits" })).toBeVisible();
+      const spills = await page.evaluate(() => {
+        const el = document.scrollingElement!;
+        return el.scrollWidth > el.clientWidth;
+      });
+      expect(spills).toBe(false);
+      await shot(page, "07-community-out-of-credits-375");
     } finally {
       // Free the community org's single active-competition slot for the serial specs.
       await apiJson(request, `/api/v1/competitions/${competitionId}`, "PATCH", { status: "archived" });
@@ -882,7 +1066,10 @@ test.describe("mobile viewport", () => {
     await openConsole(page);
     await addFinishByWish(page);
 
-    await page.getByRole("button", { name: "Generate schedule" }).click();
+    // The gate is on the phone too, and the card it opens must not push the
+    // page sideways — the viewport assertion at the end of this test covers
+    // the whole flow, card included.
+    await compileAndConfirm(page);
     await expect(page.getByText(/CLEAN · 0 blocking/)).toBeVisible({ timeout: 20_000 });
 
     // The diff panel groups the placements as an agenda list: the "Why it did

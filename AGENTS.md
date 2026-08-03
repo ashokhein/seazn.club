@@ -56,6 +56,15 @@ before diagnosing a real bug:
   lines. Always `-a` before concluding a call site does not exist.
 - A killed background command reports **exit code 0** — that 0 is the
   SIGTERM. Have the command write `EXIT=$?` itself.
+- **Shell cwd can reset to the main checkout between calls.** A verify
+  run launched from a worktree then silently executes on `main` and
+  returns a false green (12 tests, none of yours). Prefix
+  `cd <abs worktree> &&` in the *same* call, and confirm the resolved
+  paths in `.testResults[].name` before believing a count.
+- **`git stash` in a worktree is not safe here** — the stash stack is
+  shared with the main checkout. A no-op `stash push` followed by `pop`
+  pops a *pre-existing foreign* stash and leaves `package.json` /
+  `package-lock.json` unmerged, which blocks every commit in the tree.
 - Assertions on a Next HTML body must anchor on `="` — React serialises
   an omitted prop as `"$undefined"`, so a bare `data-*` probe passes in
   both states.

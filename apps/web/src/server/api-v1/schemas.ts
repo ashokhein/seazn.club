@@ -1657,6 +1657,19 @@ export const AiPlanRequest = z.object({
   // still executes, capped to the chosen rung's token budget, and the ledger
   // stamps `underfunded: true`.
   rung: RungLiteral.optional(),
+  /**
+   * W5 (#400): the confirmed compile from `POST .../schedule/ai-preview`. When
+   * present the run reuses that stored parse instead of compiling a second
+   * time, so the rules the organiser approved are the rules the architect
+   * executes under — and a `preview_id` whose stored instruction no longer
+   * matches this request's is a 409 `preview_stale` rather than a silent
+   * recompile.
+   *
+   * OPTIONAL, and it must stay that way: smoke, the e2e API paths and every
+   * external consumer post a run without one, and compile inline exactly as
+   * they always have.
+   */
+  preview_id: Uuid.optional(),
 });
 export type AiPlanRequest = z.infer<typeof AiPlanRequest>;
 
@@ -1719,6 +1732,18 @@ export const AiPlanResponse = z.object({
   explanations: z.array(z.object({ fixture_id: Uuid, note: z.string() })),
   constraint_suggestions: AiConstraintSuggestions.optional(),
   summary: z.string(),
+  /**
+   * The ARCHITECT's own assumptions (stage 2, model-authored): what it assumed
+   * while placing. NOT the resolver's — those are stage 1, deterministic, and
+   * ride on `AiParsePreviewResponse.compiled.assumptions`, shown before a credit
+   * is spent. Two different arrays in two different responses; merging them
+   * would tell the organiser the machine assumed something it did not.
+   *
+   * `.default([])` rather than `.optional()`: the prompt schema makes the field
+   * optional and the model omits it routinely, while the review panel maps over
+   * it. `undefined` here is a client crash, not a cosmetic gap.
+   */
+  assumptions: z.array(z.string()).default([]),
   usage: z.object({
     input_tokens: z.number().int(),
     output_tokens: z.number().int(),
@@ -1861,6 +1886,11 @@ export const AiCompetitionPlanRequest = z.object({
       ),
     })
     .optional(),
+  /** W5 (#400): the confirmed compile from `POST .../schedule/ai-preview`. The
+   *  joint twin of {@link AiPlanRequest.preview_id}, and scoped the same way —
+   *  a preview taken against ONE division is refused here, because its window
+   *  was resolved from a different fixture count than this run's. */
+  preview_id: Uuid.optional(),
 });
 export type AiCompetitionPlanRequest = z.infer<typeof AiCompetitionPlanRequest>;
 
@@ -1892,6 +1922,11 @@ export const AiCompetitionPlanResponse = z.object({
   }),
   explanations: z.array(z.object({ fixture_id: z.string(), note: z.string() })),
   summary: z.string(),
+  /** The ARCHITECT's own assumptions (stage 2), exactly as
+   *  {@link AiPlanResponse.assumptions} carries them — never the resolver's,
+   *  which are stage 1 and ride on the preview response. `.default([])` because
+   *  the model omits the key routinely and the review panel maps over it. */
+  assumptions: z.array(z.string()).default([]),
   /** Court labels not shared by every solved division. Cross-division court
    *  identity is a string match and nothing else, so the board warns. */
   divergent_courts: z.array(z.string()),
@@ -1951,6 +1986,75 @@ export const AiCompetitionPlanResponse = z.object({
   ),
 });
 export type AiCompetitionPlanResponse = z.infer<typeof AiCompetitionPlanResponse>;
+
+// ---------------------------------------------------------------------------
+// W5 (#400) — the parse-only preview that precedes either run
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /divisions/{id}/schedule/ai-preview and
+ * POST /competitions/{id}/schedule/ai-preview.
+ *
+ * One request body for both routes. It runs stage 1 ONLY — the instruction
+ * compile — and returns what was compiled without spending a credit or calling
+ * the architect, so the organiser can see the rules before paying for a run
+ * against them. Declining is a client no-op.
+ */
+export const AiParsePreviewRequest = z.object({
+  instruction: z.string().min(1).max(2000),
+  /** Joint route only: the divisions in scope, so the resolver reads the same
+   *  window the run will. Omitted on the single-division route, where the
+   *  division is the path parameter. */
+  division_ids: z.array(Uuid).optional(),
+  /** Single-division route only. Advisory, exactly as on {@link AiPlanRequest} —
+   *  it is here so the affordability refusal below prices the SAME run the
+   *  confirm will start. Without it a rung-3 run would be previewed against a
+   *  rung-1 floor and an org that cannot pay would be compiled for anyway. */
+  rung: RungLiteral.optional(),
+  /** Joint route only. The twin of `rung`, per {@link AiCompetitionPlanRequest}. */
+  rung_overrides: z.record(Uuid, RungLiteral).optional(),
+});
+export type AiParsePreviewRequest = z.infer<typeof AiParsePreviewRequest>;
+
+export const AiParsePreviewResponse = z.object({
+  /** Reuse token for the run. ABSENT when the compile failed schema twice —
+   *  there is nothing to confirm then, only a fallback to choose. */
+  preview_id: Uuid.optional(),
+  /** True when stage 1 failed schema twice. The client must offer the explicit
+   *  preference fallback and must NEVER fall back on its own: presenting a rule
+   *  as enforced while nothing enforces it is the failure this wave closes. */
+  failed: z.boolean(),
+  compiled: z.object({
+    /** Engine constraints, already resolved against the org clock — the rules
+     *  the referee will actually check. */
+    hard: z.array(HardConstraint),
+    soft: z.array(
+      z.object({ note: z.string(), weight: z.union([z.literal(1), z.literal(2), z.literal(3)]) }),
+    ),
+    /** Verbatim. Never converted into a rule. Carries the whole instruction back
+     *  when `failed` is true, so the card always has something honest to show. */
+    unparsed: z.array(z.string()),
+    /** RESOLVER assumptions (stage 1, deterministic, pre-credit) — how we read
+     *  the window and the weekdays. NOT the architect's own assumptions, which
+     *  are stage 2 and ride on the plan response. The two are different arrays
+     *  and must never be merged. */
+    assumptions: z.array(z.string()),
+  }),
+  /** The calendar window the INSTRUCTION stated, in the org timezone, as
+   *  YYYY-MM-DD — null when it stated none.
+   *
+   *  Null rather than the run's default window on purpose: the default is
+   *  computed by the pack builder from settings, already-scheduled instants and
+   *  session windows, and there is exactly one writer of it
+   *  (`buildSchedulePack`). Recomputing a second copy here to fill this field
+   *  would be a renderer that can drift from the one the run uses. */
+  window: z.object({ start: z.string(), end: z.string(), tz: z.string() }).nullable(),
+  /** When this preview stops being reusable. A stale preview is stale by
+   *  wall-clock as well as by content: the org's clock may have crossed a day
+   *  boundary, and "tomorrow" with it. */
+  expires_at: IsoDateTime,
+});
+export type AiParsePreviewResponse = z.infer<typeof AiParsePreviewResponse>;
 
 /**
  * GET /competitions/{id}/schedule/ai-last — the joint mirror of

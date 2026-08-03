@@ -38,6 +38,8 @@ const plan: AiPlanResponse = {
   diff: { moved: [MOVE], placed: [PLACE], unscheduled: [DROP], unchanged: [KEEP] },
   explanations: [],
   summary: "Placed the tray fixture and nudged the semi to keep the court clear.",
+  // W5 (#400): the architect's own assumptions, always an array.
+  assumptions: [],
   usage: { input_tokens: 1240, output_tokens: 860, repair_rounds: 1 },
   officials_coverage: null,
 };
