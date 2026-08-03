@@ -341,6 +341,11 @@ describe("what the CTA sends is what the receipt priced", () => {
     click("data-ai-joint-run");
     await flush();
 
+    // Shape only, and knowingly a tautology: both sides recompute from
+    // `jointPreviewBody`, so dropping a field from it drops it from BOTH and
+    // this still passes. It pins that the console hands the builder the right
+    // ARGUMENTS. The literal below is what pins the fields — do not delete it
+    // as redundant, it is the only half of this pair with teeth.
     expect(net.calls[0].json).toEqual(
       jointPreviewBody({
         competitionId: "c1",
@@ -391,15 +396,45 @@ describe("what the CTA sends is what the receipt priced", () => {
     click("data-ai-joint-run");
     await flush();
 
-    // Not runnable yet: the card is up, and the CTA behind it is not a run.
+    // Not runnable yet, and there is no run button behind the card to press:
+    // the card owns the step until it is answered.
+    expect(island.tree().some((n) => propsOf(n)["data-ai-joint-run"] !== undefined)).toBe(false);
+
     (card().onAsPreference as () => void)();
     await flush();
     expect(net.calls.map((c) => c.url)).toEqual([PREVIEW_URL]);
+    // Answering it is what makes the run reachable, and the CTA says which
+    // stage it is now on.
+    expect(propsOf(marked(island.tree(), "data-ai-joint-run"))["data-ai-joint-stage"]).toBe("run");
 
     (propsOf(marked(island.tree(), "data-ai-joint-run")).onClick as () => void)();
     await flush();
     expect(net.calls.map((c) => c.url)).toEqual([PREVIEW_URL, PLAN_URL]);
     expect(net.calls[1].json).not.toHaveProperty("preview_id");
+  });
+
+  it("refuses to charge on a confirm the gate does not sanction", async () => {
+    // The gate has to live in the CALLBACK, not in what the JSX happens to
+    // render. `preview_id` is optional on the wire and the card decides which
+    // buttons to draw from `failed` — two different fields deciding one
+    // question — so a schema-valid `{ failed: false, preview_id: undefined }`
+    // reaches a confirm the gate refuses, and `run()` charged for it. That the
+    // server always pairs the two today is a server invariant propping up a
+    // client guarantee, which is the shape of bug this wave exists to remove.
+    //
+    // Driven through the card's own `onConfirm` prop rather than a rendered
+    // button, so no change to what the card draws can make this vacuous.
+    const noId = { ...COMPILED, preview_id: undefined } as AiParsePreviewResponse;
+    const { type, click, card } = briefed();
+    twoStage(PLAN, noId);
+    type(BRIEF);
+    click("data-ai-joint-run");
+    await flush();
+
+    (card().onConfirm as () => void)();
+    await flush();
+
+    expect(net.calls.map((c) => c.url)).toEqual([PREVIEW_URL]);
   });
 
   it("does not offer a confirm for rules compiled over other divisions", async () => {

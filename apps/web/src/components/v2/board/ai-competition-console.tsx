@@ -940,6 +940,19 @@ export function AiCompetitionConsole({
 
   const run = useCallback(
     async (prior?: AiCompetitionPlanResponse | null) => {
+      // The gate, enforced where the request is made rather than only on the
+      // button that makes it. The card decides which buttons to draw from
+      // `preview.failed` while the gate reads `preview_id`, which is optional
+      // on the wire — two different fields answering one question, so a
+      // schema-valid `{ failed: false, preview_id: undefined }` reached a
+      // confirm the gate refuses and this callback charged for it. That the
+      // server always pairs the two is a server invariant propping up a client
+      // guarantee, which is the shape of bug this wave exists to remove.
+      //
+      // Scoped to a fresh run, exactly as the division console scopes it: the
+      // stale-board recovery re-runs over a proposal that was already previewed
+      // and paid for, and has no brief in front of it to confirm.
+      if (!prior && !canRunJoint({ selected, instruction, running, preview })) return;
       // Body-building, the POST and the in-flight guard all live in
       // runJointPlan: this endpoint spends credits with no idempotency key, and
       // what is SENT needs a test boundary as much as what is displayed.
@@ -978,7 +991,7 @@ export function AiCompetitionConsole({
       const key = aiErrorKey(result.httpStatus, result.code);
       setError({ message: msg(key), key });
     },
-    [competitionId, instruction, msg, onProposalChange, preview.slice.id, rungs, selected],
+    [competitionId, instruction, msg, onProposalChange, preview, running, rungs, selected],
   );
 
   const doApply = useCallback(async () => {
