@@ -550,7 +550,14 @@ export function AiConsole({
   // and fires no request at all: that is the entire gate.
   const preview = useCallback(async () => {
     const instruction = state.instruction.trim();
-    if (instruction.length < 3 || busy || state.preview.status === "loading") return;
+    // `scheduleFrozen` is checked HERE, not only on the button's `disabled`
+    // attribute: a disabled prop is a hint to a pointer, and this request is not
+    // weightless — it takes a rate-limit slot and runs an affordability check
+    // against a run the server would refuse with 409 SCHEDULE_LOCKED anyway.
+    // Same reasoning as the confirm gate inside `run` below (#400 Task 6b).
+    if (instruction.length < 3 || busy || scheduleFrozen || state.preview.status === "loading") {
+      return;
+    }
     dispatch({ type: "PREVIEW_START" });
     try {
       const compiled = await apiV1<AiParsePreviewResponse>(
@@ -571,7 +578,7 @@ export function AiConsole({
       const key = aiErrorKey(status, aiErrorCodeOf(err));
       dispatch({ type: "PREVIEW_ERROR", error: { status, message: msg(key), key } });
     }
-  }, [busy, divisionId, msg, state.instruction, state.preview.status, state.rung]);
+  }, [busy, divisionId, msg, scheduleFrozen, state.instruction, state.preview.status, state.rung]);
 
   const run = useCallback(async (opts?: { mode?: AiMode }) => {
     const instruction = state.instruction.trim();
