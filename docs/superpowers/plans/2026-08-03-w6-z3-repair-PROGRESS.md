@@ -41,9 +41,18 @@ nothing that this file does not already carry.
   `restFor` closure :812-826, `windowFor` closure :831-844, `scopeCoversFixture` :585,
   `resolveSelector` :607, `effectiveRestMinutes` :82, `isBlockingConflict` :185,
   `deltaConflicts` :204, `conflictKey` :168, `RULE_BY_REASON` :130.
-- **`pairRestMinutes` is asymmetric.** The verifier evaluates each pair in BOTH directions,
-  so the rest a pair owes is `max(f(a,b), f(b,a))`. Encoding one direction produces a
-  "repaired" board the verifier rejects.
+- **`pairRestMinutes` is asymmetric, and the rule differs by pair kind** (review finding,
+  boundary 1 — an earlier version of this note said "always max" and was WRONG):
+  - movable vs movable → `max(f(c,i,j), f(c,j,i))` (both orderings are evaluated).
+  - movable vs **immovable/`existing`** → exactly `f(c, movable, immovable)`, **no max**,
+    because only the movable side is ever the outer `a` in `validateAssignments`.
+  Max against an immovable → spurious `infeasible`. Wrong single direction → the verifier
+  rejects the "repaired" board. Asymmetry exists because `effectiveRestMinutes` reads the
+  FIRST argument's pool/division.
+- **`pairRestMinutes` must not re-derive `effectiveHard`/`ruleFixtures` per call** — it sits
+  in the O(n²) rest loop and cost 47 ms → 5242 ms (111×) on a 500-fixture board before the
+  hoist. The exported signature stays `(config, a, other)`; the hoisted internal form is
+  what `validateAssignments` and the solver's inner loops use.
 - `WeekdayCode` is UPPERCASE (`"FRI"`), `constraints.ts:76`.
 - No frozen 13-slot clean badminton schedule exists yet — T4 builds one and exports it
   from `payload-fixtures.ts` as a NEW export (never modify existing ones there).
