@@ -57,6 +57,17 @@ interface HookDispatcher {
    *  ref precisely because state is read through a closure a second click can
    *  beat; a box minted per render would let every such guard pass untested. */
   useRef: (initial: Cell) => { current: Cell };
+  /** A whole console's state in one cell. The AI consoles hold theirs in a
+   *  reducer, so without this they cannot be driven at all — and the gate that
+   *  decides whether a paid run may be POSTed is a line INSIDE one of their
+   *  callbacks, invisible to every static render. `dispatch` is stable, the way
+   *  React's is: it is the canonical stable `useEffect` dependency, and a fresh
+   *  identity per render would re-fire every effect keyed on it. */
+  useReducer: (
+    reducer: (state: Cell, action: Cell) => Cell,
+    initialArg: Cell,
+    init?: (arg: Cell) => Cell,
+  ) => [Cell, (action?: Cell) => void];
   /** The context's DEFAULT value — there is no provider tree here. That is the
    *  production path for the copy hooks (`useMsg` falls back to the English
    *  catalog outside a `DictProvider`), so the sentences a test reads are the
@@ -169,6 +180,15 @@ export function renderIsland<P>(
   // Ref boxes are created once and never replaced — that identity IS the hook.
   const refs: { current: Cell }[] = [];
   let refCursor = 0;
+  // Reducer cells keep the state, the CURRENT reducer (a component may close a
+  // fresh one over new props each render, and dispatch must use that one, not
+  // the first), and the one stable dispatch this cell will ever hand back.
+  const reducers: {
+    state: Cell;
+    reduce: (state: Cell, action: Cell) => Cell;
+    dispatch: (action?: Cell) => void;
+  }[] = [];
+  let reducerCursor = 0;
 
   const dispatcher: HookDispatcher = {
     useState(initial) {
@@ -208,6 +228,27 @@ export function renderIsland<P>(
       if (index >= refs.length) refs.push({ current: initial });
       return refs[index]!;
     },
+    useReducer(reduce, initialArg, init) {
+      const index = reducerCursor++;
+      if (index >= reducers.length) {
+        reducers.push({
+          state: init ? init(initialArg) : initialArg,
+          reduce,
+          // Minted once. Reads `reducers[index]` at CALL time rather than
+          // closing over the state, so a second dispatch reduces from what the
+          // first produced — a dispatch that closed over the render's state
+          // would silently drop every action but the last.
+          dispatch: (action?: Cell) => {
+            const cell = reducers[index]!;
+            cell.state = cell.reduce(cell.state, action);
+            run();
+          },
+        });
+      }
+      const cell = reducers[index]!;
+      cell.reduce = reduce;
+      return [cell.state, cell.dispatch];
+    },
     useContext(context) {
       return context._currentValue;
     },
@@ -219,6 +260,7 @@ export function renderIsland<P>(
     memoCursor = 0;
     callbackCursor = 0;
     refCursor = 0;
+    reducerCursor = 0;
     pending = [];
     const previous = slot.H;
     slot.H = dispatcher;

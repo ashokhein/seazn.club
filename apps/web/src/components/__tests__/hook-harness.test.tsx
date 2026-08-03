@@ -9,7 +9,7 @@
 // looped for ever. Any assertion about how many times an island fetched, or
 // about state that an effect writes, was measuring the harness.
 import { describe, expect, it } from "vitest";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { propsOf, renderIsland, walk } from "./_hook-harness";
 
@@ -210,6 +210,110 @@ describe("_hook-harness useCallback (#350 Task 8)", () => {
     expect(island.text()).toContain("1");
     expect(seen[1]).not.toBe(seen[0]);
     expect(seen[1]()).toBe(1);
+  });
+});
+
+describe("_hook-harness useReducer (#400 Task 6b)", () => {
+  // The board's AI console holds its whole state in `useReducer`, and the gate
+  // that decides whether a run may be POSTed is a line inside one of its
+  // callbacks. Without this hook the console cannot be driven at all, and that
+  // gate — the wave's headline guarantee — rests on nothing.
+  it("reduces an action into the next state and re-renders with it", () => {
+    function Island() {
+      const [n, dispatch] = useReducer(
+        (state: number, action: { by: number }) => state + action.by,
+        0,
+      );
+      return (
+        <button type="button" onClick={() => dispatch({ by: 2 })}>
+          {String(n)}
+        </button>
+      );
+    }
+
+    const island = renderIsland(Island, {});
+    expect(island.text()).toContain("0");
+    clickButton(island.tree());
+    expect(island.text()).toContain("2");
+    clickButton(island.tree());
+    // Four, not two: the second dispatch must read the state the FIRST one
+    // produced. A dispatcher that reduced from the initial value every time
+    // would sit here at 2 and look like a working hook.
+    expect(island.text()).toContain("4");
+  });
+
+  it("hands back the SAME dispatch on every render", () => {
+    // React guarantees this, and components depend on it: `dispatch` is the
+    // canonical stable dep. A new identity per render would re-fire every
+    // effect and re-make every callback that lists it — the harness would then
+    // be measuring itself.
+    const seen: unknown[] = [];
+
+    function Island() {
+      const [n, dispatch] = useReducer((state: number) => state + 1, 0);
+      seen.push(dispatch);
+      return (
+        <button type="button" onClick={() => dispatch()}>
+          {String(n)}
+        </button>
+      );
+    }
+
+    const island = renderIsland(Island, {});
+    clickButton(island.tree());
+    expect(island.text()).toContain("1");
+    expect(seen.length).toBeGreaterThan(1);
+    expect(seen[1]).toBe(seen[0]);
+  });
+
+  it("runs the lazy initialiser once, with the initial argument", () => {
+    let inits = 0;
+
+    function Island() {
+      const [n, dispatch] = useReducer(
+        (state: number) => state + 1,
+        5,
+        (seed: number) => {
+          inits += 1;
+          return seed * 10;
+        },
+      );
+      return (
+        <button type="button" onClick={() => dispatch()}>
+          {String(n)}
+        </button>
+      );
+    }
+
+    const island = renderIsland(Island, {});
+    expect(island.text()).toContain("50");
+    clickButton(island.tree());
+    expect(island.text()).toContain("51");
+    expect(inits).toBe(1);
+  });
+
+  it("keeps reducer cells positional across sibling reducers", () => {
+    function Island() {
+      const [a, bumpA] = useReducer((s: number) => s + 1, 0);
+      const [b, bumpB] = useReducer((s: number) => s + 10, 0);
+      return (
+        <div>
+          <button type="button" onClick={() => bumpA()}>
+            {`a${a}`}
+          </button>
+          <span onClick={() => bumpB()}>{`b${b}`}</span>
+        </div>
+      );
+    }
+
+    const island = renderIsland(Island, {});
+    clickButton(island.tree());
+    expect(island.text()).toContain("a1");
+    expect(island.text()).toContain("b0");
+    const span = island.tree().find((el) => el.type === "span")!;
+    (propsOf(span).onClick as () => void)();
+    expect(island.text()).toContain("a1");
+    expect(island.text()).toContain("b10");
   });
 });
 
