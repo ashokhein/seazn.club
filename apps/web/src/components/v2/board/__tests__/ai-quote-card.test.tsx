@@ -442,22 +442,38 @@ const runButton = (html: string): string =>
   html.slice(html.indexOf("ai-run"), html.indexOf("ai-run") + 900);
 
 describe("AiConsole brief step", () => {
-  it("the CTA names the credit count", () => {
+  // W5 (#400) made the brief two-stage: the first click COMPILES the
+  // instruction and spends nothing, so the button that starts it must not quote
+  // a price for a run nobody has agreed to yet. The price is named at the
+  // confirm instead — on the preview card, where `ai-instruction-preview.test`
+  // pins `data-ai-credits` and the credit label. What still has to hold HERE is
+  // that the console's own quote arithmetic reaches the organiser before they
+  // pay for anything.
+  it("quotes the run above the CTA, and the CTA that spends nothing names no price", () => {
     const html = renderConsole();
     // 250 movable / 40 active entrants / 4 courts predicts rung 3 -> 3 credits.
     const credits = quoteRun([{ key: DIVISION_ID, input: LARGE }], schedulingRungWeights()).credits;
     expect(credits).toBe(3);
-    expect(runButton(html)).toContain(`${credits} credits`);
+    // The quote card, above the button, still states it.
+    expect(html).toContain(`data-ai-credits="${credits}"`);
+    // …and the button is the free compile, not a priced run.
+    expect(html).toContain('data-ai-stage="check"');
+    expect(html).not.toContain('data-ai-stage="run"');
+    expect(runButton(html)).not.toContain("credits");
+    expect(runButton(html)).toContain(enText["board.ai.preview.check"]);
   });
 
   it("a frozen board names no price", () => {
     // The card is hidden on a frozen board because "quoting it would be a price
     // for something that is not on offer" — the disabled button underneath it
-    // must not go on quoting one.
+    // must not go on quoting one, at either stage.
     const html = renderConsole({ scheduleFrozen: true });
     expect(html).toContain(enText["board.ai.frozen"]); // the frozen notice is rendered…
     expect(runButton(html)).not.toContain("credits");
-    expect(runButton(html)).toContain("Generate schedule");
+    expect(html).not.toContain('data-ai-credits="');
+    // And a frozen board can never reach the confirmed stage, so no run is
+    // offered before anything is spent.
+    expect(html).not.toContain('data-ai-stage="run"');
   });
 });
 
