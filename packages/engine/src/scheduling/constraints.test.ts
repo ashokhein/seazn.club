@@ -202,3 +202,68 @@ describe("constraints v2 properties (PROMPT-24)", () => {
     );
   });
 });
+
+// --- Typed instruction constraints (#398) ----------------------------------
+import { ConstraintScope, FixtureSelector, HardConstraint } from "./constraints.ts";
+
+describe("typed instruction constraints (#398)", () => {
+  it("parses every hard-constraint member", () => {
+    const all = [
+      { type: "min_rest_minutes", minutes: 45, rest_scope: "both", scope: { kind: "competition" } },
+      { type: "max_fixtures_per_day", count: 2, scope: { kind: "division", divisionId: "d1" } },
+      { type: "fixture_on_weekday", selector: { kind: "terminal" }, weekday: "FRI", scope: { kind: "competition" } },
+      {
+        type: "fixture_on_date",
+        selector: { kind: "ext_key", extKey: "gf" },
+        date: "2026-08-07",
+        scope: { kind: "competition" },
+      },
+      { type: "not_before", time: "09:00", scope: { kind: "pool", divisionId: "d1", pool: "A" } },
+      { type: "not_after", time: "21:30", scope: { kind: "entrant", entrantId: "e1" } },
+    ];
+    for (const one of all) expect(HardConstraint.safeParse(one).success).toBe(true);
+  });
+
+  it("rejects a round-number selector — round is a display label", () => {
+    expect(FixtureSelector.safeParse({ kind: "round", divisionId: "d1", round: 3 }).success).toBe(false);
+  });
+
+  it("rejects an ISO instant where a wall-clock time is required", () => {
+    expect(
+      HardConstraint.safeParse({
+        type: "not_before",
+        time: "2026-08-07T09:00:00Z",
+        scope: { kind: "competition" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a non-positive rest and a zero-per-day cap", () => {
+    expect(
+      HardConstraint.safeParse({
+        type: "min_rest_minutes",
+        minutes: 0,
+        rest_scope: "both",
+        scope: { kind: "competition" },
+      }).success,
+    ).toBe(false);
+    expect(
+      HardConstraint.safeParse({ type: "max_fixtures_per_day", count: 0, scope: { kind: "competition" } }).success,
+    ).toBe(false);
+  });
+
+  it("scopes a rule to a person key", () => {
+    expect(ConstraintScope.safeParse({ kind: "person", personKey: "p-1" }).success).toBe(true);
+  });
+
+  it("defaults SchedulingConstraints.hard to [] so pre-W3 rows still parse", () => {
+    expect(SchedulingConstraints.parse({}).hard).toEqual([]);
+  });
+
+  it("carries a durable division rule through SchedulingConstraints", () => {
+    const parsed = SchedulingConstraints.parse({
+      hard: [{ type: "max_fixtures_per_day", count: 3, scope: { kind: "competition" } }],
+    });
+    expect(parsed.hard).toHaveLength(1);
+  });
+});
