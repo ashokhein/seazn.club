@@ -134,8 +134,17 @@ jobs:
       # from Turbopack's on-demand compiles near the ceiling) — flaky under a
       # full Playwright run. The standalone server has neither watchdog nor
       # per-request compiles, and is what production runs.
+      #
+      # SKIP_TYPECHECK=1 matches ci.yml's build step. Without it `next build`
+      # runs `tsc` inside the build worker on top of the compile it just
+      # finished, and the worker dies on the runner's default ~2 GB V8 heap
+      # ("FATAL ERROR: Ineffective mark-compacts near heap limit") before a
+      # single spec runs. Types are already gated by `tsc --noEmit` in ci.yml's
+      # test job, so nothing is lost here.
       - name: Build (production)
         run: npm run build --workspace apps/web
+        env:
+          SKIP_TYPECHECK: "1"
 
       # Serve the standalone output, the way fly.toml does (#356). `next start`
       # does not serve an `output: standalone` build — it warns and falls back
