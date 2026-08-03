@@ -71,8 +71,10 @@ vi.mock("@/components/i18n/dict-provider", async (importOriginal) => {
 // Static, not dynamic: vitest hoists the `vi.mock` calls above every import in
 // the file, so these already see the mocked modules.
 import { ApiV1Error } from "@/lib/client-v1";
+import type { AiParsePreviewResponse } from "@/server/api-v1/schemas";
 import { AiCompetitionConsole, JointReviewStep, type JointDivision } from "../ai-competition-console";
-import { jointRunBody } from "../ai-joint-run";
+import { AiInstructionPreview } from "../ai-instruction-preview";
+import { jointPreviewBody, jointRunBody } from "../ai-joint-run";
 import { AiQuoteCard } from "../ai-quote-card";
 
 /**
@@ -160,7 +162,24 @@ const PLAN = {
 } as unknown as AiCompetitionPlanResponse;
 
 const PLAN_URL = "/api/v1/competitions/c1/schedule/ai-plan";
+const PREVIEW_URL = "/api/v1/competitions/c1/schedule/ai-preview";
 const APPLY_URL = "/api/v1/competitions/c1/schedule/apply";
+
+/** What stage 1 gives back: the rules the organiser is asked to confirm, and
+ *  the token that makes those rules the ones the run enforces. */
+const PREVIEW_ID = "0f3a1c26-9f21-4c2e-8f0e-2b7c1f2d4a55";
+const COMPILED = {
+  preview_id: PREVIEW_ID,
+  failed: false,
+  compiled: {
+    hard: [{ type: "max_fixtures_per_day", count: 2, scope: { kind: "competition" } }],
+    soft: [],
+    unparsed: [],
+    assumptions: [],
+  },
+  window: null,
+  expires_at: "2026-08-03T18:00:00.000Z",
+} as unknown as AiParsePreviewResponse;
 
 /** Let the console's awaited `run`/`doApply`/`undo` chains settle. */
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -218,8 +237,26 @@ function briefed(extra: Partial<ConsoleProps> = {}) {
   const click = (marker: string) => (propsOf(marked(island.tree(), marker)).onClick as () => void)();
   const creditsOnCta = () =>
     propsOf(marked(island.tree(), "data-ai-joint-run"))["data-ai-joint-cta-credits"];
-  return { island, type, pickRung, click, creditsOnCta };
+  // W5 (#400) — the card is only on screen once a compile has landed, so
+  // `card()` throwing IS the assertion that the gate is closed.
+  const card = () => propsOf(typed(island.tree(), AiInstructionPreview));
+  const cardShown = () => island.tree().some((node) => node.type === AiInstructionPreview);
+  /** The two-stage gate, walked the way an organiser walks it: compile, read,
+   *  confirm. Anything that clicks straight through to a charge is not this. */
+  const confirm = async () => {
+    click("data-ai-joint-run");
+    await flush();
+    (card().onConfirm as () => void)();
+    await flush();
+  };
+  return { island, type, pickRung, click, creditsOnCta, card, cardShown, confirm };
 }
+
+/** Answer the compile with a usable preview, everything else with the plan.
+ *  URL-keyed because the console now makes TWO different POSTs for one run. */
+const twoStage = (plan: AiCompetitionPlanResponse = PLAN, preview = COMPILED) => {
+  net.handler = async (url: string) => (url === PREVIEW_URL ? preview : plan);
+};
 
 describe("what the CTA sends is what the receipt priced", () => {
   it("posts the divisions the receipt priced, at the rungs the organiser picked", async () => {
@@ -229,8 +266,8 @@ describe("what the CTA sends is what the receipt priced", () => {
     // `selected` runs two divisions nobody was quoted for; a request that drops
     // `rungs` sizes d2 from the server's own prediction while the card shows
     // the down-picked number. Both are charged from the request.
-    const { type, pickRung, click, creditsOnCta } = briefed();
-    net.handler = async () => PLAN;
+    const { type, pickRung, creditsOnCta, confirm } = briefed();
+    twoStage();
 
     type(BRIEF);
     const quoted = creditsOnCta();
@@ -239,37 +276,148 @@ describe("what the CTA sends is what the receipt priced", () => {
     // a receipt that never moved, and the two would agree about nothing.
     expect(creditsOnCta()).not.toBe(quoted);
 
+    await confirm();
+
+    // Two calls now, and only the second one spends: the compile, then the run
+    // the organiser confirmed off the back of it.
+    expect(net.calls).toHaveLength(2);
+    expect(net.calls[1].url).toBe(PLAN_URL);
+    expect(net.calls[1].method).toBe("POST");
+    expect(net.calls[1].json).toEqual(
+      jointRunBody({
+        competitionId: "c1",
+        selected: ["d1", "d2"],
+        instruction: BRIEF,
+        rungs: { d2: 3 },
+        previewId: PREVIEW_ID,
+      }),
+    );
+    // Spelled out, so a change to jointRunBody cannot make both sides agree on
+    // something wrong.
+    expect(net.calls[1].json).toMatchObject({
+      division_ids: ["d1", "d2"],
+      instruction: BRIEF,
+      mode: "generate",
+      rung_overrides: { d2: 3 },
+      preview_id: PREVIEW_ID,
+    });
+  });
+
+  it("sends the competition the console was mounted on", async () => {
+    const { type, confirm } = briefed();
+    twoStage();
+    type(BRIEF);
+    await confirm();
+    expect(net.calls.map((c) => c.url)).toEqual([PREVIEW_URL, PLAN_URL]);
+  });
+
+  it("compiles before it charges, and the first click is the compile", async () => {
+    // THE gate, at the wire. One click on a fully valid brief used to be one
+    // chargeable run; it is now a stage-1 compile that spends nothing, and the
+    // plan endpoint is not touched until the organiser confirms the card.
+    const { type, click, cardShown } = briefed();
+    twoStage();
+    type(BRIEF);
+
     click("data-ai-joint-run");
     await flush();
 
-    expect(net.calls).toHaveLength(1);
-    expect(net.calls[0].url).toBe(PLAN_URL);
+    expect(net.calls.map((c) => c.url)).toEqual([PREVIEW_URL]);
     expect(net.calls[0].method).toBe("POST");
+    expect(cardShown()).toBe(true);
+  });
+
+  it("compiles against the divisions the picker selected, not the whole board", async () => {
+    // The resolved WINDOW depends on which divisions are in scope, and Task 2b
+    // made a preview minted for a different set a 409 PREVIEW_STALE on the run.
+    // So a compile posted without them — or with all four of the board's
+    // divisions instead of the two that can run — is a receipt for a different
+    // run, and the confirm it invites is one the server will refuse.
+    const { type, click, pickRung } = briefed();
+    twoStage();
+    type(BRIEF);
+    pickRung("d2", 3);
+
+    click("data-ai-joint-run");
+    await flush();
+
     expect(net.calls[0].json).toEqual(
-      jointRunBody({
+      jointPreviewBody({
         competitionId: "c1",
         selected: ["d1", "d2"],
         instruction: BRIEF,
         rungs: { d2: 3 },
       }),
     );
-    // Spelled out, so a change to jointRunBody cannot make both sides agree on
-    // something wrong.
+    // Spelled out: the board has FOUR divisions and d3/d4 cannot join a run.
     expect(net.calls[0].json).toMatchObject({
       division_ids: ["d1", "d2"],
       instruction: BRIEF,
-      mode: "generate",
       rung_overrides: { d2: 3 },
     });
   });
 
-  it("sends the competition the console was mounted on", async () => {
-    const { type, click } = briefed();
-    net.handler = async () => PLAN;
+  it("declining the compile fires no request and keeps the brief", async () => {
+    // The point of the whole wave: reading what an instruction compiles to and
+    // deciding against it costs nothing. Declining is a client action — there
+    // is no request to make, so there is nothing to charge for.
+    const { island, type, click, card, cardShown } = briefed();
+    twoStage();
     type(BRIEF);
     click("data-ai-joint-run");
     await flush();
-    expect(net.calls[0].url).toBe(PLAN_URL);
+    net.calls.length = 0;
+
+    (card().onDismiss as () => void)();
+    await flush();
+
+    expect(net.calls).toHaveLength(0);
+    expect(cardShown()).toBe(false);
+    // The sentence they wrote is still on screen, and the CTA has gone back to
+    // offering the compile rather than a run nobody confirmed.
+    expect(propsOf(typed(island.tree(), "textarea")).value).toBe(BRIEF);
+    expect(propsOf(marked(island.tree(), "data-ai-joint-run"))["data-ai-joint-stage"]).toBe("check");
+  });
+
+  it("runs unenforced only when the organiser explicitly asks for it", async () => {
+    // A compile that failed schema twice carries no reusable token. The card
+    // offers the preference fallback and the console must never take it on its
+    // own — the run then posts WITHOUT a preview_id, so the server compiles
+    // inline and nothing pretends the sentence is enforced.
+    const failed = { ...COMPILED, preview_id: undefined, failed: true } as AiParsePreviewResponse;
+    const { type, click, card, island } = briefed();
+    twoStage(PLAN, failed);
+    type(BRIEF);
+    click("data-ai-joint-run");
+    await flush();
+
+    // Not runnable yet: the card is up, and the CTA behind it is not a run.
+    (card().onAsPreference as () => void)();
+    await flush();
+    expect(net.calls.map((c) => c.url)).toEqual([PREVIEW_URL]);
+
+    (propsOf(marked(island.tree(), "data-ai-joint-run")).onClick as () => void)();
+    await flush();
+    expect(net.calls.map((c) => c.url)).toEqual([PREVIEW_URL, PLAN_URL]);
+    expect(net.calls[1].json).not.toHaveProperty("preview_id");
+  });
+
+  it("does not offer a confirm for rules compiled over other divisions", async () => {
+    // The client half of PREVIEW_STALE. A compile taken over d1+d2 says nothing
+    // about a run over d1 alone, so changing the picker withdraws the card
+    // rather than leaving a confirm up for a receipt that no longer applies.
+    const { island, type, click, cardShown } = briefed();
+    twoStage();
+    type(BRIEF);
+    click("data-ai-joint-run");
+    await flush();
+    expect(cardShown()).toBe(true);
+
+    const picker = island.tree().find((n) => propsOf(n).divisions !== undefined);
+    (propsOf(picker!).onChange as (ids: string[]) => void)(["d1"]);
+
+    expect(cardShown()).toBe(false);
+    expect(net.calls).toHaveLength(1);
   });
 
   it("does not send a run the CTA is still refusing", async () => {
@@ -286,10 +434,9 @@ describe("the review step is wired to the console's own state", () => {
   /** Run once, successfully, so the review step is on screen. */
   async function planned() {
     const ctx = briefed();
-    net.handler = async () => PLAN;
+    twoStage();
     ctx.type(BRIEF);
-    ctx.click("data-ai-joint-run");
-    await flush();
+    await ctx.confirm();
     net.calls.length = 0;
     return ctx;
   }
@@ -425,10 +572,9 @@ describe("a stale board is pulled before the recovery button can charge for it a
   /** A console that has planned once and is sitting on the review step. */
   async function planned(extra: Partial<ConsoleProps> = {}) {
     const ctx = briefed(extra);
-    net.handler = async () => PLAN;
+    twoStage();
     ctx.type(BRIEF);
-    ctx.click("data-ai-joint-run");
-    await flush();
+    await ctx.confirm();
     net.calls.length = 0;
     return ctx;
   }

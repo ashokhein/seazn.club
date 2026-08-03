@@ -19,12 +19,14 @@ import type { Dict } from "@/lib/i18n-constants";
 import { DictProvider } from "@/components/i18n/dict-provider";
 import en from "@/dictionaries/en/ui.json";
 import { quoteRun, schedulingRungWeights } from "@/lib/ai-rung";
-import type { AiCompetitionPlanResponse } from "@/server/api-v1/schemas";
+import type { AiCompetitionPlanResponse, AiParsePreviewResponse } from "@/server/api-v1/schemas";
 import type { AiConsoleFixture } from "../ai-diff";
 import {
   AiCompetitionConsole,
+  IDLE_JOINT_PREVIEW,
   JointReviewStep,
   canRunJoint,
+  type JointPreview,
   divergentCourts,
   jointApplyDivisions,
   jointQuoteLines,
@@ -173,15 +175,128 @@ describe("the divisions a joint run starts with", () => {
   });
 
   it("gates the run on the selection independently of the brief", () => {
-    // The half the render cannot show: with a perfectly good brief, one division
-    // still cannot start a joint run.
-    const brief = "Finish every division by 6pm.";
-    expect(canRunJoint({ selected: ["d1"], instruction: brief, running: false })).toBe(false);
-    expect(canRunJoint({ selected: ["d1", "d1"], instruction: brief, running: false })).toBe(false);
-    expect(canRunJoint({ selected: ["d1", "d2"], instruction: brief, running: false })).toBe(true);
+    // The half the render cannot show: with a perfectly good brief AND a
+    // confirmed compile, one division still cannot start a joint run.
+    const ok = { instruction: BRIEF, running: false, preview: confirmedPreview() };
+    expect(canRunJoint({ ...ok, selected: ["d1"] })).toBe(false);
+    expect(canRunJoint({ ...ok, selected: ["d1", "d1"] })).toBe(false);
+    expect(canRunJoint({ ...ok, selected: ["d1", "d2"] })).toBe(true);
     // …and the other two reasons, each on its own.
-    expect(canRunJoint({ selected: ["d1", "d2"], instruction: "  ", running: false })).toBe(false);
-    expect(canRunJoint({ selected: ["d1", "d2"], instruction: brief, running: true })).toBe(false);
+    expect(canRunJoint({ ...ok, selected: ["d1", "d2"], instruction: "  " })).toBe(false);
+    expect(canRunJoint({ ...ok, selected: ["d1", "d2"], running: true })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The confirm gate (W5 #400, Task 7)
+// ---------------------------------------------------------------------------
+
+const BRIEF = "Finish every division by 6pm.";
+
+const COMPILED = {
+  preview_id: "0f3a1c26-9f21-4c2e-8f0e-2b7c1f2d4a55",
+  failed: false,
+  compiled: {
+    hard: [{ type: "max_fixtures_per_day", count: 2, scope: { kind: "competition" } }],
+    soft: [],
+    unparsed: [],
+    assumptions: ["Read 'by 6pm' as the venue's own clock."],
+  },
+  window: null,
+  expires_at: "2026-08-03T12:00:00.000Z",
+} as unknown as AiParsePreviewResponse;
+
+/** A compile the organiser has been shown, for THIS sentence and THESE
+ *  divisions — the only state from which a joint run may start. */
+function confirmedPreview(over: Partial<JointPreview["slice"]> = {}): JointPreview {
+  return {
+    slice: {
+      status: "ready",
+      data: COMPILED,
+      id: COMPILED.preview_id ?? null,
+      asPreference: false,
+      instruction: BRIEF,
+      ...over,
+    },
+    divisionIds: ["d1", "d2"],
+  };
+}
+
+describe("the joint run will not start before the compile is confirmed", () => {
+  // THE gate. The joint console spends exactly as the division console does, so
+  // it must refuse to spend for the same reason: nobody has yet seen what the
+  // sentence compiled to.
+  it("refuses a run on a good brief with no compile in hand", () => {
+    expect(
+      canRunJoint({
+        selected: ["d1", "d2"],
+        instruction: BRIEF,
+        running: false,
+        preview: IDLE_JOINT_PREVIEW,
+      }),
+    ).toBe(false);
+    // The positive discriminator: the SAME brief and selection, once compiled.
+    expect(
+      canRunJoint({
+        selected: ["d1", "d2"],
+        instruction: BRIEF,
+        running: false,
+        preview: confirmedPreview(),
+      }),
+    ).toBe(true);
+  });
+
+  it("reads the division console's own gate rather than a second copy of it", () => {
+    // One definition, so the two consoles cannot come to different conclusions
+    // about whether the organiser has agreed to anything. Every case below is
+    // `canRun`'s, exercised through the joint wrapper.
+    const state = (preview: JointPreview) => ({
+      selected: ["d1", "d2"],
+      instruction: BRIEF,
+      running: false,
+      preview,
+    });
+    // A compile that failed schema twice carries no reusable id — and taking
+    // the preference fallback is the organiser's explicit choice, not ours.
+    const failed = confirmedPreview({ id: null, data: { ...COMPILED, failed: true } });
+    expect(canRunJoint(state(failed))).toBe(false);
+    expect(canRunJoint(state({ ...failed, slice: { ...failed.slice, asPreference: true } }))).toBe(
+      true,
+    );
+    // Still compiling.
+    expect(canRunJoint(state(confirmedPreview({ status: "loading" })))).toBe(false);
+    // Rules confirmed for one sentence can never run another.
+    expect(canRunJoint(state(confirmedPreview({ instruction: "Something else entirely." })))).toBe(
+      false,
+    );
+  });
+
+  it("refuses a compile taken against a different set of divisions", () => {
+    // Task 2b made this a 409 PREVIEW_STALE on the server, because the resolved
+    // WINDOW depends on which divisions are in scope: a preview minted for two
+    // divisions describes a different run from the one three would make. The
+    // client must not offer a confirm it knows the server will refuse.
+    const narrower = { ...confirmedPreview(), divisionIds: ["d1"] };
+    expect(
+      canRunJoint({ selected: ["d1", "d2"], instruction: BRIEF, running: false, preview: narrower }),
+    ).toBe(false);
+    // Order is not identity — the same two divisions in either order is the
+    // same run, and re-checking the picker after a reorder is noise.
+    const reordered = { ...confirmedPreview(), divisionIds: ["d2", "d1"] };
+    expect(
+      canRunJoint({ selected: ["d1", "d2"], instruction: BRIEF, running: false, preview: reordered }),
+    ).toBe(true);
+  });
+
+  it("shows the compile button first, and the run only after the confirm", () => {
+    // The markup half: a fresh console offers "Check what this means", not a
+    // button that spends. Anchored on `="` — React serialises an omitted prop
+    // as `"$undefined"`, so a bare `data-ai-joint-stage` probe passes in both
+    // states.
+    const html = render();
+    expect(html).toContain('data-ai-joint-stage="check"');
+    expect(html).not.toContain('data-ai-joint-stage="run"');
+    expect(html).toContain(enText["board.ai.preview.check"]);
   });
 });
 

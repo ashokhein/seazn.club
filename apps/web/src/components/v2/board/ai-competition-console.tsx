@@ -42,9 +42,16 @@ import {
   type PickerDivision,
 } from "./ai-division-picker";
 import { AiQuoteCard, quoteFor, type QuoteCardLine } from "./ai-quote-card";
-import { aiErrorKey, applyErrorKey } from "./ai-console-state";
+import {
+  aiErrorKey,
+  applyErrorKey,
+  canRun,
+  initialAiConsoleState,
+  type AiConsoleState,
+} from "./ai-console-state";
+import { AiInstructionPreview } from "./ai-instruction-preview";
 import { AI_APPLY_MODEL } from "./ai-apply";
-import { runJointPlan } from "./ai-joint-run";
+import { runJointPlan, runJointPreview } from "./ai-joint-run";
 import {
   applyJointPlan,
   undoJointApply,
@@ -215,18 +222,96 @@ export function usableSelection(selected: string[], picker: PickerDivision[]): s
   return selected.filter((id) => usable.has(id));
 }
 
-/** The three independent reasons a joint run cannot start, in one place so the
- *  CTA and any future caller cannot disagree about them. The selection rule
- *  counts DISTINCT divisions (`jointRunReady`), because the orchestrator
- *  de-duplicates before it counts. */
+/**
+ * The joint console's compile, and the division set it was taken over.
+ *
+ * The slice is the division console's own (`AiConsoleState["preview"]`) rather
+ * than a second shape, so `canRun` is the ONE definition of "has the organiser
+ * agreed to anything". `divisionIds` is the joint console's addition and the
+ * one thing the shared gate cannot know: the resolver reads the window from the
+ * divisions in scope, so a compile taken over a different set describes a
+ * different run — which is exactly what the server answers 409 PREVIEW_STALE to.
+ */
+export interface JointPreview {
+  slice: AiConsoleState["preview"];
+  divisionIds: string[];
+}
+
+/** No compile in hand. One literal, so every path that drops a preview drops
+ *  all of it and no stale id survives to be posted. */
+export const IDLE_JOINT_PREVIEW: JointPreview = {
+  slice: { status: "idle", data: null, id: null, asPreference: false, instruction: null },
+  divisionIds: [],
+};
+
+/** Same divisions, whatever order the picker put them in — a reorder is the
+ *  same run, and sending the organiser back to re-check it would be noise. */
+function sameDivisions(a: string[], b: string[]): boolean {
+  const left = new Set(a);
+  const right = new Set(b);
+  return left.size === right.size && [...left].every((id) => right.has(id));
+}
+
+/**
+ * Is the compile on screen still about the run on offer?
+ *
+ * Derived during render rather than cleared in an effect, for the reason
+ * `usableSelection` gives one screenful up: a `router.refresh()` can narrow the
+ * selection under an open console with nobody having clicked anything, and a
+ * card that survives one frame longer than the run it describes is a confirm
+ * button for rules that are no longer the rules.
+ */
+export function previewCurrent(
+  preview: JointPreview,
+  run: { instruction: string; selected: string[] },
+): boolean {
+  return (
+    preview.slice.status === "ready" &&
+    preview.slice.instruction === run.instruction.trim() &&
+    sameDivisions(preview.divisionIds, run.selected)
+  );
+}
+
+/** The reasons a joint COMPILE cannot start. Everything the run needs except
+ *  the run's own gate — this is the click that produces what that gate wants. */
+export function canCompileJoint(input: {
+  selected: string[];
+  instruction: string;
+  running: boolean;
+  checking: boolean;
+}): boolean {
+  return (
+    jointRunReady(input.selected) &&
+    input.instruction.trim().length >= 3 &&
+    !input.running &&
+    !input.checking
+  );
+}
+
+/**
+ * The independent reasons a joint run cannot start, in one place so the CTA and
+ * any future caller cannot disagree about them.
+ *
+ * The selection rule counts DISTINCT divisions (`jointRunReady`), because the
+ * orchestrator de-duplicates before it counts. Everything else defers to
+ * `canRun`, the division console's own predicate (W5 #400): a joint run spends
+ * exactly as a single one does, so it refuses to spend for exactly the same
+ * reason — nobody has yet been shown what the sentence compiled to.
+ */
 export function canRunJoint(input: {
   selected: string[];
   instruction: string;
   running: boolean;
+  preview: JointPreview;
 }): boolean {
-  return (
-    jointRunReady(input.selected) && input.instruction.trim().length >= 3 && !input.running
-  );
+  if (!jointRunReady(input.selected)) return false;
+  if (!previewCurrent(input.preview, input)) return false;
+  return canRun({
+    ...initialAiConsoleState,
+    instruction: input.instruction,
+    run: input.running ? "running" : "idle",
+    preview: input.preview.slice,
+  });
 }
 
 /**
@@ -270,6 +355,34 @@ function Caution({ title, children }: { title?: string; children: React.ReactNod
       <span aria-hidden>⚠</span>
       <div className="min-w-0">
         {title && <p className="font-semibold">{title}</p>}
+        <div>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A note about the run's SCOPE, in the division ledger's own register.
+ *
+ * Quieter than `Caution` on purpose. These say which divisions the run covered
+ * and which court labels only some of them know — division-level facts, not
+ * per-fixture findings — and they sit next to the review card, whose header
+ * carries a count of the rows underneath it. Amber next to amber made that
+ * number look like it should have covered these too (Task 5 review). The
+ * ruling was to demote, not to count: a court-name mismatch and a flagged
+ * placement are different units, and one number cannot mean both.
+ */
+function ScopeNote({ title, children }: { title?: string; children: React.ReactNode }) {
+  return (
+    <div
+      data-scope-note="1"
+      className="flex items-start gap-1.5 rounded-md border border-slate-200 bg-slate-50/70 px-2.5 py-1.5 text-[11px] leading-snug text-slate-600"
+    >
+      <span aria-hidden className="mt-px shrink-0 text-slate-400">
+        ⓘ
+      </span>
+      <div className="min-w-0">
+        {title && <p className="font-semibold text-slate-700">{title}</p>}
         <div>{children}</div>
       </div>
     </div>
@@ -523,18 +636,30 @@ export function JointReviewStep({
         ))}
       </ul>
 
-      {plan.skipped_divisions.length > 0 && (
-        <Caution>
-          {msg("board.ai.joint.skipped", {
-            divisions: plan.skipped_divisions.map((d) => d.name).join(", "),
-          })}
-        </Caution>
-      )}
-
-      {plan.divergent_courts.length > 0 && (
-        <Caution title={msg("board.ai.joint.courtsDivergentTitle")}>
-          {msg("board.ai.joint.courtsDivergent", { courts: plan.divergent_courts.join(", ") })}
-        </Caution>
+      {/* DIVISION-LEVEL notes, deliberately not amber and deliberately not
+          counted (#388 follow-up, Task 5 review ruling). Both are facts about
+          the run's SCOPE — which divisions it covered, and which court labels
+          only some of them know — while the counted card below holds
+          per-fixture findings. An uncounted amber note beside a counted one
+          reads as the count having missed something; folding them into
+          `reviewRowCount` would be worse still, making one number mean two
+          different units. So they sit with the ledger they are about, in the
+          ledger's own register. */}
+      {(plan.skipped_divisions.length > 0 || plan.divergent_courts.length > 0) && (
+        <div data-scope-notes="1" className="space-y-1">
+          {plan.skipped_divisions.length > 0 && (
+            <ScopeNote>
+              {msg("board.ai.joint.skipped", {
+                divisions: plan.skipped_divisions.map((d) => d.name).join(", "),
+              })}
+            </ScopeNote>
+          )}
+          {plan.divergent_courts.length > 0 && (
+            <ScopeNote title={msg("board.ai.joint.courtsDivergentTitle")}>
+              {msg("board.ai.joint.courtsDivergent", { courts: plan.divergent_courts.join(", ") })}
+            </ScopeNote>
+          )}
+        </div>
       )}
 
       {clash.count > 0 && (
@@ -718,6 +843,12 @@ export function AiCompetitionConsole({
   const [picked, setPicked] = useState<string[]>(() => defaultSelectedDivisionIds(picker));
   const selected = useMemo(() => usableSelection(picked, picker), [picked, picker]);
   const [instruction, setInstruction] = useState("");
+  // W5 (#400) — the compiled instruction the organiser has been shown but not
+  // yet paid for. Held here rather than in the reducer the division console
+  // uses because this console has no reducer; the GATE is shared even so
+  // (`canRunJoint` defers to `canRun`), which is the part that must not fork.
+  const [preview, setPreview] = useState<JointPreview>(IDLE_JOINT_PREVIEW);
+  const [checking, setChecking] = useState(false);
   const [rungs, setRungs] = useState<Record<string, number | null>>({});
   const [plan, setPlan] = useState<AiCompetitionPlanResponse | null>(null);
   const [running, setRunning] = useState(false);
@@ -749,15 +880,77 @@ export function AiCompetitionConsole({
   const quote = quoteFor(lines);
   const divergent = divergentCourts(divisions, selected);
   const zones = timezoneSpread(divisions, selected);
-  const canRun = canRunJoint({ selected, instruction, running });
+  // The gate, and the click that feeds it. Both derived during render, so a
+  // refresh that narrows the selection cannot leave a confirm button up for
+  // rules compiled over divisions that are no longer in the run.
+  const confirmed = canRunJoint({ selected, instruction, running, preview });
+  const canCompile = canCompileJoint({ selected, instruction, running, checking });
+  // The card is withheld once the organiser has taken the preference fallback:
+  // they have already answered its question, and leaving it up asks again.
+  const previewData =
+    !running && !preview.slice.asPreference && previewCurrent(preview, { instruction, selected })
+      ? preview.slice.data
+      : null;
+
+  // Stage 1 only: compiles the sentence over the SELECTED divisions, spends no
+  // credit and calls no architect, so the organiser can read the rules before
+  // paying to run against them. Declining the result is a pure client action —
+  // `setPreview(IDLE_JOINT_PREVIEW)` and no request at all — and that is the
+  // entire gate.
+  const compile = useCallback(async () => {
+    const result = await runJointPreview(
+      { competitionId, selected, instruction, rungs },
+      {
+        inFlight,
+        onStart: () => {
+          setChecking(true);
+          setError(null);
+          // Records the sentence and the divisions being compiled AT the moment
+          // the request goes out, so the answer can only ever be attached to
+          // the run it was asked about.
+          setPreview({
+            slice: {
+              status: "loading",
+              data: null,
+              id: null,
+              asPreference: false,
+              instruction: instruction.trim(),
+            },
+            divisionIds: selected,
+          });
+        },
+      },
+    );
+    if (result.status === "refused") return; // something else is already in the air
+    setChecking(false);
+    if (result.status === "compiled") {
+      // `id` comes off the response and nowhere else: a failed compile carries
+      // no preview_id, which is what keeps the run gated until the organiser
+      // explicitly takes the preference fallback.
+      setPreview((cur) => ({
+        ...cur,
+        slice: { ...cur.slice, status: "ready", data: result.preview, id: result.preview.preview_id ?? null },
+      }));
+      return;
+    }
+    setPreview(IDLE_JOINT_PREVIEW);
+    const key = aiErrorKey(result.httpStatus, result.code);
+    setError({ message: msg(key), key });
+  }, [competitionId, instruction, msg, rungs, selected]);
 
   const run = useCallback(
     async (prior?: AiCompetitionPlanResponse | null) => {
       // Body-building, the POST and the in-flight guard all live in
       // runJointPlan: this endpoint spends credits with no idempotency key, and
       // what is SENT needs a test boundary as much as what is displayed.
+      //
+      // `previewId` is read from the closure here, BEFORE `onStart` drops the
+      // slice: the server marks a confirmed preview consumed, so holding it
+      // would leave the console offering a token that can no longer be
+      // redeemed. Null when the organiser took the preference fallback — the
+      // one path where nothing was confirmed.
       const result = await runJointPlan(
-        { competitionId, selected, instruction, rungs, prior },
+        { competitionId, selected, instruction, rungs, prior, previewId: preview.slice.id },
         {
           inFlight,
           // Fires only after the guard passes, so a refused second click cannot
@@ -765,6 +958,9 @@ export function AiCompetitionConsole({
           onStart: () => {
             setRunning(true);
             setError(null);
+            // The run SPENDS the preview: a second POST carrying the same id is
+            // a 409, so the console must stop offering it.
+            setPreview(IDLE_JOINT_PREVIEW);
           },
         },
       );
@@ -782,7 +978,7 @@ export function AiCompetitionConsole({
       const key = aiErrorKey(result.httpStatus, result.code);
       setError({ message: msg(key), key });
     },
-    [competitionId, instruction, msg, onProposalChange, rungs, selected],
+    [competitionId, instruction, msg, onProposalChange, preview.slice.id, rungs, selected],
   );
 
   const doApply = useCallback(async () => {
@@ -887,29 +1083,67 @@ export function AiCompetitionConsole({
 
       <RunError error={error} currency={currency} msg={msg} />
 
-      <button
-        type="button"
-        data-ai-joint-run
-        data-ai-joint-cta-credits={quote.credits}
-        onClick={() => void run()}
-        disabled={!canRun}
-        className="ai-run inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {running ? (
-          <>
-            <Spinner />
-            {msg("board.ai.joint.running")}
-          </>
-        ) : (
-          <>
-            <span aria-hidden>✦</span>
-            {msg("board.ai.quote.cta", {
-              action: msg("board.ai.joint.run"),
-              credits: plural("board.ai.quote.credits", quote.credits),
-            })}
-          </>
-        )}
-      </button>
+      {/* W5 (#400) — the confirm gate, the joint twin of the division console's.
+          The first click COMPILES the sentence over the selected divisions
+          (stage 1, no credit, no architect call) and this card is the receipt
+          for it; only its own confirm starts a chargeable run. Declining sets
+          the slice back to idle and fires no request, which is what makes
+          "declining spends no credit" a fact rather than a claim.
+
+          `AiInstructionPreview` is the division console's card, unchanged: it
+          takes a compiled instruction and knows nothing about scope, and the
+          two surfaces must not teach two readings of one sentence. */}
+      {previewData && (
+        <AiInstructionPreview
+          preview={previewData}
+          credits={quote.credits}
+          // The one thing this console can resolve that the division one
+          // cannot: a rule narrowed to ONE division of several is the joint
+          // reading that matters most, and "part of the competition only" would
+          // be an honest gap where a name is right there on the picker.
+          names={(scope) =>
+            scope.kind === "division" || scope.kind === "pool"
+              ? (divisions.find((d) => d.id === scope.divisionId)?.name ?? null)
+              : null
+          }
+          onConfirm={() => void run()}
+          onDismiss={() => setPreview(IDLE_JOINT_PREVIEW)}
+          onAsPreference={() =>
+            setPreview((cur) => ({ ...cur, slice: { ...cur.slice, asPreference: true } }))
+          }
+        />
+      )}
+
+      {!previewData && (
+        <button
+          type="button"
+          data-ai-joint-run
+          data-ai-joint-cta-credits={quote.credits}
+          data-ai-joint-stage={confirmed ? "run" : "check"}
+          onClick={confirmed ? () => void run() : () => void compile()}
+          // `confirmed` is false for the whole of a run in flight (`canRun`
+          // refuses one), so the running case is the compile case's `!canCompile`.
+          disabled={!confirmed && !canCompile}
+          className="ai-run inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {running || checking ? (
+            <>
+              <Spinner />
+              {checking ? msg("board.ai.preview.checking") : msg("board.ai.joint.running")}
+            </>
+          ) : (
+            <>
+              <span aria-hidden>✦</span>
+              {confirmed
+                ? msg("board.ai.quote.cta", {
+                    action: msg("board.ai.joint.run"),
+                    credits: plural("board.ai.quote.credits", quote.credits),
+                  })
+                : msg("board.ai.preview.check")}
+            </>
+          )}
+        </button>
+      )}
     </div>
   );
 
