@@ -133,6 +133,34 @@ if (UPDATE_GOLDEN) {
         }
       });
 
+      // W4 review item 3 — `types.length > 2` was the whole coverage claim, and
+      // it was nowhere near what the gate advertised: football recorded 4 of
+      // its 7 declared tier types, cricket 3 of 15, so adding a required field
+      // to the PRE-EXISTING FootballSub left all 45 golden tests green. A
+      // module's `fidelityTiers` is its own claim about what a scorer can
+      // record; every one of those types has to be in the corpus or the
+      // back-compat tripwire simply does not cover it.
+      it("records every event type the module declares in a fidelity tier", () => {
+        const missing = uncoveredTierTypes(module, corpus);
+        expect(
+          missing,
+          `${module.key} declares ${tierEventTypes(module).length} tier event types and its ` +
+            `corpus never exercises ${missing.length} of them, so a tightening of those ` +
+            `branches would not red anything. Extend the corpus: ` +
+            `EXTEND_GOLDEN=1 npx vitest run src/testkit/golden.test.ts`,
+        ).toEqual([]);
+      });
+
+      // The additive-only tripwire. Payloads written under the OLD schema must
+      // still satisfy the CURRENT one; a new required field or a renamed key
+      // reds this test while every generated conformance run stays green.
+      //
+      // Against the BRANCH, not the union (W4 review item 2). The union's
+      // branches carry no discriminator — the envelope's `type` does, and
+      // `apply` is what reads it — so a union parse passes whenever a sibling
+      // branch is a superset of the payload. Tightening `PeriodSuspensionEnd`
+      // used to leave this green for hockey and icehockey on the strength of
+      // `PeriodSuspensionStart` accepting the same shape.
       it("every recorded payload still parses against the branch apply selects", () => {
         expect(sportPayloads(corpus).length, "sport payloads in corpus").toBeGreaterThan(0);
         for (const stream of corpus.streams) {
