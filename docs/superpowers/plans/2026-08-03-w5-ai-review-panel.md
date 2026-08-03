@@ -905,6 +905,20 @@ npm run i18n:gen-keys && npm run i18n:check
 git add -A && git commit -m "feat(board): confirm gate on the joint console (#400)"
 ```
 
+### Carried from the Task 5 review (commit `a6c8ae6a`, verdict *ship*)
+
+Four Minors and one framing gap, all landing in files Task 7 already owns. None blocks Task 5; all are cheaper to fix here than to file.
+
+- [ ] **The pulse label under-selects.** `board.ai.review.pulse` reads "Show these on the board", but the pulse is filtered to `kind === "warning"` (`ai-review.ts:100`) while the card also holds unschedulable rows — so "these" highlights a subset and says nothing about it. Filtering was the right call (an unschedulable fixture is absent from `proposal` and has no grid block to light), so fix the copy, not the filter: name the placed subset and carry the count of what will actually light up. All four locales.
+
+- [ ] **Two toothless assertions in `__tests__/ai-competition-console.test.tsx`.**
+  - `:518` — `expect(html).not.toContain("1 warning to review")` can never fail: the key that produced that sentence is retired, so no implementation can render it. The real guard is the `data-review-count="3"` line above. Replace with `expect(html.match(/data-review-count="/g)).toHaveLength(1)` — that one *would* fail if a second count were reintroduced, which is the property #388 exists to protect.
+  - `:498-505` — the `card()` helper slices from the first `<section`, sound today only because `ai-competition-console.tsx` happens to contain no `<section>` of its own. A future `<section>` above the panel silently retargets every chip assertion without failing. Slice on `data-review-count` instead.
+
+- [ ] **`AiConsoleFixture.division_id` has no enforcement** (`ai-diff.ts:27-41`). It is optional and only `consoleFixtures` (`schedule-board.tsx:254`) populates it; a new production builder that omits it drops the joint chip again with no type error. Not worth a type change — leave a comment naming the single populating call site as load-bearing.
+
+- [ ] **`skipped_divisions` and `divergent_courts` sit in the amber band but outside the count** (`ai-competition-console.tsx:526`, `:534`). Task 4 defines three review categories and these are not among them, so this is spec-sanctioned rather than a defect — but an uncounted amber note beside a counted one is precisely the drift #388 was filed about. **Ruling: demote them visually out of the amber band, do not count them.** They are division-level notes, not per-fixture review rows; folding them into `reviewRowCount` would make one number mean two different units, which is a worse bug than the one being fixed.
+
 ---
 
 ## Task 8 — e2e, smoke, help, and the screenshot pass
