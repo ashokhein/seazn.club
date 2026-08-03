@@ -5,11 +5,13 @@
 //
 // Determinism is configured HERE, not at the call site, so every solver in the
 // process shares one seeded, single-threaded configuration.
+// `import type` is erased at compile time, so naming the context type costs
+// nothing at runtime — it does NOT pull in or boot the WASM, which stays behind
+// the dynamic `import("z3-solver")` in `loadZ3`.
+import type { Context } from "z3-solver";
+
 export interface Z3Context {
-  // Deliberately loose: z3-solver's generic `Context<Name>` types do not survive
-  // being handed around, and the encoder uses only the documented surface.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  Z3: any;
+  Z3: Context<"repair">;
   shutdown: () => void;
 }
 
@@ -23,7 +25,7 @@ export function z3LoadCount(): number {
 export async function loadZ3(): Promise<Z3Context> {
   if (loaded !== null) return loaded;
   count++;
-  loaded = (async () => {
+  const attempt = (async () => {
     const { init } = await import("z3-solver");
     const { Context, em, setParam } = await init();
     // Single-threaded and unseeded-free: parallel portfolio solving picks
@@ -38,14 +40,35 @@ export async function loadZ3(): Promise<Z3Context> {
       shutdown: () => em.PThread.terminateAllThreads(),
     };
   })();
-  return loaded;
+  loaded = attempt;
+  // A FAILED load must leave no trace. Caching the rejected promise made a
+  // transient WASM boot failure permanent: every later caller got the same
+  // rejection back, and `resetZ3` rethrew it before clearing anything — so the
+  // process could never load z3 again.
+  //
+  // The identity guard matters: a `resetZ3` racing this rejection may already
+  // have cleared the slot and a later `loadZ3` may already have filled it, and
+  // this attempt must not tear down its successor.
+  void attempt.catch(() => {
+    if (loaded === attempt) {
+      loaded = null;
+      count--;
+    }
+  });
+  return attempt;
 }
 
 /** Test-only: drops the singleton and stops the worker threads node keeps alive. */
 export async function resetZ3(): Promise<void> {
   if (loaded === null) return;
-  const ctx = await loaded;
-  ctx.shutdown();
-  loaded = null;
-  count = 0;
+  try {
+    const ctx = await loaded;
+    ctx.shutdown();
+  } finally {
+    // In a `finally` so a throwing `shutdown` (or a load that rejects between
+    // the null check and the await) cannot strand the singleton — the whole
+    // point of a reset is that the next `loadZ3` starts clean.
+    loaded = null;
+    count = 0;
+  }
 }

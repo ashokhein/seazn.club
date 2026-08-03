@@ -72,4 +72,87 @@ describe("exported rule semantics", () => {
     expect(intervalsOverlap(0, 10, 10, 20)).toBe(false);
     expect(intervalsOverlap(0, 11, 10, 20)).toBe(true);
   });
+
+  // A pair spanning `assignments` and `existing` is judged ONE-directionally:
+  // the outer loop is `for (const a of assignments)`, so only the MOVABLE side's
+  // pool/division is ever the first argument. A solver that asserts the max
+  // against an immovable over-constrains and reports a spurious infeasible.
+  it("a movable-vs-existing pair owes only the movable side's direction", () => {
+    const config: VerifyConfig = {
+      ...BASE_CONFIG,
+      constraints: {
+        // The two directions genuinely disagree: `effectiveRestMinutes` reads
+        // the FIRST argument's pool, and the two fixtures sit in different ones.
+        restByGroup: { "pool-lax": 30, "pool-strict": 90 },
+        noBackToBack: false,
+        fieldFairness: "off",
+        parallelism: "mixed",
+      } as never,
+    };
+    const t0 = at("2026-08-10T09:00:00Z");
+    const immovable: Assignment = {
+      fixtureId: "x1",
+      court: "C2",
+      startAt: t0,
+      endAt: t0 + 40 * MIN,
+      entrants: ["e1"],
+      people: [],
+      poolId: "pool-strict",
+    };
+    const movable: Assignment = {
+      fixtureId: "m1",
+      court: "C1",
+      // 45 minutes after the immovable ends: clears 30, breaches 90.
+      startAt: t0 + 85 * MIN,
+      endAt: t0 + 125 * MIN,
+      entrants: ["e1"],
+      people: [],
+      poolId: "pool-lax",
+    };
+    expect(pairRestMinutes(config, movable, immovable)).toBe(30);
+    expect(pairRestMinutes(config, immovable, movable)).toBe(90);
+    // One-directional against `existing` — the 90 is never asked for.
+    expect(validateAssignments([movable], config, [immovable]).some((c) => c.reason === "rest")).toBe(false);
+    // Both movable: the verifier evaluates the pair once per assignment, so the
+    // strict direction is reached and the max binds.
+    expect(validateAssignments([movable, immovable], config).some((c) => c.reason === "rest")).toBe(true);
+  });
+
+  // REGRESSION TRIPWIRE, NOT A BENCHMARK. `pairRestMinutes` is called from an
+  // O(n²) loop; deriving `effectiveHard` + the ruleFixtures Map INSIDE it made
+  // the per-config work quadratic too. The threshold is deliberately far above
+  // any honest machine-to-machine spread — it exists to fail loudly on that
+  // shape, not to police milliseconds.
+  //
+  // Sizing: on the dev machine this board measured 2967 ms with the derivation
+  // inside and ~30 ms with it hoisted. 400 rather than 300 because 300 landed
+  // at 1437 ms — under the threshold, i.e. a tripwire that never trips.
+  it("validateAssignments stays linear-ish in per-config work on a shared-person board", () => {
+    const n = 400;
+    const t0 = at("2026-08-10T08:00:00Z");
+    const assignments: Assignment[] = [];
+    const ruleFixtures = [];
+    for (let i = 0; i < n; i++) {
+      const startAt = t0 + i * 120 * MIN; // far apart: the rest branch, never overlap
+      assignments.push({
+        fixtureId: `f${i}`,
+        court: `C${i}`,
+        startAt,
+        endAt: startAt + 40 * MIN,
+        entrants: [`e${i}`], // distinct entrants — only the shared PERSON pairs them
+        people: ["p-shared"],
+        divisionId: "d1",
+      });
+      ruleFixtures.push({ id: `f${i}`, extKey: `f${i}`, divisionId: "d1", winnerTo: null });
+    }
+    const config: VerifyConfig = { ...BASE_CONFIG, tz: "UTC", ruleFixtures };
+    // `performance.now()` and not `Date.now()`: the boundary gate bans the
+    // latter engine-wide (ambient time makes engine output non-reproducible),
+    // and a monotonic clock is the right instrument for an elapsed span anyway.
+    // Nothing here feeds engine output — the reading is the assertion.
+    const started = performance.now();
+    validateAssignments(assignments, config);
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeLessThan(1500);
+  });
 });
