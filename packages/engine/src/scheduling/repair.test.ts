@@ -512,6 +512,86 @@ describe("the rule families, end to end", () => {
     SOLVE_TIMEOUT,
   );
 
+  /**
+   * The cap's unit is the DAY. `dayBuckets` returns one bucket per SESSION when
+   * sessions are configured, so two sessions on one calendar day used to be
+   * asserted as two independent caps — a `count: 1` admitting one fixture per
+   * session, which is two per day. The verifier counts per day and rejects the
+   * board the solver called repaired.
+   */
+  const TWO_SESSION_DAY = [
+    { from: at("2026-08-10T09:00:00Z"), to: at("2026-08-10T12:00:00Z") },
+    { from: at("2026-08-10T14:00:00Z"), to: at("2026-08-10T18:00:00Z") },
+    { from: at("2026-08-11T09:00:00Z"), to: at("2026-08-11T12:00:00Z") },
+  ];
+  const capRuleFixtures = [
+    { id: "wb-r0-i1", extKey: "wb-r0-i1", winnerTo: null },
+    { id: "wb-r0-i2", extKey: "wb-r0-i2", winnerTo: null },
+    { id: "wb-r0-i3", extKey: "wb-r0-i3", winnerTo: null },
+  ];
+  const capConfig = (count: number): VerifyConfig & { courts: readonly string[] } => ({
+    ...BASE_CONFIG,
+    tz: "UTC",
+    courts,
+    window: { from: at("2026-08-10T00:00:00Z"), to: at("2026-08-13T00:00:00Z") },
+    sessionWindows: TWO_SESSION_DAY,
+    ruleFixtures: capRuleFixtures.map((f) => ({ ...f })),
+    hard: [{ type: "max_fixtures_per_day", count, scope: { kind: "competition" } }],
+  });
+
+  it(
+    "counts max_fixtures_per_day per DAY, not per session bucket",
+    async () => {
+      const config = capConfig(1);
+      // One fixture in each of the day's two sessions. Nothing clashes: the cap
+      // is the ONLY thing wrong with this board, so a per-session encoding sees
+      // a legal board (one per bucket) and returns it untouched.
+      const proposal = assign(BADMINTON, SOLO, [
+        ["wb-r0-i1", "2026-08-10T09:00:00Z", "C1"],
+        ["wb-r0-i2", "2026-08-10T15:00:00Z", "C2"],
+      ]);
+      expect(validateAssignments(proposal, config)).toHaveLength(2);
+
+      const r = await repairSchedule({ proposal, config, budgetMs: 60_000 });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      expect(r.relaxed).toEqual([]);
+      // One card moves to the second day's session; the cap is 1 per DAY.
+      expect(r.moved).toHaveLength(1);
+      expect(new Set(r.assignments.map((a) => dayKey(a.startAt))).size).toBe(2);
+      expect(validateAssignments(r.assignments, config)).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "charges an immovable fixture to its day ONCE, not once per session",
+    async () => {
+      const config = capConfig(2);
+      // A known immovable fixture already sits in the day's first session, so
+      // the 2/day cap leaves room for exactly ONE movable card on 08-10.
+      const existing = assign(BADMINTON, SOLO, [["wb-r0-i3", "2026-08-10T10:00:00Z", "C2"]]);
+      const proposal = assign(BADMINTON, SOLO, [
+        ["wb-r0-i1", "2026-08-10T09:00:00Z", "C1"],
+        ["wb-r0-i2", "2026-08-10T15:00:00Z", "C1"],
+      ]);
+      expect(validateAssignments(proposal, config, existing)).toHaveLength(2);
+
+      const r = await repairSchedule({ proposal, config, existing, budgetMs: 60_000 });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      expect(r.relaxed).toEqual([]);
+      // EXACTLY one. Subtracting the immovable once per session bucket instead
+      // of once per day leaves the day no room at all and moves both cards —
+      // over-constraining a board the verifier is happy with.
+      expect(r.moved).toHaveLength(1);
+      const stayed = r.assignments.filter((a) => dayKey(a.startAt) === "2026-08-10");
+      expect(stayed).toHaveLength(1);
+      expect(validateAssignments(r.assignments, config, existing)).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
   it(
     "honours a feeder→dependent min_rest_minutes instruction",
     async () => {

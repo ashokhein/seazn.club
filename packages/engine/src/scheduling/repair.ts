@@ -458,14 +458,41 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
       if (scopeCoversFixture(rule.scope, fixtureById.get(a.fixtureId), a)) scoped.push(i);
     }
     if (scoped.length === 0) return;
-    for (let b = 0; b < buckets.length; b++) {
-      const bucket = buckets[b]!;
+    // A BUCKET IS NOT A DAY. `dayBuckets` returns one bucket per SESSION as soon
+    // as `sessionWindows` is non-empty, so a morning and an afternoon session on
+    // one calendar day are two buckets sharing one `ymd`. Asserted per bucket, a
+    // `count: 1` cap admitted one fixture per session — two per day — and the
+    // verifier, which counts per day, then rejected the board the solver called
+    // repaired. Same root cause as the session/window mix-up: an encoder unit
+    // that is not the verifier's unit.
+    //
+    // So the buckets are folded back into days, ONE `AtMost` per day over the
+    // union of that day's runs, and the immovable count is subtracted ONCE from
+    // the day rather than once from every session on it. Days are keyed by the
+    // verifier's own `dayKeyInTz` and sorted explicitly — `YYYY-MM-DD` sorts
+    // chronologically — so the assertion order is a function of the input, never
+    // of Map iteration.
+    const byDay = new Map<string, { from: number; to: number }[]>();
+    for (const bucket of buckets) {
+      const runs = byDay.get(bucket.ymd);
+      if (runs === undefined) byDay.set(bucket.ymd, [{ from: bucket.from, to: bucket.to }]);
+      else runs.push({ from: bucket.from, to: bucket.to });
+    }
+    const days = [...byDay.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    for (let g = 0; g < days.length; g++) {
+      const [ymd, runs] = days[g]!;
       const lits = scoped.map((i) => {
-        const lit = Z3.Bool.const(`day_${h}_${b}_${i}`);
+        const lit = Z3.Bool.const(`day_${h}_${g}_${i}`);
+        // "starts on this day" is the OR over the day's runs: a card in EITHER
+        // session counts once against the one cap.
         solver.add(
           Z3.Iff(
             lit,
-            Z3.And(start[i]!.ge(ceilMin(bucket.from)), start[i]!.le(floorMin(bucket.to - 1))),
+            Z3.Or(
+              ...runs.map((r) =>
+                Z3.And(start[i]!.ge(ceilMin(r.from)), start[i]!.le(floorMin(r.to - 1))),
+              ),
+            ),
           ),
         );
         return lit;
@@ -476,7 +503,7 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
         (e) =>
           fixtureById.has(e.fixtureId) &&
           scopeCoversFixture(rule.scope, fixtureById.get(e.fixtureId), e) &&
-          dayKeyInTz(e.startAt, zone) === bucket.ymd,
+          dayKeyInTz(e.startAt, zone) === ymd,
       ).length;
       assume(
         "instruction",
