@@ -1006,8 +1006,10 @@ describe.skipIf(!HAS_DB)("joint pack calendar anchor (#397)", () => {
     const windowed = conflicts.filter((c) => c.reason === "window");
     expect(windowed).toHaveLength(1);
     expect(windowed[0]!.fixtureId).toBe(target.id);
-    // Warn-only until W4 (#399) makes it delta-blocking.
-    expect(windowed.some(isBlocking)).toBe(false);
+    // #399: outside the days the competition runs is not a preference, so the
+    // plan-time taxonomy blocks it. Whether it can be WRITTEN is the delta at
+    // the apply gate — a board already outside its window stays editable.
+    expect(windowed.every(isBlocking)).toBe(true);
   });
 
   it("is byte-identical for two joint builds at the same injected instant", async () => {

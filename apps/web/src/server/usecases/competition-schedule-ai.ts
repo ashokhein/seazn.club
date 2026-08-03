@@ -61,6 +61,7 @@ import {
   planRungs,
   runLadder,
   schedulingAiModel,
+  unschedulableRule,
   windowBounds,
   zonedIso,
   type PackAssignment,
@@ -76,7 +77,7 @@ import {
 import { AiSchedulePlan, INSTRUCTION_RULES, JOINT_RULES, SYSTEM_PROMPT } from "./schedule-ai-prompt";
 import { parseInstruction, resolveParsed, type RawParsed } from "./schedule-ai-parse";
 import { validateInstructionRules } from "@seazn/engine/scheduling";
-import type { HardConstraint, RuleFixture, VerifyConfig } from "@seazn/engine/scheduling";
+import type { HardConstraint, RuleCode, RuleFixture, VerifyConfig } from "@seazn/engine/scheduling";
 import { resolveProvider, selectProvider, type ProviderName } from "@/server/ai/select-provider";
 import {
   AiProviderError,
@@ -1016,7 +1017,7 @@ export interface CompetitionPlanResult {
     division_id: string;
     schedule_locked?: boolean;
   }[];
-  unschedulable: { fixture_id: string; reason: string }[];
+  unschedulable: { fixture_id: string; reason: string; rule: RuleCode }[];
   warnings: Conflict[];
   blocking: Conflict[];
   diff: { moved: string[]; placed: string[]; unscheduled: string[]; unchanged: string[] };
@@ -1617,7 +1618,12 @@ export async function runCompetitionAiPlan(
       division_id: divisionOf(a.fixture_id),
       ...(a.schedule_locked !== undefined ? { schedule_locked: a.schedule_locked } : {}),
     })),
-    unschedulable: chosen.plan.unschedulable,
+    // #399: same codes as the single-division runner — the rule the model
+    // cited, or CAP for the capacity case.
+    unschedulable: chosen.plan.unschedulable.map((u) => ({
+      ...u,
+      rule: unschedulableRule(u.reason),
+    })),
     warnings: chosen.warnings,
     blocking: chosen.blocking,
     diff: computeJointDiff(chosen.plan, pack),

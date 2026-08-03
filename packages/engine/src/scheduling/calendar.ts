@@ -161,6 +161,30 @@ const withRule = (c: Conflict): Conflict => ({ ...c, rule: RULE_BY_REASON[c.reas
 export const conflictKey = (c: Conflict): string => `${c.fixtureId}|${c.reason}|${c.detail ?? ""}`;
 
 /**
+ * A conflict that makes the schedule PHYSICALLY IMPOSSIBLE, as opposed to
+ * uncomfortable: a court booked twice, a human on two courts at once, a fixture
+ * outside the days the competition runs, or one placed before the match that
+ * feeds it has finished.
+ *
+ * Lives here, beside the reasons, because the AI pipeline and the board's
+ * persistence gates must answer this identically — "two vocabularies" (#399 gap
+ * 5) is exactly what happens when they each keep a copy. Below-minimum rest is
+ * deliberately NOT here: uncomfortable is not impossible, and organisers
+ * legitimately override it.
+ *
+ * ABSOLUTE. Whether a change may be WRITTEN is this answer filtered through
+ * `deltaConflicts` at the gate, so a dirty board stays editable.
+ */
+export function isBlockingConflict(c: Conflict): boolean {
+  return (
+    c.reason === "court" ||
+    c.reason === "person_overlap" ||
+    c.reason === "window" ||
+    (c.reason === "order" && c.direct === true)
+  );
+}
+
+/**
  * The conflicts a change INTRODUCED OR WORSENED — a multiset difference, not a
  * set one. Two instances of a key after and one before means the change added a
  * second, and one instance is returned.

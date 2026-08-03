@@ -944,6 +944,119 @@ describe("verifyConfigFor (#350)", () => {
 });
 
 // ===========================================================================
+// #399 W4 — what blocks
+//
+// `isBlocking` is the ABSOLUTE vocabulary: a conflict that makes the schedule
+// physically impossible. The delta ("did this change introduce it?") is applied
+// by the three persistence gates, not here — the plan path wants the absolute
+// answer, because that is what makes a repair round try to fix a person
+// double-booking instead of shipping one.
+// ===========================================================================
+
+describe("isBlocking (#399)", () => {
+  const c = (reason: Conflict["reason"], over: Partial<Conflict> = {}): Conflict => ({
+    fixtureId: F1,
+    reason,
+    ...over,
+  });
+
+  it("blocks what is physically impossible", () => {
+    expect(isBlocking(c("court"))).toBe(true);
+    expect(isBlocking(c("order", { direct: true }))).toBe(true);
+    // A human on two courts at once is impossible no matter who put them there
+    // — the gap this wave exists to close (#399 gap 4).
+    expect(isBlocking(c("person_overlap"))).toBe(true);
+    // Outside the days the competition runs is not a preference either.
+    expect(isBlocking(c("window"))).toBe(true);
+  });
+
+  it("does NOT block what is merely uncomfortable or overridable", () => {
+    // Below-minimum rest is uncomfortable, not impossible, and organisers
+    // legitimately override it. Same for a blackout badge, a start window, an
+    // indirect order dependency and a compiled instruction rule.
+    expect(isBlocking(c("rest"))).toBe(false);
+    expect(isBlocking(c("blackout"))).toBe(false);
+    expect(isBlocking(c("start_window"))).toBe(false);
+    expect(isBlocking(c("instruction"))).toBe(false);
+    expect(isBlocking(c("order", { direct: false }))).toBe(false);
+    expect(isBlocking(c("no_slot"))).toBe(false);
+  });
+
+  it("moves person overlap OUT of the escalation numerator and INTO blocking", () => {
+    // The consequence the issue asks to be asserted rather than discovered:
+    // `partitionConflicts` feeds both the organiser's warnings and
+    // `planIsAcceptable`'s ratio, so promoting a reason changes what counts
+    // toward SCHEDULING_AI_ESCALATE_WARN_RATIO and can bring
+    // `stopped_on_budget` forward.
+    const overlap = c("person_overlap", { detail: "person p-fischer overlap" });
+    const part = partitionConflicts([overlap, c("rest")]);
+    expect(part.blocking).toEqual([overlap]);
+    expect(part.warnings).toEqual([c("rest")]);
+    // Blocking is never acceptable, whatever the ratio says.
+    expect(planIsAcceptable({ blocking: part.blocking, warnings: part.warnings }, 10)).toBe(false);
+  });
+
+  it("keeps `warnings` the EXACT complement of `blocking` (R13)", () => {
+    const all = [c("court"), c("person_overlap"), c("window"), c("rest"), c("blackout")];
+    const part = partitionConflicts(all);
+    expect([...part.blocking, ...part.warnings]).toHaveLength(all.length);
+    expect(part.warnings.some(isBlocking)).toBe(false);
+    expect(part.blocking.every(isBlocking)).toBe(true);
+  });
+});
+
+describe("verifyJoint — a shared human on two courts at once (#399)", () => {
+  it("reports a cross-division person overlap as BLOCKING", () => {
+    // Payload B's shape: one human (Fischer) entered in two divisions. The
+    // joint pack is the only place this pair is ever seen at once.
+    const p = pack(
+      [division(D1, "Alpha"), division(D2, "Beta", { settings: settings({ courts: ["Court 2"] }) })],
+      [
+        fixture(F1, D1, { home: E1, away: E2 }),
+        fixture(F2, D2, { home: E3, away: E4 }),
+      ],
+      {
+        people: [
+          { person_id: "p-fischer", entrant_ids: [E1, E3] },
+          { person_id: "p-kasparov", entrant_ids: [E2] },
+          { person_id: "p-polgar", entrant_ids: [E4] },
+        ],
+      },
+    );
+    const conflicts = verifyJoint(
+      plan([assign(F1, at("09:00"), "Court 1"), assign(F2, at("09:00"), "Court 2")]),
+      p,
+    );
+    const overlaps = conflicts.filter((x) => x.reason === "person_overlap");
+    expect(overlaps.length).toBeGreaterThan(0);
+    expect(overlaps.every((x) => x.rule === "H4")).toBe(true);
+    expect(partitionConflicts(conflicts).blocking).toEqual(overlaps);
+  });
+
+  it("ACCEPTS the same pair once they are sequenced", () => {
+    const p = pack(
+      [division(D1, "Alpha"), division(D2, "Beta", { settings: settings({ courts: ["Court 2"] }) })],
+      [
+        fixture(F1, D1, { home: E1, away: E2 }),
+        fixture(F2, D2, { home: E3, away: E4 }),
+      ],
+      {
+        people: [
+          { person_id: "p-fischer", entrant_ids: [E1, E3] },
+          { person_id: "p-kasparov", entrant_ids: [E2] },
+          { person_id: "p-polgar", entrant_ids: [E4] },
+        ],
+      },
+    );
+    const conflicts = verifyJoint(
+      plan([assign(F1, at("09:00"), "Court 1"), assign(F2, at("10:00"), "Court 2")]),
+      p,
+    );
+    expect(conflicts).toEqual([]);
+  });
+});
+
+// ===========================================================================
 // #398 — the compiled instruction, verified jointly
 //
 // Both directions for every rule: a board that satisfies the instruction must

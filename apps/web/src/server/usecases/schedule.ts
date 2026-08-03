@@ -15,8 +15,14 @@ import { REASON_CODE } from "@/lib/schedule-board";
 import { resolveVenueTz } from "@/lib/tz";
 import { EngineError } from "@seazn/engine/core";
 import {
+  conflictKey,
+  dayKeyInTz,
+  deltaConflicts,
+  isBlockingConflict,
   slotFixtures,
   validateAssignments,
+  ymdAddDays,
+  zonedTimeToUtc,
   type Assignment,
   type Conflict,
   type OrderDependency,
@@ -327,8 +333,13 @@ export async function siblingAssignments(
 
 export function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotConfig {
   const c = settings.config;
+  const window = applyWindow(settings);
   return {
     startAt: c.startAt ? ms(c.startAt) : now,
+    // #399: the days the competition actually runs, so a card dragged outside
+    // them is refused instead of badged. Delta-gated at the write, so a board
+    // already sitting outside its dates stays editable.
+    ...(window !== undefined ? { window } : {}),
     matchMinutes: c.matchMinutes,
     gapMinutes: c.gapMinutes,
     courts: [...c.courts],
@@ -370,25 +381,59 @@ export function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotCo
 
 function mapConflicts(
   conflicts: readonly Conflict[],
-  crossPersonClash?: "warn" | "hard",
+  /** The SAME verifier run over the board as it stands TODAY (#399). A conflict
+   *  already present is a badge, never a refusal: boards published before this
+   *  wave may hold person overlaps, because those were warnings all along, and
+   *  under an absolute rule the first edit to such a board would 409 — leaving
+   *  the organiser unable to fix the very thing that is wrong. Defaults to
+   *  empty, which reads as "everything here is new" — right for the auto pass,
+   *  whose proposal has no prior state of its own. */
+  baseline: readonly Conflict[] = [],
 ): ScheduleConflict[] {
-  // crossPersonClash="hard" (Jul3/04 §2) means the organiser asked for a person
-  // double-booking to be refused, not badged. The solver already refuses to
-  // place one — but the board accepted a hand-placed clash, because blocking
-  // was decided here without ever consulting the setting. Default stays "warn",
-  // so only organisations that opted in see the change.
-  const personBlocks = crossPersonClash === "hard";
+  // Only what this change INTRODUCED OR WORSENED can refuse the write.
+  const introduced = new Set(deltaConflicts(baseline, conflicts).map(conflictKey));
   return conflicts.map((c) => ({
     fixture_id: c.fixtureId,
     code: REASON_CODE[c.reason],
-    // conflict.court blocks (physically impossible); warn.order blocks for
-    // direct feeds; everything else is a badge (doc 12 §2).
-    blocking:
-      c.reason === "court" ||
-      (c.reason === "order" && c.direct === true) ||
-      (c.reason === "person_overlap" && personBlocks),
+    // The rule the prompt teaches, carried through so the organiser's 409 and a
+    // repair round cite the same token (#399).
+    ...(c.rule !== undefined ? { rule: c.rule } : {}),
+    // Physically impossible AND newly so. `isBlockingConflict` is the engine's
+    // single answer to the first half — the board and the AI pipeline used to
+    // keep separate copies, which is how a person double-booking came to block
+    // on one path and badge on the other.
+    blocking: isBlockingConflict(c) && introduced.has(conflictKey(c)),
     ...(c.detail !== undefined ? { detail: c.detail } : {}),
   }));
+}
+
+/**
+ * The competition's own dates as an engine window (#399).
+ *
+ * Deliberately NOT the AI pack's resolved window: that one WIDENS onto whatever
+ * is already scheduled and onto the compiled instruction, so nothing already on
+ * the board could ever fall outside it — a window that can never be broken
+ * enforces nothing. It also defaults to seven days when no end date is set, and
+ * caging a board inside an invented week is not something an apply gate may do.
+ *
+ * Each bound is independently optional: an organiser who set only a start date
+ * gets a floor and no ceiling.
+ */
+export function applyWindow(
+  settings: ScheduleSettingsOut,
+): { from: number; to: number } | undefined {
+  const { startAt, endAt } = settings.config;
+  if (!startAt && !endAt) return undefined;
+  // The ORG zone governs every temporal boundary (#397): a day is a wall-clock
+  // day where the organisation lives, and a DST day is 23 or 25 hours long, so
+  // the bounds are converted rather than arithmetic on 86_400_000.
+  const tz = settings.orgTz;
+  return {
+    from: startAt ? zonedTimeToUtc(dayKeyInTz(ms(startAt), tz), "00:00", tz) : -Infinity,
+    // EXCLUSIVE end-of-last-day, matching `windowBounds` in the AI path: a match
+    // ending at exactly midnight sits entirely on days inside the window.
+    to: endAt ? zonedTimeToUtc(ymdAddDays(dayKeyInTz(ms(endAt), tz), 1), "00:00", tz) : Infinity,
+  };
 }
 
 function assertNoBlocking(conflicts: ScheduleConflict[]): void {
@@ -473,6 +518,8 @@ export async function autoSchedule(
         ends_at: iso(a.endAt),
         court_label: a.court,
       })),
+      // No baseline: the auto pass PROPOSES a board rather than editing one, so
+      // every conflict in it is this proposal's own doing (#399).
       conflicts: mapConflicts(result.conflicts),
     };
   });
@@ -557,14 +604,23 @@ export async function applySchedule(
       settings.config.matchMinutes,
     );
 
+    const slotConfig = toSlotConfig(settings, 0);
+    const deps = feedDependencies(all);
+    const board = [...untouched, ...siblings];
+    // The SAME fixtures where they sit right now (#399). Anything the verifier
+    // already says about this board is history, not this apply's doing — an
+    // organiser whose board carries a pre-existing person overlap must still be
+    // able to edit it, which is the only way they can ever fix it.
+    // A fixture with no slot yet contributes nothing, so every conflict its
+    // placement causes reads as introduced. Correct: it is.
+    const currentSlots = input.assignments
+      .map((a) => byId.get(a.fixture_id) as FixtureLite)
+      .filter((f) => f.scheduled_at !== null && f.court_label !== null)
+      .map((f) => toAssignment(f, settings.config.matchMinutes, people));
+    const baseline = validateAssignments(currentSlots, slotConfig, board, deps);
     const conflicts = mapConflicts(
-      validateAssignments(
-        proposed,
-        toSlotConfig(settings, 0),
-        [...untouched, ...siblings],
-        feedDependencies(all),
-      ),
-      settings.config.constraints?.crossPersonClash,
+      validateAssignments(proposed, slotConfig, board, deps),
+      baseline,
     );
     assertNoBlocking(conflicts);
 
@@ -766,14 +822,20 @@ export async function moveFixture(
         fixture.competition_id,
         settings.config.matchMinutes,
       );
+      const slotConfig = toSlotConfig(settings, 0);
+      const deps = feedDependencies(all);
+      const board = [...others, ...siblings];
+      // Where this card sits right now (#399). An unscheduled fixture has no
+      // baseline, so every blocking conflict its first placement causes is
+      // introduced — which is exactly what it is.
+      const currentSlot =
+        fixture.scheduled_at !== null && fixture.court_label !== null
+          ? [toAssignment(fixture, settings.config.matchMinutes, people)]
+          : [];
+      const baseline = validateAssignments(currentSlot, slotConfig, board, deps);
       conflicts = mapConflicts(
-        validateAssignments(
-          [proposed],
-          toSlotConfig(settings, 0),
-          [...others, ...siblings],
-          feedDependencies(all),
-        ),
-        settings.config.constraints?.crossPersonClash,
+        validateAssignments([proposed], slotConfig, board, deps),
+        baseline,
       );
       assertNoBlocking(conflicts);
     }
@@ -911,11 +973,19 @@ export async function validateSchedule(
         -- scoped to one division, so bind it rather than re-joining.
         and oa.date = (f.scheduled_at at time zone ${settings.tz})::date`;
 
+    // A REPORT of the board as it stands — nothing is being written, so nothing
+    // is introduced and nothing here may claim to block (#399). Handing the
+    // conflicts in as their own baseline says exactly that, and keeps one
+    // definition of `blocking` instead of a second flag for read paths.
+    const boardConflicts = validateAssignments(
+      assignments,
+      toSlotConfig(settings, 0),
+      siblings,
+      feedDependencies(all),
+    );
     return {
       conflicts: [
-        ...mapConflicts(
-          validateAssignments(assignments, toSlotConfig(settings, 0), siblings, feedDependencies(all)),
-        ),
+        ...mapConflicts(boardConflicts, boardConflicts),
         ...officialConflicts.map((c) => ({ fixture_id: c.fixture_id, code: c.code as ScheduleConflict["code"], blocking: false })),
       ],
     };

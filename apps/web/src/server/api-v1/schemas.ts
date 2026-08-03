@@ -757,8 +757,16 @@ export const ScheduleSettings = z.object({
   updated_at: z.string(),
 });
 
-/** Doc 12 §2 conflict taxonomy. `blocking` = conflict.court, or warn.order on
- *  a direct feed; blocked writes are rejected, warnings persist as badges. */
+/** The rule vocabulary the scheduling prompts teach (#399). `CAP` is the
+ *  capacity case: demand exceeded capacity and no single rule was broken. */
+export const RuleCode = z.enum(["H2", "H3", "H4", "H5", "H6", "H8", "CAP"]);
+export type RuleCode = z.infer<typeof RuleCode>;
+
+/** Doc 12 §2 conflict taxonomy. Since #399 `blocking` is DELTA-based: a court
+ *  clash, a person double-booking, an out-of-window slot or a direct feed
+ *  ordering breach blocks when THIS change introduced or worsened it. The same
+ *  conflict already on the board comes back as a badge, so a dirty board stays
+ *  editable. Blocked writes are rejected; warnings persist as badges. */
 export const ScheduleConflict = z.object({
   fixture_id: Uuid,
   code: z.enum([
@@ -783,6 +791,9 @@ export const ScheduleConflict = z.object({
   ]),
   blocking: z.boolean(),
   detail: z.string().optional(),
+  /** The rule this conflict breaks, in the vocabulary the AI prompts teach
+   *  (#399) — so a refusal, a badge and a repair round all cite one token. */
+  rule: RuleCode.optional(),
 });
 export type ScheduleConflict = z.infer<typeof ScheduleConflict>;
 
@@ -1657,6 +1668,10 @@ const AiPlanConflict = z.object({
   reason: z.string(),
   detail: z.string().optional(),
   direct: z.boolean().optional(),
+  /** The rule the prompt taught for this reason (#399), so a repair round is
+   *  handed the token it knows instead of a word we invented. Declared here or
+   *  zod strips it and the model goes back to interpreting prose. */
+  rule: RuleCode.optional(),
 });
 
 // A durable constraints delta the architect inferred from the instruction —
@@ -1684,7 +1699,7 @@ const AiConstraintSuggestions = z.object({
 
 export const AiPlanResponse = z.object({
   proposal: z.array(AiPlanAssignment),
-  unschedulable: z.array(z.object({ fixture_id: Uuid, reason: z.string() })),
+  unschedulable: z.array(z.object({ fixture_id: Uuid, reason: z.string(), rule: RuleCode })),
   warnings: z.array(AiPlanConflict),
   blocking: z.array(AiPlanConflict),
   diff: z.object({
@@ -1853,7 +1868,7 @@ export const AiCompetitionPlanResponse = z.object({
       schedule_locked: z.boolean().optional(),
     }),
   ),
-  unschedulable: z.array(z.object({ fixture_id: z.string(), reason: z.string() })),
+  unschedulable: z.array(z.object({ fixture_id: z.string(), reason: z.string(), rule: RuleCode })),
   // The ENGINE verifier's camelCase Conflict, exactly as the single-division
   // AiPlanResponse carries it — NOT the snake_case ScheduleConflict of the
   // apply/validate endpoints. The orchestrator returns `Conflict[]` verbatim,

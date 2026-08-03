@@ -17369,6 +17369,18 @@
                               },
                               "detail": {
                                 "type": "string"
+                              },
+                              "rule": {
+                                "type": "string",
+                                "enum": [
+                                  "H2",
+                                  "H3",
+                                  "H4",
+                                  "H5",
+                                  "H6",
+                                  "H8",
+                                  "CAP"
+                                ]
                               }
                             },
                             "required": [
@@ -17755,6 +17767,18 @@
                               },
                               "detail": {
                                 "type": "string"
+                              },
+                              "rule": {
+                                "type": "string",
+                                "enum": [
+                                  "H2",
+                                  "H3",
+                                  "H4",
+                                  "H5",
+                                  "H6",
+                                  "H8",
+                                  "CAP"
+                                ]
                               }
                             },
                             "required": [
@@ -18139,6 +18163,18 @@
                               },
                               "detail": {
                                 "type": "string"
+                              },
+                              "rule": {
+                                "type": "string",
+                                "enum": [
+                                  "H2",
+                                  "H3",
+                                  "H4",
+                                  "H5",
+                                  "H6",
+                                  "H8",
+                                  "CAP"
+                                ]
                               }
                             },
                             "required": [
@@ -42640,11 +42676,24 @@
                               },
                               "reason": {
                                 "type": "string"
+                              },
+                              "rule": {
+                                "type": "string",
+                                "enum": [
+                                  "H2",
+                                  "H3",
+                                  "H4",
+                                  "H5",
+                                  "H6",
+                                  "H8",
+                                  "CAP"
+                                ]
                               }
                             },
                             "required": [
                               "fixture_id",
-                              "reason"
+                              "reason",
+                              "rule"
                             ],
                             "additionalProperties": false
                           }
@@ -42665,6 +42714,18 @@
                               },
                               "direct": {
                                 "type": "boolean"
+                              },
+                              "rule": {
+                                "type": "string",
+                                "enum": [
+                                  "H2",
+                                  "H3",
+                                  "H4",
+                                  "H5",
+                                  "H6",
+                                  "H8",
+                                  "CAP"
+                                ]
                               }
                             },
                             "required": [
@@ -42690,6 +42751,18 @@
                               },
                               "direct": {
                                 "type": "boolean"
+                              },
+                              "rule": {
+                                "type": "string",
+                                "enum": [
+                                  "H2",
+                                  "H3",
+                                  "H4",
+                                  "H5",
+                                  "H6",
+                                  "H8",
+                                  "CAP"
+                                ]
                               }
                             },
                             "required": [
@@ -43072,7 +43145,8 @@
                     "unschedulable": [
                       {
                         "fixture_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
-                        "reason": "example"
+                        "reason": "example",
+                        "rule": "H2"
                       }
                     ],
                     "warnings": [
@@ -43958,11 +44032,24 @@
                               },
                               "reason": {
                                 "type": "string"
+                              },
+                              "rule": {
+                                "type": "string",
+                                "enum": [
+                                  "H2",
+                                  "H3",
+                                  "H4",
+                                  "H5",
+                                  "H6",
+                                  "H8",
+                                  "CAP"
+                                ]
                               }
                             },
                             "required": [
                               "fixture_id",
-                              "reason"
+                              "reason",
+                              "rule"
                             ],
                             "additionalProperties": false
                           }
@@ -43983,6 +44070,18 @@
                               },
                               "direct": {
                                 "type": "boolean"
+                              },
+                              "rule": {
+                                "type": "string",
+                                "enum": [
+                                  "H2",
+                                  "H3",
+                                  "H4",
+                                  "H5",
+                                  "H6",
+                                  "H8",
+                                  "CAP"
+                                ]
                               }
                             },
                             "required": [
@@ -44008,6 +44107,18 @@
                               },
                               "direct": {
                                 "type": "boolean"
+                              },
+                              "rule": {
+                                "type": "string",
+                                "enum": [
+                                  "H2",
+                                  "H3",
+                                  "H4",
+                                  "H5",
+                                  "H6",
+                                  "H8",
+                                  "CAP"
+                                ]
                               }
                             },
                             "required": [
@@ -44293,7 +44404,8 @@
                     "unschedulable": [
                       {
                         "fixture_id": "example",
-                        "reason": "example"
+                        "reason": "example",
+                        "rule": "H2"
                       }
                     ],
                     "warnings": [
@@ -45224,6 +45336,18 @@
                               },
                               "direct": {
                                 "type": "boolean"
+                              },
+                              "rule": {
+                                "type": "string",
+                                "enum": [
+                                  "H2",
+                                  "H3",
+                                  "H4",
+                                  "H5",
+                                  "H6",
+                                  "H8",
+                                  "CAP"
+                                ]
                               }
                             },
                             "required": [

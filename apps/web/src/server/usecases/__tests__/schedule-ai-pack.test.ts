@@ -1188,7 +1188,7 @@ describe.skipIf(!HAS_DB)("pack calendar anchor (#397)", () => {
 });
 
 describe.skipIf(!HAS_DB)("verifyConfig carries the pack window (#397)", () => {
-  it("reports a model assignment outside the window, without blocking it", async () => {
+  it("BLOCKS a model assignment outside the window (#399)", async () => {
     const { auth, divisionId } = await seedRrBoard();
     const { pack } = await buildSchedulePack(auth, divisionId, OPTS);
     const conflicts = validateAssignments(
@@ -1206,8 +1206,9 @@ describe.skipIf(!HAS_DB)("verifyConfig carries the pack window (#397)", () => {
     );
     const windowed = conflicts.filter((c) => c.reason === "window");
     expect(windowed).toHaveLength(1);
-    // Warn-only until W4 (#399) makes it delta-blocking.
-    expect(windowed.some(isBlocking)).toBe(false);
+    // #399: the plan-time taxonomy blocks it, so a repair round is asked to move
+    // it rather than shipping a fixture outside the competition's own days.
+    expect(windowed.every(isBlocking)).toBe(true);
   });
 
   // The reject case above passes against a degenerate or inverted window too —

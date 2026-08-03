@@ -76,7 +76,18 @@ describe("feeder rest (#399)", () => {
   it("takes the rest from the constraints tab too, not only the settings one", () => {
     const conflicts = validateAssignments(
       board(FEEDER_END_MS + 20 * MIN),
-      { ...BASE_CONFIG, perEntrantMinRest: 0, constraints: { restMin: 30 } } as VerifyConfig,
+      {
+        ...BASE_CONFIG,
+        perEntrantMinRest: 0,
+        constraints: {
+          restMin: 30,
+          noBackToBack: false,
+          startWindows: [],
+          fieldFairness: "off",
+          parallelism: "mixed",
+          crossPersonClash: "warn",
+        },
+      } as VerifyConfig,
       [],
       deps,
     ).filter((c) => c.reason === "order");
