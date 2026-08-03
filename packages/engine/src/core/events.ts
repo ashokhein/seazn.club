@@ -230,6 +230,19 @@ export interface MatchStoppage {
   reason?: string;
   /** The `core.suspend` event that opened it — the read side's undo handle. */
   eventId: string;
+  /**
+   * W4a (#425) §1.2 — the game time the suspension was called, when the pad
+   * recorded one. This is the half of `resume.at − suspend.at` that only the
+   * fold knows: without it a consumer had to re-scan the raw ledger for
+   * `eventId` to answer "how much GAME time has this stoppage consumed?", which
+   * is exactly the work folding exists to spare it. The stamp is the one the
+   * monotonic guard accepted, not a second parse of the payload.
+   *
+   * Optional with no default: a stoppage recorded before this wave has no
+   * stamp, and the key is then ABSENT, so the object is byte-identical to the
+   * one that shape produced before.
+   */
+  at?: GameTime;
 }
 
 // The only types the ledger accepts while play is suspended: the annotations
@@ -393,7 +406,14 @@ export function foldMatchWithStoppage<Cfg, State>(
     if (event.type === "core.suspend") {
       // Guarded by the WRONG_PHASE branch above, so this is the first suspend.
       const reason = (event.payload as z.infer<typeof CoreSuspend>).reason;
-      stoppage = { ...(reason === undefined ? {} : { reason }), eventId: event.id };
+      // `at` is the stamp the guard above validated and counted, so the open
+      // stoppage and the high-water mark can never disagree about when play
+      // stopped. Absent when the pad recorded none (§1.2).
+      stoppage = {
+        ...(reason === undefined ? {} : { reason }),
+        eventId: event.id,
+        ...(at === null ? {} : { at }),
+      };
       continue; // kernel-owned: the module never sees it
     }
     if (event.type === "core.resume") {

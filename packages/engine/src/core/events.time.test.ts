@@ -3,7 +3,12 @@
 // nothing below imports a real module, and the guard still orders these stamps.
 import { describe, expect, it } from "vitest";
 import { EngineError } from "./errors.ts";
-import { foldMatch, type EventEnvelope, type FoldableModule } from "./events.ts";
+import {
+  foldMatch,
+  foldMatchWithStoppage,
+  type EventEnvelope,
+  type FoldableModule,
+} from "./events.ts";
 import type { LineupPair } from "./types.ts";
 
 interface TickState {
@@ -367,6 +372,40 @@ describe("fold — monotonic time guard (§3.3)", () => {
       // toThrow(EngineError) here passes for the wrong reason while `at` is
       // still absent from the two core schemas.
       expect(EngineError.is(caught, "NON_MONOTONIC_TIME")).toBe(true);
+    });
+
+    it("surfaces the suspend's stamp on the open stoppage", () => {
+      // §1.2 names `resume.at − suspend.at` as the answer to "how much GAME
+      // time did this stoppage consume?" — the wave's headline claim. The
+      // stoppage carried only a reason and an eventId, so the suspend's stamp
+      // was reachable only by re-scanning the raw ledger for that id, which is
+      // the thing folding exists to spare a consumer. It rides on the fold's
+      // OUTPUT now, so the pad renders "suspended at P2 12:41" and computes the
+      // delta against the resume it is about to append, without the stream.
+      const suspended = foldMatchWithStoppage(toy, {}, lineups, [
+        ev(at("P2", 400)),
+        suspend({ reason: "floodlight failure", ...at("P2", 761) }),
+      ]);
+      expect(suspended.stoppage).toEqual({
+        reason: "floodlight failure",
+        eventId: "e" + String(seq),
+        at: { period: "P2", elapsed: 761 },
+      });
+      // The resume closes it, exactly as before — `at` does not keep it open.
+      const resumed = foldMatchWithStoppage(toy, {}, lineups, [
+        suspend(at("P2", 761)),
+        resume(at("P2", 761)),
+      ]);
+      expect(resumed.stoppage).toBeNull();
+    });
+
+    it("omits `at` entirely on an unstamped stoppage", () => {
+      // Additive: absent, not `undefined`. Every stoppage recorded before this
+      // wave must produce the same object it produced then, key for key.
+      const { stoppage } = foldMatchWithStoppage(toy, {}, lineups, [
+        suspend({ reason: "rain" }),
+      ]);
+      expect(Object.keys(stoppage ?? {}).sort()).toEqual(["eventId", "reason"]);
     });
 
     it("leaves an UNSTAMPED suspend/resume pair exactly as it was", () => {
