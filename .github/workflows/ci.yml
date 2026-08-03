@@ -71,6 +71,9 @@ jobs:
       # died with the heap at 2041/2088 MB, and apps/web alone peaks ~2.8 GB RSS
       # locally. It has been sitting just under the default for a while — W4's
       # engine schemas only tipped it over, so this is not one wave's problem.
+      # The cost itself is #438: the engine ships as raw TS source, so every
+      # apps/web typecheck re-infers zod across all 11 sport modules. Fixing
+      # that is what removes this bump; until then it is a ceiling, not a cure.
       #
       # A ceiling, not a reservation: turbo may still run both workspaces at
       # once, and neither comes near 6 GB.
