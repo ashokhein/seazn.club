@@ -13,6 +13,7 @@
 import { describe, expect, it } from "vitest";
 import { foldMatch, type EventEnvelope } from "../../core/events.ts";
 import type { LineupPair } from "../../core/types.ts";
+import { aggregatePlayerStats } from "../../stats/stats.ts";
 import { buildStream, makeEnvelope } from "../../testkit/index.ts";
 import { CricketEv, cricket, type CricketBallEv, type CricketCfg } from "./cricket.ts";
 
@@ -47,6 +48,7 @@ interface BallSpec {
   bowler: string;
   bat?: number;
   wicket?: Wicket;
+  extras?: NonNullable<CricketBallEv["runs"]["extras"]>;
 }
 
 /** A tiny stream builder that keeps the fold's over/ball cursor for us and
@@ -66,11 +68,16 @@ class Ledger {
         striker: spec.striker,
         nonStriker: spec.nonStriker,
         bowler: spec.bowler,
-        runs: { bat: spec.bat ?? 0 },
+        runs: {
+          bat: spec.bat ?? 0,
+          ...(spec.extras === undefined ? {} : { extras: spec.extras }),
+        },
         ...(spec.wicket === undefined ? {} : { wicket: spec.wicket }),
       } satisfies CricketBallEv,
     ]);
-    this.legal += 1;
+    // Wides and no-balls do not advance the fold's over/ball cursor (§2.2).
+    const kind = spec.extras?.kind;
+    if (kind !== "wide" && kind !== "noball") this.legal += 1;
     return this;
   }
   ev(type: string, payload: unknown = {}): this {
@@ -659,5 +666,107 @@ describe("cricket W4: the extensions are additive", () => {
     expect(coarse.innings[0]?.wickets).toBe(fine.innings[0]?.wickets);
     expect(coarse.innings[0]?.runs).toBe(fine.innings[0]?.runs);
     expect(cricket.summary(coarse)).toEqual(cricket.summary(fine));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Player leaderboards — the DOMAIN.md row that was `deferred` because
+// `PlayerStatMetric.field`/`sumField` resolved only top-level payload keys and
+// every cricket credit worth a leaderboard is nested. Dotted paths landed in
+// `src/stats/stats.ts`, so the model is now declarable off `cricket.ball`.
+// ---------------------------------------------------------------------------
+
+describe("cricket W4: playerStats leaderboards off the ball ledger", () => {
+  // One legal over from A-11 plus a wide, a bye, a no-ball and three
+  // dismissals, then a second over from A-10. Folded first, so every payload
+  // below is a ball a real scorer could have entered.
+  // Every stroke is an even number of runs, so strike never rotates mid-over
+  // and the crease succession stays readable: the incoming batter replaces the
+  // dismissed one at the striker's end, and the ends swap at the over.
+  const events = new Ledger()
+    .ball({ striker: "H-1", nonStriker: "H-2", bowler: "A-11", bat: 4 })
+    .ball({ striker: "H-1", nonStriker: "H-2", bowler: "A-11", extras: { kind: "wide", runs: 1 } })
+    .ball({ striker: "H-1", nonStriker: "H-2", bowler: "A-11", extras: { kind: "bye", runs: 2 } })
+    .ball({ striker: "H-1", nonStriker: "H-2", bowler: "A-11", bat: 2 })
+    .ball({
+      striker: "H-1", nonStriker: "H-2", bowler: "A-11",
+      wicket: { kind: "caught", out: "H-1", fielder: "A-5", bowlerCredited: true },
+    })
+    .ball({
+      striker: "H-3", nonStriker: "H-2", bowler: "A-11",
+      wicket: { kind: "runout", out: "H-3", fielder: "A-7", fielderAssist: "A-3", bowlerCredited: false },
+    })
+    .ball({
+      striker: "H-4", nonStriker: "H-2", bowler: "A-11", bat: 2,
+      extras: { kind: "noball", runs: 1 },
+    })
+    .ball({ striker: "H-4", nonStriker: "H-2", bowler: "A-11" })
+    .ball({
+      striker: "H-2", nonStriker: "H-4", bowler: "A-10",
+      wicket: { kind: "stumped", out: "H-2", fielder: "A-2", bowlerCredited: true },
+    })
+    .build();
+
+  const table = () => {
+    const rows = aggregatePlayerStats(events, cricket.playerStats!);
+    return Object.fromEntries(rows.map((r) => [r.personId, r.stats]));
+  };
+
+  it("batting: runs come off `runs.bat`; a wide and a no-ball are not balls faced", () => {
+    const t = table();
+    // H-1 faced 5 deliveries, one of them a wide: 4 + 0 (bye) + 2 + 0 = 6 off
+    // the bat from four legal balls.
+    expect(t["H-1"]).toEqual({ runs: 6, balls_faced: 4 });
+    // H-4 scored 2 off a no-ball, which is not a ball faced; the next legal
+    // delivery is.
+    expect(t["H-4"]).toEqual({ runs: 2, balls_faced: 1 });
+    expect(t["H-3"]).toEqual({ runs: 0, balls_faced: 1 });
+  });
+
+  it("bowling: legal balls, runs conceded (bat + wides/no-balls, never byes) and wickets", () => {
+    const t = table();
+    // A-11: 6 legal balls; conceded 8 off the bat + 1 wide + 1 no-ball = 10;
+    // the 2 byes are the keeper's, not his. One of the two dismissals off him
+    // is a run out, which credits no bowler.
+    expect(t["A-11"]).toEqual({ balls_bowled: 6, runs_conceded: 10, wickets: 1 });
+    expect(t["A-10"]).toEqual({ balls_bowled: 1, runs_conceded: 0, wickets: 1 });
+  });
+
+  it("fielding: catches, stumpings and run outs, the assisting fielder included", () => {
+    const t = table();
+    expect(t["A-5"]).toEqual({ catches: 1 });
+    expect(t["A-2"]).toEqual({ stumpings: 1 });
+    expect(t["A-7"]).toEqual({ run_outs: 1 });
+    expect(t["A-3"]).toEqual({ run_outs: 1 });
+  });
+
+  it("agrees with the fold: same fielding credit, same legal-ball count", () => {
+    const { innings, fine } = openFine(events);
+    const t = table();
+    expect(fine.fielding).toBeDefined();
+    for (const [person, credit] of Object.entries(fine.fielding ?? {})) {
+      expect([person, t[person]?.catches ?? 0]).toEqual([person, credit.catches]);
+      expect([person, t[person]?.stumpings ?? 0]).toEqual([person, credit.stumpings]);
+      expect([person, t[person]?.run_outs ?? 0]).toEqual([person, credit.runOuts]);
+    }
+    const bowled = Object.values(t).reduce((n, s) => n + (s.balls_bowled ?? 0), 0);
+    expect(bowled).toBe(innings.legalBalls);
+    // Runs off the bat + the extras the scorebook charged elsewhere = innings.
+    const batted = Object.values(t).reduce((n, s) => n + (s.runs ?? 0), 0);
+    expect(batted).toBe(innings.runs - 4); // 1 wide + 2 byes + 1 no-ball
+  });
+
+  it("a voided ball takes its runs, its wicket and its fielding credit with it", () => {
+    // events[6] is the run out — the only ball A-7 and A-3 appear on.
+    const voided = [
+      ...events,
+      makeEnvelope(events.length, { type: "core.void", payload: {} }, events[6]!.id),
+    ];
+    const rows = aggregatePlayerStats(voided, cricket.playerStats!);
+    const t = Object.fromEntries(rows.map((r) => [r.personId, r.stats]));
+    expect(t["A-7"]).toBeUndefined();
+    expect(t["A-3"]).toBeUndefined();
+    expect(t["H-3"]).toBeUndefined();
+    expect(t["A-11"]).toEqual({ balls_bowled: 5, runs_conceded: 10, wickets: 1 });
   });
 });

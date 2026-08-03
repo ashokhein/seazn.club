@@ -18,6 +18,7 @@ import {
 } from "../../core/types.ts";
 import type { PositionCatalog } from "../../sport/catalog.ts";
 import type { ModuleEvent, SportModule } from "../../sport/module.ts";
+import { resolvePayloadPath, type PlayerStatsModel } from "../../stats/stats.ts";
 import { dlsPar, dlsTarget, resources } from "./dls.ts";
 
 // ---------------------------------------------------------------------------
@@ -1727,6 +1728,81 @@ function sideLine(state: CricketState, side: Side): string {
     .join(" & ");
 }
 
+// ---------------------------------------------------------------------------
+// Player leaderboards (Jul3/07 §3) — W4. Every credit a cricket scorebook
+// keeps is nested inside `cricket.ball`, so this model was undeclarable until
+// `PlayerStatMetric.field`/`sumField` learned dotted paths. Fine fidelity
+// only: `cricket.player.line` (Tier 2) carries the same numbers as an already
+// summed card, so reading both sources would double-count, and super-over
+// deliveries are excluded from player records by the same convention the ICC
+// applies.
+// ---------------------------------------------------------------------------
+
+/** Wides and no-balls are not legal deliveries — the same rule the fold's ball
+ *  legality check applies (§2.2), so leaderboards and the fold agree. */
+const legalDelivery = (p: Record<string, unknown>): boolean => {
+  const kind = resolvePayloadPath(p, "runs.extras.kind");
+  return kind !== "wide" && kind !== "noball";
+};
+/** Byes and leg byes are the keeper's, penalty runs the side's; only runs off
+ *  the bat and the wide/no-ball penalty are charged to the bowler. */
+const chargedToBowler = (p: Record<string, unknown>): boolean => {
+  const kind = resolvePayloadPath(p, "runs.extras.kind");
+  return kind === "wide" || kind === "noball";
+};
+const dismissedBy = (kind: string) => (p: Record<string, unknown>) =>
+  resolvePayloadPath(p, "wicket.kind") === kind;
+
+const CRICKET_PLAYER_STATS: PlayerStatsModel = {
+  metrics: [
+    // Batting.
+    {
+      key: "runs", label: "Runs", from: "cricket.ball", field: "striker",
+      agg: "sum", sumField: "runs.bat",
+    },
+    {
+      key: "balls_faced", label: "Balls faced", from: "cricket.ball", field: "striker",
+      agg: "count", when: legalDelivery,
+    },
+    // Bowling. `runs_conceded` is two metrics on one key — the fold bumps per
+    // metric, so bat runs and the wide/no-ball penalty add into the same total.
+    {
+      key: "balls_bowled", label: "Balls bowled", from: "cricket.ball", field: "bowler",
+      agg: "count", when: legalDelivery,
+    },
+    {
+      key: "runs_conceded", label: "Runs conceded", from: "cricket.ball", field: "bowler",
+      agg: "sum", sumField: "runs.bat",
+    },
+    {
+      key: "runs_conceded", label: "Runs conceded", from: "cricket.ball", field: "bowler",
+      agg: "sum", sumField: "runs.extras.runs", when: chargedToBowler,
+    },
+    {
+      key: "wickets", label: "Wickets", from: "cricket.ball", field: "bowler",
+      agg: "count", when: (p) => resolvePayloadPath(p, "wicket.bowlerCredited") === true,
+    },
+    // Fielding — new for the product. A run out credits the fielder who broke
+    // the wicket and the one who threw ("run out (Patel/Khan)"), one each.
+    {
+      key: "catches", label: "Catches", from: "cricket.ball", field: "wicket.fielder",
+      agg: "count", when: dismissedBy("caught"),
+    },
+    {
+      key: "stumpings", label: "Stumpings", from: "cricket.ball", field: "wicket.fielder",
+      agg: "count", when: dismissedBy("stumped"),
+    },
+    {
+      key: "run_outs", label: "Run outs", from: "cricket.ball", field: "wicket.fielder",
+      agg: "count", when: dismissedBy("runout"),
+    },
+    {
+      key: "run_outs", label: "Run outs", from: "cricket.ball", field: "wicket.fielderAssist",
+      agg: "count", when: dismissedBy("runout"),
+    },
+  ],
+};
+
 export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
   key: "cricket",
   version: "1.0.0",
@@ -2113,6 +2189,7 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
       entitlement: "scoring.ball_by_ball",
     },
   ],
+  playerStats: CRICKET_PLAYER_STATS,
   officialLabel: { scorer: "Umpire" }, // doc 13 §1
 
   // spec 03 §6 / PROMPT-05 §9 — generates only legal deliveries.
