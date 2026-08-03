@@ -246,16 +246,24 @@ export function foldMatchWithStoppage<Cfg, State>(
       continue; // kernel-owned: the module never sees it
     }
     if (event.type === "core.resume") {
-      if (stoppage === null) {
-        throw new EngineError("WRONG_PHASE", "core.resume rejected: play is not suspended", {
-          eventId: event.id,
-        });
-      }
+      // A resume with no open stoppage is a NO-OP, not an error. Undo is void
+      // (guarantee 3): voiding a mis-entered core.suspend leaves the resume
+      // that followed it pointing at nothing, which is meaningless but not
+      // contradictory — refusing it made the whole match unfoldable until the
+      // scorer also voided the resume, which is not an undo anyone would find.
       stoppage = null;
       continue; // kernel-owned: the module never sees it
     }
     state = module.apply(state, event);
-    if (!decided) decided = module.outcome(state) !== null;
+    if (!decided) {
+      decided = module.outcome(state) !== null;
+      // A decided match is not awaiting resumption. core.abandon and
+      // core.forfeit are both legal mid-stoppage and both decide, and
+      // core.resume is not a post-decision type — so a stoppage left open here
+      // could never be cleared, and the read side would show an abandoned
+      // match as "play suspended, awaiting restart" forever.
+      if (decided) stoppage = null;
+    }
   }
   return { state, stoppage };
 }

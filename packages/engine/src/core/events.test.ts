@@ -630,16 +630,6 @@ describe("core.suspend / core.resume (W4)", () => {
     expect(state.outcome).toEqual({ kind: "award", winner: "A" });
   });
 
-  it("rejects core.resume when play was never suspended (WRONG_PHASE)", () => {
-    try {
-      foldMatch(coinflip, cfg, lineups, [...live, env(2, "core.resume")]);
-      expect.unreachable("should have thrown");
-    } catch (error) {
-      expect(EngineError.is(error, "WRONG_PHASE")).toBe(true);
-      expect((error as EngineError).data).toMatchObject({ eventId: "e-2" });
-    }
-  });
-
   it("rejects a second core.suspend while already suspended (WRONG_PHASE)", () => {
     try {
       foldMatch(coinflip, cfg, lineups, [
@@ -687,5 +677,98 @@ describe("core.suspend / core.resume (W4)", () => {
     expect(foldMatch(coinflip, cfg, lineups, events)).toEqual(
       foldMatchWithStoppage(coinflip, cfg, lineups, events).state,
     );
+  });
+});
+
+// Defects found in review of the first cut of item 4. Both are about a
+// stoppage that outlives the thing it describes.
+describe("core.suspend / core.resume — stoppage lifetime (W4)", () => {
+  const live = [env(0, "core.start"), env(1, "coin.flip", { to: "home" })];
+
+  // A decided match is not "awaiting resumption". Leaving the stoppage set
+  // told a read side that an ABANDONED match was still going to restart, and
+  // it was unrecoverable: core.resume is not a post-decision type, so a later
+  // resume dies ALREADY_DECIDED and the flag can never be cleared.
+  it("clears the stoppage when core.abandon decides the match mid-stoppage", () => {
+    const { state, stoppage } = foldMatchWithStoppage(coinflip, cfg, lineups, [
+      ...live,
+      env(2, "core.suspend", { reason: "thunderstorm" }),
+      env(3, "core.abandon", { reason: "thunderstorm" }),
+    ]);
+    expect(state.outcome).toEqual({ kind: "no_result" });
+    expect(stoppage).toBeNull();
+  });
+
+  it("clears the stoppage when core.forfeit decides the match mid-stoppage", () => {
+    const { state, stoppage } = foldMatchWithStoppage(coinflip, cfg, lineups, [
+      ...live,
+      env(2, "core.suspend", { reason: "crowd trouble" }),
+      env(3, "core.forfeit", { by: "H", reason: "crowd trouble" }),
+    ]);
+    expect(state.outcome).toEqual({ kind: "award", winner: "A" });
+    expect(stoppage).toBeNull();
+  });
+
+  it("never reports a stoppage on a decided match", () => {
+    const decided = [
+      env(0, "core.start"),
+      env(1, "coin.flip", { to: "home" }),
+      env(2, "core.suspend", { reason: "rain" }),
+      env(3, "core.resume"),
+      env(4, "coin.flip", { to: "home" }),
+      env(5, "coin.flip", { to: "home" }),
+    ];
+    const { state, stoppage } = foldMatchWithStoppage(coinflip, cfg, lineups, decided);
+    expect(state.outcome).not.toBeNull();
+    expect(stoppage).toBeNull();
+  });
+
+  // Undo is void (guarantee 3). Voiding a mis-entered core.suspend must leave a
+  // foldable ledger: the core.resume that followed it now refers to nothing,
+  // which is meaningless but NOT contradictory, so it is a no-op. Rejecting it
+  // made the whole match unfoldable until the scorer also voided the resume.
+  it("stays foldable when a mis-entered core.suspend is voided but its resume remains", () => {
+    const { state, stoppage } = foldMatchWithStoppage(coinflip, cfg, lineups, [
+      ...live,
+      env(2, "core.suspend", { reason: "mis-entered" }),
+      env(3, "core.resume"),
+      env(4, "core.void", {}, "e-2"),
+      env(5, "coin.flip", { to: "away" }),
+    ]);
+    expect(stoppage).toBeNull();
+    expect(state.score).toEqual({ home: 1, away: 1 });
+  });
+
+  it("treats a core.resume with no open stoppage as a no-op", () => {
+    const { state, stoppage } = foldMatchWithStoppage(coinflip, cfg, lineups, [
+      ...live,
+      env(2, "core.resume"),
+      env(3, "coin.flip", { to: "away" }),
+    ]);
+    expect(stoppage).toBeNull();
+    expect(state.score).toEqual({ home: 1, away: 1 });
+  });
+
+  // The other half is a real contradiction and must still refuse: voiding the
+  // resume says play never restarted, yet play was recorded after it. Same
+  // shape as voiding core.start, which the modules already reject.
+  it("keeps the match suspended when the core.resume is voided, refusing later play", () => {
+    const events = [
+      ...live,
+      env(2, "core.suspend", { reason: "rain" }),
+      env(3, "core.resume"),
+      env(4, "core.void", {}, "e-3"),
+      env(5, "coin.flip", { to: "away" }),
+    ];
+    try {
+      foldMatch(coinflip, cfg, lineups, events);
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      expect(EngineError.is(error, "WRONG_PHASE")).toBe(true);
+      expect((error as EngineError).data).toMatchObject({ eventId: "e-5" });
+    }
+    // …and with the trailing play removed it folds cleanly, still suspended.
+    const { stoppage } = foldMatchWithStoppage(coinflip, cfg, lineups, events.slice(0, 5));
+    expect(stoppage).toMatchObject({ eventId: "e-2" });
   });
 });
