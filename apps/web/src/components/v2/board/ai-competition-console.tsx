@@ -31,8 +31,8 @@ import { UpgradeGate } from "@/components/upgrade-gate";
 import { PlanBadge } from "@/components/plan-badge";
 import type { Currency } from "@/lib/currency";
 import type { MessageKey } from "@/lib/messages";
-import { divisionInk, divisionTint } from "@/lib/division-hue";
 import type { AiCompetitionPlanResponse } from "@/server/api-v1/schemas";
+import { DivisionChip } from "./ai-division-chip";
 import { AiOutOfCredits } from "./ai-out-of-credits";
 import {
   AiDivisionPicker,
@@ -271,24 +271,6 @@ function Caution({ title, children }: { title?: string; children: React.ReactNod
         <div>{children}</div>
       </div>
     </div>
-  );
-}
-
-/** The division's own tint, the same one its cards wear on the board. This is
- *  the ledger's spine: picker order, receipt order, review order, one colour. */
-function DivisionChip({ id, name }: { id: string; name: string }) {
-  return (
-    <span
-      data-division-chip
-      title={name}
-      // `min-w-0 truncate` and a ceiling, exactly as the ghost chip on the grid
-      // has (board-grid.tsx). Without them a long division name pushes the rest
-      // of the row out of a 27rem dock.
-      className="min-w-0 max-w-[9rem] shrink truncate rounded px-1.5 py-0.5 text-[10px] font-semibold"
-      style={{ backgroundColor: divisionTint(id), color: divisionInk(id) }}
-    >
-      {name}
-    </span>
   );
 }
 
