@@ -48,6 +48,15 @@ export const FootballCfg = z.object({
     .default({ win: 3, draw: 1, loss: 0 }),
   awardScore: z.object({ goals: z.number().int().positive() }).default({ goals: 3 }),
   fairPlay: z.boolean().default(true), // track cards for FIFA fair-play TB
+  // W4 (Law 3) — return ("rolling"/"flying") substitutions. 11-a-side under the
+  // Laws forbids a substituted player from returning; FA youth football and
+  // every small-sided/futsal code permits repeat substitutions. Optional with
+  // no default: absent ≡ the pre-W4 behaviour (returns forbidden).
+  rollingSubs: z.boolean().optional(),
+  // W4 (Law 3) — competition cap on substitutions per side (5 in senior
+  // 11-a-side since 2020; unlimited under rollingSubs). Absent = uncapped,
+  // which is what every stream recorded before W4 assumed.
+  maxSubs: z.number().int().nonnegative().optional(),
   // engine/sports/football.md §8 — core.abandon policy: `replay` leaves the
   // fixture undecided (flagged for regeneration), `award` decides for the
   // current leader (level score ⇒ no_result).
@@ -337,18 +346,33 @@ function applySub(state: FootballState, payload: z.infer<typeof FootballSub>): F
   }
   const side = sideOf(state, payload.by);
   const squad = state.squads[side];
+  const rolling = state.cfg.rollingSubs === true;
   if (!squad.onPitch.includes(payload.off)) {
     invalid(`"${payload.off}" is not on the pitch`, { off: payload.off });
   }
   if (!squad.bench.includes(payload.on)) {
     invalid(`"${payload.on}" is not an available bench player`, { on: payload.on });
   }
-  const next: SquadState = {
-    onPitch: [...squad.onPitch.filter((id) => id !== payload.off), payload.on],
-    bench: squad.bench.filter((id) => id !== payload.on),
-    offUsed: [...squad.offUsed, payload.off],
-    sentOff: squad.sentOff,
-  };
+  // W4 (Law 3) — the cap counts substitutions made, which is exactly the
+  // length of offUsed. Rolling substitutions are uncapped by definition, so
+  // the cap only bites on the return-forbidden path.
+  if (!rolling && state.cfg.maxSubs !== undefined && squad.offUsed.length >= state.cfg.maxSubs) {
+    invalid(`"${payload.by}" has used all ${state.cfg.maxSubs} substitutions`, {
+      by: payload.by,
+      maxSubs: state.cfg.maxSubs,
+    });
+  }
+  const onPitch = [...squad.onPitch.filter((id) => id !== payload.off), payload.on];
+  const next: SquadState = rolling
+    ? // Repeat substitution: the player who came off rejoins the bench and may
+      // re-enter, so nothing lands in offUsed.
+      { ...squad, onPitch, bench: [...squad.bench.filter((id) => id !== payload.on), payload.off] }
+    : {
+        ...squad,
+        onPitch,
+        bench: squad.bench.filter((id) => id !== payload.on),
+        offUsed: [...squad.offUsed, payload.off],
+      };
   return { ...state, squads: { ...state.squads, [side]: next } };
 }
 
@@ -529,8 +553,10 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
   variants: {
     // spec 04 §1.1
     "11-a-side": {},
-    youth: { halfMinutes: 30 },
-    "small-sided": { halfMinutes: 20, halves: 2 },
+    // W4 — FA youth football and every small-sided/futsal code use repeat
+    // substitutions (Law 3 / FA Mini-Soccer + SSG rules); 11-a-side does not.
+    youth: { halfMinutes: 30, rollingSubs: true },
+    "small-sided": { halfMinutes: 20, halves: 2, rollingSubs: true },
   },
 
   init(cfg, lineups: LineupPair): FootballState {
