@@ -56,9 +56,8 @@ import "server-only";
 // strictly more than plan-time did.
 //
 // For a COMPLETE apply — every movable fixture the plan covered is listed — the
-// extra that richer board can find is rest and person-overlap, so the only new
-// refusal is the `crossPersonClash: "hard"` one below, which is the organiser's
-// own opt-in. A PARTIAL apply is a different case and the claim must not be
+// extra that richer board can find is rest and person-overlap. A PARTIAL apply
+// is a different case and the claim must not be
 // stretched over it: the board's `excludedFixtureIds` path (`ai-apply.ts:201`)
 // leaves the excluded fixtures at their OLD slots, where `untouched` turns them
 // into court occupancy that was not occupancy at plan time — so a partial apply
@@ -66,24 +65,27 @@ import "server-only";
 // move. That behaviour is right (it really would be a double-booking); it was
 // the "can never be refused" phrasing that was too broad.
 //
-// R13: warnings come back in full. Blackout, session-window, start-window, rest
-// and — unless the division opted into `crossPersonClash: "hard"` —
-// person-overlap violations do not block, fire no repair round, and the prompt
-// tells the model it will not be asked to repair them. A joint plan can ship
-// with a player double-booked across two divisions and every automated gate
-// reports success, so the organiser reading these conflicts is the last line of
-// defence: nothing here filters, dedupes away or collapses them beyond the
-// exact-duplicate collapse `verifyJoint` itself does.
+// R13: warnings come back in full. Blackout, session-window, start-window and
+// rest violations do not block, fire no repair round, and the prompt tells the
+// model it will not be asked to repair them. Nothing here filters, dedupes away
+// or collapses them beyond the exact-duplicate collapse `verifyJoint` does.
 //
-// BLOCKING IS NOT BARE `isBlocking`. `isBlocking` is the PLAN-time taxonomy
-// (court + direct order). The single-division APPLY additionally honours the
-// division's `constraints.crossPersonClash`: `applySchedule` hands it to
-// `mapConflicts` (schedule.ts:553) and a hand-placed person double-booking is
-// refused. Riding bare `isBlocking` meant the same org, with the same setting,
-// got a 409 from the per-stage apply and a written-through 200 from this one.
-// So the person-overlap rule is re-applied here, per division — which is the
-// only way it can be done, since `Conflict` carries no division and only the
-// pass that emitted it knows whose fixture it is.
+// BLOCKING IS DELTA-BASED (#399). `isBlocking` — now `isBlockingConflict`, one
+// definition in the engine shared with the board — says what is physically
+// impossible: a court booked twice, a human on two courts at once, a slot
+// outside the competition's days, a fixture placed before its feeder is done.
+// This module then refuses only what THIS apply introduced or worsened, by
+// verifying the pre-apply board with the identical passes and taking the
+// difference on conflict identity.
+//
+// The delta is not a softening; it is what makes the promotion survivable.
+// Boards published before #399 may hold person overlaps, because those were
+// warnings all along. Under an absolute rule the organiser's next joint apply
+// over such a competition would 409 with nothing they could do about it — the
+// board is already dirty, and every edit is refused for the dirt. The
+// per-division `crossPersonClash: "hard"` branch is gone with it: a person
+// double-booking is refused for every division now, so the opt-in no longer
+// decides what may be WRITTEN (it still steers the solver).
 //
 // This module charges NOTHING — the plan run was already priced and paid for at
 // `aiPlanForCompetition`. It is still GATED, on `scheduling.multi_division` and
@@ -100,10 +102,17 @@ import { EngineError } from "@seazn/engine/core";
 import { appendDivisionEvent } from "@/server/engine-db";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { AiApplyMeta, ScheduleConfig } from "@/server/api-v1/schemas";
-import { validateAssignments, type Assignment, type Conflict } from "@seazn/engine/scheduling";
+import {
+  conflictKey,
+  deltaConflicts,
+  validateAssignments,
+  type Assignment,
+  type Conflict,
+} from "@seazn/engine/scheduling";
 import {
   MOVABLE_STATUS,
   afterScheduleWrite,
+  applyWindow,
   assertFreshSeq,
   divisionFixtures,
   divisionLockState,
@@ -469,31 +478,55 @@ export async function applyCompetitionSchedule(
     // dependency against the whole board, so it is built over the whole board.
     const deps = feedDependencies(order.flatMap((d) => d.fixtures));
 
+    // The listed fixtures WHERE THEY SIT NOW — the merged board before this
+    // apply touches it (#399). Built exactly like `proposed` so the two passes
+    // are comparable key for key; a fixture with no slot yet contributes
+    // nothing, so its first placement's conflicts read as introduced.
+    const current: Assignment[] = order.flatMap((d) =>
+      d.input.assignments
+        .map((a) => d.byId.get(a.fixture_id)!)
+        .filter((f) => f.scheduled_at !== null && f.court_label !== null)
+        .map((f) => ({
+          ...toAssignment(f, d.settings.config.matchMinutes, people),
+          divisionId: d.id,
+        })),
+    );
+
     // ---- one pass per division, over the merged board ---------------------
     const seenConflict = new Set<string>();
     const blockingKeys = new Set<string>();
     const found: Conflict[] = [];
-    const conflictKey = (c: Conflict): string => `${c.fixtureId}|${c.reason}|${c.detail ?? ""}`;
+    const before: Conflict[] = [];
     for (const d of order) {
       const mine = proposed.filter((a) => a.divisionId === d.id);
       if (mine.length === 0) continue;
       const others = proposed.filter((a) => a.divisionId !== d.id);
-      // This division's own opt-in.
-      //
-      // Attribution is exact for THIS rule, and only because of which conflicts
-      // it covers. Every `person_overlap` the engine emits is keyed on
-      // `a.fixtureId` — a fixture of the pass's own `assignments`
-      // (calendar.ts:483,497) — so a person overlap reported here is always
-      // about one of `d`'s fixtures. That is NOT true of conflicts in general:
-      // the dependency loop (calendar.ts:506-517) resolves against
-      // `existing + assignments` and can name a fixture this pass does not own,
-      // which is exactly why the dedupe below exists. `Conflict` carries no
-      // division of its own, so per-pass attribution is the only way to reach a
-      // per-division setting at all — and it is sound for person overlap.
-      const personBlocks = d.settings.config.constraints?.crossPersonClash === "hard";
+      // The identical pass over the pre-apply board. Same division, same config,
+      // same "everyone else" — so a conflict that survives this comparison is
+      // one this apply is responsible for.
+      before.push(
+        ...validateAssignments(
+          current.filter((a) => a.divisionId === d.id),
+          verifyConfigFor(packDivisionOf(d), applyWindow(d.settings)),
+          [
+            ...current.filter((a) => a.divisionId !== d.id),
+            ...untouched,
+            ...siblings,
+          ],
+          deps,
+        ),
+      );
+      // #399 retired this pass's per-division `crossPersonClash` branch. A human
+      // on two courts at once is impossible whoever put them there, so
+      // `isBlockingConflict` now covers `person_overlap` for every division —
+      // an org that had opted into "hard" loses nothing, and one that had not
+      // gains the refusal. The setting still steers the SOLVER; it no longer
+      // decides what may be written. What replaces it is the delta below, which
+      // is the thing that actually needed deciding: a board that ALREADY holds
+      // an overlap has to stay editable.
       for (const c of validateAssignments(
         mine,
-        verifyConfigFor(packDivisionOf(d)),
+        verifyConfigFor(packDivisionOf(d), applyWindow(d.settings)),
         [...others, ...untouched, ...siblings],
         deps,
       )) {
@@ -507,28 +540,41 @@ export async function applyCompetitionSchedule(
         // the conflict rather than of which pass happened to reach it first —
         // the same key genuinely can arrive from more than one pass (see the
         // dependency loop noted above).
-        //
-        // NOT a union over the request. The verdict is the setting of the
-        // division that OWNS the overlapping fixture, so an overlap inside a
-        // "warn" division still applies even when another division in the same
-        // request is "hard". What the per-division rule buys, stated as the
-        // cross-division case: a person in a "hard" division A and a "warn"
-        // division B is refused, because A's own pass sees B's proposed slot on
-        // the merged board and blocks on A's fixture — "hard if a division IN
-        // THIS REQUEST that owns one of the clashing fixtures opted in", never
-        // "hard if anything in the competition is hard". That is the safe
-        // direction for an org that asked not to double-book its people without
-        // making one division's setting govern another's board.
-        if (isBlocking(c) || (c.reason === "person_overlap" && personBlocks)) {
-          blockingKeys.add(key);
+        if (isBlocking(c)) blockingKeys.add(key);
+        if (seenConflict.has(key)) {
+          // Same identity from another division's pass — but `shortfallMinutes`
+          // is a property of the PASS, not of the key: each division resolves
+          // its own rest, so the same feed edge can be measured at two sizes.
+          // Keeping the first would let a worsened breach compare a small
+          // after-value against a large before-value and slip the gate.
+          const seen = found.find((f) => conflictKey(f) === key);
+          if (
+            seen !== undefined &&
+            c.shortfallMinutes !== undefined &&
+            c.shortfallMinutes > (seen.shortfallMinutes ?? 0)
+          ) {
+            seen.shortfallMinutes = c.shortfallMinutes;
+          }
+          continue;
         }
-        if (seenConflict.has(key)) continue;
         seenConflict.add(key);
-        found.push(c);
+        found.push({ ...c });
       }
     }
     const conflicts = sortConflicts(found, order);
-    const blocking = conflicts.filter((c) => blockingKeys.has(conflictKey(c)));
+    // Only what this apply INTRODUCED OR WORSENED may refuse it (#399). The
+    // delta runs over the deduped, sorted list rather than the raw per-pass
+    // stream, because `before` is deduped by the same identity — a conflict
+    // re-reported by three divisions' passes must not read as three new ones.
+    // `before` goes in RAW, not deduped. `conflicts` is already collapsed to one
+    // instance per identity, so extra copies on the before side only add budget
+    // for a key that genuinely existed — and they carry the WORST
+    // `shortfallMinutes` of that key with them, which is what stops a measured
+    // breach that actually improved from reading as introduced.
+    const introduced = new Set(deltaConflicts(before, conflicts).map(conflictKey));
+    const blocking = conflicts.filter(
+      (c) => blockingKeys.has(conflictKey(c)) && introduced.has(conflictKey(c)),
+    );
     if (blocking.length > 0) {
       // Same EngineError the single-division apply raises, so the /api/v1 kernel
       // answers 409 with the conflict list attached and the board renders the

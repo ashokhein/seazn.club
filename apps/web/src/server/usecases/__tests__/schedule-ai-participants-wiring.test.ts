@@ -248,7 +248,7 @@ describe.skipIf(!HAS_DB)("pack.participants is wired into both consumers (#396)"
     ).toBe(false);
   });
 
-  it("VERIFIER: a proposal that DOES co-schedule them comes back with a person_overlap conflict", async () => {
+  it("VERIFIER: a proposal that DOES co-schedule them comes back BLOCKING (#399)", async () => {
     const { auth, divisionId, sharedPersonId, fixtureIds } = await seedRecursionClashBoard();
     const { pack, movableIds } = await buildSchedulePack(auth, divisionId, {
       now: NOW_W2,
@@ -271,23 +271,27 @@ describe.skipIf(!HAS_DB)("pack.participants is wired into both consumers (#396)"
       explanations: [],
       summary: "ok",
     };
-    parse.mockResolvedValueOnce({
-      parsed_output: proposal,
-      stop_reason: "end_turn",
-      usage: { input_tokens: 10, output_tokens: 5 },
-      content: [],
-    });
+    // #399 made a person double-booking BLOCKING, so the runner now asks for a
+    // repair. The SDK mock queue is 1:1 with architect calls: queue the same
+    // unrepaired proposal for the initial round and both repair rounds, and the
+    // run ends with the overlap still in `blocking` — which is the point.
+    for (let round = 0; round < 3; round++) {
+      parse.mockResolvedValueOnce({
+        parsed_output: proposal,
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 5 },
+        content: [],
+      });
+    }
 
     const out = await runAiPlan(pack, movableIds);
-    // Nothing blocking — so the run returns after one round and `warnings`
-    // carries the verifier's full non-blocking report.
-    expect(out.blocking).toEqual([]);
-    const overlapsOnFinal = out.warnings.filter(
+    expect(out.warnings.some((c) => c.reason === "person_overlap")).toBe(false);
+    const overlapsOnFinal = out.blocking.filter(
       (c) => c.reason === "person_overlap" && c.fixtureId === fixtureIds.final,
     );
     expect(
       overlapsOnFinal.length,
-      `expected a person_overlap on the TBD final; got ${JSON.stringify(out.warnings)}`,
+      `expected a person_overlap on the TBD final; got ${JSON.stringify(out.blocking)}`,
     ).toBeGreaterThan(0);
     // It is the recursed human, named in the detail.
     expect(overlapsOnFinal.some((c) => (c.detail ?? "").includes(sharedPersonId))).toBe(true);

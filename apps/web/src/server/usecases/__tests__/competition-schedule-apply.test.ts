@@ -708,15 +708,15 @@ describe.skipIf(!HAS_DB)("applyCompetitionSchedule (#350)", () => {
     expect(unplaced(await slots(free.bravo.id))).toBe(true);
   }, 90_000);
 
-  it("crossPersonClash 'hard' blocks a person double-booking, 'warn' only reports it", async () => {
-    // The per-stage apply consults this setting (schedule.ts:553) and refuses.
-    // Riding bare `isBlocking` meant the same org with the same setting got a
-    // 409 from one endpoint and a written-through 200 from this one.
+  it("refuses an INTRODUCED person double-booking whatever crossPersonClash says", async () => {
+    // #399 retired the opt-in as the switch. A human on two courts at once is
+    // impossible whoever put them there, so both arms are refused now — the
+    // "hard" org loses nothing and the "warn" org gains the refusal. What
+    // decides is the DELTA, pinned by the test below, not the setting.
     //
     // Alpha's round 1 is two fixtures over four disjoint entrants: put one
     // person in both, place them at the same instant on Alpha's two courts, and
     // the only conflict on the board is a person overlap — no court clash.
-    await sharePerson(auth.orgId, [board.alpha.fixtureIds[0]!, board.alpha.fixtureIds[1]!]);
     const overlapping = (expectedSeq: number): CompetitionApplyDivision => ({
       division_id: board.alpha.id,
       expected_seq: expectedSeq,
@@ -730,9 +730,8 @@ describe.skipIf(!HAS_DB)("applyCompetitionSchedule (#350)", () => {
       lineUp(board.bravo, await divisionSeq(board.bravo.id), "Court 3", 0);
 
     // A CLEAN A/B: both arms carry a constraints row and differ on
-    // `crossPersonClash` alone. Varying "row absent vs row present" instead
-    // would let a bug in the no-constraints path read as a passing setting test.
-    // Bravo is pinned to "warn" in both arms so it can never be what decides.
+    // `crossPersonClash` alone. Bravo is pinned to "warn" in both arms so it can
+    // never be what decides.
     const arm = async (clash: "warn" | "hard"): Promise<void> => {
       ({ auth } = await seedOrg("pro"));
       board = await seedBoard(auth);
@@ -747,42 +746,27 @@ describe.skipIf(!HAS_DB)("applyCompetitionSchedule (#350)", () => {
       });
     };
 
-    await arm("warn");
-    const warned = await applyCompetitionSchedule(auth, board.competitionId, {
-      divisions: [overlapping(await divisionSeq(board.alpha.id)), await bravoOf()],
-      source: "ai",
-      ai: AI,
-    });
-    expect(warned.applied).toBe(9);
-    expect(warned.conflicts.some((c) => c.reason === "person_overlap")).toBe(true);
-    // The board really was written — so the "hard" refusal below is the setting
-    // and not some other property of this seed.
-    expect(unplaced(await slots(board.alpha.id))).toBe(false);
-
-    // Same board, same overlap, one word of config different: refused. This is
-    // also the CONVERSE of the separating case below — the overlap sits inside
-    // the "hard" division while a "warn" division is in the same request.
-    await arm("hard");
-    await expect(
-      applyCompetitionSchedule(auth, board.competitionId, {
-        divisions: [overlapping(await divisionSeq(board.alpha.id)), await bravoOf()],
-        source: "ai",
-        ai: AI,
-      }),
-    ).rejects.toMatchObject({ code: "SCHEDULE_CONFLICT" });
-    expect(unplaced(await slots(board.alpha.id))).toBe(true);
-    expect(unplaced(await slots(board.bravo.id))).toBe(true);
+    for (const clash of ["warn", "hard"] as const) {
+      await arm(clash);
+      await expect(
+        applyCompetitionSchedule(auth, board.competitionId, {
+          divisions: [overlapping(await divisionSeq(board.alpha.id)), await bravoOf()],
+          source: "ai",
+          ai: AI,
+        }),
+      ).rejects.toMatchObject({ code: "SCHEDULE_CONFLICT" });
+      // Atomic: neither division was written.
+      expect(unplaced(await slots(board.alpha.id))).toBe(true);
+      expect(unplaced(await slots(board.bravo.id))).toBe(true);
+    }
   }, 180_000);
 
-  it("a 'hard' division does not make a 'warn' division's own overlap blocking", async () => {
-    // THE CASE THAT SEPARATES per-division attribution from a union over the
-    // request. Both of the tests above have exactly one "hard" division, so
-    // `personBlocks` and `order.some(... === "hard")` agree on every one of
-    // them — the property that makes the rule right was pinned by nothing.
-    //
-    // Here the overlap is inside ALPHA, which is "warn"; BRAVO is "hard" and
-    // has no overlap at all. Per-division: not blocking, so it applies. Union:
-    // 409. Only one of those is the rule this module claims to implement.
+  it("still applies over a board that ALREADY holds that overlap", async () => {
+    // THE CASE THE DELTA EXISTS FOR (#399). Competitions published before this
+    // wave may carry person overlaps, because they were warnings all along.
+    // Under an absolute rule the organiser's next joint apply would 409 with
+    // nothing they could do about it — the board is already dirty, and every
+    // edit is refused for the dirt.
     await sharePerson(auth.orgId, [board.alpha.fixtureIds[0]!, board.alpha.fixtureIds[1]!]);
     await setConstraints(board.alpha.id, ["Court 1", "Court 2"], {
       ...BASE_CONSTRAINTS,
@@ -792,16 +776,24 @@ describe.skipIf(!HAS_DB)("applyCompetitionSchedule (#350)", () => {
       ...BASE_CONSTRAINTS,
       crossPersonClash: "hard",
     });
+    const alphaAssignments = board.alpha.fixtureIds.map((fixture_id, i) => ({
+      fixture_id,
+      scheduled_at: i < 2 ? at(0) : at(i * 30),
+      court_label: i === 1 ? "Court 2" : "Court 1",
+    }));
+    // Write the overlap straight to the rows, bypassing every gate — the only
+    // way to manufacture the board a pre-#399 organiser could be sitting on.
+    for (const a of alphaAssignments) {
+      await sql`
+        update fixtures set scheduled_at = ${a.scheduled_at}, court_label = ${a.court_label}
+        where id = ${a.fixture_id}`;
+    }
     const out = await applyCompetitionSchedule(auth, board.competitionId, {
       divisions: [
         {
           division_id: board.alpha.id,
           expected_seq: await divisionSeq(board.alpha.id),
-          assignments: board.alpha.fixtureIds.map((fixture_id, i) => ({
-            fixture_id,
-            scheduled_at: i < 2 ? at(0) : at(i * 30),
-            court_label: i === 1 ? "Court 2" : "Court 1",
-          })),
+          assignments: alphaAssignments,
         },
         lineUp(board.bravo, await divisionSeq(board.bravo.id), "Court 3", 0),
       ],
@@ -809,12 +801,42 @@ describe.skipIf(!HAS_DB)("applyCompetitionSchedule (#350)", () => {
       ai: AI,
     });
     expect(out.applied).toBe(9);
-    // Reported — never swallowed — but not blocking, because the division that
-    // OWNS the overlapping fixtures did not opt in.
+    // Reported in full — a badge, never a wall.
     const overlaps = out.conflicts.filter((c) => c.reason === "person_overlap");
     expect(overlaps.length).toBeGreaterThan(0);
     for (const c of overlaps) expect(board.alpha.fixtureIds).toContain(c.fixtureId);
     expect(unplaced(await slots(board.alpha.id))).toBe(false);
+  }, 60_000);
+
+  it("REFUSES a joint apply that puts a fixture outside the competition's dates", async () => {
+    // #399 wires `applyWindow` into both joint passes. The bound is the
+    // division's OWN configured dates — deliberately not the AI pack's resolved
+    // window, which widens onto whatever is already scheduled and could
+    // therefore never be broken.
+    await sql`
+      update schedule_settings
+      set config = ${sql.json({ ...settingsConfig(["Court 1", "Court 2"]), endAt: at(600) } as never)}
+      where division_id = ${board.alpha.id}`;
+    const strayDay = new Date(T0 + 9 * 24 * 60 * MIN).toISOString();
+    await expect(
+      applyCompetitionSchedule(auth, board.competitionId, {
+        divisions: [
+          {
+            division_id: board.alpha.id,
+            expected_seq: await divisionSeq(board.alpha.id),
+            assignments: board.alpha.fixtureIds.map((fixture_id, i) => ({
+              fixture_id,
+              scheduled_at: i === 0 ? strayDay : at(i * 30),
+              court_label: "Court 1",
+            })),
+          },
+          lineUp(board.bravo, await divisionSeq(board.bravo.id), "Court 3", 0),
+        ],
+        source: "ai",
+        ai: AI,
+      }),
+    ).rejects.toMatchObject({ code: "SCHEDULE_CONFLICT" });
+    expect(unplaced(await slots(board.alpha.id))).toBe(true);
   }, 60_000);
 
   it("a cross-division person clash blocks when EITHER division opted in", async () => {

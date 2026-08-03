@@ -42,6 +42,7 @@ import {
   isEpochSentinel,
   makeClock,
   slotFixtures,
+  isBlockingConflict,
   stripByes,
   validateAssignments,
   ymdAddDays,
@@ -52,6 +53,7 @@ import {
   type HardConstraint,
   type OrderDependency,
   type ParticipantFixture,
+  type RuleCode,
   type RuleFixture,
   type SchedulableFixture,
   type SchedulingConstraints,
@@ -1322,7 +1324,7 @@ export function aiReasoning(model: string): AiReasoning {
 
 export interface AiPlanResult {
   proposal: { fixture_id: string; scheduled_at: string; court_label: string; schedule_locked?: boolean }[];
-  unschedulable: { fixture_id: string; reason: string }[];
+  unschedulable: { fixture_id: string; reason: string; rule: RuleCode }[];
   warnings: Conflict[]; // non-blocking verifier conflicts
   blocking: Conflict[]; // residual after ≤2 repairs
   diff: { moved: string[]; placed: string[]; unscheduled: string[]; unchanged: string[] };
@@ -1341,8 +1343,26 @@ export interface AiPlanResult {
 // Exported so the #350 joint runner classifies a joint conflict report with the
 // SAME taxonomy — a cross-division court clash must block exactly as a
 // within-division one does.
-export function isBlocking(c: Conflict): boolean {
-  return c.reason === "court" || (c.reason === "order" && c.direct === true);
+// #399 moved the answer itself into the engine, beside the reasons: the board's
+// persistence gates need it too, and `schedule.ts` cannot import this module
+// (the dependency runs the other way). Re-exported under the name every call
+// site already uses.
+export const isBlocking = isBlockingConflict;
+
+/** Only the codes a `Conflict` can carry. The prompts also teach H1 and H7, and
+ *  the joint J-series, but none of those map to a `ConflictReason` — passing one
+ *  through would put a value nothing can render into the wire enum. */
+const CITED_RULE = /\b(H[2-6]|H8)\b/;
+
+/**
+ * The rule an unschedulable row breaks (#399). The prompt asks the model to cite
+ * the hard rule that stopped it, so when it did, that is the answer. When it did
+ * not, the honest answer is `CAP`: demand exceeded capacity, no single rule was
+ * violated, and the schedule simply cannot exist. A rule code invented for that
+ * case would send the repair round after something that is not wrong.
+ */
+export function unschedulableRule(reason: string): RuleCode {
+  return (CITED_RULE.exec(reason.toUpperCase())?.[0] as RuleCode | undefined) ?? "CAP";
 }
 
 const toMs = (iso: string): number => new Date(iso).getTime();
@@ -1642,7 +1662,12 @@ export async function runAiPlan(
       court_label: a.court_label,
       ...(a.schedule_locked !== undefined ? { schedule_locked: a.schedule_locked } : {}),
     })),
-    unschedulable: chosen.plan.unschedulable,
+    // #399: every unplaced fixture carries a code — the rule the model cited,
+    // or CAP when it named none (the capacity case).
+    unschedulable: chosen.plan.unschedulable.map((u) => ({
+      ...u,
+      rule: unschedulableRule(u.reason),
+    })),
     warnings: chosen.warnings,
     blocking: chosen.blocking,
     diff: computeDiff(chosen.plan, pack),

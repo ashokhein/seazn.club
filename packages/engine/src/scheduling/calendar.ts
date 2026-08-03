@@ -117,12 +117,122 @@ export type ConflictReason =
   | "instruction"
   | "order"; // scheduled before a fixture that feeds it (doc 12 §2; blocks when direct)
 
+/** The rule vocabulary the scheduling prompts teach (H1–H8), so a repair round
+ *  is handed the token it was taught rather than a word of our own. `CAP` is not
+ *  a rule: when demand exceeds capacity no single rule is broken — the schedule
+ *  simply cannot exist — so `no_slot` and unschedulable rows carry it instead of
+ *  a code that would misdirect the repair (#399, design §4.1). */
+export type RuleCode = "H2" | "H3" | "H4" | "H5" | "H6" | "H8" | "CAP";
+
+/** Fixed and exhaustive, defined once beside the union rather than at each call
+ *  site — the `Record<ConflictReason, …>` key type is what keeps a new reason
+ *  from shipping code-less. */
+export const RULE_BY_REASON: Record<ConflictReason, RuleCode> = {
+  court: "H2",
+  blackout: "H3",
+  window: "H3",
+  rest: "H4",
+  person_overlap: "H4",
+  start_window: "H5",
+  order: "H6",
+  instruction: "H8",
+  no_slot: "CAP",
+};
+
 export interface Conflict {
   fixtureId: string;
   reason: ConflictReason;
   detail?: string;
   /** `order` only: true when the dependency is a direct feed (blocks, doc 12 §2). */
   direct?: boolean;
+  /** The rule the prompt taught for this reason (#399). Stamped at one choke
+   *  point per producer, never at the push site. */
+  rule?: RuleCode;
+  /** How far a MEASURED breach falls short, in minutes (#399). Deliberately not
+   *  part of `conflictKey`, and the reason is the delta: a card dragged from 30
+   *  minutes short to 10 minutes short is repairing the board, and a key that
+   *  moved with the number would report that repair as a new conflict and
+   *  refuse it. The size travels beside the key instead, so `deltaConflicts` can
+   *  tell "worse" from "better" without either being a different conflict. */
+  shortfallMinutes?: number;
+}
+
+/** Stamped where a producer RETURNS, not where it pushes: a new
+ *  `conflicts.push` would otherwise ship without a code and the repair round
+ *  would quietly fall back to interpreting prose. */
+const withRule = (c: Conflict): Conflict => ({ ...c, rule: RULE_BY_REASON[c.reason] });
+
+/** Stable conflict identity — the key `verifyJoint`'s dedupe and the joint apply
+ *  gate already use. `detail` is deliberately part of it: a worse breach writes a
+ *  different detail string, so "worsened" needs no second comparison. */
+export const conflictKey = (c: Conflict): string => `${c.fixtureId}|${c.reason}|${c.detail ?? ""}`;
+
+/**
+ * A conflict that makes the schedule PHYSICALLY IMPOSSIBLE, as opposed to
+ * uncomfortable: a court booked twice, a human on two courts at once, a fixture
+ * outside the days the competition runs, or one placed before the match that
+ * feeds it has finished.
+ *
+ * Lives here, beside the reasons, because the AI pipeline and the board's
+ * persistence gates must answer this identically — "two vocabularies" (#399 gap
+ * 5) is exactly what happens when they each keep a copy. Below-minimum rest is
+ * deliberately NOT here: uncomfortable is not impossible, and organisers
+ * legitimately override it.
+ *
+ * ABSOLUTE. Whether a change may be WRITTEN is this answer filtered through
+ * `deltaConflicts` at the gate, so a dirty board stays editable.
+ */
+export function isBlockingConflict(c: Conflict): boolean {
+  return (
+    c.reason === "court" ||
+    c.reason === "person_overlap" ||
+    c.reason === "window" ||
+    (c.reason === "order" && c.direct === true)
+  );
+}
+
+/**
+ * The conflicts a change INTRODUCED OR WORSENED — a multiset difference, not a
+ * set one. Two instances of a key after and one before means the change added a
+ * second, and one instance is returned.
+ *
+ * This is what keeps a dirty board editable (#399). Boards published before this
+ * wave may carry person overlaps, because those were warnings all along. Under
+ * an absolute rule the organiser's next edit to such a board would 409 and they
+ * would be stuck — unable to fix anything precisely because it is already wrong.
+ */
+export function deltaConflicts(
+  before: readonly Conflict[],
+  after: readonly Conflict[],
+): Conflict[] {
+  const budget = new Map<string, number>();
+  /** The worst instance of each key beforehand, for the measured reasons. */
+  const worstBefore = new Map<string, number>();
+  for (const c of before) {
+    const key = conflictKey(c);
+    budget.set(key, (budget.get(key) ?? 0) + 1);
+    if (c.shortfallMinutes !== undefined) {
+      worstBefore.set(key, Math.max(worstBefore.get(key) ?? 0, c.shortfallMinutes));
+    }
+  }
+  const out: Conflict[] = [];
+  for (const c of after) {
+    const key = conflictKey(c);
+    const left = budget.get(key) ?? 0;
+    if (left > 0) {
+      budget.set(key, left - 1);
+      // Matched an existing conflict — but a MEASURED one can still have got
+      // worse without changing identity. A bigger shortfall is a worsening;
+      // a smaller one is the organiser repairing the board and must never be
+      // refused.
+      if (c.shortfallMinutes !== undefined && c.shortfallMinutes > (worstBefore.get(key) ?? 0)) {
+        out.push(c);
+      }
+      continue;
+    }
+    out.push(c);
+  }
+  return out;
 }
 
 /** Bracket dependency for order validation: `fixtureId` must not start before
@@ -422,7 +532,7 @@ export function slotFixtures(input: SlotInput): SlotResult {
     commit(f, best.court, best.start);
   }
 
-  return { assignments: placed, conflicts };
+  return { assignments: placed, conflicts: conflicts.map(withRule) };
 }
 
 // Full conflict report over a fixed board (the drag-and-drop validate pass, doc
@@ -675,7 +785,7 @@ if (tz !== undefined) {
     }
   }
 }
-  return conflicts;
+  return conflicts.map(withRule);
 }
 
 export function validateAssignments(
@@ -758,7 +868,33 @@ export function validateAssignments(
     // Court clash / blackout — check against everything else on the board.
     const others = board.filter((o) => o !== a);
     if (courtBlocked(a.court, a.startAt, a.endAt - a.startAt, gapMs, others, blackouts) === "court") {
-      conflicts.push({ fixtureId: a.fixtureId, reason: "court", detail: `court ${a.court} double-booked` });
+      // ONE ROW PER COLLIDING FIXTURE, and the counterparty is part of the
+      // identity rather than decoration (#399). Both halves are load-bearing for
+      // the delta gate:
+      //
+      //   * naming the court alone made a SWAP invisible — a card already
+      //     clashing with B, dragged onto C instead, keyed identically;
+      //   * one row per CARD made an ADDED collision invisible — a card that
+      //     keeps its clash with B and gains one with C still reports the single
+      //     row it always did.
+      //
+      // Either way a brand-new double-booking wrote through as pre-existing, on
+      // the one reason that blocked absolutely before this wave. `person_overlap`
+      // has always reported per counterparty; `court` now matches it.
+      const hits = others.filter(
+        (o) =>
+          o.court === a.court &&
+          overlaps(a.startAt - gapMs, a.endAt + gapMs, o.startAt, o.endAt),
+      );
+      // `courtBlocked` said "court", so at least one exists; the fallback keeps
+      // the reason reportable if the two predicates ever drift apart.
+      for (const hit of hits.length > 0 ? hits.map((h) => h.fixtureId) : ["another fixture"]) {
+        conflicts.push({
+          fixtureId: a.fixtureId,
+          reason: "court",
+          detail: `court ${a.court} double-booked with ${hit}`,
+        });
+      }
     }
     for (const bo of blackouts) {
       if (bo.court !== undefined && bo.court !== a.court) continue;
@@ -777,7 +913,11 @@ export function validateAssignments(
       for (const e of a.entrants) {
         if (!other.entrants.includes(e)) continue;
         if (overlaps(a.startAt, a.endAt, other.startAt, other.endAt)) {
-          conflicts.push({ fixtureId: a.fixtureId, reason: "person_overlap", detail: `entrant ${e} overlap` });
+          conflicts.push({
+            fixtureId: a.fixtureId,
+            reason: "person_overlap",
+            detail: `entrant ${e} overlap with ${other.fixtureId}`,
+          });
         } else {
           // Resolved per PAIR: restByGroup can differ pool to pool, the other
           // division's own rest may be the binding one, and a compiled
@@ -793,7 +933,11 @@ export function validateAssignments(
       if (sharedPeople.length > 0) {
         if (overlaps(a.startAt, a.endAt, other.startAt, other.endAt)) {
           for (const p of sharedPeople) {
-            conflicts.push({ fixtureId: a.fixtureId, reason: "person_overlap", detail: `person ${p} overlap` });
+            conflicts.push({
+              fixtureId: a.fixtureId,
+              reason: "person_overlap",
+              detail: `person ${p} overlap with ${other.fixtureId}`,
+            });
           }
         } else if (!a.entrants.some((e) => other.entrants.includes(e))) {
           // Rest between two fixtures sharing a PERSON but no entrant — the case
@@ -829,14 +973,40 @@ export function validateAssignments(
     const target = byId.get(dep.fixtureId);
     const source = byId.get(dep.dependsOn);
     if (!target || !source) continue;
-    if (target.startAt < source.endAt) {
+    // The advancing player is a participant of the fixture they feed (#396), so
+    // the dependent may not start at the feeder's final whistle — it may start
+    // once the feeder's occupancy PLUS the rest that player is owed has passed
+    // (#399 gap 7). `effectiveRestMinutes` is the same answer the placer and the
+    // person checks give, so the three cannot disagree about what rest means.
+    //
+    // In the original payloads a 45-minute instruction happened to cover this by
+    // luck. A rule should not depend on luck.
+    const restMinutes = effectiveRestMinutes(config, target);
+    if (target.startAt < source.endAt + restMinutes * MS_PER_MIN) {
+      // Two distinct details on purpose. They are different failures, and the
+      // delta gate keys on `detail`: one string for both would let a newly
+      // introduced rest breach hide behind a pre-existing ordering violation.
+      const before = target.startAt < source.endAt;
+      const gapMin = (target.startAt - source.endAt) / MS_PER_MIN;
       conflicts.push({
         fixtureId: dep.fixtureId,
         reason: "order",
-        detail: `starts before feeder ${dep.dependsOn} ends`,
+        // Two distinct details on purpose: they are different failures, and one
+        // string for both would let a newly introduced rest breach hide behind
+        // a pre-existing ordering violation.
+        //
+        // NEITHER carries the measured gap. `conflictKey` includes `detail`, so
+        // a number in here would move the identity every time the card moved —
+        // and dragging a dependent from 10 minutes short to 20 would read as a
+        // NEW conflict and be refused, which is the exact lock-out this wave
+        // exists to prevent. The size rides in `shortfallMinutes` instead.
+        detail: before
+          ? `starts before feeder ${dep.dependsOn} ends`
+          : `starts inside feeder ${dep.dependsOn}'s ${restMinutes} min rest`,
         direct: dep.direct === true,
+        shortfallMinutes: Math.max(0, Math.round(restMinutes - gapMin)),
       });
     }
   }
-  return conflicts;
+  return conflicts.map(withRule);
 }

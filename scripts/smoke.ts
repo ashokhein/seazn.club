@@ -5531,8 +5531,11 @@ const yesterdayUtcYmd = (): string =>
 interface AiPlanResponseLite {
   proposal: { fixture_id: string; scheduled_at: string; court_label: string }[];
   /** Engine `Conflict[]` — non-blocking verdicts the organiser is shown rather
-   *  than having repaired (`person_overlap` is one of these, not a blocker). */
-  warnings: { fixtureId: string; reason: string; detail?: string }[];
+   *  than having repaired (rest, blackout, start window, an instruction rule). */
+  warnings: { fixtureId: string; reason: string; detail?: string; rule?: string }[];
+  /** Residual blockers after the repair rounds. Since #399 `person_overlap` and
+   *  `window` are in here, not in `warnings`. */
+  blocking: { fixtureId: string; reason: string; detail?: string; rule?: string }[];
   diff: unknown;
   summary: string;
   usage: { input_tokens: number; output_tokens: number; repair_rounds: number };
@@ -5826,11 +5829,16 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
           placedTbd[0]!.scheduled_at === placedTbd[1]!.scheduled_at,
       );
       check(
-        "v4 AI/bracket: person_overlap fires on a to-be-decided slot, naming a player who could reach it (#396)",
-        (refined?.warnings ?? []).some(
+        // #399 promoted person_overlap out of `warnings` and into `blocking`:
+        // a human on two courts at once is impossible, so the runner asks for a
+        // repair instead of shipping it. The clashing prior is unrepairable
+        // here, so it survives to the response — which is what this asserts.
+        "v4 AI/bracket: person_overlap BLOCKS on a to-be-decided slot, naming a player who could reach it (#396, #399)",
+        (refined?.blocking ?? []).some(
           (w) =>
             w.reason === "person_overlap" &&
             tbdIds.has(w.fixtureId) &&
+            w.rule === "H4" &&
             bracket.personIds.some((id) => (w.detail ?? "").includes(id)),
         ),
       );
@@ -7413,7 +7421,13 @@ interface V1Res {
   json: {
     ok: boolean;
     data?: unknown;
-    error?: { code?: string; message?: string; current_seq?: number };
+    error?: {
+      code?: string;
+      message?: string;
+      current_seq?: number;
+      /** Blocking schedule conflicts ride the 409 body (doc 12 §2, #399). */
+      conflicts?: { rule?: string; blocking?: boolean; code?: string }[];
+    };
     requestId?: string;
   };
 }
@@ -7568,6 +7582,56 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
     "v1 schedule/auto proposes all fixtures",
     v1data<{ assignments: unknown[] }>(auto).assignments.length === 6,
   );
+
+  // --- #399 W4: blocking is DELTA-based ------------------------------------
+  // Persist the proposal, then prove both halves of the rule against the live
+  // API: a move that INTRODUCES a person double-booking is refused, and the
+  // board it left behind is still editable.
+  {
+    const assignments = v1data<
+      { assignments: { fixture_id: string; scheduled_at: string; court_label: string }[] }
+    >(auto).assignments;
+    const applyRes = await v1(admin, `/api/v1/stages/${stageId}/schedule/apply`, "POST", {
+      assignments: assignments.map((a) => ({
+        fixture_id: a.fixture_id,
+        scheduled_at: a.scheduled_at,
+        court_label: a.court_label,
+      })),
+      // "auto", not "manual": a manual apply is board editing and needs the Pro
+      // `scheduling.board` key, and this section runs on a community org.
+      source: "auto",
+    });
+    check(
+      "v1 W4: the clean proposal applies with nothing blocking",
+      applyRes.status === 200 &&
+        v1data<{ conflicts: { blocking: boolean }[] }>(applyRes).conflicts.every(
+          (c) => !c.blocking,
+        ),
+    );
+    // Four entrants, one round robin. Round 1's two fixtures cover all four
+    // entrants, so ANY later-round fixture shares an entrant with each of them.
+    // The auto pass emits in round order, so [0] and [2] are always such a pair.
+    // Same instant, DIFFERENT court — the only defect is the human.
+    const anchor = assignments[0]!;
+    const sharer = assignments[2]!;
+    const clash = await v1(admin, `/api/v1/fixtures/${sharer.fixture_id}`, "PATCH", {
+      scheduled_at: anchor.scheduled_at,
+      court_label: "Court 9",
+    });
+    check(
+      "v1 W4: a move that introduces a clash → 409 SCHEDULE_CONFLICT",
+      clash.status === 409 && clash.json.error?.code === "SCHEDULE_CONFLICT",
+    );
+    check(
+      "v1 W4: the refusal names the rule the AI prompt teaches",
+      (clash.json.error?.conflicts ?? []).some((c) => !!c.rule && c.blocking === true),
+    );
+    // And the board still moves: the refusal was about the change, not the board.
+    const legal = await v1(admin, `/api/v1/fixtures/${sharer.fixture_id}`, "PATCH", {
+      court_label: "Court 9",
+    });
+    check("v1 W4: an unrelated edit on the same board still applies", legal.status === 200);
+  }
   const startRes = await v1(admin, `/api/v1/divisions/${divId}/start`, "POST");
   check("v1 division start → active", v1data<{ status: string }>(startRes).status === "active");
 
