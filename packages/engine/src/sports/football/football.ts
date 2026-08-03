@@ -126,12 +126,27 @@ export const FootballShootoutKick = z.strictObject({
   scored: z.boolean(),
 });
 
+// W4 (Law 14) — a penalty kick awarded IN OPEN PLAY that did not produce a
+// goal. A converted penalty stays `football.goal { penalty: true }` so no
+// pre-W4 stream changes meaning; this branch exists purely for the kicks a
+// scorebook otherwise loses. `outcome` is required, which is also what keeps
+// the branch structurally distinct inside the union.
+export const PenaltyOutcome = z.enum(["saved", "missed", "post"]);
+export const FootballPenalty = z.strictObject({
+  by: EntrantId, // the side awarded the kick
+  taker: PersonId.optional(),
+  keeper: PersonId.optional(), // the DEFENDING keeper who faced it
+  outcome: PenaltyOutcome,
+  minute: z.number().int().nonnegative().optional(),
+});
+
 export const FootballEv = z.union([
   FootballGoal,
   FootballCard,
   FootballSub,
   FootballPeriod,
   FootballShootoutKick,
+  FootballPenalty,
 ]);
 export type FootballEv = z.infer<typeof FootballEv>;
 
@@ -180,6 +195,18 @@ export interface FootballState {
   shootout: { kicks: { side: Side; scored: boolean }[] } | null;
   outcome: MatchOutcome | null;
   replayFlagged: boolean; // abandonPolicy 'replay' — fixture to regenerate
+  // W4 (Law 14) — unconverted open-play penalties, in play order. Absent until
+  // the first one is recorded: `init` must keep serialising exactly as it did
+  // before W4 or every frozen golden stream reds.
+  penalties?: PenaltyRecord[];
+}
+
+interface PenaltyRecord {
+  side: Side;
+  outcome: z.infer<typeof PenaltyOutcome>;
+  taker?: string;
+  keeper?: string;
+  minute?: number;
 }
 
 const PLAY_PHASES: readonly Phase[] = ["H1", "H2", "ET_H1", "ET_H2"];
@@ -425,6 +452,37 @@ function stampAddedMinutes(state: FootballState, addedMinutes: number | undefine
   };
 }
 
+// W4 (Law 14) — an open-play penalty that was not converted. The score is
+// untouched by construction; the record is what a match report needs.
+function applyPenalty(state: FootballState, payload: z.infer<typeof FootballPenalty>): FootballState {
+  if (!isPlayPhase(state.phase)) {
+    wrongPhase(`penalty not allowed in phase "${state.phase}"`, { phase: state.phase });
+  }
+  const side = sideOf(state, payload.by);
+  if (payload.taker !== undefined && !state.squads[side].onPitch.includes(payload.taker)) {
+    invalid(`taker "${payload.taker}" is not on the pitch for "${payload.by}"`, {
+      taker: payload.taker,
+    });
+  }
+  // The keeper facing the kick belongs to the DEFENDING side.
+  if (
+    payload.keeper !== undefined &&
+    !state.squads[opponent(side)].onPitch.includes(payload.keeper)
+  ) {
+    invalid(`keeper "${payload.keeper}" is not on the pitch for the defending side`, {
+      keeper: payload.keeper,
+    });
+  }
+  const record: PenaltyRecord = {
+    side,
+    outcome: payload.outcome,
+    ...(payload.taker === undefined ? {} : { taker: payload.taker }),
+    ...(payload.keeper === undefined ? {} : { keeper: payload.keeper }),
+    ...(payload.minute === undefined ? {} : { minute: payload.minute }),
+  };
+  return { ...state, penalties: [...(state.penalties ?? []), record] };
+}
+
 function applyPeriod(state: FootballState, payload: z.infer<typeof FootballPeriod>): FootballState {
   const marker = payload.phase;
   switch (marker) {
@@ -638,6 +696,8 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
         return applyPeriod(state, parsePayload(FootballPeriod, ev.payload, ev.type));
       case "football.shootout.kick":
         return applyShootoutKick(state, parsePayload(FootballShootoutKick, ev.payload, ev.type));
+      case "football.penalty":
+        return applyPenalty(state, parsePayload(FootballPenalty, ev.payload, ev.type));
       case "core.forfeit":
         return applyForfeit(state, (ev.payload as { by: string }).by);
       case "core.abandon":
@@ -677,6 +737,11 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
       detail: {
         periods: state.periods,
         ...(shootout === null ? {} : { shootout }),
+        // W4: unconverted penalties and sin bins deliberately do NOT appear
+        // here. §9.6 requires summary(coarse) === summary(fine), and coarsen
+        // drops every event with no score effect — same reason `cards` has
+        // never been in the summary. They live in State and in the ledger,
+        // which is what the match report reads.
         ...(state.replayFlagged ? { abandoned: true } : {}),
       },
     };
@@ -770,6 +835,8 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
         "football.sub",
         "football.period",
         "football.shootout.kick",
+        // W4 — neither moves the score, so both stay out of tiers 0/1.
+        "football.penalty",
       ],
       entitlement: "scoring.match_timeline",
     },
@@ -781,6 +848,7 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
         "football.sub",
         "football.period",
         "football.shootout.kick",
+        "football.penalty",
       ],
       entitlement: "scoring.match_timeline",
     },
@@ -884,6 +952,25 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
       const color = rng() < 0.85 ? "yellow" : "red";
       return { type: "football.card", payload: { by: sideId(side), person, color } };
     }
+    if (roll < 0.16) {
+      // W4 (Law 14) — an open-play penalty that was not converted. The keeper
+      // is the defending side's first player still on the pitch, which is the
+      // catalog's GK slot in the conformance lineups.
+      const side = randomSide();
+      const taker = state.squads[side].onPitch[Math.floor(rng() * state.squads[side].onPitch.length)];
+      const keeper = rng() < 0.5 ? state.squads[opponent(side)].onPitch[0] : undefined;
+      const outcomes = PenaltyOutcome.options;
+      const outcome = outcomes[Math.floor(rng() * outcomes.length)] ?? "saved";
+      return {
+        type: "football.penalty",
+        payload: {
+          by: sideId(side),
+          ...(taker === undefined ? {} : { taker }),
+          ...(keeper === undefined ? {} : { keeper }),
+          outcome,
+        },
+      };
+    }
     if (roll < 0.19) {
       const side = randomSide();
       const squad = state.squads[side];
@@ -948,6 +1035,7 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
         }
         case "football.card":
         case "football.sub":
+        case "football.penalty":
           break; // no score effect — dropped at coarse fidelity
         default:
           out.push({ type: event.type, payload: event.payload });

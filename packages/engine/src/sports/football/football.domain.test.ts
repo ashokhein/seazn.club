@@ -207,3 +207,86 @@ describe("added time (Law 7)", () => {
     expect(state.periods.map((p) => p.addedMinutes)).toEqual([undefined, undefined, 1, 2]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Law 14 — a penalty kick awarded in open play that did NOT produce a goal.
+// A converted penalty is already `football.goal { penalty: true }`; a saved or
+// missed one left no trace at all before W4.
+// ---------------------------------------------------------------------------
+
+describe("penalties in open play (Law 14)", () => {
+  const pen = (payload: unknown): [string, unknown] => ["football.penalty", payload];
+
+  it("records a saved penalty without moving the score", () => {
+    const state = fold(
+      cfgOf({}),
+      stream(
+        ["core.start"],
+        pen({ by: "H", taker: "H-p9", keeper: "A-p1", outcome: "saved", minute: 27 }),
+      ),
+    );
+    expect(state.goals).toEqual({ home: 0, away: 0 });
+    expect(state.penalties).toEqual([
+      { side: "home", outcome: "saved", taker: "H-p9", keeper: "A-p1", minute: 27 },
+    ]);
+  });
+
+  // §9.6 requires summary(coarse fold) === summary(fine fold), and coarsen
+  // drops every event with no score effect. So an unconverted penalty must
+  // stay OUT of the summary — exactly like a card — and live in State.
+  it("stays out of the summary so the coarse and fine folds still agree", () => {
+    const none = fold(cfgOf({}), stream(["core.start"]));
+    const some = fold(cfgOf({}), stream(["core.start"], pen({ by: "A", outcome: "missed" })));
+    expect(football.summary(some)).toEqual(football.summary(none));
+    expect(some.penalties).toEqual([{ side: "away", outcome: "missed" }]);
+  });
+
+  it("accepts an anonymous penalty — coarse scoring stays legal", () => {
+    const state = fold(cfgOf({}), stream(["core.start"], pen({ by: "H", outcome: "post" })));
+    expect(state.penalties).toEqual([{ side: "home", outcome: "post" }]);
+  });
+
+  it("refuses a taker who is not on the pitch for the awarded side", () => {
+    expect(() =>
+      fold(cfgOf({}), stream(["core.start"], pen({ by: "H", taker: "A-p9", outcome: "saved" }))),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
+
+  it("refuses a keeper who is not on the pitch for the DEFENDING side", () => {
+    // H-p1 is the home keeper; a penalty awarded to H is faced by an away keeper.
+    expect(() =>
+      fold(cfgOf({}), stream(["core.start"], pen({ by: "H", taker: "H-p9", keeper: "H-p1", outcome: "saved" }))),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
+
+  it("refuses a penalty outside a period of play", () => {
+    expect(() => fold(cfgOf({}), stream(pen({ by: "H", outcome: "saved" })))).toThrowError(
+      expect.objectContaining({ code: "WRONG_PHASE" }),
+    );
+  });
+
+  it("rejects an outcome outside the Law 14 vocabulary", () => {
+    expect(() =>
+      fold(cfgOf({}), stream(["core.start"], pen({ by: "H", outcome: "scored" }))),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
+
+  it("is reachable from the attributed fidelity tiers and never from the coarse ones", () => {
+    const types = (tier: number) =>
+      football.fidelityTiers.find((t) => t.tier === tier)?.eventTypes ?? [];
+    expect(types(2)).toContain("football.penalty");
+    expect(types(3)).toContain("football.penalty");
+    expect(types(0)).not.toContain("football.penalty");
+    expect(types(1)).not.toContain("football.penalty");
+  });
+
+  it("is dropped by coarsen — it never moves the score", () => {
+    const events = stream(
+      ["core.start"],
+      pen({ by: "H", outcome: "saved" }),
+      ["football.goal", { by: "H" }],
+    ).map((e) => e as EventEnvelope<never>);
+    const coarse = football.coarsen!(events);
+    expect(coarse.map((e) => e.type)).toEqual(["core.start", "football.goal"]);
+  });
+});
