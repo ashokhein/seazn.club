@@ -925,8 +925,19 @@ describe("FootballEv union disambiguation (§8)", () => {
     ["shootout kick", { by: "H", scored: true }, "FootballShootoutKick"],
     ["missed penalty", { by: "H", outcome: "saved" }, "FootballPenalty"],
     ["stamped sin bin start", { by: "H", person: "H-p1", minutes: 10, at: stamp }, "FootballSinBinStart"],
-  ])("%s reaches its own branch", (_, payload, expected) => {
+  ])("%s reaches its own branch, and every branch ahead of it REJECTS", (_, payload, expected) => {
     expect(firstBranch(payload)).toBe(expected);
+    // The winner alone is only half the claim, and the weaker half: a
+    // `toEqual(payload)` round-trip proves nothing here, because every branch is
+    // a `strictObject` and zod returns the input unchanged whichever one
+    // matched. What makes this shape reach THAT branch is that each branch zod
+    // tries first refuses it, so that is what gets asserted.
+    const winner = BRANCHES.findIndex(([name]) => name === expected);
+    expect(winner).toBeGreaterThanOrEqual(0);
+    for (const [name, schema] of BRANCHES.slice(0, winner)) {
+      expect(schema.safeParse(payload).success, `${name} must reject this shape`).toBe(false);
+    }
+    expect(BRANCHES[winner]?.[1].safeParse(payload).success).toBe(true);
   });
 
   it("does not let the widened goal branch swallow a stamped sibling", () => {
