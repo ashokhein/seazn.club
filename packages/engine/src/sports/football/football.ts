@@ -79,11 +79,33 @@ export const FootballGoal = z.strictObject({
   penalty: z.boolean().optional(), // in-play penalty kick, not a shootout kick
 });
 export const CardColor = z.enum(["yellow", "red", "second_yellow"]);
+// W4 (Law 12 §3 cautions, §4 sending-off offences) — the offence category a
+// referee's match record names next to the card. The discipline usecase's
+// suspension tariff is a function of THIS, not of the colour: violent conduct
+// and a second caution are both red cards and carry different bans.
+export const CardReason = z.enum([
+  // Law 12.3 — cautionable offences.
+  "unsporting_behaviour",
+  "dissent",
+  "persistent_offences",
+  "delaying_restart",
+  "failure_to_respect_distance",
+  "entering_or_leaving_without_permission",
+  // Law 12.4 — sending-off offences.
+  "serious_foul_play",
+  "violent_conduct",
+  "spitting",
+  "denying_goal_by_handball",
+  "denying_obvious_goalscoring_opportunity",
+  "offensive_language",
+  "second_caution",
+]);
 export const FootballCard = z.strictObject({
   by: EntrantId,
   person: PersonId.optional(),
   color: CardColor,
   minute: z.number().int().nonnegative().optional(),
+  reason: CardReason.optional(), // W4 — optional everywhere: coarse scoring
 });
 export const FootballSub = z.strictObject({
   by: EntrantId,
@@ -93,6 +115,10 @@ export const FootballSub = z.strictObject({
 });
 export const FootballPeriod = z.strictObject({
   phase: z.enum(["HT", "FT", "ET_HT", "ET_FT"]),
+  // W4 (Law 7 §3, allowance for time lost) — minutes added to the period this
+  // marker CLOSES. A match report writes "90+3"; a bare integer `minute`
+  // cannot tell that apart from the 93rd minute of extra time.
+  addedMinutes: z.number().int().nonnegative().optional(),
 });
 export const FootballShootoutKick = z.strictObject({
   by: EntrantId,
@@ -129,6 +155,16 @@ interface CardRecord {
   person?: string;
   color: z.infer<typeof CardColor>;
   minute?: number;
+  reason?: z.infer<typeof CardReason>; // W4 — Law 12 offence category
+}
+
+// W4 — a period entry gains Law 7 added time. Optional so that every stream
+// recorded before W4 serialises byte-identically.
+interface PeriodRecord {
+  phase: PlayPhase;
+  home: number;
+  away: number;
+  addedMinutes?: number;
 }
 
 export interface FootballState {
@@ -138,7 +174,7 @@ export interface FootballState {
   goals: { home: number; away: number }; // regulation + ET (shootout excluded)
   // Per-period breakdown, in play order — the coarse "period summaries" view
   // (PROMPT-04 §9) and the summary.detail payload.
-  periods: { phase: PlayPhase; home: number; away: number }[];
+  periods: PeriodRecord[];
   cards: CardRecord[];
   squads: { home: SquadState; away: SquadState };
   shootout: { kicks: { side: Side; scored: boolean }[] } | null;
@@ -336,6 +372,7 @@ function applyCard(state: FootballState, payload: z.infer<typeof FootballCard>):
     ...(payload.person === undefined ? {} : { person: payload.person }),
     color: payload.color,
     ...(payload.minute === undefined ? {} : { minute: payload.minute }),
+    ...(payload.reason === undefined ? {} : { reason: payload.reason }),
   };
   return { ...state, cards: [...state.cards, record], squads };
 }
@@ -376,21 +413,33 @@ function applySub(state: FootballState, payload: z.infer<typeof FootballSub>): F
   return { ...state, squads: { ...state.squads, [side]: next } };
 }
 
+// W4 (Law 7) — stamp the marker's added time on the period it CLOSES, i.e. the
+// last entry in play order. Absent added time leaves the entry untouched, so
+// every pre-W4 stream serialises exactly as before.
+function stampAddedMinutes(state: FootballState, addedMinutes: number | undefined): FootballState {
+  if (addedMinutes === undefined || state.periods.length === 0) return state;
+  const last = state.periods.length - 1;
+  return {
+    ...state,
+    periods: state.periods.map((period, i) => (i === last ? { ...period, addedMinutes } : period)),
+  };
+}
+
 function applyPeriod(state: FootballState, payload: z.infer<typeof FootballPeriod>): FootballState {
   const marker = payload.phase;
   switch (marker) {
     case "HT":
       if (state.phase !== "H1") wrongPhase(`HT marker in phase "${state.phase}"`);
-      return pushPeriod(state, "H2");
+      return pushPeriod(stampAddedMinutes(state, payload.addedMinutes), "H2");
     case "FT":
       if (state.phase !== "H2") wrongPhase(`FT marker in phase "${state.phase}"`);
-      return resolveFullTime(state, "FT");
+      return resolveFullTime(stampAddedMinutes(state, payload.addedMinutes), "FT");
     case "ET_HT":
       if (state.phase !== "ET_H1") wrongPhase(`ET_HT marker in phase "${state.phase}"`);
-      return pushPeriod(state, "ET_H2");
+      return pushPeriod(stampAddedMinutes(state, payload.addedMinutes), "ET_H2");
     case "ET_FT":
       if (state.phase !== "ET_H2") wrongPhase(`ET_FT marker in phase "${state.phase}"`);
-      return resolveFullTime(state, "ET_FT");
+      return resolveFullTime(stampAddedMinutes(state, payload.addedMinutes), "ET_FT");
   }
 }
 
