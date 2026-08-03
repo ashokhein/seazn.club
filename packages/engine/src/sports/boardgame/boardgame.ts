@@ -61,10 +61,12 @@ export const BoardgameCfg = z.object({
   //   neither    Sudden death: `base` for the whole game.
   //
   // `increment` and `delay` are in the same unit as `base`. Both optional with
-  // NO default — cfg is serialised into the frozen golden state strings (§8),
-  // and `increment` was widened to optional so a delay-only or sudden-death
-  // control is expressible without inventing a zero increment that reads as a
-  // deliberate Fischer setting.
+  // NO default — cfg is serialised into the frozen golden state strings (§8).
+  // `increment` was widened to optional to record INTENT: an absent increment
+  // is behaviourally identical to `increment: 0` (adding zero after each move
+  // IS sudden death), so this buys nothing a pad can act on — it only lets a
+  // sudden-death or delay-only control say so, instead of writing a zero that
+  // reads as a deliberate Fischer setting.
   clock: z
     .object({
       base: z.number().int().nonnegative(),

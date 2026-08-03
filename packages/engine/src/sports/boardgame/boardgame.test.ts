@@ -292,6 +292,8 @@ describe("boardgame: increment and delay are independent clock facts", () => {
     expect(clock?.increment).toBeUndefined();
   });
 
+  // Green in both states — `{base, increment}` parsed before the widening too.
+  // Kept as the symmetry guard opposite the delay-only case above.
   it("accepts an increment-only control (Fischer: unused time is banked)", () => {
     const clock = clockOf({ base: 180, increment: 2 });
     expect(clock).toEqual({ base: 180, increment: 2 });

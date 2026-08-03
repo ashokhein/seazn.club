@@ -124,7 +124,9 @@ Recorded, not acted on:
    worth revisiting only if chess organisers ask for game download.
 7. **`Cfg.clock.delay`, and `increment` now optional** (W4a §5.5). Any surface
    that renders a time control must read all three of `base` / `increment` /
-   `delay` and must not assume an absent `increment` means zero-and-Fischer.
+   `delay`. An absent `increment` does mean no Fischer increment — what a
+   surface must not assume is that the control is Fischer-family at all, since
+   it may be delay-only: check `delay` before assuming the clock banks time.
    A pad that counts down has to bank increment and *not* bank delay.
 8. **No e2e coverage this wave, by decision.** W4a ships no `apps/web` surface,
    so there is nothing to drive; e2e for the time model is deferred to **W10
