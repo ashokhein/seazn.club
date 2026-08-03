@@ -326,3 +326,21 @@ describe("coarsen is transparent to interruptions", () => {
     expect(badminton.summary(coarseState)).toEqual(badminton.summary(fineState));
   });
 });
+
+// W4 review item 7 — `SetBasedSub` carries `in` / `out` person ids and feeds no
+// player metric, on purpose: coming on is not a performance, and the allowance
+// it spends is a per-side count (`State.subs`), not a personal one. Recorded
+// here so the omission is a decision a future author has to overturn
+// explicitly, and stated in DOMAIN.volleyball.md.
+describe("substitution persons are unscored on purpose", () => {
+  it("keeps every module's sub event out of playerStats", () => {
+    for (const module of [volleyball, badminton, tabletennis]) {
+      const sources = new Set(module.playerStats?.metrics.map((m) => m.from) ?? []);
+      expect(sources.has(`${module.key}.sub`), `${module.key}.sub now feeds a metric`).toBe(false);
+      if (module.playerStats !== undefined) {
+        // Guards the guard: a module with no metrics at all would pass above.
+        expect(sources.size, `${module.key} declares metrics`).toBeGreaterThan(0);
+      }
+    }
+  });
+});

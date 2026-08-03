@@ -805,3 +805,47 @@ describe("cricket W4: playerStats leaderboards off the ball ledger", () => {
     expect(t["A-11"]).toEqual({ balls_bowled: 5, runs_conceded: 10, wickets: 1 });
   });
 });
+
+// ---------------------------------------------------------------------------
+// W4 review item 7 — event types that carry a person id but deliberately feed
+// NO player metric. The review asked for a decision either way; this is the
+// decision, made checkable rather than left as prose. A future author who adds
+// a metric for one of these has to delete its line here, which is where the
+// reasoning lives.
+// ---------------------------------------------------------------------------
+
+describe("person-bearing events that are unscored on purpose", () => {
+  const unscored: Record<string, string> = {
+    "cricket.retire":
+      "a retirement is a MODE OF DISMISSAL on the scorecard line, not a counting " +
+      "statistic; crediting it would put a second wicket-shaped number next to the batter",
+    "cricket.review":
+      "a review is a TEAM resource, already tallied per side in State.innings[].reviews; " +
+      "no scorecard carries a per-player review column",
+  };
+
+  it("names a person on each of them, so the omission is a choice and not an oversight", () => {
+    const persons: Record<string, string[]> = {
+      "cricket.retire": ["person", "incoming"],
+      "cricket.review": ["person", "against"],
+    };
+    for (const [type, fields] of Object.entries(persons)) {
+      for (const field of fields) {
+        const payload =
+          type === "cricket.retire"
+            ? { person: "H-1", reason: "hurt" as const, ...(field === "incoming" ? { incoming: "H-7" } : {}) }
+            : { by: "H", kind: "player" as const, outcome: "upheld" as const, [field]: "H-1" };
+        expect(CricketEv.safeParse(payload).success, `${type}.${field}`).toBe(true);
+      }
+    }
+  });
+
+  it("keeps them out of playerStats, and says why", () => {
+    const sources = new Set(cricket.playerStats?.metrics.map((m) => m.from) ?? []);
+    for (const [type, why] of Object.entries(unscored)) {
+      expect(sources.has(type), `${type} now feeds a metric — ${why}`).toBe(false);
+    }
+    // Guards the guard: the set is really populated, so `has` can fail.
+    expect(sources.has("cricket.ball")).toBe(true);
+  });
+});
