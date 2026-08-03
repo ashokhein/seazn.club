@@ -166,9 +166,20 @@ describe("expedite enforcement is conditional on `serving`", () => {
   });
 
   it("rejects a `serving` naming an entrant that is not in the fixture", () => {
+    // A REGRESSION PIN, not a mutant kill: `checkExpedite` calls `sideOf` on
+    // `serving` too, so deleting the eager check in `applyRally` leaves this
+    // green. The case below is the one with teeth for that mutant. The
+    // `message` matcher is what separates "refused for the right reason" from
+    // `apply`'s `default:` and from every `parsePayload` failure — all three
+    // throw the same INVALID_EVENT code.
     expect(() =>
       fold(tabletennis, [EXPEDITE, rally({ wonBy: "H", serving: "Z", returns: 13 })]),
-    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+    ).toThrowError(
+      expect.objectContaining({
+        code: "INVALID_EVENT",
+        message: expect.stringMatching(/unknown entrant/),
+      }),
+    );
   });
 
   it("rejects a bad `serving` on the rally that carries it, not on a later one", () => {
@@ -193,11 +204,49 @@ describe("expedite enforcement is conditional on `serving`", () => {
 // DISAGREE, reading the wrong one is invisible.
 // ---------------------------------------------------------------------------
 describe("`serving` (side) and `server` (person) are different fields", () => {
+  // THE TWO CASES WITH TEETH. `server` here is `"H"` / `"A"` — strings that are
+  // legal `PersonId`s AND legal `EntrantId`s, so a kernel that read `server`
+  // instead of `serving` resolves them through `sideOf` SUCCESSFULLY and
+  // reaches a WRONG VERDICT. That is the `DisciplineCard.entrantSide` hazard
+  // exactly: same-typed, both valid, disagreeing.
+  //
+  // The person-shaped cases below (`server: "H-p1"`) cannot pin this — a
+  // `server`-reading kernel dies in `sideOf` with INVALID_EVENT ("unknown
+  // entrant"), which is a type-domain kill, not a wrong-side kill.
+  it("accepts when only `serving` says the winner received — `server` names the winner's side", () => {
+    // Side A served, side H received and won on the 13th return: LEGAL.
+    // `server: "H"` — the umpire sheet's server id happens to equal the home
+    // entrant id. A kernel resolving the serving side from `server` sees H
+    // serving AND H winning and throws EXPEDITE_WRONG_WINNER on a legal rally.
+    const state = fold(tabletennis, [
+      EXPEDITE,
+      rally({ wonBy: "H", serving: "A", server: "H", scorer: "H-p2", returns: 13 }),
+    ]);
+    expect(state.sets[0]).toEqual({ home: 1, away: 0, closed: false });
+    expect(state.expediteUnchecked).toBeUndefined();
+    expect(state.persons).toEqual({
+      H: { points: 0, serves: 1 },
+      "H-p2": { points: 1, serves: 0 },
+    });
+  });
+
+  it("rejects when only `serving` says the winner served — `server` names the loser's side", () => {
+    // Mirror, reject direction. Side H served and side H won on 13 returns:
+    // EXPEDITE_WRONG_WINNER. A `server`-reading kernel sees A serving, H
+    // winning, and lets the illegal rally through.
+    expect(() =>
+      fold(tabletennis, [
+        EXPEDITE,
+        rally({ wonBy: "H", serving: "H", server: "A", scorer: "H-p2", returns: 13 }),
+      ]),
+    ).toThrowError(expect.objectContaining({ code: "EXPEDITE_WRONG_WINNER" }));
+  });
+
   it("accepts a doubles rally whose `server` belongs to the side that did NOT serve", () => {
     // The pair A served (serving: "A"); the pad also recorded a person from H
-    // in `server`. Reading `server` would make the winner H the "receiver" and
-    // wrongly ACCEPT nothing — but reading it here must not change the verdict:
-    // A served and A won on the 13th return, so this is EXPEDITE_WRONG_WINNER.
+    // in `server`. A served and A won on the 13th return, so this is
+    // EXPEDITE_WRONG_WINNER whichever field the kernel reads — a REGRESSION
+    // PIN on the person-shaped payload, not a mutant kill (see above).
     expect(() =>
       fold(tabletennis, [
         EXPEDITE,
@@ -209,8 +258,6 @@ describe("`serving` (side) and `server` (person) are different fields", () => {
   it("accepts the mirror rally where the two disagree the other way", () => {
     // serving: "A" (side A served), server: "H-p1" (a PERSON on H), winner H.
     // Side A served and side H received, so H winning on 13 returns is LEGAL.
-    // A kernel that resolved the serving side from `server` would see H serving
-    // AND H winning and throw — this is the case that separates the two fields.
     const state = fold(tabletennis, [
       EXPEDITE,
       rally({ wonBy: "H", serving: "A", server: "H-p1", scorer: "H-p2", returns: 13 }),
@@ -269,7 +316,14 @@ describe("SetBasedEv union disambiguation", () => {
     // 2.15.4 — match-scoped. A `game` key is a scoping mistake, not a field.
     expect(() =>
       fold(tabletennis, [{ type: "tabletennis.expedite.start", payload: { game: 3 } }]),
-    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+    ).toThrowError(
+      expect.objectContaining({
+        code: "INVALID_EVENT",
+        // The strict schema refused it — NOT `apply`'s `default:` arm, which
+        // would mean the event type was never wired at all.
+        message: expect.stringMatching(/invalid tabletennis\.expedite\.start payload/),
+      }),
+    );
   });
 });
 
@@ -281,8 +335,47 @@ describe("expedite is table tennis's alone", () => {
     for (const mod of [volleyball, badminton] as Mod[]) {
       expect(() =>
         fold(mod, [{ type: `${mod.key}.expedite.start`, payload: {} }]),
-      ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+      ).toThrowError(
+        expect.objectContaining({
+          code: "INVALID_EVENT",
+          // The `records.expedite` gate refused it — not `apply`'s `default:`
+          // arm, which is what an unwired event type would hit.
+          message: expect.stringMatching(/has no expedite system/),
+        }),
+      );
     }
+  });
+
+  it("volleyball and badminton refuse a rally carrying `returns`", () => {
+    // `returns` lives on the SHARED `SetBasedRally`, so without a gate the two
+    // sports whose laws have no expedite system silently ACCEPT a field they
+    // can never act on. That is precisely what `records` exists to stop
+    // (kernel.ts preset comment: a sport that does not declare an interruption
+    // "refuses the event outright rather than silently recording a fact its
+    // laws have no concept of").
+    for (const mod of [volleyball, badminton] as Mod[]) {
+      expect(() =>
+        fold(mod, [{ type: `${mod.key}.rally`, payload: { wonBy: "H", returns: 13 } }]),
+      ).toThrowError(
+        expect.objectContaining({
+          code: "INVALID_EVENT",
+          message: expect.stringMatching(/has no expedite system/),
+        }),
+      );
+    }
+    // `serving` is NOT gated — which side served is a fact every set-based
+    // scoresheet carries; only the 13-return count is ITTF-specific.
+    expect(
+      fold(volleyball as Mod, [
+        { type: "volleyball.rally", payload: { wonBy: "H", serving: "A" } },
+      ]).sets[0],
+    ).toEqual({ home: 1, away: 0, closed: false });
+    // …and table tennis, which does declare it, still takes `returns`.
+    expect(fold(tabletennis, [rally({ wonBy: "H", returns: 13 })]).sets[0]).toEqual({
+      home: 1,
+      away: 0,
+      closed: false,
+    });
   });
 
   it("tier 3 reaches tabletennis.expedite.start; tier 0 does not", () => {

@@ -109,8 +109,12 @@ export const SetBasedRally = z.strictObject({
   // named in `server` by a pad recording the previous rally's server, and the
   // side that served is still the other one). `DisciplineCard.entrantSide`
   // shipped that exact confusion once already, so expedite enforcement reads
-  // `serving` and never `server`, and `expedite.test.ts` pins a rally where
-  // the two point at different entrants.
+  // `serving` and never `server`. `expedite.test.ts` pins it with a rally whose
+  // `server` is a string that is ALSO a legal `EntrantId` and names the OTHER
+  // side — in both the accept and the reject direction. That is the only shape
+  // that kills the bug: with a person-shaped `server` a wrong-field kernel dies
+  // inside `sideOf` on an unknown entrant, which is a type-domain refusal and
+  // not the wrong-side verdict the pin exists to catch.
   //
   // WHY IT IS ON THE PAYLOAD AT ALL: the set-based kernel holds no serving
   // state — `server` feeds a `serves` tally and nothing else — so the engine
@@ -292,7 +296,16 @@ export interface SetBasedState {
    *  about how much of an expedited match the engine actually validated.
    *  Deliberately NOT surfaced in `summary` — coarsening discards `returns`
    *  entirely, so a coarse fold could never reproduce it and §9.6 would break
-   *  (the same reason `persons` stays out of the summary). */
+   *  (the same reason `persons` stays out of the summary). `arbitraryEvent`
+   *  generates the unenforceable rally precisely so that exclusion is a claim
+   *  §9.6 ENFORCES: put this key in `summary().detail` and the conformance run
+   *  goes red.
+   *
+   *  NOT write-only, and `summary().detail` is not the only surface. The whole
+   *  folded state is persisted verbatim (`match_states.state`) and served raw
+   *  by `GET /api/v1/fixtures/:id/state`, which is what the scoring pad page
+   *  already reads — so a pad can read this counter today without any new
+   *  export. Staying out of `summary` costs it nothing. */
   expediteUnchecked?: number;
 }
 
@@ -479,8 +492,22 @@ function checkExpedite(
   return state.expediteUnchecked;
 }
 
-function applyRally(state: SetBasedState, payload: SetBasedRally): SetBasedState {
+function applyRally(
+  state: SetBasedState,
+  payload: SetBasedRally,
+  preset: { key: string; recordsExpedite: boolean },
+): SetBasedState {
   if (state.phase !== "live") wrongPhase(`rally not allowed in phase "${state.phase}"`);
+  // W4a review — `returns` rides on the SHARED rally payload, so without this
+  // gate volleyball and badminton accept an ITTF-only field their laws have no
+  // concept of and then discard it. `records` exists to refuse exactly that
+  // (see `SetBasedPreset.records`), and the expedite EVENT is already gated;
+  // the field has to be too or the preset principle only half holds.
+  // `serving` is deliberately NOT gated: which side served is a fact every
+  // set-based scoresheet carries — only the return count is table tennis's.
+  if (payload.returns !== undefined && !preset.recordsExpedite) {
+    invalid(`"${preset.key}" has no expedite system, so a rally cannot carry \`returns\``);
+  }
   const side = sideOf(state, payload.wonBy);
   // Validate the serving side even where the rule does not bite, so a typo'd
   // entrant id is caught on the rally that carries it rather than on whichever
@@ -701,7 +728,9 @@ export interface SetBasedPreset {
   // and no substitutions; only indoor volleyball substitutes).
   // W4a (#425) §5.3 — `expedite` is table tennis's alone (ITTF Law 2.15);
   // volleyball and badminton have no such rule, so the kernel refuses
-  // `<key>.expedite.start` for them exactly as it refuses `badminton.timeout`.
+  // `<key>.expedite.start` for them exactly as it refuses `badminton.timeout`
+  // — and, because `returns` rides on the SHARED rally payload rather than a
+  // sport-specific one, `applyRally` refuses that field for them too.
   records?: {
     timeouts?: boolean;
     sanctions?: boolean;
@@ -853,7 +882,10 @@ export function makeSetBasedModule(
           if (state.phase !== "pre") wrongPhase("already started");
           return { ...state, phase: "live" };
         case rallyType:
-          return applyRally(state, parsePayload(SetBasedRally, ev.payload, ev.type));
+          return applyRally(state, parsePayload(SetBasedRally, ev.payload, ev.type), {
+            key: preset.key,
+            recordsExpedite: records.expedite === true,
+          });
         case summaryType:
           return applySummary(state, parsePayload(SetBasedSummary, ev.payload, ev.type));
         case timeoutType:
@@ -1043,6 +1075,16 @@ export function makeSetBasedModule(
         // the receiver takes the point on the thirteenth, so the serving side
         // is by construction the side that did not win it (Law 2.15.2).
         if (state.expedite !== true || rng() < 0.5) return base;
+        // W4a review — half of those omit `serving`, which is the UNENFORCEABLE
+        // path (§5.3): the rally stands and the fold counts it in
+        // `state.expediteUnchecked`. Generating it is what makes the summary
+        // exclusion of that counter an ENFORCED claim rather than an asserted
+        // one — coarsening discards `returns`, so the coarse fold cannot
+        // reproduce the count, and §9.6 (which deep-compares `summary()`) goes
+        // red the moment `expediteUnchecked` is exposed there. Without these
+        // streams the counter is always `undefined` on both sides and the
+        // exclusion reds nothing.
+        if (rng() < 0.5) return { ...base, returns: EXPEDITE_RETURNS };
         const serving =
           wonBy === state.entrants.home ? state.entrants.away : state.entrants.home;
         return { ...base, serving, returns: EXPEDITE_RETURNS };
