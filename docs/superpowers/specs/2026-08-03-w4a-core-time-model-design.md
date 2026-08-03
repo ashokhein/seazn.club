@@ -63,8 +63,15 @@ The two durations a stoppage produces are already separately available:
 | How much *real* time did it consume? | envelope `recordedAt` delta |
 | How long was the official allowed? | explicit `duration` on the interruption event (§5.4) |
 
+Both `CoreSuspend` and `CoreResume` therefore carry `at?: GameTime` — optional
+with no default, so every stoppage recorded before this wave still folds — and
+the monotonic guard (§3.3) runs *above* the kernel's two `continue`s, so those
+stamps are checked and counted like any other. Without both halves the
+`resume.at − suspend.at` this table names is unrepresentable.
+
 `core.suspend` and `core.resume` carrying the *same* `at` is correct, not a
-bug, and gets a comment saying so — otherwise the first reviewer flags it.
+bug, and gets a comment saying so — otherwise the first reviewer flags it. In a
+clock-stop sport it is the normal reading, not an edge case.
 
 ### 1.3 `elapsed` may exceed the period length
 

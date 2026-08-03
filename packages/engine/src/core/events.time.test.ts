@@ -221,6 +221,72 @@ describe("fold — monotonic time guard (§3.3)", () => {
     expect(fold(events)).toEqual(state);
   });
 
+  // §1.2 — the flagship reason the model is game clock and not wall clock:
+  // "how much GAME time did the stoppage consume?" is `resume.at − suspend.at`.
+  // Unrepresentable while both payloads were strictObject with no `at`, and
+  // unreachable while the guard sat below the two kernel-owned `continue`s.
+  describe("core.suspend / core.resume carry a stamp (§1.2)", () => {
+    const suspend = (payload: unknown) => ev(payload, "core.suspend");
+    const resume = (payload: unknown) => ev(payload, "core.resume");
+
+    it("accepts a stamped suspend/resume pair", () => {
+      const events = [
+        ev(at("P1", 400)),
+        suspend({ reason: "floodlight failure", ...at("P1", 500) }),
+        resume(at("P1", 500)),
+        ev(at("P1", 600)),
+      ];
+      // Both kernel-owned events are still swallowed — only the two toy events
+      // reach apply — but they no longer fail validation.
+      expect(fold(events).applied).toBe(2);
+    });
+
+    it("keeps an EQUAL stamp on the pair legal — that is the canonical case", () => {
+      // A clock-stop sport consumes zero game time in a stoppage, so equal is
+      // not an edge case here, it is the normal reading.
+      expect(fold([suspend(at("P2", 761)), resume(at("P2", 761))]).applied).toBe(0);
+      // ...and a reason alongside the stamp is still fine.
+      expect(
+        fold([suspend({ reason: "crowd incident", ...at("P2", 761) }), resume(at("P2", 761))])
+          .applied,
+      ).toBe(0);
+    });
+
+    it("rejects a resume stamped BEFORE its suspend", () => {
+      let caught: unknown;
+      try {
+        fold([suspend(at("P1", 900)), resume(at("P1", 300))]);
+        expect.unreachable("a resume before its suspend must be rejected");
+      } catch (err) {
+        caught = err;
+      }
+      expect(EngineError.is(caught, "NON_MONOTONIC_TIME")).toBe(true);
+    });
+
+    it("advances the high-water mark, so a later sport event cannot precede the stoppage", () => {
+      let caught: unknown;
+      try {
+        fold([suspend(at("P1", 900)), resume(at("P1", 900)), ev(at("P1", 100))]);
+        expect.unreachable("a stamp before the stoppage must be rejected");
+      } catch (err) {
+        caught = err;
+      }
+      // NOT INVALID_EVENT: the pair validated, and its stamp counted. A bare
+      // toThrow(EngineError) here passes for the wrong reason while `at` is
+      // still absent from the two core schemas.
+      expect(EngineError.is(caught, "NON_MONOTONIC_TIME")).toBe(true);
+    });
+
+    it("leaves an UNSTAMPED suspend/resume pair exactly as it was", () => {
+      // Additive: `at` is optional with no default, so every stoppage recorded
+      // before this wave still folds, and still constrains nothing.
+      expect(
+        fold([ev(at("P1", 900)), suspend({ reason: "rain" }), resume({}), ev(at("P1", 950))])
+          .applied,
+      ).toBe(2);
+    });
+  });
+
   it("keeps voided stamps out of the high-water mark", () => {
     // resolveVoids runs first, so a voided backwards stamp is simply not there
     // — and a voided FORWARD stamp must not keep constraining what follows.

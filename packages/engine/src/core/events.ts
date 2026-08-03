@@ -2,7 +2,7 @@
 // foldMatch is the ONLY state-derivation function in the system.
 import { z } from "zod";
 import { EngineError } from "./errors.ts";
-import { compareGameTime, gameTimeOf, type GameTime } from "./time.ts";
+import { GameTime, compareGameTime, gameTimeOf } from "./time.ts";
 import { EntrantId, type LineupPair, type MatchOutcome } from "./types.ts";
 
 // spec 03 §2 — ids and time are injected (uuid in prod, `e-${n}` in tests);
@@ -47,8 +47,23 @@ export const CoreAward = z.strictObject({ person: z.string().min(1), key: z.stri
 // thunderstorm, a serious injury or a crowd incident — every one of which is
 // routinely followed by a restart — was unrecordable in every sport. The reason
 // is what the official wrote in the match record; it is never adjudicated.
-export const CoreSuspend = z.strictObject({ reason: z.string().min(1).optional() });
-export const CoreResume = z.strictObject({}); // play restarts; the stoppage ends
+//
+// W4a (#425) §1.2 — both carry an optional `at`, and it is the flagship reason
+// the model is game clock rather than wall clock: "how much GAME time did this
+// stoppage consume?" is `resume.at − suspend.at`, zero in a clock-stop sport
+// and non-zero where the clock ran on. Real elapsed time stays available from
+// the `recordedAt` delta, and how long the official was ALLOWED is a separate
+// explicit duration on the interruption event (§5.4) — three different
+// questions, three different sources.
+//
+// The pair sharing ONE stamp is correct, not a bug: in a clock-stop sport the
+// game clock does not move across the stoppage at all. Optional with no
+// default, so every stoppage recorded before this wave still folds unchanged.
+export const CoreSuspend = z.strictObject({
+  reason: z.string().min(1).optional(),
+  at: GameTime.optional(),
+});
+export const CoreResume = z.strictObject({ at: GameTime.optional() }); // play restarts
 
 export const CORE_EVENT_SCHEMAS = {
   "core.start": CoreStart,
@@ -286,28 +301,19 @@ export function foldMatchWithStoppage<Cfg, State>(
         { eventId: event.id, stoppage },
       );
     }
-    if (event.type === "core.suspend") {
-      // Guarded by the branch above, so this can only be the first suspend.
-      const reason = (event.payload as z.infer<typeof CoreSuspend>).reason;
-      stoppage = { ...(reason === undefined ? {} : { reason }), eventId: event.id };
-      continue; // kernel-owned: the module never sees it
-    }
-    if (event.type === "core.resume") {
-      // A resume with no open stoppage is a NO-OP, not an error. Undo is void
-      // (guarantee 3): voiding a mis-entered core.suspend leaves the resume
-      // that followed it pointing at nothing, which is meaningless but not
-      // contradictory — refusing it made the whole match unfoldable until the
-      // scorer also voided the resume, which is not an undo anyone would find.
-      stoppage = null;
-      continue; // kernel-owned: the module never sees it
-    }
+    // The time guard runs ABOVE the two kernel-owned `continue`s below, so a
+    // core.suspend / core.resume stamp is checked and counted like any other.
+    // Below them it would have been dead code for the one pair §1.2 names as
+    // the reason the model is game clock at all.
+    //
     // Two carve-outs, both load-bearing (§3.3):
     //  - An UNSTAMPED event is unconstrained. gameTimeOf returns null for every
     //    payload written before this wave, so no recorded stream changes
     //    meaning — this null is what makes the wave additive. It is neither
     //    checked against the high-water mark nor allowed to advance it.
     //  - An EQUAL stamp is legal. core.suspend and its core.resume share one
-    //    (§1.2), and so do two penalties awarded at a single whistle. Only a
+    //    (§1.2) — in a clock-stop sport that is the NORMAL reading, not an edge
+    //    case — and so do two penalties awarded at a single whistle. Only a
     //    strictly earlier stamp throws.
     const at = gameTimeOf(event.payload);
     if (at !== null) {
@@ -329,6 +335,21 @@ export function foldMatchWithStoppage<Cfg, State>(
         );
       }
       highWater = at;
+    }
+    if (event.type === "core.suspend") {
+      // Guarded by the WRONG_PHASE branch above, so this is the first suspend.
+      const reason = (event.payload as z.infer<typeof CoreSuspend>).reason;
+      stoppage = { ...(reason === undefined ? {} : { reason }), eventId: event.id };
+      continue; // kernel-owned: the module never sees it
+    }
+    if (event.type === "core.resume") {
+      // A resume with no open stoppage is a NO-OP, not an error. Undo is void
+      // (guarantee 3): voiding a mis-entered core.suspend leaves the resume
+      // that followed it pointing at nothing, which is meaningless but not
+      // contradictory — refusing it made the whole match unfoldable until the
+      // scorer also voided the resume, which is not an undo anyone would find.
+      stoppage = null;
+      continue; // kernel-owned: the module never sees it
     }
     state = module.apply(state, event);
     if (!decided) {
