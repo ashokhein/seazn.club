@@ -169,17 +169,48 @@ match at 1 Hz is ~3600 extra events, and an irregular cadence (backgrounded
 tab, flaky network) makes two replays of the same match diverge. Replay
 determinism must not depend on something the scorer does not control.
 
-### 3.2 Expiry does not cross a period boundary
+### 3.2 Expiry carries across a period boundary
 
-`addDuration` stays within the named period. A minor awarded at `19:10` of a
-20-minute period nominally runs into the next period, but the engine cannot
-compute that without a period-length table it does not require (`periodSeconds`
-is optional, §1.3). Such a suspension simply does not expire by time; it ends
-on an explicit `suspension.end`, exactly as today.
+**Amended 2026-08-04.** This section originally said expiry never crosses a
+boundary, on the reasoning that the engine had no period-length table. Both
+halves were wrong, and the review that found it is the reason this reads the
+way it does now.
 
-This is a deliberate, documented limitation, recorded as a `deferred` dossier
-row rather than half-solved. Promoting it needs `periodSeconds` to become
-required, which is a product decision this wave does not force.
+The rule does not exist in either sport's laws. IIHF carries an unserved
+penalty into the next period; IFAB's temporary-dismissal protocol carries the
+unserved remainder of a sin bin into the next half in exactly the same way. A
+minor awarded at `19:10` of a 20-minute period **runs into the next period**,
+and a fold that ends it at the whistle under-serves it — which is worse than
+not modelling expiry at all, because it is silently wrong in the sport's
+favour rather than visibly incomplete.
+
+Nor is the length missing. `cfg.periods.minutes` and `cfg.overtime.minutes`
+are already **required** positive integers, and every phase the expiry walk
+can reach is `periodLabels + otLabels`. Verified across all five shipped
+variants: ice/iihf P1–P3 = 1200, OT = 300; ice/recreational P1–P3 = 1200, no
+OT; fih-outdoor and fih-shootout Q1–Q4 = 900; fih/youth Q1–Q4 = 600. The gap
+list for the carry is **empty**.
+
+So: derive the period length from cfg inside the expiry walk — never as a zod
+`.default()`, which would change every serialised golden state string.
+`cfg.periodSeconds` stays as an **override for the one thing cfg cannot
+express**: unequal period lengths, since `periods.minutes` is a single scalar
+for all n and `overtime{kind:"periods"}.minutes` a single scalar for OT1..OTk.
+
+A `periodSeconds` map that contradicts its cfg source is **ignored, not
+refused** — the required scalar wins. Refusing would mean a `CONFIG_INVALID`
+raised on the replay path, and cfg is read live from `division.config` on
+every read, so a later admin config edit would make every already-scored
+fixture in the division permanently unviewable. Same reasoning as the
+never-throws rule on the sweep itself.
+
+**The fallback, named rather than assumed:** where no length is derivable for
+a phase, the expiry stays in-period and the suspension ends on an explicit
+`suspension.end`. That is a fallback for an unreachable case, not the rule.
+
+`addDuration` itself is unchanged: it is a primitive over one period and never
+rolls forward. The carry lives in the expiry walk, which advances phase by
+phase using `playPhases` (§7).
 
 ### 3.3 Stamps must not travel backwards
 
@@ -573,16 +604,16 @@ Every change ships a test that fails without it.
 | Layer | What it covers |
 |---|---|
 | **Unit** | `core/time.ts` helpers: compare across phases, `addDuration` staying in-period, format/parse round-trip, `gameTimeOf` rejecting non-`GameTime`. |
-| **Unit** | Sweep: expiry at, before and after the boundary; expiry that would cross a period (must NOT expire, §3.2). |
+| **Unit** | Sweep: expiry at, before and after the boundary; expiry that crosses a period (must carry the unserved remainder into the next phase, §3.2); the named in-period fallback where no length is derivable; a contradicting `periodSeconds` ignored rather than refused. |
 | **Unit** | Release-on-goal: releasable vs not, conceding vs scoring side, earliest-first with two running, no release when either side of the pair lacks time. |
 | **Unit** | Monotonic guard: backwards rejected, equal accepted, unstamped interleaved freely, guard skipped entirely for unstamped streams. |
 | **Unit** | Phase order: an undeclared period is `INVALID_EVENT` and names the valid phases; an empty and a duplicated declaration are each `CONFIG_INVALID` at fold start. |
 | **Per-sport** | The module's `playPhases` **is** the sport's exported phase-order function (reference identity, §7 obligation 4), and the list it returns covers `pre` and `SHOOTOUT` with the shootout last. |
 | **Regression** | A stream with **no** `at` anywhere folds to a byte-identical state before and after this wave — the additive proof at fold level, independent of the goldens. |
-| **Golden** | All eleven `<key>.golden.json` byte-identical, no re-baseline. New coverage lands as appended streams with the prefix verified. |
+| **Golden** | All eleven `<key>.golden.json` byte-identical, no re-baseline. New coverage lands as appended streams with the prefix verified. **Known blind spot:** `keepRecordedCfg` swaps the recomputed cfg for the recorded one wholesale, so a cfg change cannot red a golden. A green golden is evidence about events and derived state, never proof that a cfg change was additive. |
 | **Conformance** | Existing cross-sport invariants stay green; `arbitraryEvent` emits `at` for the new fields so property runs exercise them. |
 | **Dossier** | `testkit/dossiers.test.ts` — every touched row moves off `deferred` and the `**Row counts:**` tally matches. |
-| **Disambiguation** | Per §8, one test per union per payload shape. |
+| **Disambiguation** | Per §8, one test per union per payload shape — and it must pin **which branch won**, not merely that the payload round-trips. Four shapes that pin nothing were shipped and caught in review this wave: (1) `toEqual(payload)` against a `strictObject` union — zod returns the input unchanged, so it passes on any winning branch; (2) a hand-ordered local `BRANCHES` copy, so reordering the real union reds nothing — filter the real `…Ev.options` instead; (3) asserting `code: "INVALID_EVENT"` alone, which is thrown by `apply`'s `default:`, by every `parsePayload` failure and by `sideOf` — match on `message`; (4) a metric's `when` predicate asserted only by the metric's existence. Assert the losing branches **reject**. |
 | **New-type completeness** | For `expedite.start` and `interruption`: assert each appears in `fidelityTiers`, is reachable from `arbitraryEvent`, and changes `summary` — the three of the five edits (§5.6) that fail silently. |
 | **Smoke** | `scripts/smoke.ts` extended: a timed hockey match where a minor expires and a powerplay goal releases another. |
 | **e2e** | Deferred to W10 (#421), where the pad first meets the API. This wave ships no `apps/web` surface, so there is nothing to drive. Recorded here so its absence is a decision, not an oversight. |
@@ -610,6 +641,10 @@ checkout between calls and will false-green.
 - Persisting `at` — the events table gains no column this wave. The engine
   accepts the field; wiring it through the API is W10 (#421).
 - Mutable squads / lineup events — #426, the next wave.
-- Expiry across a period boundary (§3.2).
+- ~~Expiry across a period boundary~~ — **no longer out of scope.** §3.2 was
+  amended 2026-08-04: the carry is in, because the rule that justified deferring
+  it does not exist in either sport's laws and the period lengths were already
+  required cfg. Kept here struck through so the reversal is visible rather than
+  quietly dropped.
 - Enforcing the FIH 8-second shoot-out clock (§5.1).
 - Per-move board clocks (§5.5).
