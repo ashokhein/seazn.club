@@ -837,6 +837,27 @@ export function pairRestMinutes(config: VerifyConfig, a: Assignment, other: Assi
   return pairRestMinutesWith(effectiveHard(config), ruleFixtureIndex(config), config, a, other);
 }
 
+/** `pairRestMinutes` bound to ONE config, with the two per-config derivations
+ *  made once up front (#401).
+ *
+ *  The repair encoder walks the same O(n²) pair space `validateAssignments`
+ *  does — 125k pairs at the 500-fixture cap — and the plain wrapper re-derives
+ *  `effectiveHard` and the ruleFixtures index on every call, which cost this
+ *  file 47 ms → 5242 ms before the hoist. Rather than let the solver grow its
+ *  own copy of that loop's body, it takes this closure: one implementation
+ *  (`pairRestMinutesWith`), three readers (the verifier, this factory, and the
+ *  one-off wrapper above).
+ *
+ *  The asymmetry note on `pairRestMinutes` applies unchanged — this is the same
+ *  answer, not a cheaper approximation of it. */
+export function pairRestMinutesFor(
+  config: VerifyConfig,
+): (a: Assignment, other: Assignment) => number {
+  const hard = effectiveHard(config);
+  const fixtureById = ruleFixtureIndex(config);
+  return (a, other) => pairRestMinutesWith(hard, fixtureById, config, a, other);
+}
+
 /** `pairRestMinutes` with the two per-CONFIG derivations lifted into parameters.
  *
  *  They do not vary with `a`/`other`, and this is called from an O(n²) loop, so
