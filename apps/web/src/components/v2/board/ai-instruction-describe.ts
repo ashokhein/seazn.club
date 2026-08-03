@@ -20,7 +20,7 @@
 //    not meet English rules on the one screen that tells them what they are
 //    paying for.
 //
-// The TOKENS are the exception, and on purpose. `REST`, `PER DAY`, `WEEKDAY` …
+// The TOKENS are the exception, and on purpose. `REST`, `MAX/DAY`, `≥ TIME` …
 // are the engine's own six constraint kinds rendered as a code, in the same
 // register as the `CAP` rule chips and the `FN`/`JR` markers already on this
 // board — a short stable vocabulary that means the same thing in every locale
@@ -28,6 +28,16 @@
 // them would give the same rule four names. Rule CODES (H2/H4/H8) are NOT used
 // here: every compiled instruction rule verifies as H8, so that chip would
 // print the same character on every row and say nothing.
+//
+// That defence only holds for a SYMBOL or an ABBREVIATION. #400 Task 6b: the
+// first four tokens shipped as English words — `PER DAY`, `WEEKDAY`,
+// `NOT BEFORE`, `NOT AFTER` — which the `CAP`/`FN`/`JR` precedent does not
+// cover, and a French organiser met four of them on the signature element of
+// the screen that tells them what they are paying for. The forms below are the
+// shortest stable codes the six kinds can carry: a comparison glyph for the two
+// that were phrases, and single abbreviations for the rest — a code to be
+// learned once, not an English sentence fragment to be read. Adding a seventh
+// kind means picking a token that survives the same reading.
 import type { ConstraintScope, HardConstraint, FixtureSelector } from "@seazn/engine/scheduling";
 import type { MessageKey } from "@/lib/messages";
 
@@ -64,15 +74,15 @@ export function constraintToken(c: HardConstraint): string {
     case "min_rest_minutes":
       return "REST";
     case "max_fixtures_per_day":
-      return "PER DAY";
+      return "MAX/DAY";
     case "fixture_on_weekday":
-      return "WEEKDAY";
+      return "DAY";
     case "fixture_on_date":
       return "DATE";
     case "not_before":
-      return "NOT BEFORE";
+      return "≥ TIME";
     case "not_after":
-      return "NOT AFTER";
+      return "≤ TIME";
     default: {
       const _never: never = c;
       return _never;

@@ -104,8 +104,12 @@ describe("AiInstructionPreview", () => {
 
   it("puts the engine's own token on every enforced row", () => {
     const html = render(card(PREVIEW));
-    expect(html).toContain(">PER DAY<");
-    expect(html).toContain(">WEEKDAY<");
+    expect(html).toContain(">MAX/DAY<");
+    expect(html).toContain(">DAY<");
+    // Locale-neutral, not English prose: the token is the one string on this
+    // card that is never translated (#400 Task 6b).
+    expect(html).not.toContain(">PER DAY<");
+    expect(html).not.toContain(">WEEKDAY<");
     // Never a rule code: every compiled instruction rule verifies as H8, so an
     // H8 chip on every row would say nothing at all.
     expect(html).not.toContain(">H8<");

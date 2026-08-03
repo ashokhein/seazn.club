@@ -39,43 +39,63 @@ const ctx = ctxFor(enDict, "en");
 
 const COMPETITION = { kind: "competition" } as const;
 
+/** One row per `HardConstraint` member: the constraint, its ledger token, and
+ *  the English reading. Held in a const rather than inline in `it.each` so the
+ *  prose guard below reads the SAME tokens the table pins — two lists would
+ *  drift, and the guard would then be checking a copy of the vocabulary rather
+ *  than the vocabulary. */
+const CASES: [Record<string, unknown>, string, string][] = [
+  [
+    { type: "min_rest_minutes", minutes: 45, rest_scope: "per_person", scope: COMPETITION },
+    "REST",
+    "at least 45 min rest between a player's matches",
+  ],
+  [
+    { type: "max_fixtures_per_day", count: 2, scope: COMPETITION },
+    "MAX/DAY",
+    "at most 2 matches a day",
+  ],
+  [
+    {
+      type: "fixture_on_weekday",
+      selector: { kind: "terminal" },
+      weekday: "FRI",
+      scope: COMPETITION,
+    },
+    "DAY",
+    "the final on Friday",
+  ],
+  [
+    {
+      type: "fixture_on_date",
+      selector: { kind: "terminal" },
+      date: "2026-08-07",
+      scope: COMPETITION,
+    },
+    "DATE",
+    "the final on 7 Aug 2026",
+  ],
+  [{ type: "not_before", time: "09:00", scope: COMPETITION }, "≥ TIME", "nothing before 09:00"],
+  [{ type: "not_after", time: "21:00", scope: COMPETITION }, "≤ TIME", "nothing after 21:00"],
+];
+
 describe("constraintToken / describeHardConstraint", () => {
-  it.each([
-    [
-      { type: "min_rest_minutes", minutes: 45, rest_scope: "per_person", scope: COMPETITION },
-      "REST",
-      "at least 45 min rest between a player's matches",
-    ],
-    [
-      { type: "max_fixtures_per_day", count: 2, scope: COMPETITION },
-      "PER DAY",
-      "at most 2 matches a day",
-    ],
-    [
-      {
-        type: "fixture_on_weekday",
-        selector: { kind: "terminal" },
-        weekday: "FRI",
-        scope: COMPETITION,
-      },
-      "WEEKDAY",
-      "the final on Friday",
-    ],
-    [
-      {
-        type: "fixture_on_date",
-        selector: { kind: "terminal" },
-        date: "2026-08-07",
-        scope: COMPETITION,
-      },
-      "DATE",
-      "the final on 7 Aug 2026",
-    ],
-    [{ type: "not_before", time: "09:00", scope: COMPETITION }, "NOT BEFORE", "nothing before 09:00"],
-    [{ type: "not_after", time: "21:00", scope: COMPETITION }, "NOT AFTER", "nothing after 21:00"],
-  ])("describes %s", (c, token, text) => {
+  it.each(CASES)("describes %s", (c, token, text) => {
     expect(constraintToken(c as HardConstraint)).toBe(token);
     expect(describeHardConstraint(c as HardConstraint, ctx)).toContain(text);
+  });
+
+  // #400 Task 6b. The token is the one string on this card that is NOT
+  // translated, and that only holds while it is a symbol or an abbreviation.
+  // "PER DAY" / "NOT BEFORE" / "NOT AFTER" / "WEEKDAY" were English words on
+  // the element the design calls the signature — four of them, read as-is by a
+  // French organiser on the screen that tells them what they are paying for.
+  it("keeps English prose off the ledger spine", () => {
+    for (const [, token] of CASES) {
+      expect(token, `${token} is an English phrase, not a locale-neutral token`).not.toMatch(
+        /\b(PER|NOT|BEFORE|AFTER|WEEKDAY|DAILY|PREFER)\b/,
+      );
+    }
   });
 
   it("covers every member of the HardConstraint union", () => {
