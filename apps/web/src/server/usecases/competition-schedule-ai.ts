@@ -74,6 +74,9 @@ import {
   type SchedulePack,
 } from "./schedule-ai";
 import { AiSchedulePlan, INSTRUCTION_RULES, JOINT_RULES, SYSTEM_PROMPT } from "./schedule-ai-prompt";
+import { parseInstruction, resolveParsed, type RawParsed } from "./schedule-ai-parse";
+import { validateInstructionRules } from "@seazn/engine/scheduling";
+import type { HardConstraint, RuleFixture, VerifyConfig } from "@seazn/engine/scheduling";
 import { resolveProvider, selectProvider, type ProviderName } from "@/server/ai/select-provider";
 import {
   AiProviderError,
@@ -250,6 +253,15 @@ export interface CompetitionPack {
    *  stripped bye feeders (from each source pack) and the run-wide same-name
    *  person grouping. Rendered at W5 (#400). */
   assumptions: string[];
+  /** The organiser's instruction, compiled (#398). Resolved ONCE at this level,
+   *  not per division: a joint run is one set of days and one reading, and the
+   *  feasibility bump needs the whole run's fixture count to be right. PROMPT
+   *  MATERIAL — the model is verified against exactly these rules. */
+  parsed: {
+    hard: HardConstraint[];
+    soft: { note: string; weight: 1 | 2 | 3 }[];
+    unparsed: string[];
+  };
   fixtures: { movable: CompetitionPackFixture[]; obstacles: CompetitionPackObstacle[] };
   draft: CompetitionPackDraftAssignment[];
   instruction: string;
@@ -286,6 +298,8 @@ export function toJointModelPayload(
     clock: pack.clock,
     window: pack.window,
     sessionHours: pack.sessionHours,
+    // #398: the compiled instruction IS prompt material.
+    parsed: pack.parsed,
     divisions: pack.divisions,
     courts: pack.courts,
     divergentCourts: pack.divergentCourts,
@@ -305,6 +319,11 @@ export interface BuildCompetitionPackOptions {
    *  (#397): forwarded verbatim to every per-division `buildSchedulePack`, so
    *  the divisions of one run cannot disagree about what "today" is. */
   now: number;
+  /** Stage-1 output (#398), or null. Resolved here rather than inside each
+   *  per-division sub-pack: one run is one reading of "till Friday", and the
+   *  feasibility bump must see the JOINT fixture count or it would extend a
+   *  window per division on partial counts. */
+  raw?: RawParsed | null;
   prior?: { instruction: string; assignments: CompetitionPackAssignment[] };
 }
 
@@ -712,7 +731,7 @@ export async function buildCompetitionPack(
   // that legitimately starts later to fit inside another division's day.
   const orgTz = built[0]!.pack.tz;
   const clock = built[0]!.pack.clock;
-  const window = {
+  const window: { start: string; end: string } = {
     start: built.reduce(
       (acc, b) => (Date.parse(b.pack.window.start) < Date.parse(acc) ? b.pack.window.start : acc),
       built[0]!.pack.window.start,
@@ -753,6 +772,17 @@ export async function buildCompetitionPack(
     ...built.flatMap((b) => b.pack.assumptions).filter((a) => !IDENTITY_ASSUMPTION.test(a)),
     ...identity.assumptions,
   ];
+
+  // #398: the compiled instruction, resolved once for the whole run against the
+  // joint movable count. A window the organiser stated in words REPLACES the
+  // union above — the union is the right default for windows we inferred, but
+  // it would quietly widen the one window they actually asked for.
+  const resolved = resolveParsed(opts.raw ?? null, clock, orgTz, { fixtureCount: movable.length });
+  if (resolved.windowMs !== null) {
+    window.start = zonedIso(resolved.windowMs.from, orgTz);
+    window.end = zonedIso(resolved.windowMs.to, orgTz);
+  }
+  assumptions.push(...resolved.assumptions);
 
   // -------------------------------------------------------------------------
   // Obstacles.
@@ -922,6 +952,7 @@ export async function buildCompetitionPack(
     people,
     participants,
     assumptions,
+    parsed: { hard: resolved.hard, soft: resolved.soft, unparsed: resolved.unparsed },
     fixtures: { movable, obstacles },
     draft,
     instruction: opts.instruction,
@@ -1155,9 +1186,30 @@ export function verifyConfigFor(
    *  and a window there today would turn every pre-existing board into a wall
    *  of warnings. */
   window?: { from: number; to: number },
-): Parameters<typeof validateAssignments>[1] {
+  /** The run-wide typed-rule inputs (#398). Optional for the same reason
+   *  `window` is: the apply path passes none, because apply-time blocking is
+   *  W4 (#399). `restByDivision` is what makes a cross-division pair rest at
+   *  the MAX of both divisions rather than at whichever pass happened to see
+   *  it — this function runs once PER DIVISION with that division's own
+   *  config, which is exactly how the pair came to be checked twice at two
+   *  different values. */
+  rules?: {
+    tz: string;
+    hard: readonly HardConstraint[];
+    ruleFixtures: readonly RuleFixture[];
+    restByDivision: Readonly<Record<string, number>>;
+  },
+): VerifyConfig {
   const s = division.settings;
   return {
+    ...(rules !== undefined
+      ? {
+          tz: rules.tz,
+          hard: rules.hard,
+          ruleFixtures: rules.ruleFixtures,
+          restByDivision: rules.restByDivision,
+        }
+      : {}),
     perEntrantMinRest: s.perEntrantMinRest,
     matchMinutes: s.matchMinutes,
     ...(s.constraints !== null
@@ -1279,13 +1331,52 @@ export function verifyJoint(plan: AiSchedulePlan, pack: CompetitionPack): Confli
   const deps = jointFeedDependencies(pack);
   const seen = new Set<string>();
   const out: Conflict[] = [];
+
+  // #398: built ONCE for the run, then handed to every per-division pass.
+  // `restByDivision` is the fix for cross-division rest: a human entered in two
+  // divisions recovers at the MAX of both values, not at whichever division's
+  // pass happened to look at the pair. `hard` merges the compiled instruction
+  // with every division's durable rules so there is one stream.
+  const restByDivision = Object.fromEntries(
+    pack.divisions.map((d) => [d.id, d.settings.perEntrantMinRest]),
+  );
+  const ruleFixtures: RuleFixture[] = pack.fixtures.movable.map((f) => ({
+    id: f.id,
+    extKey: f.ext_key,
+    divisionId: f.division_id,
+    ...(f.pool !== null ? { poolId: f.pool } : {}),
+    winnerTo: f.feeds.winner_to,
+  }));
+  const hard: HardConstraint[] = [
+    ...pack.parsed.hard,
+    ...pack.divisions.flatMap((d) => d.settings.constraints?.hard ?? []),
+  ];
+  // A competition-scoped rule is a statement about the WHOLE board, so it is
+  // evaluated ONCE below rather than inside a per-division pass — counted per
+  // pass, three fixtures split 2/1 across two divisions would satisfy a 2/day
+  // cap the competition plainly breaks. The per-division passes get only the
+  // `min_rest_minutes` entries, which are resolved pairwise (and raise the rest
+  // bound rather than reporting a rule of their own).
+  const rules = {
+    tz: pack.tz,
+    hard: hard.filter((h) => h.type === "min_rest_minutes"),
+    ruleFixtures,
+    restByDivision,
+  };
+  for (const c of validateInstructionRules(all, { tz: pack.tz, hard, ruleFixtures })) {
+    const key = `${c.fixtureId}|${c.reason}|${c.detail ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
+  }
+
   for (const division of pack.divisions) {
     const mine = all.filter((a) => a.divisionId === division.id);
     if (mine.length === 0) continue;
     const others = all.filter((a) => a.divisionId !== division.id);
     for (const c of validateAssignments(
       mine,
-      verifyConfigFor(division, windowBounds(pack.window)),
+      verifyConfigFor(division, windowBounds(pack.window), rules),
       [...others, ...obstacles],
       deps,
     )) {
@@ -1963,10 +2054,25 @@ export async function aiPlanForCompetition(
   // run burn a slot in every selected division's per-division bucket.
   await rateLimit(`ai-plan-competition:${competitionId}`, { max: 3, windowSeconds: 3600 });
 
+  // Stage-1 compile (#398), OUTSIDE `spendCredit` and ahead of the quote — the
+  // joint twin of the single-division pre-flight. A credit buys a token BUDGET,
+  // not a number of rounds. The model is shown every kept division's id and
+  // name, so "finals in the Open on Friday" can compile to a scoped rule; a
+  // failure is not fatal and simply leaves the run with no compiled rules.
+  const parse =
+    input.instruction.trim().length > 0
+      ? await parseInstruction(input.instruction, {
+          divisions: kept.map((id) => ({ id, name: byId.get(id)!.name })),
+          pools: [],
+          entrants: [],
+        })
+      : { raw: null, failed: false, tokens: 0, servedModel: null };
+
   // The summed 500-fixture cap lives in here — still before any reserve.
   const { pack, movableIds } = await buildCompetitionPack(auth, competitionId, kept, {
     mode: input.mode,
     instruction: input.instruction,
+    raw: parse.raw,
     // The one wall-clock read on this path (#397). Everything downstream takes
     // the instant as a parameter, so a run is reproducible from its inputs.
     now: Date.now(),
@@ -2068,7 +2174,7 @@ export async function aiPlanForCompetition(
                     // breakdown behind the discount — stamped on the failure row
                     // too, so a run that cost real tokens for nothing is priced
                     // in the ledger exactly like one that worked.
-                    ...meterStamp(quote, meter),
+                    ...meterStamp(quote, meter, { tokens: parse.tokens, failed: parse.failed }),
                     ...(providerErr
                       ? {
                           provider_status: providerCause?.status ?? null,
@@ -2139,7 +2245,7 @@ export async function aiPlanForCompetition(
                 // credits, discount, budget, spent_tokens, stopped_on_budget,
                 // underfunded and the per-division breakdown — one builder, so
                 // the event and the API response cannot drift.
-                ...meterStamp(quote, meter),
+                ...meterStamp(quote, meter, { tokens: parse.tokens, failed: parse.failed }),
                 ...(result.escalated_from
                   ? {
                       escalated_from: result.escalated_from,
@@ -2213,7 +2319,7 @@ export async function aiPlanForCompetition(
       output_tokens: result.usage.output_tokens,
       repair_rounds: result.usage.repair_rounds,
     },
-    ...meterStamp(quote, meter),
+    ...meterStamp(quote, meter, { tokens: parse.tokens, failed: parse.failed }),
     // AFTER the stamp, deliberately: the stamp carries its own narrow
     // `divisions` breakdown and this merged one replaces it (see the field's
     // doc comment). Every solved division has a quote line — they are built

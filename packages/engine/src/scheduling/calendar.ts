@@ -513,6 +513,110 @@ export function resolveSelector(
   }
 }
 
+/**
+ * The typed rules compiled from the organiser's instruction (#398), evaluated
+ * over the assignments given.
+ *
+ * Separate from `validateAssignments` because SCOPE AND PASS ARE DIFFERENT
+ * THINGS. `verifyJoint` runs one `validateAssignments` pass per division with
+ * that division's own config, but a competition-scoped rule — "two matches per
+ * day" — is a statement about the WHOLE board. Counted inside a per-division
+ * pass it sees only that division's fixtures, so three fixtures split 2/1 across
+ * two divisions would satisfy a 2/day cap that the competition plainly breaks.
+ * The joint verifier therefore calls this ONCE over every assignment and hands
+ * its per-division passes only the `min_rest_minutes` entries, which are the
+ * ones resolved pairwise rather than counted.
+ *
+ * `min_rest_minutes` is deliberately not reported here: it RAISES the rest bound
+ * inside `validateAssignments` instead, so one too-short gap is reported once as
+ * `rest` and not twice.
+ */
+export function validateInstructionRules(
+  assignments: readonly Assignment[],
+  config: Pick<VerifyConfig, "tz" | "hard" | "ruleFixtures">,
+): Conflict[] {
+  const conflicts: Conflict[] = [];
+  const hard = config.hard ?? [];
+  const fixtureById = new Map((config.ruleFixtures ?? []).map((f) => [f.id, f]));
+  // Typed instruction rules (#398). Warn-only in this wave. Every rule here
+// needs a day boundary or a wall-clock time, so all of them need the org zone;
+// without one the whole block is SKIPPED rather than bucketed in UTC.
+const ruleFixtures = config.ruleFixtures ?? [];
+const placedById = new Map(assignments.map((a) => [a.fixtureId, a]));
+const tz = config.tz;
+if (tz !== undefined) {
+  for (const h of hard) {
+    // min_rest_minutes is folded into `restFor` above — it raises the rest
+    // bound rather than producing a rule violation of its own, so a single
+    // too-short gap is reported once as `rest`, not twice.
+    if (h.type === "min_rest_minutes") continue;
+
+    if (h.type === "max_fixtures_per_day") {
+      const perDay = new Map<string, Assignment[]>();
+      for (const a of assignments) {
+        if (!scopeCoversFixture(h.scope, fixtureById.get(a.fixtureId), a)) continue;
+        const key = dayKeyInTz(a.startAt, tz);
+        const bucket = perDay.get(key);
+        if (bucket === undefined) perDay.set(key, [a]);
+        else bucket.push(a);
+      }
+      for (const [day, list] of perDay) {
+        if (list.length <= h.count) continue;
+        for (const a of list) {
+          conflicts.push({
+            fixtureId: a.fixtureId,
+            reason: "instruction",
+            detail: `${list.length} fixtures on ${day} exceed the ${h.count}/day cap`,
+          });
+        }
+      }
+      continue;
+    }
+
+    if (h.type === "fixture_on_weekday" || h.type === "fixture_on_date") {
+      for (const f of resolveSelector(h.selector, h.scope, ruleFixtures)) {
+        const a = placedById.get(f.id);
+        // Absence is not a violation of THIS rule — an unplaced fixture is
+        // reported by the no_slot / unschedulable path instead.
+        if (a === undefined) continue;
+        if (!scopeCoversFixture(h.scope, f, a)) continue;
+        const day = dayKeyInTz(a.startAt, tz);
+        if (h.type === "fixture_on_weekday" && weekdayOfYmd(day) !== h.weekday) {
+          conflicts.push({
+            fixtureId: f.id,
+            reason: "instruction",
+            detail: `is on ${weekdayOfYmd(day)} ${day}, instruction requires ${h.weekday}`,
+          });
+        }
+        if (h.type === "fixture_on_date" && day !== h.date) {
+          conflicts.push({
+            fixtureId: f.id,
+            reason: "instruction",
+            detail: `is on ${day}, instruction requires ${h.date}`,
+          });
+        }
+      }
+      continue;
+    }
+
+    // not_before / not_after — wall-clock bounds on the START, in the org zone.
+    for (const a of assignments) {
+      if (!scopeCoversFixture(h.scope, fixtureById.get(a.fixtureId), a)) continue;
+      const start = hhmmInTz(a.startAt, tz);
+      const bad = h.type === "not_before" ? start < h.time : start > h.time;
+      if (bad) {
+        conflicts.push({
+          fixtureId: a.fixtureId,
+          reason: "instruction",
+          detail: `starts ${start}, violating ${h.type} ${h.time}`,
+        });
+      }
+    }
+  }
+}
+  return conflicts;
+}
+
 export function validateAssignments(
   assignments: readonly Assignment[],
   config: VerifyConfig,
@@ -654,82 +758,7 @@ export function validateAssignments(
     }
   }
 
-  // Typed instruction rules (#398). Warn-only in this wave. Every rule here
-  // needs a day boundary or a wall-clock time, so all of them need the org zone;
-  // without one the whole block is SKIPPED rather than bucketed in UTC.
-  const ruleFixtures = config.ruleFixtures ?? [];
-  const placedById = new Map(assignments.map((a) => [a.fixtureId, a]));
-  const tz = config.tz;
-  if (tz !== undefined) {
-    for (const h of hard) {
-      // min_rest_minutes is folded into `restFor` above — it raises the rest
-      // bound rather than producing a rule violation of its own, so a single
-      // too-short gap is reported once as `rest`, not twice.
-      if (h.type === "min_rest_minutes") continue;
-
-      if (h.type === "max_fixtures_per_day") {
-        const perDay = new Map<string, Assignment[]>();
-        for (const a of assignments) {
-          if (!scopeCoversFixture(h.scope, fixtureById.get(a.fixtureId), a)) continue;
-          const key = dayKeyInTz(a.startAt, tz);
-          const bucket = perDay.get(key);
-          if (bucket === undefined) perDay.set(key, [a]);
-          else bucket.push(a);
-        }
-        for (const [day, list] of perDay) {
-          if (list.length <= h.count) continue;
-          for (const a of list) {
-            conflicts.push({
-              fixtureId: a.fixtureId,
-              reason: "instruction",
-              detail: `${list.length} fixtures on ${day} exceed the ${h.count}/day cap`,
-            });
-          }
-        }
-        continue;
-      }
-
-      if (h.type === "fixture_on_weekday" || h.type === "fixture_on_date") {
-        for (const f of resolveSelector(h.selector, h.scope, ruleFixtures)) {
-          const a = placedById.get(f.id);
-          // Absence is not a violation of THIS rule — an unplaced fixture is
-          // reported by the no_slot / unschedulable path instead.
-          if (a === undefined) continue;
-          if (!scopeCoversFixture(h.scope, f, a)) continue;
-          const day = dayKeyInTz(a.startAt, tz);
-          if (h.type === "fixture_on_weekday" && weekdayOfYmd(day) !== h.weekday) {
-            conflicts.push({
-              fixtureId: f.id,
-              reason: "instruction",
-              detail: `is on ${weekdayOfYmd(day)} ${day}, instruction requires ${h.weekday}`,
-            });
-          }
-          if (h.type === "fixture_on_date" && day !== h.date) {
-            conflicts.push({
-              fixtureId: f.id,
-              reason: "instruction",
-              detail: `is on ${day}, instruction requires ${h.date}`,
-            });
-          }
-        }
-        continue;
-      }
-
-      // not_before / not_after — wall-clock bounds on the START, in the org zone.
-      for (const a of assignments) {
-        if (!scopeCoversFixture(h.scope, fixtureById.get(a.fixtureId), a)) continue;
-        const start = hhmmInTz(a.startAt, tz);
-        const bad = h.type === "not_before" ? start < h.time : start > h.time;
-        if (bad) {
-          conflicts.push({
-            fixtureId: a.fixtureId,
-            reason: "instruction",
-            detail: `starts ${start}, violating ${h.type} ${h.time}`,
-          });
-        }
-      }
-    }
-  }
+  conflicts.push(...validateInstructionRules(assignments, config));
 
   // Feed order (doc 12 §2 warn.order): a fixture may not start before a
   // fixture that feeds it has finished. Direct feeds block; the API layer maps
