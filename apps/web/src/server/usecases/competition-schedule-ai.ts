@@ -44,7 +44,7 @@ import "server-only";
 // MODEL's job, and JOINT_RULES tells it to rebalance rather than anchor on what
 // it was handed.
 import { withTenant } from "@/lib/db";
-import { HttpError } from "@/lib/errors";
+import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { MOVABLE_STATUS, OCCUPYING, peopleByEntrant } from "./schedule";
 import { ScheduleConfig } from "@/server/api-v1/schemas";
@@ -72,6 +72,7 @@ import {
   type PackObstacle,
   type PackPerson,
   type PackSettings,
+  type PreviewClaim,
   type SchedulePack,
 } from "./schedule-ai";
 import { AiSchedulePlan, INSTRUCTION_RULES, JOINT_RULES, SYSTEM_PROMPT } from "./schedule-ai-prompt";
@@ -81,7 +82,7 @@ import {
   type RawParsed,
   type ResolvedParse,
 } from "./schedule-ai-parse";
-import { consumePreview, PREVIEW_STALE } from "./schedule-ai-preview";
+import { consumePreview, PREVIEW_STALE, releasePreview } from "./schedule-ai-preview";
 import { validateInstructionRules } from "@seazn/engine/scheduling";
 import type { HardConstraint, RuleCode, RuleFixture, VerifyConfig } from "@seazn/engine/scheduling";
 import { resolveProvider, selectProvider, type ProviderName } from "@/server/ai/select-provider";
@@ -1970,6 +1971,28 @@ export async function aiPlanForCompetition(
   competitionId: string,
   input: AiCompetitionPlanRequest,
 ): Promise<AiCompetitionPlanResponse> {
+  // W5 (#400) Task 2b/H3, the joint twin of `aiPlanForDivision`'s wrapper: the
+  // confirmation is claimed early so a double-submitted confirm buys ONE run,
+  // and is handed back when the run never reached a reserved credit. A joint
+  // run is the most expensive one this product has, so paying twice for the
+  // same compile after a 402 is the most expensive version of that bug too.
+  const claim: PreviewClaim = { previewId: null, creditReserved: false };
+  try {
+    return await planForCompetition(auth, competitionId, input, claim);
+  } catch (err) {
+    if (claim.previewId !== null && !claim.creditReserved) {
+      await releasePreview(claim.previewId, auth.orgId);
+    }
+    throw err;
+  }
+}
+
+async function planForCompetition(
+  auth: AuthCtx,
+  competitionId: string,
+  input: AiCompetitionPlanRequest,
+  claim: PreviewClaim,
+): Promise<AiCompetitionPlanResponse> {
   // Stable analytics id: the user, or an org: synthetic when an API key drives
   // the call (auth.userId is null for key auth).
   const distinctId = auth.userId ?? `org:${auth.orgId}`;
@@ -2097,6 +2120,14 @@ export async function aiPlanForCompetition(
           orgId: auth.orgId,
           scope: "competition",
           scopeId: competitionId,
+          // H1 (V346). `scope_id` is the COMPETITION and says nothing about
+          // which divisions were selected — yet the stored window was resolved
+          // from their SUMMED movable-fixture count and the compiler was shown
+          // them by name. `kept`, not `requested`: R6 drops a division with
+          // nothing movable before the price, and the preview drops it too, so
+          // adding an already-scheduled division must not invalidate a
+          // confirmation the run would not charge for either.
+          divisionIds: kept,
           instruction: input.instruction,
         })
       : null;
@@ -2107,6 +2138,8 @@ export async function aiPlanForCompetition(
       PREVIEW_STALE,
     );
   }
+  // Held from here on; see the wrapper above.
+  if (confirmed !== null) claim.previewId = input.preview_id!;
 
   // Its OWN key namespace. Sharing `ai-plan:{divisionId}` would let one joint
   // run burn a slot in every selected division's per-division bucket. Skipped on
@@ -2128,12 +2161,15 @@ export async function aiPlanForCompetition(
   // bound is the exact price; without them each line floors at rung 1. The 402
   // still comes from `spendCredit`.
   //
-  // Skipped outright on a confirmed preview: that compile already happened, was
-  // already metered on its own ledger row, and its affordability gate already
-  // ran.
+  // The COMPILE is skipped on a confirmed preview — already run, already metered
+  // on its own ledger row — but the affordability bound is NOT (Task 2b/H3). The
+  // preview checked it minutes ago; a wallet emptied by another run in between
+  // makes this a 402, and discovering that at the reserve costs the confirmation
+  // as well as the run. Refuse here, before the pack is built, and the wrapper
+  // above gives the confirmation back so the retry is free.
   const canPay =
-    confirmed !== null ||
     (await balance(walletId)) >= minimumCredits(kept.map((id) => input.rung_overrides?.[id]));
+  if (confirmed !== null && !canPay) throw new PaymentRequiredError("ai.credits");
   const parse =
     confirmed !== null
       ? { raw: confirmed.raw, failed: false, tokens: 0, servedModel: null }
@@ -2203,12 +2239,18 @@ export async function aiPlanForCompetition(
     // PaymentRequiredError("ai.credits") from an empty wallet is raised by the
     // reserve itself, before the model is ever called, and falls through the
     // catch below untouched.
-    result = await spendCredit(walletId, auth.orgId, quote.credits, async () => ({
-      aiRunId: crypto.randomUUID(),
-      // The LADDER, not the single-model runner: production wants the fallback
-      // chain, and the two names differ by one word.
-      result: await runCompetitionAiPlanLadder(pack, movableIds, meter),
-    }));
+    result = await spendCredit(walletId, auth.orgId, quote.credits, async () => {
+      // The hold exists by the time this runs, so the confirmation is now
+      // genuinely spent: a later failure releases the CREDIT but must not
+      // reopen a preview whose run actually started.
+      claim.creditReserved = true;
+      return {
+        aiRunId: crypto.randomUUID(),
+        // The LADDER, not the single-model runner: production wants the
+        // fallback chain, and the two names differ by one word.
+        result: await runCompetitionAiPlanLadder(pack, movableIds, meter),
+      };
+    });
   } catch (err) {
     // Spec §11: a run that produced nothing usable is not charged (spendCredit
     // released the hold on the throw) but IS recorded — an un-metered failure

@@ -19,7 +19,7 @@ import {
   type AiTurn,
 } from "@/server/ai/provider";
 import { withTenant } from "@/lib/db";
-import { HttpError } from "@/lib/errors";
+import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
 import { balance, spendCredit, walletIdFor } from "@/lib/credits";
 import { rateLimit } from "@/lib/rate-limit";
@@ -66,7 +66,7 @@ import {
   type RawParsed,
   type ResolvedParse,
 } from "@/server/usecases/schedule-ai-parse";
-import { consumePreview, PREVIEW_STALE } from "@/server/usecases/schedule-ai-preview";
+import { consumePreview, PREVIEW_STALE, releasePreview } from "@/server/usecases/schedule-ai-preview";
 import {
   assignOfficials,
   type AssignPolicy,
@@ -2177,6 +2177,41 @@ export async function aiPlanForDivision(
   divisionId: string,
   input: AiPlanRequest,
 ): Promise<AiPlanResponse> {
+  // W5 (#400) Task 2b/H3. The confirmation is claimed early — before the pack,
+  // the quote and the reserve — because an atomic single-use claim is the only
+  // thing that makes a double-submitted confirm buy ONE run under READ
+  // COMMITTED. The claim therefore has to be given back when the run never got
+  // as far as reserving a credit, or an empty wallet or an unplannable division
+  // would silently cost the organiser their confirmation and a second compile.
+  //
+  // A flag rather than a `try` around the body: `creditReserved` is set inside
+  // `spendCredit`'s callback, which only runs once the hold exists, so
+  // "nothing was bought" is read off the reserve itself and not inferred from
+  // which error came back.
+  const claim: PreviewClaim = { previewId: null, creditReserved: false };
+  try {
+    return await planForDivision(auth, divisionId, input, claim);
+  } catch (err) {
+    if (claim.previewId !== null && !claim.creditReserved) {
+      await releasePreview(claim.previewId, auth.orgId);
+    }
+    throw err;
+  }
+}
+
+/** Mutable out-parameter for the release above: what this run claimed, and
+ *  whether it ever got far enough to owe anything for it. */
+export interface PreviewClaim {
+  previewId: string | null;
+  creditReserved: boolean;
+}
+
+async function planForDivision(
+  auth: AuthCtx,
+  divisionId: string,
+  input: AiPlanRequest,
+  claim: PreviewClaim,
+): Promise<AiPlanResponse> {
   // Stable analytics id: the user, or an org: synthetic when a key drives the
   // call (auth.userId is null for API-key auth — CaptureArgs convention).
   const distinctId = auth.userId ?? `org:${auth.orgId}`;
@@ -2244,6 +2279,11 @@ export async function aiPlanForDivision(
           orgId: auth.orgId,
           scope: "division",
           scopeId: divisionId,
+          // Redundant here — a division preview's scope_id IS this id — and
+          // written anyway, so the predicate is one unconditional array
+          // equality on both paths rather than a shape the joint path alone
+          // has to remember (V346).
+          divisionIds: [divisionId],
           instruction: input.instruction,
         })
       : null;
@@ -2254,6 +2294,9 @@ export async function aiPlanForDivision(
       PREVIEW_STALE,
     );
   }
+  // Held from here on: everything below may throw, and until a credit is
+  // actually reserved this confirmation is owed back to the organiser.
+  if (confirmed !== null) claim.previewId = input.preview_id!;
 
   if (confirmed === null) await rateLimit(`ai-plan:${divisionId}`, { max: 5, windowSeconds: 3600 });
 
@@ -2277,10 +2320,15 @@ export async function aiPlanForDivision(
   // run that would have gone through. The 402 itself still comes from
   // `spendCredit` below, unchanged.
   //
-  // Skipped outright on a confirmed preview: that compile already happened, was
-  // already metered on its own ledger row, and its affordability gate already
-  // ran. Re-running any of it here would double-count the spend.
-  const canPay = confirmed !== null || (await balance(walletId)) >= minimumCredits([input.rung]);
+  // The COMPILE is skipped on a confirmed preview — that round already happened
+  // and was already metered on its own ledger row — but the affordability bound
+  // is NOT (Task 2b/H3). The preview checked it minutes ago; a wallet emptied by
+  // another run in between makes this run a 402, and finding that out at the
+  // reserve costs the confirmation as well as the run. Checking it here refuses
+  // before the pack is built, and the release above hands the confirmation back
+  // so the retry is free.
+  const canPay = (await balance(walletId)) >= minimumCredits([input.rung]);
+  if (confirmed !== null && !canPay) throw new PaymentRequiredError("ai.credits");
   const parse =
     confirmed !== null
       ? { raw: confirmed.raw, failed: false, tokens: 0, servedModel: null }
@@ -2342,10 +2390,17 @@ export async function aiPlanForDivision(
     // on failure (SPEC-2 §5.2). PaymentRequiredError("ai.credits") from an empty
     // wallet falls through the catch below untouched (it matches neither
     // planErr nor providerErr) and rethrows as the 402.
-    result = await spendCredit(walletId, auth.orgId, quote.credits, async () => ({
-      aiRunId: crypto.randomUUID(),
-      result: await runAiPlanLadder(pack, movableIds, meter),
-    }));
+    result = await spendCredit(walletId, auth.orgId, quote.credits, async () => {
+      // The hold exists by the time this callback runs, so from here on the run
+      // owns the confirmation it claimed: a later failure releases the CREDIT
+      // (spendCredit does that itself) but must not reopen a preview whose run
+      // genuinely started.
+      claim.creditReserved = true;
+      return {
+        aiRunId: crypto.randomUUID(),
+        result: await runAiPlanLadder(pack, movableIds, meter),
+      };
+    });
   } catch (err) {
     // Meter a refused / un-correctable / timed-out run's token spend too —
     // usage rides on the 422 extra so a failed architect call is not invisible

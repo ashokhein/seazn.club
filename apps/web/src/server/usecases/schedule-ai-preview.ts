@@ -35,7 +35,8 @@ import "server-only";
 // IS the LLM call the limit exists to bound. A second bucket would double the
 // abuse surface it was sized for (#391).
 import { createHash, randomUUID } from "node:crypto";
-import { dayKeyInTz, makeClock, type HardConstraint } from "@seazn/engine/scheduling";
+import { z } from "zod";
+import { dayKeyInTz, HardConstraint, makeClock } from "@seazn/engine/scheduling";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import { balance, walletIdFor } from "@/lib/credits";
 import { minimumCredits } from "@/lib/ai-rung";
@@ -47,8 +48,8 @@ import type { AuthCtx } from "@/server/api-v1/auth";
 import type { AiParsePreviewRequest, AiParsePreviewResponse } from "@/server/api-v1/schemas";
 import {
   parseInstruction,
+  RawParsed,
   resolveParsed,
-  type RawParsed,
   type ResolvedParse,
 } from "@/server/usecases/schedule-ai-parse";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
@@ -70,13 +71,50 @@ export const PREVIEW_TTL_MS = 30 * 60_000;
  * Leading/trailing space and a double space between two words are not a
  * different instruction; a different word is.
  *
+ * Unicode normalisation is part of that, and only NFC. A sentence pasted from
+ * elsewhere on macOS can arrive DECOMPOSED (`e` + combining acute) while the
+ * same sentence typed into the box arrives composed — byte-different, visually
+ * identical, and a needless recompile at the organiser's expense.
+ *
+ * The chain stops there, on purpose, in both directions:
+ *   * CASE STAYS SIGNIFICANT. No normalisation form folds it, and a retyped
+ *     sentence that differs in case costs a cheap recompile rather than
+ *     silently matching a confirmation it may not describe;
+ *   * LOOK-ALIKES ARE NOT FOLDED. No standard form merges a curly apostrophe
+ *     with a straight one, or an en dash with a hyphen. Inventing a fold here
+ *     would let two visibly different sentences share one confirmation — the
+ *     exact failure this hash exists to prevent, arrived at from the other side.
+ *
  * Exported because Task 2's run gate compares against it — two normalisers
  * would mean a preview that can never be matched, or worse, one that matches a
  * sentence it did not compile.
  */
 export function hashInstruction(instruction: string): string {
-  return createHash("sha256").update(instruction.trim().replace(/\s+/g, " ")).digest("hex");
+  return createHash("sha256")
+    .update(instruction.normalize("NFC").trim().replace(/\s+/g, " "))
+    .digest("hex");
 }
+
+/**
+ * The stored compile, re-validated on its way back OUT of the database.
+ *
+ * `resolved.hard` goes straight to the engine's verifier and `raw` can be
+ * re-resolved by the pack builder, so this is a genuine trust boundary: a
+ * preview lives thirty minutes, which is long enough for a deploy to land
+ * inside it and change what `HardConstraint` means. Reading the jsonb back
+ * through the SAME schemas the engine and the compiler publish is what stops a
+ * shape nothing can check from being presented as an enforced rule.
+ *
+ * `ResolvedParse` is a TS interface, so the column would otherwise be typed by
+ * generic parameter alone — a claim about the row, not a check on it.
+ */
+const StoredResolvedParse = z.object({
+  hard: z.array(HardConstraint),
+  soft: RawParsed.shape.soft,
+  unparsed: z.array(z.string()),
+  assumptions: z.array(z.string()),
+  windowMs: z.object({ from: z.number(), to: z.number() }).nullable(),
+});
 
 /** The 409 both run orchestrators raise when a `preview_id` cannot be honoured.
  *  Exported so the two call sites and their tests name it once. */
@@ -98,6 +136,13 @@ export const PREVIEW_STALE = "preview_stale";
  *     window from that division's fixture count; the joint run's is a different
  *     number, so the same sentence is a different compile. Scope is part of a
  *     preview's identity;
+ *   * a different DIVISION SET. `scope_id` is the competition on the joint path
+ *     and says nothing about which divisions were selected, yet the window is
+ *     resolved from their SUMMED movable-fixture count and the compiler is shown
+ *     them by name. A run over a set the compile never saw would place the extra
+ *     division under a window resolved without it. Compared as a SET — both
+ *     sides are sorted — because reordering a multi-select is not a change to
+ *     the run;
  *   * a different instruction. This is the one this wave exists for: recompiling
  *     silently would run — and charge — the architect under rules the organiser
  *     never saw. The comparison is on the NORMALISED hash, so retyped
@@ -119,25 +164,72 @@ export const PREVIEW_STALE = "preview_stale";
  */
 export async function consumePreview(
   previewId: string,
-  where: { orgId: string; scope: AiPreviewScope["kind"]; scopeId: string; instruction: string },
+  where: {
+    orgId: string;
+    scope: AiPreviewScope["kind"];
+    scopeId: string;
+    /** Every division this run will actually solve. Sorted here so callers do
+     *  not have to remember to; see {@link sortedDivisionIds}. */
+    divisionIds: readonly string[];
+    instruction: string;
+  },
 ): Promise<{ raw: RawParsed; resolved: ResolvedParse } | null> {
   return withTenant(where.orgId, async (tx) => {
-    const [row] = await tx<{ raw: RawParsed | null; resolved: ResolvedParse }[]>`
+    const [row] = await tx<{ raw: unknown; resolved: unknown }[]>`
       update ai_parse_previews
          set consumed_at = now()
        where id = ${previewId}
          and org_id = ${where.orgId}
          and scope = ${where.scope}
          and scope_id = ${where.scopeId}
+         and division_ids = ${sortedDivisionIds(where.divisionIds)}::uuid[]
          and instruction_hash = ${hashInstruction(where.instruction)}
          and consumed_at is null
          and expires_at > now()
          and failed = false
       returning raw, resolved`;
-    // `raw` is nullable on the table (a failed compile persists none) but a
-    // failed compile never gets a row at all, so this is belt-and-braces: a
-    // preview with no parse in it has nothing for the run to reuse.
-    return row && row.raw !== null ? { raw: row.raw, resolved: row.resolved } : null;
+    if (!row) return null;
+    // Validated AFTER the claim, deliberately: a row whose stored shape the
+    // running code can no longer read could never have authorised anything, so
+    // spending the claim on it destroys nothing. Refusing the shape, on the
+    // other hand, is the whole point — see {@link StoredResolvedParse}. `raw` is
+    // nullable on the table (a failed compile persists none) though a failed
+    // compile never gets a row at all, so a null here is simply a preview with
+    // nothing for the run to reuse.
+    const parsed = z
+      .object({ raw: RawParsed, resolved: StoredResolvedParse })
+      .safeParse({ raw: row.raw, resolved: row.resolved });
+    return parsed.success ? parsed.data : null;
+  });
+}
+
+/** The canonical order the division set is stored and compared in. Plain
+ *  codepoint order over uuid text — the sort has no meaning beyond being the
+ *  same one on both sides of the equality. */
+export function sortedDivisionIds(ids: readonly string[]): string[] {
+  return [...ids].sort();
+}
+
+/**
+ * Give a confirmation back to the organiser.
+ *
+ * The claim above is taken before the pack, the quote and the credit reserve,
+ * because that is what makes a double-submit buy one run rather than two. The
+ * cost of taking it that early is that a run which then falls over — an empty
+ * wallet at the reserve, a 422 from the pack builder — would eat a confirmation
+ * it never used: the retry 409s and the organiser pays for a second compile of a
+ * sentence they did not change.
+ *
+ * Called only when the run threw BEFORE a credit was reserved, so "nothing was
+ * bought" is a fact rather than a hope. It cannot reopen a race: a competing
+ * submit that lost the claim has already been refused, and one that wins the
+ * reopened claim is simply the retry.
+ */
+export async function releasePreview(previewId: string, orgId: string): Promise<void> {
+  await withTenant(orgId, async (tx) => {
+    await tx`
+      update ai_parse_previews set consumed_at = null
+       where id = ${previewId} and org_id = ${orgId}`;
   });
 }
 
@@ -392,12 +484,18 @@ export async function previewScheduleAi(
   });
 
   const previewId = randomUUID();
+  // The divisions this compile actually saw (V346). On the joint path `scope_id`
+  // is the competition and cannot carry them, yet the window below was resolved
+  // from their summed movable-fixture count and the compiler was shown them by
+  // name — so the run gate has to be able to check the SET, not just the scope.
+  const divisionIds = sortedDivisionIds(resolved.divisions.map((d) => d.id));
   await withTenant(auth.orgId, async (tx) => {
     await tx`
       insert into ai_parse_previews
-        (id, org_id, scope, scope_id, instruction_hash, instruction, resolved, raw,
-         failed, output_tokens, served_model, expires_at)
+        (id, org_id, scope, scope_id, division_ids, instruction_hash, instruction,
+         resolved, raw, failed, output_tokens, served_model, expires_at)
       values (${previewId}, ${auth.orgId}, ${scope.kind}, ${scope.id},
+              ${divisionIds}::uuid[],
               ${hashInstruction(input.instruction)}, ${input.instruction},
               ${tx.json(compiled as never)}, ${tx.json(parse.raw as never)},
               false, ${parse.tokens}, ${parse.servedModel}, ${expiresAt})`;

@@ -29,6 +29,7 @@
 // credits, the pack builder, ai_parse_previews — is real Postgres.
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import { dayKeyInTz, ymdAddDays, zonedTimeToUtc } from "@seazn/engine/scheduling";
 import type { AiChatResponse } from "@/server/ai/provider";
 
 const { chat, parseInstructionMock, incrWindow, rlCounts } = vi.hoisted(() => {
@@ -77,7 +78,7 @@ import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
 import { aiPlanForDivision } from "../schedule-ai";
 import { aiPlanForCompetition } from "../competition-schedule-ai";
-import { previewScheduleAi, PREVIEW_TTL_MS } from "../schedule-ai-preview";
+import { hashInstruction, previewScheduleAi, PREVIEW_TTL_MS } from "../schedule-ai-preview";
 import { GENERIC_CONFIG, seedOrg } from "./_seed";
 import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 import { recordPackPurchase, walletIdFor } from "@/lib/credits";
@@ -228,6 +229,45 @@ function legalPlan(divisions: SeededDivision[]): unknown {
     explanations: [],
     summary: "ok",
   };
+}
+
+/** The same plan shape as {@link legalPlan}, but anchored on a named DAY rather
+ *  than on the fixed `T0`. The window tests below move the org clock, so their
+ *  assignments have to move with it or every card arrives outside `pack.window`
+ *  — a BLOCKING conflict (`isBlockingConflict`), which would turn the run into a
+ *  repair loop and make the architect call count meaningless. */
+function planOnDay(d: SeededDivision, ymd: string): unknown {
+  const base = zonedTimeToUtc(ymd, "10:00", TZ);
+  return {
+    assignments: d.fixtureIds.map((id, i) => ({
+      fixture_id: id,
+      scheduled_at: new Date(base + Math.floor(i / d.courts.length) * 30 * MIN).toISOString(),
+      court_label: d.courts[i % d.courts.length]!,
+    })),
+    unschedulable: [],
+    explanations: [],
+    summary: "ok",
+  };
+}
+
+/** Move a seeded division's settings onto `ymd`, so its session window and start
+ *  anchor agree with the day the run is actually placing on. */
+async function retargetSettingsTo(d: SeededDivision, ymd: string): Promise<void> {
+  const from = new Date(zonedTimeToUtc(ymd, "08:00", TZ)).toISOString();
+  const to = new Date(zonedTimeToUtc(ymd, "22:00", TZ)).toISOString();
+  const config = { ...settingsConfig(d.courts), startAt: from, sessionWindows: [{ from, to }] };
+  await sql`
+    update schedule_settings set config = ${sql.json(config as never)}, updated_at = now()
+     where division_id = ${d.id}`;
+}
+
+/** The pack as the architect actually received it on round `n`. The pack is the
+ *  ONE artefact that carries the executed window, and it reaches the model as
+ *  the first user turn's JSON — asserting on it is the only way to tell "the run
+ *  used the window we showed" apart from "the run happened to succeed". */
+function packSentToArchitect(n = 0): { window: { start: string; end: string } } {
+  const call = chat.mock.calls[n]![0] as { messages: { role: string; content: string }[] };
+  return JSON.parse(call.messages[0]!.content) as { window: { start: string; end: string } };
 }
 
 function chatResponse(parsed: unknown): AiChatResponse<unknown> {
@@ -591,5 +631,296 @@ describe.skipIf(!HAS_DB)("the run reuses a confirmed compile (W5 #400, joint)", 
     });
     expect(run.proposal.length).toBeGreaterThan(0);
     expect(rlCounts.get(`rl:ai-plan-competition:${competitionId}`)).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2b — the three holes the Task 2/3 review found in the gate above.
+// ---------------------------------------------------------------------------
+
+/** H1. A joint preview's identity has to include WHICH divisions it compiled
+ *  for, because `scope_id` is the competition and says nothing about the set.
+ *  The window is resolved from the SUMMED movable-fixture count of the
+ *  divisions in scope, and the stage-1 prompt lists them by name — so the same
+ *  sentence over a different set is a different compile, and honouring it would
+ *  place the extra division's fixtures under a window resolved without them. */
+describe.skipIf(!HAS_DB)("a joint preview is bound to its division SET (W5 #400 H1)", () => {
+  it("refuses a run that adds a division the preview never compiled for", async () => {
+    const { auth, competitionId, divisions } = await seedJoint();
+    // Disjoint courts again, so the extra division cannot be refused for a
+    // reason other than the one under test.
+    const gamma = await seedDivision(auth, competitionId, "Gamma", ["Court 5", "Court 6"]);
+    const p = await previewScheduleAi(auth, { kind: "competition", id: competitionId }, {
+      instruction: INSTRUCTION,
+      division_ids: divisions.map((d) => d.id),
+    });
+    expect(p.preview_id).toBeTruthy();
+    parseInstructionMock.mockClear();
+
+    await expect(
+      aiPlanForCompetition(auth, competitionId, {
+        division_ids: [...divisions.map((d) => d.id), gamma.id],
+        instruction: INSTRUCTION,
+        mode: "generate",
+        preview_id: p.preview_id,
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "preview_stale" });
+    // Nothing spent, and the confirmation the organiser DID give survives.
+    expect(architectCalls()).toBe(0);
+    expect(parseCalls()).toBe(0);
+    const [row] = await sql<{ consumed_at: Date | null }[]>`
+      select consumed_at from ai_parse_previews where id = ${p.preview_id!}`;
+    expect(row!.consumed_at).toBeNull();
+  });
+
+  it("refuses a run that DROPS a division the preview compiled for", async () => {
+    const { auth, competitionId, divisions } = await seedJoint();
+    const gamma = await seedDivision(auth, competitionId, "Gamma", ["Court 5", "Court 6"]);
+    const p = await previewScheduleAi(auth, { kind: "competition", id: competitionId }, {
+      instruction: INSTRUCTION,
+      division_ids: [...divisions.map((d) => d.id), gamma.id],
+    });
+    parseInstructionMock.mockClear();
+
+    await expect(
+      aiPlanForCompetition(auth, competitionId, {
+        division_ids: divisions.map((d) => d.id),
+        instruction: INSTRUCTION,
+        mode: "generate",
+        preview_id: p.preview_id,
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "preview_stale" });
+    expect(architectCalls()).toBe(0);
+  });
+
+  it("reuses a preview when the SAME set arrives in a different order", async () => {
+    const { auth, competitionId, divisions } = await seedJoint();
+    const ids = divisions.map((d) => d.id);
+    const p = await previewScheduleAi(auth, { kind: "competition", id: competitionId }, {
+      instruction: INSTRUCTION,
+      division_ids: ids,
+    });
+    parseInstructionMock.mockClear();
+
+    // The multi-select's order is a UI accident, not a fact about the run: the
+    // check is on the SET, so reordering must not cost a recompile.
+    chat.mockResolvedValueOnce(chatResponse(legalPlan(divisions)));
+    const run = await aiPlanForCompetition(auth, competitionId, {
+      division_ids: [...ids].reverse(),
+      instruction: INSTRUCTION,
+      mode: "generate",
+      preview_id: p.preview_id,
+    });
+    expect(parseCalls()).toBe(0);
+    expect(architectCalls()).toBe(1);
+    expect(run.proposal).toHaveLength(divisions.flatMap((d) => d.fixtureIds).length);
+  });
+});
+
+/** H2. The stored `resolved` is the one the run must execute. Without it,
+ *  `buildSchedulePack` falls back to re-resolving the same `raw` against the
+ *  CURRENT clock — no extra model call, no visible difference, and a "tomorrow"
+ *  that has quietly become a different day. Only a test that moves the org clock
+ *  between the preview and the run can see it. */
+describe.skipIf(!HAS_DB)("the run executes the window it SHOWED (W5 #400 H2)", () => {
+  it("keeps the previewed window when the org clock crosses a day boundary", async () => {
+    const { auth, division } = await seedSingle();
+    // The ORG clock is what "tomorrow" is resolved against (#397) — never a
+    // division override — so this test has to state which one it is.
+    await sql`update organizations set timezone = ${TZ} where id = ${auth.orgId}`;
+
+    // A day comfortably ahead of the real clock: only `Date` is faked below, so
+    // the row's TTL — which Postgres checks against ITS OWN now() — stays live
+    // while the JS clock moves. Timers are left real so the pg driver is
+    // untouched.
+    const previewDay = dayKeyInTz(Date.now() + 3 * 24 * 3600_000, TZ);
+    const runDay = ymdAddDays(previewDay, 1);
+    await retargetSettingsTo(division, runDay);
+
+    // "…and run it all tomorrow" — the one word whose meaning depends entirely
+    // on which day it was compiled.
+    parseInstructionMock.mockImplementation(async () => ({
+      raw: {
+        hard: [
+          { type: "not_before", time: "08:00", scope: { kind: "competition" } },
+          {
+            type: "window",
+            start: { kind: "tomorrow" },
+            end: { kind: "tomorrow" },
+            scope: { kind: "competition" },
+          },
+        ],
+        soft: [],
+        unparsed: [],
+      } as RawParsed,
+      failed: false,
+      tokens: 300,
+      servedModel: "stub-parser",
+    }));
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(zonedTimeToUtc(previewDay, "23:30", TZ));
+      const p = await previewScheduleAi(auth, { kind: "division", id: division.id }, {
+        instruction: INSTRUCTION,
+      });
+      // What the organiser was shown, and then confirmed.
+      expect(p.window).toMatchObject({ start: runDay, end: runDay, tz: TZ });
+
+      // One hour later on the wall clock — but a different DAY in the org zone,
+      // so re-resolving the same `raw` would now land on runDay + 1.
+      vi.setSystemTime(zonedTimeToUtc(runDay, "00:30", TZ));
+      chat.mockResolvedValue(chatResponse(planOnDay(division, runDay)));
+      const run = await aiPlanForDivision(auth, division.id, {
+        instruction: INSTRUCTION,
+        mode: "generate",
+        preview_id: p.preview_id,
+      });
+      expect(run.proposal).toHaveLength(division.fixtureIds.length);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // THE assertion: the calendar the architect was handed is the calendar the
+    // organiser approved, not one re-derived from a clock that has since moved.
+    const sent = packSentToArchitect();
+    expect(sent.window.start.slice(0, 10)).toBe(runDay);
+    expect(sent.window.end.slice(0, 10)).toBe(runDay);
+    // …and only one round happened, so the window above is the one that ran.
+    expect(architectCalls()).toBe(1);
+  });
+});
+
+/** H3. The claim is taken before the pack, the quote and the reserve. A run that
+ *  falls over on the way there used to leave `consumed_at` set with nothing
+ *  bought: the retry 409s and the organiser pays for another compile. Both
+ *  properties have to hold at once — a failed run gives the confirmation back,
+ *  and a double-submit still buys exactly one run. */
+describe.skipIf(!HAS_DB)("a failed run gives the confirmation back (W5 #400 H3)", () => {
+  it("releases the claim when the run is refused before a credit is reserved", async () => {
+    const { auth, division } = await seedSingle();
+    const p = await previewScheduleAi(auth, { kind: "division", id: division.id }, {
+      instruction: INSTRUCTION,
+    });
+    parseInstructionMock.mockClear();
+
+    // The wallet empties between looking and confirming — an ordinary sequence
+    // when a second run of the same org lands first.
+    const walletId = await walletIdFor(auth.orgId);
+    await sql`delete from ai_credit_ledger where wallet_id = ${walletId}`;
+
+    await expect(
+      aiPlanForDivision(auth, division.id, {
+        instruction: INSTRUCTION,
+        mode: "generate",
+        preview_id: p.preview_id,
+      }),
+    ).rejects.toMatchObject({ status: 402 });
+    expect(architectCalls()).toBe(0);
+
+    // Nothing was bought, so nothing was spent: the confirmation survives.
+    const [row] = await sql<{ consumed_at: Date | null }[]>`
+      select consumed_at from ai_parse_previews where id = ${p.preview_id!}`;
+    expect(row!.consumed_at).toBeNull();
+
+    // …and the retry runs on the compile the organiser already approved rather
+    // than paying for a second one.
+    await recordPackPurchase(walletId, 100, `refund-${randomUUID()}`);
+    chat.mockResolvedValueOnce(chatResponse(legalPlan([division])));
+    const run = await aiPlanForDivision(auth, division.id, {
+      instruction: INSTRUCTION,
+      mode: "generate",
+      preview_id: p.preview_id,
+    });
+    expect(parseCalls()).toBe(0);
+    expect(run.proposal).toHaveLength(division.fixtureIds.length);
+  });
+
+  it("still buys exactly one run when the same preview_id is submitted twice at once", async () => {
+    const { auth, division } = await seedSingle();
+    const p = await previewScheduleAi(auth, { kind: "division", id: division.id }, {
+      instruction: INSTRUCTION,
+    });
+    // Both submits are answered, so nothing but the claim itself can serialise
+    // them.
+    chat.mockResolvedValue(chatResponse(legalPlan([division])));
+
+    const submit = (): Promise<unknown> =>
+      aiPlanForDivision(auth, division.id, {
+        instruction: INSTRUCTION,
+        mode: "generate",
+        preview_id: p.preview_id,
+      });
+    const settled = await Promise.allSettled([submit(), submit()]);
+
+    expect(settled.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const rejected = settled.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.reason).toMatchObject({ status: 409, code: "preview_stale" });
+    // One architect call — the double-submit bought one run, not two.
+    expect(architectCalls()).toBe(1);
+  });
+
+  it("refuses a stored parse whose shape the engine no longer accepts", async () => {
+    const { auth, division } = await seedSingle();
+    const p = await previewScheduleAi(auth, { kind: "division", id: division.id }, {
+      instruction: INSTRUCTION,
+    });
+    // A deploy lands inside the preview's 30-minute life and `HardConstraint` no
+    // longer has this shape. Feeding it to the verifier would present a rule as
+    // enforced while nothing can check it — refuse, and let the organiser
+    // recompile against the code that is actually running.
+    await sql`
+      update ai_parse_previews
+         set resolved = ${sql.json({
+           hard: [{ type: "not_before", time: "half past eight", scope: { kind: "competition" } }],
+           soft: [],
+           unparsed: [],
+           assumptions: [],
+           windowMs: null,
+         } as never)}
+       where id = ${p.preview_id!}`;
+
+    await expect(
+      aiPlanForDivision(auth, division.id, {
+        instruction: INSTRUCTION,
+        mode: "generate",
+        preview_id: p.preview_id,
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "preview_stale" });
+    expect(architectCalls()).toBe(0);
+  });
+});
+
+/** The instruction's identity. Two spellings that a human would call the same
+ *  sentence must hash the same, or the organiser pays for a recompile of a
+ *  sentence they did not change — and two that a human would call different must
+ *  not, or a changed rule executes under an old confirmation. */
+describe("hashInstruction normalises spelling, not meaning (W5 #400)", () => {
+  it("hashes the NFC and NFD spellings of one sentence equal", () => {
+    // A macOS paste can arrive decomposed while the same sentence typed into the
+    // box arrives composed. They are different byte strings and the identical
+    // instruction.
+    const composed = "no matches before café hours".normalize("NFC");
+    const decomposed = composed.normalize("NFD");
+    expect(decomposed).not.toBe(composed);
+    expect(hashInstruction(decomposed)).toBe(hashInstruction(composed));
+  });
+
+  it("still collapses surrounding and repeated whitespace", () => {
+    expect(hashInstruction("  finals   on Friday ")).toBe(hashInstruction("finals on Friday"));
+  });
+
+  it("keeps case significant", () => {
+    // Deliberately strict: no normalisation form folds case, and an organiser
+    // who retyped a sentence differently gets a cheap recompile rather than a
+    // silent match.
+    expect(hashInstruction("Finals on Friday")).not.toBe(hashInstruction("finals on friday"));
+  });
+
+  it("does not fold a curly apostrophe into a straight one", () => {
+    // Also deliberate: no standard normalisation merges these, and inventing a
+    // fold here would let two visibly different sentences share a confirmation.
+    expect(hashInstruction("don't start early")).not.toBe(hashInstruction("don’t start early"));
   });
 });
