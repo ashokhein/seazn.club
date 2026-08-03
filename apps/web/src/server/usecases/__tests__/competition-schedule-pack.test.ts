@@ -878,6 +878,86 @@ describe.skipIf(!HAS_DB)("joint pack calendar anchor (#397)", () => {
     expect(pack.window.start).toBe("2026-08-01T00:00:00+01:00");
   });
 
+  // The union is a LOCKED decision (#397), and the board above cannot prove it:
+  // every division there shares one startAt and one sessionWindows, and every
+  // fixture is placed on 2026-08-01, so union, intersection, first and last all
+  // return the same instants. This board gives the three divisions genuinely
+  // different, non-overlapping date ranges — and leaves their fixtures
+  // unplaced, so nothing widens them back together.
+  it("takes the UNION of divergent division windows, not any one of them", async () => {
+    const { auth } = await seedOrg("pro");
+    const { competitionId, divisions } = await seedCompetition(
+      auth,
+      "Union Cup",
+      BOARD.map((d) => ({ ...d, place: false })),
+    );
+    // Widest START is Bravo's; widest END is Charlie's. Neither division owns
+    // both, so no single-division answer can pass.
+    const ranges = [
+      { start: "2026-08-03", end: "2026-08-04" }, // Alpha — built[0]
+      { start: "2026-08-01", end: "2026-08-02" }, // Bravo — earliest start
+      { start: "2026-08-06", end: "2026-08-09" }, // Charlie — latest end
+    ];
+    for (const [i, d] of divisions.entries()) {
+      const r = ranges[i]!;
+      await sql`update schedule_settings set config = ${sql.json({
+        ...settingsConfig(BOARD[i]!.courts, BOARD[i]!.matchMinutes),
+        startAt: `${r.start}T09:00:00.000Z`,
+        endAt: `${r.end}T18:00:00.000Z`,
+        sessionWindows: [{ from: `${r.start}T09:00:00.000Z`, to: `${r.start}T18:00:00.000Z` }],
+      })} where division_id = ${d.id}`;
+    }
+
+    const { pack } = await buildCompetitionPack(
+      auth,
+      competitionId,
+      divisions.map((d) => d.id),
+      { now: NOW_W2, mode: "generate", instruction: "x" },
+    );
+
+    expect(pack.window.start).toBe("2026-08-01T00:00:00+01:00"); // Bravo's day
+    expect(pack.window.end).toBe("2026-08-09T23:59:59+01:00"); // Charlie's day
+    // Explicitly not any single division's window, and not the intersection —
+    // both of which the previous fixture would have satisfied.
+    for (const [i, d] of divisions.entries()) {
+      const r = ranges[i]!;
+      const own = { start: `${r.start}T00:00:00+01:00`, end: `${r.end}T23:59:59+01:00` };
+      expect(`${own.start}..${own.end}`, `${d.name} must not own the joint window`).not.toBe(
+        `${pack.window.start}..${pack.window.end}`,
+      );
+    }
+  });
+
+  // `draftPlaced` is what J5 tells the model to read as "this division is
+  // already drafted". Since #397 a repair draft can carry `scheduled_at: null`
+  // — a sentinel the pack refused to pass off as a time — so counting rows
+  // rather than PLACEMENTS reports a division as fully drafted when not one of
+  // its fixtures holds a real slot.
+  it("counts only PLACED rows in draftPlaced when a board is all sentinels", async () => {
+    const { auth } = await seedOrg("pro");
+    const { competitionId, divisions } = await seedCompetition(auth, "Sentinel Cup", BOARD.slice(0, 2));
+    // Alpha's whole board predates 1971; Bravo's is untouched.
+    await sql`update fixtures set scheduled_at = '1970-01-01T00:00:00Z'
+              where division_id = ${divisions[0]!.id}`;
+
+    const { pack } = await buildCompetitionPack(
+      auth,
+      competitionId,
+      divisions.map((d) => d.id),
+      { now: NOW_W2, mode: "repair", instruction: "x" },
+    );
+
+    const alpha = pack.divisions.find((d) => d.name === "Alpha")!;
+    const bravo = pack.divisions.find((d) => d.name === "Bravo")!;
+    expect(alpha.draftPlaced).toBe(0);
+    expect(bravo.draftPlaced).toBeGreaterThan(0);
+    // The rows are still THERE — nulled, not dropped — so the model is told the
+    // fixtures exist and are unplaced rather than being told nothing at all.
+    const alphaRows = pack.draft.filter((d) => alpha.movableIds.includes(d.fixture_id));
+    expect(alphaRows.length).toBeGreaterThan(0);
+    expect(alphaRows.every((d) => d.scheduled_at === null)).toBe(true);
+  });
+
   it("spans the window across every selected division's board", async () => {
     // Bravo starts four hours after Alpha and Charlie eight; the window is the
     // union, so no division is asked to fit inside another's day.
