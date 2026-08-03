@@ -607,6 +607,7 @@ export type DictionaryKey =
   | "board.ai.preview.selector.terminal"
   | "board.ai.preview.soft.hint"
   | "board.ai.preview.soft.title"
+  | "board.ai.preview.soft.token"
   | "board.ai.preview.title"
   | "board.ai.preview.unparsed.hint"
   | "board.ai.preview.unparsed.title"

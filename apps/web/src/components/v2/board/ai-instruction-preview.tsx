@@ -160,7 +160,20 @@ export function AiInstructionPreview({
 
       {/* Same shape, DASHED spine. The one thing an organiser must not
           misread is a wish as a rule, so the section says it in the heading,
-          repeats it in the hint, and encodes it in the spine itself. */}
+          repeats it in the hint, and encodes it in the spine itself.
+
+          #400 Task 6b — and it names the MECHANISM, not the intention. These
+          notes reach exactly one place, the architect's prompt
+          (`schedule-ai-prompt.ts:135`); they never reach the verifier. The
+          token was `PREFER`, which reads as *the system will try*, and beside a
+          clause we cannot model at all — "the show court where families can
+          watch" — it reads as *the system understood*. There is no court
+          attribute concept in the engine and no `HardConstraint` variant
+          selects a court, so that clause is structurally unenforceable however
+          well it is phrased; #440 (court identity + a court selector) is what
+          would change that, and until it lands the honest word is that we sent
+          it on. Unlike the six constraint tokens above, this one IS translated:
+          it is a claim about what we did, not a code for a rule kind. */}
       {soft.length > 0 && (
         <div className="mt-3">
           <Eyebrow>{msg("board.ai.preview.soft.title")}</Eyebrow>
@@ -174,7 +187,7 @@ export function AiInstructionPreview({
                 data-preview-rule="soft"
                 className="flex flex-wrap items-start gap-x-2 gap-y-1"
               >
-                <Token tone="soft">PREFER</Token>
+                <Token tone="soft">{msg("board.ai.preview.soft.token")}</Token>
                 <span className="min-w-0 flex-1 basis-40 break-words text-xs leading-relaxed text-slate-600">
                   {sfx.note}
                 </span>

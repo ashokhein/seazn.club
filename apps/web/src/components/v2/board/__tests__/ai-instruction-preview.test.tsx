@@ -118,7 +118,8 @@ describe("AiInstructionPreview", () => {
   it("shows soft preferences as not enforced, and never on the enforced spine", () => {
     const html = render(card(withSoft));
     expect(html).toContain(enDict["board.ai.preview.soft.title"]!);
-    expect(html).toContain("Preferred, not enforced");
+    expect(html).toContain("Passed on, never checked");
+    expect(html).toContain(enDict["board.ai.preview.soft.token"]!);
     expect(html).toContain("Put the juniors on early");
     expect(html).toContain(enDict["board.ai.preview.soft.hint"]!);
     expect(html.match(/data-preview-rule="soft"/g) ?? []).toHaveLength(1);
@@ -146,7 +147,7 @@ describe("AiInstructionPreview", () => {
   it("offers the preference fallback on a failed compile and never auto-takes it", () => {
     const html = render(card(failed));
     expect(html).toContain('data-preview-state="failed"');
-    expect(html).toContain("Run it as a preference instead");
+    expect(html).toContain(enDict["board.ai.preview.failed.asPreference"]!);
     expect(html).toContain(enDict["board.ai.preview.failed.hint"]!);
     // No confirm path out of a failure — the only way forward is the explicit
     // fallback or editing the brief.
@@ -187,7 +188,7 @@ describe("AiInstructionPreview", () => {
   it("never offers the preference fallback on a compile that succeeded", () => {
     const html = render(card(PREVIEW));
     expect(html).not.toContain('data-preview-as-preference="');
-    expect(html).not.toContain("Run it as a preference instead");
+    expect(html).not.toContain(enDict["board.ai.preview.failed.asPreference"]!);
   });
 
   it("states the window the instruction claimed, with the zone it is read in", () => {
