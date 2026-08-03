@@ -59,8 +59,10 @@ describe("aggregatePlayerStats (Jul3/07)", () => {
   });
 
   it("own goals never credit the striker; assist-less goals count only present fields", () => {
+    // Closed set on purpose: every metric football declares that this ledger
+    // touches must appear here, so a new one cannot be added unnoticed.
     const rows = aggregatePlayerStats([goal(1, "p9", undefined, true), goal(2, "p9")], MODEL);
-    expect(rows).toEqual([{ personId: "p9", stats: { goals: 1, points: 1 } }]);
+    expect(rows).toEqual([{ personId: "p9", stats: { goals: 1, own_goals: 1, points: 1 } }]);
   });
 
   it("stats are a pure order-independent fold: refold(events) == snapshot", () => {

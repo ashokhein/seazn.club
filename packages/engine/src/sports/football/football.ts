@@ -1009,6 +1009,12 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
         key: "penalties_missed", label: "Penalties missed", from: "football.penalty",
         field: "taker", agg: "count",
       },
+      // The personal column only — the goal itself was already credited to the
+      // opponent by the fold, so `points` (goals + assists) is unchanged.
+      {
+        key: "own_goals", label: "Own goals", from: "football.goal", field: "scorer",
+        agg: "count", when: (p) => p.ownGoal === true,
+      },
       {
         key: "sin_bins", label: "Sin bins", from: "football.sinbin", field: "person",
         agg: "count", when: (p) => p.returned !== true,

@@ -538,6 +538,23 @@ describe("player stats from the W4 branches", () => {
     ]);
   });
 
+  it("charges an own goal to the player who scored it, and to nothing else", () => {
+    expect(keys).toContain("own_goals");
+    const rows = aggregatePlayerStats(
+      [
+        makeEnvelope(0, {
+          type: "football.goal",
+          payload: { by: "H", scorer: "p5", ownGoal: true },
+        }),
+        makeEnvelope(1, { type: "football.goal", payload: { by: "H", scorer: "p5" } }),
+      ],
+      model,
+    );
+    // The goal itself still went to the opponent (`creditGoal(opponent(by))`);
+    // this is the personal column only, so `goals` and `points` are untouched.
+    expect(rows).toEqual([{ personId: "p5", stats: { goals: 1, own_goals: 1, points: 1 } }]);
+  });
+
   it("counts missed penalties against the taker", () => {
     const rows = aggregatePlayerStats(
       [
