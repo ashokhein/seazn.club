@@ -223,12 +223,12 @@ describe("penalties in open play (Law 14)", () => {
       cfgOf({}),
       stream(
         ["core.start"],
-        pen({ by: "H", taker: "H-p9", keeper: "A-p1", outcome: "saved", minute: 27 }),
+        pen({ by: "H", taker: "H-p9", goalkeeper: "A-p1", outcome: "saved", minute: 27 }),
       ),
     );
     expect(state.goals).toEqual({ home: 0, away: 0 });
     expect(state.penalties).toEqual([
-      { side: "home", outcome: "saved", taker: "H-p9", keeper: "A-p1", minute: 27 },
+      { side: "home", outcome: "saved", taker: "H-p9", goalkeeper: "A-p1", minute: 27 },
     ]);
   });
 
@@ -256,7 +256,31 @@ describe("penalties in open play (Law 14)", () => {
   it("refuses a keeper who is not on the pitch for the DEFENDING side", () => {
     // H-p1 is the home keeper; a penalty awarded to H is faced by an away keeper.
     expect(() =>
-      fold(cfgOf({}), stream(["core.start"], pen({ by: "H", taker: "H-p9", keeper: "H-p1", outcome: "saved" }))),
+      fold(cfgOf({}), stream(["core.start"], pen({ by: "H", taker: "H-p9", goalkeeper: "H-p1", outcome: "saved" }))),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
+
+  // W4 review item 1 — ONE name for the defending keeper across every module.
+  // The period kernel's shoot-out attempt and set piece call him `goalkeeper`;
+  // football called him `keeper`, so a pad driven by padSpec(cfg) would have
+  // rendered two controls for one fact. `goalkeeper` wins: it is unambiguous
+  // and it matches the position groups the catalogs already declare (FIH "GK",
+  // IIHF "G").
+  it("names the defending keeper `goalkeeper`, the key the period kernel uses", () => {
+    const state = fold(
+      cfgOf({}),
+      stream(["core.start"], pen({ by: "H", taker: "H-p9", goalkeeper: "A-p1", outcome: "saved" })),
+    );
+    expect(state.penalties).toEqual([
+      { side: "home", outcome: "saved", taker: "H-p9", goalkeeper: "A-p1" },
+    ]);
+  });
+
+  it("rejects the pre-unification `keeper` key outright", () => {
+    // A strict branch is the only thing that keeps the old name from lingering
+    // in half the streams: without this the two spellings would both "work".
+    expect(() =>
+      fold(cfgOf({}), stream(["core.start"], pen({ by: "H", keeper: "A-p1", outcome: "saved" }))),
     ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
   });
 
@@ -429,7 +453,7 @@ describe("event union disambiguation", () => {
     "football.sub": { by: "H", off: "H-p1", on: "H-b1", minute: 60 },
     "football.period": { phase: "HT", addedMinutes: 2 },
     "football.shootout.kick": { by: "H", person: "H-p9", scored: true },
-    "football.penalty": { by: "H", taker: "H-p9", keeper: "A-p1", outcome: "saved", minute: 27 },
+    "football.penalty": { by: "H", taker: "H-p9", goalkeeper: "A-p1", outcome: "saved", minute: 27 },
     "football.sinbin": { by: "H", person: "H-p6", minutes: 10, reason: "dissent", minute: 21 },
   };
 
@@ -604,7 +628,7 @@ describe("player stats from the W4 branches", () => {
       [
         makeEnvelope(0, {
           type: "football.penalty",
-          payload: { by: "H", taker: "p9", keeper: "k1", outcome: "saved" },
+          payload: { by: "H", taker: "p9", goalkeeper: "k1", outcome: "saved" },
         }),
       ],
       model,

@@ -148,7 +148,11 @@ export const PenaltyOutcome = z.enum(["saved", "missed", "post"]);
 export const FootballPenalty = z.strictObject({
   by: EntrantId, // the side awarded the kick
   taker: PersonId.optional(),
-  keeper: PersonId.optional(), // the DEFENDING keeper who faced it
+  // W4 review item 1 — the DEFENDING keeper who faced it. `goalkeeper` is the
+  // shared name: the period kernel's shoot-out attempt and set piece already
+  // used it, and it matches the position groups the catalogs declare (FIH
+  // "GK", IIHF "G"). One fact, one key, one pad control.
+  goalkeeper: PersonId.optional(),
   outcome: PenaltyOutcome,
   minute: z.number().int().nonnegative().optional(),
 });
@@ -246,7 +250,7 @@ interface PenaltyRecord {
   side: Side;
   outcome: z.infer<typeof PenaltyOutcome>;
   taker?: string;
-  keeper?: string;
+  goalkeeper?: string;
   minute?: number;
 }
 
@@ -574,20 +578,20 @@ function applyPenalty(state: FootballState, payload: z.infer<typeof FootballPena
       taker: payload.taker,
     });
   }
-  // The keeper facing the kick belongs to the DEFENDING side.
+  // The goalkeeper facing the kick belongs to the DEFENDING side.
   if (
-    payload.keeper !== undefined &&
-    !state.squads[opponent(side)].onPitch.includes(payload.keeper)
+    payload.goalkeeper !== undefined &&
+    !state.squads[opponent(side)].onPitch.includes(payload.goalkeeper)
   ) {
-    invalid(`keeper "${payload.keeper}" is not on the pitch for the defending side`, {
-      keeper: payload.keeper,
+    invalid(`goalkeeper "${payload.goalkeeper}" is not on the pitch for the defending side`, {
+      goalkeeper: payload.goalkeeper,
     });
   }
   const record: PenaltyRecord = {
     side,
     outcome: payload.outcome,
     ...(payload.taker === undefined ? {} : { taker: payload.taker }),
-    ...(payload.keeper === undefined ? {} : { keeper: payload.keeper }),
+    ...(payload.goalkeeper === undefined ? {} : { goalkeeper: payload.goalkeeper }),
     ...(payload.minute === undefined ? {} : { minute: payload.minute }),
   };
   return { ...state, penalties: [...(state.penalties ?? []), record] };
@@ -1160,12 +1164,12 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
       if (bin.length < 2) return { type: "football.sinbin", payload: { by: sideId(side) } };
     }
     if (roll < 0.17) {
-      // W4 (Law 14) — an open-play penalty that was not converted. The keeper
-      // is the defending side's first player still on the pitch, which is the
-      // catalog's GK slot in the conformance lineups.
+      // W4 (Law 14) — an open-play penalty that was not converted. The
+      // goalkeeper is the defending side's first player still on the pitch,
+      // which is the catalog's GK slot in the conformance lineups.
       const side = randomSide();
       const taker = state.squads[side].onPitch[Math.floor(rng() * state.squads[side].onPitch.length)];
-      const keeper = rng() < 0.5 ? state.squads[opponent(side)].onPitch[0] : undefined;
+      const goalkeeper = rng() < 0.5 ? state.squads[opponent(side)].onPitch[0] : undefined;
       const outcomes = PenaltyOutcome.options;
       const outcome = outcomes[Math.floor(rng() * outcomes.length)] ?? "saved";
       return {
@@ -1173,7 +1177,7 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
         payload: {
           by: sideId(side),
           ...(taker === undefined ? {} : { taker }),
-          ...(keeper === undefined ? {} : { keeper }),
+          ...(goalkeeper === undefined ? {} : { goalkeeper }),
           outcome,
         },
       };

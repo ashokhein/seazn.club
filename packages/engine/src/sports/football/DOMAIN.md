@@ -116,7 +116,7 @@ Football sets the pattern the other families copy, so this is explicit.
 | `football.card` | `person` | `State.cards[].person`, `discipline.extractCards`, `playerStats.*_cards` |
 | `football.sub` | `off`, `on` (both **required** — a substitution with nobody named is not a fact) | `State.squads[].onPitch/bench/offUsed` |
 | `football.shootout.kick` | `person` (kicker) | validated against the pitch; not retained per-kick in State |
-| `football.penalty` *(W4)* | `taker`, `keeper` | `State.penalties[].taker/keeper`, `playerStats.penalties_missed` |
+| `football.penalty` *(W4)* | `taker`, `goalkeeper` | `State.penalties[].taker/goalkeeper`, `playerStats.penalties_missed` |
 | `football.sinbin` *(W4)* | `person` | `State.squads[].sinBin[].person`, `playerStats.sin_bins` |
 
 **Incomplete / missing:**
