@@ -2184,26 +2184,44 @@ export async function aiPlanForDivision(
   // as far as reserving a credit, or an empty wallet or an unplannable division
   // would silently cost the organiser their confirmation and a second compile.
   //
-  // A flag rather than a `try` around the body: `creditReserved` is set inside
-  // `spendCredit`'s callback, which only runs once the hold exists, so
-  // "nothing was bought" is read off the reserve itself and not inferred from
-  // which error came back.
-  const claim: PreviewClaim = { previewId: null, creditReserved: false };
+  // The test is "was anything BOUGHT", not "did the reserve succeed" — the two
+  // differ on every failure of the architect itself, which `spendCredit`
+  // refunds. `creditConsumed` is therefore set inside the callback and unset
+  // again by `onHoldReleased`; a settle failure leaves it set, because there the
+  // run happened and the credit really is gone.
+  const claim: PreviewClaim = { previewId: null, creditConsumed: false };
   try {
     return await planForDivision(auth, divisionId, input, claim);
   } catch (err) {
-    if (claim.previewId !== null && !claim.creditReserved) {
-      await releasePreview(claim.previewId, auth.orgId);
+    if (claim.previewId !== null && !claim.creditConsumed) {
+      await releasePreviewQuietly(claim.previewId, auth.orgId);
     }
     throw err;
   }
 }
 
 /** Mutable out-parameter for the release above: what this run claimed, and
- *  whether it ever got far enough to owe anything for it. */
+ *  whether the organiser ended up paying for it. */
 export interface PreviewClaim {
   previewId: string | null;
-  creditReserved: boolean;
+  creditConsumed: boolean;
+}
+
+/**
+ * Hand a confirmation back without ever displacing the error that caused it.
+ *
+ * Both wrappers call this from a `catch`, so an unhandled throw here would
+ * replace the 402/422 the caller has to see with a database error about a
+ * bookkeeping detail. The worst case of swallowing it is the state we already
+ * had before this fix — a preview that stays claimed — which is strictly better
+ * than losing the real refusal.
+ */
+export async function releasePreviewQuietly(previewId: string, orgId: string): Promise<void> {
+  try {
+    await releasePreview(previewId, orgId);
+  } catch (err) {
+    console.error(`[schedule-ai] could not release preview ${previewId} after a failed run`, err);
+  }
 }
 
 async function planForDivision(
@@ -2390,17 +2408,23 @@ async function planForDivision(
     // on failure (SPEC-2 §5.2). PaymentRequiredError("ai.credits") from an empty
     // wallet falls through the catch below untouched (it matches neither
     // planErr nor providerErr) and rethrows as the 402.
-    result = await spendCredit(walletId, auth.orgId, quote.credits, async () => {
-      // The hold exists by the time this callback runs, so from here on the run
-      // owns the confirmation it claimed: a later failure releases the CREDIT
-      // (spendCredit does that itself) but must not reopen a preview whose run
-      // genuinely started.
-      claim.creditReserved = true;
-      return {
-        aiRunId: crypto.randomUUID(),
-        result: await runAiPlanLadder(pack, movableIds, meter),
-      };
-    });
+    result = await spendCredit(
+      walletId,
+      auth.orgId,
+      quote.credits,
+      async () => {
+        // The hold exists by the time this runs. Provisionally consumed…
+        claim.creditConsumed = true;
+        return {
+          aiRunId: crypto.randomUUID(),
+          result: await runAiPlanLadder(pack, movableIds, meter),
+        };
+      },
+      // …and un-consumed again if the ladder throws, because `spendCredit`
+      // refunds the hold in that case: a timed-out or refused run costs the
+      // organiser nothing, so it must not cost them their confirmation either.
+      { onHoldReleased: () => (claim.creditConsumed = false) },
+    );
   } catch (err) {
     // Meter a refused / un-correctable / timed-out run's token spend too —
     // usage rides on the 422 extra so a failed architect call is not invisible

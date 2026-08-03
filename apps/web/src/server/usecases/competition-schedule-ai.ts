@@ -72,6 +72,7 @@ import {
   type PackObstacle,
   type PackPerson,
   type PackSettings,
+  releasePreviewQuietly,
   type PreviewClaim,
   type SchedulePack,
 } from "./schedule-ai";
@@ -82,7 +83,7 @@ import {
   type RawParsed,
   type ResolvedParse,
 } from "./schedule-ai-parse";
-import { consumePreview, PREVIEW_STALE, releasePreview } from "./schedule-ai-preview";
+import { consumePreview, PREVIEW_STALE } from "./schedule-ai-preview";
 import { validateInstructionRules } from "@seazn/engine/scheduling";
 import type { HardConstraint, RuleCode, RuleFixture, VerifyConfig } from "@seazn/engine/scheduling";
 import { resolveProvider, selectProvider, type ProviderName } from "@/server/ai/select-provider";
@@ -1976,12 +1977,12 @@ export async function aiPlanForCompetition(
   // and is handed back when the run never reached a reserved credit. A joint
   // run is the most expensive one this product has, so paying twice for the
   // same compile after a 402 is the most expensive version of that bug too.
-  const claim: PreviewClaim = { previewId: null, creditReserved: false };
+  const claim: PreviewClaim = { previewId: null, creditConsumed: false };
   try {
     return await planForCompetition(auth, competitionId, input, claim);
   } catch (err) {
-    if (claim.previewId !== null && !claim.creditReserved) {
-      await releasePreview(claim.previewId, auth.orgId);
+    if (claim.previewId !== null && !claim.creditConsumed) {
+      await releasePreviewQuietly(claim.previewId, auth.orgId);
     }
     throw err;
   }
@@ -2239,18 +2240,25 @@ async function planForCompetition(
     // PaymentRequiredError("ai.credits") from an empty wallet is raised by the
     // reserve itself, before the model is ever called, and falls through the
     // catch below untouched.
-    result = await spendCredit(walletId, auth.orgId, quote.credits, async () => {
-      // The hold exists by the time this runs, so the confirmation is now
-      // genuinely spent: a later failure releases the CREDIT but must not
-      // reopen a preview whose run actually started.
-      claim.creditReserved = true;
-      return {
-        aiRunId: crypto.randomUUID(),
-        // The LADDER, not the single-model runner: production wants the
-        // fallback chain, and the two names differ by one word.
-        result: await runCompetitionAiPlanLadder(pack, movableIds, meter),
-      };
-    });
+    result = await spendCredit(
+      walletId,
+      auth.orgId,
+      quote.credits,
+      async () => {
+        // The hold exists by the time this runs. Provisionally consumed…
+        claim.creditConsumed = true;
+        return {
+          aiRunId: crypto.randomUUID(),
+          // The LADDER, not the single-model runner: production wants the
+          // fallback chain, and the two names differ by one word.
+          result: await runCompetitionAiPlanLadder(pack, movableIds, meter),
+        };
+      },
+      // …and un-consumed again if the ladder throws — the joint run is the most
+      // expensive failure this product has, so paying twice for the same compile
+      // after one is the most expensive version of that bug.
+      { onHoldReleased: () => (claim.creditConsumed = false) },
+    );
   } catch (err) {
     // Spec §11: a run that produced nothing usable is not charged (spendCredit
     // released the hold on the throw) but IS recorded — an un-metered failure

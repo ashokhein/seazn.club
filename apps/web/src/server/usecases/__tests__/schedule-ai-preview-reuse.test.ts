@@ -81,7 +81,7 @@ import { aiPlanForCompetition } from "../competition-schedule-ai";
 import { hashInstruction, previewScheduleAi, PREVIEW_TTL_MS } from "../schedule-ai-preview";
 import { GENERIC_CONFIG, seedOrg } from "./_seed";
 import { setOrgPlan } from "@/lib/__tests__/_billing-group";
-import { recordPackPurchase, walletIdFor } from "@/lib/credits";
+import { balance, recordPackPurchase, walletIdFor } from "@/lib/credits";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const TZ = "Europe/London";
@@ -268,6 +268,19 @@ async function retargetSettingsTo(d: SeededDivision, ymd: string): Promise<void>
 function packSentToArchitect(n = 0): { window: { start: string; end: string } } {
   const call = chat.mock.calls[n]![0] as { messages: { role: string; content: string }[] };
   return JSON.parse(call.messages[0]!.content) as { window: { start: string; end: string } };
+}
+
+/** A model REFUSAL — the cheapest way to make the ladder fail for real. It is
+ *  fatal rather than retried, so the run surfaces 422 AI_PLAN_FAILED and
+ *  `spendCredit` releases the hold it had already taken. */
+function refusalResponse(): AiChatResponse<unknown> {
+  return {
+    parsed: null,
+    assistantTurn: { role: "assistant", content: [] },
+    usage: { inputTokens: 700, outputTokens: 40, costUsd: 0 },
+    servedModel: "claude-sonnet-5",
+    refused: true,
+  };
 }
 
 function chatResponse(parsed: unknown): AiChatResponse<unknown> {
@@ -834,6 +847,71 @@ describe.skipIf(!HAS_DB)("a failed run gives the confirmation back (W5 #400 H3)"
     });
     expect(parseCalls()).toBe(0);
     expect(run.proposal).toHaveLength(division.fixtureIds.length);
+  });
+
+  it("releases the claim when the ARCHITECT fails and the hold is refunded", async () => {
+    const { auth, division } = await seedSingle();
+    const walletId = await walletIdFor(auth.orgId);
+    const p = await previewScheduleAi(auth, { kind: "division", id: division.id }, {
+      instruction: INSTRUCTION,
+    });
+    parseInstructionMock.mockClear();
+    const funded = await balance(walletId);
+
+    // The failure the reserve does NOT protect against: the credit is taken and
+    // then given straight back (`spendCredit` releases on any throw from the
+    // ladder). "The reserve succeeded" is therefore not the same question as
+    // "was anything bought".
+    chat.mockResolvedValue(refusalResponse());
+    await expect(
+      aiPlanForDivision(auth, division.id, {
+        instruction: INSTRUCTION,
+        mode: "generate",
+        preview_id: p.preview_id,
+      }),
+    ).rejects.toMatchObject({ status: 422, code: "AI_PLAN_FAILED" });
+
+    // The organiser paid nothing…
+    expect(await balance(walletId)).toBe(funded);
+    // …so they still hold their confirmation.
+    const [row] = await sql<{ consumed_at: Date | null }[]>`
+      select consumed_at from ai_parse_previews where id = ${p.preview_id!}`;
+    expect(row!.consumed_at).toBeNull();
+
+    // And the retry runs on the compile they already approved rather than
+    // buying a second one.
+    chat.mockReset();
+    chat.mockResolvedValueOnce(chatResponse(legalPlan([division])));
+    const run = await aiPlanForDivision(auth, division.id, {
+      instruction: INSTRUCTION,
+      mode: "generate",
+      preview_id: p.preview_id,
+    });
+    expect(parseCalls()).toBe(0);
+    expect(run.proposal).toHaveLength(division.fixtureIds.length);
+  });
+
+  it("refuses an unaffordable reuse BEFORE the board is read", async () => {
+    const { auth, division } = await seedSingle();
+    const p = await previewScheduleAi(auth, { kind: "division", id: division.id }, {
+      instruction: INSTRUCTION,
+    });
+    const walletId = await walletIdFor(auth.orgId);
+    await sql`delete from ai_credit_ledger where wallet_id = ${walletId}`;
+
+    // `scope.courts` names a court this division does not have — a 400 that ONLY
+    // `buildSchedulePack` can raise. Getting the 402 instead is the proof that
+    // the restored affordability bound refused before any of the board was read;
+    // without it the reserve's own 402 would arrive several queries too late.
+    await expect(
+      aiPlanForDivision(auth, division.id, {
+        instruction: INSTRUCTION,
+        mode: "generate",
+        scope: { courts: ["Court 99"] },
+        preview_id: p.preview_id,
+      }),
+    ).rejects.toMatchObject({ status: 402 });
+    expect(architectCalls()).toBe(0);
   });
 
   it("still buys exactly one run when the same preview_id is submitted twice at once", async () => {

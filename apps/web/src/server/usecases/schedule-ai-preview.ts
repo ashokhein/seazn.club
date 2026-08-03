@@ -107,10 +107,16 @@ export function hashInstruction(instruction: string): string {
  *
  * `ResolvedParse` is a TS interface, so the column would otherwise be typed by
  * generic parameter alone — a claim about the row, not a check on it.
+ *
+ * Every field is REQUIRED here. `RawParsed`'s own members carry `.default([])`,
+ * which is right for a model answer that may legitimately omit an empty list,
+ * and wrong for a row this code wrote: a stored `resolved` missing `soft` is a
+ * row we do not recognise, and filling it in would be this schema quietly
+ * repairing the thing it exists to detect. Hence `.removeDefault()`.
  */
 const StoredResolvedParse = z.object({
   hard: z.array(HardConstraint),
-  soft: RawParsed.shape.soft,
+  soft: RawParsed.shape.soft.removeDefault(),
   unparsed: z.array(z.string()),
   assumptions: z.array(z.string()),
   windowMs: z.object({ from: z.number(), to: z.number() }).nullable(),
@@ -203,11 +209,18 @@ export async function consumePreview(
   });
 }
 
-/** The canonical order the division set is stored and compared in. Plain
- *  codepoint order over uuid text — the sort has no meaning beyond being the
- *  same one on both sides of the equality. */
+/**
+ * The canonical form the division set is stored and compared in.
+ *
+ * LOWERCASED BEFORE SORTING, and that order matters. Postgres canonicalises a
+ * `uuid` to lowercase on the way in but preserves ARRAY ORDER, so a set sorted
+ * in JS from mixed-case input is stored in an order that codepoint-sorting the
+ * lower-case spelling would not reproduce ('B…' sorts before 'a…', `b…` does
+ * not) — and a legitimate confirmation would 409 purely on how the client
+ * happened to spell its uuids.
+ */
 export function sortedDivisionIds(ids: readonly string[]): string[] {
-  return [...ids].sort();
+  return ids.map((id) => id.toLowerCase()).sort();
 }
 
 /**
@@ -220,16 +233,21 @@ export function sortedDivisionIds(ids: readonly string[]): string[] {
  * it never used: the retry 409s and the organiser pays for a second compile of a
  * sentence they did not change.
  *
- * Called only when the run threw BEFORE a credit was reserved, so "nothing was
- * bought" is a fact rather than a hope. It cannot reopen a race: a competing
+ * Called only when the run cost the organiser nothing — `spendCredit` reports
+ * whether it refunded the hold, so "nothing was bought" is a fact rather than an
+ * inference from which error came back. It cannot reopen a race: a competing
  * submit that lost the claim has already been refused, and one that wins the
  * reopened claim is simply the retry.
+ *
+ * `consumed_at is not null` carries the statement's own precondition, so a
+ * double release is a provable no-op rather than one that happens to be
+ * harmless.
  */
 export async function releasePreview(previewId: string, orgId: string): Promise<void> {
   await withTenant(orgId, async (tx) => {
     await tx`
       update ai_parse_previews set consumed_at = null
-       where id = ${previewId} and org_id = ${orgId}`;
+       where id = ${previewId} and org_id = ${orgId} and consumed_at is not null`;
   });
 }
 
