@@ -305,7 +305,21 @@ export async function previewScheduleAi(
       : await resolveCompetitionScope(auth, scope.id, input);
 
   const walletId = await walletIdFor(auth.orgId);
-  await rateLimit(resolved.rateLimitKey, { max: resolved.rateLimitMax, windowSeconds: 3600 });
+  // FAIL-CLOSED, and deliberately unlike the run. The bucket IDENTITY is the
+  // run's — same key, same max, so looking before you leap cannot buy extra
+  // quota — but the POLICY diverges, because what the two paths fall back on
+  // when Redis stops answering is not the same thing. A run that slips past an
+  // unreachable limiter is still bounded by the credit wallet: it cannot proceed
+  // without spending. A preview spends nothing, so the limiter is the ONLY
+  // control on it, and fail-open would turn an Upstash blip into unmetered model
+  // access for the length of the outage. The trade is cheap in the other
+  // direction: a preview that 429s during a Redis outage costs the organiser a
+  // retry, not money.
+  await rateLimit(resolved.rateLimitKey, {
+    max: resolved.rateLimitMax,
+    windowSeconds: 3600,
+    failClosed: true,
+  });
 
   // THE MONEY GATE. `minimumCredits` is a lower bound on what the confirmed run
   // would cost — it can only ever decline to compile a run that would have been
@@ -345,6 +359,17 @@ export async function previewScheduleAi(
 
   const expiresAt = new Date(Date.now() + PREVIEW_TTL_MS).toISOString();
 
+  // NOTE ON WHAT A FAILED COMPILE COSTS. No row is persisted here, so there is
+  // nothing for a run to reuse and the confirm path has no choice but to compile
+  // again. An organiser who takes the preference fallback therefore pays for the
+  // compile TWICE — 2 preview attempts here plus the run's own 2 inline
+  // attempts — and burns 2 of the division's 5 hourly slots, because the preview
+  // consumed one and the fallback run (no `preview_id` to claim) consumes
+  // another. That is correct, not a leak: persisting a failed compile would
+  // hand the run a parse that failed schema, and skipping the limiter for a
+  // preview that did reach the model would make failure the cheap path. It is
+  // recorded here because undocumented it reads as double-charging.
+  //
   // Failed twice against the schema. Not an error — a state. No `preview_id`,
   // because there is nothing to confirm; the organiser's own sentence comes back
   // in `unparsed` so the card can show what we could not read, and the client

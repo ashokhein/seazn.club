@@ -26,6 +26,7 @@ const {
   isServerFeatureEnabled,
   captureServer,
   incrWindow,
+  cacheEnabled,
   rlCounts,
 } = vi.hoisted(() => {
   const rlCounts = new Map<string, number>();
@@ -35,11 +36,16 @@ const {
     architectParse: vi.fn(),
     isServerFeatureEnabled: vi.fn(),
     captureServer: vi.fn(),
-    incrWindow: vi.fn(async (key: string) => {
+    incrWindow: vi.fn(async (key: string): Promise<number | null> => {
       const n = (rlCounts.get(key) ?? 0) + 1;
       rlCounts.set(key, n);
       return n;
     }),
+    // Default false — no REDIS_URL in the test env, which is what the real
+    // `cacheEnabled` would answer. Only the fail-closed test flips it, because
+    // "Redis configured but unreachable" is the ONLY state in which the preview's
+    // policy differs from the run's.
+    cacheEnabled: vi.fn(() => false),
     rlCounts,
   };
 });
@@ -58,7 +64,7 @@ vi.mock("@anthropic-ai/sdk", () => ({
 vi.mock("@/lib/posthog-server", () => ({ isServerFeatureEnabled, captureServer }));
 vi.mock("@/lib/cache", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/cache")>();
-  return { ...actual, incrWindow };
+  return { ...actual, incrWindow, cacheEnabled };
 });
 
 import { sql } from "@/lib/db";
@@ -67,7 +73,7 @@ import { balance, recordPackPurchase, walletIdFor } from "@/lib/credits";
 import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { RawParsed } from "../schedule-ai-parse";
-import { previewScheduleAi } from "../schedule-ai-preview";
+import { hashInstruction, previewScheduleAi } from "../schedule-ai-preview";
 import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
@@ -105,6 +111,23 @@ const COMPILED: RawParsed = {
   unparsed: ["moar vibes pls"],
 };
 
+/** A compile whose only rule is a calendar window. Deliberately carries NO
+ *  competition-scoped per-day cap: `resolveParsed`'s feasibility re-reading only
+ *  extends a window when one exists, so the resolved days are exactly the ones
+ *  stated and the assertion below cannot drift. */
+const COMPILED_WINDOW: RawParsed = {
+  hard: [
+    {
+      type: "window",
+      start: { kind: "date", date: "2026-09-01" },
+      end: { kind: "date", date: "2026-09-07" },
+      scope: { kind: "competition" },
+    },
+  ],
+  soft: [],
+  unparsed: [],
+};
+
 /** Calls into the stage-1 compiler's provider — one per compile attempt. */
 const parseCalls = (): number => chat.mock.calls.length;
 /** Calls into the stage-2 architect. A preview must never make one. */
@@ -117,10 +140,15 @@ async function seedPlusOrg(): Promise<AuthCtx> {
   return auth;
 }
 
-async function seedPlannable(auth: AuthCtx): Promise<{ divisionId: string; competitionId: string }> {
-  const comp = await createCompetition(auth, { name: "W5 Preview", visibility: "public", branding: {} });
-  const division = await createDivision(auth, comp.id, {
-    name: "Open",
+/** One division of `competitionId`, entrants seeded. `fixtures: false` leaves it
+ *  with nothing MOVABLE, which is the state ruling R6 drops. */
+async function seedDivision(
+  auth: AuthCtx,
+  competitionId: string,
+  opts: { name?: string; fixtures?: boolean } = {},
+): Promise<string> {
+  const division = await createDivision(auth, competitionId, {
+    name: opts.name ?? "Open",
     slug: `open-${randomUUID().slice(0, 6)}`,
     sport_key: "generic",
     variant_key: "score",
@@ -147,8 +175,33 @@ async function seedPlannable(auth: AuthCtx): Promise<{ divisionId: string; compe
     name: "League",
     config: {},
   });
-  await generateStageFixtures(auth, stage!.id);
-  return { divisionId: division.id, competitionId: comp.id };
+  if (opts.fixtures !== false) await generateStageFixtures(auth, stage!.id);
+  return division.id;
+}
+
+async function seedPlannable(auth: AuthCtx): Promise<{ divisionId: string; competitionId: string }> {
+  const comp = await createCompetition(auth, { name: "W5 Preview", visibility: "public", branding: {} });
+  return { divisionId: await seedDivision(auth, comp.id), competitionId: comp.id };
+}
+
+/** A competition with `count` divisions. `emptyLast` leaves the final one with
+ *  no movable fixtures. */
+async function seedJoint(
+  auth: AuthCtx,
+  count: number,
+  opts: { emptyLast?: boolean } = {},
+): Promise<{ competitionId: string; divisionIds: string[] }> {
+  const comp = await createCompetition(auth, { name: "W5 Joint", visibility: "public", branding: {} });
+  const divisionIds: string[] = [];
+  for (let i = 0; i < count; i += 1) {
+    divisionIds.push(
+      await seedDivision(auth, comp.id, {
+        name: `Div ${i + 1}`,
+        fixtures: !(opts.emptyLast && i === count - 1),
+      }),
+    );
+  }
+  return { competitionId: comp.id, divisionIds };
 }
 
 /** The competition_events rows a preview appended for this org. */
@@ -178,6 +231,12 @@ beforeEach(() => {
   isServerFeatureEnabled.mockReset().mockResolvedValue(true);
   captureServer.mockReset().mockResolvedValue(undefined);
   rlCounts.clear();
+  incrWindow.mockReset().mockImplementation(async (key: string) => {
+    const n = (rlCounts.get(key) ?? 0) + 1;
+    rlCounts.set(key, n);
+    return n;
+  });
+  cacheEnabled.mockReset().mockReturnValue(false);
   process.env.ANTHROPIC_API_KEY = "test-key";
   delete process.env.OPENROUTER_API_KEY;
   delete process.env.AI_PROVIDER;
@@ -222,6 +281,11 @@ describe.skipIf(!HAS_DB)("previewScheduleAi (W5 #400)", () => {
     expect(await balance(walletId)).toBe(before);
     expect(architectCalls()).toBe(0);
     expect(parseCalls()).toBe(1);
+    // The preview took a slot out of the RUN's bucket, by the run's own key.
+    // Without this the limiter call could be deleted outright and every other
+    // assertion in this file would still pass — which is the difference between
+    // "bounded LLM access" and "a free one".
+    expect(rlCounts.get(`rl:ai-plan:${divisionId}`)).toBe(1);
     // Resolved from the MODEL SLUG, never from a global AI_PROVIDER: the
     // parser's default is a bare Anthropic id, and a bare id sent to OpenRouter
     // is a 404 this path would swallow as "no compiled rules".
@@ -304,5 +368,183 @@ describe.skipIf(!HAS_DB)("previewScheduleAi (W5 #400)", () => {
     const rows = await sql<{ n: number }[]>`
       select count(*)::int as n from ai_parse_previews where org_id = ${auth.orgId}`;
     expect(rows[0]!.n).toBe(0);
+  });
+
+  it("resolves a stated window to both its days in the org's zone", async () => {
+    const auth = await seedPlusOrg();
+    await recordPackPurchase(await walletIdFor(auth.orgId), 10, `fund-${randomUUID()}`);
+    // A zone that is neither UTC nor the machine's, and far enough east that a
+    // day boundary rendered in the WRONG zone lands on a different date.
+    await sql`update organizations set timezone = 'Pacific/Auckland' where id = ${auth.orgId}`;
+    const { divisionId } = await seedPlannable(auth);
+    compilerAnswers(COMPILED_WINDOW);
+
+    const res = await previewScheduleAi(auth, { kind: "division", id: divisionId }, {
+      instruction: "between the 1st and the 7th of September",
+    });
+
+    // Both ends, not one: `to` is the last whole SECOND of the final day, so a
+    // swapped or mis-zoned end silently renders the day before.
+    expect(res.window).toEqual({ start: "2026-09-01", end: "2026-09-07", tz: "Pacific/Auckland" });
+  });
+
+  it("refuses the 6th preview in the window before it reaches the model", async () => {
+    const auth = await seedPlusOrg();
+    await recordPackPurchase(await walletIdFor(auth.orgId), 10, `fund-${randomUUID()}`);
+    const { divisionId } = await seedPlannable(auth);
+    compilerAnswers(COMPILED);
+
+    for (let i = 0; i < 5; i += 1) {
+      await previewScheduleAi(auth, { kind: "division", id: divisionId }, { instruction: INSTRUCTION });
+    }
+    expect(parseCalls()).toBe(5);
+
+    await expect(
+      previewScheduleAi(auth, { kind: "division", id: divisionId }, { instruction: INSTRUCTION }),
+    ).rejects.toMatchObject({ status: 429 });
+    // A limiter that incremented AFTER the model call would leave this at 6 —
+    // it would be a counter, not a limit.
+    expect(parseCalls()).toBe(5);
+    expect(architectCalls()).toBe(0);
+  });
+
+  it("refuses the preview when the limiter backend is unreachable", async () => {
+    const auth = await seedPlusOrg();
+    await recordPackPurchase(await walletIdFor(auth.orgId), 10, `fund-${randomUUID()}`);
+    const { divisionId } = await seedPlannable(auth);
+    compilerAnswers(COMPILED);
+    // Redis CONFIGURED but not answering — `incrWindow` yields no count. This is
+    // the only state in which the preview's policy diverges from the run's: the
+    // run is still bounded by the credit wallet, the preview is bounded by
+    // nothing, so an Upstash blip would otherwise be unmetered model access.
+    cacheEnabled.mockReturnValue(true);
+    incrWindow.mockResolvedValue(null);
+
+    await expect(
+      previewScheduleAi(auth, { kind: "division", id: divisionId }, { instruction: INSTRUCTION }),
+    ).rejects.toMatchObject({ status: 429 });
+    expect(parseCalls()).toBe(0);
+    expect(await previewLedgerFor(auth.orgId)).toHaveLength(0);
+  });
+
+  it("refuses a joint preview the wallet cannot afford, before any model call", async () => {
+    const auth = await seedPlusOrg();
+    const walletId = await walletIdFor(auth.orgId);
+    // THREE divisions at the default rung: minimumCredits([u,u,u]) === 2, so a
+    // 1-credit wallet is short. Two divisions would bound at 1 and this wallet
+    // would walk through — the bound has to be the joint discount's, not a count.
+    await recordPackPurchase(walletId, 1, `fund-${randomUUID()}`);
+    const { competitionId, divisionIds } = await seedJoint(auth, 3);
+    compilerAnswers(COMPILED);
+
+    await expect(
+      previewScheduleAi(auth, { kind: "competition", id: competitionId }, {
+        instruction: INSTRUCTION,
+        division_ids: divisionIds,
+      }),
+    ).rejects.toMatchObject({ status: 402 });
+    expect(parseCalls()).toBe(0);
+    expect(architectCalls()).toBe(0);
+    expect(await previewLedgerFor(auth.orgId)).toHaveLength(0);
+  });
+
+  it("bounds the joint preview on the competition bucket at 3 an hour", async () => {
+    const auth = await seedPlusOrg();
+    await recordPackPurchase(await walletIdFor(auth.orgId), 10, `fund-${randomUUID()}`);
+    const { competitionId, divisionIds } = await seedJoint(auth, 3);
+    compilerAnswers(COMPILED);
+    const req = { instruction: INSTRUCTION, division_ids: divisionIds };
+
+    await previewScheduleAi(auth, { kind: "competition", id: competitionId }, req);
+    // The JOINT bucket, keyed by competition — not the division bucket, which
+    // would let one competition's divisions each fund a separate joint quota.
+    expect(rlCounts.get(`rl:ai-plan-competition:${competitionId}`)).toBe(1);
+
+    await previewScheduleAi(auth, { kind: "competition", id: competitionId }, req);
+    await previewScheduleAi(auth, { kind: "competition", id: competitionId }, req);
+    expect(parseCalls()).toBe(3);
+
+    await expect(
+      previewScheduleAi(auth, { kind: "competition", id: competitionId }, req),
+    ).rejects.toMatchObject({ status: 429 });
+    // A joint compile is the expensive one; its max is 3, not the division's 5.
+    expect(parseCalls()).toBe(3);
+  });
+
+  it("refuses a joint preview naming fewer than two divisions", async () => {
+    const auth = await seedPlusOrg();
+    await recordPackPurchase(await walletIdFor(auth.orgId), 10, `fund-${randomUUID()}`);
+    const { competitionId, divisionIds } = await seedJoint(auth, 2);
+    compilerAnswers(COMPILED);
+
+    await expect(
+      previewScheduleAi(auth, { kind: "competition", id: competitionId }, {
+        instruction: INSTRUCTION,
+        division_ids: [divisionIds[0]!],
+      }),
+    ).rejects.toMatchObject({ status: 400, code: "AI_PLAN_SINGLE_DIVISION" });
+    expect(parseCalls()).toBe(0);
+  });
+
+  it("drops a division with nothing movable before it compiles (R6)", async () => {
+    const auth = await seedPlusOrg();
+    await recordPackPurchase(await walletIdFor(auth.orgId), 10, `fund-${randomUUID()}`);
+    const { competitionId, divisionIds } = await seedJoint(auth, 3, { emptyLast: true });
+    compilerAnswers(COMPILED);
+
+    const res = await previewScheduleAi(auth, { kind: "competition", id: competitionId }, {
+      instruction: INSTRUCTION,
+      division_ids: divisionIds,
+    });
+
+    expect(res.failed).toBe(false);
+    // The ledger names the divisions this preview was actually compiled for. The
+    // empty one is dropped before the price, so it must be dropped here too —
+    // otherwise the preview authorises a run over a division the run will skip.
+    const [line] = await previewLedgerFor(auth.orgId);
+    expect(line!.payload.division_ids).toEqual([divisionIds[0], divisionIds[1]]);
+  });
+});
+
+// The single shared key between this wave's two tasks: the preview writes it,
+// Task 2's run gate (`consumePreview`) matches on it. Both sides call THIS
+// function, so these tests are written against the property the hash exists to
+// guarantee rather than against its current output — two agreeing
+// implementations of a wrong rule would still be wrong.
+//
+// The guarantee is asymmetric, and the asymmetry decides every judgement call
+// below. A hash that is too STRICT refuses a confirm and costs the organiser one
+// recompile. A hash that is too LOOSE runs — and charges — the architect under
+// rules the organiser never saw, which is the failure the whole wave exists to
+// close. So where the answer is genuinely arguable, err strict.
+describe("hashInstruction", () => {
+  it("ignores leading and trailing whitespace", () => {
+    expect(hashInstruction("  a  b ")).toBe(hashInstruction("a  b"));
+  });
+
+  it("collapses runs of whitespace, including newlines", () => {
+    // The same sentence wrapped across two lines is the same sentence.
+    expect(hashInstruction("a  b")).toBe(hashInstruction("a b"));
+    expect(hashInstruction("a\n\tb")).toBe(hashInstruction("a b"));
+  });
+
+  it("separates a different sentence", () => {
+    expect(hashInstruction("a b")).not.toBe(hashInstruction("a c"));
+  });
+
+  it("treats case as significant", () => {
+    // DELIBERATE. Case-folding would buy a retyped capital at the cost of making
+    // the key answer "close enough" rather than "this exact sentence"; a
+    // capitalisation change is an EDIT, and an edited instruction should be
+    // recompiled and re-shown, not silently matched to the old card.
+    expect(hashInstruction("Friday")).not.toBe(hashInstruction("friday"));
+  });
+
+  it("does not fold characters that merely look alike", () => {
+    // DELIBERATE, and the reason no folding table exists here: a curly
+    // apostrophe is not canonically equivalent to a straight one, so no standard
+    // normalisation merges them and a bespoke table would be us guessing which
+    // distinct characters "mean" the same. Refusing costs one recompile.
+    expect(hashInstruction("don't")).not.toBe(hashInstruction("don’t"));
   });
 });
