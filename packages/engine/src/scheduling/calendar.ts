@@ -893,11 +893,26 @@ export function validateAssignments(
     const target = byId.get(dep.fixtureId);
     const source = byId.get(dep.dependsOn);
     if (!target || !source) continue;
-    if (target.startAt < source.endAt) {
+    // The advancing player is a participant of the fixture they feed (#396), so
+    // the dependent may not start at the feeder's final whistle — it may start
+    // once the feeder's occupancy PLUS the rest that player is owed has passed
+    // (#399 gap 7). `effectiveRestMinutes` is the same answer the placer and the
+    // person checks give, so the three cannot disagree about what rest means.
+    //
+    // In the original payloads a 45-minute instruction happened to cover this by
+    // luck. A rule should not depend on luck.
+    const restMinutes = effectiveRestMinutes(config, target);
+    if (target.startAt < source.endAt + restMinutes * MS_PER_MIN) {
+      // Two distinct details on purpose. They are different failures, and the
+      // delta gate keys on `detail`: one string for both would let a newly
+      // introduced rest breach hide behind a pre-existing ordering violation.
+      const before = target.startAt < source.endAt;
       conflicts.push({
         fixtureId: dep.fixtureId,
         reason: "order",
-        detail: `starts before feeder ${dep.dependsOn} ends`,
+        detail: before
+          ? `starts before feeder ${dep.dependsOn} ends`
+          : `starts ${Math.round((target.startAt - source.endAt) / MS_PER_MIN)} min after feeder ${dep.dependsOn} ends, needs ${restMinutes}`,
         direct: dep.direct === true,
       });
     }
