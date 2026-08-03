@@ -14,17 +14,21 @@ import { describe, expect, it } from "vitest";
 import { compareSemver } from "../sport/registry.ts";
 import { builtinModules } from "../sports/index.ts";
 import {
+  EXTEND_GOLDEN,
   MIN_EVENTS,
   REBASELINE_GOLDEN,
   UPDATE_GOLDEN,
   buildCorpus,
   eventTypesIn,
+  extendCorpus,
   payloadParseFailures,
   readCorpus,
   rebaselineCorpus,
   recomputeStream,
   sportPayloads,
   stateMismatch,
+  tierEventTypes,
+  uncoveredTierTypes,
   writeCorpus,
 } from "./golden.ts";
 
@@ -35,6 +39,26 @@ if (UPDATE_GOLDEN) {
         const corpus = buildCorpus(module);
         writeCorpus(corpus);
         expect(corpus.streams.length).toBeGreaterThan(0);
+      });
+    }
+  });
+} else if (EXTEND_GOLDEN) {
+  // Coverage extension (#429 / W4 review item 3). APPENDS streams that reach
+  // the fidelity-tier event types no recorded stream ever exercised; every
+  // existing stream is preserved byte for byte, which the assertion below is
+  // the whole point of.
+  describe("golden corpus coverage extension (EXTEND_GOLDEN=1)", () => {
+    for (const module of builtinModules) {
+      it(`extends ${module.key} without replacing anything`, () => {
+        const before = readCorpus(module.key);
+        const { corpus, gained, stillMissing, appended } = extendCorpus(module, before);
+        expect(corpus.streams.slice(0, before.streams.length)).toEqual(before.streams);
+        // eslint-disable-next-line no-console
+        console.log(
+          `[extend] ${module.key}: +${appended.length} streams ${JSON.stringify(appended)} ` +
+            `gained ${JSON.stringify(gained)} stillMissing ${JSON.stringify(stillMissing)}`,
+        );
+        if (appended.length > 0) writeCorpus(corpus);
       });
     }
   });
@@ -109,20 +133,15 @@ if (UPDATE_GOLDEN) {
         }
       });
 
-      // The additive-only tripwire. Payloads written under the OLD schema must
-      // still satisfy the CURRENT one; a new required field or a renamed key
-      // reds this test while every generated conformance run stays green.
-      //
-      // Against the BRANCH, not the union (W4 review item 2). The union's
-      // branches carry no discriminator — the envelope's `type` does, and
-      // `apply` is what reads it — so a union parse passes whenever a sibling
-      // branch is a superset of the payload. Tightening `PeriodSuspensionEnd`
-      // used to leave this green for hockey and icehockey on the strength of
-      // `PeriodSuspensionStart` accepting the same shape.
       it("every recorded payload still parses against the branch apply selects", () => {
         expect(sportPayloads(corpus).length, "sport payloads in corpus").toBeGreaterThan(0);
         for (const stream of corpus.streams) {
-          const failures = payloadParseFailures(module, corpus.configs[stream.config], stream.events);
+          const failures = payloadParseFailures(
+            module,
+            corpus.configs[stream.config],
+            stream.events,
+            stream.lineups,
+          );
           expect(
             failures.map((f) => `#${f.index} ${f.type}: ${JSON.stringify(f.issues)}`),
             `${module.key} config=${stream.config} seed=${stream.seed} — a recorded ` +
@@ -136,7 +155,7 @@ if (UPDATE_GOLDEN) {
         for (const stream of corpus.streams) {
           const raw = corpus.configs[stream.config];
           const label = `${module.key} config=${stream.config} seed=${stream.seed}`;
-          const actual = recomputeStream(module, raw, stream.events);
+          const actual = recomputeStream(module, raw, stream.events, stream.lineups);
           for (let i = 0; i < stream.states.length; i++) {
             // Exact everywhere except `cfg`, which is compared as a subset: a
             // new OPTIONAL config knob is additive and must not red a corpus it

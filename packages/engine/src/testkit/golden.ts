@@ -103,6 +103,12 @@ export interface GoldenStream {
   /** Key into GoldenCorpus.configs. */
   config: string;
   seed: number;
+  /** W4 review item 3 — the lineups this stream was recorded against, when
+   *  they are NOT `defaultLineupPair(resolvePositions(module, cfg))`. Absent on
+   *  every pre-W4 stream, which is the point: changing the default lineups
+   *  would change `init` for all eleven corpora, so a coverage stream that
+   *  needs a bench (football cannot substitute without one) carries its own. */
+  lineups?: LineupPair;
   events: GoldenEvent[];
   /** JSON of the folded state after each event — states[i] is the fold of
    *  events[0..i]. Length always equals events.length. */
@@ -180,9 +186,10 @@ export function recomputeStream(
   module: AnySportModule,
   rawConfig: unknown,
   events: readonly GoldenEvent[],
+  recordedLineups?: LineupPair,
 ): Pick<GoldenStream, "states" | "outcome" | "summary" | "deltas"> {
   const cfg = module.configSchema.parse(rawConfig);
-  const lineups = defaultLineupPair(resolvePositions(module, cfg));
+  const lineups = recordedLineups ?? defaultLineupPair(resolvePositions(module, cfg));
   const envelopes: EventEnvelope[] = events.map((event, i) => makeEnvelope(i, event));
 
   const states = envelopes.map((_, i) =>
@@ -245,11 +252,175 @@ export const UPDATE_GOLDEN = process.env.UPDATE_GOLDEN === "1";
  *  for a corpus being built from nothing. */
 export const REBASELINE_GOLDEN = process.env.REBASELINE_GOLDEN === "1";
 
+/** Append coverage streams for uncovered fidelity-tier event types. */
+export const EXTEND_GOLDEN = process.env.EXTEND_GOLDEN === "1";
+
+// ------------------------------------------------------- coverage extension
+//
+// W4 review item 3. `carriesNonTrivialCorpus` asserted only `types.length > 2`,
+// and the corpora were frozen before the W4 event types existed, so the gate
+// covered a fraction of what it claimed to guard: football was missing 3 of its
+// 7 tier types, cricket 12 of 15. Adding a required field to the PRE-EXISTING
+// `FootballSub` left the whole golden gate green.
+//
+// The fix is coverage, and coverage means new streams. Existing streams are
+// PRESERVED byte for byte — this only ever appends.
+
+/** Event types a module declares in `fidelityTiers`. That declaration is the
+ *  module's own claim about what a scorer can record, so it is the right
+ *  yardstick for "does the corpus guard what it says it guards". */
+export function tierEventTypes(module: AnySportModule): string[] {
+  return [...new Set(module.fidelityTiers.flatMap((tier) => tier.eventTypes))].sort();
+}
+
+/** Tier types with no recorded event of that type. */
+export function uncoveredTierTypes(module: AnySportModule, corpus: GoldenCorpus): string[] {
+  const seen = new Set(eventTypesIn(corpus));
+  return tierEventTypes(module).filter((type) => !seen.has(type));
+}
+
+/** Configs reached by no `variants` entry that own a fold path a tier type
+ *  needs. Cricket declares `superOver: false` everywhere — no variant enables
+ *  it — so `cricket.superover.ball` was unreachable from any recorded config. */
+const COVERAGE_CONFIGS: Record<string, Record<string, unknown>> = {
+  cricket: {
+    superOver: { superOver: true, ballsPerInnings: 30, maxOversPerBowler: 5, minOversForResult: 1 },
+  },
+};
+
+/** Bench slots a coverage stream needs that the minimal catalog lineup has
+ *  none of. Football cannot substitute without a bench, which is why
+ *  `football.sub` — a PRE-W4 event type — was never once recorded. Changing
+ *  `defaultLineupPair` instead would change `init` for all eleven corpora, so
+ *  these lineups ride on the stream (`GoldenStream.lineups`). */
+const COVERAGE_BENCH: Record<string, number> = { football: 7 };
+
+function benchedLineups(module: AnySportModule, cfg: unknown): LineupPair | undefined {
+  const size = COVERAGE_BENCH[module.key];
+  if (size === undefined) return undefined;
+  const base = defaultLineupPair(resolvePositions(module, cfg));
+  const withBench = (lineup: LineupPair["home"]): LineupPair["home"] => ({
+    ...lineup,
+    slots: [
+      ...lineup.slots,
+      ...Array.from({ length: size }, (_, i) => ({
+        personId: `${lineup.entrantId}-b${i + 1}`,
+        slot: "bench" as const,
+        orderNo: lineup.slots.length + i + 1,
+      })),
+    ],
+  });
+  return { home: withBench(base.home), away: withBench(base.away) };
+}
+
+/** Every config a coverage scan may draw on: the ones already recorded, plus
+ *  the module's own variants and its COVERAGE_CONFIGS. MAX_CONFIGS caps the
+ *  RECORDING pass, not this one — a corpus with four configs can still need a
+ *  fifth to reach one event type. */
+function coverageCandidates(module: AnySportModule, corpus: GoldenCorpus): [string, unknown][] {
+  const out: [string, unknown][] = Object.entries(corpus.configs);
+  const known = new Set(out.map(([name]) => name));
+  for (const [name, raw] of [
+    ...Object.entries(module.variants as Record<string, unknown>),
+    ...Object.entries(COVERAGE_CONFIGS[module.key] ?? {}),
+  ]) {
+    if (known.has(name)) continue;
+    try {
+      module.configSchema.parse(raw);
+    } catch {
+      continue;
+    }
+    known.add(name);
+    out.push([name, raw]);
+  }
+  return out;
+}
+
+/** How far a coverage scan walks per config before giving up on a seed range. */
+const COVERAGE_SEED_SCAN = 3000;
+/** Coverage streams may run long — a super over is only reached after a tie. */
+const COVERAGE_MAX_EVENTS = 120;
+
+export interface CorpusExtension {
+  corpus: GoldenCorpus;
+  /** Types the appended streams brought in, in the order they were covered. */
+  gained: string[];
+  /** Types no config-and-seed in range could reach. */
+  stillMissing: string[];
+  /** `config:seed` of every stream appended. */
+  appended: string[];
+}
+
+/** Appends the fewest streams that cover a module's uncovered tier types.
+ *  Greedy: at each pass take the stream that brings in the most still-missing
+ *  types, so the corpus grows by a handful of streams rather than one per type. */
+export function extendCorpus(module: AnySportModule, existing: GoldenCorpus): CorpusExtension {
+  const wanted = new Set(uncoveredTierTypes(module, existing));
+  const corpus: GoldenCorpus = { ...existing, configs: { ...existing.configs }, streams: [...existing.streams] };
+  const gained: string[] = [];
+  const appended: string[] = [];
+  if (wanted.size === 0) return { corpus, gained, stillMissing: [], appended };
+
+  const candidates = coverageCandidates(module, existing);
+  const used = new Set(existing.streams.map((s) => `${s.config}:${s.seed}`));
+
+  while (wanted.size > 0) {
+    let best: { name: string; raw: unknown; seed: number; hits: string[] } | null = null;
+    for (const [name, raw] of candidates) {
+      const cfg = module.configSchema.parse(raw);
+      const lineups = benchedLineups(module, cfg) ?? defaultLineupPair(resolvePositions(module, cfg));
+      for (let seed = 1; seed <= COVERAGE_SEED_SCAN; seed++) {
+        if (used.has(`${name}:${seed}`)) continue;
+        let events: EventEnvelope[];
+        try {
+          events = buildStream(module, cfg, lineups, seed, COVERAGE_MAX_EVENTS);
+        } catch {
+          continue;
+        }
+        const hits = [...new Set(events.map((e) => e.type))].filter((type) => wanted.has(type));
+        if (hits.length === 0) continue;
+        if (best === null || hits.length > best.hits.length) best = { name, raw, seed, hits };
+        if (best.hits.length === wanted.size) break;
+      }
+      if (best !== null && best.hits.length === wanted.size) break;
+    }
+    if (best === null) break;
+
+    const cfg = module.configSchema.parse(best.raw);
+    const lineups = benchedLineups(module, cfg);
+    const resolved = lineups ?? defaultLineupPair(resolvePositions(module, cfg));
+    const events: GoldenEvent[] = buildStream(module, cfg, resolved, best.seed, COVERAGE_MAX_EVENTS).map(
+      (e) => ({ type: e.type, payload: e.payload }),
+    );
+    corpus.configs[best.name] = best.raw;
+    corpus.streams.push({
+      config: best.name,
+      seed: best.seed,
+      ...(lineups === undefined ? {} : { lineups }),
+      events,
+      ...recomputeStream(module, best.raw, events, lineups),
+    });
+    used.add(`${best.name}:${best.seed}`);
+    appended.push(`${best.name}:${best.seed}`);
+    for (const type of best.hits) {
+      wanted.delete(type);
+      gained.push(type);
+    }
+  }
+
+  return { corpus, gained, stillMissing: [...wanted], appended };
+}
+
 export function rebaselineCorpus(module: AnySportModule, existing: GoldenCorpus): GoldenCorpus {
   return {
     ...existing,
     streams: existing.streams.map((stream) => {
-      const fresh = recomputeStream(module, existing.configs[stream.config], stream.events);
+      const fresh = recomputeStream(
+        module,
+        existing.configs[stream.config],
+        stream.events,
+        stream.lineups,
+      );
       return {
         ...stream,
         ...fresh,
@@ -404,9 +575,10 @@ export function payloadParseFailures(
   module: AnySportModule,
   rawConfig: unknown,
   events: readonly GoldenEvent[],
+  recordedLineups?: LineupPair,
 ): PayloadParseFailure[] {
   const cfg = module.configSchema.parse(rawConfig);
-  const lineups = defaultLineupPair(resolvePositions(module, cfg));
+  const lineups = recordedLineups ?? defaultLineupPair(resolvePositions(module, cfg));
   const envelopes: EventEnvelope[] = events.map((event, i) => makeEnvelope(i, event));
   const out: PayloadParseFailure[] = [];
 

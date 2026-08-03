@@ -1640,6 +1640,58 @@ function generateBall(state: CricketState, rng: Rng): CricketBallEv {
   );
 }
 
+// W4 review item 3 — a Tier-2 scorecard line for a closed FINE innings, built
+// from that innings' own ledger. `applyPlayerLine` compares every number
+// against the ledger, so anything else would be an event this generator's own
+// fold rejects. Returns null when there is nothing left to line: no closed
+// fine innings, or every person in it already has a line of that aspect.
+function generatePlayerLine(
+  state: CricketState,
+  rng: Rng,
+): z.infer<typeof CricketPlayerLine> | null {
+  const candidates: number[] = [];
+  state.innings.forEach((innings, i) => {
+    if (innings.closed && innings.fine !== null) candidates.push(i);
+  });
+  if (candidates.length === 0) return null;
+  const index = candidates[Math.floor(rng() * candidates.length)] as number;
+  const innings = state.innings[index] as InningsState;
+  const fine = innings.fine as FineInnings;
+  const number = index + 1;
+  const taken = state.playerLines.filter((line) => line.innings === number);
+
+  const batters = Object.keys(fine.batterBalls).filter(
+    (person) => !taken.some((line) => line.person === person && line.batting !== undefined),
+  );
+  const bowlers = Object.keys(fine.bowlerBalls).filter(
+    (person) => !taken.some((line) => line.person === person && line.bowling !== undefined),
+  );
+  const wantBowling = bowlers.length > 0 && (batters.length === 0 || rng() < 0.5);
+  if (wantBowling) {
+    const person = bowlers[Math.floor(rng() * bowlers.length)] as string;
+    return {
+      innings: number,
+      person,
+      bowling: {
+        legalBalls: fine.bowlerBalls[person] ?? 0,
+        runs: fine.bowlerRuns[person] ?? 0,
+        wickets: fine.bowlerWickets[person] ?? 0,
+      },
+    };
+  }
+  if (batters.length === 0) return null;
+  const person = batters[Math.floor(rng() * batters.length)] as string;
+  return {
+    innings: number,
+    person,
+    batting: {
+      runs: fine.batterRuns[person] ?? 0,
+      balls: fine.batterBalls[person] ?? 0,
+      ...(fine.dismissed.includes(person) ? { out: true } : {}),
+    },
+  };
+}
+
 function generateSoBall(state: CricketState, rng: Rng): CricketBallEv {
   const so = state.superOver as NonNullable<CricketState["superOver"]>;
   let index = so.innings.length - 1;
@@ -2232,6 +2284,14 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
       ) {
         return { type: "cricket.followon", payload: {} };
       }
+      // W4 review item 3 — a Tier-2 scorecard line for a CLOSED fine innings.
+      // The fold validates it against the innings ledger exactly, so it is
+      // built FROM that ledger; a line that disagreed would be an event the
+      // generator's own fold rejects (spec 03 §6).
+      if (rng() < 0.25) {
+        const line = generatePlayerLine(state, rng);
+        if (line !== null) return { type: "cricket.player.line", payload: line };
+      }
       if (rng() < 0.6) {
         // Coarse innings in one event.
         const limit = state.quota;
@@ -2323,6 +2383,25 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
           },
         };
       }
+    }
+    // W4 review item 3 — the generator could not reach these two, so no
+    // corpus could hold them and no property run explored them.
+    if (roll >= 0.052 && roll < 0.056) {
+      return {
+        type: "cricket.interruption",
+        payload: {
+          kind: pick(["rain", "light", "other"] as const),
+          ...(rng() < 0.5 ? { oversLostEstimate: 1 + Math.floor(rng() * 6) } : {}),
+        },
+      };
+    }
+    if (roll >= 0.056 && roll < 0.058 && open.innings.legalBalls > 0) {
+      // An innings closed by the umpires rather than by a fold predicate: the
+      // three auto-closes are derivable from the totals, these are not.
+      return {
+        type: "cricket.innings.close",
+        payload: { reason: pick(["time", "weather", "other"] as const) },
+      };
     }
     if (roll >= 0.046 && roll < 0.052) {
       const fine = open.innings.fine;
