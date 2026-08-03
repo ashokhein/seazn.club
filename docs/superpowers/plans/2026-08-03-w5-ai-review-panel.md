@@ -22,7 +22,12 @@ Copied verbatim from the repo rules and the programme design doc. **Every task's
 - **Assertions on a Next HTML body must anchor on `="`.** React serialises an omitted prop as `"$undefined"`, so a bare `data-*` probe passes in both states.
 - **`grep` reports files here as `Binary file … matches`** — always pass `-a` before concluding a call site does not exist.
 - **`rtk` lies.** Its vitest summary prints `PASS(0) FAIL(0)` for a suite that failed to *collect*, and it hides `npm run lint` output. Judge green only from `--reporter=json --outputFile` (`numPassedTests`/`numTotalTests`), and use `rtk proxy` for lint and read `✖ N problems`.
-- **`npm test --workspace apps/web -- run <path>` treats positionals as filename FILTERS.** A typo silently runs a subset and reports green. Run whole suites.
+- **`npm test --workspace apps/web -- run <path>` treats positionals as filename FILTERS.** A typo silently runs a subset and reports green. Run whole suites. Note `apps/web`'s `test` script is *already* `vitest run`, so a positional `run` is itself the trap. `--root apps/web` is also poison — it ENOENTs path-relative suites.
+- **This worktree has no `.env.local`, so a bare test run SKIPS ~1785 tests and still reports success.** A DB-backed suite reports `status: "passed"` with every test `skipped`. Always run with the DB env, and sanity-check `numPendingTests` (~50 with the DB, ~1785 without):
+  ```
+  DATABASE_URL=postgres://…@localhost:54329/seazn_w5 DB_SCHEMA=seazn_club \
+    npm test --workspace apps/web -- --reporter=json --outputFile=/tmp/w5.json
+  ```
 - **Never enable `.github/workflows/e2e.yml`.** Verify e2e locally: production build + `E2E_PROD_TARGET` on :3100.
 - **A killed background command reports exit code 0.** Have the command write `EXIT=$?` itself.
 - **Never check out a branch in the main repo dir.** All work happens in the worktree `/Users/ashokhein/github/seazn.club/.claude/worktrees/w5-review-panel` (branch `feat/w5-ai-review-panel`), which already has `node_modules` symlinks.
