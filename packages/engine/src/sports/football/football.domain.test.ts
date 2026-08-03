@@ -462,6 +462,50 @@ describe("event union disambiguation", () => {
     ).toHaveLength(1);
   });
 
+  // W4 review item 6 — a sin bin is a sanction that removes a player from the
+  // pitch and carries the same Law 12 `reason` a card does, but `extractCards`
+  // filtered on `football.card` alone, so nothing downstream could accumulate
+  // it. Every other card-emitting family projects its temporary suspension
+  // (the period kernel projects `*.suspension.start`); football did not.
+  describe("the sin bin reaches the discipline projection (W4)", () => {
+    const bin = (payload: Record<string, unknown>, seq = 0) =>
+      football.discipline!.extractCards([makeEnvelope(seq, { type: "football.sinbin", payload })]);
+
+    it("projects a temporary dismissal, with its offence", () => {
+      expect(bin({ by: "H", person: "H-p6", reason: "dissent", minutes: 10 })).toEqual([
+        {
+          personId: "H-p6",
+          entrantSide: "H",
+          color: "sin_bin",
+          eventId: "e-0",
+          reason: "dissent",
+        },
+      ]);
+    });
+
+    it("declares the colour it projects, so the rules editor can price it", () => {
+      expect(football.discipline!.colors.map((c) => c.key)).toContain("sin_bin");
+    });
+
+    it("projects an anonymous bin without inventing a person", () => {
+      expect(bin({ by: "A" })).toEqual([{ entrantSide: "A", color: "sin_bin", eventId: "e-0" }]);
+    });
+
+    it("never projects the RETURN half of the branch as a second sanction", () => {
+      // One dismissal is one sanction; `returned: true` is the player coming
+      // back. Counting it would double every sin bin in the accumulation.
+      expect(bin({ by: "H", person: "H-p6", returned: true })).toEqual([]);
+    });
+
+    it("still projects cards, and keeps both in ledger order", () => {
+      const cards = football.discipline!.extractCards([
+        makeEnvelope(0, { type: "football.sinbin", payload: { by: "H", person: "H-p6" } }),
+        makeEnvelope(1, { type: "football.card", payload: { by: "A", person: "A-p2", color: "yellow" } }),
+      ]);
+      expect(cards.map((c) => c.color)).toEqual(["sin_bin", "yellow"]);
+    });
+  });
+
   it("makes the envelope type the discriminator for the ambiguous minimal shape", () => {
     // { by, minute } satisfies BOTH the goal branch and the sin-bin branch.
     // The union alone cannot tell them apart; apply() dispatches on the

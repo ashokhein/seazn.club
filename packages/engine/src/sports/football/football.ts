@@ -1034,10 +1034,35 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
       { key: "yellow", label: "Yellow card" },
       { key: "second_yellow", label: "Second yellow" },
       { key: "red", label: "Red card" },
+      // W4 — a temporary dismissal is a sanction, not a card grade, but the
+      // projection has exactly one axis and the rules editor prices sanctions
+      // off it. The period kernel already does this: its "colours" are the
+      // suspension CLASS keys (minor/major/misconduct), not card colours.
+      { key: "sin_bin", label: "Sin bin" },
     ],
     extractCards(ledger): DisciplineCard[] {
       const cards: DisciplineCard[] = [];
       for (const ev of resolveVoids(ledger)) {
+        // W4 review item 6 — a sin bin removes a player from the pitch and
+        // carries the same Law 12 `reason` a card does, so an accumulation
+        // rule ("three dissents in a season") has to see it. Filtering on
+        // `football.card` alone made it invisible to the discipline usecase,
+        // while every period-kernel sport projected its own suspension.
+        if (ev.type === "football.sinbin") {
+          const parsed = FootballSinBin.safeParse(ev.payload);
+          // The RETURN half of the branch is the player coming back, not a
+          // second sanction — projecting it would double every bin.
+          if (!parsed.success || parsed.data.returned === true) continue;
+          const bin = parsed.data;
+          cards.push({
+            ...(bin.person === undefined ? {} : { personId: bin.person }),
+            entrantSide: bin.by,
+            color: "sin_bin",
+            eventId: ev.id,
+            ...(bin.reason === undefined ? {} : { reason: bin.reason }),
+          });
+          continue;
+        }
         if (ev.type !== "football.card") continue;
         const parsed = FootballCard.safeParse(ev.payload);
         if (!parsed.success) continue;
