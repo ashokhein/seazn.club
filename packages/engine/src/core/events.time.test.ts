@@ -295,4 +295,76 @@ describe("fold — monotonic time guard (§3.3)", () => {
     const voidLate: EventEnvelope = { ...ev({}, "core.void"), voids: late.id };
     expect(fold([early, late, voidLate, ev(at("P1", 200))]).applied).toBe(2);
   });
+
+  // §4 says "correcting a stamp uses the existing `voids` machinery. No new
+  // mechanism." The ledger is hash-chained append-only, so a correction is
+  // void + re-append and the replacement lands LAST carrying an EARLIER `at`.
+  // Whether that survives the guard was genuinely open. It does — but only up
+  // to a limit, and the limit is what these tests pin.
+  describe("correcting a mis-typed stamp (§4)", () => {
+    const voidOf = (target: EventEnvelope): EventEnvelope => ({
+      ...ev({}, "core.void"),
+      voids: target.id,
+    });
+
+    it("WORKS: void the mis-typed stamp, then re-append the correction", () => {
+      // The high-water mark is computed over POST-VOID order, because
+      // resolveVoids runs before the fold — so the mis-typed 900 is simply not
+      // there to be beaten, and the 600 replacement is forward of the 500
+      // before it. This is the flow the pad's existing undo affordance already
+      // produces, and it needs no carve-out.
+      const good = ev(at("P1", 500));
+      const mistyped = ev(at("P1", 900)); // meant 600
+      const correction = ev(at("P1", 600));
+      expect(fold([good, mistyped, voidOf(mistyped), correction]).applied).toBe(2);
+    });
+
+    it("REJECTS a correction re-appended while the mistake is still live", () => {
+      // Ordering obligation, not a bug: void first, then re-append. The other
+      // order is a scorer claiming play went backwards, which is the whole
+      // point of the guard.
+      const good = ev(at("P1", 500));
+      const mistyped = ev(at("P1", 900));
+      expect(() => fold([good, mistyped, ev(at("P1", 600))])).toThrow(EngineError);
+    });
+
+    it("THE LIMIT: a correction cannot be inserted BEHIND later live stamps", () => {
+      // Both prior reviews were half right. Correcting the newest stamp works;
+      // correcting an older one while later stamps are still live does not, and
+      // it should not — the fold applies events in append order, so a stamp
+      // that lands after 950 carrying 600 would sweep lazy expiry (§3.1)
+      // against an order nothing agrees on. Exempting events near a void would
+      // reintroduce exactly the bug the guard exists to prevent.
+      const good = ev(at("P1", 500));
+      const mistyped = ev(at("P1", 900)); // meant 600
+      const later = ev(at("P1", 950));
+      let caught: unknown;
+      try {
+        fold([good, mistyped, later, voidOf(mistyped), ev(at("P1", 600))]);
+        expect.unreachable("a correction behind a live later stamp must be rejected");
+      } catch (err) {
+        caught = err;
+      }
+      expect(EngineError.is(caught, "NON_MONOTONIC_TIME")).toBe(true);
+    });
+
+    it("THE REMEDY: void back to the mistake, then re-append forward", () => {
+      // Which is what an undo stack does anyway — the pad's undo is a void of
+      // the last event. Void 950 and 900, re-enter 600 then 950.
+      const good = ev(at("P1", 500));
+      const mistyped = ev(at("P1", 900));
+      const later = ev(at("P1", 950));
+      expect(
+        fold([
+          good,
+          mistyped,
+          later,
+          voidOf(later),
+          voidOf(mistyped),
+          ev(at("P1", 600)),
+          ev(at("P1", 950)),
+        ]).applied,
+      ).toBe(3);
+    });
+  });
 });

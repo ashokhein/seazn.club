@@ -315,6 +315,14 @@ export function foldMatchWithStoppage<Cfg, State>(
     //    (§1.2) — in a clock-stop sport that is the NORMAL reading, not an edge
     //    case — and so do two penalties awarded at a single whistle. Only a
     //    strictly earlier stamp throws.
+    //
+    // CORRECTIONS (§4.1) need no third carve-out. `active` is the post-void
+    // stream, so a mis-typed stamp that has been voided is not there to be
+    // beaten and its replacement lands forward of whatever survives. The limit
+    // is deliberate: a correction re-appended BEHIND a still-live later stamp
+    // is rejected, because the fold applies events in append order and a
+    // replacement carrying an earlier time would sweep lazy expiry against an
+    // order nothing agrees on. Void back to the mistake, then re-append.
     const at = gameTimeOf(event.payload);
     if (at !== null) {
       if (!phaseOrder.includes(at.period)) {

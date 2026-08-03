@@ -240,8 +240,30 @@ It has exactly three consequences for this spec:
    free-text entry formats to `mm:ss` first. Recorded as a `PadSpec` obligation
    for W5 alongside `periodSeconds`.
 
+### 4.1 Correcting a stamp
+
 Correcting a stamp uses the existing `voids` machinery on the envelope. No new
-mechanism.
+mechanism, and no carve-out in the guard — the two work together already,
+because `resolveVoids` runs *before* the fold, so the high-water mark is
+computed over **post-void order**, not append order. The mis-typed stamp is
+simply not there to be beaten.
+
+The order is void **then** re-append. The other order is a scorer asserting that
+play went backwards while the mistake is still live, which is what the guard
+exists to catch.
+
+**The limit, and it is a real one.** A correction can only be re-appended behind
+stamps that are themselves voided. Correcting the *newest* stamp works
+directly; correcting an older one while later stamps are still live is rejected,
+and should be — the fold applies events in append order, so a replacement
+landing after `950` while carrying `600` would sweep lazy expiry (§3.1) against
+an order nothing agrees on. The remedy is the one an undo stack produces
+anyway: void back to the mistake, then re-append forward. Exempting events near
+a void from the guard would reintroduce precisely the bug the guard exists to
+prevent, so it is deliberately not done.
+
+W5's pad obligation follows: an "edit this stamp" affordance on anything but the
+newest stamped event must undo forward to it, not issue a lone void + append.
 
 ---
 
