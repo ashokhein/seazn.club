@@ -659,7 +659,7 @@ describe("what the joint review says there is to review", () => {
     const html = review({
       plan: plan({
         warnings: [{ fixtureId: "f1", reason: "rest", detail: "20 minutes" }],
-        skipped_divisions: [{ id: "d3", name: "Under 16s", reason: "nothing to place" }],
+        skipped_divisions: [{ id: "d3", name: "Under 16s", reason: "no_movable_fixtures" }],
         divergent_courts: ["Court 3"],
       } as Partial<AiCompetitionPlanResponse>),
     });
