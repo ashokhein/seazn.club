@@ -79,11 +79,13 @@ export interface PeriodParams {
   abandonPolicy: "replay" | "award";
 }
 
-// W4 (#407) — `goalkeeper` is a resolved-config knob only, deliberately NOT a
-// PeriodParams field: it is lineup data with no preset default, so `state.cfg`
-// serialises exactly as it did before W4 unless a competition sets it.
+// W4 (#407) — resolved-config knobs that are deliberately NOT PeriodParams
+// fields. `goalkeeper` is lineup data with no preset default. `setPieceKinds`
+// DOES have a preset default (W4 review item 4): the preset seeds the list, a
+// competition may replace it, and emptying it turns the event off.
 export type PeriodCfg = PeriodParams & {
   goalkeeper?: "required" | "optional";
+  setPieceKinds: string[];
 };
 
 const SuspensionClassSchema: z.ZodType<SuspensionClass> = z.object({
@@ -93,8 +95,19 @@ const SuspensionClassSchema: z.ZodType<SuspensionClass> = z.object({
   permanent: z.boolean().optional(),
 });
 
-export function makePeriodConfigSchema(defaults: PeriodParams) {
+export function makePeriodConfigSchema(
+  defaults: PeriodParams,
+  setPieceKinds: readonly string[] = [],
+) {
   return z.object({
+    // W4 review item 4 — which restarts this competition records as AWARDED
+    // (FIH penalty corner / stroke, IIHF penalty shot). These used to be read
+    // off a compile-time preset field because a new cfg key was believed to
+    // break replay for every recorded stream; the golden has compared `cfg` as
+    // a SUBSET since W4, so a defaulted knob is additive and reds nothing.
+    // Seeded from the preset; an empty list means this sport records no set
+    // pieces and the fold refuses the event outright.
+    setPieceKinds: z.array(z.string().min(1)).default([...setPieceKinds]),
     // W4 (#407) — FIH Rule 4 lets a team play with a goalkeeper, with a field
     // player holding goalkeeping privileges, or with none at all; IIHF Rule 6
     // lets a team pull its goaltender. The catalog forced GK min 1 max 1, so a
@@ -212,8 +225,8 @@ export const PeriodShootoutAttempt = z.strictObject({
 // W4 (#407) — a set piece AWARDED, converted or not: the FIH match record's
 // penalty-corner and penalty-stroke counts, and the IIHF penalty shot that the
 // goal kinds can only ever show once it beat the keeper. `kind` is validated
-// against the preset's setPieceKinds, so a sport that declares none rejects the
-// event outright.
+// against `cfg.setPieceKinds` (seeded from the preset), so a competition that
+// declares none rejects the event outright.
 export const PeriodSetPiece = z.strictObject({
   by: EntrantId, // the side awarded it
   kind: z.string().min(1), // 'pc' | 'stroke' (FIH) · 'ps' (IIHF)
@@ -572,15 +585,20 @@ function applyShootoutAttempt(
 
 // W4 (#407) — a set piece awarded. `converted` is the scorer's own answer to
 // "did it go in"; the goal itself still arrives as a goal event, so the two
-// never double-count the score. The allowed kinds come from the PRESET, not
-// from cfg: cfg is folded into state and frozen by the golden corpus, so a new
-// cfg key would break replay for every recorded stream.
+// never double-count the score.
+//
+// The allowed kinds come from `cfg.setPieceKinds`, seeded from the preset
+// (W4 review item 4). They used to be a compile-time preset constant, on the
+// belief that "a new cfg key would break replay for every recorded stream" —
+// which stopped being true when the golden started comparing `cfg` as a SUBSET
+// (see testkit/golden.ts). An empty list means this sport records no set
+// pieces at all.
 function applySetPiece(
   state: PeriodState,
   payload: z.infer<typeof PeriodSetPiece>,
-  allowedKinds: readonly string[] | undefined,
 ): PeriodState {
-  if (allowedKinds === undefined || allowedKinds.length === 0) {
+  const allowedKinds = state.cfg.setPieceKinds;
+  if (allowedKinds.length === 0) {
     invalid("this sport does not record set pieces");
   }
   if (!isPlayPhase(state)) {
@@ -679,17 +697,18 @@ export interface PeriodPreset {
   // (a superset/relabel of the suspension classes). Omitted → derived from the
   // suspension class keys; absent suspensions → no discipline descriptor.
   disciplineColors?: { key: string; label: string }[];
-  // W4 (#407) — the set pieces this sport records as AWARDED, not just scored
-  // (FIH penalty corner / stroke, IIHF penalty shot). Omitted → the sport has
-  // no `<key>.set_piece` event: it is absent from every fidelity tier and the
-  // fold rejects it.
+  // W4 (#407) — the DEFAULT set pieces this sport records as AWARDED, not just
+  // scored (FIH penalty corner / stroke, IIHF penalty shot). Seeds
+  // `cfg.setPieceKinds`, which a competition may replace. Omitted → the sport
+  // has no `<key>.set_piece` event: it is absent from every fidelity tier, and
+  // the default empty list makes the fold reject it.
   setPieceKinds?: string[];
 }
 
 export function makePeriodModule(
   preset: PeriodPreset,
 ): SportModule<PeriodCfg, PeriodEv, PeriodState> {
-  const configSchema = makePeriodConfigSchema(preset.defaults);
+  const configSchema = makePeriodConfigSchema(preset.defaults, preset.setPieceKinds ?? []);
   const goalType = `${preset.key}.goal`;
   const advanceType = `${preset.key}.period.advance`;
   const suspStartType = `${preset.key}.suspension.start`;
@@ -834,7 +853,7 @@ export function makePeriodModule(
             parsePayload(PeriodShootoutAttempt, ev.payload, ev.type),
           );
         case setPieceType:
-          return applySetPiece(state, parsePayload(PeriodSetPiece, ev.payload, ev.type), setPieceKinds);
+          return applySetPiece(state, parsePayload(PeriodSetPiece, ev.payload, ev.type));
         case "core.forfeit":
           return applyForfeit(state, (ev.payload as { by: string }).by);
         case "core.abandon":
@@ -1025,9 +1044,13 @@ export function makePeriodModule(
           },
         };
       }
-      if (roll < 0.22 && setPieceKinds !== undefined && setPieceKinds.length > 0) {
+      // The CONFIG's list, not the preset's — a competition may have replaced
+      // it, and a generator that emits an event its own fold rejects is worse
+      // than one that emits none (spec 03 §6).
+      const cfgKinds = state.cfg.setPieceKinds;
+      if (roll < 0.22 && cfgKinds.length > 0) {
         const side = randomSide();
-        const kind = setPieceKinds[Math.floor(rng() * setPieceKinds.length)] as string;
+        const kind = cfgKinds[Math.floor(rng() * cfgKinds.length)] as string;
         return {
           type: setPieceType,
           payload: {

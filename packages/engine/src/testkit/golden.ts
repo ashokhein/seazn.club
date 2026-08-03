@@ -249,9 +249,10 @@ export function writeCorpus(corpus: GoldenCorpus): void {
 // so comparing the two JSON strings byte-for-byte made the harness reject a
 // change it exists to bless: adding an OPTIONAL config knob with a zod
 // `.default()` shifts the resolved cfg and would red every stream for that
-// module, though it cannot change a single fold. That pushed the period family
-// into a compile-time preset field instead of a config field — a workaround for
-// a harness defect.
+// module, though it cannot change a single fold. That once pushed the period
+// family into a compile-time preset field instead of a config field; with the
+// subset rule below in place the workaround was unwound, and the set-piece
+// kinds are `cfg.setPieceKinds` again (W4 review item 4).
 //
 // So `cfg` is compared as a SUBSET: every key the golden recorded must still be
 // present with an identical value, while new keys are allowed. Everything else

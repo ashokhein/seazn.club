@@ -291,6 +291,52 @@ describe("W4 audit — awarded vs converted set pieces", () => {
     ).toThrowError(EngineError);
   });
 
+  // W4 review item 4 — the allowed kinds were read off a compile-time PRESET
+  // field, justified in the code by "a new cfg key would break replay for
+  // every recorded stream". That stopped being true when the golden started
+  // comparing `cfg` as a SUBSET: a defaulted knob is additive and reds nothing
+  // (proved by dropping `probeKnob: z.string().default("PROBE")` into this
+  // schema — golden stayed 45/45). A preset is a source file; a competition
+  // that records a different awarded restart had no way to say so.
+  describe("the allowed kinds are configuration, not a compile-time constant", () => {
+    const foldWith = (cfgRaw: unknown, events: ModuleEvent[]): PeriodState =>
+      foldMatch(hockey, hockey.configSchema.parse(cfgRaw), fihLineups, envelopes(events)) as PeriodState;
+
+    it("defaults to the kinds the preset declares", () => {
+      expect(hockey.configSchema.parse({}).setPieceKinds).toEqual(["pc", "stroke"]);
+      expect(icehockey.configSchema.parse({}).setPieceKinds).toEqual(["ps"]);
+    });
+
+    it("accepts a kind a competition declared and the preset never knew", () => {
+      const state = foldWith({ setPieceKinds: ["pc", "stroke", "penalty_corner_rebound"] }, [
+        start,
+        { type: "hockey.set_piece", payload: { by: FH, kind: "penalty_corner_rebound" } },
+      ]);
+      expect(state.setPieces).toEqual({
+        home: { penalty_corner_rebound: { awarded: 1, converted: 0 } },
+        away: {},
+      });
+    });
+
+    it("refuses a kind the competition dropped from the default list", () => {
+      expect(() =>
+        foldWith({ setPieceKinds: ["pc"] }, [
+          start,
+          { type: "hockey.set_piece", payload: { by: FH, kind: "stroke" } },
+        ]),
+      ).toThrowError(EngineError);
+    });
+
+    it("turns the event off entirely when the list is emptied", () => {
+      expect(() =>
+        foldWith({ setPieceKinds: [] }, [
+          start,
+          { type: "hockey.set_piece", payload: { by: FH, kind: "pc" } },
+        ]),
+      ).toThrowError(EngineError);
+    });
+  });
+
   it("leaves setPieces absent when no set piece is recorded (golden guard)", () => {
     expect(foldFih([start, fihGoal(FH)]).setPieces).toBeUndefined();
     const detail = hockey.summary(foldFih([start])).detail as Record<string, unknown>;
