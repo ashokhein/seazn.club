@@ -25,6 +25,19 @@ export const EngineErrorCode = z.enum([
   // PROMPT-03 — registry resolution (spec 03 §3 registry & versioning).
   "MODULE_NOT_FOUND",
   "MODULE_DUPLICATE",
+  // W4a (#425) §7 — the core time model. Appended, never reordered: the enum
+  // order is asserted in errors.test.ts and read by the API's code → HTTP map.
+  // A stamped event's `at` precedes the newest accepted stamp (spec §3.3).
+  "NON_MONOTONIC_TIME",
+  // compareGameTime received a period absent from the declared phase order.
+  "UNKNOWN_PHASE",
+  // Expedite in force, `serving` recorded, and a 13-return rally credited to
+  // the serving side (spec §5.3). Declared here, thrown by the set-based
+  // kernel in a later task.
+  "EXPEDITE_WRONG_WINNER",
+  // Football substitution beyond `subWindows` or `cfg.maxSubs` (spec §5.2).
+  // Declared here, thrown by the football module in a later task.
+  "SUB_WINDOW_EXCEEDED",
 ]);
 export type EngineErrorCode = z.infer<typeof EngineErrorCode>;
 
