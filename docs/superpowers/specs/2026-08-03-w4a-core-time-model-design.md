@@ -55,13 +55,23 @@ expires at `881` whether or not an eight-minute injury delay intervened,
 because IIHF penalty time only runs while play runs. Store wall time and every
 expiry calculation would have to subtract accumulated stoppage back out.
 
-The two durations a stoppage produces are already separately available:
+The two durations a stoppage produces come from different places, and each is
+answerable without re-scanning the raw ledger:
 
 | Question | Source |
 |---|---|
 | How much *game* time did the stoppage consume? | `resume.at − suspend.at` (zero in clock-stop sports) |
 | How much *real* time did it consume? | envelope `recordedAt` delta |
 | How long was the official allowed? | explicit `duration` on the interruption event (§5.4) |
+
+`suspend.at` is the half only the fold knows, so **`MatchStoppage` carries
+`at?: GameTime`** — the stamp the monotonic guard accepted on the `core.suspend`
+that opened the stoppage, absent when the pad recorded none. Without it the
+first row of that table was not derivable from the fold's OUTPUT at all: a
+consumer had to go back to the stream and find the event by `eventId`, which is
+the work folding exists to spare it. With it, a pad renders "suspended at P2
+12:41" from the fold alone and differences it against the `core.resume` it is
+about to append.
 
 Both `CoreSuspend` and `CoreResume` therefore carry `at?: GameTime` — optional
 with no default, so every stoppage recorded before this wave still folds — and
@@ -190,8 +200,38 @@ Two carve-outs, both load-bearing:
 Phase order comes from the module, via a new optional `playPhases?(cfg)` member
 on `FoldableModule` — the same list the module passes to `compareGameTime`
 inside `apply`, so the guard and the fold order against one list rather than
-two. A period outside it is `UNKNOWN_PHASE`, checked on every stamp including
-the first.
+two. §7 makes that an obligation with a test behind it, not a convention.
+
+**A period outside the declared list is `INVALID_EVENT`**, checked on every
+stamp including the first. It is payload validation, not an invariant breach:
+`at.period` is a free `z.string().min(1)` the client supplies, so the
+overwhelmingly likely cause is a scorer picking a period this sport does not
+have, and the error names the ones it does so the pad can say "retype it".
+Raising `UNKNOWN_PHASE` here made a typo a captured 500 that paged the on-call
+and told the scorer nothing (`ENGINE_HTTP`, `api-v1/http.ts`). `UNKNOWN_PHASE`
+is left to mean what §7 says it means: two phase lists that disagree.
+
+**The declared list is exhaustive by OBLIGATION, not by construction.** Nothing
+about the type makes it so — the first draft wired the period kernel's existing
+`playPhases` (regulation + overtime), which omits both `pre` and `SHOOTOUT`
+even though cards are legal in each, and every stamped shootout card would have
+been refused. A module must list every phase in which a stamped event may
+legally occur, in the order they occur, and nothing more (`done` is excluded:
+nothing stamped is accepted once the match is decided). Anything omitted is an
+event the scorer cannot record.
+
+Two degenerate declarations are refused outright, at fold start, as
+`CONFIG_INVALID` — both are facts about the module and its cfg, knowable before
+the first event and wrong for every event after it:
+
+- **Empty.** Read as "declares nothing" it silently drops the sport onto the
+  weaker derived order below, for precisely the cfg whose list came out empty;
+  read as declared-and-exhaustive it refused every stamped event in the sport.
+  Both readings hide a module bug.
+- **Duplicated.** `compareGameTime` orders by `indexOf`, so the repeat is
+  orphaned: two phases the module says are distinct sort as one, and every
+  comparison against the orphan is quietly wrong with nothing in the state or
+  the goldens to show it.
 
 Where a module declares none, order is derived from first appearance in the
 stream. That fallback exists only so an undeclared module behaves exactly as it
@@ -291,7 +331,11 @@ as today.
 - `PeriodCfg` gains `periodSeconds?: Record<string, number>`, **optional with
   no default** — a defaulted field would appear in the cfg that is serialised
   into every frozen state string and break all eleven goldens at once.
-- Sweep (§3.1) and release-on-goal (§3.4) run in `apply`.
+- Sweep (§3.1) and release-on-goal (§3.4) run in `apply`, ordering against
+  `playPhases(cfg)` — the exported function the module already hands the fold
+  (§7 obligation 3). Not a locally built list, and not the private
+  `scoringPhases`, which is regulation + overtime only and exists solely to
+  answer "is play running?" (`isPlayPhase`).
 - FIH's yellow-card duration picker (5 or 10) already works via the existing
   `SuspensionDetail.minutes` override; `expiresAt` now makes it *count down*
   the right amount rather than merely record it.
@@ -450,9 +494,36 @@ Four literals appended to the `EngineErrorCode` enum (`core/errors.ts:7-28`,
 | Code | Raised when |
 |---|---|
 | `NON_MONOTONIC_TIME` | A stamped event's `at` precedes the newest accepted stamp (§3.3). |
-| `UNKNOWN_PHASE` | `compareGameTime` receives a period absent from `phaseOrder`. Phase order comes from `playPhases` (`period/kernel.ts:366-368`). |
+| `UNKNOWN_PHASE` | `compareGameTime` (`core/time.ts`) receives a period absent from the `phaseOrder` it was handed. **Two call paths reach it** and both must be named: a module's own comparisons inside `apply()` (the sweep, release-on-goal), and the fold kernel's monotonic guard comparing a stamp against the high-water mark. It always means two lists disagree — a client's unrecognised period is refused earlier, as `INVALID_EVENT` (§3.3). |
+| `INVALID_EVENT` | Among the existing causes: a stamp naming a period the module does not declare (§3.3). |
+| `CONFIG_INVALID` | Among the existing causes: a module declaring an empty or duplicated phase order (§3.3). |
 | `EXPEDITE_WRONG_WINNER` | Expedite in force, `serving` recorded, `returns >= 13`, point credited to the serving side (§5.3). |
 | `SUB_WINDOW_EXCEEDED` | Football substitution beyond `subWindows` or the existing `cfg.maxSubs` (§5.2). |
+
+All four new codes map to **422**, `UNKNOWN_PHASE` included. It rejects one
+event; a 500 pages the on-call and gives the scorer nothing to act on.
+
+### The phase-order obligation — every sport that lands `at`
+
+The guard's list and the list `apply()` orders against must not merely be
+equal, they must be **the same function**. Two lists that agree today is round
+1's defect one layer down: an event the guard accepts is backwards inside
+`apply`, and lazy expiry (§3.1) sweeps against an order nothing agrees on.
+
+A sport landing `at` therefore owes four things:
+
+1. **One exported function** in the sport's own file returning the phase order
+   for a cfg — `playPhases(cfg)` in `sports/period/kernel.ts` is the reference
+   implementation. It covers every phase a stamp may name, including the ones
+   where play is not running, and orders the shootout after any overtime.
+2. **The module declares that function itself**, `playPhases,` — not a wrapper,
+   not a copy of its output.
+3. **Every `compareGameTime` call inside `apply()` passes that same function's
+   result.** No locally built list, however obviously equal.
+4. **A per-sport test asserting the reference**, i.e. `expect(mod.playPhases)
+   .toBe(playPhases)`, which fails if the two are ever wired separately. Assert
+   both sides are functions first: `undefined === undefined` passes a bare
+   `toBe` and pins nothing. See `sports/period/phases.test.ts`.
 
 ---
 
@@ -464,6 +535,17 @@ Non-negotiable, and each item is a test rather than an assertion:
   additive; fix the change. Corpora extend append-only via `EXTEND_GOLDEN`,
   with the existing prefix verified byte-identical.
 - Every new payload field is `.optional()` with **no default**.
+- **Any payload gaining `at` uses the `GameTime` schema VERBATIM** —
+  `at: GameTime.optional()`, never a hand-rolled `z.object({ period, elapsed })`
+  that happens to look like it. This is a contract, not a style note, because
+  the kernel is deliberately fail-OPEN on a malformed stamp: `gameTimeOf` is a
+  structural safe-parse, so `{ period: "P1", elapsed: -1 }` returns `null` and
+  the monotonic guard treats the event as *unstamped* rather than rejecting it
+  (`events.time.test.ts` pins that). The payload's own schema is therefore the
+  only thing standing between a corrupt stamp and the ledger, and only the real
+  `GameTime` carries all four of its guards: non-negative, integer, non-empty
+  period label, and strict (an unknown key is not a widened `GameTime`).
+  `CoreSuspend` / `CoreResume` are the pattern to copy.
 - Every new cfg field is `.optional()` with **no default** — cfg is serialised
   into the frozen state strings.
 - Every new state field is absent until something populates it, matching the
@@ -494,6 +576,8 @@ Every change ships a test that fails without it.
 | **Unit** | Sweep: expiry at, before and after the boundary; expiry that would cross a period (must NOT expire, §3.2). |
 | **Unit** | Release-on-goal: releasable vs not, conceding vs scoring side, earliest-first with two running, no release when either side of the pair lacks time. |
 | **Unit** | Monotonic guard: backwards rejected, equal accepted, unstamped interleaved freely, guard skipped entirely for unstamped streams. |
+| **Unit** | Phase order: an undeclared period is `INVALID_EVENT` and names the valid phases; an empty and a duplicated declaration are each `CONFIG_INVALID` at fold start. |
+| **Per-sport** | The module's `playPhases` **is** the sport's exported phase-order function (reference identity, §7 obligation 4), and the list it returns covers `pre` and `SHOOTOUT` with the shootout last. |
 | **Regression** | A stream with **no** `at` anywhere folds to a byte-identical state before and after this wave — the additive proof at fold level, independent of the goldens. |
 | **Golden** | All eleven `<key>.golden.json` byte-identical, no re-baseline. New coverage lands as appended streams with the prefix verified. |
 | **Conformance** | Existing cross-sport invariants stay green; `arbitraryEvent` emits `at` for the new fields so property runs exercise them. |
