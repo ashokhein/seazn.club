@@ -27,6 +27,7 @@ import type {
   AiOfficialsPlanRequest,
   AiOfficialsPlanResponse,
   AiLastResult,
+  AiParsePreviewResponse,
   ScheduleConfig,
 } from "@/server/api-v1/schemas";
 import {
@@ -45,6 +46,7 @@ import { compileOfficialsWishes, type OfficialsWish } from "./officials-wish-com
 import { AiTrace, type TraceEvent } from "./ai-trace";
 import { AiDiffPanel } from "./ai-diff-panel";
 import { AiReviewPanel } from "./ai-review-panel";
+import { AiInstructionPreview } from "./ai-instruction-preview";
 import { buildReviewRows } from "./ai-review";
 import { AiOfficialsReview, type OfficialsRosterEntry } from "./ai-officials-review";
 import type { AiConsoleFixture } from "./ai-diff";
@@ -52,6 +54,7 @@ import {
   aiConsoleReducer,
   aiErrorKey,
   applyErrorKey,
+  canRun,
   initialAiConsoleState,
   type AiConsoleState,
   type AiMode,
@@ -154,7 +157,7 @@ export function rungField(rung: number | null): { rung?: Rung } {
  * (or none), and no static-markup assertion would notice.
  */
 export function schedulePlanBody(
-  state: Pick<AiConsoleState, "rung" | "scope">,
+  state: Pick<AiConsoleState, "rung" | "scope" | "preview">,
   args: {
     instruction: string;
     mode: AiMode;
@@ -171,6 +174,16 @@ export function schedulePlanBody(
     // phase's field, and nothing short of driving a real request would catch
     // it — three mutations of exactly that shape survived a full green suite.
     ...rungField(state.rung),
+    // W5 (#400): the compile the organiser confirmed. Read off `state.preview`
+    // itself for exactly the reason `rung` is — a call site handed the id as an
+    // argument is a call site that can pass the wrong one, and this one decides
+    // whether the run executes under the rules that were shown or under a
+    // second, unseen compile.
+    //
+    // Absent on the preference fallback, and that is the honest wire shape:
+    // there is no stored parse to reuse, so the server compiles inline exactly
+    // as it did before this wave and nothing claims the sentence is enforced.
+    ...(state.preview.id ? { preview_id: state.preview.id } : {}),
     ...(args.officialsPolicy ? { officials_policy: args.officialsPolicy } : {}),
     ...(args.prior ? { prior: args.prior } : {}),
   };
@@ -531,9 +544,48 @@ export function AiConsole({
   const [traceNonce, setTraceNonce] = useState(0);
   const [officialsTraceNonce, setOfficialsTraceNonce] = useState(0);
 
+  // W5 (#400) — stage 1 only. Compiles the sentence, spends no credit and makes
+  // no architect call, so the organiser can read the rules before paying to run
+  // against them. Declining the result is a pure client action (PREVIEW_DISMISS)
+  // and fires no request at all: that is the entire gate.
+  const preview = useCallback(async () => {
+    const instruction = state.instruction.trim();
+    if (instruction.length < 3 || busy || state.preview.status === "loading") return;
+    dispatch({ type: "PREVIEW_START" });
+    try {
+      const compiled = await apiV1<AiParsePreviewResponse>(
+        `/api/v1/divisions/${divisionId}/schedule/ai-preview`,
+        {
+          method: "POST",
+          // The SAME rung the confirm will run at, so the affordability refusal
+          // prices the run that is actually on offer.
+          json: {
+            instruction,
+            ...(state.rung !== null && isRung(state.rung) ? { rung: state.rung } : {}),
+          },
+        },
+      );
+      dispatch({ type: "PREVIEW_READY", preview: compiled });
+    } catch (err) {
+      const status = err instanceof ApiV1Error ? err.status : 0;
+      const key = aiErrorKey(status, aiErrorCodeOf(err));
+      dispatch({ type: "PREVIEW_ERROR", error: { status, message: msg(key), key } });
+    }
+  }, [busy, divisionId, msg, state.instruction, state.preview.status, state.rung]);
+
   const run = useCallback(async (opts?: { mode?: AiMode }) => {
     const instruction = state.instruction.trim();
     if (instruction.length < 3 || busy) return;
+    // The confirm gate, enforced where the request is made rather than only on
+    // the button that makes it. `canRun` is the reducer's own predicate, so the
+    // card, the button and this guard cannot disagree about whether the
+    // organiser has agreed to anything.
+    //
+    // Scoped to the brief step on purpose: the seq-conflict recovery
+    // (`reRunAsRefine`) re-runs from the apply step over a proposal that was
+    // already previewed and paid for, and has no brief in front of it to
+    // confirm.
+    if (state.step === "brief" && !canRun(state)) return;
     // The seq-conflict recovery re-runs Phase A as a refine over the current
     // proposal regardless of the mode toggle's async state — an explicit override
     // wins over state.mode for both the request mode and the prior round-trip.
@@ -800,6 +852,7 @@ export function AiConsole({
           state={state}
           dispatch={dispatch}
           run={run}
+          preview={preview}
           busy={busy}
           msg={msg}
           currency={currency}
@@ -992,6 +1045,7 @@ function BriefStep({
   state,
   dispatch,
   run,
+  preview,
   busy,
   msg,
   currency,
@@ -1006,6 +1060,8 @@ function BriefStep({
   state: AiConsoleState;
   dispatch: (a: Parameters<typeof aiConsoleReducer>[1]) => void;
   run: () => void;
+  /** W5 (#400) — compile the instruction without spending anything. */
+  preview: () => void;
   busy: boolean;
   /** Frozen board — the server refuses the run with 409 SCHEDULE_LOCKED, so
    *  never offer it. */
@@ -1037,6 +1093,20 @@ function BriefStep({
   // frozen board the count is suppressed for the same reason the card is
   // hidden: there is no run to price, so naming a price would be quoting for
   // something that is not on offer.
+  // W5 (#400). Three states, one button plus one card between them:
+  //   nothing compiled  → "Check what this means" (spends nothing)
+  //   compiled          → the receipt card, whose confirm starts the run
+  //   fallback taken    → the ordinary run button, priced as always
+  const checking = state.preview.status === "loading";
+  const cardVisible =
+    !busy &&
+    !scheduleFrozen &&
+    state.preview.status === "ready" &&
+    state.preview.data !== null &&
+    !state.preview.asPreference;
+  // Reads the reducer's own predicate — the button cannot come to a different
+  // conclusion about whether the organiser has agreed to anything.
+  const confirmed = canRun(state, { scheduleFrozen });
   const runAction = msg(`board.ai.run.${state.mode}` as MessageKey);
   const runLabel = scheduleFrozen
     ? runAction
@@ -1173,24 +1243,50 @@ function BriefStep({
         </p>
       )}
 
-      <button
-        type="button"
-        onClick={run}
-        disabled={tooShort || busy || scheduleFrozen}
-        className="ai-run inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {busy ? (
-          <>
-            <Spinner />
-            {state.run === "flagged" ? msg("board.ai.flagged") : msg("board.ai.running")}
-          </>
-        ) : (
-          <>
-            <span aria-hidden>✦</span>
-            {runLabel}
-          </>
-        )}
-      </button>
+      {/* W5 (#400) — the confirm gate. The first click COMPILES the sentence
+          (stage 1, no credit, no architect call) and the card below is the
+          receipt for it; only the card's own confirm starts a chargeable run.
+          Declining dispatches PREVIEW_DISMISS and fires no request, which is
+          what makes "declining spends no credit" a fact rather than a claim.
+
+          The card is withheld once the organiser has taken the preference
+          fallback: they have already answered its question, and leaving it up
+          would ask again. */}
+      {cardVisible && state.preview.data && (
+        <AiInstructionPreview
+          preview={state.preview.data}
+          credits={quoteFor(quoteLines).credits}
+          onConfirm={run}
+          onDismiss={() => dispatch({ type: "PREVIEW_DISMISS" })}
+          onAsPreference={() => dispatch({ type: "PREVIEW_AS_PREFERENCE" })}
+        />
+      )}
+
+      {!cardVisible && (
+        <button
+          type="button"
+          onClick={confirmed ? run : preview}
+          data-ai-stage={confirmed ? "run" : "check"}
+          disabled={tooShort || busy || scheduleFrozen || checking}
+          className="ai-run inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {busy || checking ? (
+            <>
+              <Spinner />
+              {checking
+                ? msg("board.ai.preview.checking")
+                : state.run === "flagged"
+                  ? msg("board.ai.flagged")
+                  : msg("board.ai.running")}
+            </>
+          ) : (
+            <>
+              <span aria-hidden>✦</span>
+              {confirmed ? runLabel : msg("board.ai.preview.check")}
+            </>
+          )}
+        </button>
+      )}
       {/* Below the button, not inside it: a per-second counter on a gradient
           fill would jitter the label, and gray would not read on violet.
           Mounted only while busy — the unmount is what resets the clock. */}

@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import type { HardConstraint } from "@seazn/engine/scheduling";
 import { HardConstraint as HardConstraintSchema } from "@seazn/engine/scheduling";
 import { plural as pluralRuntime, t as tRuntime } from "@/lib/i18n-runtime";
-import type { Dict } from "@/lib/i18n-constants";
+import type { Dict, Locale } from "@/lib/i18n-constants";
 import {
   constraintToken,
   describeHardConstraint,
@@ -24,7 +24,7 @@ import fr from "@/dictionaries/fr/ui.json";
 const enDict = en as unknown as Dict;
 const frDict = fr as unknown as Dict;
 
-function ctxFor(dict: Dict, locale: string, names: DescribeCtx["names"] = () => null): DescribeCtx {
+function ctxFor(dict: Dict, locale: Locale, names: DescribeCtx["names"] = () => null): DescribeCtx {
   return {
     msg: (key, vars) => tRuntime(dict, key as string, vars),
     plural: (key, count, vars) => pluralRuntime(dict, key, count, locale, vars),

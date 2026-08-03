@@ -16,6 +16,7 @@ import {
   initialAiConsoleState,
   type AiConsoleState,
 } from "../ai-console-state";
+import { schedulePlanBody } from "../ai-console";
 
 const PREVIEW: AiParsePreviewResponse = {
   preview_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -181,6 +182,21 @@ describe("the confirm gate", () => {
     const s = reduce(withPreview, { type: "RESET" });
     expect(s.preview).toEqual(initialAiConsoleState.preview);
     expect(canRun(s)).toBe(false);
+  });
+
+  it("puts the confirmed compile on the wire, so the run executes the rules that were shown", () => {
+    const body = schedulePlanBody(withPreview, { instruction: INSTRUCTION, mode: "generate" });
+    expect(body.preview_id).toBe(PREVIEW.preview_id);
+  });
+
+  it("sends no preview_id on the preference fallback", () => {
+    // There is no stored parse to reuse: the server compiles inline exactly as
+    // it did before this wave, and nothing claims the sentence is enforced.
+    const s = reduce(failedPreview, { type: "PREVIEW_AS_PREFERENCE" });
+    expect(canRun(s)).toBe(true);
+    expect(schedulePlanBody(s, { instruction: INSTRUCTION, mode: "generate" })).not.toHaveProperty(
+      "preview_id",
+    );
   });
 
   it("starts idle", () => {
