@@ -61,6 +61,7 @@ import {
   planRungs,
   runLadder,
   schedulingAiModel,
+  windowBounds,
   zonedIso,
   type PackAssignment,
   type PackDraftAssignment,
@@ -694,7 +695,11 @@ export async function buildCompetitionPack(
     tz: b.pack.division.tz,
     settings: b.pack.settings,
     movableIds: b.pack.fixtures.movable.map((f) => f.id),
-    draftPlaced: b.pack.draft.length,
+    // PLACED, not present: since #397 a draft row can carry `scheduled_at:
+    // null` (an epoch sentinel the pack refused to pass off as a time), and
+    // counting it would report a division as fully drafted when nothing on it
+    // has a slot — the exact opposite of what J5 tells the model to do.
+    draftPlaced: b.pack.draft.filter((a) => a.scheduled_at !== null).length,
   }));
 
   // The calendar anchor (#397). Taken FROM the sub-packs rather than recomputed,
@@ -814,14 +819,26 @@ export async function buildCompetitionPack(
 
   // Instants, not strings: divisions may sit in different zones, so a
   // lexicographic compare over mixed-offset ISO is not chronological.
+  //
+  // #397: an unplaced row carries no instant at all, and sorts first as one
+  // stable block ahead of every placed card. Two unplaced rows are EQUAL on
+  // time and must fall through to the court — subtracting two -Infinity
+  // sentinels returns NaN, which only reaches the same place because NaN is
+  // falsy, and reads as though it returned 0.
+  const byJointTime = (
+    a: CompetitionPackDraftAssignment,
+    b: CompetitionPackDraftAssignment,
+  ): number => {
+    if (a.scheduled_at === null || b.scheduled_at === null) {
+      return (a.scheduled_at === null ? 0 : 1) - (b.scheduled_at === null ? 0 : 1);
+    }
+    return ms(a.scheduled_at) - ms(b.scheduled_at);
+  };
   const byJointAssignment = (
     a: CompetitionPackDraftAssignment,
     b: CompetitionPackDraftAssignment,
   ): number =>
-    // #397: unplaced rows carry no instant. -Infinity sorts them first, as one
-    // stable block ahead of every placed card, keeping the order total.
-    (a.scheduled_at === null ? -Infinity : ms(a.scheduled_at)) -
-      (b.scheduled_at === null ? -Infinity : ms(b.scheduled_at)) ||
+    byJointTime(a, b) ||
     cmp(a.court_label, b.court_label) ||
     byDivision(a.division_id, b.division_id) ||
     cmp(a.fixture_id, b.fixture_id);
@@ -1268,10 +1285,7 @@ export function verifyJoint(plan: AiSchedulePlan, pack: CompetitionPack): Confli
     const others = all.filter((a) => a.divisionId !== division.id);
     for (const c of validateAssignments(
       mine,
-      verifyConfigFor(division, {
-        from: Date.parse(pack.window.start),
-        to: Date.parse(pack.window.end),
-      }),
+      verifyConfigFor(division, windowBounds(pack.window)),
       [...others, ...obstacles],
       deps,
     )) {

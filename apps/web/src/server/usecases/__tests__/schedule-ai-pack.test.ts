@@ -1047,6 +1047,23 @@ describe.skipIf(!HAS_DB)("pack calendar anchor (#397)", () => {
     expect(pack.window.end).toBe("2026-08-13T23:59:59+01:00");
   });
 
+  // The widening excludes epoch sentinels from the already-scheduled board for
+  // one reason: a window that reaches back to 1970 can never be broken, so the
+  // very defect this wave exists to surface goes invisible again. A configured
+  // sessionWindow is the same input by another door and must be filtered too.
+  it("does not let an epoch sessionWindow drag the window back to 1970", async () => {
+    const { auth, divisionId } = await seedRrBoard();
+    await setConfig(divisionId, {
+      ...NO_ANCHOR_CONFIG,
+      sessionWindows: [{ from: "1970-01-01T00:00:00.000Z", to: "1970-01-01T18:00:00.000Z" }],
+    });
+    await clearBoard(divisionId);
+    const { pack } = await buildSchedulePack(auth, divisionId, OPTS);
+
+    expect(pack.window.start).toBe("2026-08-07T00:00:00+01:00");
+    expect(pack.window.end).toBe("2026-08-13T23:59:59+01:00");
+  });
+
   it("keeps the division zone as display metadata and renders in the org zone", async () => {
     // The accepted cost of the one-clock decision (design §2.1): a Madrid
     // division under a London org is written in London time. division.tz stays
@@ -1158,5 +1175,74 @@ describe.skipIf(!HAS_DB)("verifyConfig carries the pack window (#397)", () => {
     expect(windowed).toHaveLength(1);
     // Warn-only until W4 (#399) makes it delta-blocking.
     expect(windowed.some(isBlocking)).toBe(false);
+  });
+
+  // The reject case above passes against a degenerate or inverted window too —
+  // everything is outside an empty interval. This is the other direction: an
+  // assignment the organiser's own settings put INSIDE the window must come
+  // back clean THROUGH verifyConfig, not just through a hand-built config.
+  it("reports nothing for an assignment inside the window", async () => {
+    const { auth, divisionId } = await seedRrBoard();
+    const { pack } = await buildSchedulePack(auth, divisionId, OPTS);
+    const startAt = Date.parse(pack.window.start) + 10 * 60 * 60_000; // 10:00 on day one
+    const conflicts = validateAssignments(
+      [
+        {
+          fixtureId: pack.fixtures.movable[0]!.id,
+          court: pack.settings.courts[0]!,
+          startAt,
+          endAt: startAt + pack.settings.matchMinutes * 60_000,
+          entrants: [],
+          people: [],
+        },
+      ],
+      verifyConfig(pack),
+    );
+    expect(conflicts.filter((c) => c.reason === "window")).toEqual([]);
+  });
+
+  // The pack renders the window's end as the last whole SECOND of the final day
+  // (23:59:59). A match that ends exactly at midnight — 22:30 plus a 90-minute
+  // match — occupies only days INSIDE the window, so it must not be reported.
+  // Comparing an ms-resolution endAt against a second-resolution bound flags it.
+  it("accepts a match on the final day that ends exactly at midnight", async () => {
+    const { auth, divisionId } = await seedRrBoard();
+    const { pack } = await buildSchedulePack(auth, divisionId, OPTS);
+    const endAt = Date.parse(pack.window.end) + 1000; // the instant the day ends
+    const conflicts = validateAssignments(
+      [
+        {
+          fixtureId: pack.fixtures.movable[0]!.id,
+          court: pack.settings.courts[0]!,
+          startAt: endAt - 90 * 60_000,
+          endAt,
+          entrants: [],
+          people: [],
+        },
+      ],
+      verifyConfig(pack),
+    );
+    expect(conflicts.filter((c) => c.reason === "window")).toEqual([]);
+  });
+
+  // …and one millisecond past it is genuinely the next day, so it still fires.
+  it("still reports a match that runs a millisecond past the final day", async () => {
+    const { auth, divisionId } = await seedRrBoard();
+    const { pack } = await buildSchedulePack(auth, divisionId, OPTS);
+    const endAt = Date.parse(pack.window.end) + 1001;
+    const conflicts = validateAssignments(
+      [
+        {
+          fixtureId: pack.fixtures.movable[0]!.id,
+          court: pack.settings.courts[0]!,
+          startAt: endAt - 90 * 60_000,
+          endAt,
+          entrants: [],
+          people: [],
+        },
+      ],
+      verifyConfig(pack),
+    );
+    expect(conflicts.filter((c) => c.reason === "window")).toHaveLength(1);
   });
 });

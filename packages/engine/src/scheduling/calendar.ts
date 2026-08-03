@@ -32,8 +32,9 @@ export interface SlotConfig {
   blackouts?: readonly Blackout[];
   sessionWindows?: readonly SessionWindow[]; // when set, matches only inside these
   /** The competition's resolved calendar window (#397). Absent means unbounded,
-   *  which is every pre-W2 caller. `to` is inclusive: the last instant a fixture
-   *  may still be occupying. Built from wall-clock day boundaries in ONE zone at
+   *  which is every pre-W2 caller. `from` is inclusive; `to` is EXCLUSIVE — the
+   *  instant the final day ends, so a match finishing exactly at midnight on
+   *  that day is inside. Built from wall-clock day boundaries in ONE zone at
    *  the pack edge — never by adding 86_400_000, because a DST day is 23 or 25
    *  hours long. */
   window?: { from: number; to: number };

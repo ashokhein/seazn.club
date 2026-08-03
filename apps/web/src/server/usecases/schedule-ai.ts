@@ -765,14 +765,17 @@ export async function buildSchedulePack(
       .filter((f) => f.scheduled_at !== null)
       .map((f) => new Date(f.scheduled_at as string | Date).getTime())
       .filter((t) => !isEpochSentinel(t));
-    const windowStartMs = Math.min(
-      baseStartMs,
-      ...config.sessionWindows.map((w) => new Date(w.from).getTime()),
-      ...occupiedMs,
-    );
+    // A sessionWindow anchored at the epoch is the same input by another door,
+    // and widening onto it hides the defect just as thoroughly — a window that
+    // opens in 1970 can never be broken. Filtered on the pair so a half-epoch
+    // window cannot contribute one usable end and one sentinel.
+    const sessionMs = config.sessionWindows
+      .map((w) => ({ from: new Date(w.from).getTime(), to: new Date(w.to).getTime() }))
+      .filter((w) => !isEpochSentinel(w.from) && !isEpochSentinel(w.to));
+    const windowStartMs = Math.min(baseStartMs, ...sessionMs.map((w) => w.from), ...occupiedMs);
     const windowEndMs = Math.max(
       dayEnd(baseEndYmd),
-      ...config.sessionWindows.map((w) => new Date(w.to).getTime()),
+      ...sessionMs.map((w) => w.to),
       ...occupiedMs.map((t) => t + matchMinutes * MS_PER_MIN),
     );
     const window = {
@@ -1404,8 +1407,21 @@ export function verifyConfig(
     // #397: the resolved window, in the engine's epoch-ms unit. Warn-only —
     // `isBlocking` still covers court and direct order alone, and W4 (#399) is
     // what turns this into a delta-based block.
-    window: { from: toMs(pack.window.start), to: toMs(pack.window.end) },
+    window: windowBounds(pack.window),
   };
+}
+
+/**
+ * The pack renders the window's end as the last whole SECOND of the final day
+ * (`…T23:59:59`) — the form a model reads correctly. The engine compares an
+ * ms-resolution `endAt` against it, so the bound it needs is the EXCLUSIVE
+ * instant after that second: a 22:30 match of 90 minutes ends at exactly
+ * 00:00:00.000 and occupies only days inside the window, but `endAt > to`
+ * against 23:59:59.000 reports it against the very day it legally sits on.
+ * Shared with the joint verifier so the two cannot drift.
+ */
+export function windowBounds(window: { start: string; end: string }): { from: number; to: number } {
+  return { from: toMs(window.start), to: toMs(window.end) + 1000 };
 }
 
 /** feeds.after are direct winner/loser feeds (schedule.ts feedDependencies);
