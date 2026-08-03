@@ -66,6 +66,7 @@ export const CONFLICT_LABEL: Record<string, string> = {
   "warn.person_overlap": "person overlap",
   "warn.order": "plays before feeder",
   "warn.blackout": "blackout",
+  "warn.window": "outside dates",
   "warn.no_slot": "no slot",
   "warn.official_declined": "umpire declined",
   "warn.official_unavailable": "umpire unavailable",
@@ -78,6 +79,8 @@ export const CONFLICT_HELP: Record<string, string> = {
   "warn.person_overlap": "Someone would be playing in two matches at once.",
   "warn.order": "This match feeds a later one, so it can't start before the earlier match finishes.",
   "warn.blackout": "This time falls inside a blackout period.",
+  "warn.window":
+    "This match falls outside the dates the competition runs — change the schedule dates in Settings, or move the match inside them.",
   "warn.no_slot": "There's no free slot for this match at that time.",
   "warn.official_declined": "An assigned official has declined — re-assign this match.",
   "warn.official_unavailable": "An assigned official is unavailable at this time.",
