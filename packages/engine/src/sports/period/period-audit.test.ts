@@ -393,8 +393,45 @@ describe("W4 audit — event union stays disambiguated", () => {
   it("every branch accepts its own canonical payload, and the union accepts all", () => {
     for (const entry of canonical) {
       expect(entry.schema.safeParse(entry.payload).success, entry.name).toBe(true);
+      // NOTE (W4 review item 7): the second assertion cannot fail on its own —
+      // a union accepts a payload if ANY branch does, and these branches are
+      // structural supersets of one another. It is kept because a branch that
+      // vanished from the union WOULD show up here, but the discriminator
+      // itself is pinned by the fold test below, not by this.
       expect(PeriodEv.safeParse(entry.payload).success, `union: ${entry.name}`).toBe(true);
     }
+  });
+
+  // W4 review item 7 — `{ by, class }` satisfies PeriodSuspensionStart AND
+  // PeriodSuspensionEnd, so no union parse can tell them apart. `apply`
+  // dispatches on the ENVELOPE's type string, and that is what actually
+  // decides: fold the identical payload under both types and watch the states
+  // diverge. (Same shape as football.domain.test.ts's ambiguous-payload test.)
+  it("makes the envelope type the discriminator for the ambiguous suspension shape", () => {
+    const ambiguous = { by: IA, class: "minor" };
+    expect(PeriodSuspensionStart.safeParse(ambiguous).success).toBe(true);
+    expect(PeriodSuspensionEnd.safeParse(ambiguous).success).toBe(true);
+
+    const asStart = foldIce([start, { type: "icehockey.suspension.start", payload: ambiguous }]);
+    expect(asStart.suspensions).toHaveLength(1);
+    expect(asStart.cardLog).toHaveLength(1);
+
+    // The identical payload under the other type is REFUSED outright: there is
+    // no running suspension to release. Same bytes, opposite verdicts.
+    expect(() =>
+      foldIce([start, { type: "icehockey.suspension.end", payload: ambiguous }]),
+    ).toThrowError(EngineError);
+
+    // And once one IS running, the same payload releases it instead of adding
+    // a second — so the divergence is in the fold, not only in the guard.
+    const released = foldIce([
+      start,
+      { type: "icehockey.suspension.start", payload: ambiguous },
+      { type: "icehockey.suspension.end", payload: ambiguous },
+    ]);
+    expect(released.suspensions).toHaveLength(0);
+    expect(released.cardLog).toHaveLength(1); // the sanction still happened
+    expect(JSON.stringify(asStart)).not.toBe(JSON.stringify(released));
   });
 
   it("the widened goal branch still refuses every sibling's discriminating key", () => {

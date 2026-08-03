@@ -614,9 +614,44 @@ describe("cricket W4: the extensions are additive", () => {
       expect(parsed.success, `${label}: ${JSON.stringify(parsed.error?.issues ?? [])}`).toBe(true);
       expect(parsed.data, label).toEqual(payload);
     }
-    // The payload-free branches are structurally identical by design; they are
-    // told apart by the envelope type, and all of them must accept {}.
+    // The payload-free branches are structurally identical by design.
     expect(CricketEv.safeParse({}).success).toBe(true);
+  });
+
+  // W4 review item 7 — `CricketEv.safeParse({}).success` above cannot fail:
+  // cricket has FOUR identical `z.strictObject({})` branches (declare, match
+  // close, follow-on, new ball), so a union parse of `{}` succeeds however
+  // badly any one of them is broken. What the assertion was reaching for is
+  // that the ENVELOPE type is the discriminator — and the only way to see that
+  // is to fold the same payload under two types and watch the states diverge.
+  it("makes the envelope type the discriminator for the payload-free branches", () => {
+    const twoInnings = cricket.configSchema.parse({
+      inningsPerSide: 2,
+      ballsPerInnings: 60,
+      maxOversPerBowler: 10,
+      minOversForResult: 5,
+    });
+    const opened = new Ledger()
+      .ball({ striker: "H-1", nonStriker: "H-2", bowler: "A-11", bat: 2 })
+      .build();
+    const ambiguous = {};
+
+    const declared = fold(twoInnings, [
+      ...opened,
+      makeEnvelope(opened.length, { type: "cricket.innings.declare", payload: ambiguous }),
+    ]);
+    const newBall = fold(twoInnings, [
+      ...opened,
+      makeEnvelope(opened.length, { type: "cricket.newball", payload: ambiguous }),
+    ]);
+
+    // A declaration closes the innings; a new ball leaves it open and stamps
+    // the ball count. Same payload, same union branch shape, different fold.
+    expect(declared.innings).toHaveLength(1);
+    expect(declared.innings[0]?.closed).toBe(true);
+    expect(newBall.innings[0]?.closed).toBe(false);
+    expect(newBall.innings[0]?.newBallAt).toEqual([1]);
+    expect(JSON.stringify(declared)).not.toBe(JSON.stringify(newBall));
   });
 
   it("declares every new event type in a fidelity tier", () => {

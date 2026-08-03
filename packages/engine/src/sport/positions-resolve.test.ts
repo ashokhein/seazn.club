@@ -153,8 +153,19 @@ describe("every builtin variant resolves to a satisfiable catalog", () => {
         let cfg: unknown;
         try {
           cfg = module.configSchema.parse(raw);
-        } catch {
-          return; // generic has no valid empty config; its variants cover it
+        } catch (error) {
+          // W4 review item 7 — a bare `catch { return; }` here made this test
+          // pass SILENTLY for any module whose variant config stopped parsing,
+          // which is the loudest thing a config change can do. Exactly one
+          // config in the engine is legitimately unparseable: `generic` has no
+          // valid empty object (its variants carry the required resultMode),
+          // and its own named variants are checked below. Anything else is a
+          // broken preset and must fail here.
+          expect(
+            `${module.key}/${name}`,
+            `config does not parse: ${String(error)}`,
+          ).toBe("generic/default");
+          return;
         }
         const catalog = resolvePositions(module, cfg);
         expect(validateLineup(catalog, lineupFromCatalog(catalog, "H"))).toEqual([]);
