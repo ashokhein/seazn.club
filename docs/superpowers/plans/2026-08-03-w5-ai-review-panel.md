@@ -363,6 +363,36 @@ git add -A && git commit -m "feat(scheduler): run reuses the confirmed compile, 
 
 ---
 
+## Task 2b — Close the reuse gate's three holes (from the Task 2/3 review)
+
+Found reviewing `95320220` + `d168adc8`. Each is a defect in the wave's core guarantee — *the compile the organiser confirmed is the compile that executes* — not a polish item. Sequenced after Task 1's review fixes because both touch `schedule-ai-preview.ts`.
+
+**Files:** `apps/web/src/server/usecases/schedule-ai-preview.ts`, `schedule-ai.ts`, `competition-schedule-ai.ts`; a new `db/migration/deltas/V346__ai_parse_previews_division_ids.sql` (do NOT amend V345 — it is already applied locally and Flyway would fail its checksum); tests in `__tests__/schedule-ai-preview-reuse.test.ts`.
+
+- [ ] **H1 — the joint preview's identity omits the division set.**
+
+`schedule-ai-preview.ts:125-136` keys the lookup on `org_id + scope + scope_id(=competitionId) + instruction_hash`. The division set is neither stored nor checked. So preview `{A,B}` → run `{A,B,D}` under the same sentence is **honoured**: `competition-schedule-ai.ts:2163` feeds the stored `resolved`, whose window `resolveParsed` feasibility-extended from `{A,B}`'s fixture count (`schedule-ai-parse.ts:413-424`), and whose `raw` was compiled with only A and B in the prompt's division list. The architect then places D under a window resolved without it. The function's own doc at `:97-100` makes exactly this argument for scope and stops one level short.
+
+Persist the sorted kept `division_ids` on the row and add them to the `where`. `kept` is already computed at `competition-schedule-ai.ts:2067`, before the claim at `:2096`. Failing test first: a preview minted for two divisions, confirmed for three, must 409.
+
+- [ ] **H2 — deviation 2 has no test with teeth.**
+
+Delete `...(confirmed !== null ? { resolved: confirmed.resolved } : {})` at `schedule-ai.ts:2295` / `competition-schedule-ai.ts:2163` and **all 16 reuse tests still pass** — `buildSchedulePack:837` falls back to `resolveParsed(opts.raw)` on the same `confirmed.raw`, and no test advances the clock between preview and run. The reviewer verified the reasoning holds and that nothing else re-derives the executed rules from `now`, but the guarantee currently rests on an assertion nobody makes.
+
+One test: mint a preview at T, run with `now` advanced across an org-clock day boundary, assert the pack window equals the previewed window. It must fail with that spread line deleted.
+
+- [ ] **H3 — a failed run burns the confirmed compile.**
+
+`schedule-ai.ts:2243` claims the preview *before* `buildSchedulePack`, the quote, and `spendCredit` at `:2345` — and `canPay` is short-circuited to `true` on the reuse path (`:2283`), so the affordability pre-flight no longer runs at all. A 402 at `spendCredit`, or the documented `AI_PLAN_TIMEOUT` 422 (`:1547`/`:1675`), leaves `consumed_at` set with nothing to show for it: retrying the same `preview_id` 409s and the organiser pays for another parse round.
+
+Fix so that **both** properties hold — a double-submit still buys exactly one run, and a run that never reached `spendCredit` does not eat the confirmation. Restoring the `balance >= minimumCredits` check on the reuse path and releasing the claim (`consumed_at = null`) when the run throws before the credit is reserved satisfies both; the atomic `update … where consumed_at is null returning` stays exactly where it is, because it is what makes the double-submit case race-safe under READ COMMITTED. Test both directions.
+
+- [ ] **Minor, take if cheap** — validate the stored `resolved`/`raw` crossing the DB→engine boundary (`schedule-ai-preview.ts:125` types the jsonb by generic parameter only; `resolved.hard` goes straight to the verifier, and a deploy that changes `HardConstraint` inside a live preview's 30-minute TTL feeds the engine a shape it no longer expects). `ResolvedParse` is a TS interface, not a zod schema, so this is a real deviation from the plan's Step 4, not an oversight — closing it means giving it a schema.
+
+**Verified clean by the same review, do not re-raise:** cross-tenant is closed twice (`withTenant` + `org_id` in the predicate); the single `update … returning` is race-safe and double-submit buys one run; the no-`preview_id` path is unchanged; the limiter is skipped on reuse and consumed otherwise; Task 3 sources `chosen.plan.assumptions` from the architect's stage-2 array, defaults to `[]`, and publishes as required-with-default on both responses; `competition-schedule-ai-http.test.ts`'s +2 lines are genuinely type-forced.
+
+---
+
 ## Task 3 — Model assumptions reach the client
 
 **Files:**
