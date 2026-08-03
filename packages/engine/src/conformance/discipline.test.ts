@@ -10,6 +10,7 @@ import { builtinModules } from "../sports/index.ts";
 import { football } from "../sports/football/index.ts";
 import { hockey } from "../sports/hockey/index.ts";
 import { icehockey } from "../sports/icehockey/index.ts";
+import { resolvePositions } from "../sport/catalog.ts";
 import { buildStream, defaultLineupPair, makeEnvelope } from "../testkit/helpers.ts";
 import type { AnySportModule } from "../sport/module.ts";
 
@@ -24,7 +25,7 @@ function emitsCards(module: AnySportModule): boolean {
 // — card-emitting modules reach at least one in this budget.
 function sampleCards(module: AnySportModule): { personId?: string; color: string; eventId: string }[] {
   const cfg = module.configSchema.parse({});
-  const lineups = defaultLineupPair(module.positions);
+  const lineups = defaultLineupPair(resolvePositions(module, cfg));
   const out: { personId?: string; color: string; eventId: string }[] = [];
   for (let seed = 0; seed < 60; seed++) {
     const stream = buildStream(module, cfg, lineups, seed, 40) as EventEnvelope[];

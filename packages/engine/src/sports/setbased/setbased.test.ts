@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { foldMatch, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import { mulberry32 } from "../../core/rng.ts";
 import type { LineupPair } from "../../core/types.ts";
+import { resolvePositions } from "../../sport/catalog.ts";
 import { conformanceSuite, defaultLineupPair, makeEnvelope } from "../../testkit/index.ts";
 import { badminton } from "./badminton.ts";
 import type { SetBasedCfg, SetBasedEv, SetBasedState } from "./kernel.ts";
@@ -17,7 +18,7 @@ type Mod = ReturnType<typeof makeSetBasedModule>;
 const asEv = (event: EventEnvelope) => event as EventEnvelope<SetBasedEv | CoreEv>;
 
 function lineups(mod: Mod): LineupPair {
-  return defaultLineupPair(mod.positions);
+  return defaultLineupPair(resolvePositions(mod, mod.configSchema.parse({})));
 }
 
 // Build an event stream from bare [type, payload] specs.

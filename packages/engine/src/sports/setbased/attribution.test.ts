@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { foldMatch, type EventEnvelope } from "../../core/events.ts";
 import type { ModuleEvent } from "../../sport/module.ts";
 import { aggregatePlayerStats } from "../../stats/stats.ts";
+import { resolvePositions } from "../../sport/catalog.ts";
 import { defaultLineupPair, makeEnvelope } from "../../testkit/helpers.ts";
 import { badminton } from "./badminton.ts";
 import { SetBasedEv, type SetBasedState } from "./kernel.ts";
@@ -19,10 +20,11 @@ function envelopes(events: ModuleEvent[]): EventEnvelope[] {
 }
 
 function fold(mod: Mod, events: ModuleEvent[], raw: unknown = {}): SetBasedState {
+  const cfg = mod.configSchema.parse(raw);
   return foldMatch(
     mod,
-    mod.configSchema.parse(raw),
-    defaultLineupPair(mod.positions),
+    cfg,
+    defaultLineupPair(resolvePositions(mod, cfg)),
     envelopes([{ type: "core.start", payload: {} }, ...events]),
   ) as SetBasedState;
 }
