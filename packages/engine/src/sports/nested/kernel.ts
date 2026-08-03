@@ -12,10 +12,12 @@
 // the same set ledger the rally path banks (mirrors setbased summary mode).
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
-import type { CoreEv, EventEnvelope } from "../../core/events.ts";
+import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
   EntrantId,
+  type DisciplineCard,
+  type DisciplineModel,
   type LineupPair,
   type MatchOutcome,
   type MetricSpec,
@@ -701,6 +703,35 @@ export function makeNestedModule(
   const summaryType = `${preset.key}.set_summary`;
   const sanctionType = `${preset.key}.sanction`;
 
+  // W4 review item 7 — the ITF code-violation ladder reaches the shared
+  // discipline projection. The kernel folded a LOCAL sanction record in this
+  // wave and shipped no `discipline` descriptor, so a violation that carries a
+  // real consequence was invisible to the usecase that prices football's cards.
+  // The LADDER stays tennis's own (warning → point → game → default); only the
+  // projection is uniform.
+  const discipline: DisciplineModel = {
+    colors: NestedSanctionLevel.options.map((key) => ({
+      key,
+      label: key.replace(/_/g, " ").replace(/^./, (ch) => ch.toUpperCase()),
+    })),
+    extractCards(ledger): DisciplineCard[] {
+      const cards: DisciplineCard[] = [];
+      for (const ev of resolveVoids(ledger)) {
+        if (ev.type !== sanctionType) continue;
+        const parsed = NestedSanction.safeParse(ev.payload);
+        if (!parsed.success) continue;
+        const sanction = parsed.data;
+        cards.push({
+          ...(sanction.person === undefined ? {} : { personId: sanction.person }),
+          entrantSide: sanction.by,
+          color: sanction.level,
+          eventId: ev.id,
+        });
+      }
+      return cards;
+    },
+  };
+
   // Tiers 0/1 stay a bare set score; the attributed timeline (who served, who
   // won the point, code violations) rides with point scoring at tiers 2/3.
   const fidelityTiers: FidelityTier[] = [
@@ -869,6 +900,7 @@ export function makeNestedModule(
     officialLabel: preset.officialLabel,
     ...(preset.entrantModel === undefined ? {} : { entrantModel: preset.entrantModel }),
     ...(preset.playerStats === undefined ? {} : { playerStats: preset.playerStats }),
+    discipline,
 
     // spec 03 §6 — deterministic generator. Summary-dominant so matches decide
     // within the conformance event budget; point bursts exercise the rally

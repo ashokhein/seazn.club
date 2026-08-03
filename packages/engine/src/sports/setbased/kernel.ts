@@ -7,10 +7,12 @@
 // outcomes, and all result math reads only the folded set ledger.
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
-import type { CoreEv, EventEnvelope } from "../../core/events.ts";
+import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
   EntrantId,
+  type DisciplineCard,
+  type DisciplineModel,
   type LineupPair,
   type MatchOutcome,
   type MetricSpec,
@@ -612,6 +614,43 @@ export function makeSetBasedModule(
   ];
   const isExtensionType = (type: string): boolean => extensionTypes.includes(type);
 
+  // W4 review item 7 — the sanction row reaches the shared discipline
+  // projection. Volleyball, badminton and table tennis each folded a LOCAL
+  // sanction record in this wave and none of the three shipped a
+  // `discipline` descriptor, so a card that suspends a player in football was
+  // invisible to the same usecase here.
+  //
+  // The LADDER stays the sport's own — FIVB's four steps are not the ITF's and
+  // not football's colours; the dossiers record how each code's cards map onto
+  // it. What has to be uniform is the PROJECTION, so W5 renders one control.
+  const discipline: DisciplineModel | undefined =
+    records.sanctions === true
+      ? {
+          colors: SetBasedSanctionLevel.options.map((key) => ({
+            key,
+            label: key.replace(/_/g, " ").replace(/^./, (ch) => ch.toUpperCase()),
+          })),
+          extractCards(ledger): DisciplineCard[] {
+            const cards: DisciplineCard[] = [];
+            for (const ev of resolveVoids(ledger)) {
+              if (ev.type !== sanctionType) continue;
+              const parsed = SetBasedSanction.safeParse(ev.payload);
+              if (!parsed.success) continue;
+              const sanction = parsed.data;
+              cards.push({
+                ...(sanction.person === undefined ? {} : { personId: sanction.person }),
+                entrantSide: sanction.by,
+                // The ladder step IS the colour axis, exactly as the period
+                // kernel projects its suspension CLASS keys.
+                color: sanction.level,
+                eventId: ev.id,
+              });
+            }
+            return cards;
+          },
+        }
+      : undefined;
+
   // Tiers 0/1 stay a bare final score; the attributed timeline (who served, who
   // scored, cards, timeouts, subs) rides with rally scoring at tiers 2/3.
   const fidelityTiers: FidelityTier[] = [
@@ -650,6 +689,7 @@ export function makeSetBasedModule(
     variants: preset.variants,
     ...(preset.entrantModel === undefined ? {} : { entrantModel: preset.entrantModel }),
     ...(preset.playerStats === undefined ? {} : { playerStats: preset.playerStats }),
+    ...(discipline === undefined ? {} : { discipline }),
 
     init(cfg, lineups: LineupPair): SetBasedState {
       return {

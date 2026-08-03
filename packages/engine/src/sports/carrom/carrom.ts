@@ -7,10 +7,11 @@
 // `scoring.strike_by_strike`), see CarromStrike below.
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
-import type { CoreEv, EventEnvelope } from "../../core/events.ts";
+import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
   EntrantId,
+  type DisciplineCard,
   type LineupPair,
   type MatchOutcome,
   type ScoreSummary,
@@ -624,6 +625,41 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
       { key: "queens", label: "Queens", from: "carrom.board.summary", field: "queenBy", agg: "count" },
       { key: "penalties", label: "Penalties", from: "carrom.game.adjust", field: "person", agg: "count" },
     ],
+  },
+
+  // W4 review item 7 — the umpire's Laws 51/55 row reaches the shared
+  // discipline projection. Carrom folded a LOCAL penalty record in this wave
+  // (`State.penalties[]`) and shipped no `discipline` descriptor, so the only
+  // misconduct the module records could not be accumulated by the usecase that
+  // prices football's cards. The LADDER is carrom's own: the ICF Laws have one
+  // step, an umpire adjustment, not a graded card.
+  //
+  // `entrantSide` is `entrantId` — the side whose game score moved — which is
+  // exactly what `CarromPenalty.side` already records next to `person`. See
+  // DOMAIN.md: a positive adjustment credits the opponent, and the payload
+  // does not name the offender's side, so the projection reports the row as
+  // the umpire wrote it and never guesses.
+  discipline: {
+    colors: [{ key: "penalty", label: "Umpire penalty" }],
+    extractCards(ledger): DisciplineCard[] {
+      const cards: DisciplineCard[] = [];
+      for (const ev of resolveVoids(ledger)) {
+        if (ev.type !== "carrom.game.adjust") continue;
+        const parsed = CarromGameAdjust.safeParse(ev.payload);
+        if (!parsed.success) continue;
+        const adjust = parsed.data;
+        cards.push({
+          ...(adjust.person === undefined ? {} : { personId: adjust.person }),
+          entrantSide: adjust.entrantId,
+          color: "penalty",
+          eventId: ev.id,
+          // The umpire's own words: `reason` is required on the branch, so a
+          // carrom card always says why, which no other sport can promise.
+          reason: adjust.reason,
+        });
+      }
+      return cards;
+    },
   },
 
   // spec 03 §6 — deterministic generator: optional toss, start, then boards
