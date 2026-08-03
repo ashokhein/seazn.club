@@ -35,6 +35,16 @@ export type AttemptOutcome = z.infer<typeof AttemptOutcome>;
 // (personId undefined) are returned but never accumulate downstream.
 export interface DisciplineCard {
   personId?: string;
+  // INVARIANT (W4 review) — the OFFENDER's side: the side the sanction was
+  // shown to, never the side whose score moved because of it. When `personId`
+  // is present it MUST be a member of `entrantSide`; a producer that cannot
+  // reconcile the two omits `personId` rather than assert it against the wrong
+  // side. Every producer that names a `by` (football's card and sin bin, the
+  // period kernel's suspension, the set-based and nested sanctions) satisfies
+  // this by construction; carrom, whose payload names the side CREDITED by a
+  // Laws 51/55 penalty, resolves the offender before projecting. Downstream
+  // groups cards by side, so a card filed under the opponent is a card shown
+  // to the wrong team.
   entrantSide: Side;
   color: string; // module-declared key, e.g. "yellow" | "red"
   eventId: string;

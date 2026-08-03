@@ -43,6 +43,7 @@ Schema-path prefixes: `Ev.` = event payload branch, `Cfg.` = config,
 | Best-of-N games decides the match (Law 57) | all | entrant | `Cfg.bestOf`, `State.gamesWon` | modelled | refined to odd values so a decider exists |
 | Due points and penalty points (Laws 51, 55) | all | entrant | `Ev.CarromGameAdjust.delta` + `.reason` | modelled | signed delta on the open game's score; refused if it would go below zero |
 | The player whose act caused the adjustment | all | person: `person` | `Ev.CarromGameAdjust.person` → `State.penalties[]` → `summary.detail.penalties` | extended | fouls are committed by a striker, not by a side |
+| Which **side** committed the foul, when the points went the other way | all | entrant | `Ev.CarromGameAdjust.offendingEntrantId` → `discipline.extractCards` | extended | `entrantId` is the side whose score moved; a Laws 51/55 penalty credits the opponent, so the offender is the other side. Optional — the projection falls back to the sign of the delta. No fold effect: this is a discipline fact, not a score fact |
 | Which foul it was (due coin, striker pocketed, board disturbed…) | all | person | `Ev.CarromGameAdjust.reason` (free text) | deferred | a closed foul vocabulary needs a product decision plus four locale dictionaries; the umpire's reason string carries it today |
 | Strike-by-strike play (each strike, coins pocketed, fouls per strike) | all | person: `striker` | `Ev.CarromStrike` (typed; `apply()` rejects it) | deferred | reserved Pro fidelity, entitlement `scoring.strike_by_strike` (carrom.md §6). The fine tier is its own prompt and would add tiers 2/3 |
 | Doubles: which partner performed an individual act | all | person | the `breaker` / `queenBy` / `person` fields above | extended | the entrant is the pair; the acts the laws name a player for now name one |
@@ -54,24 +55,43 @@ Schema-path prefixes: `Ev.` = event payload branch, `Cfg.` = config,
 | Time limit per board or per game | all | — | — | deferred | ICF club play is untimed; a shot/board clock needs a product decision and a live timer the engine does not own |
 | Which side plays white coins / black coins | all | entrant | — | deferred | Law 43 gives white to the breaker, so it is derivable from `firstBreak` + the alternation already in state; storing it would duplicate state |
 
-**Row counts:** 17 modelled, 4 extended, 6 deferred (27 rows).
+**Row counts:** 17 modelled, 5 extended, 6 deferred (28 rows).
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
-## The discipline projection, and the one thing it cannot say
+## The discipline projection, and how it resolves the offending side
 
 W4's cross-family review gave carrom a `discipline` descriptor (review item 7):
 `carrom.game.adjust` projects into `DisciplineCard` under the single colour
 `penalty`, always with the umpire's `reason` — which is *required* on the
 branch, so a carrom card always says why, and no other sport can promise that.
 
-`DisciplineCard.entrantSide` is the payload's `entrantId`: **the side whose
-game score moved**, which is exactly what `State.penalties[].side` already
-records next to `person`. Where the umpire wrote the row as a deduction against
-the offender (the Laws 51/55 write-off) that IS the offending side. Where a
-positive adjustment credits the opponent instead, the payload does not name the
-offender's side at all, so the projection reports the row as written and never
-guesses. Naming the offending side explicitly is a schema question for a later
-wave, not something the projection may invent.
+`DisciplineCard.entrantSide` is the **offender's** side, the invariant every
+other producer holds by passing the sanctioned side's `by`. Carrom's payload
+does not name it: `entrantId` is the side whose **game score moved**, and that
+is the offender only when the umpire wrote the row as a deduction. A Laws 51/55
+penalty usually credits the *opponent*, and then the two sides are opposites —
+which put an attributed `personId` against the team he plays against. So the
+projection resolves the offender, in this order:
+
+1. `offendingEntrantId`, when the scorer recorded it (added in the same review;
+   optional, no fold effect);
+2. `delta < 0` — the docked side is the offender, so `entrantId`;
+3. `delta > 0` — the credit went to the opponent, so the **other** entrant,
+   resolved from the entrant ids the ledger itself names (`extractCards` is
+   handed events only: no config, no lineups, no folded state);
+4. no opponent resolvable — report `entrantId` and **drop `personId`**. A row
+   with no person is honest; a person filed under a side we could not reconcile
+   is not.
+
+Note what this still does not claim: an adjustment is not necessarily
+misconduct. A Law 51 write-off of due coins is bookkeeping, and it projects as
+a `penalty` card like any other, because the module has no way to tell them
+apart. Whoever prices carrom cards downstream should read `reason` before
+treating one as a sanction.
+
+`State.penalties[].side` is unchanged and still means the side whose score
+moved — it is a *scoring* record, not a discipline one, and the two answer
+different questions.
 
 ## Downstream owed
 

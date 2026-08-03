@@ -98,6 +98,14 @@ export const CarromGameAdjust = z.strictObject({
   // W4 — the player whose act caused the adjustment (Laws 51/55 fouls are
   // committed by a striker, not by a side). Optional: coarse scoring stays legal.
   person: PersonId.optional(),
+  // W4 review — the OFFENDER's side, when the scorer knows it. `entrantId` is
+  // the side whose score moved, which is the offender only when the umpire
+  // wrote the row as a deduction; a Laws 51/55 penalty is usually a CREDIT to
+  // the opponent, and then the two are opposites. The scorer names the
+  // offender's side here when the adjustment is a penalty rather than a
+  // write-off. Additive and optional throughout — coarse scoring stays legal,
+  // and the projection falls back to the sign of the delta.
+  offendingEntrantId: EntrantId.optional(),
 });
 export type CarromGameAdjust = z.infer<typeof CarromGameAdjust>;
 
@@ -422,6 +430,44 @@ export const CARROM_TIEBREAKERS: TiebreakerKey[] = [
   "lots",
 ];
 
+// W4 review — every entrant id the ledger itself names, in first-seen order.
+// `extractCards` is handed EVENTS only: no config, no lineups, no folded state.
+// So this is the projection's only route to "who is the other side", which it
+// needs because a positive umpire adjustment credits the opponent and the
+// offender is therefore whoever `entrantId` is NOT. Reads the fields that carry
+// an entrant id and nothing else — a payload that fails to parse contributes
+// no identity.
+function entrantIdsIn(events: readonly EventEnvelope[]): string[] {
+  const seen: string[] = [];
+  const add = (value: unknown): void => {
+    if (typeof value === "string" && value.length > 0 && !seen.includes(value)) seen.push(value);
+  };
+  for (const ev of events) {
+    const payload = ev.payload;
+    if (typeof payload !== "object" || payload === null) continue;
+    const fields = payload as Record<string, unknown>;
+    switch (ev.type) {
+      case "carrom.toss":
+        add(fields.firstBreak);
+        break;
+      case "carrom.board.summary":
+        add(fields.winner);
+        add(fields.queenTo); // nullable — `add` ignores anything but a string
+        break;
+      case "carrom.game.adjust":
+        add(fields.entrantId);
+        add(fields.offendingEntrantId);
+        break;
+      case "core.forfeit":
+        add(fields.by);
+        break;
+      default:
+        break;
+    }
+  }
+  return seen;
+}
+
 // ---------------------------------------------------------------------------
 // Module
 // ---------------------------------------------------------------------------
@@ -634,23 +680,46 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
   // prices football's cards. The LADDER is carrom's own: the ICF Laws have one
   // step, an umpire adjustment, not a graded card.
   //
-  // `entrantSide` is `entrantId` — the side whose game score moved — which is
-  // exactly what `CarromPenalty.side` already records next to `person`. See
-  // DOMAIN.md: a positive adjustment credits the opponent, and the payload
-  // does not name the offender's side, so the projection reports the row as
-  // the umpire wrote it and never guesses.
+  // `entrantSide` is the OFFENDER's side, never the side whose score moved —
+  // the invariant every other producer holds by passing the sanctioned side's
+  // `by` (core/types.ts). Carrom's payload names the side whose GAME SCORE
+  // moved, and a Laws 51/55 penalty usually credits the opponent, so the two
+  // are opposites exactly when the delta is positive. Resolution order:
+  //   1. `offendingEntrantId`, when the scorer recorded it;
+  //   2. `delta < 0` ⇒ the docked side is the offender ⇒ `entrantId`;
+  //   3. `delta > 0` ⇒ the credit went to the opponent ⇒ the OTHER entrant,
+  //      resolved from the entrant ids the ledger itself names;
+  //   4. no opponent resolvable ⇒ report `entrantId` and DROP `personId`,
+  //      because a person asserted against a side we could not reconcile is
+  //      worse than an anonymous row.
   discipline: {
     colors: [{ key: "penalty", label: "Umpire penalty" }],
     extractCards(ledger): DisciplineCard[] {
+      const events = resolveVoids(ledger);
+      const entrants = entrantIdsIn(events);
+      // Carrom is always exactly two entrants, so "the other one" is well
+      // defined the moment the ledger has named both — and only then.
+      const opponentOf = (entrantId: string): string | undefined => {
+        const others = entrants.filter((id) => id !== entrantId);
+        return others.length === 1 ? others[0] : undefined;
+      };
+
       const cards: DisciplineCard[] = [];
-      for (const ev of resolveVoids(ledger)) {
+      for (const ev of events) {
         if (ev.type !== "carrom.game.adjust") continue;
         const parsed = CarromGameAdjust.safeParse(ev.payload);
         if (!parsed.success) continue;
         const adjust = parsed.data;
+        const offender =
+          adjust.offendingEntrantId ??
+          (adjust.delta < 0 ? adjust.entrantId : opponentOf(adjust.entrantId));
         cards.push({
-          ...(adjust.person === undefined ? {} : { personId: adjust.person }),
-          entrantSide: adjust.entrantId,
+          // Only when the offending SIDE is known: `person` is a member of it,
+          // and filing him under an unreconciled side is the bug this fixes.
+          ...(adjust.person === undefined || offender === undefined
+            ? {}
+            : { personId: adjust.person }),
+          entrantSide: offender ?? adjust.entrantId,
           color: "penalty",
           eventId: ev.id,
           // The umpire's own words: `reason` is required on the branch, so a
