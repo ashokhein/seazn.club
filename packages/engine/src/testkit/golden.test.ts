@@ -140,6 +140,20 @@ if (UPDATE_GOLDEN) {
       // module's `fidelityTiers` is its own claim about what a scorer can
       // record; every one of those types has to be in the corpus or the
       // back-compat tripwire simply does not cover it.
+      //
+      // LIMIT (W4 review) — this is TYPE coverage, not FIELD coverage, and one
+      // recorded event of a type satisfies it. That is enough to red a new
+      // REQUIRED field on the branch (the recorded payload stops parsing) and
+      // nothing more: a narrowed enum, a tightened `min`, or a dropped optional
+      // key reds only if some recorded payload actually carries the value. It
+      // did not: `converted: false` was dropped from the hockey and icehockey
+      // corpora during the W4 rename with nothing put back, leaving one set
+      // piece per period sport with `outcome` ABSENT — so no AttemptOutcome
+      // token was covered at all and `scored` never incremented in any replay.
+      // Widening the assertion to fields would mean declaring, per module,
+      // which payload values matter; until someone does, extend the CORPUS so
+      // the tokens are present, and read a green here as "every type appears",
+      // not "every branch is pinned".
       it("records every event type the module declares in a fidelity tier", () => {
         const missing = uncoveredTierTypes(module, corpus);
         expect(
