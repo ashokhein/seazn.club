@@ -42,7 +42,7 @@ is initialised with.
 | Own goal, and who it is credited to | all | the striking side's `scorer`; credit goes to the opponent | `Ev.FootballGoal.ownGoal` → `creditGoal(opponent(by))` | modelled | `by` is the side whose player struck it; the fold credits the other side. `playerStats.goals` excludes own goals via `when: p.ownGoal !== true`. |
 | Own goal charged to the player who scored it | all | `scorer` | `playerStats.own_goals` | **extended** | `{when: p.ownGoal === true}` on `football.goal`; a personal column only, so `goals` and `points` are unchanged. The closed-set assertion in `src/stats/stats.test.ts` was widened to the new correct row. |
 | Assist | all | `assist` | `Ev.FootballGoal.assist` → `playerStats.assists` | modelled | One assist per goal (unlike ice hockey's two). |
-| Minute of a goal / card / sub | all | n/a | `Ev.FootballGoal.minute`, `Ev.FootballCard.minute`, `Ev.FootballSub.minute` | modelled | Carried on the event and read back from the ledger; the fold keeps per-period counts, not a timeline. |
+| **Time of a goal / card / sub / sin bin** | all | n/a | `Ev.FootballGoal.at`, `Ev.FootballCard.at`, `Ev.FootballSub.at`, `Ev.FootballSinBinStart.at`, `Ev.FootballSinBinEnd.at` → `State.cards[].at`, `State.squads[].sinBin[].startedAt`; legacy `.minute` on all five | **extended** | W4a (#425) §5.2. `at` is the core `GameTime` **verbatim** — SECONDS counted up from the start of the named period, so `90+3` is `{period:"H2", elapsed:2880}`. The pre-existing `minute` is MINUTES; it is **not removed** (that would break every frozen golden and the additive tripwire) but is deprecated in comment. **Where both are present `at` wins**: it is the only one the fold derives from, and `minute` is never read, converted or overwritten. Using the real `GameTime` schema is a contract, not a style note — the kernel is fail-open on a malformed stamp, so the payload schema is the only guard between a corrupt stamp and the ledger. The fold still keeps per-period counts, not a timeline. |
 | A goal-by-goal timeline inside State | all | `scorer`, `assist` | would be `State.timeline[]` | deferred | The ledger already is the timeline and the match report reads it. State is serialised whole into the frozen golden corpus, so a new always-present array would break back-compat for zero new information. |
 | Disallowed goal and its reason (offside / VAR) | all | n/a | — | deferred | Not a scorebook entry: a disallowed goal is not a goal, and the FA/IFAB match record has no field for it. VAR exists only above every declared variant's level. Needs a product decision if the pad wants a "chalked off" timeline entry. |
 | Penalty awarded in open play and **not** converted (saved / missed / woodwork) | all | `taker`; the defending `goalkeeper` | `Ev.FootballPenalty` → `State.penalties[]` | **extended** | New branch `{by, taker?, goalkeeper?, outcome, minute?}`. `outcome` is a required enum `saved\|missed\|post` — that is also what keeps the branch distinct in the union. A **converted** penalty stays `football.goal {penalty:true}`, so no pre-W4 stream changes meaning. `goalkeeper` is validated against the **defending** side. |
@@ -57,11 +57,12 @@ is initialised with.
 | **Sin bin / temporary dismissal** | all — universal in `youth` and `small-sided`, and the FA runs it in `11-a-side` below NLS step 4 | `person` | `Ev.FootballSinBinStart` (`football.sinbin.start`) → `State.squads[].sinBin[]` | **extended** | New branch. Removes the player from the pitch **without** sending them off — the fact no existing branch could express, since `football.card`'s non-yellow path removes a player for good. Anonymous bins are recorded but never move the pitch, the same discipline anonymous cards get. |
 | A sin-binned player returning to the pitch | as above | `person` | `Ev.FootballSinBinEnd` (`football.sinbin.end`) | **extended** | A start/end PAIR, the shape the period kernel uses for a suspension: two scorer moments minutes apart. An anonymous end closes the oldest anonymous dismissal. `playerStats.sin_bins` counts the dismissal and never the return. |
 | Length of a temporary dismissal | as above | n/a | `Ev.FootballSinBinStart.minutes`, falling back to `Cfg.sinBinMinutes` | **extended** | Left unset on every variant preset on purpose: the FA runs 10 minutes in 90-minute football and reduces it *pro rata* for shorter formats, so it is a competition setting, not a Law constant. |
+| **A sin bin running out on the clock** | as above | `person` | `Ev.FootballSinBinStart.at` + `.minutes`/`Cfg.sinBinMinutes` → `State.squads[].sinBin[].expiresAt`, swept in `apply` | **extended** | W4a (#425) §3.1. Before W4a a temporary dismissal ended **only** on an explicit `football.sinbin.end`, so the competition's own sin-bin length was recorded and never counted down. Expiry is **lazy**: the fold releases the player at the next STAMPED event at or after `expiresAt`, which means the pad (rendering the countdown from `expiresAt`) and the fold legitimately disagree in between — by design, and a `PadSpec` obligation for W5, not a bug. An **unstamped** event sweeps nothing, which is what keeps every pre-W4a stream folding unchanged, and both halves are required, so nothing expires that did not expire before. Expiry **never crosses a period boundary** (§3.2): a bin opened late in a half has an `expiresAt` no later stamp in that half can reach, and the engine has no period length to roll the remainder into, so it does not expire by time at all. An anonymous bin closes without returning anybody to the pitch. The explicit end still works; one stamped at or after a derived expiry is refused as a stale duplicate. |
 | A sin-binned player then sent off | as above | `person` | `applyCard` lineup check + `removeFromPitch` | **extended** | A player serving a temporary dismissal is off the pitch but still cardable; a permanent dismissal drops their bin entry so they cannot "return". |
 | Substitution (off / on) | all | `off`, `on` | `Ev.FootballSub` → `State.squads[].onPitch\|bench\|offUsed` | modelled | `off` must be on the pitch, `on` must be an unused bench player. |
 | **Return ("rolling" / "flying") substitution** | `youth`, `small-sided` | `off`, `on` | `Cfg.rollingSubs` | **extended** | Absent ≡ pre-W4 behaviour (a substituted player may not return). When on, the player who came off rejoins the **bench** and nothing lands in `offUsed`. Declared `true` on both the `youth` and `small-sided` presets and left unset on `11-a-side`. |
 | **Cap on substitutions per side** | `11-a-side` (5 under most senior regulations) | entrant | `Cfg.maxSubs` | **extended** | Counted from `squad.offUsed.length`, so it needed no new state. Never applied under `rollingSubs`, which is uncapped by definition. Absent = uncapped, which is what every pre-W4 stream assumed. |
-| Substitution *windows* (3 windows for 5 subs) | `11-a-side` | entrant | — | deferred | The Law counts windows, not substitutions, and a window is a clock fact State has no clock for. Needs a product decision. |
+| **Substitution *windows*** (3 windows for 5 subs) | `11-a-side` | entrant | `Cfg.subWindows` + `Ev.FootballSub.at` → `State.squads[].subWindows[]`, error `SUB_WINDOW_EXCEEDED` | **extended** | W4a (#425) §5.2. Unblocked by the core time model: the clock fact State had no clock for is now the stamp on the event. A window is the set of substitutions **sharing one `at`**, so three players sent on at a single stoppage spend one window; five subs taken one at a time spend five, which is exactly the Law that `Cfg.maxSubs` alone could not express. Counted per side, and applied **alongside** `maxSubs`, never instead of it. An **unstamped** substitution is in no window and consumes none — reading "no stamp" as one shared window would trip a one-window allowance on the second unstamped sub and make every pre-W4a stream unfoldable; recording one window each is the mirror of the same bug. Absent `Cfg.subWindows` = unlimited windows, which is what every pre-W4a stream assumed. First throw site for `SUB_WINDOW_EXCEEDED` (422). |
 | Injury as the reason for a substitution | all | `off` | — | deferred | A scorebook records the substitution, not the injury; the reason is medical data with consent implications. Needs a product decision. |
 | Concussion (additional permanent) substitution | all | `off`, `on` | — | deferred | An IFAB trial protocol adopted per competition; would need `Cfg.concussionSubs` and its own exemption from `maxSubs`. Needs a product decision on whether we support the trial. |
 | Starting XI confirmed pre-match | all | 11 persons | `Lineup.slots[slot="starting"]`, `positions.lineup.size` | modelled | `validateLineup` enforces the exact count. |
@@ -93,7 +94,7 @@ is initialised with.
 | Referee's written remarks | all | n/a | `core.note` | modelled | No state effect by contract. |
 | Attendance, weather, pitch condition | all | n/a | — | deferred | Fixture metadata, not a scorebook event — belongs on the fixture record, not in the ledger. |
 
-**Row counts:** 26 modelled, 15 extended, 14 deferred (55 rows). No blank cells.
+**Row counts:** 25 modelled, 18 extended, 13 deferred (56 rows). No blank cells.
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Per-variant divergence
@@ -151,14 +152,43 @@ Nothing here was acted on.
    is no valid `football.penalty` without it); the sin-bin duration when
    `Cfg.sinBinMinutes` is not set; `addedMinutes` at each period marker.
 4. **New config the rules editor should expose**: `rollingSubs`, `maxSubs`,
-   `sinBinMinutes`. `rollingSubs` now ships `true` on the `youth` and
-   `small-sided` presets, so an editor that renders variant presets will show a
-   changed default for those two.
+   `sinBinMinutes`, and (W4a) `subWindows`. `rollingSubs` now ships `true` on the
+   `youth` and `small-sided` presets, so an editor that renders variant presets
+   will show a changed default for those two. `subWindows` is left unset on every
+   preset on purpose: three windows is a senior-11-a-side regulation, not a Law
+   constant, and absent means unlimited.
 5. **Stat models that become possible**: `penalty_goals`, `penalties_missed`,
    `sin_bins` are new `playerStats.metrics` keys and will appear as new
    leaderboard columns. `points` is unchanged (`penalty_goals` is a strict
    subset of `goals`).
-6. **Not in the summary, on purpose**: unconverted penalties and sin bins are
+6. **W4a — what the pad owes the time model** (`PadSpec`, #416). Four things,
+   and none of them is an engine constraint:
+   - **The unit.** `at.elapsed` is SECONDS, the legacy `minute` is MINUTES, and
+     nothing in the fold converts between them. A pad offering minute-only entry
+     multiplies by 60 itself; `core/time.ts`'s `parseElapsed` takes `mm:ss` only
+     and refuses a bare number precisely because this sport's legacy field is
+     called `minute`.
+   - **Remaining-basis entry needs a period length.** The engine holds none for
+     football (`Cfg.halfMinutes` is a nominal half, and `elapsed` may legitimately
+     overrun it — `90+3`), so a pad offering "07:19 remaining" converts itself.
+   - **Render what the fold is folded *as of*.** A sin bin expires lazily, at the
+     next stamped event, so between the expiry and that event the pad's countdown
+     and the folded strength are meant to differ. Without an `asOf` a scorer reads
+     the stale chip as a bug — and must not be offered an explicit "return"
+     button for a bin the fold will sweep, which is now refused as a duplicate.
+   - **Stamps go in non-decreasing order.** A backwards stamp is
+     `NON_MONOTONIC_TIME` (422). Correcting one is void **then** re-append, in
+     that order, and an "edit" affordance on anything but the newest stamped
+     event must undo forward to it.
+7. **No `apps/web` surface, and no e2e, on purpose.** W4a ships engine-side only:
+   no API field, no dictionary key, no pad control, so there is nothing to drive
+   in a browser. e2e coverage for stamped football events is **deferred to W10
+   (#421)**, where the pad first meets the API; persisting `at` (the events table
+   gains no column this wave) is deferred with it. Recorded here rather than in
+   the mapping table because the table's rows are sport-fact → schema-path tuples
+   that `testkit/dossiers.test.ts` tallies, and a process row would corrupt the
+   count.
+8. **Not in the summary, on purpose**: unconverted penalties and sin bins are
    in `State` and on the ledger but **not** in `summary.detail`. Conformance
    §9.6 requires `summary(coarse fold) === summary(fine fold)` and `coarsen`
    drops every event with no score effect — the same reason `cards` has never
