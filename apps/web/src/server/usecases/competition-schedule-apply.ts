@@ -541,9 +541,24 @@ export async function applyCompetitionSchedule(
         // the same key genuinely can arrive from more than one pass (see the
         // dependency loop noted above).
         if (isBlocking(c)) blockingKeys.add(key);
-        if (seenConflict.has(key)) continue;
+        if (seenConflict.has(key)) {
+          // Same identity from another division's pass — but `shortfallMinutes`
+          // is a property of the PASS, not of the key: each division resolves
+          // its own rest, so the same feed edge can be measured at two sizes.
+          // Keeping the first would let a worsened breach compare a small
+          // after-value against a large before-value and slip the gate.
+          const seen = found.find((f) => conflictKey(f) === key);
+          if (
+            seen !== undefined &&
+            c.shortfallMinutes !== undefined &&
+            c.shortfallMinutes > (seen.shortfallMinutes ?? 0)
+          ) {
+            seen.shortfallMinutes = c.shortfallMinutes;
+          }
+          continue;
+        }
         seenConflict.add(key);
-        found.push(c);
+        found.push({ ...c });
       }
     }
     const conflicts = sortConflicts(found, order);

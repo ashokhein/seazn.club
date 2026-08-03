@@ -335,6 +335,10 @@ export function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotCo
   const c = settings.config;
   const window = applyWindow(settings);
   const startAtMs = c.startAt ? ms(c.startAt) : now;
+  const horizonMinutes =
+    window !== undefined && Number.isFinite(window.to)
+      ? Math.floor((window.to - startAtMs) / MS_PER_MIN) - c.matchMinutes
+      : 0;
   return {
     startAt: startAtMs,
     // #399: the days the competition actually runs, so a card dragged outside
@@ -343,12 +347,20 @@ export function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotCo
     ...(window !== undefined ? { window } : {}),
     // The SOLVER has to respect the same bound, or the auto pass proposes a
     // board the apply gate then refuses: `slotFixtures` searches to
-    // `startAt + horizonMinutes` (365 days by default) and cannot emit a
-    // `window` conflict of its own, so an over-subscribed division would come
-    // back with cards past its end date and 409 on apply. Bounded here, it
-    // reports `no_slot` (CAP) instead — which is the truth.
-    ...(window !== undefined && Number.isFinite(window.to)
-      ? { horizonMinutes: Math.max(0, Math.ceil((window.to - startAtMs) / MS_PER_MIN)) }
+    // `startAt + horizonMinutes` and cannot emit a `window` conflict of its own,
+    // so an over-subscribed division would come back with cards past its end
+    // date and 409 on apply. Bounded here it reports `no_slot` (CAP), which is
+    // the truth.
+    //
+    // `horizonMinutes` bounds the match START, so the match LENGTH comes off it
+    // — a match starting exactly at the window's end would finish outside it —
+    // and it floors rather than ceils, because a rounded-up minute is a minute
+    // outside the window. A non-positive result means the end date is not after
+    // the start date: a config error, and clamping it to zero would answer every
+    // fixture with CAP as if the day were merely full. Left unbounded there, so
+    // the auto pass behaves exactly as it did and the apply gate is what speaks.
+    ...(window !== undefined && Number.isFinite(window.to) && horizonMinutes > 0
+      ? { horizonMinutes }
       : {}),
     matchMinutes: c.matchMinutes,
     gapMinutes: c.gapMinutes,

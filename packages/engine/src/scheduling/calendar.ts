@@ -868,21 +868,33 @@ export function validateAssignments(
     // Court clash / blackout — check against everything else on the board.
     const others = board.filter((o) => o !== a);
     if (courtBlocked(a.court, a.startAt, a.endAt - a.startAt, gapMs, others, blackouts) === "court") {
-      // The OTHER fixture is part of the identity, not decoration (#399). A
-      // fixture already clashing with B, dragged to a slot where it clashes
-      // with C instead, is a brand-new double-booking — and with a detail that
-      // named only the court, the two keyed identically and the delta gate
-      // waved the new one through as pre-existing.
-      const hit = others.find(
+      // ONE ROW PER COLLIDING FIXTURE, and the counterparty is part of the
+      // identity rather than decoration (#399). Both halves are load-bearing for
+      // the delta gate:
+      //
+      //   * naming the court alone made a SWAP invisible — a card already
+      //     clashing with B, dragged onto C instead, keyed identically;
+      //   * one row per CARD made an ADDED collision invisible — a card that
+      //     keeps its clash with B and gains one with C still reports the single
+      //     row it always did.
+      //
+      // Either way a brand-new double-booking wrote through as pre-existing, on
+      // the one reason that blocked absolutely before this wave. `person_overlap`
+      // has always reported per counterparty; `court` now matches it.
+      const hits = others.filter(
         (o) =>
           o.court === a.court &&
           overlaps(a.startAt - gapMs, a.endAt + gapMs, o.startAt, o.endAt),
       );
-      conflicts.push({
-        fixtureId: a.fixtureId,
-        reason: "court",
-        detail: `court ${a.court} double-booked with ${hit?.fixtureId ?? "another fixture"}`,
-      });
+      // `courtBlocked` said "court", so at least one exists; the fallback keeps
+      // the reason reportable if the two predicates ever drift apart.
+      for (const hit of hits.length > 0 ? hits.map((h) => h.fixtureId) : ["another fixture"]) {
+        conflicts.push({
+          fixtureId: a.fixtureId,
+          reason: "court",
+          detail: `court ${a.court} double-booked with ${hit}`,
+        });
+      }
     }
     for (const bo of blackouts) {
       if (bo.court !== undefined && bo.court !== a.court) continue;

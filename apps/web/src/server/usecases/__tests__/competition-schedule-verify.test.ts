@@ -512,11 +512,17 @@ describe("verifyJoint — cross-division occupancy (#350)", () => {
       ]),
       p,
     );
-    expect(out.map((c) => c.reason)).toEqual(["court", "court", "court"]);
-    expect(out.map((c) => c.fixtureId)).toEqual([F2, F3, F1]);
+    // Three fixtures on one court and one instant: each collides with the other
+    // two, and since #399 a court clash is reported once per COUNTERPARTY — a
+    // single row per card could not tell "kept its clash with B" from "gained
+    // one with C", and the delta gate waved the second through.
+    expect(out.map((c) => c.reason)).toEqual(Array(6).fill("court"));
+    // Domain order survives the extra rows: division, then round, then seq —
+    // never the fixture UUID.
+    expect(out.map((c) => c.fixtureId)).toEqual([F2, F2, F3, F3, F1, F1]);
     // Guard against the assertion being satisfied by accident: string order is
     // genuinely different.
-    expect([F2, F3, F1].slice().sort()).not.toEqual([F2, F3, F1]);
+    expect([F2, F2, F3, F3, F1, F1].slice().sort()).not.toEqual([F2, F2, F3, F3, F1, F1]);
   });
 });
 

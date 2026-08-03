@@ -154,7 +154,7 @@ describe("deltaConflicts (#399)", () => {
 
   it("does NOT report a breach that got SMALLER but has not cleared", () => {
     // The lock-out this wave exists to prevent, in its subtlest form: dragging a
-    // card from 10 minutes short to 30 minutes short of the rest it owes is an
+    // card from 30 minutes short of the rest it owes to 10 minutes short is an
     // IMPROVEMENT. Reporting it as introduced would refuse the very edit that is
     // repairing the board.
     const before = { ...conflict("f1", "order", "inside the feeder rest"), shortfallMinutes: 30 };
@@ -194,6 +194,29 @@ describe("conflict identity names the counterparty (#399)", () => {
     const [withC] = clashWith("fC");
     expect(withB).toBeDefined();
     expect(conflictKey(withB!)).not.toBe(conflictKey(withC!));
+  });
+
+  it("reports a court clash ONCE PER colliding fixture, not once per card", () => {
+    // A card that KEEPS its old clash and GAINS a new one is the case a single
+    // conflict per fixture cannot express: one row naming the first collider
+    // keys identically before and after, and the new double-booking writes
+    // through. One row per counterparty is what makes the delta see it.
+    const before = validateAssignments(
+      [a("f1", "C1", AT, ["e1"], [])],
+      cfg,
+      [a("fB", "C1", AT, ["e8"], [])],
+    ).filter((c) => c.reason === "court");
+    const after = validateAssignments(
+      [a("f1", "C1", AT, ["e1"], [])],
+      cfg,
+      [a("fB", "C1", AT, ["e8"], []), a("fC", "C1", AT + 20 * MIN, ["e9"], [])],
+    ).filter((c) => c.reason === "court");
+
+    expect(before).toHaveLength(1);
+    expect(after).toHaveLength(2);
+    // The delta must see the SECOND collision, or a brand-new double-booking is
+    // accepted on the one reason that blocked absolutely before this wave.
+    expect(deltaConflicts(before, after)).toHaveLength(1);
   });
 
   it("keys a person overlap on the fixture the human is also in", () => {
