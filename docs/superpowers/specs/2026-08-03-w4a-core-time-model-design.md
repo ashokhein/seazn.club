@@ -177,6 +177,19 @@ Two carve-outs, both load-bearing:
 - **Unstamped events are unconstrained.** They neither advance nor are checked
   against the high-water mark.
 
+Phase order comes from the module, via a new optional `playPhases?(cfg)` member
+on `FoldableModule` — the same list the module passes to `compareGameTime`
+inside `apply`, so the guard and the fold order against one list rather than
+two. A period outside it is `UNKNOWN_PHASE`, checked on every stamp including
+the first.
+
+Where a module declares none, order is derived from first appearance in the
+stream. That fallback exists only so an undeclared module behaves exactly as it
+did before this wave, and it is **strictly weaker**: an unseen period is treated
+as later than every period seen so far, so `P2 100` then `P1 50` — the commonest
+manual-entry mistake there is — is accepted. Declaring `playPhases` is what
+closes it.
+
 ### 3.4 Release-on-goal
 
 `SuspensionClass` gains `releaseOnGoal?: boolean`. IIHF minors and bench minors

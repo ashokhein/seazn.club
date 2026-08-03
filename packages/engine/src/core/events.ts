@@ -154,6 +154,16 @@ export interface FoldableModule<Cfg = unknown, State = unknown> {
   // Sport-declared types still accepted after the outcome is decided
   // (spec 03 §2 guarantee 4).
   postDecisionTypes?: readonly string[];
+  // W4a (#425) §7 — the sport's phases in PLAY ORDER, for this cfg. The single
+  // source of order for game-time comparison: the kernel's monotonic guard and
+  // the module's own `compareGameTime` calls inside apply() must agree, or an
+  // event the guard accepted could be "backwards" one layer down.
+  //
+  // Optional, and absent means "derive it" (see foldMatchWithStoppage) — a
+  // deliberately weaker fallback that keeps every module that has not declared
+  // one working unchanged. Period sports supply `playPhases`
+  // (sports/period/kernel.ts:366).
+  playPhases?(cfg: Cfg): readonly string[];
 }
 
 // Core types always accepted post-decision: annotations and the finalize lock.
@@ -235,17 +245,29 @@ export function foldMatchWithStoppage<Cfg, State>(
   // "expire" after one started at seq 3 / 08:00. Guarding here means all eleven
   // modules inherit it from one place and none of them changes.
   //
-  // PHASE ORDER, the one non-obvious decision. compareGameTime needs a phase
-  // list, and the kernel knows no sport's phases — `playPhases` lives on the
-  // period module, not on FoldableModule, and widening that contract for this
-  // would touch every sport. So the order is derived generically, as the order
-  // of FIRST APPEARANCE of `period` across the stamped events in this stream:
-  // a period never seen before is appended, and is therefore later than every
-  // period seen so far. That is exactly the semantics wanted — play moves into
-  // a new period, never back into an old one — it is sport-agnostic, it needs
-  // no module API change, and because a period is registered before it is
-  // compared, UNKNOWN_PHASE can never escape this fold.
-  const phaseOrder: string[] = [];
+  // PHASE ORDER comes from the MODULE (§7). `module.playPhases(cfg)` is the one
+  // source of order, and it has to be, for two reasons:
+  //
+  //  1. Deriving it from the stream fails open on the commonest manual-entry
+  //     mistake there is. Order of first appearance made "P2 100 then P1 50"
+  //     forward motion — P1 was unseen, so it was appended as the LATER phase —
+  //     which is precisely the backwards stamp this guard exists to reject.
+  //  2. A module's own `compareGameTime(…, playPhases)` calls inside apply()
+  //     would otherwise be ordering against a different list than the guard. An
+  //     event the guard accepted could then be backwards one layer down, and
+  //     lazy expiry (§3.1) would sweep against an order nothing agrees on.
+  //
+  // Declared order is exhaustive by construction, so a stamp in a phase the
+  // module does not list is UNKNOWN_PHASE — checked on EVERY stamp, including
+  // the first, where there is no high-water mark to compare against yet.
+  //
+  // FALLBACK, only when the module declares nothing: derive order of first
+  // appearance, as above. Strictly weaker, and kept solely so a module that has
+  // not yet declared its phases behaves exactly as it did before this wave.
+  // On that path a period is registered before it is compared, so UNKNOWN_PHASE
+  // can never escape the fold.
+  const declaredPhases = module.playPhases?.(cfg);
+  const phaseOrder: string[] = declaredPhases === undefined ? [] : [...declaredPhases];
   let highWater: GameTime | null = null;
 
   for (const event of active) {
@@ -289,7 +311,16 @@ export function foldMatchWithStoppage<Cfg, State>(
     //    strictly earlier stamp throws.
     const at = gameTimeOf(event.payload);
     if (at !== null) {
-      if (!phaseOrder.includes(at.period)) phaseOrder.push(at.period);
+      if (!phaseOrder.includes(at.period)) {
+        if (declaredPhases !== undefined) {
+          throw new EngineError(
+            "UNKNOWN_PHASE",
+            `event "${event.type}" is stamped in period "${at.period}", which is not a declared play phase`,
+            { eventId: event.id, seq: event.seq, period: at.period, phaseOrder: [...phaseOrder] },
+          );
+        }
+        phaseOrder.push(at.period);
+      }
       if (highWater !== null && compareGameTime(at, highWater, phaseOrder) < 0) {
         throw new EngineError(
           "NON_MONOTONIC_TIME",

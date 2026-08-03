@@ -20,6 +20,14 @@ const toy: FoldableModule<Record<string, never>, TickState> = {
   outcome: () => null,
 };
 
+// The same toy, but declaring its phase order the way a real sport module does
+// (`playPhases`, period/kernel.ts:366). This is the module the guard should
+// believe over anything it could infer from the stream.
+const declaring: FoldableModule<Record<string, never>, TickState> = {
+  ...toy,
+  playPhases: () => ["P1", "P2", "P3", "OT"],
+};
+
 const lineups: LineupPair = {
   home: { entrantId: "H", slots: [{ personId: "p1", slot: "starting", orderNo: 1 }] },
   away: { entrantId: "A", slots: [{ personId: "p2", slot: "starting", orderNo: 1 }] },
@@ -44,6 +52,8 @@ function at(period: string, elapsed: number) {
 }
 
 const fold = (events: readonly EventEnvelope[]) => foldMatch(toy, {}, lineups, events);
+const foldDeclared = (events: readonly EventEnvelope[]) =>
+  foldMatch(declaring, {}, lineups, events);
 
 describe("fold — monotonic time guard (§3.3)", () => {
   it("rejects a stamp that precedes the newest accepted stamp", () => {
@@ -98,10 +108,59 @@ describe("fold — monotonic time guard (§3.3)", () => {
     expect(fold(events).applied).toBe(5);
   });
 
-  it("treats an unseen period as later than every period seen so far", () => {
-    // phaseOrder is order of FIRST APPEARANCE, so this is forward motion even
-    // though "Q1" sorts after "H2" alphabetically and neither is declared.
+  it("takes phase order from the module's declared playPhases, not order of appearance", () => {
+    // THE fail-open this replaces, and the commonest manual-entry mistake there
+    // is: a scorer keys the second-half event first. Deriving the order from
+    // first appearance made "P2 100 then P1 50" FORWARD motion — P1 was unseen,
+    // so it was appended as the later phase — which is exactly the backwards
+    // stamp the guard exists to reject. The module knows P1 precedes P2; the
+    // stream cannot.
+    const events = [ev(at("P2", 100)), ev(at("P1", 50))];
+    let caught: unknown;
+    try {
+      foldDeclared(events);
+      expect.unreachable("a stamp in an earlier declared phase must be rejected");
+    } catch (err) {
+      caught = err;
+    }
+    expect(EngineError.is(caught, "NON_MONOTONIC_TIME")).toBe(true);
+    expect((caught as EngineError).data).toMatchObject({ eventId: events[1]?.id });
+  });
+
+  it("still accepts genuine forward motion under the declared order", () => {
+    // Honest label: this passes with or without the declared-order change,
+    // because derivation is strictly the more permissive of the two. It is here
+    // as an over-rejection guard on the new code path, not as proof of it.
+    expect(foldDeclared([ev(at("P2", 900)), ev(at("P3", 5)), ev(at("OT", 0))]).applied).toBe(3);
+  });
+
+  it("rejects a stamp in a phase the module never declared (UNKNOWN_PHASE)", () => {
+    // A declared order is exhaustive by construction. A period outside it means
+    // the module accepted an event in a phase it does not list — an internal
+    // invariant, not something the scorer typed, so it is UNKNOWN_PHASE rather
+    // than a silent arbitrary sort that would make lazy expiry wrong.
+    let caught: unknown;
+    try {
+      foldDeclared([ev(at("SO", 0))]);
+      expect.unreachable("an undeclared phase must be rejected");
+    } catch (err) {
+      caught = err;
+    }
+    // Caught on the FIRST stamp, before any high-water mark exists — otherwise
+    // the very first event in a stream could smuggle in an unorderable phase.
+    expect(EngineError.is(caught, "UNKNOWN_PHASE")).toBe(true);
+    // ...and on a later one too.
+    expect(() => foldDeclared([ev(at("P1", 0)), ev(at("SO", 0))])).toThrow(EngineError);
+  });
+
+  it("FALLBACK ONLY: derives order of first appearance when the module declares none", () => {
+    // Kept deliberately, and it is weaker than the declared path: with no
+    // playPhases there is nothing to consult, so an unseen period is treated as
+    // later than every period seen so far. Modules that care declare.
     expect(fold([ev(at("H2", 900)), ev(at("Q1", 5)), ev(at("OT", 0))]).applied).toBe(3);
+    // The derived path never raises UNKNOWN_PHASE: a period is registered
+    // before it is compared, so the error cannot escape the fold.
+    expect(fold([ev(at("SO", 0)), ev(at("SO", 1))]).applied).toBe(2);
   });
 
   it("rejects a return to a period already left behind", () => {
