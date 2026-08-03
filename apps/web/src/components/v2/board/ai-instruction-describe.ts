@@ -145,11 +145,16 @@ function describeSelector(sel: FixtureSelector, msg: Msg): string {
 
 /**
  * The clause that keeps a narrowed rule from reading as a board-wide one.
- * Exported so a caller can tell "this rule is scoped" without re-parsing the
- * sentence; `describeHardConstraint` appends it itself, so the reading is one
- * string with one renderer and the name can never be printed twice.
+ * `describeHardConstraint` appends it itself, so the reading is one string with
+ * one renderer and the name can never be printed twice.
+ *
+ * NOT exported (#400 Task 6b). It shipped exported for a caller that wanted to
+ * tell "this rule is scoped" without re-parsing the sentence, and no such
+ * caller exists — an exported seam with no consumer is an invitation to build
+ * the second renderer this function exists to prevent. Export it again when
+ * something actually needs it.
  */
-export function constraintScopeClause(
+function constraintScopeClause(
   scope: ConstraintScope,
   msg: Msg,
   names: NameLookup,
