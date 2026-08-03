@@ -306,13 +306,14 @@ describe("expedite is table tennis's alone", () => {
   });
 
   it("coarsen passes expedite.start through without splitting the game", () => {
-    const events = envelopes([
-      { type: "core.start", payload: {} },
-      ...points("H", 3),
-      EXPEDITE,
-      ...points("H", 8),
-    ]).map((e) => ({ type: e.type, payload: e.payload }));
-    const coarse = tabletennis.coarsen!(events);
+    const coarse = tabletennis.coarsen!(
+      envelopes([
+        { type: "core.start", payload: {} },
+        ...points("H", 3),
+        EXPEDITE,
+        ...points("H", 8),
+      ]) as never, // matches attribution.test.ts — makeEnvelope is untyped
+    );
     expect(coarse.map((e) => e.type)).toEqual([
       "core.start",
       "tabletennis.expedite.start",
