@@ -52,10 +52,11 @@ Schema-path prefixes: `Ev.` = event payload branch, `Cfg.` = config,
 | Abandonment | all | entrant | `core.abandon` → `outcome.no_result` | modelled | completed games recorded, shared points |
 | Match (standings) points | all | entrant | `Cfg.points.{win,draw,loss}` | modelled | |
 | Ledger: games / boards / raw points for the ratio tie-breaks | all | entrant | `metrics.{sets_won,boards_won,points_won,…}` | modelled | games ride the `sets_*` keys, boards feed `board_ratio` |
-| Time limit per board or per game | all | — | — | deferred | ICF club play is untimed; a shot/board clock needs a product decision and a live timer the engine does not own |
+| Time limit per board or per game | all | — | — | deferred | ICF club play is untimed, so there is no control to record — carrom gets **no** equivalent of boardgame's `Cfg.clock` (and none of W4a's `delay`). A shot/board clock still needs a product decision, and by the W4a split the *ticking* would be the pad's half regardless |
+| When during the match a recorded fact happened (`at`) | all | — | — | deferred | **no `at` stamp this wave, deliberately.** W4a's ruling is that `at` records only what the fold cannot derive. Carrom has no phases to stamp against, and where the match stood is already positional: the game and **board index** in `State.games[].boards[]`, derivable from the event order |
 | Which side plays white coins / black coins | all | entrant | — | deferred | Law 43 gives white to the breaker, so it is derivable from `firstBreak` + the alternation already in state; storing it would duplicate state |
 
-**Row counts:** 17 modelled, 5 extended, 6 deferred (28 rows).
+**Row counts:** 17 modelled, 5 extended, 7 deferred (29 rows).
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## The discipline projection, and how it resolves the offending side

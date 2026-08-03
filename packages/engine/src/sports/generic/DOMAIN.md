@@ -55,7 +55,7 @@ lack of time.
 | v1 stepladder progress-score carry | all | entrant | `Cfg.progressScore` | modelled | stored for the PROMPT-15 cutover; no scoring effect inside the module |
 | Period / half / quarter / segment structure | all | entrant | — | deferred | **boundary.** Segments need open/close semantics, and once you own those you own periods, timers and per-period totals — that is a real module. A scorer can put the segment in a `core.note` |
 | Turn order, possession, serve, innings | all | entrant | — | deferred | **boundary.** The first step towards a rally/innings kernel; `setbased/` and `nested/` exist for exactly this |
-| Match clock, elapsed time, stoppages | all | — | — | deferred | **boundary.** The engine owns no clock |
+| Match clock, elapsed time, stoppages | all | — | — | deferred | **boundary.** W4a drew the line more precisely than "the engine owns no clock": the engine models **durations** and **elapsed-at-event** (a stamp on something that already happened), and the pad owns the **ticking** — the running clock, the countdown, the stoppages. Generic takes neither half: it has no periods to stamp an elapsed time against |
 | Cards, fouls, discipline | all | person | — | deferred | **boundary.** `DisciplineModel` is declared only by card sports; a generic card would have no colour vocabulary and no suspension rules |
 | Lineups, substitutions, bench | all | person | — | deferred | **boundary.** The position catalog is a single unnamed slot per side, on purpose |
 | Sets / games / frames / legs hierarchy | all | entrant | — | deferred | **boundary.** A nested-scoring grammar is what `setbased/` and `nested/` are |

@@ -43,10 +43,11 @@ Schema-path prefixes: `Ev.` = an event payload branch, `Cfg.` = config,
 | The moves themselves (algebraic movetext / PGN) | all | person | — | deferred | **wrong fidelity for our scoring tiers.** A per-ply ledger turns the engine into a chess implementation (legality, FEN, per-ply clocks) and no declared tier asks for it. PGN stays a document attached via `core.note` until there is a product decision on blob storage in the ledger |
 | The player who won the board | all | person: `winnerPerson` | `Ev.BoardgameResult.winnerPerson` → `State.winnerPerson` | extended | refused on a drawn game — a draw credits *both* players |
 | Per-person ½ point for a drawn board | all | person | — | deferred | needs a pairing↔result join that `aggregatePlayerStats` (one event type → one person field) cannot express; see *Downstream owed* |
-| Time control: base + increment | all | — (config) | `Cfg.clock.{base,increment}` | modelled | metadata, no scoring effect |
-| Time delay (Bronstein / simple delay) instead of increment | all | — | — | deferred | a clock knob with no fold effect; delay-vs-increment is a presentation distinction and needs a product decision on whether we present a clock at all |
-| Multi-period control (e.g. 90′/40 moves + 30′ + 30″, FIDE classical) | classical | — | — | deferred | same reason; the single `{base, increment}` pair covers rapid, blitz and every club classical control this product has seen |
-| Time trouble / clock reading per move | all | person | — | deferred | not a scoresheet fact — it belongs to a live clock, which the engine does not own |
+| Time control: base + increment | all | — (config) | `Cfg.clock.{base,increment}` | modelled | metadata, no scoring effect. `increment` is optional (W4a), so sudden death is expressible without a zero that reads as a deliberate Fischer setting |
+| Time delay (Bronstein / simple delay), independently of increment | all | — (config) | `Cfg.clock.delay` | extended | W4a §5.5. **Increment and delay are different clocks:** increment ADDS to the clock after the move and unused time is BANKED; delay WITHHOLDS the clock for `delay` before it starts running and banks nothing. Independent knobs — a control may carry both, either or neither. Still metadata, still no fold effect; what it buys is a pad that counts down correctly for a delay control instead of treating it as Fischer |
+| Multi-period control (e.g. 90′/40 moves + 30′ + 30″, FIDE classical) | classical | — | — | deferred | a control that *changes* mid-game needs move-count triggers and a second base; the single `{base, increment, delay}` triple covers rapid, blitz and every club classical control this product has seen |
+| Time trouble / clock reading per move | all | person | — | deferred | not a scoresheet fact — it belongs to the ticking clock, which is the pad's half of the W4a split, not the engine's |
+| When during the game a recorded fact happened (`at`) | all | — | — | deferred | **no `at` stamp this wave, deliberately.** W4a's ruling is that `at` records only what the fold cannot derive, and this module has nothing to derive it against: no phases, and a single terminal event. Where the game stood is the **move index**, which `Ev.BoardgameResult.moves` already carries |
 | Clock family (classical / rapid / blitz) | all | — (config) | `Cfg.variant` | modelled | the only thing the three variants set |
 | Adjournment and the sealed move | classical | person | — | deferred | obsolete in FIDE play since the 1990s; would need sealed-move + resumption state for a case we have never been asked for |
 | Arbiter intervention, warning, conduct penalty | all | person | `core.note` | deferred | free text is the right fidelity; a closed penalty vocabulary needs a product decision (and i18n) |
@@ -55,7 +56,7 @@ Schema-path prefixes: `Ev.` = an event payload branch, `Cfg.` = config,
 | Player rating; rated vs unrated event | all | person | — | deferred | a person/entrant record fact, not a match-ledger fact |
 | Abandonment (venue lost, round replayed) | all | entrant | `core.abandon` → `State.replayFlagged` | modelled | leaves the game undecided and flags it |
 
-**Row counts:** 12 modelled, 9 extended, 8 deferred (29 rows).
+**Row counts:** 12 modelled, 10 extended, 8 deferred (30 rows).
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Why the pairing card is not `by` + `person`
@@ -121,3 +122,13 @@ Recorded, not acted on:
    every decisive board and draws stay entrant-level.
 6. **PGN storage** remains an open product decision (see the deferred row) —
    worth revisiting only if chess organisers ask for game download.
+7. **`Cfg.clock.delay`, and `increment` now optional** (W4a §5.5). Any surface
+   that renders a time control must read all three of `base` / `increment` /
+   `delay` and must not assume an absent `increment` means zero-and-Fischer.
+   A pad that counts down has to bank increment and *not* bank delay.
+8. **No e2e coverage this wave, by decision.** W4a ships no `apps/web` surface,
+   so there is nothing to drive; e2e for the time model is deferred to **W10
+   (#421)**, where the pad first meets the API. Recorded so the absence is a
+   decision rather than an oversight. No smoke coverage is owed either — this
+   change is cfg metadata with no fold effect, so `scripts/smoke.ts` has
+   nothing to assert.
