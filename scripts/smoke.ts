@@ -5531,8 +5531,11 @@ const yesterdayUtcYmd = (): string =>
 interface AiPlanResponseLite {
   proposal: { fixture_id: string; scheduled_at: string; court_label: string }[];
   /** Engine `Conflict[]` — non-blocking verdicts the organiser is shown rather
-   *  than having repaired (`person_overlap` is one of these, not a blocker). */
-  warnings: { fixtureId: string; reason: string; detail?: string }[];
+   *  than having repaired (rest, blackout, start window, an instruction rule). */
+  warnings: { fixtureId: string; reason: string; detail?: string; rule?: string }[];
+  /** Residual blockers after the repair rounds. Since #399 `person_overlap` and
+   *  `window` are in here, not in `warnings`. */
+  blocking: { fixtureId: string; reason: string; detail?: string; rule?: string }[];
   diff: unknown;
   summary: string;
   usage: { input_tokens: number; output_tokens: number; repair_rounds: number };
@@ -5826,11 +5829,16 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
           placedTbd[0]!.scheduled_at === placedTbd[1]!.scheduled_at,
       );
       check(
-        "v4 AI/bracket: person_overlap fires on a to-be-decided slot, naming a player who could reach it (#396)",
-        (refined?.warnings ?? []).some(
+        // #399 promoted person_overlap out of `warnings` and into `blocking`:
+        // a human on two courts at once is impossible, so the runner asks for a
+        // repair instead of shipping it. The clashing prior is unrepairable
+        // here, so it survives to the response — which is what this asserts.
+        "v4 AI/bracket: person_overlap BLOCKS on a to-be-decided slot, naming a player who could reach it (#396, #399)",
+        (refined?.blocking ?? []).some(
           (w) =>
             w.reason === "person_overlap" &&
             tbdIds.has(w.fixtureId) &&
+            w.rule === "H4" &&
             bracket.personIds.some((id) => (w.detail ?? "").includes(id)),
         ),
       );
@@ -7589,7 +7597,9 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
         scheduled_at: a.scheduled_at,
         court_label: a.court_label,
       })),
-      source: "manual",
+      // "auto", not "manual": a manual apply is board editing and needs the Pro
+      // `scheduling.board` key, and this section runs on a community org.
+      source: "auto",
     });
     check(
       "v1 W4: the clean proposal applies with nothing blocking",
