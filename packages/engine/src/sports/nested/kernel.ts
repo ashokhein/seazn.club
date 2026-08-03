@@ -14,6 +14,7 @@ import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
 import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
+import { DurationSeconds, GameTime, compareGameTime } from "../../core/time.ts";
 import {
   EntrantId,
   type DisciplineCard,
@@ -60,6 +61,46 @@ export type NestedFinalSet =
   | { matchTiebreakTo: number }
   | { tiebreakTo: number };
 
+// ---------------------------------------------------------------------------
+// W4a (#425) §5.4 — interruptions: rain delay, medical timeout, toilet break,
+// heat rule. The KIND lives here rather than beside the event because the cfg
+// keys off it: an allowance is declared per kind.
+// ---------------------------------------------------------------------------
+
+export const NestedInterruptionKind = z.enum(["medical", "toilet", "heat", "other"]);
+export type NestedInterruptionKind = z.infer<typeof NestedInterruptionKind>;
+
+/**
+ * What a competition allows for one kind of break. Both halves are optional and
+ * they are enforced DIFFERENTLY, which is the rule (§5.4), not an oversight:
+ *
+ * - `count` is a hard limit — the (N+1)th break of that kind is refused, because
+ *   "you have had your medical timeout for this set" is a fact the chair knows
+ *   before the break starts and can act on.
+ * - `seconds` is NOT. An over-long break is RECORDED (`overran`) and stands. The
+ *   engine cannot send the physio away, and rejecting the event would lose the
+ *   only record that the overrun happened — which is precisely what an appeal
+ *   needs. The engine notes it; the umpire adjudicates.
+ */
+export const NestedInterruptionRules = z.strictObject({
+  /** Max breaks of this kind ONE SIDE may take IN ONE SET. */
+  count: z.number().int().nonnegative().optional(),
+  /** Allowed length. Exceeding it is recorded, never rejected. */
+  seconds: DurationSeconds.optional(),
+});
+export type NestedInterruptionRules = z.infer<typeof NestedInterruptionRules>;
+
+// Spelled out key by key rather than `z.record(NestedInterruptionKind, …)`,
+// which in zod 4 makes an enum-keyed record EXHAUSTIVE — every kind would
+// become required, and a cfg declaring one allowance would stop parsing.
+export const NestedInterruptionCfg = z.strictObject({
+  medical: NestedInterruptionRules.optional(),
+  toilet: NestedInterruptionRules.optional(),
+  heat: NestedInterruptionRules.optional(),
+  other: NestedInterruptionRules.optional(),
+});
+export type NestedInterruptionCfg = z.infer<typeof NestedInterruptionCfg>;
+
 export interface NestedParams {
   bestOf: number;
   set: NestedSetCfg;
@@ -67,6 +108,11 @@ export interface NestedParams {
   game: { noAd: boolean };
   tiebreak: { winBy: number };
   points: { win: number; loss: number }; // per-match league points
+  // W4a (#425) §5.4 — per-kind break allowances. OPTIONAL WITH NO DEFAULT, and
+  // that is a contract (§8): cfg is serialised into the frozen golden state
+  // strings, so a default here — even `{}` — rewrites every recorded stream.
+  // Absent means the competition declares no allowance, and every break stands.
+  interruptions?: NestedInterruptionCfg;
 }
 
 export type NestedCfg = NestedParams;
@@ -99,6 +145,8 @@ export function makeNestedConfigSchema(defaults: NestedParams) {
           loss: z.number().int().nonnegative(),
         })
         .default(defaults.points),
+      // No `.default()` — see NestedParams.interruptions.
+      interruptions: NestedInterruptionCfg.optional(),
     })
     .refine((cfg) => cfg.bestOf % 2 === 1, {
       message: "bestOf must be odd (a decider must exist)",
@@ -185,10 +233,65 @@ export const NestedSanction = z.strictObject({
 });
 export type NestedSanction = z.infer<typeof NestedSanction>;
 
+// W4a (#425) §5.4 — the chair's break record: rain delay, medical timeout,
+// toilet break, heat rule. Rule 30 ("continuous play") is the whole subject.
+//
+// WHY THIS IS NOT `core.suspend` / `core.resume`. That pair exists, it is
+// kernel-owned, and since W4a it carries `at` — it is the right record for
+// "play stopped, and here is when". It has no side, no person and no kind, so
+// it cannot say WHICH break this was, WHO it is charged to, or whether the
+// per-set allowance is now spent, and those three are the entire reason the
+// chair writes a medical timeout down. The two records are complementary and a
+// chair may write both: `core.suspend` says play stopped; this says a
+// three-minute MTO was charged to the home player.
+//
+// WHY THERE IS NO END EVENT. A start/end pair would make the duration
+// derivable from the end's `at`, and this wave's ruling is that `at` records
+// only what the fold CANNOT derive — recording both would recreate the
+// silent-disagreement bug a redundant pair always has. One event, two
+// independent facts:
+//
+//   `at`       — WHEN the break was called. The fold cannot derive it.
+//   `duration` — HOW LONG the break ran. The fold cannot derive that either,
+//                because tennis has no running game clock for a treatment
+//                limit to be measured against, and §5.4 is explicit that a
+//                three-minute limit must not drift when the umpire taps late.
+//
+// Neither is computable from the other, so neither is redundant.
+export const NestedInterruption = z.strictObject({
+  kind: NestedInterruptionKind,
+  // Whose break it is. OPTIONAL because a rain delay is charged to nobody, and
+  // the allowance (§5.4) is therefore enforced only where a side is named —
+  // the same conditional-enforcement shape the ITTF expedite rule takes when
+  // `serving` is absent (see DOMAIN.tabletennis.md).
+  by: EntrantId.optional(),
+  // WHICH player was treated. In doubles the side alone cannot say, and the
+  // ITF three-minute limit is per treatable condition per player.
+  person: PersonId.optional(),
+  duration: DurationSeconds.optional(),
+  // The GameTime schema VERBATIM (§8), never a hand-rolled look-alike. The
+  // kernel is deliberately fail-OPEN on a malformed stamp — `gameTimeOf` is a
+  // structural safe-parse, so `{period: "S1", elapsed: -1}` reads as UNSTAMPED
+  // rather than being rejected — which makes this schema the only thing between
+  // a corrupt stamp and the ledger. Only the real GameTime carries all four
+  // guards: non-negative, integer, non-empty label, strict.
+  at: GameTime.optional(),
+});
+export type NestedInterruption = z.infer<typeof NestedInterruption>;
+
 // Appended, never reordered: `{by, level}` cannot parse as a point (strict
 // branches reject the extra key) and a summary needs home+away, so every
-// pre-W4 payload still lands on the branch it always did.
-export const NestedEv = z.union([NestedPoint, NestedSetSummary, NestedSanction]);
+// pre-W4 payload still lands on the branch it always did. `NestedInterruption`
+// is LAST and is the only branch with a required `kind`, so it neither swallows
+// a sibling nor is swallowed — `interruption.test.ts` asserts every shape
+// parses against exactly ONE branch, which is the claim that actually fails
+// when a branch is widened.
+export const NestedEv = z.union([
+  NestedPoint,
+  NestedSetSummary,
+  NestedSanction,
+  NestedInterruption,
+]);
 export type NestedEv = z.infer<typeof NestedEv>;
 
 // ---------------------------------------------------------------------------
@@ -230,6 +333,10 @@ export interface NestedState {
   // either of these in `init` would break every frozen stream. Never do it.
   persons?: Record<string, NestedPersonTally>;
   sanctions?: NestedSanctionRec[];
+  // ---- W4a (#425) §5.4. Same rule as the two above: ABSENT until the first
+  // interruption arrives. Initialising it to `[]` in `init` rewrites every
+  // frozen golden state string.
+  interruptions?: NestedInterruptionRec[];
 }
 
 /** Per-person tallies folded out of attributed points (W4). Aces and double
@@ -246,6 +353,26 @@ export interface NestedSanctionRec {
   by: Side;
   level: NestedSanctionLevel;
   person?: string;
+}
+
+/** W4a (#425) §5.4 — one recorded break. */
+export interface NestedInterruptionRec {
+  kind: NestedInterruptionKind;
+  /**
+   * WHICH SET it fell in, 1-based — the fold's own index, never the payload's.
+   * The stamp names a period and the fold knows which set is being played, and
+   * where a fact is derivable the derived one is the truth: a payload field
+   * that can disagree with the fold is a bug nothing can see. `at.period` is
+   * checked against this and refused when it runs ahead, so the two cannot
+   * quietly diverge.
+   */
+  set: number;
+  by?: Side;
+  person?: string;
+  duration?: number;
+  at?: GameTime;
+  /** `duration` exceeded the declared allowance. Recorded, never rejected. */
+  overran?: true;
 }
 
 function opponent(side: Side): Side {
@@ -273,6 +400,58 @@ function parsePayload<T>(schema: z.ZodType<T>, payload: unknown, type: string): 
 }
 
 const majority = (bestOf: number): number => Math.ceil(bestOf / 2);
+
+// ---------------------------------------------------------------------------
+// Game time — W4a (#425) §7. Tennis has no clock, but it has ORDER, and the
+// kernel's monotonic guard needs a phase list to order stamps against.
+// ---------------------------------------------------------------------------
+
+/**
+ * THE phase order for this cfg — W4a (#425) §7. Every phase in which a STAMPED
+ * event may legally occur, in the order they occur, and nothing else.
+ *
+ * One function, two consumers, by contract: the fold kernel's monotonic guard
+ * reads it via `SportModule.playPhases`, and the `compareGameTime` call this
+ * module makes inside `apply()` passes this same function's result. Two lists
+ * that merely agree today is the defect the obligation exists to prevent — an
+ * event the guard accepts is then backwards one layer down.
+ * `interruption.test.ts` asserts the module holds this exact function
+ * reference, so a copy fails there.
+ *
+ * THE PERIOD IS THE SET, and `elapsed` counts from the start of that set —
+ * which is how a chair's card and every broadcast clock report tennis time
+ * ("second set, 47 minutes"). The alternative, one flat period counting from
+ * the first serve, loses the label the scoresheet actually prints and makes
+ * every stamp incomparable to the set it belongs to.
+ *
+ * WIDER than the sets, and that is the point:
+ *  - "pre" — a rain delay before the first serve is the commonest stoppage in
+ *    the sport, and `core.suspend` is legal before `core.start`, so a stamped
+ *    one has to be orderable. The `tennis.interruption` event itself still
+ *    requires live play; "pre" is here for the kernel-owned pair.
+ *  - "done" / "final" / "abandoned" are excluded: nothing stamped is accepted
+ *    once the match is over.
+ *
+ * Every set this cfg can REACH is listed, and no more, so a chair stamping "S5"
+ * in a best-of-3 gets a fixable INVALID_EVENT naming the sets this match has.
+ *
+ * Exhaustive by OBLIGATION, not by construction: the fold treats a period
+ * outside this list as a bad payload field, so anything omitted here is an
+ * event the scorer cannot record.
+ */
+export function playPhases(cfg: NestedCfg): string[] {
+  return ["pre", ...Array.from({ length: cfg.bestOf }, (_, i) => setLabel(i + 1))];
+}
+
+/** `S3` — the label `playPhases` uses for the nth set, 1-based. */
+function setLabel(n: number): string {
+  return `S${n}`;
+}
+
+/** The set being played right now, 1-based. Banked sets never reopen. */
+function currentSet(state: NestedState): number {
+  return state.sets.length + 1;
+}
 
 // ---------------------------------------------------------------------------
 // Deciding-set resolution — which rules govern the set about to be played.
@@ -536,6 +715,71 @@ function applySanction(state: NestedState, payload: NestedSanction): NestedState
   return { ...state, sanctions: [...(state.sanctions ?? []), record] };
 }
 
+// W4a (#425) §5.4 — the chair's break record. Never moves the score: an
+// interruption is a fact about the clock and the card, and any score
+// consequence (a point penalty for delay) is entered as the point it is.
+function applyInterruption(state: NestedState, payload: NestedInterruption): NestedState {
+  if (state.phase !== "live") wrongPhase(`interruption not allowed in phase "${state.phase}"`);
+  const set = currentSet(state);
+
+  if (payload.at !== undefined) {
+    // Ordered against `playPhases(state.cfg)` — the SAME exported function the
+    // module hands the fold kernel (§7 obligation 3), not a local list built
+    // here. `at.period` is already known to be IN that list: the kernel refuses
+    // an unknown period as INVALID_EVENT before `apply` is reached.
+    //
+    // Only a stamp running AHEAD of play is refused. A pad whose set selector
+    // was left on the next set files the break against a set nobody has played,
+    // and nothing downstream could tell. An EARLIER stamp is legitimate and
+    // stays legal — a delay before the first serve, keyed in once play is under
+    // way — and the kernel's monotonic guard is what constrains it (§3.3).
+    const order = playPhases(state.cfg);
+    const here = setLabel(set);
+    if (compareGameTime({ period: payload.at.period, elapsed: 0 }, { period: here, elapsed: 0 }, order) > 0) {
+      invalid(
+        `interruption is stamped in ${payload.at.period}, but this match has only reached ${here}`,
+        { period: payload.at.period, currentSet: here },
+      );
+    }
+  }
+
+  const by = payload.by === undefined ? undefined : sideOf(state, payload.by);
+  const rules = state.cfg.interruptions?.[payload.kind];
+
+  // The COUNT allowance is hard, and enforced only where the break names a
+  // side — an unattributed delay belongs to nobody, so there is no allowance to
+  // spend. Scoped per side per set, which is the scope the ITF medical rule
+  // uses; the message says both so a chair can act on it.
+  if (rules?.count !== undefined && by !== undefined) {
+    const taken = (state.interruptions ?? []).filter(
+      (rec) => rec.kind === payload.kind && rec.by === by && rec.set === set,
+    ).length;
+    if (taken >= rules.count) {
+      invalid(
+        `${by} has already taken ${rules.count} ${payload.kind} break${rules.count === 1 ? "" : "s"} in set ${set}, which is all this competition allows`,
+        { kind: payload.kind, by, set, allowed: rules.count },
+      );
+    }
+  }
+
+  // The DURATION allowance is not. Recorded and it stands (§5.4): the engine
+  // cannot send the physio away, and refusing the event would destroy the only
+  // record that the overrun happened — which is exactly what an appeal needs.
+  const overran =
+    rules?.seconds !== undefined && payload.duration !== undefined && payload.duration > rules.seconds;
+
+  const record: NestedInterruptionRec = {
+    kind: payload.kind,
+    set,
+    ...(by === undefined ? {} : { by }),
+    ...(payload.person === undefined ? {} : { person: payload.person }),
+    ...(payload.duration === undefined ? {} : { duration: payload.duration }),
+    ...(payload.at === undefined ? {} : { at: payload.at }),
+    ...(overran ? { overran: true as const } : {}),
+  };
+  return { ...state, interruptions: [...(state.interruptions ?? []), record] };
+}
+
 // ---------------------------------------------------------------------------
 // Set-summary application (tier 0) — v6/00 §2, mirrors setbased summary mode.
 // ---------------------------------------------------------------------------
@@ -710,6 +954,7 @@ export function makeNestedModule(
   const pointType = `${preset.key}.point`;
   const summaryType = `${preset.key}.set_summary`;
   const sanctionType = `${preset.key}.sanction`;
+  const interruptionType = `${preset.key}.interruption`;
 
   // W4 review item 7 — the ITF code-violation ladder reaches the shared
   // discipline projection. The kernel folded a LOCAL sanction record in this
@@ -749,8 +994,16 @@ export function makeNestedModule(
   const fidelityTiers: FidelityTier[] = [
     { tier: 0, eventTypes: [summaryType] },
     { tier: 1, eventTypes: [summaryType] },
-    { tier: 2, eventTypes: [pointType, sanctionType], entitlement: preset.rallyEntitlement },
-    { tier: 3, eventTypes: [pointType, sanctionType], entitlement: preset.rallyEntitlement },
+    {
+      tier: 2,
+      eventTypes: [pointType, sanctionType, interruptionType],
+      entitlement: preset.rallyEntitlement,
+    },
+    {
+      tier: 3,
+      eventTypes: [pointType, sanctionType, interruptionType],
+      entitlement: preset.rallyEntitlement,
+    },
   ];
 
   const sideMetrics = (state: NestedState, side: Side): Record<string, number> => {
@@ -803,6 +1056,8 @@ export function makeNestedModule(
           return applySetSummary(state, parsePayload(NestedSetSummary, ev.payload, ev.type));
         case sanctionType:
           return applySanction(state, parsePayload(NestedSanction, ev.payload, ev.type));
+        case interruptionType:
+          return applyInterruption(state, parsePayload(NestedInterruption, ev.payload, ev.type));
         case "core.forfeit":
           return applyForfeit(state, (ev.payload as { by: string }).by);
         case "core.abandon":
@@ -819,6 +1074,12 @@ export function makeNestedModule(
     },
 
     outcome: (state) => state.outcome,
+
+    // W4a (#425) §7 obligation 2 — the EXPORTED function itself, handed over by
+    // reference. Not a wrapper and not a copy of its output: the guard and the
+    // ordering `apply()` does must be the same function, or an event the guard
+    // accepts is backwards a layer down.
+    playPhases,
 
     // §9.5 — defined at every prefix. Headline speaks tennis: sets tally, the
     // closed-set strip (6–4 7–6(5) [10–7]), live games and the spoken game
@@ -870,6 +1131,9 @@ export function makeNestedModule(
           // coarse fold that would have to agree with it under §9.6.
           ...(state.persons === undefined ? {} : { persons: state.persons }),
           ...(state.sanctions === undefined ? {} : { sanctions: state.sanctions }),
+          // W4a §5.4 — the break record rides here for the same reason: no
+          // `coarsen` hook, so nothing has to agree with it under §9.6.
+          ...(state.interruptions === undefined ? {} : { interruptions: state.interruptions }),
         },
       };
     },
@@ -956,6 +1220,28 @@ export function makeNestedModule(
             by,
             level: levels[Math.floor(rng() * levels.length)] as (typeof levels)[number],
             person: randomPerson(by),
+          },
+        };
+      }
+      // W4a §5.4 — occasional breaks, so conformance and the corpus walk the
+      // new branch AND its stamp. The stamp is DERIVED, not rolled: the period
+      // is the set being played and `elapsed` is the match's rally count at 30s
+      // a point, which never decreases, so every generated stream is monotone
+      // by construction and the kernel's guard (§3.3) accepts all of them.
+      // (The state carries no per-set rally tally, so `elapsed` is match-wide
+      // rather than set-relative — a generator convenience, not the model.)
+      if (rng() < 0.03) {
+        const kinds = NestedInterruptionKind.options;
+        const by = randomEntrant();
+        const rallies = state.pointsWon.home + state.pointsWon.away;
+        return {
+          type: interruptionType,
+          payload: {
+            kind: kinds[Math.floor(rng() * kinds.length)] as (typeof kinds)[number],
+            by,
+            person: randomPerson(by),
+            duration: 120,
+            at: { period: setLabel(currentSet(state)), elapsed: rallies * 30 },
           },
         };
       }

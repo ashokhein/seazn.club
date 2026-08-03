@@ -85,6 +85,19 @@ export const tennis = makeNestedModule({
         field: "person",
         agg: "count",
       },
+      // W4a (#425) §5.4 — the fifth of the five coordinated edits a new event
+      // type owes, because `tennis.interruption` carries person credit. Only
+      // MEDICAL breaks: a toilet break or a rain delay is not a statistic about
+      // a player, and counting them under one key would make "interruptions"
+      // mean nothing on a leaderboard.
+      {
+        key: "medical_timeouts",
+        label: "Medical timeouts",
+        from: "tennis.interruption",
+        field: "person",
+        agg: "count",
+        when: (p) => p.kind === "medical",
+      },
     ],
   },
 });

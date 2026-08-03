@@ -503,14 +503,9 @@ describe("tennis.interruption is wired everywhere a new type must be (§5.6)", (
 
 describe("additive safety (§8)", () => {
   it("folds an unstamped pre-W4a stream with no new keys anywhere in the state", () => {
-    const state = fold(cfgFor(), [
-      start,
-      point(H),
-      point(A),
-      sanction(H),
-      summary(6, 4),
-      point(A),
-    ]);
+    // A set summary may not follow points inside the SAME set, so the summary
+    // closes set one and the rally path opens set two.
+    const state = fold(cfgFor(), [start, summary(6, 4), point(H), point(A), sanction(H), point(A)]);
     // `interruptions` must be ABSENT, not an empty array: the golden corpus
     // compares JSON.stringify(state), so initialising it in init() would
     // rewrite every frozen stream.
