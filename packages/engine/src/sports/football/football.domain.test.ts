@@ -322,10 +322,16 @@ describe("penalties in open play (Law 14)", () => {
 // futsal and most small-sided codes use time penalties of the same shape.
 // A sin-binned player leaves the pitch and comes BACK, which no existing
 // branch could express: football.card's non-yellow path sends off for good.
+//
+// W4 review item 3 — the dismissal and the return are TWO events, the shape
+// the period kernel already uses for a suspension (`*.suspension.start` /
+// `.end`). One event with a `returned: boolean` made the scorer's two moments,
+// minutes apart, into one control with a hidden mode.
 // ---------------------------------------------------------------------------
 
 describe("temporary dismissals / sin bins (Law 12 addendum)", () => {
-  const bin = (payload: unknown): [string, unknown] => ["football.sinbin", payload];
+  const bin = (payload: unknown): [string, unknown] => ["football.sinbin.start", payload];
+  const back = (payload: unknown): [string, unknown] => ["football.sinbin.end", payload];
   const started = stream(
     ["core.start"],
     bin({ by: "H", person: "H-p6", minutes: 10, reason: "dissent", minute: 21 }),
@@ -340,16 +346,40 @@ describe("temporary dismissals / sin bins (Law 12 addendum)", () => {
     ]);
   });
 
-  it("puts the player back on the pitch on the return record", () => {
+  it("puts the player back on the pitch on the end event", () => {
     const state = fold(cfgOf({}), [
       ...started,
       makeEnvelope(2, {
-        type: "football.sinbin",
-        payload: { by: "H", person: "H-p6", returned: true, minute: 31 },
+        type: "football.sinbin.end",
+        payload: { by: "H", person: "H-p6", minute: 31 },
       }),
     ]);
     expect(state.squads.home.onPitch).toContain("H-p6");
     expect(state.squads.home.sinBin).toEqual([]);
+  });
+
+  // The whole point of the pair: a start and an end are separate scorer
+  // moments, so neither may be expressible as the other.
+  it("refuses the pre-unification `returned` flag on the start event", () => {
+    expect(() =>
+      fold(cfgOf({}), stream(["core.start"], bin({ by: "H", person: "H-p6", returned: true }))),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
+
+  it("has no single-event form left — the bare `football.sinbin` type is gone", () => {
+    expect(() =>
+      fold(cfgOf({}), [
+        ...stream(["core.start"]),
+        makeEnvelope(1, { type: "football.sinbin", payload: { by: "H", person: "H-p6" } }),
+      ]),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
+
+  it("names its pair the way the period kernel does, so one pad control serves both", () => {
+    const types = football.fidelityTiers.find((t) => t.tier === 2)?.eventTypes ?? [];
+    expect(types).toContain("football.sinbin.start");
+    expect(types).toContain("football.sinbin.end");
+    expect(types).not.toContain("football.sinbin");
   });
 
   it("falls back to cfg.sinBinMinutes when the event omits a duration", () => {
@@ -369,7 +399,7 @@ describe("temporary dismissals / sin bins (Law 12 addendum)", () => {
   it("returns the oldest anonymous entry when the return names nobody", () => {
     const state = fold(cfgOf({}), [
       ...stream(["core.start"], bin({ by: "H" })),
-      makeEnvelope(2, { type: "football.sinbin", payload: { by: "H", returned: true } }),
+      makeEnvelope(2, { type: "football.sinbin.end", payload: { by: "H" } }),
     ]);
     expect(state.squads.home.sinBin).toEqual([]);
   });
@@ -382,7 +412,7 @@ describe("temporary dismissals / sin bins (Law 12 addendum)", () => {
 
   it("refuses to bin a player who is already in the bin", () => {
     expect(() =>
-      fold(cfgOf({}), [...started, makeEnvelope(2, { type: "football.sinbin", payload: { by: "H", person: "H-p6" } })]),
+      fold(cfgOf({}), [...started, makeEnvelope(2, { type: "football.sinbin.start", payload: { by: "H", person: "H-p6" } })]),
     ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
   });
 
@@ -403,7 +433,7 @@ describe("temporary dismissals / sin bins (Law 12 addendum)", () => {
     expect(() =>
       fold(
         cfgOf({}),
-        stream(["core.start"], bin({ by: "H", person: "H-p6", returned: true })),
+        stream(["core.start"], back({ by: "H", person: "H-p6" })),
       ),
     ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
   });
@@ -425,9 +455,9 @@ describe("temporary dismissals / sin bins (Law 12 addendum)", () => {
   it("is reachable from the attributed fidelity tiers only", () => {
     const types = (tier: number) =>
       football.fidelityTiers.find((t) => t.tier === tier)?.eventTypes ?? [];
-    expect(types(2)).toContain("football.sinbin");
-    expect(types(3)).toContain("football.sinbin");
-    expect(types(0)).not.toContain("football.sinbin");
+    expect(types(2)).toContain("football.sinbin.start");
+    expect(types(3)).toContain("football.sinbin.start");
+    expect(types(0)).not.toContain("football.sinbin.start");
   });
 
   it("is dropped by coarsen and stays out of the summary", () => {
@@ -454,7 +484,8 @@ describe("event union disambiguation", () => {
     "football.period": { phase: "HT", addedMinutes: 2 },
     "football.shootout.kick": { by: "H", person: "H-p9", scored: true },
     "football.penalty": { by: "H", taker: "H-p9", goalkeeper: "A-p1", outcome: "saved", minute: 27 },
-    "football.sinbin": { by: "H", person: "H-p6", minutes: 10, reason: "dissent", minute: 21 },
+    "football.sinbin.start": { by: "H", person: "H-p6", minutes: 10, reason: "dissent", minute: 21 },
+    "football.sinbin.end": { by: "H", person: "H-p6", minute: 31 },
   };
 
   it("round-trips every branch's canonical payload through the union unchanged", () => {
@@ -472,7 +503,7 @@ describe("event union disambiguation", () => {
     // so each schema must reject the others outright.
     const kick = canonical["football.shootout.kick"]!;
     const card = canonical["football.card"]!;
-    const bin = canonical["football.sinbin"]!;
+    const bin = canonical["football.sinbin.start"]!;
     const pen = canonical["football.penalty"]!;
     // Cards are extracted with FootballCard.safeParse inside discipline —
     // a kick or a sin bin leaking through there would invent suspensions.
@@ -493,7 +524,7 @@ describe("event union disambiguation", () => {
   // (the period kernel projects `*.suspension.start`); football did not.
   describe("the sin bin reaches the discipline projection (W4)", () => {
     const bin = (payload: Record<string, unknown>, seq = 0) =>
-      football.discipline!.extractCards([makeEnvelope(seq, { type: "football.sinbin", payload })]);
+      football.discipline!.extractCards([makeEnvelope(seq, { type: "football.sinbin.start", payload })]);
 
     it("projects a temporary dismissal, with its offence", () => {
       expect(bin({ by: "H", person: "H-p6", reason: "dissent", minutes: 10 })).toEqual([
@@ -515,15 +546,19 @@ describe("event union disambiguation", () => {
       expect(bin({ by: "A" })).toEqual([{ entrantSide: "A", color: "sin_bin", eventId: "e-0" }]);
     });
 
-    it("never projects the RETURN half of the branch as a second sanction", () => {
-      // One dismissal is one sanction; `returned: true` is the player coming
+    it("never projects the END of a dismissal as a second sanction", () => {
+      // One dismissal is one sanction; the end event is the player coming
       // back. Counting it would double every sin bin in the accumulation.
-      expect(bin({ by: "H", person: "H-p6", returned: true })).toEqual([]);
+      expect(
+        football.discipline!.extractCards([
+          makeEnvelope(0, { type: "football.sinbin.end", payload: { by: "H", person: "H-p6" } }),
+        ]),
+      ).toEqual([]);
     });
 
     it("still projects cards, and keeps both in ledger order", () => {
       const cards = football.discipline!.extractCards([
-        makeEnvelope(0, { type: "football.sinbin", payload: { by: "H", person: "H-p6" } }),
+        makeEnvelope(0, { type: "football.sinbin.start", payload: { by: "H", person: "H-p6" } }),
         makeEnvelope(1, { type: "football.card", payload: { by: "A", person: "A-p2", color: "yellow" } }),
       ]);
       expect(cards.map((c) => c.color)).toEqual(["sin_bin", "yellow"]);
@@ -546,7 +581,7 @@ describe("event union disambiguation", () => {
 
     const asBin = fold(cfgOf({}), [
       makeEnvelope(0, { type: "core.start", payload: {} }),
-      makeEnvelope(1, { type: "football.sinbin", payload: ambiguous }),
+      makeEnvelope(1, { type: "football.sinbin.start", payload: ambiguous }),
     ]);
     expect(asBin.goals).toEqual({ home: 0, away: 0 });
     expect(asBin.squads.home.sinBin).toEqual([{ minute: 12 }]);
@@ -563,7 +598,11 @@ describe("event union disambiguation", () => {
     expect(one(cfgOf({}), opened, "football.sub").squads.home.offUsed).toEqual(["H-p1"]);
     expect(one(cfgOf({}), opened, "football.period").periods).toHaveLength(2);
     expect(one(cfgOf({}), opened, "football.penalty").penalties).toHaveLength(1);
-    expect(one(cfgOf({}), opened, "football.sinbin").squads.home.sinBin).toHaveLength(1);
+    expect(one(cfgOf({}), opened, "football.sinbin.start").squads.home.sinBin).toHaveLength(1);
+    expect(
+      one(cfgOf({}), [...opened, makeEnvelope(1, { type: "football.sinbin.start", payload: { by: "H", person: "H-p6" } })], "football.sinbin.end")
+        .squads.home.sinBin,
+    ).toHaveLength(0);
 
     const atShootout = stream(
       ["core.start"],
@@ -639,8 +678,8 @@ describe("player stats from the W4 branches", () => {
   it("counts a sin bin once — the dismissal, never the return", () => {
     const rows = aggregatePlayerStats(
       [
-        makeEnvelope(0, { type: "football.sinbin", payload: { by: "H", person: "p6", minutes: 10 } }),
-        makeEnvelope(1, { type: "football.sinbin", payload: { by: "H", person: "p6", returned: true } }),
+        makeEnvelope(0, { type: "football.sinbin.start", payload: { by: "H", person: "p6", minutes: 10 } }),
+        makeEnvelope(1, { type: "football.sinbin.end", payload: { by: "H", person: "p6" } }),
       ],
       model,
     );

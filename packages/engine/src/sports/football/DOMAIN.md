@@ -45,18 +45,18 @@ is initialised with.
 | Minute of a goal / card / sub | all | n/a | `Ev.FootballGoal.minute`, `Ev.FootballCard.minute`, `Ev.FootballSub.minute` | modelled | Carried on the event and read back from the ledger; the fold keeps per-period counts, not a timeline. |
 | A goal-by-goal timeline inside State | all | `scorer`, `assist` | would be `State.timeline[]` | deferred | The ledger already is the timeline and the match report reads it. State is serialised whole into the frozen golden corpus, so a new always-present array would break back-compat for zero new information. |
 | Disallowed goal and its reason (offside / VAR) | all | n/a | — | deferred | Not a scorebook entry: a disallowed goal is not a goal, and the FA/IFAB match record has no field for it. VAR exists only above every declared variant's level. Needs a product decision if the pad wants a "chalked off" timeline entry. |
-| Penalty awarded in open play and **not** converted (saved / missed / woodwork) | all | `taker`; the defending `keeper` | `Ev.FootballPenalty` → `State.penalties[]` | **extended** | New branch `{by, taker?, keeper?, outcome, minute?}`. `outcome` is a required enum `saved\|missed\|post` — that is also what keeps the branch distinct in the union. A **converted** penalty stays `football.goal {penalty:true}`, so no pre-W4 stream changes meaning. `keeper` is validated against the **defending** side. |
-| Who took, and who saved, a missed penalty | all | `taker`, `keeper` | `Ev.FootballPenalty.taker`, `.keeper` → `State.penalties[].taker\|keeper`, `playerStats.penalties_missed` | **extended** | Both optional, per the person-attribution convention. |
+| Penalty awarded in open play and **not** converted (saved / missed / woodwork) | all | `taker`; the defending `goalkeeper` | `Ev.FootballPenalty` → `State.penalties[]` | **extended** | New branch `{by, taker?, goalkeeper?, outcome, minute?}`. `outcome` is a required enum `saved\|missed\|post` — that is also what keeps the branch distinct in the union. A **converted** penalty stays `football.goal {penalty:true}`, so no pre-W4 stream changes meaning. `goalkeeper` is validated against the **defending** side. |
+| Who took, and who saved, a missed penalty | all | `taker`, `goalkeeper` | `Ev.FootballPenalty.taker`, `.goalkeeper` → `State.penalties[].taker\|goalkeeper`, `playerStats.penalties_missed` | **extended** | Both optional, per the person-attribution convention. |
 | The offence that conceded a penalty | all | offender | — | deferred | Requires the Law 12 direct-free-kick offence taxonomy, which no declared fidelity tier records. Needs a product decision. |
 | Yellow card | all | `person` | `Ev.FootballCard.color = "yellow"` → `State.cards[]` | modelled | Anonymous cards legal; a second plain yellow for the same person is refused (must be recorded as `second_yellow`). |
 | Second yellow, and the red that follows it | all | `person` | `Ev.FootballCard.color = "second_yellow"` → `State.squads[].sentOff` | modelled | Refused without a prior yellow for that person; the fold removes the player permanently. FIFA fair play scores it −3, a direct red −4, yellow + direct red −5. |
 | Direct red card | all | `person` | `Ev.FootballCard.color = "red"` | modelled | Legal pre-kickoff too (football.md §9). |
 | **The offence a card was shown for** | all | `person` | `Ev.FootballCard.reason` → `State.cards[].reason` | **extended** | New optional `CardReason` enum: the six Law 12.3 cautionable offences and the seven Law 12.4 sending-off offences. The suspension tariff is a function of *this*, not of the colour — violent conduct and a second caution are both reds and carry different bans. |
-| **The offence reaching the discipline projection** | all | `person` | `Ev.FootballCard.reason` / `Ev.FootballSinBin.reason` → `discipline.extractCards() → DisciplineCard.reason` | **extended** | Unblocked later in W4: `DisciplineCard.reason` (`src/core/types.ts`) plus the conditional spread in football's `extractCards` (`football.ts`), so the discipline usecase can vary a suspension by offence and not only by colour. `extractCards` projects a **sin bin** too, under the declared colour `sin_bin` — the return half of that branch is never a second sanction. |
+| **The offence reaching the discipline projection** | all | `person` | `Ev.FootballCard.reason` / `Ev.FootballSinBinStart.reason` → `discipline.extractCards() → DisciplineCard.reason` | **extended** | Unblocked later in W4: `DisciplineCard.reason` (`src/core/types.ts`) plus the conditional spread in football's `extractCards` (`football.ts`), so the discipline usecase can vary a suspension by offence and not only by colour. `extractCards` projects a **sin bin** too, under the declared colour `sin_bin` — the return half of that branch is never a second sanction. |
 | FIFA fair-play deduction | all | `person` (anonymous cards deduct independently) | `Cfg.fairPlay`, `StandingsDelta.metrics.fair_play` | modelled | Worst applicable category per person. |
-| **Sin bin / temporary dismissal** | all — universal in `youth` and `small-sided`, and the FA runs it in `11-a-side` below NLS step 4 | `person` | `Ev.FootballSinBin` → `State.squads[].sinBin[]` | **extended** | New branch. Removes the player from the pitch **without** sending them off — the fact no existing branch could express, since `football.card`'s non-yellow path removes a player for good. Anonymous bins are recorded but never move the pitch, the same discipline anonymous cards get. |
-| A sin-binned player returning to the pitch | as above | `person` | `Ev.FootballSinBin.returned` | **extended** | Same branch carries both halves of the fact. An anonymous return closes the oldest anonymous dismissal. `playerStats.sin_bins` counts the dismissal and never the return. |
-| Length of a temporary dismissal | as above | n/a | `Ev.FootballSinBin.minutes`, falling back to `Cfg.sinBinMinutes` | **extended** | Left unset on every variant preset on purpose: the FA runs 10 minutes in 90-minute football and reduces it *pro rata* for shorter formats, so it is a competition setting, not a Law constant. |
+| **Sin bin / temporary dismissal** | all — universal in `youth` and `small-sided`, and the FA runs it in `11-a-side` below NLS step 4 | `person` | `Ev.FootballSinBinStart` (`football.sinbin.start`) → `State.squads[].sinBin[]` | **extended** | New branch. Removes the player from the pitch **without** sending them off — the fact no existing branch could express, since `football.card`'s non-yellow path removes a player for good. Anonymous bins are recorded but never move the pitch, the same discipline anonymous cards get. |
+| A sin-binned player returning to the pitch | as above | `person` | `Ev.FootballSinBinEnd` (`football.sinbin.end`) | **extended** | A start/end PAIR, the shape the period kernel uses for a suspension: two scorer moments minutes apart. An anonymous end closes the oldest anonymous dismissal. `playerStats.sin_bins` counts the dismissal and never the return. |
+| Length of a temporary dismissal | as above | n/a | `Ev.FootballSinBinStart.minutes`, falling back to `Cfg.sinBinMinutes` | **extended** | Left unset on every variant preset on purpose: the FA runs 10 minutes in 90-minute football and reduces it *pro rata* for shorter formats, so it is a competition setting, not a Law constant. |
 | A sin-binned player then sent off | as above | `person` | `applyCard` lineup check + `removeFromPitch` | **extended** | A player serving a temporary dismissal is off the pitch but still cardable; a permanent dismissal drops their bin entry so they cannot "return". |
 | Substitution (off / on) | all | `off`, `on` | `Ev.FootballSub` → `State.squads[].onPitch\|bench\|offUsed` | modelled | `off` must be on the pitch, `on` must be an unused bench player. |
 | **Return ("rolling" / "flying") substitution** | `youth`, `small-sided` | `off`, `on` | `Cfg.rollingSubs` | **extended** | Absent ≡ pre-W4 behaviour (a substituted player may not return). When on, the player who came off rejoins the **bench** and nothing lands in `offUsed`. Declared `true` on both the `youth` and `small-sided` presets and left unset on `11-a-side`. |
@@ -100,9 +100,9 @@ Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 | variant | where the model diverges | how it is expressed |
 | --- | --- | --- |
-| `11-a-side` | Baseline. Return-forbidden substitutions under a competition cap; extra time and kicks from the penalty mark in knockout; sin bins below NLS step 4. | `Cfg.maxSubs`, `Cfg.extraTime`, `Cfg.shootout`, `Ev.FootballSinBin`. |
+| `11-a-side` | Baseline. Return-forbidden substitutions under a competition cap; extra time and kicks from the penalty mark in knockout; sin bins below NLS step 4. | `Cfg.maxSubs`, `Cfg.extraTime`, `Cfg.shootout`, `Ev.FootballSinBinStart` / `Ev.FootballSinBinEnd`. |
 | `youth` | 2×30 halves; **repeat substitutions**; sin bins are standard, at a shorter pro-rata period; quarters in the mini-soccer age groups the module does not declare. | `halfMinutes: 30` + `rollingSubs: true` on the preset; `Cfg.sinBinMinutes` per competition. Quarters are **deferred**. |
-| `small-sided` | 2×20 halves; **flying substitutions**, uncapped; time penalties of sin-bin shape; **a 5-, 7- or 9-man team**. | `halfMinutes: 20` + `rollingSubs: true` on the preset; `Ev.FootballSinBin`. Squad size is **deferred** — `positions.lineup.size` is a single module-level `11`. |
+| `small-sided` | 2×20 halves; **flying substitutions**, uncapped; time penalties of sin-bin shape; **a 5-, 7- or 9-man team**. | `halfMinutes: 20` + `rollingSubs: true` on the preset; `Ev.FootballSinBinStart` / `Ev.FootballSinBinEnd`. Squad size is **deferred** — `positions.lineup.size` is a single module-level `11`. |
 
 ## Person attribution — what is complete, what is not
 
@@ -117,7 +117,7 @@ Football sets the pattern the other families copy, so this is explicit.
 | `football.sub` | `off`, `on` (both **required** — a substitution with nobody named is not a fact) | `State.squads[].onPitch/bench/offUsed` |
 | `football.shootout.kick` | `person` (kicker) | validated against the pitch; not retained per-kick in State |
 | `football.penalty` *(W4)* | `taker`, `goalkeeper` | `State.penalties[].taker/goalkeeper`, `playerStats.penalties_missed` |
-| `football.sinbin` *(W4)* | `person` | `State.squads[].sinBin[].person`, `playerStats.sin_bins` |
+| `football.sinbin.start` / `.end` *(W4)* | `person` | `State.squads[].sinBin[].person`, `playerStats.sin_bins` |
 
 **Incomplete / missing:**
 
@@ -145,11 +145,10 @@ Nothing here was acted on.
    breaks — but they will read as raw snake_case until they get labels, in all
    four locale dictionaries.
 2. **New event types the pad must be able to emit**: `football.penalty` and
-   `football.sinbin`, both tier-2/3 only (`scoring.match_timeline`
+   `football.sinbin.start`/`.end`, all tier-2/3 only (`scoring.match_timeline`
    entitlement). Neither moves the score.
 3. **Facts the pad must prompt for**: the penalty `outcome` (required — there
-   is no valid `football.penalty` without it); whether a `football.sinbin` is a
-   dismissal or a **return** (`returned`); the sin-bin duration when
+   is no valid `football.penalty` without it); the sin-bin duration when
    `Cfg.sinBinMinutes` is not set; `addedMinutes` at each period marker.
 4. **New config the rules editor should expose**: `rollingSubs`, `maxSubs`,
    `sinBinMinutes`. `rollingSubs` now ships `true` on the `youth` and
