@@ -148,6 +148,11 @@ describe("set-based sanctions", () => {
 // tennis have no substitutions at all.
 // ---------------------------------------------------------------------------
 describe("volleyball substitutions", () => {
+  // W4 review item 5 — the substitution's two person fields are `off`/`on`,
+  // the names football's `football.sub` has carried since before this wave.
+  // The set-based kernel shipped `out`/`in` in the same wave; the incumbent
+  // wins, and `in` was a poor key besides (cricket's `out` already means a
+  // DISMISSAL, so a pad reading "out" across sports meant two things).
   const sub = (payload: Record<string, unknown>): ModuleEvent => ({
     type: "volleyball.sub",
     payload,
@@ -155,18 +160,18 @@ describe("volleyball substitutions", () => {
 
   it("logs in/out players and counts them per side and per set", () => {
     const state = fold(volleyball, [
-      sub({ by: "H", in: "H-p6", out: "H-p2" }),
-      sub({ by: "A", in: "A-p5", out: "A-p1" }),
-      sub({ by: "H", in: "H-p2", out: "H-p6" }),
+      sub({ by: "H", on: "H-p6", off: "H-p2" }),
+      sub({ by: "A", on: "A-p5", off: "A-p1" }),
+      sub({ by: "H", on: "H-p2", off: "H-p6" }),
     ]);
     expect(state.subs).toEqual({
       home: 2,
       away: 1,
       thisSet: { home: 2, away: 1 },
       log: [
-        { by: "home", in: "H-p6", out: "H-p2" },
-        { by: "away", in: "A-p5", out: "A-p1" },
-        { by: "home", in: "H-p2", out: "H-p6" },
+        { by: "home", on: "H-p6", off: "H-p2" },
+        { by: "away", on: "A-p5", off: "A-p1" },
+        { by: "home", on: "H-p2", off: "H-p6" },
       ],
     });
     expect(volleyball.summary(state).detail).toMatchObject({
@@ -176,9 +181,9 @@ describe("volleyball substitutions", () => {
 
   it("resets the per-set count when a set closes but keeps the match total", () => {
     const state = fold(volleyball, [
-      sub({ by: "H", in: "H-p6", out: "H-p2" }),
+      sub({ by: "H", on: "H-p6", off: "H-p2" }),
       { type: "volleyball.set.summary", payload: { home: 25, away: 20 } },
-      sub({ by: "H", in: "H-p5", out: "H-p3" }),
+      sub({ by: "H", on: "H-p5", off: "H-p3" }),
     ]);
     expect(state.subs?.home).toBe(2);
     expect(state.subs?.thisSet).toEqual({ home: 1, away: 0 });
@@ -206,7 +211,7 @@ describe("set-based event union stays unambiguous", () => {
     ["entrant-keyed summary", { by: "H", forBy: 25, forOpp: 20 }],
     ["timeout", { by: "H", technical: true }],
     ["sanction", { by: "H", level: "warning", person: "H-p1" }],
-    ["substitution", { by: "H", in: "H-p6", out: "H-p2" }],
+    ["substitution", { by: "H", on: "H-p6", off: "H-p2" }],
   ];
 
   for (const [label, payload] of canonical) {
@@ -333,6 +338,12 @@ describe("coarsen is transparent to interruptions", () => {
 // here so the omission is a decision a future author has to overturn
 // explicitly, and stated in DOMAIN.volleyball.md.
 describe("substitution persons are unscored on purpose", () => {
+  it("refuses the pre-unification `in`/`out` substitution keys", () => {
+    expect(() =>
+      fold(volleyball, [{ type: "volleyball.sub", payload: { by: "H", in: "H-p6", out: "H-p2" } }]),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
+
   it("keeps every module's sub event out of playerStats", () => {
     for (const module of [volleyball, badminton, tabletennis]) {
       const sources = new Set(module.playerStats?.metrics.map((m) => m.from) ?? []);

@@ -152,10 +152,13 @@ export const SetBasedSanction = z.strictObject({
 });
 export type SetBasedSanction = z.infer<typeof SetBasedSanction>;
 
+// W4 review item 5 — `off`/`on`, the names `football.sub` has carried since
+// before this wave. The incumbent wins; `in`/`out` also read badly across the
+// engine, where cricket's `out` already names a DISMISSAL.
 export const SetBasedSub = z.strictObject({
   by: EntrantId,
-  in: PersonId.optional(),
-  out: PersonId.optional(),
+  off: PersonId.optional(),
+  on: PersonId.optional(),
 });
 export type SetBasedSub = z.infer<typeof SetBasedSub>;
 
@@ -201,8 +204,8 @@ export interface SetBasedSanctionRec {
 
 export interface SetBasedSubRec {
   by: Side;
-  in?: string;
-  out?: string;
+  off?: string;
+  on?: string;
 }
 
 export interface SetBasedSubState {
@@ -485,8 +488,8 @@ function applySub(state: SetBasedState, payload: SetBasedSub): SetBasedState {
   const subs = state.subs ?? { home: 0, away: 0, thisSet: { home: 0, away: 0 }, log: [] };
   const record: SetBasedSubRec = {
     by: side,
-    ...(payload.in === undefined ? {} : { in: payload.in }),
-    ...(payload.out === undefined ? {} : { out: payload.out }),
+    ...(payload.off === undefined ? {} : { off: payload.off }),
+    ...(payload.on === undefined ? {} : { on: payload.on }),
   };
   return {
     ...state,
@@ -818,7 +821,7 @@ export function makeSetBasedModule(
           const level = levels[Math.floor(rng() * levels.length)] as (typeof levels)[number];
           return { type, payload: { by, level, person: randomPerson(by) } };
         }
-        return { type, payload: { by, in: randomPerson(by), out: randomPerson(by) } };
+        return { type, payload: { by, off: randomPerson(by), on: randomPerson(by) } };
       }
       // Half of all rallies carry attribution — the other half keep the coarse
       // (entrant-only) shape legal and exercised.
