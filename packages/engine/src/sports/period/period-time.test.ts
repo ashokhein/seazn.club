@@ -737,14 +737,41 @@ describe("PeriodEv disambiguation — a widened branch must not swallow a siblin
   // with `PeriodGoal` moved to the end of the union. The winning branch has to
   // be named, and the only honest way to name it is to replay `z.union`'s own
   // first-match rule against the branches in declaration order.
-  const BRANCHES: [string, z.ZodType][] = [
-    ["PeriodGoal", PeriodGoal],
-    ["PeriodAdvance", PeriodAdvance],
-    ["PeriodSuspensionStart", PeriodSuspensionStart],
-    ["PeriodSuspensionEnd", PeriodSuspensionEnd],
-    ["PeriodShootoutAttempt", PeriodShootoutAttempt],
-    ["PeriodSetPiece", PeriodSetPiece],
-  ];
+  // Names are looked up BY SCHEMA IDENTITY and the order comes from the real
+  // `PeriodEv.options`. A hand-ordered local copy here would compute the winner
+  // against a stale order, so reordering the actual union would red nothing —
+  // the same defect this file exists to catch, one level up. Football shipped
+  // that copy and a counterfactual proved it: with the hand-ordered list, the
+  // reorder mutant survived the whole suite.
+  const BRANCH_NAMES = new Map<z.ZodType, string>([
+    [PeriodGoal, "PeriodGoal"],
+    [PeriodAdvance, "PeriodAdvance"],
+    [PeriodSuspensionStart, "PeriodSuspensionStart"],
+    [PeriodSuspensionEnd, "PeriodSuspensionEnd"],
+    [PeriodShootoutAttempt, "PeriodShootoutAttempt"],
+    [PeriodSetPiece, "PeriodSetPiece"],
+  ]);
+  const BRANCHES: [string, z.ZodType][] = PeriodEv.options.map((schema) => {
+    const name = BRANCH_NAMES.get(schema as z.ZodType);
+    // A branch added to the union without being named here would otherwise
+    // silently become "unknown" and pass every assertion below.
+    if (name === undefined) throw new Error("PeriodEv gained a branch with no name in BRANCH_NAMES");
+    return [name, schema as z.ZodType];
+  });
+
+  // Deliberately NOT `expect(BRANCHES).toEqual(PeriodEv.options)` — BRANCHES is
+  // derived FROM `PeriodEv.options`, so that assertion is tautological and can
+  // never red. The direction that can actually break is the map going stale:
+  // a branch dropped from the union leaves a name behind, and every shape below
+  // keeps passing against a schema the sport no longer has.
+  it("has no stale entry in BRANCH_NAMES", () => {
+    const live = new Set<unknown>(PeriodEv.options);
+    const orphaned = [...BRANCH_NAMES.entries()]
+      .filter(([schema]) => !live.has(schema))
+      .map(([, name]) => name);
+    expect(orphaned).toEqual([]);
+  });
+
   const winningBranch = (payload: unknown): string | null =>
     BRANCHES.find(([, schema]) => schema.safeParse(payload).success)?.[0] ?? null;
 

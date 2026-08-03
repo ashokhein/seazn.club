@@ -88,15 +88,19 @@ function unknownPhase(period: string, phaseOrder: readonly string[]): EngineErro
 }
 
 /**
- * Advance a stamp by a duration, **staying inside the named period** (§3.2).
+ * Advance a stamp by a duration, **staying inside the named period**.
  *
- * This is deliberate, not an oversight. A 2-minute minor awarded at 19:10 of a
- * 20-minute period nominally runs into the next period, but the engine cannot
- * compute that without a period-length table it does not require
- * (`periodSeconds` is optional, §1.3). Such a suspension simply does not expire
- * by time; it ends on an explicit end event, exactly as today. Promoting this
- * needs `periodSeconds` to become required — a product decision this wave does
- * not force.
+ * This is a primitive over ONE period, not a statement about how long a
+ * suspension runs. The cross-period carry is real (§3.2, amended 2026-08-04:
+ * IIHF and IFAB both carry an unserved remainder into the next period) and
+ * lives in the sport's expiry walk, which advances phase by phase using
+ * `playPhases` (§7) and derives each phase's length from cfg.
+ *
+ * The earlier rationale here — that the engine could not compute the carry
+ * without a period-length table it does not require — was wrong twice over:
+ * `cfg.periods.minutes` and `cfg.overtime.minutes` were already REQUIRED, and
+ * ending a suspension at the whistle under-serves it, which is worse than not
+ * modelling expiry at all because it is silently wrong in the sport's favour.
  *
  * THROWS `INVALID_EVENT` for a negative or non-finite duration, rather than
  * coercing. This is the one place totality is the wrong trade. Flooring a
