@@ -36,11 +36,31 @@ const point = (payload: Record<string, unknown>): ModuleEvent => ({
 // won it — the entrant-only point could express neither.
 // ---------------------------------------------------------------------------
 describe("tennis point: optional person attribution", () => {
+  // W4 review item 4 — the person credited with a point is `scorer` in every
+  // module that names one (football's goal has carried it since before this
+  // wave, and set-based rallies adopted it). Tennis called him `winner`, which
+  // is already an EntrantId across the whole engine (`MatchOutcome.winner`):
+  // one key, two meanings, on the same fixture.
+  it("names the point's person `scorer`, and refuses the old `winner` key", () => {
+    const state = fold([point({ by: H, server: "H-p1", scorer: "H-p1" })]);
+    expect(state.persons?.["H-p1"]).toEqual({ points: 1, serves: 1, aces: 0, doubleFaults: 0 });
+    expect(() => fold([point({ by: H, server: "H-p1", winner: "H-p1" })])).toThrowError(
+      expect.objectContaining({ code: "INVALID_EVENT" }),
+    );
+  });
+
+  // The SHOT TYPE `winner` is a different fact on a different level and keeps
+  // its own name — a tennis scorer would not recognise anything else.
+  it("keeps `winner` as a shot type, where tennis actually uses the word", () => {
+    const state = fold([point({ by: H, server: "H-p1", scorer: "H-p1", meta: { kind: "winner" } })]);
+    expect(state.persons?.["H-p1"]?.points).toBe(1);
+  });
+
   it("credits the point winner and the server", () => {
     const state = fold([
-      point({ by: H, server: "H-p1", winner: "H-p1" }),
-      point({ by: A, server: "H-p1", winner: "A-p1" }),
-      point({ by: H, server: "H-p1", winner: "H-p1" }),
+      point({ by: H, server: "H-p1", scorer: "H-p1" }),
+      point({ by: A, server: "H-p1", scorer: "A-p1" }),
+      point({ by: H, server: "H-p1", scorer: "H-p1" }),
     ]);
     expect(state.persons).toEqual({
       "H-p1": { points: 2, serves: 3, aces: 0, doubleFaults: 0 },
@@ -52,8 +72,8 @@ describe("tennis point: optional person attribution", () => {
 
   it("credits an ace and a double fault to the SERVER, whoever won the point", () => {
     const state = fold([
-      point({ by: H, server: "H-p1", winner: "H-p1", meta: { kind: "ace" } }),
-      point({ by: A, server: "H-p1", winner: "A-p1", meta: { kind: "double_fault" } }),
+      point({ by: H, server: "H-p1", scorer: "H-p1", meta: { kind: "ace" } }),
+      point({ by: A, server: "H-p1", scorer: "A-p1", meta: { kind: "double_fault" } }),
     ]);
     expect(state.persons?.["H-p1"]).toEqual({ points: 1, serves: 2, aces: 1, doubleFaults: 1 });
     expect(state.persons?.["A-p1"]).toEqual({ points: 1, serves: 0, aces: 0, doubleFaults: 0 });
@@ -66,7 +86,7 @@ describe("tennis point: optional person attribution", () => {
       const by = game % 2 === 0 ? H : A;
       for (let i = 0; i < 4; i++) events.push(point({ by }));
     }
-    events.push(point({ by: H, server: "H-p1", winner: "H-p1", meta: { kind: "ace" } }));
+    events.push(point({ by: H, server: "H-p1", scorer: "H-p1", meta: { kind: "ace" } }));
     const state = fold(events);
     expect(state.points.kind).toBe("tiebreak");
     expect(state.persons?.["H-p1"]).toEqual({ points: 1, serves: 1, aces: 1, doubleFaults: 0 });
@@ -79,7 +99,7 @@ describe("tennis point: optional person attribution", () => {
   });
 
   it("surfaces attribution in the summary detail (tennis has no coarsen hook)", () => {
-    const state = fold([point({ by: H, server: "H-p1", winner: "H-p1" })]);
+    const state = fold([point({ by: H, server: "H-p1", scorer: "H-p1" })]);
     expect(tennis.summary(state).detail).toMatchObject({
       persons: { "H-p1": { points: 1, serves: 1, aces: 0, doubleFaults: 0 } },
     });
@@ -141,7 +161,7 @@ describe("tennis code violations", () => {
 describe("nested event union stays unambiguous", () => {
   const canonical: Array<[label: string, payload: Record<string, unknown>]> = [
     ["bare point", { by: H }],
-    ["attributed point", { by: H, server: "H-p1", winner: "H-p1" }],
+    ["attributed point", { by: H, server: "H-p1", scorer: "H-p1" }],
     ["point with meta", { by: H, meta: { kind: "ace" } }],
     ["set summary", { home: 6, away: 4 }],
     ["tie-break set summary", { home: 7, away: 6, tb: { home: 7, away: 5 } }],
@@ -185,9 +205,9 @@ describe("tennis playerStats", () => {
     const rows = aggregatePlayerStats(
       envelopes([
         { type: "core.start", payload: {} },
-        point({ by: H, server: "H-p1", winner: "H-p1", meta: { kind: "ace" } }),
-        point({ by: H, server: "H-p1", winner: "H-p1" }),
-        point({ by: A, server: "H-p1", winner: "A-p1", meta: { kind: "double_fault" } }),
+        point({ by: H, server: "H-p1", scorer: "H-p1", meta: { kind: "ace" } }),
+        point({ by: H, server: "H-p1", scorer: "H-p1" }),
+        point({ by: A, server: "H-p1", scorer: "A-p1", meta: { kind: "double_fault" } }),
         { type: "tennis.sanction", payload: { by: A, level: "warning", person: "A-p1" } },
       ]),
       tennis.playerStats!,

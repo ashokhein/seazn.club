@@ -40,10 +40,10 @@ ticks and the signature line.
 | Which side is serving | all | entrant side | `State.serving`, `summary.detail.serving` | modelled | alternates each game; after a tie-break the first tie-break server receives. |
 | Tie-break serve rotation (one point, then two each) | all | entrant side | `State.tbPointsPlayed`, `State.tbFirstServer` | modelled | ITF Rule 5b. |
 | **Which player** served the point | all | person `server` | `Ev.Point.server` → `State.persons[id].serves` | extended | optional `PersonId`. The chair's card has a server column; in doubles the side alone cannot say who served. |
-| **Which player** won the point | all | person `winner` | `Ev.Point.winner` → `State.persons[id].points` | extended | optional. Note the deliberate name overlap: `Ev.Point.winner` is the *person* who won the point; `Ev.Point.meta.kind = "winner"` is the *shot type*. |
+| **Which player** won the point | all | person `scorer` | `Ev.Point.scorer` → `State.persons[id].points` | extended | optional. `scorer` is the engine-wide name for the person credited with a point; `winner` is an EntrantId everywhere else (`MatchOutcome.winner`). `Ev.Point.meta.kind = "winner"` keeps the word where tennis really uses it — the *shot type*. |
 | Ace | all | person (the server) | `Ev.Point.meta.kind = "ace"` + `Ev.Point.server` → `State.persons[id].aces` | extended | the shot type was already modelled; W4 makes it attributable. |
 | Double fault | all | person (the server) | `Ev.Point.meta.kind = "double_fault"` + `Ev.Point.server` → `State.persons[id].doubleFaults` | extended | credited to the **server** even though the receiver wins the point — that is how the card scores it. |
-| Winner / unforced error | all | person `winner` | `Ev.Point.meta.kind`, `Ev.Point.winner` | modelled | the shot type already existed; attribution now rides with it. |
+| Winner / unforced error | all | person `scorer` | `Ev.Point.meta.kind`, `Ev.Point.scorer` | modelled | the shot type already existed; attribution now rides with it. |
 | Code violation ladder: warning → point penalty → game penalty → default | all | entrant + optional person | `Ev.Sanction.level`, `.person` → `State.sanctions[]`, `summary.detail.sanctions` | extended | new `tennis.sanction` event; never moves the score. |
 | The point a **point penalty** concedes | all | entrant | recorded as a `tennis.point` for the opponent | modelled | as the chair writes it into the card. |
 | The game a **game penalty** concedes | all | entrant | — | deferred | there is no "award a game" event, and adding one would be a new scoring path rather than an additive field. A scorer can enter the four points; a proper fix needs a product decision. |
@@ -76,7 +76,7 @@ Asserted against the table itself by `src/testkit/dossiers.test.ts`.
   default`. `apps/web/src/lib/scoring-vocab.ts` humanises unknown values, so
   nothing breaks, but a label set is owed — and `default` in particular reads
   badly unlabelled.
-- **New payload fields** `tennis.point.server` and `.winner`. A doubles pad must
+- **New payload fields** `tennis.point.server` and `.scorer`. A doubles pad must
   offer both members of each pair, and should default `server` from
   `summary.detail.serving` plus the pair's order.
 - **`summary().detail`** now carries `persons` and `sanctions` when non-empty.

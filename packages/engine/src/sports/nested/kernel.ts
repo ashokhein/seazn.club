@@ -121,16 +121,22 @@ export const NestedPointMeta = z.strictObject({
 // could express neither. Both fields are OPTIONAL so coarse scoring stays
 // legal and a pre-W4 payload folds unchanged.
 //
-// Name overlap, deliberately kept: `NestedPoint.winner` is the PERSON who won
-// the point, while `NestedPointMeta.kind === "winner"` is the SHOT TYPE. They
-// sit on different levels of the payload and both follow their sport's own
-// vocabulary — renaming either would read wrong to a tennis scorer.
+// W4 review item 4 — the person credited with the point is `scorer`, the name
+// every other module already uses for "who is credited" (football's goal has
+// carried it since before this wave; set-based rallies adopted it). This
+// branch shipped it as `winner`, which is an EntrantId everywhere else in the
+// engine — `MatchOutcome.winner`, `standingsDelta`, every module's outcome —
+// so one key meant two things on the same fixture.
+//
+// `NestedPointMeta.kind === "winner"` is untouched: that is the SHOT TYPE, a
+// different fact on a different level, and it is the word a tennis scorer
+// actually uses. Renaming it would read wrong on the card.
 export const PersonId = z.string().min(1);
 
 export const NestedPoint = z.strictObject({
   by: EntrantId,
   server: PersonId.optional(),
-  winner: PersonId.optional(),
+  scorer: PersonId.optional(),
   meta: NestedPointMeta.optional(),
 });
 export type NestedPoint = z.infer<typeof NestedPoint>;
@@ -474,13 +480,13 @@ function creditPersons(
   state: NestedState,
   payload: NestedPoint,
 ): Record<string, NestedPersonTally> | undefined {
-  const { server, winner } = payload;
-  if (server === undefined && winner === undefined) return state.persons;
+  const { server, scorer } = payload;
+  if (server === undefined && scorer === undefined) return state.persons;
   const next: Record<string, NestedPersonTally> = { ...(state.persons ?? {}) };
   const tally = (id: string): NestedPersonTally =>
     next[id] ?? { points: 0, serves: 0, aces: 0, doubleFaults: 0 };
-  if (winner !== undefined) {
-    next[winner] = { ...tally(winner), points: tally(winner).points + 1 };
+  if (scorer !== undefined) {
+    next[scorer] = { ...tally(scorer), points: tally(scorer).points + 1 };
   }
   if (server !== undefined) {
     const kind = payload.meta?.kind;
@@ -892,7 +898,7 @@ export function makeNestedModule(
         return {
           by,
           server: serverId(),
-          winner: randomPerson(by),
+          scorer: randomPerson(by),
           ...(kind === undefined ? {} : { meta: { kind } }),
         };
       };

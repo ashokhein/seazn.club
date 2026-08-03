@@ -54,7 +54,7 @@ export const tennis = makeNestedModule({
   // is exactly how the chair's card scores it.
   playerStats: {
     metrics: [
-      { key: "points", label: "Points won", from: "tennis.point", field: "winner", agg: "count" },
+      { key: "points", label: "Points won", from: "tennis.point", field: "scorer", agg: "count" },
       {
         key: "service_points",
         label: "Service points",
