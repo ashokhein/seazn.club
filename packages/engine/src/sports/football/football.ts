@@ -62,6 +62,14 @@ export const FootballCfg = z.object({
   // The FA runs 10 minutes in 90-minute football and reduces it pro rata for
   // shorter formats, so this is a competition setting, not a Law constant.
   sinBinMinutes: z.number().int().positive().optional(),
+  // W4 (Law 3 §1, "a match is played by two teams, each of not more than
+  // eleven players") — the number of players a side fields. The Laws set 11 for
+  // the senior game; FA Mini-Soccer and the small-sided/futsal codes run 5, 7
+  // or 9 a side, and a competition may lower the minimum. Drives the resolved
+  // PositionCatalog (`positionsFor`) rather than the fold: positions are lineup
+  // data and never touch scoring math. Optional with no default — absent ≡ 11,
+  // which is what every stream recorded before W4 assumed.
+  teamSize: z.number().int().min(2).max(11).optional(),
   // engine/sports/football.md §8 — core.abandon policy: `replay` leaves the
   // fixture undecided (flagged for regeneration), `award` decides for the
   // current leader (level score ⇒ no_result).
@@ -736,6 +744,14 @@ const positions: PositionCatalog = {
   lineup: { size: 11, benchMax: 12 },
 };
 
+// W4 (#407) — the catalog for a resolved config. Only the starting size moves:
+// every small-sided code still fields exactly one goalkeeper (FA Mini-Soccer
+// Rule 3, Futsal Law 3), and the position vocabulary is the same game.
+function positionsFor(cfg: FootballCfg): PositionCatalog {
+  if (cfg.teamSize === undefined || cfg.teamSize === positions.lineup.size) return positions;
+  return { ...positions, lineup: { ...positions.lineup, size: cfg.teamSize } };
+}
+
 // ---------------------------------------------------------------------------
 // Module
 // ---------------------------------------------------------------------------
@@ -758,6 +774,7 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
   configSchema: FootballCfg,
   eventSchema: FootballEv,
   positions,
+  positionsFor,
   entrantModel: { kinds: ["team"], defaultKind: "team", team: { squadNumbers: true, captain: true } },
   variants: {
     // spec 04 §1.1
@@ -765,7 +782,12 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
     // W4 — FA youth football and every small-sided/futsal code use repeat
     // substitutions (Law 3 / FA Mini-Soccer + SSG rules); 11-a-side does not.
     youth: { halfMinutes: 30, rollingSubs: true },
-    "small-sided": { halfMinutes: 20, halves: 2, rollingSubs: true },
+    // W4 — the FA's Small-Sided Games run 5v5 (U7–U8), 7v7 (U9–U10) and 9v9
+    // (U11–U12); 7 is the middle rung and the one this preset names. A
+    // competition on another rung sets `teamSize` itself. Before W4 this
+    // variant declared no size at all, so it inherited the eleven-slot catalog
+    // and could not hold a legal lineup.
+    "small-sided": { halfMinutes: 20, halves: 2, rollingSubs: true, teamSize: 7 },
   },
 
   init(cfg, lineups: LineupPair): FootballState {

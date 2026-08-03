@@ -81,6 +81,13 @@ export interface SportModule<Cfg, Ev, State> extends FoldableModule<Cfg, State> 
   configSchema: z.ZodType<Cfg>; // variant config (overs, setTo, halfMinutes…)
   eventSchema: z.ZodType<Ev>; // union of the sport's event payloads
   positions: PositionCatalog; // spec 02 §3
+  // W4 (#407) — the catalog for a SPECIFIC resolved config, when the sport's
+  // lineup rules move with the variant: football's small-sided codes field
+  // fewer than eleven, hockey and ice hockey permit a side with no goalkeeper.
+  // Omitted ⇒ `positions` governs every config, which is what every module did
+  // before W4. Engine-side callers must go through `resolvePositions` rather
+  // than reading `positions` directly (src/sport/catalog.ts).
+  positionsFor?(cfg: Cfg): PositionCatalog;
   variants: Record<string, Partial<Cfg>>; // named presets: t20, odi, beach, blitz…
 
   // Jul3/06 §3 — optional print-template fragments. Sport-neutral kinds

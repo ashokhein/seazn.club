@@ -24,6 +24,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { foldMatch, isCoreEventType, type EventEnvelope } from "../core/events.ts";
 import type { LineupPair, StageCtx } from "../core/types.ts";
+import { resolvePositions } from "../sport/catalog.ts";
 import type { AnySportModule } from "../sport/module.ts";
 import { buildStream, defaultLineupPair, makeEnvelope } from "./helpers.ts";
 
@@ -180,7 +181,7 @@ export function recomputeStream(
   events: readonly GoldenEvent[],
 ): Pick<GoldenStream, "states" | "outcome" | "summary" | "deltas"> {
   const cfg = module.configSchema.parse(rawConfig);
-  const lineups = defaultLineupPair(module.positions);
+  const lineups = defaultLineupPair(resolvePositions(module, cfg));
   const envelopes: EventEnvelope[] = events.map((event, i) => makeEnvelope(i, event));
 
   const states = envelopes.map((_, i) =>
@@ -207,11 +208,11 @@ export function recomputeStream(
 
 export function buildCorpus(module: AnySportModule): GoldenCorpus {
   const configs = configsFor(module);
-  const lineups = defaultLineupPair(module.positions);
   const streams: GoldenStream[] = [];
 
   for (const [name, raw] of Object.entries(configs)) {
     const cfg = module.configSchema.parse(raw);
+    const lineups = defaultLineupPair(resolvePositions(module, cfg));
     for (const seed of seedsFor(module, cfg, lineups)) {
       const envelopes = buildStream(module, cfg, lineups, seed, MAX_EVENTS);
       const events: GoldenEvent[] = envelopes.map((e) => ({ type: e.type, payload: e.payload }));

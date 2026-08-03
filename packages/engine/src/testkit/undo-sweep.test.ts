@@ -12,6 +12,7 @@ import { mulberry32 } from "../core/rng.ts";
 import type { LineupPair, MatchOutcome, ScoreSummary } from "../core/types.ts";
 import type { AnySportModule, ModuleEvent } from "../sport/module.ts";
 import { builtinModules } from "../sports/index.ts";
+import { resolvePositions } from "../sport/catalog.ts";
 import { defaultLineupPair, makeEnvelope } from "./helpers.ts";
 import { deriveSeed, SIM_CONFIGS } from "./simulation.ts";
 
@@ -52,7 +53,7 @@ function expectRenderable(module: AnySportModule, summary: ScoreSummary, label: 
 
 for (const module of builtinModules) {
   const cfg = module.configSchema.parse(SIM_CONFIGS[module.key] ?? {});
-  const lineups = defaultLineupPair(module.positions);
+  const lineups = defaultLineupPair(resolvePositions(module, cfg));
 
   describe(`undo sweep — ${module.key}@${module.version}`, () => {
     it(

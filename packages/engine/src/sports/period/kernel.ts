@@ -79,7 +79,12 @@ export interface PeriodParams {
   abandonPolicy: "replay" | "award";
 }
 
-export type PeriodCfg = PeriodParams;
+// W4 (#407) — `goalkeeper` is a resolved-config knob only, deliberately NOT a
+// PeriodParams field: it is lineup data with no preset default, so `state.cfg`
+// serialises exactly as it did before W4 unless a competition sets it.
+export type PeriodCfg = PeriodParams & {
+  goalkeeper?: "required" | "optional";
+};
 
 const SuspensionClassSchema: z.ZodType<SuspensionClass> = z.object({
   minutes: z.number().int().positive().nullable(),
@@ -90,6 +95,14 @@ const SuspensionClassSchema: z.ZodType<SuspensionClass> = z.object({
 
 export function makePeriodConfigSchema(defaults: PeriodParams) {
   return z.object({
+    // W4 (#407) — FIH Rule 4 lets a team play with a goalkeeper, with a field
+    // player holding goalkeeping privileges, or with none at all; IIHF Rule 6
+    // lets a team pull its goaltender. The catalog forced GK min 1 max 1, so a
+    // side playing out with an empty net — the very situation the `emptyNet`
+    // goal kind records — could not be written down as a lineup. Lineup data
+    // only: it drives `positionsFor` and never the fold. Optional with no
+    // default so `state.cfg` serialises exactly as it did before W4.
+    goalkeeper: z.enum(["required", "optional"]).optional(),
     periods: z
       .object({
         count: z.number().int().min(1).max(4),
@@ -650,6 +663,11 @@ export interface PeriodPreset {
   defaults: PeriodParams;
   variants: Record<string, Partial<PeriodParams>>;
   positions: PositionCatalog;
+  // W4 (#407) — which `positions.groups` key is the goalkeeper, so the kernel
+  // can relax its minimum when a competition sets `goalkeeper: "optional"`.
+  // The vocabulary is the sport's, not the kernel's: FIH says GK, IIHF says G.
+  // Omitted ⇒ the sport has no keeper and the config knob does nothing.
+  keeperGroup?: string;
   metrics: MetricSpec[];
   defaultTiebreakers: TiebreakerKey[];
   officialLabel: { scorer: string };
@@ -762,6 +780,20 @@ export function makePeriodModule(
     configSchema,
     eventSchema: PeriodEv,
     positions: preset.positions,
+    // W4 (#407) — one implementation serves every period sport: when the
+    // competition makes the keeper optional, the GK group's minimum drops to
+    // zero while its maximum stays 1 (nobody fields two keepers). Absent ⇒ the
+    // preset's own catalog, byte-for-byte.
+    positionsFor(cfg) {
+      const keeper = preset.keeperGroup;
+      if (cfg.goalkeeper !== "optional" || keeper === undefined) return preset.positions;
+      return {
+        ...preset.positions,
+        groups: preset.positions.groups.map((group) =>
+          group.key === keeper ? { ...group, min: 0 } : group,
+        ),
+      };
+    },
     variants: preset.variants,
 
     init(cfg, lineups: LineupPair): PeriodState {

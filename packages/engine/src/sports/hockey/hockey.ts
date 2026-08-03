@@ -105,6 +105,7 @@ export const hockey = makePeriodModule({
     youth: { periods: { count: 4, minutes: 10 } },
   },
   positions,
+  keeperGroup: "GK",
   entrantModel: { kinds: ["team"], defaultKind: "team", team: { squadNumbers: true, captain: true } },
   metrics: [
     { key: "gf", label: "GF", direction: "desc" },
