@@ -30,6 +30,9 @@
   "peerDependencies": {
     "zod": "^4.4.3"
   },
+  "dependencies": {
+    "z3-solver": "5.0.0"
+  },
   "devDependencies": {
     "@types/node": "^20",
     "fast-check": "^3",
