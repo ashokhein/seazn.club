@@ -615,30 +615,43 @@ describe("tennis.interruption is wired everywhere a new type must be (§5.6)", (
   it("stamps a generated break from the START OF THE SET, so `elapsed` restarts at a set boundary", () => {
     // The dossier row says `elapsed` counts from the start of the SET. A
     // match-wide base satisfies the monotonic guard just as well and looks
-    // right in the state, so nothing else in this suite tells the two apart —
-    // and the frozen corpus is about to be EXTENDED with generated streams,
-    // which would freeze whichever one ships. A match-wide base never
-    // restarts, so this is the property that discriminates.
-    const cfg = cfgFor();
-    let stamped = 0;
-    let restarts = 0;
-    for (let seed = 1; seed <= 80; seed++) {
-      const stamps = buildStream(tennis, cfg, lineups, seed, 400)
-        .filter((event) => event.type === "tennis.interruption")
-        .map((event) => (event.payload as { at?: GameTime }).at)
-        .filter((at): at is GameTime => at !== undefined);
-      stamped += stamps.length;
-      for (let i = 1; i < stamps.length; i++) {
-        const prev = stamps[i - 1] as GameTime;
-        const here = stamps[i] as GameTime;
-        // Within one set the stamp still only moves forward — the kernel's
-        // guard rejects the stream otherwise, and "folds" above proves it.
-        if (here.period === prev.period) expect(here.elapsed).toBeGreaterThanOrEqual(prev.elapsed);
-        else if (here.elapsed < prev.elapsed) restarts++;
-      }
-    }
-    expect(stamped).toBeGreaterThan(0);
-    expect(restarts).toBeGreaterThan(0);
+    // right in the state, so no other test in this suite tells the two apart —
+    // and the frozen corpus is about to be EXTENDED from generated streams,
+    // which freezes whichever one ships. Restarting at a set boundary is the
+    // one property that discriminates, and a random scan almost never reaches
+    // it (two breaks either side of one boundary, the first of them late in
+    // its set). So the generator is driven DIRECTLY, against two states that
+    // differ only in which set they are in.
+    //
+    // The rng is scripted to walk into the interruption branch: skip the
+    // sanction roll, take the interruption roll, then the side and the kind.
+    // The event type is asserted rather than assumed, so a reordered draw reds
+    // here instead of quietly stamping something else.
+    const scriptedRng = () => {
+      const draws = [0.9, 0.01, 0.3, 0.3];
+      let i = 0;
+      return () => draws[i++ % draws.length] as number;
+    };
+    const stampOf = (state: NestedState): GameTime => {
+      const event = tennis.arbitraryEvent?.(state as never, scriptedRng());
+      expect(event?.type).toBe("tennis.interruption");
+      return (event?.payload as { at: GameTime }).at;
+    };
+
+    const live = fold(cfgFor(), [start]);
+    // Deep into set one...
+    const lateInSetOne = stampOf({ ...live, games: { home: 5, away: 4 } });
+    // ...and the opening minutes of set two, one summary later.
+    const earlyInSetTwo = stampOf(fold(cfgFor(), [start, summary(6, 4)]));
+
+    expect(lateInSetOne.period).toBe("S1");
+    expect(earlyInSetTwo.period).toBe("S2");
+    // Nine games of set one are behind the first stamp and none of set two is
+    // behind the second, so a set-relative clock RESTARTS: strictly smaller,
+    // later in the match. A match-wide base makes both of these the same
+    // number (no rally has been scored in either state), which is the red.
+    expect(lateInSetOne.elapsed).toBeGreaterThan(0);
+    expect(earlyInSetTwo.elapsed).toBeLessThan(lateInSetOne.elapsed);
   });
 
   it("changes summary().detail once a break is recorded, and not before", () => {

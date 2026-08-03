@@ -74,18 +74,35 @@ export type NestedInterruptionKind = z.infer<typeof NestedInterruptionKind>;
  * What a competition allows for one kind of break. Both halves are optional and
  * they are enforced DIFFERENTLY, which is the rule (§5.4), not an oversight:
  *
- * - `count` is a hard limit — the (N+1)th break of that kind is refused, because
- *   "you have had your medical timeout for this set" is a fact the chair knows
- *   before the break starts and can act on.
- * - `seconds` is NOT. An over-long break is RECORDED (`overran`) and stands. The
- *   engine cannot send the physio away, and rejecting the event would lose the
- *   only record that the overrun happened — which is precisely what an appeal
- *   needs. The engine notes it; the umpire adjudicates.
+ * - `count` bounds how many breaks of that kind one side may take in one set.
+ *   The (N+1)th is RECORDED and flagged (`overCount`), not refused.
+ * - `seconds` bounds how long one may run. An over-long break is RECORDED
+ *   (`overran`) and stands. The engine cannot send the physio away, and
+ *   rejecting the event would lose the only record that the overrun happened —
+ *   which is precisely what an appeal needs.
+ *
+ * BOTH ARE RECORDED, NEVER REFUSED, and the count one is the correction (#425
+ * review) of a fixture-bricking bug rather than a softening. §5.4 specified a
+ * hard refusal for `count`, which is right for the moment the chair keys the
+ * break in and wrong for every read afterwards: cfg is read live from
+ * `division.config` and the whole stream replays from `init` on EVERY read
+ * (state, score page, standings), so an organiser lowering `count` after the
+ * fact makes an already-recorded fixture throw on every read — with no event to
+ * void, and no scorer action that recovers it. There is no write-only seam
+ * inside `apply` to hang the refusal on: the write path (`append-event.ts`)
+ * validates by folding the whole stream through this same function.
+ *
+ * So nothing derived from cfg may throw here. The period kernel takes the same
+ * decision for `periodSeconds` and states the reason in the same words: an
+ * optional additive knob must not become something a later config edit can use
+ * to make every already-scored fixture in the division unviewable. The engine
+ * notes both verdicts; the umpire adjudicates.
  */
 export const NestedInterruptionRules = z.strictObject({
-  /** Max breaks of this kind ONE SIDE may take IN ONE SET. */
+  /** Max breaks of this kind ONE SIDE may take IN ONE SET. Exceeding it is
+   *  recorded (`overCount`), never rejected. */
   count: z.number().int().nonnegative().optional(),
-  /** Allowed length. Exceeding it is recorded, never rejected. */
+  /** Allowed length. Exceeding it is recorded (`overran`), never rejected. */
   seconds: DurationSeconds.optional(),
 });
 export type NestedInterruptionRules = z.infer<typeof NestedInterruptionRules>;
@@ -267,6 +284,12 @@ export const NestedInterruption = z.strictObject({
   by: EntrantId.optional(),
   // WHICH player was treated. In doubles the side alone cannot say, and the
   // ITF three-minute limit is per treatable condition per player.
+  //
+  // Requires `by` (enforced in `applyInterruption`, not here — the schema
+  // cannot see the fold's entrants and a `.refine` would move the failure out
+  // of the module's own error vocabulary). A person with no side is credited on
+  // the `medical_timeouts` leaderboard while the per-side count allowance never
+  // bites, which is exactly the case the per-PLAYER ITF limit is about.
   person: PersonId.optional(),
   duration: DurationSeconds.optional(),
   // The GameTime schema VERBATIM (§8), never a hand-rolled look-alike. The
@@ -371,8 +394,28 @@ export interface NestedInterruptionRec {
   person?: string;
   duration?: number;
   at?: GameTime;
-  /** `duration` exceeded the declared allowance. Recorded, never rejected. */
+  /**
+   * `duration` exceeded `cfg.interruptions[kind].seconds`. Recorded, never
+   * rejected.
+   *
+   * A PROJECTION OF THE CFG IN FORCE AT READ TIME, not a fact about the event —
+   * and deliberately so. It is recomputed on every fold, from a cfg read live
+   * out of `division.config`, so the same stream replayed after an organiser
+   * edits the allowance reports a different verdict against an identical
+   * `duration`. Within one fold the two can never disagree (the whole stream
+   * replays from `init` on every read). Freezing the verdict into the payload
+   * beside the input it was computed from is the alternative, and it is the
+   * two-fields-that-can-silently-disagree bug this wave rejected everywhere
+   * else. Same for `overCount`.
+   */
   overran?: true;
+  /**
+   * This break is beyond `cfg.interruptions[kind].count` for this side in this
+   * set. Recorded and flagged rather than refused — see the rationale on
+   * `NestedInterruptionRules`: a cfg-derived refusal fires on REPLAY, on events
+   * already in the ledger, and bricks the fixture.
+   */
+  overCount?: true;
 }
 
 function opponent(side: Side): Side {
@@ -451,6 +494,31 @@ function setLabel(n: number): string {
 /** The set being played right now, 1-based. Banked sets never reopen. */
 function currentSet(state: NestedState): number {
   return state.sets.length + 1;
+}
+
+/**
+ * Seconds into the CURRENT set — a GENERATOR-ONLY clock (`arbitraryEvent`), at
+ * five minutes a completed game plus thirty seconds a point of the game in
+ * progress. The fold owns no clock and never calls this.
+ *
+ * It exists to keep the generated stamps honest about the model the dossier
+ * states: the period is the set and `elapsed` counts from the START of that
+ * set. A match-wide base satisfies the monotonic guard just as well and looks
+ * right in the state, so nothing would have caught it — except that the golden
+ * corpus is EXTENDED from generated streams, and a wrong stamp frozen there
+ * becomes the reference, with the elapsed-restarts-at-a-set-boundary property
+ * never exercised by any recorded stream.
+ *
+ * Non-decreasing within a set by construction, which is what the kernel's
+ * monotonic guard (§3.3) needs: `games` only ever rises, and a completed game
+ * adds 300 while the points it clears are worth at most 180 (a standard game
+ * caps at 3–3 plus an advantage flag). A tie-break holds `games` at 6–6 and
+ * climbs on points alone; a match tie-break plays with `games` at 0–0 and does
+ * the same. Across a set boundary it RESTARTS, and the guard compares the
+ * phase index first, so forward-in-time still holds.
+ */
+function generatorSetElapsed(state: NestedState): number {
+  return (state.games.home + state.games.away) * 300 + (state.points.home + state.points.away) * 30;
 }
 
 // ---------------------------------------------------------------------------
@@ -722,11 +790,25 @@ function applyInterruption(state: NestedState, payload: NestedInterruption): Nes
   if (state.phase !== "live") wrongPhase(`interruption not allowed in phase "${state.phase}"`);
   const set = currentSet(state);
 
+  // A named player with no side to charge the break to. The allowance is per
+  // side, so it cannot bite; the `medical_timeouts` metric credits the person
+  // regardless; and the ITF three-minute limit is per PLAYER, which makes this
+  // the very case the rule exists for. Refused rather than derived: the fold
+  // holds the two entrant ids and NO lineup (`NestedState.entrants`), and
+  // putting the lineup in the state would add an always-present key to every
+  // frozen golden. Payload-only, so unlike an allowance this can never turn a
+  // recorded fixture unreadable — no stream contains an interruption yet.
+  if (payload.person !== undefined && payload.by === undefined) {
+    invalid(
+      'an interruption naming a person must also name the side it is charged to ("by"), because the allowance is per side',
+      { person: payload.person, kind: payload.kind },
+    );
+  }
+
   if (payload.at !== undefined) {
     // Ordered against `playPhases(state.cfg)` — the SAME exported function the
     // module hands the fold kernel (§7 obligation 3), not a local list built
-    // here. `at.period` is already known to be IN that list: the kernel refuses
-    // an unknown period as INVALID_EVENT before `apply` is reached.
+    // here.
     //
     // Only a stamp running AHEAD of play is refused. A pad whose set selector
     // was left on the next set files the break against a set nobody has played,
@@ -735,6 +817,27 @@ function applyInterruption(state: NestedState, payload: NestedInterruption): Nes
     // way — and the kernel's monotonic guard is what constrains it (§3.3).
     const order = playPhases(state.cfg);
     const here = setLabel(set);
+    // BOTH sides re-validated before `compareGameTime` sees them, because it
+    // raises UNKNOWN_PHASE for an unlisted period and §7 reserves that for two
+    // phase lists that disagree — an internal fault, a 500 that pages the
+    // on-call and tells the scorer nothing. The fold kernel does refuse an
+    // unknown period first, but `apply()` is also called DIRECTLY, without the
+    // kernel in front of it, by `testkit/conformance.ts` and
+    // `testkit/simulation.ts`. `here` is checked too: it is derived from the
+    // fold's own set index against a cfg-derived list, so a `bestOf` no longer
+    // covering the sets already banked lands here rather than in the guard.
+    if (!order.includes(payload.at.period)) {
+      invalid(
+        `interruption is stamped in "${payload.at.period}", which is not a period this match has: ${order.join(", ")}`,
+        { period: payload.at.period, phaseOrder: order },
+      );
+    }
+    if (!order.includes(here)) {
+      invalid(
+        `this match has reached ${here}, which its configured best-of-${state.cfg.bestOf} does not have: ${order.join(", ")}`,
+        { currentSet: here, phaseOrder: order },
+      );
+    }
     if (compareGameTime({ period: payload.at.period, elapsed: 0 }, { period: here, elapsed: 0 }, order) > 0) {
       invalid(
         `interruption is stamped in ${payload.at.period}, but this match has only reached ${here}`,
@@ -746,25 +849,26 @@ function applyInterruption(state: NestedState, payload: NestedInterruption): Nes
   const by = payload.by === undefined ? undefined : sideOf(state, payload.by);
   const rules = state.cfg.interruptions?.[payload.kind];
 
-  // The COUNT allowance is hard, and enforced only where the break names a
-  // side — an unattributed delay belongs to nobody, so there is no allowance to
-  // spend. Scoped per side per set, which is the scope the ITF medical rule
-  // uses; the message says both so a chair can act on it.
-  if (rules?.count !== undefined && by !== undefined) {
-    const taken = (state.interruptions ?? []).filter(
+  // NEITHER ALLOWANCE REFUSES. Both are computed from a cfg read live out of
+  // `division.config`, and every read replays the whole stream from `init`, so
+  // a refusal here fires on events already in the ledger the moment an
+  // organiser edits the number — with no event to void and no scorer action
+  // that recovers the fixture. Recorded and flagged instead; the umpire
+  // adjudicates, and a pad can surface both flags on the card.
+  //
+  // COUNT — per side per set, which is the scope the ITF medical rule uses. It
+  // is evaluated only where the break names a side: an unattributed delay
+  // (rain) belongs to nobody, so there is no allowance to spend, the same
+  // conditional shape the ITTF expedite rule takes when `serving` is absent.
+  const overCount =
+    rules?.count !== undefined &&
+    by !== undefined &&
+    (state.interruptions ?? []).filter(
       (rec) => rec.kind === payload.kind && rec.by === by && rec.set === set,
-    ).length;
-    if (taken >= rules.count) {
-      invalid(
-        `${by} has already taken ${rules.count} ${payload.kind} break${rules.count === 1 ? "" : "s"} in set ${set}, which is all this competition allows`,
-        { kind: payload.kind, by, set, allowed: rules.count },
-      );
-    }
-  }
+    ).length >= rules.count;
 
-  // The DURATION allowance is not. Recorded and it stands (§5.4): the engine
-  // cannot send the physio away, and refusing the event would destroy the only
-  // record that the overrun happened — which is exactly what an appeal needs.
+  // DURATION — the engine cannot send the physio away, and refusing the event
+  // would destroy the only record that the overrun happened (§5.4).
   const overran =
     rules?.seconds !== undefined && payload.duration !== undefined && payload.duration > rules.seconds;
 
@@ -776,6 +880,7 @@ function applyInterruption(state: NestedState, payload: NestedInterruption): Nes
     ...(payload.duration === undefined ? {} : { duration: payload.duration }),
     ...(payload.at === undefined ? {} : { at: payload.at }),
     ...(overran ? { overran: true as const } : {}),
+    ...(overCount ? { overCount: true as const } : {}),
   };
   return { ...state, interruptions: [...(state.interruptions ?? []), record] };
 }
@@ -1225,15 +1330,14 @@ export function makeNestedModule(
       }
       // W4a §5.4 — occasional breaks, so conformance and the corpus walk the
       // new branch AND its stamp. The stamp is DERIVED, not rolled: the period
-      // is the set being played and `elapsed` is the match's rally count at 30s
-      // a point, which never decreases, so every generated stream is monotone
-      // by construction and the kernel's guard (§3.3) accepts all of them.
-      // (The state carries no per-set rally tally, so `elapsed` is match-wide
-      // rather than set-relative — a generator convenience, not the model.)
+      // is the set being played and `elapsed` is `generatorSetElapsed` — time
+      // INTO THAT SET, which is the model the dossier row states, and which
+      // restarts at every set boundary. It is non-decreasing within a set, so
+      // every generated stream is monotone by construction and the kernel's
+      // guard (§3.3) accepts all of them.
       if (rng() < 0.03) {
         const kinds = NestedInterruptionKind.options;
         const by = randomEntrant();
-        const rallies = state.pointsWon.home + state.pointsWon.away;
         return {
           type: interruptionType,
           payload: {
@@ -1241,7 +1345,7 @@ export function makeNestedModule(
             by,
             person: randomPerson(by),
             duration: 120,
-            at: { period: setLabel(currentSet(state)), elapsed: rallies * 30 },
+            at: { period: setLabel(currentSet(state)), elapsed: generatorSetElapsed(state) },
           },
         };
       }
