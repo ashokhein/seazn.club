@@ -18,6 +18,7 @@ import {
   UPDATE_GOLDEN,
   buildCorpus,
   eventTypesIn,
+  payloadParseFailures,
   readCorpus,
   recomputeStream,
   sportPayloads,
@@ -95,17 +96,23 @@ if (UPDATE_GOLDEN) {
       // The additive-only tripwire. Payloads written under the OLD schema must
       // still satisfy the CURRENT one; a new required field or a renamed key
       // reds this test while every generated conformance run stays green.
-      it("every recorded payload still parses against the current eventSchema", () => {
-        const payloads = sportPayloads(corpus);
-        expect(payloads.length, "sport-namespaced payloads in corpus").toBeGreaterThan(0);
-        for (const [i, event] of payloads.entries()) {
-          const parsed = module.eventSchema.safeParse(event.payload);
+      //
+      // Against the BRANCH, not the union (W4 review item 2). The union's
+      // branches carry no discriminator — the envelope's `type` does, and
+      // `apply` is what reads it — so a union parse passes whenever a sibling
+      // branch is a superset of the payload. Tightening `PeriodSuspensionEnd`
+      // used to leave this green for hockey and icehockey on the strength of
+      // `PeriodSuspensionStart` accepting the same shape.
+      it("every recorded payload still parses against the branch apply selects", () => {
+        expect(sportPayloads(corpus).length, "sport payloads in corpus").toBeGreaterThan(0);
+        for (const stream of corpus.streams) {
+          const failures = payloadParseFailures(module, corpus.configs[stream.config], stream.events);
           expect(
-            parsed.success,
-            `payload #${i} (${event.type}) no longer parses: ${
-              parsed.success ? "" : JSON.stringify(parsed.error.issues)
-            }`,
-          ).toBe(true);
+            failures.map((f) => `#${f.index} ${f.type}: ${JSON.stringify(f.issues)}`),
+            `${module.key} config=${stream.config} seed=${stream.seed} — a recorded ` +
+              `payload no longer parses against its own branch (schema change was ` +
+              `not additive)`,
+          ).toEqual([]);
         }
       });
 

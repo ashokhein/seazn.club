@@ -22,6 +22,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { EngineError } from "../core/errors.ts";
 import { foldMatch, isCoreEventType, type EventEnvelope } from "../core/events.ts";
 import type { LineupPair, StageCtx } from "../core/types.ts";
 import { resolvePositions } from "../sport/catalog.ts";
@@ -324,6 +325,58 @@ export function stateMismatch(actual: string, expected: string): string | null {
   if (rest !== expectedRest) return `state outside cfg: recorded ${expectedRest}, replayed ${rest}`;
 
   return subsetMismatch(parsedActual.cfg, parsedExpected.cfg, "cfg");
+}
+
+// ------------------------------------------------- additive-only tripwire
+//
+// W4 review item 2. The tripwire used to re-parse each recorded payload
+// against the whole permissive `module.eventSchema`, which is a `z.union` of
+// branches that carry no discriminator — the ENVELOPE's `type` string is the
+// discriminator, and `apply` is where it is read. So a union parse succeeds
+// whenever ANY sibling branch happens to accept the payload, and a branch can
+// be tightened with the tripwire none the wiser: adding a required field to
+// `PeriodSuspensionEnd` left this green for hockey AND icehockey, because
+// `PeriodSuspensionStart` accepts the same `{by, person, class}` shape.
+//
+// So ask `apply` instead. Every module parses the selected branch through its
+// own `parsePayload`, which throws INVALID_EVENT with the message
+// `invalid <type> payload` and the zod issues attached — a signature no other
+// refusal on the path produces. Anything else the fold throws (WRONG_PHASE, a
+// lineup rejection, a domain refusal) means the payload parsed and the replay
+// test owns the difference.
+
+export interface PayloadParseFailure {
+  index: number;
+  type: string;
+  issues: unknown;
+}
+
+/** Recorded payloads that no longer parse against the branch `apply` selects
+ *  for their event type. Stops at the first event the fold cannot get past:
+ *  after that the states diverge and every later verdict is about a different
+ *  match, not about a schema. */
+export function payloadParseFailures(
+  module: AnySportModule,
+  rawConfig: unknown,
+  events: readonly GoldenEvent[],
+): PayloadParseFailure[] {
+  const cfg = module.configSchema.parse(rawConfig);
+  const lineups = defaultLineupPair(resolvePositions(module, cfg));
+  const envelopes: EventEnvelope[] = events.map((event, i) => makeEnvelope(i, event));
+  const out: PayloadParseFailure[] = [];
+
+  for (let i = 0; i < envelopes.length; i++) {
+    const type = (envelopes[i] as EventEnvelope).type;
+    try {
+      foldMatch(module, cfg, lineups, envelopes.slice(0, i + 1));
+    } catch (error) {
+      if (EngineError.is(error, "INVALID_EVENT") && error.message === `invalid ${type} payload`) {
+        out.push({ index: i, type, issues: (error.data as { issues?: unknown })?.issues });
+      }
+      return out;
+    }
+  }
+  return out;
 }
 
 /** Every non-core payload in the corpus, for the additive-only tripwire. */
