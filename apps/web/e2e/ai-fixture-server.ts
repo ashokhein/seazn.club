@@ -34,6 +34,15 @@
 // a `draft` — an engine-legal greedy solution over every movable fixture.
 // Echoing that draft as the assignments yields a plan the server-side engine
 // verifier passes as CLEAN, over whatever ids the seed minted.
+//
+// #398 (W3) added a THIRD request shape on this same dialect/endpoint: the
+// stage-1 instruction compile, sent ahead of the schedule/joint-schedule call
+// whenever the organiser's textarea is non-empty. It has neither `draft` nor
+// `fixtures`, so it is recognised by its own `{instruction, context}` shape
+// and tagged phase "parse" (see `ParseRequestLite` below) rather than falling
+// through to "schedule" — the parse call always fires first, so leaving it
+// misclassified would make it shadow the real schedule call under
+// `calls.find(c => c.phase === "schedule")`.
 import { createServer, type Server } from "node:http";
 
 /** Fixed port so the Next server (booted before the spec) and the spec agree on
@@ -47,7 +56,7 @@ export const AI_FIXTURE_URL =
 export const FIXTURE_REFUSE = "FIXTURE_REFUSE";
 
 export interface FixtureCall {
-  phase: "schedule" | "officials" | "unknown";
+  phase: "schedule" | "officials" | "parse" | "unknown";
   refusal: boolean;
   /** Movable fixtures the pack asked to place (schedule phase). */
   movable: number;
@@ -71,6 +80,16 @@ interface OfficialsPackLite {
   draft?: { fixture_id: string; official_id: string; role_key: string }[];
   fixtures?: unknown[];
 }
+/** #398's stage-1 compile: `{instruction, context: {divisions}}`, sent on the
+ *  SAME dialect/endpoint ahead of the schedule (or joint-schedule) call
+ *  whenever the organiser's textarea is non-empty. It carries neither `draft`
+ *  nor `fixtures`, so without a dedicated check it falls through to the
+ *  schedule branch below and — since it fires first — shadows the real
+ *  schedule call for any `.find(c => c.phase === "schedule")`. */
+interface ParseRequestLite {
+  instruction?: string;
+  context?: { divisions?: unknown[] };
+}
 
 function buildSchedulePlan(pack: SchedulePackLite): unknown {
   const draft = Array.isArray(pack.draft) ? pack.draft : [];
@@ -93,6 +112,14 @@ function buildSchedulePlan(pack: SchedulePackLite): unknown {
     explanations: [],
     summary: "Fixture-server canned plan echoing the deterministic draft.",
   };
+}
+
+/** Every field of `RawParsed` (schedule-ai-parse.ts) defaults, so `{}` is a
+ *  schema-valid "nothing compiled" answer under both dialects' zod validation
+ *  — the fixture doesn't need to actually honor free-text wishes as hard
+ *  constraints to keep the schedule/officials phases deterministic. */
+function buildParsePlan(): unknown {
+  return {};
 }
 
 function buildOfficialsPlan(pack: OfficialsPackLite): unknown {
@@ -147,6 +174,12 @@ function generatePlan(
     if (Array.isArray(pack.fixtures)) {
       phase = "officials";
       plan = buildOfficialsPlan(pack as OfficialsPackLite);
+    } else if (
+      typeof (pack as ParseRequestLite).instruction === "string" &&
+      Array.isArray((pack as ParseRequestLite).context?.divisions)
+    ) {
+      phase = "parse";
+      plan = buildParsePlan();
     } else {
       phase = "schedule";
       movable = pack.fixtures?.movable?.length ?? 0;
