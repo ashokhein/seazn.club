@@ -278,6 +278,53 @@ describe.skipIf(!HAS_DB)("admin fixture config snapshot", () => {
     expect(await auditRows(s.fixtureId)).toHaveLength(0);
   });
 
+  it("refuses a finalize that lands between the guard and the write", async () => {
+    // THE RACE THE GUARDS EXIST TO STOP. `loadRow` runs on its own connection,
+    // so the status check, the null check and the audit's `before` were all read
+    // BEFORE the transaction opened and before any lock was taken. A concurrent
+    // core.finalize committing in that window let staff rewrite the config under
+    // a finalized result — precisely what the feature forbids.
+    //
+    // Reproduced deterministically by holding the SAME advisory lock
+    // `append-event.ts` serialises on: a helper transaction takes it, flips the
+    // fixture to finalized, and only commits once the hatch has had its chance
+    // to read stale state.
+    const s = await seed();
+    await appendEvent(s.orgId, s.fixtureId, 0, { type: "core.start", payload: {} });
+    await appendEvent(s.orgId, s.fixtureId, 1, {
+      type: "generic.result",
+      payload: { p1Score: 2, p2Score: 1 },
+    });
+    await setDivisionConfig(s.divisionId, { ...CFG, points: { w: 2, d: 1, l: 0 } });
+
+    let holdsLock!: () => void;
+    const locked = new Promise<void>((resolve) => (holdsLock = resolve));
+    let commit!: () => void;
+    const gate = new Promise<void>((resolve) => (commit = resolve));
+    const finalizer = sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtext(${"fixture:" + s.fixtureId}))`;
+      await tx`update fixtures set status = 'finalized' where id = ${s.fixtureId}`;
+      holdsLock();
+      await gate;
+    });
+    await locked;
+
+    const hatch = resnapshotFixtureConfig(s.actorId, s.fixtureId, "raced a finalize");
+    // Load-bearing, not padding: the window this test is about is exactly "the
+    // hatch has read the row and the finalize has not committed yet". Releasing
+    // immediately would let the hatch's own pre-tx read see `finalized` and the
+    // test would pass without the fix.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    commit();
+    await finalizer;
+
+    await expect(hatch).rejects.toThrow(/finalized/i);
+    // Nothing written, and nothing in the audit log claiming staff did something.
+    const panel = await fixtureConfigPanel(s.fixtureId);
+    expect(panel!.snapshot).toEqual(CFG);
+    expect(await auditRows(s.fixtureId)).toHaveLength(0);
+  });
+
   it("refuses a cancelled fixture on the same locked set the ledger guards on", async () => {
     const s = await seed();
     await appendEvent(s.orgId, s.fixtureId, 0, { type: "core.start", payload: {} });

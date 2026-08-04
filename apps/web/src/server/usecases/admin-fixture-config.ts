@@ -1,4 +1,5 @@
 import "server-only";
+import type postgres from "postgres";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/http";
 import {
@@ -30,7 +31,12 @@ import { foldFixture } from "@/server/engine-db/fold";
  *     ledger itself guards appends on. Rewriting the cfg under a finalized
  *     result is precisely the harm the snapshot exists to prevent; staff must
  *     reopen the fixture first, which is a visible act with its own trail.
- *  3. STAFF ONLY, enforced at the route (`requireStaff`).
+ *     The check is re-read inside the transaction under the fixture advisory
+ *     lock, because a guard read before the lock is not a guard.
+ *  3. SUPERADMIN, enforced at the route (`requireSuperadmin`) — the discarded
+ *     config survives only in the audit row this writes, which is a higher bar
+ *     than reading `/admin/fixtures`. Pinned by a route test; plain
+ *     `requireStaff` would be a silent downgrade.
  *
  * The write and its audit row commit TOGETHER, so a crash can never leave a
  * re-snapshotted fixture with no record of who did it. `sql.begin` rather than
@@ -78,8 +84,12 @@ interface Row {
   event_count: number;
 }
 
-async function loadRow(fixtureId: string): Promise<Row | null> {
-  const [row] = await sql<Row[]>`
+/** Pooled `sql` or an open transaction — `postgres.TransactionSql` and `Sql`
+ *  share `ISql`. Which one matters: the guards must run on the TX. */
+type Queryable = postgres.ISql;
+
+async function loadRow(db: Queryable, fixtureId: string): Promise<Row | null> {
+  const [row] = await db<Row[]>`
     select f.id, f.org_id, f.stage_id, f.pool_id, f.fixture_no, f.status,
            f.config_snapshot, f.config_snapshot_at,
            d.config as division_config, s.config as stage_config, d.sport_key,
@@ -97,7 +107,7 @@ async function loadRow(fixtureId: string): Promise<Row | null> {
 /** Everything `/admin/fixtures` renders. Null when the id matches nothing —
  *  staff paste ids from support tickets, so a typo must not 500. */
 export async function fixtureConfigPanel(fixtureId: string): Promise<FixtureConfigPanel | null> {
-  const row = await loadRow(fixtureId);
+  const row = await loadRow(sql, fixtureId);
   if (!row) return null;
   // `resolveFixtureCfg(null, …)` rather than a second call to stageScopedCfg:
   // "what live config resolves to" must have ONE definition, or the divergence
@@ -131,23 +141,34 @@ export async function resnapshotFixtureConfig(
   if (trimmed.length === 0) {
     throw new HttpError(400, "Say why — the audit row is the only record of the discarded config.");
   }
-  const row = await loadRow(fixtureId);
-  if (!row) throw new HttpError(404, "Fixture not found");
-  if (LOCKED_FIXTURE_STATUSES.has(row.status)) {
-    throw new HttpError(
-      409,
-      `This fixture is ${row.status}. Reopen it before rewriting the config it was scored under.`,
-    );
-  }
-  if (row.config_snapshot === null) {
-    throw new HttpError(
-      409,
-      "This fixture has no config snapshot yet — it already folds against live config.",
-    );
-  }
+  const row = await sql.begin(async (tx) => {
+    // FIRST statement in the transaction, and the SAME lock `append-event.ts`
+    // serialises every append on. Without it the guards below were evaluated
+    // against a row read on another connection before the tx opened, so a
+    // `core.finalize` committing in that window let staff rewrite the config
+    // under a finalized result — the one thing this feature forbids. Holding it
+    // to commit means an append that wants in blocks and then re-reads.
+    await tx`select pg_advisory_xact_lock(hashtext(${"fixture:" + fixtureId}))`;
+    // Re-read ON THE TX, under the lock. Every guard, and the audit row's
+    // `before`, must come from this row and not from a pre-transaction read:
+    // an audit entry claiming a config was discarded that never was is worse
+    // than no entry at all.
+    const row = await loadRow(tx, fixtureId);
+    if (!row) throw new HttpError(404, "Fixture not found");
+    if (LOCKED_FIXTURE_STATUSES.has(row.status)) {
+      throw new HttpError(
+        409,
+        `This fixture is ${row.status}. Reopen it before rewriting the config it was scored under.`,
+      );
+    }
+    if (row.config_snapshot === null) {
+      throw new HttpError(
+        409,
+        "This fixture has no config snapshot yet — it already folds against live config.",
+      );
+    }
 
-  const live = resolveFixtureCfg(null, row.division_config, row.stage_config);
-  await sql.begin(async (tx) => {
+    const live = resolveFixtureCfg(null, row.division_config, row.stage_config);
     await tx`
       update fixtures
       set config_snapshot = ${tx.json(live as never)}, config_snapshot_at = now()
@@ -205,6 +226,7 @@ export async function resnapshotFixtureConfig(
         before: row.config_snapshot,
         after: live,
       } as never)})`;
+    return row;
   });
 
   // AFTER commit, and outside the transaction on purpose: `recomputeStandings`
