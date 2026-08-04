@@ -6,7 +6,13 @@
 // occupancy and warns on per-person overlaps. No wall-clock reads — all times
 // are injected (the same unit throughout, e.g. epoch ms); durations are minutes.
 import type { EntrantId } from "../core/types.ts";
-import type { ConstraintScope, FixtureSelector, HardConstraint, SchedulingConstraints } from "./constraints.ts";
+import type {
+  ConstraintScope,
+  FixtureSelector,
+  HardConstraint,
+  SchedulingConstraints,
+  WeekdayCode,
+} from "./constraints.ts";
 import { dayKeyInTz, hhmmInTz, weekdayOfYmd, ymdAddDays, zonedTimeToUtc } from "./tz.ts";
 
 const MS_PER_MIN = 60_000;
@@ -469,6 +475,35 @@ export function slotFixtures(input: SlotInput): SlotResult {
     }
     return out;
   };
+  /** Which of THIS run's cards each day-target rule names, index-aligned with
+   *  `placementHard`; `null` means the placer cannot resolve the selector and
+   *  the rule is skipped.
+   *
+   *  With `ruleFixtures` it is `resolveSelector`, the verifier's own function,
+   *  so both sides name the same cards. Without them only an `id` selector can
+   *  be resolved — `terminal` and `ext_key` need metadata a
+   *  `SchedulableFixture` does not carry, and inventing it (treating every card
+   *  as terminal, say) would bind a final's rule to the whole draw. Which is
+   *  also what the verifier does with no `ruleFixtures`: `resolveSelector` over
+   *  an empty list names nothing. */
+  const selectorNames = placementHard.map((h) => {
+    if (h.type !== "fixture_on_weekday" && h.type !== "fixture_on_date") return null;
+    if (config.ruleFixtures !== undefined) {
+      return new Set(resolveSelector(h.selector, h.scope, config.ruleFixtures).map((x) => x.id));
+    }
+    return h.selector.kind === "id" ? new Set([h.selector.fixtureId]) : null;
+  });
+  /** The next day strictly after `from` falling on `want`. At most one week,
+   *  and one JUMP either way — the repair budget is spent on courts, not on
+   *  stepping through the days in between. */
+  const nextYmdWithWeekday = (from: string, want: WeekdayCode): string => {
+    let y = from;
+    for (let d = 0; d < 7; d++) {
+      y = ymdAddDays(y, 1);
+      if (weekdayOfYmd(y) === want) break;
+    }
+    return y;
+  };
   const countDay = (row: ScopeRow, rf: RuleFixture | undefined, startAt: number): void => {
     if (tz === undefined) return;
     const day = dayKeyInTz(startAt, tz);
@@ -517,6 +552,21 @@ export function slotFixtures(input: SlotInput): SlotResult {
       // that can hold it.
       if (h.type === "not_after" && time > h.time) {
         bound = Math.max(bound, dayStart(ymdAddDays(day, 1)));
+      }
+      // Day targets name a CARD, so the selector decides — a rule about the
+      // final may not move the group stage that shares its division.
+      if (h.type === "fixture_on_date" || h.type === "fixture_on_weekday") {
+        const names = selectorNames[i]!;
+        if (names === null || !names.has(f.id)) continue;
+        if (h.type === "fixture_on_weekday") {
+          if (weekdayOfYmd(day) !== h.weekday) bound = Math.max(bound, dayStart(nextYmdWithWeekday(day, h.weekday)));
+          continue;
+        }
+        // This pass only ever moves a card LATER, so a target date already
+        // behind the candidate is unreachable: say so instead of spending the
+        // repair budget proving it, and let the caller report `no_slot`.
+        if (day > h.date) return Infinity;
+        if (day < h.date) bound = Math.max(bound, dayStart(h.date));
       }
     }
     return bound > start ? bound : null;
@@ -670,8 +720,11 @@ export function slotFixtures(input: SlotInput): SlotResult {
         // strictly greater than `start`, so the loop always makes progress.
         const bound = nextAcceptableStart(f, start);
         if (bound === null) break;
-        lb = bound;
         start = null;
+        // `Infinity` — no later instant can ever satisfy the rule. Abandon this
+        // court now; the unplaceable path reports it.
+        if (!Number.isFinite(bound)) break;
+        lb = bound;
       }
       if (start === null) continue;
       if (start > window.notAfter) {
