@@ -8,7 +8,7 @@ import {
 } from "@seazn/engine/core";
 import { resolveModule } from "./registry";
 import { loadLineupPair } from "./lineups";
-import { stageScopedCfg } from "./stage-cfg";
+import { resolveFixtureCfg } from "./fixture-cfg";
 
 type Tx = postgres.TransactionSql;
 
@@ -25,6 +25,9 @@ interface FixtureRow {
   stage_id: string;
   home_entrant_id: string | null;
   away_entrant_id: string | null;
+  /** V347 — the resolved cfg this fixture was SCORED under; null before its
+   *  first event. See `fixture-cfg.ts` for why it exists. */
+  config_snapshot: unknown;
 }
 interface DivisionRow {
   config: unknown;
@@ -47,7 +50,8 @@ interface EventRow {
 // (nothing to derive). Shared by rebuildState + verifyStateConsistency.
 export async function foldFixture(tx: Tx, fixtureId: string): Promise<FoldedFixture | null> {
   const [fixture] = await tx<FixtureRow[]>`
-    select division_id, stage_id, home_entrant_id, away_entrant_id from fixtures where id = ${fixtureId}
+    select division_id, stage_id, home_entrant_id, away_entrant_id, config_snapshot
+    from fixtures where id = ${fixtureId}
   `;
   if (!fixture) return null;
 
@@ -85,13 +89,18 @@ export async function foldFixture(tx: Tx, fixtureId: string): Promise<FoldedFixt
     ...(r.voids_event_id ? { voids: r.voids_event_id } : {}),
   }));
 
-  // Same stage-scoped decider overlay the write path applies (PROMPT-61 §2) —
-  // read and write folds must stay byte-consistent or verifyStateConsistency
-  // would flag phantom drift.
+  // Exactly the cfg the write path used (V347): the snapshot frozen on the
+  // first append, or — for a fixture with no snapshot yet — the same
+  // stage-scoped decider overlay (PROMPT-61 §2). Read and write folds must stay
+  // byte-consistent or verifyStateConsistency would flag phantom drift, which
+  // is why BOTH go through `resolveFixtureCfg` rather than each building cfg
+  // for themselves. The stage row is still loaded: it is the fallback input,
+  // and every fixture written before V347 shipped takes that path.
   const [stage] = await tx<{ config: Record<string, unknown> | null }[]>`
     select config from stages where id = ${fixture.stage_id}
   `;
-  const state = foldMatch(sportModule, stageScopedCfg(division.config, stage?.config), lineups, envelopes);
+  const cfg = resolveFixtureCfg(fixture.config_snapshot, division.config, stage?.config);
+  const state = foldMatch(sportModule, cfg, lineups, envelopes);
   return {
     fixtureId,
     lastSeq: events[events.length - 1].seq,
