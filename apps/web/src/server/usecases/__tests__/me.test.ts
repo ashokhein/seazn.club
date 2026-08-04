@@ -172,6 +172,13 @@ describe.skipIf(!HAS_DB)("player home /me (PROMPT-53)", () => {
       values (${orgId}, ${refPerson.id}, ${refPerson.full_name}, ${sql.json(["referee"])})
       returning id`;
     expect(official).toBeDefined();
+    // #402 / V348 — an official-ONLY person lives in the 'official' lane, which
+    // is precisely what lets one login hold a player person AND an official one
+    // in the same org under persons_org_user_lane_uq. `inviteOfficial` mints it
+    // that way in production (officials.ts is the only official-lane insert);
+    // this hand-rolled setup bypasses that rail, so it stamps the lane itself.
+    // Setup only — the two hasPhotoFeature assertions below are untouched.
+    await sql`update persons set lane = 'official' where id = ${refPerson.id}`;
 
     const player = await makeUser("player");
     await sql`update persons set user_id = ${player} where id = ${persons[0].id}`;

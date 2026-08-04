@@ -9,6 +9,7 @@ import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import {
+  acceptResolvedClaim,
   createClaimInvite,
   revokeClaimInvite,
   getOpenClaim,
@@ -211,5 +212,49 @@ describe.skipIf(!HAS_DB)("person claims (PROMPT-53)", () => {
     await expect(revokeClaimInvite(keyAuth, person.id)).rejects.toMatchObject({ status: 403 });
     // owner path still fine
     await expect(createClaimInvite(owner, person.id, "x@test.local")).resolves.toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #402 — the failure mode the V345 revert cited by name.
+//
+// `acceptResolvedClaim` runs a bare `update persons set user_id`. Under
+// persons_org_user_lane_uq that raises 23505 for a user who already holds a
+// PLAYER person in the org and claims a second one. The lane column removed the
+// player-vs-official collision entirely, so what is left is precisely the
+// duplicate #402 exists to eliminate — it must surface as a clean 409 pointing
+// at the merge route (#404), never a 500 carrying a constraint name.
+// ---------------------------------------------------------------------------
+describe.skipIf(!HAS_DB)("duplicate player link (#402)", () => {
+  it("a second player-lane claim in one org is a 409, not a constraint 500", async () => {
+    const { owner, orgId, person: first } = await rig();
+    const claimantEmail = `dup-${randomUUID().slice(0, 8)}@test.local`;
+    const userId = await makeUser("claimant");
+
+    // The user already holds a player person here — the state a duplicate hits.
+    await sql`update persons set user_id = ${userId} where id = ${first.id}`;
+
+    const second = await createPerson(owner, {
+      full_name: "Duplicate Of Them",
+      consent: {},
+    } as never);
+    const invite = await createClaimInvite(owner, second.id, claimantEmail);
+    const claim = await resolveClaimToken(invite.secret);
+
+    await expect(acceptResolvedClaim(claim, userId)).rejects.toMatchObject({
+      status: 409,
+      code: "PERSON_ALREADY_LINKED",
+    });
+
+    // The first link is untouched, and the duplicate stays unclaimed.
+    const rows = await sql<{ id: string; user_id: string | null }[]>`
+      select id, user_id from persons
+       where org_id = ${orgId} and id in (${first.id}, ${second.id})`;
+    expect(rows.find((r) => r.id === first.id)?.user_id).toBe(userId);
+    expect(rows.find((r) => r.id === second.id)?.user_id).toBeNull();
+    const [{ n }] = await sql<{ n: string }[]>`
+      select count(*)::text as n from persons
+       where org_id = ${orgId} and user_id = ${userId} and lane = 'player'`;
+    expect(Number(n)).toBe(1);
   });
 });
