@@ -100,7 +100,7 @@ test("signed-in self-registration: two divisions resolve to one person", async (
       // undated registrant at all: without an age it cannot tell an adult
       // entering themselves from a parent entering a child, and two undated
       // children would otherwise fuse into one persons row.
-      await reg.getByLabel(/date of birth/i).fill("1990-05-05");
+      await reg.getByLabel(/^date of birth/i).fill("1990-05-05");
       await reg.getByRole("button", { name: "Enter the competition" }).click();
       await reg.waitForURL(/\/register\/status\?/, { timeout: 20_000 });
     }

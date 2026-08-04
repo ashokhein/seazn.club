@@ -288,26 +288,34 @@ export function RegisterForm({
                   className={INPUT_CLASS}
                 />
               </label>
-              <label className="block text-sm">
-                <span className="text-zinc-700">
-                  Date of birth {division.requires_dob || linkSelf ? "*" : "(optional)"}
-                </span>
-                <input
-                  type="date"
-                  // #402 — linking to an account needs a date of birth. Without one
-                  // the server cannot tell an adult entering themselves from a
-                  // parent entering a child, and it refuses to link either way.
-                  required={division.requires_dob || linkSelf}
-                  value={dob}
-                  onChange={(e) => setDob(e.target.value)}
-                  className={INPUT_CLASS}
-                />
-                {linkSelf && !division.requires_dob && (
-                  <span className="mt-1 block text-xs text-zinc-600">
-                    {msg("register.self.dobRequired")}
+              <div>
+                <label className="block text-sm">
+                  <span className="text-zinc-700">
+                    Date of birth {division.requires_dob || linkSelf ? "*" : "(optional)"}
                   </span>
+                  <input
+                    type="date"
+                    // #402 — linking to an account needs a date of birth. Without one
+                    // the server cannot tell an adult entering themselves from a
+                    // parent entering a child, and it refuses to link either way.
+                    required={division.requires_dob || linkSelf}
+                    aria-describedby={
+                      linkSelf && !division.requires_dob ? "register-dob-hint" : undefined
+                    }
+                    value={dob}
+                    onChange={(e) => setDob(e.target.value)}
+                    className={INPUT_CLASS}
+                  />
+                </label>
+                {/* Outside the <label> on purpose: nested text joins the field's
+                    accessible name, so a screen reader would announce the whole
+                    hint as the name of the input. Described-by keeps it a hint. */}
+                {linkSelf && !division.requires_dob && (
+                  <p id="register-dob-hint" className="mt-1 text-xs text-zinc-600">
+                    {msg("register.self.dobRequired")}
+                  </p>
                 )}
-              </label>
+              </div>
               <label className="block text-sm">
                 <span className="text-zinc-700">Gender (optional)</span>
                 <select value={gender} onChange={(e) => setGender(e.target.value)} className={INPUT_CLASS}>
@@ -330,7 +338,9 @@ export function RegisterForm({
                   point: on a shared device the visitor must see WHICH account they
                   would be linking before they agree to it. */}
               {canLinkAccount && (
-                <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
+                // Spans both columns like the roster fieldset above it: the pick
+                // lists roster names, so a half-width select truncates them.
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 sm:col-span-2">
                   <label className="flex cursor-pointer items-start gap-2.5 py-1 text-sm">
                     <input
                       type="checkbox"
@@ -586,7 +596,7 @@ export function RegisterForm({
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block font-medium">{d.name}</span>
-                    <span className="mt-0.5 block text-xs text-zinc-500">
+                    <span className="mt-0.5 block text-xs text-zinc-600">
                       {d.sport_key} · {d.entrant_kind}
                       {d.fee_cents > 0
                         ? ` · ${msg(d.payment_method === "stripe" ? "register.method.card" : "register.method.offline")}`
@@ -729,7 +739,7 @@ function TeamRoster({
   return (
     <fieldset className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50/50 p-4 sm:col-span-2">
       <legend className="px-1 text-sm font-medium text-zinc-700">Players (optional)</legend>
-      <p className="text-xs text-zinc-500">
+      <p className="text-xs text-zinc-600">
         Add your squad now, or leave blank and the organiser adds them later.
       </p>
 
@@ -797,7 +807,7 @@ function TeamRoster({
 
       <details className="text-sm">
         <summary className="cursor-pointer text-accent-strong">Import a list</summary>
-        <p className="mt-2 text-xs text-zinc-500">
+        <p className="mt-2 text-xs text-zinc-600">
           One player per line. Optional squad number and date of birth (YYYY-MM-DD), comma-separated
           — e.g. <code>Jordan Blake, 7, 2005-04-12</code>.
         </p>
