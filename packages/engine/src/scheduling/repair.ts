@@ -38,8 +38,8 @@ import {
 } from "./calendar.ts";
 import {
   buildDomains,
+  calendarDaysCovering,
   candidatePairs,
-  dayBuckets,
   maxSeparationMinutes,
   repairCourts,
   repairUniverse,
@@ -181,6 +181,12 @@ export class RepairVerificationError extends Error {
   }
 }
 
+/** How far outside the universe the finite-model guard lets a start wander.
+ *  Named because TWO things must agree on it: the bound itself, and the day
+ *  groups a per-day cap counts over. A cap that stops short of the guard is a
+ *  cap with an exit. */
+const START_GUARD_MS = 30 * MS_PER_DAY;
+
 const ceilMin = (ms: number): number => Math.ceil(ms / MS_PER_MIN);
 const floorMin = (ms: number): number => Math.floor(ms / MS_PER_MIN);
 const roundMin = (ms: number): number => Math.round(ms / MS_PER_MIN);
@@ -240,11 +246,6 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
   const domains = buildDomains(domainInput);
   const courts = repairCourts(domainInput);
   const universe = repairUniverse(domainInput);
-  const buckets = dayBuckets({
-    tz: config.tz,
-    window: universe,
-    sessionWindows: config.sessionWindows,
-  });
   const grid = input.gridMinutes ?? REPAIR_GRID_MINUTES;
   const gapMin = config.gapMinutes;
   const pairRest = pairRestMinutesFor(config);
@@ -293,10 +294,7 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
     // window AND no session windows — `repairUniverse` then returns the board's
     // own extent widened by a week, `byFamily.window` is absent entirely, and
     // this ±30 days is the only bound on the integer.
-    solver.add(
-      s.ge(floorMin(universe.from - 30 * MS_PER_DAY)),
-      s.le(ceilMin(universe.to + 30 * MS_PER_DAY)),
-    );
+    solver.add(s.ge(floorMin(universe.from - START_GUARD_MS)), s.le(ceilMin(universe.to + START_GUARD_MS)));
     // The original placement is always legal, so k=0 stays representable even
     // when the LLM placed a card off-grid.
     solver.add(Z3.Or(s.mod(grid).eq(0), s.eq(origStartMin[i]!)));
@@ -505,42 +503,44 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
       if (scopeCoversFixture(rule.scope, fixtureById.get(a.fixtureId), a)) scoped.push(i);
     }
     if (scoped.length === 0) return;
-    // A BUCKET IS NOT A DAY. `dayBuckets` returns one bucket per SESSION as soon
-    // as `sessionWindows` is non-empty, so a morning and an afternoon session on
-    // one calendar day are two buckets sharing one `ymd`. Asserted per bucket, a
-    // `count: 1` cap admitted one fixture per session — two per day — and the
-    // verifier, which counts per day, then rejected the board the solver called
-    // repaired. Same root cause as the session/window mix-up: an encoder unit
-    // that is not the verifier's unit.
+    // THE CAP'S UNIT IS THE CALENDAR DAY — the one `validateInstructionRules`
+    // tallies with `dayKeyInTz`. Not a session, and not a slice of a day.
     //
-    // So the buckets are folded back into days, ONE `AtMost` per day over the
-    // union of that day's runs, and the immovable count is subtracted ONCE from
-    // the day rather than once from every session on it. Days are keyed by the
-    // verifier's own `dayKeyInTz` and sorted explicitly — `YYYY-MM-DD` sorts
-    // chronologically — so the assertion order is a function of the input, never
-    // of Map iteration.
-    const byDay = new Map<string, { from: number; to: number }[]>();
-    for (const bucket of buckets) {
-      const runs = byDay.get(bucket.ymd);
-      if (runs === undefined) byDay.set(bucket.ymd, [{ from: bucket.from, to: bucket.to }]);
-      else runs.push({ from: bucket.from, to: bucket.to });
-    }
-    const days = [...byDay.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    // `dayBuckets` over the universe, which is what this used to count, is
+    // neither. It returns one bucket per SESSION as soon as `sessionWindows` is
+    // non-empty (a morning and an afternoon session on one day are two buckets
+    // sharing one `ymd`, so a `count: 1` cap admitted one fixture per SESSION),
+    // and it CLIPS its first and last entries to the window it was handed. The
+    // clipping is the subtler half: the only unconditional bound on a start is
+    // the ±30-day finite-model guard, so with no pack window and no session
+    // windows — where the universe is merely the board's own extent widened by a
+    // week — a start could land in the part of a day the universe cut off,
+    // satisfy no day literal, and be counted by nobody. Twenty fixtures under a
+    // 1/day cap took exactly that exit: `repaired`, `relaxed: []`, and a verifier
+    // reporting six fixtures on one day.
+    //
+    // So the groups are whole calendar days spanning everywhere a start can go:
+    // the pack window when there is one, since `window` is a blocking family and
+    // is never relaxed, and otherwise the guard range itself. Cheap where it
+    // matters — a windowed board still gets one group per day of its window —
+    // and complete where it did not used to be.
+    const capRange = config.window ?? {
+      from: universe.from - START_GUARD_MS,
+      to: universe.to + START_GUARD_MS,
+    };
+    const days = calendarDaysCovering(capRange, zone);
+    // Every day literal this rule owns, per scoped fixture, for the completeness
+    // clause below.
+    const litsByFixture: Bool<"repair">[][] = scoped.map(() => []);
     for (let g = 0; g < days.length; g++) {
-      const [ymd, runs] = days[g]!;
-      const lits = scoped.map((i) => {
+      const { ymd, from, to } = days[g]!;
+      const lits = scoped.map((i, si) => {
         const lit = Z3.Bool.const(`day_${h}_${g}_${i}`);
-        // "starts on this day" is the OR over the day's runs: a card in EITHER
-        // session counts once against the one cap.
+        litsByFixture[si]!.push(lit);
+        // Days abut and do not overlap, so "starts on this day" is one closed
+        // range and every start satisfies exactly one of these literals.
         solver.add(
-          Z3.Iff(
-            lit,
-            Z3.Or(
-              ...runs.map((r) =>
-                Z3.And(start[i]!.ge(ceilMin(r.from)), start[i]!.le(floorMin(r.to - 1))),
-              ),
-            ),
-          ),
+          Z3.Iff(lit, Z3.And(start[i]!.ge(ceilMin(from)), start[i]!.le(floorMin(to - 1)))),
         );
         return lit;
       });
@@ -556,6 +556,22 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
         "instruction",
         Z3.AtMost([lits[0]!, ...lits.slice(1)], Math.max(0, rule.count - immovable)),
       );
+    }
+
+    // COMPLETENESS, asserted rather than argued. The day groups above are
+    // believed to cover every reachable start; this says so to the solver, and
+    // costs one disjunction per scoped fixture to do it. Where the belief holds
+    // it constrains nothing (it is implied by the guard the start already
+    // carries); where it does not — a `calendarDaysCovering` walk that hit its
+    // 4000-day insurance cap, a future edit that narrows `capRange` — the
+    // instruction family goes UNSAT and is relaxed and REPORTED, instead of a cap
+    // quietly holding on part of the calendar only.
+    //
+    // That is the difference that matters: this bug's whole shape was a rule the
+    // solver believed it had enforced. A relaxed family is a bad answer the
+    // caller can see.
+    for (let si = 0; si < scoped.length; si++) {
+      assume("instruction", Z3.Or(...litsByFixture[si]!));
     }
   }
 

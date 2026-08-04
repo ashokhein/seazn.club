@@ -7,6 +7,7 @@ import {
 } from "./calendar.ts";
 import {
   buildDomains,
+  calendarDaysCovering,
   candidatePairs,
   dayBuckets,
   maxSeparationMinutes,
@@ -37,6 +38,40 @@ describe("dayBuckets", () => {
     });
     expect(buckets).toHaveLength(1);
     expect(buckets[0]!.from).toBe(from);
+  });
+});
+
+describe("calendarDaysCovering", () => {
+  it("returns WHOLE days that tile the range with no clipping and no gap", () => {
+    // Mid-morning both ends — precisely what `dayBuckets` would have clipped, and
+    // what let a start in the cut-off remainder be counted by no day literal.
+    const range = { from: at("2026-08-10T09:00:00Z"), to: at("2026-08-12T15:30:00Z") };
+    const days = calendarDaysCovering(range, "UTC");
+    // One day of padding at each end, because the solver's bound on a start is
+    // applied in whole MINUTES and can sit just outside the range.
+    expect(days.map((d) => d.ymd)).toEqual([
+      "2026-08-09",
+      "2026-08-10",
+      "2026-08-11",
+      "2026-08-12",
+      "2026-08-13",
+    ]);
+    expect(days[0]!.from).toBe(at("2026-08-09T00:00:00Z"));
+    expect(days.at(-1)!.to).toBe(at("2026-08-14T00:00:00Z"));
+    for (let i = 1; i < days.length; i++) expect(days[i]!.from).toBe(days[i - 1]!.to);
+    // Covering means covering: nothing in the range falls between two days.
+    expect(days[0]!.from).toBeLessThanOrEqual(range.from);
+    expect(days.at(-1)!.to).toBeGreaterThan(range.to);
+  });
+
+  it("keeps the org zone's midnights, so the DST fall-back day is 25 hours", () => {
+    const days = calendarDaysCovering(
+      { from: at("2026-10-25T05:00:00Z"), to: at("2026-10-25T06:00:00Z") },
+      "Europe/London",
+    );
+    const dst = days.find((d) => d.ymd === "2026-10-25")!;
+    expect(dst.to - dst.from).toBe(25 * H);
+    expect(dst.from).toBe(at("2026-10-24T23:00:00Z"));
   });
 });
 

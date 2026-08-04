@@ -7,6 +7,7 @@ import {
   type VerifyConfig,
 } from "./calendar.ts";
 import {
+  repairAndVerify,
   repairSchedule,
   BLOCKING_FAMILIES,
   REPAIR_FAMILIES,
@@ -588,6 +589,104 @@ describe("the rule families, end to end", () => {
       const stayed = r.assignments.filter((a) => dayKey(a.startAt) === "2026-08-10");
       expect(stayed).toHaveLength(1);
       expect(validateAssignments(r.assignments, config, existing)).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  /**
+   * The cap's unit is the CALENDAR DAY — and with no pack window and no session
+   * windows the day buckets stop being one.
+   *
+   * `repairUniverse` then falls back to the board's extent widened by a week, so
+   * the first bucket starts mid-morning and covers only PART of its `ymd`, while
+   * the start integer is bounded by the far wider ±30-day finite-model guard. A
+   * start landing in the clipped-off remainder of a day satisfies no day literal
+   * at all, so it is counted by no `AtMost` and escapes the cap outright — while
+   * `validateInstructionRules` counts the whole calendar day and rejects it.
+   *
+   * Twenty fixtures at 1/day: the encoder used to hand back "repaired,
+   * `relaxed: []`" over a board the verifier scored as six fixtures on one day.
+   * The cap now counts whole calendar days across the same range the guard
+   * allows, so the answer is an actual spread — twenty days, verifier-clean.
+   */
+  const capBoard = (n: number): { proposal: Assignment[]; capCourts: string[] } => {
+    const capCourts = Array.from({ length: n }, (_, i) => `K${String(i).padStart(2, "0")}`);
+    // Distinct court, distinct entrant, distinct person per card: the per-day cap
+    // is the ONLY thing wrong with this board, and nothing on it is blocking.
+    const proposal = capCourts.map((court, i) => ({
+      fixtureId: `f${String(i).padStart(2, "0")}`,
+      court,
+      startAt: at("2026-08-10T09:00:00Z"),
+      endAt: at("2026-08-10T09:40:00Z"),
+      entrants: [`e${i}`],
+      people: [`p${i}`],
+      divisionId: "d1",
+    }));
+    return { proposal, capCourts };
+  };
+
+  it(
+    "keeps max_fixtures_per_day countable with no pack window and no sessions",
+    async () => {
+      const N = 20;
+      const { proposal, capCourts } = capBoard(N);
+      const config: VerifyConfig & { courts: readonly string[] } = {
+        ...BASE_CONFIG,
+        tz: "UTC",
+        courts: capCourts,
+        ruleFixtures: proposal.map((a) => ({
+          id: a.fixtureId,
+          extKey: a.fixtureId,
+          winnerTo: null,
+          divisionId: "d1",
+        })),
+        hard: [{ type: "max_fixtures_per_day", count: 1, scope: { kind: "competition" } }],
+      };
+      const before = validateAssignments(proposal, config);
+      expect(before).toHaveLength(N);
+      expect(before.filter(isBlockingConflict)).toEqual([]);
+
+      // `repairAndVerify` is half the assertion: it re-runs the REAL verifier and
+      // throws when a family the solver did NOT relax is broken by the board it
+      // handed back. That is the throw this test used to produce.
+      const r = await repairAndVerify({ proposal, config, budgetMs: 60_000 });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      // The cap held rather than being dropped, and the verifier says so.
+      expect(r.relaxed).toEqual([]);
+      expect(validateAssignments(r.assignments, config)).toEqual([]);
+      expect(new Set(r.assignments.map((a) => dayKey(a.startAt))).size).toBe(N);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "still spreads a no-window board over days rather than relaxing the cap",
+    async () => {
+      // The other half of the contract: confining the cap's starts to the days it
+      // can actually count must not turn a board that FITS into a relaxed one.
+      const { proposal, capCourts } = capBoard(3);
+      const config: VerifyConfig & { courts: readonly string[] } = {
+        ...BASE_CONFIG,
+        tz: "UTC",
+        courts: capCourts,
+        ruleFixtures: proposal.map((a) => ({
+          id: a.fixtureId,
+          extKey: a.fixtureId,
+          winnerTo: null,
+          divisionId: "d1",
+        })),
+        hard: [{ type: "max_fixtures_per_day", count: 1, scope: { kind: "competition" } }],
+      };
+      expect(validateAssignments(proposal, config)).toHaveLength(3);
+
+      const r = await repairAndVerify({ proposal, config, budgetMs: 60_000 });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      expect(r.relaxed).toEqual([]);
+      expect(r.moved).toHaveLength(2);
+      expect(new Set(r.assignments.map((a) => dayKey(a.startAt))).size).toBe(3);
+      expect(validateAssignments(r.assignments, config)).toEqual([]);
     },
     SOLVE_TIMEOUT,
   );

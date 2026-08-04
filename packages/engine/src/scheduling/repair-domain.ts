@@ -217,6 +217,44 @@ export function dayBuckets(
   return out;
 }
 
+/**
+ * WHOLE calendar days in the org zone covering `range`, padded by one day at
+ * each end. The counting unit for anything the verifier tallies per day.
+ *
+ * `dayBuckets` is the wrong tool for that job twice over: it CLIPS its first and
+ * last entries to the window it was handed, and it returns one bucket per
+ * SESSION when sessions are configured. Both make its entries something other
+ * than a calendar day, and `validateInstructionRules` counts calendar days —
+ * a start in a clipped-off remainder is then counted by the verifier and by no
+ * literal of the encoder, which is how a per-day cap came to be enforced on part
+ * of a day only.
+ *
+ * The padding is not decoration. The solver's bound on a start is applied in
+ * MINUTES (`floorMin` / `ceilMin`), so the extreme reachable start sits just
+ * outside the millisecond range these days are derived from; a day at each end
+ * costs two trivially-satisfied groups and removes the rounding edge entirely.
+ */
+export function calendarDaysCovering(range: Interval, tz: string): DayBucket[] {
+  if (range.to < range.from) return [];
+  const out: DayBucket[] = [];
+  let ymd = ymdAddDays(dayKeyInTz(range.from, tz), -1);
+  const last = ymdAddDays(dayKeyInTz(range.to, tz), 1);
+  let cursor = zonedTimeToUtc(ymd, "00:00", tz);
+  // A competition is days, not centuries. The cap mirrors `dayBuckets`; the
+  // caller keeps the encoding honest if it ever bites (see the completeness
+  // clause in `repair.ts`, which turns a truncated day list into a RELAXED
+  // instruction family rather than an unenforced rule).
+  while (out.length < 4000) {
+    ymd = dayKeyInTz(cursor, tz);
+    const next = zonedTimeToUtc(ymdAddDays(ymd, 1), "00:00", tz);
+    if (next <= cursor) break;
+    out.push({ ymd, from: cursor, to: next });
+    if (ymd >= last) break;
+    cursor = next;
+  }
+  return out;
+}
+
 // --- the universe the solver searches --------------------------------------
 
 /** The outer bound on every start the solver may consider. The pack window when
