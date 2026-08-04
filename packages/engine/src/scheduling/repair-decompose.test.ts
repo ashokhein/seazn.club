@@ -282,12 +282,7 @@ describe("the per-component gate", () => {
     ]);
     // Which fixtures were left for LLM repair is part of the answer, not a
     // detail the caller has to reconstruct.
-    expect(r.components.flatMap((c) => [...c.fixtureIds])).toEqual([
-      "g0a",
-      "g0b",
-      "g1a",
-      "g1b",
-    ]);
+    expect(r.unresolvedFixtureIds).toEqual(["g0a", "g0b", "g1a", "g1b"]);
     expect(r.residual.length).toBeGreaterThan(0);
     expect(r.minimality.verdict).toBe("upper_bound");
     expect(r.minimality.caveats).toContain("components_unresolved");
@@ -316,6 +311,7 @@ describe("the per-component gate", () => {
       // belongs to the component it declined.
       expect(r.residual.length).toBeGreaterThan(0);
       for (const c of r.residual) expect(["g1a", "g1b", "g1c"]).toContain(c.fixtureId);
+      expect(r.unresolvedFixtureIds).toEqual(["g1a", "g1b", "g1c"]);
       expect(r.minimality.verdict).toBe("upper_bound");
     },
     SOLVE_TIMEOUT,

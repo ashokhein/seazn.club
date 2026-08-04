@@ -17,9 +17,24 @@
 //     same court, or a shared participant, within the separation the pair could
 //     owe, plus every order dependency — solve ONE component with the entire
 //     rest of the board frozen into `existing`, commit the result, move to the
-//     next. Measured at a 20 s per-component budget: 500 movable repairs
-//     verifier-clean in 38.9 s light / 145.0 s dense, against a single solve
-//     that does not return in 119 s.
+//     next.
+//
+// Measured by `scripts/bench-decompose.ts` at a 20 s per-component budget, one
+// child process per case, against a single solve that does not return in 119 s
+// at any of these sizes:
+//
+//   | n   | 1-in | comps | max | total ms | k   | lower bound | verdict | after |
+//   | 120 |   20 |     9 |  31 |    4 651 |   6 |           6 | proved  |     0 |
+//   | 120 |    5 |    10 |  37 |   10 320 |  24 |          24 | proved  |     0 |
+//   | 250 |   20 |    25 |  31 |   10 155 |  12 |          12 | proved  |     0 |
+//   | 250 |    5 |    23 |  38 |   37 740 |  50 |          50 | proved  |     0 |
+//   | 500 |   20 |    46 |  36 |   33 778 |  25 |          25 | proved  |     0 |
+//   | 500 |    5 |    40 |  39 |  129 821 | 100 |         100 | proved  |     0 |
+//
+// Every row verifier-clean, every `k` equal to the clashes the generator
+// injected AND to an independently computed lower bound, zero components
+// skipped, zero WASM aborts in six runs. Peak RSS 623 MB at 500 light, 899 MB
+// at 500 dense. The graph itself costs 1-2 ms.
 //
 // Freezing is what makes this sound. The frozen cards go in as `existing`, so
 // `repairSchedule` constrains every moved card against all of them — a
@@ -99,7 +114,7 @@ export const DEFAULT_COMPONENT_BUDGET_MS = 20_000;
  * Wall-clock ceiling on a whole decomposed call.
  *
  * A TERMINATION bound, not a latency target. The measured end-to-end worst case
- * is 145.0 s (500 movable, 1-in-5 clashes, 40 components at a 20 s per-component
+ * is 129.8 s (500 movable, 1-in-5 clashes, 40 components at a 20 s per-component
  * budget); this is that number with headroom for a production host slower than
  * the bench machine. Any caller on an HTTP path must pass its own `budgetMs` —
  * the anytime property means a smaller budget returns a PARTLY repaired board,
@@ -207,6 +222,10 @@ export interface DecomposedRepairResult {
   /** Union across components, in `REPAIR_FAMILIES` order. */
   relaxed: readonly RepairFamily[];
   components: readonly RepairComponentReport[];
+  /** Every fixture in a component this call did not resolve — skipped, timed
+   *  out or infeasible — sorted. Exactly the set to hand to LLM repair, so the
+   *  caller reads one field instead of reconstructing it from outcomes. */
+  unresolvedFixtureIds: readonly string[];
   minimality: MinimalityCertificate;
   mode: DecompositionMode;
   modeReason?: DecompositionModeReason;
@@ -377,6 +396,7 @@ export async function repairDecomposed(
       checks: 0,
       relaxed: [],
       components: [],
+      unresolvedFixtureIds: [],
       minimality: { verdict: "proved", k: 0, lowerBound: 0, witnesses: [], caveats: [] },
       mode: "components",
       residual: [],
@@ -517,9 +537,11 @@ export async function repairDecomposed(
     const relaxedHere = relaxedByFixture.get(c.fixtureId);
     return relaxedHere === undefined || relaxedHere.length === 0 ? true : isBlockingConflict(c);
   });
-  const unresolvedCount = reports.filter(
-    (r) => r.outcome !== "clean" && r.outcome !== "repaired",
-  ).length;
+  const unresolved = reports.filter((r) => r.outcome !== "clean" && r.outcome !== "repaired");
+  const unresolvedCount = unresolved.length;
+  const unresolvedFixtureIds = unresolved
+    .flatMap((r) => [...r.fixtureIds])
+    .sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
   const repairedCount = reports.filter((r) => r.outcome === "repaired").length;
   const status: DecomposedRepairStatus =
     unresolvedCount === 0 ? "repaired" : repairedCount > 0 ? "partial" : "unrepaired";
@@ -547,6 +569,7 @@ export async function repairDecomposed(
     checks,
     relaxed: anyRelaxed,
     components: reports,
+    unresolvedFixtureIds,
     minimality: {
       // `k` is an upper bound unless the lower bound MEETS it and nothing
       // weakened the comparison. Never claim minimal from the search alone.
