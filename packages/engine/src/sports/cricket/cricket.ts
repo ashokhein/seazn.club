@@ -25,7 +25,7 @@ import {
 import type { PositionCatalog } from "../../sport/catalog.ts";
 import type { ModuleEvent, SportModule } from "../../sport/module.ts";
 import { resolvePayloadPath, type PlayerStatsModel } from "../../stats/stats.ts";
-import { dlsPar, dlsTarget, resources } from "./dls.ts";
+import { dlsPar, dlsTarget, resourcesFromBalls } from "./dls.ts";
 
 // ---------------------------------------------------------------------------
 // Cfg — spec 04 §2.1
@@ -391,6 +391,22 @@ function parsePayload<T>(schema: z.ZodType<T>, payload: unknown, type: string): 
 
 // All-out threshold — spec §2.3: playersPerSide − 1 partnerships; bounded by
 // the actual lineup so short lineups stay consistent across both fidelities.
+//
+// #451 — this is ALSO the DLS wickets scale (every `resourcesFromBalls` call
+// below passes it). The alternative was the stable cfg-derived
+// `cfg.playersPerSide − 1`, on the grounds that the lineup is supplied at read
+// time and so a squad edit could move the scale under a recorded ledger.
+// Rejected, because:
+//   1. The DLS column means "how much of THIS innings' batting is gone", and
+//      the innings ends at exactly this threshold (`autoClose` below reads the
+//      same function). Scaling by anything else puts an all-out side somewhere
+//      other than the last column — which is defect #451 itself, in miniature.
+//   2. It introduces no NEW replay instability: `allOutWickets` already gates
+//      the all-out close, so a lineup edit that moves it already moves the
+//      innings result. A DLS scale that stayed put while the close moved would
+//      make the two disagree.
+// `state.orders` is written once, by `init`, and is never reassigned by the
+// fold, so the scale is constant for the whole of one replay.
 function allOutWickets(state: CricketState, side: Side): number {
   const order = state.orders[side];
   const players = Math.min(state.cfg.playersPerSide, order.length || state.cfg.playersPerSide);
@@ -546,7 +562,7 @@ function createInnings(state: CricketState, fidelity: "fine" | "coarse"): Cricke
   let next: CricketState = { ...state, innings: [...state.innings, innings] };
   // DLS bookkeeping (spec §2.5) — resources available at innings start.
   if (state.quota !== null) {
-    const res = resources(state.quota / state.cfg.ballsPerOver, 0);
+    const res = resourcesFromBalls(state.quota, 0, allOutWickets(state, battingSide));
     if (index === 0 && next.r1 === null) next = { ...next, r1: res };
     if (state.cfg.inningsPerSide === 1 && index === 1 && next.r2 === null) {
       next = { ...next, r2: res };
@@ -763,9 +779,15 @@ function applyRevise(
       }
       if (innings.ballsLimit !== null) {
         // Resources lost = remaining before − remaining after, at the current
-        // wickets (Standard Edition interruption accounting).
-        const before = resources((innings.ballsLimit - innings.legalBalls) / bpo, innings.wickets);
-        const after = resources((newLimit - innings.legalBalls) / bpo, innings.wickets);
+        // wickets (Standard Edition interruption accounting). Balls and raw
+        // wickets go in; `resourcesFromBalls` owns both unit conversions (#451).
+        const allOut = allOutWickets(next, innings.battingSide);
+        const before = resourcesFromBalls(
+          innings.ballsLimit - innings.legalBalls,
+          innings.wickets,
+          allOut,
+        );
+        const after = resourcesFromBalls(newLimit - innings.legalBalls, innings.wickets, allOut);
         const lost = before - after;
         if (index === 0 && next.r1 !== null) next = { ...next, r1: next.r1 - lost };
         if (index === 1 && next.r2 !== null) next = { ...next, r2: next.r2 - lost };
@@ -773,7 +795,11 @@ function applyRevise(
       next = replaceInnings(next, index, { ...innings, ballsLimit: newLimit });
     } else if (next.innings.length === 1 && next.quota !== null) {
       // Between innings: the chase quota (and its resources) shrink.
-      next = { ...next, r2: resources(newLimit / bpo, 0) };
+      const chaseSide = battingSideAt(next, 1);
+      next = {
+        ...next,
+        r2: resourcesFromBalls(newLimit, 0, allOutWickets(next, chaseSide)),
+      };
     }
     next = { ...next, quota: newLimit };
   }
@@ -812,9 +838,10 @@ function applyAbandon(state: CricketState): CricketState {
     chase.ballsLimit !== null
   ) {
     const s1 = (state.innings[0] as InningsState).runs;
-    const remaining = resources(
-      (chase.ballsLimit - chase.legalBalls) / state.cfg.ballsPerOver,
+    const remaining = resourcesFromBalls(
+      chase.ballsLimit - chase.legalBalls,
       chase.wickets,
+      allOutWickets(state, chase.battingSide),
     );
     const par = dlsPar(s1, state.r1, state.r2, state.r2 - remaining);
     if (chase.runs > par) {

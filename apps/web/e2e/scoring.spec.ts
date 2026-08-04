@@ -287,3 +287,93 @@ test("cricket scores over-by-over: add an over grows the total, then close innin
   await page.getByRole("button", { name: /^Close innings$/ }).click();
   await expect(page.getByText(/— total/)).toContainText("0/0", { timeout: 20_000 });
 });
+
+// #451 — DLS reads a published resource table that is fixed at 6-ball overs and
+// 10 wickets, so a division whose format is neither must have its inputs
+// converted onto those scales before the lookup. `hundred` is the sharpest case
+// on the overs axis: its overs are FIVE balls, so a 10-over revision is 50
+// balls, not 60, and reading it as 60 inflates both resource percentages and
+// publishes a target of 86 where the method says 84.
+//
+// Asserted through the API, not the DOM, on purpose: no surface paints
+// `revisedTarget` or `targetSource` today (#467), and a DOM probe for a value
+// that is never rendered passes in both states. `cricket.revise` also accepts a
+// manual `target`, which stamps targetSource "manual" and skips the maths
+// entirely — this sends `oversPerSide` alone and pins targetSource "dls", so a
+// revise that quietly fell through to the manual branch cannot pass it.
+test("cricket DLS scales a five-ball-over format onto the published table", async ({
+  page,
+  request,
+}) => {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    name: `Cricket DLS ${TAG}`,
+    visibility: "private",
+  });
+  const div = await apiJson<{ id: string }>(
+    request,
+    `/api/v1/competitions/${comp.data!.id}/divisions`,
+    "POST",
+    {
+      name: "The Hundred",
+      sport_key: "cricket",
+      variant_key: "hundred",
+      // The only override the rail needs: scoring.ts reads dls.enabled straight
+      // off divisions.config to decide a revise is a DLS one.
+      config: { dls: { enabled: true, edition: "standard" } },
+      eligibility: [],
+    },
+  );
+  const divisionId = div.data!.id;
+  const { ids: entrantIds } = await addEntrantsViaApi(
+    request,
+    divisionId,
+    ["Century Kings", "Century Queens"],
+    "team",
+  );
+  const { fixtureIds } = await createStageAndGenerate(request, divisionId, {
+    kind: "knockout",
+    name: "Final",
+  });
+  const fixtureId = fixtureIds[0]!;
+  await apiJson(request, `/api/v1/divisions/${divisionId}/start`, "POST");
+
+  const send = async (seq: number, type: string, payload: unknown) => {
+    const res = await apiJson(request, `/api/v1/fixtures/${fixtureId}/events`, "POST", {
+      expected_seq: seq,
+      type,
+      payload,
+    });
+    expect(res.status, `${type}: ${res.error?.code ?? ""} ${res.error?.message ?? ""}`).toBe(201);
+  };
+  await send(0, "cricket.toss", { wonBy: entrantIds[0]!, elected: "bat" });
+  await send(1, "core.start", {});
+  // The full first innings: 150/0 off the whole 100-ball quota.
+  await send(2, "cricket.innings.summary", {
+    runs: 150,
+    wickets: 0,
+    legalBalls: 100,
+    partial: true,
+  });
+  // Rain cuts the chase to 10 overs — FIVE-ball overs, so 50 balls.
+  await send(3, "cricket.revise", { oversPerSide: 10 });
+
+  const state = await apiJson<{
+    state: {
+      r1: number | null;
+      r2: number | null;
+      revisedTarget: number | null;
+      targetSource: string | null;
+    };
+  }>(request, `/api/v1/fixtures/${fixtureId}/state`);
+  const fold = state.data!.state;
+  // R1 is the resource for a 100-ball innings, R2 for the 50 balls that remain
+  // — read as 6-ball overs they come out 56.6 / 32.1 and the target with them.
+  expect(fold.r1).toBeCloseTo(49.13333333333333, 9);
+  expect(fold.r2).toBeCloseTo(27.366666666666667, 9);
+  expect(fold.targetSource).toBe("dls");
+  expect(fold.revisedTarget).toBe(84);
+
+  // And the shortened match is still scoreable — the pad opens on the chase.
+  await page.goto(`/fixtures/${fixtureId}`);
+  await expect(page.getByText(/— total/)).toContainText("0/0", { timeout: 20_000 });
+});

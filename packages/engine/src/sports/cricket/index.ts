@@ -22,4 +22,16 @@ export {
   type PowerplayBlock,
   type ReviewLedger,
 } from "./cricket.ts";
-export { DLS_STANDARD_TABLE, DLS_G50, DLS_EDITION, resources, dlsTarget, dlsPar } from "./dls.ts";
+// `resources` is the RAW table primitive (six-ball overs, ten-wicket innings).
+// Anything holding cfg-scaled quantities must use `resourcesFromBalls` (#451).
+export {
+  DLS_STANDARD_TABLE,
+  DLS_G50,
+  DLS_EDITION,
+  DLS_TABLE_BALLS_PER_OVER,
+  DLS_TABLE_WICKETS,
+  resources,
+  resourcesFromBalls,
+  dlsTarget,
+  dlsPar,
+} from "./dls.ts";

@@ -6,7 +6,7 @@ import { shuffle } from "../../core/rng.ts";
 import type { LineupPair, StageCtx, StandingsDelta } from "../../core/types.ts";
 import { buildStream, conformanceSuite, makeEnvelope } from "../../testkit/index.ts";
 import { cricket, type CricketBallEv, type CricketCfg, type CricketEv } from "./cricket.ts";
-import { dlsTarget, resources } from "./dls.ts";
+import { dlsTarget, resources, resourcesFromBalls } from "./dls.ts";
 
 // W4a (#425) §3.3 — every fold below is PAD-SHAPED: it is building a stream
 // event by event, which is the write path. `strictFromSeq: 0` marks the whole
@@ -517,6 +517,155 @@ describe("cricket golden (c): DLS Standard Edition", () => {
     const state = fold(odiDls, manual);
     expect(state.revisedTarget).toBe(200);
     expect(state.targetSource).toBe("manual");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #451 — the published D/L table is FIXED at six-ball overs and ten wickets,
+// but every fold call site fed it cfg-scaled quantities. `resourcesFromBalls`
+// is now the single conversion entry point; these pin both axes.
+// ---------------------------------------------------------------------------
+
+describe("DLS scales: table units vs config units (#451)", () => {
+  it("is the identity for a ten-wicket innings — no standard value moves", () => {
+    // The wickets scale is 10/10 = 1 exactly, so every 11-a-side figure must
+    // stay bit-identical to the pre-#451 `resources(balls / 6, wickets)`.
+    for (const balls of [0, 1, 5, 6, 7, 30, 60, 119, 120, 150, 251, 300, 301]) {
+      for (let w = 0; w <= 10; w++) {
+        expect(resourcesFromBalls(balls, w, 10)).toBe(resources(balls / 6, w));
+      }
+    }
+    // Spot-check against the published rows the old call sites happened to hit.
+    expect(resourcesFromBalls(300, 0, 10)).toBe(100.0);
+    expect(resourcesFromBalls(120, 0, 10)).toBe(56.6);
+    expect(resourcesFromBalls(30, 0, 10)).toBe(17.2);
+  });
+
+  it("converts the overs axis by SIX, not by cfg.ballsPerOver (the Hundred)", () => {
+    // 100 balls is 16.667 six-ball overs, NOT the 20 five-ball overs the config
+    // counts. Row 16 col 0 = 47.6, row 17 col 0 = 49.9, fraction 2/3 ⇒
+    // 47.6 + (2/3) × 2.3 = 49.1333…  The old code read row 20 col 0 = 56.6.
+    expect(resourcesFromBalls(100, 0, 10)).toBeCloseTo(47.6 + (2 / 3) * 2.3, 9);
+    expect(resourcesFromBalls(100, 0, 10)).toBeCloseTo(49.13333333333333, 9);
+    expect(resourcesFromBalls(100, 0, 10)).not.toBeCloseTo(56.6, 6);
+  });
+
+  it("converts the wickets axis by the innings' all-out count (six-a-side)", () => {
+    // A six-a-side innings ends at 5 wickets, so 4 down is 8/10 of the batting
+    // gone, not 4/10. Row 5: col 4 = 16.1 (what the old code read), col 8 = 9.4.
+    expect(resourcesFromBalls(30, 4, 5)).toBe(resources(5, 8));
+    expect(resourcesFromBalls(30, 4, 5)).toBe(9.4);
+    expect(resourcesFromBalls(30, 4, 5)).not.toBe(16.1);
+    // Every wicket in a five-wicket innings maps to an even column.
+    expect(resourcesFromBalls(30, 1, 5)).toBe(resources(5, 2));
+    expect(resourcesFromBalls(30, 2, 5)).toBe(resources(5, 4));
+    expect(resourcesFromBalls(30, 3, 5)).toBe(resources(5, 6));
+  });
+
+  it("clamps an all-out side to the last column", () => {
+    // 5 of 5 scales to 10, beyond the table's 0..9 — clamp, never index out.
+    expect(resourcesFromBalls(30, 5, 5)).toBe(resources(5, 9));
+    expect(resourcesFromBalls(30, 5, 5)).toBe(4.6);
+    expect(resourcesFromBalls(300, 10, 10)).toBe(resources(50, 9));
+  });
+
+  it("rounds a scale that does not divide 10, rather than flooring it", () => {
+    // Every variant shipped today has an exact scale — 11-a-side is 10/10 = 1,
+    // six-a-side is 10/5 = 2 — so rounding and truncation agree and nothing
+    // recorded moves. An eight-a-side innings (all out at 7) does NOT: the
+    // scale is 10/7, and truncating would read 2 wickets down as column 2
+    // (2.857 → 2) instead of column 3, crediting the batting side MORE
+    // resources than it still has. Same "wrong side of the rounding" family as
+    // the bug this file exists for, one variant away.
+    expect(resourcesFromBalls(30, 2, 7)).toBe(resources(5, 3));
+    expect(resourcesFromBalls(30, 2, 7)).not.toBe(resources(5, 2));
+    expect(resourcesFromBalls(30, 1, 7)).toBe(resources(5, 1)); // 1.43 → 1
+    expect(resourcesFromBalls(30, 5, 7)).toBe(resources(5, 7)); // 7.14 → 7
+
+    // Rounding never credits MORE resource than the true proportion would, in
+    // either direction: the scaled column is within half a column of exact.
+    for (const allOut of [3, 4, 6, 7, 8, 9]) {
+      for (let w = 0; w <= allOut; w++) {
+        const exact = Math.min((w * 10) / allOut, 9);
+        const used = resourcesFromBalls(30, w, allOut);
+        expect(used).toBeLessThanOrEqual(resources(5, Math.floor(exact)));
+        expect(used).toBeGreaterThanOrEqual(resources(5, Math.min(Math.ceil(exact), 9)));
+      }
+    }
+  });
+
+  it("keeps every currently shipped scale byte-identical under rounding", () => {
+    // The guard that lets the change above ship with no golden churn: for
+    // allOut 10 and 5, round(w × scale) === trunc(w × scale) for every w.
+    for (const allOut of [10, 5]) {
+      for (let w = 0; w <= allOut; w++) {
+        const scaled = (w * 10) / allOut;
+        expect(Math.round(scaled)).toBe(Math.trunc(scaled));
+      }
+    }
+  });
+
+  it("survives a non-positive all-out count without producing NaN", () => {
+    // Unreachable from the fold (`allOutWickets()` is Math.max(1, …)) but a bare
+    // divide gives Infinity, and 0 × Infinity is NaN — which would index the
+    // table out of bounds and silently poison r1/r2 on every read.
+    for (const allOut of [0, -1, -10]) {
+      for (const w of [0, 3, 9]) {
+        const value = resourcesFromBalls(30, w, allOut);
+        expect(Number.isFinite(value)).toBe(true);
+        expect(value).toBe(resources(5, w)); // falls back to the unscaled column
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #451 regression — the issue's two worked examples, end to end through the
+// fold. Both are RED without the source fix.
+// ---------------------------------------------------------------------------
+
+describe("#451 regression: cfg-scaled DLS inputs", () => {
+  const hundredDls = cricket.configSchema.parse({
+    ...cricket.variants.hundred,
+    dls: { enabled: true, edition: "standard" },
+  });
+  const pairsDls = cricket.configSchema.parse({
+    ...cricket.variants["pairs-6-a-side"],
+    dls: { enabled: true, edition: "standard" },
+  });
+
+  it("the Hundred's r1 is 16.667 six-ball overs of resource, not 20", () => {
+    const state = fold(
+      hundredDls,
+      stream(
+        ["core.start"],
+        ["cricket.innings.summary", { runs: 80, wickets: 5, legalBalls: 100 }],
+      ),
+    );
+    expect(state.r1).toBeCloseTo(49.13333333333333, 9);
+    expect(state.r1).not.toBeCloseTo(56.6, 6);
+  });
+
+  it("a six-a-side abandoned chase is decided the RIGHT way round", () => {
+    // 60 balls a side ⇒ R1 = R2 = res(10, 0) = 32.1. Team H makes 80. Team A is
+    // 45/4 after 30 balls (5 overs, at the 5-over minimum) when rain ends play.
+    //   4 of 5 wickets down = column 8 ⇒ remaining res(5,8) = 9.4,
+    //   used = 32.1 − 9.4 = 22.7, par = ⌊80 × 22.7/32.1⌋ = 56 ⇒ H by 11.
+    // The old code read column 4 ⇒ remaining 16.1, used 16.0,
+    //   par = ⌊80 × 16/32.1⌋ = 39 ⇒ A by 6 — a full result REVERSAL.
+    const state = fold(
+      pairsDls,
+      stream(
+        ["core.start"],
+        ["cricket.innings.summary", { runs: 80, wickets: 5, legalBalls: 60 }],
+        ["cricket.innings.summary", { runs: 45, wickets: 4, legalBalls: 30, partial: true }],
+        ["core.abandon", { reason: "rain" }],
+      ),
+    );
+    expect(state.r1).toBeCloseTo(32.1, 9);
+    expect(state.r2).toBeCloseTo(32.1, 9);
+    expect(state.outcome).toMatchObject({ kind: "win", winner: "H", method: "dls" });
+    expect(state.margin).toBe("by 11 runs");
   });
 });
 

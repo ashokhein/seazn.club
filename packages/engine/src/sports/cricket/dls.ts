@@ -73,10 +73,24 @@ export const DLS_STANDARD_TABLE: readonly (readonly number[])[] = [
   /* 50 */ [100.0, 93.4, 85.1, 74.9, 62.7, 49.0, 34.9, 22.0, 11.9, 4.7],
 ];
 
+// The table's OWN scales. Every published figure above is a six-ball over and
+// a ten-wicket innings — nothing in it moves with a match config. A caller
+// holding cfg-scaled quantities (the Hundred's five-ball over, a six-a-side
+// team's five-wicket innings) MUST convert into these units first; see
+// `resourcesFromBalls`, which is the only conversion entry point.
+export const DLS_TABLE_BALLS_PER_OVER = 6;
+export const DLS_TABLE_WICKETS = 10;
+
 // Resources remaining (%) with `oversLeft` overs and `wicketsLost` wickets
 // down. The published table is per whole over; fractional overs (interruption
 // mid-over) interpolate linearly between adjacent rows — a documented
 // approximation of the unpublished per-ball Standard Edition figures.
+//
+// This is the raw TABLE PRIMITIVE: both arguments are in the table's own units
+// (six-ball overs, ten-wicket innings). Fold call sites must go through
+// `resourcesFromBalls` instead — see #451, where feeding cfg-scaled overs and
+// raw wickets straight in produced wrong Hundred targets and a REVERSED
+// six-a-side result.
 export function resources(oversLeft: number, wicketsLost: number): number {
   const wickets = Math.min(Math.max(Math.trunc(wicketsLost), 0), 9);
   const overs = Math.min(Math.max(oversLeft, 0), 50);
@@ -87,6 +101,49 @@ export function resources(oversLeft: number, wicketsLost: number): number {
   const upperRow = DLS_STANDARD_TABLE[lower + 1] as readonly number[];
   const next = upperRow[wickets] as number;
   return base + (overs - lower) * (next - base);
+}
+
+// Resources remaining (%), taking the quantities a cricket fold actually holds
+// — BALLS left (the ledger is integer balls, never overs) and a RAW wicket
+// count — and converting both onto the published table's scales (#451).
+//
+//   overs axis   : `ballsLeft / 6`, never `ballsLeft / cfg.ballsPerOver`. A
+//                  Hundred innings is 100 balls = 16.67 six-ball overs, not 20.
+//   wickets axis : `wicketsLost × 10 / allOutWickets`. The column means "how
+//                  much of this innings' batting is gone"; in a six-a-side
+//                  innings that ends at 5 wickets, 4 down is 8/10, not 4/10.
+//                  `resources` then clamps to columns 0..9, so an all-out side
+//                  lands on the last column.
+//
+//                  We ROUND the scaled column rather than let `resources`
+//                  truncate it. Truncation is exact for every scale that
+//                  divides 10 (11-a-side → 1, six-a-side → 2) but floors
+//                  everywhere else: an eight-a-side innings (allOut 7, scale
+//                  10/7) would read 1 wicket down as column 1 (1.43 → 1) and
+//                  2 down as column 2 (2.86 → 2), each time crediting the
+//                  batting side MORE resources than it still has. That is the
+//                  same "wrong side of the rounding" error #451 is about, one
+//                  variant away. Rounding is a no-op for every config shipped
+//                  today, so it changes no recorded value.
+//
+// `allOutWickets` is the innings' own all-out threshold (cricket.ts
+// `allOutWickets()`), i.e. the wicket count at which that innings ends. When it
+// is 10 the scale is exactly 1 and every standard 11-a-side value is
+// bit-identical to the pre-#451 behaviour.
+//
+// A non-positive `allOutWickets` is unreachable from the fold (`allOutWickets()`
+// is `Math.max(1, …)`), but a bare divide would yield Infinity — and `0 × Infinity`
+// is NaN, which indexes the table out of bounds and poisons r1/r2 silently. So
+// we fall back to the unscaled column rather than throw: this runs on the READ
+// path of every recorded fixture, and a throw inside a fold permanently bricks
+// replay (§3.3 seam; period/kernel.ts is the precedent).
+export function resourcesFromBalls(
+  ballsLeft: number,
+  wicketsLost: number,
+  allOutWickets: number,
+): number {
+  const scale = allOutWickets > 0 ? DLS_TABLE_WICKETS / allOutWickets : 1;
+  return resources(ballsLeft / DLS_TABLE_BALLS_PER_OVER, Math.round(wicketsLost * scale));
 }
 
 // spec 04 §2.5 — Standard Edition target:
