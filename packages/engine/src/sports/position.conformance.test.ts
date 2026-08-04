@@ -451,7 +451,9 @@ describe("cricket — innings and the decimalised over", () => {
 
   it("is innings 1 at the top of the innings", () => {
     const { state } = fresh<CricketState>(cricket);
-    expect(line(cricket, state)).toBe("Innings 1 · Over 0.0");
+    // `oversText` is cricket's own notation, shared with `summary`: a completed
+    // over prints bare, so a fresh innings is "0", not "0.0".
+    expect(line(cricket, state)).toBe("Innings 1 · Over 0");
   });
 
   it("reads Innings 2 · Over 12.3", () => {

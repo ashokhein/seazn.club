@@ -57,7 +57,7 @@
 // to the axis.
 import { z } from "zod";
 import { EngineError } from "./errors.ts";
-import { formatElapsed } from "./time.ts";
+import { formatElapsed, type GameTime } from "./time.ts";
 
 /**
  * One ordered component of a position.
@@ -117,12 +117,26 @@ export const POSITION_SEPARATOR = " · ";
 // ---------------------------------------------------------------------------
 
 /**
+ * A named value whose display notation is not its rank: cricket's over prints
+ * "12.3" and ranks by 75 legal balls.
+ */
+export function labelledSegment(
+  key: string,
+  label: string,
+  value: string,
+  ordinal?: number,
+): PositionSegment {
+  return ordinal === undefined ? { key, label, value } : { key, label, value, ordinal };
+}
+
+/**
  * A numbered unit: set 2, game 4, innings 1, board 3.
  *
- * The number is both the display value and the rank, so the two cannot drift.
+ * The number is both the display value and the rank, so the two cannot drift —
+ * which is why this is not merely `labelledSegment` with the caller stringifying.
  */
 export function unitSegment(key: string, label: string, n: number): PositionSegment {
-  return { key, label, value: String(n), ordinal: n };
+  return labelledSegment(key, label, String(n), n);
 }
 
 /**
@@ -178,6 +192,74 @@ export function scoreSegment(key: string, line: string, ordinal?: number): Posit
  */
 export function currentUnit(completed: number, live: boolean): number {
   return live ? completed + 1 : Math.max(1, completed);
+}
+
+/**
+ * `currentUnit` widened by the OTHER thing the state can prove: how many units
+ * have STARTED. The rule for every sport that counts sets, games or innings.
+ *
+ * `live` alone is not enough, and the case that proves it is not a hand-written
+ * one — the conformance suite's monotonicity property found it. A carrom match
+ * ABANDONED during game 3 has two games complete and three started, so
+ * `currentUnit` reports "Game 2": the position travels BACKWARDS at the final
+ * event, and W6 sorts a timeline by exactly this.
+ *
+ * `started` alone is not enough either, in the opposite direction. These kernels
+ * open a unit LAZILY — set-based on the first rally, cricket on the first ball —
+ * so between units nothing is open, and `started` under-counts by one for a
+ * match that is still running and certain to play the next one.
+ *
+ * The max of the two is right in both directions, and monotone: neither input
+ * ever decreases. It never invents a unit for a match already decided, because
+ * `currentUnit` stops at `completed` there and a decided match starts nothing.
+ */
+export function unitNumber(args: { started: number; completed: number; live: boolean }): number {
+  return Math.max(args.started, currentUnit(args.completed, args.live));
+}
+
+/**
+ * THE position derivation for a period sport — football and the period kernel
+ * (hockey, ice hockey), which have different state types and so cannot share a
+ * module member. They share this instead, and the conformance suite holds the
+ * two to producing the same shape, because W8 draws ONE chip for both.
+ *
+ * `evidence` is every phase this state attests to, in any order and with holes:
+ * the phase the fold is in, the phase the newest stamp names, the last phase
+ * entered, and "SHOOTOUT" where one was reached. The LATEST by `phaseOrder`
+ * wins.
+ *
+ * A MAX rather than "trust `state.phase`" for two reasons. It is monotone by
+ * construction — position cannot travel backwards as a match folds, whatever
+ * order the fields update in. And `state.phase` goes terminal ("done", "final",
+ * "abandoned") at the final whistle, and those are markers rather than places:
+ * they are absent from `playPhases` for that reason, so reporting one would
+ * hand W6 an unorderable position for every finished fixture, when the honest
+ * answer — the last phase actually played — is right there in the evidence.
+ *
+ * THE CLOCK IS ATTACHED ONLY WHEN THE STAMP NAMES THE PHASE THIS RESOLVED TO.
+ * A period advances on an unstamped whistle and `asOf` then still names the one
+ * before it; printing 44:59 beside "H2" asserts something false about where
+ * play is. `state.phase` and `asOf.period` are both plain strings, so a producer
+ * that reached for the wrong one compiles, folds and looks right — the
+ * `DisciplineCard.entrantSide` shape, and the reason the conformance suite pins
+ * the case where the two differ.
+ */
+export function periodClockPosition(args: {
+  phaseOrder: readonly string[];
+  evidence: readonly (string | undefined)[];
+  asOf?: GameTime;
+}): MatchPosition {
+  const { phaseOrder, evidence, asOf } = args;
+  let best = 0; // phaseOrder[0] — "pre" for every sport that declares one
+  for (const candidate of evidence) {
+    if (candidate === undefined) continue;
+    const index = phaseOrder.indexOf(candidate);
+    if (index > best) best = index;
+  }
+  const phase = phaseOrder[best] as string;
+  const segments = [phaseSegment(phase, phaseOrder)];
+  if (asOf !== undefined && asOf.period === phase) segments.push(clockSegment(asOf.elapsed));
+  return { segments };
 }
 
 // ---------------------------------------------------------------------------

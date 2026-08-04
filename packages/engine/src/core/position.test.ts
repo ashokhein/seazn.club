@@ -8,9 +8,12 @@ import {
   comparePosition,
   currentUnit,
   formatPosition,
+  labelledSegment,
   matchPositionOf,
+  periodClockPosition,
   phaseSegment,
   scoreSegment,
+  unitNumber,
   unitSegment,
 } from "./position.ts";
 
@@ -93,6 +96,78 @@ describe("segment builders", () => {
   });
 });
 
+describe("labelledSegment — a named value whose display and rank differ", () => {
+  it("keeps the display value and the rank independent", () => {
+    // Cricket's over prints "12.3" and ranks by 75 legal balls. `unitSegment`
+    // ties the two together deliberately; this is the escape for the case where
+    // the notation is not the number.
+    expect(labelledSegment("over", "Over", "12.3", 75)).toEqual({
+      key: "over",
+      label: "Over",
+      value: "12.3",
+      ordinal: 75,
+    });
+    expect(labelledSegment("over", "Over", "12.3")).toEqual({
+      key: "over",
+      label: "Over",
+      value: "12.3",
+    });
+  });
+
+  it("is what unitSegment is built from, so the two cannot spell a unit differently", () => {
+    expect(unitSegment("set", "Set", 2)).toEqual(labelledSegment("set", "Set", "2", 2));
+  });
+});
+
+describe("periodClockPosition — the shared derivation for period sports", () => {
+  const order = ["pre", "H1", "H2", "SHOOTOUT"];
+
+  it("takes the LATEST phase the state evidences, by the declared order", () => {
+    // Evidence arrives in no particular order and from several fields, so the
+    // rule is a max over the declared order rather than "trust this one field".
+    // Monotone by construction: the answer cannot travel backwards.
+    expect(
+      periodClockPosition({ phaseOrder: order, evidence: ["H1", undefined, "H2", "pre"] }),
+    ).toEqual({ segments: [{ key: "period", value: "H2", ordinal: 2 }] });
+  });
+
+  it("ignores evidence the declared order does not contain", () => {
+    // "done" / "final" / "abandoned" are terminal markers, not places on the
+    // pitch, and `playPhases` excludes them for exactly that reason.
+    expect(periodClockPosition({ phaseOrder: order, evidence: ["done", "H1"] })).toEqual({
+      segments: [{ key: "period", value: "H1", ordinal: 1 }],
+    });
+  });
+
+  it("falls back to the first declared phase when nothing is evidenced", () => {
+    // A fixture abandoned before the opening whistle happened in "pre".
+    expect(periodClockPosition({ phaseOrder: order, evidence: ["abandoned"] })).toEqual({
+      segments: [{ key: "period", value: "pre", ordinal: 0 }],
+    });
+  });
+
+  it("adds the clock ONLY when the stamp names the phase it resolved to", () => {
+    expect(
+      periodClockPosition({ phaseOrder: order, evidence: ["H2"], asOf: { period: "H2", elapsed: 761 } }),
+    ).toEqual({
+      segments: [
+        { key: "period", value: "H2", ordinal: 2 },
+        { key: "clock", value: "12:41", ordinal: 761 },
+      ],
+    });
+  });
+
+  it("drops a stamp left behind in an earlier phase", () => {
+    // A period advances on an UNSTAMPED whistle and `asOf` still names the one
+    // before it. 44:59 next to "H2" asserts something false about where play
+    // is; both fields are strings, so a producer that reached for the wrong one
+    // compiles and looks right.
+    expect(
+      periodClockPosition({ phaseOrder: order, evidence: ["H2"], asOf: { period: "H1", elapsed: 2699 } }),
+    ).toEqual({ segments: [{ key: "period", value: "H2", ordinal: 2 }] });
+  });
+});
+
 describe("currentUnit — the one rule for 'which set/game/innings are we in'", () => {
   it("is one past the completed count while the match is live", () => {
     expect(currentUnit(0, true)).toBe(1);
@@ -109,6 +184,38 @@ describe("currentUnit — the one rule for 'which set/game/innings are we in'", 
     // A walkover or an abandonment at 0–0 happened IN the first set, not in
     // set zero.
     expect(currentUnit(0, false)).toBe(1);
+  });
+});
+
+describe("unitNumber — completed AND started, because 'live' alone is not enough", () => {
+  it("is one past the completed count while a match runs between units", () => {
+    // Set 1 closed, set 2 not yet opened (these kernels open a set lazily, on
+    // its first rally) — the match is in set 2.
+    expect(unitNumber({ started: 1, completed: 1, live: true })).toBe(2);
+  });
+
+  it("tracks the unit in progress once it has started", () => {
+    expect(unitNumber({ started: 3, completed: 2, live: true })).toBe(3);
+  });
+
+  it("names the last unit played on a match decided at a unit boundary", () => {
+    expect(unitNumber({ started: 2, completed: 2, live: false })).toBe(2);
+  });
+
+  it("KEEPS the unit in progress when a match is abandoned mid-unit", () => {
+    // The case a `live`-only rule gets wrong, and the reason `started` exists.
+    // A carrom match abandoned during game 3 has two games COMPLETE, so
+    // `currentUnit` alone reports "Game 2" — a position that travels BACKWARDS
+    // at the final event, which is exactly what W6 sorts a timeline by. Caught
+    // by the monotonicity property in `position.conformance.test.ts`, not by
+    // any hand-written case.
+    expect(unitNumber({ started: 3, completed: 2, live: false })).toBe(3);
+    expect(currentUnit(2, false)).toBe(2); // the rule that was not enough
+  });
+
+  it("is unit 1 before anything has started", () => {
+    expect(unitNumber({ started: 0, completed: 0, live: true })).toBe(1);
+    expect(unitNumber({ started: 0, completed: 0, live: false })).toBe(1);
   });
 });
 

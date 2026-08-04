@@ -13,6 +13,7 @@ import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
 import { isStrictFold, resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import { GameTime, addDuration, compareGameTime, gameTimeOf } from "../../core/time.ts";
+import { periodClockPosition, type MatchPosition } from "../../core/position.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
   AttemptOutcome,
@@ -489,6 +490,30 @@ export function playPhases(cfg: PeriodCfg): string[] {
 
 function inOvertime(state: PeriodState): boolean {
   return otLabels(state.cfg).includes(state.phase);
+}
+
+/**
+ * W4a (#425) T6b — "P2 · 12:41". A module-scope function, not a closure built
+ * inside `makePeriodModule`, so hockey and ice hockey hold the SAME reference
+ * and a sport cannot fork the derivation and still compile.
+ *
+ * Every phase this state attests to is offered as evidence and the latest wins:
+ * `phase` while play runs, the last phase entered once `phase` has gone
+ * terminal, SHOOTOUT where one was reached, and `asOf.period` — which also
+ * carries the case where a period advanced on an unstamped whistle. The clock
+ * rides along only when that stamp names the phase this resolved to.
+ */
+function periodPosition(state: PeriodState): MatchPosition {
+  return periodClockPosition({
+    phaseOrder: playPhases(state.cfg),
+    evidence: [
+      state.phase,
+      state.asOf?.period,
+      state.periods[state.periods.length - 1]?.phase,
+      state.shootout === null ? undefined : "SHOOTOUT",
+    ],
+    asOf: state.asOf,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1433,6 +1458,14 @@ export function makePeriodModule(
     },
 
     outcome: (state) => state.outcome,
+
+    // W4a (#425) T6b — the cross-sport position axis. ONE reference shared by
+    // hockey and ice hockey (`position.conformance.test.ts` asserts
+    // `hockey.position === icehockey.position` by identity, the same way
+    // `phases.test.ts` asserts `mod.playPhases === playPhases`), and it
+    // delegates to the same `periodClockPosition` football does, so W8 draws
+    // one chip for all three.
+    position: periodPosition,
 
     // §9.5 — defined at every prefix. Headline grammar per v6/00 §5:
     // `2 — 1 · P3`, `3 — 2 (OT)`, `2 — 1 (GWS 2–1)`, `1 — 1 · Q4`.

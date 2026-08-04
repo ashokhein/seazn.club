@@ -16,6 +16,13 @@ import { isStrictFold, resolveVoids, type CoreEv, type EventEnvelope } from "../
 import type { Rng } from "../../core/rng.ts";
 import { DurationSeconds, GameTime, compareGameTime } from "../../core/time.ts";
 import {
+  currentUnit,
+  scoreSegment,
+  unitNumber,
+  unitSegment,
+  type MatchPosition,
+} from "../../core/position.ts";
+import {
   EntrantId,
   type DisciplineCard,
   type DisciplineModel,
@@ -1091,6 +1098,64 @@ const METRICS: MetricSpec[] = [
   { key: "points_won", label: "Points won", direction: "desc", display: false },
 ];
 
+
+/**
+ * W4a (#425) T6b — "Set 2 · Game 4 · 30–15". Module scope, so tennis (and any
+ * later nested preset) holds ONE reference.
+ *
+ * THE SET AND GAME NUMBERS GO THROUGH `currentUnit`, which is the whole reason
+ * that function exists. `sets.length + 1` is the obvious derivation and is
+ * wrong exactly once — at the end. A best-of-three won 2–0 reads "Set 3",
+ * naming a set nobody played, on every match report and every timeline row for
+ * that fixture. Once the match is decided the games come from the set that was
+ * actually played, because the kernel resets `state.games` when a set banks.
+ *
+ * The tie-break needs no special case: `games` is held at 6–6 through it, so it
+ * falls out as game 13 of the set, which is what it is. A MATCH tie-break does:
+ * it replaces the final set and has no games at all, so the game segment is
+ * omitted rather than reported as a phantom "Game 1".
+ *
+ * THE POINT SCORE CARRIES NO ORDINAL, deliberately. Points played is not
+ * derivable from `GamePoints` past deuce — `{home: 3, away: 3, advantage}`
+ * looks identical on the fourth point of a game and the fortieth — so
+ * `comparePosition` is told to stop at the game rather than handed an invented
+ * rank it would sort by.
+ */
+function nestedPosition(state: NestedState): MatchPosition {
+  const live = state.outcome === null;
+  const closed = state.sets.length; // `sets` holds CLOSED sets only
+  const lastSet = state.sets[closed - 1];
+
+  // The current set is under way iff a game or a point has been played in it.
+  // That is this kernel's only evidence of a STARTED set — unlike the set-based
+  // kernel, it appends to `sets` on close rather than on open — and it is what
+  // stops a match abandoned mid-set from reporting the set before it.
+  const inProgress =
+    state.games.home + state.games.away > 0 || state.points.home + state.points.away > 0;
+  const setNumber = unitNumber({ started: closed + (inProgress ? 1 : 0), completed: closed, live });
+
+  // A match tie-break REPLACES the final set and has no games at all, so the
+  // game segment is omitted rather than reported as a phantom "Game 1".
+  const matchTiebreak = live ? state.points.kind === "matchTiebreak" : lastSet?.mtb === true;
+  const segments = [unitSegment("set", "Set", setNumber)];
+  if (!matchTiebreak) {
+    // While a set is under way the games come from `state.games`; once it banks
+    // the kernel resets those, so a decided match reads them off the set that
+    // was actually played.
+    const open = inProgress || live;
+    const played =
+      open || lastSet === undefined
+        ? state.games.home + state.games.away
+        : lastSet.home + lastSet.away;
+    segments.push(unitSegment("game", "Game", currentUnit(played, open)));
+  }
+  // Only while live: once the set banks, the deciding game's point score is
+  // gone from the state, and reporting the reset "0–0" would be a lie.
+  if (live) segments.push(scoreSegment("points", gameScoreLine(state.points)));
+  return { segments };
+}
+
+
 export function makeNestedModule(
   preset: NestedPreset,
 ): SportModule<NestedCfg, NestedEv, NestedState> {
@@ -1232,6 +1297,9 @@ export function makeNestedModule(
     // ordering `apply()` does must be the same function, or an event the guard
     // accepts is backwards a layer down.
     playPhases,
+
+    // W4a (#425) T6b — the cross-sport position axis (see `nestedPosition`).
+    position: nestedPosition,
 
     // §9.5 — defined at every prefix. Headline speaks tennis: sets tally, the
     // closed-set strip (6–4 7–6(5) [10–7]), live games and the spoken game

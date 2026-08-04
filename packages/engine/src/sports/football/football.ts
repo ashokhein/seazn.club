@@ -6,6 +6,7 @@ import { EngineError } from "../../core/errors.ts";
 import { isStrictFold, resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import { GameTime, addDuration, compareGameTime, gameTimeOf } from "../../core/time.ts";
+import { periodClockPosition, type MatchPosition } from "../../core/position.ts";
 import {
   AttemptOutcome,
   EntrantId,
@@ -488,6 +489,35 @@ export function playPhases(cfg: FootballCfg): string[] {
  * at the end of the second half rather than rolling into an extra time the
  * competition does not play.
  */
+/**
+ * W4a (#425) T6b — "H2 · 48:12", the cross-sport position axis.
+ *
+ * DELEGATES to `periodClockPosition`, the same core function the period kernel
+ * uses. Football and the period kernel have different state types and so cannot
+ * share a module member the way hockey and ice hockey do, and this wave has
+ * already paid for that gap once: football hand-rolled the period kernel's time
+ * model and diverged from it in five places. The shared derivation is the fix
+ * available here, and `position.conformance.test.ts` holds both to producing an
+ * identical SHAPE for the same instant, because W8 draws one chip for all four
+ * period sports.
+ *
+ * `PLAY_PHASES` is deliberately not consulted: `playPhases` is the wider list
+ * the fold's monotonic guard orders against, and it is the one an event's
+ * `at.period` is validated against, so it is the one a position must rank in.
+ */
+function footballPosition(state: FootballState): MatchPosition {
+  return periodClockPosition({
+    phaseOrder: playPhases(state.cfg),
+    evidence: [
+      state.phase,
+      state.asOf?.period,
+      state.periods[state.periods.length - 1]?.phase,
+      state.shootout === null ? undefined : "SHOOTOUT",
+    ],
+    asOf: state.asOf,
+  });
+}
+
 function clockPhases(cfg: FootballCfg): string[] {
   return ["H1", "H2", ...(cfg.extraTime.enabled ? ["ET_H1", "ET_H2"] : [])];
 }
@@ -1453,6 +1483,10 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
   },
 
   outcome: (state) => state.outcome,
+
+  // W4a (#425) T6b — the cross-sport position axis, via the SAME core
+  // derivation the period kernel uses (see `footballPosition`).
+  position: footballPosition,
 
   // §9.5 — defined at every prefix.
   summary(state): ScoreSummary {

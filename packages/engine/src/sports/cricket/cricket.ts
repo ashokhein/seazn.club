@@ -8,6 +8,12 @@ import { EngineError } from "../../core/errors.ts";
 import { isStrictFold, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
+  labelledSegment,
+  unitNumber,
+  unitSegment,
+  type MatchPosition,
+} from "../../core/position.ts";
+import {
   EntrantId,
   type LineupPair,
   type MatchOutcome,
@@ -398,6 +404,46 @@ function oversText(balls: number, ballsPerOver: number): string {
   const rem = balls % ballsPerOver;
   return rem === 0 ? `${whole}` : `${whole}.${rem}`;
 }
+
+
+/**
+ * W4a (#425) T6b — "Innings 2 · Over 12.3", the cross-sport position axis.
+ *
+ * THE OVER COMES FROM `legalBalls`, AND ONLY FROM `legalBalls`. An innings also
+ * carries `extras`, an integer on the same object that also counts deliveries,
+ * and only one of the two is the over reading — three wides into an over and
+ * the scoreboard still says 0.3. A producer that reached for the other one
+ * compiles, folds and reads plausibly; it shows up as a timeline that files a
+ * wicket in the wrong over, which is the `DisciplineCard.entrantSide` shape
+ * again. `oversText` is the module's own notation, shared with `summary`, so an
+ * over is spelled one way everywhere.
+ *
+ * THE SUPER OVER CONTINUES THE INNINGS COUNT rather than restarting at 1: its
+ * innings are the third and fourth of the match. Numbering them 1 and 2 would
+ * send position BACKWARDS mid-fixture, and W6 sorts a timeline by this.
+ */
+function cricketPosition(state: CricketState): MatchPosition {
+  const live = state.outcome === null;
+  const superOver = state.superOver;
+  const list = superOver === null ? state.innings : superOver.innings;
+  const offset = superOver === null ? 0 : state.innings.length;
+  const number = unitNumber({
+    // An innings is opened on its first ball, so `length` counts innings
+    // STARTED — which is what keeps a match abandoned mid-innings from
+    // reporting the innings before it.
+    started: list.length,
+    completed: list.filter((innings) => innings.closed).length,
+    live,
+  });
+  const balls = list[number - 1]?.legalBalls ?? 0;
+  return {
+    segments: [
+      unitSegment("innings", "Innings", offset + number),
+      labelledSegment("over", "Over", oversText(balls, state.cfg.ballsPerOver), balls),
+    ],
+  };
+}
+
 
 // ---------------------------------------------------------------------------
 // Innings sequencing — spec §2.3 / cricket.md §3
@@ -2074,6 +2120,9 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
   },
 
   outcome: (state) => state.outcome,
+
+  // W4a (#425) T6b — the cross-sport position axis (see `cricketPosition`).
+  position: cricketPosition,
 
   // §9.5 — reads only InningsTotals (never fine state), so coarse and fine
   // folds of the same match render identically (§9.6).

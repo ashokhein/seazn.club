@@ -10,6 +10,12 @@ import { EngineError } from "../../core/errors.ts";
 import { isStrictFold, resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
+  scoreSegment,
+  unitNumber,
+  unitSegment,
+  type MatchPosition,
+} from "../../core/position.ts";
+import {
   EntrantId,
   type DisciplineCard,
   type DisciplineModel,
@@ -776,6 +782,48 @@ function makeMetrics(unit: { one: string; many: string }): MetricSpec[] {
 // Module factory
 // ---------------------------------------------------------------------------
 
+
+/**
+ * W4a (#425) T6b — "Set 3 · 21–19". Module scope, so badminton, table tennis
+ * and volleyball hold the SAME reference; `position.conformance.test.ts`
+ * asserts that by identity, the way `phases.test.ts` asserts `playPhases`.
+ *
+ * THE SET NUMBER IS THE COMPLETED COUNT THROUGH `currentUnit`, not
+ * `state.sets.length`. `sets` holds the closed sets AND a trailing open one, so
+ * the two agree while a set is in progress and disagree in the two places that
+ * matter: between sets, where `sets.length` under-counts by one, and after the
+ * match is decided, where `closed + 1` names a set nobody played.
+ *
+ * The score comes from `sets[n - 1]` — the set this resolved to — which makes
+ * every case fall out of one expression: love-all before the first rally, the
+ * live score during a set, love-all again between sets, and the final score of
+ * the deciding set once the match is over.
+ *
+ * `home + away` is an exact rank here in a way it is not in tennis: every rally
+ * scores a point, so it counts rallies played and orders two positions inside
+ * one set.
+ */
+function setBasedPosition(state: SetBasedState): MatchPosition {
+  const number = unitNumber({
+    // A set is opened LAZILY, on its first rally, so `sets.length` counts sets
+    // STARTED and under-counts by one between sets — while `closed + 1`
+    // over-counts by one on a match abandoned mid-set. `unitNumber` is the max.
+    started: state.sets.length,
+    completed: state.sets.filter((set) => set.closed).length,
+    live: state.outcome === null,
+  });
+  const set = state.sets[number - 1];
+  const home = set?.home ?? 0;
+  const away = set?.away ?? 0;
+  return {
+    segments: [
+      unitSegment("set", "Set", number),
+      scoreSegment("points", `${home}–${away}`, home + away),
+    ],
+  };
+}
+
+
 export function makeSetBasedModule(
   preset: SetBasedPreset,
 ): SportModule<SetBasedCfg, SetBasedEv, SetBasedState> {
@@ -948,6 +996,9 @@ export function makeSetBasedModule(
     },
 
     outcome: (state) => state.outcome,
+
+    // W4a (#425) T6b — the cross-sport position axis (see `setBasedPosition`).
+    position: setBasedPosition,
 
     // §9.5 — defined at every prefix; reads only the folded set ledger so
     // coarse and fine folds render identically (§9.6). The headline carries the

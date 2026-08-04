@@ -9,6 +9,7 @@ import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
 import { isStrictFold, resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
+import { currentUnit, unitNumber, unitSegment, type MatchPosition } from "../../core/position.ts";
 import {
   EntrantId,
   type DisciplineCard,
@@ -169,6 +170,41 @@ export interface CarromState {
   // one names a player (golden-safe).
   penalties?: CarromPenalty[];
 }
+
+
+/**
+ * W4a (#425) T6b — "Game 2 · Board 3", the cross-sport position axis.
+ *
+ * Both numbers go through `currentUnit`, and the BOARD's liveness is the open
+ * game's, not the match's: a board is in progress only while the game it
+ * belongs to is open. `boards` holds boards already BANKED, so the one being
+ * played is `length + 1` while that holds and `length` once the game is won or
+ * drawn — otherwise a match won on board 5 reports "Board 6", a board nobody
+ * played, on every match report for that fixture.
+ */
+function carromPosition(state: CarromState): MatchPosition {
+  const live = state.outcome === null;
+  const gameNumber = unitNumber({
+    // `bankGame` opens the next game only while the match is still open, so
+    // `games.length` is exactly "games started" and never a phantom.
+    started: state.games.length,
+    completed: state.games.filter((game) => game.winner !== null).length,
+    live,
+  });
+  const game = state.games[gameNumber - 1];
+  // The BOARD's liveness is the GAME's, not the match's. Gating it on `live`
+  // sent the board backwards on a match abandoned mid-board — the board was in
+  // progress, and it stays the last place anything happened. (Found by the
+  // conformance suite's monotonicity property, not by a hand-written case.)
+  const boardLive = game === undefined || game.winner === null;
+  return {
+    segments: [
+      unitSegment("game", "Game", gameNumber),
+      unitSegment("board", "Board", currentUnit(game?.boards.length ?? 0, boardLive)),
+    ],
+  };
+}
+
 
 function opponent(side: Side): Side {
   return side === "home" ? "away" : "home";
@@ -548,6 +584,9 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
   outcome: (state) => state.outcome,
 
   // §9.5 — defined at every prefix; boards render like sets (carrom.md §6).
+  // W4a (#425) T6b — the cross-sport position axis (see `carromPosition`).
+  position: carromPosition,
+
   summary(state): ScoreSummary {
     const current = state.games.find((game) => game.winner === null);
     const line = (side: Side): string => {
