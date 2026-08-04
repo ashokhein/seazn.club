@@ -244,6 +244,25 @@ nothing that this file does not already carry.
   helpers make the bug invisible by construction.
   **FILED as issue #443** (2026-08-04) with the full evidence, the fix sketch, and the
   non-negotiable test requirement.
+- **AN EIGHTH WAY A GREEN LIES: `scripts/smoke.ts` reads `SCHEDULING_AI_BASE_URL` from its
+  OWN env, not the server's.** Setting it only on the server under test makes the whole v4
+  AI section SKIP — `612 passed` instead of `664`, no failures, no warning that anything
+  was dropped beyond one easily-missed line: `v4 AI: SCHEDULING_AI_BASE_URL unset —
+  model-dependent AI checks skipped`. Smoke starts its own model fixture, so the runner
+  needs `SCHEDULING_AI_BASE_URL=http://127.0.0.1:4319 AI_FIXTURE_PORT=4319
+  ANTHROPIC_API_KEY=<any non-empty>` on the SMOKE process (mirrors `ci.yml`'s smoke job env).
+- **CI smoke went red on the WASM fix, and the red was CORRECT** — the first run in which
+  the solver actually executed. Two checks asserted the clashing bracket prior SURVIVED,
+  premised on it being "unrepairable"; that held only while nothing could repair it.
+  Probed response (do not re-derive this — it is what the solver does here):
+  `placed 2, times [10:00@A, 09:30@B], repair {moved: 1, minimality: proved, unresolved: 0},
+  blocking []`. Both fixtures still placed; the collision clears by moving exactly ONE.
+  Rewritten to assert the repair, the `moved === 1` minimality claim, and the absent
+  overlap — plus a guard that both fixtures are still placed, because a plan that simply
+  LOST one would also satisfy "no two in one slot".
+  **#399's classification is still load-bearing**: the solver only repairs BLOCKING
+  families, so person_overlap being blocking is exactly why this repairs at all. The
+  outcome changed, not the rule. Do not read this as W6 relaxing #399.
 - **Full local e2e (parallel project): 186 passed, 8 failed, 0 attributable to W6.**
   `ai-architect.spec.ts` 13/13. Triage of the 8, so nobody re-does it:
   * 5 × `event-pass.spec.ts` — the spec THROWS by design without a real Stripe test key
