@@ -32,6 +32,16 @@ const TENNIS_BEST_OF_3 = {
   points: { win: 2, loss: 0 },
 } as const;
 
+// `colors` is the cleanest STRICT-ONLY cfg switch in the builtins
+// (`boardgame.ts:260`): an arbiter turns it off for a casual division, and the
+// seam means doing so must not refuse pairing cards already recorded with a
+// colour. Used to probe review item B6 below.
+const BOARDGAME_WITH_COLORS = {
+  variant: "classical",
+  colors: true,
+  scoring: { win: 1, draw: 0.5, loss: 0 },
+} as const;
+
 interface Seed {
   orgId: string;
   actorId: string;
@@ -370,6 +380,48 @@ describe.skipIf(!HAS_DB)("admin fixture config snapshot", () => {
     await expect(resnapshotFixtureConfig(s.actorId, s.fixtureId, "no")).rejects.toBeInstanceOf(
       HttpError,
     );
+  });
+
+  it("does not leave the fixture in a state where every future write is refused", async () => {
+    // REVIEW ITEM B6. The preflight is the READ fold — `fold.ts` passes no
+    // `strictFromSeq` — so it proves the recorded stream still replays under the
+    // new cfg, not that the next append will be accepted. The worry: a fixture
+    // re-snapshotted into a cfg whose strict-on-write seam refuses everything,
+    // with no way back.
+    //
+    // It does not happen, and the reason is structural rather than lucky.
+    // `append-event.ts` passes `strictFromSeq: candidate.seq`, which names the
+    // ONE event not yet in the ledger; every recorded event replays non-strict,
+    // byte-identically to the preflight. So a strict refusal can only ever
+    // reject the NEW event — which is the entry rule doing its job, not a
+    // lockout — and the preflight's non-strict fold is a complete proof for
+    // everything already recorded.
+    const s = await seed({ sportKey: "boardgame", config: BOARDGAME_WITH_COLORS });
+    await appendEvent(s.orgId, s.fixtureId, 0, { type: "core.start", payload: {} });
+    await appendEvent(s.orgId, s.fixtureId, 1, {
+      type: "boardgame.pairing",
+      payload: { white: s.home, board: 1 },
+    });
+
+    await setDivisionConfig(s.divisionId, { ...BOARDGAME_WITH_COLORS, colors: false });
+    await resnapshotFixtureConfig(s.actorId, s.fixtureId, "casual division, colours off");
+
+    // The recorded colour card is NOT re-judged: the fixture still writes.
+    const next = await appendEvent(s.orgId, s.fixtureId, 2, {
+      type: "boardgame.pairing",
+      payload: { board: 2 },
+    });
+    expect(next.seq).toBe(3);
+
+    // …and the entry rule is exactly as strict as before for a NEW card. Both
+    // halves matter: a fix that relaxed the write path would be worse than the
+    // bug.
+    await expect(
+      appendEvent(s.orgId, s.fixtureId, 3, {
+        type: "boardgame.pairing",
+        payload: { white: s.away, board: 3 },
+      }),
+    ).rejects.toThrow(/without colours/i);
   });
 
   it("refuses an unscored fixture: there is nothing frozen to correct", async () => {

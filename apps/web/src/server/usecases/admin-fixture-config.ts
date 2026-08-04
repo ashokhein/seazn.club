@@ -197,6 +197,49 @@ export async function resnapshotFixtureConfig(
     // snapshot exists to escape, on a fixture staff were trying to rescue. A
     // throw here rolls the update back, so a refused re-snapshot leaves both the
     // old cfg and an empty audit trail.
+    //
+    // WHY THE NON-STRICT READ FOLD IS THE RIGHT PREFLIGHT, and not a gap
+    // (reviewed W4a follow-up, item B6). `fold.ts` passes no `strictFromSeq`, so
+    // this proves the fixture still READS, not that the next append will be
+    // accepted — which sounds like it leaves room to re-snapshot a fixture into
+    // a cfg where every future write 422s. It does not, structurally:
+    //
+    //   * `append-event.ts` passes `strictFromSeq: candidate.seq`, naming the
+    //     ONE event not yet in the ledger. Every recorded event replays
+    //     non-strict, byte-identically to this fold. A `strict &&` refusal can
+    //     therefore never fire on a recorded event, which makes this preflight a
+    //     COMPLETE proof for the prior stream, not a partial one.
+    //   * What a strict refusal can still reject is the NEW event, judged under
+    //     the corrected cfg — the entry rule doing exactly its job ("this
+    //     division plays without colours"). That is not a lockout.
+    //   * A real lockout would need a refusal that fires whatever the candidate
+    //     is. All 22 `strict &&` sites across the eleven builtins live inside
+    //     handlers for sport-specific types (goal, card, suspension, set
+    //     summary, pairing, adjust, revise, declaration). None is reachable from
+    //     `core.void`, `core.abandon`, `core.forfeit`, `core.note` or
+    //     `core.finalize`, so the whole recovery vocabulary — including the undo
+    //     whose absence made the original W4a defect unrecoverable — survives
+    //     every cfg.
+    //   * The one cfg-derived write refusal that IS type-independent is not a
+    //     module seam at all: `append-event.ts`'s DRAW_NOT_ALLOWED gate, which
+    //     this preflight does not evaluate. Reaching it needs a cfg under which
+    //     the stream still folds to a DRAW while `supportsDraws` is false. Of
+    //     the five cfg-dependent implementations, each key that turns
+    //     `supportsDraws` false also stops the fold producing a draw: generic's
+    //     `allowDraws` makes `applyResult` refuse outright (preflight catches
+    //     it); period's `overtime`/`shootout` re-fold into an OT period or the
+    //     SHOOTOUT phase with a null outcome; carrom's `tieBoard` returns null
+    //     instead of "draw" and plays an extra board; cricket only produces a
+    //     draw at `inningsPerSide === 2`, the same condition. football,
+    //     setbased, nested and boardgame key off the stage kind, which the hatch
+    //     cannot change.
+    //
+    // WHAT WOULD BREAK IT: widening `strictFromSeq` to cover recorded events; a
+    // `strict &&` refusal added to a `core.*` handler; or a `supportsDraws` whose
+    // cfg key does not also change the folded outcome. The first two are pinned
+    // by `admin-fixture-config.test.ts` ("does not leave the fixture in a state
+    // where every future write is refused"); the third is not, and is the one to
+    // re-derive if a module's draw policy changes.
     let folded;
     try {
       folded = await foldFixture(tx, fixtureId);
