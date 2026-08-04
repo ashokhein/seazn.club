@@ -7,7 +7,7 @@
 // are injected (the same unit throughout, e.g. epoch ms); durations are minutes.
 import type { EntrantId } from "../core/types.ts";
 import type { ConstraintScope, FixtureSelector, HardConstraint, SchedulingConstraints } from "./constraints.ts";
-import { dayKeyInTz, hhmmInTz, weekdayOfYmd } from "./tz.ts";
+import { dayKeyInTz, hhmmInTz, weekdayOfYmd, ymdAddDays, zonedTimeToUtc } from "./tz.ts";
 
 const MS_PER_MIN = 60_000;
 
@@ -42,6 +42,20 @@ export interface SlotConfig {
   horizonMinutes?: number; // how far past startAt to search before reporting no_slot
   /** Constraints v2 (Jul3/04 §3) — extends, never replaces, the base pass. */
   constraints?: SchedulingConstraints;
+  /** The ORG zone (#397), spelled exactly as `VerifyConfig` spells it so ONE
+   *  config object can drive the placer and the verifier and neither can be
+   *  handed a different clock. A typed rule that needs a calendar day or a
+   *  wall-clock time is SKIPPED when this is absent rather than bucketed in UTC
+   *  — placing around a rule the organiser never expressed is worse than not
+   *  placing around it, and it is the #448 defect in the other direction. */
+  tz?: string;
+  /** Fixture metadata for the typed rules, exactly as `VerifyConfig` takes it:
+   *  a `fixture_on_date`/`fixture_on_weekday` selector resolves through it, and
+   *  a `max_fixtures_per_day` tally seeds from the `existing` cards it names.
+   *  Absent for every pre-#463 caller, and then the placer counts only what it
+   *  places and resolves only `id` selectors — which is exactly what the
+   *  verifier does with no `ruleFixtures` either. */
+  ruleFixtures?: readonly RuleFixture[];
 }
 
 export interface SchedulableFixture {
@@ -419,6 +433,81 @@ export function slotFixtures(input: SlotInput): SlotResult {
     ...(f.poolId !== undefined ? { poolId: f.poolId } : {}),
     ...(f.divisionId !== undefined ? { divisionId: f.divisionId } : {}),
   });
+  // --- typed rules the PLACER refuses a slot over (#463) --------------------
+  //
+  // `validateAssignments` has always reported these families; `slotFixtures`
+  // packed straight through them. That is the placer/verifier fork in its
+  // costliest form: Auto proposes a board the apply gate warns about, and
+  // re-running Auto proposes the same board again because the placer does not
+  // know the rule exists.
+  //
+  // Every family here needs a calendar day or a wall-clock time, so every one
+  // of them needs the ORG zone. Without one the whole block is INERT — the same
+  // ruling `VerifyConfig.tz` documents, and the reason every pre-#463 caller
+  // (none of which can set `tz`, because `SlotConfig` had no such field) keeps
+  // its exact previous behaviour.
+  const tz = config.tz;
+  const placementHard: readonly HardConstraint[] =
+    tz === undefined ? [] : hard.filter((h) => h.type !== "min_rest_minutes");
+  const ruleFixtureById = ruleFixtureIndex(config);
+  /** Per-RULE day tallies for `max_fixtures_per_day`, index-aligned with
+   *  `placementHard`. Per rule and not per day because two rules can cap the
+   *  same day at different numbers for different scopes. */
+  const dayCounts = placementHard.map(() => new Map<string, number>());
+  /** The instant a calendar day begins in the org zone. Never `+ 86_400_000`:
+   *  a DST day is 23 or 25 hours long. */
+  const dayStart = (ymd: string): number => zonedTimeToUtc(ymd, "00:00", tz as string);
+  /** Which `max_fixtures_per_day` rules bind a row, as indices. One resolution
+   *  for the tally READ at placement time and the tally WRITE at commit time —
+   *  two scope walks is how a placer and a verifier fork in the first place. */
+  const dayCapRulesFor = (row: ScopeRow, rf: RuleFixture | undefined): number[] => {
+    const out: number[] = [];
+    for (let i = 0; i < placementHard.length; i++) {
+      const h = placementHard[i]!;
+      if (h.type !== "max_fixtures_per_day" || !scopeCoversFixture(h.scope, rf, row)) continue;
+      out.push(i);
+    }
+    return out;
+  };
+  const countDay = (row: ScopeRow, rf: RuleFixture | undefined, startAt: number): void => {
+    if (tz === undefined) return;
+    const day = dayKeyInTz(startAt, tz);
+    for (const i of dayCapRulesFor(row, rf)) dayCounts[i]!.set(day, (dayCounts[i]!.get(day) ?? 0) + 1);
+  };
+  // Seed from the rest of the board. A cap is a statement about how busy a day
+  // is, and a day is exactly as busy as everything already on it — the same
+  // count `validateInstructionRules` takes, including its filter: only entries
+  // that are KNOWN FIXTURES count, because an outside booking or a closed court
+  // is not a fixture and counting one would invent a cap breach.
+  for (const a of input.existing ?? []) {
+    const rf = ruleFixtureById.get(a.fixtureId);
+    if (rf !== undefined) countDay(a, rf, a.startAt);
+  }
+
+  /** The earliest start ≥ `start` that every typed rule binding this fixture
+   *  would accept, or `null` when `start` itself is already acceptable.
+   *
+   *  Returns a bound rather than a boolean because the rejections are
+   *  DAY-LEVEL: the repair loop below gets 64 tries, and stepping a half-hour
+   *  at a time would exhaust well inside the very day the rule is telling it to
+   *  leave. */
+  const nextAcceptableStart = (f: SchedulableFixture, start: number): number | null => {
+    if (placementHard.length === 0) return null;
+    const zone = tz as string;
+    const row = scopeRowOf(f);
+    const rf = ruleFixtureById.get(f.id);
+    const day = dayKeyInTz(start, zone);
+    let bound = start;
+    for (let i = 0; i < placementHard.length; i++) {
+      const h = placementHard[i]!;
+      if (!scopeCoversFixture(h.scope, rf, row)) continue;
+      if (h.type === "max_fixtures_per_day") {
+        if ((dayCounts[i]!.get(day) ?? 0) >= h.count) bound = Math.max(bound, dayStart(ymdAddDays(day, 1)));
+      }
+    }
+    return bound > start ? bound : null;
+  };
+
   const restForMs = (f: SchedulableFixture): number =>
     (hard.length === 0
       ? effectiveRestMinutes(config, f)
@@ -506,6 +595,10 @@ export function slotFixtures(input: SlotInput): SlotResult {
     };
     bookings.push(assignment);
     placed.push(assignment);
+    // Locked fixtures come through here too, and they fill the day just as much
+    // as a placed one — a pinned card the organiser cannot move is precisely
+    // what makes the next one breach the cap.
+    countDay(assignment, ruleFixtureById.get(f.id), start);
     for (const k of restKeysOf(f)) lastEnd.set(k, Math.max(lastEnd.get(k) ?? -Infinity, assignment.endAt));
     // Per-person overlap against everything already on the board (warn only).
     for (const person of assignment.people) {
@@ -554,8 +647,16 @@ export function slotFixtures(input: SlotInput): SlotResult {
         start = earliestOnCourt(court, lb, durMs, gapMs, horizon, bookings, blackouts);
         if (start === null) break;
         const clash = personBlocked(f, start) ?? blockModeBlocked(start);
-        if (clash === null) break;
-        lb = Math.max(clash.endAt, start + 1);
+        if (clash !== null) {
+          lb = Math.max(clash.endAt, start + 1);
+          start = null;
+          continue;
+        }
+        // Typed-rule rejection (#463), on the same repair budget. The bound is
+        // strictly greater than `start`, so the loop always makes progress.
+        const bound = nextAcceptableStart(f, start);
+        if (bound === null) break;
+        lb = bound;
         start = null;
       }
       if (start === null) continue;
