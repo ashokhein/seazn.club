@@ -135,44 +135,10 @@ export async function patchPerson(auth: AuthCtx, id: string, patch: PatchPerson)
   });
 }
 
-/**
- * Merge `duplicateId` into `id` (dedupe, doc 08 §3): repoint memberships,
- * lineups and profiles, then delete the duplicate. Score events reference
- * users, not persons — untouched.
- */
-export async function mergePersons(
-  auth: AuthCtx,
-  id: string,
-  duplicateId: string,
-): Promise<PersonRow> {
-  if (id === duplicateId) throw new HttpError(422, "cannot merge a person into itself");
-  return withTenant(auth.orgId, async (tx) => {
-    const [target] = await tx<PersonRow[]>`select ${tx(COLS)} from persons where id = ${id}`;
-    if (!target) throw new HttpError(404, "person not found");
-    const [dup] = await tx`select 1 from persons where id = ${duplicateId}`;
-    if (!dup) throw new HttpError(404, "duplicate person not found");
-
-    // Repoint where the target isn't already present; drop the remainder.
-    await tx`
-      update entrant_members set person_id = ${id}
-      where person_id = ${duplicateId}
-        and entrant_id not in (select entrant_id from entrant_members where person_id = ${id})`;
-    await tx`delete from entrant_members where person_id = ${duplicateId}`;
-    await tx`
-      update lineups set person_id = ${id}
-      where person_id = ${duplicateId}
-        and (fixture_id, entrant_id) not in
-            (select fixture_id, entrant_id from lineups where person_id = ${id})`;
-    await tx`delete from lineups where person_id = ${duplicateId}`;
-    await tx`
-      update player_profiles set person_id = ${id}
-      where person_id = ${duplicateId}
-        and sport_key not in (select sport_key from player_profiles where person_id = ${id})`;
-    await tx`delete from player_profiles where person_id = ${duplicateId}`;
-    await tx`delete from persons where id = ${duplicateId}`;
-    return target;
-  });
-}
+// The merge lives in person-merge.ts (#404). It used to end here with
+// `delete from persons where id = duplicateId`, which cascade-destroyed the
+// absorbed person's discipline history, stats, club membership, account claim
+// and RSVPs; it now tombstones instead, and is reversible.
 
 export async function getProfile(auth: AuthCtx, personId: string, sportKey: string): Promise<unknown> {
   return withTenant(auth.orgId, async (tx) => {
