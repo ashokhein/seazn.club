@@ -247,7 +247,13 @@ export interface RegistrationRow {
   guardian_name: string | null;
   guardian_consent: boolean;
   answers: Record<string, unknown>;
-  roster: { name: string; dob?: string | null; squad_number?: number | null }[];
+  roster: { name: string; dob?: string | null; squad_number?: number | null; self?: boolean }[];
+  /** #402 — the registrant's account, captured only under an explicit
+   *  "I'm registering myself" with no guardian involvement. Null for every
+   *  anonymous, guardian and organiser-side entry. Its presence IS the record
+   *  that the affirmation was given, and it is what `materialise` resolves the
+   *  player-lane person on. */
+  user_id: string | null;
   amount_cents: number;
   currency: string | null;
   /** The platform-fee rate this card charge used, frozen at checkout creation
@@ -279,7 +285,8 @@ const REG_COLS = [
   "answers", "roster", "amount_cents", "currency", "fee_percent", "payment_method",
   "checkout_session_id", "payment_intent_id", "refunded_cents", "refunded_at",
   "expires_at", "reminded_at", "offline_marked_paid_at", "disputed_at",
-  "dispute_id", "entrant_id", "promoted_at", "withdrawn_at", "locale", "created_at",
+  "dispute_id", "entrant_id", "promoted_at", "withdrawn_at", "locale", "user_id",
+  "created_at",
 ] as const;
 
 const SETTINGS_COLS = [
@@ -786,7 +793,7 @@ export async function submitRegistration(
   compSlug: string,
   input: PublicRegisterRequest,
   origin: string,
-  opts?: { locale?: Locale | null },
+  opts?: { locale?: Locale | null; sessionUserId?: string | null },
 ): Promise<SubmitResult> {
   const ctx = await divisionCtx(sql, input.division_id);
   if (
@@ -827,6 +834,16 @@ export async function submitRegistration(
 
   const answers = validateAnswers(settings.form_fields ?? [], input.answers);
   const secret = mintRegistrationToken();
+
+  // #402 — the session is captured ONLY under an explicit affirmation with no
+  // guardian involvement. A signed-in guardian registering two children shares
+  // one user_id, so an inferred link would merge siblings exactly as
+  // contact_email would. The veto lives here, server-side, so a forged request
+  // cannot reach the person resolver.
+  const linkUserId =
+    opts?.sessionUserId && input.registering_self && !input.guardian_name && !input.guardian_consent
+      ? opts.sessionUserId
+      : null;
 
   // Payment path is the division's choice (spec §3): offline entries are
   // accepted immediately with the organiser's instructions; card entries mint
@@ -885,7 +902,7 @@ export async function submitRegistration(
                 (division_id, status, ref_code, display_name, contact_email, dob, gender,
                  guardian_name, guardian_consent, privacy_consent_at, privacy_consent_version,
                  answers, roster, amount_cents, currency,
-                 payment_method, expires_at, access_token_hash, locale)
+                 payment_method, expires_at, access_token_hash, locale, user_id)
               values
                 (${input.division_id}, ${waitlisted ? "waitlisted" : "pending"}, ${ref},
                  ${input.display_name}, ${input.contact_email}, ${input.dob ?? null},
@@ -897,7 +914,8 @@ export async function submitRegistration(
                  ${settings.payment_method},
                  ${useStripe && !waitlisted ? sp`now() + interval '48 hours'` : null},
                  ${hashRegistrationToken(secret)},
-                 ${captureRegistrantLocale(opts?.locale ?? null, ctx.default_locale)})
+                 ${captureRegistrantLocale(opts?.locale ?? null, ctx.default_locale)},
+                 ${linkUserId})
               returning ${sql(REG_COLS as unknown as string[])}`;
             return r;
           })) as unknown as RegistrationRow;

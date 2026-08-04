@@ -1076,6 +1076,12 @@ export const PublicRegisterRequest = z.object({
   guardian_consent: z.boolean().default(false),
   /** GDPR (spec 2026-07-14): explicit agreement to store/process the form's PII. */
   privacy_consent: z.boolean().default(false),
+  /** #402 — the registrant affirms this entry is for THEMSELVES. Only then may
+   *  the session be captured. Never inferred from being signed in: a guardian,
+   *  spouse or team captain is signed in too. Optional, not defaulted: absent
+   *  and false mean the same safe thing (no link), and every existing caller
+   *  keeps compiling. */
+  registering_self: z.boolean().optional(),
   answers: z.record(z.string(), z.unknown()).default({}),
   // Team registrations may include a squad roster (typed or imported). Ignored
   // for individual/pair entrants.
@@ -1085,6 +1091,8 @@ export const PublicRegisterRequest = z.object({
         name: z.string().min(1).max(120),
         dob: z.iso.date().nullish(),
         squad_number: z.number().int().min(0).max(999).nullish(),
+        /** #402 — the submitter declaring which roster row is them. At most one. */
+        self: z.boolean().optional(),
       }),
     )
     .max(50)
@@ -1092,6 +1100,25 @@ export const PublicRegisterRequest = z.object({
   /** Honeypot (v3/05 §4): hidden on the real form; bots that fill it get a
    *  generic rejection in the route before any work happens. */
   website: z.string().max(200).optional(),
+}).superRefine((v, ctx) => {
+  // #402 — the self-declaration must be coherent before it reaches the person
+  // resolver: one roster row at most, and never without the affirmation that
+  // authorises capturing the session at all.
+  const selves = v.players.filter((p) => p.self).length;
+  if (selves > 1) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["players"],
+      message: "Only one roster entry may be marked as yourself",
+    });
+  }
+  if (selves > 0 && !v.registering_self) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["players"],
+      message: "Marking a roster entry as yourself requires registering_self",
+    });
+  }
 });
 export type PublicRegisterRequest = z.infer<typeof PublicRegisterRequest>;
 
