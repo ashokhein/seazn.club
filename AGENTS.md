@@ -38,6 +38,23 @@ someone else's lane. Overlap → sequential, or `isolation: "worktree"`.
 **Never accept "done, tests pass"** without the raw counts pasted back.
 Rerun the gate yourself at the wave boundary.
 
+## Environment setup
+
+Standing up a local environment — a fresh DB, a worktree, a prod server
+for smoke or e2e — has an ordered recipe, and several of the obvious
+shortcuts return HTTP 200 or exit 0 while serving, testing or compiling
+the wrong thing. **Follow the `seazn-local-env` skill**
+(`~/.claude/skills/seazn-local-env/SKILL.md` — invoke it with the Skill
+tool, or just read the file; it is machine-local, so a fresh clone on
+another machine will not have it). Its §5 also lists the environmental
+red signatures here, so an environment fault is not reported as a defect.
+
+The two that cost the most, if you read nothing else: `db:apply` alone is
+NOT a fresh schema (it needs `sync:sports`, or `funnel.test.ts` fails
+`expected 'generic' to be 'badminton'`), and a `pg_ctl` that fails with
+"Address already in use" is followed by a `createdb` that SUCCEEDS —
+against another session's server. Confirm `show data_directory` is yours.
+
 ## Verification traps in this repo
 
 Tool wrappers here lie in specific, repeatable ways. Assume these
