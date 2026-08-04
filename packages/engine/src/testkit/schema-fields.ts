@@ -140,8 +140,16 @@ function segmentsOf(path: string): string[] {
 function presentAt(value: unknown, segments: readonly string[]): boolean {
   if (segments.length === 0) return value !== undefined;
   const [head, ...rest] = segments as [string, ...string[]];
+  // `[]` means "descend into the members". `walk` emits it for arrays, tuples
+  // AND records — and a record is WRITTEN as an object, so testing only
+  // `Array.isArray` made every record path unreachable by construction. That is
+  // not a hypothetical: `suspensions.classes` is a `z.record` on the period
+  // kernel, so `suspensions.classes[].pim` reported uncovered for ice hockey
+  // and hockey while the frozen cfg pinned all three of its leaves.
   if (head === "[]") {
-    return Array.isArray(value) && value.some((item) => presentAt(item, rest));
+    if (Array.isArray(value)) return value.some((item) => presentAt(item, rest));
+    if (typeof value !== "object" || value === null) return false;
+    return Object.values(value as Record<string, unknown>).some((item) => presentAt(item, rest));
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   if (!Object.hasOwn(value, head)) return false;
@@ -153,4 +161,71 @@ function presentAt(value: unknown, segments: readonly string[]): boolean {
  *  a JSON round-trip through the corpus would drop the key. */
 export function fieldPresent(payload: unknown, path: string): boolean {
   return presentAt(payload, segmentsOf(path));
+}
+
+// ------------------------------------------------------------ value walking
+//
+// T2 (#425 follow-up) — the STATE half of the additive tripwire.
+//
+// `SportModule<Cfg, Ev, State>` declares `configSchema` and `eventSchema` but
+// NO `stateSchema`: every state shape is a plain TS interface, built by `init`
+// and `apply` and never validated at runtime. So `optionalFieldPaths` has
+// nothing to walk for state, and the declared-vs-written comparison the payload
+// half runs cannot be reproduced from a schema. What the corpus DOES have is
+// the state itself — `GoldenStream.states` is `JSON.stringify` of the fold
+// after every event — so the paths come from the recorded VALUES instead.
+//
+// The grammar is deliberately the same as `optionalFieldPaths`: dotted keys,
+// `[]` for "descend into the members". A caller that walks both can compare
+// them without a translation step.
+
+export interface ValueWalkOptions {
+  /** Object keys rendered as `[]` instead of as themselves. A recorded state
+   *  cannot say which of its objects are RECORDS (person id → runs) and which
+   *  are structs (`{home, away}`), and keying a record by its ids turns lineup
+   *  data into schema paths: cricket's `innings[].fine.batterRuns` alone
+   *  contributed 22 person-keyed paths that say nothing about any field. */
+  collapse?: ReadonlySet<string>;
+  /** Keys dropped at the ROOT of the walk. The state walk drops `cfg`, which
+   *  the config half of the tripwire owns and which would otherwise double-count
+   *  every declared knob as a state path. */
+  omit?: ReadonlySet<string>;
+}
+
+function walkValue(
+  value: unknown,
+  prefix: string,
+  out: Set<string>,
+  collapse: ReadonlySet<string>,
+  depth: number,
+): void {
+  if (depth > 12) return; // no engine state nests anywhere near this deep
+  if (Array.isArray(value)) {
+    for (const item of value) walkValue(item, `${prefix}[]`, out, collapse, depth + 1);
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  for (const [key, member] of Object.entries(value as Record<string, unknown>)) {
+    if (member === undefined) continue; // a JSON round-trip drops the key
+    const path = collapse.has(key) ? `${prefix}[]` : prefix === "" ? key : `${prefix}.${key}`;
+    out.add(path);
+    walkValue(member, path, out, collapse, depth + 1);
+  }
+}
+
+/** Every dotted path a VALUE writes, sorted. A leaf counts however falsy it is
+ *  — `null`, `0` and `false` are recorded facts about the shape — and an empty
+ *  array contributes only its own key, because no element wrote anything. */
+export function valueFieldPaths(value: unknown, options: ValueWalkOptions = {}): string[] {
+  const collapse = options.collapse ?? new Set<string>();
+  const out = new Set<string>();
+  const omit = options.omit;
+  const root =
+    omit === undefined || typeof value !== "object" || value === null || Array.isArray(value)
+      ? value
+      : Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).filter(([key]) => !omit.has(key)),
+        );
+  walkValue(root, "", out, collapse, 0);
+  return [...out].sort();
 }

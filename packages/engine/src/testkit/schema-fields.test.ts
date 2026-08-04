@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { football } from "../sports/football/index.ts";
-import { fieldPresent, optionalFieldPaths } from "./schema-fields.ts";
+import { fieldPresent, optionalFieldPaths, valueFieldPaths } from "./schema-fields.ts";
 
 describe("optionalFieldPaths", () => {
   it("reports a strictObject's optional keys and none of its required ones", () => {
@@ -133,5 +133,101 @@ describe("fieldPresent", () => {
     expect(fieldPresent("minute", "minute")).toBe(false);
     expect(fieldPresent(null, "minute")).toBe(false);
     expect(fieldPresent({ at: "H1" }, "at.period")).toBe(false);
+  });
+
+  // T2 (#425 follow-up). `optionalFieldPaths` emits the SAME `[]` segment for a
+  // `z.record` as for an array, but a record is written as an OBJECT — so
+  // `suspensions.classes[].pim` was unreachable for every recorded config and
+  // the ice-hockey/hockey suspension classes read as uncovered while the frozen
+  // cfg pinned them all along.
+  it("finds a key on ANY VALUE of a record segment, which is written as an object", () => {
+    const classes = { minor: { minutes: 2 }, misconduct: { minutes: 10, pim: 10 } };
+    expect(fieldPresent({ classes }, "classes[].pim")).toBe(true);
+    expect(fieldPresent({ classes: { minor: { minutes: 2 } } }, "classes[].pim")).toBe(false);
+    expect(fieldPresent({ classes: {} }, "classes[].pim")).toBe(false);
+  });
+
+  it("still refuses a record segment whose value is a scalar", () => {
+    expect(fieldPresent({ classes: { minor: 2 } }, "classes[].pim")).toBe(false);
+  });
+});
+
+// --------------------------------------------------------------- valueFieldPaths
+//
+// T2 (#425 follow-up) — the STATE half of the tripwire has no schema to walk
+// (`SportModule<Cfg, Ev, State>` declares no `stateSchema`; every state shape is
+// a plain TS interface never validated at runtime), so its paths come from the
+// recorded VALUES instead. Same dotted grammar as `optionalFieldPaths`, so the
+// two halves are comparable.
+
+describe("valueFieldPaths", () => {
+  it("dots every key of a nested object", () => {
+    expect(valueFieldPaths({ phase: "H1", goals: { home: 1, away: 0 } })).toEqual([
+      "goals",
+      "goals.away",
+      "goals.home",
+      "phase",
+    ]);
+  });
+
+  it("descends into array elements with a [] segment, pooling across elements", () => {
+    const value = { cards: [{ color: "yellow" }, { color: "red", at: { period: "H2" } }] };
+    expect(valueFieldPaths(value)).toEqual([
+      "cards",
+      "cards[].at",
+      "cards[].at.period",
+      "cards[].color",
+    ]);
+  });
+
+  it("emits nothing for an empty array — an absent element writes no path", () => {
+    expect(valueFieldPaths({ cards: [] })).toEqual(["cards"]);
+  });
+
+  it("keeps a null leaf as a written path", () => {
+    // `outcome: null` is a recorded fact about the shape, not an absence.
+    expect(valueFieldPaths({ outcome: null })).toEqual(["outcome"]);
+  });
+
+  it("collapses a collapsed key into [], so a person-keyed record is one path", () => {
+    const value = { batterRuns: { "H-p1": 12, "A-p3": 4 } };
+    expect(valueFieldPaths(value, { collapse: new Set(["H-p1", "A-p3"]) })).toEqual([
+      "batterRuns",
+      "batterRuns[]",
+    ]);
+  });
+
+  it("collapses side keys so a home/away asymmetry is not reported as a gap", () => {
+    // `squads.home` and `squads.away` are the same shape by construction; keying
+    // them apart would make "the seed sin-binned an away player, not a home one"
+    // read as a missing field.
+    const collapse = new Set(["home", "away"]);
+    const homeOnly = { squads: { home: { sinBin: [{ person: "p1" }] }, away: {} } };
+    const awayOnly = { squads: { home: {}, away: { sinBin: [{ person: "p1" }] } } };
+    expect(valueFieldPaths(homeOnly, { collapse })).toEqual(
+      valueFieldPaths(awayOnly, { collapse }),
+    );
+    expect(valueFieldPaths(homeOnly, { collapse })).toContain("squads[].sinBin[].person");
+  });
+
+  it("is sorted and deduped, so two streams' sets diff as sets", () => {
+    const paths = valueFieldPaths({ b: 1, a: { z: 1, y: 2 } });
+    expect(paths).toEqual([...new Set(paths)].sort());
+  });
+
+  it("reports nothing for a scalar or a null root", () => {
+    expect(valueFieldPaths(null)).toEqual([]);
+    expect(valueFieldPaths(7)).toEqual([]);
+  });
+
+  it("omits the keys named in `omit`, at the ROOT only", () => {
+    // The state walk drops `cfg`: the config half of the tripwire owns it, and
+    // leaving it in would double-count every knob as a state path.
+    const value = { cfg: { setTo: 25 }, phase: "live", inner: { cfg: 1 } };
+    expect(valueFieldPaths(value, { omit: new Set(["cfg"]) })).toEqual([
+      "inner",
+      "inner.cfg",
+      "phase",
+    ]);
   });
 });
