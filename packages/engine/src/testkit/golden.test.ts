@@ -19,6 +19,7 @@ import {
   REBASELINE_GOLDEN,
   UPDATE_GOLDEN,
   buildCorpus,
+  declaredOptionalFields,
   eventTypesIn,
   extendCorpus,
   payloadParseFailures,
@@ -26,8 +27,10 @@ import {
   rebaselineCorpus,
   recomputeStream,
   sportPayloads,
+  staleUnreachableFields,
   stateMismatch,
   tierEventTypes,
+  uncoveredTierFields,
   uncoveredTierTypes,
   writeCorpus,
 } from "./golden.ts";
@@ -43,10 +46,11 @@ if (UPDATE_GOLDEN) {
     }
   });
 } else if (EXTEND_GOLDEN) {
-  // Coverage extension (#429 / W4 review item 3). APPENDS streams that reach
-  // the fidelity-tier event types no recorded stream ever exercised; every
-  // existing stream is preserved byte for byte, which the assertion below is
-  // the whole point of.
+  // Coverage extension (#429 / W4 review item 3, widened by W4a T10). APPENDS
+  // streams that reach the fidelity-tier event types no recorded stream ever
+  // exercised AND the optional payload fields no recorded stream ever wrote;
+  // every existing stream is preserved byte for byte, which the assertion below
+  // is the whole point of.
   describe("golden corpus coverage extension (EXTEND_GOLDEN=1)", () => {
     for (const module of builtinModules) {
       it(`extends ${module.key} without replacing anything`, () => {
@@ -141,19 +145,16 @@ if (UPDATE_GOLDEN) {
       // record; every one of those types has to be in the corpus or the
       // back-compat tripwire simply does not cover it.
       //
-      // LIMIT (W4 review) — this is TYPE coverage, not FIELD coverage, and one
-      // recorded event of a type satisfies it. That is enough to red a new
-      // REQUIRED field on the branch (the recorded payload stops parsing) and
-      // nothing more: a narrowed enum, a tightened `min`, or a dropped optional
-      // key reds only if some recorded payload actually carries the value. It
-      // did not: `converted: false` was dropped from the hockey and icehockey
-      // corpora during the W4 rename with nothing put back, leaving one set
-      // piece per period sport with `outcome` ABSENT — so no AttemptOutcome
-      // token was covered at all and `scored` never incremented in any replay.
-      // Widening the assertion to fields would mean declaring, per module,
-      // which payload values matter; until someone does, extend the CORPUS so
-      // the tokens are present, and read a green here as "every type appears",
-      // not "every branch is pinned".
+      // LIMIT — this is TYPE coverage, and one recorded event of a type
+      // satisfies it. That is enough to red a new REQUIRED field on the branch
+      // (the recorded payload stops parsing) and nothing more: a narrowed enum,
+      // a tightened `min`, or a renamed optional key reds only if some recorded
+      // payload actually carries the value. It did not: `converted: false` was
+      // dropped from the hockey and icehockey corpora during the W4 rename with
+      // nothing put back, leaving one set piece per period sport with `outcome`
+      // ABSENT — so no AttemptOutcome token was covered at all and `scored`
+      // never incremented in any replay. The FIELD assertion below is that
+      // second dimension (W4a T10); read a green HERE as "every type appears".
       it("records every event type the module declares in a fidelity tier", () => {
         const missing = uncoveredTierTypes(module, corpus);
         expect(
@@ -162,6 +163,45 @@ if (UPDATE_GOLDEN) {
             `corpus never exercises ${missing.length} of them, so a tightening of those ` +
             `branches would not red anything. Extend the corpus: ` +
             `EXTEND_GOLDEN=1 npx vitest run src/testkit/golden.test.ts`,
+        ).toEqual([]);
+      });
+
+      // W4a (#425) T10 — the FIELD dimension, and the one the wave's own
+      // deliverable was blind to. `at` was added to eleven modules and to every
+      // generator, and after the sanctioned EXTEND_GOLDEN pass 0 of football's
+      // 274 and 0 of icehockey's 148 recorded events carried it: both already
+      // covered every TYPE they declare, so `extendCorpus` appended nothing for
+      // them, and a generator that starts emitting a field does not
+      // retroactively reach a frozen corpus. Old payloads without `at` still
+      // fold byte-identically — that much was genuinely proven — but a FUTURE
+      // tightening (making `at` required, renaming it, reshaping `GameTime`,
+      // narrowing `DurationSeconds`) reddened nothing at all.
+      //
+      // LIMIT, and it is a real one: the paths are pooled across the whole event
+      // union, because its branches carry no discriminator (see
+      // `declaredOptionalFields`). A green here means SOME recorded payload
+      // writes the field, not that every branch declaring it has one.
+      it("writes every optional payload field the module's event union declares", () => {
+        const missing = uncoveredTierFields(module, corpus);
+        expect(
+          missing,
+          `${module.key} declares ${declaredOptionalFields(module).length} optional payload ` +
+            `fields and its corpus never writes ${missing.length} of them, so renaming, ` +
+            `reshaping or narrowing those fields would not red anything. Extend the corpus: ` +
+            `EXTEND_GOLDEN=1 npx vitest run src/testkit/golden.test.ts — and for a field no ` +
+            `seeded walk of arbitraryEvent can reach, add a COVERAGE_CONFIGS entry, or an ` +
+            `UNREACHABLE_FIELDS entry stating WHY it cannot be reached.`,
+        ).toEqual([]);
+      });
+
+      // The other half of that gate. An exemption that the ledger has since
+      // started writing is stale: it reads as a considered decision while
+      // suppressing nothing, which is how an allow-list rots into a rubber stamp.
+      it("allow-lists no optional field the corpus actually writes", () => {
+        expect(
+          staleUnreachableFields(module, corpus),
+          `${module.key}: UNREACHABLE_FIELDS claims these cannot be reached, but the ` +
+            `corpus writes them — delete the entries`,
         ).toEqual([]);
       });
 

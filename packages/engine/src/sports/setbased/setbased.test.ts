@@ -12,6 +12,12 @@ import { makeSetBasedModule } from "./kernel.ts";
 import { tabletennis } from "./tabletennis.ts";
 import { volleyball } from "./volleyball.ts";
 
+// W4a (#425) §3.3 — every fold below is PAD-SHAPED: it is building a stream
+// event by event, which is the write path. `strictFromSeq: 0` marks the whole
+// stream new and is therefore exactly the pre-seam behaviour. Only a real READ
+// path (apps/web fold.ts) and the cfg-replay property pass no options.
+const STRICT_ALL = { strictFromSeq: 0 } as const;
+
 type Side = "home" | "away";
 type Mod = ReturnType<typeof makeSetBasedModule>;
 
@@ -46,7 +52,7 @@ function rallyMatch(mod: Mod, winners: Side[]): EventEnvelope[] {
 }
 
 function fold(mod: Mod, cfg: SetBasedCfg, events: EventEnvelope[]): SetBasedState {
-  return foldMatch(mod, cfg, lineups(mod), events) as SetBasedState;
+  return foldMatch(mod, cfg, lineups(mod), events, STRICT_ALL) as SetBasedState;
 }
 
 // ---------------------------------------------------------------------------

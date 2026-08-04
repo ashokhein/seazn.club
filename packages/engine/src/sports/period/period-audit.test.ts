@@ -31,6 +31,12 @@ import {
   type PeriodState,
 } from "./kernel.ts";
 
+// W4a (#425) §3.3 — every fold below is PAD-SHAPED: it is building a stream
+// event by event, which is the write path. `strictFromSeq: 0` marks the whole
+// stream new and is therefore exactly the pre-seam behaviour. Only a real READ
+// path (apps/web fold.ts) and the cfg-replay property pass no options.
+const STRICT_ALL = { strictFromSeq: 0 } as const;
+
 const iceLineups = defaultLineupPair(icehockey.positions);
 const fihLineups = defaultLineupPair(hockey.positions);
 const IH = iceLineups.home.entrantId;
@@ -48,12 +54,12 @@ function foldIce(events: ModuleEvent[], variant?: string): PeriodState {
   const cfg = icehockey.configSchema.parse(
     variant === undefined ? {} : icehockey.variants[variant],
   );
-  return foldMatch(icehockey, cfg, iceLineups, envelopes(events)) as PeriodState;
+  return foldMatch(icehockey, cfg, iceLineups, envelopes(events), STRICT_ALL) as PeriodState;
 }
 
 function foldFih(events: ModuleEvent[], variant?: string): PeriodState {
   const cfg = hockey.configSchema.parse(variant === undefined ? {} : hockey.variants[variant]);
-  return foldMatch(hockey, cfg, fihLineups, envelopes(events)) as PeriodState;
+  return foldMatch(hockey, cfg, fihLineups, envelopes(events), STRICT_ALL) as PeriodState;
 }
 
 const iceGoal = (by: string, extra?: Record<string, unknown>): ModuleEvent => ({
@@ -361,7 +367,13 @@ describe("W4 audit — awarded vs converted set pieces", () => {
   // that records a different awarded restart had no way to say so.
   describe("the allowed kinds are configuration, not a compile-time constant", () => {
     const foldWith = (cfgRaw: unknown, events: ModuleEvent[]): PeriodState =>
-      foldMatch(hockey, hockey.configSchema.parse(cfgRaw), fihLineups, envelopes(events)) as PeriodState;
+      foldMatch(
+        hockey,
+        hockey.configSchema.parse(cfgRaw),
+        fihLineups,
+        envelopes(events),
+        STRICT_ALL,
+      ) as PeriodState;
 
     it("defaults to the kinds the preset declares", () => {
       expect(hockey.configSchema.parse({}).setPieceKinds).toEqual(["pc", "stroke"]);

@@ -159,10 +159,18 @@ coarse scoring must stay legal.
 
 ---
 
-**Row counts:** 36 modelled, 17 extended, 11 deferred (64 rows).
+| Where in the match an event happened (the position axis) | all | — | `SportModule.position(state)` -> `innings` + `over` segments, e.g. `Innings 2 . Over 12.3` | extended | W4a T6b. A **read-side projection**, never a payload: a `MatchPosition` on every stamped event was considered this wave and rejected, because position is derivable from state the fold already computes and recording it would create a recorded value and a derived value of the same type that can silently disagree — the `DisciplineCard.entrantSide` shape. A wrong recorded value is in the hash-chained ledger forever; a wrong projection is one deploy away from fixed. Ordered segments rather than a display string, so W8 can drop a segment for a 375px scorebug, localise each `key` and order two positions in one match; `formatPosition` is the plain-text path. Nothing is materialised into state, so every frozen golden is byte-identical. The over comes from `legalBalls` and ONLY from `legalBalls`. An innings also carries `extras`, an integer on the same object that also counts deliveries, and only one of the two is the over reading — three wides into an over and the scoreboard still says 0.3. The super over CONTINUES the innings count rather than restarting at 1, because its innings are the third and fourth of the match and restarting would send position backwards mid-fixture. `oversText` is the module's own notation, shared with `summary`, so an over is spelled one way everywhere. |
+
+**Row counts:** 36 modelled, 18 extended, 11 deferred (65 rows).
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Downstream owed
+
+- **Position labels owed in all four locale dictionaries** (W4a T6b): `scoring.position.innings`, `scoring.position.over`.
+  `SportModule.position` returns a stable segment `key` plus an ENGLISH `label`
+  fallback — the engine writes no locale copy, by the same rule `MetricSpec.label`
+  follows. W8 renders `scoring.position.<key>` and falls back to `label`. Both values stay locale-neutral numerals; only the noun is looked up.
+  Deliberately NOT written by this task, which touches no dictionary.
 
 Recorded, not acted on.
 

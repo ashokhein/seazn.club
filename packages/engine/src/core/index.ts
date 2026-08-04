@@ -4,4 +4,6 @@ export * from "./events.ts";
 export * from "./types.ts";
 export * from "./errors.ts";
 export * from "./clock.ts";
+export * from "./time.ts";
+export * from "./position.ts";
 export * from "./rng.ts";

@@ -52,10 +52,13 @@ Schema-path prefixes: `Ev.` = event payload branch, `Cfg.` = config,
 | Abandonment | all | entrant | `core.abandon` → `outcome.no_result` | modelled | completed games recorded, shared points |
 | Match (standings) points | all | entrant | `Cfg.points.{win,draw,loss}` | modelled | |
 | Ledger: games / boards / raw points for the ratio tie-breaks | all | entrant | `metrics.{sets_won,boards_won,points_won,…}` | modelled | games ride the `sets_*` keys, boards feed `board_ratio` |
-| Time limit per board or per game | all | — | — | deferred | ICF club play is untimed; a shot/board clock needs a product decision and a live timer the engine does not own |
+| Time limit per board or per game | all | — | — | deferred | ICF club play is untimed, so there is no control to record — carrom gets **no** equivalent of boardgame's `Cfg.clock` (and none of W4a's `delay`). A shot/board clock still needs a product decision, and by the W4a split the *ticking* would be the pad's half regardless |
+| When during the match a recorded fact happened (`at`) | all | — | — | deferred | **no `at` stamp this wave, deliberately.** W4a's ruling is that `at` records only what the fold cannot derive. Carrom has no phases to stamp against, and where the match stood is already positional: the game and **board index** in `State.games[].boards[]`, derivable from the event order |
 | Which side plays white coins / black coins | all | entrant | — | deferred | Law 43 gives white to the breaker, so it is derivable from `firstBreak` + the alternation already in state; storing it would duplicate state |
 
-**Row counts:** 17 modelled, 5 extended, 6 deferred (28 rows).
+| Where in the match an event happened (the position axis) | all | — | `SportModule.position(state)` -> `game` + `board` segments, e.g. `Game 2 . Board 3` | extended | W4a T6b. A **read-side projection**, never a payload: a `MatchPosition` on every stamped event was considered this wave and rejected, because position is derivable from state the fold already computes and recording it would create a recorded value and a derived value of the same type that can silently disagree — the `DisciplineCard.entrantSide` shape. A wrong recorded value is in the hash-chained ledger forever; a wrong projection is one deploy away from fixed. Ordered segments rather than a display string, so W8 can drop a segment for a 375px scorebug, localise each `key` and order two positions in one match; `formatPosition` is the plain-text path. Nothing is materialised into state, so every frozen golden is byte-identical. `bankGame` opens the next game only while the match is still open, so `State.games.length` is exactly games STARTED and never a phantom. The BOARD's liveness is the GAME's, not the match's: gating it on the match sent the board backwards on a fixture abandoned mid-board, since the board was in progress and stays the last place anything happened. |
+
+**Row counts:** 17 modelled, 6 extended, 7 deferred (30 rows).
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## The discipline projection, and how it resolves the offending side
@@ -94,6 +97,12 @@ moved — it is a *scoring* record, not a discipline one, and the two answer
 different questions.
 
 ## Downstream owed
+
+- **Position labels owed in all four locale dictionaries** (W4a T6b): `scoring.position.game`, `scoring.position.board`.
+  `SportModule.position` returns a stable segment `key` plus an ENGLISH `label`
+  fallback — the engine writes no locale copy, by the same rule `MetricSpec.label`
+  follows. W8 renders `scoring.position.<key>` and falls back to `label`. Both values stay locale-neutral numerals; only the noun is looked up.
+  Deliberately NOT written by this task, which touches no dictionary.
 
 Recorded, not acted on:
 

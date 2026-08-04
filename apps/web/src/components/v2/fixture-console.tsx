@@ -23,6 +23,7 @@ import { FootballPad } from "@/components/v2/pads/football-pad";
 import { CricketPad } from "@/components/v2/pads/cricket-pad";
 import { PadSuspensionBanner } from "@/components/discipline/pad-suspension-banner";
 import { useMsg } from "@/components/i18n/dict-provider";
+import { scoringErrorText } from "@/lib/scoring-vocab";
 import type { MessageKey } from "@/lib/messages";
 
 type Msg = (key: MessageKey, vars?: Record<string, string | number>) => string;
@@ -287,7 +288,14 @@ export function FixtureConsole({
         } else if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
           setPaywallFeature(String(err.extra.feature_key ?? ""));
         } else {
-          setError(err instanceof Error ? err.message : msg("score.failed"));
+          // #427: an EngineError's message is the engine's own English and the
+          // envelope carries it through ApiV1Error — localize by code first.
+          setError(scoringErrorText(
+            err instanceof ApiV1Error ? err.code : null,
+            err instanceof Error ? err.message : null,
+            msg,
+            "score.failed",
+          ));
         }
         return false;
       } finally {

@@ -7,8 +7,9 @@
 // `scoring.strike_by_strike`), see CarromStrike below.
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
-import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
+import { isStrictFold, resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
+import { currentUnit, unitNumber, unitSegment, type MatchPosition } from "../../core/position.ts";
 import {
   EntrantId,
   type DisciplineCard,
@@ -169,6 +170,41 @@ export interface CarromState {
   // one names a player (golden-safe).
   penalties?: CarromPenalty[];
 }
+
+
+/**
+ * W4a (#425) T6b — "Game 2 · Board 3", the cross-sport position axis.
+ *
+ * Both numbers go through `currentUnit`, and the BOARD's liveness is the open
+ * game's, not the match's: a board is in progress only while the game it
+ * belongs to is open. `boards` holds boards already BANKED, so the one being
+ * played is `length + 1` while that holds and `length` once the game is won or
+ * drawn — otherwise a match won on board 5 reports "Board 6", a board nobody
+ * played, on every match report for that fixture.
+ */
+function carromPosition(state: CarromState): MatchPosition {
+  const live = state.outcome === null;
+  const gameNumber = unitNumber({
+    // `bankGame` opens the next game only while the match is still open, so
+    // `games.length` is exactly "games started" and never a phantom.
+    started: state.games.length,
+    completed: state.games.filter((game) => game.winner !== null).length,
+    live,
+  });
+  const game = state.games[gameNumber - 1];
+  // The BOARD's liveness is the GAME's, not the match's. Gating it on `live`
+  // sent the board backwards on a match abandoned mid-board — the board was in
+  // progress, and it stays the last place anything happened. (Found by the
+  // conformance suite's monotonicity property, not by a hand-written case.)
+  const boardLive = game === undefined || game.winner === null;
+  return {
+    segments: [
+      unitSegment("game", "Game", gameNumber),
+      unitSegment("board", "Board", currentUnit(game?.boards.length ?? 0, boardLive)),
+    ],
+  };
+}
+
 
 function opponent(side: Side): Side {
   return side === "home" ? "away" : "home";
@@ -334,12 +370,23 @@ function applyBoard(state: CarromState, payload: CarromBoardSummary): CarromStat
   return settle(next, index);
 }
 
-function applyAdjust(state: CarromState, payload: CarromGameAdjust): CarromState {
+function applyAdjust(
+  state: CarromState,
+  payload: CarromGameAdjust,
+  strict: boolean,
+): CarromState {
   if (state.phase !== "live") wrongPhase(`adjustment not allowed in phase "${state.phase}"`);
   const side = sideOf(state, payload.entrantId);
   const { game, index } = openGame(state);
-  const score = game.score[side] + payload.delta;
-  if (score < 0) invalid("adjustment would take the game score below zero", { score });
+  const raw = game.score[side] + payload.delta;
+  // STRICT ONLY (§3.3 seam). The running score this delta is applied to is a
+  // PROJECTION of cfg — flipping `queenFollowsBoard` or lowering `queenCapAt`
+  // rescores every board — so a correction that was legal when the umpire keyed
+  // it can go negative on replay under an edited config, with no event to void.
+  // Clamped rather than refused: a carrom score cannot be negative, and a state
+  // that renders is worth more than an error page.
+  if (strict && raw < 0) invalid("adjustment would take the game score below zero", { score: raw });
+  const score = Math.max(0, raw);
   const updated: CarromGameState = { ...game, score: { ...game.score, [side]: score } };
   const penalties =
     payload.person === undefined
@@ -501,7 +548,7 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
     };
   },
 
-  apply(state, ev: EventEnvelope<CarromEv | CoreEv>): CarromState {
+  apply(state, ev: EventEnvelope<CarromEv | CoreEv>, ctx): CarromState {
     switch (ev.type) {
       case "core.start":
         if (state.phase !== "pre") wrongPhase("already started");
@@ -515,7 +562,7 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
       case "carrom.board.summary":
         return applyBoard(state, parsePayload(CarromBoardSummary, ev.payload, ev.type));
       case "carrom.game.adjust":
-        return applyAdjust(state, parsePayload(CarromGameAdjust, ev.payload, ev.type));
+        return applyAdjust(state, parsePayload(CarromGameAdjust, ev.payload, ev.type), isStrictFold(ctx));
       case "carrom.strike":
         // Reserved fine fidelity — carrom.md §6, key `scoring.strike_by_strike`.
         return invalid("carrom.strike is reserved and not yet implemented");
@@ -537,6 +584,9 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
   outcome: (state) => state.outcome,
 
   // §9.5 — defined at every prefix; boards render like sets (carrom.md §6).
+  // W4a (#425) T6b — the cross-sport position axis (see `carromPosition`).
+  position: carromPosition,
+
   summary(state): ScoreSummary {
     const current = state.games.find((game) => game.winner === null);
     const line = (side: Side): string => {

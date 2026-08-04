@@ -23,6 +23,12 @@ import type { LineupPair } from "../core/types.ts";
 import type { AnySportModule } from "../sport/module.ts";
 import { makeEnvelope } from "./helpers.ts";
 
+// W4a (#425) §3.3 — every fold below is PAD-SHAPED: it builds a stream event by
+// event, which is the write path. `strictFromSeq: 0` marks the whole stream new
+// and is therefore exactly the pre-seam behaviour. Only a real READ path
+// (apps/web fold.ts) and the cfg-replay property pass no options at all.
+const STRICT_ALL = { strictFromSeq: 0 } as const;
+
 /** How a stream's stoppage is shaped.
  *  - `matched`      — suspend … resume, play continues. The common case.
  *  - `unresumed`    — suspended and never restarted (the match record ends
@@ -64,7 +70,7 @@ function liveInjectionPoint(
 ): number {
   const live: number[] = [];
   for (let i = 1; i < base.length; i++) {
-    const state = foldMatch(module, cfg, lineups, base.slice(0, i));
+    const state = foldMatch(module, cfg, lineups, base.slice(0, i), STRICT_ALL);
     if (module.outcome(state) === null) live.push(i);
   }
   if (live.length === 0) return 0;

@@ -25,6 +25,27 @@ export const EngineErrorCode = z.enum([
   // PROMPT-03 — registry resolution (spec 03 §3 registry & versioning).
   "MODULE_NOT_FOUND",
   "MODULE_DUPLICATE",
+  // W4a (#425) §7 — the core time model. Appended, never reordered: the enum
+  // order is asserted in errors.test.ts and read by the API's code → HTTP map.
+  // A stamped event's `at` precedes the newest accepted stamp (spec §3.3).
+  "NON_MONOTONIC_TIME",
+  // `compareGameTime` (core/time.ts) received a period absent from the phase
+  // order it was handed. TWO call paths reach it, and naming only the first
+  // sent a reader looking in the wrong file: a module's own comparisons inside
+  // `apply()` (the sweep, release-on-goal), and the fold kernel's monotonic
+  // guard, which compares each stamp against the high-water mark. It is
+  // therefore a disagreement between two lists, never a scorer's typo — an
+  // `at.period` the module does not declare is refused earlier, by the fold, as
+  // INVALID_EVENT. Still a 422: it rejects one event, and paging the on-call
+  // gives the scorer nothing.
+  "UNKNOWN_PHASE",
+  // Expedite in force, `serving` recorded, and a 13-return rally credited to
+  // the serving side (spec §5.3). Thrown by `checkExpedite` in
+  // `sports/setbased/kernel.ts` — its only throw site.
+  "EXPEDITE_WRONG_WINNER",
+  // Football substitution beyond `subWindows` or `cfg.maxSubs` (spec §5.2).
+  // Declared here, thrown by the football module in a later task.
+  "SUB_WINDOW_EXCEEDED",
 ]);
 export type EngineErrorCode = z.infer<typeof EngineErrorCode>;
 

@@ -204,7 +204,19 @@ export async function appendEvent(
     // the ledger only ever holds valid events (spec 03 §2 guarantee 2).
     const stream = [...prior, candidate];
     const cfg = stageScopedCfg(division.config, stage?.config);
-    const state = foldMatch(sportModule, cfg, lineups, stream);
+    // W4a (#425) §3.3 — the strict-on-write seam. `cfg` above is rebuilt LIVE
+    // from `division.config` on every call, and every READ replays this same
+    // stream from `init`, so a refusal computed from cfg cannot tell "the
+    // scorer just typed a period this sport does not have" from "an organiser
+    // lowered bestOf after the match was scored". The first is fixable; the
+    // second has no event to void and would make the fixture permanently
+    // unviewable. `strictFromSeq` names the ONE event that is not yet in the
+    // ledger, so the candidate is validated in full and `prior` — which the
+    // ledger already accepted, under whatever cfg was in force then — is
+    // replayed. `fold.ts` and every other read path pass no options at all.
+    const state = foldMatch(sportModule, cfg, lineups, stream, {
+      strictFromSeq: candidate.seq,
+    });
     const summary = sportModule.summary(state);
     const outcome = sportModule.outcome(state);
     const active = resolveVoids(stream);

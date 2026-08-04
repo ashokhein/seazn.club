@@ -45,6 +45,11 @@ describe("EngineError", () => {
       // PROMPT-03 registry additions
       "MODULE_NOT_FOUND",
       "MODULE_DUPLICATE",
+      // W4a (#425) §7 core time model — appended last, existing order frozen
+      "NON_MONOTONIC_TIME",
+      "UNKNOWN_PHASE",
+      "EXPEDITE_WRONG_WINNER",
+      "SUB_WINDOW_EXCEEDED",
     ]);
   });
 });

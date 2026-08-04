@@ -8,6 +8,12 @@ import { buildStream, conformanceSuite, makeEnvelope } from "../../testkit/index
 import { cricket, type CricketBallEv, type CricketCfg, type CricketEv } from "./cricket.ts";
 import { dlsTarget, resources } from "./dls.ts";
 
+// W4a (#425) §3.3 — every fold below is PAD-SHAPED: it is building a stream
+// event by event, which is the write path. `strictFromSeq: 0` marks the whole
+// stream new and is therefore exactly the pre-seam behaviour. Only a real READ
+// path (apps/web fold.ts) and the cfg-replay property pass no options.
+const STRICT_ALL = { strictFromSeq: 0 } as const;
+
 // Eleven per side; batting order = orderNo (spec §2.7).
 function lineup(prefix: string): LineupPair["home"] {
   return {
@@ -26,7 +32,8 @@ const league: StageCtx = { kind: "league" };
 const t20: CricketCfg = cricket.configSchema.parse(
   cricket.variants.t20 as Record<string, unknown>,
 );
-const fold = (cfg: CricketCfg, events: EventEnvelope[]) => foldMatch(cricket, cfg, lineups, events);
+const fold = (cfg: CricketCfg, events: EventEnvelope[]) =>
+  foldMatch(cricket, cfg, lineups, events, STRICT_ALL);
 
 function stream(...specs: Array<[type: string, payload?: unknown]>): EventEnvelope[] {
   return specs.map(([type, payload], i) => makeEnvelope(i, { type, payload: payload ?? {} }));

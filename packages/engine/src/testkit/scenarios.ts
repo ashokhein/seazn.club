@@ -24,6 +24,12 @@ import type { SetBasedState } from "../sports/setbased/kernel.ts";
 import { defaultLineupPair, lineupFromCatalog, makeEnvelope } from "./helpers.ts";
 import { deriveSeed, SimInvariantError, SIM_CONFIGS } from "./simulation.ts";
 
+// W4a (#425) §3.3 — every fold below is PAD-SHAPED: it builds a stream event by
+// event, which is the write path. `strictFromSeq: 0` marks the whole stream new
+// and is therefore exactly the pre-seam behaviour. Only a real READ path
+// (apps/web fold.ts) and the cfg-replay property pass no options at all.
+const STRICT_ALL = { strictFromSeq: 0 } as const;
+
 // ---------------------------------------------------------------------------
 // Shared: walk a module's generator to a decided stream.
 // ---------------------------------------------------------------------------
@@ -92,7 +98,7 @@ export function runUndoStorm(module: AnySportModule, seed: number): UndoStormSta
 
     let state: unknown;
     try {
-      state = foldMatch(module, cfg, lineups, withVoid);
+      state = foldMatch(module, cfg, lineups, withVoid, STRICT_ALL);
     } catch (err) {
       if (!EngineError.is(err)) {
         throw new SimInvariantError(`${label(i, target.type)} fold threw non-EngineError: ${String(err)}`);
@@ -215,10 +221,16 @@ export function runBoundaryMatrices(): BoundaryMatrixStats[] {
     const lineups = defaultLineupPair(resolvePositions(matrix.module, cfg));
     let cases = 0;
     const fold = (events: ModuleEvent[]) =>
-      foldMatch(matrix.module, cfg, lineups, [
-        makeEnvelope(0, { type: "core.start", payload: {} }),
-        ...events.map((e, i) => ({ ...makeEnvelope(i + 1, e) })),
-      ]) as SetBasedState;
+      foldMatch(
+        matrix.module,
+        cfg,
+        lineups,
+        [
+          makeEnvelope(0, { type: "core.start", payload: {} }),
+          ...events.map((e, i) => ({ ...makeEnvelope(i + 1, e) })),
+        ],
+        STRICT_ALL,
+      ) as SetBasedState;
 
     for (const { score, ends } of matrix.cases) {
       const [h, a] = score;

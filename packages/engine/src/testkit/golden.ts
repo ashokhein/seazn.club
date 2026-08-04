@@ -28,6 +28,13 @@ import type { LineupPair, StageCtx } from "../core/types.ts";
 import { resolvePositions } from "../sport/catalog.ts";
 import type { AnySportModule } from "../sport/module.ts";
 import { buildStream, defaultLineupPair, makeEnvelope } from "./helpers.ts";
+import { fieldPresent, optionalFieldPaths } from "./schema-fields.ts";
+
+// W4a (#425) §3.3 — every fold below is PAD-SHAPED: it builds a stream event by
+// event, which is the write path. `strictFromSeq: 0` marks the whole stream new
+// and is therefore exactly the pre-seam behaviour. Only a real READ path
+// (apps/web fold.ts) and the cfg-replay property pass no options at all.
+const STRICT_ALL = { strictFromSeq: 0 } as const;
 
 // ---------------------------------------------------------------- generation
 
@@ -193,9 +200,9 @@ export function recomputeStream(
   const envelopes: EventEnvelope[] = events.map((event, i) => makeEnvelope(i, event));
 
   const states = envelopes.map((_, i) =>
-    JSON.stringify(foldMatch(module, cfg, lineups, envelopes.slice(0, i + 1))),
+    JSON.stringify(foldMatch(module, cfg, lineups, envelopes.slice(0, i + 1), STRICT_ALL)),
   );
-  const finalState = foldMatch(module, cfg, lineups, envelopes);
+  const finalState = foldMatch(module, cfg, lineups, envelopes, STRICT_ALL);
   const outcome = module.outcome(finalState);
 
   const deltas: Record<string, unknown> = {};
@@ -279,13 +286,207 @@ export function uncoveredTierTypes(module: AnySportModule, corpus: GoldenCorpus)
   return tierEventTypes(module).filter((type) => !seen.has(type));
 }
 
-/** Configs reached by no `variants` entry that own a fold path a tier type
- *  needs. Cricket declares `superOver: false` everywhere — no variant enables
- *  it — so `cricket.superover.ball` was unreachable from any recorded config. */
+// ------------------------------------------------- optional-FIELD coverage
+//
+// W4a (#425) T10. Everything above reasons about event TYPES, and one recorded
+// event of a type satisfies it. The wave's own deliverable proved how little
+// that covers: after the sanctioned EXTEND_GOLDEN pass, 0 of 148 icehockey and
+// 0 of 274 football events carried `at`, because both modules already covered
+// every type they declare and `extendCorpus` therefore appended nothing —
+// a generator that has started emitting a new field does not retroactively
+// reach a frozen corpus. Nothing in the ledger carried `at`, so making it
+// required, renaming it, reshaping `GameTime` or narrowing `DurationSeconds`
+// would have reddened none of the eleven corpora.
+
+/** Walking a union is not free and `extendCorpus` asks per candidate stream. */
+const DECLARED_FIELDS = new WeakMap<AnySportModule, string[]>();
+
+/** Every OPTIONAL field the module's event union declares, as dotted paths.
+ *
+ *  LIMIT, and read it before trusting a green. The union's branches carry no
+ *  discriminator — the ENVELOPE's `type` is what `apply` reads — so there is no
+ *  sound branch-to-type map here and the paths are pooled across the whole
+ *  union. Coverage of `at` therefore means "SOME recorded payload writes `at`",
+ *  not "every branch that declares `at` has one". Reshaping `GameTime`, renaming
+ *  `at` on the shared schema, or narrowing `DurationSeconds` reds (they move
+ *  every branch at once); renaming `at` on one branch only does not.
+ *  `uncoveredTierTypes` is the assertion that guards the branch dimension. */
+export function declaredOptionalFields(module: AnySportModule): string[] {
+  const cached = DECLARED_FIELDS.get(module);
+  if (cached !== undefined) return cached;
+  const fields = optionalFieldPaths(module.eventSchema);
+  DECLARED_FIELDS.set(module, fields);
+  return fields;
+}
+
+/** Optional payload fields no seeded walk of the module's own `arbitraryEvent`
+ *  can reach, each against the reason it cannot. THE REASON IS THE ENTRY: a
+ *  list that grows without one is precisely the defect this gate exists to
+ *  catch, one level up, and `golden-fields.test.ts` reds on a bare reason, on a
+ *  path the module no longer declares, and on a path the ledger has since
+ *  started writing.
+ *
+ *  Three classes appear below, and only the first is a corpus problem:
+ *    GENERATOR — the branch declares the field, `arbitraryEvent` never sets it.
+ *      Closing these means widening the generators under src/sports/**, which
+ *      is a module change, not a testkit one.
+ *    KERNEL-UNION — the setbased kernel gives volleyball, badminton and
+ *      tabletennis ONE event union while each sport's `records` preset
+ *      registers a different subset of event types. The union therefore
+ *      over-declares for a given sport: the field belongs to a type that sport
+ *      cannot record at all, and no config reaches it (`records` is a
+ *      compile-time preset, not a cfg knob).
+ *    CFG — genuinely cfg-gated; prefer a COVERAGE_CONFIGS entry, and both that
+ *      were found (generic's draws, hockey's assists) got one instead of a line
+ *      here. Nothing is allow-listed under this class today. */
+export const UNREACHABLE_FIELDS: Record<string, Record<string, string>> = {
+  football: {
+    addedMinutes:
+      "GENERATOR: arbitraryEvent builds football.period as {phase, at}; nothing in it ever writes Law 7 added time.",
+    assist:
+      "GENERATOR: arbitraryEvent builds football.goal as {by, scorer, at}; it never names a second scorer.",
+    penalty:
+      "GENERATOR: the generated goal toggles ownGoal but never penalty:true — an in-play penalty GOAL is not in its repertoire (football.penalty, the missed kick, is).",
+  },
+  cricket: {
+    against:
+      "GENERATOR: arbitraryEvent builds cricket.review as {by, kind, outcome}; it never names the side reviewed against.",
+    partial:
+      "GENERATOR: only coarsen() writes partial on cricket.innings.summary, and a golden corpus is a fine-grained walk of arbitraryEvent — it never calls coarsen.",
+    target:
+      "GENERATOR: arbitraryEvent builds cricket.revise with oversPerSide only; a DLS-revised target is never generated.",
+    "wicket.incoming":
+      "GENERATOR: randomDelivery's wicket object omits incoming — the generated fall of wicket never names the batter walking in.",
+  },
+  carrom: {
+    offendingEntrantId:
+      "GENERATOR: arbitraryEvent builds carrom.game.adjust without it — the generated adjustment never attributes an offender.",
+  },
+  volleyball: {
+    partial:
+      "GENERATOR: only coarsen() writes partial on the set summary; the corpus is a fine-grained arbitraryEvent walk.",
+    returns:
+      "KERNEL-UNION: the setbased kernel gives all three sports ONE event union, but volleyball's preset registers no expedite system — apply refuses volleyball.expedite.start with `\"volleyball\" has no expedite system`, so no config or seed can record this field.",
+    serving:
+      "KERNEL-UNION: same as `returns` — the field rides on the expedite payload volleyball cannot record.",
+  },
+  badminton: {
+    off: "KERNEL-UNION: apply refuses badminton.sub with `\"badminton\" does not record substitutions`; `records` is a compile-time preset, not a cfg knob, so no coverage config reaches it.",
+    on: "KERNEL-UNION: same as `off` — the field rides on the substitution payload badminton cannot record.",
+    partial:
+      "GENERATOR: only coarsen() writes partial on the game summary; the corpus is a fine-grained arbitraryEvent walk.",
+    returns:
+      "KERNEL-UNION: apply refuses badminton.expedite.start with `\"badminton\" has no expedite system` — the expedite payload is table tennis's alone.",
+    serving: "KERNEL-UNION: same as `returns` — rides on the expedite payload badminton cannot record.",
+    technical:
+      "KERNEL-UNION: apply refuses badminton.timeout with `\"badminton\" does not record timeouts`; the field rides on that payload.",
+  },
+  tabletennis: {
+    off: "KERNEL-UNION: apply refuses tabletennis.sub with `\"tabletennis\" does not record substitutions` — its preset registers timeouts, sanctions and expedite, but no substitutions.",
+    on: "KERNEL-UNION: same as `off` — rides on the substitution payload tabletennis cannot record.",
+    partial:
+      "GENERATOR: only coarsen() writes partial on the game summary; the corpus is a fine-grained arbitraryEvent walk.",
+  },
+  tennis: {
+    "meta.receiverSide":
+      "GENERATOR: the generated point's meta only ever carries {kind} (ace / double_fault); receiverSide is never written.",
+  },
+  icehockey: {
+    meta: "GENERATOR: the period kernel builds its shoot-out attempt without a meta object at all, so neither it nor either of its leaves is ever written.",
+    "meta.clockSeconds": "GENERATOR: rides on the shoot-out attempt's `meta`, which arbitraryEvent never builds.",
+    "meta.ineligible": "GENERATOR: rides on the shoot-out attempt's `meta`, which arbitraryEvent never builds.",
+    period:
+      "GENERATOR: the generated goal never sets the goal payload's own `period` field — the period is taken from folded state instead.",
+  },
+  hockey: {
+    meta: "GENERATOR: the period kernel builds its shoot-out attempt without a meta object at all, so neither it nor either of its leaves is ever written.",
+    "meta.clockSeconds": "GENERATOR: rides on the shoot-out attempt's `meta`, which arbitraryEvent never builds.",
+    "meta.ineligible": "GENERATOR: rides on the shoot-out attempt's `meta`, which arbitraryEvent never builds.",
+    period:
+      "GENERATOR: the generated goal never sets the goal payload's own `period` field — the period is taken from folded state instead.",
+  },
+};
+
+function corpusEvents(corpus: GoldenCorpus): GoldenEvent[] {
+  return corpus.streams.flatMap((stream) => stream.events);
+}
+
+/** Declared optional fields some event in `events` actually writes. */
+function writtenFields(module: AnySportModule, events: readonly GoldenEvent[]): Set<string> {
+  const out = new Set<string>();
+  for (const path of declaredOptionalFields(module)) {
+    if (events.some((event) => fieldPresent(event.payload, path))) out.add(path);
+  }
+  return out;
+}
+
+/** Declared optional fields no recorded payload writes, minus the allow-list. */
+export function uncoveredTierFields(module: AnySportModule, corpus: GoldenCorpus): string[] {
+  const written = writtenFields(module, corpusEvents(corpus));
+  const allowed = UNREACHABLE_FIELDS[module.key] ?? {};
+  return declaredOptionalFields(module).filter(
+    (path) => !written.has(path) && !Object.hasOwn(allowed, path),
+  );
+}
+
+/** What a stream contributes to coverage: the event types it records AND the
+ *  declared optional fields it writes, in one tagged namespace so `extendCorpus`
+ *  can go on picking the stream that brings in the most of what is missing. */
+export function coverageTokens(
+  module: AnySportModule,
+  events: readonly GoldenEvent[],
+): string[] {
+  const out = new Set<string>();
+  for (const event of events) out.add(`type:${event.type}`);
+  for (const path of writtenFields(module, events)) out.add(`field:${path}`);
+  return [...out].sort();
+}
+
+/** Allow-listed fields the ledger DOES now write — stale entries, suppressing
+ *  nothing while still reading as a considered exemption. */
+export function staleUnreachableFields(module: AnySportModule, corpus: GoldenCorpus): string[] {
+  const written = writtenFields(module, corpusEvents(corpus));
+  return Object.keys(UNREACHABLE_FIELDS[module.key] ?? {})
+    .filter((path) => written.has(path))
+    .sort();
+}
+
+/** Allow-listed paths the module's event union no longer declares optional —
+ *  a typo, or a field that has since been renamed, removed or made required. */
+export function undeclaredUnreachableFields(module: AnySportModule): string[] {
+  const declared = new Set(declaredOptionalFields(module));
+  return Object.keys(UNREACHABLE_FIELDS[module.key] ?? {})
+    .filter((path) => !declared.has(path))
+    .sort();
+}
+
+/** Configs reached by no `variants` entry that own a fold path a tier type — or
+ *  since W4a T10, an optional payload FIELD — needs. Cricket declares
+ *  `superOver: false` everywhere, no variant enables it, so
+ *  `cricket.superover.ball` was unreachable from any recorded config. A
+ *  coverage config is always preferable to an UNREACHABLE_FIELDS line: it makes
+ *  the field genuinely recorded rather than exempted. */
 const COVERAGE_CONFIGS: Record<string, Record<string, unknown>> = {
   cricket: {
     superOver: { superOver: true, ballsPerInnings: 30, maxOversPerBowler: 5, minOversForResult: 1 },
   },
+  // `generic.result.isDraw` is only emitted when draws are allowed AND the
+  // result is not a score line — and the one shipped variant with
+  // `allowDraws: true` is `score`, whose `resultMode: "score"` short-circuits
+  // before the draw branches. Neither knob alone reaches it.
+  generic: {
+    drawable: {
+      resultMode: "win_loss",
+      allowDraws: true,
+      points: { w: 3, d: 1, l: 0 },
+      progressScore: false,
+    },
+  },
+  // Hockey's `assists` default is `false` and none of fih-outdoor / fih-shootout
+  // / youth overrides it, so `assists` on a hockey goal was unrecordable. Ice
+  // hockey defaults it on, which is why only one of the two period sports
+  // needed this.
+  hockey: { assisted: { assists: true } },
 };
 
 /** Bench slots a coverage stream needs that the minimal catalog lineup has
@@ -343,23 +544,38 @@ const COVERAGE_MAX_EVENTS = 120;
 
 export interface CorpusExtension {
   corpus: GoldenCorpus;
-  /** Types the appended streams brought in, in the order they were covered. */
+  /** Coverage tokens the appended streams brought in, in the order they were
+   *  covered. `type:<event type>` and `field:<dotted optional path>`. */
   gained: string[];
-  /** Types no config-and-seed in range could reach. */
+  /** Tokens no config-and-seed in range could reach. */
   stillMissing: string[];
   /** `config:seed` of every stream appended. */
   appended: string[];
 }
 
-/** Appends the fewest streams that cover a module's uncovered tier types.
+/** Everything the corpus is short of: event types it never records AND optional
+ *  payload fields it never writes. One namespace so the greedy pick below can
+ *  trade the two off against each other — a single appended stream routinely
+ *  brings in a missing type and four missing fields at once. */
+export function uncoveredCoverageTokens(module: AnySportModule, corpus: GoldenCorpus): string[] {
+  return [
+    ...uncoveredTierTypes(module, corpus).map((type) => `type:${type}`),
+    ...uncoveredTierFields(module, corpus).map((path) => `field:${path}`),
+  ].sort();
+}
+
+/** Appends the fewest streams that cover a module's uncovered coverage tokens.
  *  Greedy: at each pass take the stream that brings in the most still-missing
- *  types, so the corpus grows by a handful of streams rather than one per type. */
+ *  tokens, so the corpus grows by a handful of streams rather than one per
+ *  token. Existing streams are PRESERVED byte for byte — this only appends. */
 export function extendCorpus(module: AnySportModule, existing: GoldenCorpus): CorpusExtension {
-  const wanted = new Set(uncoveredTierTypes(module, existing));
+  const wanted = new Set(uncoveredCoverageTokens(module, existing));
   const corpus: GoldenCorpus = { ...existing, configs: { ...existing.configs }, streams: [...existing.streams] };
   const gained: string[] = [];
   const appended: string[] = [];
   if (wanted.size === 0) return { corpus, gained, stillMissing: [], appended };
+  const hitsOf = (events: readonly GoldenEvent[]): string[] =>
+    coverageTokens(module, events).filter((token) => wanted.has(token));
 
   const candidates = coverageCandidates(module, existing);
   const used = new Set(existing.streams.map((s) => `${s.config}:${s.seed}`));
@@ -377,7 +593,7 @@ export function extendCorpus(module: AnySportModule, existing: GoldenCorpus): Co
         } catch {
           continue;
         }
-        const hits = [...new Set(events.map((e) => e.type))].filter((type) => wanted.has(type));
+        const hits = hitsOf(events);
         if (hits.length === 0) continue;
         if (best === null || hits.length > best.hits.length) best = { name, raw, seed, hits };
         if (best.hits.length === wanted.size) break;
@@ -585,7 +801,7 @@ export function payloadParseFailures(
   for (let i = 0; i < envelopes.length; i++) {
     const type = (envelopes[i] as EventEnvelope).type;
     try {
-      foldMatch(module, cfg, lineups, envelopes.slice(0, i + 1));
+      foldMatch(module, cfg, lineups, envelopes.slice(0, i + 1), STRICT_ALL);
     } catch (error) {
       if (EngineError.is(error, "INVALID_EVENT") && error.message === `invalid ${type} payload`) {
         out.push({ index: i, type, issues: (error.data as { issues?: unknown })?.issues });

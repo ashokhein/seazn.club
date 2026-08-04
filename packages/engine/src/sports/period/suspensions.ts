@@ -1,9 +1,18 @@
 // Timed-suspension track — v6/00 §3 + v6/01 §2/§3. Class tables (IIHF
 // penalty minutes, FIH cards), the active-suspension ledger and the derived
 // facts: team strength while suspensions run, PIM tallies, FIH progressive-
-// escalation hints. The engine has NO clock (v6/00 §6.1): a suspension starts
-// and ends by scorer events only; pads show a countdown hint from wall time,
-// but the fold trusts nothing except `suspension.start` / `suspension.end`.
+// escalation hints.
+//
+// W4a (#425) refines the old "the engine has NO clock" statement into the split
+// the wave established: the engine models DURATIONS and ELAPSED-AT-EVENT, the
+// pad owns the TICKING. A suspension still starts and ends by scorer events —
+// nothing here reads wall time — but where the start carries a game-time stamp
+// the fold can now derive when it ends and release it lazily, at the next
+// stamped event (kernel.ts). Where no stamp was recorded, everything below
+// behaves exactly as it did: the release is an explicit event, and nothing
+// expires.
+
+import type { GameTime } from "../../core/time.ts";
 
 export type SuspSide = "home" | "away";
 
@@ -20,6 +29,19 @@ export interface SuspensionClass {
   /** Cannot be released by a suspension.end — the player is off for good
    *  (FIH red). Team-short reds keep the team short to full time. */
   permanent?: boolean;
+  /**
+   * W4a (#425) §3.4 — a goal by the opposition ends this suspension early
+   * (IIHF Rule 20.4: a minor terminates when the non-offending team scores).
+   * IIHF minors and bench minors set it; majors, misconducts and match
+   * penalties do not, and no FIH card does — field hockey has no
+   * powerplay-goal release at all.
+   *
+   * The release is gated a second time in the fold, on BOTH the goal and the
+   * suspension carrying a stamp. That gate — not this flag — is what keeps the
+   * eleven frozen goldens byte-identical: no recorded stream carries `at`, so
+   * setting the flag here cannot change how any recorded goal folds.
+   */
+  releaseOnGoal?: boolean;
 }
 
 export type SuspensionClasses = Record<string, SuspensionClass>;
@@ -32,8 +54,13 @@ export interface SuspensionCfg {
 // team is short for 5' (released by event like a major); modelled as a
 // releasable 5' team-short class carrying 25 PIM.
 export const ICEHOCKEY_SUSPENSIONS: SuspensionClasses = {
-  minor: { minutes: 2, teamShort: true },
-  bench_minor: { minutes: 2, teamShort: true },
+  minor: { minutes: 2, teamShort: true, releaseOnGoal: true },
+  bench_minor: { minutes: 2, teamShort: true, releaseOnGoal: true },
+  // NOT releaseOnGoal, deliberately. A double minor's FIRST half terminates on
+  // a goal and the second then starts running — that is two suspensions, not
+  // one shortened by half, and modelling it as a single releasable 4' class
+  // would wipe the remaining 2:00 the offender still owes. Splitting it needs
+  // its own state and is recorded as a deferred dossier row.
   double_minor: { minutes: 4, teamShort: true },
   major: { minutes: 5, teamShort: true },
   misconduct: { minutes: 10, teamShort: false, pim: 10 },
@@ -72,12 +99,48 @@ export interface ActiveSuspension extends SuspensionDetail {
   classKey: string;
   teamShort: boolean;
   permanent: boolean;
+  /**
+   * W4a (#425) — the game time the suspension started, when the pad recorded
+   * one. ABSENT for every suspension recorded before this wave, and its absence
+   * is load-bearing: an unstamped suspension neither expires by time nor is
+   * eligible for release-on-goal, so it behaves exactly as it always did.
+   */
+  startedAt?: GameTime;
+  /**
+   * When it runs out, derived at start from `startedAt` + the AWARDED minutes
+   * (`SuspensionDetail.minutes` where the umpire gave one, else the class
+   * nominal — an FIH yellow is a MINIMUM of 5 and 10 is common).
+   *
+   * Absent when there is no `startedAt`, when the class is for the rest of the
+   * match (`minutes: null`), or when the start was stamped in a phase where no
+   * play clock runs ("pre", "SHOOTOUT") — penalty time only runs while play
+   * runs, so a pre-game card is served from the opening whistle and expires by
+   * event, not by arithmetic against a clock that was not on.
+   *
+   * The fold sweeps against this LAZILY, at the next stamped event and at each
+   * phase whistle. Between an expiry and the next event the pad and the fold
+   * legitimately disagree — the pad is counting down, the fold is a record of
+   * facts (§3.1).
+   */
+  expiresAt?: GameTime;
 }
 
 export interface CardRecordEntry extends SuspensionDetail {
   side: SuspSide;
   person?: string;
   classKey: string;
+  /**
+   * W4a (#425) — the same two stamps the active entry carries, kept here
+   * because the card log is the immutable scoresheet row and both times are
+   * printed on it.
+   *
+   * They are also the only record left once the fold sweeps the suspension out
+   * of `state.suspensions`, which is what lets a LATER explicit release be
+   * reconciled against it rather than refused (kernel `alreadyRunOut`). Absent
+   * for every unstamped card, so a pre-wave card log is byte-identical.
+   */
+  startedAt?: GameTime;
+  expiresAt?: GameTime;
 }
 
 /** PIM recorded for one suspension class (defaults to its minutes). */

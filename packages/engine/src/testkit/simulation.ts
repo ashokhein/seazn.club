@@ -45,6 +45,12 @@ import { resolvePositions } from "../sport/catalog.ts";
 import type { AnySportModule, ModuleEvent, TiebreakerKey } from "../sport/module.ts";
 import { lineupFromCatalog, TEST_INSTANT } from "./helpers.ts";
 
+// W4a (#425) §3.3 — every fold below is PAD-SHAPED: it builds a stream event by
+// event, which is the write path. `strictFromSeq: 0` marks the whole stream new
+// and is therefore exactly the pre-seam behaviour. Only a real READ path
+// (apps/web fold.ts) and the cfg-replay property pass no options at all.
+const STRICT_ALL = { strictFromSeq: 0 } as const;
+
 // ---------------------------------------------------------------------------
 // Templates & options
 // ---------------------------------------------------------------------------
@@ -333,7 +339,7 @@ function injectVoidIntoMatch(
 
   let state: unknown;
   try {
-    state = foldMatch(module, cfg, lineups, events);
+    state = foldMatch(module, cfg, lineups, events, STRICT_ALL);
   } catch (err) {
     if (EngineError.is(err)) return rejected(err.code); // typed rejection — ledger stays
     throw err;

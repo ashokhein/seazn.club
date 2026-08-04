@@ -10,7 +10,7 @@
 // tiebreakers.ts).
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
-import type { CoreEv, EventEnvelope } from "../../core/events.ts";
+import { isStrictFold, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
   EntrantId,
@@ -43,8 +43,36 @@ export const BoardgameCfg = z.object({
   byeScore: z.number().int().nonnegative().default(2),
   // Clock family — metadata only, no scoring effect (chess.md §2).
   variant: z.enum(["classical", "rapid", "blitz"]).default("classical"),
+  // Time control. Still metadata only: the board game has no clock in the fold,
+  // the engine never reads a clock inside a fold, and none of these fields
+  // changes any fold behaviour. What they record is WHICH control was in force,
+  // so a pad can drive the right countdown (W4a §5.5).
+  //
+  // `increment` and `delay` are two DIFFERENT clocks, and they are independent
+  // knobs — a control may carry both, either, or neither:
+  //
+  //   increment  Fischer. When the move is completed, `increment` is ADDED to
+  //              that player's clock. Time not used on the move is BANKED and
+  //              accumulates over the game. ("90+30")
+  //   delay      Bronstein / simple (US) delay. The clock is WITHHELD for
+  //              `delay` at the start of the move and only starts running once
+  //              it elapses. Unused delay is NOT banked — it does not carry to
+  //              the next move, so the base time can only ever go down. ("G/5 d3")
+  //   neither    Sudden death: `base` for the whole game.
+  //
+  // `increment` and `delay` are in the same unit as `base`. Both optional with
+  // NO default — cfg is serialised into the frozen golden state strings (§8).
+  // `increment` was widened to optional to record INTENT: an absent increment
+  // is behaviourally identical to `increment: 0` (adding zero after each move
+  // IS sudden death), so this buys nothing a pad can act on — it only lets a
+  // sudden-death or delay-only control say so, instead of writing a zero that
+  // reads as a deliberate Fischer setting.
   clock: z
-    .object({ base: z.number().int().nonnegative(), increment: z.number().int().nonnegative() })
+    .object({
+      base: z.number().int().nonnegative(),
+      increment: z.number().int().nonnegative().optional(),
+      delay: z.number().int().nonnegative().optional(),
+    })
     .optional(),
 });
 export type BoardgameCfg = z.infer<typeof BoardgameCfg>;
@@ -214,13 +242,22 @@ function decideResult(
 
 // W4 — the arbiter's pairing card. Recordable before or during the game (an
 // arbiter corrects a mis-set board); refused once the game is over.
-function applyPairing(state: BoardgameState, card: BoardgamePairing): BoardgameState {
+function applyPairing(
+  state: BoardgameState,
+  card: BoardgamePairing,
+  strict: boolean,
+): BoardgameState {
   if (state.phase !== "pre" && state.phase !== "live") {
     wrongPhase(`pairing not allowed in phase "${state.phase}"`);
   }
   let colorOfHome = state.colorOfHome;
   if (card.white !== undefined) {
-    if (state.cfg.colors === false) {
+    // STRICT ONLY (§3.3 seam). `colors` is a cfg switch an arbiter turns off
+    // for a casual division, and doing so would otherwise refuse every pairing
+    // card already recorded with a colour — no event to void, and the whole
+    // division's history goes dark. The colour is a recorded fact; the switch
+    // says only whether the pad offers the field today.
+    if (strict && state.cfg.colors === false) {
       invalid("this division plays without colours", { white: card.white });
     }
     colorOfHome = sideOf(state, card.white) === "home" ? "W" : "B";
@@ -324,7 +361,7 @@ export const boardgame: SportModule<BoardgameCfg, BoardgameEv, BoardgameState> =
     };
   },
 
-  apply(state, ev: EventEnvelope<BoardgameEv | CoreEv>): BoardgameState {
+  apply(state, ev: EventEnvelope<BoardgameEv | CoreEv>, ctx): BoardgameState {
     switch (ev.type) {
       case "core.start":
         if (state.phase !== "pre") wrongPhase("already started");
@@ -337,7 +374,7 @@ export const boardgame: SportModule<BoardgameCfg, BoardgameEv, BoardgameState> =
         });
       }
       case "boardgame.pairing":
-        return applyPairing(state, parsePayload(BoardgamePairing, ev.payload, ev.type));
+        return applyPairing(state, parsePayload(BoardgamePairing, ev.payload, ev.type), isStrictFold(ctx));
       case "core.forfeit": {
         if (state.phase !== "live") wrongPhase(`forfeit not allowed in phase "${state.phase}"`);
         const by = (ev.payload as { by: string }).by;
