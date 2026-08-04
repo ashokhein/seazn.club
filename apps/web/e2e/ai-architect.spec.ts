@@ -14,6 +14,8 @@ import {
 import {
   startAiFixtureServer,
   FIXTURE_CLASH,
+  FIXTURE_CLASH_SECONDS,
+  FIXTURE_CLASH_OFFSET_MS,
   FIXTURE_REFUSE,
   FIXTURE_COMPILE_BRIEF,
   FIXTURE_COMPILE_SOFT,
@@ -971,6 +973,102 @@ test("a double-booked plan is repaired by the solver before the organiser sees i
   );
   expect(overflow).toBeLessThanOrEqual(0);
   await shot(page, "13-repair-strip-375");
+});
+
+/**
+ * #452 — the same repair, on a board that is not on the minute grid.
+ *
+ * The test above cannot reach this. Every instant the deterministic draft
+ * produces is minute-aligned, so the encoder's minutes and the verifier's
+ * milliseconds agree on that board by construction — which is precisely why
+ * #457 (an obstacle ending at 10:00:20 rounded DOWN to 10:00, letting z3 permit
+ * a 20-second overlap the verifier rejects) shipped past a green suite.
+ * `FIXTURE_CLASH_SECONDS` pushes the four cards that are NOT in the clash off
+ * the minute, so the card the solver has to move is routed around real
+ * sub-minute occupancy; see that constant for why it is those cards and not
+ * the clashing pair.
+ *
+ * What this pins that nothing else does: sub-minute instants crossing every
+ * layer of the real stack — model plan → engine verifier → z3 repair → the
+ * repair's own re-verification → the apply gate → `timestamptz`. A repair whose
+ * encoding drifts does not come back merely wrong; `repairAndVerify` throws
+ * `RepairVerificationError` and the run drops through to the PAID LLM repair
+ * round, so both the CLEAN board and the "exactly one schedule call" assertion
+ * below are load-bearing.
+ *
+ * HONEST LIMIT, so nobody over-claims this later: it is not proven that this
+ * board would have gone red on the pre-#457 encoder. z3 is free to choose any
+ * minimal repair, and only some of those choices put the moved card adjacent
+ * enough to a rounded obstacle for the old `roundMin` to matter. What IS true
+ * is that no minute-aligned board can go red on it at all, so this is the first
+ * e2e that can.
+ *
+ * Deliberately kept ALONGSIDE the whole-minute test rather than replacing it:
+ * that one is the minimal-repair proof on a wholly aligned board, and the two
+ * agreeing on `data-moved="1"` / `proved` is itself an assertion.
+ */
+test("a clash off the minute boundary is repaired without losing its seconds (#452)", async ({
+  page,
+  request,
+}) => {
+  fixture.reset();
+  await activateFreshProPlusOrg(page, request);
+  const { divisionId } = await seedAiDivision(request);
+
+  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await openConsole(page);
+
+  await page.locator("#ai-instruction").fill(`${FIXTURE_CLASH_SECONDS} — squeeze the order.`);
+  await compileAndConfirm(page);
+
+  // Same organiser-facing outcome as the whole-minute case. If the encoder and
+  // the verifier disagree about the extra 20 seconds, the solver's answer fails
+  // its own re-verification and this never renders.
+  await expect(page.getByText(/CLEAN · 0 blocking/)).toBeVisible({ timeout: 30_000 });
+  const strip = page.locator('[data-testid="ai-repair-strip"]');
+  await expect(strip).toBeVisible();
+  // The SAME verdict the whole-minute clash produces — one move, proved minimal,
+  // nothing given up. That parity is the point: putting four off-minute cards on
+  // the board must not degrade the repair. (It does when the CLASH pair is the
+  // off-minute one: measured `data-moved="2"`, `data-minimality="upper_bound"`.
+  // See `FIXTURE_CLASH_SECONDS`.)
+  await expect(strip).toHaveAttribute("data-moved", "1");
+  await expect(strip).toHaveAttribute("data-minimality", "proved");
+  await expect(strip).toHaveAttribute("data-unresolved", "0");
+  await shot(page, "14-repair-strip-offminute");
+
+  // One schedule call. A repair that failed verification is not a silent
+  // downgrade — it costs a second, chargeable model round, so this is the
+  // assertion that separates "the solver answered" from "the solver was
+  // overruled".
+  expect(fixture.calls.filter((c) => c.phase === "schedule").length).toBe(1);
+
+  // Through the apply gate and into the column, because a truncation anywhere
+  // downstream would be invisible on the board (which renders to the minute).
+  // "Skip to apply", not "Review & apply": this division seeds no officials, so
+  // the officials step is skipped and its own onward button never renders.
+  await page.getByRole("button", { name: "Skip to apply" }).click();
+  await page.getByRole("button", { name: "Apply schedule only" }).click();
+  await expect(page.getByText("Applied. The board is updated.")).toBeVisible({ timeout: 20_000 });
+
+  const placed = (await getFixtureScheduleSources(divisionId)).filter(
+    (r) => r.scheduled_at !== null,
+  );
+  expect(placed).toHaveLength(6);
+  const seconds = placed.map((r) => new Date(r.scheduled_at!).getUTCSeconds());
+  const offMinute = FIXTURE_CLASH_OFFSET_MS / 1000;
+  // FOUR off-minute cards in, four out. The fixture server offsets every draft
+  // card from the third on; none of them is in the clash, so a minimal repair
+  // leaves all four exactly where they were, to the millisecond. Fewer than four
+  // means something between the model and the `timestamptz` column truncated to
+  // the minute — the failure #457 was about, and the one no minute-aligned
+  // board can show.
+  expect(seconds.filter((s) => s === offMinute)).toHaveLength(4);
+  // The clash pair: one card never moved, one was repaired back onto the minute
+  // grid. Pinned so a future fixture-server edit that started offsetting the
+  // pair too (which measurably costs the minimal repair) fails here rather than
+  // quietly changing what this test covers.
+  expect(seconds.filter((s) => s === 0)).toHaveLength(2);
 });
 
 test("blackout injected over a scheduled fixture surfaces the repair nudge", async ({
