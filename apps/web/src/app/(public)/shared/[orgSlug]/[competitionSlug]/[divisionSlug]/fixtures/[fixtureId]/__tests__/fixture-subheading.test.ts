@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fixtureSubheading } from "../page";
+import { fixtureSubheading } from "../fixture-subheading";
 
 describe("fixtureSubheading", () => {
   it("says Live instead of Time TBD for an in-play fixture with no scheduled time", () => {

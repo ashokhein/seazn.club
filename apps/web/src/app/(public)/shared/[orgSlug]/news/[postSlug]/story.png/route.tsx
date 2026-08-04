@@ -12,7 +12,9 @@ import { postCardModel, PostShareCard, STORY_SIZE } from "@/server/og/post-card"
 import { getDictionary, t } from "@/lib/i18n";
 import { hasLocale, DEFAULT_LOCALE } from "@/lib/i18n-constants";
 
-export const contentType = "image/png";
+// No `contentType` export here: that is a metadata-file convention
+// (opengraph-image / icon), not a Route Handler one — Next rejects it on a
+// route module and `ImageResponse` sets `content-type: image/png` itself.
 export const revalidate = 300;
 
 type Ctx = { params: Promise<{ orgSlug: string; postSlug: string }> };

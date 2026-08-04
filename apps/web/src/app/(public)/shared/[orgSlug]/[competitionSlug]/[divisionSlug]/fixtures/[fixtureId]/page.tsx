@@ -9,6 +9,7 @@ import { sportsEventJsonLd } from "@/lib/public-site";
 import { publicThemeStyle } from "@/lib/public-theme";
 import { LiveScore } from "@/components/public-site/live-score";
 import { ShareButton } from "@/components/share-button";
+import { fixtureSubheading } from "./fixture-subheading";
 
 export const revalidate = 30;
 
@@ -117,25 +118,4 @@ export default async function FixturePage({ params }: Props) {
       />
     </div>
   );
-}
-
-/**
- * "Time TBD" only makes sense pre-match — a live fixture with no
- * scheduled_at (started ad hoc) should say so instead of implying it
- * hasn't started, which contradicts the LIVE scorebug right below it.
- */
-export function fixtureSubheading(
-  status: string,
-  scheduledAt: string | null | undefined,
-): string {
-  if (scheduledAt) {
-    return new Date(scheduledAt).toLocaleString("en-GB", {
-      weekday: "long",
-      day: "numeric",
-      month: "long",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  }
-  return status === "in_play" ? "Live" : "Time TBD";
 }

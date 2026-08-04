@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { meEmptyState } from "../page";
+import { meEmptyState } from "../me-empty-state";
 
 describe("meEmptyState", () => {
   it("shows the unrostered message when the user has no teams, fixtures, or results", () => {

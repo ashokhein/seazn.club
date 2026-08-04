@@ -64,7 +64,7 @@ const uniq = () => randomUUID().slice(0, 8);
   });
 
   it("groupLabelsByIds renders the 3-org group as 'N organisations · Payer'", async () => {
-    const { groupLabelsByIds } = await import("@/app/admin/billing-events/page");
+    const { groupLabelsByIds } = await import("@/app/admin/billing-events/group-labels");
     const labels = await groupLabelsByIds([groupId]);
     const label = labels.get(groupId)!;
     expect(label).toMatch(/3 organisations/);
