@@ -3008,5 +3008,13 @@
   "engineError.NON_MONOTONIC_TIME": "Ese tiempo es anterior a la última entrada. Revisa el reloj e inténtalo de nuevo.",
   "engineError.UNKNOWN_PHASE": "Este deporte no tiene ese periodo.",
   "engineError.EXPEDITE_WRONG_WINNER": "Con el sistema de aceleración, el restador gana esa jugada. Comprueba quién la ganó.",
-  "engineError.SUB_WINDOW_EXCEEDED": "No quedan sustituciones en esta ventana."
+  "engineError.SUB_WINDOW_EXCEEDED": "No quedan sustituciones en esta ventana.",
+  "scoring.position.set": "Set",
+  "scoring.position.game": "Juego",
+  "scoring.position.innings": "Entrada",
+  "scoring.position.over": "Over",
+  "scoring.position.board": "Tablero",
+  "scoring.position.points": "Puntos",
+  "scoring.position.period": "Periodo",
+  "scoring.position.clock": "Reloj"
 }

@@ -1,12 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
   wicketLabel, extraLabel, sportLabel, swatchLabel,
-  eventLabel, enumLabel, engineErrorLabel, scoringErrorText,
-  EVENT_KEY, ENUM_VOCAB, ENGINE_ERROR_KEY,
+  eventLabel, enumLabel, engineErrorLabel, scoringErrorText, positionLabel,
+  EVENT_KEY, ENUM_VOCAB, ENGINE_ERROR_KEY, POSITION_KEY,
   SCORING_VOCAB_KEYS, type MsgFn,
 } from "@/lib/scoring-vocab";
 import { builtinModules } from "@seazn/engine/sports";
-import { EngineErrorCode } from "@seazn/engine/core";
+import { EngineErrorCode, matchPositionOf } from "@seazn/engine/core";
+import { buildStream, defaultLineupPair } from "@seazn/engine/testkit";
 import uiEn from "@/dictionaries/en/ui.json";
 import uiEs from "@/dictionaries/es/ui.json";
 import uiFr from "@/dictionaries/fr/ui.json";
@@ -133,6 +134,51 @@ function declaredEnumMembers(): Map<string, Set<string>> {
   return all;
 }
 
+interface DrivableModule {
+  key: string;
+  positions: unknown;
+  configSchema: { parse(value: unknown): unknown };
+  init(cfg: unknown, lineups: unknown): unknown;
+  apply(state: unknown, envelope: unknown): unknown;
+  position?: (state: unknown) => unknown;
+}
+
+/**
+ * Every position-segment key the projecting sports actually emit (W4a's
+ * cross-sport match-position axis, `@seazn/engine/core` position.ts).
+ *
+ * Folded out of real generated streams, because there is nothing static to
+ * read: a module builds its segments INSIDE `position(state)`, and which keys
+ * appear depends on the state — a set-based sport only emits `points` while a
+ * set is live, a period sport only emits `clock` once a stamp names the phase
+ * it resolved to. A hand-copied list is the exact defect this file exists to
+ * close, and it already bit once here: the wave's own summary named five keys
+ * (`set`, `game`, `innings`, `over`, `board`) and missed three.
+ */
+function declaredPositionKeys(): { keys: Set<string>; projecting: number } {
+  const keys = new Set<string>();
+  let projecting = 0;
+  for (const sport of builtinModules as unknown as DrivableModule[]) {
+    if (sport.position === undefined) continue;
+    projecting += 1;
+    const cfg = sport.configSchema.parse({});
+    const lineups = defaultLineupPair(sport.positions as never);
+    for (const seed of [1, 7, 42]) {
+      let state: unknown = sport.init(cfg, lineups);
+      const collect = () => {
+        const position = matchPositionOf(sport as never, state);
+        for (const segment of position?.segments ?? []) keys.add(segment.key);
+      };
+      collect();
+      for (const envelope of buildStream(sport as never, cfg as never, lineups, seed, 300)) {
+        state = sport.apply(state, envelope);
+        collect();
+      }
+    }
+  }
+  return { keys, projecting };
+}
+
 describe("scoring-vocab covers what the engine declares", () => {
   // Vacuity guards. A derivation that silently returns nothing — a zod internals
   // change, a renamed field — would make every assertion below pass while
@@ -166,12 +212,42 @@ describe("scoring-vocab covers what the engine declares", () => {
     );
   });
 
+  it("the position derivation reaches every projecting sport", () => {
+    // Vacuity guard. A fold that produced nothing — a renamed member, a stream
+    // generator that stops at seq 0 — would make the coverage loop below pass
+    // over an empty set. Pin the shape, and pin by name the three keys the
+    // wave's hand-written summary of this axis left out.
+    const { keys, projecting } = declaredPositionKeys();
+    expect(projecting).toBe(9); // boardgame and generic honestly abstain
+    expect(keys.size).toBeGreaterThanOrEqual(8);
+    for (const key of ["set", "game", "innings", "over", "board", "points", "period", "clock"]) {
+      expect(keys, `stream fold never emitted position key "${key}"`).toContain(key);
+    }
+  });
+
+  it("labels every position segment key the engine emits", () => {
+    for (const key of declaredPositionKeys().keys) {
+      expect(POSITION_KEY, `no label for position segment key "${key}"`).toHaveProperty([key]);
+    }
+  });
+
+  it("resolves position copy against the real en dictionary, and falls back", () => {
+    expect(positionLabel("over", en)).toBe("Over");
+    expect(positionLabel("clock", en)).toBe("Clock");
+    expect(positionLabel("board", echo)).toBe("«scoring.position.board»");
+    // Unknown key: the engine's own English label wins over a humanized token.
+    expect(positionLabel("frame", echo, "Frame")).toBe("Frame");
+    expect(positionLabel("half_inning", echo)).toBe("Half inning");
+  });
+
   it("exports the vocabulary maps the coverage assertions read", () => {
     // Vite resolves a missing named export to `undefined`, so a coverage loop
     // over an absent map is vacuously green. Prove the maps exist first.
     expect(EVENT_KEY).toBeTypeOf("object");
     expect(ENUM_VOCAB).toBeTypeOf("object");
     expect(ENGINE_ERROR_KEY).toBeTypeOf("object");
+    expect(POSITION_KEY).toBeTypeOf("object");
+    expect(positionLabel).toBeTypeOf("function");
     expect(eventLabel).toBeTypeOf("function");
     expect(enumLabel).toBeTypeOf("function");
     expect(engineErrorLabel).toBeTypeOf("function");

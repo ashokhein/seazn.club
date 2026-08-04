@@ -127,6 +127,32 @@ export const EVENT_KEY: Record<string, MessageKey> = {
   "volleyball.timeout": "event.volleyball.timeout",
 };
 
+/**
+ * The cross-sport match-position axis (W4a, `@seazn/engine/core` position.ts):
+ * one `key` per ordered segment — "Set 2 · 30–15", "Innings 1 · Over 12.3",
+ * "P2 · 12:41" — that a single renderer draws for all eleven sports.
+ *
+ * The engine emits `key` as the stable token and writes no locale copy; its
+ * optional `label` is an English fallback, present only where a value needs a
+ * noun to read. The three label-less keys (`period`, `clock`, `points`) are
+ * mapped anyway: a value that names itself inline still needs a noun the
+ * moment a surface heads a column with it or an assistive reader announces it,
+ * and a gap there is a hardcoded English string waiting to happen.
+ *
+ * Derived, never hand-listed — `__tests__/scoring-vocab.test.ts` folds real
+ * streams for the nine projecting sports and reds on any key missing here.
+ */
+export const POSITION_KEY: Record<string, MessageKey> = {
+  set: "scoring.position.set",
+  game: "scoring.position.game",
+  innings: "scoring.position.innings",
+  over: "scoring.position.over",
+  board: "scoring.position.board",
+  points: "scoring.position.points",
+  period: "scoring.position.period",
+  clock: "scoring.position.clock",
+};
+
 const CARD_COLOR_KEY: Record<string, MessageKey> = {
   yellow: "cardColor.yellow", red: "cardColor.red",
   second_yellow: "cardColor.second_yellow",
@@ -278,6 +304,16 @@ export const enumLabel = (field: string, value: string, m: MsgFn): string => {
   return humanize(value);
 };
 
+/**
+ * Localized noun for a position segment, keyed by the engine's stable `key`.
+ * `engineLabel` is that segment's own `label` — the engine's English, used
+ * only for a key this app has no copy for yet, which is strictly better than
+ * a humanized token ("Frame" beats "Frame" only by accident; "Half inning"
+ * would lose to a real one).
+ */
+export const positionLabel = (key: string, m: MsgFn, engineLabel?: string): string =>
+  key in POSITION_KEY ? m(POSITION_KEY[key]) : (engineLabel ?? humanize(key));
+
 /** Localized copy for an engine refusal; null when the code isn't an engine one. */
 export const engineErrorLabel = (code: string, m: MsgFn): string | null =>
   code in ENGINE_ERROR_KEY ? m(ENGINE_ERROR_KEY[code as EngineErrorCode]) : null;
@@ -303,5 +339,6 @@ export const SCORING_VOCAB_KEYS: readonly MessageKey[] = [
   ...Object.values(WICKET_KEY), ...Object.values(EXTRA_KEY),
   ...Object.values(SPORT_KEY), ...Object.values(SWATCH_KEY),
   ...Object.values(EVENT_KEY), ...Object.values(ENGINE_ERROR_KEY),
+  ...Object.values(POSITION_KEY),
   ...Object.values(ENUM_VOCAB).flatMap((maps) => maps.flatMap((m) => Object.values(m))),
 ];

@@ -3008,5 +3008,13 @@
   "engineError.NON_MONOTONIC_TIME": "That time is earlier than the last entry. Check the clock and try again.",
   "engineError.UNKNOWN_PHASE": "This sport doesn't have that period.",
   "engineError.EXPEDITE_WRONG_WINNER": "Under the expedite system the receiver wins that rally. Check who won it.",
-  "engineError.SUB_WINDOW_EXCEEDED": "No substitutions left in this window."
+  "engineError.SUB_WINDOW_EXCEEDED": "No substitutions left in this window.",
+  "scoring.position.set": "Set",
+  "scoring.position.game": "Game",
+  "scoring.position.innings": "Innings",
+  "scoring.position.over": "Over",
+  "scoring.position.board": "Board",
+  "scoring.position.points": "Points",
+  "scoring.position.period": "Period",
+  "scoring.position.clock": "Clock"
 }

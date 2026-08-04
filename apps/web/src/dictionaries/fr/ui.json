@@ -3008,5 +3008,13 @@
   "engineError.NON_MONOTONIC_TIME": "Ce temps est antérieur à la dernière saisie. Vérifiez le chrono et réessayez.",
   "engineError.UNKNOWN_PHASE": "Ce sport n'a pas cette période.",
   "engineError.EXPEDITE_WRONG_WINNER": "Avec le système accéléré, le relanceur gagne cet échange. Vérifiez qui l'a gagné.",
-  "engineError.SUB_WINDOW_EXCEEDED": "Plus de remplacements disponibles dans cette fenêtre."
+  "engineError.SUB_WINDOW_EXCEEDED": "Plus de remplacements disponibles dans cette fenêtre.",
+  "scoring.position.set": "Set",
+  "scoring.position.game": "Jeu",
+  "scoring.position.innings": "Manche",
+  "scoring.position.over": "Over",
+  "scoring.position.board": "Plateau",
+  "scoring.position.points": "Points",
+  "scoring.position.period": "Période",
+  "scoring.position.clock": "Chrono"
 }

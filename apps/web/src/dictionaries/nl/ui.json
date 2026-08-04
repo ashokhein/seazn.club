@@ -3008,5 +3008,13 @@
   "engineError.NON_MONOTONIC_TIME": "Die tijd ligt vóór de vorige invoer. Controleer de klok en probeer het opnieuw.",
   "engineError.UNKNOWN_PHASE": "Deze sport heeft die periode niet.",
   "engineError.EXPEDITE_WRONG_WINNER": "Bij het versnellingssysteem wint de ontvanger die rally. Controleer wie hem won.",
-  "engineError.SUB_WINDOW_EXCEEDED": "Geen wissels meer in dit venster."
+  "engineError.SUB_WINDOW_EXCEEDED": "Geen wissels meer in dit venster.",
+  "scoring.position.set": "Set",
+  "scoring.position.game": "Game",
+  "scoring.position.innings": "Innings",
+  "scoring.position.over": "Over",
+  "scoring.position.board": "Bord",
+  "scoring.position.points": "Punten",
+  "scoring.position.period": "Periode",
+  "scoring.position.clock": "Klok"
 }
