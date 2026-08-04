@@ -8,7 +8,11 @@ import { sweepExpiredPreviews } from "../ai-preview-sweep";
 // support" — and nothing swept it, so every previewed instruction survived
 // until the org itself was deleted. These tests pin the retention policy the
 // privacy page now states.
-describe("#403 — ai_parse_previews retention sweep", () => {
+// The unit CI job runs without a database; these need one. Same guard the
+// sibling preview suites use (schedule-ai-preview.test.ts:83).
+const HAS_DB = !!process.env.DATABASE_URL;
+
+describe.skipIf(!HAS_DB)("#403 — ai_parse_previews retention sweep", () => {
   let orgId: string;
 
   beforeEach(async () => {
