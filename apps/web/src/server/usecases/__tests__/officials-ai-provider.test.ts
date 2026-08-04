@@ -22,7 +22,13 @@ const refA = REF_A;
 
 function makePack(): import("../officials-ai").OfficialsPack {
   return {
-    division: { id: "d1", name: "Open", sport: "generic", tz: "Europe/London" },
+    division: {
+      id: "d1",
+      name: "Open",
+      sport: "generic",
+      tz: "Europe/London",
+      org_tz: "Europe/London",
+    },
     match_minutes: 30,
     policy: {
       roles: ["referee"],

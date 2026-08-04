@@ -5,6 +5,7 @@ exports[`buildOfficialsPack (v4/03 §2) > pack is deterministic and matches the 
   "division": {
     "id": "<id:1>",
     "name": "Open",
+    "org_tz": "UTC",
     "sport": "generic",
     "tz": "Europe/London",
   },

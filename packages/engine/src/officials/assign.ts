@@ -3,6 +3,7 @@
 // candidates (never assigned in violation), locked assignments are validated
 // obstacles, soft objectives (fairness, block-stay, travel) order candidates.
 import { mulberry32 } from "../core/rng.ts";
+import { dayKeyInTz } from "../scheduling/tz.ts";
 import type {
   AssignInput,
   AssignResult,
@@ -35,13 +36,37 @@ function overlaps(busy: readonly Busy[], from: number, to: number): Busy | undef
 }
 
 // Fairness basis key (Jul3/02 §3, 29 May): whole tournament or per day.
-// Days bucket on UTC — times are injected epoch ms, the caller owns zones.
-function basisKey(basis: "tournament" | "per_day", startAt: number): string {
-  return basis === "tournament" ? "T" : new Date(startAt).toISOString().slice(0, 10);
+//
+// A day is the calendar day in the ORG zone the caller injects (#397/#448) —
+// the single source of truth for what "a day" means here. The hard maxPerDay
+// cap, per_day fairness and the fairness-spread warning ALL route through this
+// one function, so they can never disagree about which day a fixture is on.
+// It used to bucket on UTC, which split one local evening across two days and
+// doubled the cap for every org west of Greenwich.
+function basisKey(
+  basis: "tournament" | "per_day",
+  startAt: number,
+  dayKey: (startAt: number) => string,
+): string {
+  return basis === "tournament" ? "T" : dayKey(startAt);
 }
 
 export function assignOfficials(input: AssignInput): AssignResult {
-  const { policy, rngSeed } = input;
+  const { policy, rngSeed, tz } = input;
+
+  // `dayKeyInTz` builds an Intl.DateTimeFormat per call and basisKey sits in
+  // the inner candidate loop (fixtures × roles × officials), so memoise on the
+  // instant. Fixtures share start times heavily, and the cache is per-call, so
+  // this cannot leak state between runs or make the pass non-deterministic.
+  const dayKeyCache = new Map<number, string>();
+  const dayKey = (startAt: number): string => {
+    let key = dayKeyCache.get(startAt);
+    if (key === undefined) {
+      key = dayKeyInTz(startAt, tz);
+      dayKeyCache.set(startAt, key);
+    }
+    return key;
+  };
   const conflicts: OfficialConflict[] = [];
   const byId = new Map<string, OfficialSpec>(input.officials.map((o) => [o.id, o]));
   const fixtureById = new Map<string, OfficialFixture>(input.fixtures.map((f) => [f.id, f]));
@@ -100,7 +125,7 @@ export function assignOfficials(input: AssignInput): AssignResult {
   // Track both bases: "T" (tournament) for fairness, the day for maxPerDay.
   function bump(officialId: string, startAt: number): void {
     const m = counts.get(officialId)!;
-    for (const key of ["T", basisKey("per_day", startAt)]) {
+    for (const key of ["T", basisKey("per_day", startAt, dayKey)]) {
       m.set(key, (m.get(key) ?? 0) + 1);
     }
   }
@@ -201,15 +226,15 @@ export function assignOfficials(input: AssignInput): AssignResult {
         // hard: max assignments per day (29 May) — always day-based,
         // independent of the fairness distribution basis
         if (official.maxPerDay !== undefined) {
-          const dayKey = basisKey("per_day", fixture.startAt);
-          const dayCount = counts.get(official.id)!.get(dayKey) ?? 0;
+          const fixtureDay = basisKey("per_day", fixture.startAt, dayKey);
+          const dayCount = counts.get(official.id)!.get(fixtureDay) ?? 0;
           if (dayCount >= official.maxPerDay) continue;
         }
 
         // soft score, minimised lexicographically:
         // [fairness count, block-stay miss, travel penalty, seeded tiebreak]
         const count =
-          counts.get(official.id)!.get(basisKey(policy.fairness, fixture.startAt)) ?? 0;
+          counts.get(official.id)!.get(basisKey(policy.fairness, fixture.startAt, dayKey)) ?? 0;
         const last = lastOnCourt.get(official.id);
         // stay = the official's previous assignment sits in the SAME
         // court-block as this fixture (29 Jun "before break", not across it)

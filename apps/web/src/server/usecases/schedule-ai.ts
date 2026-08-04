@@ -2042,7 +2042,16 @@ function coveragePreview(
     ...(o.entrant_ids.length > 0 ? { entrantIds: o.entrant_ids } : {}),
     homeDivisionId: pack.division.id,
   }));
-  const { conflicts } = assignOfficials({ fixtures, officials, locked: [], policy, rngSeed: "coverage" });
+  // `pack.tz` is the ORG zone (see SchedulePack.tz) — the day bucket the
+  // maxPerDay cap and per_day fairness are counted on (#448).
+  const { conflicts } = assignOfficials({
+    fixtures,
+    officials,
+    locked: [],
+    policy,
+    rngSeed: "coverage",
+    tz: pack.tz,
+  });
   const unfilled = conflicts
     .filter((c) => c.kind === "role_unfilled")
     .map((c) => ({ fixture_id: c.fixtureId ?? "", role_key: c.roleKey ?? "" }));

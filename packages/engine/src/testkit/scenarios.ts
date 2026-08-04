@@ -318,7 +318,16 @@ export function runOfficialsScenario(seed: number): OfficialsStats {
     restMinMinutes: 0,
     blockGapMinutes: 30,
   };
-  const result = assignOfficials({ fixtures, officials, locked: [], policy, rngSeed: `sim-${seed}` });
+  // Fixtures are laid out from epoch 0, so "UTC" keeps this sim's day bucket
+  // identical to what it has always been (#448 made the zone explicit).
+  const result = assignOfficials({
+    fixtures,
+    officials,
+    locked: [],
+    policy,
+    rngSeed: `sim-${seed}`,
+    tz: "UTC",
+  });
 
   // Hard invariant: no official on two overlapping fixtures.
   const byOfficial = new Map<string, { from: number; to: number }[]>();

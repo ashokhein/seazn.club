@@ -75,6 +75,21 @@ export interface AssignInput {
   locked: readonly FixtureOfficial[];
   policy: AssignPolicy;
   rngSeed: string;
+  /**
+   * The ORGANISATION zone (#397, design §2.1) — the governing clock for every
+   * calendar day this pass buckets on: the `maxPerDay` cap, `per_day` fairness
+   * and the fairness-spread warning all share it. NOT the division's display
+   * zone: a division override must not decide which day a fixture falls on, or
+   * two divisions of one competition would disagree about the same Saturday.
+   *
+   * REQUIRED on purpose (#448). This field exists because the pass used to
+   * bucket days on UTC, which silently doubled a `maxPerDay: 2` cap for any
+   * evening fixture west of Greenwich. An optional field defaulting to UTC
+   * would reinstate exactly that failure for every caller that forgot it, and
+   * a caller forgetting it is the whole defect. Making it required turns each
+   * un-updated call site into a compile error instead.
+   */
+  tz: string;
 }
 
 export interface AssignResult {
