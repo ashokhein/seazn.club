@@ -70,8 +70,12 @@ interface EventRow {
   voids_event_id: string | null;
 }
 
-// Terminal DB statuses that lock the ledger against further appends.
-const LOCKED = new Set(["finalized", "cancelled"]);
+// Terminal DB statuses that lock the ledger against further appends. Exported
+// because the V347 config-snapshot escape hatch must refuse on exactly this
+// set — rewriting the cfg a FINALIZED result was computed under is the very
+// thing the snapshot exists to prevent, so the two guards may not drift apart.
+export const LOCKED_FIXTURE_STATUSES: ReadonlySet<string> = new Set(["finalized", "cancelled"]);
+const LOCKED = LOCKED_FIXTURE_STATUSES;
 
 // Map the folded ledger onto the fixtures.status enum. Derived from the
 // ACTIVE (void-resolved) events, not from event-type transitions: a void can
