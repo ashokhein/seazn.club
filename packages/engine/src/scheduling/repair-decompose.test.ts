@@ -13,14 +13,27 @@ import { validateAssignments } from "./calendar.ts";
 import {
   repairComponents,
   repairDecomposed,
+  type DecomposedRepairResult,
   type RepairComponentReport,
 } from "./repair-decompose.ts";
 import { disjointConflictBound } from "./repair-minimality.ts";
 import { singleComponentBoard } from "./repair-synthetic-board.ts";
 import { RepairVerificationError } from "./repair.ts";
+import {
+  atABudgetThatReachesTheSolver,
+  measureLoadFactor,
+  scaleForLoad,
+  timedUnderLoad,
+} from "./solver-test-bounds.ts";
 import { resetZ3, z3LoadCount } from "./z3-load.ts";
 
 const SOLVE_TIMEOUT = 120_000;
+
+// Once per FILE, not per test: contention is a property of the host, and four
+// samples cost under 100 ms at full speed. 1 on a box as fast as the reference,
+// so nothing here moves on a quiet machine.
+const LOAD = measureLoadFactor();
+const scale = (ms: number): number => scaleForLoad(ms, LOAD);
 
 afterAll(async () => {
   await resetZ3();
@@ -360,16 +373,33 @@ describe("the pathological single-component board", () => {
       // probe, which does not return; so the budget is what has to bring control
       // back, and it has to bring it back on time.
       const board = singleComponentBoard({ n: 120 });
-      const budgetMs = 2_500;
-      const t0 = performance.now();
-      const r = await repairDecomposed({
-        proposal: board.proposal,
-        config: board.config,
-        dependencies: board.dependencies,
-        budgetMs,
-        componentLimit: 500,
+      // At 2 500 ms this reaches the solver on a quiet host, and on a loaded one
+      // the 120-fixture encode eats the whole budget instead — `checks` comes
+      // back 0 and the assertion below stops testing what it names. Observe the
+      // budget that actually reaches `check()` rather than estimating it: a
+      // factor sampled before the run is already stale if contention arrives
+      // mid-encode, and being short is silent. See `solver-test-bounds.ts`.
+      let wall = 0;
+      let factor = 1;
+      const { result: r, budgetMs } = await atABudgetThatReachesTheSolver<DecomposedRepairResult>({
+        from: 2_500,
+        attempts: 4,
+        reachedSolver: (res) => (res.components[0]?.checks ?? 0) >= 1,
+        run: async (ms) => {
+          const timed = await timedUnderLoad(() =>
+            repairDecomposed({
+              proposal: board.proposal,
+              config: board.config,
+              dependencies: board.dependencies,
+              budgetMs: ms,
+              componentLimit: 500,
+            }),
+          );
+          wall = timed.wallMs;
+          factor = timed.factor;
+          return timed.result;
+        },
       });
-      const wall = performance.now() - t0;
 
       expect(r.components).toHaveLength(1);
       expect(r.components[0]?.outcome).toBe("timeout");
@@ -378,8 +408,10 @@ describe("the pathological single-component board", () => {
       expect(r.moved).toEqual([]);
       expect(r.assignments).toEqual(board.proposal);
       // The bound is the point: "it came back" is also true of four minutes.
-      // Slack covers the un-sampled prologue and the certificate pass.
-      expect(wall).toBeLessThan(budgetMs + 6_000);
+      // Slack covers the un-sampled prologue and the certificate pass, and
+      // scales with the host — the property is "control returns within a
+      // bounded multiple of the deadline", not a fixed latency promise.
+      expect(wall).toBeLessThan(budgetMs + scaleForLoad(6_000, factor));
     },
     SOLVE_TIMEOUT,
   );

@@ -212,6 +212,68 @@ nothing that this file does not already carry.
   11/16, 13/24) and **0/3 with `await resetZ3()` between solves**. `resetZ3()` between
   component solves is MANDATORY and nearly free: ~1 ms teardown, ~200-300 ms reboot absorbed
   into the next solve. This also explains both earlier sightings (mixed workloads, one heap).
+- **PRE-EXISTING PRODUCT BUG, confirmed by a scout, NOT introduced by W6 and deliberately NOT
+  fixed here — `min_rest_minutes` feeder-rest has never fired in production.**
+  `RuleFixture.winnerTo` carries `fixtures.winner_to_fixture` (**uuid** FK,
+  `V214__fixtures.sql:14`); `RuleFixture.extKey` carries `fixtures.ext_key` (**text**,
+  `V214__fixtures.sql:31-33`). `calendar.ts:707` joins them with
+  `d.extKey !== f.winnerTo`, and `repair.ts:491` carries the same join. **No conversion site
+  exists anywhere in the codebase** — an earlier claim that `stages.ts:908` maps uuid→ext_key
+  is false; that line does not exist and `stages.ts:957-1075` is bracket-wiring SQL that
+  WRITES `winner_to_fixture = <target id>`. So the comparison matches zero pairs on real data.
+  Affected: `schedule-ai.ts:1489`, `competition-schedule-ai.ts:1359` and `:1531`, all tracing
+  to `schedule-ai.ts:976`.
+  **Why the suite is blind:** every engine test sets `winnerTo` to a string equal to some
+  fixture's `extKey`/`id` (`calendar-instruction.test.ts:22-25` — the `rf` helper defaults
+  `extKey = id`; `repair.test.ts:349-351,492-494,530-532`;
+  `repair-domain.test.ts:136,280-281,395-397`; `payload-fixtures.ts:141-144`;
+  `calendar-shared-semantics.test.ts:146`). `competition-schedule-verify.test.ts:1169` uses a
+  real UUID but pairs it with `ext_key: null`, so it exercises the `terminal` selector, not the
+  feeder-rest join. **No test pairs a real UUID `winnerTo` with a real ext-key `extKey`.**
+  Encoder and verifier agree, so `repairAndVerify` cannot catch it — the safety net is blind
+  because both halves share the assumption.
+  **Why it stays out of W6:** (1) fixing it changes SHIPPED verifier behaviour — boards that
+  validate clean today would start reporting feeder-rest conflicts, which needs its own
+  decision about existing data; (2) W6's scale evidence was measured with this join matching
+  NOTHING, so making it fire adds real constraints and could change component sizes — the very
+  thing that makes 500 movable reachable. Folding it in would invalidate the bench.
+  **Fix sketch for the follow-up issue:** either resolve `winnerTo` to an ext key when building
+  `RuleFixture` (a map of the right shape already exists at `schedule-ai.ts:724`, `extKeyById`,
+  currently used only to rewrite assumption text), or change both joins to compare on fixture
+  id. Either way the regression test MUST pair a real UUID with a real ext key — the current
+  helpers make the bug invisible by construction.
+  **FILED as issue #443** (2026-08-04) with the full evidence, the fix sketch, and the
+  non-negotiable test requirement.
+- **A SIXTH way a count lies in this repo, and it is the nastiest: MACHINE CONTENTION.**
+  Measured, not inferred: a fixed JS CPU unit costs **93 ms idle vs 464 ms (5x)** while other
+  agents run suites. At 5x the n=120 encode blows a 2.5 s budget **inside the O(n²) encode**,
+  so `check()` is never reached and the assertion reads `checks === 0`. Same mechanism explains
+  `12745 ms vs a 7000 ms bound` (idle overshoot on n=500 is only **98 ms**) and a 9-failure
+  `repair.test.ts` set that vanishes on an idle machine.
+  **This cost a wrong diagnosis:** three failures were attributed to `8363cb7f`'s budget
+  widening purely because they appeared after it. They cannot be — the decompose test runs in
+  `components` mode where the new ternary picks the IDENTICAL `Math.min(...)` branch. A probe
+  calling `repairSchedule` directly, with nothing from `repair-decompose.ts` on the path,
+  reproduces the failure. **Correlation with a recent commit is not causation; get the
+  mechanism.**
+  Consequence for CI: this repo runs suites concurrently, so solver tests that pass on an idle
+  laptop WILL be flaky in CI. The fix must be structural — calibrate a CPU unit in the same run
+  and scale **test bounds** by a clamped factor.
+  **NEVER scale the production solver budget by that factor.** The web runner passes 45 s
+  deliberately (sized against `ROUND_TIMEOUT_MS` and two full-ceiling components); a 5x host
+  would turn that into 225 s inside an HTTP request — invisible at the call site. A slow host
+  must produce a `timeout` + telemetry-visible fallback, which is what #401 asks for. Scaling
+  the encode loop's clock-SAMPLING granularity is fine (it does not move the deadline, only the
+  precision of honouring it); scaling the deadline is not.
+  **The half-built calibration in the tree has a latent bug — fix it before trusting it.**
+  `solver-load-factor.ts`'s `workUnit()` runs **5M iterations costing ~115 ms** on this box,
+  while `REFERENCE_UNIT_MS` claims **23 ms**. So on a fully IDLE machine the factor reads a
+  constant ~5x and silently loosens every scaled bound — a calibration that always says
+  "the machine is slow" is worse than none, because it disables the bounds while looking
+  principled. Measured correction: **1M iterations = 23.1 ms, stable**, which makes the shipped
+  constant honest and the calibration cost ~70 ms as documented.
+  Also seen: a **927 s / 961 s wall on a 2.5 s budget** — almost certainly host suspend, not a
+  solver bug. Do not go hunting when an absurd elapsed value appears.
 - **OPEN — rounding, not grouping (5th encoder/verifier mismatch, different family).**
   `repair.ts:378-379` bounds an IMMOVABLE with `roundMin` (`Math.round`) while movable domains
   use conservative `ceilMin`/`floorMin`. An obstacle with sub-minute endpoints can therefore be

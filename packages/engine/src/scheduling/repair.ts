@@ -358,7 +358,17 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
     // 125k pairs at the 500-fixture cap, each one several z3 term allocations.
     // Sampled rather than tested every iteration: `performance.now()` in the
     // hot loop would itself be a measurable share of the encode.
-    if ((p & 0x3ff) === 0 && overBudget()) return timeout(0);
+    //
+    // Every 128, not every 1024. The granularity is not free precision — it is
+    // how far past its deadline a call may run before it notices, and that
+    // window is one chunk of z3 term building, which stretches with the host.
+    // At 1024 the measured overshoot was tens of milliseconds on a quiet box
+    // and NINETEEN SECONDS on a loaded one, against a 3 s budget. A caller that
+    // asked for 45 s and got 64 s has not been given a budget, it has been given
+    // a suggestion. A `performance.now()` read costs tens of nanoseconds against
+    // 128 term allocations, so the tighter window is not measurable in the
+    // encode's own cost.
+    if ((p & 0x7f) === 0 && overBudget()) return timeout(0);
     const [i, j] = pairs[p]!;
     const ai = proposalById.get(domains[i]!.fixtureId)!;
     const aj = proposalById.get(domains[j]!.fixtureId)!;
@@ -383,7 +393,10 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
 
   // --- movable × immovable --------------------------------------------------
   for (let i = 0; i < domains.length; i++) {
-    if ((i & 0x3f) === 0 && overBudget()) return timeout(0);
+    // Every 16, for the same reason as the pair loop above: this body walks a
+    // fixture against every immovable on the board, so one iteration is itself
+    // unbounded work.
+    if ((i & 0xf) === 0 && overBudget()) return timeout(0);
     const d = domains[i]!;
     const ai = proposalById.get(d.fixtureId)!;
     // A `null` span means the blocking families alone leave this fixture nowhere

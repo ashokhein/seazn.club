@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import {
   isBlockingConflict,
   validateAssignments,
@@ -33,6 +33,26 @@ import {
 // exit. This file never calls `vi.resetModules()`, so the binding above is the
 // only loader instance in play and one teardown is enough.
 afterAll(async () => {
+  await resetZ3();
+});
+
+// A reset after EVERY test, not only at the end of the file.
+//
+// `vitest.config.ts` sets `isolate: false`, so every test here shares one module
+// registry and therefore ONE WASM heap. Nothing frees the `Solver` and the terms
+// a solve allocates, so across ~20 solves that heap only grows and the pthread
+// worker eventually dies mid-solve with `RuntimeError: memory access out of
+// bounds` — the same failure `repairDecomposed` resets between components to
+// avoid, reached by sitting in one test FILE rather than one call.
+//
+// It surfaced when the encode's budget-sampling window was tightened, which
+// changed where a timing-out encode stops and left more partial work behind per
+// test. The growing heap was always the cause; the sampling only moved the
+// threshold at which it tips over. Eight tests in this file aborted at once.
+//
+// A reboot costs 200-300 ms. That buys a file whose twentieth test means the
+// same thing as its first.
+afterEach(async () => {
   await resetZ3();
 });
 

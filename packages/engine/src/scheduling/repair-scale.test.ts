@@ -14,16 +14,34 @@
 // Both cases run far above the 5 s vitest default, so each carries an explicit
 // timeout. That is deliberate — weakening the assertion to fit the default
 // would delete the only test of the property the wave exists to guarantee.
+//
+// EVERY BOUND BELOW IS RELATIVE TO THE HOST, not to the machine it was authored
+// on. This suite runs its files concurrently and shares the box with whatever
+// else is building; a measured 5× slowdown on this very machine was enough to
+// push the n=120 encode past a fixed 5 s budget, at which point the budget
+// expired in the ENCODE, `checks` came back 0, and the second test here stopped
+// exercising the solver it exists to test. See `solver-test-bounds.ts`. The
+// factor is 1 on an idle host, so none of these bars drop.
 import { afterAll, describe, expect, it } from "vitest";
 import { repairSchedule, type RepairPhase } from "./repair.ts";
 import { syntheticBoard } from "./repair-synthetic-board.ts";
+import {
+  atABudgetThatReachesTheSolver,
+  measureLoadFactor,
+  scaleForLoad,
+  timedUnderLoad,
+} from "./solver-test-bounds.ts";
 import { resetZ3, z3LoadCount } from "./z3-load.ts";
 
 afterAll(async () => {
   await resetZ3();
 });
 
-const TEST_TIMEOUT = 120_000;
+/** Once per FILE, not per test: it costs ~70 ms and load does not change
+ *  meaningfully inside one file's run. */
+const LOAD = measureLoadFactor();
+const scale = (ms: number): number => scaleForLoad(ms, LOAD);
+const TEST_TIMEOUT = scale(120_000);
 
 describe("termination under budget", () => {
   it(
@@ -37,22 +55,36 @@ describe("termination under budget", () => {
       // encode alone runs into the tens of seconds, so this budget expires
       // DURING the encode — which is the case that used to escape entirely,
       // the budget having once been tested only around `check()`.
+      //
+      // NOT scaled, and that is the point: the scenario is "the budget runs out
+      // mid-encode", and a budget stretched to fit a slow host would let the
+      // encode finish and quietly test something else. What scales is the
+      // SLACK, below — how far past its deadline the call is allowed to
+      // notice, which is a property of how fast this box encodes 1 024 pairs.
       const budgetMs = 3_000;
-      const t0 = performance.now();
-      const r = await repairSchedule({
-        proposal: board.proposal,
-        config: board.config,
-        dependencies: board.dependencies,
-        budgetMs,
-      });
-      const wall = performance.now() - t0;
+      const {
+        result: r,
+        wallMs: wall,
+        factor,
+      } = await timedUnderLoad(() =>
+        repairSchedule({
+          proposal: board.proposal,
+          config: board.config,
+          dependencies: board.dependencies,
+          budgetMs,
+        }),
+      );
 
       expect(["repaired", "timeout", "infeasible", "clean"]).toContain(r.status);
       // The bound is the point. Slack covers the un-sampled prologue (verifier
       // pre-check, WASM boot, domain build) plus one 1024-pair sampling
-      // interval; measured overshoot is well under a second.
-      expect(wall).toBeLessThan(budgetMs + 4_000);
-      expect(r.elapsedMs).toBeLessThan(budgetMs + 4_000);
+      // interval; measured overshoot on an idle host is 98 ms against a 4 s
+      // allowance. Both the prologue and that sampling interval are CPU work,
+      // so both stretch with the host — 12.7 s was measured under load against
+      // an unscaled 7 s bound.
+      const allowance = budgetMs + scaleForLoad(4_000, factor);
+      expect(wall).toBeLessThan(allowance);
+      expect(r.elapsedMs).toBeLessThan(allowance);
     },
     TEST_TIMEOUT,
   );
@@ -66,20 +98,40 @@ describe("termination under budget", () => {
       // loop. A budget respected only up to `check()` would hang here for as
       // long as z3 felt like taking.
       const board = syntheticBoard({ n: 120, clashEvery: 20 });
-      const budgetMs = 5_000;
-      const t0 = performance.now();
-      const r = await repairSchedule({
-        proposal: board.proposal,
-        config: board.config,
-        dependencies: board.dependencies,
-        budgetMs,
+      // Scaling cannot save this one. The scenario REQUIRES the encode to fit so
+      // that z3's own clock is what stops the run; on a loaded host a 5 s budget
+      // is eaten by the encode, `checks` comes back 0, and the assertion below
+      // would be measuring the encode's sampling loop while claiming to measure
+      // the solver's timeout. Observe the budget that reaches `check()` instead
+      // of estimating it — and if none does, the `checks >= 1` assertion fails
+      // honestly rather than passing on the wrong code path.
+      let wall = 0;
+      let factor = 1;
+      const { result: r, budgetMs } = await atABudgetThatReachesTheSolver<
+        Awaited<ReturnType<typeof repairSchedule>>
+      >({
+        from: 5_000,
+        attempts: 4,
+        reachedSolver: (res) => res.status === "timeout" && res.checks >= 1,
+        run: async (ms) => {
+          const timed = await timedUnderLoad(() =>
+            repairSchedule({
+              proposal: board.proposal,
+              config: board.config,
+              dependencies: board.dependencies,
+              budgetMs: ms,
+            }),
+          );
+          wall = timed.wallMs;
+          factor = timed.factor;
+          return timed.result;
+        },
       });
-      const wall = performance.now() - t0;
 
       expect(r.status).toBe("timeout");
       if (r.status !== "timeout") return;
       expect(r.checks).toBeGreaterThanOrEqual(1); // it really did reach the solver
-      expect(wall).toBeLessThan(budgetMs + 4_000);
+      expect(wall).toBeLessThan(budgetMs + scaleForLoad(4_000, factor));
     },
     TEST_TIMEOUT,
   );
