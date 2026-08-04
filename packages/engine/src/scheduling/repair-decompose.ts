@@ -372,34 +372,23 @@ function dayCapGuard(
  * exactly one case: the board it produced disagrees with the real verifier,
  * which is an impossible event and must be loud rather than shipped.
  *
- * SERIALISED PER PROCESS. `resetZ3()` tears down the shared WASM context and its
- * pthreads, so a second decomposed repair running alongside the first would pull
- * the threads out from under a live `check()` — the same abort the reset exists
- * to prevent, arriving by a different road. Two callers (the division runner and
- * the competition runner) each have their own repair loop and a joint run can
- * have both in flight, so this is not hypothetical. Calls queue; the budget
- * clock starts when a call's own work does, not when it was made.
+ * SERIALISED PER PROCESS, one component at a time, by the lock `repairSchedule`
+ * and `resetZ3` both take (`withZ3Lock`, z3-load.ts). `resetZ3()` tears down the
+ * shared WASM context and its pthreads, so anything running alongside a
+ * decomposed repair would have the threads pulled out from under a live
+ * `check()` — the same abort the reset exists to prevent, arriving by a
+ * different road. Two callers (the division runner and the competition runner)
+ * each have their own repair loop and a joint run can have both in flight, so
+ * this is not hypothetical.
+ *
+ * The lock is deliberately NOT held across the whole call. It is taken per
+ * component solve and per reset, so a second caller runs BETWEEN two components
+ * rather than waiting out a 240 s decomposed budget — and it still never runs
+ * DURING one. The budget clock starts when this call's own work does, and time
+ * lost waiting for the lock counts against it: the anytime property means a
+ * caller that runs short returns a partly repaired board rather than nothing.
  */
 export async function repairDecomposed(
-  input: DecomposedRepairInput,
-): Promise<DecomposedRepairResult> {
-  const run = solverQueue.then(
-    () => decomposeAndSolve(input),
-    () => decomposeAndSolve(input),
-  );
-  // The queue must survive a rejected repair, or one thrown verification error
-  // would wedge every later call behind it.
-  solverQueue = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
-}
-
-/** The tail of the in-process queue. One WASM context, one solve at a time. */
-let solverQueue: Promise<unknown> = Promise.resolve();
-
-async function decomposeAndSolve(
   input: DecomposedRepairInput,
 ): Promise<DecomposedRepairResult> {
   // `performance.now()`: ambient wall-clock reads are banned engine-wide

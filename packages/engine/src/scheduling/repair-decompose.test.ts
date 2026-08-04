@@ -478,6 +478,7 @@ describe("the max_fixtures_per_day guard", () => {
       ).resolves.not.toBeInstanceOf(RepairVerificationError);
     }
   }, SOLVE_TIMEOUT);
+
 });
 
 describe("disjointConflictBound", () => {
@@ -561,30 +562,50 @@ describe("two repairs at once", () => {
       // `check()`, terminating the pthreads underneath it — and the division
       // runner and the competition runner each have their own repair loop, so a
       // joint run really can have both in flight.
+      //
+      // THE UNIT OF EXCLUSION IS ONE COMPONENT SOLVE, not one call. The lock
+      // lives on `repairSchedule` and `resetZ3` (`withZ3Lock`, z3-load.ts), so
+      // a second caller is admitted BETWEEN two of this one's components —
+      // deliberately, because a lock held for a whole decomposed call stalls an
+      // HTTP path for the full 240 s budget, and nothing about the WASM needs
+      // it: the reset that follows each component runs under the same lock.
+      // What must never happen is a solve straddling another's, which is what
+      // the phase quartets below pin.
       const first = clashBoard(2);
       const second = clashBoard(2);
       const order: string[] = [];
+      const phases: string[] = [];
       const [a, b] = await Promise.all([
         repairDecomposed({
           proposal: first.proposal,
           config: first.config,
           budgetMs: 60_000,
           onComponent: () => order.push("a"),
+          onPhase: (p) => phases.push(`a:${p.phase}`),
         }),
         repairDecomposed({
           proposal: second.proposal,
           config: second.config,
           budgetMs: 60_000,
           onComponent: () => order.push("b"),
+          onPhase: (p) => phases.push(`b:${p.phase}`),
         }),
       ]);
 
       expect(a.status).toBe("repaired");
       expect(b.status).toBe("repaired");
       expect(order).toHaveLength(4);
-      // Grouped, not interleaved: one call's components all run before the
-      // other's start.
-      expect(order.join("")).toBe(order[0] === "a" ? "aabb" : "bbaa");
+      // Four solves, each emitting its four phases in order and under one
+      // caller's tag. An overlap shows up here as a mixed or short quartet —
+      // and it is the only way one call's `resetZ3()` could reach the other's
+      // live `check()`.
+      expect(phases).toHaveLength(16);
+      for (let i = 0; i < phases.length; i += 4) {
+        const tag = phases[i]!.slice(0, 1);
+        expect(phases.slice(i, i + 4)).toEqual(
+          ["precheck", "z3_ready", "domains", "encoded"].map((p) => `${tag}:${p}`),
+        );
+      }
     },
     SOLVE_TIMEOUT,
   );

@@ -58,6 +58,51 @@ export async function loadZ3(): Promise<Z3Context> {
   return attempt;
 }
 
+/** The tail of the in-process solver queue. One WASM context, one solve at a
+ *  time. */
+let z3Queue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Serialises everything that can touch the WASM, process-wide.
+ *
+ * `resetZ3` terminates the pthreads the whole process shares, so a reset
+ * arriving while any solve is inside `check()` is the
+ * `RuntimeError: memory access out of bounds` the reset exists to prevent,
+ * reached by a different road. That is not hypothetical: `repairDecomposed`
+ * resets between every component, and two web runners (the division one and the
+ * competition one) each own a repair loop that a joint run can have in flight at
+ * once. So the lock sits HERE, in front of the shared context, rather than
+ * around any one caller — a queue on one entry point serialises that entry point
+ * against itself and nothing else.
+ *
+ * Three properties, all load-bearing:
+ *
+ *   * chained through BOTH arms (`.then(work, work)`), so a rejected entrant
+ *     still runs the next one;
+ *   * the tail is reset through both arms as well, so a rejection releases the
+ *     lock instead of wedging every later call behind it;
+ *   * the tail is assigned SYNCHRONOUSLY with the read, so two callers in one
+ *     turn cannot both chain off the same predecessor.
+ *
+ * NOT REENTRANT, deliberately — a lock a caller can take twice is a lock that
+ * deadlocks the second time. It is taken by the leaves only: `repairSchedule`
+ * and `resetZ3`. Everything else reaches the solver through one of those two —
+ * `repairAndVerify` calls `repairSchedule` and then runs a pure verifier;
+ * `repairDecomposed` takes it once per component solve and once per reset, which
+ * is what lets a second caller in BETWEEN components rather than stalling it for
+ * a 240 s decomposed budget. `loadZ3` does not take it, because it is called
+ * from inside it; a boot is also harmless on its own, since it only ever hands
+ * back the singleton.
+ */
+export function withZ3Lock<T>(work: () => Promise<T>): Promise<T> {
+  const run = z3Queue.then(work, work);
+  z3Queue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 /**
  * Drops the singleton and stops the worker threads node keeps alive.
  *
@@ -68,15 +113,20 @@ export async function loadZ3(): Promise<Z3Context> {
  * 3 runs without it, 0 of 3 with it). Teardown is about 1 ms; the next `loadZ3`
  * pays a 200-300 ms reboot.
  *
- * It is PROCESS-WIDE, which is why `repairDecomposed` serialises itself: calling
- * this while another solve is inside `check()` on the same context terminates
- * the threads underneath it.
+ * It is PROCESS-WIDE, which is why it runs UNDER `withZ3Lock`: calling this
+ * while another solve is inside `check()` on the same context terminates the
+ * threads underneath it. Waiting for the lock is why a reset can look slow —
+ * the teardown itself is about 1 ms.
  *
  * `count` returns to zero, so `z3LoadCount()` reads "loads since the last reset"
  * — which is exactly what makes "a reset really did happen between those two
  * solves" assertable.
  */
-export async function resetZ3(): Promise<void> {
+export function resetZ3(): Promise<void> {
+  return withZ3Lock(tearDownZ3);
+}
+
+async function tearDownZ3(): Promise<void> {
   if (loaded === null) return;
   try {
     const ctx = await loaded;

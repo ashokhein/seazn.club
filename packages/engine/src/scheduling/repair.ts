@@ -50,7 +50,7 @@ import {
   type RepairFamily,
 } from "./repair-domain.ts";
 import { dayKeyInTz } from "./tz.ts";
-import { loadZ3 } from "./z3-load.ts";
+import { loadZ3, withZ3Lock } from "./z3-load.ts";
 
 /** #401's Task 4 interface names these on `repair.ts`; they are DEFINED in
  *  `repair-domain.ts` because the domain builder is what decides which family a
@@ -196,7 +196,25 @@ const roundMin = (ms: number): number => Math.round(ms / MS_PER_MIN);
  *  which then does not match on the way back out of the unsat core. */
 const famLiteralName = (f: RepairFamily): string => `fam_${f}`;
 
-export async function repairSchedule(input: RepairInput): Promise<RepairResult> {
+/**
+ * Repairs a board with the fewest moves the solver can prove, or says why not.
+ *
+ * SERIALISED PER PROCESS, and this is the only place in the repair stack that
+ * takes the lock. `resetZ3()` tears down the WASM context and its pthreads for
+ * the WHOLE process, so any solve running beside a reset — or beside another
+ * solve that will reset when it finishes — is the `memory access out of bounds`
+ * abort the reset exists to prevent. Putting the lock on the leaf rather than on
+ * a caller is what makes `repairAndVerify`, `repairDecomposed` and a bare
+ * `resetZ3()` serialise against ONE another and not merely each against itself.
+ *
+ * The budget clock starts when the call's own work does, not when the call was
+ * made: time spent queueing is not time the caller was given.
+ */
+export function repairSchedule(input: RepairInput): Promise<RepairResult> {
+  return withZ3Lock(() => solveRepair(input));
+}
+
+async function solveRepair(input: RepairInput): Promise<RepairResult> {
   // `performance.now()` rather than `Date.now()`: ambient wall-clock reads are
   // banned engine-wide (scripts/engine-boundary.ts), and an elapsed span is what
   // a monotonic clock is for anyway.
@@ -714,6 +732,10 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
  * throws: the solver and the verifier disagreeing about what the rules mean is
  * an impossible event, and impossible events that occur should be loud rather
  * than shipped as a board the organiser is then locked out of editing.
+ *
+ * Takes no lock of its own: the solve inside `repairSchedule` holds it, and the
+ * re-verification below is pure. Taking it here as well would deadlock, since
+ * `withZ3Lock` is not reentrant.
  */
 export async function repairAndVerify(input: RepairInput): Promise<RepairResult> {
   const result = await repairSchedule(input);
