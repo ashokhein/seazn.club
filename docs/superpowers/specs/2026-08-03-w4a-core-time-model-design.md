@@ -271,6 +271,55 @@ as later than every period seen so far, so `P2 100` then `P1 50` — the commone
 manual-entry mistake there is — is accepted. Declaring `playPhases` is what
 closes it.
 
+### 3.3.1 Strict on write, tolerant on replay — ADDED 2026-08-04 (T9)
+
+Everything in §3.3 above is stated as though the fold had a write path. It did
+not. `foldMatch` is the only state-derivation function AND the write gate:
+`append-event.ts` validates a candidate by folding the whole stream including
+it, through the same fold, against a `cfg` it rebuilds live from
+`division.config` on every call. Two consequences compose:
+
+1. every check ran identically on write and on read, so "refuse this on the
+   write path only" was not expressible; and
+2. every READ replays from `init`, so a refusal computed from cfg fires on
+   events **already in the ledger** the moment an organiser edits the config —
+   with no event to void and no scorer action that recovers the fixture.
+
+The phase guard §3.3 specifies is exactly that shape, one layer above all
+eleven sports: its own justification ("a scorer picking a period this sport does
+not have") is a statement about a NEW event and false about history.
+
+**`FoldOptions.strictFromSeq`** is the seam. It is the seq of the first event
+not yet in the ledger: events at or after it are validated in full, everything
+before is replayed. One fold, one traversal. `append-event.ts` passes the
+candidate's seq — exactly one strict event; `fold.ts` and every other read path
+pass nothing.
+
+**Absent means tolerant**, and that polarity is the fail-safe one: a caller that
+forgets the option under-validates a write it was probably not making, where the
+opposite default bricks every fixture in an edited division. The seam reaches
+modules too, via an optional third argument to `apply` (`FoldContext`); absent
+there reads as STRICT, because the only callers that omit it are the testkit
+harnesses building a stream event by event.
+
+**The rule this gives the whole engine:** a check whose verdict a config edit
+can move is strict-only. A check that reads the stream alone — payload schema,
+a tie-break winner contradicting its set winner, a lineup membership — is
+unconditional. `docs`-level consequence: "X is rejected" in this spec now always
+means *rejected on append*, and a recorded stream must remain readable under any
+config the schema accepts.
+
+**One class is knowingly outside it.** Lowering `bestOf`, `maxBoards`,
+`periods.count` or `playersPerSide` decides a recorded match EARLIER on replay,
+and guarantee 4 (`ALREADY_DECIDED`) then refuses the rest of the ledger. Gating
+guarantee 4 on the seam was tried and reverted: it moves the throw one layer
+down into each module's own terminal-phase guard, so a real fix is a coordinated
+ruling across the kernel and all eleven modules on what a post-decision event
+MEANS on replay — dispatch it and the state is nonsense, skip it and the fold
+silently drops recorded history. `sports/cfg-replay.conformance.test.ts`
+classifies that class exhaustively and names the sports that exhibit it, so both
+a new brick and a fix turn it red.
+
 ### 3.4 Release-on-goal
 
 `SuspensionClass` gains `releaseOnGoal?: boolean`. IIHF minors and bench minors
@@ -452,9 +501,44 @@ optional `person`, optional `duration: DurationSeconds`, optional `at`.
 
 `duration` is recorded explicitly rather than derived from `recordedAt`,
 because a three-minute medical-timeout limit must not drift when the umpire
-taps late. Cfg gains optional per-kind allowances; exceeding a count allowance
-is rejected, exceeding a duration allowance is **recorded, not rejected** — the
-engine notes the overrun, the umpire adjudicates.
+taps late. Cfg gains optional per-kind allowances.
+
+**AMENDED 2026-08-04 (T9).** This paragraph said "exceeding a count allowance is
+rejected, exceeding a duration allowance is recorded". What shipped is
+`overCount: true` alongside `overran: true` — **neither allowance refuses**, and
+this amendment makes the spec say what ships.
+
+It was first departed from as a bug fix. Both allowances are computed from a cfg
+read live out of `division.config`, and every read replays the whole stream from
+`init`, so refusing on `count` fired on events already in the ledger the moment
+an organiser lowered the number — with no event to void and no scorer action
+that recovers the fixture. At the time there was no way to say "refuse this only
+when it is being appended", so recording a flag was the only option.
+
+**§3.3.1 has since built that seam, and the answer is still no.** With
+`strictFromSeq` a count refusal *could* now be strict-only. It should not be,
+for three reasons that are about the rule rather than the mechanism:
+
+1. **The break happened.** The chair keys it in because a physio came on court.
+   Refusing the event does not send the physio away; it destroys the only record
+   that the fourth medical timeout occurred, which is precisely what an appeal
+   needs. That is the argument this section already made for `duration`, and
+   nothing about `count` distinguishes it.
+2. **One rule, one mechanism.** Enforcing the two halves of the same cfg object
+   by two different means — one refusal, one flag — is a difference a reader
+   would look for a reason behind, and there is none.
+3. **A refusal is user-facing copy.** `EngineError.message` reaches the scorer
+   verbatim, so refusing here means telling an umpire mid-match that something
+   they watched happen is not allowed to be recorded.
+
+So the seam changes the *reason* rather than the verdict: `overCount` was a
+workaround for a missing capability and is now a deliberate rule. The engine
+notes both verdicts; the umpire adjudicates.
+
+The interruption's `at` handling follows §3.3.1 in full — the two phase checks
+and the "stamped ahead of play" comparison are **strict only**, because
+`playPhases` is derived from `bestOf` and lowering it from 5 to 3 would
+otherwise make every interruption recorded in S4 or S5 unreadable.
 
 ### 5.5 Boardgame, carrom, generic
 
