@@ -551,3 +551,41 @@ describe("disjointConflictBound", () => {
     expect(bound.unattributed).toBe(3);
   });
 });
+
+describe("two repairs at once", () => {
+  it(
+    "serialises, because tearing the WASM down under a live solve is the abort it exists to prevent",
+    async () => {
+      // The reset between components is process-wide. A second decomposed
+      // repair overlapping the first would call it while the first is inside
+      // `check()`, terminating the pthreads underneath it — and the division
+      // runner and the competition runner each have their own repair loop, so a
+      // joint run really can have both in flight.
+      const first = clashBoard(2);
+      const second = clashBoard(2);
+      const order: string[] = [];
+      const [a, b] = await Promise.all([
+        repairDecomposed({
+          proposal: first.proposal,
+          config: first.config,
+          budgetMs: 60_000,
+          onComponent: () => order.push("a"),
+        }),
+        repairDecomposed({
+          proposal: second.proposal,
+          config: second.config,
+          budgetMs: 60_000,
+          onComponent: () => order.push("b"),
+        }),
+      ]);
+
+      expect(a.status).toBe("repaired");
+      expect(b.status).toBe("repaired");
+      expect(order).toHaveLength(4);
+      // Grouped, not interleaved: one call's components all run before the
+      // other's start.
+      expect(order.join("")).toBe(order[0] === "a" ? "aabb" : "bbaa");
+    },
+    SOLVE_TIMEOUT,
+  );
+});

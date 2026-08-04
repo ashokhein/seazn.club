@@ -58,7 +58,24 @@ export async function loadZ3(): Promise<Z3Context> {
   return attempt;
 }
 
-/** Test-only: drops the singleton and stops the worker threads node keeps alive. */
+/**
+ * Drops the singleton and stops the worker threads node keeps alive.
+ *
+ * No longer test-only. `repairDecomposed` calls this BETWEEN component solves
+ * and it is load-bearing there: many medium solves otherwise share one
+ * monotonically-growing WASM heap, nothing frees the per-component `Solver`, and
+ * the pthread worker dies with `RuntimeError: memory access out of bounds` (3 of
+ * 3 runs without it, 0 of 3 with it). Teardown is about 1 ms; the next `loadZ3`
+ * pays a 200-300 ms reboot.
+ *
+ * It is PROCESS-WIDE, which is why `repairDecomposed` serialises itself: calling
+ * this while another solve is inside `check()` on the same context terminates
+ * the threads underneath it.
+ *
+ * `count` returns to zero, so `z3LoadCount()` reads "loads since the last reset"
+ * — which is exactly what makes "a reset really did happen between those two
+ * solves" assertable.
+ */
 export async function resetZ3(): Promise<void> {
   if (loaded === null) return;
   try {
