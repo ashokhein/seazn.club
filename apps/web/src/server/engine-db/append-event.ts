@@ -89,6 +89,26 @@ function nextStatus(
   active: readonly EventEnvelope[],
 ): string {
   if (candidateType === "core.finalize") return "finalized";
+  return fixtureStatusFromFold(outcome, active);
+}
+
+/**
+ * The same rule for a fold with no candidate event — a fixture whose cached
+ * status has to be re-derived from a stream that did not change (the V347
+ * re-snapshot hatch). Exported so the two can never drift: a hatch that wrote
+ * its own status rule would reintroduce exactly the read/write disagreement
+ * `fixture-cfg.ts` exists to prevent.
+ *
+ * `finalized` is deliberately NOT reachable here even when the ledger holds an
+ * active `core.finalize`: every caller of this overload has already refused a
+ * fixture in `LOCKED_FIXTURE_STATUSES`, so the only way to arrive with a
+ * finalize in the stream is that staff reopened the fixture on purpose, and
+ * re-deriving it back to `finalized` would silently undo that.
+ */
+export function fixtureStatusFromFold(
+  outcome: MatchOutcome | null,
+  active: readonly EventEnvelope[],
+): string {
   const has = (type: string) => active.some((event) => event.type === type);
   // Abandon first: cricket abandon folds to a no_result OUTCOME, but the
   // fixture status stays "abandoned" (replay policy owns it from here).

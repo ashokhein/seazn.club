@@ -10,7 +10,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
-import { appendEvent, rebuildState } from "@/server/engine-db";
+import { appendEvent, rebuildState, recomputeStandings } from "@/server/engine-db";
 import { fixtureConfigPanel, resnapshotFixtureConfig } from "../admin-fixture-config";
 import { HttpError } from "@/lib/http";
 
@@ -23,16 +23,28 @@ const CFG = {
   progressScore: false,
 } as const;
 
+const TENNIS_BEST_OF_3 = {
+  bestOf: 3,
+  set: { gamesTo: 6, winBy: 2, tiebreakAt: 6, tiebreakTo: 7 },
+  finalSet: "same",
+  game: { noAd: false },
+  tiebreak: { winBy: 2 },
+  points: { win: 2, loss: 0 },
+} as const;
+
 interface Seed {
   orgId: string;
   actorId: string;
   divisionId: string;
+  stageId: string;
   fixtureId: string;
   home: string;
   away: string;
 }
 
-async function seed(): Promise<Seed> {
+async function seed(opts: { sportKey?: string; config?: unknown } = {}): Promise<Seed> {
+  const sportKey = opts.sportKey ?? "generic";
+  const config = opts.config ?? CFG;
   const suffix = randomUUID().slice(0, 8);
   const [{ id: actorId }] = await sql<{ id: string }[]>`
     insert into users (email, display_name, is_staff, staff_role)
@@ -43,7 +55,8 @@ async function seed(): Promise<Seed> {
     returning id`;
   await sql`
     insert into sports (key, name, module_version, position_catalog)
-    values ('generic', 'Generic', '1.0.0', ${sql.json({ groups: [], lineup: { size: 1, benchMax: 0 } })})
+    values (${sportKey}, ${sportKey}, '1.0.0',
+            ${sql.json({ groups: [], lineup: { size: 1, benchMax: 0 } })})
     on conflict (key) do nothing`;
   const [{ id: competitionId }] = await sql<{ id: string }[]>`
     insert into competitions (org_id, name, slug, visibility)
@@ -51,8 +64,8 @@ async function seed(): Promise<Seed> {
     returning id`;
   const [{ id: divisionId }] = await sql<{ id: string }[]>`
     insert into divisions (competition_id, name, slug, sport_key, variant_key, config, module_version)
-    values (${competitionId}, 'Div', ${"div-" + suffix}, 'generic', 'score',
-            ${sql.json(CFG)}, '1.0.0')
+    values (${competitionId}, 'Div', ${"div-" + suffix}, ${sportKey}, 'score',
+            ${sql.json(config as never)}, '1.0.0')
     returning id`;
   const [{ id: stageId }] = await sql<{ id: string }[]>`
     insert into stages (division_id, seq, kind, name, config)
@@ -68,7 +81,33 @@ async function seed(): Promise<Seed> {
     insert into fixtures (stage_id, division_id, round_no, seq_in_round, home_entrant_id, away_entrant_id)
     values (${stageId}, ${divisionId}, 1, 1, ${home}, ${away})
     returning id`;
-  return { orgId, actorId, divisionId, fixtureId, home, away };
+  return { orgId, actorId, divisionId, stageId, fixtureId, home, away };
+}
+
+async function setDivisionConfig(divisionId: string, config: unknown): Promise<void> {
+  await sql`update divisions set config = ${sql.json(config as never)} where id = ${divisionId}`;
+}
+
+async function fixtureRow(fixtureId: string) {
+  const [row] = await sql<{ status: string; outcome: unknown }[]>`
+    select status, outcome from fixtures where id = ${fixtureId}`;
+  return row;
+}
+
+async function cachedState(fixtureId: string) {
+  const [row] = await sql<{ last_seq: number; state: unknown; summary: unknown }[]>`
+    select last_seq, state, summary from match_states where fixture_id = ${fixtureId}`;
+  return row;
+}
+
+async function cachedStandings(stageId: string) {
+  const [row] = await sql<{ rows: { entrantId: string; points: number }[] }[]>`
+    select rows from standings_snapshots where stage_id = ${stageId} and pool_id is null`;
+  return row?.rows ?? [];
+}
+
+function cachedPoints(rows: { entrantId: string; points: number }[], entrantId: string) {
+  return rows.find((r) => r.entrantId === entrantId)?.points;
 }
 
 async function auditRows(fixtureId: string) {
@@ -122,6 +161,65 @@ describe.skipIf(!HAS_DB)("admin fixture config snapshot", () => {
     // hatch.
     const rebuilt = await rebuildState(s.orgId, s.fixtureId);
     expect(rebuilt?.outcome).toEqual({ kind: "draw" });
+  });
+
+  it("re-derives the cached standings the discarded config produced", async () => {
+    // A re-snapshot changes what the fixture folds against, and TWO caches were
+    // computed from the old answer: match_states and standings_snapshots. If the
+    // hatch rewrites the column and walks away, the panel reports `diverged: no`
+    // while the table on screen is still the discarded config's — and it stays
+    // that way until somebody happens to append another event.
+    const s = await seed();
+    await appendEvent(s.orgId, s.fixtureId, 0, { type: "core.start", payload: {} });
+    await appendEvent(s.orgId, s.fixtureId, 1, {
+      type: "generic.result",
+      payload: { p1Score: 2, p2Score: 1 },
+    });
+    await recomputeStandings(s.orgId, s.stageId);
+    expect(cachedPoints(await cachedStandings(s.stageId), s.home)).toBe(3);
+
+    await setDivisionConfig(s.divisionId, { ...CFG, points: { w: 2, d: 1, l: 0 } });
+    await resnapshotFixtureConfig(s.actorId, s.fixtureId, "organiser set the points table wrong");
+
+    // Read the PERSISTED snapshot, not a fresh recompute: the table people look
+    // at is served from this row.
+    expect(cachedPoints(await cachedStandings(s.stageId), s.home)).toBe(2);
+  });
+
+  it("re-derives the fixture's own state cache, outcome and status", async () => {
+    // The sharpest version: tennis at bestOf 3 is DECIDED after two sets; the
+    // same stream at bestOf 5 is still in progress. A correction to bestOf is a
+    // legitimate staff fix, and after it every fold-derived cache on the fixture
+    // is wrong — match_states, fixtures.outcome and fixtures.status alike.
+    const s = await seed({ sportKey: "tennis", config: TENNIS_BEST_OF_3 });
+    await appendEvent(s.orgId, s.fixtureId, 0, { type: "core.start", payload: {} });
+    await appendEvent(s.orgId, s.fixtureId, 1, {
+      type: "tennis.set_summary",
+      payload: { home: 6, away: 4 },
+    });
+    const scored = await appendEvent(s.orgId, s.fixtureId, 2, {
+      type: "tennis.set_summary",
+      payload: { home: 6, away: 3 },
+    });
+    expect(scored.outcome).toMatchObject({ kind: "win", winner: s.home });
+    await recomputeStandings(s.orgId, s.stageId);
+    expect(cachedPoints(await cachedStandings(s.stageId), s.home)).toBe(2);
+
+    await setDivisionConfig(s.divisionId, { ...TENNIS_BEST_OF_3, bestOf: 5 });
+    await resnapshotFixtureConfig(s.actorId, s.fixtureId, "the league is best of five");
+
+    const cached = await cachedState(s.fixtureId);
+    expect(cached.last_seq).toBe(3);
+    // Byte-identical to what a fresh fold produces — the whole point of a cache.
+    const refolded = await rebuildState(s.orgId, s.fixtureId);
+    expect(cached.state).toEqual(refolded!.state);
+    expect(refolded!.outcome).toBeNull();
+
+    const fx = await fixtureRow(s.fixtureId);
+    expect(fx.outcome).toBeNull();
+    expect(fx.status).toBe("in_play");
+    // …and a fixture that is no longer decided contributes nothing to the table.
+    expect(cachedPoints(await cachedStandings(s.stageId), s.home)).toBe(0);
   });
 
   it("refuses a re-snapshot whose live config cannot read the recorded events", async () => {

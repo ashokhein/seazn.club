@@ -2,6 +2,7 @@ import "server-only";
 import type postgres from "postgres";
 import {
   foldMatch,
+  resolveVoids,
   type EventEnvelope,
   type MatchOutcome,
   type ScoreSummary,
@@ -18,6 +19,11 @@ export interface FoldedFixture {
   state: unknown;
   summary: ScoreSummary;
   outcome: MatchOutcome | null;
+  /** The void-resolved stream. `fixtures.status` is derived from WHICH events
+   *  survive (`core.start`, `core.forfeit`, `core.abandon`), not from the fold,
+   *  so any caller that re-derives the fixture row needs it — see
+   *  `fixtureStatusFromFold` in `append-event.ts`. */
+  active: readonly EventEnvelope[];
 }
 
 interface FixtureRow {
@@ -107,5 +113,6 @@ export async function foldFixture(tx: Tx, fixtureId: string): Promise<FoldedFixt
     state,
     summary: sportModule.summary(state),
     outcome: sportModule.outcome(state),
+    active: resolveVoids(envelopes),
   };
 }

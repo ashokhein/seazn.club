@@ -4,6 +4,7 @@ import "server-only";
 // isolation.
 export {
   appendEvent,
+  fixtureStatusFromFold,
   LOCKED_FIXTURE_STATUSES,
   type AppendInput,
   type AppendResult,

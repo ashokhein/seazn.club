@@ -1,7 +1,12 @@
 import "server-only";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/http";
-import { LOCKED_FIXTURE_STATUSES, resolveFixtureCfg } from "@/server/engine-db";
+import {
+  LOCKED_FIXTURE_STATUSES,
+  fixtureStatusFromFold,
+  recomputeStandings,
+  resolveFixtureCfg,
+} from "@/server/engine-db";
 import { foldFixture } from "@/server/engine-db/fold";
 
 /**
@@ -57,6 +62,9 @@ export interface FixtureConfigPanel {
 
 interface Row {
   id: string;
+  org_id: string;
+  stage_id: string;
+  pool_id: string | null;
   fixture_no: number | null;
   status: string;
   config_snapshot: unknown;
@@ -72,7 +80,8 @@ interface Row {
 
 async function loadRow(fixtureId: string): Promise<Row | null> {
   const [row] = await sql<Row[]>`
-    select f.id, f.fixture_no, f.status, f.config_snapshot, f.config_snapshot_at,
+    select f.id, f.org_id, f.stage_id, f.pool_id, f.fixture_no, f.status,
+           f.config_snapshot, f.config_snapshot_at,
            d.config as division_config, s.config as stage_config, d.sport_key,
            d.name as division_name, c.name as competition_name, o.name as org_name,
            (select count(*)::int from score_events e where e.fixture_id = f.id) as event_count
@@ -150,8 +159,9 @@ export async function resnapshotFixtureConfig(
     // snapshot exists to escape, on a fixture staff were trying to rescue. A
     // throw here rolls the update back, so a refused re-snapshot leaves both the
     // old cfg and an empty audit trail.
+    let folded;
     try {
-      await foldFixture(tx, fixtureId);
+      folded = await foldFixture(tx, fixtureId);
     } catch (err) {
       throw new HttpError(
         409,
@@ -159,6 +169,30 @@ export async function resnapshotFixtureConfig(
           `(${err instanceof Error ? err.message : "fold failed"}). ` +
           "Fix the division config first, then re-snapshot.",
       );
+    }
+    // …and the preflight's answer is KEPT, not thrown away. Every fold-derived
+    // cache on this fixture was computed under the config just discarded:
+    // `match_states` (what `/state`, the score page and the console all read —
+    // no read path re-folds), `fixtures.outcome` and `fixtures.status`. Leaving
+    // them meant the panel reported `diverged: no` over a fixture still showing
+    // the old config's result, until somebody happened to append another event.
+    if (folded) {
+      await tx`
+        insert into match_states (fixture_id, last_seq, state, summary)
+        values (${fixtureId}, ${folded.lastSeq}, ${tx.json(folded.state as never)},
+                ${tx.json(folded.summary as never)})
+        on conflict (fixture_id) do update set
+          last_seq = excluded.last_seq, state = excluded.state,
+          summary = excluded.summary, updated_at = now()`;
+      // Unconditionally, in BOTH directions: a corrected config can just as
+      // easily un-decide a fixture (tennis at bestOf 5 is not over after two
+      // sets) as decide one, and a stale non-null outcome beside a null fold is
+      // what feeds the standings table.
+      await tx`
+        update fixtures set
+          outcome = ${folded.outcome === null ? null : tx.json(folded.outcome as never)},
+          status = ${fixtureStatusFromFold(folded.outcome, folded.active)}
+        where id = ${fixtureId}`;
     }
     // Mirror logStaffAction's columns (lib/admin.ts) on THIS tx — never call
     // logStaffAction itself inside the tx, it opens its own connection.
@@ -172,4 +206,13 @@ export async function resnapshotFixtureConfig(
         after: live,
       } as never)})`;
   });
+
+  // AFTER commit, and outside the transaction on purpose: `recomputeStandings`
+  // opens its own tenant connection and takes the DIVISION advisory lock, which
+  // cannot be acquired from inside a tx already holding the fixture lock without
+  // inverting the order every other writer uses. The standings snapshot is a
+  // derived cache — `usecases/scoring.ts` recomputes it after its own append the
+  // same way — so a crash here leaves a stale table, not a wrong ledger, and the
+  // next scored fixture in the stage repairs it.
+  await recomputeStandings(row.org_id, row.stage_id, row.pool_id ?? undefined);
 }
