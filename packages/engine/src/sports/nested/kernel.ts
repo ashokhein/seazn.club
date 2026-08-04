@@ -12,7 +12,7 @@
 // the same set ledger the rally path banks (mirrors setbased summary mode).
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
-import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
+import { isStrictFold, resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import { DurationSeconds, GameTime, compareGameTime } from "../../core/time.ts";
 import {
@@ -786,7 +786,11 @@ function applySanction(state: NestedState, payload: NestedSanction): NestedState
 // W4a (#425) §5.4 — the chair's break record. Never moves the score: an
 // interruption is a fact about the clock and the card, and any score
 // consequence (a point penalty for delay) is entered as the point it is.
-function applyInterruption(state: NestedState, payload: NestedInterruption): NestedState {
+function applyInterruption(
+  state: NestedState,
+  payload: NestedInterruption,
+  strict: boolean,
+): NestedState {
   if (state.phase !== "live") wrongPhase(`interruption not allowed in phase "${state.phase}"`);
   const set = currentSet(state);
 
@@ -805,7 +809,19 @@ function applyInterruption(state: NestedState, payload: NestedInterruption): Nes
     );
   }
 
-  if (payload.at !== undefined) {
+  // STRICT ONLY (§3.3 seam). Every refusal in this block is computed from
+  // `playPhases(state.cfg)`, which nested derives from `bestOf` — so lowering
+  // `bestOf` from 5 to 3 makes `here` (S4, S5) unlistable and every recorded
+  // interruption in those sets throw on every read, with no event to void. The
+  // stamps were legal when they were recorded; what moved is cfg. On the write
+  // path they stay exactly as strict as before: a pad whose set selector ran
+  // ahead of play still gets a fixable INVALID_EVENT naming the sets it has.
+  //
+  // The whole block is gated, not just the two `order.includes` checks: the
+  // ordering comparison below raises UNKNOWN_PHASE for an unlisted period, so
+  // skipping only the friendly refusals would swap a fixable error for an
+  // internal-fault 500 — the exact trade the two checks exist to prevent.
+  if (payload.at !== undefined && strict) {
     // Ordered against `playPhases(state.cfg)` — the SAME exported function the
     // module hands the fold kernel (§7 obligation 3), not a local list built
     // here.
@@ -1150,7 +1166,7 @@ export function makeNestedModule(
       };
     },
 
-    apply(state, ev: EventEnvelope<NestedEv | CoreEv>): NestedState {
+    apply(state, ev: EventEnvelope<NestedEv | CoreEv>, ctx): NestedState {
       switch (ev.type) {
         case "core.start":
           if (state.phase !== "pre") wrongPhase("already started");
@@ -1162,7 +1178,11 @@ export function makeNestedModule(
         case sanctionType:
           return applySanction(state, parsePayload(NestedSanction, ev.payload, ev.type));
         case interruptionType:
-          return applyInterruption(state, parsePayload(NestedInterruption, ev.payload, ev.type));
+          return applyInterruption(
+            state,
+            parsePayload(NestedInterruption, ev.payload, ev.type),
+            isStrictFold(ctx),
+          );
         case "core.forfeit":
           return applyForfeit(state, (ev.payload as { by: string }).by);
         case "core.abandon":

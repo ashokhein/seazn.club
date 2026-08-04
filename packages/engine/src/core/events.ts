@@ -162,9 +162,66 @@ export function resolveVoids(events: readonly EventEnvelope[]): EventEnvelope[] 
 
 // Structural subset of the SportModule contract (spec 03 §3) the kernel needs;
 // the full interface lands with PROMPT-03 and is assignable to this.
+/**
+ * W4a (#425) §3.3 — which half of the fold this event is being folded FOR.
+ *
+ * `foldMatch` is both the write gate and the only read path: `append-event.ts`
+ * validates a candidate by folding the whole stream including it, and the state
+ * route, the score page and standings replay that same stream. Without a signal
+ * telling the two apart, every check runs identically on both — which is why a
+ * refusal computed from `cfg` was a fixture-bricking bug rather than a
+ * validation, and why "reject it on the write path" was not expressible.
+ *
+ * `strict: true` means the event is NOT yet in the ledger. A cfg-derived
+ * refusal is then a mistake the scorer can still fix, and refusing is the
+ * kindest thing the fold can do. `strict: false` means it is history: cfg has
+ * moved since it was recorded, there is no event to void, and the fold must
+ * degrade rather than make the fixture unviewable.
+ */
+export interface FoldContext {
+  readonly strict: boolean;
+}
+
+/**
+ * How much of the stream is new — the seam itself.
+ *
+ * `strictFromSeq` is the seq of the first event that is not yet in the ledger.
+ * Events at or after it are validated in full; everything before is replayed.
+ * `append-event.ts` passes the candidate's seq (exactly one strict event);
+ * every READ path passes nothing.
+ *
+ * ABSENT MEANS TOLERANT, and that direction is deliberate. A caller that
+ * forgets the option under-validates a write it was probably not making; a
+ * caller that forgets it under the opposite default bricks every fixture in a
+ * division whose config was edited. Only one of those is recoverable.
+ *
+ * A value at or below the stream's first seq makes the whole stream strict,
+ * which is what a test simulating a pad wants.
+ */
+export interface FoldOptions {
+  readonly strictFromSeq?: number;
+}
+
+/**
+ * The default a module applies when `apply()` is called WITHOUT a context.
+ *
+ * `apply` is reachable two ways: through the fold (which always supplies one)
+ * and directly, from `testkit/conformance.ts`, `testkit/simulation.ts` and
+ * `helpers.buildStream`, which are all building a stream event by event — the
+ * write shape. So an absent context reads as STRICT, and the tolerant reading
+ * only ever comes from the fold saying so explicitly. Modules call this rather
+ * than spelling the default out, so the polarity lives in one place.
+ */
+export function isStrictFold(ctx?: FoldContext): boolean {
+  return ctx?.strict !== false;
+}
+
 export interface FoldableModule<Cfg = unknown, State = unknown> {
   init(cfg: Cfg, lineups: LineupPair): State;
-  apply(state: State, event: EventEnvelope): State; // pure; throws EngineError
+  // `ctx` is optional so the eight modules with no cfg-derived refusal inside
+  // apply() need not move at all; the three that have one read it (see
+  // isStrictFold).
+  apply(state: State, event: EventEnvelope, ctx?: FoldContext): State; // pure; throws EngineError
   outcome(state: State): MatchOutcome | null; // null = still live
   // Sport-declared types still accepted after the outcome is decided
   // (spec 03 §2 guarantee 4).
@@ -288,8 +345,9 @@ export function foldMatch<Cfg, State>(
   cfg: Cfg,
   lineups: LineupPair,
   events: readonly EventEnvelope[],
+  opts?: FoldOptions,
 ): State {
-  return foldMatchWithStoppage(module, cfg, lineups, events).state;
+  return foldMatchWithStoppage(module, cfg, lineups, events, opts).state;
 }
 
 /** foldMatch plus guarantee 5: the open stoppage, if play is suspended right
@@ -300,8 +358,10 @@ export function foldMatchWithStoppage<Cfg, State>(
   cfg: Cfg,
   lineups: LineupPair,
   events: readonly EventEnvelope[],
+  opts?: FoldOptions,
 ): { state: State; stoppage: MatchStoppage | null } {
   const active = resolveVoids(events);
+  const strictFromSeq = opts?.strictFromSeq;
   const postDecision = new Set([...POST_DECISION_CORE, ...(module.postDecisionTypes ?? [])]);
   const duringStoppage = new Set(DURING_STOPPAGE);
 
@@ -347,6 +407,11 @@ export function foldMatchWithStoppage<Cfg, State>(
   let highWater: GameTime | null = null;
 
   for (const event of active) {
+    // §3.3 seam. Everything below that reads CFG is gated on this; everything
+    // that reads only the STREAM (payload shape, the decision monotonicity, the
+    // suspension window) is not, because a cfg edit cannot change its verdict
+    // and tolerating it would weaken the fold for no benefit.
+    const strict = strictFromSeq !== undefined && event.seq >= strictFromSeq;
     validateCoreEvent(event);
     if (decided && !postDecision.has(event.type)) {
       throw new EngineError(
@@ -387,29 +452,51 @@ export function foldMatchWithStoppage<Cfg, State>(
     const at = gameTimeOf(event.payload);
     if (at !== null) {
       if (!phaseOrder.includes(at.period)) {
-        if (declaredPhases !== undefined) {
+        if (declaredPhases !== undefined && strict) {
           // INVALID_EVENT, not UNKNOWN_PHASE. `at.period` is a free string the
           // client supplies, so this is a typo or a stale pad sending a period
           // this sport does not have — the same class of mistake as any other
           // bad payload field, and the scorer can retype it. Raising the
           // internal-invariant code here made a typo a 500 and a page; naming
           // the valid phases makes it fixable at the pad instead.
+          //
+          // STRICT ONLY, and the comment above is the reason: every word of it
+          // is about an event being entered NOW. Applied to history the same
+          // check says something else entirely — that an organiser lowering
+          // `bestOf`, cutting an overtime period or renaming a phase has made
+          // every already-scored fixture in the division throw on every read,
+          // with no event to void. The stamp was legal when it was recorded;
+          // what changed is cfg, and cfg is not the ledger's to police
+          // retroactively.
           throw new EngineError(
             "INVALID_EVENT",
             `event "${event.type}" is stamped in period "${at.period}", which this sport does not have — expected one of ${phaseOrder.join(", ")}`,
             { eventId: event.id, seq: event.seq, period: at.period, phaseOrder: [...phaseOrder] },
           );
         }
+        // On replay, and on the undeclared-module fallback, the period is
+        // REGISTERED rather than refused — the event still reaches the module
+        // and still folds. Appending puts it after every phase the cfg still
+        // declares, which is a guess; the monotonic check below is what stops
+        // that guess from turning into a second refusal.
         phaseOrder.push(at.period);
       }
-      if (highWater !== null && compareGameTime(at, highWater, phaseOrder) < 0) {
+      const backwards = highWater !== null && compareGameTime(at, highWater, phaseOrder) < 0;
+      if (backwards && strict) {
         throw new EngineError(
           "NON_MONOTONIC_TIME",
-          `event "${event.type}" is stamped ${at.period} ${at.elapsed}s, before the newest accepted stamp ${highWater.period} ${highWater.elapsed}s`,
+          `event "${event.type}" is stamped ${at.period} ${at.elapsed}s, before the newest accepted stamp ${(highWater as GameTime).period} ${(highWater as GameTime).elapsed}s`,
           { eventId: event.id, seq: event.seq, at, previous: highWater },
         );
       }
-      highWater = at;
+      // A backwards stamp on REPLAY is accepted and the event still dispatches,
+      // but the high-water mark is deliberately not moved backwards. This guard
+      // orders against `playPhases(cfg)`, so a cfg edit alone can turn a run
+      // that was forward when it was recorded into a backwards one — a fact
+      // about the config, not about the ledger. Leaving the mark at the
+      // furthest-forward stamp keeps the check at full strength for the
+      // candidate, the one event whose order a scorer can still fix.
+      if (!backwards) highWater = at;
     }
     if (event.type === "core.suspend") {
       // Guarded by the WRONG_PHASE branch above, so this is the first suspend.
@@ -433,7 +520,12 @@ export function foldMatchWithStoppage<Cfg, State>(
       stoppage = null;
       continue; // kernel-owned: the module never sees it
     }
-    state = module.apply(state, event);
+    // The seam reaches the module too. Three of the eleven re-validate the
+    // stamp inside apply() — not redundantly, because the testkit calls apply()
+    // directly — and nested/kernel refuses an interruption against a cfg
+    // allowance. Each is the same fixture-bricking shape as the guard above and
+    // needs the same signal; the other eight ignore the argument.
+    state = module.apply(state, event, { strict });
     if (!decided) {
       decided = module.outcome(state) !== null;
       // A decided match is not awaiting resumption. core.abandon and

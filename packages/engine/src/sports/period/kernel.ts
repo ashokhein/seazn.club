@@ -11,7 +11,7 @@
 // scorer decides (coincidentals, delayed penalties → core.note for context).
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
-import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
+import { isStrictFold, resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import { GameTime, addDuration, compareGameTime, gameTimeOf } from "../../core/time.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
@@ -1338,18 +1338,27 @@ export function makePeriodModule(
       };
     },
 
-    apply(state, ev: EventEnvelope<PeriodEv | CoreEv>): PeriodState {
+    apply(state, ev: EventEnvelope<PeriodEv | CoreEv>, ctx): PeriodState {
       // W4a (#425) §3 — the game-time frame around every event.
       //
       // `gameTimeOf` is the same structural safe-parse the fold kernel's
       // monotonic guard uses, so the module and the guard read one stamp, not
       // two interpretations of one payload.
       const at = gameTimeOf(ev.payload);
-      if (at !== null) {
+      if (at !== null && isStrictFold(ctx)) {
         // §7, module half. The fold guard already refuses an undeclared period,
         // but `apply` must not depend on having been called through it: the
         // same list, the same error code, and a message that names the phases
         // so a scorer can retype rather than a 500 that pages the on-call.
+        //
+        // STRICT ONLY (§3.3 seam), for the reason the rest of this file already
+        // acts on: `playPhases` is cfg-derived — dropping `overtime` or
+        // lowering `periods.count` deletes labels — and cfg is read live on
+        // every read. Refusing on replay would make an organiser's config edit
+        // brick every fixture already scored in the division, with no event to
+        // void. `phaseLengths` ignores a contradicting `periodSeconds` rather
+        // than refusing, and `orderable` returns null rather than raising, for
+        // the same reason; this was the one place that still threw.
         const order = playPhases(state.cfg);
         if (!order.includes(at.period)) {
           invalid(

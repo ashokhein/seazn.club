@@ -59,9 +59,16 @@ function at(period: string, elapsed: number) {
   return { at: { period, elapsed } };
 }
 
-const fold = (events: readonly EventEnvelope[]) => foldMatch(toy, {}, lineups, events);
+// EVERY case in the two describes below is about the WRITE path — a scorer
+// keying a stamp now, a pad re-appending a correction — so both helpers mark
+// the whole stream strict (§3.3 seam; `strictFromSeq` at or below the first seq
+// means "treat all of it as new"). The tolerant reading, which is what a READ
+// path gets by passing no options at all, has its own describe at the end of
+// the file.
+const STRICT_ALL = { strictFromSeq: 0 } as const;
+const fold = (events: readonly EventEnvelope[]) => foldMatch(toy, {}, lineups, events, STRICT_ALL);
 const foldDeclared = (events: readonly EventEnvelope[]) =>
-  foldMatch(declaring, {}, lineups, events);
+  foldMatch(declaring, {}, lineups, events, STRICT_ALL);
 
 describe("fold — monotonic time guard (§3.3)", () => {
   it("rejects a stamp that precedes the newest accepted stamp", () => {
@@ -100,7 +107,7 @@ describe("fold — monotonic time guard (§3.3)", () => {
       },
     };
     const events = [ev(at("P1", 800)), ev(at("P1", 500))];
-    expect(() => foldMatch(spy, {}, lineups, events)).toThrow(EngineError);
+    expect(() => foldMatch(spy, {}, lineups, events, STRICT_ALL)).toThrow(EngineError);
     expect(dispatched).toEqual([events[0]?.id]);
   });
 
@@ -189,7 +196,7 @@ describe("fold — monotonic time guard (§3.3)", () => {
       },
     };
     const events = [ev(at("P1", 0)), ev(at("SO", 0))];
-    expect(() => foldMatch(spy, {}, lineups, events)).toThrow(EngineError);
+    expect(() => foldMatch(spy, {}, lineups, events, STRICT_ALL)).toThrow(EngineError);
     expect(dispatched).toEqual([events[0]?.id]);
   });
 
@@ -482,7 +489,7 @@ describe("fold — monotonic time guard (§3.3)", () => {
       const events = [ev(at("P1", 900)), ev(at("P1", 100))];
       let caught: unknown;
       try {
-        foldMatch(deciding, {}, lineups, events);
+        foldMatch(deciding, {}, lineups, events, STRICT_ALL);
         expect.unreachable("a post-decision event must be rejected");
       } catch (err) {
         caught = err;
@@ -634,7 +641,9 @@ describe("strict on write, tolerant on replay (§3.3 seam)", () => {
   // `extraTime.enabled` / `shootout`, the period kernel from `periods.count`,
   // nested from `bestOf`).
   const cfgDriven: FoldableModule<PhaseCfg, TickState> = {
-    ...toy,
+    init: () => ({ seen: [], applied: 0 }),
+    apply: (state, event) => toy.apply(state, event),
+    outcome: () => null,
     playPhases: (cfg) => [...cfg.phases],
   };
 
@@ -697,10 +706,14 @@ describe("strict on write, tolerant on replay (§3.3 seam)", () => {
     // The regression guard on the earlier fix: raising INVALID_EVENT (not the
     // internal UNKNOWN_PHASE) and naming the valid phases is what turned a
     // typo from a 500-and-a-page into something a scorer can retype.
+    // `ev()` allocates seqs in call order, so the history must be built FIRST
+    // or `strictFromSeq: candidate.seq` sweeps it in and the test stops being
+    // about the candidate at all.
+    const history = [ev(at("P1", 0))];
     const candidate = ev(at("SO", 0));
     let caught: unknown;
     try {
-      foldMatch(cfgDriven, WIDE, lineups, [ev(at("P1", 0)), candidate], {
+      foldMatch(cfgDriven, WIDE, lineups, [...history, candidate], {
         strictFromSeq: candidate.seq,
       });
       expect.unreachable("an undeclared phase on a NEW event must be rejected");
@@ -728,10 +741,11 @@ describe("strict on write, tolerant on replay (§3.3 seam)", () => {
     expect(foldMatch(cfgDriven, NARROWED, lineups, stream).applied).toBe(3);
 
     // A genuinely backwards NEW stamp is still refused, under the same cfg.
+    const before = [ev(at("P2", 900))];
     const candidate = ev(at("P1", 1));
     let caught: unknown;
     try {
-      foldMatch(cfgDriven, NARROWED, lineups, [ev(at("P2", 900)), candidate], {
+      foldMatch(cfgDriven, NARROWED, lineups, [...before, candidate], {
         strictFromSeq: candidate.seq,
       });
       expect.unreachable("a backwards stamp on a NEW event must be rejected");
@@ -746,10 +760,11 @@ describe("strict on write, tolerant on replay (§3.3 seam)", () => {
     // Replay accepts the out-of-order history, but the mark it leaves for the
     // candidate is the furthest-forward stamp, not the last one seen. Otherwise
     // tolerating history would quietly weaken the guard for the new event.
+    const history = [ev(at("P2", 900)), ev(at("P1", 5))];
     const candidate = ev(at("P2", 100));
     let caught: unknown;
     try {
-      foldMatch(cfgDriven, NARROWED, lineups, [ev(at("P2", 900)), ev(at("P1", 5)), candidate], {
+      foldMatch(cfgDriven, NARROWED, lineups, [...history, candidate], {
         strictFromSeq: candidate.seq,
       });
       expect.unreachable("the candidate is behind the furthest-forward stamp");

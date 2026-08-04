@@ -85,12 +85,14 @@ describe("period phase order (§7)", () => {
 describe("a stamped event in a non-play phase folds (§3.3)", () => {
   const lineups = defaultLineupPair(icehockey.positions);
   const cfg = icehockey.configSchema.parse({});
+  // Pad-shaped: the whole stream is being entered now (§3.3 seam).
   const fold = (events: ModuleEvent[]): unknown =>
     foldMatch(
       icehockey,
       cfg,
       lineups,
       events.map((event, i) => makeEnvelope(i, event)) as EventEnvelope[],
+      { strictFromSeq: 0 },
     );
 
   // core.suspend / core.resume are the only stamped payloads today, so they are

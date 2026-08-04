@@ -50,8 +50,11 @@ function envelopes(events: ModuleEvent[]): EventEnvelope[] {
   return events.map((event, i) => makeEnvelope(i, event));
 }
 
+// Pad-shaped: every event in these streams is being entered now, so the whole
+// stream is strict (§3.3 seam). A read path passes nothing and is tolerant.
+const STRICT_ALL = { strictFromSeq: 0 } as const;
 function fold(cfg: unknown, events: ModuleEvent[]): NestedState {
-  return foldMatch(tennis, cfg, lineups, envelopes(events)) as NestedState;
+  return foldMatch(tennis, cfg, lineups, envelopes(events), STRICT_ALL) as NestedState;
 }
 
 const start: ModuleEvent = { type: "core.start", payload: {} };

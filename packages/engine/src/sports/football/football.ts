@@ -3,7 +3,7 @@
 // two official tiebreaker presets (fifa2026 H2H-first / classic GD-first).
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
-import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
+import { isStrictFold, resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import { GameTime, addDuration, compareGameTime, gameTimeOf } from "../../core/time.ts";
 import {
@@ -1409,18 +1409,27 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
   // calls it too, so the guard and this module order against one list.
   playPhases,
 
-  apply(state, ev: EventEnvelope<FootballEv | CoreEv>): FootballState {
+  apply(state, ev: EventEnvelope<FootballEv | CoreEv>, ctx): FootballState {
     // W4a (#425) §3 — the game-time frame around every event.
     //
     // `gameTimeOf` is the same structural safe-parse the fold kernel's monotonic
     // guard uses, so the module and the guard read one stamp rather than two
     // interpretations of one payload.
     const at = gameTimeOf(ev.payload);
-    if (at !== null) {
+    if (at !== null && isStrictFold(ctx)) {
       // §7, module half. The fold guard already refuses an undeclared period,
       // but `apply` must not DEPEND on having been called through it: the same
       // list, the same error code, and a message that names the phases so a
       // scorer can retype rather than a 500 that pages the on-call.
+      //
+      // STRICT ONLY (§3.3 seam). `playPhases` is derived from cfg — turning off
+      // `extraTime.enabled` or `shootout` deletes three phases at once — and cfg
+      // is read live at fold time, so on replay this same check says "an
+      // organiser edited the division, therefore no scored fixture in it can be
+      // read again". There is no event to void; the stamp was legal when it was
+      // recorded. Nothing downstream needs the refusal either: `sweepExpired`
+      // and every comparison below go through `orderable`, which returns null
+      // for an unlisted phase rather than raising.
       const order = playPhases(state.cfg);
       if (!order.includes(at.period)) {
         invalid(

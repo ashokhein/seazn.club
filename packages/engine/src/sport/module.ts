@@ -2,7 +2,7 @@
 // doc 13 §1 (officialLabel) and the conformance kit's needs (PROMPT-03 §4:
 // declaredPointsSets; arbitraryEvent/coarsen hooks from spec 03 §6 + §9.6).
 import { z } from "zod";
-import type { CoreEv, EventEnvelope, FoldableModule } from "../core/events.ts";
+import type { CoreEv, EventEnvelope, FoldableModule, FoldContext } from "../core/events.ts";
 import type { Rng } from "../core/rng.ts";
 import type {
   DisciplineModel,
@@ -115,7 +115,11 @@ export interface SportModule<Cfg, Ev, State> extends FoldableModule<Cfg, State> 
   discipline?: DisciplineModel;
 
   init(cfg: Cfg, lineups: LineupPair): State;
-  apply(state: State, ev: EventEnvelope<Ev | CoreEv>): State; // pure; throws EngineError
+  // W4a (#425) §3.3 — `ctx` is the strict-on-write / tolerant-on-replay seam,
+  // narrowed from FoldableModule. Optional, and absent reads as STRICT
+  // (`isStrictFold`), so the eight modules with no cfg-derived refusal inside
+  // apply() are unchanged and the testkit's direct calls keep full validation.
+  apply(state: State, ev: EventEnvelope<Ev | CoreEv>, ctx?: FoldContext): State; // pure; throws EngineError
   outcome(state: State): MatchOutcome | null; // null = still live
   summary(state: State): ScoreSummary; // display-ready at every prefix (§9.5)
 

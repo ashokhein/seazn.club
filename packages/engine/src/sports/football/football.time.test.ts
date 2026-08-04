@@ -47,8 +47,12 @@ function stream(...specs: Array<[type: string, payload?: unknown]>): EventEnvelo
   return specs.map(([type, payload], i) => makeEnvelope(i, { type, payload: payload ?? {} }));
 }
 const cfgOf = (raw: unknown): FootballCfg => football.configSchema.parse(raw);
+// Every case below drives the fold the way a PAD does — building a stream
+// event by event — so the whole stream is strict (§3.3 seam). A read path
+// passes no options and is tolerant of a cfg edited since the match.
+const STRICT_ALL = { strictFromSeq: 0 } as const;
 const fold = (cfg: FootballCfg, events: EventEnvelope[]) =>
-  foldMatch(football, cfg, lineups, events);
+  foldMatch(football, cfg, lineups, events, STRICT_ALL);
 const at = (period: string, elapsed: number) => ({ period, elapsed });
 
 // ---------------------------------------------------------------------------
