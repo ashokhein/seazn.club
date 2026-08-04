@@ -32,11 +32,15 @@
 import { describe, expect, it } from "vitest";
 import { resolvePositions } from "../sport/catalog.ts";
 import type { AnySportModule } from "../sport/module.ts";
+import { badminton } from "../sports/setbased/badminton.ts";
 import { carrom } from "../sports/carrom/index.ts";
+import { cricket } from "../sports/cricket/index.ts";
 import { football } from "../sports/football/index.ts";
 import { hockey } from "../sports/hockey/index.ts";
 import { icehockey } from "../sports/icehockey/index.ts";
+import { tabletennis } from "../sports/setbased/tabletennis.ts";
 import { tennis } from "../sports/tennis/index.ts";
+import { volleyball } from "../sports/setbased/volleyball.ts";
 import { UNREACHABLE_FIELDS, declaredOptionalFields } from "./golden.ts";
 import { buildStream, defaultLineupPair } from "./helpers.ts";
 import { fieldPresent } from "./schema-fields.ts";
@@ -54,6 +58,12 @@ interface GeneratorCase {
   config: string;
   /** Seeds 1..seeds are walked; enough that both branches of every probe land. */
   seeds: number;
+  /** Stream length, when the default is not enough to SAMPLE the probe. Cricket
+   *  needs it: a review sits in a 0.6%-wide band of the roll, so 80 events a
+   *  seed yielded four in the whole walk and "sometimes, not always" turned on
+   *  a coin landing the same way four times. Reaching further into the match is
+   *  a sampling budget, not a change to what the generator does. */
+  maxEvents?: number;
   probes: Probe[];
 }
 
@@ -95,6 +105,41 @@ const CASES: GeneratorCase[] = [
       { type: "icehockey.goal", path: "period" },
     ],
   },
+  // Cricket's four, all under a limited-overs variant: `revise` needs a quota
+  // and a single innings per side, and the coarse-innings path only reaches a
+  // `partial` where an innings has a limit to be partial against.
+  {
+    module: cricket,
+    config: "t20",
+    seeds: 60,
+    maxEvents: 400,
+    probes: [
+      { type: "cricket.ball", path: "wicket.incoming" },
+      { type: "cricket.review", path: "against" },
+      { type: "cricket.revise", path: "target" },
+      { type: "cricket.innings.summary", path: "partial" },
+    ],
+  },
+  // The set-based trio share one kernel and one generator, but each has its own
+  // preset, so each is walked on its own.
+  {
+    module: badminton,
+    config: "default",
+    seeds: 20,
+    probes: [{ type: "badminton.game.summary", path: "partial" }],
+  },
+  {
+    module: tabletennis,
+    config: "default",
+    seeds: 20,
+    probes: [{ type: "tabletennis.game.summary", path: "partial" }],
+  },
+  {
+    module: volleyball,
+    config: "default",
+    seeds: 20,
+    probes: [{ type: "volleyball.set.summary", path: "partial" }],
+  },
   // Hockey's default and `fih-outdoor` have no shoot-out at all, so the attempt
   // is only generated under the variant that declares one. `goalKinds` and the
   // goal payload are the same under every hockey variant.
@@ -123,8 +168,9 @@ function generatedPayloads(testCase: GeneratorCase): Map<string, unknown[]> {
   const cfg = testCase.module.configSchema.parse(raw);
   const lineups = defaultLineupPair(resolvePositions(testCase.module, cfg));
   const byType = new Map<string, unknown[]>();
+  const length = testCase.maxEvents ?? MAX_EVENTS;
   for (let seed = 1; seed <= testCase.seeds; seed++) {
-    for (const envelope of buildStream(testCase.module, cfg, lineups, seed, MAX_EVENTS)) {
+    for (const envelope of buildStream(testCase.module, cfg, lineups, seed, length)) {
       const bucket = byType.get(envelope.type);
       if (bucket === undefined) byType.set(envelope.type, [envelope.payload]);
       else bucket.push(envelope.payload);
@@ -205,22 +251,13 @@ describe("arbitraryEvent writes the optional fields its payload branches declare
 // Collapsing the two is how a real gap gets filed under a legitimate exemption
 // and stops being looked at.
 //
-// SEVEN GENERATOR entries survive, every one of them because closing it reaches
-// something a generator change may not decide on its own — an unguarded
-// cfg-derived check on the READ path (§3.3), a coarsener that cannot absorb the
-// event (§9.6), or cfg-replay's exactly-asserted SPORTS_WITH_DECIDED_EARLIER
-// carve-out moving off its sample. Each entry says which. Asserted as an EXACT
-// set, the same device that carve-out uses: adding an eighth reds, and so does
-// closing one without deleting its line.
-const BLOCKED_GENERATOR_FIELDS = [
-  "badminton.partial",
-  "cricket.against",
-  "cricket.partial",
-  "cricket.target",
-  "cricket.wicket.incoming",
-  "tabletennis.partial",
-  "volleyball.partial",
-].sort();
+// NONE survive. Seven did until the W4a follow-up: each was blocked on a fold
+// defect the generator change merely EXPOSED — two cfg-derived refusals that
+// fired on the READ path (§3.3) and a coarsener that emitted two partials for
+// one set (§9.6). Fixing those three is what let the last seven close, so the
+// list is empty rather than deleted: it is asserted as an EXACT set, and an
+// eighth entry appearing reds here with the reason attached.
+const BLOCKED_GENERATOR_FIELDS: string[] = [];
 
 describe("UNREACHABLE_FIELDS keeps its GENERATOR and KERNEL-UNION classes apart", () => {
   const entriesOfClass = (prefix: string): string[] =>

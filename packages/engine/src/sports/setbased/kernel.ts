@@ -1171,6 +1171,23 @@ export function makeSetBasedModule(
       };
       const open = openSet(state);
       if (open !== null) {
+        // W4a follow-up — an in-progress SNAPSHOT of the set being rallied: the
+        // umpire posts the score so far, and the set carries on. It is the one
+        // shape `partial` has on the write path (everywhere else it comes from
+        // `coarsen`), and it reads the OPEN SET rather than inventing numbers,
+        // so it can never be a completed score and never decreases — legal
+        // under any config, which is what keeps it off the §3.3 seam.
+        // Both payload shapes are offered: the positional one coarsen must drop
+        // (it has no lineup context) and the entrant-keyed one it can absorb.
+        if (rng() < 0.06 && (open.set.home > 0 || open.set.away > 0)) {
+          const { home, away } = open.set;
+          return rng() < 0.5
+            ? { type: summaryType, payload: { home, away, partial: true } }
+            : {
+                type: summaryType,
+                payload: { by: state.entrants.home, forBy: home, forOpp: away, partial: true },
+              };
+        }
         // A rally set is mid-flight — keep rallying it to a finish.
         return { type: rallyType, payload: rallyPayload() };
       }

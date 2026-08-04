@@ -128,6 +128,28 @@ describe("coarsen emits at most one partial per set (§9.6)", () => {
       expect(mod.outcome(coarseState)).toEqual(mod.outcome(fineState));
     });
 
+    it(`${mod.key}: keeps a positional snapshot when it has no count of its own`, () => {
+      const cfg = mod.configSchema.parse({});
+      // A set recorded ONLY as a snapshot — no rallies for coarsen to segment.
+      // Dropping it here would lose the set entirely, so it passes through.
+      const fine = record(mod, {}, [{ type, payload: { home: 4, away: 2, partial: true } }]);
+      const coarse = mod
+        .coarsen!(fine as never)
+        .map((event, i) => makeEnvelope(i, event));
+
+      expect(coarse.map((env) => env.type)).toEqual(["core.start", type]);
+      const coarseState = foldMatch(
+        mod,
+        cfg,
+        pairFor(mod, cfg),
+        coarse,
+        STRICT_ALL,
+      ) as SetBasedState;
+      const fineState = foldMatch(mod, cfg, pairFor(mod, cfg), fine, STRICT_ALL) as SetBasedState;
+      expect(coarseState.sets).toEqual(fineState.sets);
+      expect(mod.summary(coarseState)).toEqual(mod.summary(fineState));
+    });
+
     it(`${mod.key}: keeps a positional snapshot out of a rally-scored set`, () => {
       const cfg = mod.configSchema.parse({});
       const events: ModuleEvent[] = [];
