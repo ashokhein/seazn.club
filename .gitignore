@@ -56,3 +56,9 @@ packages/engine/sim-report.json
 
 # Turborepo
 .turbo
+
+# Subagent scratch memory. Agents write these under whatever package they are
+# working in, so they appear as untracked dirs anywhere in the tree — and a
+# single `git add -A` would commit twelve of them. Agent DEFINITIONS
+# (.claude/agents/*.md) stay tracked; only the per-run memory is ignored.
+**/.claude/agent-memory/
