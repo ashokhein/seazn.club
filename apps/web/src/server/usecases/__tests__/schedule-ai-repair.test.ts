@@ -169,6 +169,50 @@ describe("solver repair in runAiPlan (#401)", () => {
     expect(changed).toHaveLength(1);
   });
 
+  it("carries a model start's SECONDS all the way into the solver and back out again", async () => {
+    // The adapter boundary, pinned in both directions.
+    //
+    // `AiSchedulePlan.scheduled_at` is an RFC-3339 string the model writes and
+    // nothing on the way to `toEngineAssignments` truncates, so an engine
+    // `Assignment.startAt` is routinely NOT on a minute. The z3 repair encoder
+    // works in whole minutes, so it has to round every one of those outward —
+    // and this test exists so that nobody "fixes" that by quantising here
+    // instead, where it would silently move a fixture the organiser placed.
+    //
+    // The clash is SUB-MINUTE and exists only in milliseconds: F1 runs
+    // 14:00:00-14:30:00 and F2 opens at 14:29:40 on the same court. Rounded to
+    // the nearest minute the two are back to back and there is nothing to
+    // repair, so a solver run at all is the proof the seconds survived.
+    parse.mockResolvedValueOnce(
+      planResponse(
+        plan([
+          assign(F1, "2026-08-01T14:00:00+01:00", "Court 1"),
+          assign(F2, "2026-08-01T14:29:40+01:00", "Court 1"),
+          assign(F3, "2026-08-01T14:00:20+01:00", "Court 2"),
+          assign(F4, "2026-08-01T14:30:20+01:00", "Court 2"),
+        ]),
+      ),
+    );
+
+    const out = await runAiPlan(pack, movableIds);
+
+    expect(out.blocking).toEqual([]);
+    expect(out.repair.engine).toBe("z3");
+    expect(out.repair.solver_ran).toBe(true);
+    expect(out.repair.status).toBe("repaired");
+    expect(out.repair.moved).toBe(1);
+    expect(parse).toHaveBeenCalledTimes(1);
+
+    // And back out: a fixture the solver did not move keeps its instant to the
+    // millisecond, seconds included. Compared as an INSTANT, not as a string —
+    // the offset the model wrote is not the offset we serialise.
+    const byId = new Map(out.proposal.map((p) => [p.fixture_id, p]));
+    for (const id of [F3, F4]) {
+      const emitted = new Date(byId.get(id)!.scheduled_at).getTime();
+      expect(emitted % 60_000).toBe(20_000);
+    }
+  });
+
   it("stamps engine 'none' and never runs the solver when the first plan verifies clean", async () => {
     parse.mockResolvedValueOnce(planResponse(cleanPlan));
 
