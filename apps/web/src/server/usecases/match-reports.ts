@@ -273,7 +273,8 @@ async function bridgeReportSuspensions(a: ReportAssignment, incidents: ReportInc
   const valid = new Set(
     (
       await superuser<{ id: string }[]>`
-        select id from persons where org_id = ${a.org_id} and id = any(${personIds})`
+        select id from persons
+         where org_id = ${a.org_id} and id = any(${personIds}) and merged_into is null`
     ).map((r) => r.id),
   );
   for (const { inc, idx } of targets) {

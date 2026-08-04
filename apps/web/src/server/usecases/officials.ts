@@ -126,8 +126,9 @@ export async function listOfficialBusyElsewhere(auth: AuthCtx): Promise<Official
   return sql<OfficialBusyRow[]>`
     select distinct o.id as official_id, f.scheduled_at
     from officials o
-    join persons p on p.id = o.person_id and p.user_id is not null
+    join persons p on p.id = o.person_id and p.user_id is not null and p.merged_into is null
     join persons p2 on p2.user_id = p.user_id and p2.org_id <> ${auth.orgId}
+      and p2.merged_into is null
     join officials o2 on o2.person_id = p2.id
     join fixture_officials fo on fo.official_id = o2.id and fo.response <> 'declined'
     join fixtures f on f.id = fo.fixture_id

@@ -159,7 +159,8 @@ export async function personStats(
 ): Promise<{ divisions: { division_id: string; division_name: string; stats: Record<string, number> }[] }> {
   await requireFeature(auth.orgId, "stats.player");
   return withTenant(auth.orgId, async (tx) => {
-    const [person] = await tx`select 1 from persons where id = ${personId}`;
+    const [person] = await tx`
+      select 1 from persons where id = ${personId} and merged_into is null`;
     if (!person) throw new HttpError(404, "person not found");
     // refresh the divisions this person appears in (or the requested one)
     const divisionIds = divisionId

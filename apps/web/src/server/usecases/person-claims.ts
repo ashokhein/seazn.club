@@ -59,7 +59,8 @@ export async function createClaimInvite(
   const secret = mintClaimSecret();
   const row = await withTenant(auth.orgId, async (tx) => {
     const [person] = await tx<{ id: string; full_name: string; user_id: string | null }[]>`
-      select id, full_name, user_id from persons where id = ${personId}`;
+      select id, full_name, user_id from persons
+       where id = ${personId} and merged_into is null`;
     if (!person) throw new HttpError(404, "person not found");
     if (person.user_id) {
       throw new HttpError(409, "This profile is already claimed", "ALREADY_CLAIMED");
@@ -282,7 +283,7 @@ export async function unlinkPerson(auth: AuthCtx, personId: string): Promise<voi
   requireSessionEditor(auth);
   await withTenant(auth.orgId, async (tx) => {
     const [person] = await tx<{ id: string }[]>`
-      select id from persons where id = ${personId}`;
+      select id from persons where id = ${personId} and merged_into is null`;
     if (!person) throw new HttpError(404, "person not found");
     await tx`update persons set user_id = null where id = ${personId}`;
     await tx`

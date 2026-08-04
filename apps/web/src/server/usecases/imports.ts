@@ -54,7 +54,8 @@ async function fetchSnapshot(tx: Tx): Promise<ImportSnapshot> {
   const teams = await tx<{ id: string; name: string; club_id: string | null }[]>`
     select id, name, club_id from teams order by id`;
   const persons = await tx<{ id: string; full_name: string; dob: string | null; external_ref: string | null }[]>`
-    select id, full_name, dob::text as dob, external_ref from persons order by id`;
+    select id, full_name, dob::text as dob, external_ref from persons
+     where merged_into is null order by id`;
   // positionKeys: the sport's position_catalog group keys (doc 02 §3).
   const divisions = await tx<{ id: string; name: string; slug: string; sport_key: string; position_keys: string[] }[]>`
     select d.id, d.name, d.slug, d.sport_key,

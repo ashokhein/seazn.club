@@ -107,7 +107,7 @@ export async function listMyFixtures(userId: string): Promise<{
     left join entrants opp on opp.id =
       case when f.home_entrant_id = e.id then f.away_entrant_id else f.home_entrant_id end
     left join fixture_availability fa on fa.fixture_id = f.id and fa.person_id = p.id
-    where p.user_id = ${userId}
+    where p.user_id = ${userId} and p.merged_into is null
       and f.status in ('scheduled', 'in_play')
       and (f.scheduled_at is null or f.scheduled_at >= date_trunc('day', now()))
     order by f.scheduled_at nulls last, f.id, p.id
@@ -132,7 +132,7 @@ export async function listMyFixtures(userId: string): Promise<{
     join organizations o on o.id = f.org_id
     left join entrants opp on opp.id =
       case when f.home_entrant_id = e.id then f.away_entrant_id else f.home_entrant_id end
-    where p.user_id = ${userId} and f.status = 'finalized'
+    where p.user_id = ${userId} and p.merged_into is null and f.status = 'finalized'
     order by f.scheduled_at desc nulls last, f.id
     limit 10`;
 
@@ -146,7 +146,7 @@ export async function listMyFixtures(userId: string): Promise<{
     join divisions d on d.id = e.division_id
     join competitions c on c.id = d.competition_id
     join organizations o on o.id = d.org_id
-    where p.user_id = ${userId}
+    where p.user_id = ${userId} and p.merged_into is null
     order by o.name, c.name, d.name`;
 
   return { upcoming, results, teams };
@@ -166,7 +166,7 @@ async function myPersonOnFixture(userId: string, fixtureId: string): Promise<MyF
     join entrants e on e.id in (f.home_entrant_id, f.away_entrant_id)
       and e.status in ${sql(ROSTERED)}
     join entrant_members em on em.entrant_id = e.id
-    join persons p on p.id = em.person_id and p.user_id = ${userId}
+    join persons p on p.id = em.person_id and p.user_id = ${userId} and p.merged_into is null
     where f.id = ${fixtureId}
     limit 1`;
   return row ?? null;
@@ -253,7 +253,8 @@ export async function listFixtureAvailability(
  *  nav's "Player home" door for dual-role users (organiser + player). */
 export async function hasClaimedProfile(userId: string): Promise<boolean> {
   const [row] = await sql<{ has: boolean }[]>`
-    select exists(select 1 from persons where user_id = ${userId}) as has`;
+    select exists(select 1 from persons
+                    where user_id = ${userId} and merged_into is null) as has`;
   return row?.has === true;
 }
 
@@ -290,7 +291,7 @@ export async function listMyPlayerStats(userId: string): Promise<MyStatBlock[]> 
            d.name as division_name, d.slug as division_slug,
            ps.sport_key, d.module_version, ps.stats
     from player_stat_snapshots ps
-    join persons p on p.id = ps.person_id and p.user_id = ${userId}
+    join persons p on p.id = ps.person_id and p.user_id = ${userId} and p.merged_into is null
     join divisions d on d.id = ps.division_id and d.archived_at is null
     join competitions c on c.id = d.competition_id
     join organizations o on o.id = c.org_id
@@ -314,7 +315,8 @@ export async function listMyPlayerStats(userId: string): Promise<MyStatBlock[]> 
  *  scorer-only rule, doc 13 §4, extended to players). */
 export async function isPlayerOnly(userId: string): Promise<boolean> {
   const [row] = await sql<{ player_only: boolean }[]>`
-    select exists(select 1 from persons where user_id = ${userId})
+    select exists(select 1 from persons
+                  where user_id = ${userId} and merged_into is null)
        and not exists(select 1 from org_members where user_id = ${userId})
        as player_only`;
   return row?.player_only === true;
@@ -357,7 +359,7 @@ export async function getMySuspensions(userId: string): Promise<MySuspension[]> 
     join divisions d on d.id = s.division_id
     join competitions c on c.id = d.competition_id
     join organizations o on o.id = s.org_id
-    where p.user_id = ${userId} and s.status = 'active'
+    where p.user_id = ${userId} and p.merged_into is null and s.status = 'active'
     order by o.name, d.name, s.created_at`;
 }
 
@@ -372,7 +374,7 @@ export async function listMyPersons(userId: string): Promise<MyPerson[]> {
     select p.id, p.full_name, o.name as org_name, p.consent, p.dob, p.photo_path,
            exists(select 1 from entrant_members em where em.person_id = p.id) as is_rostered
     from persons p join organizations o on o.id = p.org_id
-    where p.user_id = ${userId}
+    where p.user_id = ${userId} and p.merged_into is null
     order by o.name, p.full_name`;
   return rows.map(({ dob, is_rostered, photo_path, ...p }) => ({
     ...p,
@@ -395,7 +397,8 @@ export async function setMyConsent(
   patch: { public_name?: boolean; public_photo?: boolean },
 ): Promise<MyPerson> {
   const [person] = await sql<{ id: string; dob: string | null }[]>`
-    select id, dob from persons where id = ${personId} and user_id = ${userId}`;
+    select id, dob from persons
+     where id = ${personId} and user_id = ${userId} and merged_into is null`;
   if (!person) throw new HttpError(404, "player profile not found");
   if (consentLocked(person.dob)) {
     throw new HttpError(403, "An organiser manages consent for under-16 players", "CONSENT_LOCKED");
@@ -432,7 +435,8 @@ export async function setMyPersonPhoto(
   file: { contentType: string; bytes: Buffer } | null,
 ): Promise<MyPerson> {
   const [person] = await sql<{ id: string; org_id: string; dob: string | null }[]>`
-    select id, org_id, dob from persons where id = ${personId} and user_id = ${userId}`;
+    select id, org_id, dob from persons
+     where id = ${personId} and user_id = ${userId} and merged_into is null`;
   if (!person) throw new HttpError(404, "player profile not found");
   if (consentLocked(person.dob)) {
     throw new HttpError(403, "An organiser manages the profile for under-16 players", "CONSENT_LOCKED");
