@@ -17,9 +17,27 @@ update persons set lane = 'official'
  where exists (select 1 from officials o where o.person_id = persons.id)
    and not exists (select 1 from entrant_members em where em.person_id = persons.id);
 
+-- Scoped to the PLAYER lane, and only the player lane.
+--
+-- The first cut of this index covered every lane — "one person per (user, org,
+-- lane)" — on the reasoning that the only collision left was two player rows.
+-- That reasoning missed `inviteOfficial`: it mints a FRESH lane='official'
+-- person for every officials row whose person_id is null, and it cannot dedupe,
+-- because at invite time the person is unclaimed and the user is unknown. An
+-- org that carries the same human on its officials roster twice therefore
+-- produces two official-lane persons for one account, which is long-standing
+-- and legitimate (smoke.ts:3507). The lane-wide index turned the second
+-- officiating claim into a 409.
+--
+-- #402 only ever needed uniqueness where registration resolves — the player
+-- lane, the lane `resolvePlayerPerson` upserts on. `lane` stays in the key so
+-- `on conflict (org_id, user_id, lane)` can still infer this index; the
+-- predicate is what confines it. Note that the matching ON CONFLICT clause must
+-- repeat `lane = 'player'`: Postgres only infers a partial index whose
+-- predicate is implied by the one the statement supplies.
 create unique index persons_org_user_lane_uq
   on persons (org_id, user_id, lane)
-  where user_id is not null;
+  where user_id is not null and lane = 'player';
 
 -- The registrant's session, captured only under an explicit affirmation with no
 -- guardian fields (see submitRegistration). Nullable by design: registration

@@ -17,7 +17,7 @@ import {
   claimPerson,
   unlinkPerson,
 } from "../person-claims";
-import { createOfficial } from "../officials";
+import { createOfficial, inviteOfficial } from "../officials";
 import { createPerson } from "../persons";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -315,5 +315,60 @@ describe.skipIf(!HAS_DB)("duplicate player link (#402)", () => {
     const [after] = await sql<{ user_id: string | null }[]>`
       select user_id from persons where id = ${officialPerson.id}`;
     expect(after.user_id).toBeNull();
+  });
+
+  // REGRESSION (smoke.ts:3507 "off accept-by-id links the second org without
+  // the emailed token" + "off official <id> claimed=true").
+  //
+  // One org may carry the same human on the officials roster twice, and
+  // `inviteOfficial` mints a FRESH lane='official' person for every officials
+  // row whose person_id is null — it has no way to dedupe, because at invite
+  // time the person is unclaimed and the user is unknown. So the second claim
+  // legitimately produces a second official-lane person for one user in one
+  // org. persons_org_user_lane_uq must not forbid that: #402 needs uniqueness
+  // in the PLAYER lane only, which is the lane `resolvePlayerPerson` upserts
+  // on. A lane-wide index turned this long-standing flow into a 409.
+  it("a second officiating claim in one org links its own official-lane person", async () => {
+    const { owner, orgId } = await rig();
+    const refEmail = `ref-${randomUUID().slice(0, 8)}@test.local`;
+    const refUser = await makeUser("ref");
+
+    // Exactly the smoke sequence: create → invite → claim, twice, one org.
+    const first = await createOfficial(owner, {
+      display_name: "Ria Ref",
+      role_keys: ["referee"],
+    });
+    expect(first.person_id).toBeNull(); // the premise: no person bound at create
+    const inviteOne = await inviteOfficial(owner, first.id, refEmail);
+    await claimPerson(inviteOne.secret, refUser, refEmail);
+
+    const second = await createOfficial(owner, {
+      display_name: "Ria Ref Two",
+      role_keys: ["referee"],
+    });
+    const inviteTwo = await inviteOfficial(owner, second.id, refEmail);
+    await expect(claimPerson(inviteTwo.secret, refUser, refEmail)).resolves.toMatchObject({
+      person_id: inviteTwo.official.person_id!,
+    });
+
+    // Two DISTINCT official-lane persons, both linked to the one account.
+    expect(inviteTwo.official.person_id).not.toBe(inviteOne.official.person_id);
+    const linked = await sql<{ id: string; lane: string }[]>`
+      select id, lane from persons
+       where org_id = ${orgId} and user_id = ${refUser} order by created_at`;
+    expect(linked.map((r) => r.lane)).toEqual(["official", "official"]);
+    expect(linked.map((r) => r.id)).toEqual([
+      inviteOne.official.person_id,
+      inviteTwo.official.person_id,
+    ]);
+
+    // …and both officials rows read as claimed, the exact join the smoke's
+    // checkOfficialClaimed runs.
+    const claimed = await sql<{ id: string; claimed: boolean }[]>`
+      select o.id, (p.user_id is not null) as claimed
+        from officials o join persons p on p.id = o.person_id
+       where o.id in (${first.id}, ${second.id})`;
+    expect(claimed).toHaveLength(2);
+    expect(claimed.every((r) => r.claimed)).toBe(true);
   });
 });

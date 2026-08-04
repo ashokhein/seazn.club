@@ -453,7 +453,7 @@ async function resolvePlayerPerson(
   const [person] = await tx<{ id: string }[]>`
     insert into persons (org_id, full_name, dob, gender, user_id, lane)
     values (${orgId}, ${fullName}, ${dob}, ${gender}, ${userId}, 'player')
-    on conflict (org_id, user_id, lane) where user_id is not null
+    on conflict (org_id, user_id, lane) where user_id is not null and lane = 'player'
     do update set full_name = persons.full_name
     returning id`;
   return person.id;

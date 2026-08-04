@@ -223,10 +223,18 @@ export async function acceptResolvedClaim(claim: ResolvedClaim, userId: string):
         where id = ${claim.id} and claimed_at is null`;
     });
   } catch (e) {
-    // #402 — persons_org_user_lane_uq. The lane column means a player and an
-    // official profile no longer collide; the only remaining collision is two
-    // PLAYER persons for one human in one org, which is the duplicate #402
-    // exists to eliminate. Route it to the merge tool (#404), never a 500.
+    // #402 — persons_org_user_lane_uq, which is scoped to `lane = 'player'`.
+    // So the only collision reachable here is two PLAYER persons for one human
+    // in one org: exactly the duplicate #402 exists to eliminate, and exactly
+    // what the message says. Route it to the merge tool (#404), never a 500.
+    //
+    // Do NOT widen that index to cover every lane. `inviteOfficial` mints a
+    // fresh official-lane person per officials row and cannot dedupe (the
+    // person is unclaimed at invite time), so a human on one org's officials
+    // roster twice holds two official-lane persons by design — widening it
+    // makes their second officiating claim fail with this 409 and the wrong
+    // message. Covered by the second-officiating-claim test in
+    // __tests__/person-claims.test.ts.
     if (isUniqueViolation(e, "persons_org_user_lane_uq")) {
       throw new HttpError(
         409,
