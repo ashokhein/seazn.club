@@ -31,7 +31,6 @@ import {
   formatPosition,
   matchPositionOf,
 } from "../core/position.ts";
-import type { EventEnvelope } from "../core/events.ts";
 import type { AnySportModule } from "../sport/module.ts";
 import { buildStream, defaultLineupPair } from "../testkit/helpers.ts";
 import { builtinModules } from "./index.ts";
@@ -595,7 +594,7 @@ describe("every projecting sport, over generated streams", () => {
         let previous = matchPositionOf(module, state) as MatchPosition;
         expect(MatchPosition.safeParse(previous).success, `${module.key} @init`).toBe(true);
         for (const envelope of events) {
-          state = module.apply(state, envelope as EventEnvelope);
+          state = module.apply(state, envelope);
           const current = matchPositionOf(module, state) as MatchPosition;
           const parsed = MatchPosition.safeParse(current);
           expect(parsed.success, `${module.key} seq ${envelope.seq}: ${JSON.stringify(current)}`).toBe(
@@ -632,7 +631,7 @@ describe("position is a projection, never a field of state", () => {
       const lineups = defaultLineupPair(module.positions);
       const events = buildStream(module, cfg, lineups, 7, 200);
       let state: unknown = module.init(cfg, lineups);
-      for (const envelope of events) state = module.apply(state, envelope as EventEnvelope);
+      for (const envelope of events) state = module.apply(state, envelope);
       expect(JSON.stringify(state)).not.toContain('"position"');
       expect(JSON.stringify(state)).not.toContain('"segments"');
     });

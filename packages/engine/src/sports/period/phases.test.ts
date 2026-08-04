@@ -8,7 +8,7 @@
 // production.
 import { describe, expect, it } from "vitest";
 import { EngineError } from "../../core/errors.ts";
-import { foldMatch, type EventEnvelope } from "../../core/events.ts";
+import { foldMatch } from "../../core/events.ts";
 import { defaultLineupPair, makeEnvelope } from "../../testkit/helpers.ts";
 import type { ModuleEvent } from "../../sport/module.ts";
 import type { SportModule } from "../../sport/module.ts";
@@ -19,8 +19,8 @@ import { periodLabels, playPhases, type PeriodCfg } from "./kernel.ts";
 type PeriodModule = SportModule<PeriodCfg, unknown, unknown>;
 
 const presets: [string, PeriodModule][] = [
-  ["icehockey", icehockey as unknown as PeriodModule],
-  ["hockey", hockey as unknown as PeriodModule],
+  ["icehockey", icehockey],
+  ["hockey", hockey],
 ];
 
 // Every named variant plus the bare default, because the list is cfg-derived:
@@ -91,7 +91,7 @@ describe("a stamped event in a non-play phase folds (§3.3)", () => {
       icehockey,
       cfg,
       lineups,
-      events.map((event, i) => makeEnvelope(i, event)) as EventEnvelope[],
+      events.map((event, i) => makeEnvelope(i, event)),
       { strictFromSeq: 0 },
     );
 

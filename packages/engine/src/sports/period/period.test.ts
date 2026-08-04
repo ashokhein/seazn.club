@@ -40,12 +40,12 @@ function foldIce(events: ModuleEvent[], variant?: string): PeriodState {
   const cfg = icehockey.configSchema.parse(
     variant === undefined ? {} : icehockey.variants[variant],
   );
-  return foldMatch(icehockey, cfg, iceLineups, envelopes(events), STRICT_ALL) as PeriodState;
+  return foldMatch(icehockey, cfg, iceLineups, envelopes(events), STRICT_ALL);
 }
 
 function foldFih(events: ModuleEvent[], variant?: string): PeriodState {
   const cfg = hockey.configSchema.parse(variant === undefined ? {} : hockey.variants[variant]);
-  return foldMatch(hockey, cfg, fihLineups, envelopes(events), STRICT_ALL) as PeriodState;
+  return foldMatch(hockey, cfg, fihLineups, envelopes(events), STRICT_ALL);
 }
 
 const iceGoal = (by: string, extra?: Record<string, unknown>): ModuleEvent => ({

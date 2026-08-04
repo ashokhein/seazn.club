@@ -26,7 +26,7 @@ function fold(mod: Mod, events: ModuleEvent[], raw: unknown = {}): SetBasedState
     cfg,
     defaultLineupPair(resolvePositions(mod, cfg)),
     envelopes([{ type: "core.start", payload: {} }, ...events]),
-  ) as SetBasedState;
+  );
 }
 
 const rally = (mod: Mod, payload: Record<string, unknown>): ModuleEvent => ({
@@ -358,11 +358,11 @@ describe("coarsen is transparent to interruptions", () => {
     for (let i = 0; i < 11; i++) fine.push(rally(badminton, { wonBy: "H" }));
 
     const fineEnvs = envelopes(fine);
-    const fineState = foldMatch(badminton, cfg, pair, fineEnvs) as SetBasedState;
+    const fineState = foldMatch(badminton, cfg, pair, fineEnvs);
     const coarse = badminton
       .coarsen!(fineEnvs as never)
       .map((event, i) => makeEnvelope(i, event));
-    const coarseState = foldMatch(badminton, cfg, pair, coarse) as SetBasedState;
+    const coarseState = foldMatch(badminton, cfg, pair, coarse);
 
     expect(fineState.setsWon).toEqual({ home: 1, away: 0 });
     expect(coarseState.setsWon).toEqual(fineState.setsWon);

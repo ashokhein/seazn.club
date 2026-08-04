@@ -30,7 +30,7 @@ const lineups: LineupPair = { home: lineup("H"), away: lineup("A") };
 const league: StageCtx = { kind: "league" };
 
 const t20: CricketCfg = cricket.configSchema.parse(
-  cricket.variants.t20 as Record<string, unknown>,
+  cricket.variants.t20,
 );
 const fold = (cfg: CricketCfg, events: EventEnvelope[]) =>
   foldMatch(cricket, cfg, lineups, events, STRICT_ALL);
@@ -686,7 +686,7 @@ describe("cricket golden (d): tied T20 super over policies", () => {
 // ---------------------------------------------------------------------------
 
 describe("cricket golden (e): two-innings matches", () => {
-  const test = cricket.configSchema.parse(cricket.variants.test as Record<string, unknown>);
+  const test = cricket.configSchema.parse(cricket.variants.test);
 
   it("draws on time expiry with draw points", () => {
     const events = stream(

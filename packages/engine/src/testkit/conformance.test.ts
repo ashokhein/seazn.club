@@ -231,7 +231,7 @@ const coinflip: SportModule<CoinCfg, CoinEv, CoinState> = {
         continue;
       }
       emit(); // summary lands where its flip run ended
-      out.push({ type: event.type, payload: event.payload as CoinEv });
+      out.push({ type: event.type, payload: event.payload });
     }
     emit();
     return out;

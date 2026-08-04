@@ -86,6 +86,13 @@ export type CoreEv =
   | z.infer<typeof CoreStart>
   | z.infer<typeof CoreForfeit>
   | z.infer<typeof CoreAbandon>
+  // CoreFinalize is `z.strictObject({})`, so it infers `{}` and technically
+  // absorbs its siblings — no-duplicate-type-constituents is right about the
+  // type and wrong about the intent. The constituent is listed because this
+  // union is the documented payload set modules see in apply(); dropping the
+  // name to satisfy the rule would silently remove core.finalize from that
+  // contract, and would stop tracking CoreFinalize if it ever gains fields.
+  // eslint-disable-next-line @typescript-eslint/no-duplicate-type-constituents
   | z.infer<typeof CoreFinalize>
   | z.infer<typeof CoreNote>
   | z.infer<typeof CoreAward>;

@@ -12,7 +12,7 @@ const DIVISIONS: ImportSnapshot["divisions"] = [
 ];
 
 function row(partial: Partial<ImportRow> & { rowNo: number }): ImportRow {
-  return partial as ImportRow;
+  return partial;
 }
 
 // The golden fixture: 3 clubs × 4 teams × 11 players placed into one division

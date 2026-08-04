@@ -1091,7 +1091,7 @@ function applyDelivery(
   // Accounting.
   const batRuns = payload.runs.bat;
   const extraRuns = extras?.runs ?? 0;
-  const facing = striker as string;
+  const facing = striker;
   const batterRuns =
     extras?.kind === "wide"
       ? fine.batterRuns
@@ -1249,6 +1249,12 @@ function applySummary(
   }
   if (open === null) {
     next = createInnings(next, "coarse");
+    // createInnings just opened one, so openInnings cannot return null here.
+    // Load-bearing: `open` is declared `… | null` and the destructure below
+    // needs the narrowing. no-unnecessary-type-assertion checks the declared
+    // type of the target, not the narrowing, so it false-positives and its
+    // autofix breaks tsc.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
     open = openInnings(next) as { innings: InningsState; index: number };
   }
   const { innings, index } = open;
@@ -1375,7 +1381,7 @@ function applySuperOverBall(
     (target !== null && updated.runs >= target);
   const closed: InningsState = shouldClose ? { ...updated, closed: true } : updated;
   const nextList = inningsList.map((entry, i) => (i === index ? closed : entry));
-  let next: CricketState = { ...state, superOver: { innings: nextList, dismissed } };
+  const next: CricketState = { ...state, superOver: { innings: nextList, dismissed } };
 
   if (!shouldClose || !second) return next;
 
@@ -2049,6 +2055,9 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
         }
         if (open === null) {
           next = createInnings(next, "fine");
+          // See applySummary above: the assertion is the narrowing, and
+          // no-unnecessary-type-assertion's autofix breaks tsc without it.
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
           open = openInnings(next) as { innings: InningsState; index: number };
         }
         const battingSide = open.innings.battingSide;

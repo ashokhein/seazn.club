@@ -653,7 +653,7 @@ function serveAfterGame(state: NestedState): Side {
 function winGame(state: NestedState, winnerSide: Side): NestedState {
   const games = { ...state.games, [winnerSide]: state.games[winnerSide] + 1 };
   const rules = rulesFor(state);
-  let next: NestedState = {
+  const next: NestedState = {
     ...state,
     games,
     points: FRESH_GAME,

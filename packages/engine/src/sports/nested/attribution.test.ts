@@ -23,7 +23,7 @@ function fold(events: ModuleEvent[], raw: unknown = {}): NestedState {
     tennis.configSchema.parse(raw),
     lineups,
     envelopes([{ type: "core.start", payload: {} }, ...events]),
-  ) as NestedState;
+  );
 }
 
 const point = (payload: Record<string, unknown>): ModuleEvent => ({

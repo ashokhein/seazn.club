@@ -199,6 +199,6 @@ export function parseElapsed(text: string): number | null {
 export function gameTimeOf(payload: unknown): GameTime | null {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
   if (!("at" in payload)) return null;
-  const parsed = GameTime.safeParse((payload as { at: unknown }).at);
+  const parsed = GameTime.safeParse(payload.at);
   return parsed.success ? parsed.data : null;
 }

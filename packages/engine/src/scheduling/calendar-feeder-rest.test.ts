@@ -6,7 +6,7 @@
 // Frozen against payload A (badminton double elimination): `wb-r0-i1` feeds
 // `wb-r1-i0` by a direct winner feed, which is the edge a real bracket walks.
 import { describe, expect, it } from "vitest";
-import { validateAssignments, type Conflict, type OrderDependency, type VerifyConfig } from "./calendar";
+import { validateAssignments, type Conflict, type OrderDependency } from "./calendar";
 import { assign, at, BADMINTON, BASE_CONFIG, SOLO } from "./payload-fixtures";
 
 const MIN = 60_000;
@@ -29,7 +29,7 @@ const board = (dependentStartMs: number) =>
 const orderConflicts = (dependentStartMs: number, restMinutes: number): Conflict[] =>
   validateAssignments(
     board(dependentStartMs),
-    { ...BASE_CONFIG, perEntrantMinRest: restMinutes } as VerifyConfig,
+    { ...BASE_CONFIG, perEntrantMinRest: restMinutes },
     [],
     deps,
   ).filter((c) => c.reason === "order");
@@ -91,7 +91,7 @@ describe("feeder rest (#399)", () => {
           parallelism: "mixed",
           crossPersonClash: "warn",
         },
-      } as VerifyConfig,
+      },
       [],
       deps,
     ).filter((c) => c.reason === "order");

@@ -185,7 +185,7 @@ function buildSingleElim(opts: SingleElimOptions): SEResult {
       const real = (hE ?? aE) as EntrantId;
       fixtures.push({ ...base, home: real, award: real });
     }
-    (gameIds[0] as string[]).push(id);
+    (gameIds[0]).push(id);
   }
 
   // Later rounds — winner feeds.
@@ -294,7 +294,7 @@ export function generateDoubleElim(opts: DoubleElimOptions): GeneratedBracket {
         homeFrom: loserOf((wb.gameIds[0] as string[])[2 * i] as string),
         awayFrom: loserOf((wb.gameIds[0] as string[])[2 * i + 1] as string),
       });
-      (lbGameIds[0] as string[]).push(id);
+      (lbGameIds[0]).push(id);
     }
 
     for (let L = 1; L < lbRounds; L++) {
@@ -414,8 +414,8 @@ export function generateStepladder(opts: StepladderOptions): GeneratedBracket {
     id: "sl-g0",
     round: 0,
     ...(k === 2 ? { isFinal: true } : {}),
-    home: ordered[k - 2] as EntrantId,
-    away: ordered[k - 1] as EntrantId,
+    home: ordered[k - 2],
+    away: ordered[k - 1],
   });
   // Game j (1…k−2): the waiting seed (rank k−1−j) vs the previous winner.
   for (let j = 1; j <= k - 2; j++) {
@@ -423,7 +423,7 @@ export function generateStepladder(opts: StepladderOptions): GeneratedBracket {
       id: `sl-g${j}`,
       round: j,
       ...(j === k - 2 ? { isFinal: true } : {}),
-      home: ordered[k - 2 - j] as EntrantId,
+      home: ordered[k - 2 - j],
       awayFrom: winnerOf(`sl-g${j - 1}`),
     });
   }

@@ -92,12 +92,12 @@ for (const module of builtinModules) {
             // renders these; a throw here is the blank-screen bug).
             let summary: ScoreSummary | undefined;
             expect(() => {
-              summary = module.summary(state as never);
+              summary = module.summary(state);
             }, `${label}: summary() must not throw after an accepted void`).not.toThrow();
             expectRenderable(module, summary as ScoreSummary, label);
             let outcome: MatchOutcome | null = null;
             expect(() => {
-              outcome = module.outcome(state as never);
+              outcome = module.outcome(state);
             }, `${label}: outcome() must not throw after an accepted void`).not.toThrow();
 
             // Scoring must be able to CONTINUE on the post-undo state: the
@@ -111,7 +111,7 @@ for (const module of builtinModules) {
                 if (next === null || next === undefined) break;
                 const env = makeEnvelope(withVoid.length + n, next);
                 try {
-                  resumed = module.apply(resumed as never, env);
+                  resumed = module.apply(resumed, env);
                 } catch (err) {
                   expect(
                     EngineError.is(err),
@@ -119,7 +119,7 @@ for (const module of builtinModules) {
                   ).toBe(true);
                   break;
                 }
-                decided = module.outcome(resumed as never) !== null;
+                decided = module.outcome(resumed) !== null;
               }
               expect(() => module.summary(resumed as never), `${label}: post-resume summary`).not.toThrow();
             }

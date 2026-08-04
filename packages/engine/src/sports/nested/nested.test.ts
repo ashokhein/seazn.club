@@ -39,7 +39,7 @@ const summary = (home: number, away: number, tb?: { home: number; away: number }
 });
 
 function fold(cfg: unknown, events: ModuleEvent[]): NestedState {
-  return foldMatch(tennis, cfg, lineups, envelopes(events), STRICT_ALL) as NestedState;
+  return foldMatch(tennis, cfg, lineups, envelopes(events), STRICT_ALL);
 }
 
 // n straight points for one side (a clean game = 4).
@@ -229,7 +229,7 @@ describe("nested kernel — decision & undo", () => {
       ...envs,
       makeEnvelope(envs.length, { type: "core.void", payload: {} }, "e-2"),
     ];
-    const state = foldMatch(tennis, cfgFor(), lineups, withVoid, STRICT_ALL) as NestedState;
+    const state = foldMatch(tennis, cfgFor(), lineups, withVoid, STRICT_ALL);
     expect(state.outcome).toBeNull();
     expect(state.setsWon).toEqual({ home: 1, away: 0 });
     expect(state.phase).toBe("live");

@@ -277,7 +277,7 @@ function playFixture(
       state = module.apply(state, env);
       events.push(env);
     }
-    const outcome = module.outcome(state) as MatchOutcome | null;
+    const outcome = module.outcome(state);
     if (outcome === null) continue; // budget exhausted undecided — replay
     if (opts.decisive && !DECISIVE_KINDS.has(outcome.kind)) continue; // knockout replay
     return { events, state, outcome };
@@ -346,7 +346,7 @@ function injectVoidIntoMatch(
   }
 
   // Refold OK — if the void reopened the match, keep scoring to a decision.
-  let outcome = module.outcome(state) as MatchOutcome | null;
+  let outcome = module.outcome(state);
   const generate = module.arbitraryEvent as NonNullable<AnySportModule["arbitraryEvent"]>;
   for (let i = events.length; outcome === null && i < events.length + opts.maxEvents; i++) {
     const next = generate.call(module, state, rng) as ModuleEvent | null;
@@ -354,7 +354,7 @@ function injectVoidIntoMatch(
     const env = envelope(fixtureId, i, next);
     state = module.apply(state, env);
     events.push(env);
-    outcome = module.outcome(state) as MatchOutcome | null;
+    outcome = module.outcome(state);
   }
   if (outcome === null || (opts.decisive && !DECISIVE_KINDS.has(outcome.kind))) {
     // Can't complete the reopened match within budget/constraints — a real
@@ -987,7 +987,7 @@ export function assertDivisionInvariants(
 
   // Every fixture terminal; event envelopes well-formed and globally unique.
   const allEventIds = new Set<string>();
-  const allowedTotals = module.declaredPointsSets(cfg) as readonly number[];
+  const allowedTotals = module.declaredPointsSets(cfg);
   for (const stage of sim.stages) {
     for (const fixture of stage.fixtures) {
       if (!TERMINAL.has(fixture.status)) {

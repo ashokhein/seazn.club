@@ -108,11 +108,11 @@ export function generateRoundRobin(opts: RoundRobinOptions): RoundRobinSchedule 
       // Assemble this round's columns as (top, bottom) pairs. Column 0 involves
       // the pivot; columns 1..half-1 are U-vs-U.
       const columns: { top: EntrantId | null; bottom: EntrantId | null; isPivot: boolean }[] = [];
-      columns.push({ top: pivot, bottom: (u[n - 2] ?? null) as EntrantId | null, isPivot: true });
+      columns.push({ top: pivot, bottom: (u[n - 2] ?? null), isPivot: true });
       for (let i = 1; i < half; i++) {
         columns.push({
-          top: (u[i - 1] ?? null) as EntrantId | null,
-          bottom: (u[n - 2 - i] ?? null) as EntrantId | null,
+          top: (u[i - 1] ?? null),
+          bottom: (u[n - 2 - i] ?? null),
           isPivot: false,
         });
       }
