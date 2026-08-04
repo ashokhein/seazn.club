@@ -51,9 +51,26 @@ no guardian fields at all.
 
 1. **A lane discriminator makes the key unique.** `persons.lane` is
    `'player' | 'official'`; the unique index becomes
-   `(org_id, user_id, lane) where user_id is not null`. Registration always
-   resolves the player lane. This removes the exact collision the revert cited,
-   so the index the design doc asked for can finally land.
+   `(org_id, user_id, lane) where user_id is not null and lane = 'player'`.
+   Registration always resolves the player lane. This removes the exact
+   collision the revert cited, so the index the design doc asked for can
+   finally land.
+
+   **The `lane = 'player'` half of that predicate is load-bearing, and it was
+   learned the hard way.** An earlier draft of this design constrained every
+   lane, on the reasoning that "the only remaining collision is two player
+   persons for one human in one org". That reasoning is wrong, and smoke caught
+   it: `inviteOfficial` mints a person unconditionally and *cannot* dedupe,
+   because at invite time the person is unclaimed and the account behind the
+   email is not knowable. Two official-lane persons for one user in one org is
+   therefore legitimate, long-standing behaviour — an organiser inviting the
+   same referee twice — and constraining it broke officiating claims with a 409
+   on a previously passing path. Uniqueness belongs only where registration
+   actually resolves. Consequence for callers: Postgres infers a partial arbiter
+   index only when the statement's predicate implies the index's, so the upsert
+   in `materialise` must repeat `and lane = 'player'` in its `on conflict`
+   clause or it fails with "no unique or exclusion constraint matching the ON
+   CONFLICT specification".
 2. **Linking requires an explicit affirmation, with a server-side guardian
    veto.** `registrations.user_id` is written only when the registrant is signed
    in **and** affirmed "I'm registering myself" **and** the row carries no
@@ -82,9 +99,12 @@ update persons set lane = 'official'
  where exists (select 1 from officials o where o.person_id = persons.id)
    and not exists (select 1 from entrant_members em where em.person_id = persons.id);
 
+-- Scoped to the player lane on purpose: see §2 decision 1. Constraining the
+-- official lane breaks officiating claims, because inviteOfficial mints
+-- unconditionally and cannot know which account an unclaimed invite belongs to.
 create unique index persons_org_user_lane_uq
   on persons (org_id, user_id, lane)
-  where user_id is not null;
+  where user_id is not null and lane = 'player';
 
 alter table registrations
   add column user_id uuid references users(id) on delete set null;
@@ -154,12 +174,14 @@ insert.
 
 **`acceptResolvedClaim`** (`person-claims.ts:211-225`) does a bare
 `update persons set user_id`. Under the new index that raises `23505` for a user
-who already holds a *player* person in the org and claims a second one. The lane
-column means the player-vs-official case no longer collides at all — the only
-remaining collision is two player persons for one human in one org, which is
-exactly the duplicate #402 exists to eliminate. So the update catches `23505`
+who already holds a *player* person in the org and claims a second one — which
+is exactly the duplicate #402 exists to eliminate. So the update catches `23505`
 and throws `HttpError(409, …, "PERSON_ALREADY_LINKED")`, pointing at the merge
 route rather than crashing. This is the piece the reverted V345 lacked.
+
+Because the index is scoped to the player lane, an *officiating* claim never
+reaches this branch: a referee invited twice into one org holds two official-lane
+persons, and claiming the second is a 200, unchanged from before this work.
 
 ## 5. UI
 
@@ -189,6 +211,7 @@ page scroll.
 | Regression | anonymous registration still succeeds, still creates a person, `registrations.user_id` null |
 | Regression | organiser-side entry creation binds no `user_id` |
 | Regression | `acceptResolvedClaim` second player claim ⇒ 409 `PERSON_ALREADY_LINKED`, not 500 |
+| Regression | a referee invited TWICE into one org claims both ⇒ **200 both times**, no 409 — the official lane is deliberately unconstrained (§2 decision 1) |
 | Regression | `me.test.ts:162` stays green — a user linked only as an official keeps `hasPhotoFeature === false` |
 | Index | duplicate `(org_id, user_id, 'player')` rejected; same `user_id` across two *lanes* accepted; two null `user_id`s accepted |
 | Race | two concurrent affirmed registrations ⇒ one `persons` row, both entrants materialise |
