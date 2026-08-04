@@ -24,11 +24,21 @@ const CFG_WITH_DRAWS = {
   progressScore: false,
 };
 
-/** A generic division with one scored fixture, and the ids to poke at it. */
+/**
+ * A generic division with one scored fixture, and the ids to poke at it.
+ *
+ * `lastSeq` is RETURNED rather than assumed. `/divisions/{id}/start` starts the
+ * DIVISION; it appends no `core.start` to any fixture, so the ledger here holds
+ * exactly one event — and both callers used to hardcode `expected_seq: 2`. One
+ * of them failed loudly with SEQ_CONFLICT; the other posted through `apiJson`,
+ * which returns the status rather than throwing, so its finalize 409'd in
+ * silence and the fixture was never finalized at all. Anything reading a seq
+ * takes it from here.
+ */
 async function seedDrawnFixture(
   request: Parameters<typeof apiJson>[0],
   label: string,
-): Promise<{ divisionId: string; fixtureId: string }> {
+): Promise<{ divisionId: string; fixtureId: string; lastSeq: number }> {
   const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
     name: `Cfg snapshot ${label} ${TAG}`,
     visibility: "private",
@@ -52,12 +62,18 @@ async function seedDrawnFixture(
   // A DRAW, on purpose: `allowDraws` is an ungated cfg-derived refusal inside
   // generic's apply(), so flipping the flag afterwards is the sharpest available
   // reproduction of "a config edit bricks a recorded fixture".
-  await apiJson(request, `/api/v1/fixtures/${fixtureId}/events`, "POST", {
-    expected_seq: state.data!.last_seq,
-    type: "generic.result",
-    payload: { p1Score: 1, p2Score: 1 },
-  });
-  return { divisionId, fixtureId };
+  const scored = await apiJson<{ seq: number }>(
+    request,
+    `/api/v1/fixtures/${fixtureId}/events`,
+    "POST",
+    {
+      expected_seq: state.data!.last_seq,
+      type: "generic.result",
+      payload: { p1Score: 1, p2Score: 1 },
+    },
+  );
+  expect(scored.status, JSON.stringify(scored.error)).toBe(201);
+  return { divisionId, fixtureId, lastSeq: scored.data!.seq };
 }
 
 test("the first event freezes the config the fixture is scored under", async ({ request }) => {
@@ -68,7 +84,7 @@ test("the first event freezes the config the fixture is scored under", async ({ 
 test("editing the division config neither rescores nor locks the scorer out", async ({
   request,
 }) => {
-  const { divisionId, fixtureId } = await seedDrawnFixture(request, "edit");
+  const { divisionId, fixtureId, lastSeq } = await seedDrawnFixture(request, "edit");
   const before = await apiJson<{ outcome: unknown; summary: unknown }>(
     request,
     `/api/v1/fixtures/${fixtureId}/state`,
@@ -82,7 +98,7 @@ test("editing the division config neither rescores nor locks the scorer out", as
   await setDivisionConfigSql(divisionId, { ...CFG_WITH_DRAWS, allowDraws: false });
 
   const finalize = await request.post(`/api/v1/fixtures/${fixtureId}/events`, {
-    data: { expected_seq: 2, type: "core.finalize", payload: {} },
+    data: { expected_seq: lastSeq, type: "core.finalize", payload: {} },
   });
   expect(finalize.status(), await finalize.text()).toBe(201);
 
@@ -131,24 +147,41 @@ test("staff can re-snapshot a reopened fixture, and the hatch holds at 375px", a
     });
     await expectNoHorizontalScroll(page);
 
-    // …and the fixture still reads.
-    const after = await apiJson<{ outcome: unknown }>(
+    // …and the fixture still reads. `/state` is served from the `match_states`
+    // CACHE — no read path re-folds — so "outcome is still a draw" alone proved
+    // nothing: it would hold identically if the re-snapshot had never touched
+    // the cache at all. The cfg the cached fold ran under is the discriminating
+    // fact, and generic carries it in its state, so assert on THAT: the cache
+    // was re-derived inside the same transaction, from the new snapshot.
+    const after = await apiJson<{ outcome: unknown; state: { cfg: { points: unknown } } }>(
       request,
       `/api/v1/fixtures/${fixtureId}/state`,
     );
     expect(after.data!.outcome).toEqual({ kind: "draw" });
+    expect(after.data!.state.cfg.points).toEqual({ w: 2, d: 1, l: 0 });
   } finally {
     await setOwnerStaffSql(org.id, false);
   }
 });
 
 test("a finalized fixture is refused until it is reopened", async ({ page, request }) => {
-  const { fixtureId } = await seedDrawnFixture(request, "locked");
-  await apiJson(request, `/api/v1/fixtures/${fixtureId}/events`, "POST", {
-    expected_seq: 2,
+  const { fixtureId, lastSeq } = await seedDrawnFixture(request, "locked");
+  const finalize = await apiJson(request, `/api/v1/fixtures/${fixtureId}/events`, "POST", {
+    expected_seq: lastSeq,
     type: "core.finalize",
     payload: {},
   });
+  // BOTH of these, and neither is padding. `apiJson` returns the status instead
+  // of throwing, so a finalize that 409'd on a stale seq used to sail past here
+  // and the panel below was asserting "no" against a fixture that was still
+  // merely decided — a test that would have passed with the product broken. The
+  // precondition has to be proven, not assumed.
+  expect(finalize.status, JSON.stringify(finalize.error)).toBe(201);
+  const finalized = await apiJson<{ status: string }>(
+    request,
+    `/api/v1/fixtures/${fixtureId}/state`,
+  );
+  expect(finalized.data!.status).toBe("finalized");
 
   const org = await activeOrg(page);
   await setOwnerStaffSql(org.id, true);
