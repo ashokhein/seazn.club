@@ -490,7 +490,13 @@ export async function repairDecomposed(
         existing: frozen,
         dependencies,
         config,
-        budgetMs: Math.min(componentBudgetMs, remaining),
+        // `componentBudgetMs` bounds ONE COMPONENT, which is what its own
+        // docstring says it means. In `whole_board` mode the guard declined to
+        // make components at all and this is a single solve of the entire
+        // board, so the bound is the caller's own budget — capping it at the
+        // component ceiling turned a 240 s call into a 20 s one, on precisely
+        // the boards a single solve finds hardest.
+        budgetMs: mode === "whole_board" ? remaining : Math.min(componentBudgetMs, remaining),
         gridMinutes: input.gridMinutes,
         onProgress: input.onProgress,
         onPhase: input.onPhase,

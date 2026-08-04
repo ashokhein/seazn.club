@@ -479,6 +479,58 @@ describe("the max_fixtures_per_day guard", () => {
     }
   }, SOLVE_TIMEOUT);
 
+  it(
+    "gives a whole-board solve the CALL's budget, not the per-component ceiling",
+    async () => {
+      // `componentBudgetMs` says what ONE COMPONENT may cost, and in this mode
+      // the guard declined to make any: there is a single solve of the whole
+      // board, and it is the caller's `budgetMs` that bounds it. Capping it at
+      // the component ceiling silently rewrote a 240 s call into a 20 s one —
+      // on exactly the boards the guard sends down this path, which are the
+      // ones a single solve finds hardest.
+      //
+      // Pinned with a ceiling of 1 ms: a solve given that returns without ever
+      // reaching an answer, so the two modes are told apart by the outcome
+      // rather than by a stopwatch.
+      const { proposal, config } = cappedBoard(["c"]);
+      await resetZ3();
+
+      const r = await repairDecomposed({
+        proposal,
+        config,
+        budgetMs: 60_000,
+        componentBudgetMs: 1,
+      });
+
+      expect(r.mode).toBe("whole_board");
+      expect(r.status).toBe("repaired");
+      expect(r.components[0]?.outcome).toBe("repaired");
+      expect(validateAssignments(r.assignments, config)).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "still holds a COMPONENT to the per-component ceiling",
+    async () => {
+      // The other half of the pair, or the fix above reads as "the component
+      // budget stopped binding anything".
+      const { proposal, config } = cappedBoard(["a", "b", "c"]);
+      await resetZ3();
+
+      const r = await repairDecomposed({
+        proposal,
+        config,
+        budgetMs: 60_000,
+        componentBudgetMs: 1,
+      });
+
+      expect(r.mode).toBe("components");
+      expect(r.components.map((c) => c.outcome)).toEqual(["timeout", "timeout"]);
+      expect(r.status).toBe("unrepaired");
+    },
+    SOLVE_TIMEOUT,
+  );
 });
 
 describe("disjointConflictBound", () => {
