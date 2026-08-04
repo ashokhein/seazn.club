@@ -48,10 +48,18 @@ explicit rather than implicit.
 | A printed badminton scoresheet | all | — | — | deferred | only volleyball ships an `exportTemplates.scoresheet`; a badminton sheet is a print task for a later wave, not a schema gap. |
 | Rally length / stroke counts | all | persons | — | deferred | not on any scoresheet; a Pro statistics layer, wrong fidelity for our tiers. |
 
-**Row counts:** 17 modelled, 3 extended, 7 deferred (27 rows).
+| Where in the match an event happened (the position axis) | all | — | `SportModule.position(state)` -> `set` + `points` segments, e.g. `Set 3 . 21-19` | extended | W4a T6b. A **read-side projection**, never a payload: a `MatchPosition` on every stamped event was considered this wave and rejected, because position is derivable from state the fold already computes and recording it would create a recorded value and a derived value of the same type that can silently disagree — the `DisciplineCard.entrantSide` shape. A wrong recorded value is in the hash-chained ledger forever; a wrong projection is one deploy away from fixed. Ordered segments rather than a display string, so W8 can drop a segment for a 375px scorebug, localise each `key` and order two positions in one match; `formatPosition` is the plain-text path. Nothing is materialised into state, so every frozen golden is byte-identical. Badminton, table tennis and volleyball hold ONE function reference, asserted by identity. The set number is `unitNumber` over both the started count and the completed count, not `State.sets.length`: a set is opened lazily on its first rally, so `length` under-counts between games while `closed + 1` over-counts on a match abandoned mid-game. The score is ranked by `home + away`, which is exactly rallies played under rally scoring, so two positions inside one game order. |
+
+**Row counts:** 17 modelled, 4 extended, 7 deferred (28 rows).
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Downstream owed
+
+- **Position labels owed in all four locale dictionaries** (W4a T6b): `scoring.position.set`.
+  `SportModule.position` returns a stable segment `key` plus an ENGLISH `label`
+  fallback — the engine writes no locale copy, by the same rule `MetricSpec.label`
+  follows. W8 renders `scoring.position.<key>` and falls back to `label`. The `points` segment carries no label.
+  Deliberately NOT written by this task, which touches no dictionary.
 
 - **New event type** `badminton.sanction`, reachable at fidelity tiers 2 and 3
   under the existing `scoring.rally_by_rally` entitlement. Badminton

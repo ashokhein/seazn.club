@@ -51,10 +51,18 @@ a row that says the sport does **not** have a fact is enforced by the preset's
 | Referee / scorer / captain signatures | all | officials | `exportTemplates.scoresheet.signatures` | modelled | the printed sheet already carries the block. |
 | Remarks and injury notes | all | — | `core.note` | modelled | free text, no fold effect. |
 
-**Row counts:** 15 modelled, 7 extended, 7 deferred (29 rows).
+| Where in the match an event happened (the position axis) | all | — | `SportModule.position(state)` -> `set` + `points` segments, e.g. `Set 5 . 12-10` | extended | W4a T6b. A **read-side projection**, never a payload: a `MatchPosition` on every stamped event was considered this wave and rejected, because position is derivable from state the fold already computes and recording it would create a recorded value and a derived value of the same type that can silently disagree — the `DisciplineCard.entrantSide` shape. A wrong recorded value is in the hash-chained ledger forever; a wrong projection is one deploy away from fixed. Ordered segments rather than a display string, so W8 can drop a segment for a 375px scorebug, localise each `key` and order two positions in one match; `formatPosition` is the plain-text path. Nothing is materialised into state, so every frozen golden is byte-identical. ONE function reference shared with badminton and table tennis. The score comes from the set the number resolved to, which makes all four cases fall out of one expression: love-all before the first rally, the live score during a set, love-all again between sets, and the final score of the deciding set once the match is over. |
+
+**Row counts:** 15 modelled, 8 extended, 7 deferred (30 rows).
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Downstream owed
+
+- **Position labels owed in all four locale dictionaries** (W4a T6b): `scoring.position.set`.
+  `SportModule.position` returns a stable segment `key` plus an ENGLISH `label`
+  fallback — the engine writes no locale copy, by the same rule `MetricSpec.label`
+  follows. W8 renders `scoring.position.<key>` and falls back to `label`. The `points` segment carries no label.
+  Deliberately NOT written by this task, which touches no dictionary.
 
 - **New event types** `volleyball.timeout`, `volleyball.sanction`,
   `volleyball.sub` reach a scorer at fidelity tiers 2 and 3 under the existing

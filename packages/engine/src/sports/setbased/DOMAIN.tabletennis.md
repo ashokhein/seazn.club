@@ -54,10 +54,18 @@ limitation stated in the table rather than buried in the code.
 | Remarks, injury notes | all | — | `core.note` | modelled | free text, no fold effect. |
 | Stroke / rally-length statistics | all | persons | — | deferred | not on the match sheet; Pro statistics, wrong fidelity for our tiers. |
 
-**Row counts:** 16 modelled, 8 extended, 8 deferred (32 rows).
+| Where in the match an event happened (the position axis) | all | — | `SportModule.position(state)` -> `set` + `points` segments, e.g. `Set 5 . 9-7` | extended | W4a T6b. A **read-side projection**, never a payload: a `MatchPosition` on every stamped event was considered this wave and rejected, because position is derivable from state the fold already computes and recording it would create a recorded value and a derived value of the same type that can silently disagree — the `DisciplineCard.entrantSide` shape. A wrong recorded value is in the hash-chained ledger forever; a wrong projection is one deploy away from fixed. Ordered segments rather than a display string, so W8 can drop a segment for a 375px scorebug, localise each `key` and order two positions in one match; `formatPosition` is the plain-text path. Nothing is materialised into state, so every frozen golden is byte-identical. ONE function reference shared with badminton and volleyball. Expedite is deliberately NOT a position segment: it is match-scoped once introduced (Law 2.15.4) and so says nothing about where in the match anything happened — `State.expedite` remains the place to read it. |
+
+**Row counts:** 16 modelled, 9 extended, 8 deferred (33 rows).
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Downstream owed
+
+- **Position labels owed in all four locale dictionaries** (W4a T6b): `scoring.position.set`.
+  `SportModule.position` returns a stable segment `key` plus an ENGLISH `label`
+  fallback — the engine writes no locale copy, by the same rule `MetricSpec.label`
+  follows. W8 renders `scoring.position.<key>` and falls back to `label`. The `points` segment carries no label.
+  Deliberately NOT written by this task, which touches no dictionary.
 
 - **New event types** `tabletennis.timeout` and `tabletennis.sanction`,
   reachable at fidelity tiers 2 and 3 under the existing

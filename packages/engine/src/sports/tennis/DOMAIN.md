@@ -66,10 +66,18 @@ ticks and the signature line.
 | Remarks | all | — | `core.note` | modelled | free text, no fold effect. |
 | A printed tennis scorecard | all | — | — | deferred | only volleyball ships an `exportTemplates.scoresheet`; a tennis card is a print task for a later wave, not a schema gap. |
 
-**Row counts:** 24 modelled, 8 extended, 9 deferred (41 rows).
+| Where in the match an event happened (the position axis) | all | — | `SportModule.position(state)` -> `set` + `game` + `points` segments, e.g. `Set 2 . Game 4 . 30-15` | extended | W4a T6b. A **read-side projection**, never a payload: a `MatchPosition` on every stamped event was considered this wave and rejected, because position is derivable from state the fold already computes and recording it would create a recorded value and a derived value of the same type that can silently disagree — the `DisciplineCard.entrantSide` shape. A wrong recorded value is in the hash-chained ledger forever; a wrong projection is one deploy away from fixed. Ordered segments rather than a display string, so W8 can drop a segment for a 375px scorebug, localise each `key` and order two positions in one match; `formatPosition` is the plain-text path. Nothing is materialised into state, so every frozen golden is byte-identical. The tie-break needs no special case: `State.games` is held at 6-6 through it, so it falls out as game 13 of the set. A MATCH tie-break replaces the final set and has no games, so the game segment is omitted rather than reported as a phantom `Game 1`. The point score deliberately carries NO ordinal — points played is not derivable from `GamePoints` past deuce, so `comparePosition` is told to stop at the game rather than handed an invented rank it would sort by. Once a set banks the kernel resets `games` and `points`, so a decided match reads its games off the set that was actually played and drops the points segment. |
+
+**Row counts:** 24 modelled, 9 extended, 9 deferred (42 rows).
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Downstream owed
+
+- **Position labels owed in all four locale dictionaries** (W4a T6b): `scoring.position.set`, `scoring.position.game`.
+  `SportModule.position` returns a stable segment `key` plus an ENGLISH `label`
+  fallback — the engine writes no locale copy, by the same rule `MetricSpec.label`
+  follows. W8 renders `scoring.position.<key>` and falls back to `label`. The `period`, `clock` and `points` segments carry NO label — `P2`, `12:41` and `30–15` name themselves, and labelling them renders "Period P2".
+  Deliberately NOT written by this task, which touches no dictionary.
 
 - **New event type** `tennis.sanction`, reachable at fidelity tiers 2 and 3
   under the existing `scoring.rally_by_rally` entitlement. No new FeatureKey was

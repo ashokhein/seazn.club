@@ -96,7 +96,9 @@ is initialised with.
 | Referee's written remarks | all | n/a | `core.note` | modelled | No state effect by contract. |
 | Attendance, weather, pitch condition | all | n/a | — | deferred | Fixture metadata, not a scorebook event — belongs on the fixture record, not in the ledger. |
 
-**Row counts:** 25 modelled, 20 extended, 13 deferred (58 rows). No blank cells.
+| Where in the match an event happened (the position axis) | all | — | `SportModule.position(state)` -> `period` + `clock` segments, e.g. `H2 . 48:12` | extended | W4a T6b. A **read-side projection**, never a payload: a `MatchPosition` on every stamped event was considered this wave and rejected, because position is derivable from state the fold already computes and recording it would create a recorded value and a derived value of the same type that can silently disagree — the `DisciplineCard.entrantSide` shape. A wrong recorded value is in the hash-chained ledger forever; a wrong projection is one deploy away from fixed. Ordered segments rather than a display string, so W8 can drop a segment for a 375px scorebug, localise each `key` and order two positions in one match; `formatPosition` is the plain-text path. Nothing is materialised into state, so every frozen golden is byte-identical. Football and the period kernel have different state types and cannot share a module member, so both delegate to the core `periodClockPosition` and the conformance suite holds them to ONE shape. That is the direct answer to this wave's five hand-rolled time-model divergences in this file. Ranked against `playPhases(cfg)` — the wider list an event's `at.period` is validated against — never the narrower `PLAY_PHASES`. |
+
+**Row counts:** 25 modelled, 21 extended, 13 deferred (59 rows). No blank cells.
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Per-variant divergence
