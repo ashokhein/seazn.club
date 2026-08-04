@@ -3,6 +3,7 @@
 // declaredPointsSets; arbitraryEvent/coarsen hooks from spec 03 §6 + §9.6).
 import { z } from "zod";
 import type { CoreEv, EventEnvelope, FoldableModule, FoldContext } from "../core/events.ts";
+import type { MatchPosition } from "../core/position.ts";
 import type { Rng } from "../core/rng.ts";
 import type {
   DisciplineModel,
@@ -122,6 +123,36 @@ export interface SportModule<Cfg, Ev, State> extends FoldableModule<Cfg, State> 
   apply(state: State, ev: EventEnvelope<Ev | CoreEv>, ctx?: FoldContext): State; // pure; throws EngineError
   outcome(state: State): MatchOutcome | null; // null = still live
   summary(state: State): ScoreSummary; // display-ready at every prefix (§9.5)
+
+  /**
+   * W4a (#425) T6b — WHERE IN THE MATCH we are: set 2, game 4, 30–15 · over
+   * 12.3 · P2 12:41. The one cross-sport axis W5's pad and W6's timeline order
+   * and label events by, projected from state at read time.
+   *
+   * READ-SIDE BY RULING. The alternative — a `MatchPosition` on every stamped
+   * payload — was considered and rejected this wave: `at` is recorded because
+   * the fold cannot derive elapsed time, and position IS derivable, so
+   * recording it creates a recorded-vs-derived pair of the same type that can
+   * silently disagree (the `DisciplineCard.entrantSide` shape). Full argument
+   * in `core/position.ts`.
+   *
+   * OPTIONAL, and its absence is not a gap to be filled. All eleven modules
+   * stay at `1.0.0` and `registry.get(key, version)` is an exact lookup with no
+   * fallback, so this could never have been required. But the option is also
+   * the honest answer for a sport with no position: boardgame's IS the move
+   * index, which `BoardgameResult.moves` already carries on the single terminal
+   * event, and generic has a running score and no cursor at all. Absent ⇒ the
+   * caller orders and labels by `seq` — decided ONCE, in `matchPositionOf`.
+   *
+   * MUST NOT be materialised into `State`. cfg and state are serialised into
+   * the frozen golden strings; a position field in `init` would break all
+   * eleven corpora at once, and would be the very denormalisation above.
+   *
+   * Defined at every prefix, like `summary` (§9.5): at `init`, mid-match, and
+   * after the match is decided — where it names the last unit ACTUALLY PLAYED
+   * (`currentUnit`), never a phantom next one.
+   */
+  position?(state: State): MatchPosition;
 
   // PROMPT-03 deviation from spec 03 §3: `state` appended to the signature —
   // ledger metrics (gf/ga, NRR integer ledger…) live in the folded state, not
