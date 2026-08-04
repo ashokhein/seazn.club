@@ -27,11 +27,22 @@ export function labelPlayerStats(
 ): LabelledPlayerStat[] {
   try {
     const model = resolveModule(sportKey, moduleVersion).playerStats;
-    return [
+    const declared = [
       ...(model?.metrics ?? []).map((x) => ({ key: x.key, label: x.label })),
       ...(model?.derived ?? []).map((d) => ({ key: d.key, label: d.label })),
       ...(model?.awards ?? []).map((a) => ({ key: `${a.key}_awards`, label: a.label })),
-    ]
+    ];
+    // `metrics` is an AGGREGATION spec, not a display list: a module may declare
+    // one key several times to credit it from several payload fields, and
+    // `aggregatePlayerStats` folds them all into that single counter (boardgame
+    // credits `games` from both `homePerson` and `awayPerson`). Emitting a row
+    // per DECLARATION therefore renders the same counter twice under the same
+    // key — and the player pages use `key` as their React key, so row identity
+    // goes ambiguous the moment a list reorders or animates. One row per key,
+    // first declaration wins so declared order is what renders.
+    const seen = new Set<string>();
+    return declared
+      .filter((x) => !seen.has(x.key) && (seen.add(x.key), true))
       .map((x) => ({
         key: x.key,
         label: playerStatLabel(sportKey, x.key, m, x.label),

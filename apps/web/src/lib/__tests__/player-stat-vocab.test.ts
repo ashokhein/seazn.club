@@ -19,6 +19,7 @@ import { describe, it, expect } from "vitest";
 import { PLAYER_STAT_KEY, playerStatLabel, type MsgFn } from "@/lib/scoring-vocab";
 import { labelPlayerStats } from "@/server/player-stats";
 import { builtinModules } from "@seazn/engine/sports";
+import { aggregatePlayerStats, type PlayerStatsModel } from "@seazn/engine/stats";
 import uiEn from "@/dictionaries/en/ui.json";
 import uiEs from "@/dictionaries/es/ui.json";
 import uiFr from "@/dictionaries/fr/ui.json";
@@ -192,9 +193,6 @@ describe("labelPlayerStats renders localized copy, not the engine's English", ()
     for (const [sport, rows] of rowsBySport()) {
       const stats = Object.fromEntries(rows.map((r) => [r.row, 1]));
       const labelled = labelPlayerStats(sport, rows[0].version, stats, echo);
-      // Key SET, not length: a module may declare one metric key twice with two
-      // credit paths (boardgame's `games` counts home and away), which the
-      // helper emits as two rows. Deduping that is a separate concern.
       expect(new Set(labelled.map((l) => l.key)), `${sport} rows`).toEqual(
         new Set(rows.map((r) => r.row)),
       );
@@ -223,6 +221,52 @@ describe("labelPlayerStats renders localized copy, not the engine's English", ()
           .not.toBe(english);
       }
     }
+  });
+
+  it("emits each key at most once, for every builtin module", () => {
+    // As a LIST, not a set — the set assertion above passes in both states and
+    // is exactly why this stayed silent. `metrics` is an aggregation spec, so a
+    // module legitimately declares one key several times to credit it from
+    // several payload fields (boardgame's `games`: homePerson AND awayPerson).
+    // The display helper must collapse those to one row: the player pages use
+    // `key` as their React key, and duplicate keys make row identity ambiguous
+    // on any reorder or animation — and render the same counter twice.
+    for (const [sport, rows] of rowsBySport()) {
+      const stats = Object.fromEntries(rows.map((r) => [r.row, 1]));
+      const keys = labelPlayerStats(sport, rows[0].version, stats, echo).map((l) => l.key);
+      const dupes = keys.filter((k, i) => keys.indexOf(k) !== i);
+      expect(dupes, `${sport} emitted duplicate stat rows`).toEqual([]);
+    }
+  });
+
+  it("credits a repeated metric key from every declared field, not just the first", () => {
+    // The other half of the same contract: deduping is a DISPLAY concern only.
+    // Deleting one of boardgame's two `games` declarations would also make this
+    // pass, while silently halving the counter — every away-side appearance
+    // would stop counting. The aggregator must still honour both declarations.
+    const boardgame = builtinModules.find((mod) => mod.key === "boardgame");
+    const model = (boardgame as unknown as { playerStats: PlayerStatsModel }).playerStats;
+    const games = model.metrics.filter((x) => x.key === "games");
+    expect(games.map((x) => x.field)).toEqual(["homePerson", "awayPerson"]);
+
+    const rows = aggregatePlayerStats(
+      [
+        {
+          id: "e1",
+          fixtureId: "f1",
+          seq: 1,
+          type: "boardgame.pairing",
+          payload: { homePerson: "alice", awayPerson: "bob" },
+          recordedAt: "2026-01-01T00:00:00.000Z",
+          recordedBy: null,
+        },
+      ],
+      model,
+    );
+    expect(Object.fromEntries(rows.map((r) => [r.personId, r.stats.games]))).toEqual({
+      alice: 1,
+      bob: 1,
+    });
   });
 
   it("resolves real copy for the metrics whose keys collide", () => {
