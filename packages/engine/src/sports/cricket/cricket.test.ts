@@ -545,9 +545,7 @@ describe("a recorded revise survives a shortened over (§3.3)", () => {
     // 180 already in the ledger — the innings is recorded in balls and does not
     // move with the config, so only the quota does.
     const shortened = cricket.configSchema.parse({ ...raw, ballsPerOver: 4 });
-    const state = foldMatch(cricket, shortened, lineups, events) as ReturnType<
-      typeof cricket.init
-    >;
+    const state = foldMatch(cricket, shortened, lineups, events);
     expect(state.quota).toBe(160);
     expect(state.innings[0]?.legalBalls).toBe(180);
   });

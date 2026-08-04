@@ -2523,7 +2523,7 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
           type: "cricket.revise",
           payload: {
             oversPerSide: newOvers,
-            ...(named ? { target: (first as InningsState).runs + 1 } : {}),
+            ...(named ? { target: first.runs + 1 } : {}),
           },
         };
       }
