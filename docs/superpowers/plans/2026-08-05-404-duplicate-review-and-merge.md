@@ -263,8 +263,11 @@ git commit -m "db(V349): tombstone column and person_merges ledger (#404)"
 - Modify: `apps/web/src/server/usecases/persons.ts` — every read of `persons`
 - Modify: `apps/web/src/server/usecases/registrations.ts:456` — `ON CONFLICT`
   predicate gains `and merged_into is null`
-- Modify: `db/migration/deltas/V349__person_merges.sql` — recreate
-  `public_entrants_v` (`V289`) and `public_players_v` (`V307`) with the filter
+- Create: `db/migration/deltas/V350__person_tombstone_views.sql` — recreate
+  `public_entrants_v` (`V289`) and `public_players_v` (`V307`) with the filter.
+  **A NEW migration, never an edit to V349** — V349 is already applied, and
+  Flyway validates the checksum of an applied migration, so editing it fails
+  `db:apply` for everyone including CI.
 - Test: `apps/web/src/server/usecases/__tests__/person-tombstone-reads.test.ts`
 
 **Interfaces:**
@@ -307,9 +310,11 @@ here — the grep is the coverage.** Then in `registrations.ts`:
     do update set full_name = persons.full_name
 ```
 
-And append the two view recreations to V349, copying each view's existing body
-from `V289__entrant_badge_public_view.sql` / `V307__public_players_ungated.sql`
-and adding `and p.merged_into is null` to its person join.
+And write the two view recreations into a **new** `V350__person_tombstone_views.sql`,
+copying each view's existing body from `V289__entrant_badge_public_view.sql` /
+`V307__public_players_ungated.sql` and adding `and p.merged_into is null` to its
+person join. Do **not** edit V349 — it is applied, and Flyway validates checksums
+of applied migrations.
 
 - [ ] **Step 4: Run — expect 3 passed. Then run the FULL suite**, because this
   changes a read every roster surface depends on:
