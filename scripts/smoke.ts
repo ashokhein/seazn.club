@@ -5543,6 +5543,17 @@ interface AiPlanResponseLite {
   diff: unknown;
   summary: string;
   usage: { input_tokens: number; output_tokens: number; repair_rounds: number };
+  /** W6 (#401): what the constraint solver did before any LLM repair round.
+   *  Present on every plan — `solver_ran: false` on the clean path and when the
+   *  kill switch is set — so its ABSENCE is a regression, not a valid state. */
+  repair?: {
+    engine: string;
+    solver_ran: boolean;
+    status?: string;
+    moved?: number;
+    unresolved?: number;
+    minimality?: string;
+  };
   officials_coverage: unknown;
 }
 
@@ -5789,6 +5800,34 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
           typeof genEvent.spent_tokens === "number" &&
           typeof genEvent.usage?.output_tokens === "number" &&
           genEvent.spent_tokens === genEvent.usage.output_tokens,
+      );
+
+      // W6 (#401): the constraint solver runs before any LLM repair round. The
+      // report is present on EVERY plan, including the ones where it had nothing
+      // to do — "the field exists" is what makes its absence a detectable
+      // regression rather than a silent revert to LLM-only repair.
+      check(
+        "v6 AI/repair: the plan carries a solver report (#401)",
+        !!plan.repair && typeof plan.repair.solver_ran === "boolean",
+      );
+      // It must cost nothing. The solver is not metered, so a run that repaired
+      // a board still bills exactly what the model used — if solver work ever
+      // leaked into the ledger, spent_tokens would diverge from the model's own
+      // output_tokens, which the check above already pins.
+      check(
+        "v6 AI/repair: a solver repair spends no credits and no tokens (#401)",
+        !!genEvent &&
+          typeof genEvent.spent_tokens === "number" &&
+          genEvent.spent_tokens === genEvent.usage?.output_tokens,
+      );
+      // Whatever it reports must be internally consistent: it cannot claim to
+      // have moved fixtures without having run, and it cannot claim proved
+      // minimality without a move count to be minimal about.
+      check(
+        "v6 AI/repair: the report never claims work it did not do (#401)",
+        !!plan.repair &&
+          ((plan.repair.moved ?? 0) === 0 || plan.repair.solver_ran === true) &&
+          (plan.repair.minimality !== "proved" || typeof plan.repair.moved === "number"),
       );
 
       const applied = await v1(plus, `/api/v1/stages/${stageId}/schedule/apply`, "POST", {
