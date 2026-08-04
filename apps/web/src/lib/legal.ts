@@ -1,8 +1,11 @@
 import { sql } from "@/lib/db";
 
-/** "Last updated" date of /legal/terms + /legal/privacy — bump when the text
- *  changes. (Cookie-banner consent versioning lives separately in consent.ts.) */
-export const LEGAL_VERSION = "2026-07-14";
+/** The latest "Last updated" date across /legal/terms + /legal/privacy — bump
+ *  when either text changes, so a consent stamp names the text that was shown.
+ *  (Cookie-banner consent versioning lives separately in consent.ts.)
+ *  Pinned to the privacy page's own date by
+ *  app/legal/__tests__/privacy-scheduling-note.test.tsx. */
+export const LEGAL_VERSION = "2026-08-04";
 
 /**
  * Record clickwrap acceptance of Terms + Privacy (GDPR spec 2026-07-14): the
