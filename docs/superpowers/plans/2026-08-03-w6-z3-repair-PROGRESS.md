@@ -17,8 +17,8 @@ the resolved errors. What must survive is only what this file records.
 | # | Boundary | State | Exit gate |
 |---|---|---|---|
 | 1 | T1-T2 z3 loader + calendar.ts exports | **CLOSED** — `3b1b2ad4`, `7ac1cf6d`, `a0605bd7` | gate re-run by the orchestrator: 1523 pass / 0 fail / 410 suites, 0 outside the worktree, no pre-existing test or golden touched, tsc 0. Review found 5, all fixed; re-review in flight |
-| 2 | T3-T5 repair-domain, repair.ts, repairAndVerify | **in progress** — code landed `9c145f55`/`a526ee3c`/`cff11b0e`, orchestrator gate green (1548/0/422), **review returned NEEDS FIXES (2 CRITICAL) — fix implementer in flight** | badminton +1 clash moves **exactly 1** fixture (12 anchors byte-identical); Stepladder 13-violation → verifier-clean, both finals Friday; determinism twice; infeasible names families; timeout returns cleanly; `z3LoadCount()===0` on the clean path |
-| 3 | T6-T7 bench + budget + engine gate | pending | measured 50/120/250/500 table in the commit body; `DEFAULT_REPAIR_BUDGET_MS` set FROM it; goldens untouched. **Engine half fully droppable after this.** |
+| 2 | T3-T5 repair-domain, repair.ts, repairAndVerify | **in progress** — `9c145f55`/`a526ee3c`/`cff11b0e`, review NEEDS FIXES (2 CRITICAL), all 9 fixed in `63f2ef1c`/`d94b18b2`/`91bbc54b`. **Orchestrator gate re-run: 1566 pass / 0 fail / 427 suites, 0 outside worktree, tsc 0, 0 goldens, 0 pre-existing tests touched. Re-review in flight.** | badminton +1 clash moves **exactly 1** fixture (12 anchors byte-identical); Stepladder 13-violation → verifier-clean, both finals Friday; determinism twice; infeasible names families; timeout returns cleanly; `z3LoadCount()===0` on the clean path |
+| 3 | T6-T7 bench + budget + engine gate | **code landed** — `db1de378`, `50dcad31` (see "T6 measured" below). `DEFAULT_REPAIR_BUDGET_MS = 20_000`, measured. **The bench found a blocker for boundary 4: the solver cannot reach 500 movable at any budget — the feasibility probe alone exceeds 119 s from ~80 movable up.** | measured 20-500 table recorded; `DEFAULT_REPAIR_BUDGET_MS` set FROM it; goldens untouched. **Engine half fully droppable after this.** |
 | 4 | T8-T10 both runners + openapi regen | pending | `schedule-ai-route`, `competition-schedule-ai-route`, `competition-schedule-ai-http`, `ai-credit-wallet-spend` all green; `openapi/` clean after regen |
 | 5 | T11-T12 UI/i18n/e2e/smoke/help | pending | 4 dicts + `i18n:check`; screenshots desktop **and 375px**; e2e local prod build; smoke extended; help extended; review; PR |
 
@@ -94,6 +94,149 @@ nothing that this file does not already carry.
   two different module instances — two `z3-load` singletons, two `count`s, two WASM boots,
   and a `z3LoadCount()` assertion that can pass vacuously against the wrong instance.
   Re-import every touched module on the same side of the reset; `resetZ3()` in teardown.
+
+- **Boundary-2 review found a reproduced hole and it is now closed.** The class of bug to
+  keep watching for: any path where a constraint `validateAssignments` ENFORCES is not
+  ENCODED. It appeared as `span` being the intersection of ALL families — a fixture with an
+  unsatisfiable *relaxable* instruction got `span: null`, which was then read as "cannot
+  interact with anything", dropping it from `candidatePairs` AND the movable×immovable loop,
+  so it carried no court/person/rest constraint at all. `repairSchedule` returned
+  `clean, moved: []` on a board the verifier scored as 2 blocking `court` conflicts.
+  **Rule that came out of it: prune on `BLOCKING_FAMILIES` + the universe ONLY, and an empty
+  domain must still be encoded against everything else.**
+- Post-fix solver surface, for the integration tasks:
+  `RepairVerificationError` gained `kind: "encoding_drift"` (zero moves on a proven-dirty
+  board is now an ERROR, never `clean`); new relaxable family **`order_soft`** carries
+  indirect (`direct:false`) deps, which `isBlockingConflict` ignores; `BLOCKING_FAMILIES`
+  now lives in `repair-domain.ts` and is re-exported from `repair.ts` alongside
+  `REPAIR_FAMILIES`/`RepairFamily`; sessions are encoded under the relaxable `blackout`
+  family (matching the verifier's reason) while the pack window stays enforced
+  unconditionally; the budget now covers `loadZ3` + encode, sampled every 1024th pair.
+- **The C1 bug class struck TWICE — watch for it in every future encoder change.**
+  Second instance (re-review, `assertDayCap`): `max_fixtures_per_day` was asserted per
+  BUCKET, but with `sessionWindows` a bucket is a SESSION, not a day — two sessions on one
+  day let a `count:1` cap admit two fixtures, and the immovable subtraction ran once per
+  bucket instead of once per day. **The invariant: every encoder assertion must use the
+  VERIFIER'S unit.** Cheap detection: any board where the encoder's grouping key and the
+  verifier's grouping key can differ (session vs day, court vs venue, pool vs division).
+- **OPEN CRITICAL (found in re-review, fix queued behind T6's bench — both touch `repair.ts`):**
+  the day cap's buckets are clipped to the universe, but the verifier counts whole calendar
+  days. `dayBuckets` (`repair-domain.ts:175-183`) clips bucket 0 to `window.from`, so with
+  **no pack window AND no session windows** (`repairUniverse` = board extent ±7 days) bucket 0
+  covers only part of its `ymd`; starts in the clipped-off remainder are counted by no day
+  literal and escape the cap. Reproduced at 20 fixtures / `max_fixtures_per_day: 1`:
+  `repaired` with **`relaxed: []`** and the verifier returning 10 conflicts
+  (`6 fixtures on 2026-08-03 exceed the 1/day cap`); `repairAndVerify` throws.
+  Sound WITH a pack window (buckets and the never-relaxed `window` family clip to the same
+  instants), so the gap is exactly the no-window/no-session config M6's finite-model guard
+  singles out. Fix: build the cap's buckets over whole calendar days (or the ±30-day guard
+  range), or assert every start falls inside some bucket when a day-shaped rule exists.
+  Probe: `scratchpad/probe-cap2.mjs`. **Third instance of the encoder-unit-vs-verifier-unit
+  bug class.**
+- **OPEN CRITICAL — z3 can abort the PROCESS, not return `timeout`.** One of two identical
+  20-fixture runs died with an emscripten `_emscripten_resize_heap` OOM inside
+  `rewriter_tpl<maximize_bv_sharing>`. Unrecoverable WASM abort — no `try/catch` contains it,
+  so in production it takes the web process down and defeats "solver failure must never fail
+  the run". Non-deterministic. T6 is measuring frequency and peak heap at 250/500; mitigation
+  (memory cap / solver in a worker thread / hard size ceiling) is an ARCHITECTURE decision for
+  the integration task and must be chosen from those numbers. **A wall-clock budget is
+  worthless if the process dies before the deadline.**
+- **Resolved, NOT a bug:** the day cap being absent from the relaxed path is safe. It is
+  asserted under `instruction`; `validateInstructionRules:745-751` reports a breach as
+  `reason:"instruction"`, which `isBlockingConflict` does not cover, so relaxing it yields
+  only non-blocking conflicts, which `repairAndVerify:538` filters. Family ↔ reason ↔ blocking
+  is consistent. Do not re-open.
+- **T6 budget-bench inputs, measured by the reviewer at N=500 / 124,750 pairs:**
+  the unbudgeted prologue (pre-check `validateAssignments` + `buildDomains` +
+  `candidatePairs` + WASM boot) is **282 ms** — `budgetMs:1` still returns `elapsedMs 282`.
+  Budget overshoot from the 1024-pair sampling granularity is **~30-80 ms**
+  (`budgetMs 1000` → `elapsedMs 1032`). The encode does NOT finish inside 1 s at N=500.
+  Do not let the bench read the 282 ms prologue as solve time.
+- **Deferred optimisation, decide AFTER T6's bench, not before:** the pruner is currently
+  near-useless because one encoding serves two assumption sets, so spans must be
+  blocking-only. A sound recovery is TWO encodings — full-family spans for the strict pass,
+  blocking-only spans for the fallback. Only worth the complexity if the measured N=500
+  number actually threatens the budget. Do not build it speculatively.
+- **Feeds T6's bench:** with only `window` being a per-fixture interval list among the
+  blocking families, the pruner now rarely drops a pair, so the O(n²) encode at 500 movable
+  is close to unpruned. That cost is real and must be measured, not assumed.
+- `swiss.test.ts` "chess colour bounds hold (n up to 64)" is a **pre-existing flake** —
+  fast-check property test on the default 5 s timeout, dies under pool contention. Passes
+  alone and on rerun. Untouched by this wave; do not chase it.
+
+## T6 measured — the bench, the table, and what it says
+
+Run with `node --experimental-strip-types packages/engine/scripts/bench-repair.ts`
+(`--sizes --densities --repeats --budget`). One CHILD PROCESS per run, so a WASM abort is a
+recorded row instead of a vanished bench. Board: `repair-synthetic-board.ts`, seeded, 4
+courts, 40 fixtures/day on a 50-minute pitch, explicit pack window + one session window per
+day, feed chains of 4, entrants repeating within and across days. Clean baseline verifies
+0 conflicts at every size; `k` therefore counts exactly the injected clashes. NO `hard`
+instruction rules and NO `max_fixtures_per_day` — the clipped-bucket day-cap bug is under
+review and a board using it would measure an encoding that is about to change.
+
+Machine: darwin arm64, node v26.4.0. All times ms. "1-in-N" = one clash injected per N
+fixtures. Three repeats each at 45 s budget unless noted; run-to-run spread was under 1%.
+
+| n | 1-in | pairs | prologue | encode | probe | search | total | k | checks | status |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 20 | 20 | 190 | 275 | 145 | 417 | 114 | **952** | 1 | 3 | repaired |
+| 20 | 5 | 190 | 281 | 146 | 416 | 296 | **1 140** | 4 | 6 | repaired |
+| 40 | 20 | 780 | 279 | 343 | 5 903 | 1 641 | **8 166** | 2 | 4 | repaired |
+| 40 | 5 | 780 | 282 | 312 | 2 101 | 3 584 | **6 279** | 8 | 10 | repaired |
+| 50 | 20 | 1 225 | 173 | 270 | 2 003 | 838 | **3 283** | 2 | 4 | repaired |
+| 50 | 5 | 1 225 | 181 | 278 | 2 361 | 5 974 | **8 794** | 10 | 12 | repaired |
+| 60 | 20 | 1 770 | 255 | 574 | 8 169 | 3 186 | **12 184** | 3 | 5 | repaired |
+| 60 | 5 | 1 770 | 242 | 519 | 14 195 | 28 825 | **43 781** | 12 | 14 | repaired |
+| 70 | 20 | 2 415 | 226 | 649 | 25 120 | 2 417 | **28 412** | 3 | 5 | repaired |
+| 70 | 5 | 2 415 | 233 | 640 | 22 937 | 45 096 | **68 906** | 14 | 16 | repaired |
+| 80 | 20 | 3 160 | 226 | 789 | 119 180 | — | **120 196** | — | 1 | timeout (120 s budget) |
+| 80 | 5 | 3 160 | 335 | 1 121 | 118 807 | — | **120 263** | — | 1 | timeout (120 s budget) |
+| 120 | 20 | 7 140 | 183 | 1 200 | 43 778 | — | **45 161** | — | 1 | timeout |
+| 120 | 5 | 7 140 | 193 | 1 361 | 43 626 | — | **45 180** | — | 1 | timeout |
+| 250 | 20 | 31 125 | 223 | 4 718 | 40 259 | — | **45 201** | — | 1 | timeout |
+| 250 | 5 | 31 125 | 261 | 5 420 | 39 595 | — | **45 276** | — | 1 | timeout |
+| 500 | 20 | 124 750 | 329 | 21 210 | 24 414 | — | **45 953** | — | 1 | timeout |
+| 500 | 5 | 124 750 | 363 | 24 927 | 20 434 | — | **45 724** | — | 1 | timeout |
+
+Prologue splits at n=500: pre-check 46-87, WASM boot 189-296, domain build 52-67. Peak RSS
+206 MB at n=50, 345 at 120, 588 at 250, **906 at 500**.
+
+- **THE HEADLINE: the cliff is between 70 and 80 movable, and it is the FEASIBILITY PROBE,
+  not the ascending-k search.** At n≥80 `check(REPAIR_FAMILIES)` with no `AtMost` bound does
+  not return in 119 s; every run at 120/250/500 spent its whole budget on `checks: 1`. The
+  probe is also the expensive half BELOW the cliff — at n=70 light it is 25 s against 2.4 s
+  for the entire k=0..3 walk it exists to protect. The probe is a fail-fast optimisation
+  that costs ten times the search.
+- **Consequence for #401's "NO fixture-count gate, solve the full 500 movable range":** the
+  encoding as it stands cannot. 500 movable is not slow, it is unreachable — 21-25 s to
+  encode 124,750 pairs and then a probe that never returns. A larger budget does not help
+  (20 s → 60 s → 120 s changed nothing at any size ≥80).
+- Density matters far less than size. n=500 dense and n=500 light are within 10% of each
+  other; both die in the probe. Below the cliff density drives `search` only (k+1 checks).
+- Not the cause, checked and eliminated: the 5-minute grid `s.mod(grid)` (`gridMinutes: 1`
+  → 58.8 s probe at n=120, unchanged) and the session-window `blackout` intervals (removed
+  → 58.8 s, unchanged). It is the O(n²) disjunctive court/rest encoding itself.
+- **Two-encoding pruning recovery (deferred at boundary 2) would NOT fix this.** It targets
+  encode time; encode is 21-25 s of a run whose probe alone exceeds 119 s. Worth much more:
+  skipping or bounding the probe, and containing the solver.
+- **`DEFAULT_REPAIR_BUDGET_MS = 20_000`**, from the rule: 2× the worst total among boards
+  repaired at every measured density inside 10 s (n=50 dense, 8 794 ms), rounded up to the
+  next 5 s. Covers everything to n=60 light. 15 s would also have been defensible; 20 s
+  buys the 2× host-speed headroom without buying any board the solver cannot reach anyway.
+- **WASM abort: 0 in 50 runs** (30 of them completing solves at n=20..70; 20 at n≥120).
+  Peak RSS never exceeded 906 MB. The reviewer's `_emscripten_resize_heap` abort at 20
+  fixtures did NOT reproduce here — but 0/50 on one board family does not refute a
+  non-deterministic abort, and note that every 250/500 run died on the wall clock inside
+  the probe rather than deep in a search, which is where heavy rewriting allocates.
+- The reviewer's "prologue is 282 ms at N=500" does not reproduce on this board: the
+  pre-check is 46-87 ms and the whole prologue 329-363 ms. `budgetMs: 1` returns straight
+  after `validateAssignments`, before `loadZ3`, so that 282 ms was a pre-check on a board
+  carrying more rule work than this one (instruction rules / `ruleFixtures`).
+- Termination is covered by `repair-scale.test.ts`: 500 movable at a 3 s budget returns in
+  3.1 s (budget expires mid-ENCODE), and 120 movable at a 5 s budget returns in 5.2 s
+  (budget expires inside `check()`, `checks >= 1`). Mutation-verified: disabling the
+  encode's budget sampling takes the first from 3.1 s to 20.7 s.
 
 ## Open, non-blocking — fix after boundary 2 lands
 

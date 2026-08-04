@@ -64,9 +64,33 @@ const MS_PER_DAY = 86_400_000;
  *  always legal even when it is off-grid, so k=0 is always representable. */
 export const REPAIR_GRID_MINUTES = 5;
 
-/** Wall-clock ceiling on one solve. Provisional until #401's bench (Task 6)
- *  measures 50/120/250/500 movable and replaces this with the measured number. */
-export const DEFAULT_REPAIR_BUDGET_MS = 15_000;
+/**
+ * Wall-clock ceiling on a whole repair, ascending-k search included. MEASURED,
+ * not chosen: `scripts/bench-repair.ts` times 20/40/50/60/70/80/120/250/500
+ * movable at two conflict densities, three runs each, one child process per run
+ * (the full table is in the commit that set this constant, and in the wave
+ * ledger under "T6 measured").
+ *
+ * The measurement is bimodal, which is why this is not a percentile of the
+ * 500-movable number: there is no 500-movable completion to take a percentile
+ * of. Up to about 70 movable the solver repairs — 0.95 s at 20, 8.8 s at 50,
+ * 12.2 s at 60 — and from 80 up the FEASIBILITY PROBE ALONE does not return in
+ * 119 s, at either density. Raising the budget from 20 s to 60 s changed
+ * nothing at 120, 250 or 500. No budget buys a large board; it only delays the
+ * fallback.
+ *
+ * The rule: twice the worst total among boards repaired at EVERY measured
+ * density inside ten seconds (50 movable, dense, 8.8 s), rounded up to the next
+ * 5 s. The 2× is headroom for a production host slower than the bench machine;
+ * it also covers 60 movable at the light density (12.2 s). Beyond that, extra
+ * budget is pure latency charged to exactly the boards least likely to be
+ * repairable — and the AI runner charges it once per repair round.
+ *
+ * On exhaustion the caller falls back to LLM repair and says so in telemetry:
+ * never silence, never an unrepaired plan presented as repaired. Override per
+ * deployment with SCHEDULING_REPAIR_BUDGET_MS.
+ */
+export const DEFAULT_REPAIR_BUDGET_MS = 20_000;
 
 /**
  * Where one repair's wall clock actually goes. The budget is a single number
