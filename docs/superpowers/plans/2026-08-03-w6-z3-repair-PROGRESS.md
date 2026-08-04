@@ -247,10 +247,18 @@ nothing that this file does not already carry.
 - **A SEVENTH way a count lies, and it fires on EVERY worktree: no `.env.local`.**
   `.env.local` is gitignored, so `git worktree add` does not carry it. `apps/web/vitest.config.ts`
   loads `../../.env.local` to supply `DATABASE_URL`, and every DB-backed suite is
-  `describe.skipIf(!HAS_DB)`. Without the file the run is **green and meaningless**: measured
-  here at `pass 3394 / fail 0 / pending 1822 / total 5216` against a 6857-test baseline —
-  about **1640 tests deleted from the run**, with a 0-failure headline. The `pending` count is
-  the tell; the `pass` count is not. Fix: provision a fresh DB and export the URL for the run.
+  `describe.skipIf(!HAS_DB)`. Without the file the run is **green and meaningless**. Same
+  command, only `DATABASE_URL` differing:
+
+  ```
+  no .env.local:  pass 3394  fail 0  pending 1822  total 5216   <- 0 failures, looks green
+  fresh DB:       pass 5166  fail 0  pending   50  total 5216
+  ```
+
+  **`total` is IDENTICAL** — the suites are collected and then skipped — so reconciling the
+  total against a baseline, which is the defence against positional filters and `--root`, does
+  **not** catch this. 1772 tests went from skipped to passing without moving a single number
+  you would normally check. `pending` is the only tell. Fix: provision a fresh DB for the run.
 
   ```
   createdb -h 127.0.0.1 -p 54329 -U postgres seazn_w6
