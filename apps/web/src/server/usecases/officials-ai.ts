@@ -162,7 +162,7 @@ export async function buildOfficialsPack(
     if (!division) throw new HttpError(404, "division not found");
 
     const settings = await loadSettings(tx, divisionId);
-    const tz = settings.tz; // display/rendering only
+    const tz = settings.displayTz; // display/rendering only
     const orgTz = settings.orgTz; // governing clock for every day bucket (#448)
     const matchMinutes = settings.config.matchMinutes;
 

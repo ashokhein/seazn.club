@@ -80,17 +80,50 @@ export const OCCUPYING = ["scheduled", "in_play", "decided", "finalized", "forfe
 // Settings
 // ---------------------------------------------------------------------------
 
+/** The INTERNAL settings object. Its two zones are deliberately NOT one letter
+ *  apart: `displayTz` vs `orgTz` reads as a choice, `tz` vs `orgTz` reads as a
+ *  typo, and #448 was exactly that typo shipped. Anything doing calendar-day
+ *  math wants `orgTz`; anything rendering a timestamp wants `displayTz`.
+ *
+ *  This is NOT the wire shape — see `ScheduleSettingsWire`. */
 export interface ScheduleSettingsOut {
   division_id: string;
   config: ScheduleConfig;
-  /** RESOLVED venue zone (V305): stored division tz → org timezone → 'UTC'. */
-  tz: string;
+  /** RESOLVED venue zone (V305): stored division tz → org timezone → 'UTC'.
+   *  DISPLAY ONLY. Never use it to decide which calendar day something is on. */
+  displayTz: string;
   /** The ORGANISATION zone, resolved independently of the division's own (#397).
    *  W2 makes this the one clock all temporal math runs in — day boundaries,
-   *  weekday targets, session hours, output offsets — while `tz` above stays the
-   *  display lane a division may override. */
+   *  weekday targets, session hours, output offsets — while `displayTz` above
+   *  stays the display lane a division may override. */
   orgTz: string;
   updated_at: string;
+}
+
+/** The PUBLIC payload of GET/PUT /api/v1/divisions/{id}/schedule-settings.
+ *
+ *  The route returns the two boundary functions below unmapped, so this shape
+ *  IS the wire. The key is `tz` — not `displayTz` — because it is pinned by the
+ *  `ScheduleSettings` response schema and documented in openapi/v1.json;
+ *  renaming it would break every existing client. `orgTz` is deliberately NOT
+ *  here: it was only ever serialised as an undocumented extra.
+ *  Pinned by `__tests__/schedule-settings-wire.test.ts`. */
+export interface ScheduleSettingsWire {
+  division_id: string;
+  config: ScheduleConfig;
+  /** RESOLVED venue zone (V305) — the DISPLAY lane, `ScheduleSettingsOut.displayTz`. */
+  tz: string;
+  updated_at: string;
+}
+
+/** Internal → wire. The one place the display zone is renamed back to `tz`. */
+function toWire(s: ScheduleSettingsOut): ScheduleSettingsWire {
+  return {
+    division_id: s.division_id,
+    config: s.config,
+    tz: s.displayTz,
+    updated_at: s.updated_at,
+  };
 }
 
 /** Does a config use the Pro constraint solver (doc 12 §5)? Community keeps
@@ -110,7 +143,7 @@ export async function putScheduleSettings(
   auth: AuthCtx,
   divisionId: string,
   input: PutScheduleSettings,
-): Promise<ScheduleSettingsOut> {
+): Promise<ScheduleSettingsWire> {
   if (usesConstraints(input.config)) {
     await requireFeature(auth.orgId, "scheduling.constraints");
   }
@@ -130,18 +163,18 @@ export async function putScheduleSettings(
         set config = excluded.config,
             tz = case when ${tzTouched} then excluded.tz else schedule_settings.tz end,
             updated_at = now()`;
-    return loadSettings(tx, divisionId);
+    return toWire(await loadSettings(tx, divisionId));
   });
 }
 
 export async function getScheduleSettings(
   auth: AuthCtx,
   divisionId: string,
-): Promise<ScheduleSettingsOut> {
+): Promise<ScheduleSettingsWire> {
   return withTenant(auth.orgId, async (tx) => {
     const [division] = await tx`select 1 from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
-    return loadSettings(tx, divisionId);
+    return toWire(await loadSettings(tx, divisionId));
   });
 }
 
@@ -168,12 +201,18 @@ export async function loadSettings(tx: Tx, divisionId: string): Promise<Schedule
     config: ScheduleConfig.parse(row?.config ?? {}),
     // A division that already holds its own tz keeps winning, silently and
     // forever — the console can no longer set one, but it must never move.
-    tz: resolveVenueTz(row?.tz, row?.org_tz),
+    displayTz: resolveVenueTz(row?.tz, row?.org_tz),
     // Deliberately NOT resolveVenueTz(row?.tz, …): the division override must not
     // leak into the governing clock, or two divisions of one competition would
     // disagree about which calendar day a fixture is on (#397, design §2.1).
     orgTz: resolveVenueTz(null, row?.org_tz),
-    updated_at: row?.updated_at ?? new Date(0).toISOString(),
+    // postgres hands timestamptz back as a Date, so the declared `string` was a
+    // lie the wire hid (JSON.stringify(Date) already emits this exact ISO
+    // string). Normalise here so `ScheduleSettings.parse` actually accepts it.
+    updated_at:
+      row?.updated_at !== null && row?.updated_at !== undefined
+        ? new Date(row.updated_at).toISOString()
+        : new Date(0).toISOString(),
   };
 }
 
@@ -1129,7 +1168,7 @@ export async function validateSchedule(
         -- venue lane (V305): settings already carries the RESOLVED zone
         -- (division override → org timezone → UTC), and this whole query is
         -- scoped to one division, so bind it rather than re-joining.
-        and oa.date = (f.scheduled_at at time zone ${settings.tz})::date`;
+        and oa.date = (f.scheduled_at at time zone ${settings.displayTz})::date`;
 
     // A REPORT of the board as it stands. `blocking` here says "impossible", not
     // "refused" (#399) — the board paints those cards red, and it must keep

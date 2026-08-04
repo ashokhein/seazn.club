@@ -557,11 +557,11 @@ export async function buildSchedulePack(
     if (!division) throw new HttpError(404, "division not found");
     const settings = await loadSettings(tx, divisionId);
     const config = settings.config;
-    // ONE clock (#397, design §2.1). `settings.tz` stays available as the
+    // ONE clock (#397, design §2.1). `settings.displayTz` stays available as the
     // division's DISPLAY zone — it is what `pack.division.tz` carries — but
     // every instant below is rendered in, and every calendar question answered
     // in, the ORGANISATION zone.
-    const tz = settings.tz;
+    const tz = settings.displayTz;
     const orgTz = settings.orgTz;
     const clock = makeClock(opts.now, orgTz);
     const courts = [...config.courts];
