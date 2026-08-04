@@ -244,6 +244,42 @@ nothing that this file does not already carry.
   helpers make the bug invisible by construction.
   **FILED as issue #443** (2026-08-04) with the full evidence, the fix sketch, and the
   non-negotiable test requirement.
+- **Full local e2e (parallel project): 186 passed, 8 failed, 0 attributable to W6.**
+  `ai-architect.spec.ts` 13/13. Triage of the 8, so nobody re-does it:
+  * 5 × `event-pass.spec.ts` — the spec THROWS by design without a real Stripe test key
+    ("It buys a real $29 test-mode pass"); a dummy `sk_test_ci_e2e_dummy` was used
+    deliberately. Not run with the real key: it charges a live test-mode card and touches
+    money paths this wave never modified.
+  * 3 × concurrency flakes (`org-switch` ×2, `schedule-panels` ×1) — **all green at
+    `--workers=1`** (8/8 in 19.9 s). The schedule-panels one was `socket hang up` on
+    `POST /api/v1/competitions`; the server never crashed (0 abort/OOM lines, still
+    serving), so it was a dropped request under 4-worker load, NOT the in-process WASM.
+    Worth ruling out explicitly — "the new WASM ate the server" is the obvious wrong
+    conclusion here.
+- **THE WAVE SHIPPED A PRODUCTION NO-OP AND EVERY CI GATE WAS GREEN ON IT.** Found only by
+  running the e2e against a real standalone server. `z3-solver` is WASM; in a Next
+  `output: "standalone"` build **two** things break independently:
+  1. `build/z3-built.wasm` is never copied — nothing in the import graph names it, so
+     tracing cannot infer it. → `outputFileTracingIncludes`.
+  2. The glue resolves the binary from its own `__dirname`, and bundling rewrites that to
+     the tracing placeholder, so the server asks for
+     `/ROOT/node_modules/z3-solver/build/z3-built.wasm`. → `serverExternalPackages`.
+  **Fixing only (1) still aborted every solve**, with the file sitting correctly in
+  `.next/standalone/node_modules/`. Copying a file cannot fix a broken lookup path; `/ROOT`
+  in the ENOENT is the tell that you have (2), not (1).
+  What made it lethal: `loadZ3` turns the abort into the **designed** fallback to LLM
+  repair. No error, no 500, no failing test — minimal-movement repair simply would not
+  have existed in production while the organiser kept paying for the model round it was
+  built to avoid. Symptom in the e2e: `repair › reconciled · 2 round(s)` and `2 blocking
+  unresolved` on a board the solver fixes in one move locally.
+  Unit tests import from the source `node_modules`, where the file is always present, so
+  they are structurally incapable of catching it — as are typecheck, lint, i18n and the
+  OpenAPI drift gate. Guarded now by `z3-tracing-config.test.ts`: asserts both config
+  halves and resolves the glob to require `z3-built.wasm` BY NAME, so a version bump that
+  relocates the artefact fails loudly instead of silently restoring the bug.
+  After the fix: e2e `ai-architect.spec.ts` 13/13, zero `wasm`/`Aborted` lines in the
+  server log (was 6), board CLEAN with `1 fixture moved`, minimality `proved`, 0 repair
+  rounds.
 - **THE ENGINE SUITE IS GREEN ON AN IDLE HOST — 1612/1613 — and the one failure was a TEST
   BUG, not host suspension.** Earlier this file recorded the residual failures as
   unobtainable-locally host artefacts. Half right: `roundrobin` / `swiss` / `carrom` /
