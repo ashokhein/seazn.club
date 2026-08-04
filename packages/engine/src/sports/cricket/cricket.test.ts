@@ -569,6 +569,42 @@ describe("DLS scales: table units vs config units (#451)", () => {
     expect(resourcesFromBalls(300, 10, 10)).toBe(resources(50, 9));
   });
 
+  it("rounds a scale that does not divide 10, rather than flooring it", () => {
+    // Every variant shipped today has an exact scale — 11-a-side is 10/10 = 1,
+    // six-a-side is 10/5 = 2 — so rounding and truncation agree and nothing
+    // recorded moves. An eight-a-side innings (all out at 7) does NOT: the
+    // scale is 10/7, and truncating would read 2 wickets down as column 2
+    // (2.857 → 2) instead of column 3, crediting the batting side MORE
+    // resources than it still has. Same "wrong side of the rounding" family as
+    // the bug this file exists for, one variant away.
+    expect(resourcesFromBalls(30, 2, 7)).toBe(resources(5, 3));
+    expect(resourcesFromBalls(30, 2, 7)).not.toBe(resources(5, 2));
+    expect(resourcesFromBalls(30, 1, 7)).toBe(resources(5, 1)); // 1.43 → 1
+    expect(resourcesFromBalls(30, 5, 7)).toBe(resources(5, 7)); // 7.14 → 7
+
+    // Rounding never credits MORE resource than the true proportion would, in
+    // either direction: the scaled column is within half a column of exact.
+    for (const allOut of [3, 4, 6, 7, 8, 9]) {
+      for (let w = 0; w <= allOut; w++) {
+        const exact = Math.min((w * 10) / allOut, 9);
+        const used = resourcesFromBalls(30, w, allOut);
+        expect(used).toBeLessThanOrEqual(resources(5, Math.floor(exact)));
+        expect(used).toBeGreaterThanOrEqual(resources(5, Math.min(Math.ceil(exact), 9)));
+      }
+    }
+  });
+
+  it("keeps every currently shipped scale byte-identical under rounding", () => {
+    // The guard that lets the change above ship with no golden churn: for
+    // allOut 10 and 5, round(w × scale) === trunc(w × scale) for every w.
+    for (const allOut of [10, 5]) {
+      for (let w = 0; w <= allOut; w++) {
+        const scaled = (w * 10) / allOut;
+        expect(Math.round(scaled)).toBe(Math.trunc(scaled));
+      }
+    }
+  });
+
   it("survives a non-positive all-out count without producing NaN", () => {
     // Unreachable from the fold (`allOutWickets()` is Math.max(1, …)) but a bare
     // divide gives Infinity, and 0 × Infinity is NaN — which would index the

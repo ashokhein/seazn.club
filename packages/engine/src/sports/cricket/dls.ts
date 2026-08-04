@@ -112,8 +112,19 @@ export function resources(oversLeft: number, wicketsLost: number): number {
 //   wickets axis : `wicketsLost × 10 / allOutWickets`. The column means "how
 //                  much of this innings' batting is gone"; in a six-a-side
 //                  innings that ends at 5 wickets, 4 down is 8/10, not 4/10.
-//                  `resources` then truncates and clamps to columns 0..9, so
-//                  an all-out side lands on the last column.
+//                  `resources` then clamps to columns 0..9, so an all-out side
+//                  lands on the last column.
+//
+//                  We ROUND the scaled column rather than let `resources`
+//                  truncate it. Truncation is exact for every scale that
+//                  divides 10 (11-a-side → 1, six-a-side → 2) but floors
+//                  everywhere else: an eight-a-side innings (allOut 7, scale
+//                  10/7) would read 1 wicket down as column 1 (1.43 → 1) and
+//                  2 down as column 2 (2.86 → 2), each time crediting the
+//                  batting side MORE resources than it still has. That is the
+//                  same "wrong side of the rounding" error #451 is about, one
+//                  variant away. Rounding is a no-op for every config shipped
+//                  today, so it changes no recorded value.
 //
 // `allOutWickets` is the innings' own all-out threshold (cricket.ts
 // `allOutWickets()`), i.e. the wicket count at which that innings ends. When it
@@ -132,7 +143,7 @@ export function resourcesFromBalls(
   allOutWickets: number,
 ): number {
   const scale = allOutWickets > 0 ? DLS_TABLE_WICKETS / allOutWickets : 1;
-  return resources(ballsLeft / DLS_TABLE_BALLS_PER_OVER, wicketsLost * scale);
+  return resources(ballsLeft / DLS_TABLE_BALLS_PER_OVER, Math.round(wicketsLost * scale));
 }
 
 // spec 04 §2.5 — Standard Edition target:
