@@ -74,6 +74,53 @@ export const FIXTURE_REFUSE = "FIXTURE_REFUSE";
 export const FIXTURE_CLASH = "FIXTURE_CLASH";
 
 /**
+ * #452 — the same clash, on a board whose OTHER cards sit off the minute.
+ *
+ * Every instant the deterministic draft produces is minute-aligned, so
+ * `FIXTURE_CLASH` can only ever build a board on which the repair encoder's
+ * minutes and `validateAssignments`'s milliseconds agree by construction. That
+ * is precisely the blind spot #457 lived in: an obstacle ending at 10:00:20
+ * rounded DOWN to 10:00, so z3 permitted a start that overlapped it by twenty
+ * seconds and the verifier rejected the board the solver had just proved clean.
+ * No minute-aligned board can express that disagreement.
+ *
+ * WHAT IS OFFSET, AND WHY IT IS NOT THE CLASH PAIR. The clash stays byte-for-byte
+ * what `FIXTURE_CLASH` produces; every draft card FROM THE THIRD ON is shifted
+ * instead. Two reasons, both measured rather than assumed:
+ *
+ *   * The cards that are not in the clash have no reason to move, so they are
+ *     what the solver has to route the repaired card AROUND — the obstacle
+ *     rounding that #457 was actually about. They also come out the far end
+ *     still carrying their seconds, which is what makes the spec's assertion on
+ *     the applied board deterministic rather than a coin flip on which of two
+ *     interchangeable cards z3 picked.
+ *   * Offsetting the clash pair itself was tried first and is worse in a way
+ *     worth recording: the board then repairs with `data-moved="2"` and
+ *     `data-minimality="upper_bound"` (both clash cards land in the free tail
+ *     of the day, minute-aligned, and no sub-minute value survives at all),
+ *     where the whole-minute clash proves a single move. So that variant tests
+ *     neither minimal repair nor sub-minute survival.
+ *
+ * Sub-minute instants are reachable from the product, not invented here:
+ * `AddFixture.scheduled_at` is a client-supplied RFC-3339 string with no
+ * seconds restriction, the single-move PATCH stores it verbatim, and the AI
+ * usecase feeds `Date.parse` straight into `Assignment.startAt`.
+ *
+ * The sentinel deliberately CONTAINS `FIXTURE_CLASH`, so a body carrying it
+ * takes the clash path too; the offset is the only difference.
+ */
+export const FIXTURE_CLASH_SECONDS = `${FIXTURE_CLASH}_SECONDS`;
+
+/** How far off the minute `FIXTURE_CLASH_SECONDS` pushes the non-clashing cards.
+ *  Small enough that it moves no minute bucket, weekday or day boundary — the
+ *  only thing under test is the sub-minute remainder itself. */
+export const FIXTURE_CLASH_OFFSET_MS = 20_000;
+
+/** The first draft index `FIXTURE_CLASH_OFFSET_MS` applies to. 0 and 1 are the
+ *  clash pair and are left exactly where `FIXTURE_CLASH` puts them. */
+const CLASH_OFFSET_FROM_INDEX = 2;
+
+/**
  * W5 (#400) — the one brief this server actually COMPILES.
  *
  * Stage 1 is a model call like any other, so against the canned `{}` below
@@ -135,7 +182,7 @@ interface ParseRequestLite {
   context?: { divisions?: unknown[] };
 }
 
-function buildSchedulePlan(pack: SchedulePackLite, clash = false): unknown {
+function buildSchedulePlan(pack: SchedulePackLite, clashOffsetMs: number | null = null): unknown {
   const draft = Array.isArray(pack.draft) ? pack.draft : [];
   const assignments = draft.map((d) => ({
     fixture_id: d.fixture_id,
@@ -146,12 +193,26 @@ function buildSchedulePlan(pack: SchedulePackLite, clash = false): unknown {
   // `court` conflict, on a board whose remaining slots are free — so the minimal
   // repair is a single move, and a solver that moved more than one fixture is
   // visibly wrong rather than merely slower.
-  if (clash && assignments.length >= 2) {
+  //
+  if (clashOffsetMs !== null && assignments.length >= 2) {
     assignments[1] = {
       ...assignments[1]!,
       scheduled_at: assignments[0]!.scheduled_at,
       court_label: assignments[0]!.court_label,
     };
+    // #452: the rest of the board goes off the minute, leaving the clash exactly
+    // where it was. See `FIXTURE_CLASH_SECONDS` for why it is these cards and
+    // not the clashing pair. `clashOffsetMs === 0` touches nothing, so
+    // `FIXTURE_CLASH` behaviour is unchanged rather than round-tripped
+    // through Date.
+    if (clashOffsetMs > 0) {
+      for (let i = CLASH_OFFSET_FROM_INDEX; i < assignments.length; i++) {
+        assignments[i] = {
+          ...assignments[i]!,
+          scheduled_at: new Date(Date.parse(assignments[i]!.scheduled_at) + clashOffsetMs).toISOString(),
+        };
+      }
+    }
   }
   const placed = new Set(assignments.map((a) => a.fixture_id));
   const movable = !Array.isArray(pack.fixtures) && pack.fixtures?.movable ? pack.fixtures.movable : [];
@@ -231,7 +292,9 @@ interface GeneratedPlan {
 function generatePlan(
   body: { model?: string; messages?: { role?: string; content?: unknown }[] },
   fallbackModel: string,
-  clash = false,
+  /** null = no clash; 0 = the whole-minute clash; >0 = that many ms off the
+   *  minute (#452). */
+  clashOffsetMs: number | null = null,
 ): GeneratedPlan {
   let phase: FixtureCall["phase"] = "unknown";
   const model = body.model ?? fallbackModel;
@@ -253,7 +316,7 @@ function generatePlan(
     } else {
       phase = "schedule";
       movable = pack.fixtures?.movable?.length ?? 0;
-      plan = buildSchedulePlan(pack as SchedulePackLite, clash);
+      plan = buildSchedulePlan(pack as SchedulePackLite, clashOffsetMs);
     }
   } catch {
     /* leave defaults; a malformed pack becomes an empty-plan response */
@@ -284,10 +347,19 @@ export async function startAiFixtureServer(port = AI_FIXTURE_PORT): Promise<AiFi
       } catch {
         /* malformed body becomes an empty-plan response, same as before */
       }
+      // Order matters: `FIXTURE_CLASH_SECONDS` contains `FIXTURE_CLASH`, so the
+      // more specific sentinel has to be tested first or every off-minute run
+      // silently degrades to the whole-minute clash and passes for the wrong
+      // reason.
+      const clashOffsetMs = raw.includes(FIXTURE_CLASH_SECONDS)
+        ? FIXTURE_CLASH_OFFSET_MS
+        : raw.includes(FIXTURE_CLASH)
+          ? 0
+          : null;
       const { phase, model, plan, movable } = generatePlan(
         body,
         isAnthropic ? "claude-sonnet-5" : "anthropic/claude-sonnet-5",
-        raw.includes(FIXTURE_CLASH),
+        clashOffsetMs,
       );
       const planLike = plan as { assignments?: unknown[] } | null;
       calls.push({ phase, refusal, movable, assignments: planLike?.assignments?.length ?? 0 });
