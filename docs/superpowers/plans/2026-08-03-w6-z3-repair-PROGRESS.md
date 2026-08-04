@@ -244,6 +244,21 @@ nothing that this file does not already carry.
   helpers make the bug invisible by construction.
   **FILED as issue #443** (2026-08-04) with the full evidence, the fix sketch, and the
   non-negotiable test requirement.
+- **A SEVENTH way a count lies, and it fires on EVERY worktree: no `.env.local`.**
+  `.env.local` is gitignored, so `git worktree add` does not carry it. `apps/web/vitest.config.ts`
+  loads `../../.env.local` to supply `DATABASE_URL`, and every DB-backed suite is
+  `describe.skipIf(!HAS_DB)`. Without the file the run is **green and meaningless**: measured
+  here at `pass 3394 / fail 0 / pending 1822 / total 5216` against a 6857-test baseline —
+  about **1640 tests deleted from the run**, with a 0-failure headline. The `pending` count is
+  the tell; the `pass` count is not. Fix: provision a fresh DB and export the URL for the run.
+
+  ```
+  createdb -h 127.0.0.1 -p 54329 -U postgres seazn_w6
+  DATABASE_URL="postgresql://postgres@127.0.0.1:54329/seazn_w6" DATABASE_SSL=disable \
+    npm run db:apply && ... npm run sync:sports     # BOTH — sync:sports or the sport catalog is empty
+  DATABASE_URL=... DATABASE_SSL=disable AUTH_SECRET=<any> NEXT_PUBLIC_SUPABASE_URL="" \
+    npm test --workspace apps/web -- --reporter=json --outputFile=/tmp/w6-web-db.json
+  ```
 - **A SIXTH way a count lies in this repo, and it is the nastiest: MACHINE CONTENTION.**
   Measured, not inferred: a fixed JS CPU unit costs **93 ms idle vs 464 ms (5x)** while other
   agents run suites. At 5x the n=120 encode blows a 2.5 s budget **inside the O(n²) encode**,
@@ -274,6 +289,39 @@ nothing that this file does not already carry.
   constant honest and the calibration cost ~70 ms as documented.
   Also seen: a **927 s / 961 s wall on a 2.5 s budget** — almost certainly host suspend, not a
   solver bug. Do not go hunting when an absurd elapsed value appears.
+- **THE WASM ABORT IS FIXED — root cause was the TEST FILE, not the solver** (`8dc64b69`).
+  `repair.test.ts` ran ~20 solves against ONE WASM heap (`isolate: false` shares the module
+  registry file-wide) with only an `afterAll` reset; nothing frees a solve's `Solver` and terms,
+  so the heap only grew and the pthread worker died mid-solve. The production path already knew
+  this — `repairDecomposed` resets between components for exactly this reason — the test file
+  was the one place NOT doing it. Adding `afterEach(resetZ3)` took the aborts from **8 to 0**.
+  Tightening the budget sampling did not cause it; it changed where a timing-out encode stops,
+  left more partial work per test, and moved the threshold.
+  `repair-verify.test.ts` deliberately has NO such hook — it already resets modules per test and
+  shuts its own instance down in a `finally`. Do not "fix" it.
+- **THIS HOST SUSPENDS MID-RUN — do not chase timing failures on it.** Measured: a **3 s budget
+  produced a 986 s wall**, matching 927 s / 961 s seen earlier by another agent. Symptoms:
+  `STACK_TRACE_ERROR` timeouts, vitest runs that die WITHOUT writing their JSON report, and
+  wall-clock assertions off by two orders of magnitude. Post-fix the residual failures are in
+  `roundrobin`, `swiss`, `carrom`, `simulation` — suites this wave never touched — plus a
+  marginal 1510 ms vs 1500 ms perf bound. **A clean engine gate is not obtainable here; CI must
+  judge.** Do not "fix" these by loosening bounds.
+- **Budget sampling is now every 128 pairs / 16 fixtures** (was 1024 / 64). This is a PRODUCT
+  fix: the window is how far past its deadline a call may run before noticing, and one chunk of
+  z3 term building stretches with the host — tens of ms idle, **19 s loaded** against a 3 s
+  budget. The web runner passes 45 s and must get 45 s. A `performance.now()` read is tens of
+  nanoseconds against 128 term allocations, so the tighter window is not measurable in the
+  encode's cost.
+- **`timedUnderLoad` exists because calibrating once per FILE measured the wrong moment** —
+  module scope runs at IMPORT time, before the worker pool saturates, so the factor honestly
+  read ~1 and then scaled a bound applied to a call that ran under full contention. It now
+  samples both sides of the timed call and keeps the worse.
+- **OPEN — `atABudgetThatReachesTheSolver` doubling is expensive under load.** On a slow host
+  every attempt runs to its full budget, so one test can burn 5+10+20+40 s. A cheaper
+  construction that gets the same guarantee: shrink the BOARD instead of raising the budget —
+  the feasibility probe is intractable from ~80 movable up, so n≈80-90 has a small fast encode
+  and a probe that still never returns, reaching `check()` in one attempt at any speed. n=120
+  was overshooting into "the encode is the bottleneck". Worth doing when a stable host is available.
 - **OPEN — rounding, not grouping (5th encoder/verifier mismatch, different family).**
   `repair.ts:378-379` bounds an IMMOVABLE with `roundMin` (`Math.round`) while movable domains
   use conservative `ceilMin`/`floorMin`. An obstacle with sub-minute endpoints can therefore be
