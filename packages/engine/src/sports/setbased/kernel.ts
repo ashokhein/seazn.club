@@ -7,7 +7,7 @@
 // outcomes, and all result math reads only the folded set ledger.
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
-import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
+import { isStrictFold, resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
   EntrantId,
@@ -553,7 +553,11 @@ function normalizeSummary(
   return { home: payload.home, away: payload.away, partial: payload.partial === true };
 }
 
-function applySummary(state: SetBasedState, payload: SetBasedSummary): SetBasedState {
+function applySummary(
+  state: SetBasedState,
+  payload: SetBasedSummary,
+  strict: boolean,
+): SetBasedState {
   if (state.phase !== "live") wrongPhase(`set summary not allowed in phase "${state.phase}"`);
   const params = state.cfg;
   const { home, away, partial } = normalizeSummary(state, payload);
@@ -579,13 +583,27 @@ function applySummary(state: SetBasedState, payload: SetBasedSummary): SetBasedS
   // Completed-set summary: no rally set may be mid-flight (dual fidelity is
   // per-set, not per-point).
   const open = openSet(state);
-  if (open !== null && (open.set.home > 0 || open.set.away > 0)) {
+  // STRICT ONLY (§3.3 seam). "Is a set in flight?" is a PROJECTION of cfg: lower
+  // `setTo` and rallies that used to close a set no longer do, so a set the
+  // ledger scored rally-by-rally and then summarised reads as still open on
+  // replay and every summary in the division is refused. The dual-fidelity rule
+  // it enforces — do not mix point-by-point and summary scoring for one set —
+  // is about what a scorer may ENTER, and stays exactly as strict there.
+  if (strict && open !== null && (open.set.home > 0 || open.set.away > 0)) {
     invalid("this set is being scored rally-by-rally — a set summary is not allowed for it");
   }
   const index = open === null ? state.sets.length : open.index;
   const target = setTarget(params, index);
   const winner = setWinner(home, away, target, params.winBy, params.cap);
-  if (winner === null || !reachableSetScore(home, away, target, params.winBy, params.cap)) {
+  // STRICT ONLY (§3.3 seam). The set predicate is built from `setTo`,
+  // `finalSetTo`, `winBy` and `cap` — all cfg — so lowering any of them makes
+  // every set summary already in the ledger "unreachable" and every fixture in
+  // the division unreadable, with no event to void. 21–19 was a real set when
+  // it was played; it is not the ledger's fault the competition later moved to
+  // 15. On replay the summary is banked as recorded: `winner` is null only when
+  // neither side meets the target, and the higher score then takes the set,
+  // which is the reading a scoresheet has always had.
+  if (strict && (winner === null || !reachableSetScore(home, away, target, params.winBy, params.cap))) {
     invalid("set summary is not a reachable final score under the set predicate", {
       home,
       away,
@@ -597,7 +615,9 @@ function applySummary(state: SetBasedState, payload: SetBasedSummary): SetBasedS
   const set: SetState = { home, away, closed: false };
   const withSet =
     open === null ? { ...state, sets: [...state.sets, set] } : replaceSet(state, index, set);
-  return bankSet(withSet, index, winner);
+  // `winner` is non-null on every strict path (the guard above proves it) and
+  // may be null only on replay, where the higher score takes the set.
+  return bankSet(withSet, index, winner ?? (home >= away ? "home" : "away"));
 }
 
 // ---------------------------------------------------------------------------
@@ -876,7 +896,8 @@ export function makeSetBasedModule(
       };
     },
 
-    apply(state, ev: EventEnvelope<SetBasedEv | CoreEv>): SetBasedState {
+    apply(state, ev: EventEnvelope<SetBasedEv | CoreEv>, ctx): SetBasedState {
+      const strict = isStrictFold(ctx);
       switch (ev.type) {
         case "core.start":
           if (state.phase !== "pre") wrongPhase("already started");
@@ -887,7 +908,7 @@ export function makeSetBasedModule(
             recordsExpedite: records.expedite === true,
           });
         case summaryType:
-          return applySummary(state, parsePayload(SetBasedSummary, ev.payload, ev.type));
+          return applySummary(state, parsePayload(SetBasedSummary, ev.payload, ev.type), strict);
         case timeoutType:
           if (records.timeouts !== true) {
             invalid(`"${preset.key}" does not record timeouts`);

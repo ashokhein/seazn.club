@@ -29,6 +29,12 @@ import { resolvePositions } from "../sport/catalog.ts";
 import type { AnySportModule } from "../sport/module.ts";
 import { buildStream, defaultLineupPair, makeEnvelope } from "./helpers.ts";
 
+// W4a (#425) §3.3 — every fold below is PAD-SHAPED: it builds a stream event by
+// event, which is the write path. `strictFromSeq: 0` marks the whole stream new
+// and is therefore exactly the pre-seam behaviour. Only a real READ path
+// (apps/web fold.ts) and the cfg-replay property pass no options at all.
+const STRICT_ALL = { strictFromSeq: 0 } as const;
+
 // ---------------------------------------------------------------- generation
 
 /** Streams shorter than this are "trivial" — a module that can reach it must. */
@@ -193,9 +199,9 @@ export function recomputeStream(
   const envelopes: EventEnvelope[] = events.map((event, i) => makeEnvelope(i, event));
 
   const states = envelopes.map((_, i) =>
-    JSON.stringify(foldMatch(module, cfg, lineups, envelopes.slice(0, i + 1))),
+    JSON.stringify(foldMatch(module, cfg, lineups, envelopes.slice(0, i + 1), STRICT_ALL)),
   );
-  const finalState = foldMatch(module, cfg, lineups, envelopes);
+  const finalState = foldMatch(module, cfg, lineups, envelopes, STRICT_ALL);
   const outcome = module.outcome(finalState);
 
   const deltas: Record<string, unknown> = {};
@@ -585,7 +591,7 @@ export function payloadParseFailures(
   for (let i = 0; i < envelopes.length; i++) {
     const type = (envelopes[i] as EventEnvelope).type;
     try {
-      foldMatch(module, cfg, lineups, envelopes.slice(0, i + 1));
+      foldMatch(module, cfg, lineups, envelopes.slice(0, i + 1), STRICT_ALL);
     } catch (error) {
       if (EngineError.is(error, "INVALID_EVENT") && error.message === `invalid ${type} payload`) {
         out.push({ index: i, type, issues: (error.data as { issues?: unknown })?.issues });

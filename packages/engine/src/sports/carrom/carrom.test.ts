@@ -9,6 +9,12 @@ import { aggregatePlayerStats } from "../../stats/stats.ts";
 import { conformanceSuite, defaultLineupPair, makeEnvelope } from "../../testkit/index.ts";
 import { carrom, CARROM_TIEBREAKERS, type CarromState } from "./carrom.ts";
 
+// W4a (#425) §3.3 — every fold below is PAD-SHAPED: it is building a stream
+// event by event, which is the write path. `strictFromSeq: 0` marks the whole
+// stream new and is therefore exactly the pre-seam behaviour. Only a real READ
+// path (apps/web fold.ts) and the cfg-replay property pass no options.
+const STRICT_ALL = { strictFromSeq: 0 } as const;
+
 const lineups: LineupPair = defaultLineupPair(carrom.positions); // entrants H / A
 const cfg = carrom.configSchema.parse({});
 const league: StageCtx = { kind: "league" };
@@ -17,7 +23,7 @@ function stream(...specs: Array<[type: string, payload?: unknown]>): EventEnvelo
   return specs.map(([type, payload], i) => makeEnvelope(i, { type, payload: payload ?? {} }));
 }
 function fold(events: EventEnvelope[], config = cfg): CarromState {
-  return foldMatch(carrom, config, lineups, events) as CarromState;
+  return foldMatch(carrom, config, lineups, events, STRICT_ALL) as CarromState;
 }
 
 // One board-summary spec: [winner, opponentCoinsLeft, queenTo].

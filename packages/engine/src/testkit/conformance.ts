@@ -17,6 +17,12 @@ import { FidelityTier, type SportModule } from "../sport/module.ts";
 import { parseSemver } from "../sport/registry.ts";
 import { buildStream, defaultLineupPair, makeEnvelope } from "./helpers.ts";
 
+// W4a (#425) §3.3 — every fold below is PAD-SHAPED: it is building a stream
+// event by event, which is the write path. `strictFromSeq: 0` marks the whole
+// stream new and is therefore exactly the pre-seam behaviour. Only a real READ
+// path (apps/web fold.ts) and the cfg-replay property pass no options.
+const STRICT_ALL = { strictFromSeq: 0 } as const;
+
 export interface ConformanceOpts {
   cfg?: unknown; // raw config, parsed through module.configSchema (default {})
   lineups?: LineupPair; // default: minimal lineups from the position catalog
@@ -40,7 +46,8 @@ export function conformanceSuite<Cfg, Ev, State>(
   const numRuns = opts.numRuns ?? 300;
   const maxEvents = opts.maxEvents ?? 40;
 
-  const fold = (events: readonly EventEnvelope[]) => foldMatch(module, cfg, lineups, events);
+  const fold = (events: readonly EventEnvelope[]) =>
+    foldMatch(module, cfg, lineups, events, STRICT_ALL);
   // Envelopes from generators carry `unknown` payloads; the module's own
   // generator only emits its Ev | CoreEv union.
   const asModuleEvent = (event: EventEnvelope) => event as EventEnvelope<Ev | CoreEv>;

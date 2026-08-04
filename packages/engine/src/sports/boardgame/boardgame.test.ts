@@ -6,6 +6,12 @@ import { aggregatePlayerStats } from "../../stats/stats.ts";
 import { conformanceSuite, defaultLineupPair, makeEnvelope } from "../../testkit/index.ts";
 import { boardgame, BOARDGAME_TIEBREAKERS, type BoardgameState } from "./boardgame.ts";
 
+// W4a (#425) §3.3 — every fold below is PAD-SHAPED: it is building a stream
+// event by event, which is the write path. `strictFromSeq: 0` marks the whole
+// stream new and is therefore exactly the pre-seam behaviour. Only a real READ
+// path (apps/web fold.ts) and the cfg-replay property pass no options.
+const STRICT_ALL = { strictFromSeq: 0 } as const;
+
 const lineups: LineupPair = defaultLineupPair(boardgame.positions); // entrants H / A
 const cfg = boardgame.configSchema.parse({});
 const league: StageCtx = { kind: "league" };
@@ -14,7 +20,7 @@ function stream(...specs: Array<[type: string, payload?: unknown]>): EventEnvelo
   return specs.map(([type, payload], i) => makeEnvelope(i, { type, payload: payload ?? {} }));
 }
 function fold(events: EventEnvelope[], config = cfg): BoardgameState {
-  return foldMatch(boardgame, config, lineups, events) as BoardgameState;
+  return foldMatch(boardgame, config, lineups, events, STRICT_ALL) as BoardgameState;
 }
 const asEv = (event: EventEnvelope) => event as EventEnvelope<CoreEv>;
 

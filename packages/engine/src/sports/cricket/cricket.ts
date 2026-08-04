@@ -5,7 +5,7 @@
 // those totals — result logic never peeks at ball events.
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
-import type { CoreEv, EventEnvelope } from "../../core/events.ts";
+import { isStrictFold, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
   EntrantId,
@@ -903,6 +903,8 @@ interface DeliveryCtx {
   // batter not previously dismissed in the super over(s).
   strictOrder: boolean;
   soIneligible: readonly string[];
+  /** W4a (#425) §3.3 seam — false when this event is already in the ledger. */
+  strictFold: boolean;
 }
 
 function applyDelivery(
@@ -920,7 +922,12 @@ function applyDelivery(
   // not advance the count — spec §2.2 ball legality).
   const expectedOver = Math.floor(innings.legalBalls / bpo);
   const expectedBall = (innings.legalBalls % bpo) + 1;
-  if (payload.over !== expectedOver || payload.ballInOver !== expectedBall) {
+  // STRICT ONLY (§3.3 seam). `bpo` is `cfg.ballsPerOver`, read live from
+  // division.config, so an eight-ball competition edited to six renumbers every
+  // delivery already in the ledger and the fixture throws on every read — with
+  // no event to void. The counters are what the scorer wrote on the card; the
+  // config is what someone changed afterwards.
+  if (ctx.strictFold && (payload.over !== expectedOver || payload.ballInOver !== expectedBall)) {
     invalid("over/ballInOver do not match the ledger", {
       expected: { over: expectedOver, ballInOver: expectedBall },
       got: { over: payload.over, ballInOver: payload.ballInOver },
@@ -930,20 +937,30 @@ function applyDelivery(
   // Bowler legality — no consecutive overs, per-bowler quota (spec §2.2).
   let currentBowler = fine.currentBowler;
   if (currentBowler === null) {
-    if (payload.bowler === fine.prevOverBowler) {
+    // BOTH CFG-DERIVED, so both are STRICT ONLY (§3.3 seam). Where an over ENDS
+    // is `cfg.ballsPerOver`, so re-cutting six-ball overs to five re-partitions
+    // a recorded innings and turns a perfectly legal spell into "consecutive
+    // overs" on every read; the quota is `cfg.maxOversPerBowler` outright.
+    // Neither refusal has an event to void — the deliveries were legal as
+    // bowled. The lineup check between them is NOT gated: it reads the lineup,
+    // which is recorded alongside the stream, not the division config.
+    if (ctx.strictFold && payload.bowler === fine.prevOverBowler) {
       invalid(`bowler "${payload.bowler}" cannot bowl consecutive overs`);
     }
     if (!ctx.bowlingOrder.includes(payload.bowler)) {
       invalid(`bowler "${payload.bowler}" is not in the fielding lineup`);
     }
-    if (ctx.maxOversPerBowler !== undefined) {
+    if (ctx.strictFold && ctx.maxOversPerBowler !== undefined) {
       const bowled = Math.floor((fine.bowlerBalls[payload.bowler] ?? 0) / bpo);
       if (bowled >= ctx.maxOversPerBowler) {
         invalid(`bowler "${payload.bowler}" has exhausted the ${ctx.maxOversPerBowler}-over quota`);
       }
     }
     currentBowler = payload.bowler;
-  } else if (payload.bowler !== currentBowler) {
+  } else if (ctx.strictFold && payload.bowler !== currentBowler) {
+    // Same cause as the two above: whether an over is "in progress" at this
+    // delivery is decided by `cfg.ballsPerOver`, so the boundary moves when the
+    // config does and a legal change of bowler reads as a mid-over swap.
     invalid(`over in progress belongs to "${currentBowler}"`);
   }
 
@@ -952,10 +969,20 @@ function applyDelivery(
   let nonStriker = fine.nonStriker;
   if (ctx.strictOrder) {
     if (payload.striker !== striker || payload.nonStriker !== nonStriker) {
-      invalid("striker/non-striker do not match the ledger", {
-        expected: { striker, nonStriker },
-        got: { striker: payload.striker, nonStriker: payload.nonStriker },
-      });
+      // STRICT ONLY (§3.3 seam). Who is on strike is a projection of where the
+      // OVER ended, and that is `cfg.ballsPerOver` — re-cutting six-ball overs
+      // to five re-partitions a recorded innings and puts the fold's expected
+      // pair out of step with every delivery card already in the ledger. On
+      // replay the LEDGER wins: the card names who faced the ball, and that is
+      // the recorded fact; the fold's expectation is the derivation.
+      if (ctx.strictFold) {
+        invalid("striker/non-striker do not match the ledger", {
+          expected: { striker, nonStriker },
+          got: { striker: payload.striker, nonStriker: payload.nonStriker },
+        });
+      }
+      striker = payload.striker;
+      nonStriker = payload.nonStriker;
     }
   } else {
     // Super over: resolve open ends against eligibility.
@@ -1154,6 +1181,7 @@ function finishDelivery(
 function applySummary(
   state: CricketState,
   payload: z.infer<typeof CricketInningsSummary>,
+  strict: boolean,
 ): CricketState {
   if (state.phase !== "live") wrongPhase(`innings summary in phase "${state.phase}"`);
   let next = state;
@@ -1177,17 +1205,22 @@ function applySummary(
       got: { runs: payload.runs, wickets: payload.wickets, legalBalls: payload.legalBalls },
     });
   }
+  // THREE STRICT-ONLY CHECKS (§3.3 seam), all three cfg-derived: `allOut`
+  // follows `playersPerSide`, `ballsLimit` follows `ballsPerInnings`, and the
+  // declaration rule follows `inningsPerSide`. Lowering any of them refuses a
+  // summary the ledger already holds, on every read, with nothing to void — a
+  // T20 division re-cut to 10 overs would take every recorded innings dark.
   const allOut = allOutWickets(next, innings.battingSide);
-  if (payload.wickets > allOut) {
+  if (strict && payload.wickets > allOut) {
     invalid(`wickets exceed all-out (${allOut})`, { wickets: payload.wickets });
   }
-  if (innings.ballsLimit !== null && payload.legalBalls > innings.ballsLimit) {
+  if (strict && innings.ballsLimit !== null && payload.legalBalls > innings.ballsLimit) {
     invalid("legalBalls exceed the innings quota", {
       legalBalls: payload.legalBalls,
       quota: innings.ballsLimit,
     });
   }
-  if (payload.declared === true && next.cfg.inningsPerSide !== 2) {
+  if (strict && payload.declared === true && next.cfg.inningsPerSide !== 2) {
     invalid("declarations apply to two-innings matches only");
   }
   const updated: InningsState = {
@@ -1227,7 +1260,11 @@ function soBattingSideAt(state: CricketState, index: number): Side {
   return index % 2 === 0 ? pairFirst : opponent(pairFirst);
 }
 
-function applySuperOverBall(state: CricketState, payload: CricketBallEv): CricketState {
+function applySuperOverBall(
+  state: CricketState,
+  payload: CricketBallEv,
+  strict: boolean,
+): CricketState {
   if (state.phase !== "super_over" || state.superOver === null) {
     wrongPhase(`super-over ball in phase "${state.phase}"`);
   }
@@ -1262,6 +1299,7 @@ function applySuperOverBall(state: CricketState, payload: CricketBallEv): Cricke
     allOut: 2, // spec cricket.md §3 — 2-wicket all out
     strictOrder: false,
     soIneligible: so.dismissed[battingSide],
+    strictFold: strict,
   });
 
   const dismissedNow = payload.wicket !== undefined ? [payload.wicket.out] : [];
@@ -1904,7 +1942,8 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
     };
   },
 
-  apply(state, ev: EventEnvelope<CricketEv | CoreEv>): CricketState {
+  apply(state, ev: EventEnvelope<CricketEv | CoreEv>, ctx): CricketState {
+    const strict = isStrictFold(ctx);
     switch (ev.type) {
       case "core.start":
         if (state.phase !== "pre") wrongPhase("already started");
@@ -1942,13 +1981,14 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
           allOut: allOutWickets(next, battingSide),
           strictOrder: true,
           soIneligible: [],
+          strictFold: strict,
         });
         return autoClose(replaceInnings(next, open.index, updated));
       }
       case "cricket.superover.ball":
-        return applySuperOverBall(state, parsePayload(CricketBall, ev.payload, ev.type));
+        return applySuperOverBall(state, parsePayload(CricketBall, ev.payload, ev.type), strict);
       case "cricket.innings.summary":
-        return applySummary(state, parsePayload(CricketInningsSummary, ev.payload, ev.type));
+        return applySummary(state, parsePayload(CricketInningsSummary, ev.payload, ev.type), strict);
       case "cricket.innings.declare": {
         if (state.phase !== "live") wrongPhase(`declare in phase "${state.phase}"`);
         parsePayload(CricketDeclare, ev.payload, ev.type);

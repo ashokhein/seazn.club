@@ -407,12 +407,22 @@ export function foldMatchWithStoppage<Cfg, State>(
   let highWater: GameTime | null = null;
 
   for (const event of active) {
-    // §3.3 seam. Everything below that reads CFG is gated on this; everything
-    // that reads only the STREAM (payload shape, the decision monotonicity, the
-    // suspension window) is not, because a cfg edit cannot change its verdict
-    // and tolerating it would weaken the fold for no benefit.
+    // §3.3 seam. Everything below whose verdict a cfg edit can move is gated on
+    // this. `validateCoreEvent` is not: it is a payload-schema check on the
+    // stream alone, and no config edit can change its answer.
     const strict = strictFromSeq !== undefined && event.seq >= strictFromSeq;
     validateCoreEvent(event);
+    // GUARANTEE 4 is deliberately NOT gated on `strict`, and the reason is
+    // worth recording because it looks like an oversight. It IS cfg-derived at
+    // one remove — `decided` comes from `module.outcome(state)`, folded against
+    // a cfg read live — and lowering `bestOf`, `maxBoards` or cricket's
+    // `playersPerSide` does decide a recorded match earlier on replay than it
+    // decided when it was scored, which bricks it. But tolerating it HERE fixes
+    // nothing: every module also refuses its own events once its state reaches
+    // the terminal phase (`WRONG_PHASE: … not allowed in phase "done"`), so the
+    // throw simply moves one layer down. Making that class readable is a
+    // coordinated change across the kernel and all eleven modules, not a
+    // one-line gate, and it is filed rather than half-done here.
     if (decided && !postDecision.has(event.type)) {
       throw new EngineError(
         "ALREADY_DECIDED",

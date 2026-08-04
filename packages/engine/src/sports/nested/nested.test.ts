@@ -11,6 +11,12 @@ import type { ModuleEvent } from "../../sport/module.ts";
 import { tennis } from "../tennis/tennis.ts";
 import { gameScoreLine, type NestedState } from "./kernel.ts";
 
+// W4a (#425) §3.3 — every fold below is PAD-SHAPED: it is building a stream
+// event by event, which is the write path. `strictFromSeq: 0` marks the whole
+// stream new and is therefore exactly the pre-seam behaviour. Only a real READ
+// path (apps/web fold.ts) and the cfg-replay property pass no options.
+const STRICT_ALL = { strictFromSeq: 0 } as const;
+
 const lineups = defaultLineupPair(tennis.positions);
 const H = lineups.home.entrantId;
 const A = lineups.away.entrantId;
@@ -33,7 +39,7 @@ const summary = (home: number, away: number, tb?: { home: number; away: number }
 });
 
 function fold(cfg: unknown, events: ModuleEvent[]): NestedState {
-  return foldMatch(tennis, cfg, lineups, envelopes(events)) as NestedState;
+  return foldMatch(tennis, cfg, lineups, envelopes(events), STRICT_ALL) as NestedState;
 }
 
 // n straight points for one side (a clean game = 4).
@@ -223,7 +229,7 @@ describe("nested kernel — decision & undo", () => {
       ...envs,
       makeEnvelope(envs.length, { type: "core.void", payload: {} }, "e-2"),
     ];
-    const state = foldMatch(tennis, cfgFor(), lineups, withVoid) as NestedState;
+    const state = foldMatch(tennis, cfgFor(), lineups, withVoid, STRICT_ALL) as NestedState;
     expect(state.outcome).toBeNull();
     expect(state.setsWon).toEqual({ home: 1, away: 0 });
     expect(state.phase).toBe("live");

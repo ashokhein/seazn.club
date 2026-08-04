@@ -34,10 +34,19 @@ function ralliesTo(rallyType: string, h: number, a: number): ModuleEvent[] {
 function fold(module: typeof badminton, events: ModuleEvent[], cfg: unknown = {}) {
   const envs: EventEnvelope[] = events.map((e, i) => makeEnvelope(i, e));
   const parsed = module.configSchema.parse(cfg);
-  return foldMatch(module, parsed, defaultLineupPair(resolvePositions(module, parsed)), [
-    makeEnvelope(0, { type: "core.start", payload: {} }),
-    ...envs.map((e, i) => ({ ...e, seq: i + 1, id: `e-${i + 1}` })),
-  ]);
+  // W4a (#425) §3.3 — pad-shaped: this builds a stream event by event, which is
+  // the write path, so the whole stream is strict. That is exactly the pre-seam
+  // behaviour; only a real READ path passes no options.
+  return foldMatch(
+    module,
+    parsed,
+    defaultLineupPair(resolvePositions(module, parsed)),
+    [
+      makeEnvelope(0, { type: "core.start", payload: {} }),
+      ...envs.map((e, i) => ({ ...e, seq: i + 1, id: `e-${i + 1}` })),
+    ],
+    { strictFromSeq: 0 },
+  );
 }
 
 interface MatrixCase {

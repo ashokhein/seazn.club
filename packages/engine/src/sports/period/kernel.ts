@@ -813,17 +813,33 @@ function creditGoal(state: PeriodState, credited: Side): PeriodState {
   };
 }
 
-function applyGoal(state: PeriodState, payload: z.infer<typeof PeriodGoal>): PeriodState {
+function applyGoal(
+  state: PeriodState,
+  payload: z.infer<typeof PeriodGoal>,
+  strict: boolean,
+): PeriodState {
   if (!isPlayPhase(state)) {
     wrongPhase(`goal not allowed in phase "${state.phase}"`, { phase: state.phase });
   }
   const by = sideOf(state, payload.by);
   const kind = payload.kind;
-  if (kind !== undefined && kind !== "fg" && kind !== "og" && !state.cfg.goalKinds.includes(kind)) {
+  // STRICT ONLY (§3.3 seam) wherever the condition reads cfg. `goalKinds` and
+  // `assists` are lists an organiser edits, and refusing a recorded goal because
+  // its kind was later removed from the list makes the fixture unreadable with
+  // no event to void. The kind is a recorded fact; the list is a current
+  // preference. `og` carrying assists is NOT gated — that one is a fact about
+  // the payload alone, and no config edit can change its verdict.
+  if (
+    strict &&
+    kind !== undefined &&
+    kind !== "fg" &&
+    kind !== "og" &&
+    !state.cfg.goalKinds.includes(kind)
+  ) {
     invalid(`goal kind "${kind}" is not valid for this sport`, { kind });
   }
   if (payload.assists !== undefined && payload.assists.length > 0) {
-    if (!state.cfg.assists) invalid("this sport does not record assists");
+    if (strict && !state.cfg.assists) invalid("this sport does not record assists");
     if (kind === "og") invalid("an own goal cannot carry assists");
   }
   const credited = kind === "og" ? opponent(by) : by;
@@ -876,12 +892,24 @@ function applyGoal(state: PeriodState, payload: z.infer<typeof PeriodGoal>): Per
   return next;
 }
 
-function applyAdvance(state: PeriodState, payload: z.infer<typeof PeriodAdvance>): PeriodState {
+function applyAdvance(
+  state: PeriodState,
+  payload: z.infer<typeof PeriodAdvance>,
+  strict: boolean,
+): PeriodState {
   const expected = expectedAdvance(state);
   if (expected === null) {
     wrongPhase(`period advance not allowed in phase "${state.phase}"`);
   }
-  if (payload.to !== expected) {
+  // STRICT ONLY (§3.3 seam). `expected` is computed from `periods.count` and
+  // the overtime block, so lowering a four-quarter competition to two halves
+  // renames every marker in every fixture already scored — "expected advance to
+  // H2, got Q2" on every read, with no event to void. IGNORED on replay rather
+  // than honoured: the advance still happens, to the label THIS cfg says comes
+  // next, which keeps the period list internally consistent with the config it
+  // is being read under. Same direction `phaseLengths` takes for a
+  // contradicting `periodSeconds`, and the same reason.
+  if (strict && payload.to !== expected) {
     invalid(`expected advance to "${expected}", got "${payload.to}"`, { expected, to: payload.to });
   }
   // W4a — the whistle closes this phase, so anything whose expiry fell inside
@@ -901,16 +929,27 @@ function suspensionAllowed(state: PeriodState): boolean {
 function applySuspensionStart(
   state: PeriodState,
   payload: z.infer<typeof PeriodSuspensionStart>,
+  strict: boolean,
 ): PeriodState {
-  if (state.cfg.suspensions === null) invalid("this sport does not track suspensions");
+  if (strict && state.cfg.suspensions === null) {
+    invalid("this sport does not track suspensions");
+  }
   if (!suspensionAllowed(state)) {
     wrongPhase(`suspension not allowed in phase "${state.phase}"`);
   }
   const side = sideOf(state, payload.by);
-  const cls = state.cfg.suspensions.classes[payload.class];
-  if (cls === undefined) {
+  const declared = state.cfg.suspensions?.classes[payload.class];
+  if (strict && declared === undefined) {
     invalid(`unknown suspension class "${payload.class}"`, { class: payload.class });
   }
+  // STRICT ONLY (§3.3 seam). `suspensions.classes` is a cfg map an organiser
+  // edits, so on replay the class a card was issued under may simply be gone.
+  // The card is a recorded fact and must still fold; what cannot be recovered
+  // is the class NOMINAL, so the umpire's awarded minutes govern where they
+  // were recorded and there is nothing left to count down where they were not.
+  // Neither team-short nor permanent: both are claims this cfg no longer makes,
+  // and inventing either would put a phantom player in the box.
+  const cls = declared ?? { minutes: payload.minutes ?? 0, teamShort: false, permanent: false };
   // W4 — the scoresheet detail rides along, and only when recorded: an
   // undetailed card must still fold to exactly its pre-W4 shape.
   const detail = {
@@ -1063,16 +1102,20 @@ function applyShootoutAttempt(
 function applySetPiece(
   state: PeriodState,
   payload: z.infer<typeof PeriodSetPiece>,
+  strict: boolean,
 ): PeriodState {
   const allowedKinds = state.cfg.setPieceKinds;
-  if (allowedKinds.length === 0) {
+  // STRICT ONLY (§3.3 seam), both of them: `setPieceKinds` is an editable cfg
+  // list, so emptying it or dropping one entry would otherwise make every
+  // recorded penalty corner in the division unreadable.
+  if (strict && allowedKinds.length === 0) {
     invalid("this sport does not record set pieces");
   }
   if (!isPlayPhase(state)) {
     wrongPhase(`set piece not allowed in phase "${state.phase}"`, { phase: state.phase });
   }
   const side = sideOf(state, payload.by);
-  if (!allowedKinds.includes(payload.kind)) {
+  if (strict && !allowedKinds.includes(payload.kind)) {
     invalid(`set piece kind "${payload.kind}" is not valid for this sport`, { kind: payload.kind });
   }
   const base = state.setPieces ?? { home: {}, away: {} };
@@ -1263,23 +1306,31 @@ export function makePeriodModule(
   // The event dispatch, unchanged since W4. `apply` below wraps it in the
   // game-time frame (validate the stamp, sweep, dispatch, record `asOf`)
   // rather than threading a stamp through every case.
-  const applyEvent = (state: PeriodState, ev: EventEnvelope<PeriodEv | CoreEv>): PeriodState => {
+  const applyEvent = (
+    state: PeriodState,
+    ev: EventEnvelope<PeriodEv | CoreEv>,
+    strict: boolean,
+  ): PeriodState => {
     switch (ev.type) {
       case "core.start":
         if (state.phase !== "pre") wrongPhase("already started");
         return pushPeriod(state, periodLabels(state.cfg)[0] as string);
       case goalType:
-        return applyGoal(state, parsePayload(PeriodGoal, ev.payload, ev.type));
+        return applyGoal(state, parsePayload(PeriodGoal, ev.payload, ev.type), strict);
       case advanceType:
-        return applyAdvance(state, parsePayload(PeriodAdvance, ev.payload, ev.type));
+        return applyAdvance(state, parsePayload(PeriodAdvance, ev.payload, ev.type), strict);
       case suspStartType:
-        return applySuspensionStart(state, parsePayload(PeriodSuspensionStart, ev.payload, ev.type));
+        return applySuspensionStart(
+          state,
+          parsePayload(PeriodSuspensionStart, ev.payload, ev.type),
+          strict,
+        );
       case suspEndType:
         return applySuspensionEnd(state, parsePayload(PeriodSuspensionEnd, ev.payload, ev.type));
       case attemptType:
         return applyShootoutAttempt(state, parsePayload(PeriodShootoutAttempt, ev.payload, ev.type));
       case setPieceType:
-        return applySetPiece(state, parsePayload(PeriodSetPiece, ev.payload, ev.type));
+        return applySetPiece(state, parsePayload(PeriodSetPiece, ev.payload, ev.type), strict);
       case "core.forfeit":
         return applyForfeit(state, (ev.payload as { by: string }).by);
       case "core.abandon":
@@ -1374,7 +1425,7 @@ export function makePeriodModule(
       // the release, so that one applies first and sweeps after.
       const sweepsFirst = at !== null && ev.type !== suspEndType;
       const base = sweepsFirst ? sweepExpired(state, at as GameTime) : state;
-      const applied = applyEvent(base, ev);
+      const applied = applyEvent(base, ev, isStrictFold(ctx));
       if (at === null) return applied;
       const swept = ev.type === suspEndType ? sweepExpired(applied, at) : applied;
       // §6 obligation 3 — as of when everything above is true.

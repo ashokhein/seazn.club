@@ -7,7 +7,7 @@
 // `scoring.strike_by_strike`), see CarromStrike below.
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
-import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
+import { isStrictFold, resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
   EntrantId,
@@ -334,12 +334,23 @@ function applyBoard(state: CarromState, payload: CarromBoardSummary): CarromStat
   return settle(next, index);
 }
 
-function applyAdjust(state: CarromState, payload: CarromGameAdjust): CarromState {
+function applyAdjust(
+  state: CarromState,
+  payload: CarromGameAdjust,
+  strict: boolean,
+): CarromState {
   if (state.phase !== "live") wrongPhase(`adjustment not allowed in phase "${state.phase}"`);
   const side = sideOf(state, payload.entrantId);
   const { game, index } = openGame(state);
-  const score = game.score[side] + payload.delta;
-  if (score < 0) invalid("adjustment would take the game score below zero", { score });
+  const raw = game.score[side] + payload.delta;
+  // STRICT ONLY (§3.3 seam). The running score this delta is applied to is a
+  // PROJECTION of cfg — flipping `queenFollowsBoard` or lowering `queenCapAt`
+  // rescores every board — so a correction that was legal when the umpire keyed
+  // it can go negative on replay under an edited config, with no event to void.
+  // Clamped rather than refused: a carrom score cannot be negative, and a state
+  // that renders is worth more than an error page.
+  if (strict && raw < 0) invalid("adjustment would take the game score below zero", { score: raw });
+  const score = Math.max(0, raw);
   const updated: CarromGameState = { ...game, score: { ...game.score, [side]: score } };
   const penalties =
     payload.person === undefined
@@ -501,7 +512,7 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
     };
   },
 
-  apply(state, ev: EventEnvelope<CarromEv | CoreEv>): CarromState {
+  apply(state, ev: EventEnvelope<CarromEv | CoreEv>, ctx): CarromState {
     switch (ev.type) {
       case "core.start":
         if (state.phase !== "pre") wrongPhase("already started");
@@ -515,7 +526,7 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
       case "carrom.board.summary":
         return applyBoard(state, parsePayload(CarromBoardSummary, ev.payload, ev.type));
       case "carrom.game.adjust":
-        return applyAdjust(state, parsePayload(CarromGameAdjust, ev.payload, ev.type));
+        return applyAdjust(state, parsePayload(CarromGameAdjust, ev.payload, ev.type), isStrictFold(ctx));
       case "carrom.strike":
         // Reserved fine fidelity — carrom.md §6, key `scoring.strike_by_strike`.
         return invalid("carrom.strike is reserved and not yet implemented");

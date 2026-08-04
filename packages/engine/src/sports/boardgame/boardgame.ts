@@ -10,7 +10,7 @@
 // tiebreakers.ts).
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
-import type { CoreEv, EventEnvelope } from "../../core/events.ts";
+import { isStrictFold, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
   EntrantId,
@@ -242,13 +242,22 @@ function decideResult(
 
 // W4 — the arbiter's pairing card. Recordable before or during the game (an
 // arbiter corrects a mis-set board); refused once the game is over.
-function applyPairing(state: BoardgameState, card: BoardgamePairing): BoardgameState {
+function applyPairing(
+  state: BoardgameState,
+  card: BoardgamePairing,
+  strict: boolean,
+): BoardgameState {
   if (state.phase !== "pre" && state.phase !== "live") {
     wrongPhase(`pairing not allowed in phase "${state.phase}"`);
   }
   let colorOfHome = state.colorOfHome;
   if (card.white !== undefined) {
-    if (state.cfg.colors === false) {
+    // STRICT ONLY (§3.3 seam). `colors` is a cfg switch an arbiter turns off
+    // for a casual division, and doing so would otherwise refuse every pairing
+    // card already recorded with a colour — no event to void, and the whole
+    // division's history goes dark. The colour is a recorded fact; the switch
+    // says only whether the pad offers the field today.
+    if (strict && state.cfg.colors === false) {
       invalid("this division plays without colours", { white: card.white });
     }
     colorOfHome = sideOf(state, card.white) === "home" ? "W" : "B";
@@ -352,7 +361,7 @@ export const boardgame: SportModule<BoardgameCfg, BoardgameEv, BoardgameState> =
     };
   },
 
-  apply(state, ev: EventEnvelope<BoardgameEv | CoreEv>): BoardgameState {
+  apply(state, ev: EventEnvelope<BoardgameEv | CoreEv>, ctx): BoardgameState {
     switch (ev.type) {
       case "core.start":
         if (state.phase !== "pre") wrongPhase("already started");
@@ -365,7 +374,7 @@ export const boardgame: SportModule<BoardgameCfg, BoardgameEv, BoardgameState> =
         });
       }
       case "boardgame.pairing":
-        return applyPairing(state, parsePayload(BoardgamePairing, ev.payload, ev.type));
+        return applyPairing(state, parsePayload(BoardgamePairing, ev.payload, ev.type), isStrictFold(ctx));
       case "core.forfeit": {
         if (state.phase !== "live") wrongPhase(`forfeit not allowed in phase "${state.phase}"`);
         const by = (ev.payload as { by: string }).by;

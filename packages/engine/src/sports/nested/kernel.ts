@@ -911,7 +911,20 @@ function setInProgress(state: NestedState): boolean {
   return pts.home > 0 || pts.away > 0;
 }
 
-function applySetSummary(state: NestedState, payload: NestedSetSummary): NestedState {
+// `strict` is the §3.3 seam. EVERY refusal below whose condition reads
+// `rulesFor(state)` or `state.cfg` is gated on it: the set predicate is built
+// from `bestOf`, `set.tiebreakAt`, `set.tiebreakTo`, `finalSet` and
+// `tiebreak.winBy`, all of which an organiser edits, and cfg is read live on
+// every read. A 7–6 set with a 7–5 tie-break was real when it was played; a
+// competition later moving `tiebreakAt` to 3 must not make it unreadable, and
+// there is no event to void. The refusals that read only the PAYLOAD (a tb
+// block whose winner contradicts the set winner) stay unconditional — no config
+// edit can change their verdict.
+function applySetSummary(
+  state: NestedState,
+  payload: NestedSetSummary,
+  strict: boolean,
+): NestedState {
   if (state.phase !== "live") wrongPhase(`set summary not allowed in phase "${state.phase}"`);
   if (setInProgress(state)) {
     invalid("this set is being scored point-by-point — a set summary is not allowed for it");
@@ -924,7 +937,7 @@ function applySetSummary(state: NestedState, payload: NestedSetSummary): NestedS
     if (payload.tb !== undefined) {
       invalid("a match tie-break summary carries its points in home/away, not tb");
     }
-    if (!reachableTbScore(home, away, rules.mtbTo, state.cfg.tiebreak.winBy)) {
+    if (strict && !reachableTbScore(home, away, rules.mtbTo, state.cfg.tiebreak.winBy)) {
       invalid("match tie-break summary is not a reachable final score", {
         home,
         away,
@@ -942,16 +955,23 @@ function applySetSummary(state: NestedState, payload: NestedSetSummary): NestedS
     ((home === rules.tiebreakAt + 1 && away === rules.tiebreakAt) ||
       (away === rules.tiebreakAt + 1 && home === rules.tiebreakAt));
   if (isTbScore) {
-    if (payload.tb === undefined) {
+    if (strict && payload.tb === undefined) {
       invalid(`a ${home}–${away} set ends in a tie-break — include its points as tb`, {
         home,
         away,
       });
     }
+    if (payload.tb === undefined) {
+      // Replay under a `tiebreakAt` this score only became a tie-break score
+      // under. Nothing was recorded for a tie-break that was never played, so
+      // the set banks on its games alone.
+      const side: Side = home > away ? "home" : "away";
+      return bankSet(state, side, { home, away });
+    }
     const winner: Side = home > away ? "home" : "away";
     const tbh = payload.tb.home;
     const tba = payload.tb.away;
-    if (!reachableTbScore(tbh, tba, rules.tiebreakTo, state.cfg.tiebreak.winBy)) {
+    if (strict && !reachableTbScore(tbh, tba, rules.tiebreakTo, state.cfg.tiebreak.winBy)) {
       invalid("tie-break summary is not a reachable final score", {
         tb: payload.tb,
         to: rules.tiebreakTo,
@@ -970,19 +990,22 @@ function applySetSummary(state: NestedState, payload: NestedSetSummary): NestedS
   }
 
   // Plain games score: terminal under the set predicate, one game earlier not.
-  if (payload.tb !== undefined) {
+  if (strict && payload.tb !== undefined) {
     invalid("tb points are only valid on a tie-break set score", { home, away });
   }
-  const winner = setGamesWinner(home, away, rules);
-  if (winner === null) {
+  const gamesWinner = setGamesWinner(home, away, rules);
+  if (strict && gamesWinner === null) {
     invalid("set summary is not a completed set score", { home, away, rules });
   }
+  // Non-null on every strict path; null only on replay, where the higher games
+  // score takes the set.
+  const winner: Side = gamesWinner ?? (home >= away ? "home" : "away");
   const prevH = winner === "home" ? home - 1 : home;
   const prevA = winner === "away" ? away - 1 : away;
   const wasLive =
     setGamesWinner(prevH, prevA, rules) === null &&
     !(rules.tiebreakAt !== null && prevH === rules.tiebreakAt && prevA === rules.tiebreakAt);
-  if (prevH < 0 || prevA < 0 || !wasLive) {
+  if (strict && (prevH < 0 || prevA < 0 || !wasLive)) {
     invalid("set summary is not a reachable final score", { home, away, rules });
   }
   return bankSet(state, winner, { home, away });
@@ -1174,7 +1197,11 @@ export function makeNestedModule(
         case pointType:
           return applyPoint(state, parsePayload(NestedPoint, ev.payload, ev.type));
         case summaryType:
-          return applySetSummary(state, parsePayload(NestedSetSummary, ev.payload, ev.type));
+          return applySetSummary(
+            state,
+            parsePayload(NestedSetSummary, ev.payload, ev.type),
+            isStrictFold(ctx),
+          );
         case sanctionType:
           return applySanction(state, parsePayload(NestedSanction, ev.payload, ev.type));
         case interruptionType:

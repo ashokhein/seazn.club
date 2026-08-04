@@ -17,6 +17,12 @@ import { hockey } from "../hockey/hockey.ts";
 import { expectedAdvance, type PeriodState } from "./kernel.ts";
 import { shootoutDecision } from "./shootout.ts";
 
+// W4a (#425) §3.3 — every fold below is PAD-SHAPED: it is building a stream
+// event by event, which is the write path. `strictFromSeq: 0` marks the whole
+// stream new and is therefore exactly the pre-seam behaviour. Only a real READ
+// path (apps/web fold.ts) and the cfg-replay property pass no options.
+const STRICT_ALL = { strictFromSeq: 0 } as const;
+
 const iceLineups = defaultLineupPair(icehockey.positions);
 const fihLineups = defaultLineupPair(hockey.positions);
 const IH = iceLineups.home.entrantId;
@@ -34,12 +40,12 @@ function foldIce(events: ModuleEvent[], variant?: string): PeriodState {
   const cfg = icehockey.configSchema.parse(
     variant === undefined ? {} : icehockey.variants[variant],
   );
-  return foldMatch(icehockey, cfg, iceLineups, envelopes(events)) as PeriodState;
+  return foldMatch(icehockey, cfg, iceLineups, envelopes(events), STRICT_ALL) as PeriodState;
 }
 
 function foldFih(events: ModuleEvent[], variant?: string): PeriodState {
   const cfg = hockey.configSchema.parse(variant === undefined ? {} : hockey.variants[variant]);
-  return foldMatch(hockey, cfg, fihLineups, envelopes(events)) as PeriodState;
+  return foldMatch(hockey, cfg, fihLineups, envelopes(events), STRICT_ALL) as PeriodState;
 }
 
 const iceGoal = (by: string, extra?: Record<string, unknown>): ModuleEvent => ({
