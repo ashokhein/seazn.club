@@ -3100,5 +3100,22 @@
   "stat.hockey.so_attempts": "Tentatives de shoot-out",
   "stat.hockey.so_goals": "Buts en shoot-out",
   "stat.hockey.so_saves": "Arrêts en shoot-out",
-  "stat.hockey.cards_served": "Suspensions purgées"
+  "stat.hockey.cards_served": "Suspensions purgées",
+  "matchPhase.ET_H1": "Prolongation — première période",
+  "matchPhase.ET_H2": "Prolongation — deuxième période",
+  "eventCopy.ownGoal": "But contre son camp",
+  "eventCopy.unknownPerson": "Inconnu",
+  "eventCopy.voided": "Saisie précédente annulée",
+  "eventCopy.forfeited": "{name} a déclaré forfait",
+  "eventCopy.abandoned": "Match abandonné",
+  "eventCopy.awarded": "Récompense attribuée",
+  "eventCopy.fromPenalty": "sur penalty",
+  "eventCopy.shootoutScored": "{name} a marqué",
+  "eventCopy.shootoutMissed": "{name} a manqué",
+  "eventCopy.wins": "{name} l'emporte",
+  "eventCopy.winsBy": "{name} l'emporte par {method}",
+  "eventCopy.draw": "Match nul",
+  "eventCopy.recorded": "Enregistré",
+  "eventCopy.inProgress": "en cours",
+  "eventCopy.pointTo": "Point pour {name}"
 }

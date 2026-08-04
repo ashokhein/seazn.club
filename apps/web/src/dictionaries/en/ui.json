@@ -3100,5 +3100,22 @@
   "stat.hockey.so_attempts": "SO attempts",
   "stat.hockey.so_goals": "SO goals",
   "stat.hockey.so_saves": "SO saves",
-  "stat.hockey.cards_served": "Suspensions served"
+  "stat.hockey.cards_served": "Suspensions served",
+  "matchPhase.ET_H1": "Extra time — first half",
+  "matchPhase.ET_H2": "Extra time — second half",
+  "eventCopy.ownGoal": "Own goal",
+  "eventCopy.unknownPerson": "Unknown",
+  "eventCopy.voided": "Previous entry voided",
+  "eventCopy.forfeited": "{name} forfeited",
+  "eventCopy.abandoned": "Match abandoned",
+  "eventCopy.awarded": "Awarded",
+  "eventCopy.fromPenalty": "penalty",
+  "eventCopy.shootoutScored": "{name} scored",
+  "eventCopy.shootoutMissed": "{name} missed",
+  "eventCopy.wins": "{name} wins",
+  "eventCopy.winsBy": "{name} wins by {method}",
+  "eventCopy.draw": "Draw",
+  "eventCopy.recorded": "Recorded",
+  "eventCopy.inProgress": "in progress",
+  "eventCopy.pointTo": "Point {name}"
 }

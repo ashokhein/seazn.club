@@ -517,7 +517,7 @@ export function FixtureConsole({
           <ul className="max-h-96 divide-y divide-slate-50 overflow-y-auto">
             {[...events].reverse().map((e) => {
               const voided = events.some((v) => v.voids_event_id === e.id);
-              const desc = describeEvent(e.type, e.payload, entrantNames);
+              const desc = describeEvent(e.type, e.payload, entrantNames, msg);
               // Attribution: device-link events come from the handed device;
               // signed-in recorders show by name.
               const recorder = e.device_link_id
@@ -532,8 +532,14 @@ export function FixtureConsole({
                   className={`flex items-center gap-3 px-4 py-2 text-xs ${voided ? "line-through opacity-40" : ""}`}
                 >
                   <span className="w-8 shrink-0 font-mono text-slate-300">#{e.seq}</span>
+                  {/* `normal-case` overrides .badge's `capitalize`: badges are
+                      dictionary copy now, and capitalize would rewrite
+                      "Fin de la prolongation" as "Fin De La Prolongation".
+                      Localized event names are also longer than the English
+                      literals this used to hold, so let them wrap inside the
+                      column instead of overflowing it. */}
                   <span
-                    className={`badge w-24 shrink-0 justify-center capitalize ${EVENT_TONE_STYLE[desc.tone]}`}
+                    className={`badge w-24 shrink-0 break-words text-center leading-tight normal-case sm:w-32 ${EVENT_TONE_STYLE[desc.tone]}`}
                   >
                     {desc.label}
                   </span>

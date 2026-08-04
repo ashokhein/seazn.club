@@ -3100,5 +3100,22 @@
   "stat.hockey.so_attempts": "Shoot-outpogingen",
   "stat.hockey.so_goals": "Shoot-outdoelpunten",
   "stat.hockey.so_saves": "Shoot-outreddingen",
-  "stat.hockey.cards_served": "Uitgezeten schorsingen"
+  "stat.hockey.cards_served": "Uitgezeten schorsingen",
+  "matchPhase.ET_H1": "Verlenging — eerste helft",
+  "matchPhase.ET_H2": "Verlenging — tweede helft",
+  "eventCopy.ownGoal": "Eigen doelpunt",
+  "eventCopy.unknownPerson": "Onbekend",
+  "eventCopy.voided": "Vorige invoer geannuleerd",
+  "eventCopy.forfeited": "{name} heeft verstek laten gaan",
+  "eventCopy.abandoned": "Wedstrijd gestaakt",
+  "eventCopy.awarded": "Prijs toegekend",
+  "eventCopy.fromPenalty": "uit strafschop",
+  "eventCopy.shootoutScored": "{name} scoorde",
+  "eventCopy.shootoutMissed": "{name} miste",
+  "eventCopy.wins": "{name} wint",
+  "eventCopy.winsBy": "{name} wint door {method}",
+  "eventCopy.draw": "Gelijkspel",
+  "eventCopy.recorded": "Vastgelegd",
+  "eventCopy.inProgress": "bezig",
+  "eventCopy.pointTo": "Punt voor {name}"
 }

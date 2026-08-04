@@ -290,10 +290,15 @@ const REASON_KEY: Record<string, MessageKey> = {
   hurt: "reason.hurt", out: "reason.out", time: "reason.time",
   weather: "reason.weather", other: "reason.other",
 };
+// ET_H1/ET_H2 arrive from `football.period` payloads. They were absent here
+// until #427's second pass, because `event-copy.ts` carried its own PERIOD_LABEL
+// table and nothing forced the two to agree — the exact drift a single
+// vocabulary exists to prevent.
 const PHASE_KEY: Record<string, MessageKey> = {
   start: "matchPhase.start", end: "matchPhase.end",
   HT: "matchPhase.HT", FT: "matchPhase.FT",
-  ET_HT: "matchPhase.ET_HT", ET_FT: "matchPhase.ET_FT",
+  ET_H1: "matchPhase.ET_H1", ET_HT: "matchPhase.ET_HT",
+  ET_H2: "matchPhase.ET_H2", ET_FT: "matchPhase.ET_FT",
 };
 // Penalty / shoot-out outcomes and cricket's review outcomes share the field.
 const OUTCOME_KEY: Record<string, MessageKey> = {
