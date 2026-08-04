@@ -638,9 +638,30 @@ function lineupsFor(module: AnySportModule, cfg: unknown, recorded?: LineupPair)
   return recorded ?? defaultLineupPair(resolvePositions(module, cfg));
 }
 
+/** Both state-path sets are walked repeatedly by the gate — the assertion, its
+ *  failure message and the staleness checks all ask for them — and both are
+ *  expensive: `recordedStatePaths` re-parses every state string of a corpus
+ *  that runs to 1.6 MB for cricket, and `reachableStatePaths` folds thousands
+ *  of generated events. Recomputing was not merely slow, it was WRONG in
+ *  effect: the tennis and cricket cases crossed vitest's 5 s default and failed
+ *  as an opaque `STACK_TRACE_ERROR`, which reads as a coverage failure and is
+ *  not one. Keyed by corpus identity — `readCorpus` returns a fresh object per
+ *  describe block, and a mutated corpus is a different object. */
+const STATE_PATH_CACHE = new WeakMap<GoldenCorpus, { recorded?: string[]; reachable?: string[] }>();
+
+function cacheFor(corpus: GoldenCorpus): { recorded?: string[]; reachable?: string[] } {
+  const hit = STATE_PATH_CACHE.get(corpus);
+  if (hit !== undefined) return hit;
+  const fresh: { recorded?: string[]; reachable?: string[] } = {};
+  STATE_PATH_CACHE.set(corpus, fresh);
+  return fresh;
+}
+
 /** Every state path the FROZEN corpus writes, across every stream and every
  *  per-event state in it. */
 export function recordedStatePaths(module: AnySportModule, corpus: GoldenCorpus): string[] {
+  const cache = cacheFor(corpus);
+  if (cache.recorded !== undefined) return cache.recorded;
   const out = new Set<string>();
   for (const stream of corpus.streams) {
     const cfg = module.configSchema.parse(corpus.configs[stream.config]);
@@ -655,7 +676,8 @@ export function recordedStatePaths(module: AnySportModule, corpus: GoldenCorpus)
       for (const path of statePathsOf(parsed, collapse)) out.add(path);
     }
   }
-  return [...out].sort();
+  cache.recorded = [...out].sort();
+  return cache.recorded;
 }
 
 /** How far the reachability sweep walks. Deliberately generous relative to the
@@ -670,6 +692,8 @@ const STATE_SWEEP_EVENTS = 80;
  *  the state tripwire — see the section note for why a sweep stands in for the
  *  `stateSchema` the module does not have. */
 export function reachableStatePaths(module: AnySportModule, corpus: GoldenCorpus): string[] {
+  const cache = cacheFor(corpus);
+  if (cache.reachable !== undefined) return cache.reachable;
   const out = new Set<string>();
   for (const [, raw] of coverageCandidates(module, corpus)) {
     let cfg: unknown;
@@ -690,7 +714,8 @@ export function reachableStatePaths(module: AnySportModule, corpus: GoldenCorpus
       for (const state of states) for (const path of statePathsOf(state, collapse)) out.add(path);
     }
   }
-  return [...out].sort();
+  cache.reachable = [...out].sort();
+  return cache.reachable;
 }
 
 /** State paths the live modules can reach that no corpus can record, each
