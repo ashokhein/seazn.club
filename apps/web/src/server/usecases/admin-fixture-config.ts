@@ -2,6 +2,7 @@ import "server-only";
 import type postgres from "postgres";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/http";
+import { EngineError } from "@seazn/engine/core";
 import {
   LOCKED_FIXTURE_STATUSES,
   fixtureStatusFromFold,
@@ -184,10 +185,25 @@ export async function resnapshotFixtureConfig(
     try {
       folded = await foldFixture(tx, fixtureId);
     } catch (err) {
+      // Only a refusal FROM THE FOLD is evidence about the config. A dropped
+      // connection, a data defect (a fixture whose entrant went missing) or a
+      // module version the registry does not have are all failures the
+      // catch-all used to relabel "the live config cannot read this fixture",
+      // sending staff to fix a division config that is working fine. Those
+      // rethrow as themselves and surface as a 500, which is what they are.
+      //
+      // A DENYLIST, not an allowlist of fold codes: the two registry codes are
+      // the only EngineErrors that reach here without the fold having judged
+      // anything, and a code added to the taxonomy later is far more likely to
+      // be a new fold refusal than a new registry failure — so the default has
+      // to be "the config could not read it".
+      if (!EngineError.is(err) || err.code === "MODULE_NOT_FOUND" || err.code === "MODULE_DUPLICATE") {
+        throw err;
+      }
       throw new HttpError(
         409,
         "The live config cannot read this fixture's recorded events " +
-          `(${err instanceof Error ? err.message : "fold failed"}). ` +
+          `(${err.message}). ` +
           "Fix the division config first, then re-snapshot.",
       );
     }

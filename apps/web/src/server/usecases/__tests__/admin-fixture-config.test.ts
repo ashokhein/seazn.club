@@ -245,6 +245,44 @@ describe.skipIf(!HAS_DB)("admin fixture config snapshot", () => {
     expect((await rebuildState(s.orgId, s.fixtureId))?.outcome).toEqual({ kind: "draw" });
   });
 
+  it("does not blame the config for a failure that is not the config", async () => {
+    // The preflight's catch-all turned EVERY throw into "the live config cannot
+    // read this fixture's recorded events", which sends staff to fix a division
+    // config that is working fine — and, on a dropped connection, to fix nothing
+    // at all. Only a refusal from the FOLD is evidence about the config.
+    const s = await seed();
+    await appendEvent(s.orgId, s.fixtureId, 0, { type: "core.start", payload: {} });
+    await appendEvent(s.orgId, s.fixtureId, 1, {
+      type: "generic.result",
+      payload: { p1Score: 2, p2Score: 1 },
+    });
+    await setDivisionConfig(s.divisionId, { ...CFG, points: { w: 2, d: 1, l: 0 } });
+
+    // (1) A plain Error from the loader, nothing to do with cfg.
+    await sql`update fixtures set away_entrant_id = null where id = ${s.fixtureId}`;
+    const dataError = await resnapshotFixtureConfig(s.actorId, s.fixtureId, "x").catch(
+      (e: unknown) => e,
+    );
+    expect(String((dataError as Error).message)).toMatch(/unassigned entrant/i);
+    expect(String((dataError as Error).message)).not.toMatch(/live config cannot read/i);
+    await sql`update fixtures set away_entrant_id = ${s.away} where id = ${s.fixtureId}`;
+
+    // (2) An EngineError, but from the REGISTRY — the division pins a module
+    //     version that is not installed. Also not a config problem.
+    await sql`update divisions set module_version = '9.9.9' where id = ${s.divisionId}`;
+    const moduleError = await resnapshotFixtureConfig(s.actorId, s.fixtureId, "x").catch(
+      (e: unknown) => e,
+    );
+    expect(String((moduleError as Error).message)).toMatch(/no sport module/i);
+    expect(String((moduleError as Error).message)).not.toMatch(/live config cannot read/i);
+
+    // Both still roll the whole transaction back.
+    await sql`update divisions set module_version = '1.0.0' where id = ${s.divisionId}`;
+    const panel = await fixtureConfigPanel(s.fixtureId);
+    expect(panel!.snapshot).toEqual(CFG);
+    expect(await auditRows(s.fixtureId)).toHaveLength(0);
+  });
+
   it("writes one audit row carrying the reason and both configs", async () => {
     const s = await seed();
     await appendEvent(s.orgId, s.fixtureId, 0, { type: "core.start", payload: {} });
