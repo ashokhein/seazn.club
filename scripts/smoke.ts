@@ -10136,6 +10136,115 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
     ),
   );
 
+  // --- #402: a SIGNED-IN registrant who affirms "I'm registering myself" is
+  // ONE person across every division they enter; the same account registering
+  // a child under guardian consent stays a SEPARATE person (the server-side
+  // veto — a signed-in guardian entering two children shares one user_id, so
+  // an inferred link would fuse the siblings exactly as contact_email would).
+  //
+  // Person identity is observed through GET /api/v1/entrants/{id}, whose
+  // `members[]` carry `person_id`; the division entrants LIST does not (it
+  // returns entrant columns only). /api/v1/me/persons is the second, distinct
+  // vantage point: it selects on persons.user_id, so it proves the link was
+  // actually written rather than that two entrants merely share a row.
+  const selfDivIds: string[] = [];
+  for (const lane of ["Self A", "Self B", "Self Guardian"]) {
+    const selfDiv = await v1(admin, `/api/v1/competitions/${compId}/divisions`, "POST", {
+      name: `${lane} ${tag}`,
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    });
+    const selfDivId = v1data<{ id: string }>(selfDiv).id;
+    const selfSettings = await v1(
+      admin,
+      `/api/v1/divisions/${selfDivId}/registration-settings`,
+      "PUT",
+      {
+        enabled: true,
+        entrant_kind: "individual",
+        capacity: 10,
+        fee_cents: 0,
+        currency: "gbp",
+        form_fields: [],
+      },
+    );
+    check(`gap self-link division "${lane}" open for registration`, selfSettings.status === 200);
+    selfDivIds.push(selfDivId);
+  }
+  const selfEmail = `selflink_${tag}@example.com`;
+  const selfSession = newSession();
+  await signIn(selfSession, selfEmail);
+  // #402 — an affirmation without a date of birth is refused (400) and never
+  // links: an undated registrant may be a child, and a parent entering two of
+  // them would otherwise fuse both siblings into one persons row.
+  const adultDob = "1990-05-05";
+  const registerAsSelf = (divisionId: string, extra: Record<string, unknown>) =>
+    v1(selfSession, `/api/v1/public/orgs/${proSlug}/competitions/${compSlug}/register`, "POST", {
+      division_id: divisionId,
+      display_name: `Self Link ${tag}`,
+      contact_email: selfEmail,
+      privacy_consent: true,
+      registering_self: true,
+      dob: adultDob,
+      ...extra,
+    });
+  /** Confirm a submitted registration and return the person the entrant carries. */
+  const confirmToPerson = async (submitted: V1Res): Promise<string | null> => {
+    const regId = v1data<{ registration_id: string }>(submitted).registration_id;
+    const done = await v1(admin, `/api/v1/registrations/${regId}/confirm`, "POST", {});
+    const entrantId = v1data<{ entrant_id: string | null }>(done).entrant_id;
+    if (!entrantId) return null;
+    const entrant = await v1(admin, `/api/v1/entrants/${entrantId}`);
+    return v1data<{ members: { person_id: string }[] }>(entrant).members[0]?.person_id ?? null;
+  };
+
+  const selfA = await registerAsSelf(selfDivIds[0]!, {});
+  const selfB = await registerAsSelf(selfDivIds[1]!, {});
+  check(
+    "gap self-link registrations accepted in two divisions",
+    selfA.status === 201 && selfB.status === 201,
+  );
+  // The affirmation carries no weight without an age: refused at the schema so
+  // the registrant is told why, and unlinkable at the server either way.
+  const undatedSelf = await registerAsSelf(selfDivIds[2]!, { dob: null });
+  check("gap an affirmed registration with NO date of birth is refused", undatedSelf.status === 400);
+  const selfPersonA = await confirmToPerson(selfA);
+  const selfPersonB = await confirmToPerson(selfB);
+  check(
+    "gap signed-in self-registration resolves ONE person across two divisions",
+    selfPersonA !== null && selfPersonA === selfPersonB,
+  );
+
+  // Always ~10 years old, so the guardian branch is genuinely required rather
+  // than decorative (a bare dob-less pair would be accepted either way).
+  const kidDob = new Date(Date.now() - 10 * 365.25 * 864e5).toISOString().slice(0, 10);
+  const kid = await registerAsSelf(selfDivIds[2]!, {
+    display_name: `Self Kid ${tag}`,
+    dob: kidDob,
+    guardian_name: `Self Link ${tag}`,
+    guardian_consent: true,
+  });
+  check("gap guardian registration accepted from the same account", kid.status === 201);
+  const kidPerson = await confirmToPerson(kid);
+  check(
+    "gap guardian entry from the same account is a SEPARATE person",
+    kidPerson !== null && kidPerson !== selfPersonA,
+  );
+
+  const myPersons = await v1(selfSession, "/api/v1/me/persons");
+  const myPersonIds = v1data<{ id: string }[]>(myPersons) ?? [];
+  check(
+    "gap the registrant's account claims the linked person exactly once",
+    myPersons.status === 200 &&
+      selfPersonA !== null &&
+      myPersonIds.filter((p) => p.id === selfPersonA).length === 1,
+  );
+  check(
+    "gap the guardian's child never joins the registrant's account",
+    kidPerson !== null && !myPersonIds.some((p) => p.id === kidPerson),
+  );
+
   // --- Free paths on a fresh community owner: device links 402, offline
   // entry fees allowed without Stripe ---
   const free = newSession();
@@ -10807,6 +10916,10 @@ async function cleanup(tag: string): Promise<void> {
     `scorer2_${tag}@example.com`,
     `free_${tag}@example.com`,
     `walkin_${tag}@example.com`,
+    // #402 — gapSuite's signed-in self-registrant. Its persons rows live in the
+    // admin's Pro org and go with that org in the same delete statement above,
+    // so nothing still references this user by the time the users delete runs.
+    `selflink_${tag}@example.com`,
     `ui_free_${tag}@example.com`,
     `disc_free_${tag}@example.com`,
     `pass_${tag}@example.com`,

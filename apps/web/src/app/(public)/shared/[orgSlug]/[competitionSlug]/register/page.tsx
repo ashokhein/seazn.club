@@ -7,6 +7,7 @@ import { notFound } from "next/navigation";
 import Image from "next/image";
 import type { Metadata } from "next";
 import { publicRegistrationInfo } from "@/server/usecases/registrations";
+import { getCurrentUser } from "@/lib/auth";
 import { getPublicOrg } from "@/server/public-site/data";
 import { resolveSponsors } from "@/server/usecases/sponsors";
 import { HttpError } from "@/lib/errors";
@@ -33,6 +34,12 @@ export default async function RegisterPage({ params }: Props) {
   // orders it, so the title sponsor leads.
   const pub = await getPublicOrg(orgSlug);
   const sponsors = pub ? await resolveSponsors(pub.org.id) : [];
+
+  // #402 — the affirmation control only exists for a signed-in visitor, and it
+  // names the account so nobody links an entry to whoever last used the device.
+  // Resolved here (server) rather than fetched client-side: registration stays
+  // anonymous by default and must not gain a client auth round-trip.
+  const account = await getCurrentUser();
 
   const locale = await resolveLocale({ orgDefault: toLocale(pub?.org.default_locale ?? null) });
   const ui = await getDictionary(locale, "ui");
@@ -75,7 +82,12 @@ export default async function RegisterPage({ params }: Props) {
           {t(ui, "register.notOpen")}
         </p>
       ) : (
-        <RegisterForm org={info.org} competition={info.competition} divisions={info.divisions} />
+        <RegisterForm
+          org={info.org}
+          competition={info.competition}
+          divisions={info.divisions}
+          account={account ? { email: account.email } : null}
+        />
       )}
     </div>
     </DictProvider>

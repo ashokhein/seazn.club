@@ -121,6 +121,42 @@ export function isMinor(dobIso: string, now: Date): boolean {
   return ageAt(dobIso, now) < 18;
 }
 
+/**
+ * #402 — the session captured onto `registrations.user_id`, or null.
+ *
+ * The session is captured ONLY under an explicit affirmation, from a registrant
+ * whose own dob proves them an ADULT, with no guardian field filled in. Each
+ * clause is load-bearing:
+ *
+ *  - Affirmation, because a guardian, a spouse and a team captain are all
+ *    signed in too; being signed in is never enough on its own.
+ *  - A PRESENT dob, because `dob` is nullish: a parent entering two children
+ *    with no dob triggers no guardian requirement anywhere, so an affirmation
+ *    alone would link both siblings to one account and fuse them into one
+ *    persons row — the exact harm `contact_email` was rejected for.
+ *  - ADULT, because a minor's date of birth is guardian territory whether or
+ *    not the guardian fields were filled in. `submitRegistration` also refuses
+ *    that submission with a 422, but the invariant must not depend on that
+ *    refusal staying where it is.
+ *
+ * The veto lives server-side so a forged request cannot reach the person
+ * resolver; the schema's matching rule is only the useful error message.
+ */
+export function deriveLinkUserId(
+  sessionUserId: string | null,
+  input: Pick<
+    PublicRegisterRequest,
+    "registering_self" | "guardian_name" | "guardian_consent" | "dob"
+  >,
+  now: Date,
+): string | null {
+  if (!sessionUserId) return null;
+  if (!input.registering_self) return null;
+  if (!input.dob || isMinor(input.dob, now)) return null;
+  if (input.guardian_name || input.guardian_consent) return null;
+  return sessionUserId;
+}
+
 interface AgeRule {
   kind: "age";
   maxAgeAt?: number;
@@ -247,7 +283,13 @@ export interface RegistrationRow {
   guardian_name: string | null;
   guardian_consent: boolean;
   answers: Record<string, unknown>;
-  roster: { name: string; dob?: string | null; squad_number?: number | null }[];
+  roster: { name: string; dob?: string | null; squad_number?: number | null; self?: boolean }[];
+  /** #402 — the registrant's account, captured only under an explicit
+   *  "I'm registering myself" with no guardian involvement. Null for every
+   *  anonymous, guardian and organiser-side entry. Its presence IS the record
+   *  that the affirmation was given, and it is what `materialise` resolves the
+   *  player-lane person on. */
+  user_id: string | null;
   amount_cents: number;
   currency: string | null;
   /** The platform-fee rate this card charge used, frozen at checkout creation
@@ -279,7 +321,8 @@ const REG_COLS = [
   "answers", "roster", "amount_cents", "currency", "fee_percent", "payment_method",
   "checkout_session_id", "payment_intent_id", "refunded_cents", "refunded_at",
   "expires_at", "reminded_at", "offline_marked_paid_at", "disputed_at",
-  "dispute_id", "entrant_id", "promoted_at", "withdrawn_at", "locale", "created_at",
+  "dispute_id", "entrant_id", "promoted_at", "withdrawn_at", "locale", "user_id",
+  "created_at",
 ] as const;
 
 const SETTINGS_COLS = [
@@ -388,6 +431,34 @@ function windowOpen(s: RegistrationSettingsRow, now: Date): boolean {
  * person (dob/gender feed eligibility; consent defaults empty = initials on
  * public surfaces, doc 06 §4.7).
  */
+/**
+ * #402 — resolve the registrant's player-lane person, or create it.
+ *
+ * The upsert (not select-then-insert) is what closes the race: two divisions
+ * confirmed concurrently by one signed-in registrant both miss a select, and
+ * both insert. Here `persons_org_user_lane_uq` arbitrates and the loser is
+ * handed the winner's id. `do update set full_name = persons.full_name` is a
+ * deliberate no-op — `do nothing` returns no row, and the existing person's own
+ * data must win, so a later entry never overwrites full_name/dob/gender. A
+ * divergence is a signal for #404's review queue, never an in-place edit.
+ */
+async function resolvePlayerPerson(
+  tx: Tx,
+  orgId: string,
+  userId: string,
+  fullName: string,
+  dob: string | null,
+  gender: string | null,
+): Promise<string> {
+  const [person] = await tx<{ id: string }[]>`
+    insert into persons (org_id, full_name, dob, gender, user_id, lane)
+    values (${orgId}, ${fullName}, ${dob}, ${gender}, ${userId}, 'player')
+    on conflict (org_id, user_id, lane) where user_id is not null and lane = 'player'
+    do update set full_name = persons.full_name
+    returning id`;
+  return person.id;
+}
+
 async function materialise(tx: Tx, reg: RegistrationRow, entrantKind: string): Promise<string> {
   if (reg.entrant_id) return reg.entrant_id;
   const [entrant] = await tx<{ id: string }[]>`
@@ -395,25 +466,53 @@ async function materialise(tx: Tx, reg: RegistrationRow, entrantKind: string): P
     values (${reg.division_id}, ${entrantKind}, ${reg.display_name}, 'confirmed')
     returning id`;
   if (entrantKind === "individual") {
-    const [person] = await tx<{ id: string }[]>`
-      insert into persons (org_id, full_name, dob, gender)
-      values (${reg.org_id}, ${reg.display_name}, ${reg.dob}, ${reg.gender})
-      returning id`;
+    // With no captured session this is byte-for-byte the pre-#402 insert: the
+    // anonymous and guardian flows cannot regress.
+    const personId = reg.user_id
+      ? await resolvePlayerPerson(
+          tx, reg.org_id, reg.user_id, reg.display_name, reg.dob, reg.gender,
+        )
+      : (
+          await tx<{ id: string }[]>`
+            insert into persons (org_id, full_name, dob, gender)
+            values (${reg.org_id}, ${reg.display_name}, ${reg.dob}, ${reg.gender})
+            returning id`
+        )[0].id;
+    // A RESOLVED person can already sit on this entrant (re-confirm), which the
+    // fresh-insert path could never hit — so the membership write is idempotent.
     await tx`
       insert into entrant_members (entrant_id, person_id)
-      values (${entrant.id}, ${person.id})`;
+      values (${entrant.id}, ${personId})
+      on conflict (entrant_id, person_id) do nothing`;
   } else if (entrantKind === "team" && reg.roster.length > 0) {
     // Team roster supplied at registration → a person + squad member per player.
+    //
+    // ONE registrant, so at most one roster entry may resolve. The schema
+    // rejects a second `self`, but `roster` is jsonb read back off a stored row
+    // and a second resolving entry would hand two different humans the same
+    // person id — the second membership then vanishing into `do nothing`. The
+    // guarantee has to live here, where the person is minted.
+    let selfResolved = false;
     for (const p of reg.roster) {
       const name = p.name.trim();
       if (!name) continue;
-      const [person] = await tx<{ id: string }[]>`
-        insert into persons (org_id, full_name, dob)
-        values (${reg.org_id}, ${name}, ${p.dob ?? null})
-        returning id`;
+      // Only the row the submitter DECLARED as themselves resolves. Every other
+      // roster name is a typed string with no identity of its own — name
+      // matching may suggest (#404), never link.
+      const selfUserId = reg.user_id && p.self && !selfResolved ? reg.user_id : null;
+      if (selfUserId) selfResolved = true;
+      const personId =
+        selfUserId
+          ? await resolvePlayerPerson(tx, reg.org_id, selfUserId, name, p.dob ?? null, null)
+          : (
+              await tx<{ id: string }[]>`
+                insert into persons (org_id, full_name, dob)
+                values (${reg.org_id}, ${name}, ${p.dob ?? null})
+                returning id`
+            )[0].id;
       await tx`
         insert into entrant_members (entrant_id, person_id, squad_number)
-        values (${entrant.id}, ${person.id}, ${p.squad_number ?? null})
+        values (${entrant.id}, ${personId}, ${p.squad_number ?? null})
         on conflict (entrant_id, person_id) do nothing`;
     }
   }
@@ -786,7 +885,7 @@ export async function submitRegistration(
   compSlug: string,
   input: PublicRegisterRequest,
   origin: string,
-  opts?: { locale?: Locale | null },
+  opts?: { locale?: Locale | null; sessionUserId?: string | null },
 ): Promise<SubmitResult> {
   const ctx = await divisionCtx(sql, input.division_id);
   if (
@@ -827,6 +926,8 @@ export async function submitRegistration(
 
   const answers = validateAnswers(settings.form_fields ?? [], input.answers);
   const secret = mintRegistrationToken();
+
+  const linkUserId = deriveLinkUserId(opts?.sessionUserId ?? null, input, new Date());
 
   // Payment path is the division's choice (spec §3): offline entries are
   // accepted immediately with the organiser's instructions; card entries mint
@@ -885,7 +986,7 @@ export async function submitRegistration(
                 (division_id, status, ref_code, display_name, contact_email, dob, gender,
                  guardian_name, guardian_consent, privacy_consent_at, privacy_consent_version,
                  answers, roster, amount_cents, currency,
-                 payment_method, expires_at, access_token_hash, locale)
+                 payment_method, expires_at, access_token_hash, locale, user_id)
               values
                 (${input.division_id}, ${waitlisted ? "waitlisted" : "pending"}, ${ref},
                  ${input.display_name}, ${input.contact_email}, ${input.dob ?? null},
@@ -897,7 +998,8 @@ export async function submitRegistration(
                  ${settings.payment_method},
                  ${useStripe && !waitlisted ? sp`now() + interval '48 hours'` : null},
                  ${hashRegistrationToken(secret)},
-                 ${captureRegistrantLocale(opts?.locale ?? null, ctx.default_locale)})
+                 ${captureRegistrantLocale(opts?.locale ?? null, ctx.default_locale)},
+                 ${linkUserId})
               returning ${sql(REG_COLS as unknown as string[])}`;
             return r;
           })) as unknown as RegistrationRow;

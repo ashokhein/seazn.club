@@ -209,19 +209,55 @@ export function assertClaimEmail(claim: ResolvedClaim, userEmail: string): void 
  * me-officiating.ts) call this — one acceptance mechanism, two ways in.
  */
 export async function acceptResolvedClaim(claim: ResolvedClaim, userId: string): Promise<ResolvedClaim> {
-  await sql.begin(async (tx) => {
-    const [updated] = await tx<{ id: string }[]>`
-      update persons set user_id = ${userId}
-      where id = ${claim.person_id} and user_id is null
-      returning id`;
-    if (!updated) {
-      throw new HttpError(409, "This profile has already been claimed", "CLAIM_CLAIMED");
+  try {
+    await sql.begin(async (tx) => {
+      const [updated] = await tx<{ id: string }[]>`
+        update persons set user_id = ${userId}
+        where id = ${claim.person_id} and user_id is null
+        returning id`;
+      if (!updated) {
+        throw new HttpError(409, "This profile has already been claimed", "CLAIM_CLAIMED");
+      }
+      await tx`
+        update person_claims set claimed_at = now()
+        where id = ${claim.id} and claimed_at is null`;
+    });
+  } catch (e) {
+    // #402 — persons_org_user_lane_uq, which is scoped to `lane = 'player'`.
+    // So the only collision reachable here is two PLAYER persons for one human
+    // in one org: exactly the duplicate #402 exists to eliminate, and exactly
+    // what the message says. Route it to the merge tool (#404), never a 500.
+    //
+    // Do NOT widen that index to cover every lane. `inviteOfficial` mints a
+    // fresh official-lane person per officials row and cannot dedupe (the
+    // person is unclaimed at invite time), so a human on one org's officials
+    // roster twice holds two official-lane persons by design — widening it
+    // makes their second officiating claim fail with this 409 and the wrong
+    // message. Covered by the second-officiating-claim test in
+    // __tests__/person-claims.test.ts.
+    if (isUniqueViolation(e, "persons_org_user_lane_uq")) {
+      throw new HttpError(
+        409,
+        "You already have a player profile in this organisation",
+        "PERSON_ALREADY_LINKED",
+      );
     }
-    await tx`
-      update person_claims set claimed_at = now()
-      where id = ${claim.id} and claimed_at is null`;
-  });
+    throw e;
+  }
   return claim;
+}
+
+/** postgres.js names the tripped index on `constraint_name`; other drivers use
+ *  `constraint`. Match on the NAME, never on the bare 23505 — this transaction
+ *  can also trip the one-open-claim index, which is a different failure. */
+function isUniqueViolation(e: unknown, constraint: string): boolean {
+  if (typeof e !== "object" || e === null) return false;
+  if ((e as { code?: string }).code !== "23505") return false;
+  const named =
+    (e as { constraint_name?: string }).constraint_name ??
+    (e as { constraint?: string }).constraint ??
+    "";
+  return String(named) === constraint;
 }
 
 /**

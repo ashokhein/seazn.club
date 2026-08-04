@@ -151,9 +151,19 @@ export async function inviteOfficial(
       select ${tx(COLS)} from officials where id = ${officialId}`;
     if (!row) throw new HttpError(404, "official not found");
     if (!row.person_id) {
+      // #402 — the OFFICIAL lane, so registration's player-lane resolve can
+      // never pick this row up, and claiming it can never collide with the
+      // same human's player person.
+      //
+      // Note this mints unconditionally: one org may carry the same human on
+      // its officials roster twice, and there is nothing to dedupe against —
+      // the person is unclaimed here, so the account behind `email` is not
+      // knowable yet. Two official-lane persons for one user in one org is
+      // therefore a legitimate outcome, which is why persons_org_user_lane_uq
+      // is scoped to `lane = 'player'` (see V348).
       const [person] = await tx<{ id: string }[]>`
-        insert into persons (org_id, full_name)
-        values (${auth.orgId}, ${row.display_name}) returning id`;
+        insert into persons (org_id, full_name, lane)
+        values (${auth.orgId}, ${row.display_name}, 'official') returning id`;
       row.person_id = person!.id;
     }
     const [updated] = await tx<OfficialRow[]>`

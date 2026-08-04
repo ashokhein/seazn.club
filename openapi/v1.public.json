@@ -27889,6 +27889,9 @@
                     "default": false,
                     "type": "boolean"
                   },
+                  "registering_self": {
+                    "type": "boolean"
+                  },
                   "answers": {
                     "default": {},
                     "type": "object",
@@ -27932,6 +27935,9 @@
                               "type": "null"
                             }
                           ]
+                        },
+                        "self": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -27968,7 +27974,8 @@
                   {
                     "name": "example",
                     "dob": "2026-08-01",
-                    "squad_number": 0
+                    "squad_number": 0,
+                    "self": true
                   }
                 ]
               }

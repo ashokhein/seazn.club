@@ -9,6 +9,7 @@ import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import {
+  acceptResolvedClaim,
   createClaimInvite,
   revokeClaimInvite,
   getOpenClaim,
@@ -16,6 +17,7 @@ import {
   claimPerson,
   unlinkPerson,
 } from "../person-claims";
+import { createOfficial, inviteOfficial } from "../officials";
 import { createPerson } from "../persons";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -211,5 +213,162 @@ describe.skipIf(!HAS_DB)("person claims (PROMPT-53)", () => {
     await expect(revokeClaimInvite(keyAuth, person.id)).rejects.toMatchObject({ status: 403 });
     // owner path still fine
     await expect(createClaimInvite(owner, person.id, "x@test.local")).resolves.toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #402 — the failure mode the V345 revert cited by name.
+//
+// `acceptResolvedClaim` runs a bare `update persons set user_id`. Under
+// persons_org_user_lane_uq that raises 23505 for a user who already holds a
+// PLAYER person in the org and claims a second one. The lane column removed the
+// player-vs-official collision entirely, so what is left is precisely the
+// duplicate #402 exists to eliminate — it must surface as a clean 409 pointing
+// at the merge route (#404), never a 500 carrying a constraint name.
+// ---------------------------------------------------------------------------
+describe.skipIf(!HAS_DB)("duplicate player link (#402)", () => {
+  it("a second player-lane claim in one org is a 409, not a constraint 500", async () => {
+    const { owner, orgId, person: first } = await rig();
+    const claimantEmail = `dup-${randomUUID().slice(0, 8)}@test.local`;
+    const userId = await makeUser("claimant");
+
+    // The user already holds a player person here — the state a duplicate hits.
+    await sql`update persons set user_id = ${userId} where id = ${first.id}`;
+
+    const second = await createPerson(owner, {
+      full_name: "Duplicate Of Them",
+      consent: {},
+    } as never);
+    const invite = await createClaimInvite(owner, second.id, claimantEmail);
+    const claim = await resolveClaimToken(invite.secret);
+
+    await expect(acceptResolvedClaim(claim, userId)).rejects.toMatchObject({
+      status: 409,
+      code: "PERSON_ALREADY_LINKED",
+    });
+
+    // The first link is untouched, and the duplicate stays unclaimed.
+    const rows = await sql<{ id: string; user_id: string | null }[]>`
+      select id, user_id from persons
+       where org_id = ${orgId} and id in (${first.id}, ${second.id})`;
+    expect(rows.find((r) => r.id === first.id)?.user_id).toBe(userId);
+    expect(rows.find((r) => r.id === second.id)?.user_id).toBeNull();
+    const [{ n }] = await sql<{ n: string }[]>`
+      select count(*)::text as n from persons
+       where org_id = ${orgId} and user_id = ${userId} and lane = 'player'`;
+    expect(Number(n)).toBe(1);
+  });
+
+  // ACCEPTED BEHAVIOUR, NOT A BUG — do not "fix" this by relaxing the guard.
+  //
+  // `createOfficial({ person_id })` binds an official role to an EXISTING person
+  // without moving it out of the player lane (only inviteOfficial mints a
+  // lane='official' row). So a human who is an official through a player-lane
+  // person, and who already holds their own player-lane person in the same org,
+  // hits persons_org_user_lane_uq on the claim: two player-lane rows for one
+  // account is exactly the duplicate identity #402 exists to prevent.
+  //
+  // Failing closed with a 409 beats silently minting a second identity or
+  // fusing two records. The recovery route is #404's duplicate review + merge
+  // tool, which the 409's code points the organiser at.
+  it("an official bound to a PLAYER-lane person is refused a second claim (accepted, see #404)", async () => {
+    const { owner, orgId, person: own } = await rig();
+    const userId = await makeUser("official-and-player");
+
+    // The human's own player-lane person, already linked to their account.
+    await sql`update persons set user_id = ${userId} where id = ${own.id}`;
+
+    // A SECOND person for the same human, bound as an official via person_id —
+    // still lane='player', because createOfficial does not move the lane.
+    const officialPerson = await createPerson(owner, {
+      full_name: "Same Human, Official Hat",
+      consent: {},
+    } as never);
+    const official = await createOfficial(owner, {
+      display_name: "Same Human, Official Hat",
+      person_id: officialPerson.id,
+      role_keys: ["referee"],
+    });
+    expect(official.person_id).toBe(officialPerson.id);
+    const [lane] = await sql<{ lane: string }[]>`
+      select lane from persons where id = ${officialPerson.id}`;
+    expect(lane.lane).toBe("player"); // the premise: NOT moved to the official lane
+
+    const invite = await createClaimInvite(
+      owner,
+      officialPerson.id,
+      `official-${randomUUID().slice(0, 8)}@test.local`,
+    );
+    const claim = await resolveClaimToken(invite.secret);
+
+    await expect(acceptResolvedClaim(claim, userId)).rejects.toMatchObject({
+      status: 409,
+      code: "PERSON_ALREADY_LINKED",
+    });
+
+    // Nothing was merged and nothing was minted: one player-lane person for the
+    // account, and the official's person is still waiting for #404.
+    const [{ n: linked }] = await sql<{ n: string }[]>`
+      select count(*)::text as n from persons
+       where org_id = ${orgId} and user_id = ${userId} and lane = 'player'`;
+    expect(Number(linked)).toBe(1);
+    const [after] = await sql<{ user_id: string | null }[]>`
+      select user_id from persons where id = ${officialPerson.id}`;
+    expect(after.user_id).toBeNull();
+  });
+
+  // REGRESSION (smoke.ts:3507 "off accept-by-id links the second org without
+  // the emailed token" + "off official <id> claimed=true").
+  //
+  // One org may carry the same human on the officials roster twice, and
+  // `inviteOfficial` mints a FRESH lane='official' person for every officials
+  // row whose person_id is null — it has no way to dedupe, because at invite
+  // time the person is unclaimed and the user is unknown. So the second claim
+  // legitimately produces a second official-lane person for one user in one
+  // org. persons_org_user_lane_uq must not forbid that: #402 needs uniqueness
+  // in the PLAYER lane only, which is the lane `resolvePlayerPerson` upserts
+  // on. A lane-wide index turned this long-standing flow into a 409.
+  it("a second officiating claim in one org links its own official-lane person", async () => {
+    const { owner, orgId } = await rig();
+    const refEmail = `ref-${randomUUID().slice(0, 8)}@test.local`;
+    const refUser = await makeUser("ref");
+
+    // Exactly the smoke sequence: create → invite → claim, twice, one org.
+    const first = await createOfficial(owner, {
+      display_name: "Ria Ref",
+      role_keys: ["referee"],
+    });
+    expect(first.person_id).toBeNull(); // the premise: no person bound at create
+    const inviteOne = await inviteOfficial(owner, first.id, refEmail);
+    await claimPerson(inviteOne.secret, refUser, refEmail);
+
+    const second = await createOfficial(owner, {
+      display_name: "Ria Ref Two",
+      role_keys: ["referee"],
+    });
+    const inviteTwo = await inviteOfficial(owner, second.id, refEmail);
+    await expect(claimPerson(inviteTwo.secret, refUser, refEmail)).resolves.toMatchObject({
+      person_id: inviteTwo.official.person_id!,
+    });
+
+    // Two DISTINCT official-lane persons, both linked to the one account.
+    expect(inviteTwo.official.person_id).not.toBe(inviteOne.official.person_id);
+    const linked = await sql<{ id: string; lane: string }[]>`
+      select id, lane from persons
+       where org_id = ${orgId} and user_id = ${refUser} order by created_at`;
+    expect(linked.map((r) => r.lane)).toEqual(["official", "official"]);
+    expect(linked.map((r) => r.id)).toEqual([
+      inviteOne.official.person_id,
+      inviteTwo.official.person_id,
+    ]);
+
+    // …and both officials rows read as claimed, the exact join the smoke's
+    // checkOfficialClaimed runs.
+    const claimed = await sql<{ id: string; claimed: boolean }[]>`
+      select o.id, (p.user_id is not null) as claimed
+        from officials o join persons p on p.id = o.person_id
+       where o.id in (${first.id}, ${second.id})`;
+    expect(claimed).toHaveLength(2);
+    expect(claimed.every((r) => r.claimed)).toBe(true);
   });
 });

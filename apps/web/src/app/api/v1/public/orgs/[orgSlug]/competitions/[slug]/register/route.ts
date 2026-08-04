@@ -4,6 +4,7 @@ import { baseUrl } from "@/lib/oauth";
 import { HttpError } from "@/lib/errors";
 import { PublicRegisterRequest } from "@/server/api-v1/schemas";
 import { submitRegistration } from "@/server/usecases/registrations";
+import { getCurrentUser } from "@/lib/auth";
 import { hasLocale, type Locale } from "@/lib/i18n-constants";
 
 /** The registrant's explicit locale pick (footer switcher → seazn_locale cookie),
@@ -35,8 +36,14 @@ export async function POST(req: Request, { params }: Ctx) {
     // Second bucket per IP+division (v3/05 §4): one address hammering a
     // single division throttles harder than the general write budget above.
     await rateLimit(`regsubmit:${ip}:${input.division_id}`, { max: 5, windowSeconds: 300 });
+    // #402 — resolve the session HERE and pass it inward. Keeping the lookup in
+    // the public route is what makes the organiser-facing entry paths
+    // structurally unable to supply one: an organiser adding an entry on
+    // someone's behalf must never bind their own user_id to a player's person.
+    const sessionUser = await getCurrentUser();
     const result = await submitRegistration(orgSlug, slug, input, baseUrl(req), {
       locale: explicitLocale(req),
+      sessionUserId: sessionUser?.id ?? null,
     });
     return reply(201, {
       registration_id: result.registration.id,

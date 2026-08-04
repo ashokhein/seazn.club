@@ -113,10 +113,14 @@ export function RegisterForm({
   org,
   competition,
   divisions,
+  account,
 }: {
   org: RegisterOrg;
   competition: RegisterCompetition;
   divisions: RegisterDivision[];
+  /** #402 — the signed-in visitor, or null. Registration stays anonymous by
+   *  default; this only enables the opt-in that links the entry to an account. */
+  account: { email: string } | null;
 }) {
   const msg = useMsg();
   const router = useRouter();
@@ -133,6 +137,10 @@ export function RegisterForm({
   const [privacyConsent, setPrivacyConsent] = useState(false);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [players, setPlayers] = useState<Player[]>([]);
+  // #402 — opt-in, never inferred from being signed in: a guardian, a spouse and
+  // a team captain are all signed in too. Default false is the safe state.
+  const [registeringSelf, setRegisteringSelf] = useState(false);
+  const [selfPlayerIndex, setSelfPlayerIndex] = useState<number | null>(null);
   const [importText, setImportText] = useState("");
   const [website, setWebsite] = useState(""); // honeypot — humans never see it
   const [error, setError] = useState<string | null>(null);
@@ -145,6 +153,12 @@ export function RegisterForm({
   // Guardian consent: always on youth divisions (v3/11 gap 8), and for any
   // registrant whose DOB says minor.
   const needsGuardian = (division?.youth ?? false) || (dob !== "" && isMinorDob(dob));
+  // #402 — mirrors the server-side veto in submitRegistration exactly. A guardian
+  // entering two children shares one account, so linking there would fuse the
+  // siblings into one person. The server refuses it regardless; hiding the
+  // control here keeps the form honest rather than offering a dead checkbox.
+  const canLinkAccount = account !== null && !needsGuardian;
+  const linkSelf = canLinkAccount && registeringSelf;
   const waitlist = division ? division.open && division.remaining === 0 : false;
 
   const dates = competition.starts_on
@@ -183,14 +197,19 @@ export function RegisterForm({
           privacy_consent: privacyConsent,
           answers,
           website: website || undefined,
+          registering_self: linkSelf,
           players:
             division.entrant_kind === "team"
               ? players
-                  .filter((p) => p.name.trim())
-                  .map((p) => ({
+                  // Keep the original index alongside: the roster pick is stored
+                  // by position, and filtering blank rows out first would shift it.
+                  .map((p, i) => ({ p, i }))
+                  .filter(({ p }) => p.name.trim())
+                  .map(({ p, i }) => ({
                     name: p.name.trim(),
                     dob: p.dob || null,
                     squad_number: p.squad_number ? Number(p.squad_number) : null,
+                    self: linkSelf && i === selfPlayerIndex ? true : undefined,
                   }))
               : [],
         },
@@ -269,18 +288,34 @@ export function RegisterForm({
                   className={INPUT_CLASS}
                 />
               </label>
-              <label className="block text-sm">
-                <span className="text-zinc-700">
-                  Date of birth {division.requires_dob ? "*" : "(optional)"}
-                </span>
-                <input
-                  type="date"
-                  required={division.requires_dob}
-                  value={dob}
-                  onChange={(e) => setDob(e.target.value)}
-                  className={INPUT_CLASS}
-                />
-              </label>
+              <div>
+                <label className="block text-sm">
+                  <span className="text-zinc-700">
+                    Date of birth {division.requires_dob || linkSelf ? "*" : "(optional)"}
+                  </span>
+                  <input
+                    type="date"
+                    // #402 — linking to an account needs a date of birth. Without one
+                    // the server cannot tell an adult entering themselves from a
+                    // parent entering a child, and it refuses to link either way.
+                    required={division.requires_dob || linkSelf}
+                    aria-describedby={
+                      linkSelf && !division.requires_dob ? "register-dob-hint" : undefined
+                    }
+                    value={dob}
+                    onChange={(e) => setDob(e.target.value)}
+                    className={INPUT_CLASS}
+                  />
+                </label>
+                {/* Outside the <label> on purpose: nested text joins the field's
+                    accessible name, so a screen reader would announce the whole
+                    hint as the name of the input. Described-by keeps it a hint. */}
+                {linkSelf && !division.requires_dob && (
+                  <p id="register-dob-hint" className="mt-1 text-xs text-zinc-600">
+                    {msg("register.self.dobRequired")}
+                  </p>
+                )}
+              </div>
               <label className="block text-sm">
                 <span className="text-zinc-700">Gender (optional)</span>
                 <select value={gender} onChange={(e) => setGender(e.target.value)} className={INPUT_CLASS}>
@@ -297,6 +332,61 @@ export function RegisterForm({
                   importText={importText}
                   setImportText={setImportText}
                 />
+              )}
+              {/* #402 — links this entry to the signed-in account so one person's
+                  results stay together across divisions. Naming the account is the
+                  point: on a shared device the visitor must see WHICH account they
+                  would be linking before they agree to it. */}
+              {canLinkAccount && (
+                // Spans both columns like the roster fieldset above it: the pick
+                // lists roster names, so a half-width select truncates them.
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 sm:col-span-2">
+                  <label className="flex cursor-pointer items-start gap-2.5 py-1 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={registeringSelf}
+                      onChange={(e) => {
+                        setRegisteringSelf(e.target.checked);
+                        if (!e.target.checked) setSelfPlayerIndex(null);
+                      }}
+                      className="mt-0.5 h-4 w-4 shrink-0"
+                    />
+                    <span className="min-w-0">
+                      <span className="font-medium text-zinc-800">
+                        {msg("register.self.label")}
+                      </span>
+                      <span className="mt-0.5 block text-xs text-zinc-600">
+                        {msg("register.self.hint")}
+                      </span>
+                      <span className="mt-1 block truncate text-xs font-medium text-zinc-700">
+                        {account.email}
+                      </span>
+                    </span>
+                  </label>
+                  {registeringSelf && division.entrant_kind === "team" && (
+                    <label className="mt-3 block text-sm">
+                      <span className="text-zinc-700">{msg("register.self.rosterLabel")}</span>
+                      <select
+                        value={selfPlayerIndex === null ? "" : String(selfPlayerIndex)}
+                        onChange={(e) =>
+                          setSelfPlayerIndex(
+                            e.target.value === "" ? null : Number(e.target.value),
+                          )
+                        }
+                        className={INPUT_CLASS}
+                      >
+                        <option value="">{msg("register.self.rosterNone")}</option>
+                        {players.map((p, i) =>
+                          p.name.trim() ? (
+                            <option key={i} value={i}>
+                              {p.name.trim()}
+                            </option>
+                          ) : null,
+                        )}
+                      </select>
+                    </label>
+                  )}
+                </div>
               )}
             </div>
           ),
@@ -506,7 +596,7 @@ export function RegisterForm({
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block font-medium">{d.name}</span>
-                    <span className="mt-0.5 block text-xs text-zinc-500">
+                    <span className="mt-0.5 block text-xs text-zinc-600">
                       {d.sport_key} · {d.entrant_kind}
                       {d.fee_cents > 0
                         ? ` · ${msg(d.payment_method === "stripe" ? "register.method.card" : "register.method.offline")}`
@@ -649,7 +739,7 @@ function TeamRoster({
   return (
     <fieldset className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50/50 p-4 sm:col-span-2">
       <legend className="px-1 text-sm font-medium text-zinc-700">Players (optional)</legend>
-      <p className="text-xs text-zinc-500">
+      <p className="text-xs text-zinc-600">
         Add your squad now, or leave blank and the organiser adds them later.
       </p>
 
@@ -717,7 +807,7 @@ function TeamRoster({
 
       <details className="text-sm">
         <summary className="cursor-pointer text-accent-strong">Import a list</summary>
-        <p className="mt-2 text-xs text-zinc-500">
+        <p className="mt-2 text-xs text-zinc-600">
           One player per line. Optional squad number and date of birth (YYYY-MM-DD), comma-separated
           — e.g. <code>Jordan Blake, 7, 2005-04-12</code>.
         </p>
