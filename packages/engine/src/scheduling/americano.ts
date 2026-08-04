@@ -49,7 +49,7 @@ function quartets(
   const matches: AmericanoMatch[] = [];
   const playable = Math.min(Math.floor(order.length / 4), courtCount);
   for (let c = 0; c < playable; c++) {
-    const q = order.slice(c * 4, c * 4 + 4) as EntrantId[];
+    const q = order.slice(c * 4, c * 4 + 4);
     matches.push({
       id: `am-r${roundNo}-c${c + 1}`,
       roundNo,

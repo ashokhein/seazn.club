@@ -262,13 +262,19 @@ function playFixture(
   seed: number,
   opts: { maxEvents: number; decisive: boolean },
 ): PlayedMatch {
+  // Extracted to null-check once rather than per event. The receiver is never
+  // lost: every call is `generate.call(module, …)`.
+  // eslint-disable-next-line @typescript-eslint/unbound-method
   const generate = module.arbitraryEvent;
   if (!generate) throw new Error(`module "${module.key}" does not implement arbitraryEvent`);
 
   const MAX_ATTEMPTS = 100;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const rng = mulberry32(deriveSeed(seed, "fixture", fixtureId, attempt));
-    let state = module.init(cfg, lineups);
+    // AnySportModule is SportModule<any, any, any>, so init/apply return
+    // `any`. Pin it to `unknown` at the boundary: this harness only hands
+    // state back to the module, it never reads into it.
+    let state: unknown = module.init(cfg, lineups);
     const events: EventEnvelope[] = [];
     for (let i = 0; i < opts.maxEvents; i++) {
       const next = generate.call(module, state, rng) as ModuleEvent | null;
@@ -277,7 +283,7 @@ function playFixture(
       state = module.apply(state, env);
       events.push(env);
     }
-    const outcome = module.outcome(state) as MatchOutcome | null;
+    const outcome = module.outcome(state);
     if (outcome === null) continue; // budget exhausted undecided — replay
     if (opts.decisive && !DECISIVE_KINDS.has(outcome.kind)) continue; // knockout replay
     return { events, state, outcome };
@@ -346,7 +352,9 @@ function injectVoidIntoMatch(
   }
 
   // Refold OK — if the void reopened the match, keep scoring to a decision.
-  let outcome = module.outcome(state) as MatchOutcome | null;
+  let outcome = module.outcome(state);
+  // Receiver supplied explicitly at the `.call(module, …)` below.
+  // eslint-disable-next-line @typescript-eslint/unbound-method
   const generate = module.arbitraryEvent as NonNullable<AnySportModule["arbitraryEvent"]>;
   for (let i = events.length; outcome === null && i < events.length + opts.maxEvents; i++) {
     const next = generate.call(module, state, rng) as ModuleEvent | null;
@@ -354,7 +362,7 @@ function injectVoidIntoMatch(
     const env = envelope(fixtureId, i, next);
     state = module.apply(state, env);
     events.push(env);
-    outcome = module.outcome(state) as MatchOutcome | null;
+    outcome = module.outcome(state);
   }
   if (outcome === null || (opts.decisive && !DECISIVE_KINDS.has(outcome.kind))) {
     // Can't complete the reopened match within budget/constraints — a real
@@ -808,7 +816,7 @@ const seedMap = (order: readonly EntrantId[]): Map<EntrantId, number> =>
 
 export function simulateDivision(opts: SimOptions): SimulationResult {
   const module = opts.module;
-  const cfg = module.configSchema.parse(opts.cfg ?? {});
+  const cfg: unknown = module.configSchema.parse(opts.cfg ?? {});
   const seed = opts.seed;
   const n = opts.entrantCount ?? drawEntrantCount(seed);
   if (n < 2 || n > 64) throw new Error(`entrantCount ${n} outside 2–64`);
@@ -987,7 +995,7 @@ export function assertDivisionInvariants(
 
   // Every fixture terminal; event envelopes well-formed and globally unique.
   const allEventIds = new Set<string>();
-  const allowedTotals = module.declaredPointsSets(cfg) as readonly number[];
+  const allowedTotals = module.declaredPointsSets(cfg);
   for (const stage of sim.stages) {
     for (const fixture of stage.fixtures) {
       if (!TERMINAL.has(fixture.status)) {

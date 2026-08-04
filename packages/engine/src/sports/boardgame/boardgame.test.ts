@@ -20,7 +20,7 @@ function stream(...specs: Array<[type: string, payload?: unknown]>): EventEnvelo
   return specs.map(([type, payload], i) => makeEnvelope(i, { type, payload: payload ?? {} }));
 }
 function fold(events: EventEnvelope[], config = cfg): BoardgameState {
-  return foldMatch(boardgame, config, lineups, events, STRICT_ALL) as BoardgameState;
+  return foldMatch(boardgame, config, lineups, events, STRICT_ALL);
 }
 const asEv = (event: EventEnvelope) => event as EventEnvelope<CoreEv>;
 

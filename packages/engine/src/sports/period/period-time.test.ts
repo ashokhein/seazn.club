@@ -27,7 +27,7 @@ import { EngineError } from "../../core/errors.ts";
 import { foldMatch, type EventEnvelope } from "../../core/events.ts";
 import { compareGameTime, gameTimeOf } from "../../core/time.ts";
 import { buildStream, defaultLineupPair, makeEnvelope } from "../../testkit/helpers.ts";
-import type { ModuleEvent } from "../../sport/module.ts";
+import type { ModuleEvent, SportModule } from "../../sport/module.ts";
 import { icehockey } from "../icehockey/icehockey.ts";
 import { hockey } from "../hockey/hockey.ts";
 import {
@@ -54,14 +54,14 @@ function envelopes(events: ModuleEvent[]): EventEnvelope[] {
   return events.map((event, i) => makeEnvelope(i, event));
 }
 
-const iceCfg = (raw: unknown = {}): PeriodCfg => icehockey.configSchema.parse(raw) as PeriodCfg;
-const fihCfg = (raw: unknown = {}): PeriodCfg => hockey.configSchema.parse(raw) as PeriodCfg;
+const iceCfg = (raw: unknown = {}): PeriodCfg => icehockey.configSchema.parse(raw);
+const fihCfg = (raw: unknown = {}): PeriodCfg => hockey.configSchema.parse(raw);
 
 function foldIce(events: ModuleEvent[], cfg: PeriodCfg = iceCfg()): PeriodState {
-  return foldMatch(icehockey, cfg, iceLineups, envelopes(events)) as PeriodState;
+  return foldMatch(icehockey, cfg, iceLineups, envelopes(events));
 }
 function foldFih(events: ModuleEvent[], cfg: PeriodCfg = fihCfg()): PeriodState {
-  return foldMatch(hockey, cfg, fihLineups, envelopes(events)) as PeriodState;
+  return foldMatch(hockey, cfg, fihLineups, envelopes(events));
 }
 
 const at = (period: string, elapsed: number) => ({ period, elapsed });
@@ -320,7 +320,7 @@ describe("an unrecognised period never throws out of the sweep", () => {
       suspensions: base.suspensions.map((s) => ({ ...s, expiresAt: at("Q9", 1) })),
     };
     const ev = makeEnvelope(9, iceGoal(IH, { at: at("P1", 900) }));
-    const next = icehockey.apply(stale as never, ev as never) as PeriodState;
+    const next = icehockey.apply(stale, ev as never);
     expect(next.suspensions.length).toBe(1);
   });
 
@@ -331,7 +331,7 @@ describe("an unrecognised period never throws out of the sweep", () => {
     const ev = makeEnvelope(9, iceGoal(IH, { at: at("Q1", 10) }));
     let caught: unknown;
     try {
-      icehockey.apply(base as never, ev as never);
+      icehockey.apply(base, ev as never);
       expect.unreachable("an undeclared period must be refused");
     } catch (err) {
       caught = err;
@@ -664,7 +664,7 @@ describe("the generator stamps what it emits, so the property runs exercise §9.
   // future EXTEND_GOLDEN appends all stayed on the pre-wave path — and "the
   // eleven goldens are byte-identical" was guaranteed by the generator's blind
   // spot rather than by the change being additive.
-  const cases: [string, typeof icehockey | typeof hockey, unknown][] = [
+  const cases: [string, SportModule<PeriodCfg, unknown, unknown>, unknown][] = [
     ["icehockey", icehockey, {}],
     ["hockey", hockey, {}],
   ];
@@ -693,7 +693,7 @@ describe("the generator stamps what it emits, so the property runs exercise §9.
     const lineups = defaultLineupPair(mod.positions);
     for (let seed = 1; seed <= 12; seed++) {
       const events = buildStream(mod as never, cfg as never, lineups, seed, 60);
-      const order = mod.playPhases?.(cfg as never) ?? [];
+      const order = mod.playPhases?.(cfg) ?? [];
       let high: ReturnType<typeof gameTimeOf> = null;
       for (const event of events) {
         const stamp = gameTimeOf(event.payload);
@@ -717,7 +717,7 @@ describe("the generator stamps what it emits, so the property runs exercise §9.
     let sawExpiry = false;
     for (let seed = 1; seed <= 40 && !sawExpiry; seed++) {
       const events = buildStream(icehockey as never, cfg as never, lineups, seed, 60);
-      const state = foldMatch(icehockey, cfg, lineups, events) as PeriodState;
+      const state = foldMatch(icehockey, cfg, lineups, events);
       sawExpiry = state.cardLog.some((entry) => entry.expiresAt !== undefined);
     }
     expect(sawExpiry).toBe(true);

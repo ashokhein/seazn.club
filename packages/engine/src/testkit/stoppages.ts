@@ -70,7 +70,7 @@ function liveInjectionPoint(
 ): number {
   const live: number[] = [];
   for (let i = 1; i < base.length; i++) {
-    const state = foldMatch(module, cfg, lineups, base.slice(0, i), STRICT_ALL);
+    const state: unknown = foldMatch(module, cfg, lineups, base.slice(0, i), STRICT_ALL);
     if (module.outcome(state) === null) live.push(i);
   }
   if (live.length === 0) return 0;

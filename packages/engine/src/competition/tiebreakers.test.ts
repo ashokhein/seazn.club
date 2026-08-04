@@ -15,7 +15,6 @@ import {
   sonnebornBerger,
   swissTiebreaks,
   wins,
-  type Color,
   type SwissGame,
   type SwissRow,
   type SwissTable,
@@ -27,7 +26,7 @@ function card(entrant: string, results: Array<[opp: string, won: boolean]>): Swi
     opponent: opp,
     result: won ? "win" : "loss",
     scored: won ? 2 : 0,
-    color: (i % 2 === 0 ? "W" : "B") as Color,
+    color: (i % 2 === 0 ? "W" : "B"),
   }));
   return { entrant, score: games.reduce((s, g) => s + g.scored, 0), games };
 }

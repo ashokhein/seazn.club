@@ -52,7 +52,7 @@ function rallyMatch(mod: Mod, winners: Side[]): EventEnvelope[] {
 }
 
 function fold(mod: Mod, cfg: SetBasedCfg, events: EventEnvelope[]): SetBasedState {
-  return foldMatch(mod, cfg, lineups(mod), events, STRICT_ALL) as SetBasedState;
+  return foldMatch(mod, cfg, lineups(mod), events, STRICT_ALL);
 }
 
 // ---------------------------------------------------------------------------

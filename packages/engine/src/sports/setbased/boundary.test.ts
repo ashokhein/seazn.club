@@ -13,7 +13,6 @@ import { defaultLineupPair, makeEnvelope } from "../../testkit/helpers.ts";
 import { badminton } from "./badminton.ts";
 import { tabletennis } from "./tabletennis.ts";
 import { volleyball } from "./volleyball.ts";
-import type { SetBasedState } from "./kernel.ts";
 
 // Drive one rally set to exactly (h, a) alternating trailing points so no
 // intermediate score is terminal by accident (winner's points last).
@@ -69,7 +68,7 @@ function runMatrix(
     for (const { score, ends } of cases) {
       const [h, a] = score;
       it(`rally to ${h}-${a} ${ends ? "ends" : "does NOT end"} the set`, () => {
-        const state = fold(module, ralliesTo(rally, h, a), cfg) as SetBasedState;
+        const state = fold(module, ralliesTo(rally, h, a), cfg);
         const set = state.sets[0];
         expect(set, "first set exists").toBeDefined();
         expect(set!.home).toBe(h);
@@ -78,7 +77,7 @@ function runMatrix(
       });
       if (ends) {
         it(`summary ${h}-${a} is accepted as a completed set`, () => {
-          const state = fold(module, [{ type: summaryType, payload: { home: h, away: a } }], cfg) as SetBasedState;
+          const state = fold(module, [{ type: summaryType, payload: { home: h, away: a } }], cfg);
           expect(state.sets[0]?.closed).toBe(true);
           expect(state.setsWon.home + state.setsWon.away).toBe(1);
         });
@@ -164,7 +163,7 @@ describe("volleyball: deciding set uses finalSetTo", () => {
     const state = fold(volleyball, [
       ...summaries([[25, 20], [20, 25], [25, 20], [20, 25]]),
       ...summaries([[15, 13]]),
-    ]) as SetBasedState;
+    ]);
     expect(state.setsWon).toEqual({ home: 3, away: 2 });
     expect(state.outcome?.kind).toBe("win");
   });
@@ -187,7 +186,7 @@ describe("volleyball: deciding set uses finalSetTo", () => {
 describe("badminton short variant: 11 with cap 15", () => {
   const cfg = { setTo: 11, finalSetTo: 11, cap: 15 };
   it("golden point at 15-14; 16-15 impossible", () => {
-    const state = fold(badminton, ralliesTo("badminton.rally", 15, 14), cfg) as SetBasedState;
+    const state = fold(badminton, ralliesTo("badminton.rally", 15, 14), cfg);
     expect(state.sets[0]?.closed).toBe(true);
     expect(() =>
       fold(badminton, [{ type: "badminton.game.summary", payload: { home: 16, away: 15 } }], cfg),
@@ -219,7 +218,7 @@ describe("summary equals recount-from-events at every prefix", () => {
             expect(JSON.stringify(module.summary(recount as never))).toBe(
               JSON.stringify(module.summary(state as never)),
             );
-            if (module.outcome(state as never) !== null) break;
+            if (module.outcome(state) !== null) break;
           }
         }),
         { numRuns: Number(process.env.SIM_RUNS ?? 25) },

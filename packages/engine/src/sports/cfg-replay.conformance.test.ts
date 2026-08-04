@@ -72,6 +72,13 @@ function getAt(root: unknown, path: Path): unknown {
  *  is the commonest edit an organiser makes, and it is not the same as setting
  *  the field to zero. */
 const DROP = Symbol("drop");
+// `unknown | typeof DROP` does collapse to `unknown` — the rule is right about
+// the type and wrong about the point. The DROP arm is the signature's
+// documentation: it is how a caller learns the sentinel is accepted here and
+// means "remove the key" rather than "set it to a value". Narrowing to
+// `unknown` to satisfy the rule would delete that, and no reader would guess
+// DROP is legal from the remaining type.
+// eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
 function withAt(root: unknown, path: Path, value: unknown | typeof DROP): unknown {
   const copy = clone(root);
   let cursor = copy as Record<string | number, unknown>;
@@ -110,6 +117,8 @@ function paths(value: unknown, base: Path = []): Path[] {
  */
 function mutantsFor(cfg: unknown): Mutant[] {
   const out: Mutant[] = [];
+  // See withAt above: the DROP arm documents the sentinel, not the type.
+  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
   const push = (path: Path, value: unknown | typeof DROP, how: string): void => {
     out.push({ label: `${path.join(".") || "<root>"} ${how}`, raw: withAt(cfg, path, value) });
   };

@@ -895,6 +895,11 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
     return res === "unknown" ? "budget" : res;
   };
   const coreFamilies = (): RepairFamily[] => {
+    // `e` is a z3 Bool AST node crossing back from the solver. z3-solver types
+    // it as a plain object, but it carries its own toString() that renders the
+    // S-expression name — which is exactly what is matched against
+    // famLiteralName below. Not Object's default stringification.
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string
     const names = new Set([...solver.unsatCore()].map((e) => e.toString()));
     return sortFamilies(REPAIR_FAMILIES.filter((f) => names.has(famLiteralName(f))));
   };
@@ -936,6 +941,12 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
     if (res === "sat") {
       const model = solver.model();
       const intOf = (e: Arith<"repair">): number => {
+        // Same z3 boundary: model.eval returns an AST node whose toString()
+        // renders the numeral as an S-expression, which the next line parses
+        // (including z3's "(- n)" form for negatives). Object's default
+        // stringification would make that parse impossible, so this firing is
+        // the rule not knowing z3's types rather than a real defect.
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string
         const s = model.eval(e, true).toString().replace(/\s+/g, "");
         return s.startsWith("(-") ? -Number(s.slice(2, -1)) : Number(s);
       };

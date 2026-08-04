@@ -43,7 +43,7 @@ const A = lineups.away.entrantId;
 
 function cfgFor(variant?: string, extra?: Record<string, unknown>): NestedCfg {
   const preset = variant === undefined ? {} : tennis.variants[variant];
-  return tennis.configSchema.parse({ ...preset, ...(extra ?? {}) }) as NestedCfg;
+  return tennis.configSchema.parse({ ...preset, ...(extra ?? {}) });
 }
 
 function envelopes(events: ModuleEvent[]): EventEnvelope[] {
@@ -54,7 +54,7 @@ function envelopes(events: ModuleEvent[]): EventEnvelope[] {
 // stream is strict (§3.3 seam). A read path passes nothing and is tolerant.
 const STRICT_ALL = { strictFromSeq: 0 } as const;
 function fold(cfg: unknown, events: ModuleEvent[]): NestedState {
-  return foldMatch(tennis, cfg, lineups, envelopes(events), STRICT_ALL) as NestedState;
+  return foldMatch(tennis, cfg, lineups, envelopes(events), STRICT_ALL);
 }
 
 const start: ModuleEvent = { type: "core.start", payload: {} };
@@ -350,7 +350,7 @@ describe("nested phase order (§7)", () => {
   describe("apply() re-validates the stamp itself (§3.3, §7)", () => {
     const live = () => fold(cfgFor(), [start]);
     const applyDirect = (state: NestedState, payload: Record<string, unknown>) =>
-      tennis.apply(state as never, makeEnvelope(9, interruption(payload)) as never);
+      tennis.apply(state, makeEnvelope(9, interruption(payload)) as never);
 
     it("refuses an undeclared period as INVALID_EVENT, naming the periods it has", () => {
       const message = messageOf(() => applyDirect(live(), { kind: "heat", at: { period: "H1", elapsed: 60 } }));
@@ -636,7 +636,7 @@ describe("tennis.interruption is wired everywhere a new type must be (§5.6)", (
       return () => draws[i++ % draws.length] as number;
     };
     const stampOf = (state: NestedState): GameTime => {
-      const event = tennis.arbitraryEvent?.(state as never, scriptedRng());
+      const event = tennis.arbitraryEvent?.(state, scriptedRng());
       expect(event?.type).toBe("tennis.interruption");
       return (event?.payload as { at: GameTime }).at;
     };
@@ -658,10 +658,10 @@ describe("tennis.interruption is wired everywhere a new type must be (§5.6)", (
   });
 
   it("changes summary().detail once a break is recorded, and not before", () => {
-    const clean = tennis.summary(fold(cfgFor(), [start, point(H)]) as never);
+    const clean = tennis.summary(fold(cfgFor(), [start, point(H)]));
     expect(Object.hasOwn(clean.detail as object, "interruptions")).toBe(false);
     const withBreak = tennis.summary(
-      fold(cfgFor(), [start, point(H), interruption({ kind: "heat", duration: 600 })]) as never,
+      fold(cfgFor(), [start, point(H), interruption({ kind: "heat", duration: 600 })]),
     );
     expect((withBreak.detail as { interruptions: unknown }).interruptions).toEqual([
       { kind: "heat", set: 1, duration: 600 },

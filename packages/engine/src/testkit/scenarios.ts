@@ -41,10 +41,16 @@ function decidedStream(
   seed: number,
   maxEvents = 600,
 ): { events: EventEnvelope[]; state: unknown } | null {
+  // Extracted to null-check once rather than per event. The receiver is never
+  // lost: every call is `generate.call(module, …)`.
+  // eslint-disable-next-line @typescript-eslint/unbound-method
   const generate = module.arbitraryEvent;
   if (!generate) throw new Error(`module "${module.key}" lacks arbitraryEvent`);
   const rng = mulberry32(seed);
-  let state = module.init(cfg, lineups);
+  // AnySportModule is SportModule<any, any, any>, so init/apply return `any`.
+  // Pin it to `unknown` at the boundary — this harness never inspects state,
+  // it only passes it back to the module.
+  let state: unknown = module.init(cfg, lineups);
   const events: EventEnvelope[] = [];
   for (let i = 0; i < maxEvents; i++) {
     const next = generate.call(module, state, rng) as ModuleEvent | null;
@@ -111,28 +117,28 @@ export function runUndoStorm(module: AnySportModule, seed: number): UndoStormSta
     // Renderable summary + resumable scoring — the blank-panel guarantees.
     let summary: { headline?: unknown };
     try {
-      summary = module.summary(state as never) as { headline?: unknown };
+      summary = module.summary(state);
     } catch (err) {
       throw new SimInvariantError(`${label(i, target.type)} summary() threw: ${String(err)}`);
     }
     if (typeof summary.headline !== "string") {
       throw new SimInvariantError(`${label(i, target.type)} headline not a string`);
     }
-    if (module.outcome(state as never) === null) {
+    if (module.outcome(state) === null) {
       const rng = mulberry32(deriveSeed(seed, module.key, "storm-resume", i));
       let resumed = state;
       for (let n = 0; n < 600; n++) {
         const next = module.arbitraryEvent?.call(module, resumed as never, rng) as ModuleEvent | null;
         if (next === null || next === undefined) break;
         try {
-          resumed = module.apply(resumed as never, makeEnvelope(withVoid.length + n, next));
+          resumed = module.apply(resumed, makeEnvelope(withVoid.length + n, next));
         } catch (err) {
           if (!EngineError.is(err)) {
             throw new SimInvariantError(`${label(i, target.type)} resume threw non-EngineError: ${String(err)}`);
           }
           break;
         }
-        if (module.outcome(resumed as never) !== null) break;
+        if (module.outcome(resumed) !== null) break;
       }
     }
   }
@@ -217,7 +223,7 @@ export interface BoundaryMatrixStats {
 export function runBoundaryMatrices(): BoundaryMatrixStats[] {
   const out: BoundaryMatrixStats[] = [];
   for (const matrix of MATRICES) {
-    const cfg = matrix.module.configSchema.parse({});
+    const cfg: unknown = matrix.module.configSchema.parse({});
     const lineups = defaultLineupPair(resolvePositions(matrix.module, cfg));
     let cases = 0;
     const fold = (events: ModuleEvent[]) =>
@@ -356,10 +362,10 @@ export function runCustomPointsScenario(module: AnySportModule, seed: number): C
   for (let s = 0; s < 4; s++) {
     const played = decidedStream(module, cfg, lineups, deriveSeed(seed + s, module.key, "points"));
     if (played === null) continue;
-    const outcome = module.outcome(played.state as never) as MatchOutcome;
+    const outcome = module.outcome(played.state) as MatchOutcome;
     if (outcome.kind === "no_result") continue;
-    const pair = module.standingsDelta(outcome, cfg as never, { kind: "league" }, played.state as never);
-    const mapped = applyPointsRule(outcome, pair as FixtureResult, CUSTOM_RULE);
+    const pair = module.standingsDelta(outcome, cfg, { kind: "league" }, played.state);
+    const mapped = applyPointsRule(outcome, pair, CUSTOM_RULE);
     for (const [i, delta] of mapped.entries()) {
       const want = delta.won === 1 ? 5 : delta.drawn === 1 ? 2 : delta.lost === 1 ? 1 : 0;
       // Forfeits without a configured forfeit block still pay base points.
@@ -446,7 +452,7 @@ export function runAmericanoScenario(module: AnySportModule, seed: number, playe
       if (played === null) {
         throw new SimInvariantError(`[americano:${seed}] match ${match.id} never decided`);
       }
-      const outcome = module.outcome(played.state as never) as MatchOutcome;
+      const outcome = module.outcome(played.state) as MatchOutcome;
       if (outcome.kind === "win" || outcome.kind === "award") {
         const winners = outcome.winner === home ? match.team1 : match.team2;
         for (const p of winners) personal.set(p, (personal.get(p) ?? 0) + 1);
@@ -475,7 +481,7 @@ export interface LadderStats {
 export function runLadderScenario(module: AnySportModule, seed: number, entrants = 8): LadderStats {
   const cfg = moduleCfg(module);
   const rng = mulberry32(deriveSeed(seed, module.key, "ladder"));
-  let order: EntrantId[] = Array.from({ length: entrants }, (_, i) => `L${String(i + 1).padStart(2, "0")}`);
+  const order: EntrantId[] = Array.from({ length: entrants }, (_, i) => `L${String(i + 1).padStart(2, "0")}`);
   const initial = [...order];
   let swaps = 0;
   const challenges = entrants * 2;
@@ -496,7 +502,7 @@ export function runLadderScenario(module: AnySportModule, seed: number, entrants
       played = decidedStream(module, cfg, lineups, deriveSeed(seed + s, `ladder-${c}`, "match"));
     }
     if (played === null) continue; // undecidable challenge — ladder unchanged
-    const outcome = module.outcome(played.state as never) as MatchOutcome;
+    const outcome = module.outcome(played.state) as MatchOutcome;
     const winner = outcome.kind === "win" || outcome.kind === "award" ? outcome.winner : null;
     if (winner === challenger) {
       // scoring.ts onDecided ladder rule: challenger takes the position.

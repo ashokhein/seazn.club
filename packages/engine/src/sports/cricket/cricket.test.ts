@@ -30,7 +30,7 @@ const lineups: LineupPair = { home: lineup("H"), away: lineup("A") };
 const league: StageCtx = { kind: "league" };
 
 const t20: CricketCfg = cricket.configSchema.parse(
-  cricket.variants.t20 as Record<string, unknown>,
+  cricket.variants.t20,
 );
 const fold = (cfg: CricketCfg, events: EventEnvelope[]) =>
   foldMatch(cricket, cfg, lineups, events, STRICT_ALL);
@@ -545,9 +545,7 @@ describe("a recorded revise survives a shortened over (§3.3)", () => {
     // 180 already in the ledger — the innings is recorded in balls and does not
     // move with the config, so only the quota does.
     const shortened = cricket.configSchema.parse({ ...raw, ballsPerOver: 4 });
-    const state = foldMatch(cricket, shortened, lineups, events) as ReturnType<
-      typeof cricket.init
-    >;
+    const state = foldMatch(cricket, shortened, lineups, events);
     expect(state.quota).toBe(160);
     expect(state.innings[0]?.legalBalls).toBe(180);
   });
@@ -686,7 +684,7 @@ describe("cricket golden (d): tied T20 super over policies", () => {
 // ---------------------------------------------------------------------------
 
 describe("cricket golden (e): two-innings matches", () => {
-  const test = cricket.configSchema.parse(cricket.variants.test as Record<string, unknown>);
+  const test = cricket.configSchema.parse(cricket.variants.test);
 
   it("draws on time expiry with draw points", () => {
     const events = stream(

@@ -536,6 +536,13 @@ function applyRally(
   let open = openSet(next);
   if (open === null) {
     next = { ...next, sets: [...next.sets, { home: 0, away: 0, closed: false }] };
+    // We just appended an open set, so openSet cannot return null here. The
+    // assertion is load-bearing: `open` is declared `… | null`, so without it
+    // the reads below do not narrow. no-unnecessary-type-assertion judges the
+    // assertion against the DECLARED type of the assignment target rather than
+    // the narrowing it establishes, and so reports a false positive — its
+    // autofix breaks tsc here.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
     open = openSet(next) as { set: SetState; index: number };
   }
   const scored: SetState = { ...open.set, [side]: open.set[side] + 1 };
@@ -911,7 +918,7 @@ export function makeSetBasedModule(
 
   // Award/forfeit points = a clean-sweep win pair: "*" (or the first entry).
   const cleanSweepPair = (cfg: SetBasedCfg): PointsPair =>
-    cfg.pointsMap["*"] ?? (Object.values(cfg.pointsMap)[0] as PointsPair | undefined) ?? [1, 0];
+    cfg.pointsMap["*"] ?? Object.values(cfg.pointsMap)[0] ?? [1, 0];
 
   // pointsMap lookup for a decided match: exact "W-L", else "*".
   const matchPoints = (cfg: SetBasedCfg, winnerSets: number, loserSets: number): PointsPair => {

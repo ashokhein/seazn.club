@@ -38,7 +38,7 @@ function fold(mod: Mod, events: ModuleEvent[], raw: unknown = {}): SetBasedState
     cfg,
     defaultLineupPair(resolvePositions(mod, cfg)),
     envelopes([{ type: "core.start", payload: {} }, ...events]),
-  ) as SetBasedState;
+  );
 }
 
 const rally = (payload: Record<string, unknown>): ModuleEvent => ({
@@ -366,7 +366,7 @@ describe("expedite is table tennis's alone", () => {
     // `serving` is NOT gated — which side served is a fact every set-based
     // scoresheet carries; only the 13-return count is ITTF-specific.
     expect(
-      fold(volleyball as Mod, [
+      fold(volleyball, [
         { type: "volleyball.rally", payload: { wonBy: "H", serving: "A" } },
       ]).sets[0],
     ).toEqual({ home: 1, away: 0, closed: false });

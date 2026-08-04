@@ -21,7 +21,6 @@ import { singleComponentBoard } from "./repair-synthetic-board.ts";
 import { RepairVerificationError } from "./repair.ts";
 import {
   atABudgetThatReachesTheSolver,
-  measureLoadFactor,
   scaleForLoad,
   timedUnderLoad,
 } from "./solver-test-bounds.ts";
@@ -29,11 +28,6 @@ import { resetZ3, z3LoadCount } from "./z3-load.ts";
 
 const SOLVE_TIMEOUT = 120_000;
 
-// Once per FILE, not per test: contention is a property of the host, and four
-// samples cost under 100 ms at full speed. 1 on a box as fast as the reference,
-// so nothing here moves on a quiet machine.
-const LOAD = measureLoadFactor();
-const scale = (ms: number): number => scaleForLoad(ms, LOAD);
 
 afterAll(async () => {
   await resetZ3();

@@ -156,11 +156,11 @@ function runTimeKernelConformance(adapter: TimeKernelAdapter): void {
       const { cfg, open, event, phases } = adapter.undeclaredStamp;
       let state = adapter.module.init(cfg, adapter.lineups) as unknown;
       open.forEach((step, i) => {
-        state = adapter.module.apply(state, makeEnvelope(i, step) as EventEnvelope);
+        state = adapter.module.apply(state, makeEnvelope(i, step));
       });
       const before = state;
       const error = caught(() =>
-        adapter.module.apply(before, makeEnvelope(open.length, event) as EventEnvelope),
+        adapter.module.apply(before, makeEnvelope(open.length, event)),
       );
       expect(EngineError.is(error, "INVALID_EVENT")).toBe(true);
       // Payload validation, not an invariant breach (§3.3): the likely cause is
@@ -248,14 +248,14 @@ function runTimeKernelConformance(adapter: TimeKernelAdapter): void {
       expect(runningBefore).toBeGreaterThan(0);
 
       const stale = caught(() =>
-        adapter.module.apply(state, makeEnvelope(99, undeclared) as EventEnvelope),
+        adapter.module.apply(state, makeEnvelope(99, undeclared)),
       );
       expect(EngineError.is(stale, "UNKNOWN_PHASE")).toBe(false);
 
       // …and a stamp the cfg DOES declare still folds, with the unorderable
       // suspension kept rather than silently erased: one that outlives its time
       // is visible and correctable, one that vanished is neither.
-      const next = adapter.module.apply(state, makeEnvelope(99, declared) as EventEnvelope);
+      const next = adapter.module.apply(state, makeEnvelope(99, declared));
       expect(adapter.running(next)).toHaveLength(runningBefore);
     });
   });

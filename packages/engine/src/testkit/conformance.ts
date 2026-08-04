@@ -209,6 +209,10 @@ export function conformanceSuite<Cfg, Ev, State>(
     // same match fold to identical outcomes and summaries.
     if (module.coarsen) {
       it("§9.6 dual-fidelity: coarse fold ≡ fine fold", () => {
+        // Extracted only to carry the null-check out of the property body.
+        // The receiver is never lost: the call below is `.call(module, …)`,
+        // which supplies `this` explicitly.
+        // eslint-disable-next-line @typescript-eslint/unbound-method
         const coarsen = module.coarsen as NonNullable<typeof module.coarsen>;
         fc.assert(
           fc.property(streamArb, (events) => {

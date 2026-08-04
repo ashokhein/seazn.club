@@ -1474,7 +1474,7 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
     // reconcile a scorer who correctly recorded both the expiry and the release
     // — so that one applies first and sweeps after.
     const sweepsFirst = at !== null && ev.type !== "football.sinbin.end";
-    const base = sweepsFirst ? sweepExpired(state, at as GameTime) : state;
+    const base = sweepsFirst ? sweepExpired(state, at) : state;
     const applied = applyEvent(base, ev);
     if (at === null) return applied;
     const swept = ev.type === "football.sinbin.end" ? sweepExpired(applied, at) : applied;

@@ -35,7 +35,7 @@ function sampleCards(module: AnySportModule): { personId?: string; color: string
   const lineups = defaultLineupPair(resolvePositions(module, cfg));
   const out: { personId?: string; color: string; eventId: string }[] = [];
   for (let seed = 0; seed < 60; seed++) {
-    const stream = buildStream(module, cfg, lineups, seed, 40) as EventEnvelope[];
+    const stream = buildStream(module, cfg, lineups, seed, 40);
     out.push(...module.discipline!.extractCards(stream));
   }
   return out;
@@ -88,7 +88,7 @@ describe("SPEC-1 discipline descriptor", () => {
 // sport schema and never reaches the discipline projection.
 describe("SPEC-1 discipline card detail (W4)", () => {
   const ledger = (type: string, payload: unknown): EventEnvelope[] => [
-    makeEnvelope(0, { type, payload }) as EventEnvelope,
+    makeEnvelope(0, { type, payload }),
   ];
 
   it("football projects the Law 12 offence onto the card", () => {
@@ -156,15 +156,15 @@ describe("SPEC-1 discipline card detail (W4)", () => {
       makeEnvelope(0, {
         type: "football.card",
         payload: { by: "H", person: "H-p7", color: "yellow", reason: "dissent" },
-      }) as EventEnvelope,
+      }),
       makeEnvelope(1, {
         type: "football.card",
         payload: { by: "H", person: "H-p7", color: "yellow", reason: "unsporting_behaviour" },
-      }) as EventEnvelope,
+      }),
       makeEnvelope(2, {
         type: "football.card",
         payload: { by: "H", person: "H-p7", color: "yellow", reason: "dissent" },
-      }) as EventEnvelope,
+      }),
     ]);
     const dissent = cards.filter((c) => c.reason === "dissent");
     expect(dissent).toHaveLength(2);
@@ -179,7 +179,7 @@ describe("SPEC-1 discipline card detail (W4)", () => {
 // ladder, which is the part that must not be.
 describe("SPEC-1 discipline reaches every sanction-bearing family (W4 item 7)", () => {
   const ledger = (type: string, payload: unknown): EventEnvelope[] => [
-    makeEnvelope(0, { type, payload }) as EventEnvelope,
+    makeEnvelope(0, { type, payload }),
   ];
 
   it("volleyball projects the FIVB ladder step as the colour", () => {
@@ -290,15 +290,15 @@ describe("SPEC-1 discipline reaches every sanction-bearing family (W4 item 7)", 
       makeEnvelope(0, {
         type: "tennis.sanction",
         payload: { by: "H", person: "H-p1", level: "warning", reason: "racquet abuse" },
-      }) as EventEnvelope,
+      }),
       makeEnvelope(1, {
         type: "tennis.sanction",
         payload: { by: "H", person: "H-p1", level: "warning", reason: "coaching" },
-      }) as EventEnvelope,
+      }),
       makeEnvelope(2, {
         type: "tennis.sanction",
         payload: { by: "H", person: "H-p1", level: "point_penalty", reason: "racquet abuse" },
-      }) as EventEnvelope,
+      }),
     ]);
     // Same ladder step twice, same offence twice — different pairs. Only
     // `reason` can tell the second story.
@@ -341,16 +341,16 @@ describe("SPEC-1 discipline reaches every sanction-bearing family (W4 item 7)", 
 // side, so a card filed under the opponent is a card shown to the wrong team.
 describe("carrom resolves the offending side, not the side that gained (W4)", () => {
   const adjust = (payload: Record<string, unknown>, seq: number): EventEnvelope =>
-    makeEnvelope(seq, { type: "carrom.game.adjust", payload }) as EventEnvelope;
+    makeEnvelope(seq, { type: "carrom.game.adjust", payload });
 
   // extractCards is handed EVENTS, never lineups, so both entrants have to be
   // visible in the ledger before an opponent can be named at all.
   const twoSided = (payload: Record<string, unknown>): EventEnvelope[] => [
-    makeEnvelope(0, { type: "carrom.toss", payload: { firstBreak: "H" } }) as EventEnvelope,
+    makeEnvelope(0, { type: "carrom.toss", payload: { firstBreak: "H" } }),
     makeEnvelope(1, {
       type: "carrom.board.summary",
       payload: { winner: "A", opponentCoinsLeft: 3, queenTo: null },
-    }) as EventEnvelope,
+    }),
     adjust(payload, 2),
   ];
 

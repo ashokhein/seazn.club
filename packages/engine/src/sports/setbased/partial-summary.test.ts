@@ -53,7 +53,7 @@ function record(mod: Mod, raw: unknown, events: ModuleEvent[]): EventEnvelope[] 
 // already in the ledger.
 function reread(mod: Mod, raw: unknown, envs: EventEnvelope[]): SetBasedState {
   const cfg = mod.configSchema.parse(raw);
-  return foldMatch(mod, cfg, pairFor(mod, cfg), envs) as SetBasedState;
+  return foldMatch(mod, cfg, pairFor(mod, cfg), envs);
 }
 
 const rally = (mod: Mod, wonBy: string): ModuleEvent => ({
@@ -121,8 +121,8 @@ describe("coarsen emits at most one partial per set (§9.6)", () => {
         pairFor(mod, cfg),
         coarse,
         STRICT_ALL,
-      ) as SetBasedState;
-      const fineState = foldMatch(mod, cfg, pairFor(mod, cfg), fine, STRICT_ALL) as SetBasedState;
+      );
+      const fineState = foldMatch(mod, cfg, pairFor(mod, cfg), fine, STRICT_ALL);
       expect(coarseState.sets).toEqual(fineState.sets);
       expect(mod.summary(coarseState)).toEqual(mod.summary(fineState));
       expect(mod.outcome(coarseState)).toEqual(mod.outcome(fineState));
@@ -144,8 +144,8 @@ describe("coarsen emits at most one partial per set (§9.6)", () => {
         pairFor(mod, cfg),
         coarse,
         STRICT_ALL,
-      ) as SetBasedState;
-      const fineState = foldMatch(mod, cfg, pairFor(mod, cfg), fine, STRICT_ALL) as SetBasedState;
+      );
+      const fineState = foldMatch(mod, cfg, pairFor(mod, cfg), fine, STRICT_ALL);
       expect(coarseState.sets).toEqual(fineState.sets);
       expect(mod.summary(coarseState)).toEqual(mod.summary(fineState));
     });
@@ -178,8 +178,8 @@ describe("coarsen emits at most one partial per set (§9.6)", () => {
         pairFor(mod, cfg),
         coarse,
         STRICT_ALL,
-      ) as SetBasedState;
-      const fineState = foldMatch(mod, cfg, pairFor(mod, cfg), fine, STRICT_ALL) as SetBasedState;
+      );
+      const fineState = foldMatch(mod, cfg, pairFor(mod, cfg), fine, STRICT_ALL);
       expect(coarseState.sets).toEqual(fineState.sets);
       expect(mod.summary(coarseState)).toEqual(mod.summary(fineState));
     });

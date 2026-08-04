@@ -291,7 +291,7 @@ export function assignOfficials(input: AssignInput): AssignResult {
   for (const [key, values] of spreadByBasis) {
     if (values.length < input.officials.length) {
       // officials with zero assignments in this basis count as 0
-      values.push(...Array(input.officials.length - values.length).fill(0));
+      values.push(...new Array<number>(input.officials.length - values.length).fill(0));
     }
     const spread = Math.max(...values) - Math.min(...values);
     if (spread > 1) {

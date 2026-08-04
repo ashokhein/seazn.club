@@ -23,7 +23,7 @@ function stream(...specs: Array<[type: string, payload?: unknown]>): EventEnvelo
   return specs.map(([type, payload], i) => makeEnvelope(i, { type, payload: payload ?? {} }));
 }
 function fold(events: EventEnvelope[], config = cfg): CarromState {
-  return foldMatch(carrom, config, lineups, events, STRICT_ALL) as CarromState;
+  return foldMatch(carrom, config, lineups, events, STRICT_ALL);
 }
 
 // One board-summary spec: [winner, opponentCoinsLeft, queenTo].

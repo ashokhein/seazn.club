@@ -243,7 +243,7 @@ function runMatrix(seedsPerCell: number, reportPath: string): never {
       const opts = simOptionsFor(generic, "league", 1);
       const sim = simulateDivision(opts);
       const rows = sim.stages[0]?.tables?.pools[0]?.rows ?? [];
-      scenarios.carryOver = runCarryOverScenario(rows as never);
+      scenarios.carryOver = runCarryOverScenario(rows);
     }
   } catch (error) {
     fail(failures, "scenario:carry-over", error);

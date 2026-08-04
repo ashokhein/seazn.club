@@ -41,7 +41,6 @@ import {
   escalationHints,
   pimOf,
   strengthChip,
-  strengthOf,
   type ActiveSuspension,
   type CardRecordEntry,
   type SuspensionClass,
@@ -1449,7 +1448,7 @@ export function makePeriodModule(
       // would then reject a scorer who correctly recorded both the expiry and
       // the release, so that one applies first and sweeps after.
       const sweepsFirst = at !== null && ev.type !== suspEndType;
-      const base = sweepsFirst ? sweepExpired(state, at as GameTime) : state;
+      const base = sweepsFirst ? sweepExpired(state, at) : state;
       const applied = applyEvent(base, ev, isStrictFold(ctx));
       if (at === null) return applied;
       const swept = ev.type === suspEndType ? sweepExpired(applied, at) : applied;

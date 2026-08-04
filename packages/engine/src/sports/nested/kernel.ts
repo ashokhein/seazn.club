@@ -653,7 +653,7 @@ function serveAfterGame(state: NestedState): Side {
 function winGame(state: NestedState, winnerSide: Side): NestedState {
   const games = { ...state.games, [winnerSide]: state.games[winnerSide] + 1 };
   const rules = rulesFor(state);
-  let next: NestedState = {
+  const next: NestedState = {
     ...state,
     games,
     points: FRESH_GAME,
@@ -723,7 +723,6 @@ function applyTbPoint(state: NestedState, side: Side, mtb: boolean): NestedState
   }
   // TB set closes tiebreakAt+1 : tiebreakAt; the first TB server receives
   // first in the next set, so the next server is their opponent.
-  const tbAt = rules.tiebreakAt as number;
   const games = { ...next.games, [winner]: next.games[winner] + 1 };
   next = {
     ...next,
@@ -1431,8 +1430,12 @@ export function makeNestedModule(
         // only, and both — `NestedPointMeta` is a strictObject whose every key
         // is optional, so a meta carrying only this one is a legal payload and
         // the one a no-ad point actually produces.
-        const receiverSide =
-          rng() < 0.2 ? ((rng() < 0.5 ? "deuce" : "ad") as "deuce" | "ad") : undefined;
+        // Annotated, not asserted: the literals widen to `string` on the way
+        // through the spread below, and `no-unnecessary-type-assertion` judges
+        // an `as` here against the ternary alone, so it reads as redundant and
+        // its autofix breaks the return type. The annotation satisfies both.
+        const receiverSide: "deuce" | "ad" | undefined =
+          rng() < 0.2 ? (rng() < 0.5 ? "deuce" : "ad") : undefined;
         const meta = {
           ...(kind === undefined ? {} : { kind }),
           ...(receiverSide === undefined ? {} : { receiverSide }),
