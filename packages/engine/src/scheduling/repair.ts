@@ -68,6 +68,20 @@ export const REPAIR_GRID_MINUTES = 5;
  *  measures 50/120/250/500 movable and replaces this with the measured number. */
 export const DEFAULT_REPAIR_BUDGET_MS = 15_000;
 
+/**
+ * Where one repair's wall clock actually goes. The budget is a single number
+ * over four very different costs, and #401 asks for them measured separately:
+ *
+ *   `precheck`  the verifier pass that decides whether z3 is needed at all
+ *   `z3_ready`  the WASM boot, paid once per process
+ *   `domains`   the pure domain build — intervals, buckets, courts
+ *   `encoded`   every assertion, including the O(n²) pair loop
+ *
+ * Anything after `encoded` is solving: the feasibility probe, then the
+ * ascending-k walk `onProgress` reports.
+ */
+export type RepairPhase = "precheck" | "z3_ready" | "domains" | "encoded";
+
 export interface RepairInput {
   proposal: readonly Assignment[]; // the fixtures this run may move
   existing?: readonly Assignment[]; // immovable board + obstacles
@@ -76,6 +90,12 @@ export interface RepairInput {
   budgetMs?: number; // default DEFAULT_REPAIR_BUDGET_MS
   gridMinutes?: number;
   onProgress?: (p: { k: number; elapsedMs: number }) => void;
+  /** Phase-boundary instrumentation, for the bench that sets the budget.
+   *  Measured from inside because that is the only honest place: a caller
+   *  re-running the prologue to time it measures a warm cache, and the encode
+   *  and the probe have no boundary visible from outside at all. Each phase
+   *  fires at most once, and only if the call reaches it. */
+  onPhase?: (p: { phase: RepairPhase; elapsedMs: number }) => void;
 }
 
 export type RepairResult =
@@ -172,6 +192,7 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
 
   // 1. A board that already verifies is answered WITHOUT loading the WASM.
   const pre = validateAssignments(proposal, config, existing, dependencies);
+  input.onPhase?.({ phase: "precheck", elapsedMs: elapsed() });
   if (pre.length === 0) {
     return {
       status: "clean",
@@ -189,6 +210,7 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
   if (overBudget()) return timeout(0);
   const { Z3 } = await loadZ3();
   const solver = new Z3.Solver();
+  input.onPhase?.({ phase: "z3_ready", elapsedMs: elapsed() });
 
   const domainInput = { proposal, existing, config };
   const domains = buildDomains(domainInput);
@@ -208,6 +230,7 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
   const proposalById = new Map(proposal.map((a) => [a.fixtureId, a]));
   const boardById = new Map([...existing, ...proposal].map((a) => [a.fixtureId, a]));
   const courtIndex = new Map(courts.map((c, i) => [c, i]));
+  input.onPhase?.({ phase: "domains", elapsedMs: elapsed() });
 
   const idx = new Map(domains.map((d, i) => [d.fixtureId, i]));
   const start = domains.map((_, i) => Z3.Int.const(`s_${i}`));
@@ -513,6 +536,8 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
   }
 
   // --- search ---------------------------------------------------------------
+  input.onPhase?.({ phase: "encoded", elapsedMs: elapsed() });
+
   type CheckOutcome = "sat" | "unsat" | "budget";
   const check = async (assumptions: readonly Bool<"repair">[]): Promise<CheckOutcome> => {
     const remaining = budgetMs - elapsed();
