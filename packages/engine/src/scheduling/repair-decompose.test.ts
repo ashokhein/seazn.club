@@ -33,6 +33,14 @@ const SOLVE_TIMEOUT = 120_000;
 // samples cost under 100 ms at full speed. 1 on a box as fast as the reference,
 // so nothing here moves on a quiet machine.
 const LOAD = measureLoadFactor();
+// `scale` is genuinely unused, and that looks like the bug rather than the
+// dead code: repair-scale.test.ts carries these same two lines and then does
+// `const TEST_TIMEOUT = scale(120_000)`, whereas SOLVE_TIMEOUT above is a flat
+// 120_000. So this file measures host load and then ignores it, which is
+// exactly the contention the suite is known to be sensitive to under a full
+// serial run. Wiring it up changes when these tests time out, so it is left
+// for whoever owns that call rather than done as a drive-by in a lint sweep.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const scale = (ms: number): number => scaleForLoad(ms, LOAD);
 
 afterAll(async () => {
