@@ -15,6 +15,7 @@ import {
   repairDecomposed,
   type RepairComponentReport,
 } from "./repair-decompose.ts";
+import { disjointConflictBound } from "./repair-minimality.ts";
 import { singleComponentBoard } from "./repair-synthetic-board.ts";
 import { RepairVerificationError } from "./repair.ts";
 import { resetZ3, z3LoadCount } from "./z3-load.ts";
@@ -477,4 +478,76 @@ describe("the max_fixtures_per_day guard", () => {
       ).resolves.not.toBeInstanceOf(RepairVerificationError);
     }
   }, SOLVE_TIMEOUT);
+});
+
+describe("disjointConflictBound", () => {
+  // The certificate on its own, without a solver in the way. What it must never
+  // do is over-count: a bound larger than the true minimum turns an honest
+  // "upper_bound" into a false "proved", which is the only way this file can
+  // lie.
+  it("counts one move per clash when the clashes share no fixture", () => {
+    const { proposal, config } = clashBoard(2);
+    const bound = disjointConflictBound({
+      proposal,
+      config,
+      conflicts: validateAssignments(proposal, config),
+    });
+    expect(bound.lowerBound).toBe(2);
+    expect(bound.witnesses.map((w) => [...w.fixtureIds])).toEqual([
+      ["g0a", "g0b"],
+      ["g1a", "g1b"],
+    ]);
+    expect(bound.unattributed).toBe(0);
+  });
+
+  it("never counts one card twice, even when it is in several conflicts", () => {
+    // Three cards on one court at one time. Six conflict rows, three pairs, and
+    // every pair shares a fixture with both others — so the disjoint set holds
+    // exactly one. Two moves are actually needed here, which is the point: this
+    // is a LOWER bound, and a weak lower bound is honest where an inflated one
+    // would certify a repair that moved one card too many.
+    const proposal = [
+      at("a", "C1", 0, ["e1", "e2"]),
+      at("b", "C1", 0, ["e3", "e4"]),
+      at("c", "C1", 0, ["e5", "e6"]),
+    ];
+    const config = cfg();
+    expect(validateAssignments(proposal, config).length).toBeGreaterThan(1);
+    expect(disjointConflictBound({ proposal, config, conflicts: validateAssignments(proposal, config) }).lowerBound).toBe(1);
+  });
+
+  it("still counts a clash whose counterparty cannot be moved", () => {
+    const movable = [at("a", "C1", 0, ["e1", "e2"])];
+    const immovable = [at("z", "C1", 0, ["e3", "e4"])];
+    const config = cfg();
+    const bound = disjointConflictBound({
+      proposal: movable,
+      existing: immovable,
+      config,
+      conflicts: validateAssignments(movable, config, immovable),
+    });
+    // One move, and it has to be `a` — the witness names only what can move.
+    expect(bound.lowerBound).toBe(1);
+    expect(bound.witnesses[0]?.fixtureIds).toEqual(["a"]);
+  });
+
+  it("proves nothing from a per-day cap, and says how many rows it could not use", () => {
+    // A cap row names one card and its detail carries the whole DAY's total, so
+    // no one- or two-card sub-board reproduces it. Left out of the bound rather
+    // than guessed at: three cards on a day are not three independent moves.
+    const proposal = [
+      at("a", "C1", 0, ["e1", "e2"]),
+      at("b", "C1", 540, ["e3", "e4"]),
+      at("c", "C1", 590, ["e5", "e6"]),
+    ];
+    const config = cfg({
+      hard: [{ type: "max_fixtures_per_day", count: 2, scope: { kind: "competition" } }],
+      ruleFixtures: ["a", "b", "c"].map((id) => ({ id, extKey: null, winnerTo: null })),
+    });
+    const conflicts = validateAssignments(proposal, config);
+    expect(conflicts).toHaveLength(3);
+    const bound = disjointConflictBound({ proposal, config, conflicts });
+    expect(bound.lowerBound).toBe(0);
+    expect(bound.unattributed).toBe(3);
+  });
 });

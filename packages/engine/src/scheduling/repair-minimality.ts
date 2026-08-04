@@ -154,6 +154,12 @@ export function disjointConflictBound(input: MinimalityBoundInput): MinimalityBo
   // may collect several neighbours — `rest` rows do not name their counterparty,
   // so one key can stand for two breaches — and a SUPERSET of the true witness
   // is safe: it can only make disjointness harder to satisfy.
+  //
+  // A SUBSET would not be safe, which is why the self keys are subtracted rather
+  // than merged: a conflict the fixture produces ALONE is caused by its own
+  // placement and nothing else on the board can clear it, so `{a}` there is
+  // exact, not a subset. Only conflicts that need a second card get a second
+  // fixture in their witness.
   const witnessByKey = new Map<string, Set<string>>();
   const add = (key: string, ids: readonly string[]): void => {
     const set = witnessByKey.get(key);
