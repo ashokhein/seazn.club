@@ -303,22 +303,29 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
   const start = domains.map((_, i) => Z3.Int.const(`s_${i}`));
   const courtVar = domains.map((_, i) => Z3.Int.const(`c_${i}`));
   const movedVar = domains.map((_, i) => Z3.Bool.const(`m_${i}`));
-  // The minutes a fixture is PACKED with, which must cover its real span on
-  // both the placements it can take:
+  // The minutes a fixture is PACKED with. A fixture has TWO extents, because it
+  // has two possible placements and they do not round the same way:
   //
-  //   * moved — `s` is a grid minute and the emitted start is exactly
-  //     `s * MS_PER_MIN`, so `ceilMin(durationMs)` covers it;
-  //   * unmoved — `s` is `origStartMin`, a FLOOR, and the emitted start is the
-  //     original instant to the millisecond (see the `still` branch at the end
-  //     of the solve). The fraction the floor dropped off the head reappears at
-  //     the tail, so 10:00:20 + 30 min needs 31 minutes, not 30.
+  //   * MOVED — the emitted start is exactly `s * MS_PER_MIN` (see the `still`
+  //     branch at the end of the solve), so `ceilMin(durationMs)` is its true
+  //     extent and nothing more is owed;
+  //   * UNMOVED — `s` is `origStartMin`, a FLOOR, and the emitted start is the
+  //     original instant to the millisecond. The fraction the floor dropped off
+  //     the head reappears at the tail, so 10:00:20 + 30 min needs 31 minutes.
   //
-  // One number for both, because `durMin` is also the extent every pair, court
-  // and feed constraint measures; the max costs at most one minute of solution
-  // space and only for a fixture that was off the minute to begin with.
-  const durMinHi = domains.map((d) =>
-    Math.max(ceilMin(d.durationMs), ceilMin(d.origStartAt + d.durationMs) - floorMin(d.origStartAt)),
-  );
+  // Charging the unmoved extent to BOTH used to look like a minute of harmless
+  // slack. It is not: a fixture that has already been snapped to the grid can
+  // never spend it down, so back-to-back cards read as clashing, a board needs
+  // two moves where one is minimal, and a saturated court (24 x 31 min against a
+  // 720-minute window) comes back `infeasible` while being perfectly repairable.
+  // `court` is a blocking family, so that `infeasible` is final.
+  const durMinMoved = domains.map((d) => ceilMin(d.durationMs));
+  const durMinStill = domains.map((d) => ceilMin(d.origStartAt + d.durationMs) - floorMin(d.origStartAt));
+  // Always 0 or 1, and 0 for every fixture that begins on a whole minute — which
+  // is what keeps the encoding of an on-the-minute board byte-identical to the
+  // one before any of this existed. `Math.max(ceilMin(dur), ...)` used to guard
+  // this and was dead: `ceil(f + d) >= ceil(d)` for `f >= 0`, always.
+  const stillExtra = domains.map((_, i) => durMinStill[i]! - durMinMoved[i]!);
   // The other direction, for the ONE place a fixture's end is the smaller side
   // of a comparison rather than an occupancy: the min_rest escape clause below.
   const durMinLo = domains.map((d) => floorMin(d.durationMs));
@@ -328,7 +335,7 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
   // `not_before 09:00` bound of `ceilMin(09:00)`, or a 23:59:40 start claim the
   // NEXT day's cap literal while `dayKeyInTz` counts it on the day before.
   // Flooring keeps k=0 representable without making an illegal original look
-  // legal, and `durMinHi` above pays for the head the floor gives away.
+  // legal, and `durMinStill` above pays for the head the floor gives away.
   const origStartMin = domains.map((d) => floorMin(d.origStartAt));
   // How far a movable's REAL start can sit ABOVE its encoded `s`: one minute
   // when the original is off the minute (the unmoved escape re-emits it
@@ -337,6 +344,40 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
     floorMin(d.origStartAt) * MS_PER_MIN === d.origStartAt ? 0 : 1,
   );
   const origCourtIdx = domains.map((d) => courtIndex.get(d.origCourt) ?? 0);
+
+  /**
+   * `start + duration + r` for fixture `i`, charging the unmoved extent ONLY on
+   * the branch where the fixture is actually unmoved.
+   *
+   * `movedVar[i]` is `s != origStartMin || court != origCourt` (asserted below),
+   * which is exactly the condition under which the emitted instant is
+   * `s * MS_PER_MIN` rather than the original. So the `If` is not an
+   * approximation of the still case — it IS the still case.
+   *
+   * For a fixture that starts on a whole minute `stillExtra` is 0 and this
+   * builds the same single constant term it always did: no `If`, no extra node,
+   * nothing for z3 to propagate.
+   */
+  const endOf = (i: number, r: number): Arith<"repair"> =>
+    stillExtra[i] === 0
+      ? start[i]!.add(durMinMoved[i]! + r)
+      : start[i]!
+          .add(Z3.If(movedVar[i]!, Z3.Int.val(durMinMoved[i]!), Z3.Int.val(durMinStill[i]!)))
+          .add(r);
+  /** The fixture is exactly where it began — same minute, same court. */
+  const isStill = (i: number): Bool<"repair"> => Z3.Not(movedVar[i]!);
+  /**
+   * The LATEST minute fixture `i` can really start, which is `s` itself unless
+   * the unmoved escape is taken and the emitted instant is the off-minute
+   * original. Gated on `movedVar` for the same reason as `endOf`: a card that
+   * has been snapped to the grid starts exactly on `s` and owes no slack, and
+   * charging it anyway costs a whole minute of a bound it can never win back —
+   * enough to refuse the only hole a card actually fits in.
+   */
+  const startHiOf = (i: number): Arith<"repair"> =>
+    startSlackMin[i] === 0
+      ? start[i]!
+      : start[i]!.add(Z3.If(movedVar[i]!, Z3.Int.val(0), Z3.Int.val(startSlackMin[i]!)));
 
   const fam = Object.fromEntries(
     REPAIR_FAMILIES.map((f) => [f, Z3.Bool.const(famLiteralName(f))]),
@@ -347,10 +388,41 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
 
   const TRUE = Z3.And();
   const FALSE = Z3.Or();
-  const inRuns = (x: Arith<"repair">, runs: readonly { from: number; to: number }[]): Bool<"repair"> =>
-    runs.length === 0
-      ? FALSE
-      : Z3.Or(...runs.map((r) => Z3.And(x.ge(ceilMin(r.from)), x.le(floorMin(r.to)))));
+  /**
+   * "Fixture `i` starts inside one of these legal runs."
+   *
+   * `runs` are legal START instants in milliseconds, already narrowed by the
+   * fixture's own duration (`repair-domain.ts`), so BOTH ends of each run bound
+   * the start — `ge` from below and `le` from ABOVE. The upper half is why this
+   * takes an index rather than a bare term: on the unmoved escape the real start
+   * sits up to a minute above `s`, and `s <= floorMin(r.to)` was letting a card
+   * that really runs 40 seconds past the pack window sit there and be called
+   * clean. `window`, `instruction`, `start_window` and `blackout` all bound a
+   * start from above, so all four were exposed; the day-cap literal is the one
+   * upper bound that is safe untouched, because a day boundary is always on a
+   * minute.
+   *
+   * `- slack` is safe but not tight, so the ORIGINAL placement is added back as
+   * an escape whenever it is really inside a run and the grid form alone would
+   * refuse it. That fact is exact — the original instant is known to the
+   * millisecond — and it is the same reasoning that keeps k=0 representable.
+   */
+  const inRuns = (i: number, runs: readonly { from: number; to: number }[]): Bool<"repair"> => {
+    if (runs.length === 0) return FALSE;
+    const slack = startSlackMin[i]!;
+    const lo = start[i]!;
+    const hi = startHiOf(i);
+    const grid = Z3.Or(
+      ...runs.map((r) => Z3.And(lo.ge(ceilMin(r.from)), hi.le(floorMin(r.to)))),
+    );
+    if (slack === 0) return grid;
+    const orig = domains[i]!.origStartAt;
+    const reallyInside = runs.some((r) => orig >= r.from && orig <= r.to);
+    const gridAdmits = runs.some(
+      (r) => origStartMin[i]! >= ceilMin(r.from) && origStartMin[i]! + slack <= floorMin(r.to),
+    );
+    return reallyInside && !gridAdmits ? Z3.Or(grid, isStill(i)) : grid;
+  };
 
   // --- per-fixture structure ------------------------------------------------
   for (let i = 0; i < domains.length; i++) {
@@ -383,12 +455,12 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
 
     for (const family of ["window", "instruction", "start_window"] as const) {
       const runs = d.byFamily[family];
-      if (runs !== undefined) assume(family, inRuns(s, runs));
+      if (runs !== undefined) assume(family, inRuns(i, runs));
     }
     if (d.byFamily.blackout !== undefined) {
       for (const c of courts) {
         const ci = courtIndex.get(c)!;
-        assume("blackout", Z3.Implies(courtVar[i]!.eq(ci), inRuns(s, d.courtIntervals[c] ?? [])));
+        assume("blackout", Z3.Implies(courtVar[i]!.eq(ci), inRuns(i, d.courtIntervals[c] ?? [])));
       }
     }
 
@@ -426,11 +498,25 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
     const [i, j] = pairs[p]!;
     const ai = proposalById.get(domains[i]!.fixtureId)!;
     const aj = proposalById.get(domains[j]!.fixtureId)!;
-    const sep = (r: number): Bool<"repair"> =>
-      Z3.Or(
-        start[i]!.ge(start[j]!.add(durMinHi[j]! + r)),
-        start[j]!.ge(start[i]!.add(durMinHi[i]! + r)),
-      );
+    // A minute grid cannot say "10:30:20", so a pair that really abuts — A ends
+    // 10:30:20, B starts 10:30:20, which `validateAssignments` accepts — reads
+    // as a clash once A's unmoved extent is charged against B's floored start.
+    // The board then needs two moves where one is minimal, and a court packed
+    // with off-minute cards reads as one long chain of clashes.
+    //
+    // So the ORIGINAL relationship is added back where the grid alone would
+    // refuse it. It is an exact fact, not a relaxation: `bothStill` pins both
+    // fixtures to the instants that were measured in milliseconds here.
+    const bothStill = (): Bool<"repair"> => Z3.And(isStill(i), isStill(j));
+    const msApart = (r: number): boolean =>
+      ai.startAt - aj.endAt >= r * MS_PER_MIN || aj.startAt - ai.endAt >= r * MS_PER_MIN;
+    const gridApart = (r: number): boolean =>
+      origStartMin[i]! >= origStartMin[j]! + durMinStill[j]! + r ||
+      origStartMin[j]! >= origStartMin[i]! + durMinStill[i]! + r;
+    const sep = (r: number): Bool<"repair"> => {
+      const grid = Z3.Or(start[i]!.ge(endOf(j, r)), start[j]!.ge(endOf(i, r)));
+      return msApart(r) && !gridApart(r) ? Z3.Or(grid, bothStill()) : grid;
+    };
     assume("court", Z3.Implies(courtVar[i]!.eq(courtVar[j]!), sep(gapMin)));
     if (sharesParticipant(ai, aj)) {
       // Overlap is blocking and rest is not, so they are asserted under
@@ -476,12 +562,27 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
       if (
         spanFrom !== null &&
         spanTo !== null &&
-        (spanFrom >= eEnd + reach || spanTo + durMinHi[i]! + reach <= eStart)
+        // The PRUNE takes the larger extent deliberately: pruning less is safe,
+        // pruning more drops a constraint.
+        (spanFrom >= eEnd + reach || spanTo + durMinStill[i]! + reach <= eStart)
       ) {
         continue;
       }
-      const clear = (r: number): Bool<"repair"> =>
-        Z3.Or(start[i]!.ge(eEnd + r), start[i]!.le(eStart - durMinHi[i]! - r));
+      // Same exact-fact escape as the movable pair above, with only one side
+      // free to move: an immovable is always where it says it is.
+      const msClear = (r: number): boolean =>
+        ai.startAt - e.endAt >= r * MS_PER_MIN || e.startAt - ai.endAt >= r * MS_PER_MIN;
+      const gridClear = (r: number): boolean =>
+        origStartMin[i]! >= eEnd + r || origStartMin[i]! + durMinStill[i]! + r <= eStart;
+      const clear = (r: number): Bool<"repair"> => {
+        const grid = Z3.Or(
+          start[i]!.ge(eEnd + r),
+          stillExtra[i] === 0
+            ? start[i]!.le(eStart - durMinMoved[i]! - r)
+            : endOf(i, r).le(eStart),
+        );
+        return msClear(r) && !gridClear(r) ? Z3.Or(grid, isStill(i)) : grid;
+      };
       const ci = courtIndex.get(e.court);
       if (ci !== undefined) assume("court", Z3.Implies(courtVar[i]!.eq(ci), clear(gapMin)));
       if (sharesParticipant(ai, e)) {
@@ -509,8 +610,9 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
   const startHi = (id: string): Arith<"repair"> | number => {
     const i = idx.get(id);
     // A movable's real start is `s` exactly, except on the unmoved escape, where
-    // it can be up to a minute later — `startSlackMin` is that minute.
-    return i !== undefined ? start[i]!.add(startSlackMin[i]!) : ceilMin(boardById.get(id)!.startAt);
+    // it can be up to a minute later — `startHiOf` is that minute, charged only
+    // on the branch that actually takes the escape.
+    return i !== undefined ? startHiOf(i) : ceilMin(boardById.get(id)!.startAt);
   };
   const endLo = (id: string): Arith<"repair"> | number => {
     const i = idx.get(id);
@@ -518,7 +620,7 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
   };
   const endHi = (id: string): Arith<"repair"> | number => {
     const i = idx.get(id);
-    return i !== undefined ? start[i]!.add(durMinHi[i]!) : ceilMin(boardById.get(id)!.endAt);
+    return i !== undefined ? endOf(i, 0) : ceilMin(boardById.get(id)!.endAt);
   };
   const plus = (x: Arith<"repair"> | number, n: number): Arith<"repair"> | number =>
     typeof x === "number" ? x + n : x.add(n);
@@ -777,14 +879,25 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
         // millisecond. Round-tripping it through minutes would rewrite a board
         // the organiser may already have published.
         //
-        // This is the one place the board leaves the minute grid, and it is why
-        // `origStartMin` floors and `durMinHi` carries the leftover fraction:
-        // the interval z3 reasoned about, `[origStartMin, origStartMin +
-        // durMinHi]`, has to contain the instants emitted here, or a card the
-        // solver proved clear of an obstacle re-enters it on the way out. The
-        // remaining asymmetry — a still fixture's real start sitting above its
-        // encoded `s` — is what `startSlackMin` pays for at the one site that
-        // uses a start as an upper bound.
+        // This is the one place the board leaves the minute grid, and it is what
+        // every rounding decision above is written against. Three consequences,
+        // and missing any one of them ships a clash:
+        //
+        //   * the TAIL — `origStartMin` floors, so the interval z3 reasoned
+        //     about must be `[origStartMin, origStartMin + durMinStill]` to
+        //     contain what is emitted here. `durMinStill` is charged only on
+        //     this branch (`endOf`), because a fixture that DID move is exactly
+        //     on the grid and paying for a fraction it no longer has is
+        //     over-constraint it can never spend down.
+        //   * the HEAD — the real start sits up to a minute ABOVE `s`, so every
+        //     site that bounds a start from ABOVE owes `startSlackMin`: the four
+        //     families in `inRuns` and `startHi` in the feed-order expressions.
+        //     The day-cap literal is the one upper bound that does not, because
+        //     a day boundary is always on a minute.
+        //   * the SLACK ITSELF is not free — it refuses placements that are
+        //     really legal. Where the original placement is known to be legal in
+        //     milliseconds, it is added back as an explicit escape (`isStill`)
+        //     rather than left as a lost minute.
         const startAt = still ? a.startAt : startMin * MS_PER_MIN;
         solved.set(d.fixtureId, {
           ...a,

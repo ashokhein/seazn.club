@@ -307,6 +307,189 @@ describe("repair encodes sub-minute instants conservatively", () => {
   );
 
   it(
+    "refuses an off-minute original that really runs PAST the pack window",
+    async () => {
+      // `inRuns` bounds a start from ABOVE as well as below — the runs are legal
+      // START instants already narrowed by the fixture's own duration, so
+      // `window.to = 20:00` with a 40-minute card gives a run ending 19:20:00.
+      //
+      // `floorMin(19:20:40)` is that same 19:20 minute, so the unmoved escape
+      // sat exactly on the bound and the encoder called a card that really runs
+      // to 20:00:40 legal. Through `repairSchedule` — which is what both web
+      // runners reach — that came back `repaired`, 40 seconds past the window,
+      // with nothing thrown.
+      const movable = card("m1", t("2026-08-10T19:20:40Z"), 40 * MIN, "C1", "e-move");
+      await expectMovedAndClean({ proposal: [movable], config: config(["C1"]), movedId: "m1" });
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "refuses an off-minute original that really runs INTO a blackout",
+    async () => {
+      // The same upper bound, reached through the fourth family. `blackout` runs
+      // are per-court and subtract `bo.from - durationMs + 1`, so a 30-minute
+      // card in front of a 12:00 blackout may start no later than 11:30:00.000 —
+      // and `floorMin(11:30:40)` is 11:30.
+      const cfg: VerifyConfig & { courts: readonly string[] } = {
+        ...config(["C1"]),
+        blackouts: [{ from: t("2026-08-10T12:00:00Z"), to: t("2026-08-10T13:00:00Z") }],
+      };
+      const movable = card("m1", t("2026-08-10T11:30:40Z"), 30 * MIN, "C1", "e-move");
+      await expectMovedAndClean({ proposal: [movable], config: cfg, movedId: "m1" });
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "leaves an off-minute original alone when it is really LEGAL under not_after",
+    async () => {
+      // The other half of the same bound, and the reason it is not simply
+      // `- 1 minute` everywhere. `hhmmInTz` truncates, so `not_after 19:00`
+      // legitimately admits the whole 19:00 minute and a start at 19:00:40 is
+      // LEGAL. Subtracting the slack alone would refuse it and move a card the
+      // organiser placed correctly, so the original placement is added back as
+      // an exact escape wherever it is really inside a run.
+      const cfg: VerifyConfig & { courts: readonly string[] } = {
+        ...config(["C1"]),
+        ruleFixtures: [
+          { id: "clashing", extKey: "clashing", winnerTo: null },
+          { id: "late", extKey: "late", winnerTo: null },
+        ],
+        hard: [{ type: "not_after", time: "19:00", scope: { kind: "competition" } }],
+      };
+      const obstacle = card("fixed", t("2026-08-10T15:00:00Z"), 40 * MIN, "C1", "e-fixed");
+      const clashing = card("clashing", t("2026-08-10T15:00:00Z"), 40 * MIN, "C1", "e-clash");
+      const late = card("late", t("2026-08-10T19:00:40Z"), 40 * MIN, "C1", "e-late");
+      const proposal = [clashing, late];
+      expect(validateAssignments(proposal, cfg, [obstacle])).not.toEqual([]);
+
+      const r = await repairAndVerify({
+        proposal,
+        existing: [obstacle],
+        config: cfg,
+        budgetMs: 60_000,
+      });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      // ONE move, and it is the card that was actually double-booked. `late`
+      // keeps its instant, seconds and all.
+      expect(r.moved).toEqual(["clashing"]);
+      const byId = new Map(r.assignments.map((a) => [a.fixtureId, a]));
+      expect(byId.get("late")!.startAt).toBe(t("2026-08-10T19:00:40Z"));
+      expect(validateAssignments(r.assignments, cfg, [obstacle])).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "does not charge an unmoved card's extra minute to cards that really abut it",
+    async () => {
+      // Minimality, which is the property this wave exists to deliver.
+      //
+      // A ends 10:30:20 and B starts 10:30:20: `validateAssignments` lets
+      // intervals touch, so the pair is legal exactly where it stands. On the
+      // minute grid A is charged 31 minutes from 10:00 and B floors to 10:30, so
+      // `30 >= 31` is false and the encoder invents a clash between two cards
+      // that have none — turning a one-move board into a two-move board, and a
+      // saturated court into a spurious `infeasible`.
+      //
+      // Only C is really in the way, so the minimal repair is to move C.
+      const a = card("a", t("2026-08-10T10:00:20Z"), 30 * MIN, "C1", "e-a");
+      const b = card("b", t("2026-08-10T10:30:20Z"), 30 * MIN, "C1", "e-b");
+      const c = card("c", t("2026-08-10T10:15:00Z"), 30 * MIN, "C1", "e-c");
+      const cfg = config(["C1"]);
+      expect(validateAssignments([a, b, c], cfg)).not.toEqual([]);
+      // The pair the encoder used to break is REALLY clean on its own.
+      expect(validateAssignments([a, b], cfg)).toEqual([]);
+
+      const r = await repairAndVerify({ proposal: [a, b, c], config: cfg, budgetMs: 60_000 });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      expect(r.k).toBe(1);
+      expect(r.moved).toEqual(["c"]);
+      // And the two that stayed keep their instants to the millisecond.
+      const byId = new Map(r.assignments.map((x) => [x.fixtureId, x]));
+      expect(byId.get("a")!.startAt).toBe(t("2026-08-10T10:00:20Z"));
+      expect(byId.get("b")!.startAt).toBe(t("2026-08-10T10:30:20Z"));
+      expect(validateAssignments(r.assignments, cfg)).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "fits a MOVED off-minute card into a hole exactly its own length",
+    async () => {
+      // The other half of "charge the still extent only when still". Both the
+      // head slack and the tail minute are owed by the UNMOVED escape and by
+      // nothing else, so a card that has been snapped to the grid must be
+      // measured at exactly `ceilMin(duration)` from exactly `s`.
+      //
+      // The window runs 09:00-11:00 and obstacles hold 09:00-10:30 and
+      // 11:00-12:00, so the only legal placement is 10:30-11:00 — a hole exactly
+      // 30 minutes wide. A card charged 31 minutes, or pushed a minute earlier
+      // by a slack it no longer owes, does not fit, and `court` is blocking, so
+      // the answer is a final `infeasible` on a board with an obvious repair.
+      const cfg: VerifyConfig & { courts: readonly string[] } = {
+        ...config(["C1"]),
+        window: { from: t("2026-08-10T09:00:00Z"), to: t("2026-08-10T11:00:00Z") },
+      };
+      const before = card("o1", t("2026-08-10T09:00:00Z"), 90 * MIN, "C1", "e-o1");
+      const after = card("o2", t("2026-08-10T11:00:00Z"), 60 * MIN, "C1", "e-o2");
+      const movable = card("m1", t("2026-08-10T09:00:20Z"), 30 * MIN, "C1", "e-move");
+      const existing = [before, after];
+      expect(validateAssignments([movable], cfg, existing)).not.toEqual([]);
+
+      const r = await repairAndVerify({
+        proposal: [movable],
+        existing,
+        config: cfg,
+        budgetMs: 60_000,
+      });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      expect(r.assignments[0]!.startAt).toBe(t("2026-08-10T10:30:00Z"));
+      expect(validateAssignments(r.assignments, cfg, existing)).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "does not charge an unmoved card's extra minute against an IMMOVABLE it really abuts",
+    async () => {
+      // The movable-versus-immovable form of the same minimality trap. `a` really
+      // starts the instant the obstacle ends, which `validateAssignments`
+      // accepts, but on the grid the obstacle's end ceils to 10:31 while `a`'s
+      // start floors to 10:30. Without the original placement added back as an
+      // exact fact, `a` is dragged off a slot it was entitled to keep.
+      const obstacle = card("fixed", t("2026-08-10T10:00:20Z"), 30 * MIN, "C1", "e-fixed");
+      const blocker = card("p", t("2026-08-10T09:00:00Z"), 40 * MIN, "C2", "e-p");
+      const a = card("a", t("2026-08-10T10:30:20Z"), 30 * MIN, "C1", "e-a");
+      const b = card("b", t("2026-08-10T09:00:00Z"), 40 * MIN, "C2", "e-b");
+      const cfg = config(["C1", "C2"]);
+      const existing = [obstacle, blocker];
+      // `a` against the obstacle is clean on its own; only `b` is really in
+      // anyone's way.
+      expect(validateAssignments([a], cfg, [obstacle])).toEqual([]);
+      expect(validateAssignments([a, b], cfg, existing)).not.toEqual([]);
+
+      const r = await repairAndVerify({
+        proposal: [a, b],
+        existing,
+        config: cfg,
+        budgetMs: 60_000,
+      });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      expect(r.moved).toEqual(["b"]);
+      const byId = new Map(r.assignments.map((x) => [x.fixtureId, x]));
+      expect(byId.get("a")!.startAt).toBe(t("2026-08-10T10:30:20Z"));
+      expect(validateAssignments(r.assignments, cfg, existing)).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
     "will not let a min_rest feeder rule ESCAPE on rounding — the escape clause rounds the other way",
     async () => {
       // `Or(start_dd < end_f, start_dd >= end_f + minutes)`. The first disjunct
@@ -385,7 +568,13 @@ describe("a whole board with nothing on the minute", () => {
         config: board.config,
         budgetMs: 60_000,
       });
-      expect(["clean", "repaired", "infeasible", "timeout"]).toContain(r.status);
+      // NOT the full status union: `repairAndVerify` returns early for anything
+      // other than `repaired`/`clean` and never re-runs the verifier, so an
+      // `infeasible` or a `timeout` would pass this test having checked nothing.
+      // Over-constraint makes `infeasible` a live outcome for exactly the
+      // all-off-minute boards this probe builds, which is the shape it would
+      // have quietly stopped covering.
+      expect(["clean", "repaired"]).toContain(r.status);
     },
     SOLVE_TIMEOUT,
   );
