@@ -25,7 +25,7 @@ import {
   type OrderDependency,
   type VerifyConfig,
 } from "./calendar.ts";
-import { repairAndVerify } from "./repair.ts";
+import { repairAndVerify, repairSchedule } from "./repair.ts";
 import { at, BASE_CONFIG, STEP_RULE_FIXTURES } from "./payload-fixtures.ts";
 import { syntheticBoard } from "./repair-synthetic-board.ts";
 import { dayKeyInTz } from "./tz.ts";
@@ -612,6 +612,54 @@ describe("repair encodes sub-minute instants conservatively", () => {
   );
 
   it(
+    "still refuses a feed edge when the fixture CANNOT stay where the escape assumes",
+    async () => {
+      // The escape's own antecedent, which nothing else in this file can see
+      // fail. Every other test here proves the escape FIRES when it should;
+      // this one proves it stops applying the moment its premise stops holding.
+      //
+      // `bothAtOrigin` says "…and every movable end is still exactly where it
+      // began". Drop that and the escape becomes an unconditional TRUE: the
+      // `order` family is satisfied no matter where the solver puts the card,
+      // and a board with no legal answer comes back `repaired` carrying a
+      // blocking `order` conflict.
+      //
+      // `t`'s only hole inside the window is the morning — BEFORE its feeder
+      // ends — so the honest answer is that there is nowhere to put it.
+      const source = card("s", t("2026-08-10T09:00:20Z"), 40 * MIN, "C1", "e-s");
+      const fill1 = card("b1", t("2026-08-10T09:40:20Z"), 80 * MIN, "C1", "e-b1");
+      const fill2 = card("b2", t("2026-08-10T09:00:00Z"), 120 * MIN, "C2", "e-b2");
+      const target = card("t", t("2026-08-10T09:40:20Z"), 40 * MIN, "C2", "e-t");
+      const cfg: VerifyConfig & { courts: readonly string[] } = {
+        ...config(["C1", "C2"]),
+        window: { from: t("2026-08-10T08:00:00Z"), to: t("2026-08-10T11:00:00Z") },
+      };
+      const existing = [source, fill1, fill2];
+      const dependencies: OrderDependency[] = [
+        { fixtureId: "t", dependsOn: "s", direct: true },
+      ];
+      // The board really is dirty, and only on the court.
+      expect(
+        validateAssignments([target], cfg, existing, dependencies).map((c) => c.reason),
+      ).toEqual(["court"]);
+
+      const r = await repairSchedule({
+        proposal: [target],
+        existing,
+        dependencies,
+        config: cfg,
+        budgetMs: 60_000,
+      });
+      // `infeasible` is the RIGHT answer here, and it is the assertion: a
+      // `repaired` board would be one the verifier rejects.
+      expect(r.status).toBe("infeasible");
+      if (r.status !== "infeasible") return;
+      expect(r.families).toContain("order");
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
     "will not let a min_rest feeder rule ESCAPE on rounding — the escape clause rounds the other way",
     async () => {
       // `Or(start_dd < end_f, start_dd >= end_f + minutes)`. The first disjunct
@@ -673,7 +721,7 @@ describe("repair encodes sub-minute instants conservatively", () => {
 describe("a whole board with nothing on the minute", () => {
   it(
     "survives its own verifier once every start and end carries seconds",
-    async () => {
+    async (ctx) => {
       const board = syntheticBoard({ n: 20, clashEvery: 5 });
       expect(board.clashes).toBeGreaterThan(0);
       const jittered = board.proposal.map((a, i) => ({
@@ -695,13 +743,17 @@ describe("a whole board with nothing on the minute", () => {
       // over-constraint makes `infeasible` a live outcome for exactly the
       // all-off-minute boards this probe builds — so it would pass having
       // checked nothing, on the failure this file exists to catch.
-      //
-      // `timeout` stays admissible. It is a property of the box, not of the
-      // encoding: the solve is serialised process-wide, so a loaded host can
-      // spend the budget queueing. Excluding it makes this test fail for a
-      // reason it cannot diagnose.
       expect(r.status).not.toBe("infeasible");
-      expect(["clean", "repaired", "timeout"]).toContain(r.status);
+      // `timeout` is not a pass either, for the same reason — it returns before
+      // the verifier too, so a loaded box would quietly turn this file's only
+      // whole-board probe into a no-op exactly when it is slowest. SKIPPED, so
+      // that green always means a board was actually defended.
+      //
+      // Nothing to do with the z3 lock: it is in-process (`z3-load.ts`) and this
+      // file's tests run one at a time under `isolate: false`, so there is no
+      // queue to wait behind. Only host CPU can burn the budget here.
+      if (r.status === "timeout") ctx.skip();
+      expect(["clean", "repaired"]).toContain(r.status);
     },
     SOLVE_TIMEOUT,
   );
