@@ -61,6 +61,7 @@ import {
   planRungs,
   runLadder,
   schedulingAiModel,
+  toRuleFixture,
   unschedulableRule,
   windowBounds,
   zonedIso,
@@ -1351,13 +1352,12 @@ export function verifyConfigFor(
  */
 export function jointSolverConfig(pack: CompetitionPack): VerifyConfig & { courts: string[] } {
   const divisions = pack.divisions;
-  const ruleFixtures: RuleFixture[] = pack.fixtures.movable.map((f) => ({
-    id: f.id,
-    extKey: f.ext_key,
-    divisionId: f.division_id,
-    ...(f.pool !== null ? { poolId: f.pool } : {}),
-    winnerTo: f.feeds.winner_to,
-  }));
+  // Built by the shared producer, not a literal of its own (#443) — see
+  // `toRuleFixture`. Each fixture's OWN division, because a joint pack spans
+  // several.
+  const ruleFixtures: RuleFixture[] = pack.fixtures.movable.map((f) =>
+    toRuleFixture(f, f.division_id),
+  );
   const settings = divisions.map((d) => d.settings);
   const max = (pick: (s: (typeof settings)[number]) => number): number =>
     settings.reduce((acc, s) => Math.max(acc, pick(s)), 0);
@@ -1523,13 +1523,12 @@ export function verifyJoint(plan: AiSchedulePlan, pack: CompetitionPack): Confli
   const restByDivision = Object.fromEntries(
     pack.divisions.map((d) => [d.id, d.settings.perEntrantMinRest]),
   );
-  const ruleFixtures: RuleFixture[] = pack.fixtures.movable.map((f) => ({
-    id: f.id,
-    extKey: f.ext_key,
-    divisionId: f.division_id,
-    ...(f.pool !== null ? { poolId: f.pool } : {}),
-    winnerTo: f.feeds.winner_to,
-  }));
+  // Same shared producer as `jointSolverConfig` (#443): the verifier and the
+  // solver must be handed rule fixtures built by ONE piece of code, or they can
+  // disagree about which fixture a feed edge names.
+  const ruleFixtures: RuleFixture[] = pack.fixtures.movable.map((f) =>
+    toRuleFixture(f, f.division_id),
+  );
   const hard: HardConstraint[] = [
     ...pack.parsed.hard,
     ...pack.divisions.flatMap((d) => d.settings.constraints?.hard ?? []),

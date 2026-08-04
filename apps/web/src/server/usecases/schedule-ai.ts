@@ -1477,17 +1477,43 @@ function toObstacleAssignments(pack: SchedulePack): Assignment[] {
   }));
 }
 
+/**
+ * THE one place a `RuleFixture` is built — for the single-division pack here and
+ * for both joint producers in `competition-schedule-ai.ts` (#443).
+ *
+ * It is one function rather than three literals because of what #443 was: two
+ * copies of a join drifted onto a shared wrong assumption, and the second copy
+ * is exactly what made the first invisible. `winnerTo` and `id` must stay in ONE
+ * namespace — `winnerTo` carries `fixtures.winner_to_fixture`, a uuid FK to
+ * `fixtures.id`, and the engine now joins the feed edge on that id. `extKey`
+ * carries `fixtures.ext_key`, nullable text, and is a different namespace with
+ * no converter anywhere.
+ *
+ * A producer that put an ext key in `winnerTo` would type-check — `RuleFixture`
+ * declares both `string | null` — and would fail SILENTLY, because a join that
+ * resolves nothing reports nothing: `min_rest_minutes` would go on compiling and
+ * displaying as enforced while binding nothing at all. One producer means one
+ * thing to guard, and `schedule-ai-repair.test.ts` guards it.
+ *
+ * `divisionId` is a parameter because the two packs source it differently: the
+ * single-division pack takes it from the division it is a pack OF, the joint
+ * pack from each fixture's own `division_id`.
+ */
+export function toRuleFixture(f: PackFixture, divisionId: string): RuleFixture {
+  return {
+    id: f.id,
+    extKey: f.ext_key,
+    divisionId,
+    ...(f.pool !== null ? { poolId: f.pool } : {}),
+    winnerTo: f.feeds.winner_to,
+  };
+}
+
 /** The fixture metadata typed rules need and `Assignment` does not carry (#398).
  *  `winnerTo` is the ONLY definition of terminal — never a round number, which
  *  is a display label an elimination bracket numbers sparsely. */
 export function packRuleFixtures(pack: SchedulePack): RuleFixture[] {
-  return pack.fixtures.movable.map((f) => ({
-    id: f.id,
-    extKey: f.ext_key,
-    divisionId: pack.division.id,
-    ...(f.pool !== null ? { poolId: f.pool } : {}),
-    winnerTo: f.feeds.winner_to,
-  }));
+  return pack.fixtures.movable.map((f) => toRuleFixture(f, pack.division.id));
 }
 
 /** Exported for the same reason the joint twin `verifyConfigFor` is: it is a

@@ -701,10 +701,25 @@ if (tz !== undefined) {
         if (f.winnerTo === null) continue;
         const feeder = placedById.get(f.id);
         if (feeder === undefined) continue;
-        for (const d of ruleFixtures) {
-          // The feed edge, by the same ext_key the bracket is wired with, and
-          // within one division — two divisions can reuse a key like "SF1".
-          if (d.extKey !== f.winnerTo || d.divisionId !== f.divisionId) continue;
+        // THE FEED EDGE IS A FIXTURE ID, NOT AN EXT KEY (#443). `winnerTo`
+        // carries `fixtures.winner_to_fixture` — a uuid FK to `fixtures.id`.
+        // `extKey` carries `fixtures.ext_key`, which is nullable text and lives
+        // in a different namespace entirely; nothing converts one into the
+        // other. This join used to compare them, so on every real payload it
+        // matched ZERO pairs and the whole rule compiled, displayed as enforced,
+        // and bound nothing.
+        //
+        // No division guard either. The old one existed only to disambiguate a
+        // reused generator key like "SF1"; a uuid FK names exactly one fixture
+        // row wherever it sits, so there is nothing left to disambiguate — and
+        // keeping the guard would silently DROP a legitimate cross-division
+        // feed, which is the same binds-nothing failure in a smaller costume.
+        //
+        // `repair.ts` carries this join verbatim: the solver may not hold an
+        // opinion of its own about what a rule means (#401).
+        {
+          const d = fixtureById.get(f.winnerTo);
+          if (d === undefined) continue;
           const dependent = placedById.get(d.id);
           if (dependent === undefined) continue;
           if (!scopeCoversFixture(h.scope, f, feeder) && !scopeCoversFixture(h.scope, d, dependent)) continue;

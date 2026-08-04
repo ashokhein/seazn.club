@@ -526,9 +526,12 @@ describe("scoping", () => {
       expect(withDeps.filter((c) => c.reason === "order")).toHaveLength(1);
     });
 
-    it("does not cross divisions on a reused ext_key", () => {
-      // Two divisions can both wire an "sl-g2-d1"-shaped key; a feed edge is only
-      // an edge within one division's bracket.
+    it("an ext_key that merely EQUALS a winnerTo is not a feed edge (#443)", () => {
+      // Renamed from "does not cross divisions on a reused ext_key": the guard
+      // that used to answer this case was `divisionId`, and it only existed
+      // because the join compared `extKey` against `winnerTo` and two divisions
+      // can both wire a key like "SF1". The join is now on fixture id, so a text
+      // key that happens to read like a `winner_to_fixture` names nothing.
       const crossed: RuleFixture[] = [
         { id: "sl-g1-d1", extKey: "SF1", winnerTo: "F", divisionId: "d1" },
         { id: "sl-g2-d2", extKey: "F", winnerTo: null, divisionId: "d2" },
@@ -554,6 +557,118 @@ describe("scoping", () => {
           }),
         ),
       ).toEqual([]);
+    });
+
+    // --- #443: the feed edge is a FIXTURE ID, not an ext_key ---------------
+    //
+    // `winnerTo` carries `fixtures.winner_to_fixture` — a uuid FK to
+    // `fixtures.id`. `extKey` carries `fixtures.ext_key`, nullable text. The
+    // join used to compare one against the other, so on every real payload it
+    // matched ZERO pairs: this rule compiled, displayed as enforced, and bound
+    // nothing. The encoder carried the same join, which is why `repairAndVerify`
+    // could not see it either.
+    //
+    // Every helper above defaults `extKey = id`, which is exactly what made the
+    // defect invisible. These cases spell both namespaces out and keep them
+    // DELIBERATELY different — a uuid `winnerTo` beside a real, unequal ext key.
+    describe("the feed edge joins on fixture id, not ext_key (#443)", () => {
+      const FEEDER_ID = "0b3f5a7c-1d2e-4f60-8a91-000000000001";
+      const DEP_ID = "0b3f5a7c-1d2e-4f60-8a91-000000000002";
+      const MATCH_MIN = 30;
+
+      /** Two fixtures on their own courts with no shared entrants or people, so
+       *  `court`, `rest` and `person_overlap` can never be mistaken for the
+       *  proof — the instruction rule is the only thing that can speak. */
+      const uuidBoard = (dependentIso: string, depDivision = "d1"): Assignment[] => {
+        const card = (fixtureId: string, iso: string, court: string, divisionId: string): Assignment => ({
+          fixtureId,
+          court,
+          startAt: at(iso),
+          endAt: at(iso) + MATCH_MIN * 60_000,
+          entrants: [],
+          people: [],
+          divisionId,
+        });
+        return [
+          card(FEEDER_ID, "2026-07-24T10:00:00Z", "Court 1", "d1"),
+          card(DEP_ID, dependentIso, "Court 2", depDivision),
+        ];
+      };
+
+      const verifyRf = (b: Assignment[], ruleFixtures: RuleFixture[]): Conflict[] =>
+        instr(
+          validateAssignments(b, {
+            ...BASE_CONFIG,
+            tz: TZ,
+            matchMinutes: MATCH_MIN,
+            hard: [feedRest("feeder_to_dependent")],
+            ruleFixtures,
+          }),
+        );
+
+      it("REJECTS a uuid feed whose dependent carries a DIFFERENT ext key", () => {
+        const rfs: RuleFixture[] = [
+          { id: FEEDER_ID, extKey: "SF1", winnerTo: DEP_ID, divisionId: "d1" },
+          { id: DEP_ID, extKey: "F", winnerTo: null, divisionId: "d1" },
+        ];
+        const found = verifyRf(uuidBoard("2026-07-24T10:50:00Z"), rfs);
+        expect(found.map((c) => c.fixtureId)).toEqual([DEP_ID]);
+        expect(found[0]?.detail).toBe("starts 20 min after its feeder, instruction requires 40");
+      });
+
+      it("ACCEPTS the same uuid feed once the gap is honoured", () => {
+        const rfs: RuleFixture[] = [
+          { id: FEEDER_ID, extKey: "SF1", winnerTo: DEP_ID, divisionId: "d1" },
+          { id: DEP_ID, extKey: "F", winnerTo: null, divisionId: "d1" },
+        ];
+        expect(verifyRf(uuidBoard("2026-07-24T11:15:00Z"), rfs)).toEqual([]);
+      });
+
+      it("reaches a dependent whose ext_key is NULL — the column is nullable", () => {
+        // `V214__fixtures.sql` declares `ext_key text` NULLABLE, so under the old
+        // join a bracket wired without generator keys missed UNCONDITIONALLY:
+        // `null !== <uuid>` for every pair, every time. Any uuid→ext_key mapping
+        // would have reproduced exactly this hole.
+        const rfs: RuleFixture[] = [
+          { id: FEEDER_ID, extKey: "SF1", winnerTo: DEP_ID, divisionId: "d1" },
+          { id: DEP_ID, extKey: null, winnerTo: null, divisionId: "d1" },
+        ];
+        expect(verifyRf(uuidBoard("2026-07-24T10:50:00Z"), rfs).map((c) => c.fixtureId)).toEqual([DEP_ID]);
+      });
+
+      it("enforces a feed edge that CROSSES divisions", () => {
+        // `winner_to_fixture` is a uuid FK: it names exactly ONE fixture row,
+        // wherever that row sits. The old `divisionId` guard existed solely to
+        // disambiguate a reused text key; keeping it beside an id join would
+        // silently drop a legitimate cross-division feed — the same
+        // binds-nothing failure this issue is about.
+        const rfs: RuleFixture[] = [
+          { id: FEEDER_ID, extKey: "SF1", winnerTo: DEP_ID, divisionId: "d1" },
+          { id: DEP_ID, extKey: "F", winnerTo: null, divisionId: "d2" },
+        ];
+        expect(verifyRf(uuidBoard("2026-07-24T10:50:00Z", "d2"), rfs).map((c) => c.fixtureId)).toEqual([
+          DEP_ID,
+        ]);
+      });
+
+      it("a same-division ext_key coincidence still creates NO edge", () => {
+        // The mirror of the case above, with the division guard out of the way:
+        // the ONLY thing that makes a feed edge is `winnerTo === <a fixture id>`.
+        // Before #443 this pair was an edge and reported a conflict.
+        const rfs: RuleFixture[] = [
+          { id: FEEDER_ID, extKey: "SF1", winnerTo: "F", divisionId: "d1" },
+          { id: DEP_ID, extKey: "F", winnerTo: null, divisionId: "d1" },
+        ];
+        expect(verifyRf(uuidBoard("2026-07-24T10:50:00Z"), rfs)).toEqual([]);
+      });
+
+      it("a terminal feeder (winnerTo === null) short-circuits before any join", () => {
+        const rfs: RuleFixture[] = [
+          { id: FEEDER_ID, extKey: "SF1", winnerTo: null, divisionId: "d1" },
+          { id: DEP_ID, extKey: "F", winnerTo: null, divisionId: "d1" },
+        ];
+        expect(verifyRf(uuidBoard("2026-07-24T10:50:00Z"), rfs)).toEqual([]);
+      });
     });
   });
 

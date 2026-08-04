@@ -15,7 +15,7 @@ vi.mock("@anthropic-ai/sdk", () => ({
   },
 }));
 
-import { runAiPlan } from "../schedule-ai";
+import { packRuleFixtures, runAiPlan } from "../schedule-ai";
 import type { SchedulePack } from "../schedule-ai";
 import { resetZ3 } from "@seazn/engine/scheduling";
 
@@ -220,5 +220,43 @@ describe("solver repair in runAiPlan (#401)", () => {
         .content,
     ) as { focus_fixture_ids?: string[]; verifier_conflicts: unknown[] };
     expect(repairTurn.focus_fixture_ids).toEqual(expect.arrayContaining([F1, F2]));
+  });
+});
+
+// A TRIPWIRE, not a bug reproduction — the producer is already correct and this
+// passes today. It exists because the engine's feed-edge join now reads
+// `winnerTo` as a FIXTURE ID (#443), and the way that rule dies is silent: a
+// join that resolves nothing reports nothing, so `min_rest_minutes` would go on
+// compiling and displaying as enforced while binding nothing at all. Nothing in
+// the engine can catch a producer that starts emitting an ext_key here, because
+// `RuleFixture` types both fields as `string | null`.
+//
+// SCOPE: this covers `packRuleFixtures` — the single-division path — by calling
+// it. It does NOT reach the two joint producers on its own; they are covered in
+// `competition-schedule-ai-repair.test.ts`, which also pins that all three go
+// through the one shared `toRuleFixture` builder.
+//
+// `makePack` is the right board for it: its ids are uuids and its ext keys are
+// "f1".."f4", so the two namespaces are disjoint and "resolves to an id" cannot
+// pass by coincidence.
+describe("packRuleFixtures namespace tripwire (#443)", () => {
+  it("emits winnerTo in the FIXTURE-ID namespace, never the ext_key one", () => {
+    const base = makePack();
+    const movable = base.fixtures.movable.map((f, i) =>
+      i === 0 ? { ...f, feeds: { ...f.feeds, winner_to: F2 } } : f,
+    );
+    const withFeed: SchedulePack = { ...base, fixtures: { ...base.fixtures, movable } };
+
+    const rf = packRuleFixtures(withFeed);
+    const ids = new Set(rf.map((f) => f.id));
+    const extKeys = new Set(rf.map((f) => f.extKey).filter((k): k is string => k !== null));
+    // Guard the guard: if the fixture ever made ids and ext keys equal, every
+    // assertion below would pass in both states.
+    expect([...ids].some((id) => extKeys.has(id))).toBe(false);
+
+    const feeds = rf.filter((f) => f.winnerTo !== null);
+    expect(feeds).toHaveLength(1);
+    expect(ids.has(feeds[0]!.winnerTo!)).toBe(true);
+    expect(extKeys.has(feeds[0]!.winnerTo!)).toBe(false);
   });
 });
