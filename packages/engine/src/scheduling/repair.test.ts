@@ -840,6 +840,56 @@ describe("the rule families, end to end", () => {
   );
 
   it(
+    "joins the feed edge by fixture id, not ext_key (#443)",
+    async () => {
+      // `winnerTo` is `fixtures.winner_to_fixture` — a uuid FK to `fixtures.id`.
+      // `extKey` is `fixtures.ext_key`, nullable text. The encoder compared one
+      // against the other, so on every real payload it asserted NOTHING, and
+      // `repairAndVerify` was blind because the verifier shared the assumption.
+      // Every ext key below is deliberately UNEQUAL to every id.
+      //
+      // The board carries a genuine court clash as well, so z3 runs whether or
+      // not the feed constraint is encoded. That is what makes the gap assertion
+      // a test of the ENCODER rather than of the pre-check verifier: without the
+      // constraint the solver repairs the clash, leaves the dependent where it
+      // sits, and the 90-minute gap is simply never asked for.
+      const config: VerifyConfig & { courts: readonly string[] } = {
+        ...BASE_CONFIG,
+        tz: "UTC",
+        courts,
+        window: { from: at("2026-08-10T08:00:00Z"), to: at("2026-08-10T20:00:00Z") },
+        ruleFixtures: [
+          { id: "sl-g1-d1", extKey: "SF-A", divisionId: "d1", winnerTo: "sl-g2-d1" },
+          { id: "sl-g2-d1", extKey: "FINAL-A", divisionId: "d1", winnerTo: null },
+          { id: "sl-g2-d2", extKey: "GRP-B", divisionId: "d2", winnerTo: null },
+        ],
+        hard: [
+          {
+            type: "min_rest_minutes",
+            minutes: 90,
+            rest_scope: "feeder_to_dependent",
+            scope: { kind: "competition" },
+          },
+        ],
+      };
+      const proposal = assign(STEP, SHARED, [
+        ["sl-g1-d1", "2026-08-10T09:00:00Z", "C1"], // feeder, ends 09:40
+        ["sl-g2-d2", "2026-08-10T09:20:00Z", "C1"], // the court clash that forces a solve
+        ["sl-g2-d1", "2026-08-10T10:00:00Z", "C2"], // dependent — 20 min after the feeder
+      ]);
+      const deps: OrderDependency[] = [{ fixtureId: "sl-g2-d1", dependsOn: "sl-g1-d1", direct: true }];
+
+      const r = await repairSchedule({ proposal, config, dependencies: deps, budgetMs: 60_000 });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      const byId = new Map(r.assignments.map((a) => [a.fixtureId, a]));
+      expect(byId.get("sl-g2-d1")!.startAt - byId.get("sl-g1-d1")!.endAt).toBeGreaterThanOrEqual(90 * MIN);
+      expect(validateAssignments(r.assignments, config, [], deps)).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
     "stays finite with no pack window and no session windows",
     async () => {
       // The ONLY configuration in which the unconditional ±30-day bound on every

@@ -498,10 +498,20 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
           if (f.winnerTo === null) continue;
           const feeder = boardById.get(f.id);
           if (feeder === undefined) continue;
-          for (const dd of ruleFixtures) {
-            // The feed edge, by the same ext_key the bracket is wired with, and
-            // within one division — two divisions can reuse a key like "SF1".
-            if (dd.extKey !== f.winnerTo || dd.divisionId !== f.divisionId) continue;
+          // THE FEED EDGE IS A FIXTURE ID, NOT AN EXT KEY (#443) — the same join
+          // `validateInstructionRules` makes, for the same reason. `winnerTo` is
+          // `fixtures.winner_to_fixture` (a uuid FK to `fixtures.id`); `extKey`
+          // is the nullable text `fixtures.ext_key`, a different namespace with
+          // no converter anywhere. Comparing them matched zero pairs on every
+          // real payload, so this encoder asserted nothing — and because the
+          // verifier shared the assumption, `repairAndVerify` could not see it.
+          //
+          // No division guard: a uuid FK names exactly one fixture row wherever
+          // it sits, so a reused generator key can no longer be mistaken for a
+          // feed, and guarding would silently drop a cross-division one.
+          {
+            const dd = fixtureById.get(f.winnerTo);
+            if (dd === undefined) continue;
             const dependent = boardById.get(dd.id);
             if (dependent === undefined) continue;
             if (!idx.has(f.id) && !idx.has(dd.id)) continue;
