@@ -290,15 +290,23 @@ export function RegisterForm({
               </label>
               <label className="block text-sm">
                 <span className="text-zinc-700">
-                  Date of birth {division.requires_dob ? "*" : "(optional)"}
+                  Date of birth {division.requires_dob || linkSelf ? "*" : "(optional)"}
                 </span>
                 <input
                   type="date"
-                  required={division.requires_dob}
+                  // #402 — linking to an account needs a date of birth. Without one
+                  // the server cannot tell an adult entering themselves from a
+                  // parent entering a child, and it refuses to link either way.
+                  required={division.requires_dob || linkSelf}
                   value={dob}
                   onChange={(e) => setDob(e.target.value)}
                   className={INPUT_CLASS}
                 />
+                {linkSelf && !division.requires_dob && (
+                  <span className="mt-1 block text-xs text-zinc-600">
+                    {msg("register.self.dobRequired")}
+                  </span>
+                )}
               </label>
               <label className="block text-sm">
                 <span className="text-zinc-700">Gender (optional)</span>

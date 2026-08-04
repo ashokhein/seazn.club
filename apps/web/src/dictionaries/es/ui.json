@@ -328,6 +328,7 @@
   "register.section.consent": "Consentimiento",
   "register.self.label": "Me inscribo a mí mismo",
   "register.self.hint": "Mantiene tus resultados juntos en todas las divisiones en las que participes.",
+  "register.self.dobRequired": "Necesaria para vincular esta inscripción a tu cuenta.",
   "register.self.rosterLabel": "¿Cuál de estos jugadores eres tú?",
   "register.self.rosterNone": "Ninguno de estos",
   "register.submit.free": "Inscribirse en la competición",

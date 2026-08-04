@@ -328,6 +328,7 @@
   "register.section.consent": "Toestemming",
   "register.self.label": "Ik schrijf mezelf in",
   "register.self.hint": "Houdt je resultaten bij elkaar in alle divisies waaraan je deelneemt.",
+  "register.self.dobRequired": "Nodig om deze inschrijving aan je account te koppelen.",
   "register.self.rosterLabel": "Welke speler ben jij?",
   "register.self.rosterNone": "Geen van deze",
   "register.submit.free": "Deelnemen aan de competitie",
