@@ -99,6 +99,16 @@ export function AiDiffPanel({
       {/* Officials coverage preview — only when a policy was sent (§2). */}
       {cov && <CoverageStrip fillable={cov.fillable} total={cov.total} unfilled={cov.unfilled.length} />}
 
+      {/* Automatic clash repair (#401) — a STATUS, deliberately quiet. It sits
+          above the blocking block because it explains why that block is shorter
+          than it would have been, and it renders only when the solver actually
+          moved something: "the solver ran and found nothing to do" is not news
+          to an organiser, and a panel that reports every no-op trains people to
+          stop reading it. */}
+      {plan.repair?.solver_ran && (plan.repair.moved ?? 0) > 0 && (
+        <RepairStrip repair={plan.repair} />
+      )}
+
       {/* Blocking — Accept is gated on these; untick to drop each to the tray. */}
       {plan.blocking.length > 0 && (
         <div className="rounded-lg border border-red-200 bg-red-50/60 p-3">
@@ -257,6 +267,59 @@ function CoverageStrip({ fillable, total, unfilled }: { fillable: number; total:
           <span className="text-teal-700">{msg("board.ai.coverage.full")}</span>
         )}
       </p>
+    </div>
+  );
+}
+
+/**
+ * What the constraint solver did before the model was asked again (#401).
+ *
+ * Teal, not amber: this is work that already succeeded. The blocking block below
+ * is the one that needs a decision, and two alarm-coloured panels stacked would
+ * flatten the difference between "here is what was handled" and "here is what
+ * you must handle".
+ *
+ * Three facts, in the order an organiser cares about them: how much of their
+ * schedule moved, whether anything is still outstanding, and — only when the
+ * engine actually proved it — that no smaller change existed. `minimality` is
+ * `upper_bound` whenever a day cap coupled the components, and claiming
+ * "minimal" there would be a lie the engine explicitly declined to tell.
+ */
+function RepairStrip({
+  repair,
+}: {
+  repair: NonNullable<AiPlanResponse["repair"]>;
+}) {
+  const msg = useMsg();
+  const plural = usePlural();
+  const moved = repair.moved ?? 0;
+  const unresolved = repair.unresolved ?? 0;
+  return (
+    <div
+      className="rounded-lg border border-teal-200 bg-teal-50/60 p-3"
+      data-testid="ai-repair-strip"
+      data-moved={String(moved)}
+      data-unresolved={String(unresolved)}
+      data-minimality={repair.minimality ?? "unknown"}
+    >
+      <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-teal-800">
+        <span aria-hidden>✓</span>
+        {plural("board.ai.repaired.title", moved)}
+      </p>
+      {/* Wraps rather than truncates: at 375px this is three short phrases on
+          two or three lines, which is readable — a single clipped line is not. */}
+      <p className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] leading-relaxed text-teal-900/80">
+        <span className="font-semibold">{plural("board.ai.repaired.moved", moved)}</span>
+        <span className="text-teal-900/60">{msg("board.ai.repaired.freeOfCharge")}</span>
+        {repair.minimality === "proved" && (
+          <span className="text-teal-900/60">{msg("board.ai.repaired.minimal")}</span>
+        )}
+      </p>
+      {unresolved > 0 && (
+        <p className="mt-1 text-[11px] text-amber-700">
+          {plural("board.ai.repaired.partial", unresolved)}
+        </p>
+      )}
     </div>
   );
 }

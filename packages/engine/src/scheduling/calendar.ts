@@ -294,8 +294,13 @@ function effectiveBlackouts(
   return [...blackouts, ...sessionGaps(config.sessionWindows, lo, hi)];
 }
 
-const overlaps = (aStart: number, aEnd: number, bStart: number, bEnd: number): boolean =>
-  aStart < bEnd && bStart < aEnd;
+/** Half-open overlap: touching intervals do NOT overlap, which is why a match
+ *  may start at the exact instant the previous one ends. Exported (#401) so the
+ *  solver's domain pruning agrees with the verifier about "touching". */
+export function intervalsOverlap(aFrom: number, aTo: number, bFrom: number, bTo: number): boolean {
+  return aFrom < bTo && bFrom < aTo;
+}
+const overlaps = intervalsOverlap;
 
 // Does [start, start+dur) clash with a court booking (respecting `gap` on both
 // sides) or a blackout window on `court`?
@@ -645,8 +650,12 @@ export function resolveSelector(
  *  organiser's instruction (`hard`) and the ones stored durably on the division
  *  (`constraints.hard`, written through the API). A rule that binds on one entry
  *  point and not the other is the worst kind — the board shows it enforced on
- *  Monday and silently not on Tuesday. */
-function effectiveHard(config: Pick<VerifyConfig, "hard" | "constraints">): readonly HardConstraint[] {
+ *  Monday and silently not on Tuesday.
+ *
+ *  Exported for the repair solver (#401): the solver reads the SAME merged
+ *  stream the verifier does, because a solver with its own idea of which rules
+ *  are in force can produce a "repaired" board the verifier rejects. */
+export function effectiveHard(config: Pick<VerifyConfig, "hard" | "constraints">): readonly HardConstraint[] {
   const stored = config.constraints?.hard ?? [];
   const compiled = config.hard ?? [];
   if (stored.length === 0) return compiled;
@@ -788,6 +797,123 @@ if (tz !== undefined) {
   return conflicts.map(withRule);
 }
 
+/** `ruleFixtures` as an id lookup. Split out so a caller in a loop derives it
+ *  ONCE — see `pairRestMinutesWith`. */
+function ruleFixtureIndex(config: Pick<VerifyConfig, "ruleFixtures">): ReadonlyMap<string, RuleFixture> {
+  return new Map((config.ruleFixtures ?? []).map((f) => [f.id, f]));
+}
+
+/** The strictest rest that applies to a PAIR — this division's resolved value,
+ *  the other division's own value, and any instruction rule covering EITHER
+ *  side. A lower bound only: "at least N minutes" can raise a stored setting,
+ *  never lower it.
+ *
+ *  Module-scope and exported (#401) so the repair solver bounds a pair by the
+ *  same number the verifier will judge it by.
+ *
+ *  NOTE for callers — WHAT A PAIR ACTUALLY OWES DEPENDS ON WHICH SIDES MOVE.
+ *  `validateAssignments` iterates `for (const a of assignments)` over an inner
+ *  `board = [...existing, ...assignments]`, so:
+ *
+ *    * movable vs movable (both in `assignments`) — the pair is evaluated in
+ *      BOTH directions, once per assignment, and owes
+ *      `max(pairRestMinutes(c,a,b), pairRestMinutes(c,b,a))`.
+ *    * movable vs immovable (`other` came from `existing`) — the immovable side
+ *      is never an outer `a`, so exactly ONE direction is ever evaluated:
+ *      `pairRestMinutes(config, movable, immovable)`, that argument order.
+ *
+ *  The asymmetry is real, not a rounding detail: `effectiveRestMinutes` reads
+ *  the FIRST argument's pool/division, so a per-pool `restByGroup` or a
+ *  `min_rest_minutes` scoped to one side only makes the two directions differ.
+ *
+ *  Consequence for the repair solver: asserting the max against an immovable
+ *  OVER-constrains — it refuses boards the verifier would pass and reports a
+ *  spurious infeasible. Asserting the wrong single direction UNDER-constrains —
+ *  the solver returns a "repaired" board that the verifier then rejects, which
+ *  is the exact lock-out this wave exists to prevent. */
+export function pairRestMinutes(config: VerifyConfig, a: Assignment, other: Assignment): number {
+  // Thin wrapper for one-off callers (the solver asks pair by pair). Anything
+  // iterating pairs must hoist and call `pairRestMinutesWith` directly.
+  return pairRestMinutesWith(effectiveHard(config), ruleFixtureIndex(config), config, a, other);
+}
+
+/** `pairRestMinutes` bound to ONE config, with the two per-config derivations
+ *  made once up front (#401).
+ *
+ *  The repair encoder walks the same O(n²) pair space `validateAssignments`
+ *  does — 125k pairs at the 500-fixture cap — and the plain wrapper re-derives
+ *  `effectiveHard` and the ruleFixtures index on every call, which cost this
+ *  file 47 ms → 5242 ms before the hoist. Rather than let the solver grow its
+ *  own copy of that loop's body, it takes this closure: one implementation
+ *  (`pairRestMinutesWith`), three readers (the verifier, this factory, and the
+ *  one-off wrapper above).
+ *
+ *  The asymmetry note on `pairRestMinutes` applies unchanged — this is the same
+ *  answer, not a cheaper approximation of it. */
+export function pairRestMinutesFor(
+  config: VerifyConfig,
+): (a: Assignment, other: Assignment) => number {
+  const hard = effectiveHard(config);
+  const fixtureById = ruleFixtureIndex(config);
+  return (a, other) => pairRestMinutesWith(hard, fixtureById, config, a, other);
+}
+
+/** `pairRestMinutes` with the two per-CONFIG derivations lifted into parameters.
+ *
+ *  They do not vary with `a`/`other`, and this is called from an O(n²) loop, so
+ *  deriving them inside made the per-config work quadratic as well: a
+ *  500-fixture board with a board-wide shared person took 5242 ms instead of
+ *  47 ms. A WeakMap memo keyed on `config` would also work, but the callers are
+ *  a single hot loop and one explicit hoist beats a cache whose lifetime nobody
+ *  can see. The exported signature is unchanged because the solver depends on
+ *  it. */
+function pairRestMinutesWith(
+  hard: readonly HardConstraint[],
+  fixtureById: ReadonlyMap<string, RuleFixture>,
+  config: VerifyConfig,
+  a: Assignment,
+  other: Assignment,
+): number {
+  let minutes = effectiveRestMinutes(config, a);
+  const otherDivision = other.divisionId;
+  if (otherDivision !== undefined) {
+    minutes = Math.max(minutes, config.restByDivision?.[otherDivision] ?? 0);
+  }
+  for (const h of hard) {
+    if (h.type !== "min_rest_minutes" || h.rest_scope === "feeder_to_dependent") continue;
+    const covers =
+      scopeCoversFixture(h.scope, fixtureById.get(a.fixtureId), a) ||
+      scopeCoversFixture(h.scope, fixtureById.get(other.fixtureId), other);
+    if (covers) minutes = Math.max(minutes, h.minutes);
+  }
+  return minutes;
+}
+
+/** The start bounds `startWindows` impose on an assignment. Exported (#401) so
+ *  the repair domain clips to the same instants the verifier compares against —
+ *  it bounds the START, not the occupancy.
+ *
+ *  startWindows (Jul3/04 §3) are a hard bound the solver refuses to place
+ *  outside — so the verifier has to know them too, or the same rule holds for
+ *  Auto-schedule and evaporates the moment somebody drags a card. */
+export function startWindowFor(
+  config: Pick<VerifyConfig, "constraints">,
+  a: Assignment,
+): { notBefore: number; notAfter: number } {
+  let notBefore = -Infinity;
+  let notAfter = Infinity;
+  for (const w of config.constraints?.startWindows ?? []) {
+    const hits =
+      (w.target.kind === "entrant" && a.entrants.includes(w.target.id)) ||
+      (w.target.kind === "pool" && a.poolId === w.target.id) ||
+      (w.target.kind === "division" && a.divisionId === w.target.id);
+    if (!hits) continue;
+    if (w.notBefore !== undefined) notBefore = Math.max(notBefore, w.notBefore);
+    if (w.notAfter !== undefined) notAfter = Math.min(notAfter, w.notAfter);
+  }
+  return { notBefore, notAfter };
+}
+
 export function validateAssignments(
   assignments: readonly Assignment[],
   config: VerifyConfig,
@@ -801,47 +927,15 @@ export function validateAssignments(
   const board = [...existing, ...assignments];
   const byId = new Map(board.map((a) => [a.fixtureId, a]));
 
-  // --- typed instruction rules (#398) -------------------------------------
+  // The typed rule stream (#398) and its fixture lookup, derived ONCE and
+  // handed to `pairRestMinutesWith` in the O(n²) rest loop below — deriving
+  // them per call cost 111× on a 500-fixture board.
+  //
+  // This function reads only the `min_rest_minutes` SUBSET of the typed rules,
+  // and only to raise a pair's rest bound. Every other typed rule is evaluated
+  // by `validateInstructionRules`, which derives its own copy.
   const hard = effectiveHard(config);
-  const fixtureById = new Map((config.ruleFixtures ?? []).map((f) => [f.id, f]));
-
-  /** The strictest rest that applies to a PAIR: this division's resolved value,
-   *  the other division's own value, and any instruction rule covering EITHER
-   *  side. A lower bound only — "at least N minutes" can raise a stored setting,
-   *  never lower it. */
-  const restFor = (a: Assignment, other: Assignment): number => {
-    let minutes = effectiveRestMinutes(config, a);
-    const otherDivision = other.divisionId;
-    if (otherDivision !== undefined) {
-      minutes = Math.max(minutes, config.restByDivision?.[otherDivision] ?? 0);
-    }
-    for (const h of hard) {
-      if (h.type !== "min_rest_minutes" || h.rest_scope === "feeder_to_dependent") continue;
-      const covers =
-        scopeCoversFixture(h.scope, fixtureById.get(a.fixtureId), a) ||
-        scopeCoversFixture(h.scope, fixtureById.get(other.fixtureId), other);
-      if (covers) minutes = Math.max(minutes, h.minutes);
-    }
-    return minutes;
-  };
-
-  // startWindows (Jul3/04 §3) are a hard bound the solver refuses to place
-  // outside — so the verifier has to know them too, or the same rule holds for
-  // Auto-schedule and evaporates the moment somebody drags a card.
-  const windowFor = (a: Assignment): { notBefore: number; notAfter: number } => {
-    let notBefore = -Infinity;
-    let notAfter = Infinity;
-    for (const w of config.constraints?.startWindows ?? []) {
-      const hits =
-        (w.target.kind === "entrant" && a.entrants.includes(w.target.id)) ||
-        (w.target.kind === "pool" && a.poolId === w.target.id) ||
-        (w.target.kind === "division" && a.divisionId === w.target.id);
-      if (!hits) continue;
-      if (w.notBefore !== undefined) notBefore = Math.max(notBefore, w.notBefore);
-      if (w.notAfter !== undefined) notAfter = Math.min(notAfter, w.notAfter);
-    }
-    return { notBefore, notAfter };
-  };
+  const fixtureById = ruleFixtureIndex(config);
 
   for (const a of assignments) {
     // The pack window (#397): the whole occupancy must fall inside the days the
@@ -857,7 +951,7 @@ export function validateAssignments(
       });
     }
     // Bounds the START, matching the solver's `start > window.notAfter`.
-    const window = windowFor(a);
+    const window = startWindowFor(config, a);
     if (a.startAt < window.notBefore || a.startAt > window.notAfter) {
       conflicts.push({
         fixtureId: a.fixtureId,
@@ -922,7 +1016,7 @@ export function validateAssignments(
           // Resolved per PAIR: restByGroup can differ pool to pool, the other
           // division's own rest may be the binding one, and a compiled
           // instruction can raise both (#398).
-          const restMs = restFor(a, other) * MS_PER_MIN;
+          const restMs = pairRestMinutesWith(hard, fixtureById, config, a, other) * MS_PER_MIN;
           const gap = a.startAt >= other.endAt ? a.startAt - other.endAt : other.startAt - a.endAt;
           if (gap < restMs) {
             conflicts.push({ fixtureId: a.fixtureId, reason: "rest", detail: `entrant ${e} below rest` });
@@ -949,7 +1043,7 @@ export function validateAssignments(
           // pair rather than once per shared person: a grand final shares seven
           // people with its feeders and seven identical rows teach the repair
           // round nothing.
-          const restMs = restFor(a, other) * MS_PER_MIN;
+          const restMs = pairRestMinutesWith(hard, fixtureById, config, a, other) * MS_PER_MIN;
           const gap = a.startAt >= other.endAt ? a.startAt - other.endAt : other.startAt - a.endAt;
           if (gap < restMs) {
             conflicts.push({

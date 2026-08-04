@@ -56,6 +56,24 @@ export const AI_FIXTURE_URL =
 export const FIXTURE_REFUSE = "FIXTURE_REFUSE";
 
 /**
+ * W6 (#401): forces the canned plan to double-book a court.
+ *
+ * The model is the only thing this server pretends to be, so the only way to
+ * exercise the constraint solver end-to-end is to hand the runner a plan that
+ * genuinely breaks a rule. The second draft card is moved onto the first card's
+ * court AND time, which `validateAssignments` scores as a blocking `court`
+ * conflict — the exact shape the solver was built to repair, and the one an
+ * organiser would otherwise have had to fix by hand or by spending another LLM
+ * round.
+ *
+ * Deliberately a REAL conflict rather than a hand-written repair report: a
+ * fixture that fakes the report proves the panel renders, while this proves the
+ * runner detected a clash, the solver was reached, and the repair came back
+ * verifier-clean.
+ */
+export const FIXTURE_CLASH = "FIXTURE_CLASH";
+
+/**
  * W5 (#400) — the one brief this server actually COMPILES.
  *
  * Stage 1 is a model call like any other, so against the canned `{}` below
@@ -117,13 +135,24 @@ interface ParseRequestLite {
   context?: { divisions?: unknown[] };
 }
 
-function buildSchedulePlan(pack: SchedulePackLite): unknown {
+function buildSchedulePlan(pack: SchedulePackLite, clash = false): unknown {
   const draft = Array.isArray(pack.draft) ? pack.draft : [];
   const assignments = draft.map((d) => ({
     fixture_id: d.fixture_id,
     scheduled_at: d.scheduled_at,
     court_label: d.court_label,
   }));
+  // W6 (#401): put the second card exactly where the first one is. One blocking
+  // `court` conflict, on a board whose remaining slots are free — so the minimal
+  // repair is a single move, and a solver that moved more than one fixture is
+  // visibly wrong rather than merely slower.
+  if (clash && assignments.length >= 2) {
+    assignments[1] = {
+      ...assignments[1]!,
+      scheduled_at: assignments[0]!.scheduled_at,
+      court_label: assignments[0]!.court_label,
+    };
+  }
   const placed = new Set(assignments.map((a) => a.fixture_id));
   const movable = !Array.isArray(pack.fixtures) && pack.fixtures?.movable ? pack.fixtures.movable : [];
   // Structural completeness: every movable id must appear exactly once. Anything
@@ -202,6 +231,7 @@ interface GeneratedPlan {
 function generatePlan(
   body: { model?: string; messages?: { role?: string; content?: unknown }[] },
   fallbackModel: string,
+  clash = false,
 ): GeneratedPlan {
   let phase: FixtureCall["phase"] = "unknown";
   const model = body.model ?? fallbackModel;
@@ -223,7 +253,7 @@ function generatePlan(
     } else {
       phase = "schedule";
       movable = pack.fixtures?.movable?.length ?? 0;
-      plan = buildSchedulePlan(pack as SchedulePackLite);
+      plan = buildSchedulePlan(pack as SchedulePackLite, clash);
     }
   } catch {
     /* leave defaults; a malformed pack becomes an empty-plan response */
@@ -257,6 +287,7 @@ export async function startAiFixtureServer(port = AI_FIXTURE_PORT): Promise<AiFi
       const { phase, model, plan, movable } = generatePlan(
         body,
         isAnthropic ? "claude-sonnet-5" : "anthropic/claude-sonnet-5",
+        raw.includes(FIXTURE_CLASH),
       );
       const planLike = plan as { assignments?: unknown[] } | null;
       calls.push({ phase, refusal, movable, assignments: planLike?.assignments?.length ?? 0 });

@@ -13,6 +13,7 @@ import {
 } from "./helpers";
 import {
   startAiFixtureServer,
+  FIXTURE_CLASH,
   FIXTURE_REFUSE,
   FIXTURE_COMPILE_BRIEF,
   FIXTURE_COMPILE_SOFT,
@@ -919,6 +920,57 @@ test("a model refusal surfaces the AI_PLAN_FAILED copy (and proves the model was
   // never reaching the model.
   expect(fixture.calls.length).toBeGreaterThanOrEqual(1);
   expect(fixture.calls.some((c) => c.refusal)).toBe(true);
+});
+
+test("a double-booked plan is repaired by the solver before the organiser sees it (#401)", async ({
+  page,
+  request,
+}) => {
+  fixture.reset();
+  await activateFreshProPlusOrg(page, request);
+  const { divisionId } = await seedAiDivision(request);
+
+  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await openConsole(page);
+
+  // FIXTURE_CLASH makes the canned plan put two cards on one court at one time.
+  // The runner's verifier scores that as a blocking `court` conflict, which is
+  // what sends the board to the constraint solver instead of straight to a
+  // second LLM round.
+  await page.locator("#ai-instruction").fill(`${FIXTURE_CLASH} — squeeze the order.`);
+  await compileAndConfirm(page);
+
+  // The organiser is shown a CLEAN board. That is the whole point: the clash was
+  // real, and it was gone before this screen rendered.
+  await expect(page.getByText(/CLEAN · 0 blocking/)).toBeVisible({ timeout: 30_000 });
+
+  const strip = page.locator('[data-testid="ai-repair-strip"]');
+  await expect(strip).toBeVisible();
+  // Exactly one move. The rest of the board is free, so one card had to shift and
+  // no more — a strip reporting 2+ would mean the solver found an answer but not
+  // the minimal one, which is the property this wave exists to deliver.
+  await expect(strip).toHaveAttribute("data-moved", "1");
+  await expect(strip).toHaveAttribute("data-unresolved", "0");
+  await shot(page, "13-repair-strip");
+
+  // Proof the model was actually asked and the clash actually came back, so this
+  // cannot pass by quietly never reaching the fixture server.
+  const scheduleCall = fixture.calls.find((c) => c.phase === "schedule");
+  expect(scheduleCall).toBeTruthy();
+
+  // No second LLM round was spent: the solver answered, so the repair loop never
+  // had to pay for another schedule call.
+  expect(fixture.calls.filter((c) => c.phase === "schedule").length).toBe(1);
+
+  // 375px: the strip wraps rather than truncating, and nothing it adds pushes the
+  // page into horizontal scroll.
+  await page.setViewportSize({ width: 375, height: 800 });
+  await expect(strip).toBeVisible();
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+  await shot(page, "13-repair-strip-375");
 });
 
 test("blackout injected over a scheduled fixture surfaces the repair nudge", async ({

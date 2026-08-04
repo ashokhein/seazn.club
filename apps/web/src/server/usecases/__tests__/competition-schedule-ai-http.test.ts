@@ -329,6 +329,25 @@ describe("AiCompetitionPlanResponse — the `divisions` collision", () => {
       },
     ],
     usage: { input_tokens: 1200, output_tokens: 600, repair_rounds: 1 },
+    // W6 (#401): a non-trivial report, so the wire shape is exercised rather
+    // than defaulted away — this run's solver tried, partly succeeded, and the
+    // assistant finished the job.
+    repair: {
+      engine: "llm" as const,
+      solver_ran: true,
+      status: "partial" as const,
+      moved: 2,
+      ms: 1_800,
+      checks: 4,
+      minimality: "upper_bound" as const,
+      components_solved: 3,
+      components_skipped: 1,
+      unresolved: 5,
+      residual: 2,
+      relaxed: ["blackout"],
+      timed_out: true,
+      fallback: "partial" as const,
+    },
     credits: 3,
     budget: 96_000,
     spent_tokens: 41_000,

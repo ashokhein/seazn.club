@@ -35,6 +35,7 @@ function fakeResult(over: { warnings?: number; blocking?: number; usage?: Usage 
     // W5 (#400): the architect's own assumptions, always an array.
     assumptions: [],
     usage: over.usage ?? usage(100, 50, 0.01),
+    repair: { engine: "none" as const, solver_ran: false },
   };
 }
 

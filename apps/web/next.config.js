@@ -41,12 +41,34 @@ const nextConfig = {
   // pdfkit reads its AFM font-metrics files from disk at runtime (Jul3/06
   // exports); bundling it breaks that path resolution, so load it — and
   // exceljs, likewise native-ish — from node_modules on the server.
-  serverExternalPackages: ["pdfkit", "exceljs"],
+  // z3-solver joins them, for pdfkit's exact reason. Its emscripten glue locates
+  // `build/z3-built.wasm` relative to its own `__dirname`; bundling rewrites that
+  // to the tracing placeholder, so the server asks for
+  // `/ROOT/node_modules/z3-solver/build/z3-built.wasm` and gets ENOENT no matter
+  // where the file actually is. Tracing the .wasm in (below) is necessary but NOT
+  // sufficient — that was measured: with the file present in
+  // .next/standalone/node_modules and this line missing, every solve still
+  // aborted. Both halves are load-bearing.
+  serverExternalPackages: ["pdfkit", "exceljs", "z3-solver"],
   // Email HTML templates and /help Markdown are read from disk at runtime
   // (lib/email-templates/compose.ts, server/help-content.ts) — make sure
   // they land in the standalone trace for every route.
+  // z3-solver is a WASM build: the JS glue fetches `build/z3-built.wasm` from
+  // disk at runtime, and nothing in the import graph mentions the `.wasm`, so
+  // tracing cannot infer it. Without this the standalone server aborts on every
+  // solve with
+  //   ENOENT ... '/ROOT/node_modules/z3-solver/build/z3-built.wasm'
+  // and the scheduler falls back to LLM repair — silently, because that
+  // fallback is a designed path. The whole minimal-movement repair becomes a
+  // no-op in production while still spending a model round, and no unit test
+  // can see it: they import from the source node_modules, which always has the
+  // file. Caught only by e2e against a real standalone build (#401).
   outputFileTracingIncludes: {
-    "/*": ["src/lib/email-templates/html/**/*", "content/help/**/*"],
+    "/*": [
+      "src/lib/email-templates/html/**/*",
+      "content/help/**/*",
+      "../../node_modules/z3-solver/build/**/*",
+    ],
   },
   // PostHog reverse proxy: front analytics through our own origin so
   // ad-blockers don't drop events. Client posts to /ingest (see

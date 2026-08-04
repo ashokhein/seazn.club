@@ -201,6 +201,41 @@ Three divisions sized 1, 2 and 3 add up to 6 and are charged **5 credits**. The 
 
 One thing that surprises people: the **thinking budget is sized from the undiscounted total**, not from what you pay. Those three divisions get the budget 6 credits buys while being charged 5 — the batch discount lowers the price, never the capability, so scheduling divisions together is never a worse deal than scheduling them one at a time.
 
+## Clashes are repaired before you see them
+
+When a plan comes back with a clash — two matches on one court, a player with no
+rest between games, a semi-final before the quarter-final that feeds it — the
+schedule is repaired automatically before it reaches you, and it is repaired by
+**moving as few fixtures as possible**.
+
+That last part is the point. A schedule you have already read is a schedule you
+have started to rely on: the two courts you told the caretaker about, the slot
+the visiting side booked travel around. A repair that shuffles forty fixtures to
+fix one clash is technically correct and practically useless. So the repair looks
+for the smallest set of moves that resolves every conflict, and when it can prove
+no smaller set exists, it says so.
+
+Everything you pinned stays pinned. A pinned fixture is never moved to make room
+for another one.
+
+**This costs no credits.** It runs before the model is asked to try again, and
+when it succeeds the model is not asked at all — which is usually faster as well
+as cheaper.
+
+### When some conflicts are left over
+
+Sometimes the repair cannot resolve everything. A day with more matches than the
+courts and hours can hold has no valid arrangement, and no amount of moving
+fixtures will invent one. Sometimes a single knot of interlocking fixtures is
+simply too large to solve quickly, and waiting longer would be worse than asking
+the model.
+
+In those cases the panel tells you how many fixtures were sorted out and how many
+were handed back to the AI, and the run continues as it always did. You are never
+left with a schedule that quietly still has clashes in it: whatever the repair
+produces is checked against every rule before it is shown to you, and anything
+still unresolved is named.
+
 ## Applying and undo
 
 Applying writes the times (and, if you included them, the officials) to the board and marks those fixtures as AI-scheduled. It first creates a **before-AI** save point, so **undo** puts everything back exactly as it was. The instruction you typed is kept with the applied schedule, so you can always see what you asked for.
