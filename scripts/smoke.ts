@@ -5948,28 +5948,47 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
       );
       const refined = v1data<AiPlanResponseLite>(refinedRes);
       const placedTbd = (refined?.proposal ?? []).filter((a) => tbdIds.has(a.fixture_id));
+      // W6 (#401) CHANGED THIS OUTCOME, and the change is the point.
+      //
+      // These two checks used to assert that the clashing prior SURVIVED to the
+      // response, on the stated premise that it was "unrepairable". That premise
+      // was true only while nothing could repair it. The z3 solver now runs
+      // before the model is asked again, so the organiser is no longer shown a
+      // board that puts one human on two courts at once.
+      //
+      // Both fixtures are still placed — the clash is resolved by MOVING one, not
+      // by dropping either. The guards below keep this from going vacuous in the
+      // other direction: a plan that simply lost a fixture would also produce
+      // "no two fixtures in one slot".
       check(
-        // Guards the assertion below against going vacuous: it can only mean
-        // anything while both undecided fixtures really are in one time slot.
-        "v4 AI/bracket: refine keeps the clashing prior (final + 3rd-place playoff in one slot)",
+        "v4 AI/bracket: refine REPAIRS the clashing prior instead of shipping it (#401)",
         refinedRes.status === 200 &&
           tbdIds.size === 2 &&
           placedTbd.length === 2 &&
-          placedTbd[0]!.scheduled_at === placedTbd[1]!.scheduled_at,
+          placedTbd[0]!.scheduled_at !== placedTbd[1]!.scheduled_at,
       );
       check(
-        // #399 promoted person_overlap out of `warnings` and into `blocking`:
-        // a human on two courts at once is impossible, so the runner asks for a
-        // repair instead of shipping it. The clashing prior is unrepairable
-        // here, so it survives to the response — which is what this asserts.
-        "v4 AI/bracket: person_overlap BLOCKS on a to-be-decided slot, naming a player who could reach it (#396, #399)",
-        (refined?.blocking ?? []).some(
-          (w) =>
-            w.reason === "person_overlap" &&
-            tbdIds.has(w.fixtureId) &&
-            w.rule === "H4" &&
-            bracket.personIds.some((id) => (w.detail ?? "").includes(id)),
-        ),
+        // The solver's own report is the evidence that the repair happened here
+        // rather than the fixture model having quietly returned something else.
+        // `moved === 1` is the minimality claim in its smallest observable form:
+        // two fixtures collide, exactly one has to move, and the engine proves
+        // no smaller change exists.
+        "v4 AI/bracket: ...by moving exactly ONE fixture, proved minimal (#401)",
+        refined?.repair?.solver_ran === true &&
+          refined.repair.status === "repaired" &&
+          refined.repair.moved === 1 &&
+          refined.repair.minimality === "proved",
+      );
+      check(
+        // #399 promoted person_overlap out of `warnings` and into `blocking`: a
+        // human on two courts at once is impossible, so the runner asks for a
+        // repair instead of shipping it. That classification is still what drives
+        // this — the solver only repairs BLOCKING families — but the outcome is
+        // now the repair, so what survives to the organiser is nothing.
+        "v4 AI/bracket: the person_overlap that blocked is GONE from the response (#396, #399, #401)",
+        (refined?.blocking ?? []).every(
+          (w) => !(w.reason === "person_overlap" && tbdIds.has(w.fixtureId)),
+        ) && (refined?.repair?.unresolved ?? 0) === 0,
       );
 
       // ---- #397: the division with NO configured start date ----
