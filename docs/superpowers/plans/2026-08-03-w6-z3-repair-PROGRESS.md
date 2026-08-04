@@ -18,7 +18,7 @@ the resolved errors. What must survive is only what this file records.
 |---|---|---|---|
 | 1 | T1-T2 z3 loader + calendar.ts exports | **CLOSED** — `3b1b2ad4`, `7ac1cf6d`, `a0605bd7` | gate re-run by the orchestrator: 1523 pass / 0 fail / 410 suites, 0 outside the worktree, no pre-existing test or golden touched, tsc 0. Review found 5, all fixed; re-review in flight |
 | 2 | T3-T5 repair-domain, repair.ts, repairAndVerify | **in progress** — `9c145f55`/`a526ee3c`/`cff11b0e`, review NEEDS FIXES (2 CRITICAL), all 9 fixed in `63f2ef1c`/`d94b18b2`/`91bbc54b`. **Orchestrator gate re-run: 1566 pass / 0 fail / 427 suites, 0 outside worktree, tsc 0, 0 goldens, 0 pre-existing tests touched. Re-review in flight.** | badminton +1 clash moves **exactly 1** fixture (12 anchors byte-identical); Stepladder 13-violation → verifier-clean, both finals Friday; determinism twice; infeasible names families; timeout returns cleanly; `z3LoadCount()===0` on the clean path |
-| 3 | T6-T7 bench + budget + engine gate | **code landed** — `db1de378`, `50dcad31` (see "T6 measured" below). `DEFAULT_REPAIR_BUDGET_MS = 20_000`, measured. **The bench found a blocker for boundary 4: the solver cannot reach 500 movable at any budget — the feasibility probe alone exceeds 119 s from ~80 movable up.** | measured 20-500 table recorded; `DEFAULT_REPAIR_BUDGET_MS` set FROM it; goldens untouched. **Engine half fully droppable after this.** |
+| 3 | T6-T7 bench + budget + engine gate | **code landed** — `db1de378`, `c7c5a5dc` (see "T6 measured" below; orchestrator gate re-run 1572/0/430, tree clean, 0 goldens). `DEFAULT_REPAIR_BUDGET_MS = 20_000`, measured. **The bench found a blocker for boundary 4: the solver cannot reach 500 movable at any budget — the feasibility probe alone exceeds 119 s from ~80 movable up.** | measured 20-500 table recorded; `DEFAULT_REPAIR_BUDGET_MS` set FROM it; goldens untouched. **Engine half fully droppable after this.** |
 | 4 | T8-T10 both runners + openapi regen | pending | `schedule-ai-route`, `competition-schedule-ai-route`, `competition-schedule-ai-http`, `ai-credit-wallet-spend` all green; `openapi/` clean after regen |
 | 5 | T11-T12 UI/i18n/e2e/smoke/help | pending | 4 dicts + `i18n:check`; screenshots desktop **and 375px**; e2e local prod build; smoke extended; help extended; review; PR |
 
@@ -119,7 +119,40 @@ nothing that this file does not already carry.
   bucket instead of once per day. **The invariant: every encoder assertion must use the
   VERIFIER'S unit.** Cheap detection: any board where the encoder's grouping key and the
   verifier's grouping key can differ (session vs day, court vs venue, pool vs division).
-- **OPEN CRITICAL (found in re-review, fix queued behind T6's bench — both touch `repair.ts`):**
+- **THE DOMINANT BUG CLASS OF THIS WAVE — four instances, every one invisible to a green
+  suite and caught only by a probe: _an encoder unit that is not the verifier's unit._**
+  1. span-vs-family (pruned on relaxable families → a fixture got no constraints at all);
+  2. bucket-vs-day (`assertDayCap` per session bucket, cap admitted 2/day);
+  3. clipped-window-vs-calendar-day (bucket 0 clipped to `window.from` → starts escaped the cap);
+  4. session-label-vs-calendar-day (a session crossing local midnight is labelled
+     `dayKeyInTz(w.from)`, so `not_before`/`not_after`/`fixture_on_date` admit starts the
+     verifier judges against the NEXT day) — **RESOLVED `f8d202ce`**: private
+     `splitAtMidnights(from,to,tz,out)`, used by BOTH `dayBuckets` branches, so `ymd` is the
+     org-zone date of every instant in the bucket. Steps via
+     `zonedTimeToUtc(ymdAddDays(ymd,1),"00:00",tz)` so the 25-hour fall-back day survives
+     (pinned by a test). Repro was: one court, London session 22:00 Mon → 02:00 Tue,
+     `fixture_on_date "2026-08-10"`, Monday half filled — the only ONE-move fix lands after
+     midnight and the verifier scores it Tuesday; the honest answer costs two moves.
+  **Encoder-unit spot-check now CONFIRMED across the whole encoder** (second agent, independent):
+  court clash keys a bijective index over `repairCourts` (config ∪ board labels, so an immovable
+  is never missed); person/rest via `sharesParticipant` = entrants ∪ people, matching the
+  verifier's two loops; feed edge on `extKey` + `divisionId`, character-for-character; day cap
+  on `calendarDaysCovering`/`dayKeyInTz`; scope via the imported `scopeCoversFixture`. Session
+  `normalise` fusion is sound (runs fuse only when they touch and coverage carries).
+  **Standing check for every future encoder change:** name the grouping/counting key the
+  encoder uses, name the one `calendar.ts` uses, and prove they are the same key. Everything
+  else in the encoder groups by court label, participant id or feed edge — all verifier keys.
+- **RESOLVED** (`97f31b62`) — instance 3 above. Fix is whole org-zone calendar days via
+  `calendarDaysCovering(range, tz)`, padded one day each end (the start bound is applied in
+  whole minutes), grouped over `config.window ?? universe ± START_GUARD_MS`. A windowed board
+  still gets exactly one group per window day, so the common case is unchanged. A per-fixture
+  `Or(day literals)` stays under `instruction` as a **completeness clause** so a truncated day
+  walk relaxes-and-reports instead of silently under-enforcing.
+  **Do not "simplify" to the `Or` alone — it was implemented and measured first: it makes the
+  cap unsatisfiable inside the universe and the pigeonhole UNSAT proof burns the whole budget,
+  60 s timeout vs 1.8 s repaired on the same board.**
+- **RESOLVED (superseded)** — the entry below was instance 3 before the fix; kept for the
+  reproduction only:
   the day cap's buckets are clipped to the universe, but the verifier counts whole calendar
   days. `dayBuckets` (`repair-domain.ts:175-183`) clips bucket 0 to `window.from`, so with
   **no pack window AND no session windows** (`repairUniverse` = board extent ±7 days) bucket 0
@@ -133,7 +166,65 @@ nothing that this file does not already carry.
   range), or assert every start falls inside some bucket when a day-shaped rule exists.
   Probe: `scratchpad/probe-cap2.mjs`. **Third instance of the encoder-unit-vs-verifier-unit
   bug class.**
-- **OPEN CRITICAL — z3 can abort the PROCESS, not return `timeout`.** One of two identical
+- **DECOMPOSITION SPIKE — measured, and it makes the full 500 range reachable. This is the
+  design boundary 4 must be built on.** (scripts: `scratchpad/graph.ts`, `scratchpad/decompose.ts`)
+  - **The candidate-pair graph is COMPLETE — partitioning it is a dead end.** 124,750/124,750
+    pairs at n=500, one component of 500, every size and density. `span` is blocking-only and
+    `window` is the only per-fixture blocking interval, so every span is the whole pack window
+    and any two cards can be moved onto one court. **Do not try to partition `candidatePairs`.**
+  - **What works is FREEZE-AND-COMMIT-SEQUENTIALLY, not partition.** Build the graph over
+    CURRENT PLACEMENTS (same court / shared person within `maxSeparationMinutes`, plus order
+    deps); solve one component with the entire rest of the board frozen into `existing`;
+    commit; move on. Graph build is 1-2 ms.
+  - Component sizes n=500: 46 comps light / 40 dense, **max 36 / 39**. Bounded by the busiest
+    DAY (courts × slots), never by board size — the overnight gap exceeds
+    `maxSeparationMinutes`, so a component can never span two days.
+  - Measured end-to-end at a 20 s per-component budget, all verifier-clean, all at provably
+    minimal `k`: 120 → 4.5 s / 13.9 s · 250 → 9.8 s / 50.0 s · 500 → **38.9 s / 145.0 s**
+    (light/dense). Today: does not return in 119 s. Peak RSS 643 / 903 MB at n=500.
+  - **Anytime property:** each component commits independently, so exhausting the budget
+    yields a PARTLY repaired board rather than nothing. Any partial result must still be
+    verified before it is returned.
+  - **Minimality is proved by a CERTIFICATE, not by the ring-expansion argument.** Restricting
+    the movable set can only raise `k` — true, so a result is an upper bound. What proves
+    minimality is a lower bound: an independent set of DISJOINT conflicts each needing ≥1 move.
+    When found `k` meets that bound, minimality is proved. Ship the certificate check.
+  - **Per-component gate: 50 movable.** From the T6 curve read per-component (40→8.2 s,
+    50→8.8 s, 60→43.8 s, 70→68.9 s, 80→never) plus a measured 1.5-2× cost for ~465 frozen
+    cards. Fires on a busy DAY, never on a big board — a far weaker constraint than the
+    board-size gate #401 forbids. Above it: skip to LLM repair, telemetry-visible.
+  - **Pathological case degrades gracefully:** a single-court continuous chain is one
+    component by construction (measured n=60/80/120 → one solve, 20 s timeout, zero repair =
+    today's behaviour + 1 ms). Real one-court venues cap at 16-20 cards/day, under the cliff.
+  - **`max_fixtures_per_day` COUPLES components.** Freezing converts a card's cap contribution
+    from an `AtMost` literal into a decrement of the bound — sound, but **only if every frozen
+    fixture appears in `config.ruleFixtures`**, because `assertDayCap` filters `existing` by
+    `fixtureById.has()`. A frozen fixture missing from `ruleFixtures` is invisible to the cap,
+    under-counts, and the verifier rejects a board the solver called repaired — the SAME bug
+    class again. Also, sequential commits make the cap ORDER-DEPENDENT: solving A first can
+    fill a day B then cannot use. With a day cap the result stays SOUND but LOSES the
+    minimality proof. Say so in telemetry rather than claiming minimal.
+- **ROOT CAUSE FOUND for the WASM abort, and it is the opposite of the hopeful theory.**
+  Decomposition makes it WORSE, not better: many medium solves share one monotonically-growing
+  WASM heap and nothing frees the per-component `Solver` and its terms. Reproduced
+  deterministically — **3/3 runs died without a reset between components**
+  (`RuntimeError: memory access out of bounds` from the pthread worker, at components 7/14,
+  11/16, 13/24) and **0/3 with `await resetZ3()` between solves**. `resetZ3()` between
+  component solves is MANDATORY and nearly free: ~1 ms teardown, ~200-300 ms reboot absorbed
+  into the next solve. This also explains both earlier sightings (mixed workloads, one heap).
+- **OPEN — rounding, not grouping (5th encoder/verifier mismatch, different family).**
+  `repair.ts:378-379` bounds an IMMOVABLE with `roundMin` (`Math.round`) while movable domains
+  use conservative `ceilMin`/`floorMin`. An obstacle with sub-minute endpoints can therefore be
+  cleared by up to **30 s less** than the verifier demands. Found by inspection, NOT reproduced.
+  Cheap to fix (use the conservative direction on both sides); needs a probe first to confirm
+  sub-minute endpoints are reachable from real payloads at all.
+- **OPEN CRITICAL — z3 can abort the PROCESS, not return `timeout`. SEEN TWICE now, so the
+  bench's 0-in-50 does NOT refute it** — the bench ran one synthetic board family; both
+  sightings came from mixed/real-shaped workloads. Second sighting: a combined
+  `repair-domain.test.ts` + `repair.test.ts` run died with `Cannot enlarge memory arrays … (OOM)`;
+  both files pass individually and in the full gate. Working theory: the abort needs several
+  distinct WASM contexts or a large heap already in play, which a single-board bench never
+  builds. **Do not close this on a clean bench run.** One of two identical
   20-fixture runs died with an emscripten `_emscripten_resize_heap` OOM inside
   `rewriter_tpl<maximize_bv_sharing>`. Unrecoverable WASM abort — no `try/catch` contains it,
   so in production it takes the web process down and defeats "solver failure must never fail

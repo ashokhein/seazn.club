@@ -470,6 +470,22 @@ export function buildDomains(input: RepairDomainInput): FixtureDomain[] {
 }
 
 /**
+ * Do these two cards put the same body on court twice?
+ *
+ * Entrants OR people, which is the union `validateAssignments` checks in its two
+ * loops — `people` is participants (#396), so a rule about a human reaches the
+ * TBD slots they can still advance into. One home for it because three readers
+ * need the same answer: the encoder's pair loop, the component graph, and the
+ * minimality certificate's neighbourhood. Three copies of a predicate is three
+ * chances to disagree with the verifier about what "shared" means.
+ */
+export function sharesParticipant(a: Assignment, b: Assignment): boolean {
+  for (const e of a.entrants) if (b.entrants.includes(e)) return true;
+  for (const p of a.people) if (b.people.includes(p)) return true;
+  return false;
+}
+
+/**
  * An UPPER BOUND, in minutes, on the separation any pair on this board can owe.
  *
  * Every source `effectiveRestMinutes` and `pairRestMinutesWith` can draw on,

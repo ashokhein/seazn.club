@@ -43,6 +43,7 @@ import {
   maxSeparationMinutes,
   repairCourts,
   repairUniverse,
+  sharesParticipant,
   sortFamilies,
   BLOCKING_FAMILIES,
   REPAIR_FAMILIES,
@@ -703,12 +704,6 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
   // exactly the probe. Kept so an encoding drift reports rather than falls off
   // the end of the function.
   return { status: "infeasible", families: sortFamilies(coreFamilies()), elapsedMs: elapsed(), checks };
-}
-
-function sharesParticipant(a: Assignment, b: Assignment): boolean {
-  for (const e of a.entrants) if (b.entrants.includes(e)) return true;
-  for (const p of a.people) if (b.people.includes(p)) return true;
-  return false;
 }
 
 /**
