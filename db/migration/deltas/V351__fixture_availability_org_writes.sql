@@ -1,0 +1,14 @@
+-- V351 — #404. The merge repoints `fixture_availability` (spec §4.3: most
+-- recent response wins), and it runs inside `withTenant`, i.e. as `app_user`.
+-- V276 created the tenant policy `for all to app_user` WITH a `with check`
+-- clause — which is meaningless unless the role can write — but then granted
+-- only `select`. Every write to the table so far has come from the /me lane,
+-- which uses the unscoped client, so the omission never surfaced.
+--
+-- This is the missing half of that grant, not a widening of the tenancy model:
+-- the existing policy still confines app_user to `org_id = current_org_id()`,
+-- exactly as it does for every other roster table an organiser already writes.
+-- Without it the repoint fails at runtime with "permission denied for table
+-- fixture_availability" and the absorbed person's RSVPs are stranded on a
+-- tombstone.
+grant insert, update, delete on fixture_availability to app_user;
