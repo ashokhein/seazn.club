@@ -25,6 +25,20 @@ import { nextConfig } from "../../../next.config.js";
 const WASM_GLOB = "../../node_modules/z3-solver/build/**/*";
 
 describe("z3 WASM survives standalone output tracing", () => {
+  it("is left unbundled, so its glue can still find its own directory", () => {
+    // Measured, not assumed: tracing the .wasm into the standalone output is
+    // necessary but NOT sufficient. z3's emscripten glue resolves the binary
+    // relative to its own `__dirname`, and bundling rewrites that to the tracing
+    // placeholder — the server then asks for
+    //   /ROOT/node_modules/z3-solver/build/z3-built.wasm
+    // and gets ENOENT with the file sitting correctly in
+    // .next/standalone/node_modules. A rebuild with the include and without this
+    // entry still aborted every solve.
+    const external =
+      (nextConfig as { serverExternalPackages?: string[] }).serverExternalPackages ?? [];
+    expect(external).toContain("z3-solver");
+  });
+
   it("is listed in outputFileTracingIncludes", () => {
     const includes =
       (nextConfig as { outputFileTracingIncludes?: Record<string, string[]> })
