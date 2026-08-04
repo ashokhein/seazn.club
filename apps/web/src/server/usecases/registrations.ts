@@ -395,6 +395,34 @@ function windowOpen(s: RegistrationSettingsRow, now: Date): boolean {
  * person (dob/gender feed eligibility; consent defaults empty = initials on
  * public surfaces, doc 06 §4.7).
  */
+/**
+ * #402 — resolve the registrant's player-lane person, or create it.
+ *
+ * The upsert (not select-then-insert) is what closes the race: two divisions
+ * confirmed concurrently by one signed-in registrant both miss a select, and
+ * both insert. Here `persons_org_user_lane_uq` arbitrates and the loser is
+ * handed the winner's id. `do update set full_name = persons.full_name` is a
+ * deliberate no-op — `do nothing` returns no row, and the existing person's own
+ * data must win, so a later entry never overwrites full_name/dob/gender. A
+ * divergence is a signal for #404's review queue, never an in-place edit.
+ */
+async function resolvePlayerPerson(
+  tx: Tx,
+  orgId: string,
+  userId: string,
+  fullName: string,
+  dob: string | null,
+  gender: string | null,
+): Promise<string> {
+  const [person] = await tx<{ id: string }[]>`
+    insert into persons (org_id, full_name, dob, gender, user_id, lane)
+    values (${orgId}, ${fullName}, ${dob}, ${gender}, ${userId}, 'player')
+    on conflict (org_id, user_id, lane) where user_id is not null
+    do update set full_name = persons.full_name
+    returning id`;
+  return person.id;
+}
+
 async function materialise(tx: Tx, reg: RegistrationRow, entrantKind: string): Promise<string> {
   if (reg.entrant_id) return reg.entrant_id;
   const [entrant] = await tx<{ id: string }[]>`
@@ -402,25 +430,44 @@ async function materialise(tx: Tx, reg: RegistrationRow, entrantKind: string): P
     values (${reg.division_id}, ${entrantKind}, ${reg.display_name}, 'confirmed')
     returning id`;
   if (entrantKind === "individual") {
-    const [person] = await tx<{ id: string }[]>`
-      insert into persons (org_id, full_name, dob, gender)
-      values (${reg.org_id}, ${reg.display_name}, ${reg.dob}, ${reg.gender})
-      returning id`;
+    // With no captured session this is byte-for-byte the pre-#402 insert: the
+    // anonymous and guardian flows cannot regress.
+    const personId = reg.user_id
+      ? await resolvePlayerPerson(
+          tx, reg.org_id, reg.user_id, reg.display_name, reg.dob, reg.gender,
+        )
+      : (
+          await tx<{ id: string }[]>`
+            insert into persons (org_id, full_name, dob, gender)
+            values (${reg.org_id}, ${reg.display_name}, ${reg.dob}, ${reg.gender})
+            returning id`
+        )[0].id;
+    // A RESOLVED person can already sit on this entrant (re-confirm), which the
+    // fresh-insert path could never hit — so the membership write is idempotent.
     await tx`
       insert into entrant_members (entrant_id, person_id)
-      values (${entrant.id}, ${person.id})`;
+      values (${entrant.id}, ${personId})
+      on conflict (entrant_id, person_id) do nothing`;
   } else if (entrantKind === "team" && reg.roster.length > 0) {
     // Team roster supplied at registration → a person + squad member per player.
     for (const p of reg.roster) {
       const name = p.name.trim();
       if (!name) continue;
-      const [person] = await tx<{ id: string }[]>`
-        insert into persons (org_id, full_name, dob)
-        values (${reg.org_id}, ${name}, ${p.dob ?? null})
-        returning id`;
+      // Only the row the submitter DECLARED as themselves resolves. Every other
+      // roster name is a typed string with no identity of its own — name
+      // matching may suggest (#404), never link.
+      const personId =
+        reg.user_id && p.self
+          ? await resolvePlayerPerson(tx, reg.org_id, reg.user_id, name, p.dob ?? null, null)
+          : (
+              await tx<{ id: string }[]>`
+                insert into persons (org_id, full_name, dob)
+                values (${reg.org_id}, ${name}, ${p.dob ?? null})
+                returning id`
+            )[0].id;
       await tx`
         insert into entrant_members (entrant_id, person_id, squad_number)
-        values (${entrant.id}, ${person.id}, ${p.squad_number ?? null})
+        values (${entrant.id}, ${personId}, ${p.squad_number ?? null})
         on conflict (entrant_id, person_id) do nothing`;
     }
   }
