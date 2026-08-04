@@ -4,7 +4,7 @@
 // own. The DB-backed proof that they actually do is in
 // `config-snapshot.test.ts`.
 import { describe, expect, it } from "vitest";
-import { resolveFixtureCfg } from "../fixture-cfg";
+import { hasFrozenCfg, resolveFixtureCfg } from "../fixture-cfg";
 
 const DIVISION = { bestOf: 3, points: { w: 3, d: 1, l: 0 }, shootout: null } as const;
 const STAGE = { shootout: { bestOf: 5 }, placements: { "1": [1, 2] } };
@@ -45,6 +45,24 @@ describe("resolveFixtureCfg", () => {
     // wrong for `0`/`""`; assert on presence, not truthiness.
     const empty = {};
     expect(resolveFixtureCfg(empty, DIVISION, STAGE)).toBe(empty);
+  });
+
+  it("hasFrozenCfg answers the SAME question the resolver asks, for every shape", () => {
+    // Three call sites decided "is there a snapshot" independently: the freeze
+    // tested `=== null`, the resolver treated `undefined` as absent too, and the
+    // admin panel tested `!== null` again. They agreed only because the column
+    // happens to be selected everywhere — add one query that omits it and the
+    // freeze would re-take a snapshot the resolver was already honouring.
+    //
+    // GUARDS THE GUARD: derived from the resolver's own behaviour rather than
+    // restating the predicate, so a change to either alone fails here.
+    const shapes: unknown[] = [null, undefined, {}, 0, "", false, { bestOf: 3 }, []];
+    for (const shape of shapes) {
+      const resolverTreatsAsPresent = resolveFixtureCfg(shape, DIVISION, null) !== DIVISION;
+      expect(hasFrozenCfg(shape), `disagreed about ${JSON.stringify(shape) ?? "undefined"}`).toBe(
+        resolverTreatsAsPresent,
+      );
+    }
   });
 
   it("gives append-event the RESOLVED value to freeze — stage overlay applied", () => {

@@ -41,6 +41,24 @@ export function resolveFixtureCfg(
   divisionCfg: unknown,
   stageCfg: Record<string, unknown> | null | undefined,
 ): unknown {
-  if (snapshot !== null && snapshot !== undefined) return snapshot;
+  if (hasFrozenCfg(snapshot)) return snapshot;
   return stageScopedCfg(divisionCfg, stageCfg);
+}
+
+/**
+ * "Does this fixture have a frozen config?" — ONE predicate, for the resolver
+ * above, the freeze in `append-event.ts` and the `/admin` panel alike.
+ *
+ * They used to answer it three times: the freeze tested `=== null`, the resolver
+ * treated `undefined` as absent too, and the panel tested `!== null` again. They
+ * agree only as long as every query selects the column; add one that does not
+ * and the freeze would re-take a snapshot the resolver was already honouring,
+ * under whatever config happens to be live by then.
+ *
+ * `undefined` is absence for the same reason `null` is — a column that was not
+ * selected is not a config — and both are distinct from `{}`, `0` and `""`,
+ * which are legitimate frozen configs.
+ */
+export function hasFrozenCfg(snapshot: unknown): boolean {
+  return snapshot !== null && snapshot !== undefined;
 }

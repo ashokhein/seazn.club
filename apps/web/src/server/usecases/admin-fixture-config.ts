@@ -6,6 +6,7 @@ import { EngineError } from "@seazn/engine/core";
 import {
   LOCKED_FIXTURE_STATUSES,
   fixtureStatusFromFold,
+  hasFrozenCfg,
   recomputeStandings,
   resolveFixtureCfg,
 } from "@/server/engine-db";
@@ -127,8 +128,8 @@ export async function fixtureConfigPanel(fixtureId: string): Promise<FixtureConf
     snapshot,
     snapshotAt: row.config_snapshot_at?.toISOString() ?? null,
     live,
-    diverged: snapshot !== null && JSON.stringify(snapshot) !== JSON.stringify(live),
-    canResnapshot: snapshot !== null && !LOCKED_FIXTURE_STATUSES.has(row.status),
+    diverged: hasFrozenCfg(snapshot) && JSON.stringify(snapshot) !== JSON.stringify(live),
+    canResnapshot: hasFrozenCfg(snapshot) && !LOCKED_FIXTURE_STATUSES.has(row.status),
   };
 }
 
@@ -162,7 +163,22 @@ export async function resnapshotFixtureConfig(
         `This fixture is ${row.status}. Reopen it before rewriting the config it was scored under.`,
       );
     }
-    if (row.config_snapshot === null) {
+    // NO SNAPSHOT → REFUSED, and that is the right answer rather than a gap the
+    // hatch should close (review item B8). Two cases reach here, and neither
+    // wants a "take a first snapshot" button:
+    //
+    //   * Zero events. There is nothing to protect and nothing to correct — the
+    //     fixture already folds against live config, which is the documented
+    //     meaning of a null column. Freezing it early would take the organiser's
+    //     format away before they finished choosing it.
+    //   * Events but no snapshot — only fixtures written before V347, and this
+    //     is greenfield, so the set is empty. Even if it were not: what such a
+    //     fixture needs is `rebuildState` under the config that was in force,
+    //     not a freeze of whatever is live now, which would silently ratify a
+    //     drift nobody reviewed. That is a backfill, and a backfill belongs in a
+    //     migration where it can be reasoned about once, not behind a button
+    //     that is one mis-click from rewriting a match's history.
+    if (!hasFrozenCfg(row.config_snapshot)) {
       throw new HttpError(
         409,
         "This fixture has no config snapshot yet — it already folds against live config.",

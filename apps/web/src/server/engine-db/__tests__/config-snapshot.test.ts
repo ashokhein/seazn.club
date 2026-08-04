@@ -131,6 +131,25 @@ describe.skipIf(!HAS_DB)("fixture config snapshot (V347)", () => {
     ).rejects.toThrow(/win_loss mode requires/);
   });
 
+  it("never freezes a jsonb null, which would read back as 'no snapshot'", async () => {
+    // `tx.json(null)` stores `'null'::jsonb`, and the driver hands that back as
+    // JS null — so the column would say "never frozen" while `config_snapshot
+    // is null` said otherwise, and the fixture would silently re-freeze on every
+    // single append instead of once. Only reachable by a config written straight
+    // to the DB, which is exactly the audience V347 is defence-in-depth for.
+    const s = await seed({});
+    // A JSON null, not a SQL null — the column is NOT NULL, and this is the only
+    // shape that round-trips to JS `null`.
+    await sql`update divisions set config = 'null'::jsonb where id = ${s.divisionId}`;
+    await appendEvent(s.orgId, s.fixtureId, 0, { type: "core.start", payload: {} });
+
+    const [row] = await sql<{ sql_null: boolean; config_snapshot_at: Date | null }[]>`
+      select config_snapshot is null as sql_null, config_snapshot_at
+      from fixtures where id = ${s.fixtureId}`;
+    expect(row.sql_null).toBe(true);
+    expect(row.config_snapshot_at).toBeNull();
+  });
+
   it("freezes the RESOLVED cfg — stage overlay applied — on the first append", async () => {
     const s = await seed({ stageConfig: { shootout: { bestOf: 5 }, placements: {} } });
     await appendEvent(s.orgId, s.fixtureId, 0, { type: "core.start", payload: {} });

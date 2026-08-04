@@ -9,7 +9,7 @@ export {
   type AppendInput,
   type AppendResult,
 } from "./append-event";
-export { resolveFixtureCfg } from "./fixture-cfg";
+export { hasFrozenCfg, resolveFixtureCfg } from "./fixture-cfg";
 export { rebuildState, verifyStateConsistency, type ConsistencyReport } from "./rebuild";
 export {
   recomputeStandings,
