@@ -444,6 +444,34 @@ export async function setFixtureStatusSql(fixtureId: string, status: string): Pr
 }
 
 /**
+ * Rewrite a division's sport config behind the app's back (V347 config-snapshot
+ * e2e).
+ *
+ * Deliberately SQL rather than the divisions PATCH route: the point of the spec
+ * is what happens to an ALREADY SCORED fixture when the config moves, and the
+ * route's own validation is a separate concern that would only make the rig
+ * fragile. Fails loudly on zero rows — a no-op fixture would leave the spec
+ * asserting that nothing changed when nothing was changed.
+ */
+export async function setDivisionConfigSql(divisionId: string, config: unknown): Promise<void> {
+  await withDb(async (sql) => {
+    const res = await sql`
+      update divisions set config = ${sql.json(config as never)} where id = ${divisionId}`;
+    if (res.count === 0) throw new Error(`no division ${divisionId}`);
+  });
+}
+
+/** A fixture's frozen config snapshot (V347), or null before its first event. */
+export async function fixtureConfigSnapshotSql(fixtureId: string): Promise<unknown> {
+  return withDb(async (sql) => {
+    const rows = await sql<{ config_snapshot: unknown }[]>`
+      select config_snapshot from fixtures where id = ${fixtureId}`;
+    if (rows.length === 0) throw new Error(`no fixture ${fixtureId}`);
+    return rows[0].config_snapshot;
+  });
+}
+
+/**
  * Drop an org's server-side entitlement cache (`ent:{org}:*`). SQL-flip
  * helpers mutate entitlement state behind the app's back; on a Redis-backed
  * target (staging) a limit resolved BEFORE the flip stays cached for up to

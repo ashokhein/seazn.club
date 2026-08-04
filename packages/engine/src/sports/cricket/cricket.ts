@@ -729,7 +729,11 @@ function maybeComputeDlsTarget(state: CricketState): CricketState {
   };
 }
 
-function applyRevise(state: CricketState, payload: z.infer<typeof CricketRevise>): CricketState {
+function applyRevise(
+  state: CricketState,
+  payload: z.infer<typeof CricketRevise>,
+  strict: boolean,
+): CricketState {
   if (state.phase !== "pre" && state.phase !== "live") {
     wrongPhase(`revise not allowed in phase "${state.phase}"`);
   }
@@ -743,7 +747,15 @@ function applyRevise(state: CricketState, payload: z.infer<typeof CricketRevise>
     const open = openInnings(next);
     if (open !== null) {
       const { innings, index } = open;
-      if (newLimit < innings.legalBalls) {
+      // STRICT ONLY (§3.3 seam), like the three checks in `applySummary`. Both
+      // sides of this comparison are cfg-derived: the quota is
+      // `oversPerSide × cfg.ballsPerOver` while the innings is recorded in
+      // BALLS, so shortening the over shrinks the limit under history that
+      // cannot move. Ungated, an umpire-confirmed revise the ledger already
+      // holds is refused on every read, with nothing to void. What the revise
+      // MEANS on replay is unchanged — the quota is set to the recorded number
+      // of overs, and `autoClose` reads it the same way it always did.
+      if (strict && newLimit < innings.legalBalls) {
         invalid("revised overs are below the balls already bowled", {
           legalBalls: innings.legalBalls,
           newLimit,
@@ -1709,7 +1721,7 @@ function generateBall(state: CricketState, rng: Rng): CricketBallEv {
   const bowler =
     fine.currentBowler ??
     pickFrom(eligibleBowlers(bowlingOrder, fine, state.cfg.maxOversPerBowler, bpo), rng);
-  return randomDelivery(
+  const ball = randomDelivery(
     {
       over: Math.floor(legalBalls / bpo),
       ballInOver: (legalBalls % bpo) + 1,
@@ -1722,6 +1734,28 @@ function generateBall(state: CricketState, rng: Rng): CricketBallEv {
     rng,
     bowlingOrder,
   );
+  if (ball.wicket === undefined) return ball;
+  // W4a follow-up — name the batter walking in on EVERY OTHER wicket, so
+  // `resolveIncoming`'s explicit arm (Law 25.1: the order after the openers is
+  // the captain's) is folded by generated streams instead of only by
+  // hand-written ones. Two deliberate properties:
+  //   * SOMETIMES, not always — a field written on every event leaves the
+  //     missing-field fold path exactly as unwalked as one written on none.
+  //   * DERIVED, never drawn. The trigger is the wicket count and the value is
+  //     the batter the default arm would have picked anyway, so this consumes
+  //     no rng and moves no existing walk: same batter, same runs, same
+  //     decisions downstream. A draw here would re-seed every cricket stream in
+  //     every property suite for no benefit.
+  if (fine.dismissed.length % 2 !== 0) return ball;
+  const unavailable = new Set<string>([
+    ...fine.dismissed,
+    ball.wicket.out,
+    ...(fine.retiredNotOut ?? []),
+    ...[fine.striker, fine.nonStriker].filter((person): person is string => person !== null),
+  ]);
+  const byOrder = nextBatterFrom(order, fine.nextBatterIndex, unavailable);
+  if (byOrder === null) return ball; // last man, or a resumption — leave it implicit
+  return { ...ball, wicket: { ...ball.wicket, incoming: byOrder.person } };
 }
 
 // W4 review item 3 — a Tier-2 scorecard line for a closed FINE innings, built
@@ -2075,7 +2109,7 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
         return { ...state, interruptions: state.interruptions + 1 };
       }
       case "cricket.revise":
-        return applyRevise(state, parsePayload(CricketRevise, ev.payload, ev.type));
+        return applyRevise(state, parsePayload(CricketRevise, ev.payload, ev.type), strict);
       case "cricket.followon": {
         if (state.phase !== "live") wrongPhase(`follow-on in phase "${state.phase}"`);
         parsePayload(CricketFollowOn, ev.payload, ev.type);
@@ -2396,6 +2430,26 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
               ? 1 + Math.floor(rng() * limit)
               : limit;
         const runs = Math.floor(rng() * 220);
+        // W4a follow-up — a coarse innings entered PROGRESSIVELY. `partial`
+        // leaves the innings open (spec §2.3: the totals may only grow), which
+        // is how a coarse scorer records a match while it is still being
+        // played; the branch below then grows it to a finish. Only offered
+        // where the snapshot is genuinely mid-innings — not all out and inside
+        // the quota — or the fold auto-closes it and `partial` records nothing.
+        // Derived from numbers already drawn, so it consumes no rng of its own.
+        if (!bowledOut && limit !== null && runs % 2 === 0) {
+          const half = Math.floor(runs / 2);
+          return {
+            type: "cricket.innings.summary",
+            payload: {
+              runs: half,
+              wickets: Math.floor(wickets / 2),
+              legalBalls: Math.floor(legalBalls / 2),
+              boundaries: Math.floor(half / 8),
+              partial: true,
+            },
+          };
+        }
         return {
           type: "cricket.innings.summary",
           payload: {
@@ -2411,8 +2465,24 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
     }
 
     if (open.innings.fine === null) {
-      // Open coarse innings never comes from this generator, but stay total.
-      return { type: "cricket.innings.close", payload: {} };
+      // An open COARSE innings — the progressive snapshot above left it open.
+      // Grow the totals to a legal finish and close it with a non-partial
+      // summary; that is the second half of progressive coarse scoring, and it
+      // is what makes the partial branch a real fold path rather than a flag.
+      const { innings } = open;
+      const allOut = allOutWickets(state, innings.battingSide);
+      const wicketRoom = allOut - innings.wickets;
+      const ballRoom = innings.ballsLimit === null ? 60 : innings.ballsLimit - innings.legalBalls;
+      const runs = innings.runs + Math.floor(rng() * 120);
+      return {
+        type: "cricket.innings.summary",
+        payload: {
+          runs,
+          wickets: innings.wickets + (wicketRoom > 0 ? Math.floor(rng() * (wicketRoom + 1)) : 0),
+          legalBalls: innings.legalBalls + (ballRoom > 0 ? Math.floor(rng() * (ballRoom + 1)) : 0),
+          boundaries: Math.floor(runs / 8),
+        },
+      };
     }
     const roll = rng();
     if (roll < 0.004) return { type: "core.abandon", payload: { reason: "rain" } };
@@ -2428,7 +2498,25 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
       const floorOvers = Math.max(1, Math.ceil(open.innings.legalBalls / bpo));
       if (currentOvers - 1 >= floorOvers) {
         const newOvers = Math.max(floorOvers, currentOvers - 1 - Math.floor(rng() * 3));
-        return { type: "cricket.revise", payload: { oversPerSide: newOvers } };
+        // W4a follow-up — every other revise of a CHASE also carries the
+        // umpire-confirmed target (§2.5: a manual target always wins over the
+        // computed one). Its VALUE is the target the chase already had, so the
+        // revise decides nothing it would not have decided anyway and no
+        // existing walk moves; what it does change is `targetSource`, which is
+        // the whole point — a manual target is folded, and the match reads as
+        // won against a revised target rather than a regulation one. Offered
+        // only where the first innings is complete, so runs + 1 IS the target,
+        // and only where DLS is off, since the two are alternatives.
+        const first = state.innings[0];
+        const chasing = state.innings.length === 2 && first !== undefined && first.closed;
+        const named = chasing && !state.cfg.dls.enabled && open.innings.legalBalls % 2 === 0;
+        return {
+          type: "cricket.revise",
+          payload: {
+            oversPerSide: newOvers,
+            ...(named ? { target: (first as InningsState).runs + 1 } : {}),
+          },
+        };
       }
     }
     if (
@@ -2463,11 +2551,20 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
       const allowance = state.cfg.reviews?.perInnings;
       const spent = open.innings.reviews?.[side].lost ?? 0;
       if (allowance === undefined || spent < allowance) {
+        // `against` — the batter the decision concerned — is DERIVED from the
+        // crease and gated on a state parity, for the same reason as
+        // `wicket.incoming` above: it consumes no rng, so adding it re-seeds no
+        // existing stream. It feeds no fold path at all (applyReview only moves
+        // the allowance ledger), which is exactly why nothing but a corpus
+        // coverage check would ever notice it was unwritten.
+        const against = open.innings.fine.striker;
+        const named = against !== null && open.innings.legalBalls % 2 === 0;
         return {
           type: "cricket.review",
           payload: {
             by,
             kind: rng() < 0.2 ? "umpire" : "player",
+            ...(named ? { against } : {}),
             outcome: pick(["upheld", "struck_down", "umpires_call"] as const),
           },
         };

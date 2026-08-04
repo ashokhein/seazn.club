@@ -17,6 +17,7 @@ import {
 } from "@seazn/engine/competition";
 import type { AnySportModule } from "@seazn/engine/sport";
 import { resolveModule } from "./registry";
+import { resolveFixtureCfg } from "./fixture-cfg";
 
 type Tx = postgres.TransactionSql;
 
@@ -72,13 +73,15 @@ interface FixtureRow {
   away_entrant_id: string | null;
   outcome: unknown;
   state: unknown;
+  /** V347 — the resolved cfg this fixture was SCORED under; null before its
+   *  first event. See `fixture-cfg.ts`. */
+  config_snapshot: unknown;
 }
 
 interface StageInputs {
   stage: StageRow;
   division: DivisionRow;
   module: AnySportModule;
-  cfg: unknown;
   fixtures: FixtureRow[];
   tableFixtures: TableFixture[];
   entrants: string[];
@@ -105,11 +108,19 @@ async function loadStageInputs(tx: Tx, stageId: string): Promise<StageInputs> {
 
   const fixtures = await tx<FixtureRow[]>`
     select f.id, f.status, f.round_no, f.pool_id, f.home_entrant_id, f.away_entrant_id,
-           f.outcome, m.state
+           f.outcome, f.config_snapshot, m.state
     from fixtures f left join match_states m on m.fixture_id = f.id
     where f.stage_id = ${stageId}
     order by f.round_no, f.seq_in_round
   `;
+  // NOT snapshotted, and that is not an oversight. `stage.config.points`
+  // (Jul3/05 §2) is a competition-level re-derivation applied on top of the
+  // sport ledger, not an input to any fold, so it is not part of the resolved
+  // cfg `stageScopedCfg` produces and no fixture froze it. It is safe today
+  // because a stage's config is locked the moment fixtures exist
+  // (`usecases/stages.ts` FORMAT_LOCKED) except for `qualified`,
+  // `carry_deltas`, `rank_overrides` and `ladder_order` — `points` is not on
+  // that list. Relax that lock and this line becomes the same defect again.
   const pointsRule = stage.config?.points ? PointsRule.parse(stage.config.points) : null;
 
   const tableFixtures: TableFixture[] = fixtures.map((f) => {
@@ -122,9 +133,23 @@ async function loadStageInputs(tx: Tx, stageId: string): Promise<StageInputs> {
     // Only decided fixtures with a folded state contribute a delta pair.
     if (f.outcome && f.state && f.home_entrant_id && f.away_entrant_id) {
       const ctx: StageCtx = { ...ctxBase, roundNo: f.round_no, ...(f.pool_id ? { poolId: f.pool_id } : {}) };
+      // V347 — PER FIXTURE, not once for the stage. Standings are a SECOND
+      // derivation of the same fixture, and `standingsDelta` reads cfg directly
+      // (`generic` returns `cfg.points.w` for a win). Passing live
+      // `division.config` here meant lowering `points.w` after matches were
+      // played still rewrote the table for them, which is the first bullet of
+      // the defect V347 exists to close and what
+      // `content/help/divisions/settings.md` promises organisers is gone. Same
+      // resolver as both folds, so a fixture's table contribution and its state
+      // can never be computed under two different configs; a fixture with no
+      // snapshot (never scored) still reads live cfg, deliberately.
       const pair = sportModule.standingsDelta(
         f.outcome as MatchOutcome,
-        division.config,
+        resolveFixtureCfg(
+          f.config_snapshot,
+          division.config,
+          stage.config as Record<string, unknown> | null,
+        ),
         ctx,
         f.state,
       );
@@ -156,7 +181,9 @@ async function loadStageInputs(tx: Tx, stageId: string): Promise<StageInputs> {
     stage,
     division,
     module: sportModule,
-    cfg: division.config,
+    // No stage-wide `cfg` field: there is no such thing any more. Each fixture
+    // resolves its own above, and a single shared one is exactly how live
+    // config leaked back into decided fixtures.
     fixtures,
     tableFixtures,
     entrants,

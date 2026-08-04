@@ -12,7 +12,7 @@ import {
 } from "@seazn/engine/core";
 import { resolveModule } from "./registry";
 import { loadLineupPair } from "./lineups";
-import { stageScopedCfg } from "./stage-cfg";
+import { hasFrozenCfg, resolveFixtureCfg } from "./fixture-cfg";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
 
@@ -47,6 +47,9 @@ interface FixtureRow {
   away_entrant_id: string | null;
   status: string;
   outcome: unknown;
+  /** V347 — the resolved cfg this fixture was SCORED under; null until its
+   *  first event. See `fixture-cfg.ts` for why it exists. */
+  config_snapshot: unknown;
 }
 interface StageRow {
   kind: string;
@@ -67,8 +70,12 @@ interface EventRow {
   voids_event_id: string | null;
 }
 
-// Terminal DB statuses that lock the ledger against further appends.
-const LOCKED = new Set(["finalized", "cancelled"]);
+// Terminal DB statuses that lock the ledger against further appends. Exported
+// because the V347 config-snapshot escape hatch must refuse on exactly this
+// set — rewriting the cfg a FINALIZED result was computed under is the very
+// thing the snapshot exists to prevent, so the two guards may not drift apart.
+export const LOCKED_FIXTURE_STATUSES: ReadonlySet<string> = new Set(["finalized", "cancelled"]);
+const LOCKED = LOCKED_FIXTURE_STATUSES;
 
 // Map the folded ledger onto the fixtures.status enum. Derived from the
 // ACTIVE (void-resolved) events, not from event-type transitions: a void can
@@ -82,6 +89,26 @@ function nextStatus(
   active: readonly EventEnvelope[],
 ): string {
   if (candidateType === "core.finalize") return "finalized";
+  return fixtureStatusFromFold(outcome, active);
+}
+
+/**
+ * The same rule for a fold with no candidate event — a fixture whose cached
+ * status has to be re-derived from a stream that did not change (the V347
+ * re-snapshot hatch). Exported so the two can never drift: a hatch that wrote
+ * its own status rule would reintroduce exactly the read/write disagreement
+ * `fixture-cfg.ts` exists to prevent.
+ *
+ * `finalized` is deliberately NOT reachable here even when the ledger holds an
+ * active `core.finalize`: every caller of this overload has already refused a
+ * fixture in `LOCKED_FIXTURE_STATUSES`, so the only way to arrive with a
+ * finalize in the stream is that staff reopened the fixture on purpose, and
+ * re-deriving it back to `finalized` would silently undo that.
+ */
+export function fixtureStatusFromFold(
+  outcome: MatchOutcome | null,
+  active: readonly EventEnvelope[],
+): string {
   const has = (type: string) => active.some((event) => event.type === type);
   // Abandon first: cricket abandon folds to a no_result OUTCOME, but the
   // fixture status stays "abandoned" (replay policy owns it from here).
@@ -122,7 +149,8 @@ export async function appendEvent(
     await tx`select pg_advisory_xact_lock(hashtext(${"fixture:" + fixtureId}))`;
 
     const [fixture] = await tx<FixtureRow[]>`
-      select id, division_id, stage_id, home_entrant_id, away_entrant_id, status, outcome
+      select id, division_id, stage_id, home_entrant_id, away_entrant_id, status, outcome,
+             config_snapshot
       from fixtures where id = ${fixtureId}
     `;
     if (!fixture) {
@@ -203,17 +231,38 @@ export async function appendEvent(
     // (invalid event, already-decided, …) aborts the tx before any insert, so
     // the ledger only ever holds valid events (spec 03 §2 guarantee 2).
     const stream = [...prior, candidate];
-    const cfg = stageScopedCfg(division.config, stage?.config);
-    // W4a (#425) §3.3 — the strict-on-write seam. `cfg` above is rebuilt LIVE
-    // from `division.config` on every call, and every READ replays this same
-    // stream from `init`, so a refusal computed from cfg cannot tell "the
-    // scorer just typed a period this sport does not have" from "an organiser
-    // lowered bestOf after the match was scored". The first is fixable; the
-    // second has no event to void and would make the fixture permanently
-    // unviewable. `strictFromSeq` names the ONE event that is not yet in the
-    // ledger, so the candidate is validated in full and `prior` — which the
-    // ledger already accepted, under whatever cfg was in force then — is
-    // replayed. `fold.ts` and every other read path pass no options at all.
+    // V347 — the cfg this fixture is SCORED under, frozen the moment it has
+    // history worth protecting. Before this, `cfg` was rebuilt LIVE from
+    // `division.config` on every call while every READ replayed the whole
+    // stream from `init`, so editing a division's config changed the input to
+    // every past fold at once: finished fixtures silently rescored, and any
+    // cfg-derived refusal started firing on events already in the ledger, with
+    // no event to void and no scorer action that recovers it.
+    //
+    // A fixture with ZERO events deliberately reads LIVE cfg — `lastSeq === 0`
+    // below is exactly "nothing recorded yet", and an organiser still setting
+    // the division up must have the format they choose apply. See
+    // `fixture-cfg.ts` for the full rationale; it is the single reader of the
+    // column, shared with `fold.ts` so the two folds cannot drift apart.
+    const cfg = resolveFixtureCfg(fixture.config_snapshot, division.config, stage?.config);
+    // Take it on the FIRST event only. The advisory lock above is held to
+    // commit, so no concurrent appender can interleave between this decision
+    // and the write below — the snapshot is taken exactly once.
+    //
+    // `cfg != null` is not paranoia: `tx.json(null)` writes a SQL NULL, so a
+    // division whose config is a JSON null would stamp `config_snapshot_at`
+    // while `config_snapshot` still read as "never frozen" — a row claiming a
+    // freeze that did not happen, and a fixture that quietly keeps following
+    // live config. Better to leave both columns honestly null.
+    const freezeSnapshot = !hasFrozenCfg(fixture.config_snapshot) && lastSeq === 0 && cfg != null;
+    // W4a (#425) §3.3 — the strict-on-write seam. A refusal computed from cfg
+    // cannot tell "the scorer just typed a period this sport does not have"
+    // from "an organiser lowered bestOf after the match was scored". The first
+    // is fixable; the second has no event to void. `strictFromSeq` names the
+    // ONE event that is not yet in the ledger, so the candidate is validated in
+    // full and `prior` — which the ledger already accepted, under the cfg now
+    // frozen above — is replayed. `fold.ts` and every other read path pass no
+    // options at all.
     const state = foldMatch(sportModule, cfg, lineups, stream, {
       strictFromSeq: candidate.seq,
     });
@@ -235,6 +284,16 @@ export async function appendEvent(
         "this stage cannot end level — decide it by extra time or a shootout",
         { fixtureId, stage: stage.kind },
       );
+    }
+
+    // Same transaction as the event that made it necessary: a crash between the
+    // two can never leave a fixture with history and no frozen cfg.
+    if (freezeSnapshot) {
+      await tx`
+        update fixtures
+        set config_snapshot = ${tx.json(cfg as never)}, config_snapshot_at = now()
+        where id = ${fixtureId}
+      `;
     }
 
     await tx`

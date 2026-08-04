@@ -153,6 +153,119 @@ export const POSITION_KEY: Record<string, MessageKey> = {
   clock: "scoring.position.clock",
 };
 
+/**
+ * Match awards, shared by two surfaces that used to name them independently:
+ * the player-stat rows below (`*_awards`) and the fixture console's `core.award`
+ * line. One key per award, so "Man of the Match" is translated once.
+ */
+const AWARD_KEY: Record<string, MessageKey> = {
+  motm: "award.motm", mvp: "award.mvp", potm: "award.potm",
+};
+
+/**
+ * Player-stat row labels, keyed `<sportKey>.<rowKey>` — the row key is the one
+ * a snapshot carries, so awards appear here with their `_awards` suffix.
+ *
+ * PER-SPORT BY NECESSITY, not by taste. Five metric keys are declared by more
+ * than one sport with DIFFERENT English: `sanctions` is "Sanctions" in
+ * volleyball and "Cards" in badminton and table tennis; `points` is "Points won"
+ * in tennis; `so_attempts` / `so_goals` / `so_saves` are the IIHF's "GWS *" on
+ * ice and the FIH's "SO *" on grass. A flat `stat.sanctions` would force one
+ * sport's wording onto another in four languages, and nothing on screen would
+ * show it — the engine's English `label` always renders something plausible.
+ * `__tests__/player-stat-vocab.test.ts` derives that collision set from the
+ * engine and reds if any locale collapses two of them into one word.
+ *
+ * The three award rows point at `AWARD_KEY` rather than minting `stat.*` copy,
+ * because the console names the same awards.
+ */
+export const PLAYER_STAT_KEY: Record<string, MessageKey> = {
+  "football.goals": "stat.football.goals",
+  "football.assists": "stat.football.assists",
+  "football.yellow_cards": "stat.football.yellow_cards",
+  "football.red_cards": "stat.football.red_cards",
+  "football.penalty_goals": "stat.football.penalty_goals",
+  "football.penalties_missed": "stat.football.penalties_missed",
+  "football.own_goals": "stat.football.own_goals",
+  "football.sin_bins": "stat.football.sin_bins",
+  "football.points": "stat.football.points",
+  "football.motm_awards": AWARD_KEY.motm,
+
+  "cricket.runs": "stat.cricket.runs",
+  "cricket.balls_faced": "stat.cricket.balls_faced",
+  "cricket.balls_bowled": "stat.cricket.balls_bowled",
+  "cricket.runs_conceded": "stat.cricket.runs_conceded",
+  "cricket.wickets": "stat.cricket.wickets",
+  "cricket.catches": "stat.cricket.catches",
+  "cricket.stumpings": "stat.cricket.stumpings",
+  "cricket.run_outs": "stat.cricket.run_outs",
+
+  "boardgame.games": "stat.boardgame.games",
+  "boardgame.wins": "stat.boardgame.wins",
+
+  "carrom.breaks": "stat.carrom.breaks",
+  "carrom.queens": "stat.carrom.queens",
+  "carrom.penalties": "stat.carrom.penalties",
+
+  "generic.points": "stat.generic.points",
+  "generic.scores": "stat.generic.scores",
+
+  "volleyball.points": "stat.volleyball.points",
+  "volleyball.serves": "stat.volleyball.serves",
+  "volleyball.sanctions": "stat.volleyball.sanctions",
+
+  "badminton.points": "stat.badminton.points",
+  "badminton.serves": "stat.badminton.serves",
+  "badminton.sanctions": "stat.badminton.sanctions",
+
+  "tabletennis.points": "stat.tabletennis.points",
+  "tabletennis.serves": "stat.tabletennis.serves",
+  "tabletennis.sanctions": "stat.tabletennis.sanctions",
+
+  "tennis.points": "stat.tennis.points",
+  "tennis.service_points": "stat.tennis.service_points",
+  "tennis.aces": "stat.tennis.aces",
+  "tennis.double_faults": "stat.tennis.double_faults",
+  "tennis.violations": "stat.tennis.violations",
+  "tennis.medical_timeouts": "stat.tennis.medical_timeouts",
+
+  "icehockey.goals": "stat.icehockey.goals",
+  "icehockey.assists": "stat.icehockey.assists",
+  "icehockey.pen_minor": "stat.icehockey.pen_minor",
+  "icehockey.pen_double": "stat.icehockey.pen_double",
+  "icehockey.pen_major": "stat.icehockey.pen_major",
+  "icehockey.pen_misc": "stat.icehockey.pen_misc",
+  "icehockey.pen_gm": "stat.icehockey.pen_gm",
+  "icehockey.pen_match": "stat.icehockey.pen_match",
+  "icehockey.goals_pp": "stat.icehockey.goals_pp",
+  "icehockey.goals_sh": "stat.icehockey.goals_sh",
+  "icehockey.goals_ps": "stat.icehockey.goals_ps",
+  "icehockey.goals_en": "stat.icehockey.goals_en",
+  "icehockey.ps_taken": "stat.icehockey.ps_taken",
+  "icehockey.so_attempts": "stat.icehockey.so_attempts",
+  "icehockey.so_goals": "stat.icehockey.so_goals",
+  "icehockey.so_saves": "stat.icehockey.so_saves",
+  "icehockey.pen_served": "stat.icehockey.pen_served",
+  "icehockey.points": "stat.icehockey.points",
+  "icehockey.pim": "stat.icehockey.pim",
+  "icehockey.mvp_awards": AWARD_KEY.mvp,
+
+  "hockey.goals": "stat.hockey.goals",
+  "hockey.green_cards": "stat.hockey.green_cards",
+  "hockey.yellow_cards": "stat.hockey.yellow_cards",
+  "hockey.red_cards": "stat.hockey.red_cards",
+  "hockey.goals_pc": "stat.hockey.goals_pc",
+  "hockey.goals_stroke": "stat.hockey.goals_stroke",
+  "hockey.goals_en": "stat.hockey.goals_en",
+  "hockey.strokes_taken": "stat.hockey.strokes_taken",
+  "hockey.pc_taken": "stat.hockey.pc_taken",
+  "hockey.so_attempts": "stat.hockey.so_attempts",
+  "hockey.so_goals": "stat.hockey.so_goals",
+  "hockey.so_saves": "stat.hockey.so_saves",
+  "hockey.cards_served": "stat.hockey.cards_served",
+  "hockey.potm_awards": AWARD_KEY.potm,
+};
+
 const CARD_COLOR_KEY: Record<string, MessageKey> = {
   yellow: "cardColor.yellow", red: "cardColor.red",
   second_yellow: "cardColor.second_yellow",
@@ -177,10 +290,15 @@ const REASON_KEY: Record<string, MessageKey> = {
   hurt: "reason.hurt", out: "reason.out", time: "reason.time",
   weather: "reason.weather", other: "reason.other",
 };
+// ET_H1/ET_H2 arrive from `football.period` payloads. They were absent here
+// until #427's second pass, because `event-copy.ts` carried its own PERIOD_LABEL
+// table and nothing forced the two to agree — the exact drift a single
+// vocabulary exists to prevent.
 const PHASE_KEY: Record<string, MessageKey> = {
   start: "matchPhase.start", end: "matchPhase.end",
   HT: "matchPhase.HT", FT: "matchPhase.FT",
-  ET_HT: "matchPhase.ET_HT", ET_FT: "matchPhase.ET_FT",
+  ET_H1: "matchPhase.ET_H1", ET_HT: "matchPhase.ET_HT",
+  ET_H2: "matchPhase.ET_H2", ET_FT: "matchPhase.ET_FT",
 };
 // Penalty / shoot-out outcomes and cricket's review outcomes share the field.
 const OUTCOME_KEY: Record<string, MessageKey> = {
@@ -314,6 +432,24 @@ export const enumLabel = (field: string, value: string, m: MsgFn): string => {
 export const positionLabel = (key: string, m: MsgFn, engineLabel?: string): string =>
   key in POSITION_KEY ? m(POSITION_KEY[key]) : (engineLabel ?? humanize(key));
 
+/**
+ * Localized label for one player-stat row, scoped by sport (see
+ * `PLAYER_STAT_KEY`). `engineLabel` is the module's own declared English, used
+ * only for a row this app has no copy for yet: a sport can ship a metric a
+ * release before its dictionary entry lands, and the engine's word beats a
+ * humanized token ("PIM" survives, "Pim" would not).
+ */
+export const playerStatLabel = (
+  sportKey: string, statKey: string, m: MsgFn, engineLabel?: string,
+): string => {
+  const key = `${sportKey}.${statKey}`;
+  return key in PLAYER_STAT_KEY ? m(PLAYER_STAT_KEY[key]) : (engineLabel ?? humanize(statKey));
+};
+
+/** Localized name for a match award (`core.award`'s payload `key`), or null. */
+export const awardLabel = (key: string, m: MsgFn): string | null =>
+  key in AWARD_KEY ? m(AWARD_KEY[key]) : null;
+
 /** Localized copy for an engine refusal; null when the code isn't an engine one. */
 export const engineErrorLabel = (code: string, m: MsgFn): string | null =>
   code in ENGINE_ERROR_KEY ? m(ENGINE_ERROR_KEY[code as EngineErrorCode]) : null;
@@ -339,6 +475,7 @@ export const SCORING_VOCAB_KEYS: readonly MessageKey[] = [
   ...Object.values(WICKET_KEY), ...Object.values(EXTRA_KEY),
   ...Object.values(SPORT_KEY), ...Object.values(SWATCH_KEY),
   ...Object.values(EVENT_KEY), ...Object.values(ENGINE_ERROR_KEY),
-  ...Object.values(POSITION_KEY),
+  ...Object.values(POSITION_KEY), ...Object.values(PLAYER_STAT_KEY),
+  ...Object.values(AWARD_KEY),
   ...Object.values(ENUM_VOCAB).flatMap((maps) => maps.flatMap((m) => Object.values(m))),
 ];

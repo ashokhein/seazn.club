@@ -328,43 +328,32 @@ export function declaredOptionalFields(module: AnySportModule): string[] {
  *
  *  Three classes appear below, and only the first is a corpus problem:
  *    GENERATOR — the branch declares the field, `arbitraryEvent` never sets it.
- *      Closing these means widening the generators under src/sports/**, which
- *      is a module change, not a testkit one.
+ *      NOT really an exemption: a coverage gap in the sport's own generator,
+ *      wearing one. Twenty sat here and ALL TWENTY ARE CLOSED — football's
+ *      added time, assists and penalty goals, carrom's named offender,
+ *      tennis's receiver side, both period sports' whole shoot-out `meta` plus
+ *      the goal's own period label, cricket's incoming batter, reviewed batter,
+ *      umpire target and progressive innings, and the set-based trio's
+ *      in-progress set snapshot — by widening the generators under
+ *      src/sports/**, always SOMETIMES and never always: a field written on
+ *      every event leaves the missing-field fold path exactly as unwalked as
+ *      one written on none. `generator-fields.test.ts` is what holds them
+ *      closed, and asserts the EXACT (now empty) set of those still blocked.
+ *      The last seven were blocked on three fold defects the generator change
+ *      merely EXPOSED — two cfg-derived refusals unguarded on the read path
+ *      (§3.3) and a coarsener that emitted two partials for one set (§9.6) —
+ *      and closing them meant fixing those first, not widening around them.
  *    KERNEL-UNION — the setbased kernel gives volleyball, badminton and
  *      tabletennis ONE event union while each sport's `records` preset
  *      registers a different subset of event types. The union therefore
  *      over-declares for a given sport: the field belongs to a type that sport
- *      cannot record at all, and no config reaches it (`records` is a
- *      compile-time preset, not a cfg knob).
+ *      cannot record at all, `apply` refuses it BY NAME, and no config reaches
+ *      it (`records` is a compile-time preset, not a cfg knob).
  *    CFG — genuinely cfg-gated; prefer a COVERAGE_CONFIGS entry, and both that
  *      were found (generic's draws, hockey's assists) got one instead of a line
  *      here. Nothing is allow-listed under this class today. */
 export const UNREACHABLE_FIELDS: Record<string, Record<string, string>> = {
-  football: {
-    addedMinutes:
-      "GENERATOR: arbitraryEvent builds football.period as {phase, at}; nothing in it ever writes Law 7 added time.",
-    assist:
-      "GENERATOR: arbitraryEvent builds football.goal as {by, scorer, at}; it never names a second scorer.",
-    penalty:
-      "GENERATOR: the generated goal toggles ownGoal but never penalty:true — an in-play penalty GOAL is not in its repertoire (football.penalty, the missed kick, is).",
-  },
-  cricket: {
-    against:
-      "GENERATOR: arbitraryEvent builds cricket.review as {by, kind, outcome}; it never names the side reviewed against.",
-    partial:
-      "GENERATOR: only coarsen() writes partial on cricket.innings.summary, and a golden corpus is a fine-grained walk of arbitraryEvent — it never calls coarsen.",
-    target:
-      "GENERATOR: arbitraryEvent builds cricket.revise with oversPerSide only; a DLS-revised target is never generated.",
-    "wicket.incoming":
-      "GENERATOR: randomDelivery's wicket object omits incoming — the generated fall of wicket never names the batter walking in.",
-  },
-  carrom: {
-    offendingEntrantId:
-      "GENERATOR: arbitraryEvent builds carrom.game.adjust without it — the generated adjustment never attributes an offender.",
-  },
   volleyball: {
-    partial:
-      "GENERATOR: only coarsen() writes partial on the set summary; the corpus is a fine-grained arbitraryEvent walk.",
     returns:
       "KERNEL-UNION: the setbased kernel gives all three sports ONE event union, but volleyball's preset registers no expedite system — apply refuses volleyball.expedite.start with `\"volleyball\" has no expedite system`, so no config or seed can record this field.",
     serving:
@@ -373,8 +362,6 @@ export const UNREACHABLE_FIELDS: Record<string, Record<string, string>> = {
   badminton: {
     off: "KERNEL-UNION: apply refuses badminton.sub with `\"badminton\" does not record substitutions`; `records` is a compile-time preset, not a cfg knob, so no coverage config reaches it.",
     on: "KERNEL-UNION: same as `off` — the field rides on the substitution payload badminton cannot record.",
-    partial:
-      "GENERATOR: only coarsen() writes partial on the game summary; the corpus is a fine-grained arbitraryEvent walk.",
     returns:
       "KERNEL-UNION: apply refuses badminton.expedite.start with `\"badminton\" has no expedite system` — the expedite payload is table tennis's alone.",
     serving: "KERNEL-UNION: same as `returns` — rides on the expedite payload badminton cannot record.",
@@ -384,26 +371,6 @@ export const UNREACHABLE_FIELDS: Record<string, Record<string, string>> = {
   tabletennis: {
     off: "KERNEL-UNION: apply refuses tabletennis.sub with `\"tabletennis\" does not record substitutions` — its preset registers timeouts, sanctions and expedite, but no substitutions.",
     on: "KERNEL-UNION: same as `off` — rides on the substitution payload tabletennis cannot record.",
-    partial:
-      "GENERATOR: only coarsen() writes partial on the game summary; the corpus is a fine-grained arbitraryEvent walk.",
-  },
-  tennis: {
-    "meta.receiverSide":
-      "GENERATOR: the generated point's meta only ever carries {kind} (ace / double_fault); receiverSide is never written.",
-  },
-  icehockey: {
-    meta: "GENERATOR: the period kernel builds its shoot-out attempt without a meta object at all, so neither it nor either of its leaves is ever written.",
-    "meta.clockSeconds": "GENERATOR: rides on the shoot-out attempt's `meta`, which arbitraryEvent never builds.",
-    "meta.ineligible": "GENERATOR: rides on the shoot-out attempt's `meta`, which arbitraryEvent never builds.",
-    period:
-      "GENERATOR: the generated goal never sets the goal payload's own `period` field — the period is taken from folded state instead.",
-  },
-  hockey: {
-    meta: "GENERATOR: the period kernel builds its shoot-out attempt without a meta object at all, so neither it nor either of its leaves is ever written.",
-    "meta.clockSeconds": "GENERATOR: rides on the shoot-out attempt's `meta`, which arbitraryEvent never builds.",
-    "meta.ineligible": "GENERATOR: rides on the shoot-out attempt's `meta`, which arbitraryEvent never builds.",
-    period:
-      "GENERATOR: the generated goal never sets the goal payload's own `period` field — the period is taken from folded state instead.",
   },
 };
 

@@ -24,6 +24,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <Link href="/admin/billing-events" className="hover:text-white">Stripe</Link>
           <Link href="/admin/pass-credit-reversals" className="hover:text-white">Pass credits</Link>
           <Link href="/admin/ai-runs" className="hover:text-white">AI runs</Link>
+          <Link href="/admin/fixtures" className="hover:text-white">Fixture config</Link>
           <Link href="/admin/settings" className="hover:text-white">Settings</Link>
           <Link href="/admin/audit" className="hover:text-white">Audit</Link>
         </nav>

@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 // clubs and none of their consoles. All plans, free included.
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { meEmptyState } from "./me-empty-state";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { routes } from "@/lib/routes";
 import {
@@ -364,20 +365,6 @@ function FixtureContext({ f }: { f: MyFixture }) {
 function publicHref(f: MyFixture): string | null {
   if (f.competition_visibility !== "public" && f.competition_visibility !== "unlisted") return null;
   return routes.sharedFixture(f.org_slug, f.competition_slug, f.division_slug, f.id);
-}
-
-/**
- * "Not rostered anywhere" and "rostered but nothing scheduled yet" are
- * different situations that need different copy — see fix-ui audit
- * 04-account-public-embed.md.
- */
-export function meEmptyState(
-  upcomingCount: number,
-  resultsCount: number,
-  teamsCount: number,
-): "unrostered" | "rostered" | null {
-  if (upcomingCount > 0 || resultsCount > 0) return null;
-  return teamsCount > 0 ? "rostered" : "unrostered";
 }
 
 function headline(r: MyResult): string | null {

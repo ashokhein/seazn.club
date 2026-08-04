@@ -1899,13 +1899,38 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
       const scorer =
         rng() < 0.5 ? squad.onPitch[Math.floor(rng() * squad.onPitch.length)] : undefined;
       const minute = rng() < 0.5 ? Math.floor(rng() * 130) : undefined;
+      // W4a T10 follow-up — the two attribution facts a goal line carries that
+      // this generator never wrote. Both SOMETIMES: an unassisted goal and a
+      // goal from open play are the common cases, and the fold path for the
+      // ABSENT field is the one every pre-W4 payload takes.
+      //
+      // The assisting player is drawn from the striking side's pitch, minus the
+      // scorer — the same side the scorer is validated against (`applyGoal`),
+      // and `assists` is the metric `assist` feeds. Only on a scored, non-own
+      // goal: an own goal has no assist to credit, and naming one would put a
+      // second player on a goal the fold credits to the opponent.
+      const assistPool =
+        scorer === undefined || ownGoal
+          ? []
+          : squad.onPitch.filter((person) => person !== scorer);
+      const assist =
+        assistPool.length > 0 && rng() < 0.35
+          ? assistPool[Math.floor(rng() * assistPool.length)]
+          : undefined;
+      // An in-play penalty CONVERTED. `football.penalty` already generates the
+      // kick that was not scored (its `outcome` covers saved/missed/post), so
+      // the converted one only ever existed as a goal — and never once carried
+      // the flag that says so, which is what `penalty_goals` counts.
+      const penalty = !ownGoal && rng() < 0.12;
       return {
         type: "football.goal",
         payload: {
           by: sideId(side),
           ...(scorer === undefined ? {} : { scorer }),
+          ...(assist === undefined ? {} : { assist }),
           ...(minute === undefined ? {} : { minute }),
           ...(ownGoal ? { ownGoal: true } : {}),
+          ...(penalty ? { penalty: true } : {}),
           at: stamp(state.phase),
         },
       };
@@ -1913,7 +1938,18 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
     // Advance the clock.
     const marker =
       state.phase === "H1" ? "HT" : state.phase === "H2" ? "FT" : state.phase === "ET_H1" ? "ET_HT" : "ET_FT";
-    return { type: "football.period", payload: { phase: marker, at: stamp(state.phase) } };
+    // W4a T10 follow-up — Law 7 allowance for time lost, on SOME whistles. A
+    // period closed dead on time carries none, and that absence is the shape
+    // every pre-W4 marker has, so `stampAddedMinutes` needs both to be walked.
+    const addedMinutes = rng() < 0.5 ? Math.floor(rng() * 7) : undefined;
+    return {
+      type: "football.period",
+      payload: {
+        phase: marker,
+        ...(addedMinutes === undefined ? {} : { addedMinutes }),
+        at: stamp(state.phase),
+      },
+    };
   },
 
   // §9.6 / PROMPT-04 §9 — timeline → period summaries: strip attribution

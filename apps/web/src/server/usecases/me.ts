@@ -12,6 +12,9 @@ import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { publicStorageUrl } from "@/lib/supabase-storage";
 import { uploadPersonPhotoBytes } from "./persons";
 import { labelPlayerStats, type LabelledPlayerStat } from "@/server/player-stats";
+import { DEFAULT_LOCALE } from "@/lib/i18n-constants";
+import { resolveLocale } from "@/lib/resolve-locale";
+import { msgFor } from "@/lib/messages-i18n";
 
 export type AvailabilityStatus = "in" | "out" | "maybe";
 
@@ -292,8 +295,14 @@ export async function listMyPlayerStats(userId: string): Promise<MyStatBlock[]> 
     join competitions c on c.id = d.competition_id
     join organizations o on o.id = c.org_id
     order by o.name, c.name, d.name`;
+  // /me is already dynamic (its page resolves the locale to build the
+  // dictionary), so reading it here costs no rendering mode. The catch is for
+  // callers outside a request scope — tests, jobs — where cookies() throws;
+  // English is the right answer there, not a crash.
+  const locale = await resolveLocale().catch(() => DEFAULT_LOCALE);
+  const m = (k: Parameters<typeof msgFor>[1]) => msgFor(locale, k);
   return rows.flatMap(({ module_version, visibility, stats, ...row }) => {
-    const metrics = labelPlayerStats(row.sport_key, module_version, stats);
+    const metrics = labelPlayerStats(row.sport_key, module_version, stats, m);
     if (metrics.length === 0) return [];
     return [{ ...row, competition_public: visibility === "public", metrics }];
   });

@@ -521,6 +521,53 @@ describe("cricket golden (c): DLS Standard Edition", () => {
 });
 
 // ---------------------------------------------------------------------------
+// W4a follow-up §3.3 — `applyRevise` compares the revised quota against the
+// balls ALREADY BOWLED, and both sides of that comparison move with cfg
+// (`oversPerSide × cfg.ballsPerOver`). A league that re-cuts its over length
+// would otherwise refuse a revise the ledger already holds, on every read,
+// with no event to void. The entry rule stays exactly as strict.
+// ---------------------------------------------------------------------------
+
+describe("a recorded revise survives a shortened over (§3.3)", () => {
+  const raw = { ballsPerInnings: 300, maxOversPerBowler: 10, minOversForResult: 20 };
+  const events = stream(
+    ["core.start"],
+    ["cricket.innings.summary", { runs: 120, wickets: 2, legalBalls: 180, partial: true }],
+    ["cricket.revise", { oversPerSide: 40 }],
+  );
+
+  it("re-reads the ledger after ballsPerOver drops to 4", () => {
+    // WRITE path: 40 × 6 = 240 balls, comfortably above the 180 bowled.
+    const cfg = cricket.configSchema.parse(raw);
+    expect(fold(cfg, events)).toBeDefined();
+
+    // READ path under the edit: the same 40 overs are now 160 balls, below the
+    // 180 already in the ledger — the innings is recorded in balls and does not
+    // move with the config, so only the quota does.
+    const shortened = cricket.configSchema.parse({ ...raw, ballsPerOver: 4 });
+    const state = foldMatch(cricket, shortened, lineups, events) as ReturnType<
+      typeof cricket.init
+    >;
+    expect(state.quota).toBe(160);
+    expect(state.innings[0]?.legalBalls).toBe(180);
+  });
+
+  it("still refuses a revise below the balls bowled on the WRITE path", () => {
+    const cfg = cricket.configSchema.parse(raw);
+    expect(() =>
+      fold(
+        cfg,
+        stream(
+          ["core.start"],
+          ["cricket.innings.summary", { runs: 120, wickets: 2, legalBalls: 180, partial: true }],
+          ["cricket.revise", { oversPerSide: 20 }],
+        ),
+      ),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_EVENT" }));
+  });
+});
+
+// ---------------------------------------------------------------------------
 // PROMPT-05 §8 (d) — tied T20 → super over → still-tied policies.
 // ---------------------------------------------------------------------------
 
