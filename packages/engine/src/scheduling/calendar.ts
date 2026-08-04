@@ -381,9 +381,24 @@ export function slotFixtures(input: SlotInput): SlotResult {
   const siblings = input.existing ?? []; // other divisions' fixed board (parallelism=block)
   const placed: Assignment[] = [];
   const conflicts: Conflict[] = [];
-  const lastEnd = new Map<EntrantId, number>(); // this division's per-entrant rest tracking
+  // Rest is owed to a PARTICIPANT, and a participant is an entrant OR a person
+  // (#463). Keyed by `EntrantId` alone, this map made a per-person rest rule
+  // invisible to the placer while `validateAssignments` still reported it
+  // (:1150) — two fixtures sharing a person but no entrant were packed adjacent
+  // and then flagged, which is the placer/verifier fork this module exists to
+  // prevent. `SchedulableFixture.people` (:52) already carried the participants;
+  // the placer simply never read them.
+  const lastEnd = new Map<string, number>(); // this division's per-participant rest tracking
   const courtUse = new Map<EntrantId, Map<string, number>>(); // fieldFairness=balance
   const lastCourt = new Map<EntrantId, string>(); // fieldFairness=rotate
+  // Namespaced, not concatenated: an entrant and a person are different
+  // participants even if their ids collide as strings, and fusing them would
+  // rest a fixture behind one it shares nothing with. `courtUse`/`lastCourt`
+  // stay entrant-keyed — field fairness is an entrant-level concept.
+  const restKeysOf = (f: SchedulableFixture): string[] => [
+    ...entrantsOf(f).map((e) => `entrant:${e}`),
+    ...(f.people ?? []).map((p) => `person:${p}`),
+  ];
   const c = config.constraints;
 
   // Jul3/04 §3 — shared with validateAssignments so the placer and the verifier
@@ -491,7 +506,7 @@ export function slotFixtures(input: SlotInput): SlotResult {
     };
     bookings.push(assignment);
     placed.push(assignment);
-    for (const e of ent) lastEnd.set(e, Math.max(lastEnd.get(e) ?? -Infinity, assignment.endAt));
+    for (const k of restKeysOf(f)) lastEnd.set(k, Math.max(lastEnd.get(k) ?? -Infinity, assignment.endAt));
     // Per-person overlap against everything already on the board (warn only).
     for (const person of assignment.people) {
       for (const other of bookings) {
@@ -526,7 +541,7 @@ export function slotFixtures(input: SlotInput): SlotResult {
     const restF = Math.max(restMs, restForMs(f));
     const window = windowFor(f);
     let ready = Math.max(config.startAt, window.notBefore);
-    for (const e of ent) ready = Math.max(ready, (lastEnd.get(e) ?? -Infinity) + restF);
+    for (const k of restKeysOf(f)) ready = Math.max(ready, (lastEnd.get(k) ?? -Infinity) + restF);
 
     let best: { court: string; start: number } | null = null;
     let windowBound = false;
