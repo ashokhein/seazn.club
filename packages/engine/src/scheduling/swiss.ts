@@ -66,7 +66,10 @@ function colourState(seq: readonly Colour[] | undefined): ColourState {
   if (seq === undefined || seq.length === 0) return { diff: 0, streakColour: null, streakLen: 0 };
   let w = 0;
   let b = 0;
-  for (const c of seq) c === "W" ? w++ : b++;
+  for (const c of seq) {
+    if (c === "W") w++;
+    else b++;
+  }
   const streakColour = seq[seq.length - 1] as Colour;
   let streakLen = 1;
   for (let i = seq.length - 2; i >= 0; i--) {

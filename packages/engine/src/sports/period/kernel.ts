@@ -41,7 +41,6 @@ import {
   escalationHints,
   pimOf,
   strengthChip,
-  strengthOf,
   type ActiveSuspension,
   type CardRecordEntry,
   type SuspensionClass,

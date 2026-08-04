@@ -723,7 +723,6 @@ function applyTbPoint(state: NestedState, side: Side, mtb: boolean): NestedState
   }
   // TB set closes tiebreakAt+1 : tiebreakAt; the first TB server receives
   // first in the next set, so the next server is their opponent.
-  const tbAt = rules.tiebreakAt as number;
   const games = { ...next.games, [winner]: next.games[winner] + 1 };
   next = {
     ...next,
