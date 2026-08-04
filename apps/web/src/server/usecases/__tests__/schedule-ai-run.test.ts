@@ -3,7 +3,7 @@
 // whose queued resolutions stand in for structured-output responses. Every plan
 // is hand-authored against a small in-file 4-fixture pack — runAiPlan takes the
 // pack as data, so no DB is needed here.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the SDK default export as a class exposing `messages.parse`. Must be
 // declared before importing the module under test.
@@ -159,6 +159,18 @@ beforeEach(() => {
   parse.mockReset();
   process.env.ANTHROPIC_API_KEY = "test-key";
   delete process.env.AI_PROVIDER;
+  // W6 (#401): these tests drive the LLM REPAIR LOOP, which the z3 solver now
+  // runs ahead of. That loop is still live code — it is what runs when the
+  // solver is switched off, out of budget, queued, or unable to finish a board —
+  // and this suite is its coverage, so the solver is switched off here and
+  // exercised in schedule-ai-repair.test.ts instead.
+  process.env.SCHEDULING_REPAIR_SOLVER = "off";
+});
+
+// `process.env` is per WORKER, not per file — a switch left off here would
+// silently disable the solver in whichever suite this worker picks up next.
+afterAll(() => {
+  delete process.env.SCHEDULING_REPAIR_SOLVER;
 });
 
 describe("runAiPlan (v4/00 §3-4)", () => {

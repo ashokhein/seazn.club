@@ -4,7 +4,7 @@
 // its own file); this one mocks anthropicProvider() itself, so it proves
 // runAiPlan talks to the AiProvider interface — not to Anthropic — without
 // caring how the adapter fills that interface in.
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
 
 const anthropicProvider = vi.fn();
 vi.mock("@/server/ai/anthropic-provider", () => ({ anthropicProvider }));
@@ -117,6 +117,18 @@ const round = (parsed: unknown) => ({
 beforeEach(() => {
   anthropicProvider.mockReset();
   process.env.ANTHROPIC_API_KEY = "test-key";
+  // W6 (#401): these tests drive the LLM REPAIR LOOP, which the z3 solver now
+  // runs ahead of. That loop is still live code — it is what runs when the
+  // solver is switched off, out of budget, queued, or unable to finish a board —
+  // and this suite is its coverage, so the solver is switched off here and
+  // exercised in schedule-ai-repair.test.ts instead.
+  process.env.SCHEDULING_REPAIR_SOLVER = "off";
+});
+
+// `process.env` is per WORKER, not per file — a switch left off here would
+// silently disable the solver in whichever suite this worker picks up next.
+afterAll(() => {
+  delete process.env.SCHEDULING_REPAIR_SOLVER;
 });
 
 describe("schedule runner ↔ provider seam", () => {

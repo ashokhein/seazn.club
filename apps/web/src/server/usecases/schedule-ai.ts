@@ -66,6 +66,15 @@ import {
   type RawParsed,
   type ResolvedParse,
 } from "@/server/usecases/schedule-ai-parse";
+import {
+  applySolverMoves,
+  solveBoard,
+  solverBudgetMs,
+  SOLVER_MIN_BUDGET_MS,
+  type RepairEngine,
+  type RepairReport,
+  type SolverTelemetry,
+} from "@/server/usecases/schedule-ai-solver";
 import { consumePreview, PREVIEW_STALE, releasePreview } from "@/server/usecases/schedule-ai-preview";
 import {
   assignOfficials,
@@ -1355,6 +1364,12 @@ export interface AiPlanResult {
   // cost_usd is the provider-reported cost when available, falling back to a
   // derived estimate per round; null only when neither is computable.
   usage: { input_tokens: number; output_tokens: number; repair_rounds: number; cost_usd: number | null };
+  /** W6 (#401): how this board reached its final state. `engine: "none"` means
+   *  no repair changed it — it verified clean, or repair was attempted and
+   *  nothing was adopted. Everything else the solver observed rides alongside,
+   *  including the paths where it never ran, because #401 requires the LLM
+   *  fallback to be TELEMETRY-VISIBLE rather than merely correct. */
+  repair: RepairReport;
 }
 
 // A verifier conflict blocks when it makes the schedule physically impossible —
@@ -1665,7 +1680,18 @@ export async function runAiPlan(
   // Best-so-far across repair rounds: repair round 2 can leave MORE blocking
   // conflicts than round 1, so we keep the plan with the fewest blocking (ties
   // resolve to the later round) and return that — never blindly the last round.
-  let best: { plan: AiSchedulePlan; blocking: Conflict[]; warnings: Conflict[] } | null = null;
+  // `engine` rides along per candidate rather than being tracked for the run:
+  // the winning board can be an earlier round's, and "which engine repaired
+  // this" is a fact about the board returned, not about the run.
+  let best: { plan: AiSchedulePlan; blocking: Conflict[]; warnings: Conflict[]; engine: RepairEngine } | null = null;
+
+  // #401 solver state. The budget is per RUN, not per round: the solver is
+  // tried before every repair round, and a run that met its budget three times
+  // over would add three times the latency it was sized for.
+  const pinnedIds = new Set(pack.fixtures.movable.filter((f) => f.pinned).map((f) => f.id));
+  let solverBudgetLeft = solverBudgetMs();
+  let solverAttempts = 0;
+  let repairTelemetry: SolverTelemetry = { solver_ran: false };
 
   // Accumulated usage rides along on a 422 too, so callers can meter a refused
   // or un-correctable run rather than losing the tokens already spent.
@@ -1701,6 +1727,7 @@ export async function runAiPlan(
     // and the review panel maps over the array.
     assumptions: chosen.plan.assumptions ?? [],
     usage: usageNow(),
+    repair: { engine: chosen.engine, ...repairTelemetry },
   });
 
   for (;;) {
@@ -1786,13 +1813,78 @@ export async function runAiPlan(
     }
 
     // Verify against the engine (obstacles are fixed occupancy).
-    const conflicts = validateAssignments(toEngineAssignments(plan!, pack), config, obstacles, dependencies);
-    const blocking = conflicts.filter(isBlocking);
+    let chosen: AiSchedulePlan = plan!;
+    let conflicts = validateAssignments(toEngineAssignments(chosen, pack), config, obstacles, dependencies);
+    let blocking = conflicts.filter(isBlocking);
+    // A board straight from the model carries no repair of ours; a board a
+    // repair round produced carries the LLM's.
+    let boardEngine: RepairEngine = repairRounds === 0 ? "none" : "llm";
+    /** Fixtures the solver could not resolve — handed to the LLM round below so
+     *  it is pointed at the residue rather than left to re-derive it. */
+    let unresolved: readonly string[] = [];
+
+    // ---- #401: solve before asking the model again -------------------------
+    // The solver costs no tokens, no credits and no SDK call, so the only thing
+    // a failed attempt spends is its own bounded wall clock. Every failure —
+    // switched off, queued, out of budget, infeasible, thrown — falls through to
+    // the LLM repair path exactly as this loop behaved before the wave, and says
+    // so in `repair`.
+    //
+    // The MIN guard applies from the second attempt on: the first attempt runs
+    // whatever budget it was given, so an operator who sets the budget very low
+    // still gets the attempt (and the telemetry) they configured.
+    if (blocking.length > 0 && (solverAttempts === 0 || solverBudgetLeft >= SOLVER_MIN_BUDGET_MS)) {
+      solverAttempts++;
+      const board = toEngineAssignments(chosen, pack);
+      const attempt = await solveBoard({
+        // A pinned fixture is not the solver's to move — `structuralCheck`
+        // already refuses a model that moves one, and the solver must be held
+        // to the same rule. It goes in as immovable occupancy instead, so it
+        // still blocks the court and still owes its rest.
+        proposal: board.filter((a) => !pinnedIds.has(a.fixtureId)),
+        existing: [...obstacles, ...board.filter((a) => pinnedIds.has(a.fixtureId))],
+        dependencies,
+        config: { ...config, courts: pack.settings.courts },
+        budgetMs: Math.max(solverBudgetLeft, 1),
+      });
+      solverBudgetLeft -= attempt.telemetry.ms ?? 0;
+      // A later attempt that never reached the solver must not erase an earlier
+      // one that did.
+      if (attempt.telemetry.solver_ran || !repairTelemetry.solver_ran) {
+        repairTelemetry = attempt.telemetry;
+      }
+      unresolved = attempt.unresolvedFixtureIds;
+
+      if (attempt.assignments !== null && attempt.movedFixtureIds.length > 0) {
+        const patched = applySolverMoves(
+          chosen,
+          attempt.assignments,
+          attempt.movedFixtureIds,
+          (instantMs) => zonedIso(instantMs, pack.tz),
+        );
+        const after = validateAssignments(toEngineAssignments(patched, pack), config, obstacles, dependencies);
+        const afterBlocking = after.filter(isBlocking);
+        // ADOPTION GATE: strictly fewer BLOCKING conflicts, judged by this
+        // runner's own verifier rather than by the solver's internal one. A
+        // solver answer that trades a blocking conflict for warnings is still a
+        // good trade — a warning is a quality note, a blocking conflict is an
+        // impossible board — so warnings are recorded, never a veto.
+        if (afterBlocking.length < blocking.length) {
+          chosen = patched;
+          conflicts = after;
+          blocking = afterBlocking;
+          boardEngine = "z3";
+        } else {
+          repairTelemetry = { ...repairTelemetry, fallback: "not_adopted" };
+        }
+      }
+    }
+
     const warnings = conflicts.filter((c) => !isBlocking(c));
 
     // Keep the fewest-blocking plan; `<=` lets a later round win an exact tie.
     if (best === null || blocking.length <= best.blocking.length) {
-      best = { plan: plan!, blocking, warnings };
+      best = { plan: chosen, blocking, warnings, engine: boardEngine };
     }
 
     if (blocking.length === 0 || repairRounds >= MAX_REPAIR_ROUNDS) {
@@ -1801,13 +1893,30 @@ export async function runAiPlan(
 
     // Blocking conflicts remain and rounds are left — send the report back and
     // ask for minimal fixes (01 §5).
+    //
+    // HAND-OFF POLICY (#401), stated once because it is a choice and not a
+    // consequence: BLOCKING residue is mandatory work and always triggers this
+    // round. Non-blocking residue left behind by a solver that RELAXED a family
+    // does not trigger a round of its own — the board is legal, and spending a
+    // paid round on a quality note the organiser can see would be the wrong
+    // trade. It stays visible in two places: `warnings` (which the review panel
+    // renders and `planIsAcceptable` already counts toward ladder escalation)
+    // and `repair.relaxed` / `repair.residual`.
     repairRounds++;
     conversation.push(response?.assistantTurn ?? { role: "assistant", content: [] });
     conversation.push({
       role: "user",
       content: JSON.stringify({
         verifier_conflicts: conflicts,
-        note: "Fix only these conflicts. Move as few fixtures as possible. Do not reintroduce earlier conflicts.",
+        // When the solver moved fixtures, the model's own last turn is no longer
+        // the board these conflicts were measured on. Send the board, or it
+        // repairs a plan nobody holds and silently discards the solver's work.
+        ...(boardEngine === "z3" ? { repaired_assignments: chosen.assignments } : {}),
+        ...(unresolved.length > 0 ? { focus_fixture_ids: [...unresolved] } : {}),
+        note:
+          boardEngine === "z3"
+            ? "An automatic solver has already moved some fixtures to clear other conflicts. `repaired_assignments` is the board these conflicts were measured on and it REPLACES your previous output — start from it. Fix only these conflicts, concentrating on focus_fixture_ids. Move as few fixtures as possible. Do not reintroduce earlier conflicts."
+            : "Fix only these conflicts. Move as few fixtures as possible. Do not reintroduce earlier conflicts.",
       }),
     });
   }
