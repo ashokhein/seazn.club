@@ -90,10 +90,19 @@ export function effectiveRestMinutes(
   const c = config.constraints;
   let minutes = config.perEntrantMinRest;
   if (c?.restMin !== undefined) minutes = Math.max(minutes, c.restMin);
-  const byGroup =
-    (group?.poolId !== undefined ? c?.restByGroup?.[group.poolId] : undefined) ??
-    (group?.divisionId !== undefined ? c?.restByGroup?.[group.divisionId] : undefined);
-  if (byGroup !== undefined) minutes = Math.max(minutes, byGroup);
+  // MAX, not precedence (#459, owner ruling 2026-08-04). A row can match both a
+  // division-keyed and a pool-keyed entry; a pool entry RAISES the floor and
+  // never lowers it, exactly like `restMin` and `noBackToBack` on the lines
+  // either side of this one. Resolving with `??` instead made the pool entry
+  // shadow the division one — and, because `0 ?? x` is `0`, an explicit pool
+  // entry of zero ERASED a division rule rather than adding nothing.
+  //
+  // Nothing in the UI presents a pool rest as an override of its division, so
+  // "most specific wins" would have been a semantics no surface teaches.
+  for (const key of [group?.poolId, group?.divisionId]) {
+    const v = key !== undefined ? c?.restByGroup?.[key] : undefined;
+    if (v !== undefined) minutes = Math.max(minutes, v);
+  }
   // "One fixture between" is only meaningful once we know how long a fixture
   // is; callers that validate without a match length simply don't get it.
   if (c?.noBackToBack && config.matchMinutes !== undefined) {

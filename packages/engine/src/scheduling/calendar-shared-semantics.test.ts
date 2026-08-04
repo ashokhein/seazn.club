@@ -287,6 +287,52 @@ describe("exported rule semantics", () => {
       ).toContain("rest");
     });
 
+    // #459, owner ruling 2026-08-04: a pool-keyed `restByGroup` entry RAISES the
+    // floor, it does not override its division. Resolved with `??` before, which
+    // made the more specific key win — and made an explicit `0` erase the
+    // division rule outright, because `0 ?? x` is `0`.
+    describe("restByGroup resolves pool and division by max, not precedence (#459)", () => {
+      const grouped = (restByGroup: Record<string, number>) => ({
+        ...BASE_CONFIG,
+        startAt: t0,
+        courts: ["C1", "C2"],
+        perEntrantMinRest: 30,
+        constraints: {
+          restByGroup,
+          noBackToBack: false,
+          startWindows: [],
+          fieldFairness: "off",
+          parallelism: "mixed",
+          crossPersonClash: "warn",
+        } as never,
+      });
+      // Both fixtures sit in pool-a of d1, so BOTH keys match the same pair.
+      const pooled = [
+        { id: "g-1", roundNo: 0, home: "e1", away: "e2", divisionId: "d1", poolId: "pool-a" },
+        { id: "g-2", roundNo: 1, home: "e1", away: "e3", divisionId: "d1", poolId: "pool-a" },
+      ];
+      const gap = (config: ReturnType<typeof grouped>) => {
+        const { assignments } = slotFixtures({ fixtures: pooled, config });
+        expect(assignments).toHaveLength(2);
+        return assignments[1]!.startAt - assignments[0]!.endAt;
+      };
+
+      it.each([
+        ["a laxer pool entry does not lower the division floor", { d1: 180, "pool-a": 45 }, 180],
+        ["a stricter pool entry raises it", { d1: 60, "pool-a": 150 }, 150],
+        // The `??` case: `0` is not nullish, so it USED to win outright and
+        // erase the 180. Under max it contributes nothing, as an explicit
+        // "no extra rest for this pool" should.
+        ["an explicit pool zero adds nothing rather than erasing the division rule", { d1: 180, "pool-a": 0 }, 180],
+      ])("%s", (_label, restByGroup, expected) => {
+        const config = grouped(restByGroup);
+        expect(gap(config)).toBe(expected * MIN);
+        // Placer and verifier must agree — this file exists to fail when they fork.
+        const { assignments } = slotFixtures({ fixtures: pooled, config });
+        expect(pairRestMinutes(config as VerifyConfig, assignments[0]!, assignments[1]!)).toBe(expected);
+        expect(validateAssignments(assignments, config as VerifyConfig)).toEqual([]);
+      });
+    });
   });
 
   // REGRESSION TRIPWIRE, NOT A BENCHMARK. `pairRestMinutes` is called from an
