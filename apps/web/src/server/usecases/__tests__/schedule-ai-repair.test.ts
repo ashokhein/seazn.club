@@ -231,6 +231,11 @@ describe("solver repair in runAiPlan (#401)", () => {
 // the engine can catch a producer that starts emitting an ext_key here, because
 // `RuleFixture` types both fields as `string | null`.
 //
+// SCOPE: this covers `packRuleFixtures` — the single-division path — by calling
+// it. It does NOT reach the two joint producers on its own; they are covered in
+// `competition-schedule-ai-repair.test.ts`, which also pins that all three go
+// through the one shared `toRuleFixture` builder.
+//
 // `makePack` is the right board for it: its ids are uuids and its ext keys are
 // "f1".."f4", so the two namespaces are disjoint and "resolves to an id" cannot
 // pass by coincidence.

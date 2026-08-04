@@ -5,6 +5,7 @@
 // is clean on its own and only a solve over the WHOLE board can see it. A
 // per-division solver would report nothing to fix and hand a double-booked court
 // to the organiser.
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const parse = vi.fn();
@@ -15,7 +16,7 @@ vi.mock("@anthropic-ai/sdk", () => ({
   },
 }));
 
-import { runCompetitionAiPlan } from "../competition-schedule-ai";
+import { jointSolverConfig, runCompetitionAiPlan } from "../competition-schedule-ai";
 import type { CompetitionPack } from "../competition-schedule-ai";
 import { resetZ3 } from "@seazn/engine/scheduling";
 
@@ -236,5 +237,67 @@ describe("solver repair in runCompetitionAiPlan (#401)", () => {
         .content,
     ) as { focus_fixture_ids?: string[] };
     expect(repairTurn.focus_fixture_ids).toEqual(expect.arrayContaining([F1, F2]));
+  });
+});
+
+// The JOINT half of the #443 namespace guard. `schedule-ai-repair.test.ts`
+// covers the single-division producer; these two cover the competition path,
+// where the same mistake would be even quieter — a joint run spans divisions, so
+// a feed edge that resolves to nothing takes the whole competition's feeder-rest
+// enforcement with it while still displaying as a compiled rule.
+//
+// TRIPWIRES, not bug reproductions: both pass against correct code today.
+describe("joint RuleFixture producers stay in the fixture-id namespace (#443)", () => {
+  /** `makePack`'s ids are uuids and its ext keys are "a1"/"b1", so the two
+   *  namespaces are disjoint and "resolves to an id" cannot pass by coincidence.
+   *  F1 (Alpha) feeds F2 (Beta) — deliberately CROSS-DIVISION, which is the edge
+   *  the engine only began enforcing once the division guard came off. */
+  const feedPack = (): CompetitionPack => {
+    const p = makePack();
+    return {
+      ...p,
+      fixtures: {
+        ...p.fixtures,
+        movable: p.fixtures.movable.map((f) =>
+          f.id === F1 ? { ...f, feeds: { ...f.feeds, winner_to: F2 } } : f,
+        ),
+      },
+    };
+  };
+
+  it("jointSolverConfig emits winnerTo as a fixture id, never an ext_key", () => {
+    const rf = jointSolverConfig(feedPack()).ruleFixtures ?? [];
+    const ids = new Set(rf.map((f) => f.id));
+    const extKeys = new Set(rf.map((f) => f.extKey).filter((k): k is string => k !== null));
+    // Guard the guard: if the fixture ever made ids and ext keys equal, every
+    // assertion below would pass in both states.
+    expect([...ids].some((id) => extKeys.has(id))).toBe(false);
+
+    const feeds = rf.filter((f) => f.winnerTo !== null);
+    expect(feeds).toHaveLength(1);
+    expect(ids.has(feeds[0]!.winnerTo!)).toBe(true);
+    expect(extKeys.has(feeds[0]!.winnerTo!)).toBe(false);
+    // And the edge is the one that was wired, attributed to the FEEDER's own
+    // division — not the dependent's.
+    expect(feeds[0]!.id).toBe(F1);
+    expect(feeds[0]!.winnerTo).toBe(F2);
+    expect(feeds[0]!.divisionId).toBe(D1);
+  });
+
+  it("every RuleFixture in both usecases comes from the ONE shared builder", () => {
+    // This is what makes the guard above cover `verifyJoint` too, which needs a
+    // whole plan to call and is not worth building one for. #443 was two copies
+    // of a join drifting onto a shared wrong assumption; the durable fix is that
+    // there is only ever one copy. `winnerTo:` is the field only a RuleFixture
+    // literal carries, so counting it counts the producers.
+    const read = (rel: string): string =>
+      readFileSync(new URL(rel, import.meta.url), "utf8");
+    const single = read("../schedule-ai.ts");
+    const joint = read("../competition-schedule-ai.ts");
+    const producers = (s: string): number => (s.match(/winnerTo:/g) ?? []).length;
+
+    expect(/export function toRuleFixture\(/.test(single)).toBe(true);
+    expect(producers(single)).toBe(1); // the builder itself
+    expect(producers(joint)).toBe(0); // both joint sites delegate to it
   });
 });
