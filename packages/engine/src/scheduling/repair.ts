@@ -622,6 +622,43 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
     const i = idx.get(id);
     return i !== undefined ? endOf(i, 0) : ceilMin(boardById.get(id)!.endAt);
   };
+  //
+  // The same four, evaluated at the instant the board CAME IN rather than as a
+  // z3 term — what each accessor collapses to when the fixture does not move.
+  // They exist to ask "does the grid form refuse a placement that is really
+  // legal?", which is the question the exact-fact escapes below turn on.
+  const origStartLoMin = (id: string): number => {
+    const i = idx.get(id);
+    return i !== undefined ? origStartMin[i]! : floorMin(boardById.get(id)!.startAt);
+  };
+  const origStartHiMin = (id: string): number => {
+    const i = idx.get(id);
+    return i !== undefined ? origStartMin[i]! + startSlackMin[i]! : ceilMin(boardById.get(id)!.startAt);
+  };
+  const origEndLoMin = (id: string): number => {
+    const i = idx.get(id);
+    return i !== undefined ? origStartMin[i]! + durMinLo[i]! : floorMin(boardById.get(id)!.endAt);
+  };
+  const origEndHiMin = (id: string): number => {
+    const i = idx.get(id);
+    return i !== undefined ? origStartMin[i]! + durMinStill[i]! : ceilMin(boardById.get(id)!.endAt);
+  };
+  /**
+   * "Every one of these fixtures is exactly where it began."
+   *
+   * An id that is not movable contributes nothing — an immovable is always at
+   * its origin — so a pair of immovables yields `Z3.And()`, which is TRUE. That
+   * is the whole point: a feed edge between two pinned cards has no z3 variable
+   * to relax, and a grid form that refuses it is refusing the only placement
+   * that exists.
+   */
+  const bothAtOrigin = (...ids: readonly string[]): Bool<"repair"> =>
+    Z3.And(
+      ...ids
+        .map((id) => idx.get(id))
+        .filter((i): i is number => i !== undefined)
+        .map(isStill),
+    );
   const plus = (x: Arith<"repair"> | number, n: number): Arith<"repair"> | number =>
     typeof x === "number" ? x + n : x.add(n);
   const geq = (a: Arith<"repair"> | number, b: Arith<"repair"> | number): Bool<"repair"> => {
@@ -657,9 +694,26 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
     // side and rounds down, the source's end is the larger side and rounds up.
     // Either one taken the other way makes the encoded rule weaker than the
     // millisecond one it stands for.
+    //
+    // But rounding the two ends of ONE instant in opposite directions turns a
+    // feed edge that merely abuts — `t` starting the moment `s` ends, which
+    // `validateAssignments` accepts — into `N >= N + 1`. `order` is a BLOCKING
+    // family, so that is not a lost minute: with both ends immovable the whole
+    // solve returns `infeasible` naming `order` on a board whose only real
+    // conflict is somewhere else, and pinned fixtures reach the solver as
+    // `existing`. Two pinned cards on a feed edge, back-to-back at an off-minute
+    // instant, killed the z3 path for that competition outright and dropped
+    // every run through to the paid LLM repair round.
+    //
+    // So the exact fact is added back, exactly as `sep` and `clear` do it. With
+    // no movable end `bothAtOrigin` is TRUE, which is correct and not a
+    // weakening: there is no other placement to be wrong about.
+    const grid = geq(startLo(dep.fixtureId), plus(endHi(dep.dependsOn), rest));
+    const msHolds = target.startAt - source.endAt >= rest * MS_PER_MIN;
+    const gridHolds = origStartLoMin(dep.fixtureId) >= origEndHiMin(dep.dependsOn) + rest;
     assume(
       dep.direct === true ? "order" : "order_soft",
-      geq(startLo(dep.fixtureId), plus(endHi(dep.dependsOn), rest)),
+      msHolds && !gridHolds ? Z3.Or(grid, bothAtOrigin(dep.fixtureId, dep.dependsOn)) : grid,
     );
   }
 
@@ -711,12 +765,30 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
             // overshoot `round(start + duration)` by a minute, lifting the
             // encoded feeder end above the real one and walking a fixture that
             // is squarely inside the forbidden band out through the escape.
+            //
+            // And the same exact-fact escape as the `order` edge above, for the
+            // same reason: rounding the two ends of one instant apart makes a
+            // pair that really rests exactly `minutes` read as a minute short.
+            // Milder here only because `instruction` is not blocking, so it
+            // degrades to `relaxed: ["instruction"]` rather than `infeasible` —
+            // which still means a rule the organiser wrote is reported as given
+            // up on a board that honours it.
+            const gridForm = Z3.Or(
+              lt(startHi(dd.id), endLo(f.id)),
+              geq(startLo(dd.id), plus(endHi(f.id), rule.minutes)),
+            );
+            // Mirrors `validateAssignments` exactly: a dependent before its
+            // feeder's end is not measured at all, and the gap is otherwise
+            // compared against `rule.minutes`.
+            const msOk =
+              dependent.startAt < feeder.endAt ||
+              dependent.startAt - feeder.endAt >= rule.minutes * MS_PER_MIN;
+            const gridOk =
+              origStartHiMin(dd.id) < origEndLoMin(f.id) ||
+              origStartLoMin(dd.id) >= origEndHiMin(f.id) + rule.minutes;
             assume(
               "instruction",
-              Z3.Or(
-                lt(startHi(dd.id), endLo(f.id)),
-                geq(startLo(dd.id), plus(endHi(f.id), rule.minutes)),
-              ),
+              msOk && !gridOk ? Z3.Or(gridForm, bothAtOrigin(dd.id, f.id)) : gridForm,
             );
           }
         }

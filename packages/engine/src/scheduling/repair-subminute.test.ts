@@ -490,6 +490,128 @@ describe("repair encodes sub-minute instants conservatively", () => {
   );
 
   it(
+    "does not make a merely-abutting feed edge between two PINNED cards infeasible",
+    async () => {
+      // `order` is a BLOCKING family, so getting this wrong is not a lost
+      // minute. `s` ends 09:40:20 and `t` starts on that instant — which
+      // `validateAssignments` accepts, `target.startAt >= source.endAt + rest`
+      // — but the target's start floors while the source's end ceils, so the
+      // encoded edge read `N >= N + 1` and the whole solve came back
+      // `infeasible` naming `order`, on a board whose only real conflict is a
+      // court double-booking somewhere else entirely.
+      //
+      // Both ends are `existing` because that is how PINNED fixtures reach the
+      // solver, and a pinned pair has no z3 variable to relax: every run for
+      // that competition died here and fell through to the paid LLM round.
+      const source = card("s", t("2026-08-10T09:00:20Z"), 40 * MIN, "C1", "e-s");
+      const target = card("t", t("2026-08-10T09:40:20Z"), 40 * MIN, "C2", "e-t");
+      const blocker = card("blk", t("2026-08-10T12:00:00Z"), 40 * MIN, "C3", "e-blk");
+      const clashing = card("m2", t("2026-08-10T12:00:00Z"), 40 * MIN, "C3", "e-m2");
+      const cfg = config(["C1", "C2", "C3"]);
+      const existing = [source, target, blocker];
+      const dependencies: OrderDependency[] = [
+        { fixtureId: "t", dependsOn: "s", direct: true },
+      ];
+      // The verifier's own reading of that feed edge: nothing to answer for.
+      const pre = validateAssignments([clashing], cfg, existing, dependencies);
+      expect(pre.map((c) => c.reason)).toEqual(["court"]);
+
+      await expectMovedAndClean({
+        proposal: [clashing],
+        existing,
+        dependencies,
+        config: cfg,
+        movedId: "m2",
+      });
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "does not drag a MOVABLE feed edge apart when its ends really abut",
+    async () => {
+      // The same edge with both ends free to move. Not `infeasible` here, just
+      // wrong: the solver satisfies the invented shortfall by shifting a card
+      // that had nothing to answer for, and reports two moves on a board whose
+      // minimal repair is one.
+      const source = card("s", t("2026-08-10T09:00:20Z"), 40 * MIN, "C1", "e-s");
+      const target = card("t", t("2026-08-10T09:40:20Z"), 40 * MIN, "C2", "e-t");
+      const blocker = card("blk", t("2026-08-10T12:00:00Z"), 40 * MIN, "C3", "e-blk");
+      const clashing = card("m2", t("2026-08-10T12:00:00Z"), 40 * MIN, "C3", "e-m2");
+      const cfg = config(["C1", "C2", "C3"]);
+      const dependencies: OrderDependency[] = [
+        { fixtureId: "t", dependsOn: "s", direct: true },
+      ];
+      const proposal = [source, target, clashing];
+      expect(
+        validateAssignments(proposal, cfg, [blocker], dependencies).map((c) => c.reason),
+      ).toEqual(["court"]);
+
+      const r = await repairAndVerify({
+        proposal,
+        existing: [blocker],
+        dependencies,
+        config: cfg,
+        budgetMs: 60_000,
+      });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      expect(r.k).toBe(1);
+      expect(r.moved).toEqual(["m2"]);
+      const byId = new Map(r.assignments.map((x) => [x.fixtureId, x]));
+      expect(byId.get("s")!.startAt).toBe(t("2026-08-10T09:00:20Z"));
+      expect(byId.get("t")!.startAt).toBe(t("2026-08-10T09:40:20Z"));
+      expect(validateAssignments(r.assignments, cfg, [blocker], dependencies)).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
+    "does not report a min_rest feed rule as RELAXED on a board that honours it exactly",
+    async () => {
+      // The non-blocking half of the same defect, which is why it degrades to a
+      // relaxed family rather than an infeasible board — a rule the organiser
+      // wrote, reported as given up, on a schedule that keeps it to the second.
+      //
+      // Feeder ends 09:40:20, dependent starts 11:10:20: a gap of exactly the 90
+      // minutes the rule asks for.
+      const cfg: VerifyConfig & { courts: readonly string[] } = {
+        ...config(["C1", "C2", "C3"]),
+        ruleFixtures: STEP_RULE_FIXTURES.map((f) => ({ ...f })),
+        hard: [
+          {
+            type: "min_rest_minutes",
+            minutes: 90,
+            rest_scope: "feeder_to_dependent",
+            scope: { kind: "competition" },
+          },
+        ],
+      };
+      const feeder = card("sl-g1-d1", t("2026-08-10T09:00:20Z"), 40 * MIN, "C1", "e-f");
+      const dependent = card("sl-g2-d1", t("2026-08-10T11:10:20Z"), 40 * MIN, "C2", "e-d");
+      const blocker = card("blk", t("2026-08-10T14:00:00Z"), 40 * MIN, "C3", "e-blk");
+      const clashing = card("m2", t("2026-08-10T14:00:00Z"), 40 * MIN, "C3", "e-m2");
+      const proposal = [feeder, dependent, clashing];
+      expect(validateAssignments(proposal, cfg, [blocker]).map((c) => c.reason)).toEqual(["court"]);
+
+      const r = await repairAndVerify({
+        proposal,
+        existing: [blocker],
+        config: cfg,
+        budgetMs: 60_000,
+      });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      expect(r.relaxed).toEqual([]);
+      expect(r.moved).toEqual(["m2"]);
+      const byId = new Map(r.assignments.map((x) => [x.fixtureId, x]));
+      expect(byId.get("sl-g1-d1")!.startAt).toBe(t("2026-08-10T09:00:20Z"));
+      expect(byId.get("sl-g2-d1")!.startAt).toBe(t("2026-08-10T11:10:20Z"));
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  it(
     "will not let a min_rest feeder rule ESCAPE on rounding — the escape clause rounds the other way",
     async () => {
       // `Or(start_dd < end_f, start_dd >= end_f + minutes)`. The first disjunct
@@ -568,13 +690,18 @@ describe("a whole board with nothing on the minute", () => {
         config: board.config,
         budgetMs: 60_000,
       });
-      // NOT the full status union: `repairAndVerify` returns early for anything
-      // other than `repaired`/`clean` and never re-runs the verifier, so an
-      // `infeasible` or a `timeout` would pass this test having checked nothing.
-      // Over-constraint makes `infeasible` a live outcome for exactly the
-      // all-off-minute boards this probe builds, which is the shape it would
-      // have quietly stopped covering.
-      expect(["clean", "repaired"]).toContain(r.status);
+      // `infeasible` is the vacuity that matters: `repairAndVerify` returns early
+      // for anything but `repaired`/`clean` and never re-runs the verifier, and
+      // over-constraint makes `infeasible` a live outcome for exactly the
+      // all-off-minute boards this probe builds — so it would pass having
+      // checked nothing, on the failure this file exists to catch.
+      //
+      // `timeout` stays admissible. It is a property of the box, not of the
+      // encoding: the solve is serialised process-wide, so a loaded host can
+      // spend the budget queueing. Excluding it makes this test fail for a
+      // reason it cannot diagnose.
+      expect(r.status).not.toBe("infeasible");
+      expect(["clean", "repaired", "timeout"]).toContain(r.status);
     },
     SOLVE_TIMEOUT,
   );
