@@ -59,6 +59,7 @@ const plan: AiPlanResponse = {
   // W5 (#400): the architect's own assumptions, always an array.
   assumptions: [],
   usage: { input_tokens: 10, output_tokens: 5, repair_rounds: 0 },
+  repair: { engine: "none" as const, solver_ran: false },
   officials_coverage: null,
 };
 const fixtures: AiConsoleFixture[] = [

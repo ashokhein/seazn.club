@@ -190,7 +190,19 @@ beforeEach(() => {
   parse.mockReset();
   process.env.ANTHROPIC_API_KEY = "test-key";
   delete process.env.AI_PROVIDER;
+  // W6 (#401): these tests pin behaviour that assumes a blocking board STAYS
+  // blocking — escalation, budget stops, and the verifier's own report. The z3
+  // solver now repairs such boards ahead of the LLM round, so it is switched off
+  // here; its own behaviour is covered by schedule-ai-repair.test.ts and
+  // competition-schedule-ai-repair.test.ts.
+  process.env.SCHEDULING_REPAIR_SOLVER = "off";
 });
+
+// `process.env` is per WORKER, not per file.
+afterAll(() => {
+  delete process.env.SCHEDULING_REPAIR_SOLVER;
+});
+
 
 describe.skipIf(!HAS_DB)("pack.participants is wired into both consumers (#396)", () => {
   it("the board itself links final↔other ONLY through the participants recursion", async () => {

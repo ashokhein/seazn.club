@@ -252,6 +252,8 @@ const POLICY = {
 };
 
 afterAll(async () => {
+  // `process.env` is per WORKER, not per file — see the switch in beforeEach.
+  delete process.env.SCHEDULING_REPAIR_SOLVER;
   if (!HAS_DB) return;
   const g = globalThis as { _sql?: { end(): Promise<void> } };
   const client = g._sql;
@@ -274,6 +276,12 @@ beforeEach(() => {
   // makes the OpenRouter rungs skip to the mocked sonnet rung — hermetic again.
   delete process.env.OPENROUTER_API_KEY;
   delete process.env.AI_PROVIDER;
+  // W6 (#401): these tests pin behaviour that assumes a blocking board STAYS
+  // blocking — escalation, budget stops, and the verifier's own report. The z3
+  // solver now repairs such boards ahead of the LLM round, so it is switched off
+  // here; its own behaviour is covered by schedule-ai-repair.test.ts and
+  // competition-schedule-ai-repair.test.ts.
+  process.env.SCHEDULING_REPAIR_SOLVER = "off";
 });
 
 describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, credit-metered v17)", () => {

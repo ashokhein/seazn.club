@@ -10,7 +10,7 @@
 // every division's fixtures"). Until something asserts that the runner actually
 // concatenates it onto SYSTEM_PROMPT, the prompt could be silently unsent and
 // every test still pass.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const parse = vi.fn();
 vi.mock("@anthropic-ai/sdk", () => ({
@@ -172,6 +172,16 @@ beforeEach(() => {
   delete process.env.SCHEDULING_AI_MODEL;
   delete process.env.SCHEDULING_AI_LADDER;
   delete process.env.SCHEDULING_AI_CHEAP_MODEL;
+  // W6 (#401): this suite is the coverage for the LLM REPAIR LOOP and for the
+  // ladder that escalates on a plan the referee refuses. The z3 solver now runs
+  // ahead of that loop and would fix these boards for free, so it is switched
+  // off here and exercised in competition-schedule-ai-repair.test.ts instead.
+  process.env.SCHEDULING_REPAIR_SOLVER = "off";
+});
+
+// `process.env` is per WORKER, not per file.
+afterAll(() => {
+  delete process.env.SCHEDULING_REPAIR_SOLVER;
 });
 
 describe("runCompetitionAiPlan (#350)", () => {

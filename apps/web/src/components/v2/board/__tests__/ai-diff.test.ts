@@ -41,6 +41,7 @@ const plan: AiPlanResponse = {
   // W5 (#400): the architect's own assumptions, always an array.
   assumptions: [],
   usage: { input_tokens: 1240, output_tokens: 860, repair_rounds: 1 },
+  repair: { engine: "none" as const, solver_ran: false },
   officials_coverage: null,
 };
 

@@ -76,6 +76,15 @@ import {
   type PreviewClaim,
   type SchedulePack,
 } from "./schedule-ai";
+import {
+  applySolverMoves,
+  solveBoard,
+  solverBudgetMs,
+  SOLVER_MIN_BUDGET_MS,
+  type RepairEngine,
+  type RepairReport,
+  type SolverTelemetry,
+} from "./schedule-ai-solver";
 import { AiSchedulePlan, INSTRUCTION_RULES, JOINT_RULES, SYSTEM_PROMPT } from "./schedule-ai-prompt";
 import {
   parseInstruction,
@@ -1043,6 +1052,10 @@ export interface CompetitionPlanResult {
    *  Always an array, never undefined. */
   assumptions: string[];
   usage: { input_tokens: number; output_tokens: number; repair_rounds: number; cost_usd: number | null };
+  /** W6 (#401): how this board reached its final state, exactly as
+   *  {@link AiPlanResult.repair} carries it. The joint solve runs ONCE over the
+   *  whole board — see {@link jointSolverConfig}. */
+  repair: RepairReport;
 }
 
 /** Raised when a plan/proposal names a fixture this pack does not contain, or a
@@ -1294,6 +1307,155 @@ export function verifyConfigFor(
     // one set of days. Warn-only; `isBlocking` is unchanged.
     ...(window !== undefined ? { window } : {}),
   };
+}
+
+/**
+ * ONE config for a solve over the WHOLE joint board (#401).
+ *
+ * `verifyJoint` grades per division, each with that division's own config. The
+ * repair solver takes a single config, and it must — the clash this whole
+ * pipeline exists to catch is BETWEEN divisions, so a per-division solve would
+ * find each board spotless and hand the organiser a double-booked court.
+ *
+ * The merge rule, and why it is safe rather than approximate:
+ *
+ *   * BLOCKING families are exact under the merge. `isBlocking` covers court
+ *     double-booking and direct feed order, and nothing else. A court clash is a
+ *     property of (court label, interval) and needs no per-division setting; a
+ *     direct order violation is resolved from `dependencies` and the run-wide
+ *     `ruleFixtures` this builds. So a board this config calls court- and
+ *     order-clean IS court- and order-clean under every division's own pass.
+ *     That is the guarantee the caller relies on, and it does not depend on any
+ *     of the merges below being faithful.
+ *   * Everything else merges CONSERVATIVELY — tighter than any one division, never
+ *     looser. Rest and gaps take the maximum; blackouts take the union; courts
+ *     and session windows take the INTERSECTION. A conservative merge can only
+ *     cost the solver solutions, and a solver that finds none falls back to the
+ *     LLM round that was going to run anyway. A loose merge would do the
+ *     opposite: produce a board that is legal under the merge and illegal under
+ *     the division that owns the fixture.
+ *
+ * COURTS ARE THE SHARP EDGE. Court ownership is a STRUCTURAL rule
+ * (`jointStructuralCheck`), not a verifier one — no `validateAssignments` pass
+ * rejects an Alpha fixture on a court only Beta owns. Hand the solver the union
+ * and it will use the extra courts, and the joint verifier will grade the result
+ * clean. Hence the intersection: every court the solver may pick is legal for
+ * every division in the run.
+ *
+ * The cost is real and bounded: a competition whose divisions hold different
+ * courts (`pack.divergentCourts` is non-empty) gives the solver fewer courts to
+ * work with, and one whose divisions share NO court gives it none — that case is
+ * declined outright rather than attempted. The proper fix is per-fixture court
+ * domains in the engine's repair input, which is an engine change and not this
+ * one; until then the conservative answer is the correct one.
+ */
+export function jointSolverConfig(pack: CompetitionPack): VerifyConfig & { courts: string[] } {
+  const divisions = pack.divisions;
+  const ruleFixtures: RuleFixture[] = pack.fixtures.movable.map((f) => ({
+    id: f.id,
+    extKey: f.ext_key,
+    divisionId: f.division_id,
+    ...(f.pool !== null ? { poolId: f.pool } : {}),
+    winnerTo: f.feeds.winner_to,
+  }));
+  const settings = divisions.map((d) => d.settings);
+  const max = (pick: (s: (typeof settings)[number]) => number): number =>
+    settings.reduce((acc, s) => Math.max(acc, pick(s)), 0);
+
+  // Courts every division may use. Order follows the pack's own court order so
+  // the solve is deterministic.
+  const courts = pack.courts.filter((c) => settings.every((s) => s.courts.includes(c)));
+
+  // A division with NO session windows is unconstrained, not "constrained to
+  // nothing" — it must not empty the intersection.
+  const sessionWindows = intersectWindows(
+    settings.filter((s) => s.sessionWindows.length > 0).map((s) => s.sessionWindows.map((w) => ({ from: ms(w.from), to: ms(w.to) }))),
+  );
+
+  const withConstraints = settings.filter((s) => s.constraints !== null).map((s) => s.constraints!);
+  const restByGroup: Record<string, number> = {};
+  for (const c of withConstraints) {
+    for (const [k, v] of Object.entries(c.restByGroup ?? {})) {
+      restByGroup[k] = Math.max(restByGroup[k] ?? 0, v);
+    }
+  }
+  const restMins = withConstraints.flatMap((c) => (c.restMin !== undefined ? [c.restMin] : []));
+
+  return {
+    tz: pack.tz,
+    // The same merged stream `verifyJoint` grades against: the compiled
+    // instruction plus every division's durable rules.
+    hard: [...pack.parsed.hard, ...divisions.flatMap((d) => d.settings.constraints?.hard ?? [])],
+    ruleFixtures,
+    // A human entered in two divisions recovers at the MAX of both. The engine
+    // reads this off each assignment's `divisionId`, which the joint path is the
+    // only one that stamps.
+    restByDivision: Object.fromEntries(divisions.map((d) => [d.id, d.settings.perEntrantMinRest])),
+    perEntrantMinRest: max((s) => s.perEntrantMinRest),
+    matchMinutes: max((s) => s.matchMinutes),
+    gapMinutes: max((s) => s.gapMinutes),
+    ...(withConstraints.length > 0
+      ? {
+          constraints: {
+            ...(restMins.length > 0 ? { restMin: Math.max(...restMins) } : {}),
+            ...(Object.keys(restByGroup).length > 0 ? { restByGroup } : {}),
+            // Any division that forbids back-to-back forbids it for the merge.
+            noBackToBack: withConstraints.some((c) => c.noBackToBack === true),
+            // Start windows are TARGETED by entrant, pool or division id, so the
+            // union is exact rather than conservative: a division's window binds
+            // that division's fixtures and no others.
+            startWindows: withConstraints.flatMap((c) =>
+              c.startWindows.flatMap((w) =>
+                w.target.kind === "entrant" || w.target.kind === "pool" || w.target.kind === "division"
+                  ? [
+                      {
+                        target: { kind: w.target.kind, id: w.target.id },
+                        ...(w.notBefore !== undefined ? { notBefore: ms(w.notBefore) } : {}),
+                        ...(w.notAfter !== undefined ? { notAfter: ms(w.notAfter) } : {}),
+                      },
+                    ]
+                  : [],
+              ),
+            ),
+            fieldFairness: "off" as const,
+            parallelism: "mixed" as const,
+            crossPersonClash: "warn" as const,
+          },
+        }
+      : {}),
+    // Union: a blackout on one division's court is a court nobody should be put
+    // on at that instant, and over-avoiding one is a lost solution, never an
+    // illegal board.
+    blackouts: divisions.flatMap((d) =>
+      d.settings.blackouts.map((b) => ({
+        ...(b.court !== undefined ? { court: b.court } : {}),
+        from: ms(b.from),
+        to: ms(b.to),
+      })),
+    ),
+    sessionWindows,
+    window: windowBounds(pack.window),
+    courts,
+  };
+}
+
+/** Intersect interval lists. An empty input list means "nobody constrained
+ *  this", which is the whole timeline, not nothing. */
+function intersectWindows(
+  lists: { from: number; to: number }[][],
+): { from: number; to: number }[] {
+  if (lists.length === 0) return [];
+  return lists.reduce((acc, list) => {
+    const out: { from: number; to: number }[] = [];
+    for (const a of acc) {
+      for (const b of list) {
+        const from = Math.max(a.from, b.from);
+        const to = Math.min(a.to, b.to);
+        if (from < to) out.push({ from, to });
+      }
+    }
+    return out;
+  });
 }
 
 /** The joint pipeline's conflict partition: `warnings` is the EXACT complement
@@ -1618,7 +1780,19 @@ export async function runCompetitionAiPlan(
   let repairRounds = 0;
   let correctiveUsed = false;
 
-  let best: { plan: AiSchedulePlan; blocking: Conflict[]; warnings: Conflict[] } | null = null;
+  let best:
+    | { plan: AiSchedulePlan; blocking: Conflict[]; warnings: Conflict[]; engine: RepairEngine }
+    | null = null;
+
+  // #401 solver state, mirroring the single-division runner: ONE budget for the
+  // run, tried before every repair round, and a `repair` report either way.
+  const pinnedIds = new Set(pack.fixtures.movable.filter((f) => f.pinned).map((f) => f.id));
+  const solverConfig = jointSolverConfig(pack);
+  const jointObstacles = toJointObstacleAssignments(pack);
+  const jointDeps = jointFeedDependencies(pack);
+  let solverBudgetLeft = solverBudgetMs();
+  let solverAttempts = 0;
+  let repairTelemetry: SolverTelemetry = { solver_ran: false };
 
   const usageNow = () => ({
     input_tokens: inputTokens,
@@ -1655,6 +1829,7 @@ export async function runCompetitionAiPlan(
     // and the review panel maps over the array.
     assumptions: chosen.plan.assumptions ?? [],
     usage: usageNow(),
+    repair: { engine: chosen.engine, ...repairTelemetry },
   });
 
   for (;;) {
@@ -1721,27 +1896,111 @@ export async function runCompetitionAiPlan(
       continue;
     }
 
-    const conflicts = verifyJoint(plan!, pack);
-    const { blocking, warnings } = partitionConflicts(conflicts);
+    let chosen: AiSchedulePlan = plan!;
+    let conflicts = verifyJoint(chosen, pack);
+    let blocking = partitionConflicts(conflicts).blocking;
+    let boardEngine: RepairEngine = repairRounds === 0 ? "none" : "llm";
+    let unresolved: readonly string[] = [];
+
+    // ---- #401: solve the WHOLE board before asking the model again ---------
+    // One solve, never one per division: the clash this pipeline exists to catch
+    // lives BETWEEN divisions, and each division's own board is clean when it
+    // does. `jointSolverConfig` is what makes one config safe for many
+    // divisions.
+    if (blocking.length > 0 && (solverAttempts === 0 || solverBudgetLeft >= SOLVER_MIN_BUDGET_MS)) {
+      solverAttempts++;
+      if (solverConfig.courts.length === 0) {
+        // No court is legal for every division in the run, so the solver has
+        // nowhere to put anything. Say so rather than attempting it: a solve
+        // with an empty court list is a guaranteed-infeasible use of the budget.
+        repairTelemetry = { solver_ran: false, fallback: "court_split" };
+      } else {
+        const board = toJointEngineAssignments(chosen, pack);
+        const attempt = await solveBoard({
+          proposal: board.filter((a) => !pinnedIds.has(a.fixtureId)),
+          existing: [...jointObstacles, ...board.filter((a) => pinnedIds.has(a.fixtureId))],
+          dependencies: jointDeps,
+          config: solverConfig,
+          budgetMs: Math.max(solverBudgetLeft, 1),
+        });
+        solverBudgetLeft -= attempt.telemetry.ms ?? 0;
+        if (attempt.telemetry.solver_ran || !repairTelemetry.solver_ran) {
+          repairTelemetry = attempt.telemetry;
+        }
+        unresolved = attempt.unresolvedFixtureIds;
+
+        if (attempt.assignments !== null && attempt.movedFixtureIds.length > 0) {
+          const patched = applySolverMoves(
+            chosen,
+            attempt.assignments,
+            attempt.movedFixtureIds,
+            (instantMs) => zonedIso(instantMs, pack.tz),
+          );
+          const after = verifyJoint(patched, pack);
+          const afterBlocking = partitionConflicts(after).blocking;
+          // ADOPTION GATE. Strictly fewer blocking conflicts under the JOINT
+          // verifier — the authority on a board the solver graded through one
+          // merged config — and every moved fixture still on a court its own
+          // division owns, which no verifier pass checks.
+          if (afterBlocking.length < blocking.length && courtsAreOwned(patched, pack)) {
+            chosen = patched;
+            conflicts = after;
+            blocking = afterBlocking;
+            boardEngine = "z3";
+          } else {
+            repairTelemetry = { ...repairTelemetry, fallback: "not_adopted" };
+          }
+        }
+      }
+    }
+
+    const warnings = partitionConflicts(conflicts).warnings;
 
     if (best === null || blocking.length <= best.blocking.length) {
-      best = { plan: plan!, blocking, warnings };
+      best = { plan: chosen, blocking, warnings, engine: boardEngine };
     }
 
     if (blocking.length === 0 || repairRounds >= MAX_REPAIR_ROUNDS) {
       return finalizeFrom(best!);
     }
 
+    // Hand-off policy is the single-division runner's, unchanged: blocking
+    // residue is mandatory work and triggers this round; non-blocking residue a
+    // relaxed solve left behind does not, and stays visible in `warnings` and in
+    // `repair.relaxed` / `repair.residual`.
     repairRounds++;
     conversation.push(response?.assistantTurn ?? { role: "assistant", content: [] });
     conversation.push({
       role: "user",
       content: JSON.stringify({
         verifier_conflicts: conflicts,
-        note: "Fix only these conflicts. Move as few fixtures as possible. Do not reintroduce earlier conflicts. A court conflict between two divisions may be reported on both fixtures; where it is, moving either one resolves it.",
+        ...(boardEngine === "z3" ? { repaired_assignments: chosen.assignments } : {}),
+        ...(unresolved.length > 0 ? { focus_fixture_ids: [...unresolved] } : {}),
+        note:
+          boardEngine === "z3"
+            ? "An automatic solver has already moved some fixtures to clear other conflicts. `repaired_assignments` is the board these conflicts were measured on and it REPLACES your previous output — start from it. Fix only these conflicts, concentrating on focus_fixture_ids. Move as few fixtures as possible. Do not reintroduce earlier conflicts. A court conflict between two divisions may be reported on both fixtures; where it is, moving either one resolves it."
+            : "Fix only these conflicts. Move as few fixtures as possible. Do not reintroduce earlier conflicts. A court conflict between two divisions may be reported on both fixtures; where it is, moving either one resolves it.",
       }),
     });
   }
+}
+
+/** Every assignment sits on a court its OWN division owns.
+ *
+ *  The structural rule `jointStructuralCheck` enforces on model output, applied
+ *  to solver output for the same reason: no `validateAssignments` pass rejects a
+ *  fixture on another division's court, so without this a solver handed too many
+ *  courts produces a board that grades perfectly clean and is not schedulable.
+ *  Belt to `jointSolverConfig`'s braces — that function only offers courts every
+ *  division shares, and this proves it. */
+function courtsAreOwned(plan: AiSchedulePlan, pack: CompetitionPack): boolean {
+  const divisionByFixture = new Map(pack.fixtures.movable.map((f) => [f.id, f.division_id]));
+  const courtsByDivision = new Map(pack.divisions.map((d) => [d.id, new Set(d.settings.courts)]));
+  return plan.assignments.every((a) => {
+    const division = divisionByFixture.get(a.fixture_id);
+    if (division === undefined) return false;
+    return courtsByDivision.get(division)?.has(a.court_label) === true;
+  });
 }
 
 /** Wire the joint runner to the shared model ladder — the joint mirror of
@@ -2439,6 +2698,9 @@ async function planForCompetition(
   return {
     proposal: result.proposal,
     unschedulable: result.unschedulable,
+    // W6 (#401): ONE report for the whole competition — the joint solve runs
+    // once over the whole board, never once per division.
+    repair: result.repair,
     // R13: warnings are carried IN FULL. `isBlocking` covers only `court` and
     // direct `order`, so blackout, session-window, rest and person-overlap
     // violations neither block nor trigger a repair round — the organiser

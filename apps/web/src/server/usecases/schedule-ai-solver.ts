@@ -125,7 +125,11 @@ export type SolverFallback =
   | "error"
   /** The solver answered, but the caller's own verifier did not agree the board
    *  was better, so its moves were discarded. */
-  | "not_adopted";
+  | "not_adopted"
+  /** Joint runs only: the divisions in this run share no court, so there is no
+   *  placement the solver could offer that is legal for all of them. See
+   *  `jointSolverConfig`. */
+  | "court_split";
 
 /** Everything one solver attempt observed. `engine` is stamped by the caller,
  *  which is the only party that knows whether an LLM round ran afterwards.

@@ -57144,6 +57144,106 @@
                           ],
                           "additionalProperties": false
                         },
+                        "repair": {
+                          "type": "object",
+                          "properties": {
+                            "engine": {
+                              "type": "string",
+                              "enum": [
+                                "none",
+                                "z3",
+                                "llm"
+                              ]
+                            },
+                            "solver_ran": {
+                              "type": "boolean"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "clean",
+                                "repaired",
+                                "partial",
+                                "unrepaired"
+                              ]
+                            },
+                            "moved": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "ms": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "checks": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "minimality": {
+                              "type": "string",
+                              "enum": [
+                                "proved",
+                                "upper_bound"
+                              ]
+                            },
+                            "components_solved": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "components_skipped": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "unresolved": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "residual": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "relaxed": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "families": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "timed_out": {
+                              "type": "boolean"
+                            },
+                            "fallback": {
+                              "type": "string",
+                              "enum": [
+                                "disabled",
+                                "queue_wait",
+                                "budget",
+                                "partial",
+                                "unrepaired",
+                                "error",
+                                "not_adopted",
+                                "court_split"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "engine",
+                            "solver_ran"
+                          ],
+                          "additionalProperties": false
+                        },
                         "officials_coverage": {
                           "anyOf": [
                             {
@@ -57318,6 +57418,7 @@
                         "summary",
                         "assumptions",
                         "usage",
+                        "repair",
                         "officials_coverage"
                       ],
                       "additionalProperties": false
@@ -57390,6 +57491,12 @@
                       "input_tokens": -9007199254740991,
                       "output_tokens": -9007199254740991,
                       "repair_rounds": -9007199254740991
+                    },
+                    "repair": {
+                      "engine": "none",
+                      "solver_ran": true,
+                      "status": "clean",
+                      "moved": 0
                     },
                     "officials_coverage": {
                       "fillable": -9007199254740991,
@@ -61274,6 +61381,106 @@
                           ],
                           "additionalProperties": false
                         },
+                        "repair": {
+                          "type": "object",
+                          "properties": {
+                            "engine": {
+                              "type": "string",
+                              "enum": [
+                                "none",
+                                "z3",
+                                "llm"
+                              ]
+                            },
+                            "solver_ran": {
+                              "type": "boolean"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "clean",
+                                "repaired",
+                                "partial",
+                                "unrepaired"
+                              ]
+                            },
+                            "moved": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "ms": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "checks": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "minimality": {
+                              "type": "string",
+                              "enum": [
+                                "proved",
+                                "upper_bound"
+                              ]
+                            },
+                            "components_solved": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "components_skipped": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "unresolved": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "residual": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "relaxed": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "families": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "timed_out": {
+                              "type": "boolean"
+                            },
+                            "fallback": {
+                              "type": "string",
+                              "enum": [
+                                "disabled",
+                                "queue_wait",
+                                "budget",
+                                "partial",
+                                "unrepaired",
+                                "error",
+                                "not_adopted",
+                                "court_split"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "engine",
+                            "solver_ran"
+                          ],
+                          "additionalProperties": false
+                        },
                         "credits": {
                           "type": "integer",
                           "minimum": -9007199254740991,
@@ -61413,6 +61620,7 @@
                         "divergent_courts",
                         "skipped_divisions",
                         "usage",
+                        "repair",
                         "divisions"
                       ],
                       "additionalProperties": false
@@ -61495,6 +61703,12 @@
                       "input_tokens": -9007199254740991,
                       "output_tokens": -9007199254740991,
                       "repair_rounds": -9007199254740991
+                    },
+                    "repair": {
+                      "engine": "none",
+                      "solver_ran": true,
+                      "status": "clean",
+                      "moved": 0
                     },
                     "divisions": [
                       {

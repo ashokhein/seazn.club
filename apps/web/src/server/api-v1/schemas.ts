@@ -1718,6 +1718,65 @@ const AiConstraintSuggestions = z.object({
   crossPersonClash: z.enum(["warn", "hard"]).optional(),
 });
 
+/**
+ * W6 (#401): how a schedule reached its final state.
+ *
+ * `engine` is the headline and the rest is why. `"none"` means no repair changed
+ * the board — it verified clean, or repair was attempted and nothing was
+ * adopted. `"z3"` means the automatic solver fixed it, for no credits and no
+ * model call. `"llm"` means the assistant was asked to repair it.
+ *
+ * The rest of the object exists because #401 requires the FALLBACK to be
+ * visible, not merely correct: a run where the solver timed out, was queued
+ * behind another run, or came back with families it could not satisfy must say
+ * which, or "we tried and gave up" is indistinguishable from "we never tried".
+ *
+ * Every field but `engine` and `solver_ran` is optional, because most of them
+ * are facts only a completed solve produces. Kept OPEN (a plain object rather
+ * than a closed union) so a new diagnostic is an additive change — the same
+ * reason `usage` is shaped this way.
+ */
+export const AiRepairReport = z.object({
+  engine: z.enum(["none", "z3", "llm"]),
+  /** Did the WASM solver actually run? False on the clean path, and on both
+   *  paths where the attempt was declined before it started. */
+  solver_ran: z.boolean(),
+  status: z.enum(["clean", "repaired", "partial", "unrepaired"]).optional(),
+  /** `k` — the number of fixtures moved. */
+  moved: z.number().int().nonnegative().optional(),
+  /** Wall-clock the request paid, queue wait included. */
+  ms: z.number().int().nonnegative().optional(),
+  checks: z.number().int().nonnegative().optional(),
+  /** `upper_bound` means `moved` is the fewest this decomposition found, not the
+   *  fewest that exist. Never rendered as "minimal" unless this says `proved`. */
+  minimality: z.enum(["proved", "upper_bound"]).optional(),
+  components_solved: z.number().int().nonnegative().optional(),
+  components_skipped: z.number().int().nonnegative().optional(),
+  /** Fixtures the solver left for the assistant. */
+  unresolved: z.number().int().nonnegative().optional(),
+  /** Conflicts the board still carries, blocking or not. */
+  residual: z.number().int().nonnegative().optional(),
+  /** Constraint families a component dropped to find any answer at all. */
+  relaxed: z.array(z.string()).optional(),
+  /** Families that cannot hold together — "no schedule can satisfy all of
+   *  these at once". */
+  families: z.array(z.string()).optional(),
+  timed_out: z.boolean().optional(),
+  fallback: z
+    .enum([
+      "disabled",
+      "queue_wait",
+      "budget",
+      "partial",
+      "unrepaired",
+      "error",
+      "not_adopted",
+      "court_split",
+    ])
+    .optional(),
+});
+export type AiRepairReport = z.infer<typeof AiRepairReport>;
+
 export const AiPlanResponse = z.object({
   proposal: z.array(AiPlanAssignment),
   unschedulable: z.array(z.object({ fixture_id: Uuid, reason: z.string(), rule: RuleCode })),
@@ -1749,6 +1808,9 @@ export const AiPlanResponse = z.object({
     output_tokens: z.number().int(),
     repair_rounds: z.number().int(),
   }),
+  /** W6 (#401): which engine repaired this board, and what the automatic one
+   *  did or could not do. */
+  repair: AiRepairReport,
   /** Dry officials coverage preview (present only when officials_policy sent). */
   officials_coverage: z
     .object({
@@ -1946,6 +2008,9 @@ export const AiCompetitionPlanResponse = z.object({
     output_tokens: z.number().int(),
     repair_rounds: z.number().int(),
   }),
+  /** W6 (#401): the joint solve runs ONCE over the whole board, so this is one
+   *  report for the competition, never one per division. */
+  repair: AiRepairReport,
   // ---------------------------------------------------------------------
   // ORDER IS LOAD-BEARING. `AiRunPriceFields` declares its own `divisions`
   // key — the meter stamp's per-division PRICE rows — and the override below

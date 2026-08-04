@@ -2755,6 +2755,10 @@ async function planForDivision(
       output_tokens: result.usage.output_tokens,
       repair_rounds: result.usage.repair_rounds,
     },
+    // W6 (#401): which engine repaired the board, and what the automatic one
+    // did or gave up on. Carried whole — the fields are already the public
+    // shape, and a run that fell back must be able to say so to the organiser.
+    repair: result.repair,
     officials_coverage,
     // Token-weighted credit pricing (lib/ai-rung.ts) — what was charged, what
     // the predictor said, whether the confirm card's warning applies, and
