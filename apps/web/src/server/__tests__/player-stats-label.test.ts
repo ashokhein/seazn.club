@@ -3,10 +3,14 @@
 // builds yield [] instead of throwing.
 import { describe, expect, it } from "vitest";
 import { labelPlayerStats } from "@/server/player-stats";
+import type { MsgFn } from "@/lib/scoring-vocab";
+import uiEn from "@/dictionaries/en/ui.json";
+
+const en: MsgFn = (k) => (uiEn as Record<string, string>)[k];
 
 describe("labelPlayerStats", () => {
   it("labels football counters from the module model and drops zeros", () => {
-    const rows = labelPlayerStats("football", "1.0.0", { goals: 3, assists: 0 });
+    const rows = labelPlayerStats("football", "1.0.0", { goals: 3, assists: 0 }, en);
     const goals = rows.find((r) => r.key === "goals");
     expect(goals?.value).toBe(3);
     expect(goals?.label.toLowerCase()).toContain("goal");
@@ -14,6 +18,6 @@ describe("labelPlayerStats", () => {
   });
 
   it("returns [] for a retired module build", () => {
-    expect(labelPlayerStats("football", "0.0.1-gone", { goals: 3 })).toEqual([]);
+    expect(labelPlayerStats("football", "0.0.1-gone", { goals: 3 }, en)).toEqual([]);
   });
 });

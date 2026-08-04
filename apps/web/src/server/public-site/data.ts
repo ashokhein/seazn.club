@@ -13,6 +13,8 @@ import { hasFeature } from "@/lib/entitlements";
 import { isoDateTime } from "@/lib/public-site";
 import { resolveModule } from "@/server/engine-db";
 import { labelPlayerStats } from "@/server/player-stats";
+import { toLocale } from "@/lib/i18n-constants";
+import { msgFor } from "@/lib/messages-i18n";
 
 /** timestamptz → ISO string before rows cross into client components. */
 const normalizeFixture = <T extends { scheduled_at: unknown }>(f: T): T => ({
@@ -446,6 +448,13 @@ export async function getPublicPlayer(
     return null;
   }
 
+  // Stat-row copy for spectators. Deliberately NOT resolveLocale(): that reads
+  // cookies()/headers() and would opt this ISR route (revalidate = 300) into
+  // dynamic rendering. The org's default_locale is the documented
+  // spectator-facing locale for exactly this reason.
+  const statMsg = (k: Parameters<typeof msgFor>[1]) =>
+    msgFor(toLocale(shell.org.default_locale), k);
+
   const detail = await unstable_cache(
     async () => {
       const [player] = await sql<PublicPlayer[]>`
@@ -486,7 +495,10 @@ export async function getPublicPlayer(
       const stats: PublicPlayerStats[] = [];
       for (const snap of snapshots) {
         // Shared labelling (G6): same module-declared model as the /me view.
-        const labelled = labelPlayerStats(snap.sport_key, snap.module_version, snap.stats);
+        // Locale comes from the ORG DEFAULT, never the request: that is what
+        // keeps this page ISR-cacheable (see PublicOrg.default_locale), and it
+        // is a function of the org, so it is stable within this cache key.
+        const labelled = labelPlayerStats(snap.sport_key, snap.module_version, snap.stats, statMsg);
         if (labelled.length > 0) {
           stats.push({
             division_name: snap.division_name,
@@ -498,7 +510,10 @@ export async function getPublicPlayer(
       }
       return { player, memberships, stats };
     },
-    ["pub-player-v13", shell.competition.id, personId],
+    // v14: stat labels inside this payload are now localized copy, not the
+    // engine's English. A live v13 entry would keep serving English for a full
+    // REVALIDATE_SLOW window after deploy, so retire the key rather than wait.
+    ["pub-player-v14", shell.competition.id, personId],
     { tags: [competitionTag(shell.competition.id)], revalidate: REVALIDATE_SLOW },
   )();
   if (!detail) return null;
