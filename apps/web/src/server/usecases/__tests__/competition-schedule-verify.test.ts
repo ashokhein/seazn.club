@@ -806,6 +806,64 @@ describe("joint engine assignments (#350)", () => {
     expect(byId.get(F2)!.endAt - byId.get(F2)!.startAt).toBe(90 * 60_000);
   });
 
+  // #446 — `divisionId` above was stamped from the start; `poolId` was not, on
+  // the stated grounds that it "matches the single-division path exactly". The
+  // single-division path was the same bug, not a baseline: `restByGroup` and
+  // `startWindows` both target a POOL as well as a division, the pack has always
+  // carried `PackFixture.pool`, and the placer has always read it — so a
+  // pool-targeted rule bound while drafting and evaporated at verification.
+  it("stamps the pool as well as the division, so a pool-targeted rule survives", () => {
+    const POOL = "aaaa1111-1111-4111-8111-111111111111";
+    const p = pack(
+      [
+        division(D1, "Alpha", {
+          settings: settings({
+            matchMinutes: 30,
+            perEntrantMinRest: 30,
+            courts: ["Court 1", "Court 2"],
+            constraints: constraints({ restByGroup: { [POOL]: 180 } }),
+          }),
+        }),
+      ],
+      [
+        fixture(F1, D1, { pool: POOL, home: E1, away: E2 }),
+        fixture(F2, D1, { pool: POOL, seq: 1, home: E1, away: E3 }),
+      ],
+    );
+    const out = toJointEngineAssignments(
+      // 30 minutes apart: clears the 30-minute default rest, breaches the 180
+      // the pool asks for.
+      plan([assign(F1, at("09:00"), "Court 1"), assign(F2, at("10:00"), "Court 2")]),
+      p,
+    );
+    expect(out.map((a) => a.poolId)).toEqual([POOL, POOL]);
+    expect(verifyJoint(plan([assign(F1, at("09:00"), "Court 1"), assign(F2, at("10:00"), "Court 2")]), p)
+      .map((c) => c.reason)).toContain("rest");
+  });
+
+  // The negative half: a fixture in NO pool must omit the key rather than carry
+  // `undefined`, and a rule keyed on some other pool must stay silent. Without
+  // this the assertion above is satisfied by stamping any non-empty string.
+  it("omits the pool for a pool-less fixture and ignores another pool's rule", () => {
+    const OTHER = "aaaa2222-2222-4222-8222-222222222222";
+    const p = pack(
+      [
+        division(D1, "Alpha", {
+          settings: settings({
+            matchMinutes: 30,
+            perEntrantMinRest: 30,
+            courts: ["Court 1", "Court 2"],
+            constraints: constraints({ restByGroup: { [OTHER]: 180 } }),
+          }),
+        }),
+      ],
+      [fixture(F1, D1, { home: E1, away: E2 }), fixture(F2, D1, { seq: 1, home: E1, away: E3 })],
+    );
+    const rows = plan([assign(F1, at("09:00"), "Court 1"), assign(F2, at("10:00"), "Court 2")]);
+    expect(toJointEngineAssignments(rows, p).every((a) => !("poolId" in a))).toBe(true);
+    expect(verifyJoint(rows, p).map((c) => c.reason)).not.toContain("rest");
+  });
+
   it("mirrors feed dependencies across every division's movable fixtures", () => {
     const p = pack(
       [division(D1, "Alpha"), division(D2, "Beta")],

@@ -7,6 +7,7 @@ import {
   effectiveHard,
   intervalsOverlap,
   pairRestMinutes,
+  slotFixtures,
   startWindowFor,
   validateAssignments,
   type Assignment,
@@ -116,6 +117,74 @@ describe("exported rule semantics", () => {
     // Both movable: the verifier evaluates the pair once per assignment, so the
     // strict direction is reached and the max binds.
     expect(validateAssignments([movable, immovable], config).some((c) => c.reason === "rest")).toBe(true);
+  });
+
+  // #446 — the placer's OWN OUTPUT is the input the verifier is handed next
+  // (Auto-schedule places a board, the organiser drags one card, the board is
+  // re-verified). `slotFixtures` resolves `restByGroup` and `startWindows` off
+  // `SchedulableFixture.poolId`; `validateAssignments` resolves the same two
+  // rules off `Assignment.poolId`. If `commit()` drops the field on the way out,
+  // the rule holds while the placer is looking and evaporates the instant
+  // anything re-reads the result — which is the fork this whole file exists for.
+  //
+  // Asserted on a MOVED card, not on the placer's clean board: a lost group id
+  // can only make the verifier LAXER, so a legal board round-trips clean either
+  // way and proves nothing.
+  describe("a placer placement re-read by the verifier (#446)", () => {
+    const t0 = at("2026-08-10T09:00:00Z");
+    const poolConfig = {
+      ...BASE_CONFIG,
+      startAt: t0,
+      courts: ["C1", "C2"],
+      perEntrantMinRest: 30,
+      constraints: {
+        restByGroup: { "pool-a": 180 },
+        startWindows: [{ target: { kind: "pool", id: "pool-a" }, notAfter: t0 + 600 * MIN }],
+        noBackToBack: false,
+        fieldFairness: "off",
+        parallelism: "mixed",
+      } as never,
+    };
+    const place = () =>
+      slotFixtures({
+        fixtures: [
+          { id: "pa-1", roundNo: 0, home: "e1", away: "e2", poolId: "pool-a", divisionId: "d1" },
+          { id: "pa-2", roundNo: 1, home: "e1", away: "e3", poolId: "pool-a", divisionId: "d1" },
+        ],
+        config: poolConfig,
+      });
+
+    it("the placer honours the pool rest and the verifier agrees on the same board", () => {
+      const { assignments, conflicts } = place();
+      expect(conflicts).toEqual([]);
+      expect(assignments).toHaveLength(2);
+      // The placer really did apply the 180, not the 30 default.
+      expect(assignments[1]!.startAt - assignments[0]!.endAt).toBe(180 * MIN);
+      expect(validateAssignments(assignments, poolConfig)).toEqual([]);
+    });
+
+    it("a placed pool card dragged inside the pool rest is a rest conflict", () => {
+      const [first, second] = place().assignments;
+      // 40 minutes after the first ends: clears the 30-minute default, breaches
+      // the 180 the placer itself just enforced. Only `startAt`/`endAt` change —
+      // everything else is the object the placer emitted.
+      const dragged: Assignment = {
+        ...second!,
+        startAt: first!.endAt + 40 * MIN,
+        endAt: first!.endAt + 80 * MIN,
+      };
+      const conflicts = validateAssignments([dragged], poolConfig, [first!]);
+      expect(conflicts.map((c) => c.reason)).toContain("rest");
+    });
+
+    it("a placed pool card dragged past the pool start window is a start_window conflict", () => {
+      const [, second] = place().assignments;
+      const late = t0 + 700 * MIN; // beyond notAfter = t0 + 600
+      const dragged: Assignment = { ...second!, startAt: late, endAt: late + 40 * MIN };
+      expect(startWindowFor(poolConfig, dragged).notAfter).toBe(t0 + 600 * MIN);
+      const conflicts = validateAssignments([dragged], poolConfig);
+      expect(conflicts.map((c) => c.reason)).toContain("start_window");
+    });
   });
 
   // REGRESSION TRIPWIRE, NOT A BENCHMARK. `pairRestMinutes` is called from an

@@ -261,6 +261,20 @@ function peopleOf(f: FixtureLite, people: Map<string, string[]>): string[] {
   ];
 }
 
+/** A DB fixture row as the engine's `Assignment`.
+ *
+ *  `poolId`/`divisionId` are stamped (#446). They are not decoration: the
+ *  verifier resolves a pool- or division-targeted `restByGroup` and
+ *  `startWindows` entry off exactly these two fields
+ *  (`effectiveRestMinutes`/`startWindowFor`), and the placer resolves the same
+ *  rules off the twin fields on `SchedulableFixture` (built at :523 from the
+ *  same row). Dropping them here is what made a pool rule bind for
+ *  Auto-schedule and evaporate the moment an organiser dragged a card.
+ *
+ *  Optionality follows the `SchedulableFixture` builder exactly: `division_id`
+ *  is NOT NULL so it is always stamped; `pool_id` is nullable and the key is
+ *  omitted rather than set to `undefined`, because `Assignment.poolId` is an
+ *  optional string and the verifier tests it with `!== undefined`. */
 export function toAssignment(f: FixtureLite, matchMinutes: number, people: Map<string, string[]>): Assignment {
   const start = ms(f.scheduled_at as string | Date);
   return {
@@ -270,6 +284,8 @@ export function toAssignment(f: FixtureLite, matchMinutes: number, people: Map<s
     endAt: start + matchMinutes * MS_PER_MIN,
     entrants: [f.home_entrant_id, f.away_entrant_id].filter((e): e is string => e !== null),
     people: peopleOf(f, people),
+    ...(f.pool_id !== null ? { poolId: f.pool_id } : {}),
+    divisionId: f.division_id,
   };
 }
 
@@ -620,6 +636,11 @@ export async function applySchedule(
         endAt: start + settings.config.matchMinutes * MS_PER_MIN,
         entrants: [f.home_entrant_id, f.away_entrant_id].filter((e): e is string => e !== null),
         people: peopleOf(f, people),
+        // #446: the proposed card's own group identity, so a pool- or
+        // division-targeted rule is applied to the placement being judged and
+        // not only to the board it lands on. Same shape as `toAssignment`.
+        ...(f.pool_id !== null ? { poolId: f.pool_id } : {}),
+        divisionId: f.division_id,
       };
     });
     const listed = new Set(input.assignments.map((a) => a.fixture_id));
@@ -839,6 +860,12 @@ export async function moveFixture(
           (e): e is string => e !== null,
         ),
         people: peopleOf(fixture, people),
+        // #446 — this is the drag/keyboard move the issue describes: without
+        // these two the dragged card resolves its rest to `perEntrantMinRest`
+        // and its start bound to (-inf, +inf), so a pool rule the auto pass
+        // honoured is silently absent at exactly the moment a human overrides it.
+        ...(fixture.pool_id !== null ? { poolId: fixture.pool_id } : {}),
+        divisionId: fixture.division_id,
       };
       const others = all
         .filter((f) => f.id !== fixture.id && f.scheduled_at !== null && f.court_label !== null)

@@ -1443,8 +1443,23 @@ function structuralCheck(plan: AiSchedulePlan, movableIds: Set<string>, pack: Sc
 }
 
 /** Map the LLM proposal onto engine assignments (ISO → epoch ms). Entrants and
- *  people come from the pack so the verifier can catch overlaps. */
-function toEngineAssignments(plan: AiSchedulePlan, pack: SchedulePack): Assignment[] {
+ *  people come from the pack so the verifier can catch overlaps.
+ *
+ *  `poolId`/`divisionId` come from the pack too (#446), from the same two pack
+ *  fields `packRuleFixtures` below already reads. They are what makes a
+ *  pool- or division-targeted `restByGroup` entry actually bind on this path.
+ *
+ *  NOT `startWindows`, on this path: `verifyConfig` below pins
+ *  `startWindows: []` outright, so the single-division AI path is blind to
+ *  every start window whatever it targets, and `repair-domain` clips the
+ *  repair domain to that same empty config. Stamping the group identity is
+ *  necessary for that to ever work and is not sufficient — filed separately.
+ *  `schedule-group-targeting.test.ts` asserts the pin, so this comment and
+ *  that test cannot drift apart silently.
+ *
+ *  Exported for the same reason its joint twin `toJointEngineAssignments` is:
+ *  the verify seam is testable without a model round trip. */
+export function toEngineAssignments(plan: AiSchedulePlan, pack: SchedulePack): Assignment[] {
   const fixtureById = new Map(pack.fixtures.movable.map((f) => [f.id, f]));
   const durMs = pack.settings.matchMinutes * MS_PER_MIN;
   return plan.assignments.map((a) => {
@@ -1461,11 +1476,22 @@ function toEngineAssignments(plan: AiSchedulePlan, pack: SchedulePack): Assignme
       // whoever can still advance into it, which is what every person rule
       // needs and what `pack.people` (pairs sharing an entrant) never had.
       people: pack.participants[a.fixture_id] ?? [],
+      ...(f?.pool != null ? { poolId: f.pool } : {}),
+      divisionId: pack.division.id,
     };
   });
 }
 
-/** Fixed court occupancy the proposal must dodge (other stages + siblings). */
+/** Fixed court occupancy the proposal must dodge (other stages + siblings).
+ *
+ *  DELIBERATELY carries no `poolId`/`divisionId` (#446), unlike every other
+ *  adapter in this file. A `PackObstacle` is a court booking — an out-of-run
+ *  division's placement, another stage's decided fixture, an outside hire — and
+ *  it has no entrants and no people, so no rest pair and no start-window bound
+ *  can ever reach it (`startWindowFor` runs over `assignments` only; the rest
+ *  loop needs a shared entrant or person). Stamping a FOREIGN division's id on
+ *  a row this run may not move would be a rule match invented in the opposite
+ *  direction — the pack does not even carry the pool that row sat in. */
 function toObstacleAssignments(pack: SchedulePack): Assignment[] {
   return pack.fixtures.obstacles.map((o, i) => ({
     fixtureId: `obstacle:${i}`,

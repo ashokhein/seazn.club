@@ -446,6 +446,14 @@ export function slotFixtures(input: SlotInput): SlotResult {
       endAt: start + durMs,
       entrants: ent,
       people: [...(f.people ?? [])],
+      // Carried through, not dropped (#446). `windowFor`/`restForMs` above read
+      // the fixture's pool and division to honour a pool- or division-targeted
+      // `startWindow`/`restByGroup`; `validateAssignments` reads the SAME two
+      // fields off the Assignment. Emitting a placement that has lost them means
+      // feeding the placer's own output back to the verifier flips the verdict —
+      // the placer/verifier fork this module exists to prevent.
+      ...(f.poolId !== undefined ? { poolId: f.poolId } : {}),
+      ...(f.divisionId !== undefined ? { divisionId: f.divisionId } : {}),
     };
     bookings.push(assignment);
     placed.push(assignment);
