@@ -1573,10 +1573,16 @@ async function smokePlanMatrix(): Promise<void> {
   // the org west of Greenwich and lay four fixtures across one LOCAL Saturday
   // whose evening half is already Sunday in UTC: a UTC bucket sees 2 + 2 and
   // fills all four, the org's own day allows only 2.
-  const tzOrg = await call(plus, `/api/orgs/${plusOrg}`, "PATCH", {
+  // `call` returns json.data and THROWS on ok:false — it has no .status, so
+  // assert the value actually landed. The two checks below are meaningless if
+  // this org is still on UTC, so this must fail loudly rather than silently.
+  const tzOrg = (await call(plus, `/api/orgs/${plusOrg}`, "PATCH", {
     timezone: "America/Los_Angeles",
-  });
-  check("matrix/pro_plus #448: org timezone set to America/Los_Angeles", tzOrg.status === 200);
+  })) as { timezone: string };
+  check(
+    "matrix/pro_plus #448: org timezone set to America/Los_Angeles",
+    tzOrg.timezone === "America/Los_Angeles",
+  );
 
   // 2026-07-11 in Los Angeles (PDT, UTC-7): 10:00 & 12:00 local are still
   // Saturday UTC; 18:00 & 20:00 local are already Sunday UTC.
