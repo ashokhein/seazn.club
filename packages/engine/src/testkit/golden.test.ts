@@ -19,19 +19,27 @@ import {
   REBASELINE_GOLDEN,
   UPDATE_GOLDEN,
   buildCorpus,
+  declaredOptionalConfigFields,
   declaredOptionalFields,
   eventTypesIn,
   extendCorpus,
   payloadParseFailures,
   readCorpus,
+  reachableStatePaths,
   rebaselineCorpus,
   recomputeStream,
+  recordedStatePaths,
   sportPayloads,
+  staleUnreachableConfigFields,
   staleUnreachableFields,
+  staleUnreachableStatePaths,
   stateMismatch,
   tierEventTypes,
+  uncoveredConfigFields,
+  uncoveredStatePaths,
   uncoveredTierFields,
   uncoveredTierTypes,
+  unreachableStatePathsGoneStale,
   writeCorpus,
 } from "./golden.ts";
 
@@ -202,6 +210,76 @@ if (UPDATE_GOLDEN) {
           staleUnreachableFields(module, corpus),
           `${module.key}: UNREACHABLE_FIELDS claims these cannot be reached, but the ` +
             `corpus writes them — delete the entries`,
+        ).toEqual([]);
+      });
+
+      // T2 (#425 follow-up) — the CONFIG dimension. The two tests above ask the
+      // additive question of `eventSchema`; nothing asked it of `configSchema`,
+      // so a knob no recorded config sets and no frozen state carries could be
+      // narrowed, renamed or reshaped with all eleven corpora green. Every W4a
+      // config addition was in exactly that position: `subWindows`,
+      // `periodSeconds`, `clock.delay`, `releaseOnGoal`.
+      //
+      // LIMIT: a knob pinned only by the frozen state (a `.default()` no config
+      // overrides) is guarded against a rename or a changed value, not against
+      // a domain narrowing that still admits the default. `pinnedConfigFields`
+      // spells out which pin is which.
+      it("pins every optional config field the module's config schema declares", () => {
+        const missing = uncoveredConfigFields(module, corpus);
+        expect(
+          missing,
+          `${module.key} declares ${declaredOptionalConfigFields(module).length} optional ` +
+            `config fields and its corpus pins ${missing.length} of them nowhere — no ` +
+            `recorded config sets them and no frozen state carries them, so narrowing, ` +
+            `renaming or reshaping those knobs would not red anything. Add a ` +
+            `COVERAGE_CONFIGS entry that sets them and extend the corpus: ` +
+            `EXTEND_GOLDEN=1 npx vitest run src/testkit/golden.test.ts — or an ` +
+            `UNREACHABLE_CONFIG_FIELDS entry stating WHY no config can set them.`,
+        ).toEqual([]);
+      });
+
+      it("allow-lists no config field the corpus actually pins", () => {
+        expect(
+          staleUnreachableConfigFields(module, corpus),
+          `${module.key}: UNREACHABLE_CONFIG_FIELDS claims these cannot be reached, but ` +
+            `the corpus pins them — delete the entries`,
+        ).toEqual([]);
+      });
+
+      // T2 (#425 follow-up) — the STATE dimension, and the one with no schema
+      // behind it. `stateMismatch` already compares everything outside `cfg` as
+      // exact string equality, so any path the corpus WRITES is fully pinned in
+      // both directions. A path it never writes is pinned by nothing, and that
+      // was where the wave's own state fields sat: `overran` / `overCount` need
+      // a `cfg.interruptions` allowance no shipped variant declares, and
+      // football's `at` stamp reached cards and shoot-out penalties in the live
+      // generator while no frozen stream carried one.
+      //
+      // The declared side is a seeded sweep of the module's OWN generator (see
+      // the section note in golden.ts) — there is no `stateSchema` to walk.
+      it("records every state path its own generator can still reach", () => {
+        const missing = uncoveredStatePaths(module, corpus);
+        expect(
+          missing,
+          `${module.key}: its generator can reach ${reachableStatePaths(module, corpus).length} ` +
+            `state paths and the corpus records ${recordedStatePaths(module, corpus).length}; ` +
+            `${missing.length} live-reachable paths are written by no frozen stream, so ` +
+            `narrowing or renaming those state fields would red nothing. Extend the ` +
+            `corpus: EXTEND_GOLDEN=1 npx vitest run src/testkit/golden.test.ts — or add an ` +
+            `UNREACHABLE_STATE_PATHS entry stating WHY no stream can record them.`,
+        ).toEqual([]);
+      });
+
+      it("allow-lists no state path the corpus records, nor one nothing reaches", () => {
+        expect(
+          staleUnreachableStatePaths(module, corpus),
+          `${module.key}: UNREACHABLE_STATE_PATHS claims these cannot be recorded, but ` +
+            `the corpus records them — delete the entries`,
+        ).toEqual([]);
+        expect(
+          unreachableStatePathsGoneStale(module, corpus),
+          `${module.key}: UNREACHABLE_STATE_PATHS names paths no generator can reach at ` +
+            `all — the entries suppress nothing and are now noise`,
         ).toEqual([]);
       });
 

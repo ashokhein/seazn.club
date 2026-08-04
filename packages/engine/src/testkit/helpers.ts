@@ -78,6 +78,29 @@ export function buildStream<Cfg, Ev, State>(
   seed: number,
   maxEvents: number,
 ): EventEnvelope[] {
+  return buildWalk(module, cfg, lineups, seed, maxEvents).events;
+}
+
+/** `buildStream` plus the states it already computes on the way. `states[i]` is
+ *  the fold of `events[0..i]`, so it lines up index for index with
+ *  `GoldenStream.states` — the walk is the same one `buildCorpus` records.
+ *
+ *  It is `module.apply` rather than `foldMatch`, one layer below what the
+ *  corpus records, because a caller sweeping many seeds for STATE SHAPE cannot
+ *  afford `foldMatch` over every prefix (quadratic in the stream length). The
+ *  two agree on generated streams: the only events `foldMatch` withholds from
+ *  the module are `core.suspend` / `core.resume`, which no `arbitraryEvent`
+ *  emits, and its remaining work — void resolution and the monotonic-time
+ *  guard — refuses events rather than reshaping state. Anything that needs the
+ *  RECORDED state, not merely its shape, must still go through
+ *  `recomputeStream`. */
+export function buildWalk<Cfg, Ev, State>(
+  module: SportModule<Cfg, Ev, State>,
+  cfg: Cfg,
+  lineups: LineupPair,
+  seed: number,
+  maxEvents: number,
+): { events: EventEnvelope[]; states: State[] } {
   const generate = module.arbitraryEvent;
   if (!generate) {
     throw new Error(`module "${module.key}" does not implement arbitraryEvent`);
@@ -85,12 +108,14 @@ export function buildStream<Cfg, Ev, State>(
   const rng = mulberry32(seed);
   let state = module.init(cfg, lineups);
   const events: EventEnvelope[] = [];
+  const states: State[] = [];
   for (let i = 0; i < maxEvents; i++) {
     const next = generate.call(module, state, rng);
     if (!next) break;
     const envelope = makeEnvelope(events.length, next);
     state = module.apply(state, envelope as EventEnvelope<Ev | CoreEv>);
     events.push(envelope);
+    states.push(state);
   }
-  return events;
+  return { events, states };
 }

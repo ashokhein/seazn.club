@@ -27,8 +27,8 @@ import { foldMatch, isCoreEventType, type EventEnvelope } from "../core/events.t
 import type { LineupPair, StageCtx } from "../core/types.ts";
 import { resolvePositions } from "../sport/catalog.ts";
 import type { AnySportModule } from "../sport/module.ts";
-import { buildStream, defaultLineupPair, makeEnvelope } from "./helpers.ts";
-import { fieldPresent, optionalFieldPaths } from "./schema-fields.ts";
+import { buildStream, buildWalk, defaultLineupPair, makeEnvelope } from "./helpers.ts";
+import { fieldPresent, optionalFieldPaths, valueFieldPaths } from "./schema-fields.ts";
 
 // W4a (#425) §3.3 — every fold below is PAD-SHAPED: it builds a stream event by
 // event, which is the write path. `strictFromSeq: 0` marks the whole stream new
@@ -396,16 +396,52 @@ export function uncoveredTierFields(module: AnySportModule, corpus: GoldenCorpus
   );
 }
 
-/** What a stream contributes to coverage: the event types it records AND the
- *  declared optional fields it writes, in one tagged namespace so `extendCorpus`
- *  can go on picking the stream that brings in the most of what is missing. */
+/** What a candidate stream contributes to coverage, in one tagged namespace so
+ *  `extendCorpus` can go on picking the stream that brings in the most of what
+ *  is missing:
+ *    `type:`  — an event type it records;
+ *    `field:` — a declared optional PAYLOAD field it writes;
+ *    `cfg:`   — a declared optional CONFIG field its config sets (T2);
+ *    `state:` — a state path its fold writes (T2).
+ *
+ *  `cfg` and `state` tokens need what the events alone cannot say — the config
+ *  the stream would be recorded under, and the states it folds to — so they
+ *  appear only when the caller supplies them. */
 export function coverageTokens(
   module: AnySportModule,
   events: readonly GoldenEvent[],
+  context?: {
+    rawConfig?: unknown;
+    states?: readonly unknown[];
+    collapse?: ReadonlySet<string>;
+  },
 ): string[] {
   const out = new Set<string>();
   for (const event of events) out.add(`type:${event.type}`);
   for (const path of writtenFields(module, events)) out.add(`field:${path}`);
+  if (context?.rawConfig !== undefined) {
+    // The RESOLVED cfg, not the raw one: an appended stream freezes its parsed
+    // cfg into every recorded state, and that is what `pinnedConfigFields` will
+    // see once the stream lands. Scoring the raw object instead would make the
+    // greedy pick undercount every defaulted knob it is about to pin.
+    let resolved: unknown;
+    try {
+      resolved = module.configSchema.parse(context.rawConfig);
+    } catch {
+      resolved = undefined;
+    }
+    for (const path of declaredOptionalConfigFields(module)) {
+      if (fieldPresent(context.rawConfig, path) || fieldPresent(resolved, path)) {
+        out.add(`cfg:${path}`);
+      }
+    }
+  }
+  if (context?.states !== undefined) {
+    const collapse = context.collapse ?? new Set<string>();
+    for (const state of context.states) {
+      for (const path of statePathsOf(state, collapse)) out.add(`state:${path}`);
+    }
+  }
   return [...out].sort();
 }
 
@@ -424,6 +460,277 @@ export function undeclaredUnreachableFields(module: AnySportModule): string[] {
   const declared = new Set(declaredOptionalFields(module));
   return Object.keys(UNREACHABLE_FIELDS[module.key] ?? {})
     .filter((path) => !declared.has(path))
+    .sort();
+}
+
+// ------------------------------------------------ optional-CONFIG coverage
+//
+// T2 (#425 follow-up). Everything above reasons about the EVENT schema. The
+// same additive question applies to `configSchema`, and nothing asked it: a
+// module can narrow, rename or reshape an optional config knob and every one of
+// the eleven corpora stays green, because a knob no recorded config sets and no
+// frozen state carries is pinned by nothing at all. `subWindows`,
+// `periodSeconds`, `clock.delay` and the ice-hockey/hockey `releaseOnGoal` were
+// all in exactly that position when this was written — every one of them added
+// by W4a, none of them guarded by the corpus the wave shipped.
+//
+// Unlike state, cfg HAS a runtime schema (`SportModule.configSchema`), so the
+// declared side is the same walker the payload half uses.
+
+const DECLARED_CONFIG_FIELDS = new WeakMap<AnySportModule, string[]>();
+
+/** Every OPTIONAL field the module's config schema declares, as dotted paths. */
+export function declaredOptionalConfigFields(module: AnySportModule): string[] {
+  const cached = DECLARED_CONFIG_FIELDS.get(module);
+  if (cached !== undefined) return cached;
+  const fields = optionalFieldPaths(module.configSchema);
+  DECLARED_CONFIG_FIELDS.set(module, fields);
+  return fields;
+}
+
+/** The parsed `cfg` a stream's frozen state carries, or undefined. Taken from
+ *  the FIRST recorded state: no fold rewrites `cfg`, so every state in a stream
+ *  carries the same one, and `keepRecordedCfg` preserves it across a
+ *  re-baseline precisely so this stays the cfg the corpus was frozen against. */
+function recordedCfgOf(stream: GoldenStream): unknown {
+  const first = stream.states[0];
+  if (first === undefined) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(first);
+    return isPlainObject(parsed) ? parsed.cfg : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Optional config fields a raw config WRITES. The scorer's-input rule the
+ *  payload half uses, applied to the organiser's input: what matters is the
+ *  value that was recorded, not what `parse` filled in around it. */
+export function writtenConfigFields(module: AnySportModule, rawConfig: unknown): Set<string> {
+  return new Set(declaredOptionalConfigFields(module).filter((p) => fieldPresent(rawConfig, p)));
+}
+
+/** Optional config fields the corpus PINS. Two independent pins, and a field
+ *  needs only one of them, but they are not the same guarantee:
+ *
+ *    RAW — some recorded `configs` entry writes the key, so replay re-parses
+ *      that value through the live schema. Narrowing the field's DOMAIN (a
+ *      tightened `min`, a dropped enum member, an int where a float was) reds.
+ *    FROZEN — some frozen state's serialised `cfg` carries the key, which
+ *      `stateMismatch` compares as a subset. A rename, a removal, or a changed
+ *      resolved value reds.
+ *
+ *  LIMIT, and it is why the two are reported as one set rather than silently
+ *  conflated in a comment: a FROZEN-only pin does NOT catch a domain narrowing
+ *  that still admits the recorded value — tightening `z.number().int()` to
+ *  `z.literal(2)` on a knob whose default is 2 and which no config overrides
+ *  reds nothing. Closing that needs a COVERAGE_CONFIGS entry that sets the knob
+ *  to something, which is why one is always preferable to an allow-list line. */
+export function pinnedConfigFields(module: AnySportModule, corpus: GoldenCorpus): Set<string> {
+  const declared = declaredOptionalConfigFields(module);
+  const recorded: unknown[] = [
+    ...Object.values(corpus.configs),
+    ...corpus.streams.map(recordedCfgOf),
+  ];
+  return new Set(declared.filter((p) => recorded.some((cfg) => fieldPresent(cfg, p))));
+}
+
+/** Optional config fields no recorded config sets and no frozen state carries,
+ *  each against the reason no corpus can reach it. Same contract as
+ *  UNREACHABLE_FIELDS — the reason IS the entry, and `golden-fields.test.ts`
+ *  reds on a bare one, on a path the schema no longer declares, and on a path
+ *  the corpus has since started pinning. Prefer a COVERAGE_CONFIGS entry: it
+ *  makes the knob genuinely recorded instead of exempted. */
+export const UNREACHABLE_CONFIG_FIELDS: Record<string, Record<string, string>> = {};
+
+/** Declared optional config fields the corpus pins nowhere, minus the
+ *  allow-list. */
+export function uncoveredConfigFields(module: AnySportModule, corpus: GoldenCorpus): string[] {
+  const pinned = pinnedConfigFields(module, corpus);
+  const allowed = UNREACHABLE_CONFIG_FIELDS[module.key] ?? {};
+  return declaredOptionalConfigFields(module).filter(
+    (path) => !pinned.has(path) && !Object.hasOwn(allowed, path),
+  );
+}
+
+/** Allow-listed config fields the corpus DOES pin — stale entries. */
+export function staleUnreachableConfigFields(
+  module: AnySportModule,
+  corpus: GoldenCorpus,
+): string[] {
+  const pinned = pinnedConfigFields(module, corpus);
+  return Object.keys(UNREACHABLE_CONFIG_FIELDS[module.key] ?? {})
+    .filter((path) => pinned.has(path))
+    .sort();
+}
+
+/** Allow-listed paths the config schema no longer declares optional. */
+export function undeclaredUnreachableConfigFields(module: AnySportModule): string[] {
+  const declared = new Set(declaredOptionalConfigFields(module));
+  return Object.keys(UNREACHABLE_CONFIG_FIELDS[module.key] ?? {})
+    .filter((path) => !declared.has(path))
+    .sort();
+}
+
+// ---------------------------------------------------------- STATE coverage
+//
+// T2 (#425 follow-up), and the harder half. `SportModule<Cfg, Ev, State>`
+// declares no `stateSchema` — `State` is a bare generic and every state shape
+// is a plain TS interface never validated at runtime — so there is no schema to
+// walk and no declared set to compare against.
+//
+// WHAT IS ALREADY GUARDED, so the gap is stated exactly. `stateMismatch`
+// compares everything outside `cfg` as EXACT STRING equality, so for any path
+// the corpus already writes, BOTH directions red today: narrowing or renaming
+// changes the replayed string, and a new state key changes it too (which is
+// what `REBASELINE_GOLDEN` exists for). Freezing the observed path set would
+// therefore only restate, more weakly, an assertion the replay already makes
+// byte for byte.
+//
+// WHAT IS NOT. A state field NO recorded stream writes is invisible to that
+// comparison, and the wave's own fields were in exactly that position:
+// `overran` and `overCount` are computed only under a `cfg.interruptions`
+// allowance that no shipped variant declares, and football's `at` stamp reached
+// cards and shoot-out penalties in the live generator while no frozen stream
+// carried one. So the gap is COVERAGE, the same gap `uncoveredTierFields`
+// closes for payloads.
+//
+// THE DECLARED SIDE, with no schema: the live modules themselves. A seeded
+// sweep of `arbitraryEvent` over every candidate config says which state paths
+// the module can produce NOW; the frozen corpora say which it has recorded.
+// The difference is the uncovered set. That is self-maintaining in the way a
+// hand-kept list is not — add a conditional state field, the sweep reaches it,
+// and the gate reds until a stream is appended or the field is allow-listed.
+//
+// CONSEQUENCE worth knowing before widening a generator: this makes the gate
+// sensitive to `arbitraryEvent`. A generator that starts reaching a new state
+// path reds here until EXTEND_GOLDEN records one. That is the intended
+// behaviour and it is also new blast radius.
+
+/** The two side keys. A side-keyed map is symmetric by construction in every
+ *  module here (`goals`, `squads`, `kindCounts`, `setPieces`), so keying the
+ *  paths apart reports "this seed sin-binned an away player and not a home one"
+ *  as a missing field. Collapsing them costs no real coverage: the two branches
+ *  cannot have different shapes. */
+const SIDE_KEYS = ["home", "away"];
+
+/** Object keys the state walk renders as `[]` rather than as themselves —
+ *  the side keys plus every entrant and person id in the lineups. Ids are the
+ *  keys of the per-person records (cricket's `batterRuns`, `bowlerBalls`), and
+ *  keying those by id turns lineup data into schema paths: 22 of them for one
+ *  cricket innings, none of which names a field. */
+function collapseKeysFor(lineups: LineupPair): Set<string> {
+  const out = new Set<string>(SIDE_KEYS);
+  for (const side of [lineups.home, lineups.away]) {
+    out.add(side.entrantId);
+    for (const slot of side.slots) out.add(slot.personId);
+  }
+  return out;
+}
+
+/** Dotted paths one folded state writes, `cfg` excluded — the config half above
+ *  owns it, and leaving it in would double-count every knob. */
+export function statePathsOf(state: unknown, collapse: ReadonlySet<string>): string[] {
+  return valueFieldPaths(state, { collapse, omit: new Set(["cfg"]) });
+}
+
+function lineupsFor(module: AnySportModule, cfg: unknown, recorded?: LineupPair): LineupPair {
+  return recorded ?? defaultLineupPair(resolvePositions(module, cfg));
+}
+
+/** Every state path the FROZEN corpus writes, across every stream and every
+ *  per-event state in it. */
+export function recordedStatePaths(module: AnySportModule, corpus: GoldenCorpus): string[] {
+  const out = new Set<string>();
+  for (const stream of corpus.streams) {
+    const cfg = module.configSchema.parse(corpus.configs[stream.config]);
+    const collapse = collapseKeysFor(lineupsFor(module, cfg, stream.lineups));
+    for (const serialised of stream.states) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(serialised);
+      } catch {
+        continue;
+      }
+      for (const path of statePathsOf(parsed, collapse)) out.add(path);
+    }
+  }
+  return [...out].sort();
+}
+
+/** How far the reachability sweep walks. Deliberately generous relative to the
+ *  recording pass (a state path can need a shoot-out, a super over or a fourth
+ *  set) and deliberately fixed, so the declared set is a deterministic function
+ *  of the modules and not of when the test ran. */
+const STATE_SWEEP_SEEDS = 60;
+const STATE_SWEEP_EVENTS = 80;
+
+/** Every state path the LIVE module can still produce, from a seeded sweep of
+ *  its own generator over every candidate config. This is the declared side of
+ *  the state tripwire — see the section note for why a sweep stands in for the
+ *  `stateSchema` the module does not have. */
+export function reachableStatePaths(module: AnySportModule, corpus: GoldenCorpus): string[] {
+  const out = new Set<string>();
+  for (const [, raw] of coverageCandidates(module, corpus)) {
+    let cfg: unknown;
+    try {
+      cfg = module.configSchema.parse(raw);
+    } catch {
+      continue;
+    }
+    const lineups = benchedLineups(module, cfg) ?? defaultLineupPair(resolvePositions(module, cfg));
+    const collapse = collapseKeysFor(lineups);
+    for (let seed = 1; seed <= STATE_SWEEP_SEEDS; seed++) {
+      let states: unknown[];
+      try {
+        states = buildWalk(module, cfg, lineups, seed, STATE_SWEEP_EVENTS).states;
+      } catch {
+        continue; // a generator/apply refusal on this seed: it records nothing
+      }
+      for (const state of states) for (const path of statePathsOf(state, collapse)) out.add(path);
+    }
+  }
+  return [...out].sort();
+}
+
+/** State paths the live modules can reach that no corpus can record, each
+ *  against the reason. Same contract as UNREACHABLE_FIELDS: the reason IS the
+ *  entry, and the hygiene tests red on a bare one, on a path the corpus has
+ *  since started writing, and on a path the sweep can no longer reach at all
+ *  (which makes the entry suppress nothing). */
+export const UNREACHABLE_STATE_PATHS: Record<string, Record<string, string>> = {};
+
+/** Live-reachable state paths the frozen corpus never writes, minus the
+ *  allow-list. */
+export function uncoveredStatePaths(module: AnySportModule, corpus: GoldenCorpus): string[] {
+  const recorded = new Set(recordedStatePaths(module, corpus));
+  const allowed = UNREACHABLE_STATE_PATHS[module.key] ?? {};
+  return reachableStatePaths(module, corpus).filter(
+    (path) => !recorded.has(path) && !Object.hasOwn(allowed, path),
+  );
+}
+
+/** Allow-listed state paths the corpus DOES write — stale entries. */
+export function staleUnreachableStatePaths(
+  module: AnySportModule,
+  corpus: GoldenCorpus,
+): string[] {
+  const recorded = new Set(recordedStatePaths(module, corpus));
+  return Object.keys(UNREACHABLE_STATE_PATHS[module.key] ?? {})
+    .filter((path) => recorded.has(path))
+    .sort();
+}
+
+/** Allow-listed state paths the sweep can no longer reach — the field was
+ *  renamed, removed, or the generator stopped producing it, so the entry now
+ *  exempts nothing while still reading as a considered decision. */
+export function unreachableStatePathsGoneStale(
+  module: AnySportModule,
+  corpus: GoldenCorpus,
+): string[] {
+  const reachable = new Set(reachableStatePaths(module, corpus));
+  return Object.keys(UNREACHABLE_STATE_PATHS[module.key] ?? {})
+    .filter((path) => !reachable.has(path))
     .sort();
 }
 
@@ -454,6 +761,83 @@ const COVERAGE_CONFIGS: Record<string, Record<string, unknown>> = {
   // hockey defaults it on, which is why only one of the two period sports
   // needed this.
   hockey: { assisted: { assists: true } },
+};
+
+/** T2 (#425 follow-up) — configs whose only job is to SET the optional knobs no
+ *  shipped variant sets, so `uncoveredConfigFields` has something to pin them
+ *  with. Each one is a plausible competition rather than a schema exercise, but
+ *  it is a coverage instrument and not a preset: nothing outside this harness
+ *  reads it.
+ *
+ *  `periodSeconds` is deliberately NON-uniform in each. A map giving every
+ *  phase of a group the same value states nothing `periods.minutes` /
+ *  `halfMinutes` does not, and `phaseLengths` IGNORES it in that case, so a
+ *  uniform map would pin the key while exercising none of its behaviour. */
+const COVERAGE_CONFIG_KNOBS: Record<string, Record<string, unknown>> = {
+  // Law 3 as an FA youth competition writes it down: a squad cap, a window cap,
+  // returns permitted, a declared sin-bin length, and a second half played
+  // longer than the first (the one thing `halfMinutes` cannot say).
+  football: {
+    lawful: {
+      teamSize: 11,
+      maxSubs: 5,
+      subWindows: 3,
+      rollingSubs: true,
+      sinBinMinutes: 10,
+      periodSeconds: { H1: 2700, H2: 2820 },
+    },
+  },
+  // ICC playing conditions declare a per-innings DRS allowance; no shipped
+  // variant does, so `reviews` was pinned by nothing. The generator already
+  // respects the allowance, so a stream under it stays valid.
+  cricket: { reviewed: { reviews: { perInnings: 2 } } },
+  // A Fischer-with-delay time control ("G/5 +3 d2"). `increment` and `delay`
+  // are independent knobs and a control may declare both.
+  boardgame: { timed: { clock: { base: 300, increment: 3, delay: 2 } } },
+  // A competition that declares break allowances at all — none of the shipped
+  // variants does, which is why `overran` and `overCount` had never been
+  // computed by any fold. The generator's break is 120s long, so a 60s
+  // allowance overruns it and a count of 1 puts the side's second break of a
+  // kind in a set over the count.
+  tennis: {
+    breaks: {
+      interruptions: {
+        medical: { count: 1, seconds: 60 },
+        heat: { count: 1, seconds: 60 },
+        toilet: { count: 1, seconds: 60 },
+        other: { count: 1, seconds: 60 },
+      },
+    },
+  },
+  // IIHF with the full points ladder, a pulled-goaltender-legal lineup, an
+  // 8-second shoot-out clock and a third period played longer.
+  icehockey: {
+    "iihf-detail": {
+      goalkeeper: "optional",
+      periodSeconds: { P1: 1200, P2: 1200, P3: 1260 },
+      points: { win: 3, draw: 1, loss: 0, otWin: 2, otLoss: 1, shootoutWin: 2, shootoutLoss: 1 },
+      shootout: { attempts: 5, suddenDeath: true, clockSeconds: 8 },
+    },
+  },
+  // FIH with sudden-death extra time played short-sided, a PIM column on the
+  // card ladder, and every class stating explicitly that a goal does NOT end
+  // it (FIH cards run to time, unlike an IIHF minor). The class KEYS must stay
+  // green/yellow/red — the generator picks from them.
+  hockey: {
+    "fih-detail": {
+      goalkeeper: "optional",
+      periodSeconds: { Q1: 900, Q2: 900, Q3: 900, Q4: 960 },
+      overtime: { kind: "sudden_death", minutes: 10, skaters: 7 },
+      points: { win: 3, draw: 1, loss: 0, otWin: 2, otLoss: 1 },
+      suspensions: {
+        classes: {
+          green: { minutes: 2, teamShort: true, pim: 2, releaseOnGoal: false },
+          yellow: { minutes: 5, teamShort: true, pim: 5, releaseOnGoal: false },
+          red: { minutes: null, teamShort: true, permanent: true, pim: 10, releaseOnGoal: false },
+        },
+      },
+    },
+  },
 };
 
 /** Bench slots a coverage stream needs that the minimal catalog lineup has
@@ -491,6 +875,7 @@ function coverageCandidates(module: AnySportModule, corpus: GoldenCorpus): [stri
   for (const [name, raw] of [
     ...Object.entries(module.variants as Record<string, unknown>),
     ...Object.entries(COVERAGE_CONFIGS[module.key] ?? {}),
+    ...Object.entries(COVERAGE_CONFIG_KNOBS[module.key] ?? {}),
   ]) {
     if (known.has(name)) continue;
     try {
@@ -520,14 +905,20 @@ export interface CorpusExtension {
   appended: string[];
 }
 
-/** Everything the corpus is short of: event types it never records AND optional
- *  payload fields it never writes. One namespace so the greedy pick below can
- *  trade the two off against each other — a single appended stream routinely
- *  brings in a missing type and four missing fields at once. */
+/** Everything the corpus is short of: event types it never records, optional
+ *  payload fields it never writes, optional config fields nothing pins, and
+ *  state paths the live modules reach but no stream recorded. One namespace so
+ *  the greedy pick below can trade them off against each other — a single
+ *  appended stream routinely brings in a missing type and four missing fields
+ *  at once, and a coverage config brings in its own knobs AND the state paths
+ *  those knobs unlock (tennis `interruptions` pins thirteen cfg fields and
+ *  reaches `overran` / `overCount` in the same stream). */
 export function uncoveredCoverageTokens(module: AnySportModule, corpus: GoldenCorpus): string[] {
   return [
     ...uncoveredTierTypes(module, corpus).map((type) => `type:${type}`),
     ...uncoveredTierFields(module, corpus).map((path) => `field:${path}`),
+    ...uncoveredConfigFields(module, corpus).map((path) => `cfg:${path}`),
+    ...uncoveredStatePaths(module, corpus).map((path) => `state:${path}`),
   ].sort();
 }
 
@@ -541,8 +932,19 @@ export function extendCorpus(module: AnySportModule, existing: GoldenCorpus): Co
   const gained: string[] = [];
   const appended: string[] = [];
   if (wanted.size === 0) return { corpus, gained, stillMissing: [], appended };
-  const hitsOf = (events: readonly GoldenEvent[]): string[] =>
-    coverageTokens(module, events).filter((token) => wanted.has(token));
+  // Folding a candidate's states costs more than reading its events, so only
+  // pay it when a `state:` token is actually outstanding.
+  const wantsState = [...wanted].some((token) => token.startsWith("state:"));
+  const hitsOf = (
+    raw: unknown,
+    events: readonly GoldenEvent[],
+    states: readonly unknown[],
+    collapse: ReadonlySet<string>,
+  ): string[] =>
+    coverageTokens(module, events, {
+      rawConfig: raw,
+      ...(wantsState ? { states, collapse } : {}),
+    }).filter((token) => wanted.has(token));
 
   const candidates = coverageCandidates(module, existing);
   const used = new Set(existing.streams.map((s) => `${s.config}:${s.seed}`));
@@ -552,15 +954,19 @@ export function extendCorpus(module: AnySportModule, existing: GoldenCorpus): Co
     for (const [name, raw] of candidates) {
       const cfg = module.configSchema.parse(raw);
       const lineups = benchedLineups(module, cfg) ?? defaultLineupPair(resolvePositions(module, cfg));
+      const collapse = collapseKeysFor(lineups);
       for (let seed = 1; seed <= COVERAGE_SEED_SCAN; seed++) {
         if (used.has(`${name}:${seed}`)) continue;
         let events: EventEnvelope[];
+        let states: unknown[];
         try {
-          events = buildStream(module, cfg, lineups, seed, COVERAGE_MAX_EVENTS);
+          const walk = buildWalk(module, cfg, lineups, seed, COVERAGE_MAX_EVENTS);
+          events = walk.events;
+          states = walk.states;
         } catch {
           continue;
         }
-        const hits = hitsOf(events);
+        const hits = hitsOf(raw, events, states, collapse);
         if (hits.length === 0) continue;
         if (best === null || hits.length > best.hits.length) best = { name, raw, seed, hits };
         if (best.hits.length === wanted.size) break;
