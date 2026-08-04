@@ -10175,6 +10175,10 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
   const selfEmail = `selflink_${tag}@example.com`;
   const selfSession = newSession();
   await signIn(selfSession, selfEmail);
+  // #402 — an affirmation without a date of birth is refused (400) and never
+  // links: an undated registrant may be a child, and a parent entering two of
+  // them would otherwise fuse both siblings into one persons row.
+  const adultDob = "1990-05-05";
   const registerAsSelf = (divisionId: string, extra: Record<string, unknown>) =>
     v1(selfSession, `/api/v1/public/orgs/${proSlug}/competitions/${compSlug}/register`, "POST", {
       division_id: divisionId,
@@ -10182,6 +10186,7 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
       contact_email: selfEmail,
       privacy_consent: true,
       registering_self: true,
+      dob: adultDob,
       ...extra,
     });
   /** Confirm a submitted registration and return the person the entrant carries. */
@@ -10200,6 +10205,10 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
     "gap self-link registrations accepted in two divisions",
     selfA.status === 201 && selfB.status === 201,
   );
+  // The affirmation carries no weight without an age: refused at the schema so
+  // the registrant is told why, and unlinkable at the server either way.
+  const undatedSelf = await registerAsSelf(selfDivIds[2]!, { dob: null });
+  check("gap an affirmed registration with NO date of birth is refused", undatedSelf.status === 400);
   const selfPersonA = await confirmToPerson(selfA);
   const selfPersonB = await confirmToPerson(selfB);
   check(

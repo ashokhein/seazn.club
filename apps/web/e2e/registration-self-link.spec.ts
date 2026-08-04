@@ -96,6 +96,11 @@ test("signed-in self-registration: two divisions resolve to one person", async (
       await reg.getByRole("checkbox", { name: /I agree that/ }).check();
       // #402 — the affirmation. Unchecked by default: the safe state is "no link".
       await reg.getByRole("checkbox", { name: /registering myself/i }).check();
+      // …and the date of birth it makes mandatory. The server refuses to link an
+      // undated registrant at all: without an age it cannot tell an adult
+      // entering themselves from a parent entering a child, and two undated
+      // children would otherwise fuse into one persons row.
+      await reg.getByLabel(/date of birth/i).fill("1990-05-05");
       await reg.getByRole("button", { name: "Enter the competition" }).click();
       await reg.waitForURL(/\/register\/status\?/, { timeout: 20_000 });
     }

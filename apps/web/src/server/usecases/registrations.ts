@@ -121,6 +121,42 @@ export function isMinor(dobIso: string, now: Date): boolean {
   return ageAt(dobIso, now) < 18;
 }
 
+/**
+ * #402 — the session captured onto `registrations.user_id`, or null.
+ *
+ * The session is captured ONLY under an explicit affirmation, from a registrant
+ * whose own dob proves them an ADULT, with no guardian field filled in. Each
+ * clause is load-bearing:
+ *
+ *  - Affirmation, because a guardian, a spouse and a team captain are all
+ *    signed in too; being signed in is never enough on its own.
+ *  - A PRESENT dob, because `dob` is nullish: a parent entering two children
+ *    with no dob triggers no guardian requirement anywhere, so an affirmation
+ *    alone would link both siblings to one account and fuse them into one
+ *    persons row — the exact harm `contact_email` was rejected for.
+ *  - ADULT, because a minor's date of birth is guardian territory whether or
+ *    not the guardian fields were filled in. `submitRegistration` also refuses
+ *    that submission with a 422, but the invariant must not depend on that
+ *    refusal staying where it is.
+ *
+ * The veto lives server-side so a forged request cannot reach the person
+ * resolver; the schema's matching rule is only the useful error message.
+ */
+export function deriveLinkUserId(
+  sessionUserId: string | null,
+  input: Pick<
+    PublicRegisterRequest,
+    "registering_self" | "guardian_name" | "guardian_consent" | "dob"
+  >,
+  now: Date,
+): string | null {
+  if (!sessionUserId) return null;
+  if (!input.registering_self) return null;
+  if (!input.dob || isMinor(input.dob, now)) return null;
+  if (input.guardian_name || input.guardian_consent) return null;
+  return sessionUserId;
+}
+
 interface AgeRule {
   kind: "age";
   maxAgeAt?: number;
@@ -882,15 +918,7 @@ export async function submitRegistration(
   const answers = validateAnswers(settings.form_fields ?? [], input.answers);
   const secret = mintRegistrationToken();
 
-  // #402 — the session is captured ONLY under an explicit affirmation with no
-  // guardian involvement. A signed-in guardian registering two children shares
-  // one user_id, so an inferred link would merge siblings exactly as
-  // contact_email would. The veto lives here, server-side, so a forged request
-  // cannot reach the person resolver.
-  const linkUserId =
-    opts?.sessionUserId && input.registering_self && !input.guardian_name && !input.guardian_consent
-      ? opts.sessionUserId
-      : null;
+  const linkUserId = deriveLinkUserId(opts?.sessionUserId ?? null, input, new Date());
 
   // Payment path is the division's choice (spec §3): offline entries are
   // accepted immediately with the organiser's instructions; card entries mint

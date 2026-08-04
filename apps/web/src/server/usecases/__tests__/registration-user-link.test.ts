@@ -22,12 +22,17 @@ import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
 import {
   confirmRegistration,
+  deriveLinkUserId,
   putRegistrationSettings,
   submitRegistration,
 } from "../registrations";
 import { seedOrg } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
+
+/** An unambiguous adult on any clock this suite will ever run on. Linking now
+ *  REQUIRES a dob (#402 finding 5), so every "expect a link" case sends one. */
+const ADULT_DOB = "1990-05-05";
 
 /** Registration-open division. Deliberately a local copy of the helper in
  *  persons-identity.test.ts — the two suites stay independent. */
@@ -112,6 +117,68 @@ async function personCount(orgId: string): Promise<number> {
   return Number(n);
 }
 
+// The derivation is exported so the branches the outer 422s make unreachable can
+// still be pinned. A minor's dob is guardian territory whether or not the
+// guardian fields were filled in: `submitRegistration` refuses that submission
+// outright today, but the link rule must not depend on that refusal staying
+// where it is — the veto is the guarantee, the 422 is only the friendly error.
+describe("deriveLinkUserId (#402 — the capture rule itself)", () => {
+  const NOW = new Date("2026-08-04T12:00:00Z");
+  const MINOR_DOB = "2016-09-11"; // 9 on NOW
+  const base = {
+    registering_self: false as boolean | undefined,
+    guardian_name: null as string | null | undefined,
+    guardian_consent: false,
+    dob: null as string | null | undefined,
+  };
+
+  it("no session ⇒ null", () => {
+    expect(deriveLinkUserId(null, { ...base, registering_self: true, dob: ADULT_DOB }, NOW))
+      .toBeNull();
+  });
+
+  it("session but no affirmation ⇒ null", () => {
+    expect(deriveLinkUserId("u1", { ...base, dob: ADULT_DOB }, NOW)).toBeNull();
+  });
+
+  it("session + affirmation + an ADULT dob ⇒ the session id", () => {
+    expect(deriveLinkUserId("u1", { ...base, registering_self: true, dob: ADULT_DOB }, NOW))
+      .toBe("u1");
+  });
+
+  it("guardian_name present ⇒ null", () => {
+    expect(
+      deriveLinkUserId(
+        "u1",
+        { ...base, registering_self: true, dob: ADULT_DOB, guardian_name: "Grace Guardian" },
+        NOW,
+      ),
+    ).toBeNull();
+  });
+
+  it("guardian_consent true ⇒ null", () => {
+    expect(
+      deriveLinkUserId(
+        "u1",
+        { ...base, registering_self: true, dob: ADULT_DOB, guardian_consent: true },
+        NOW,
+      ),
+    ).toBeNull();
+  });
+
+  it("NO dob ⇒ null — an unaged registrant may be anyone, including a child", () => {
+    expect(deriveLinkUserId("u1", { ...base, registering_self: true, dob: null }, NOW)).toBeNull();
+    expect(
+      deriveLinkUserId("u1", { ...base, registering_self: true, dob: undefined }, NOW),
+    ).toBeNull();
+  });
+
+  it("a MINOR's dob ⇒ null even with NO guardian fields at all", () => {
+    expect(deriveLinkUserId("u1", { ...base, registering_self: true, dob: MINOR_DOB }, NOW))
+      .toBeNull();
+  });
+});
+
 describe.skipIf(!HAS_DB)("registration session capture (#402)", () => {
   it("signed out ⇒ user_id null", async () => {
     const { auth } = await seedOrg("pro");
@@ -128,12 +195,32 @@ describe.skipIf(!HAS_DB)("registration session capture (#402)", () => {
     expect(await linkedUser(res.registration.id)).toBeNull();
   });
 
-  it("signed in and affirmed ⇒ user_id captured", async () => {
+  it("signed in and affirmed with an ADULT dob ⇒ user_id captured", async () => {
     const { auth } = await seedOrg("pro");
     const div = await seedOpenDivision(auth);
     const userId = await makeUser();
-    const res = await submitAs(div, { registering_self: true }, userId);
+    const res = await submitAs(div, { registering_self: true, dob: ADULT_DOB }, userId);
     expect(await linkedUser(res.registration.id)).toBe(userId);
+  });
+
+  it("affirmed BUT no dob ⇒ user_id null (an unaged registrant may be a child)", async () => {
+    const { auth } = await seedOrg("pro");
+    const div = await seedOpenDivision(auth);
+    const userId = await makeUser();
+    const res = await submitAs(div, { registering_self: true, dob: null }, userId);
+    expect(await linkedUser(res.registration.id)).toBeNull();
+  });
+
+  it("affirmed with a MINOR's dob and no guardian fields ⇒ refused outright", async () => {
+    const { auth } = await seedOrg("pro");
+    const div = await seedOpenDivision(auth);
+    const userId = await makeUser();
+    // The outer guardian-consent guard rejects this submission before any row
+    // exists, so there is nothing left to link. deriveLinkUserId pins the same
+    // case independently, above, so the invariant does not rest on this 422.
+    await expect(
+      submitAs(div, { registering_self: true, dob: "2016-09-11" }, userId),
+    ).rejects.toMatchObject({ status: 422 });
   });
 
   it("affirmed BUT guardian_name present ⇒ user_id null (server-side veto)", async () => {
@@ -169,8 +256,8 @@ describe.skipIf(!HAS_DB)("person resolution by (org_id, user_id, 'player') (#402
     const userId = await makeUser();
     const before = await personCount(auth.orgId);
 
-    const a = await submitAs(divA, { registering_self: true }, userId);
-    const b = await submitAs(divB, { registering_self: true }, userId);
+    const a = await submitAs(divA, { registering_self: true, dob: ADULT_DOB }, userId);
+    const b = await submitAs(divB, { registering_self: true, dob: ADULT_DOB }, userId);
     const ca = await confirmRegistration(auth, a.registration.id);
     const cb = await confirmRegistration(auth, b.registration.id);
 
@@ -250,6 +337,39 @@ describe.skipIf(!HAS_DB)("person resolution by (org_id, user_id, 'player') (#402
     expect(await personCount(auth.orgId)).toBe(before + 2);
   });
 
+  it("a signed-in parent entering two children with NO dob and NO guardian fields still gets TWO persons", async () => {
+    const { auth } = await seedOrg("pro");
+    const div = await seedOpenDivision(auth);
+    const userId = await makeUser();
+    const email = `parent-${randomUUID().slice(0, 8)}@test.local`;
+    const before = await personCount(auth.orgId);
+
+    // The hole finding 5 closed: with `dob` absent the guardian branch never
+    // runs, so nothing forces the guardian fields, and an affirmation alone
+    // used to link BOTH children to the parent's account — one persons row for
+    // two siblings. Counted as a DELTA: existence would pass either way.
+    const regIds: string[] = [];
+    for (const name of ["Ada Child", "Bob Child"]) {
+      const r = await submitAs(
+        div,
+        {
+          display_name: name,
+          contact_email: email,
+          dob: null,
+          registering_self: true,
+          guardian_name: null,
+          guardian_consent: false,
+        },
+        userId,
+      );
+      regIds.push(r.registration.id);
+      await confirmRegistration(auth, r.registration.id);
+    }
+
+    expect(await personCount(auth.orgId)).toBe(before + 2);
+    for (const id of regIds) expect(await linkedUser(id)).toBeNull();
+  });
+
   it("team roster: only the declared `self` entry resolves; the rest insert fresh", async () => {
     const { auth } = await seedOrg("pro");
     const divA = await seedOpenDivision(auth, "team");
@@ -261,8 +381,8 @@ describe.skipIf(!HAS_DB)("person resolution by (org_id, user_id, 'player') (#402
       { name: "Team Mate One" },
       { name: "Team Mate Two" },
     ];
-    const a = await submitAs(divA, { registering_self: true, players }, userId);
-    const b = await submitAs(divB, { registering_self: true, players }, userId);
+    const a = await submitAs(divA, { registering_self: true, dob: ADULT_DOB, players }, userId);
+    const b = await submitAs(divB, { registering_self: true, dob: ADULT_DOB, players }, userId);
     const ca = await confirmRegistration(auth, a.registration.id);
     const cb = await confirmRegistration(auth, b.registration.id);
 
@@ -294,8 +414,8 @@ describe.skipIf(!HAS_DB)("person resolution by (org_id, user_id, 'player') (#402
     const userId = await makeUser();
     const before = await personCount(auth.orgId);
 
-    const a = await submitAs(divA, { registering_self: true }, userId);
-    const b = await submitAs(divB, { registering_self: true }, userId);
+    const a = await submitAs(divA, { registering_self: true, dob: ADULT_DOB }, userId);
+    const b = await submitAs(divB, { registering_self: true, dob: ADULT_DOB }, userId);
     await Promise.all([
       confirmRegistration(auth, a.registration.id),
       confirmRegistration(auth, b.registration.id),

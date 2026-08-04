@@ -1119,6 +1119,18 @@ export const PublicRegisterRequest = z.object({
       message: "Marking a roster entry as yourself requires registering_self",
     });
   }
+  // #402 — the affirmation needs a date of birth. `dob` is nullish, so without
+  // this a parent could affirm "registering myself" for two children who supply
+  // no dob, trigger no guardian requirement, and link both to their own account
+  // — one persons row for two siblings. The server refuses to link an undated
+  // or under-18 registrant regardless; this is the message that says why.
+  if (v.registering_self && !v.dob) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["dob"],
+      message: "A date of birth is required when you're registering yourself",
+    });
+  }
 });
 export type PublicRegisterRequest = z.infer<typeof PublicRegisterRequest>;
 
