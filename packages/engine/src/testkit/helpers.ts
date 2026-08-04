@@ -101,6 +101,9 @@ export function buildWalk<Cfg, Ev, State>(
   seed: number,
   maxEvents: number,
 ): { events: EventEnvelope[]; states: State[] } {
+  // Extracted to null-check once rather than per event. The receiver is never
+  // lost: every call is `generate.call(module, …)`.
+  // eslint-disable-next-line @typescript-eslint/unbound-method
   const generate = module.arbitraryEvent;
   if (!generate) {
     throw new Error(`module "${module.key}" does not implement arbitraryEvent`);

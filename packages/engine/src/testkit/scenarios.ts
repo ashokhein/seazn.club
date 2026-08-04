@@ -41,10 +41,16 @@ function decidedStream(
   seed: number,
   maxEvents = 600,
 ): { events: EventEnvelope[]; state: unknown } | null {
+  // Extracted to null-check once rather than per event. The receiver is never
+  // lost: every call is `generate.call(module, …)`.
+  // eslint-disable-next-line @typescript-eslint/unbound-method
   const generate = module.arbitraryEvent;
   if (!generate) throw new Error(`module "${module.key}" lacks arbitraryEvent`);
   const rng = mulberry32(seed);
-  let state = module.init(cfg, lineups);
+  // AnySportModule is SportModule<any, any, any>, so init/apply return `any`.
+  // Pin it to `unknown` at the boundary — this harness never inspects state,
+  // it only passes it back to the module.
+  let state: unknown = module.init(cfg, lineups);
   const events: EventEnvelope[] = [];
   for (let i = 0; i < maxEvents; i++) {
     const next = generate.call(module, state, rng) as ModuleEvent | null;
@@ -217,7 +223,7 @@ export interface BoundaryMatrixStats {
 export function runBoundaryMatrices(): BoundaryMatrixStats[] {
   const out: BoundaryMatrixStats[] = [];
   for (const matrix of MATRICES) {
-    const cfg = matrix.module.configSchema.parse({});
+    const cfg: unknown = matrix.module.configSchema.parse({});
     const lineups = defaultLineupPair(resolvePositions(matrix.module, cfg));
     let cases = 0;
     const fold = (events: ModuleEvent[]) =>

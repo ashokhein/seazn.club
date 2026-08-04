@@ -27,7 +27,7 @@ import { EngineError } from "../../core/errors.ts";
 import { foldMatch, type EventEnvelope } from "../../core/events.ts";
 import { compareGameTime, gameTimeOf } from "../../core/time.ts";
 import { buildStream, defaultLineupPair, makeEnvelope } from "../../testkit/helpers.ts";
-import type { ModuleEvent } from "../../sport/module.ts";
+import type { ModuleEvent, SportModule } from "../../sport/module.ts";
 import { icehockey } from "../icehockey/icehockey.ts";
 import { hockey } from "../hockey/hockey.ts";
 import {
@@ -664,7 +664,7 @@ describe("the generator stamps what it emits, so the property runs exercise §9.
   // future EXTEND_GOLDEN appends all stayed on the pre-wave path — and "the
   // eleven goldens are byte-identical" was guaranteed by the generator's blind
   // spot rather than by the change being additive.
-  const cases: [string, typeof icehockey  , unknown][] = [
+  const cases: [string, SportModule<PeriodCfg, unknown, unknown>, unknown][] = [
     ["icehockey", icehockey, {}],
     ["hockey", hockey, {}],
   ];

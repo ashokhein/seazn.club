@@ -51,6 +51,17 @@ export default defineConfig([
           // run by hand with --experimental-strip-types, never type-checked
           // by `npm run typecheck`), and this config file is .mjs. Both still
           // get linted, just against the default compiler options.
+          // Deliberately shallower than the `scripts/**/*.ts` override below,
+          // and NOT by preference: typescript-eslint rejects `**` in
+          // allowDefaultProject outright ("contains a disallowed '**'") as a
+          // performance guard, so this is the only legal form.
+          //
+          // The asymmetry has one consequence worth knowing: add a nested
+          // script such as scripts/bench/x.ts and it will fail to lint with
+          // "was not found by the project service". The fix is to add its
+          // directory here explicitly (e.g. "scripts/bench/*.ts") — or, if
+          // scripts/ ever grows enough to want real type-checking, to give it
+          // a tsconfig and drop it from allowDefaultProject entirely.
           allowDefaultProject: ["*.mjs", "scripts/*.ts"],
         },
         tsconfigRootDir: import.meta.dirname,
@@ -86,28 +97,41 @@ export default defineConfig([
   },
 
   {
-    // Test and harness surfaces. `src/testkit/schema-fields.ts` walks zod
-    // schemas reflectively (`_def`, unknown shapes) and is 33 of these on its
-    // own; the specs parse recorded JSON and reach into vitest matchers.
-    // Typing that reflection would mean asserting a shape we are specifically
-    // trying NOT to assume.
-    files: ["**/*.test.ts", "src/testkit/**/*.ts", "test/**/*.ts"],
+    // Specs. They parse recorded JSON and reach into vitest matchers, and are
+    // routinely declared async for symmetry across a table of cases even when
+    // a given case has nothing to await.
+    //
+    // Scoped to specs ONLY. src/testkit/** is deliberately NOT here: it is
+    // ~3.8k lines of non-test code and `src/testkit/index.ts` is a public
+    // entrypoint (`"./testkit"` in package.json exports), so it is held to the
+    // same standard as the rest of src.
+    files: ["**/*.test.ts", "test/**/*.ts"],
     rules: {
       ...ANY_BOUNDARY_RULES,
       // Fires on `expect(obj.method)` / passing kernel methods as callbacks,
       // which is the normal shape of a conformance spec here.
       "@typescript-eslint/unbound-method": "off",
-      // Specs are declared async for symmetry across a table of cases even
-      // when a given case has nothing to await.
       "@typescript-eslint/require-await": "off",
     },
   },
 
   {
-    // The z3-solver bridge. z3-solver 5.0.0 ships its WASM API essentially
-    // untyped, so every value crossing back is `any`; `no-base-to-string`
-    // fires on the solver's own stringifiable AST nodes.
-    files: ["src/scheduling/z3-*.ts", "src/scheduling/repair.ts"],
+    // The two reflective walkers. schema-fields.ts walks zod schemas through
+    // `_def` and golden.ts walks recorded JSON of a shape it is specifically
+    // trying NOT to assume — typing either would mean asserting the structure
+    // the walker exists to discover.
+    files: ["src/testkit/schema-fields.ts", "src/testkit/golden.ts"],
+    rules: ANY_BOUNDARY_RULES,
+  },
+
+  {
+    // The z3-solver bridge proper: z3-solver 5.0.0 ships its WASM API
+    // essentially untyped, so every value crossing back is `any`, and
+    // `no-base-to-string` fires on the solver's own stringifiable AST nodes.
+    // repair.ts is NOT here — it is the orchestrator above the bridge and
+    // imports only types plus loadZ3/withZ3Lock, so the handful of solver
+    // returns it does touch carry per-site disables instead.
+    files: ["src/scheduling/z3-*.ts"],
     rules: {
       ...ANY_BOUNDARY_RULES,
       "@typescript-eslint/no-base-to-string": "off",
