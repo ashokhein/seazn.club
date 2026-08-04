@@ -22,6 +22,7 @@ import type {
   SportInfo,
 } from "@/components/v2/fixture-console";
 import { useMsg } from "@/components/i18n/dict-provider";
+import { scoringErrorText } from "@/lib/scoring-vocab";
 import type { MessageKey } from "@/lib/messages";
 
 export type PadSideInfo = SideInfo;
@@ -142,7 +143,14 @@ export function DeviceScorePad({
           await resync().catch(() => undefined);
           setError(msg("device.seqConflict"));
         } else {
-          setError(err instanceof Error ? err.message : msg("device.failed"));
+          // #427: an EngineError's message is the engine's own English and the
+          // envelope carries it through ApiV1Error — localize by code first.
+          setError(scoringErrorText(
+            err instanceof ApiV1Error ? err.code : null,
+            err instanceof Error ? err.message : null,
+            msg,
+            "device.failed",
+          ));
         }
         return false;
       } finally {
