@@ -14,7 +14,7 @@ export default function PrivacyPage() {
       <MarketingNav />
       <main className="mx-auto max-w-3xl px-4 py-16">
         <h1 className="mb-2 text-3xl font-bold text-purple-900">Privacy Policy</h1>
-        <p className="mb-8 text-sm text-slate-400">Last updated: 14 July 2026</p>
+        <p className="mb-8 text-sm text-slate-400">Last updated: 4 August 2026</p>
         <div className="prose prose-slate max-w-none space-y-6 text-sm text-slate-700">
 
           <section>
@@ -57,37 +57,43 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="mb-2 text-lg font-semibold text-slate-800">5. Sub-processors</h2>
+            <h2 className="mb-2 text-lg font-semibold text-slate-800">5. Automated grouping when we build a schedule</h2>
+            <p>When we lay out a timetable, player records that carry the same name are <strong>treated as one player while a timetable is built</strong>, so one person is never booked onto two courts at the same time. It is a scheduling safeguard only. <strong>No records are merged</strong>: the records stay separate on rosters, results and reports, nothing is written to them, and the grouping is discarded when the run ends. Every grouping we make is listed back to the organiser before they apply the schedule, so a wrong match can be corrected. This is not automated decision-making under Article 22 — it decides only what time a match is played.</p>
+          </section>
+
+          <section>
+            <h2 className="mb-2 text-lg font-semibold text-slate-800">6. Sub-processors</h2>
             <p>We share data with trusted sub-processors to operate the service. See our <Link href="/legal/sub-processors" className="text-purple-600 underline">sub-processors list</Link> for details.</p>
           </section>
 
           <section>
-            <h2 className="mb-2 text-lg font-semibold text-slate-800">6. Data retention</h2>
+            <h2 className="mb-2 text-lg font-semibold text-slate-800">7. Data retention</h2>
             <p>Account data is retained for the life of your account plus 30 days after deletion. Tournament records may be anonymised rather than deleted at your request. Billing records are retained for 7 years for tax compliance.</p>
+            <p className="mt-2">Scheduling instructions you preview but do not run are deleted within the hour; a preview you did run is kept for 30 days so a disputed plan can be re-checked.</p>
           </section>
 
           <section>
-            <h2 className="mb-2 text-lg font-semibold text-slate-800">7. Your rights (GDPR)</h2>
+            <h2 className="mb-2 text-lg font-semibold text-slate-800">8. Your rights (GDPR)</h2>
             <p>You have the right to access, correct, or delete your personal data. You can export your data from Settings → Account → Export my data. To exercise other rights, email us at privacy@seazn.club. We respond within 30 days.</p>
           </section>
 
           <section>
-            <h2 className="mb-2 text-lg font-semibold text-slate-800">8. Cookies</h2>
+            <h2 className="mb-2 text-lg font-semibold text-slate-800">9. Cookies</h2>
             <p>We use essential session cookies plus, with your consent, PostHog analytics cookies. No advertising cookies. See our <Link href="/legal/cookie-policy" className="text-purple-600 underline">Cookie Policy</Link>.</p>
           </section>
 
           <section>
-            <h2 className="mb-2 text-lg font-semibold text-slate-800">9. Security</h2>
+            <h2 className="mb-2 text-lg font-semibold text-slate-800">10. Security</h2>
             <p>Data is encrypted in transit (TLS) and at rest. Passwords are hashed with bcrypt. Access is controlled by row-level security policies at the database level. Staff access is logged and audited.</p>
           </section>
 
           <section>
-            <h2 className="mb-2 text-lg font-semibold text-slate-800">10. Changes</h2>
+            <h2 className="mb-2 text-lg font-semibold text-slate-800">11. Changes</h2>
             <p>We will notify you by email of material changes to this policy at least 14 days in advance.</p>
           </section>
 
           <section>
-            <h2 className="mb-2 text-lg font-semibold text-slate-800">11. Contact</h2>
+            <h2 className="mb-2 text-lg font-semibold text-slate-800">12. Contact</h2>
             <p>Privacy questions: <a href="mailto:privacy@seazn.club" className="text-purple-600 underline">privacy@seazn.club</a></p>
           </section>
         </div>

@@ -20,7 +20,7 @@ You can apply the schedule on its own, or apply both together.
 The architect only ever sees this division's own scheduling picture, assembled into one deterministic brief:
 
 - the fixtures it may move, plus any pinned ones it must leave alone;
-- entrants, and players shared across entrants (so it never double-books a person);
+- entrants, and players shared across entrants — as links between records, never their names (so it never double-books a person);
 - your courts, play hours, blackout windows and existing constraints;
 - other divisions' bookings on shared courts — as blocked time only, never their names or rosters;
 - for the officials pass: your officials, their roles, per-day limits, blackout dates and "booked elsewhere" times.

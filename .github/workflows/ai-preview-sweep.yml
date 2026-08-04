@@ -1,0 +1,55 @@
+# AI preview retention sweep (#403): POST the preview-retention endpoint daily.
+# /api/cron/ai-previews deletes compiled-instruction previews past their life.
+# `ai_parse_previews.instruction` holds the organiser's raw sentence, which can
+# carry personal data about individuals, so it is retained to the policy stated
+# on /legal/privacy §7 rather than kept until the org is deleted: unconsumed
+# previews go at expiry (~30 minutes), consumed ones after 30 days.
+#
+# Auth: the x-cron-secret header must match the app's CRON_SECRET env — set the
+# same value in BOTH places:
+#   gh secret set CRON_SECRET                                  # this workflow
+#   flyctl secrets set -c fly.stg.toml CRON_SECRET=<same>      # the app
+# For PRODUCTION, duplicate this file with the prod BASE_URL and mirror the
+# secret into the prod Fly app. A retention job that only runs against staging
+# is not a retention policy — this needs the prod twin before the claim on the
+# privacy page is true in production.
+#
+# Skips with a warning until the GitHub secret exists (a missing secret must not
+# fill the Actions tab with red), and fails loud on any non-200.
+name: AI preview retention sweep
+
+on:
+  schedule:
+    - cron: "41 3 * * *" # daily, offset from the billing crons
+  workflow_dispatch: {} # manual run for testing
+
+permissions: {}
+
+concurrency:
+  group: ai-preview-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Delete expired instruction previews (staging)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      BASE_URL: https://seazn-club-stg.fly.dev
+    steps:
+      - name: Secret missing — skip
+        if: env.CRON_SECRET == ''
+        run: echo "::warning::CRON_SECRET not set — expired AI instruction previews are NOT being deleted. Set it with 'gh secret set CRON_SECRET' and mirror it into the Fly app."
+
+      - name: POST /api/cron/ai-previews
+        if: env.CRON_SECRET != ''
+        run: |
+          body=$(curl --silent --show-error --fail-with-body \
+            --max-time 120 --retry 2 --retry-all-errors \
+            -X POST "$BASE_URL/api/cron/ai-previews" \
+            -H "x-cron-secret: $CRON_SECRET")
+          echo "response: $body"
+          expired=$(echo "$body" | jq -r '.data.expired // 0')
+          spent=$(echo "$body" | jq -r '.data.spent // 0')
+          echo "::notice::ai preview sweep: expired=$expired spent=$spent"
