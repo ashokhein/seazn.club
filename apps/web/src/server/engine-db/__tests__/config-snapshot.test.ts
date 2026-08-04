@@ -163,12 +163,40 @@ describe.skipIf(!HAS_DB)("fixture config snapshot (V347)", () => {
     expect(second.config_snapshot).toEqual(GENERIC_SCORE_DRAWS);
   });
 
-  it("a config edit does not brick an already-recorded fixture", async () => {
-    // THE UNRECOVERABLE ONE. `generic`'s allowDraws check is an ungated
-    // cfg-derived refusal inside apply(), so before V347 flipping the flag made
-    // every READ of this fixture throw: state endpoint, score page, standings.
-    // Each recorded event was legal when it was recorded, so there is nothing to
-    // void and no scorer action that recovers it.
+  it("a config edit does not lock the scorer out of a fixture mid-match", async () => {
+    // THE UNRECOVERABLE ONE, on the surface it actually reaches in production.
+    // `append-event` re-folds the WHOLE stream on every append, so an ungated
+    // cfg-derived refusal (generic's allowDraws) starts throwing on events
+    // already in the ledger the moment the flag flips. Every subsequent append
+    // fails — including `core.void`, so there is no undo that recovers it, and
+    // the fixture can never be finalized.
+    //
+    // Worth being precise about where the damage is NOT: `getFixtureState` and
+    // the score page read the persisted `match_states` cache, so a config edit
+    // does not brick a READ today. It bricks every further WRITE, and rewrites
+    // the cache from a stream replayed under a config that was never in force
+    // the moment one succeeds.
+    const s = await seed({});
+    await appendEvent(s.orgId, s.fixtureId, 0, { type: "core.start", payload: {} });
+    const scored = await appendEvent(s.orgId, s.fixtureId, 1, {
+      type: "generic.result",
+      payload: { p1Score: 1, p2Score: 1 },
+    });
+    expect(scored.outcome).toEqual({ kind: "draw" });
+
+    await setDivisionConfig(s.divisionId, { ...GENERIC_SCORE_DRAWS, allowDraws: false });
+
+    const finalized = await appendEvent(s.orgId, s.fixtureId, 2, {
+      type: "core.finalize",
+      payload: {},
+    });
+    expect(finalized.status).toBe("finalized");
+    // …and the result the organiser published is the one that got finalized.
+    expect(finalized.outcome).toEqual({ kind: "draw" });
+    expect(finalized.summary).toEqual(scored.summary);
+  });
+
+  it("a config edit does not brick a re-fold of an already-recorded fixture", async () => {
     const s = await seed({});
     await appendEvent(s.orgId, s.fixtureId, 0, { type: "core.start", payload: {} });
     const scored = await appendEvent(s.orgId, s.fixtureId, 1, {
