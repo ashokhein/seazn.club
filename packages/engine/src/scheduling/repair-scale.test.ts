@@ -76,15 +76,36 @@ describe("termination under budget", () => {
       );
 
       expect(["repaired", "timeout", "infeasible", "clean"]).toContain(r.status);
-      // The bound is the point. Slack covers the un-sampled prologue (verifier
-      // pre-check, WASM boot, domain build) plus one 1024-pair sampling
-      // interval; measured overshoot on an idle host is 98 ms against a 4 s
-      // allowance. Both the prologue and that sampling interval are CPU work,
-      // so both stretch with the host — 12.7 s was measured under load against
-      // an unscaled 7 s bound.
+
+      // THE BUDGET CLAIM IS `elapsedMs`, NOT `wallMs`, and the difference is not
+      // pedantry — it is a whole failure mode.
+      //
+      // `repairSchedule` is `withZ3Lock(() => solveRepair(input))` (repair.ts:214)
+      // and the solver's clock starts INSIDE `solveRepair` (repair.ts:221), after
+      // the lock is acquired. Sibling test files share this process, every one of
+      // their solves takes the same process-wide lock, and this 500-movable board
+      // queues behind them. So `wall` = queue wait + budget, while `elapsedMs` is
+      // the budget alone.
+      //
+      // Asserting the tight bound on `wall` measured OTHER TESTS' solve time and
+      // reported it as this solver overshooting: 10 168 ms against a 7 000 ms
+      // bound in a full-suite run, versus a standalone probe on the same idle host
+      // that returned in 3 003 ms against a 3 000 ms budget — 3 ms of real
+      // overshoot. Loosening the bound would have buried a correct solver under a
+      // number it did not produce.
+      //
+      // Slack covers the un-sampled prologue (verifier pre-check, WASM boot,
+      // domain build — measured 85-352 ms at this size) plus one sampling
+      // interval, now 128 pairs / 16 fixtures rather than the original 1 024.
+      // Both are CPU work, so both stretch with the host.
       const allowance = budgetMs + scaleForLoad(4_000, factor);
-      expect(wall).toBeLessThan(allowance);
       expect(r.elapsedMs).toBeLessThan(allowance);
+
+      // Wall still gets an assertion, because an unbounded queue in front of the
+      // solver is a real way for a caller to hang and `elapsedMs` cannot see it.
+      // The bound is deliberately loose: it catches "never returns", which is the
+      // only wall-clock property that survives an oversubscribed machine.
+      expect(wall).toBeLessThan(TEST_TIMEOUT);
     },
     TEST_TIMEOUT,
   );
@@ -131,7 +152,12 @@ describe("termination under budget", () => {
       expect(r.status).toBe("timeout");
       if (r.status !== "timeout") return;
       expect(r.checks).toBeGreaterThanOrEqual(1); // it really did reach the solver
-      expect(wall).toBeLessThan(budgetMs + scaleForLoad(4_000, factor));
+      // Same distinction as the test above, and the same reason: `wall` includes
+      // the wait for the process-wide z3 lock, which is other tests' solve time.
+      // This assertion passed on the run that exposed it next door — by luck of
+      // scheduling, not by being right. The budget claim is the solver's own clock.
+      expect(r.elapsedMs).toBeLessThan(budgetMs + scaleForLoad(4_000, factor));
+      expect(wall).toBeLessThan(TEST_TIMEOUT);
     },
     TEST_TIMEOUT,
   );

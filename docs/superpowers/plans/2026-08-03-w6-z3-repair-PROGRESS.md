@@ -244,6 +244,25 @@ nothing that this file does not already carry.
   helpers make the bug invisible by construction.
   **FILED as issue #443** (2026-08-04) with the full evidence, the fix sketch, and the
   non-negotiable test requirement.
+- **THE ENGINE SUITE IS GREEN ON AN IDLE HOST — 1612/1613 — and the one failure was a TEST
+  BUG, not host suspension.** Earlier this file recorded the residual failures as
+  unobtainable-locally host artefacts. Half right: `roundrobin` / `swiss` / `carrom` /
+  `simulation` all pass once nothing else is running, so those really were contention. But
+  `repair-scale.test.ts` "a 500-movable board returns inside its budget" failed at
+  **10 168 ms against a 7 000 ms bound**, and that one was real — in the test, not the solver.
+  A standalone probe on the same idle host: `precheck=93 z3_ready=301 domains=352 →
+  status=timeout elapsed=3002 WALL=3003` against a 3 000 ms budget. **3 ms of overshoot.**
+  The gap: `repairSchedule` is `withZ3Lock(() => solveRepair(input))` (`repair.ts:214`) and the
+  solver's clock starts INSIDE `solveRepair` (`repair.ts:221`), *after* the lock is acquired.
+  Sibling test files share the process and every solve takes the same process-wide lock, so
+  the scale board queues behind them. `wall` = queue wait + budget; `elapsedMs` = budget alone.
+  The assertion was measuring **other tests' solve time and reporting it as this solver
+  overshooting**. Fixed by asserting the budget on `r.elapsedMs` and leaving `wall` a loose
+  never-returns bound. The second test in the file had the same conflation and passed only by
+  luck of scheduling; fixed too.
+  **The lesson generalises: a wall-clock assertion around a call that takes a shared lock is
+  measuring the lock queue.** Loosening the bound would have buried a correct solver under a
+  number it did not produce.
 - **A SEVENTH way a count lies, and it fires on EVERY worktree: no `.env.local`.**
   `.env.local` is gitignored, so `git worktree add` does not carry it. `apps/web/vitest.config.ts`
   loads `../../.env.local` to supply `DATABASE_URL`, and every DB-backed suite is
