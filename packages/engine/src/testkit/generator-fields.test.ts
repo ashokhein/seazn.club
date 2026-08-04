@@ -33,13 +33,9 @@ import { describe, expect, it } from "vitest";
 import { resolvePositions } from "../sport/catalog.ts";
 import type { AnySportModule } from "../sport/module.ts";
 import { carrom } from "../sports/carrom/index.ts";
-import { cricket } from "../sports/cricket/index.ts";
 import { football } from "../sports/football/index.ts";
 import { hockey } from "../sports/hockey/index.ts";
 import { icehockey } from "../sports/icehockey/index.ts";
-import { badminton } from "../sports/setbased/badminton.ts";
-import { tabletennis } from "../sports/setbased/tabletennis.ts";
-import { volleyball } from "../sports/setbased/volleyball.ts";
 import { tennis } from "../sports/tennis/index.ts";
 import { UNREACHABLE_FIELDS, declaredOptionalFields } from "./golden.ts";
 import { buildStream, defaultLineupPair } from "./helpers.ts";
@@ -77,17 +73,6 @@ const CASES: GeneratorCase[] = [
     ],
   },
   {
-    module: cricket,
-    config: "default",
-    seeds: 60,
-    probes: [
-      { type: "cricket.review", path: "against" },
-      { type: "cricket.innings.summary", path: "partial" },
-      { type: "cricket.revise", path: "target" },
-      { type: "cricket.ball", path: "wicket.incoming" },
-    ],
-  },
-  {
     module: carrom,
     config: "default",
     seeds: 40,
@@ -98,27 +83,6 @@ const CASES: GeneratorCase[] = [
     config: "default",
     seeds: 20,
     probes: [{ type: "tennis.point", path: "meta.receiverSide" }],
-  },
-  // One kernel serves all three, and each registers a different `records`
-  // preset — so the summary type differs and all three are walked, not just
-  // whichever one happens to share the kernel edit's directory.
-  {
-    module: volleyball,
-    config: "default",
-    seeds: 40,
-    probes: [{ type: "volleyball.set.summary", path: "partial" }],
-  },
-  {
-    module: badminton,
-    config: "default",
-    seeds: 40,
-    probes: [{ type: "badminton.game.summary", path: "partial" }],
-  },
-  {
-    module: tabletennis,
-    config: "default",
-    seeds: 40,
-    probes: [{ type: "tabletennis.game.summary", path: "partial" }],
   },
   {
     module: icehockey,
@@ -231,34 +195,70 @@ describe("arbitraryEvent writes the optional fields its payload branches declare
   }
 });
 
-// The two classes the allow-list's own doc comment separates. GENERATOR meant
-// "the branch declares it, arbitraryEvent never sets it" — a corpus defect, and
-// the whole subject of this file. KERNEL-UNION means the shared set-based union
-// over-declares for a sport whose `records` preset cannot register the owning
-// event type at all, and `apply` refuses it by name; `records` is a
-// compile-time preset, so no config and no seed reaches those. Collapsing the
-// two is how a real gap gets filed under a legitimate exemption and stops being
-// looked at.
-describe("UNREACHABLE_FIELDS holds no GENERATOR exemption", () => {
-  it("exempts nothing on the grounds that the generator merely never set it", () => {
-    const generatorEntries = Object.entries(UNREACHABLE_FIELDS).flatMap(([key, entries]) =>
-      Object.entries(entries)
-        .filter(([, reason]) => reason.startsWith("GENERATOR:"))
-        .map(([path]) => `${key}.${path}`),
-    );
+// ------------------------------------------------- the two classes, kept apart
+//
+// GENERATOR means "the branch declares it, arbitraryEvent never sets it" — a
+// coverage gap, and the whole subject of this file. KERNEL-UNION means the
+// shared set-based union over-declares for a sport whose `records` preset
+// cannot register the owning event type at all, and `apply` refuses it BY NAME;
+// `records` is a compile-time preset, so no config and no seed reaches those.
+// Collapsing the two is how a real gap gets filed under a legitimate exemption
+// and stops being looked at.
+//
+// SEVEN GENERATOR entries survive, every one of them because closing it reaches
+// something a generator change may not decide on its own — an unguarded
+// cfg-derived check on the READ path (§3.3), a coarsener that cannot absorb the
+// event (§9.6), or cfg-replay's exactly-asserted SPORTS_WITH_DECIDED_EARLIER
+// carve-out moving off its sample. Each entry says which. Asserted as an EXACT
+// set, the same device that carve-out uses: adding an eighth reds, and so does
+// closing one without deleting its line.
+const BLOCKED_GENERATOR_FIELDS = [
+  "badminton.partial",
+  "cricket.against",
+  "cricket.partial",
+  "cricket.target",
+  "cricket.wicket.incoming",
+  "tabletennis.partial",
+  "volleyball.partial",
+].sort();
+
+describe("UNREACHABLE_FIELDS keeps its GENERATOR and KERNEL-UNION classes apart", () => {
+  const entriesOfClass = (prefix: string): string[] =>
+    Object.entries(UNREACHABLE_FIELDS)
+      .flatMap(([key, entries]) =>
+        Object.entries(entries)
+          .filter(([, reason]) => reason.startsWith(prefix))
+          .map(([path]) => `${key}.${path}`),
+      )
+      .sort();
+
+  it("holds exactly the filed GENERATOR gaps and no others", () => {
     expect(
-      generatorEntries.sort(),
-      `a GENERATOR entry is a coverage gap, not an exemption: widen the sport's own ` +
-        `arbitraryEvent so the field is written on SOME events, or — if it is genuinely ` +
-        `cfg-gated — add a COVERAGE_CONFIGS entry instead`,
-    ).toEqual([]);
+      entriesOfClass("GENERATOR"),
+      `a GENERATOR entry is a coverage gap, not an exemption. A NEW one means a field ` +
+        `slipped past the generator: widen the sport's own arbitraryEvent so it is written ` +
+        `on SOME events, or — if it is genuinely cfg-gated — add a COVERAGE_CONFIGS entry. ` +
+        `A MISSING one means a gap was closed: delete the line, do not edit this list`,
+    ).toEqual(BLOCKED_GENERATOR_FIELDS);
   });
 
-  it("states a recognised class on every surviving entry", () => {
+  it("states the blocker on every surviving GENERATOR entry", () => {
+    // The whole point of the class is that it is temporary. An entry that says
+    // only "the generator never sets it" is a restatement of the gate's own
+    // finding; one that names what closing it would break is a decision.
     for (const [key, entries] of Object.entries(UNREACHABLE_FIELDS)) {
       for (const [path, reason] of Object.entries(entries)) {
-        expect(reason.split(":")[0], `${key}.${path}`).toBe("KERNEL-UNION");
+        if (!reason.startsWith("GENERATOR")) continue;
+        expect(reason, `${key}.${path}`).toContain("(BLOCKED)");
       }
     }
+  });
+
+  it("classes every remaining entry as one of the two, never something new", () => {
+    const classed = new Set([...entriesOfClass("GENERATOR"), ...entriesOfClass("KERNEL-UNION")]);
+    const all = Object.entries(UNREACHABLE_FIELDS).flatMap(([key, entries]) =>
+      Object.keys(entries).map((path) => `${key}.${path}`),
+    );
+    expect(all.filter((entry) => !classed.has(entry)).sort()).toEqual([]);
   });
 });

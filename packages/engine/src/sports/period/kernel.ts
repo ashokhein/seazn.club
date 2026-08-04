@@ -1619,6 +1619,19 @@ export function makePeriodModule(
       if (state.phase === "SHOOTOUT" && state.shootout) {
         const expected = expectedKicker(state.shootout.kicks) ?? randomSide();
         const named = rng() < 0.5;
+        // W4a T10 follow-up — the attempt's own `meta`, which this generator
+        // built no object for at all, so neither it nor either of its two
+        // leaves was ever written. ONE draw picks between four shapes, and all
+        // four are needed: `meta` absent (the pre-W4 attempt), clockSeconds
+        // alone (an FIH 8-second run at goal), ineligible alone (a GWS kicker
+        // sitting a penalty), and both. A leaf covered only ever together with
+        // its sibling pins neither one on its own.
+        //
+        // `clockSeconds` is the limit on ONE attempt, unrelated to `at` above,
+        // which is a position in the match — hence 1..8 and not a match clock.
+        const metaRoll = rng();
+        const withClock = metaRoll >= 0.45 && metaRoll < 0.8;
+        const withIneligible = metaRoll >= 0.65;
         return {
           type: attemptType,
           payload: {
@@ -1629,6 +1642,14 @@ export function makePeriodModule(
               ? {
                   person: `${sideId(expected)}-p3`,
                   goalkeeper: `${sideId(opponent(expected))}-g1`,
+                }
+              : {}),
+            ...(withClock || withIneligible
+              ? {
+                  meta: {
+                    ...(withClock ? { clockSeconds: 1 + Math.floor(rng() * 8) } : {}),
+                    ...(withIneligible ? { ineligible: true } : {}),
+                  },
                 }
               : {}),
           },
@@ -1706,12 +1727,21 @@ export function makePeriodModule(
               : undefined;
         const withAssists = state.cfg.assists && kind !== "og" && rng() < 0.4;
         const attributed = rng() < 0.5;
+        // W4a T10 follow-up — the scorer's OWN period label for the goal log.
+        // `applyGoal` reads it as `payload.period ?? next.phase`, so writing it
+        // is the only way the left arm of that fallback is ever taken; every
+        // generated goal used to take the right one. SOMETIMES, because the
+        // fallback is the shape a coarse goal has. Set to the live phase rather
+        // than a free string: a label that disagreed with the fold's own phase
+        // would bake a contradiction into the frozen goal log.
+        const labelled = rng() < 0.4;
         return {
           type: goalType,
           payload: {
             by: sideId(side),
             at: stamp(state.phase),
             ...(kind === undefined ? {} : { kind }),
+            ...(labelled ? { period: state.phase } : {}),
             ...(withAssists ? { assists: [`${sideId(side)}-p2`] } : {}),
             ...(attributed
               ? { person: `${sideId(side)}-p1`, clockRef: "10:00", emptyNet: rng() < 0.1 }

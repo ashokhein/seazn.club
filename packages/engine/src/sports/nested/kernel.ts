@@ -1423,11 +1423,25 @@ export function makeNestedModule(
             : kindRoll < 0.3
               ? ("double_fault" as const)
               : undefined;
+        // W4a T10 follow-up — ITF App VI: on a no-ad deciding point the
+        // receiver chooses which court the serve comes into. It has no fold
+        // effect, which is exactly why nothing else would ever have noticed it
+        // being renamed or narrowed. SOMETIMES, and INDEPENDENT of `kind`, so
+        // the corpus holds all four shapes: no meta, kind only, receiverSide
+        // only, and both — `NestedPointMeta` is a strictObject whose every key
+        // is optional, so a meta carrying only this one is a legal payload and
+        // the one a no-ad point actually produces.
+        const receiverSide =
+          rng() < 0.2 ? ((rng() < 0.5 ? "deuce" : "ad") as "deuce" | "ad") : undefined;
+        const meta = {
+          ...(kind === undefined ? {} : { kind }),
+          ...(receiverSide === undefined ? {} : { receiverSide }),
+        };
         return {
           by,
           server: serverId(),
           scorer: randomPerson(by),
-          ...(kind === undefined ? {} : { meta: { kind } }),
+          ...(Object.keys(meta).length === 0 ? {} : { meta }),
         };
       };
       // Occasional code violations, so conformance walks the new branch.

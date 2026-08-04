@@ -814,6 +814,13 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
           reason: "umpire penalty",
           // W4 — the offending striker (testkit lineup convention).
           person: `${state.entrants[opponent(side)]}-p1`,
+          // W4a T10 follow-up — the OFFENDER's side, named explicitly. It is
+          // `opponent(side)` so it agrees with `person` above, who is that
+          // side's striker. SOMETIMES: the whole reason the field exists is
+          // that `extractCards` otherwise has to INFER the offender from the
+          // sign of the delta, and a value written on every row would leave
+          // that inference — resolution steps 2 and 3 — never once folded.
+          ...(rng() < 0.5 ? { offendingEntrantId: state.entrants[opponent(side)] } : {}),
         },
       };
     }
