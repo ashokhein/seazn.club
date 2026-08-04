@@ -6,7 +6,7 @@
 // was derived from pins nothing).
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import football from "../sports/football/index.ts";
+import { football } from "../sports/football/index.ts";
 import { fieldPresent, optionalFieldPaths } from "./schema-fields.ts";
 
 describe("optionalFieldPaths", () => {
