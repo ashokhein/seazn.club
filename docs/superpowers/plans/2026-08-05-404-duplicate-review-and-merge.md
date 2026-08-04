@@ -428,6 +428,63 @@ git commit -am "persons: a merge that preserves records and can be undone (#404)
 
 ---
 
+### Task 3b: Stats must follow the survivor across a refold
+
+**Files:**
+- Modify: `apps/web/src/server/usecases/player-stats.ts:61-62`
+- Test: `apps/web/src/server/usecases/__tests__/player-stats-merged.test.ts`
+
+**Why this task exists.** Spec §4.3 claimed `recomputePlayerStats` folds from
+score events that "reference users rather than persons", so it would be
+authoritative after a repoint. **That is wrong** — `sumPlayerStats` returns
+`row.personId` read out of score-event *payloads* (`player-stats.ts:62`, written
+at `:67-70`). A tombstoned person's id is still in every historical event, so a
+refold rebuilds a snapshot row for the tombstone and the survivor never inherits
+those stats. Every stats read refolds, so **no fix inside the merge transaction
+can hold** — the relabel has to live in the fold.
+
+**Interfaces:**
+- Consumes: `persons.merged_into` (Task 1).
+- Produces: nothing new; `recomputePlayerStats(tx, divisionId)` keeps its
+  signature and gains correct behaviour across merges.
+
+- [ ] **Step 1: Write the failing test** — score events naming person A; merge A
+  into B; call `recomputePlayerStats`; assert exactly one snapshot row exists for
+  the division, that it is keyed to **B**, and that it carries A's stats. Then a
+  second case: events naming **both** A and B, merged — assert one row whose
+  stats are the *sum*, not either half.
+- [ ] **Step 2: Run — red** (the row comes back keyed to the tombstone).
+- [ ] **Step 3: Implement** — relabel **before** summing, so the engine's own
+  summation combines the two histories:
+
+```ts
+  const perFixture = [...byFixture.values()].map((ledger) => aggregatePlayerStats(ledger, model));
+  // #404: a merged person's id still appears in every historical score event.
+  // Relabel to the survivor BEFORE sumPlayerStats so the engine's own summation
+  // combines both histories — relabelling after the sum would require
+  // re-implementing that arithmetic here.
+  const survivorOf = new Map<string, string>(
+    (await tx<{ id: string; merged_into: string }[]>`
+       select id, merged_into from persons
+       where merged_into is not null and org_id = current_org_id()`)
+      .map((r) => [r.id, r.merged_into]),
+  );
+  const relabelled = perFixture.map((agg) => relabelPersonIds(agg, survivorOf));
+  const rows = sumPlayerStats(relabelled, model);
+```
+
+  Follow the chain to a live survivor if `merged_into` ever points at another
+  tombstone — Task 3 flattens on merge, so one hop is the invariant, but assert
+  it rather than assume it.
+- [ ] **Step 4: Run — green.**
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -am "stats: a merged person's history follows the survivor (#404)"
+```
+
+---
+
 ### Task 4: Reversal
 
 **Files:**
