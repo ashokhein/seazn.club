@@ -188,3 +188,71 @@ export function syntheticBoard(opts: SyntheticBoardOptions): SyntheticBoard {
 
   return { proposal, dependencies, config, clashes: injected, days };
 }
+
+/**
+ * The PATHOLOGICAL board for decomposition: one court, one day, every card back
+ * to back, so the whole thing is a single component by construction and there is
+ * nothing to split.
+ *
+ * It exists to pin the degradation. Decomposition must not make this case worse
+ * than the single solve it replaces — one solve, the budget expires, no repair,
+ * and control RETURNS. A decomposer that hangs here, or that quietly reports
+ * "repaired" having solved nothing, is worse than the behaviour it replaced.
+ *
+ * The geometry is load-bearing. 25-minute matches on a 30-minute pitch: a card
+ * collapsed onto its neighbour still leaves a 60-minute hole, inside the 70
+ * minutes (25 + 45 rest) that makes an edge, so the chain survives clash
+ * injection. A 50-minute pitch cuts the chain at every clash and measures a
+ * fragmented board by accident — which is exactly the mistake that made an
+ * earlier version of this look tractable.
+ *
+ * Real one-court venues run 16 to 20 cards a day and sit well under
+ * `COMPONENT_MOVABLE_LIMIT`; this shape is the one that does not.
+ */
+export function singleComponentBoard(opts: { n: number; clashEvery?: number }): SyntheticBoard {
+  const { n } = opts;
+  const clashEvery = opts.clashEvery ?? 10;
+  const PITCH = 30;
+  const MATCH = 25;
+  const OPEN = EPOCH + OPEN_MS;
+  const span = (n * PITCH + 600) * MIN;
+  const proposal: Assignment[] = [];
+  for (let f = 0; f < n; f++) {
+    const startAt = OPEN + f * PITCH * MIN;
+    // Every card its own entrants. The chain is held by the COURT alone, so the
+    // only conflicts on this board are the injected clashes — the difficulty
+    // measured here is the component's size, not a board buried in rest
+    // breaches nothing could repair anyway.
+    const entrants = [entrantOf(2 * f), entrantOf(2 * f + 1)];
+    proposal.push({
+      fixtureId: idOf(f),
+      court: "C1",
+      startAt,
+      endAt: startAt + MATCH * MIN,
+      entrants,
+      people: entrants.map((e) => `p-${e}`),
+    });
+  }
+  let clashes = 0;
+  for (let f = clashEvery; f < n; f += clashEvery) {
+    proposal[f]!.startAt = proposal[f - 1]!.startAt;
+    proposal[f]!.endAt = proposal[f - 1]!.endAt;
+    clashes++;
+  }
+  return {
+    proposal,
+    dependencies: [],
+    config: {
+      matchMinutes: MATCH,
+      gapMinutes: GAP_MIN,
+      perEntrantMinRest: REST_MIN,
+      blackouts: [],
+      sessionWindows: [{ from: OPEN, to: OPEN + span }],
+      tz: "UTC",
+      window: { from: OPEN, to: OPEN + span },
+      courts: ["C1"],
+    },
+    clashes,
+    days: 1,
+  };
+}

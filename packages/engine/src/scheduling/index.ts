@@ -16,4 +16,6 @@ export * from "./tz.ts";
 // dynamic import inside `loadZ3`, so importing this barrel costs nothing.
 export * from "./repair-domain.ts";
 export * from "./repair.ts";
+export * from "./repair-decompose.ts";
+export * from "./repair-minimality.ts";
 export * from "./z3-load.ts";
