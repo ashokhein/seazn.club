@@ -497,12 +497,26 @@ export function slotFixtures(input: SlotInput): SlotResult {
     const row = scopeRowOf(f);
     const rf = ruleFixtureById.get(f.id);
     const day = dayKeyInTz(start, zone);
+    const time = hhmmInTz(start, zone);
     let bound = start;
     for (let i = 0; i < placementHard.length; i++) {
       const h = placementHard[i]!;
       if (!scopeCoversFixture(h.scope, rf, row)) continue;
       if (h.type === "max_fixtures_per_day") {
         if ((dayCounts[i]!.get(day) ?? 0) >= h.count) bound = Math.max(bound, dayStart(ymdAddDays(day, 1)));
+      }
+      // WALL-CLOCK bounds in the org zone, never instants (constraints.ts:56).
+      // Compared with the same `<` / `>` the verifier uses, so a start landing
+      // exactly ON the bound is legal to both — an off-by-one here would place
+      // boards the gate then refuses.
+      if (h.type === "not_before" && time < h.time) {
+        bound = Math.max(bound, zonedTimeToUtc(day, h.time, zone));
+      }
+      // Too late in the day is not repairable within the day: the only earlier
+      // instants are the ones already rejected, so the next day is the earliest
+      // that can hold it.
+      if (h.type === "not_after" && time > h.time) {
+        bound = Math.max(bound, dayStart(ymdAddDays(day, 1)));
       }
     }
     return bound > start ? bound : null;
