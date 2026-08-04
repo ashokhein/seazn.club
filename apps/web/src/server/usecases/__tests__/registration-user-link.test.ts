@@ -20,6 +20,7 @@ import { sql } from "@/lib/db";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
+import { createEntrants } from "../entrants";
 import {
   confirmRegistration,
   deriveLinkUserId,
@@ -248,6 +249,44 @@ describe.skipIf(!HAS_DB)("registration session capture (#402)", () => {
   });
 });
 
+describe.skipIf(!HAS_DB)("organiser-side entry creation (#402)", () => {
+  it("binds NO user_id to the person, even though the organiser is signed in", async () => {
+    const { auth } = await seedOrg("pro");
+    const div = await seedOpenDivision(auth);
+    expect(auth.userId).toBeTruthy(); // the organiser IS a session, or this is vacuous
+
+    // Structural, by design (spec §4): the session is resolved in the PUBLIC
+    // route and passed inward, so no organiser-facing path can supply one. An
+    // organiser adding an entry on someone's behalf must never bind their own
+    // account to a player's identity — that is the same two-humans-one-person
+    // corruption from the other end.
+    const [entrant] = await createEntrants(auth, div.divisionId, [
+      {
+        kind: "individual",
+        display_name: "Walk In",
+        members: [{ new_person: { full_name: "Walk In" }, is_captain: false, roles: [] }],
+        seed: null,
+        team_id: null,
+        copy_roster_from_entrant_id: null,
+        badge_url: null,
+      },
+    ]);
+
+    const people = await sql<{ user_id: string | null; lane: string }[]>`
+      select p.user_id, p.lane from persons p
+        join entrant_members em on em.person_id = p.id
+       where em.entrant_id = ${entrant.id}`;
+    expect(people).toHaveLength(1);
+    expect(people[0].user_id).toBeNull();
+    expect(people[0].lane).toBe("player");
+    // …and the organiser's own account still holds no person in this org.
+    const [{ n }] = await sql<{ n: string }[]>`
+      select count(*)::text as n from persons
+       where org_id = ${auth.orgId} and user_id = ${auth.userId}`;
+    expect(Number(n)).toBe(0);
+  });
+});
+
 describe.skipIf(!HAS_DB)("person resolution by (org_id, user_id, 'player') (#402)", () => {
   it("THE headline: one signed-in registrant, two divisions ⇒ ONE persons row", async () => {
     const { auth } = await seedOrg("pro");
@@ -405,6 +444,48 @@ describe.skipIf(!HAS_DB)("person resolution by (org_id, user_id, 'player') (#402
       select id from persons
        where org_id = ${auth.orgId} and user_id = ${userId} and lane = 'player'`;
     expect(counts.get(captain.id)).toBe(2);
+  });
+
+  it("TWO roster entries flagged `self` ⇒ only the first resolves, the second is a fresh person", async () => {
+    const { auth } = await seedOrg("pro");
+    const div = await seedOpenDivision(auth, "team");
+    const userId = await makeUser();
+    const before = await personCount(auth.orgId);
+
+    // The schema rejects a second `self`, but the roster is jsonb that reaches
+    // `materialise` from a stored row — so the loop must refuse structurally
+    // rather than trust the door it came through. Driven through
+    // submitRegistration, which is the highest level below the schema and the
+    // one that actually writes the roster the loop reads.
+    const c = await confirmRegistration(
+      auth,
+      (
+        await submitAs(
+          div,
+          {
+            registering_self: true,
+            dob: ADULT_DOB,
+            players: [
+              { name: "Cap Tain", self: true },
+              { name: "Imposter Two", self: true },
+            ],
+          },
+          userId,
+        )
+      ).registration.id,
+    );
+
+    const members = await sql<{ person_id: string }[]>`
+      select person_id from entrant_members where entrant_id = ${c.entrant_id as string}`;
+    expect(members).toHaveLength(2);
+    expect(new Set(members.map((m) => m.person_id)).size).toBe(2);
+    // Two humans, two rows. With the second `self` also resolving they shared
+    // one, and `on conflict do nothing` swallowed the duplicate membership.
+    expect(await personCount(auth.orgId)).toBe(before + 2);
+    const [{ n }] = await sql<{ n: string }[]>`
+      select count(*)::text as n from persons
+       where org_id = ${auth.orgId} and user_id = ${userId} and lane = 'player'`;
+    expect(Number(n)).toBe(1);
   });
 
   it("two concurrent affirmed registrations ⇒ still ONE persons row", async () => {

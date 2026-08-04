@@ -486,15 +486,24 @@ async function materialise(tx: Tx, reg: RegistrationRow, entrantKind: string): P
       on conflict (entrant_id, person_id) do nothing`;
   } else if (entrantKind === "team" && reg.roster.length > 0) {
     // Team roster supplied at registration → a person + squad member per player.
+    //
+    // ONE registrant, so at most one roster entry may resolve. The schema
+    // rejects a second `self`, but `roster` is jsonb read back off a stored row
+    // and a second resolving entry would hand two different humans the same
+    // person id — the second membership then vanishing into `do nothing`. The
+    // guarantee has to live here, where the person is minted.
+    let selfResolved = false;
     for (const p of reg.roster) {
       const name = p.name.trim();
       if (!name) continue;
       // Only the row the submitter DECLARED as themselves resolves. Every other
       // roster name is a typed string with no identity of its own — name
       // matching may suggest (#404), never link.
+      const selfUserId = reg.user_id && p.self && !selfResolved ? reg.user_id : null;
+      if (selfUserId) selfResolved = true;
       const personId =
-        reg.user_id && p.self
-          ? await resolvePlayerPerson(tx, reg.org_id, reg.user_id, name, p.dob ?? null, null)
+        selfUserId
+          ? await resolvePlayerPerson(tx, reg.org_id, selfUserId, name, p.dob ?? null, null)
           : (
               await tx<{ id: string }[]>`
                 insert into persons (org_id, full_name, dob)

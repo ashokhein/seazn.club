@@ -17,6 +17,7 @@ import {
   claimPerson,
   unlinkPerson,
 } from "../person-claims";
+import { createOfficial } from "../officials";
 import { createPerson } from "../persons";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -256,5 +257,63 @@ describe.skipIf(!HAS_DB)("duplicate player link (#402)", () => {
       select count(*)::text as n from persons
        where org_id = ${orgId} and user_id = ${userId} and lane = 'player'`;
     expect(Number(n)).toBe(1);
+  });
+
+  // ACCEPTED BEHAVIOUR, NOT A BUG — do not "fix" this by relaxing the guard.
+  //
+  // `createOfficial({ person_id })` binds an official role to an EXISTING person
+  // without moving it out of the player lane (only inviteOfficial mints a
+  // lane='official' row). So a human who is an official through a player-lane
+  // person, and who already holds their own player-lane person in the same org,
+  // hits persons_org_user_lane_uq on the claim: two player-lane rows for one
+  // account is exactly the duplicate identity #402 exists to prevent.
+  //
+  // Failing closed with a 409 beats silently minting a second identity or
+  // fusing two records. The recovery route is #404's duplicate review + merge
+  // tool, which the 409's code points the organiser at.
+  it("an official bound to a PLAYER-lane person is refused a second claim (accepted, see #404)", async () => {
+    const { owner, orgId, person: own } = await rig();
+    const userId = await makeUser("official-and-player");
+
+    // The human's own player-lane person, already linked to their account.
+    await sql`update persons set user_id = ${userId} where id = ${own.id}`;
+
+    // A SECOND person for the same human, bound as an official via person_id —
+    // still lane='player', because createOfficial does not move the lane.
+    const officialPerson = await createPerson(owner, {
+      full_name: "Same Human, Official Hat",
+      consent: {},
+    } as never);
+    const official = await createOfficial(owner, {
+      display_name: "Same Human, Official Hat",
+      person_id: officialPerson.id,
+      role_keys: ["referee"],
+    });
+    expect(official.person_id).toBe(officialPerson.id);
+    const [lane] = await sql<{ lane: string }[]>`
+      select lane from persons where id = ${officialPerson.id}`;
+    expect(lane.lane).toBe("player"); // the premise: NOT moved to the official lane
+
+    const invite = await createClaimInvite(
+      owner,
+      officialPerson.id,
+      `official-${randomUUID().slice(0, 8)}@test.local`,
+    );
+    const claim = await resolveClaimToken(invite.secret);
+
+    await expect(acceptResolvedClaim(claim, userId)).rejects.toMatchObject({
+      status: 409,
+      code: "PERSON_ALREADY_LINKED",
+    });
+
+    // Nothing was merged and nothing was minted: one player-lane person for the
+    // account, and the official's person is still waiting for #404.
+    const [{ n: linked }] = await sql<{ n: string }[]>`
+      select count(*)::text as n from persons
+       where org_id = ${orgId} and user_id = ${userId} and lane = 'player'`;
+    expect(Number(linked)).toBe(1);
+    const [after] = await sql<{ user_id: string | null }[]>`
+      select user_id from persons where id = ${officialPerson.id}`;
+    expect(after.user_id).toBeNull();
   });
 });
