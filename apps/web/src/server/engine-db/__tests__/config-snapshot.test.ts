@@ -12,7 +12,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
-import { appendEvent, rebuildState, verifyStateConsistency } from "../index";
+import { appendEvent, rebuildState, recomputeStandings, verifyStateConsistency } from "../index";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -234,6 +234,64 @@ describe.skipIf(!HAS_DB)("fixture config snapshot (V347)", () => {
     const rebuilt = await rebuildState(s.orgId, s.fixtureId);
     expect(rebuilt?.outcome).toMatchObject({ kind: "win", winner: s.home });
     expect(rebuilt?.summary).toEqual(scored.summary);
+  });
+
+  it("a config edit does not move the table under fixtures that were already played", async () => {
+    // THE FIRST BULLET OF THE V347 DEFECT, on the surface people actually look
+    // at. The freeze protects the FOLD; standings are a second derivation of the
+    // same fixture, and `competition.ts` rebuilt its cfg live from
+    // `division.config` for every fixture in the stage. So lowering `points.w`
+    // after matches were played, agreed and published still rewrote the table
+    // for them — the exact harm the migration comment and
+    // `content/help/divisions/settings.md` promise is gone.
+    const s = await seed({});
+    await appendEvent(s.orgId, s.fixtureId, 0, { type: "core.start", payload: {} });
+    const scored = await appendEvent(s.orgId, s.fixtureId, 1, {
+      type: "generic.result",
+      payload: { p1Score: 2, p2Score: 1 },
+    });
+    expect(scored.outcome).toMatchObject({ kind: "win", winner: s.home });
+
+    const before = await recomputeStandings(s.orgId, s.stageId);
+    expect(before.find((r) => r.entrantId === s.home)?.points).toBe(3);
+
+    await setDivisionConfig(s.divisionId, { ...GENERIC_SCORE_DRAWS, points: { w: 1, d: 0, l: 0 } });
+
+    const after = await recomputeStandings(s.orgId, s.stageId);
+    expect(after.find((r) => r.entrantId === s.home)?.points).toBe(3);
+    expect(after).toEqual(before);
+  });
+
+  it("standings for an UNSCORED fixture still follow live config", async () => {
+    // The other half of the same rule, and the reason the fix has to go through
+    // `resolveFixtureCfg` rather than "always read the column": a fixture with no
+    // events has nothing to protect, and the organiser's edit must apply to it.
+    // A per-fixture resolver gets both; a blanket freeze gets only the first.
+    const s = await seed({});
+    await appendEvent(s.orgId, s.fixtureId, 0, { type: "core.start", payload: {} });
+    const scored = await appendEvent(s.orgId, s.fixtureId, 1, {
+      type: "generic.result",
+      payload: { p1Score: 2, p2Score: 1 },
+    });
+    expect(scored.outcome).toMatchObject({ kind: "win", winner: s.home });
+
+    // A second, unplayed fixture between the same pair.
+    const [{ id: laterFixtureId }] = await sql<{ id: string }[]>`
+      insert into fixtures (stage_id, division_id, round_no, seq_in_round, home_entrant_id, away_entrant_id)
+      values (${s.stageId}, ${s.divisionId}, 2, 1, ${s.away}, ${s.home})
+      returning id`;
+
+    await setDivisionConfig(s.divisionId, { ...GENERIC_SCORE_DRAWS, points: { w: 1, d: 0, l: 0 } });
+    await appendEvent(s.orgId, laterFixtureId, 0, { type: "core.start", payload: {} });
+    await appendEvent(s.orgId, laterFixtureId, 1, {
+      type: "generic.result",
+      payload: { p1Score: 3, p2Score: 0 },
+    });
+
+    // 3 for the frozen win, 1 for the one played under the new table.
+    const rows = await recomputeStandings(s.orgId, s.stageId);
+    expect(rows.find((r) => r.entrantId === s.home)?.points).toBe(3);
+    expect(rows.find((r) => r.entrantId === s.away)?.points).toBe(1);
   });
 
   it("a stage config edit does not reach back either", async () => {
