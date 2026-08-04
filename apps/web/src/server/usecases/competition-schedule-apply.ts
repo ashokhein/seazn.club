@@ -453,6 +453,11 @@ export async function applyCompetitionSchedule(
           // What `verifyJoint` partitions on, and what makes a division-keyed
           // `constraints.restByGroup` govern that division's own fixtures.
           divisionId: d.id,
+          // …and the POOL-keyed half of the same field (#446). `restByGroup` and
+          // `startWindows` both target a pool or a division; only the division
+          // half was ever stamped, so a pool-targeted rule bound in the placer
+          // and evaporated here.
+          ...(f.pool_id !== null ? { poolId: f.pool_id } : {}),
         };
       }),
     );
@@ -486,10 +491,12 @@ export async function applyCompetitionSchedule(
       d.input.assignments
         .map((a) => d.byId.get(a.fixture_id)!)
         .filter((f) => f.scheduled_at !== null && f.court_label !== null)
-        .map((f) => ({
-          ...toAssignment(f, d.settings.config.matchMinutes, people),
-          divisionId: d.id,
-        })),
+        // `toAssignment` stamps `divisionId` from the fixture's own
+        // `division_id` (#446), so this pass does NOT re-write it from `d.id`.
+        // The two agree — `d.byId` only holds that division's fixtures — and
+        // one field with one source is the whole point of the fix this file
+        // is part of.
+        .map((f) => toAssignment(f, d.settings.config.matchMinutes, people)),
     );
 
     // ---- one pass per division, over the merged board ---------------------

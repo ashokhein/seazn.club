@@ -90,10 +90,19 @@ export function effectiveRestMinutes(
   const c = config.constraints;
   let minutes = config.perEntrantMinRest;
   if (c?.restMin !== undefined) minutes = Math.max(minutes, c.restMin);
-  const byGroup =
-    (group?.poolId !== undefined ? c?.restByGroup?.[group.poolId] : undefined) ??
-    (group?.divisionId !== undefined ? c?.restByGroup?.[group.divisionId] : undefined);
-  if (byGroup !== undefined) minutes = Math.max(minutes, byGroup);
+  // MAX, not precedence (#459, owner ruling 2026-08-04). A row can match both a
+  // division-keyed and a pool-keyed entry; a pool entry RAISES the floor and
+  // never lowers it, exactly like `restMin` and `noBackToBack` on the lines
+  // either side of this one. Resolving with `??` instead made the pool entry
+  // shadow the division one — and, because `0 ?? x` is `0`, an explicit pool
+  // entry of zero ERASED a division rule rather than adding nothing.
+  //
+  // Nothing in the UI presents a pool rest as an override of its division, so
+  // "most specific wins" would have been a semantics no surface teaches.
+  for (const key of [group?.poolId, group?.divisionId]) {
+    const v = key !== undefined ? c?.restByGroup?.[key] : undefined;
+    if (v !== undefined) minutes = Math.max(minutes, v);
+  }
   // "One fixture between" is only meaningful once we know how long a fixture
   // is; callers that validate without a match length simply don't get it.
   if (c?.noBackToBack && config.matchMinutes !== undefined) {
@@ -379,7 +388,32 @@ export function slotFixtures(input: SlotInput): SlotResult {
 
   // Jul3/04 §3 — shared with validateAssignments so the placer and the verifier
   // can never drift apart on what "enough rest" means.
-  const restForMs = (f: SchedulableFixture): number => effectiveRestMinutes(config, f) * MS_PER_MIN;
+  //
+  // #447: `effectiveRestMinutes` reads the settings/constraints family only, so
+  // a durable `min_rest_minutes` rule raised the bound the VERIFIER used and not
+  // the one the placer packed to. Auto then proposed a board the apply gate
+  // warned about, and re-running auto could never fix it. `hardRestMinutesFor`
+  // is the verifier's own fold, called here on the one row this pass is placing
+  // — the same single-direction question `pairRestMinutes(config, movable,
+  // immovable)` asks, and the strongest one the placer's per-entrant `lastEnd`
+  // map can answer. Derived once: the rule list does not vary per fixture.
+  const hard = effectiveHard(config);
+  const scopeRowOf = (f: SchedulableFixture): ScopeRow => ({
+    entrants: entrantsOf(f),
+    people: [...(f.people ?? [])],
+    ...(f.poolId !== undefined ? { poolId: f.poolId } : {}),
+    ...(f.divisionId !== undefined ? { divisionId: f.divisionId } : {}),
+  });
+  const restForMs = (f: SchedulableFixture): number =>
+    (hard.length === 0
+      ? effectiveRestMinutes(config, f)
+      : Math.max(
+          effectiveRestMinutes(config, f),
+          // No `RuleFixture` here on purpose: the placer holds none, and
+          // `scopeCoversFixture` falls back to the row's own pool/division,
+          // which is exactly what a `SchedulableFixture` carries.
+          hardRestMinutesFor(hard, undefined, scopeRowOf(f)),
+        )) * MS_PER_MIN;
 
   // startWindows (Jul3/04 §3): hard lower/upper bounds per entrant/pool/division.
   const windowFor = (f: SchedulableFixture): { notBefore: number; notAfter: number } => {
@@ -446,6 +480,14 @@ export function slotFixtures(input: SlotInput): SlotResult {
       endAt: start + durMs,
       entrants: ent,
       people: [...(f.people ?? [])],
+      // Carried through, not dropped (#446). `windowFor`/`restForMs` above read
+      // the fixture's pool and division to honour a pool- or division-targeted
+      // `startWindow`/`restByGroup`; `validateAssignments` reads the SAME two
+      // fields off the Assignment. Emitting a placement that has lost them means
+      // feeding the placer's own output back to the verifier flips the verdict —
+      // the placer/verifier fork this module exists to prevent.
+      ...(f.poolId !== undefined ? { poolId: f.poolId } : {}),
+      ...(f.divisionId !== undefined ? { divisionId: f.divisionId } : {}),
     };
     bookings.push(assignment);
     placed.push(assignment);
@@ -584,13 +626,21 @@ export type VerifyConfig = Pick<
     restByDivision?: Readonly<Record<string, number>>;
   };
 
+/** Exactly the fields `scopeCoversFixture` reads. Named (#447) so the PLACER can
+ *  ask the same question the verifier does: `slotFixtures` holds
+ *  `SchedulableFixture`s, which carry the same four facts under `home`/`away`
+ *  rather than `entrants`, and an `Assignment` it has not built yet is not
+ *  available to it. Widening the parameter rather than duplicating the switch is
+ *  what keeps one definition of "does this rule bind this row". */
+export type ScopeRow = Pick<Assignment, "entrants" | "people" | "poolId" | "divisionId">;
+
 /** Does a scoped rule bind this assignment? `person` is the bridge that makes
  *  person-scoped rules expressible at all: `people` is participants (#396), so a
  *  rule about a human reaches the TBD slots they can still advance into. */
 export function scopeCoversFixture(
   scope: ConstraintScope,
   f: RuleFixture | undefined,
-  a: Assignment,
+  a: ScopeRow,
 ): boolean {
   switch (scope.kind) {
     case "competition":
@@ -661,6 +711,46 @@ export function effectiveHard(config: Pick<VerifyConfig, "hard" | "constraints">
   if (stored.length === 0) return compiled;
   if (compiled.length === 0) return stored;
   return [...compiled, ...stored];
+}
+
+/** The rest, in minutes, that the typed rules demand of ONE row.
+ *
+ *  THE PLACER AND THE VERIFIER MUST BOTH READ THIS (#447). `min_rest_minutes`
+ *  with `rest_scope: "per_person"` is deliberately absent from
+ *  `validateInstructionRules` — it is folded into the rest bound instead, so one
+ *  too-short gap is reported once as `rest` and not twice. That fold used to
+ *  live only in `pairRestMinutesWith`, i.e. only in the verifier, while
+ *  `slotFixtures` resolved rest through `effectiveRestMinutes`, which never
+ *  reads `hard`. So the auto pass proposed a board the apply gate immediately
+ *  warned about and re-running auto could not fix it: the placer did not know
+ *  the rule existed. That is a placer/verifier fork, the exact failure
+ *  `calendar-shared-semantics.test.ts` exists to catch.
+ *
+ *  `feeder_to_dependent` is excluded because that half IS reported as its own
+ *  `instruction` rule (it has no rest bound to hide inside); `both` is included,
+ *  since it carries the per-person half too.
+ *
+ *  A lower bound only — every caller combines it with `Math.max`. "At least N
+ *  minutes" may raise a stored setting, never lower it.
+ *
+ *  SCOPE OF THE PLACER HALF, so nobody reads more into it than is there: the
+ *  placer keys `lastEnd` by `EntrantId`, so it applies this bound only to pairs
+ *  that share an ENTRANT. A pair sharing a PERSON but no entrant — which is
+ *  precisely what `validateAssignments` reports below — and any pair against
+ *  `existing` (other divisions' cards, obstacles) are still placer-blind, so
+ *  the auto pass can still propose a board the gate warns about for those.
+ *  Tracked in #463; the verifier half has always covered both. */
+export function hardRestMinutesFor(
+  hard: readonly HardConstraint[],
+  f: RuleFixture | undefined,
+  row: ScopeRow,
+): number {
+  let minutes = 0;
+  for (const h of hard) {
+    if (h.type !== "min_rest_minutes" || h.rest_scope === "feeder_to_dependent") continue;
+    if (scopeCoversFixture(h.scope, f, row)) minutes = Math.max(minutes, h.minutes);
+  }
+  return minutes;
 }
 
 export function validateInstructionRules(
@@ -894,14 +984,23 @@ function pairRestMinutesWith(
   if (otherDivision !== undefined) {
     minutes = Math.max(minutes, config.restByDivision?.[otherDivision] ?? 0);
   }
-  for (const h of hard) {
-    if (h.type !== "min_rest_minutes" || h.rest_scope === "feeder_to_dependent") continue;
-    const covers =
-      scopeCoversFixture(h.scope, fixtureById.get(a.fixtureId), a) ||
-      scopeCoversFixture(h.scope, fixtureById.get(other.fixtureId), other);
-    if (covers) minutes = Math.max(minutes, h.minutes);
-  }
-  return minutes;
+  // THE HOT PATH. This runs once per PAIR — 125k times on the 500-fixture cap —
+  // and the overwhelmingly common case is no typed rules at all. The old inline
+  // `for (const h of hard)` did nothing when `hard` was empty; extracting the
+  // body into a function turned that into two calls and two Map lookups per
+  // pair, which put `repair-scale`'s budget bench over its 7000 ms line. Keep
+  // the early return.
+  if (hard.length === 0) return minutes;
+  // A PAIR is covered when EITHER side is — the same disjunction this loop
+  // always applied, now expressed as the max of the two per-row answers so the
+  // placer can ask for one of them on its own (#447). `hardRestMinutesFor` is
+  // the single definition; nothing here may grow a second copy of the scope
+  // walk, which is how the placer and the verifier forked in the first place.
+  return Math.max(
+    minutes,
+    hardRestMinutesFor(hard, fixtureById.get(a.fixtureId), a),
+    hardRestMinutesFor(hard, fixtureById.get(other.fixtureId), other),
+  );
 }
 
 /** The start bounds `startWindows` impose on an assignment. Exported (#401) so

@@ -21,13 +21,16 @@ import {
   isBlockingConflict,
   slotFixtures,
   validateAssignments,
+  validateInstructionRules,
   ymdAddDays,
   zonedTimeToUtc,
   type Assignment,
   type Conflict,
   type OrderDependency,
+  type RuleFixture,
   type SchedulableFixture,
   type SlotConfig,
+  type VerifyConfig,
 } from "@seazn/engine/scheduling";
 import { appendDivisionEvent } from "@/server/engine-db";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -40,7 +43,7 @@ import {
 import { sendOfficialAssignmentChangedEmail } from "@/lib/email";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 import { generateStageFixtures } from "./stages";
-import { schedulingAiModel } from "./schedule-ai";
+import { schedulingAiModel, toRuleFixture } from "./schedule-ai";
 
 type Tx = postgres.TransactionSql;
 
@@ -261,6 +264,20 @@ function peopleOf(f: FixtureLite, people: Map<string, string[]>): string[] {
   ];
 }
 
+/** A DB fixture row as the engine's `Assignment`.
+ *
+ *  `poolId`/`divisionId` are stamped (#446). They are not decoration: the
+ *  verifier resolves a pool- or division-targeted `restByGroup` and
+ *  `startWindows` entry off exactly these two fields
+ *  (`effectiveRestMinutes`/`startWindowFor`), and the placer resolves the same
+ *  rules off the twin fields on `SchedulableFixture` (built at :523 from the
+ *  same row). Dropping them here is what made a pool rule bind for
+ *  Auto-schedule and evaporate the moment an organiser dragged a card.
+ *
+ *  Optionality follows the `SchedulableFixture` builder exactly: `division_id`
+ *  is NOT NULL so it is always stamped; `pool_id` is nullable and the key is
+ *  omitted rather than set to `undefined`, because `Assignment.poolId` is an
+ *  optional string and the verifier tests it with `!== undefined`. */
 export function toAssignment(f: FixtureLite, matchMinutes: number, people: Map<string, string[]>): Assignment {
   const start = ms(f.scheduled_at as string | Date);
   return {
@@ -270,6 +287,8 @@ export function toAssignment(f: FixtureLite, matchMinutes: number, people: Map<s
     endAt: start + matchMinutes * MS_PER_MIN,
     entrants: [f.home_entrant_id, f.away_entrant_id].filter((e): e is string => e !== null),
     people: peopleOf(f, people),
+    ...(f.pool_id !== null ? { poolId: f.pool_id } : {}),
+    divisionId: f.division_id,
   };
 }
 
@@ -389,9 +408,95 @@ export function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotCo
             fieldFairness: c.constraints.fieldFairness,
             parallelism: c.constraints.parallelism,
             crossPersonClash: c.constraints.crossPersonClash,
+            // #447: the DURABLE typed rules (#398). This key was the one field
+            // of `constraints` the copy above dropped, and `effectiveHard` reads
+            // exactly it — so a rule an organiser stored through the API bound on
+            // the AI path (which builds its own config) and silently nowhere
+            // else. `effectiveHard`'s own docstring calls that "the worst kind".
+            //
+            // Carried here rather than on the top-level `hard` field because
+            // `effectiveHard` MERGES the two — setting both would count every
+            // durable rule twice — and because `constraints.hard` is the durable
+            // home: the top-level one is where a run puts the stream it COMPILED
+            // from an instruction. It also rides `toSlotConfig` rather than the
+            // wrapper below so every existing caller of this function gets it
+            // without a second place to remember.
+            //
+            // Optional, never defaulted (the schema says so): a `hard: []` on a
+            // config that stored nothing is indistinguishable downstream, but it
+            // would make every `toSlotConfig` output differ from the literals the
+            // rest of the suite compares against.
+            ...(c.constraints.hard !== undefined ? { hard: c.constraints.hard } : {}),
           },
         }
       : {}),
+  };
+}
+
+/** A `fixtures` row as a `RuleFixture`, by renaming its columns onto the ONE
+ *  builder (#447).
+ *
+ *  Deliberately not a second RuleFixture literal. `winnerTo` must carry
+ *  `fixtures.winner_to_fixture` — a uuid FK to `fixtures.id` — and `extKey` must
+ *  carry `fixtures.ext_key`, nullable text in a different namespace with no
+ *  converter. `RuleFixture` types both `string | null`, so a producer that swaps
+ *  them type-checks and then binds NOTHING, silently: that is #443, and #443 was
+ *  invisible precisely because a second copy of the join existed. This function
+ *  therefore does one thing — rename `pool_id`→`pool`, `winner_to_fixture`→
+ *  `feeds.winner_to` — and hands the result to `toRuleFixture`, which stays the
+ *  only assignment of `winnerTo` in the codebase. `schedule-ai-repair.test.ts`
+ *  guards that count across all three modules. */
+export function rowToRuleFixture(
+  f: Pick<FixtureLite, "id" | "ext_key" | "pool_id" | "division_id" | "winner_to_fixture">,
+): RuleFixture {
+  return toRuleFixture(
+    { id: f.id, ext_key: f.ext_key, pool: f.pool_id, feeds: { winner_to: f.winner_to_fixture } },
+    f.division_id,
+  );
+}
+
+/** Everything the VERIFIER reads, for the board paths (#447).
+ *
+ *  `toSlotConfig` answers the placer's question ("where may a card go?") and a
+ *  `SlotConfig` is structurally assignable to a `VerifyConfig` with `tz`, `hard`,
+ *  `ruleFixtures` and `restByDivision` all `undefined` — which is exactly why
+ *  handing one straight to `validateAssignments` compiled clean for four call
+ *  sites while dropping every typed rule on the floor.
+ *
+ *  Two of those fields are load-bearing here and both are traps:
+ *
+ *    tz            `validateInstructionRules` wraps its ENTIRE typed-rule block
+ *                  in `if (tz !== undefined)`, on purpose: every rule in it
+ *                  needs a day boundary or a wall-clock time, and bucketing one
+ *                  in UTC would report a violation the organiser never expressed.
+ *                  So carrying the rules WITHOUT the zone is a fix that binds
+ *                  nothing. It is `orgTz`, never `tz` — the org zone governs
+ *                  every temporal boundary (#397), and the division's display
+ *                  override must not move a rule's calendar day.
+ *    ruleFixtures  the feeder→dependent half of `min_rest_minutes` iterates it,
+ *                  and every `terminal`/`ext_key` selector resolves through it.
+ *                  Without it those rules compile, display as enforced, and bind
+ *                  nothing — the same failure shape as #443.
+ *
+ *  No `restByDivision`: that is the JOINT verifier's field, for the one pass per
+ *  division `verifyJoint` runs. These paths verify one division against a fixed
+ *  sibling board, which is a different question.
+ *
+ *  Returns `SlotConfig & VerifyConfig` so the auto pass can hand ONE object to
+ *  both the placer and the verifier. A second builder for the second consumer is
+ *  how the placer and the verifier drift apart. */
+export function toVerifyConfig(
+  settings: ScheduleSettingsOut,
+  /** The division's own fixture rows — `divisionFixtures`, not just the movable
+   *  ones. A selector may name a fixture this run cannot move, and a day cap
+   *  counts every fixture on the day. */
+  fixtures: readonly FixtureLite[],
+  now: number,
+): SlotConfig & VerifyConfig {
+  return {
+    ...toSlotConfig(settings, now),
+    tz: settings.orgTz,
+    ruleFixtures: fixtures.map(rowToRuleFixture),
   };
 }
 
@@ -535,11 +640,12 @@ export async function autoSchedule(
         : {}),
     }));
 
-    const result = slotFixtures({
-      fixtures: schedulable,
-      config: toSlotConfig(settings, roundToMinute(Date.now())),
-      existing: [...obstacles, ...siblings],
-    });
+    // ONE config for both halves of this pass (#447). The placer reads the
+    // `SlotConfig` side, the typed-rule referee below reads the `VerifyConfig`
+    // side, and neither can drift onto a different idea of the rules.
+    const config = toVerifyConfig(settings, all, roundToMinute(Date.now()));
+    const board = [...obstacles, ...siblings];
+    const result = slotFixtures({ fixtures: schedulable, config, existing: board });
     return {
       assignments: result.assignments.map((a) => ({
         fixture_id: a.fixtureId,
@@ -549,7 +655,20 @@ export async function autoSchedule(
       })),
       // No baseline: the auto pass PROPOSES a board rather than editing one, so
       // every conflict in it is this proposal's own doing (#399).
-      conflicts: mapConflicts(result.conflicts),
+      //
+      // `slotFixtures` PLACES; it does not referee typed rules — it reports only
+      // what it could not fit (`no_slot`, `start_window`, a pinned collision).
+      // So a durable rule the placer has no term for would come back clean from
+      // the one surface an organiser uses to build a board. The AI path answers
+      // this the same way: place, then run the referee over the proposal
+      // (`verifyConfig`). Only `validateInstructionRules` is run here, not the
+      // whole verifier, so this proposal reports exactly the typed rules it was
+      // missing and does not start emitting rest/overlap rows the auto pass has
+      // never emitted.
+      conflicts: mapConflicts([
+        ...result.conflicts,
+        ...validateInstructionRules(result.assignments, config, board),
+      ]),
     };
   });
 }
@@ -620,6 +739,11 @@ export async function applySchedule(
         endAt: start + settings.config.matchMinutes * MS_PER_MIN,
         entrants: [f.home_entrant_id, f.away_entrant_id].filter((e): e is string => e !== null),
         people: peopleOf(f, people),
+        // #446: the proposed card's own group identity, so a pool- or
+        // division-targeted rule is applied to the placement being judged and
+        // not only to the board it lands on. Same shape as `toAssignment`.
+        ...(f.pool_id !== null ? { poolId: f.pool_id } : {}),
+        divisionId: f.division_id,
       };
     });
     const listed = new Set(input.assignments.map((a) => a.fixture_id));
@@ -633,7 +757,9 @@ export async function applySchedule(
       settings.config.matchMinutes,
     );
 
-    const slotConfig = toSlotConfig(settings, 0);
+    // #447: the VERIFY config, so the durable typed rules an organiser stored
+    // are the rules this gate judges by. Warn-only — see `assertNoNewBlocking`.
+    const slotConfig = toVerifyConfig(settings, all, 0);
     const deps = feedDependencies(all);
     const board = [...untouched, ...siblings];
     // The SAME fixtures where they sit right now (#399). Anything the verifier
@@ -839,6 +965,12 @@ export async function moveFixture(
           (e): e is string => e !== null,
         ),
         people: peopleOf(fixture, people),
+        // #446 — this is the drag/keyboard move the issue describes: without
+        // these two the dragged card resolves its rest to `perEntrantMinRest`
+        // and its start bound to (-inf, +inf), so a pool rule the auto pass
+        // honoured is silently absent at exactly the moment a human overrides it.
+        ...(fixture.pool_id !== null ? { poolId: fixture.pool_id } : {}),
+        divisionId: fixture.division_id,
       };
       const others = all
         .filter((f) => f.id !== fixture.id && f.scheduled_at !== null && f.court_label !== null)
@@ -849,7 +981,8 @@ export async function moveFixture(
         fixture.competition_id,
         settings.config.matchMinutes,
       );
-      const slotConfig = toSlotConfig(settings, 0);
+      // #447: the dragged card is judged against the durable typed rules too.
+      const slotConfig = toVerifyConfig(settings, all, 0);
       const deps = feedDependencies(all);
       const board = [...others, ...siblings];
       // Where this card sits right now (#399). An unscheduled fixture has no
@@ -1005,7 +1138,10 @@ export async function validateSchedule(
     return {
       conflicts: [
         ...mapConflicts(
-          validateAssignments(assignments, toSlotConfig(settings, 0), siblings, feedDependencies(all)),
+          // #447: `toVerifyConfig`, so the board's own report shows the durable
+          // typed rules the organiser stored — this is the surface the
+          // constraints panel promises them on.
+          validateAssignments(assignments, toVerifyConfig(settings, all, 0), siblings, feedDependencies(all)),
         ),
         ...officialConflicts.map((c) => ({ fixture_id: c.fixture_id, code: c.code as ScheduleConflict["code"], blocking: false })),
       ],

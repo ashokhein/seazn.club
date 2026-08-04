@@ -921,6 +921,12 @@ export async function buildSchedulePack(
         // 1970-01-01 as the draft time for every fixture (#397). The honest
         // fallback is the first session hour of the window's first day, in the
         // org zone.
+        // `toSlotConfig`, not `toVerifyConfig`: this is the DRAFT placer, and it
+        // runs before any instruction has been compiled, so the only `hard`
+        // rules that exist here are the durable ones `toSlotConfig` already
+        // forwards (#447). The asymmetry is deliberate rather than the one that
+        // caused #447 — but it is the same shape, so if a compiled rule ever
+        // becomes available at draft time this must move to `toVerifyConfig`.
         config: toSlotConfig(
           settings,
           zonedTimeToUtc(dayKeyInTz(draftAnchorMs, orgTz), DEFAULT_SESSION_HOURS.start, orgTz),
@@ -1443,8 +1449,23 @@ function structuralCheck(plan: AiSchedulePlan, movableIds: Set<string>, pack: Sc
 }
 
 /** Map the LLM proposal onto engine assignments (ISO → epoch ms). Entrants and
- *  people come from the pack so the verifier can catch overlaps. */
-function toEngineAssignments(plan: AiSchedulePlan, pack: SchedulePack): Assignment[] {
+ *  people come from the pack so the verifier can catch overlaps.
+ *
+ *  `poolId`/`divisionId` come from the pack too (#446), from the same two pack
+ *  fields `packRuleFixtures` below already reads. They are what makes a
+ *  pool- or division-targeted `restByGroup` entry actually bind on this path.
+ *
+ *  NOT `startWindows`, on this path: `verifyConfig` below pins
+ *  `startWindows: []` outright, so the single-division AI path is blind to
+ *  every start window whatever it targets, and `repair-domain` clips the
+ *  repair domain to that same empty config. Stamping the group identity is
+ *  necessary for that to ever work and is not sufficient — filed separately.
+ *  `schedule-group-targeting.test.ts` asserts the pin, so this comment and
+ *  that test cannot drift apart silently.
+ *
+ *  Exported for the same reason its joint twin `toJointEngineAssignments` is:
+ *  the verify seam is testable without a model round trip. */
+export function toEngineAssignments(plan: AiSchedulePlan, pack: SchedulePack): Assignment[] {
   const fixtureById = new Map(pack.fixtures.movable.map((f) => [f.id, f]));
   const durMs = pack.settings.matchMinutes * MS_PER_MIN;
   return plan.assignments.map((a) => {
@@ -1461,11 +1482,22 @@ function toEngineAssignments(plan: AiSchedulePlan, pack: SchedulePack): Assignme
       // whoever can still advance into it, which is what every person rule
       // needs and what `pack.people` (pairs sharing an entrant) never had.
       people: pack.participants[a.fixture_id] ?? [],
+      ...(f?.pool != null ? { poolId: f.pool } : {}),
+      divisionId: pack.division.id,
     };
   });
 }
 
-/** Fixed court occupancy the proposal must dodge (other stages + siblings). */
+/** Fixed court occupancy the proposal must dodge (other stages + siblings).
+ *
+ *  DELIBERATELY carries no `poolId`/`divisionId` (#446), unlike every other
+ *  adapter in this file. A `PackObstacle` is a court booking — an out-of-run
+ *  division's placement, another stage's decided fixture, an outside hire — and
+ *  it has no entrants and no people, so no rest pair and no start-window bound
+ *  can ever reach it (`startWindowFor` runs over `assignments` only; the rest
+ *  loop needs a shared entrant or person). Stamping a FOREIGN division's id on
+ *  a row this run may not move would be a rule match invented in the opposite
+ *  direction — the pack does not even carry the pool that row sat in. */
 function toObstacleAssignments(pack: SchedulePack): Assignment[] {
   return pack.fixtures.obstacles.map((o, i) => ({
     fixtureId: `obstacle:${i}`,
@@ -1477,9 +1509,25 @@ function toObstacleAssignments(pack: SchedulePack): Assignment[] {
   }));
 }
 
+/** Exactly the fields `toRuleFixture` reads, and nothing else — the widened
+ *  parameter that lets a `fixtures` row reach the one builder (#447).
+ *
+ *  Named after what it is rather than where it comes from: `PackFixture`
+ *  satisfies it structurally, and `rowToRuleFixture` in `schedule.ts` builds one
+ *  by renaming a DB row's columns. Keeping it this narrow is the point — a
+ *  parameter that demanded the whole `PackFixture` would have forced the board
+ *  to grow a RuleFixture literal of its own. */
+export interface RuleFixtureSource {
+  id: string;
+  ext_key: string | null;
+  pool: string | null;
+  feeds: { winner_to: string | null };
+}
+
 /**
- * THE one place a `RuleFixture` is built — for the single-division pack here and
- * for both joint producers in `competition-schedule-ai.ts` (#443).
+ * THE one place a `RuleFixture` is built — for the single-division pack here,
+ * for both joint producers in `competition-schedule-ai.ts` (#443), and for the
+ * board paths via `rowToRuleFixture` (#447).
  *
  * It is one function rather than three literals because of what #443 was: two
  * copies of a join drifted onto a shared wrong assumption, and the second copy
@@ -1495,11 +1543,19 @@ function toObstacleAssignments(pack: SchedulePack): Assignment[] {
  * displaying as enforced while binding nothing at all. One producer means one
  * thing to guard, and `schedule-ai-repair.test.ts` guards it.
  *
- * `divisionId` is a parameter because the two packs source it differently: the
+ * `divisionId` is a parameter because the packs source it differently: the
  * single-division pack takes it from the division it is a pack OF, the joint
  * pack from each fixture's own `division_id`.
+ *
+ * The parameter is `RuleFixtureSource`, not `PackFixture`, since #447: the board
+ * paths (`schedule.ts`) hold the same five facts on a `fixtures` ROW under
+ * different column names, and they need a `RuleFixture` too. Widening the
+ * parameter to exactly the fields this function reads lets `rowToRuleFixture`
+ * rename its columns and delegate here, so there is still ONE assignment of
+ * `winnerTo` in the codebase and still one thing to guard — rather than a second
+ * builder in a second module, which is precisely the shape #443 was.
  */
-export function toRuleFixture(f: PackFixture, divisionId: string): RuleFixture {
+export function toRuleFixture(f: RuleFixtureSource, divisionId: string): RuleFixture {
   return {
     id: f.id,
     extKey: f.ext_key,

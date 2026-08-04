@@ -565,6 +565,13 @@ export async function buildCompetitionPack(
         // (These assignments are placer input only: the joint verifier rebuilds
         // obstacles through `toJointObstacleAssignments`, so this cannot double
         // a conflict report.)
+        //
+        // No `poolId` (#446). This list is PLACER input: `slotFixtures` reads
+        // `existing` for court, times, entrants and people and never for a
+        // group id — it resolves `restByGroup`/`startWindows` off the
+        // `SchedulableFixture` being placed. `divisionId` below predates that
+        // read and is kept for the draft-accumulation bookkeeping; adding a
+        // pool would mean widening this module's SQL for a field nothing reads.
         people: [
           ...new Set(
             [
@@ -1080,8 +1087,13 @@ export const JOINT_ASSIGNMENT_UNKNOWN = "AI_PLAN_INVALID_ASSIGNMENT";
  *    never reaches (it leaves divisionId unset). Since each division's pass runs
  *    with that division's own constraints, a restByGroup entry keyed by a
  *    division now governs that division's own fixtures — which is what the field
- *    means. `poolId` is deliberately still NOT stamped, matching the
- *    single-division path exactly.
+ *    means.
+ *
+ *    This bullet used to end "`poolId` is deliberately still NOT stamped,
+ *    matching the single-division path exactly." That symmetry was real and the
+ *    conclusion was wrong: the single-division path was not a baseline, it was
+ *    the same bug (#446). `poolId` is stamped now, on both paths, and the pack
+ *    has carried it all along as `PackFixture.pool`.
  *  * An unresolvable assignment THROWS rather than defaulting.
  *
  *  That last one is the important one, and it is why there is no `?? 0` here.
@@ -1131,6 +1143,7 @@ export function toJointEngineAssignments(plan: AiSchedulePlan, pack: Competition
       // this read green on a pack that never computed the map.
       people: pack.participants[a.fixture_id] ?? [],
       divisionId: f.division_id,
+      ...(f.pool != null ? { poolId: f.pool } : {}),
     };
   });
 }
@@ -1143,7 +1156,19 @@ export function toJointEngineAssignments(plan: AiSchedulePlan, pack: Competition
  *  within ONE division's list, and a duplicate id on the joint board is not
  *  inert: `validateAssignments` builds a `byId` map over `existing` +
  *  `assignments` for feed-order resolution, where a collision silently drops an
- *  entry. */
+ *  entry.
+ *
+ *  Carries no `poolId`/`divisionId` DELIBERATELY (#446), even though
+ *  `o.division_id` is right here and used for the id key. These rows are
+ *  occupancy: no entrants, no people, never in `ruleFixtures`. Every read of
+ *  `Assignment.divisionId`/`poolId` is unreachable for them —
+ *  `startWindowFor` runs over `assignments` only, the rest pair needs a shared
+ *  entrant or person, and `validateInstructionRules` counts `existing` only
+ *  where a `RuleFixture` exists, whose own ids win in `scopeCoversFixture`.
+ *  So stamping would be inert today and, the day some rule does start reading
+ *  `existing`, would silently apply a division rule to a booking from OUTSIDE
+ *  the run (`o.division_id === null` — the `"x"` key below) or to a row this run
+ *  is not permitted to move. Occupancy carries no group identity, on purpose. */
 export function toJointObstacleAssignments(pack: CompetitionPack): Assignment[] {
   const indexByDivision = new Map(pack.divisions.map((d, i) => [d.id, String(i)]));
   const counters = new Map<string, number>();
