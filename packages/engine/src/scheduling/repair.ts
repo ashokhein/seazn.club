@@ -507,10 +507,10 @@ export async function repairSchedule(input: RepairInput): Promise<RepairResult> 
     // tallies with `dayKeyInTz`. Not a session, and not a slice of a day.
     //
     // `dayBuckets` over the universe, which is what this used to count, is
-    // neither. It returns one bucket per SESSION as soon as `sessionWindows` is
-    // non-empty (a morning and an afternoon session on one day are two buckets
-    // sharing one `ymd`, so a `count: 1` cap admitted one fixture per SESSION),
-    // and it CLIPS its first and last entries to the window it was handed. The
+    // neither. As soon as `sessionWindows` is non-empty it covers only the hours
+    // those sessions run (a morning and an afternoon session on one day are two
+    // buckets sharing one `ymd`, so a `count: 1` cap admitted one fixture per
+    // SESSION), and it CLIPS its first and last entries to the window. The
     // clipping is the subtler half: the only unconditional bound on a start is
     // the ±30-day finite-model guard, so with no pack window and no session
     // windows — where the universe is merely the board's own extent widened by a

@@ -39,6 +39,42 @@ describe("dayBuckets", () => {
     expect(buckets).toHaveLength(1);
     expect(buckets[0]!.from).toBe(from);
   });
+
+  it("splits a session that crosses local midnight at the org zone's midnight", () => {
+    // 22:00 Monday → 02:00 Tuesday, London. Labelled whole, the four hours after
+    // midnight wear Monday's date and every day-shaped instruction reads them as
+    // Monday's — which the verifier, which asks `dayKeyInTz(startAt)`, does not.
+    const buckets = dayBuckets({
+      tz: "Europe/London",
+      sessionWindows: [{ from: at("2026-08-10T21:00:00Z"), to: at("2026-08-11T01:00:00Z") }],
+    });
+    expect(buckets.map((b) => b.ymd)).toEqual(["2026-08-10", "2026-08-11"]);
+    expect(buckets[0]!.from).toBe(at("2026-08-10T21:00:00Z"));
+    expect(buckets[0]!.to).toBe(at("2026-08-10T23:00:00Z")); // local midnight
+    expect(buckets[1]!.from).toBe(at("2026-08-10T23:00:00Z"));
+    expect(buckets[1]!.to).toBe(at("2026-08-11T01:00:00Z"));
+  });
+
+  it("keeps the split on the org's midnight across the DST fall-back", () => {
+    // 2026-10-25 is the European fall-back: that London day is 25 hours, and the
+    // session runs from the evening before into it. A fixed 86_400_000 step would
+    // put the boundary an hour early.
+    const buckets = dayBuckets({
+      tz: "Europe/London",
+      sessionWindows: [
+        { from: at("2026-10-24T21:00:00+01:00"), to: at("2026-10-26T00:00:00Z") },
+      ],
+    });
+    expect(buckets.map((b) => b.ymd)).toEqual(["2026-10-24", "2026-10-25"]);
+    expect(buckets[0]!.to).toBe(at("2026-10-24T23:00:00Z")); // 00:00 BST
+    expect(buckets[1]!.to - buckets[1]!.from).toBe(25 * H); // the fall-back day
+  });
+
+  it("leaves a session unsplit when there is no zone to split it by", () => {
+    const from = at("2026-08-10T21:00:00Z");
+    const buckets = dayBuckets({ sessionWindows: [{ from, to: from + 4 * H }] });
+    expect(buckets).toEqual([{ ymd: "", from, to: from + 4 * H }]);
+  });
 });
 
 describe("calendarDaysCovering", () => {

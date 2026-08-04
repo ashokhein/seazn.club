@@ -14,6 +14,7 @@ import {
   type RepairFamily,
   type RepairResult,
 } from "./repair.ts";
+import { dayKeyInTz } from "./tz.ts";
 import { resetZ3, z3LoadCount } from "./z3-load.ts";
 import {
   assign,
@@ -687,6 +688,90 @@ describe("the rule families, end to end", () => {
       expect(r.moved).toHaveLength(2);
       expect(new Set(r.assignments.map((a) => dayKey(a.startAt))).size).toBe(3);
       expect(validateAssignments(r.assignments, config)).toEqual([]);
+    },
+    SOLVE_TIMEOUT,
+  );
+
+  /**
+   * A SESSION IS NOT A DAY, and one that runs past local midnight proves it.
+   *
+   * `dayBuckets` used to label a whole session with `dayKeyInTz(session.from)`,
+   * so the part of an overnight session that falls after midnight carried the
+   * PREVIOUS day's label. Every day-shaped instruction in `buildDomains` reads
+   * that label — `fixture_on_date`, `fixture_on_weekday`, and the per-day
+   * anchor `not_before`/`not_after` resolve their wall clock against — so a
+   * start the verifier judges on Tuesday was admitted as Monday's.
+   *
+   * Under the `instruction` family, which the strict pass never relaxes: the
+   * solver answers `repaired` with `relaxed: []` and `repairAndVerify` then
+   * throws on the board it just produced.
+   *
+   * The board below forces the mislabelled slot rather than merely offering it.
+   * One court, one overnight session, and every legal Monday-evening slot taken
+   * — one of them by an IMMOVABLE — so the only single move that clears the
+   * clash lands after midnight. The honest answer costs two moves: shift an
+   * unconstrained card into the small hours and put the date-pinned one in the
+   * slot it vacates.
+   */
+  const OVERNIGHT = {
+    // 22:00 Monday → 02:00 Tuesday, London (BST, so UTC+1).
+    from: at("2026-08-10T21:00:00Z"),
+    to: at("2026-08-11T01:00:00Z"),
+  };
+  const overnightCard = (fixtureId: string, iso: string): Assignment => ({
+    fixtureId,
+    court: "C1",
+    startAt: at(iso),
+    endAt: at(iso) + 40 * MIN,
+    entrants: [`e-${fixtureId}`],
+    people: [`p-${fixtureId}`],
+    divisionId: "d1",
+  });
+
+  it(
+    "does not let a session that crosses midnight lend its date to the next day",
+    async () => {
+      const config: VerifyConfig & { courts: readonly string[] } = {
+        ...BASE_CONFIG,
+        tz: "Europe/London",
+        courts: ["C1"],
+        sessionWindows: [OVERNIGHT],
+        ruleFixtures: [{ id: "pinned", extKey: "pinned", winnerTo: null, divisionId: "d1" }],
+        hard: [
+          {
+            type: "fixture_on_date",
+            date: "2026-08-10",
+            selector: { kind: "id", fixtureId: "pinned" },
+            scope: { kind: "competition" },
+          },
+        ],
+      };
+      // 22:00, 22:40 and 23:20 local fill the session's Monday half exactly; the
+      // 23:20 card is IMMOVABLE, so the pinned fixture is the one that has to go.
+      const existing = [overnightCard("immovable", "2026-08-10T22:20:00Z")];
+      const proposal = [
+        overnightCard("free-a", "2026-08-10T21:00:00Z"),
+        overnightCard("free-b", "2026-08-10T21:40:00Z"),
+        overnightCard("pinned", "2026-08-10T22:20:00Z"),
+      ];
+      const before = validateAssignments(proposal, config, existing);
+      expect(before.filter(isBlockingConflict)).toHaveLength(1); // the court clash
+      expect(before.filter((c) => c.reason === "instruction")).toEqual([]);
+
+      // `repairAndVerify` is the assertion: with nothing relaxed the board it
+      // hands back must satisfy the verifier outright.
+      const r = await repairAndVerify({ proposal, config, existing, budgetMs: 60_000 });
+      expect(r.status).toBe("repaired");
+      if (r.status !== "repaired") return;
+      expect(r.relaxed).toEqual([]);
+      const byId = new Map(r.assignments.map((a) => [a.fixtureId, a]));
+      // The pinned card is still on Monday, in the ORG zone — not on Tuesday
+      // wearing Monday's label.
+      expect(dayKeyInTz(byId.get("pinned")!.startAt, "Europe/London")).toBe("2026-08-10");
+      expect(validateAssignments(r.assignments, config, existing)).toEqual([]);
+      // Two moves, because one is not enough once Tuesday's small hours are off
+      // limits to the pinned fixture.
+      expect(r.moved).toHaveLength(2);
     },
     SOLVE_TIMEOUT,
   );

@@ -73,8 +73,10 @@ export interface Interval {
   to: number;
 }
 
-/** One calendar day in the org zone (or one session window). Half-open on the
- *  instants, like every other window in the engine. */
+/** One calendar day in the org zone, or the part of one a session covers.
+ *  Half-open on the instants, like every other window in the engine. `ymd` is
+ *  always the org-zone date of EVERY instant in `[from, to)` — the invariant the
+ *  day-shaped instruction rules read it for. */
 export interface DayBucket {
   ymd: string;
   from: number;
@@ -176,15 +178,48 @@ function subtractRange(intervals: readonly Interval[], lo: number, hi: number): 
 // --- day buckets -----------------------------------------------------------
 
 /**
+ * Cuts `[from, to)` at the org zone's midnights, appending each slice to `out`.
+ *
+ * The shared walk behind both of `dayBuckets`' branches, so a bucket's `ymd` is
+ * the date of every instant it holds no matter which branch produced it.
+ *
+ * The 4000-slice cap is shared across the whole call: a competition is days, not
+ * centuries, and the cap is insurance against a zone whose midnight arithmetic
+ * fails to advance, which would otherwise spin forever inside a pure function.
+ */
+function splitAtMidnights(from: number, to: number, tz: string, out: DayBucket[]): void {
+  let cursor = from;
+  while (cursor < to && out.length < 4000) {
+    const ymd = dayKeyInTz(cursor, tz);
+    // NEVER `cursor + 86_400_000`: the DST fall-back day is 25 hours long, and
+    // a fixed step would drift the bucket boundaries off the org's midnight.
+    const next = Math.min(to, zonedTimeToUtc(ymdAddDays(ymd, 1), "00:00", tz));
+    if (next <= cursor) break;
+    out.push({ ymd, from: cursor, to: next });
+    cursor = next;
+  }
+}
+
+/**
  * The calendar days a repair may place into, walked in the ORG zone.
  *
- * Session windows win when present: they are absolute instants and are the
- * documented escape hatch for a division whose zone differs from the org's, so
- * a day walk would be re-deriving something the organiser already stated.
+ * Session windows win over the pack window when present: they are absolute
+ * instants and are the documented escape hatch for a division whose zone differs
+ * from the org's, so a day walk over the window would be re-deriving something
+ * the organiser already stated.
+ *
+ * They do NOT win over the day boundary itself. A session running 22:00 → 02:00
+ * is two buckets, cut at the org's midnight, because `ymd` is what every
+ * day-shaped instruction rule resolves against and the verifier asks
+ * `dayKeyInTz(a.startAt)` of each start individually. Labelled whole with
+ * `dayKeyInTz(session.from)`, the hours after midnight wore the previous day's
+ * date and `buildDomains` admitted starts the verifier scored on the next one —
+ * under `instruction`, so the strict pass reported `repaired` with `relaxed: []`
+ * and `repairAndVerify` threw on the board it had just produced.
  *
  * Without a zone there is nothing to bucket BY — the verifier skips every
- * day-shaped rule in that state — so the whole window comes back as one bucket
- * rather than being silently sliced in UTC.
+ * day-shaped rule in that state — so each window comes back whole rather than
+ * being silently sliced in UTC.
  */
 export function dayBuckets(
   config: Pick<VerifyConfig, "tz" | "window" | "sessionWindows">,
@@ -192,28 +227,21 @@ export function dayBuckets(
   const tz = config.tz;
   const sessions = config.sessionWindows ?? [];
   if (sessions.length > 0) {
-    return sessions
-      .filter((w) => w.to > w.from)
-      .map((w) => ({ ymd: tz === undefined ? "" : dayKeyInTz(w.from, tz), from: w.from, to: w.to }))
-      .sort((a, b) => a.from - b.from || a.to - b.to);
+    const out: DayBucket[] = [];
+    for (const w of sessions) {
+      if (w.to <= w.from) continue;
+      if (tz === undefined) out.push({ ymd: "", from: w.from, to: w.to });
+      else splitAtMidnights(w.from, w.to, tz, out);
+    }
+    // Session order is the caller's; bucket order is chronological, so the same
+    // config always encodes identically.
+    return out.sort((a, b) => a.from - b.from || a.to - b.to);
   }
   const window = config.window;
   if (window === undefined || window.to <= window.from) return [];
   if (tz === undefined) return [{ ymd: "", from: window.from, to: window.to }];
   const out: DayBucket[] = [];
-  let cursor = window.from;
-  // A competition window is days, not centuries. The cap is insurance against a
-  // zone whose midnight arithmetic fails to advance, which would otherwise spin
-  // forever inside a pure function.
-  while (cursor < window.to && out.length < 4000) {
-    const ymd = dayKeyInTz(cursor, tz);
-    // NEVER `cursor + 86_400_000`: the DST fall-back day is 25 hours long, and
-    // a fixed step would drift the bucket boundaries off the org's midnight.
-    const to = Math.min(window.to, zonedTimeToUtc(ymdAddDays(ymd, 1), "00:00", tz));
-    if (to <= cursor) break;
-    out.push({ ymd, from: cursor, to });
-    cursor = to;
-  }
+  splitAtMidnights(window.from, window.to, tz, out);
   return out;
 }
 
@@ -222,9 +250,9 @@ export function dayBuckets(
  * each end. The counting unit for anything the verifier tallies per day.
  *
  * `dayBuckets` is the wrong tool for that job twice over: it CLIPS its first and
- * last entries to the window it was handed, and it returns one bucket per
- * SESSION when sessions are configured. Both make its entries something other
- * than a calendar day, and `validateInstructionRules` counts calendar days —
+ * last entries to the window it was handed, and when sessions are configured it
+ * returns only the slices those sessions cover. Both make its entries something
+ * other than a whole calendar day, and `validateInstructionRules` counts them —
  * a start in a clipped-off remainder is then counted by the verifier and by no
  * literal of the encoder, which is how a per-day cap came to be enforced on part
  * of a day only.
