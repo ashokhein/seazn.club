@@ -4982,7 +4982,18 @@ async function configSnapshotSuite(admin: Session, adminEmail: string): Promise<
       select id, is_staff, staff_role from users where email = ${adminEmail}`;
     const hatch = `/api/admin/fixtures/${fx.fixtureId}/config-snapshot`;
     const asOutsider = await raw(admin, hatch, "POST", { reason: "not staff" });
-    check("V347 the re-snapshot hatch refuses a non-staff caller", asOutsider.status >= 400);
+    // The EXACT code, not `>= 400`: that also swallows a 500, so a route that
+    // crashed on every call would read as "properly guarded". AuthError → 401
+    // through the shared handler.
+    check("V347 the re-snapshot hatch refuses a non-staff caller", asOutsider.status === 401);
+
+    // SUPERADMIN, not merely staff. The discarded config survives only in the
+    // audit row this writes; a support-role operator passes `requireStaff` and
+    // must still be refused, so this is the one caller whose verdict differs
+    // between the two guards.
+    await db`update users set is_staff = true, staff_role = 'support' where id = ${me.id}`;
+    const asSupport = await raw(admin, hatch, "POST", { reason: "support is not superadmin" });
+    check("V347 the re-snapshot hatch refuses a support-role staff user", asSupport.status === 401);
 
     await db`update users set is_staff = true, staff_role = 'superadmin' where id = ${me.id}`;
     try {
