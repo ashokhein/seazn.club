@@ -43,7 +43,38 @@ Only `min_rest_minutes` is placed around today. The other five are reported by t
 
 ---
 
-### Task 1: Normalise both sides of every scoped comparison
+### Task 1: WITHDRAWN — #449 and #450 do not live in this file
+
+**Executed 2026-08-05. All three tests passed as written, so the stop condition
+fired and no change was made to `scopeCoversFixture`.** The function is correct:
+it compares the strings it is given. The divergence is in the BUILDERS, in
+`apps/web`, exactly as the bug class predicts — two producers, one comparison.
+
+Verified against `origin/main` @ `14b8e5f6`:
+
+- **#449 (pool).** `schedule-ai.ts:902` builds the placer's input as
+  `poolId: f.pool_id` — a **uuid**. `schedule-ai.ts:978` builds the pack as
+  `pool: poolKey.get(f.pool_id)` — the **`pools.key`** (`"A"`, `"B"`), which
+  becomes `Assignment.poolId`. `toRuleFixture` (`:1563`) stamps that same key
+  onto `RuleFixture.poolId`, and because `scopeCoversFixture` reads
+  `f?.poolId ?? a.poolId`, the RuleFixture value MASKS the assignment's. One
+  division, two namespaces, at most one side ever binding. The same field keys
+  `restByGroup`. The joint twin is `competition-schedule-ai.ts:1146`.
+- **#450 (person).** `personKeyResolver` collapses roster rows to
+  `name:<normalised>` and `schedule-ai.ts:631` maps every roster through it, so
+  the placer's and verifier's ROWS already agree. Nothing maps
+  `hard[].scope.personKey`. A rule authored against a person uuid stops binding
+  the moment that person collapses. **This is not fixable inside the engine:**
+  rebuilding `name:<normalised>` from a uuid needs the person-name map, which
+  the engine does not have and should not be given. The fix belongs beside the
+  `identity.keyOf` call sites in `apps/web`.
+
+Both therefore move to **Wave 1b**, whose plan must cover them. Note
+`schedule-ai-parse.ts:50` narrows the model to competition/division scopes, so
+pool- and person-scoped rules reach the engine only via durable
+`schedule_settings` config — which is why no AI-path test ever caught this.
+
+The original Task 1 text follows for the record; do not execute it.
 
 Closes #449 (pool key vs uuid) and #450 (person name vs uuid). `scopeCoversFixture` compares `scope.pool` against `a.poolId`, and `scope.personKey` against `a.people` — but the two sides are produced by different builders, so one may hold a uuid while the other holds a pool key or a `name:<normalised>` collapse key.
 
@@ -300,8 +331,9 @@ describe("placer honours max_fixtures_per_day on the ORG day (#463)", () => {
         constraints: {
           hard: [
             {
+              // `count`, NOT `max` — verified at constraints.ts:70.
               type: "max_fixtures_per_day",
-              max: 2,
+              count: 2,
               scope: { kind: "entrant", entrantId: "e1" },
             },
           ],
@@ -519,7 +551,7 @@ import { slotFixtures, validateAssignments } from "./calendar.ts";
 // Feed the placer's OWN OUTPUT back to the verifier. Any family the placer
 // does not honour shows up here as a violation the placer just created.
 const FAMILIES = [
-  { type: "max_fixtures_per_day", max: 2, scope: { kind: "entrant", entrantId: "e1" } },
+  { type: "max_fixtures_per_day", count: 2, scope: { kind: "entrant", entrantId: "e1" } },
   { type: "not_before", time: "09:00", scope: { kind: "division", divisionId: "d1" } },
   { type: "not_after", time: "20:00", scope: { kind: "division", divisionId: "d1" } },
   { type: "fixture_on_weekday", weekday: 6, scope: { kind: "division", divisionId: "d1" } },
