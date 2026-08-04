@@ -921,6 +921,12 @@ export async function buildSchedulePack(
         // 1970-01-01 as the draft time for every fixture (#397). The honest
         // fallback is the first session hour of the window's first day, in the
         // org zone.
+        // `toSlotConfig`, not `toVerifyConfig`: this is the DRAFT placer, and it
+        // runs before any instruction has been compiled, so the only `hard`
+        // rules that exist here are the durable ones `toSlotConfig` already
+        // forwards (#447). The asymmetry is deliberate rather than the one that
+        // caused #447 — but it is the same shape, so if a compiled rule ever
+        // becomes available at draft time this must move to `toVerifyConfig`.
         config: toSlotConfig(
           settings,
           zonedTimeToUtc(dayKeyInTz(draftAnchorMs, orgTz), DEFAULT_SESSION_HOURS.start, orgTz),
@@ -1503,9 +1509,25 @@ function toObstacleAssignments(pack: SchedulePack): Assignment[] {
   }));
 }
 
+/** Exactly the fields `toRuleFixture` reads, and nothing else — the widened
+ *  parameter that lets a `fixtures` row reach the one builder (#447).
+ *
+ *  Named after what it is rather than where it comes from: `PackFixture`
+ *  satisfies it structurally, and `rowToRuleFixture` in `schedule.ts` builds one
+ *  by renaming a DB row's columns. Keeping it this narrow is the point — a
+ *  parameter that demanded the whole `PackFixture` would have forced the board
+ *  to grow a RuleFixture literal of its own. */
+export interface RuleFixtureSource {
+  id: string;
+  ext_key: string | null;
+  pool: string | null;
+  feeds: { winner_to: string | null };
+}
+
 /**
- * THE one place a `RuleFixture` is built — for the single-division pack here and
- * for both joint producers in `competition-schedule-ai.ts` (#443).
+ * THE one place a `RuleFixture` is built — for the single-division pack here,
+ * for both joint producers in `competition-schedule-ai.ts` (#443), and for the
+ * board paths via `rowToRuleFixture` (#447).
  *
  * It is one function rather than three literals because of what #443 was: two
  * copies of a join drifted onto a shared wrong assumption, and the second copy
@@ -1521,11 +1543,19 @@ function toObstacleAssignments(pack: SchedulePack): Assignment[] {
  * displaying as enforced while binding nothing at all. One producer means one
  * thing to guard, and `schedule-ai-repair.test.ts` guards it.
  *
- * `divisionId` is a parameter because the two packs source it differently: the
+ * `divisionId` is a parameter because the packs source it differently: the
  * single-division pack takes it from the division it is a pack OF, the joint
  * pack from each fixture's own `division_id`.
+ *
+ * The parameter is `RuleFixtureSource`, not `PackFixture`, since #447: the board
+ * paths (`schedule.ts`) hold the same five facts on a `fixtures` ROW under
+ * different column names, and they need a `RuleFixture` too. Widening the
+ * parameter to exactly the fields this function reads lets `rowToRuleFixture`
+ * rename its columns and delegate here, so there is still ONE assignment of
+ * `winnerTo` in the codebase and still one thing to guard — rather than a second
+ * builder in a second module, which is precisely the shape #443 was.
  */
-export function toRuleFixture(f: PackFixture, divisionId: string): RuleFixture {
+export function toRuleFixture(f: RuleFixtureSource, divisionId: string): RuleFixture {
   return {
     id: f.id,
     extKey: f.ext_key,

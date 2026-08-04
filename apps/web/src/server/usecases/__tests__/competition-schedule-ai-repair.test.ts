@@ -284,20 +284,33 @@ describe("joint RuleFixture producers stay in the fixture-id namespace (#443)", 
     expect(feeds[0]!.divisionId).toBe(D1);
   });
 
-  it("every RuleFixture in both usecases comes from the ONE shared builder", () => {
+  it("every RuleFixture in all three usecases comes from the ONE shared builder", () => {
     // This is what makes the guard above cover `verifyJoint` too, which needs a
     // whole plan to call and is not worth building one for. #443 was two copies
     // of a join drifting onto a shared wrong assumption; the durable fix is that
     // there is only ever one copy. `winnerTo:` is the field only a RuleFixture
     // literal carries, so counting it counts the producers.
+    //
+    // `schedule.ts` joined the list in #447: the board paths need RuleFixtures
+    // too, and they hold the same five facts on a `fixtures` ROW under different
+    // column names. That is a signature problem, not a data one, so
+    // `rowToRuleFixture` renames its columns and delegates rather than writing a
+    // fourth literal — which is why the count below stays at one.
     const read = (rel: string): string =>
       readFileSync(new URL(rel, import.meta.url), "utf8");
     const single = read("../schedule-ai.ts");
     const joint = read("../competition-schedule-ai.ts");
+    const board = read("../schedule.ts");
     const producers = (s: string): number => (s.match(/winnerTo:/g) ?? []).length;
 
     expect(/export function toRuleFixture\(/.test(single)).toBe(true);
     expect(producers(single)).toBe(1); // the builder itself
     expect(producers(joint)).toBe(0); // both joint sites delegate to it
+    expect(producers(board)).toBe(0); // and so does the board's row adapter
+    // Anchored on the RETURN, not on a bare `toRuleFixture(`: the loose form is
+    // a substring of `export function rowToRuleFixture(`, so it would pass even
+    // if the delegation had been replaced by a literal. The real teeth are the
+    // zero above; this pins that the delegate is what produces the value.
+    expect(/return toRuleFixture\(/.test(board)).toBe(true);
   });
 });
