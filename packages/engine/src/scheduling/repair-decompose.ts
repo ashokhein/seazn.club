@@ -229,8 +229,12 @@ export interface DecomposedRepairResult {
   minimality: MinimalityCertificate;
   mode: DecompositionMode;
   modeReason?: DecompositionModeReason;
-  /** Conflicts the board still carries, all of them inside components this call
-   *  did not resolve. Empty on `repaired` and `clean`. */
+  /** Conflicts the board still carries. Empty on `clean`, and on `repaired`
+   *  unless a component relaxed families — a relaxed answer is allowed to leave
+   *  NON-blocking conflicts behind, and says which families it dropped. Anything
+   *  here is either inside a component this call did not resolve, or inside one
+   *  that relaxed; a blocking conflict anywhere else throws instead of
+   *  returning. */
   residual: readonly Conflict[];
 }
 
@@ -465,7 +469,13 @@ async function decomposeAndSolve(
       continue;
     }
 
-    const frozen = [...existing, ...proposal.flatMap((a) => (own.has(a.fixtureId) ? [] : [board.get(a.fixtureId)!]))];
+    // THE WHOLE REST OF THE BOARD, at its current placement: the caller's own
+    // immovables plus every other component, committed ones included. This is
+    // what makes a component's answer legal against cards it never looked at.
+    const frozen = [
+      ...existing,
+      ...proposal.flatMap((a) => (own.has(a.fixtureId) ? [] : [board.get(a.fixtureId)!])),
+    ];
 
     // The limit is a statement about what ONE solve can reach, so it applies to
     // components only. In `whole_board` mode there is nothing to gate — the
