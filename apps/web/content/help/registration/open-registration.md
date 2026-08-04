@@ -28,6 +28,16 @@ They get a **reference number** like `SZ-7F3K-Q2ND` and a tear-off ticket — th
 
 The **Registrations** console opens on a **pulse strip** — confirmed / holding / waitlisted counts against capacity, money collected and due, and the next payment deadline — with the list below split into **Confirmed / Pending / Waitlist / All** tabs. Row actions are grouped so the split is unmistakable: **Spot** actions change who's in (Approve, Waitlist, **Withdraw** — frees the place and auto-refunds before your *refund lock* date), while **Money** actions only move money (**Mark paid** for cash/bank fees, **Waive fee** for comped entries — both logged — and **Refund**, which returns the fee while the entry keeps its spot). Entries sharing a contact email with another active entry carry a small *duplicate contact* hint — often legitimate, like a parent entering two kids.
 
+## Linking an entry to an account
+
+Registration never requires an account — anyone can enter with just an email address, and that stays true.
+
+A registrant who happens to be signed in sees one extra tick box: **I'm registering myself**. It names the account it would link to, so nobody on a shared device links an entry to whoever used the browser last. When they tick it, every division they enter attaches to the same player record, so their results, discipline history and profile photo stay together instead of splitting across a separate record per entry. Team entries add a follow-up: **Which player are you?**, so the roster row that is actually them gets the link and their team-mates are unaffected.
+
+Left unticked — or signed out — the entry behaves exactly as it always has.
+
+The tick box disappears whenever guardian details are in play, and the entry is never linked in that case even if the box was ticked first. A parent entering two children is signed in as one person for both, so linking there would fuse the two children into a single player record and merge their results. Matching names or dates of birth are only ever flagged for you to review; nothing is ever merged automatically.
+
 ## Under-18 divisions
 
 Youth divisions automatically add a guardian-consent step and shorten player names on public pages ([details](/help/registration/youth)).
