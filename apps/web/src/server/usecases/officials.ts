@@ -151,9 +151,12 @@ export async function inviteOfficial(
       select ${tx(COLS)} from officials where id = ${officialId}`;
     if (!row) throw new HttpError(404, "official not found");
     if (!row.person_id) {
+      // #402 — the OFFICIAL lane. persons_org_user_lane_uq is unique on
+      // (org_id, user_id, lane), so an official person minted here can never
+      // collide with — or be resolved as — the same human's player person.
       const [person] = await tx<{ id: string }[]>`
-        insert into persons (org_id, full_name)
-        values (${auth.orgId}, ${row.display_name}) returning id`;
+        insert into persons (org_id, full_name, lane)
+        values (${auth.orgId}, ${row.display_name}, 'official') returning id`;
       row.person_id = person!.id;
     }
     const [updated] = await tx<OfficialRow[]>`

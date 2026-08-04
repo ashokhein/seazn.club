@@ -16,6 +16,7 @@ import { sql } from "@/lib/db";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
+import { createOfficial, inviteOfficial } from "../officials";
 import {
   confirmRegistration,
   putRegistrationSettings,
@@ -149,5 +150,77 @@ describe.skipIf(!HAS_DB)("guardian anti-merge (permanent regression guard, #396)
        where entrant_id in (${one.entrant_id}, ${two.entrant_id})`;
     expect(members).toHaveLength(2);
     expect(members[0].person_id).not.toBe(members[1].person_id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #402 — the lane discriminator that finally makes the withdrawn V345 index
+// landable. `(org_id, user_id)` is NOT unique (a player person and an official
+// person for one human), but `(org_id, user_id, lane)` is. These four tests pin
+// each edge of that claim: duplicates rejected, BOTH lanes accepted, anonymous
+// rows unconstrained, and inviteOfficial minting into the official lane so
+// registration's player-lane resolve can never grab an official's row.
+// ---------------------------------------------------------------------------
+describe.skipIf(!HAS_DB)("persons lane identity (#402)", () => {
+  it("rejects a second player-lane person for the same user in one org", async () => {
+    const { auth } = await seedOrg("pro");
+    const [user] = await sql<{ id: string }[]>`
+      insert into users (email, display_name, password_hash)
+      values (${`lane-${randomUUID().slice(0, 8)}@test.local`}, 'Lane Tester', 'x')
+      returning id`;
+
+    await sql`
+      insert into persons (org_id, full_name, user_id, lane)
+      values (${auth.orgId}, 'Lane Tester', ${user.id}, 'player')`;
+
+    await expect(
+      sql`insert into persons (org_id, full_name, user_id, lane)
+          values (${auth.orgId}, 'Lane Tester Again', ${user.id}, 'player')`,
+    ).rejects.toThrow(/persons_org_user_lane_uq/);
+  });
+
+  it("accepts the same user in BOTH lanes — the case that killed V345", async () => {
+    const { auth } = await seedOrg("pro");
+    const [user] = await sql<{ id: string }[]>`
+      insert into users (email, display_name, password_hash)
+      values (${`dual-${randomUUID().slice(0, 8)}@test.local`}, 'Dual Role', 'x')
+      returning id`;
+
+    await sql`insert into persons (org_id, full_name, user_id, lane)
+              values (${auth.orgId}, 'Dual Role', ${user.id}, 'player')`;
+    await sql`insert into persons (org_id, full_name, user_id, lane)
+              values (${auth.orgId}, 'Dual Role', ${user.id}, 'official')`;
+
+    const [{ n }] = await sql<{ n: string }[]>`
+      select count(*)::text as n from persons
+       where org_id = ${auth.orgId} and user_id = ${user.id}`;
+    expect(Number(n)).toBe(2);
+  });
+
+  it("leaves anonymous persons unconstrained — many null user_ids in one org", async () => {
+    const { auth } = await seedOrg("pro");
+    await sql`insert into persons (org_id, full_name) values (${auth.orgId}, 'Anon One')`;
+    await sql`insert into persons (org_id, full_name) values (${auth.orgId}, 'Anon Two')`;
+    const [{ n }] = await sql<{ n: string }[]>`
+      select count(*)::text as n from persons
+       where org_id = ${auth.orgId} and user_id is null`;
+    expect(Number(n)).toBeGreaterThanOrEqual(2);
+  });
+
+  it("inviteOfficial mints an official-lane person", async () => {
+    const { auth } = await seedOrg("pro");
+    // inviteOfficial(auth, officialId, email) — it does not create the official,
+    // it ensures a person for one that already exists with person_id null.
+    const official = await createOfficial(auth, {
+      display_name: "Ref Without Account",
+      role_keys: ["referee"],
+    });
+    expect(official.person_id).toBeNull();
+    await inviteOfficial(auth, official.id, `ref-${randomUUID().slice(0, 8)}@test.local`);
+    const [row] = await sql<{ lane: string }[]>`
+      select p.lane from persons p
+        join officials o on o.person_id = p.id
+       where o.id = ${official.id}`;
+    expect(row.lane).toBe("official");
   });
 });
