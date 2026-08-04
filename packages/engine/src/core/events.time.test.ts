@@ -598,3 +598,212 @@ describe("fold — monotonic time guard (§3.3)", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// W4a (#425) T9 — the strict-on-write / tolerant-on-replay seam (§3.3).
+//
+// WHY THIS EXISTS. `foldMatch` is the ONLY state-derivation function, and it is
+// the write gate too: `append-event.ts` validates a candidate by folding the
+// WHOLE stream including it, through the same fold, against a cfg it rebuilds
+// live from `division.config` on every call. Two consequences compose:
+//
+//  1. every check in the fold ran identically on write and on read, so
+//     "refuse this on the write path only" was not expressible; and
+//  2. every READ replays from `init`, so a refusal computed from cfg fires on
+//     events already in the ledger the moment an organiser edits the config —
+//     with no event to void and no scorer action that recovers the fixture.
+//
+// The phase guard above is exactly that shape: it reads `playPhases(cfg)`, and
+// lowering `bestOf`, cutting an overtime period or renaming a phase makes every
+// already-recorded fixture in the division throw on every read. Its own comment
+// reasons entirely about write time ("a typo or a stale pad") — true of a NEW
+// event, false of HISTORY.
+//
+// `strictFromSeq` is the seam. It says which events are not yet in the ledger:
+// those get full validation, everything before them is replayed. One fold, one
+// traversal, no module signature change forced on the eleven sports.
+// ---------------------------------------------------------------------------
+describe("strict on write, tolerant on replay (§3.3 seam)", () => {
+  interface PhaseCfg {
+    phases: readonly string[];
+  }
+
+  // A module whose phase order comes OUT OF CFG — which is what makes the
+  // hazard reachable. `declaring` above hard-codes its list, so no config edit
+  // can shrink it; every real module derives the list from cfg (football from
+  // `extraTime.enabled` / `shootout`, the period kernel from `periods.count`,
+  // nested from `bestOf`).
+  const cfgDriven: FoldableModule<PhaseCfg, TickState> = {
+    ...toy,
+    playPhases: (cfg) => [...cfg.phases],
+  };
+
+  const WIDE: PhaseCfg = { phases: ["P1", "P2", "P3", "OT"] };
+  // The same division after an organiser cut overtime and the third period.
+  const NARROWED: PhaseCfg = { phases: ["P1", "P2"] };
+
+  it("a cfg that no longer has a recorded period leaves the fixture READABLE", () => {
+    // Recorded under the wide cfg — every stamp legal at the time.
+    const stream = [ev(at("P1", 10)), ev(at("P2", 20)), ev(at("P3", 30)), ev(at("OT", 5))];
+    expect(foldMatch(cfgDriven, WIDE, lineups, stream).applied).toBe(4);
+
+    // Same stream, narrowed cfg, read path (no options). Two of those periods
+    // no longer exist. It must still fold: there is no event to void here, so a
+    // throw is a permanently unviewable fixture.
+    expect(foldMatch(cfgDriven, NARROWED, lineups, stream).applied).toBe(4);
+  });
+
+  it("registers the vanished period rather than dropping the event", () => {
+    // Tolerating is not ignoring. The unknown phase joins the order the way the
+    // undeclared-module fallback already does, so the events still reach the
+    // module and still fold — `applied` counts dispatches, and a guard that
+    // silently skipped them would read 0 here.
+    const stream = [ev(at("P3", 30)), ev(at("P3", 31))];
+    expect(foldMatch(cfgDriven, NARROWED, lineups, stream).applied).toBe(2);
+  });
+
+  it("STILL REFUSES the candidate by name, while tolerating its history", () => {
+    // The seam in one fold: the same phase guard, two verdicts. This is the
+    // case that fails whichever half you drop — tolerate everything and a pad
+    // typo becomes permanent; refuse everything and the fixture bricks.
+    const history = [ev(at("P1", 10)), ev(at("P3", 30))]; // P3 no longer in cfg
+    const candidate = ev(at("QQ", 0)); // a typo the scorer just made
+    let caught: unknown;
+    try {
+      foldMatch(cfgDriven, NARROWED, lineups, [...history, candidate], {
+        strictFromSeq: candidate.seq,
+      });
+      expect.unreachable("the candidate's typo must still be refused");
+    } catch (err) {
+      caught = err;
+    }
+    expect(EngineError.is(caught, "INVALID_EVENT")).toBe(true);
+    // THE ASSERTION THAT MAKES THIS TEST NON-VACUOUS. Before the seam the fold
+    // threw on the HISTORY (P3) and never reached the candidate, so a bare
+    // `code` check was already green. The eventId is what says WHICH event was
+    // refused, and it must be the new one.
+    const data = (caught as EngineError).data as { eventId: string; period: string };
+    expect(data.eventId).toBe(candidate.id);
+    expect(data.period).toBe("QQ");
+    // And it must still name the phases, or the pad cannot tell the scorer what
+    // to retype. The list carries the recorded-but-unlisted P3 as well as the
+    // two the cfg declares — refusing to name a period the fold has just
+    // accepted out of history would be lying to the scorer.
+    expect((caught as EngineError).message).toContain("QQ");
+    expect((caught as EngineError).message).toContain("P1, P2, P3");
+  });
+
+  it("keeps the typo message and code for a NEW event under an unedited cfg", () => {
+    // The regression guard on the earlier fix: raising INVALID_EVENT (not the
+    // internal UNKNOWN_PHASE) and naming the valid phases is what turned a
+    // typo from a 500-and-a-page into something a scorer can retype.
+    const candidate = ev(at("SO", 0));
+    let caught: unknown;
+    try {
+      foldMatch(cfgDriven, WIDE, lineups, [ev(at("P1", 0)), candidate], {
+        strictFromSeq: candidate.seq,
+      });
+      expect.unreachable("an undeclared phase on a NEW event must be rejected");
+    } catch (err) {
+      caught = err;
+    }
+    expect(EngineError.is(caught, "INVALID_EVENT")).toBe(true);
+    expect(EngineError.is(caught, "UNKNOWN_PHASE")).toBe(false);
+    expect((caught as EngineError).data).toMatchObject({
+      period: "SO",
+      phaseOrder: ["P1", "P2", "P3", "OT"],
+    });
+    expect((caught as EngineError).message).toContain(
+      'is stamped in period "SO", which this sport does not have — expected one of P1, P2, P3, OT',
+    );
+  });
+
+  it("tolerates an order a cfg edit turned BACKWARDS, and still refuses a new one", () => {
+    // The monotonic guard orders against `playPhases(cfg)` too, so it is the
+    // same hazard by another door: P2-then-P3 is forward under the wide cfg and
+    // unorderable once P3 is gone. Appending the vanished phase at the end of
+    // the order is not enough on its own — the NEXT recorded stamp then sorts
+    // before it — so replay must not raise here either.
+    const stream = [ev(at("P1", 10)), ev(at("P3", 30)), ev(at("P2", 20))];
+    expect(foldMatch(cfgDriven, NARROWED, lineups, stream).applied).toBe(3);
+
+    // A genuinely backwards NEW stamp is still refused, under the same cfg.
+    const candidate = ev(at("P1", 1));
+    let caught: unknown;
+    try {
+      foldMatch(cfgDriven, NARROWED, lineups, [ev(at("P2", 900)), candidate], {
+        strictFromSeq: candidate.seq,
+      });
+      expect.unreachable("a backwards stamp on a NEW event must be rejected");
+    } catch (err) {
+      caught = err;
+    }
+    expect(EngineError.is(caught, "NON_MONOTONIC_TIME")).toBe(true);
+    expect((caught as EngineError).data).toMatchObject({ eventId: candidate.id });
+  });
+
+  it("does not let a tolerated backwards stamp drag the high-water mark back", () => {
+    // Replay accepts the out-of-order history, but the mark it leaves for the
+    // candidate is the furthest-forward stamp, not the last one seen. Otherwise
+    // tolerating history would quietly weaken the guard for the new event.
+    const candidate = ev(at("P2", 100));
+    let caught: unknown;
+    try {
+      foldMatch(cfgDriven, NARROWED, lineups, [ev(at("P2", 900)), ev(at("P1", 5)), candidate], {
+        strictFromSeq: candidate.seq,
+      });
+      expect.unreachable("the candidate is behind the furthest-forward stamp");
+    } catch (err) {
+      caught = err;
+    }
+    expect(EngineError.is(caught, "NON_MONOTONIC_TIME")).toBe(true);
+    expect((caught as EngineError).data).toMatchObject({
+      eventId: candidate.id,
+      previous: { period: "P2", elapsed: 900 },
+    });
+  });
+
+  it("tells the MODULE which events are new, so its own cfg checks can follow", () => {
+    // The core guard is one instance of the shape; period/kernel, football and
+    // nested each re-validate the stamp inside `apply()` because `apply` is
+    // called directly by the testkit. They need the same signal or the seam
+    // stops at the kernel boundary.
+    const seen: { id: string; strict: boolean | undefined }[] = [];
+    const spy: FoldableModule<PhaseCfg, TickState> = {
+      ...cfgDriven,
+      apply(state, event, ctx) {
+        seen.push({ id: event.id, strict: ctx?.strict });
+        return toy.apply(state, event);
+      },
+    };
+    const a = ev(at("P1", 1));
+    const b = ev(at("P1", 2));
+    const c = ev(at("P1", 3));
+    foldMatch(spy, WIDE, lineups, [a, b, c], { strictFromSeq: c.seq });
+    expect(seen).toEqual([
+      { id: a.id, strict: false },
+      { id: b.id, strict: false },
+      { id: c.id, strict: true },
+    ]);
+
+    // A read path passes no options at all, and then NOTHING is strict — that
+    // is the fail-safe direction: a caller that forgets cannot brick a fixture,
+    // it can only under-validate a write it was never making.
+    seen.length = 0;
+    foldMatch(spy, WIDE, lineups, [a, b, c]);
+    expect(seen.map((s) => s.strict)).toEqual([false, false, false]);
+  });
+
+  it("carries the seam through foldMatchWithStoppage as well", () => {
+    // The two entry points must not diverge: the stoppage variant is what the
+    // read side calls for "is play suspended right now?".
+    const stream = [ev(at("P3", 30))];
+    expect(foldMatchWithStoppage(cfgDriven, NARROWED, lineups, stream).state.applied).toBe(1);
+    const candidate = ev(at("QQ", 0));
+    expect(() =>
+      foldMatchWithStoppage(cfgDriven, NARROWED, lineups, [candidate], {
+        strictFromSeq: candidate.seq,
+      }),
+    ).toThrow(EngineError);
+  });
+});
