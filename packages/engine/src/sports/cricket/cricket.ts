@@ -729,7 +729,11 @@ function maybeComputeDlsTarget(state: CricketState): CricketState {
   };
 }
 
-function applyRevise(state: CricketState, payload: z.infer<typeof CricketRevise>): CricketState {
+function applyRevise(
+  state: CricketState,
+  payload: z.infer<typeof CricketRevise>,
+  strict: boolean,
+): CricketState {
   if (state.phase !== "pre" && state.phase !== "live") {
     wrongPhase(`revise not allowed in phase "${state.phase}"`);
   }
@@ -743,7 +747,15 @@ function applyRevise(state: CricketState, payload: z.infer<typeof CricketRevise>
     const open = openInnings(next);
     if (open !== null) {
       const { innings, index } = open;
-      if (newLimit < innings.legalBalls) {
+      // STRICT ONLY (§3.3 seam), like the three checks in `applySummary`. Both
+      // sides of this comparison are cfg-derived: the quota is
+      // `oversPerSide × cfg.ballsPerOver` while the innings is recorded in
+      // BALLS, so shortening the over shrinks the limit under history that
+      // cannot move. Ungated, an umpire-confirmed revise the ledger already
+      // holds is refused on every read, with nothing to void. What the revise
+      // MEANS on replay is unchanged — the quota is set to the recorded number
+      // of overs, and `autoClose` reads it the same way it always did.
+      if (strict && newLimit < innings.legalBalls) {
         invalid("revised overs are below the balls already bowled", {
           legalBalls: innings.legalBalls,
           newLimit,
@@ -2075,7 +2087,7 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
         return { ...state, interruptions: state.interruptions + 1 };
       }
       case "cricket.revise":
-        return applyRevise(state, parsePayload(CricketRevise, ev.payload, ev.type));
+        return applyRevise(state, parsePayload(CricketRevise, ev.payload, ev.type), strict);
       case "cricket.followon": {
         if (state.phase !== "live") wrongPhase(`follow-on in phase "${state.phase}"`);
         parsePayload(CricketFollowOn, ev.payload, ev.type);

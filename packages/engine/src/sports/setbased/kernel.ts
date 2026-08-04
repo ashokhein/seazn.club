@@ -574,7 +574,15 @@ function applySummary(
     const open = openSet(state);
     const index = open?.index ?? state.sets.length;
     const target = setTarget(params, index);
-    if (setWinner(home, away, target, params.winBy, params.cap) !== null) {
+    // STRICT ONLY (§3.3 seam), for the same reason as the two checks below the
+    // completed-set branch: "is this score already a finished set?" is built
+    // from `setTo`, `finalSetTo`, `winBy` and `cap` — all cfg. Lower any of them
+    // and a snapshot the ledger already holds becomes a completed score, so
+    // every read of that fixture refuses an event there is nothing to void. On
+    // replay the snapshot is banked as recorded: an open set that happens to
+    // read as complete under today's config stays open, and the rally or
+    // summary that actually closed it still closes it.
+    if (strict && setWinner(home, away, target, params.winBy, params.cap) !== null) {
       invalid("a partial set summary must not be a completed set score", { home, away });
     }
     if (open === null) {
@@ -1238,6 +1246,42 @@ export function makeSetBasedModule(
             setsPlayed += 1;
             resetSet();
           }
+          continue;
+        }
+        // A snapshot of the set being coarsened. The coarse stream may hold AT
+        // MOST ONE partial per set: flushing our own rally-derived partial and
+        // then passing this one through puts two in, and because the flush
+        // restarts the count at zero the second reads as a DECREASE and the
+        // coarse fold refuses the stream (§9.6).
+        if (event.type === summaryType && (event.payload as { partial?: boolean }).partial === true) {
+          const payload = event.payload as SetBasedSummary;
+          if ("by" in payload) {
+            // Entrant-keyed: ABSORBED, not dropped. `by` names one of the two
+            // slots outright — no lineup context needed — so the snapshot
+            // becomes the running count and any points it carries that were
+            // never recorded rally-by-rally survive the coarsening.
+            if (idA === null) {
+              idA = payload.by;
+              a = payload.forBy;
+              b = payload.forOpp;
+            } else if (payload.by === idA) {
+              a = payload.forBy;
+              b = payload.forOpp;
+            } else {
+              idB = payload.by;
+              b = payload.forBy;
+              a = payload.forOpp;
+            }
+            continue;
+          }
+          // Positional {home, away}: unresolvable here by design — coarsen
+          // segments on entrant ids alone and never learns which slot is home.
+          // Our own rally count is the record for a set we have been counting,
+          // so drop the snapshot (coarsening is allowed to discard, and it
+          // already discards `returns`); with nothing counted it is the only
+          // reading of the set there is, so keep it.
+          if (a !== 0 || b !== 0) continue;
+          out.push({ type: event.type, payload: event.payload });
           continue;
         }
         // W4 — an interruption (timeout / sanction / substitution) is
