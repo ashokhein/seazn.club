@@ -220,6 +220,22 @@ describe("encodeBuild — not_before / not_after", () => {
     });
   }, 180_000);
 
+  it("binds EVERY fixture the scope covers, not only the one it probed", async () => {
+    // The wall-clock verdict is resolved ONCE per (rule, slot) — it depends on
+    // the slot and on scope, never on which scoped row is asked — and is then
+    // applied to the whole scoped set. This is the case that makes that second
+    // half load-bearing: with two scoped fixtures, an encoder that bound only
+    // the row it probed leaves the other free to take a morning slot.
+    const cfg = twoSession();
+    const hard = [rule({ type: "not_before", time: "10:00", scope: { kind: "competition" } })];
+    await assertRuleParity({
+      cfg,
+      verify: { ...cfg, hard },
+      fixtures: [fx("f1", "E1", "E2"), fx("f2", "E3", "E4")],
+      slots: 8,
+    });
+  }, 300_000);
+
   it("binds only the fixtures the rule's SCOPE covers", async () => {
     // f1 is in division DA and bound; f2 is in DB and free to take a morning
     // slot. A filter that ignored `scopeCoversFixture` and bound the whole board
@@ -324,6 +340,27 @@ describe("encodeBuild — fixture_on_date / fixture_on_weekday", () => {
       slots: 8,
     });
   }, 180_000);
+
+  it("binds EVERY fixture the selector names, not only the first", async () => {
+    // A `terminal` selector under a competition scope covers every division's
+    // final — two fixtures here. An encoder that stopped at the first would
+    // leave the second free of a rule the referee still enforces on it.
+    const cfg = twoDay();
+    const hard = [
+      rule({
+        type: "fixture_on_date",
+        date: "2026-08-09",
+        selector: { kind: "terminal" },
+        scope: { kind: "competition" },
+      }),
+    ];
+    await assertRuleParity({
+      cfg,
+      verify: { ...cfg, hard, ruleFixtures: [rf("f1"), rf("f2")] },
+      fixtures: [fx("f1", "E1", "E2"), fx("f2", "E3", "E4")],
+      slots: 8,
+    });
+  }, 300_000);
 
   it("binds only the fixtures the SELECTOR names", async () => {
     // The selector names f1 by id; f2 is a fixture of the same competition and
