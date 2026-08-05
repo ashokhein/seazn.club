@@ -399,6 +399,11 @@ export function MergeConfirmDialog({
     [survivor.consent, absorbed.consent],
   );
   const ready = affirmed && (!dobDiffer || affirmedDob) && !busy;
+  // `mergePersons` writes only `consent` back to the surviving row — it never
+  // moves `persons.user_id`. Keeping the unlinked record of the pair therefore
+  // strands the player's account link on the tombstone, and swapping is the
+  // only way to avoid it, so this is said before the confirmation, not after.
+  const strandsAccount = !survivor.user_id && !!absorbed.user_id;
 
   const fields: { label: MessageKey; of: (p: DupPerson) => string }[] = [
     { label: "persons.dupes.field.name", of: (p) => p.full_name },
@@ -413,6 +418,7 @@ export function MergeConfirmDialog({
 
   const pill = (on: boolean, strong = false) => (
     <span
+      title={strong ? msg("persons.dupes.consent.after") : undefined}
       className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
         on
           ? "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-100"
@@ -472,25 +478,44 @@ export function MergeConfirmDialog({
           </p>
         )}
 
+        {strandsAccount && (
+          <p
+            data-account-warn="1"
+            className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800"
+          >
+            {msg("persons.dupes.account.warn")}
+            <button
+              type="button"
+              data-swap-account="1"
+              onClick={() => setKeepFirst((v) => !v)}
+              className="font-semibold underline underline-offset-2 hover:text-amber-900"
+            >
+              {msg("persons.dupes.dialog.swap")}
+            </button>
+          </p>
+        )}
+
         {/* The record diff. Genuinely wide, so it opts into its own scroll
             container above `sm`; below `sm` each field stacks instead. */}
-        <div className="scroll-x mt-4">
+        <div className="mt-4 flex justify-end">
+          <button
+            type="button"
+            data-swap="1"
+            onClick={() => setKeepFirst((v) => !v)}
+            className="rounded px-1 text-xs font-medium text-purple-700 underline underline-offset-2 hover:text-purple-900"
+          >
+            {msg("persons.dupes.dialog.swap")}
+          </button>
+        </div>
+        <div className="scroll-x mt-1">
           <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-[6.5rem_minmax(0,1fr)_1.75rem_minmax(0,1fr)]">
             <p className="hidden sm:block" />
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-purple-700">
+            <p className="hidden text-[11px] font-semibold uppercase tracking-[0.16em] text-purple-700 sm:block">
               {msg("persons.dupes.dialog.keepCol")}
             </p>
             <p className="hidden sm:block" />
-            <p className="mt-3 flex items-baseline justify-between gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400 sm:mt-0">
+            <p className="hidden text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400 sm:block">
               {msg("persons.dupes.dialog.absorbCol")}
-              <button
-                type="button"
-                data-swap="1"
-                onClick={() => setKeepFirst((v) => !v)}
-                className="rounded px-1 text-[11px] font-medium tracking-normal text-purple-700 underline underline-offset-2 hover:text-purple-900"
-              >
-                {msg("persons.dupes.dialog.swap")}
-              </button>
             </p>
 
             {fields.map(({ label, of }) => {
@@ -504,7 +529,16 @@ export function MergeConfirmDialog({
                   <p className="mt-2 text-[11px] uppercase tracking-[0.14em] text-purple-700 sm:mt-3 sm:self-center">
                     {msg(label)}
                   </p>
-                  <p className="text-sm tabular-nums text-slate-800 sm:mt-3 sm:self-center">
+                  {/* The column headers are the only thing naming the two
+                      sides, and they are off screen once the grid stacks — so
+                      below `sm` every value carries its own side. */}
+                  <p className="flex items-baseline gap-2 text-sm tabular-nums text-slate-800 sm:mt-3 sm:self-center">
+                    <span
+                      data-role="keep"
+                      className="w-16 shrink-0 text-[10px] uppercase tracking-[0.12em] text-purple-400 sm:hidden"
+                    >
+                      {msg("persons.dupes.dialog.keepShort")}
+                    </span>
                     {shown(kept)}
                   </p>
                   <p
@@ -516,11 +550,19 @@ export function MergeConfirmDialog({
                     {differs ? "≠" : "·"}
                   </p>
                   <p
-                    className={`text-sm tabular-nums sm:mt-3 sm:self-center ${
-                      differs ? "text-slate-400 line-through" : "text-slate-400"
+                    className={`flex items-baseline gap-2 text-sm tabular-nums text-slate-400 sm:mt-3 sm:self-center ${
+                      differs ? "sm:line-through" : ""
                     }`}
                   >
-                    {shown(gone)}
+                    <span
+                      data-role="absorb"
+                      className="w-16 shrink-0 text-[10px] uppercase tracking-[0.12em] text-slate-300 sm:hidden"
+                    >
+                      {msg("persons.dupes.dialog.absorbShort")}
+                    </span>
+                    <span className={differs ? "line-through sm:no-underline" : ""}>
+                      {shown(gone)}
+                    </span>
                   </p>
                 </div>
               );
@@ -545,7 +587,9 @@ export function MergeConfirmDialog({
                 data-resolved={resolved[key] ? "on" : "off"}
                 className="flex flex-wrap items-center gap-x-2 gap-y-1"
               >
-                <span className="w-16 shrink-0 text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                {/* Full width below `sm` so the equation below it never wraps
+                    mid-way and strands the resolved pill on its own line. */}
+                <span className="w-full text-[11px] uppercase tracking-[0.14em] text-slate-500 sm:w-16 sm:shrink-0">
                   {key in CONSENT_LABEL ? msg(CONSENT_LABEL[key]!) : key}
                 </span>
                 {pill((survivor.consent ?? {})[key] === true)}
@@ -560,9 +604,6 @@ export function MergeConfirmDialog({
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-[11px] text-purple-500">
-            {msg("persons.dupes.consent.after")}
-          </p>
         </section>
 
         <p className="mt-4 text-xs text-slate-500">{msg("persons.dupes.undoable")}</p>

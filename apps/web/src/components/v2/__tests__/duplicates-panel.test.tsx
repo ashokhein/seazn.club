@@ -91,6 +91,29 @@ describe("DuplicatesPanel — the merge confirmation", () => {
     expect(html).toMatch(/data-consent-key="public_photo"[^>]*data-resolved="on"/);
   });
 
+  // `mergePersons` writes only `consent` back to the survivor's row — it never
+  // moves `persons.user_id`. So keeping the UNLINKED record of the pair strands
+  // the player's account link on the tombstone, and the roster stops showing
+  // them as claimed. The organiser can only avoid that by swapping, so the
+  // dialog has to say so before they confirm.
+  it("warns when only the record being merged in carries the account link", () => {
+    const linked = person({ ...ABSORBED, user_id: "u9" });
+    const island = renderIsland(MergeConfirmDialog, dialogProps(SURVIVOR, linked));
+    const warned = () => island.tree().some((el) => propsOf(el)["data-account-warn"] !== undefined);
+    expect(warned()).toBe(true);
+    // Swapping puts the linked record on the surviving side; nothing is stranded.
+    (propsFor(island, "data-swap").onClick as () => void)();
+    expect(warned()).toBe(false);
+  });
+
+  // Below `sm` the three-column diff stacks and the column headers go with it,
+  // leaving two near-identical values with nothing to tell them apart.
+  it("names the side of every value, so the stacked diff still reads", () => {
+    const html = renderToStaticMarkup(<MergeConfirmDialog {...dialogProps(SURVIVOR, ABSORBED)} />);
+    expect(html.match(/data-role="keep"/g) ?? []).toHaveLength(5);
+    expect(html.match(/data-role="absorb"/g) ?? []).toHaveLength(5);
+  });
+
   it("sends the explicit confirmation, and the dob override only when the dates differ", async () => {
     posted.calls.length = 0;
     const same = renderIsland(MergeConfirmDialog, dialogProps(SURVIVOR, ABSORBED));

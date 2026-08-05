@@ -3178,5 +3178,8 @@
   "persons.dupes.reverse.body": "{absorbed} vuelve como ficha propia y {survivor} recupera los ajustes que tenía antes.",
   "persons.dupes.reverse.confirm": "Deshacer la fusión",
   "persons.dupes.reverse.working": "Deshaciendo…",
-  "persons.dupes.error": "No se pudo completar"
+  "persons.dupes.error": "No se pudo completar",
+  "persons.dupes.account.warn": "Solo la ficha que se va a fusionar está vinculada a la cuenta de un jugador. Conserva esa en su lugar o el vínculo se perderá.",
+  "persons.dupes.dialog.keepShort": "Conservar",
+  "persons.dupes.dialog.absorbShort": "Fusionar"
 }

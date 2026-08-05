@@ -3178,5 +3178,8 @@
   "persons.dupes.reverse.body": "{absorbed} komt terug als eigen record en {survivor} krijgt de eerdere instellingen terug.",
   "persons.dupes.reverse.confirm": "Samenvoegen ongedaan maken",
   "persons.dupes.reverse.working": "Bezig…",
-  "persons.dupes.error": "Dat is niet gelukt"
+  "persons.dupes.error": "Dat is niet gelukt",
+  "persons.dupes.account.warn": "Alleen het record dat wordt opgenomen is gekoppeld aan het account van een speler. Behoud dat record, anders blijft de koppeling achter.",
+  "persons.dupes.dialog.keepShort": "Behouden",
+  "persons.dupes.dialog.absorbShort": "Opnemen"
 }

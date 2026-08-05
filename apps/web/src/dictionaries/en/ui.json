@@ -3178,5 +3178,8 @@
   "persons.dupes.reverse.body": "{absorbed} comes back as its own record, and {survivor} returns to the settings it had before.",
   "persons.dupes.reverse.confirm": "Undo the merge",
   "persons.dupes.reverse.working": "Undoing…",
-  "persons.dupes.error": "That did not work"
+  "persons.dupes.error": "That did not work",
+  "persons.dupes.account.warn": "Only the record being merged in is linked to a player’s account. Keep that one instead, or the link is left behind.",
+  "persons.dupes.dialog.keepShort": "Keep",
+  "persons.dupes.dialog.absorbShort": "Merge in"
 }
