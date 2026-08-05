@@ -22,13 +22,23 @@
 // something to chew on. MEASURED on it:
 //
 //   * the whole run, unconstrained, costs 201_748 units and completes 4 tiers;
-//   * ONE check costs ~28_500 even when told it may spend 10, because z3 tests
-//     the limit at intervals rather than stopping on it.
+//   * a SUCCESSFUL check costs ~40_672;
+//   * an ABORTED check still costs ~28_500 — told it may spend 10, it spends
+//     28_668 — because z3 tests the limit at intervals rather than stopping on
+//     it, so every check carries a floor cost it pays regardless.
 //
-// That makes 60_000 the discriminating budget. It is twice what a single check
-// needs — so under the old set-it-once behaviour every check had room and the
-// run completed all four tiers, spending the full 201_748 — and a third of what
-// the run needs, so under a run total it stops early having spent 73_529.
+// THE BUDGET HERE IS 100_000, AND THE TWO NUMBERS IT SITS BETWEEN ARE THE WHOLE
+// TEST. It is ~2.5x a single successful check, so under the old set-it-once
+// behaviour every check has room and the run completes all four tiers, spending
+// the full 201_900. It is half what the run costs, so under a run total it
+// stops at tier 1 having spent 103_661. Both measured, on both behaviours.
+//
+// An earlier draft used 60_000 and was TOOTHLESS: that is under 1.5x a
+// successful check, so the old behaviour ran out of road too and produced the
+// same `budgetExpired: true` and the same early stop. The mutation sweep caught
+// it. The lesson is that ~28_500 is what a check that GIVES UP costs, and
+// sizing a per-check budget against it measures nothing.
+//
 // Asserting BOTH the tier count and the spend is deliberate: the tier count
 // alone would also move if the model got harder, and the spend alone would also
 // move if a check got cheaper.
@@ -88,24 +98,26 @@ describe("buildSchedule run budget", () => {
     });
     expect(generous.rlimitSpent).toBeGreaterThan(150_000);
 
-    const capped = await buildSchedule({ fixtures, config, rlimit: 60_000 });
+    const capped = await buildSchedule({ fixtures, config, rlimit: 100_000 });
+    // Each of these three a per-check limit gets wrong. Measured under the
+    // mutant that arms `rlimit` once per check at the nominal value: tiers 4,
+    // `budgetExpired` false, spent 201_900.
     expect(capped.budgetExpired).toBe(true);
-    // THE TWO HALVES OF R11. The run stopped early...
     expect(capped.tiersCompleted).toBeLessThan(generous.tiersCompleted);
-    // ...and it stopped because it had SPENT the allowance, not because a
-    // clock ran out. Under a per-check limit this run spends what `generous`
-    // spends — 201_748, over three times the budget — so the ceiling here is
-    // what tells the two behaviours apart. Two budgets of slack, because a
-    // check overshoots its limit by a floor cost it pays regardless.
-    expect(capped.rlimitSpent).toBeGreaterThan(60_000);
-    expect(capped.rlimitSpent).toBeLessThan(120_000);
+    // The run stopped because it had SPENT the allowance, not because a clock
+    // ran out — so the spend sits just above the budget...
+    expect(capped.rlimitSpent).toBeGreaterThan(100_000);
+    // ...and nowhere near the 201_748 the run costs when nothing bounds it.
+    // THIS is the assertion that tells a run total from a per-check limit; the
+    // slack covers one check's overshoot (3_661 measured here).
+    expect(capped.rlimitSpent).toBeLessThan(150_000);
   }, 300_000);
 
   it("still never returns a board below the greedy floor when the budget runs out", async () => {
     // Running out is a NORMAL outcome — the incumbent stands, `status` is
     // ordinary. What must not happen is the run handing back something worse
     // than today's board.
-    const capped = await buildSchedule({ fixtures, config, rlimit: 60_000 });
+    const capped = await buildSchedule({ fixtures, config, rlimit: 100_000 });
     const floor = boardMetrics(legalSeed(), config.courts, fixtures.length);
     expect(isStrictlyBetter(floor, capped.metrics)).toBe(false);
     expect(capped.status).toBe("ok");
@@ -115,8 +127,8 @@ describe("buildSchedule run budget", () => {
     // `rlimit` is a resource counter rather than a clock (D9), so WHERE a run
     // stops is a property of the search and not of the machine. Two runs at one
     // budget must stop identically; a larger budget must not buy a worse board.
-    const a = await buildSchedule({ fixtures, config, rlimit: 60_000 });
-    const b = await buildSchedule({ fixtures, config, rlimit: 60_000 });
+    const a = await buildSchedule({ fixtures, config, rlimit: 100_000 });
+    const b = await buildSchedule({ fixtures, config, rlimit: 100_000 });
     expect({ tiers: a.tiersCompleted, rows: a.assignments, metrics: a.metrics }).toEqual({
       tiers: b.tiersCompleted,
       rows: b.assignments,
