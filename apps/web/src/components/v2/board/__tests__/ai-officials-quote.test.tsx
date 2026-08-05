@@ -7,6 +7,13 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Dict } from "@/lib/i18n-constants";
 import { DictProvider } from "@/components/i18n/dict-provider";
+// #385: every surface that prices a run now reads its rung weights and token
+// budgets from the provider the board's RSC seeds — a client module cannot
+// resolve AI_RUNG_* for itself. Server-resolved DEFAULTS here: these suites are
+// about copy and wiring, and rung-config-provider.test.tsx owns the assertion
+// that an override actually reaches the card.
+import { RungConfigProvider } from "../rung-config-provider";
+import { resolveRungConfig } from "@/lib/ai-rung";
 import {
   officialsRungWeights,
   quoteRun,
@@ -58,6 +65,7 @@ function render(
   } = {},
 ): string {
   return renderToStaticMarkup(
+    <RungConfigProvider value={resolveRungConfig()}>
     <DictProvider dict={dict} locale="en">
       <AiOfficialsReview
         plan={over.plan ?? null}
@@ -84,7 +92,8 @@ function render(
         onContinue={() => {}}
         onPulse={() => {}}
       />
-    </DictProvider>,
+    </DictProvider>
+    </RungConfigProvider>,
   );
 }
 
@@ -94,6 +103,7 @@ function render(
  *  never that the step feeds it the string the adopt path actually sends. */
 function stepHtml(state: Partial<AiConsoleState>): string {
   return renderToStaticMarkup(
+    <RungConfigProvider value={resolveRungConfig()}>
     <DictProvider dict={dict} locale="en">
       {OfficialsStep({
         state: {
@@ -116,7 +126,8 @@ function stepHtml(state: Partial<AiConsoleState>): string {
         onAdopt: () => {},
         onPulse: () => {},
       })}
-    </DictProvider>,
+    </DictProvider>
+    </RungConfigProvider>,
   );
 }
 
@@ -141,11 +152,19 @@ describe("officials confirm card", () => {
     expect(creditsShown(render())).toBe(officials);
   });
 
-  it("names the credit count on the Re-plan button", () => {
-    const html = render();
-    const btn = html.slice(html.lastIndexOf("ai-run"));
-    expect(btn).toContain("1 credit");
-    expect(btn).toContain(enText["board.ai.officials.replan"]);
+  it("names the credit count on the run button", () => {
+    // #383: with no plan yet this button DRAFTS — the step no longer auto-fires
+    // one, so "re-plan" would name work that has not happened. The subject of
+    // this test is unchanged: the CTA names what the run costs.
+    const btn = (html: string) => html.slice(html.lastIndexOf("ai-run"));
+    const drafting = btn(render());
+    expect(drafting).toContain("1 credit");
+    expect(drafting).toContain(enText["board.ai.officials.run"]);
+
+    // Once a draft exists the same button refines it, and says so.
+    const refining = btn(render({ plan: planWith(0) }));
+    expect(refining).toContain("1 credit");
+    expect(refining).toContain(enText["board.ai.officials.replan"]);
   });
 
   it("quotes the empty-instruction draft at a flat 1 credit, with no rung control", () => {
@@ -257,7 +276,8 @@ describe("officials confirm card", () => {
     // Nothing below rung 1, so drive it from a pack the officials weights put
     // on rung 2: 300 + 0.25*40 + 1*10 = 320 -> rung 2.
     const html = renderToStaticMarkup(
-      <DictProvider dict={dict} locale="en">
+      <RungConfigProvider value={resolveRungConfig()}>
+    <DictProvider dict={dict} locale="en">
         <AiOfficialsReview
           plan={null}
           placements={[]}
@@ -283,7 +303,8 @@ describe("officials confirm card", () => {
           onContinue={() => {}}
           onPulse={() => {}}
         />
-      </DictProvider>,
+      </DictProvider>
+    </RungConfigProvider>,
     );
     expect(creditsShown(html)).toBe(1);
     expect(html).toContain(enText["board.ai.quote.underfunded"]);

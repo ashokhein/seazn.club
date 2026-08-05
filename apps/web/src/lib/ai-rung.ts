@@ -79,6 +79,46 @@ export function officialsRungWeights(): RungWeights {
   };
 }
 
+/**
+ * Every AI_RUNG_* override, resolved in ONE place, for handing to the client
+ * (#385).
+ *
+ * `envNumber` above reads `process.env[name]` with a COMPUTED key. Next
+ * replaces `process.env.FOO` by static substitution, and only for
+ * NEXT_PUBLIC_-prefixed names, so a computed lookup is never replaced at all:
+ * in a `"use client"` module every one of these calls falls through to its
+ * fallback. The confirm card therefore priced on defaults while the server
+ * priced on the overrides — and when an override RAISES a price that is a
+ * silent under-quote, the organiser charged more than the card promised.
+ *
+ * Nothing sets these variables today, which is exactly why this is worth fixing
+ * now: the mechanism exists to be used in production WITHOUT a deploy (see
+ * `tokenBudgetForCredits`' own note), so the first calibration change would
+ * introduce the divergence.
+ */
+export interface RungConfig {
+  scheduling: RungWeights;
+  officials: RungWeights;
+  /** Budget for 1..6 credits, resolved server-side. Index 0 is 1 credit. Six
+   *  because #350's joint solve tops out well inside that; the card falls back
+   *  to `tokenBudgetForCredits` for anything past the end rather than showing a
+   *  budget of `undefined`. */
+  budgets: number[];
+}
+
+/**
+ * SERVER-ONLY. Call it in an RSC and pass the result through
+ * `RungConfigProvider` — see the note on {@link RungConfig} for why a client
+ * module cannot resolve these for itself.
+ */
+export function resolveRungConfig(): RungConfig {
+  return {
+    scheduling: schedulingRungWeights(),
+    officials: officialsRungWeights(),
+    budgets: [1, 2, 3, 4, 5, 6].map((n) => tokenBudgetForCredits(n)),
+  };
+}
+
 export interface RungInput {
   movableFixtures: number;
   entrants: number;

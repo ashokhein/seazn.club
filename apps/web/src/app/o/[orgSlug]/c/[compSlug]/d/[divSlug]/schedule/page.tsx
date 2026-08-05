@@ -15,6 +15,8 @@ import { hasFeature } from "@/lib/entitlements";
 import { preferredCurrency } from "@/lib/currency-server";
 import { withTenant } from "@/lib/db";
 import { ScheduleBoard } from "@/components/v2/schedule-board";
+import { RungConfigProvider } from "@/components/v2/board/rung-config-provider";
+import { resolveRungConfig } from "@/lib/ai-rung";
 import { StandaloneScheduleSettings } from "@/components/v2/board/settings-panel";
 import { OfficialsPanel } from "@/components/v2/officials-panel";
 import { HistoryPanel } from "@/components/v2/history-panel";
@@ -194,6 +196,13 @@ export default async function DivisionSchedulePage({
                 <UpgradeGate feature="scheduling.board" compact />
               </div>
             )}
+            {/* #385: the AI rung weights and token budgets, resolved HERE —
+                this is a server component, and `resolveRungConfig` reads
+                AI_RUNG_* through a computed `process.env` key that Next never
+                substitutes into a client bundle. Without this the confirm card
+                prices on the built-in defaults while the server charges on the
+                overrides. */}
+            <RungConfigProvider value={resolveRungConfig()}>
             <ScheduleBoard
               divisions={[{ id: division.id, name: division.name, slug: division.slug, status: division.status, seq: Number(division.seq), schedule_locked: division.schedule_locked }]}
               stages={stages.map((s) => ({ id: s.id, division_id: id, seq: s.seq, kind: s.kind, name: s.name, status: s.status }))}
@@ -219,6 +228,7 @@ export default async function DivisionSchedulePage({
               showSettings={false}
               officialsWithBlackout={new Set(blackouts.map((b) => b.official_id)).size}
             />
+            </RungConfigProvider>
           </>
         )}
 

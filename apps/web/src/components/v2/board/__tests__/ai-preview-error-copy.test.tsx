@@ -17,6 +17,13 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Dict, Locale } from "@/lib/i18n-constants";
 import { DictProvider } from "@/components/i18n/dict-provider";
+// #385: every surface that prices a run now reads its rung weights and token
+// budgets from the provider the board's RSC seeds — a client module cannot
+// resolve AI_RUNG_* for itself. Server-resolved DEFAULTS here: these suites are
+// about copy and wiring, and rung-config-provider.test.tsx owns the assertion
+// that an override actually reaches the card.
+import { RungConfigProvider } from "../rung-config-provider";
+import { resolveRungConfig } from "@/lib/ai-rung";
 import { BriefStep } from "../ai-console";
 import { initialAiConsoleState, type AiConsoleState } from "../ai-console-state";
 import en from "@/dictionaries/en/ui.json";
@@ -113,6 +120,7 @@ function render(state: AiConsoleState, locale: Locale = "en"): string {
   const dict = DICTS[locale];
   const msg = formatter(dict);
   return renderToStaticMarkup(
+    <RungConfigProvider value={resolveRungConfig()}>
     <DictProvider dict={dict as unknown as Dict} locale={locale}>
       <BriefStep
         state={state}
@@ -130,7 +138,8 @@ function render(state: AiConsoleState, locale: Locale = "en"): string {
         lastRun={null}
         scheduleFrozen={false}
       />
-    </DictProvider>,
+    </DictProvider>
+    </RungConfigProvider>,
   );
 }
 

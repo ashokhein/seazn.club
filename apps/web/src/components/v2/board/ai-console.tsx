@@ -41,6 +41,7 @@ import {
 import { AiWishChips } from "./ai-wish-chips";
 import { AiPreflight, AiLastRun, type PreflightInput } from "./ai-preflight";
 import { AiQuoteCard, quoteFor, type QuoteCardLine } from "./ai-quote-card";
+import { useRungConfig } from "./rung-config-provider";
 import { compileWishes, deriveFreeText, joinNonEmpty, type Wish } from "./wish-compile";
 import { compileOfficialsWishes, type OfficialsWish } from "./officials-wish-compile";
 import { AiTrace, type TraceEvent } from "./ai-trace";
@@ -163,6 +164,11 @@ export function schedulePlanBody(
     mode: AiMode;
     officialsPolicy?: AiPlanRequest["officials_policy"] | null;
     prior?: AiPlanRequest["prior"] | null;
+    /** #387: the credits the confirm card SHOWED. The server compares it to
+     *  what it charges and records the divergence. Absent when no card was on
+     *  screen (the seq-conflict re-run), because silence must never be read as
+     *  "quoted zero". */
+    quotedCredits?: number;
   },
 ): AiPlanRequest {
   return {
@@ -186,6 +192,7 @@ export function schedulePlanBody(
     ...(state.preview.id ? { preview_id: state.preview.id } : {}),
     ...(args.officialsPolicy ? { officials_policy: args.officialsPolicy } : {}),
     ...(args.prior ? { prior: args.prior } : {}),
+    ...(args.quotedCredits !== undefined ? { quoted_credits: args.quotedCredits } : {}),
   };
 }
 
@@ -200,6 +207,8 @@ export function officialsPlanBody(
     /** Round-tripped assignments; the brief they were produced under comes from
      *  state, so the two halves of `prior` cannot describe different runs. */
     priorAssignments?: AiOfficialsPlanResponse["assignments"] | null;
+    /** #387 — see `schedulePlanBody`. */
+    quotedCredits?: number;
   },
 ): AiOfficialsPlanRequest {
   return {
@@ -215,6 +224,7 @@ export function officialsPlanBody(
           },
         }
       : {}),
+    ...(args.quotedCredits !== undefined ? { quoted_credits: args.quotedCredits } : {}),
   };
 }
 
@@ -518,7 +528,10 @@ export function AiConsole({
   // the write already forces a render on every path that sets it, so this is
   // a same-render swap, not a new one.
   const [officialsHadPrior, setOfficialsHadPrior] = useState(false);
-  const officialsAutoStarted = useRef(false);
+  // #385/#387: the SERVER's rung config, and the quotes the two confirm
+  // surfaces are showing. The run bodies send those numbers so the server can
+  // say whether what it charged is what the organiser was promised.
+  const rungConfig = useRungConfig();
   // Cancel any in-flight run on close/unmount (the board conditionally renders
   // the dock, so unmount cleanup covers close too) — its rejection is ignored.
   const abortRef = useRef<AbortController | null>(null);
@@ -605,6 +618,13 @@ export function AiConsole({
     const body = schedulePlanBody(state, {
       instruction,
       mode,
+      // #387: the price the brief step is showing. Built from the SAME pure
+      // `scheduleQuoteLines` + `quoteFor` pair the card renders — the whole
+      // point of this field is that it is the card's number, so recomputing it
+      // a second way here would make it measure nothing.
+      quotedCredits: quoteFor(scheduleQuoteLines(divisionId, brief, mode, state.scope, state.rung), {
+        weights: rungConfig.scheduling,
+      }).credits,
       // A dry officials-coverage preview rides along only when the division has a
       // saved policy (none is persisted today, so this is omitted — see the prop).
       officialsPolicy,
@@ -626,10 +646,9 @@ export function AiConsole({
         { method: "POST", json: body, signal: ac.signal },
       );
       priorInstruction.current = instruction;
-      // A new schedule invalidates the officials draft (reducer clears the plan);
-      // reset the auto-run latch so the officials step re-solves over the new
-      // times on next entry rather than showing stale assignments.
-      officialsAutoStarted.current = false;
+      // A new schedule invalidates the officials draft — the reducer clears the
+      // plan, so the officials step returns to its pre-run card and the
+      // organiser drafts again over the new times when they choose to (#383).
       dispatch({ type: "RUN_DONE", plan });
     } catch (err) {
       // A cancelled run is not an error — the console is closing or superseded.
@@ -644,7 +663,7 @@ export function AiConsole({
     // `state` whole, not a field list: the body builder reads the state object
     // itself (so a call site cannot hand it the wrong phase's rung), which means
     // a field list would go stale the moment the builder reads a new one.
-  }, [busy, divisionId, msg, officialsPolicy, state]);
+  }, [brief, busy, divisionId, msg, officialsPolicy, rungConfig, state]);
 
   // Phase B run. Empty instruction + no prior = the zero-token solver draft (the
   // auto-run on first entry); a non-empty instruction plans with the LLM; a
@@ -669,8 +688,25 @@ export function AiConsole({
       }));
       // Phase B's rung is read by the builder from `officialsRung` — never
       // passed in, so this call site cannot hand it Phase A's.
+      // #387: the officials card's own price. `freeDraft` is the SERVER's own
+      // predicate — `officials-ai.ts` takes `freeDraftQuote` iff the sent
+      // instruction is empty — and both spend paths (re-plan, adopt) supply
+      // that string themselves, so asking it of `opts.instruction` asks the
+      // question the server will ask of this very request.
+      const quotedCredits = quoteFor(
+        [
+          {
+            key: "officials",
+            label: null,
+            input: officialsQuoteInput(fixtures, schedule),
+            chosen: state.officialsRung,
+          },
+        ],
+        { weights: rungConfig.officials, freeDraft: opts.instruction.trim() === "" },
+      ).credits;
       const officialsBody = officialsPlanBody(state, {
         instruction: opts.instruction,
+        quotedCredits,
         schedule,
         policy: officialsPolicy ?? DEFAULT_OFFICIALS_POLICY,
         priorAssignments: opts.priorAssignments,
@@ -693,25 +729,16 @@ export function AiConsole({
       }
     },
     // See the note on `run`'s deps — the body builder reads `state` itself.
-    [busy, divisionId, msg, officialsPolicy, state],
+    [busy, divisionId, fixtures, msg, officialsPolicy, rungConfig, state],
   );
 
-  // Auto-run the free solver draft the first time the organiser reaches the
-  // officials step so it is never blank (design/v4/03 §3). Fires once per open;
-  // refines are manual. On error the plan stays null and the ref stays set, so
-  // it never retries in a loop — the inline error offers Re-plan.
-  useEffect(() => {
-    if (
-      state.step === "officials" &&
-      state.officialsPlan === null &&
-      state.schedulePlan !== null &&
-      !officialsAutoStarted.current &&
-      !busy
-    ) {
-      officialsAutoStarted.current = true;
-      void runOfficials({ instruction: "" });
-    }
-  }, [state.step, state.officialsPlan, state.schedulePlan, busy, runOfficials]);
+  // #383: the officials step used to auto-fire the solver draft here. That run
+  // spends 1 credit (`freeDraftQuote` is a price CAP, not zero — "free" means
+  // free of MODEL cost), so the organiser was charged before a confirm card
+  // could render: the one credit-spending path in the product with no pre-spend
+  // surface, and the one they could not decline. The card in the officials step
+  // now carries the flat 1-credit price and a button, exactly as this step's
+  // siblings do.
 
   // ---------------------------------------------------- apply orchestration (T15)
   // Chain the existing apply rails: a before-ai checkpoint, the schedule apply(s)
@@ -1087,6 +1114,11 @@ export function BriefStep({
   lastRun: AiLastResult | null;
 }) {
   const plural = usePlural();
+  // #385: the CTA and the confirm card price through the SAME server-resolved
+  // weights the card renders with. Letting `quoteFor` fall back to
+  // `schedulingRungWeights()` here would put a defaults-priced number on the
+  // button above a card priced on the overrides.
+  const cfg = useRungConfig();
   const tooShort = state.instruction.trim().length < 3;
   const presetNums = [1, 2, 3] as const;
   // ONE line — the division being planned. The joint competition console
@@ -1129,7 +1161,7 @@ export function BriefStep({
     ? runAction
     : msg("board.ai.quote.cta", {
         action: runAction,
-        credits: plural("board.ai.quote.credits", quoteFor(quoteLines).credits),
+        credits: plural("board.ai.quote.credits", quoteFor(quoteLines, { weights: cfg.scheduling }).credits),
       });
   return (
     <div className="space-y-3">
@@ -1291,7 +1323,7 @@ export function BriefStep({
       {cardVisible && state.preview.data && (
         <AiInstructionPreview
           preview={state.preview.data}
-          credits={quoteFor(quoteLines).credits}
+          credits={quoteFor(quoteLines, { weights: cfg.scheduling }).credits}
           onConfirm={run}
           onDismiss={() => dispatch({ type: "PREVIEW_DISMISS" })}
           onAsPreference={() => dispatch({ type: "PREVIEW_AS_PREFERENCE" })}

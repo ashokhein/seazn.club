@@ -56,6 +56,19 @@ vi.mock("@/lib/client-v1", async (importOriginal) => {
 // component with no provider tree. This is the same fallback `useMsg` already
 // takes there — the real runtime over the real English catalog — so the copy
 // the console builds is still the shipped copy.
+// #385: the console prices on the rung config the board's RSC resolved, read
+// through `useRungConfig`. The hookless harness has no provider tree — its
+// `useContext` returns the context DEFAULT, and this context has none on
+// purpose — so the hook is replaced with the server-resolved defaults. The
+// production guarantee (a missing provider throws) is pinned by
+// rung-config-provider.test.tsx, not weakened here.
+vi.mock("../rung-config-provider", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../rung-config-provider")>();
+  const { resolveRungConfig } = await import("@/lib/ai-rung");
+  const config = resolveRungConfig();
+  return { ...actual, useRungConfig: () => config };
+});
+
 vi.mock("@/components/i18n/dict-provider", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/i18n/dict-provider")>();
   const { plural } = await import("@/lib/i18n-runtime");
@@ -274,7 +287,8 @@ describe("what the CTA sends is what the receipt priced", () => {
     pickRung("d2", 3);
     // The pick reached the PRICE first — otherwise the body below could match
     // a receipt that never moved, and the two would agree about nothing.
-    expect(creditsOnCta()).not.toBe(quoted);
+    const repriced = creditsOnCta();
+    expect(repriced).not.toBe(quoted);
 
     await confirm();
 
@@ -290,6 +304,10 @@ describe("what the CTA sends is what the receipt priced", () => {
         instruction: BRIEF,
         rungs: { d2: 3 },
         previewId: PREVIEW_ID,
+        // #387: the number the CTA is showing, read off the CTA itself rather
+        // than restated — the whole point of the field is that the server can
+        // compare the charge against what this organiser was actually shown.
+        quotedCredits: repriced as number,
       }),
     );
     // Spelled out, so a change to jointRunBody cannot make both sides agree on
@@ -300,6 +318,7 @@ describe("what the CTA sends is what the receipt priced", () => {
       mode: "generate",
       rung_overrides: { d2: 3 },
       preview_id: PREVIEW_ID,
+      quoted_credits: repriced,
     });
   });
 

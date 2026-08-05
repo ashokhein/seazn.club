@@ -6644,6 +6644,10 @@ async function latestCompetitionEvent(
   parse_failed?: boolean;
   spent_tokens?: number;
   budget?: number;
+  /** #387: the `schedule.ai_quote_mismatch` payload — what the confirm card
+   *  quoted against what the run actually charged. */
+  quoted?: number;
+  charged?: number;
 } | null> {
   const sql = smokeDb();
   try {
@@ -7436,10 +7440,12 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
       const plusOrg = (await signIn(plus, `smoke-ai-plus-${tag}@example.com`)).org_id;
       await setPlan(plusOrg, "pro_plus", plus);
       const { compId, divId, stageId } = await seedPlannableAiDivision(plus, "AI Plus");
-      await v1(plus, "/api/v1/officials", "POST", {
-        display_name: `AI Ref ${tag}`,
-        role_keys: ["referee"],
-      });
+      const firstRefId = v1data<{ id: string }>(
+        await v1(plus, "/api/v1/officials", "POST", {
+          display_name: `AI Ref ${tag}`,
+          role_keys: ["referee"],
+        }),
+      ).id;
 
       // #398: carries a phrase the stage-1 compiler can turn into a typed rule
       // ("two matches per day"), so the pre-flight compile actually runs on this
@@ -7638,6 +7644,11 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
       const offRes = await v1(plus, `/api/v1/divisions/${divId}/officials/ai-plan`, "POST", {
         instruction: "",
         policy: { roles: ["referee"] },
+        // #387: what a confirm card would have shown. The empty-instruction
+        // path is priced at a flat 1 credit, so 3 is a deliberate divergence —
+        // the server must REPORT it and RECORD it, and must still return the
+        // plan (this is telemetry, not a gate).
+        quoted_credits: 3,
         schedule: plan.proposal.map((a) => ({
           fixture_id: a.fixture_id,
           scheduled_at: a.scheduled_at,
@@ -7651,6 +7662,8 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
           repair_rounds: number;
         };
         assignments: unknown[];
+        credits?: number;
+        quote_mismatch?: { quoted: number; charged: number };
       }>(offRes);
       check(
         "v4 AI/plus: officials ai-plan (empty instruction) returns a zero-token solver draft",
@@ -7667,6 +7680,88 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
       check(
         'v4 AI/plus: schedule.ai_officials_generated ledger row stamps model "solver-draft"',
         !!offEvent && offEvent.model === "solver-draft",
+      );
+
+      // #387 — quote/charge reconciliation.
+      check(
+        "#387: the officials run reports the card's quote against what it charged",
+        off.quote_mismatch?.quoted === 3 && off.quote_mismatch?.charged === off.credits,
+      );
+      check(
+        "#387: a mismatch does not withhold the plan — it is telemetry, not a gate",
+        offRes.status === 200 && off.assignments.length > 0,
+      );
+      const mismatchEvent = await latestCompetitionEvent(compId, "schedule.ai_quote_mismatch");
+      check(
+        "#387: the divergence is recorded on the competition ledger",
+        !!mismatchEvent && mismatchEvent.quoted === 3 && mismatchEvent.charged === 1,
+      );
+
+      // ---- #384: an adopted candidate reaches the SOLVE, not just the diff ----
+      //
+      // Adopting a candidate with an empty instruction used to be discarded:
+      // `prior.assignments` was consumed only as a diff baseline, so the plan
+      // was re-derived from the solver and the organiser's click vanished —
+      // while the diff, which DID read the prior, then reported their own
+      // adoption as something the AI had changed.
+      //
+      // NOT VACUOUS BY CONSTRUCTION: a second referee is added and the run
+      // above is used as the control, so the adopted official is deliberately
+      // the one the solver did NOT choose for that slot. If the adoption were
+      // dropped, the response would come back naming the control's pick.
+      const secondRefId = v1data<{ id: string }>(
+        await v1(plus, "/api/v1/officials", "POST", {
+          display_name: `AI Ref B ${tag}`,
+          role_keys: ["referee"],
+        }),
+      ).id;
+      const officialsSchedule = plan.proposal.map((a) => ({
+        fixture_id: a.fixture_id,
+        scheduled_at: a.scheduled_at,
+        court_label: a.court_label,
+      }));
+      const control = v1data<{
+        assignments: { fixtureId: string; officialId: string; roleKey: string }[];
+      }>(
+        await v1(plus, `/api/v1/divisions/${divId}/officials/ai-plan`, "POST", {
+          instruction: "",
+          policy: { roles: ["referee"] },
+          schedule: officialsSchedule,
+        }),
+      );
+      const target = control.assignments[0];
+      const adoptedId = target?.officialId === secondRefId ? firstRefId : secondRefId;
+      const adoptRes = await v1(plus, `/api/v1/divisions/${divId}/officials/ai-plan`, "POST", {
+        instruction: "",
+        policy: { roles: ["referee"] },
+        schedule: officialsSchedule,
+        prior: {
+          instruction: "",
+          assignments: control.assignments.map((a) =>
+            a.fixtureId === target?.fixtureId && a.roleKey === target?.roleKey
+              ? { ...a, officialId: adoptedId }
+              : a,
+          ),
+        },
+      });
+      const adopt = v1data<{
+        assignments: { fixtureId: string; officialId: string; roleKey: string }[];
+        diff: { changed: string[]; unchanged: string[] };
+      }>(adoptRes);
+      const adoptedSlot = adopt.assignments.find(
+        (a) => a.fixtureId === target?.fixtureId && a.roleKey === target?.roleKey,
+      );
+      check(
+        "#384: an adopted official survives the empty-instruction solve",
+        adoptRes.status === 200 && !!target && adoptedSlot?.officialId === adoptedId,
+      );
+      check(
+        "#384: the organiser's own adoption is not reported as AI-changed",
+        !!target && !adopt.diff.changed.includes(target.fixtureId),
+      );
+      check(
+        "#384: every other slot still comes back filled (an adopt does not blank the grid)",
+        adopt.assignments.length === control.assignments.length,
       );
 
       // ---- #396: a to-be-decided bracket slot is checked against everyone who

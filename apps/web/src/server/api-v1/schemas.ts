@@ -1695,6 +1695,22 @@ const AiRunPriceFields = {
   /** Single-division form. */
   rung: RungLiteral.optional(),
   predicted_rung: RungLiteral.optional(),
+  /**
+   * Set ONLY when the client's confirm card quoted a different number than the
+   * server charged (#387).
+   *
+   * The card computes its quote by calling the same pure function the server
+   * calls — deliberately, so there is one arithmetic implementation and no
+   * per-keystroke fetch. That rests on one premise: same function, same inputs,
+   * same environment. PR #359 found three ways it breaks and #385 closed the
+   * largest; this field makes any residual divergence VISIBLE instead of
+   * silent.
+   *
+   * Both directions are reported. An over-quote is a bad surprise on screen; an
+   * under-quote is a billing complaint. Absent means they agreed — or that the
+   * caller sent no quote at all, which is not the same as quoting zero.
+   */
+  quote_mismatch: z.object({ quoted: z.number().int(), charged: z.number().int() }).optional(),
   /** Joint (multi-division) form — issue #350. */
   discount: z.number().int().optional(),
   divisions: z
@@ -1751,6 +1767,18 @@ export const AiPlanRequest = z.object({
    * they always have.
    */
   preview_id: Uuid.optional(),
+  /**
+   * What the confirm card showed (#387). The server compares it against what it
+   * actually charged, reports the divergence on `quote_mismatch` and records a
+   * `schedule.ai_quote_mismatch` competition_event.
+   *
+   * OPTIONAL, and it must stay that way: server-side callers, smoke and every
+   * external consumer send none. `.positive()` rather than `.nonnegative()`
+   * because there is no such thing as a zero-credit quote — an absent value must
+   * never be read as "quoted nothing", and a client that means "I showed no
+   * price" says so by omitting the field.
+   */
+  quoted_credits: z.number().int().positive().optional(),
 });
 export type AiPlanRequest = z.infer<typeof AiPlanRequest>;
 
@@ -1934,6 +1962,18 @@ export const AiOfficialsPlanRequest = z.object({
   // Ignored on the empty-instruction path, which makes no model call and is
   // always priced at 1 credit.
   rung: RungLiteral.optional(),
+  /**
+   * What the confirm card showed (#387). The server compares it against what it
+   * actually charged, reports the divergence on `quote_mismatch` and records a
+   * `schedule.ai_quote_mismatch` competition_event.
+   *
+   * OPTIONAL, and it must stay that way: server-side callers, smoke and every
+   * external consumer send none. `.positive()` rather than `.nonnegative()`
+   * because there is no such thing as a zero-credit quote — an absent value must
+   * never be read as "quoted nothing", and a client that means "I showed no
+   * price" says so by omitting the field.
+   */
+  quoted_credits: z.number().int().positive().optional(),
 });
 export type AiOfficialsPlanRequest = z.infer<typeof AiOfficialsPlanRequest>;
 
@@ -2034,6 +2074,18 @@ export const AiCompetitionPlanRequest = z.object({
    *  a preview taken against ONE division is refused here, because its window
    *  was resolved from a different fixture count than this run's. */
   preview_id: Uuid.optional(),
+  /**
+   * What the confirm card showed (#387). The server compares it against what it
+   * actually charged, reports the divergence on `quote_mismatch` and records a
+   * `schedule.ai_quote_mismatch` competition_event.
+   *
+   * OPTIONAL, and it must stay that way: server-side callers, smoke and every
+   * external consumer send none. `.positive()` rather than `.nonnegative()`
+   * because there is no such thing as a zero-credit quote — an absent value must
+   * never be read as "quoted nothing", and a client that means "I showed no
+   * price" says so by omitting the field.
+   */
+  quoted_credits: z.number().int().positive().optional(),
 });
 export type AiCompetitionPlanRequest = z.infer<typeof AiCompetitionPlanRequest>;
 

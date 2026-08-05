@@ -35,6 +35,7 @@ import {
   type TokenMeter,
 } from "@/lib/ai-rung";
 import { deferred } from "@/lib/deferred";
+import { recordQuoteMismatch } from "./ai-quote-mismatch";
 import { maybeAlertExpensiveRun } from "@/server/usecases/ai-runs-admin";
 import {
   computeParticipants,
@@ -2893,6 +2894,16 @@ async function planForDivision(
     }),
   );
 
+  // #387: what the confirm card said, against what was actually charged.
+  // AFTER the ledger row above and outside every gate — the credit is already
+  // spent, so this reports and records; it never refuses.
+  const quote_mismatch = await recordQuoteMismatch(
+    auth,
+    { competitionId: gate.competitionId, divisionIds: [divisionId] },
+    input.quoted_credits,
+    quote.credits,
+  );
+
   const officials_coverage = input.officials_policy
     ? coveragePreview(pack, result.proposal, input.officials_policy)
     : null;
@@ -2949,5 +2960,7 @@ async function planForDivision(
     // whether the budget cut the run short, so the client can reconcile against
     // its own (advisory) prediction.
     ...meterStamp(quote, meter, parseStamp),
+    // #387 — present only when the card and the charge disagreed.
+    ...(quote_mismatch ? { quote_mismatch } : {}),
   };
 }

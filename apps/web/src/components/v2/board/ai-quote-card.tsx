@@ -37,6 +37,7 @@ import {
   type RungInput,
   type RungWeights,
 } from "@/lib/ai-rung";
+import { useRungConfig } from "./rung-config-provider";
 
 export const RUNGS: Rung[] = [1, 2, 3];
 
@@ -150,8 +151,20 @@ export function AiQuoteCard({
   busy: boolean;
 } & QuoteCardOptions) {
   const plural = usePlural();
-  const quote = quoteFor(lines, { weights, freeDraft });
+  // #385: the weights and budgets the SERVER resolved. `quoteFor` keeps its
+  // optional `weights` because the server calls it directly, but the COMPONENT
+  // never falls back to `schedulingRungWeights()` — a client module reads
+  // `process.env` through a computed key and always gets the defaults, so that
+  // fallback is precisely how the card came to quote a different number than
+  // the invoice charged.
+  const cfg = useRungConfig();
+  const quote = quoteFor(lines, { weights: weights ?? cfg.scheduling, freeDraft });
   const joint = quote.lines.length > 1;
+  // Same reasoning for the token budget. The tail fallback covers credit totals
+  // past the resolved table (a joint run of many rung-3 divisions); the ladder
+  // does not currently produce one, and a budget of `undefined` on screen would
+  // be worse than a defaults-derived number.
+  const budgetFor = (n: number): number => cfg.budgets[n - 1] ?? tokenBudgetForCredits(n);
 
   // "Very large" means the work outgrows what the TOP rung can buy — #348 §8's
   // "predicted > rung-3 capacity → still allow it, warn". It is measured
@@ -167,7 +180,7 @@ export function AiQuoteCard({
   // (run fewer divisions together), so it gets its own line.
   const oversized = freeDraft
     ? []
-    : quote.lines.filter((l) => l.estTokens > tokenBudgetForCredits(l.predictedRung));
+    : quote.lines.filter((l) => l.estTokens > budgetFor(l.predictedRung));
   // EVERY oversized line gets a name. Dropping the unnamed ones instead
   // (`.filter(Boolean)`) means a joint run whose oversized lines are all
   // unlabelled yields an empty list and falls through to the singular
@@ -176,9 +189,11 @@ export function AiQuoteCard({
   const oversizedNames = oversized.map(
     (l) => lines.find((x) => x.key === l.key)?.label ?? msg("board.ai.quote.thisDivision"),
   );
-  const predictedBudget = tokenBudgetForCredits(
-    quote.lines.reduce((n, l) => n + l.predictedRung, 0),
-  );
+  const predictedBudget = budgetFor(quote.lines.reduce((n, l) => n + l.predictedRung, 0));
+  // `quoteRun` sized this from its OWN `tokenBudgetForCredits`, which on the
+  // client is the defaults table. The number the organiser reads is the
+  // server's.
+  const budget = budgetFor(quote.rungTotal);
   const jointTooBig = !freeDraft && oversized.length === 0 && quote.estTokens > predictedBudget;
 
   return (
@@ -283,8 +298,8 @@ export function AiQuoteCard({
             for the free draft — it makes no model call, so promising it a
             thinking budget would describe a run that does not happen. */}
         {!freeDraft && (
-          <p className="text-[11px] text-slate-500" data-ai-budget={quote.budget}>
-            {msg("board.ai.quote.budget", { tokens: formatTokens(quote.budget) })}
+          <p className="text-[11px] text-slate-500" data-ai-budget={budget}>
+            {msg("board.ai.quote.budget", { tokens: formatTokens(budget) })}
           </p>
         )}
         {quote.underfunded && <Caution>{msg("board.ai.quote.underfunded")}</Caution>}
@@ -300,6 +315,64 @@ export function AiQuoteCard({
         {jointTooBig && <Caution>{msg("board.ai.quote.veryLargeJoint")}</Caution>}
       </div>
     </section>
+  );
+}
+
+/**
+ * The receipt correction line (#387) — what the card quoted against what the
+ * run actually charged.
+ *
+ * Server-detected: the client sends the number its card showed and the server
+ * compares it against the charge, so this renders what the response reports and
+ * computes nothing itself. A client that recomputed the comparison could agree
+ * with itself while disagreeing with the invoice, which is the failure being
+ * measured.
+ *
+ * TWO TONES, because the two directions are not the same news. Charged MORE
+ * than quoted is the complaint-shaped one and takes the card's existing amber
+ * caution treatment — the same vocabulary the oversize and underfunded warnings
+ * already use, so it reads as part of the receipt rather than as a new kind of
+ * alert. Charged LESS is a correction in the organiser's favour and stays
+ * muted: alarming someone about money they did not spend trains them to ignore
+ * the amber one.
+ *
+ * The figures live in the sentence and nowhere else. An earlier pass paired
+ * them as a struck-through before/after; it printed both numbers twice, which
+ * is decoration, so it went.
+ */
+export function AiQuoteMismatchNote({
+  mismatch,
+  msg,
+}: {
+  mismatch: { quoted: number; charged: number } | undefined;
+  msg: ReturnType<typeof useMsg>;
+}) {
+  if (!mismatch) return null;
+  const over = mismatch.charged > mismatch.quoted;
+  const text = msg(over ? "board.ai.quote.mismatchOver" : "board.ai.quote.mismatchUnder", {
+    quoted: mismatch.quoted,
+    charged: mismatch.charged,
+  });
+  // `tabular-nums` on the whole line: the digits sit inside the sentence here,
+  // and the card's other amounts are lined up, so these should not be the one
+  // place the figures wobble.
+  return over ? (
+    <p
+      role="status"
+      data-ai-quote-mismatch="over"
+      className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-snug tabular-nums text-amber-900"
+    >
+      <span aria-hidden>⚠</span>
+      <span>{text}</span>
+    </p>
+  ) : (
+    <p
+      role="status"
+      data-ai-quote-mismatch="under"
+      className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] leading-snug tabular-nums text-slate-600"
+    >
+      {text}
+    </p>
   );
 }
 

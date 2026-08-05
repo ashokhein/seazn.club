@@ -15,8 +15,9 @@
 import { useMemo, useState } from "react";
 import { timeLabel } from "@/lib/day-label";
 import { useMsg, usePlural } from "@/components/i18n/dict-provider";
-import { officialsRungWeights, type RungInput } from "@/lib/ai-rung";
-import { AiQuoteCard, quoteFor, type QuoteCardLine } from "./ai-quote-card";
+import { type RungInput } from "@/lib/ai-rung";
+import { AiQuoteCard, AiQuoteMismatchNote, quoteFor, type QuoteCardLine } from "./ai-quote-card";
+import { useRungConfig } from "./rung-config-provider";
 import type { MessageKey } from "@/lib/messages";
 import type { AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
 import { OfficialAvatar } from "@/components/v2/officials-shared";
@@ -211,7 +212,11 @@ export function AiOfficialsReview({
   // adopt brief and an empty box, Re-plan alone would in fact be free, so the
   // card OVER-quotes it. Over-quoting is the safe error; under-quoting bills
   // someone more than the surface they confirmed.
-  const officialsWeights = useMemo(() => officialsRungWeights(), []);
+  // #385: resolved on the SERVER. `officialsRungWeights()` called here read
+  // `process.env` through a computed key, which a `"use client"` bundle never
+  // gets substituted — so every AI_RUNG_OFFICIALS_* override the server priced
+  // with was invisible to this card.
+  const officialsWeights = useRungConfig().officials;
   const freeDraft = instruction.trim() === "" && adoptInstruction.trim() === "";
   // DISPLAY ONLY — never a price input (see above). A plan that reports no
   // tokens is *usually* the solver pass, which is good enough to pick the
@@ -226,8 +231,14 @@ export function AiOfficialsReview({
     weights: officialsWeights,
     freeDraft,
   }).credits;
+  // #383: before anything has run there is no plan to re-plan — the button is
+  // the DRAFT, and it is the organiser's first chance to decline the spend.
+  // Naming it "Re-plan officials" while the grid is empty would describe work
+  // that has not happened; naming the price is what makes the button a
+  // decision rather than a surprise on the invoice.
+  const drafting = plan === null;
   const replanLabel = msg("board.ai.quote.cta", {
-    action: msg("board.ai.officials.replan"),
+    action: msg(drafting ? "board.ai.officials.run" : "board.ai.officials.replan"),
     credits: plural("board.ai.quote.credits", replanCredits),
   });
   const model = useMemo(
@@ -289,6 +300,9 @@ export function AiOfficialsReview({
               ))}
             </div>
           </div>
+
+          {/* #387 — the receipt correction, beside the run's own usage row. */}
+          <AiQuoteMismatchNote mismatch={plan.quote_mismatch} msg={msg} />
 
           <CoverageLine filled={model.filled} total={model.total} />
         </div>
@@ -376,7 +390,11 @@ export function AiOfficialsReview({
         <button
           type="button"
           onClick={onReplan}
-          disabled={busy || plan === null}
+          // #383: NOT gated on a plan existing any more. That gate was written
+          // when the only thing that produced the first draft was the auto-run
+          // this task removed — leaving it would mean the organiser arrives at
+          // an empty step whose one button is permanently disabled.
+          disabled={busy}
           className="ai-run inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy ? (

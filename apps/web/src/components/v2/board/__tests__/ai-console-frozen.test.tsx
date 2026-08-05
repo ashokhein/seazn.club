@@ -5,6 +5,13 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { DictProvider } from "@/components/i18n/dict-provider";
+// #385: every surface that prices a run now reads its rung weights and token
+// budgets from the provider the board's RSC seeds — a client module cannot
+// resolve AI_RUNG_* for itself. Server-resolved DEFAULTS here: these suites are
+// about copy and wiring, and rung-config-provider.test.tsx owns the assertion
+// that an override actually reaches the card.
+import { RungConfigProvider } from "../rung-config-provider";
+import { resolveRungConfig } from "@/lib/ai-rung";
 import { AiConsole } from "../ai-console";
 
 const stub = {
@@ -42,9 +49,11 @@ const props: Parameters<typeof AiConsole>[0] = {
 
 const render = (scheduleFrozen: boolean) =>
   renderToStaticMarkup(
+    <RungConfigProvider value={resolveRungConfig()}>
     <DictProvider dict={stub} locale="en">
       <AiConsole {...props} scheduleFrozen={scheduleFrozen} />
-    </DictProvider>,
+    </DictProvider>
+    </RungConfigProvider>,
   );
 
 describe("AiConsole — frozen schedule", () => {

@@ -15,6 +15,8 @@ import { hasFeature } from "@/lib/entitlements";
 import { preferredCurrency } from "@/lib/currency-server";
 import { withTenant } from "@/lib/db";
 import { ScheduleBoard } from "@/components/v2/schedule-board";
+import { RungConfigProvider } from "@/components/v2/board/rung-config-provider";
+import { resolveRungConfig } from "@/lib/ai-rung";
 import { feedLabels, type FeedRow } from "@/lib/schedule-board";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { resolveLocale } from "@/lib/resolve-locale";
@@ -130,6 +132,12 @@ export default async function CompetitionSchedulePage({
           </h1>
         </div>
 
+        {/* #385: the AI rung weights and token budgets, resolved HERE — this is
+            a server component, and `resolveRungConfig` reads AI_RUNG_* through a
+            computed `process.env` key that Next never substitutes into a client
+            bundle. Without this the confirm card prices on the built-in
+            defaults while the server charges on the overrides. */}
+        <RungConfigProvider value={resolveRungConfig()}>
         <ScheduleBoard
           divisions={perDivision.map(({ division }) => ({
             id: division.id,
@@ -182,6 +190,7 @@ export default async function CompetitionSchedulePage({
           // all three joint endpoints.
           competition={{ id, divisionSettings }}
         />
+        </RungConfigProvider>
       </main>
     </>
   );
