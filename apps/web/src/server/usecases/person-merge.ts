@@ -177,6 +177,18 @@ export async function mergePersons(
     //    copied: an absorbed photo must never become reachable through a
     //    survivor whose resolved public_photo is false.
     const consent = resolveConsent(survivor.consent, absorbed.consent);
+    // The account link, however, IS carried. It belongs to the human, not to
+    // whichever row the organiser happened to keep: `person_claims` repoints to
+    // the survivor below, so leaving `user_id` on the tombstone strands the
+    // player — they sign in, their claim names the survivor, and the survivor is
+    // unlinked. Two DIFFERENT accounts is the ambiguous case and was already
+    // refused above, so this is never a guess about which human this is.
+    const carriedUserId = survivor.user_id ?? absorbed.user_id;
+    // …and the tombstone gives it up, so one account is never held by two rows.
+    // Only when it was actually carried: if the survivor had its own link the
+    // absorbed row's copy is the same account twice (#402, official lane) and
+    // nothing moved, so nothing is cleared either.
+    const tombstoneUserId = survivor.user_id === null ? null : absorbed.user_id;
 
     // 3. Repoint, per §4.3.
     await repointEntrantMembers(tx, survivorId, absorbedId);
@@ -194,8 +206,13 @@ export async function mergePersons(
     // 4. Flatten inbound tombstones, so merged_into always names a LIVE person
     //    and every read stays one check.
     await tx`update persons set merged_into = ${survivorId} where merged_into = ${absorbedId}`;
-    // 5. Tombstone. Never delete.
-    await tx`update persons set merged_into = ${survivorId} where id = ${absorbedId}`;
+    // 5. Tombstone. Never delete. The account link is released in the SAME
+    //    statement that writes it: persons_org_user_lane_uq is
+    //    `(org_id, user_id, lane) where … merged_into is null`, so the survivor's
+    //    update below must not run while a live row still holds the pair.
+    await tx`
+      update persons set merged_into = ${survivorId}, user_id = ${tombstoneUserId}
+       where id = ${absorbedId}`;
 
     // 6. Stats are aggregates: picking one row silently halves a season. Drop
     //    both and refold the division from its ledger. This runs AFTER the
@@ -209,7 +226,7 @@ export async function mergePersons(
     for (const { division_id } of divisions) await recomputePlayerStats(tx, division_id);
 
     const [updated] = await tx<PersonRow[]>`
-      update persons set consent = ${tx.json(consent as never)}
+      update persons set consent = ${tx.json(consent as never)}, user_id = ${carriedUserId}
       where id = ${survivorId} returning ${tx(RESULT_COLS)}`;
 
     // 7. The ledger row — audit trail and undo record in one.
@@ -334,15 +351,26 @@ export async function reverseMerge(
     const snapshot = merge.snapshot ?? {};
     const rowsOf = (table: string): Record<string, unknown>[] => snapshot[table] ?? [];
 
-    // 1. The persons rows. A merge writes exactly two things to a persons row —
-    //    `consent` on the survivor and `merged_into` on the absorbed row plus
-    //    every tombstone it flattened — so those two are what comes back.
+    // 1. The persons rows. A merge writes exactly three things to a persons row
+    //    — `consent` and the carried `user_id` on the survivor, and
+    //    `merged_into` (plus the released `user_id`) on the absorbed row and
+    //    every tombstone it flattened — so those three are what comes back.
     //    Restoring the whole row would clobber an edit the organiser made to a
     //    live person after the merge, which the merge never touched.
-    for (const row of rowsOf("persons")) {
+    //
+    //    Rows that RELEASE a user_id are replayed before rows that take one:
+    //    persons_org_user_lane_uq is not deferrable, so handing the link back to
+    //    the absorbed row while the survivor still holds it fails mid-statement
+    //    even though the end state is legal. The snapshot happens to list the
+    //    survivor first, but that ordering is not a contract.
+    const personRows = [...rowsOf("persons")].sort(
+      (x, y) => Number(x.user_id !== null) - Number(y.user_id !== null),
+    );
+    for (const row of personRows) {
       await tx`
         update persons
            set consent = ${tx.json((row.consent ?? {}) as never)},
+               user_id = ${(row.user_id as string | null) ?? null},
                merged_into = ${(row.merged_into as string | null) ?? null}
          where id = ${row.id as string}`;
     }
@@ -413,6 +441,76 @@ export async function reverseMerge(
       update person_merges set reversed_at = now(), reversed_by = ${opts.confirmedBy}
        where id = ${mergeId}`;
   });
+}
+
+/** One row of the merge log: what was fused, when, and whether it still stands.
+ *  `*_name` is read live rather than out of the snapshot — a renamed survivor
+ *  should read under the name the roster shows today. */
+export interface MergeLogEntry {
+  merge_id: string;
+  survivor_id: string;
+  absorbed_id: string;
+  survivor_name: string;
+  absorbed_name: string;
+  created_at: string;
+  /** Non-null once undone. The row is kept either way — it is the audit trail
+   *  (#403 R2/R3) — so this is what decides whether Undo is still offered. */
+  reversed_at: string | null;
+}
+
+const LOG_LIMIT_DEFAULT = 50;
+const LOG_LIMIT_MAX = 200;
+
+interface MergeLogRow {
+  merge_id: string;
+  survivor_id: string;
+  absorbed_id: string;
+  survivor_name: string;
+  absorbed_name: string;
+  created_at: Date;
+  reversed_at: Date | null;
+}
+
+/**
+ * The org's merge log, newest first (#404 Task 8b).
+ *
+ * The undo window is unbounded by decision, but the panel held its history in
+ * React state — so a refresh took every Undo control with it and the decision
+ * was hollow in practice. This is the read that makes it real.
+ *
+ * Tenancy is RLS's, not a where-clause's: `person_merges` carries the standard
+ * `org_id = current_org_id()` policy (V349) and both joins land on `persons`,
+ * which carries its own. The joins are inner joins deliberately — both FKs are
+ * `on delete cascade`, so a ledger row whose people are gone is gone too, and a
+ * missing side would mean a corrupted row rather than a mergeless entry to show.
+ * Tombstones are NOT filtered here: the absorbed row is a tombstone by
+ * definition, and after a reversal the survivor may be one in turn.
+ */
+export async function listMerges(
+  auth: AuthCtx,
+  opts: { limit?: number } = {},
+): Promise<{ items: MergeLogEntry[] }> {
+  const limit = Math.min(Math.max(opts.limit ?? LOG_LIMIT_DEFAULT, 1), LOG_LIMIT_MAX);
+  const rows = await withTenant(auth.orgId, async (tx) => {
+    return tx<MergeLogRow[]>`
+      select m.id as merge_id, m.survivor_id, m.absorbed_id,
+             s.full_name as survivor_name, a.full_name as absorbed_name,
+             m.created_at, m.reversed_at
+        from person_merges m
+        join persons s on s.id = m.survivor_id
+        join persons a on a.id = m.absorbed_id
+       order by m.created_at desc
+       limit ${limit}`;
+  });
+  // postgres hands back timestamptz as a Date; the wire says string, and only
+  // converting here keeps that declaration true.
+  return {
+    items: rows.map((r) => ({
+      ...r,
+      created_at: r.created_at.toISOString(),
+      reversed_at: r.reversed_at === null ? null : r.reversed_at.toISOString(),
+    })),
+  };
 }
 
 /**

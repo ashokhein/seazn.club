@@ -3169,7 +3169,7 @@
   "persons.dupes.revealed.completed": "Finalizado",
   "persons.dupes.revealed.completedNote": "Esta competición ya terminó: no hay nada que reprogramar, pero conviene conocer el choque.",
   "persons.dupes.conflict.other": "Choque de calendario",
-  "persons.dupes.history.title": "Fusionado en esta sesión",
+  "persons.dupes.history.title": "Fusiones recientes",
   "persons.dupes.history.body": "Deshacer devuelve las dos fichas exactamente como estaban.",
   "persons.dupes.history.reversed": "Deshecho",
   "persons.dupes.history.pair": "absorbió a",

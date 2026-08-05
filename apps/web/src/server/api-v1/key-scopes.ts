@@ -174,9 +174,9 @@ const RULES: RouteRule[] = [
   { method: "POST", path: "/persons", scope: "manage" },
   { method: "GET", path: "/persons/:id", scope: "read" },
   { method: "PATCH", path: "/persons/:id", scope: "manage" },
-  // POST /persons/:id/merge, GET /persons/duplicates and POST
-  // /persons/merges/:id/reverse are structurally excluded from keys (#404) —
-  // see NEVER_KEY_ROUTES.
+  // POST /persons/:id/merge, GET /persons/duplicates, GET /persons/merges and
+  // POST /persons/merges/:id/reverse are structurally excluded from keys
+  // (#404) — see NEVER_KEY_ROUTES.
   { method: "POST", path: "/persons/:id/photo", scope: "manage" },
   { method: "POST", path: "/entrants/:id/badge", scope: "manage" },
   { method: "DELETE", path: "/entrants/:id/badge", scope: "manage" },
@@ -316,8 +316,12 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   // user id, and a key has no user behind it. The queue that proposes the
   // merges is barred with them: it is a list of people this org may be about
   // to fuse, and it exists only to be answered by a human.
+  // The log is barred on the same reasoning, one step further on: it is a
+  // durable record of which two people this org decided were one, by name —
+  // and every row in it is a live undo handle for a write no key may make.
   "POST /persons/:id/merge",
   "GET /persons/duplicates",
+  "GET /persons/merges",
   "POST /persons/merges/:id/reverse",
 ];
 

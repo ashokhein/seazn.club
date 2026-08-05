@@ -3169,7 +3169,7 @@
   "persons.dupes.revealed.completed": "Completed",
   "persons.dupes.revealed.completedNote": "This competition has finished — nothing to reschedule, but the clash is worth knowing about.",
   "persons.dupes.conflict.other": "Scheduling clash",
-  "persons.dupes.history.title": "Merged in this session",
+  "persons.dupes.history.title": "Recent merges",
   "persons.dupes.history.body": "Undo puts both records back exactly as they were.",
   "persons.dupes.history.reversed": "Undone",
   "persons.dupes.history.pair": "absorbed",

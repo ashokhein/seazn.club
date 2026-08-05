@@ -16,7 +16,7 @@ import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { putLineup } from "../fixtures";
-import { mergePersons } from "../person-merge";
+import { mergePersons, reverseMerge } from "../person-merge";
 import { recomputePlayerStats } from "../player-stats";
 import { startDivision } from "../schedule";
 import { scoreEvent } from "../scoring";
@@ -475,5 +475,94 @@ describe.skipIf(!HAS_DB)("#404 mergePersons", () => {
       409,
       "MERGE_TOMBSTONE",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #404 Task 8b — the account link. Found by Task 8's screenshots: `mergePersons`
+// wrote exactly one column back to the surviving row (`consent`), so merging a
+// CLAIMED record into an unclaimed one repointed `person_claims` while leaving
+// `persons.user_id` on the tombstone. The player then signs in and finds no
+// record at all — the claim points at the survivor, the survivor is unlinked.
+//
+// The genuinely ambiguous case (two DIFFERENT accounts) is already a 422, so
+// carrying the link across when the survivor has none is never a guess about
+// which human this is.
+// ---------------------------------------------------------------------------
+describe.skipIf(!HAS_DB)("#404 the account link follows the human", () => {
+  it("carries the absorbed row's account onto an unclaimed survivor, off the tombstone", async () => {
+    const { auth } = await seedOrg("pro");
+    const { id: userId } = await makeUser("merge-claimed");
+    const name = `Robin Vale ${rnd()}`;
+    const survivor = await person(auth.orgId, { full_name: name });
+    const absorbed = await person(auth.orgId, { full_name: name, user_id: userId });
+
+    const result = await mergePersons(auth, survivor, absorbed, { confirmedBy: auth.userId! });
+    // The wire result, not just the row: this is what the roster redraws from.
+    expect(result.survivor.user_id).toBe(userId);
+
+    const rows = await sql<{ id: string; user_id: string | null }[]>`
+      select id, user_id from persons where id in ${sql([survivor, absorbed])}`;
+    expect(rows.find((r) => r.id === survivor)!.user_id).toBe(userId);
+    // And the tombstone lets it go — one account may not be held by two rows,
+    // and the live one is the survivor.
+    expect(rows.find((r) => r.id === absorbed)!.user_id).toBeNull();
+  });
+
+  it("leaves one account held twice exactly where it was", async () => {
+    const { auth } = await seedOrg("pro");
+    const { id: userId } = await makeUser("merge-both");
+    // Official lane: two live player-lane rows for one account are barred by
+    // persons_org_user_lane_uq, so this is the only shape the pair can take.
+    const survivor = await person(auth.orgId, { user_id: userId, lane: "official" });
+    const absorbed = await person(auth.orgId, { user_id: userId, lane: "official" });
+
+    const result = await mergePersons(auth, survivor, absorbed, { confirmedBy: auth.userId! });
+    expect(result.survivor.user_id).toBe(userId);
+
+    // Nothing to carry, so nothing moves: the tombstone keeps what it had.
+    const [tomb] = await sql<{ user_id: string | null; merged_into: string | null }[]>`
+      select user_id, merged_into from persons where id = ${absorbed}`;
+    expect(tomb!.user_id).toBe(userId);
+    expect(tomb!.merged_into).toBe(survivor);
+  });
+
+  it("still refuses two different accounts, and moves neither link", async () => {
+    const { auth } = await seedOrg("pro");
+    const one = await makeUser("merge-x");
+    const two = await makeUser("merge-y");
+    const survivor = await person(auth.orgId, { user_id: one.id });
+    const absorbed = await person(auth.orgId, { user_id: two.id });
+
+    await expectHttp(
+      mergePersons(auth, survivor, absorbed, { confirmedBy: auth.userId! }),
+      422,
+      "MERGE_TWO_ACCOUNTS",
+    );
+
+    const rows = await sql<{ id: string; user_id: string | null }[]>`
+      select id, user_id from persons where id in ${sql([survivor, absorbed])}`;
+    expect(rows.find((r) => r.id === survivor)!.user_id).toBe(one.id);
+    expect(rows.find((r) => r.id === absorbed)!.user_id).toBe(two.id);
+  });
+
+  it("gives the account back to the absorbed row when the merge is reversed", async () => {
+    const { auth } = await seedOrg("pro");
+    const { id: userId } = await makeUser("merge-undo");
+    const name = `Sasha Quinn ${rnd()}`;
+    const survivor = await person(auth.orgId, { full_name: name });
+    const absorbed = await person(auth.orgId, { full_name: name, user_id: userId });
+
+    const { merge_id } = await mergePersons(auth, survivor, absorbed, {
+      confirmedBy: auth.userId!,
+    });
+    await reverseMerge(auth, merge_id, { confirmedBy: auth.userId! });
+
+    const rows = await sql<{ id: string; user_id: string | null; merged_into: string | null }[]>`
+      select id, user_id, merged_into from persons where id in ${sql([survivor, absorbed])}`;
+    const back = rows.find((r) => r.id === absorbed)!;
+    expect(back.user_id).toBe(userId);
+    expect(back.merged_into).toBeNull();
+    expect(rows.find((r) => r.id === survivor)!.user_id).toBeNull();
   });
 });

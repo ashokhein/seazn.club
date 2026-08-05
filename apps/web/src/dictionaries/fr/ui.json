@@ -3169,7 +3169,7 @@
   "persons.dupes.revealed.completed": "Terminé",
   "persons.dupes.revealed.completedNote": "Cette compétition est terminée : rien à reprogrammer, mais le conflit mérite d’être connu.",
   "persons.dupes.conflict.other": "Conflit de planning",
-  "persons.dupes.history.title": "Fusionné pendant cette session",
+  "persons.dupes.history.title": "Fusions récentes",
   "persons.dupes.history.body": "Annuler rétablit les deux fiches exactement telles qu’elles étaient.",
   "persons.dupes.history.reversed": "Annulée",
   "persons.dupes.history.pair": "a absorbé",

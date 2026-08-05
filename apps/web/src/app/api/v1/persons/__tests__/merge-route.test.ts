@@ -47,6 +47,7 @@ import { seedOrg } from "@/server/usecases/__tests__/_seed";
 import { POST as mergeRoute } from "@/app/api/v1/persons/[id]/merge/route";
 import { GET as duplicatesRoute } from "@/app/api/v1/persons/duplicates/route";
 import { POST as reverseRoute } from "@/app/api/v1/persons/merges/[id]/reverse/route";
+import { GET as mergesRoute } from "@/app/api/v1/persons/merges/route";
 
 const rnd = () => randomUUID().slice(0, 8);
 
@@ -297,6 +298,20 @@ describe.skipIf(!HAS_DB)("API keys are refused on every merge surface", () => {
     expect(matchKeyRoute("POST", "/api/v1/persons/merges/11111111-1111-1111-1111-111111111111/reverse")).toBeNull();
   });
 
+  it("bars the merge log too — a read key would have walked in through /persons/:id", async () => {
+    // Not vacuous: `/persons/merges` is matched by the `GET /persons/:id` rule,
+    // so absence from RULES is NOT enough here — only the explicit ban closes it.
+    expect(matchKeyRoute("GET", "/api/v1/persons/merges")).toBeNull();
+
+    const auth = await organiser();
+    const { secret } = await createApiKey(auth, { name: `k-${rnd()}`, scopes: ["read"] });
+    const { status, body } = await read(
+      await mergesRoute(keyedReq(secret, "GET", "/persons/merges")),
+    );
+    expect(status).toBe(403);
+    expect(body.error?.message).toMatch(/cannot access this endpoint/);
+  });
+
   it("a real read key is 403 on merge, reverse and the duplicate queue", async () => {
     const auth = await organiser();
     const name = `Keyed ${rnd()}`;
@@ -338,5 +353,60 @@ describe.skipIf(!HAS_DB)("API keys are refused on every merge surface", () => {
     const [row] = await sql<{ merged_into: string | null }[]>`
       select merged_into from persons where id = ${duplicate}`;
     expect(row!.merged_into).toBeNull();
+  });
+});
+
+// #404 Task 8b — the merge log has to outlive the tab. Undo is unbounded by
+// decision (Art. 16 rectification has no expiry), but the panel held its history
+// in React state, so a refresh took every Undo control with it. This is the read
+// that makes the decision real.
+describe.skipIf(!HAS_DB)("GET /persons/merges", () => {
+  /** Merge a fresh same-named pair in `auth`'s org and hand back the ledger id. */
+  async function mergeOne(auth: AuthCtx, label: string): Promise<string> {
+    const survivor = await person(auth.orgId, { full_name: label });
+    const duplicate = await person(auth.orgId, { full_name: label });
+    const { body } = await read(
+      await mergeRoute(
+        sessionReq("POST", `/persons/${survivor}/merge`, {
+          duplicate_id: duplicate,
+          confirmed: true,
+        }),
+        ctx(survivor),
+      ),
+    );
+    return body.data!.merge_id as string;
+  }
+
+  it("lists this org's merges newest-first with their reversal stamp, and no other org's", async () => {
+    // The foreign org merges FIRST, so its row is the oldest — a read that
+    // forgot its tenant would put it at the bottom, not somewhere loud.
+    const other = await organiser();
+    const foreign = await mergeOne(other, `Foreign ${rnd()}`);
+
+    const auth = await organiser();
+    const older = await mergeOne(auth, `Mine older ${rnd()}`);
+    const newer = await mergeOne(auth, `Mine newer ${rnd()}`);
+    await reverseRoute(
+      sessionReq("POST", `/persons/merges/${older}/reverse`, { confirmed: true }),
+      ctx(older),
+    );
+
+    const { status, body } = await read(await mergesRoute(sessionReq("GET", "/persons/merges")));
+    expect(status).toBe(200);
+    const items = body.data!.items as {
+      merge_id: string;
+      survivor_name: string;
+      absorbed_name: string;
+      reversed_at: string | null;
+    }[];
+    expect(items.map((i) => i.merge_id)).toEqual([newer, older]);
+    expect(items.map((i) => i.merge_id)).not.toContain(foreign);
+    // A reversed merge stays in the log with its stamp — it is the audit trail,
+    // and the panel needs the stamp to know which rows still offer Undo.
+    expect(items[0]!.reversed_at).toBeNull();
+    expect(typeof items[1]!.reversed_at).toBe("string");
+    // Names, so the panel can label a row it never saw merged.
+    expect(items[0]!.survivor_name).toMatch(/^Mine newer /);
+    expect(items[0]!.absorbed_name).toMatch(/^Mine newer /);
   });
 });

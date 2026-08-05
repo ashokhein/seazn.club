@@ -13,7 +13,7 @@
 // to the STRICTER of the two (spec §4, #403), and the dialog shows that
 // resolution rather than the survivor's own flags — which is the one thing here
 // that can be wrong without anybody noticing.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1 } from "@/lib/client-v1";
 import { useMsg } from "@/components/i18n/dict-provider";
@@ -65,6 +65,16 @@ export interface MergeEntry {
   survivor_name: string;
   absorbed_name: string;
   reversed?: boolean;
+}
+
+/** One row of `GET /persons/merges` — the DURABLE log. The undo window is
+ *  unbounded by decision, so the history cannot live in React state: a refresh
+ *  took every Undo control with it, and the decision was hollow. */
+interface MergeLogRow {
+  merge_id: string;
+  survivor_name: string;
+  absorbed_name: string;
+  reversed_at: string | null;
 }
 
 interface MergeApiResult {
@@ -157,6 +167,38 @@ export function DuplicatesPanel({
   const [history, setHistory] = useState<MergeEntry[]>([]);
   const [reversing, setReversing] = useState<MergeEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // The log is loaded on mount rather than passed down from the page: it is a
+  // record of writes THIS panel makes, so it has to stay current after a merge
+  // and after an undo without a server round-trip of the whole page.
+  //
+  // Merged by id rather than replacing state — a merge confirmed while the load
+  // is still in flight is already in `history`, and the log would otherwise
+  // either duplicate it or drop it depending on which landed first. Failure is
+  // silent on purpose: an unreachable log must not take the review queue, which
+  // is server-rendered and already on screen, down with it.
+  useEffect(() => {
+    if (!canEdit) return;
+    let live = true;
+    void apiV1<{ items: MergeLogRow[] }>("/api/v1/persons/merges")
+      .then((res) => {
+        if (!live) return;
+        const loaded: MergeEntry[] = (res.items ?? []).map((row) => ({
+          merge_id: row.merge_id,
+          survivor_name: row.survivor_name,
+          absorbed_name: row.absorbed_name,
+          reversed: row.reversed_at !== null,
+        }));
+        setHistory((prev) => [
+          ...prev,
+          ...loaded.filter((row) => !prev.some((e) => e.merge_id === row.merge_id)),
+        ]);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [canEdit]);
 
   function onMerged(result: MergeApiResult, survivor: DupPerson, absorbed: DupPerson) {
     const entry: MergeEntry = {

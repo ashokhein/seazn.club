@@ -2535,3 +2535,21 @@ export const DuplicateCandidates = z.object({
   ),
 });
 export type DuplicateCandidates = z.infer<typeof DuplicateCandidates>;
+
+/** The org's merge log, newest first. `reversed_at` is what decides whether a
+ *  row still offers Undo — a reversed merge is kept, never deleted (#403 R2/R3),
+ *  so the list is an audit trail as well as a set of undo handles. */
+export const MergeLog = z.object({
+  items: z.array(
+    z.object({
+      merge_id: Uuid,
+      survivor_id: Uuid,
+      absorbed_id: Uuid,
+      survivor_name: z.string(),
+      absorbed_name: z.string(),
+      created_at: z.string(),
+      reversed_at: z.string().nullable(),
+    }),
+  ),
+});
+export type MergeLog = z.infer<typeof MergeLog>;
