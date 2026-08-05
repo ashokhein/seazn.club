@@ -87,6 +87,7 @@
 // their own test.
 import type { Arith, Bool, Solver } from "z3-solver";
 import { boardMetrics, isStrictlyBetter, type BoardMetrics } from "./build-objectives.ts";
+import { improveByWindows, type LnsWindow } from "./build-lns.ts";
 import { buildGrid, type BuildGrid, type BuildSlot } from "./build-grid.ts";
 import { encodeBuild, type BuildConfig, type EncodedModel } from "./build-encode.ts";
 import {
@@ -255,12 +256,22 @@ export function rejectedBlockingConflicts(
 
 export function buildSchedule(input: BuildInput): Promise<BuildResult> {
   // `withZ3Lock` is NOT reentrant. It is taken exactly here, and nothing below
-  // may take it again — `loadZ3` deliberately does not, and neither does
-  // anything in `build-encode.ts`.
+  // may take it again — `loadZ3` deliberately does not, neither does anything
+  // in `build-encode.ts`, and the LNS pass re-enters `solveBuild` rather than
+  // `buildSchedule` for exactly this reason. (The plan proposed driving LNS
+  // through `repairSchedule`, which DOES take the lock itself, and therefore
+  // proposed moving this call inward; nothing here takes it twice, so the lock
+  // stays on the outside where it can serialise the whole run.)
   return withZ3Lock(() => solveBuild(input));
 }
 
-async function solveBuild(input: BuildInput): Promise<BuildResult> {
+/**
+ * @param allowLns false on the LNS pass's own sub-solves. Each window is solved
+ * by re-entering this function with the rest of the board pinned, so without a
+ * guard a sub-solve that also fell short of `TIER_COUNT` would open windows of
+ * its own, without bound.
+ */
+async function solveBuild(input: BuildInput, allowLns = true): Promise<BuildResult> {
   // `performance.now()`, never `Date.now()` — `scripts/engine-boundary.ts` bans
   // ambient wall-clock reads in engine source, and a monotonic clock is the
   // right one for a duration anyway.
@@ -649,6 +660,68 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
     }
   }
 
+  // 6c. LNS — the fallback for a run that did not finish (design D7's "C"
+  //     half). See `build-lns.ts` for what a window is and why it is neither
+  //     `repairSchedule` nor an `existing`-shaped sub-board.
+  //
+  //     THE TRIGGER IS `tiersCompleted < TIER_COUNT`, not `budgetExpired`.
+  //     Those are different questions: a tier can exit without ever setting
+  //     `budgetExpired` (a term and its metric drifting apart breaks the walk
+  //     on the spot), and `tiersCompleted === TIER_COUNT` is the ONLY thing
+  //     that means "every tier ran to a verdict" — the same predicate
+  //     `already_optimal` keys on below. A board that is not lexicographically
+  //     proven is a board windows may still improve.
+  //
+  //     `rlimit` is passed down UNCHANGED and is therefore a PER-SOLVE cap, not
+  //     a run total. That is deliberate and it is the deterministic choice:
+  //     splitting it would need the window count in advance, and the number of
+  //     windows is bounded by the courts plus one. Real time is bounded by the
+  //     wall backstop, which is passed down as what is left of it.
+  //
+  //     The result is taken only if the WHOLE board improved, so this pass can
+  //     never make the answer worse — the same guarantee the greedy seed gives,
+  //     and the reason it needs no escape hatch either.
+  let usedLns = false;
+  if (allowLns && tiersCompleted < TIER_COUNT && elapsed() < wallMs) {
+    const solveWindow = async (w: LnsWindow): Promise<readonly Assignment[]> => {
+      const sub = await solveBuild(
+        {
+          fixtures: w.fixtures,
+          config,
+          // The caller's immovables only. Everything else is a pinned FIXTURE
+          // in `w.fixtures`, which is what keeps the sub-solve's metrics the
+          // whole board's metrics.
+          existing: w.existing,
+          dependencies,
+          rlimit,
+          wallMs: Math.max(1, wallMs - elapsed()),
+        },
+        false,
+      );
+      return sub.assignments;
+    };
+    const out = await improveByWindows({
+      board: incumbent,
+      fixtures,
+      existing,
+      // `frozen` only. A caller-`locked` fixture needs no help from the window
+      // plan: it carries its pin into every sub-solve on its own fixture record
+      // and `encodeBuild` §4 asserts it as a unit clause.
+      frozen: new Set(frozenIds),
+      courts: config.courts,
+      total: fixtures.length,
+      deadlineMs: wallMs,
+      elapsed,
+      solveWindow,
+    });
+    if (isStrictlyBetter(out.metrics, incumbentMetrics)) {
+      incumbent = out.board;
+      incumbentMetrics = out.metrics;
+      improved = true;
+      usedLns = true;
+    }
+  }
+
   // 7. The gate. Encoder and verifier disagreeing is the exact bug class this
   //    design exists to prevent, so it is never silent — but it is also never
   //    an exception, because the organiser still needs a board, and it is a
@@ -694,7 +767,11 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
     assignments: incumbent,
     conflicts,
     metrics: incumbentMetrics,
-    engine: incumbent === seedAssignments ? "greedy" : "z3",
+    // Where the board CAME FROM. `z3+lns` is claimed only when a window pass
+    // actually produced the board being returned — an LNS pass that ran and
+    // improved nothing leaves the tiers' own answer in place, and saying
+    // otherwise would attribute the board to the wrong solver.
+    engine: usedLns ? "z3+lns" : incumbent === seedAssignments ? "greedy" : "z3",
     status,
     tiersCompleted,
     budgetExpired,
@@ -838,28 +915,34 @@ function buildTiers(input: TierInput): Tier[] {
   // quietest, so the court SET it divides by is `config.courts` plus whatever
   // courts the board actually used — a configured court nobody plays on counts
   // as a zero (that is the point of the metric), while an UNconfigured court
-  // nobody plays on is not in the set at all. That asymmetry is why the bounds
-  // below are not symmetric: `hi` ranges over every court in the lattice (an
-  // unused one contributes 0 and cannot raise a maximum), but `lo` is held
-  // under an unconfigured court's load only WHEN THAT COURT IS USED.
+  // nobody plays on is not in the set at all.
   //
-  // A court can be in the lattice without being configured only through a pin —
-  // R3 removed the rest — so this is the locked-onto-court-5 case, and getting
-  // it wrong would report an imbalance of zero on a board with one lonely
-  // pinned card.
+  // THE SECOND HALF OF THAT SENTENCE IS UNREACHABLE HERE, and the bound is
+  // unconditional because of it. Under R3 the only slots left on an
+  // unconfigured court are exact matches for a PIN (`restrictToConfiguredCourts`
+  // deletes the rest), and every pin is force-asserted true — `encodeBuild` §4
+  // for a `locked` fixture, the frozen-anchor loop above for the other source.
+  // So an unconfigured court in `grid.byCourt` provably carries load, it is
+  // provably in `boardMetrics`' court set, and `lo <= load` is exactly right
+  // for it. An earlier draft guarded this with `Implies(load >= 1, ...)`; that
+  // guard was not merely untested but DEAD, since its antecedent holds for
+  // every reachable input, and a dead guard reads as a case somebody once saw.
+  //
+  // (If an unforced pin source is ever added — a pin the solver may decline —
+  // this is the line that has to come back, because a court in the lattice with
+  // nothing on it would then pull the minimum to zero and report an imbalance
+  // the board does not have.)
   const cbLo = Z3.Int.const("cb_lo");
   const cbHi = Z3.Int.const("cb_hi");
-  const configured = new Set(config.courts);
   const loadOf = (rowsOnCourt: readonly number[]): Arith<"repair"> =>
     Z3.Sum(
       Z3.Int.val(0),
       ...rowsOnCourt.map((s) => Z3.If(occAny[s]!, Z3.Int.val(durMs), Z3.Int.val(0))),
     );
-  for (const [court, rowsOnCourt] of grid.byCourt) {
+  for (const rowsOnCourt of grid.byCourt.values()) {
     const load = loadOf(rowsOnCourt);
     solver.add(cbHi.ge(load));
-    if (configured.has(court)) solver.add(cbLo.le(load));
-    else solver.add(Z3.Implies(load.ge(1), cbLo.le(load)));
+    solver.add(cbLo.le(load));
   }
   // A configured court with no slots at all — blacked out, or outside every
   // session window. `boardMetrics` still seeds it at zero, so it still pulls the
