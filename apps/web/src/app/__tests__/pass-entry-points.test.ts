@@ -395,6 +395,59 @@ describe("the competition layout resolves what its islands cannot", () => {
     expect(src).toContain("usePassLockReason");
   });
 
+  // #376. The same shape of hole one level up: the UPGRADE PAGE is where an
+  // organiser lands from every one of those entry points, and it judged the
+  // lock as `pass ? passLockReason(…) : null` — a verdict conditional on the
+  // very row whose absence is the case that needed judging. A competition that
+  // finished without ever being sold a pass therefore rendered the ordinary
+  // priced ticket, and its Buy button led to a 410 Gone.
+  const UPGRADE_PAGE = ["app", "o", "[orgSlug]", "c", "[compSlug]", "upgrade", "page.tsx"];
+
+  it("the upgrade page judges the lock from the COMPETITION, not from the pass row", () => {
+    const src = code(...UPGRADE_PAGE);
+    // Same single round trip, turned round: the pass is LEFT JOINed onto the
+    // competition, so `status`/`ends_on` come back whether or not a pass exists.
+    expect(src).toMatch(/from\s+competitions\b/);
+    expect(src).toMatch(/left join\s+competition_passes\b/i);
+    expect(src).toMatch(/c\.status/);
+    expect(src).toMatch(/c\.ends_on/);
+    // The CALL with the row's own columns, not the bare identifier — an
+    // assertion on `"passLockReason"` alone is satisfied by the import line.
+    expect(src).toMatch(/passLockReason\(\s*\w+\.status\s*,\s*\w+\.ends_on\s*\)/);
+    // The shape it replaced, pinned negatively. It is the one edit that would
+    // silently restore the defect while leaving every assertion above green.
+    expect(src).not.toMatch(/pass\s*\?\s*passLockReason\(/);
+  });
+
+  it("the upgrade page RENDERS the closed state, rather than falling through to the ticket", () => {
+    // `UpgradePageState` gets no exhaustiveness check anywhere — the page reads
+    // `state.kind` in a dozen separate `===` chains — so the `closed` member
+    // compiled perfectly clean and rendered as "none of the above": the priced
+    // ticket, with every held/ended flag false. There is no compile error to
+    // catch this, which is exactly why it is asserted here.
+    const src = code(...UPGRADE_PAGE);
+    expect(src).toContain('state.kind === "closed"');
+    expect(src).toContain("ClosedPanel");
+    // And it cannot be routed through the ticket "with a flag". Ticket's stub
+    // renders <PassUpgradeButton canBuy={state.canBuy}> and `closed` carries a
+    // canBuy of its own, so the wrong panel typechecks and ships a Buy button.
+    // The Exclude is what makes that a compile error instead.
+    expect(src).toMatch(/Exclude<\s*UpgradePageState\s*,[\s\S]{0,120}kind:\s*"closed"\s*\}/);
+    // The comparison table is the page's SECOND offer surface: a closed
+    // competition that kept its pass columns would recommend, in figures, the
+    // purchase the panel above has just refused.
+    expect(src).toMatch(/closedToPasses[\s\S]{0,200}"community",\s*"pro"/);
+  });
+
+  it("the paywall renders it too, off the same one signal", () => {
+    // <UpgradeGate> is the other surface that offers the pass inside a
+    // competition. Without its own branch a closed competition fell to the
+    // generic card, which explains nothing about why the offer has gone.
+    const src = code("components", "upgrade-gate.tsx");
+    expect(src).toContain('gate === "closed"');
+    expect(src).toContain("PASS_CLOSED_REASON_KEY");
+  });
+
   it("keeps every client island free of a VALUE import from lib/entitlements", () => {
     // A type-only import is erased at compile time and is the correct shape; a
     // plain import of the same symbol is not, and it fails at build time as an

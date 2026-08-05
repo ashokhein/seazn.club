@@ -16,6 +16,7 @@ import {
   lowestPassRung,
   lowestPricedRung,
   passActiveLabel,
+  PASS_CLOSED_REASON_KEY,
   PASS_LOCK_REASON_KEY,
 } from "@/lib/pass-ladder";
 import { PASS_FEATURES } from "@/lib/pass-features";
@@ -125,6 +126,8 @@ function paidPlan(feature: string, currency: Currency): { name: string; price: s
  * | held            | yes              | Pro only — pass ceiling              |
  * | held            | no               | Pro only — not on pass               |
  * | ended           | either           | Pro only — pass has stopped applying |
+ * | closed          | either           | Pro only — none was ever bought, and |
+ * |                 |                  | none can be now                      |
  * | paid_plan       | either           | Pro only (as before) — pass is moot  |
  *
  * `held` is task 17's fix: a gate rendering for a key the pass DOES lift, while
@@ -154,6 +157,14 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
   const sellable = usePassSellableRungs();
   const passOwned = gate === "held";
   const passEnded = gate === "ended";
+  // #376 — the competition is past the pass line and never held one. Distinct
+  // from `ended` in the only way that matters here: there is no purchase to
+  // explain, so the ended card's sentences (all of which say a pass "has
+  // stopped lifting its limits") would be claims about money this org never
+  // spent. Same `lockReason` narrowing as the ended card below, for the same
+  // reason: `gate === "closed"` is DERIVED from a non-null reason, so the
+  // conjunct never fails in practice and exists so the Record can be indexed.
+  const passClosed = gate === "closed";
   const liftable = PASS_FEATURES.has(feature);
   // Only an org that can still BENEFIT from a pass is offered one.
   const passHref = liftable && gate === "none" ? passHrefFromPath(pathname, feature) : null;
@@ -165,6 +176,10 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
         data-feature={feature}
         data-pass-owned={passOwned || undefined}
         data-pass-ended={passEnded || undefined}
+        // Carries the REASON as its value, not a bare flag: the pill has no
+        // room for the sentence, so the attribute is the only place the two
+        // arms are distinguishable from outside.
+        data-pass-closed-gate={(passClosed && lockReason) || undefined}
         className="inline-flex items-center gap-1.5 rounded-full bg-purple-50 px-3 py-1 text-xs font-medium text-purple-700 hover:bg-purple-100"
       >
         <LockIcon />
@@ -268,6 +283,58 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
             exhaustiveness this Record exists to provide. `dict` is already read
             above for the rung label, so this adds no new provider dependency. */}
         <p className="mt-2">{t(dict, PASS_LOCK_REASON_KEY[lockReason])}</p>
+        <div className="mt-3">
+          <Link href={href} className="btn btn-primary px-4 py-2 text-sm">
+            Go {plan.name} — {plan.price}
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // #376: the competition itself is past the line — completed, archived, or a
+  // week past its end date — and no pass was ever bought for it. Until the
+  // layout judged the lock from the COMPETITION this org read `none` and was
+  // shown the $29 path, which `POST /api/billing/pass-checkout` answers with
+  // 410 Gone: a paywall whose one call to action was a dead end.
+  //
+  // Its own branch rather than a fall-through to the plain Pro card at the
+  // bottom. That card renders identically whether the pass was never on offer
+  // or has just been withdrawn, and this reader has very likely just come from
+  // a surface that WAS offering it. Saying why it has gone is the difference
+  // between an explanation and a silence.
+  //
+  // NOT the ended card, whose every sentence describes a purchase that stopped
+  // working — false twice over here, since nothing was bought. The two sets of
+  // copy are separate Records for exactly that reason.
+  if (passClosed && lockReason) {
+    const plan = paidPlan(feature, currency);
+    return (
+      <div
+        data-feature={feature}
+        data-pass-closed-gate={lockReason}
+        className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700"
+      >
+        {/* Slate and plain, like the ended card and for the same reason: the
+            purple family means "a payment lifts this", and nothing on this
+            card is for sale. `.app-eyebrow` — the floodlit "this is on"
+            device — would say the opposite of every word underneath it. */}
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          {t(dict, "upgrade.closed.title")}
+        </p>
+        <p className="mt-2 flex items-center gap-2 font-medium">
+          <LockIcon />
+          <PlanBadge feature={feature} />
+          {reason}
+        </p>
+        {/* Keyed off the reason through the shared Record, never a
+            `=== "terminal" ? … : …`: the ternary keeps compiling when a third
+            reason joins PASS_LOCK_REASONS and files it under the wrong
+            sentence. Read through `t(dict, …)` rather than `msg(…)` because
+            `useMsg()` takes the narrower `MessageKey` while the Record is a
+            `DictionaryKey` map — casting to bridge them would throw away the
+            exhaustiveness the Record exists to provide. */}
+        <p className="mt-2">{t(dict, PASS_CLOSED_REASON_KEY[lockReason])}</p>
         <div className="mt-3">
           <Link href={href} className="btn btn-primary px-4 py-2 text-sm">
             Go {plan.name} — {plan.price}

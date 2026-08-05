@@ -158,11 +158,15 @@ export async function POST(req: Request) {
     // one pass per competition is forever (#248 Q4, enforced by the
     // `competition_passes` PK) — so they lost the money AND their one chance.
     //
-    // THE ROUTE IS THE AUTHORITY, even though the offer surfaces now suppress
-    // this. The surfaces have been wrong about the lock before — #301 is a whole
-    // wave of them saying a locked pass was active — and `/upgrade` is a direct
-    // link an organiser can hold in a bookmark or an email long after the event.
-    // A suppressed button is a nicety; refusing to take the money is the rule.
+    // THE ROUTE IS THE AUTHORITY. The offer surfaces suppress this as of #376 —
+    // before it, they suppressed it only for a competition that HELD a pass,
+    // and a never-held one rendered a live checkout that landed here for a 410.
+    // The refusal below is not a backstop for a bug that was fixed; it is the
+    // rule, and `/upgrade` is a direct link an organiser can hold in a bookmark
+    // or an email long after the event. The surfaces have been wrong about the
+    // lock before — #301 is a whole wave of them saying a locked pass was
+    // active. A suppressed button is a nicety; refusing to take the money is
+    // the rule.
     //
     // Judged by `passLockReason`, never by a status list of its own: the SQL
     // (`pass_applies`, V343) and this function are already the two authorised

@@ -154,6 +154,22 @@ export const PASS_LOCK_REASON_KEY: Record<PassLockReason, DictionaryKey> = {
 };
 
 /**
+ * The same two reasons, said to someone who never bought a pass (#376).
+ *
+ * A separate Record rather than a reuse of `PASS_LOCK_REASON_KEY`: every one
+ * of those sentences ends "so its Event Pass has stopped lifting its limits",
+ * which is a statement about a purchase. On this state there was no purchase,
+ * and the sentence would be a plain falsehood on the one screen that exists to
+ * explain what the org can and cannot buy.
+ *
+ * Keyed off the union for the same compile-error protection.
+ */
+export const PASS_CLOSED_REASON_KEY: Record<PassLockReason, DictionaryKey> = {
+  terminal: "upgrade.closed.reasonTerminal",
+  past_ends_on: "upgrade.closed.reasonPastEnds",
+};
+
+/**
  * Every lock reason's sentence, finished — `passActiveLabels` for the ended
  * state, and here for the same reason.
  *
