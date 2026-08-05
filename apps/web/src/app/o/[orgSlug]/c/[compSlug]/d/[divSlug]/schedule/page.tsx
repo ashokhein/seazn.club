@@ -27,12 +27,20 @@ import {
   listOfficialsForConsole,
   listOfficialBlackouts,
   listOfficialBusyElsewhere,
+  type OfficialConsoleRow,
+  type OfficialBlackoutRow,
+  type OfficialBusyRow,
 } from "@/server/usecases/officials";
 import { feedLabels, type FeedRow } from "@/lib/schedule-board";
 import { UpgradeGate } from "@/components/upgrade-gate";
 
 const TABS = ["board", "settings", "constraints", "officials", "history"] as const;
 type Tab = (typeof TABS)[number];
+
+/** The "didn't load it" arm of a gated `Promise.all` slot. Explicitly typed
+ *  because a bare `Promise.resolve([])` infers `never[]`, and the resulting
+ *  `T[] | never[]` union has no callable `.map` at the use sites below. */
+const notLoaded = <T,>(): Promise<T[]> => Promise.resolve([]);
 
 export default async function DivisionSchedulePage({
   params,
@@ -50,6 +58,21 @@ export default async function DivisionSchedulePage({
   const { auth, canEdit } = page;
   const id = page.division.id;
   const division = await getDivision(auth, id);
+  // #230 item 4: officials data is read by the Officials tab, and nothing else
+  // reads the roster or the busy table at all — so Board, Settings, Constraints
+  // and History used to pay for the whole org roster plus a cross-organisation
+  // query on every navigation. `listOfficialBusyElsewhere` is the one worth
+  // gating: it runs on the bare superuser connection by design (officials.ts —
+  // the read straddles two orgs, which `withTenant` cannot express), so the
+  // fewer tabs that trigger it, the fewer times that read runs at all.
+  // `officialsMeta` below was already gated this way.
+  //
+  // Blackouts are the exception: the board's AI preflight line ("N with
+  // blackout dates", ai-preflight.tsx) is fed by ScheduleBoard's
+  // `officialsWithBlackout`, which is this list de-duplicated. Deferring it off
+  // the board would silently show 0 there, so it loads on board too.
+  const wantsOfficials = tab === "officials";
+  const wantsBlackouts = tab === "officials" || tab === "board";
   const [
     competition,
     stages,
@@ -72,9 +95,9 @@ export default async function DivisionSchedulePage({
     hasFeature(auth.orgId, "scheduling.board"),
     hasFeature(auth.orgId, "scheduling.constraints"),
     hasFeature(auth.orgId, "scheduling.ai"),
-    listOfficialsForConsole(auth),
-    listOfficialBlackouts(auth),
-    listOfficialBusyElsewhere(auth),
+    wantsOfficials ? listOfficialsForConsole(auth) : notLoaded<OfficialConsoleRow>(),
+    wantsBlackouts ? listOfficialBlackouts(auth) : notLoaded<OfficialBlackoutRow>(),
+    wantsOfficials ? listOfficialBusyElsewhere(auth) : notLoaded<OfficialBusyRow>(),
     preferredCurrency(auth.orgId),
   ]);
 
