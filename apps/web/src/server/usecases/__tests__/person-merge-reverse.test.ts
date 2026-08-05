@@ -20,7 +20,7 @@ import { recomputePlayerStats } from "../player-stats";
 import { startDivision } from "../schedule";
 import { scoreEvent } from "../scoring";
 import { createStages, generateStageFixtures } from "../stages";
-import { GENERIC_CONFIG, seedOrg } from "./_seed";
+import { GENERIC_CONFIG, seedFootballCatalog, seedOrg } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -429,6 +429,9 @@ describe.skipIf(!HAS_DB)("#404 reverseMerge", () => {
     const { auth } = await seedOrg("pro");
     // football, not generic: generic declares no playerStats model, so the fold
     // returns before it touches the table and the assertion is unfalsifiable.
+    // Seeded rather than assumed — relying on another suite's rows passes
+    // locally and 422s on a fresh CI database.
+    await seedFootballCatalog();
     const comp = await createCompetition(auth, {
       name: "Stats Cup " + rnd(),
       visibility: "public",

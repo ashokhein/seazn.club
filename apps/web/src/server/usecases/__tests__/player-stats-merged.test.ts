@@ -22,7 +22,7 @@ import { recomputePlayerStats } from "../player-stats";
 import { startDivision } from "../schedule";
 import { scoreEvent } from "../scoring";
 import { createStages, generateStageFixtures } from "../stages";
-import { seedOrg } from "./_seed";
+import { seedFootballCatalog, seedOrg } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -43,6 +43,10 @@ async function person(orgId: string, fullName: string): Promise<string> {
  * attribution accepts any of them.
  */
 async function seedFootball(auth: AuthCtx, reds: string[]) {
+  // The catalog rows first: `sync:sports` writes them in a provisioned
+  // environment, but a suite that relies on that is order-dependent against a
+  // fresh database and 422s with `unknown variant 'default' for football`.
+  await seedFootballCatalog();
   const comp = await createCompetition(auth, {
     name: "Merge Stats Cup " + rnd(),
     visibility: "public",
