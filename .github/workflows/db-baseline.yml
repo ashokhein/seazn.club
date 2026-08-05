@@ -15,9 +15,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # This job only shells to scripts/flyway.sh and installs nothing. It still
+      # needs pnpm on PATH: setup-node enables pnpm caching on its own once
+      # package.json declares a `packageManager`, and its post step then shells
+      # out to pnpm to locate the store. Without these two steps the baseline
+      # itself succeeds and the job still goes red on the post step — the worst
+      # shape for a manual, rarely-run database operation.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 26
+      - name: Ensure the pnpm store directory exists, for setup-node's cache save
+        run: mkdir -p "$(pnpm store path --silent)"
 
       - name: Cache Flyway CLI
         uses: actions/cache@v4

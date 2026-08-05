@@ -1,6 +1,27 @@
 import path from "node:path";
+import { createRequire } from "node:module";
 import { withSentryConfig } from "@sentry/nextjs";
 import { posthogIngestHosts } from "./src/lib/posthog-proxy.mjs";
+
+// z3-solver is a WASM build whose emscripten glue reads `build/z3-built.wasm`
+// off disk at runtime; nothing in the import graph names the `.wasm`, so tracing
+// cannot infer it and it has to be listed explicitly below. That listing used to
+// be a literal glob pointing two levels up into a hoisted `node_modules/
+// z3-solver/build` — which npm produced and pnpm does not: pnpm's store puts
+// the real file under
+// `node_modules/.pnpm/z3-solver@<version>/node_modules/z3-solver/build`, so the
+// glob would match NOTHING.
+//
+// It would also break in silence. With the file missing from the standalone
+// output the server ENOENTs on every solve, `loadZ3` turns that into the
+// designed fallback to LLM repair, and minimal-movement repair becomes a
+// production no-op that still spends a model round. Ask the resolver where the
+// package actually is instead of asserting a linker's layout.
+const require = createRequire(import.meta.url);
+const z3BuildDir = path.join(
+  path.dirname(require.resolve("z3-solver/package.json")),
+  "build",
+);
 
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -67,7 +88,8 @@ const nextConfig = {
     "/*": [
       "src/lib/email-templates/html/**/*",
       "content/help/**/*",
-      "../../node_modules/z3-solver/build/**/*",
+      // Resolved, not hardcoded — see the createRequire block at the top.
+      path.relative(import.meta.dirname, path.join(z3BuildDir, "**/*")),
     ],
   },
   // PostHog reverse proxy: front analytics through our own origin so

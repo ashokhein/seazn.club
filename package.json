@@ -7,14 +7,17 @@
     "apps/*",
     "packages/*"
   ],
-  "packageManager": "npm@11.17.0",
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=26"
+  },
   "scripts": {
     "dev": "npm run dev --workspace apps/web",
     "build": "npm run build --workspace apps/web",
     "start": "npm run start --workspace apps/web",
     "lint": "npm run lint --workspace apps/web && npm run lint --workspace packages/engine",
     "typecheck": "npm run typecheck --workspace apps/web && npm run typecheck --workspace packages/engine",
-    "typecheck:scripts": "tsc -p tsconfig.scripts.json",
+    "typecheck:scripts": "node node_modules/typescript-native/bin/tsc -p tsconfig.scripts.json",
     "test": "npm run test --workspace apps/web && npm run test --workspace packages/engine",
     "test:watch": "npm run test:watch --workspace apps/web",
     "test:coverage": "npm run test:coverage --workspace apps/web",
@@ -39,7 +42,20 @@
     "check:rls": "node --experimental-strip-types scripts/check-rls.ts",
     "backfill:pass-credit-redemptions": "node --env-file-if-exists=apps/web/.env.local --experimental-strip-types scripts/backfill-pass-credit-redemptions.ts"
   },
+  "dependencies": {
+    "@seazn/engine": "workspace:*",
+    "postgres": "^3.4.9",
+    "stripe": "^22.3.0"
+  },
   "devDependencies": {
-    "turbo": "^2.10.8"
+    "@anthropic-ai/sdk": "^0.110.0",
+    "@types/node": "^26",
+    "bcryptjs": "^3.0.3",
+    "exceljs": "^4.4.0",
+    "playwright": "^1.61.1",
+    "turbo": "^2.10.8",
+    "typescript": "6.0.3",
+    "typescript-native": "npm:typescript@7.0.2",
+    "zod": "^4.4.3"
   }
 }

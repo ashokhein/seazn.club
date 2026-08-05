@@ -1,14 +1,24 @@
 # ── Stage 1: install all deps (including devDeps for build) ──────────────────
-FROM node:22-alpine AS builder
+FROM node:26-alpine AS builder
 WORKDIR /app
 
-# Workspace manifests first so `npm ci` layer caches across source changes.
-COPY package.json package-lock.json ./
+# Workspace manifests first so the install layer caches across source changes.
+# pnpm-workspace.yaml is not optional here, and its absence is SILENT: besides
+# the workspace globs it carries the public-hoist patterns for the three
+# serverExternalPackages (pdfkit, exceljs, z3-solver). Leave it out and the
+# install succeeds, `next build` succeeds, and the standalone server cannot
+# resolve any of them at runtime — z3 then falls back to LLM repair, which is a
+# designed path, so nothing surfaces an error.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json apps/web/
 COPY packages/engine/package.json packages/engine/
-# BuildKit cache mount: the npm cache persists on the Fly builder disk between
-# deploys, so a lockfile change re-downloads only what actually changed.
-RUN --mount=type=cache,id=npm,target=/root/.npm npm ci --prefer-offline
+# node 26 dropped corepack, so pnpm is installed explicitly rather than activated.
+RUN npm i -g pnpm@10.34.5
+# BuildKit cache mount over pnpm's content-addressed store: it persists on the
+# Fly builder disk between deploys, so a lockfile change re-fetches only what
+# actually changed.
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store && pnpm install --frozen-lockfile
 
 COPY . .
 
@@ -41,7 +51,7 @@ ENV SENTRY_AUTH_TOKEN=$SENTRY_AUTH_TOKEN
 RUN SKIP_TYPECHECK=1 npm run build --workspace apps/web
 
 # ── Stage 2: minimal production image ────────────────────────────────────────
-FROM node:22-alpine AS runner
+FROM node:26-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

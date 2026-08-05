@@ -22,7 +22,26 @@ import fs from "node:fs";
 import path from "node:path";
 import { nextConfig } from "../../../next.config.js";
 
-const WASM_GLOB = "../../node_modules/z3-solver/build/**/*";
+/**
+ * The glob is no longer a constant this file can restate. next.config.js
+ * RESOLVES it (`require.resolve("z3-solver/package.json")`) precisely so it
+ * survives a package-manager change: under npm the package hoisted to
+ * `<repo>/node_modules/z3-solver`, under pnpm the real file lives beneath
+ * `node_modules/.pnpm/z3-solver@<version>/`, and a literal written for one
+ * layout matches nothing under the other — silently, which is the whole point
+ * of this file.
+ *
+ * So read the glob back OFF the config and check where it actually leads. A
+ * hardcoded expectation here would only prove the test agrees with itself.
+ */
+function tracedZ3Glob(): string | undefined {
+  const includes =
+    (nextConfig as { outputFileTracingIncludes?: Record<string, string[]> })
+      .outputFileTracingIncludes ?? {};
+  return Object.values(includes)
+    .flat()
+    .find((entry) => entry.includes("z3-solver"));
+}
 
 describe("z3 WASM survives standalone output tracing", () => {
   it("is left unbundled, so its glue can still find its own directory", () => {
@@ -40,21 +59,22 @@ describe("z3 WASM survives standalone output tracing", () => {
   });
 
   it("is listed in outputFileTracingIncludes", () => {
-    const includes =
-      (nextConfig as { outputFileTracingIncludes?: Record<string, string[]> })
-        .outputFileTracingIncludes ?? {};
-    const all = Object.values(includes).flat();
-    expect(all).toContain(WASM_GLOB);
+    const glob = tracedZ3Glob();
+    expect(glob, "no outputFileTracingIncludes entry mentions z3-solver").toBeDefined();
+    // It must reach the package's own build/ directory and sweep it whole —
+    // the glue loads z3-built.wasm by name but the directory is its unit.
+    expect(glob).toMatch(/z3-solver[/\\]build[/\\]\*\*[/\\]\*$/);
   });
 
   it("actually points at the shipped binary", () => {
-    // The glob above is a string in a config file: it stays "correct" forever
-    // even if z3 moves the artefact in a version bump. Resolve it and look.
-    // Without this half, a dependency upgrade reintroduces the exact silent
-    // production failure this file was written for.
+    // The entry is still a string in a config file: it stays "correct" forever
+    // even if z3 moves the artefact in a version bump, and it is now also the
+    // only thing standing between a linker change and a silent production
+    // no-op. Resolve it and look.
+    const glob = tracedZ3Glob()!;
     const appDir = path.join(import.meta.dirname, "../../..");
-    const buildDir = path.resolve(appDir, WASM_GLOB.replace("/**/*", ""));
-    expect(fs.existsSync(buildDir)).toBe(true);
+    const buildDir = path.resolve(appDir, glob.replace(/[/\\]\*\*[/\\]\*$/, ""));
+    expect(fs.existsSync(buildDir), `no such directory: ${buildDir}`).toBe(true);
     const wasm = fs
       .readdirSync(buildDir)
       .filter((f) => f.endsWith(".wasm"));

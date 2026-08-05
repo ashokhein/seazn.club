@@ -52,34 +52,32 @@ jobs:
           filters: |
             engine:
               - 'packages/engine/**'
-              - 'package-lock.json'
               - 'pnpm-lock.yaml'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       # Both workspaces in one graph-ordered pass, restored from the Remote
       # Cache when neither TS tree changed. turbo.json's globalDependencies
       # pull in scripts/** + tsconfig.scripts.json, which apps/web's typecheck
       # reads via its second `tsc -p ../../tsconfig.scripts.json` half — without
       # that, a scripts/ edit would restore a stale green.
-      # apps/web's `tsc --noEmit` needs more than the runner's default ~2 GB V8
-      # heap — the same ceiling a247b46e hit in e2e's production build. That one
-      # could dodge it (SKIP_TYPECHECK, because THIS step gates types); this one
-      # cannot, so the ceiling has to come up. Measured on W4 (#415): the run
-      # died with the heap at 2041/2088 MB, and apps/web alone peaks ~2.8 GB RSS
-      # locally. It has been sitting just under the default for a while — W4's
-      # engine schemas only tipped it over, so this is not one wave's problem.
-      # The cost itself is #438: the engine ships as raw TS source, so every
-      # apps/web typecheck re-infers zod across all 11 sport modules. Fixing
-      # that is what removes this bump; until then it is a ceiling, not a cure.
       #
-      # A ceiling, not a reservation: turbo may still run both workspaces at
-      # once, and neither comes near 6 GB.
+      # This step used to carry `NODE_OPTIONS: --max-old-space-size=6144`:
+      # apps/web peaked ~2.8 GB against the runner's ~2 GB default V8 heap and
+      # died at 2041/2088 MB. TypeScript 7 is a native Go binary, so there is no
+      # V8 heap to raise — measured peak RSS is ~2.5 GB of ordinary process
+      # memory. The appetite barely moved; only the cap disappeared.
+      #
+      # Do NOT reintroduce that flag. If it ever looks necessary again, the flag
+      # is not the problem — something has fallen back to a JS compiler, and
+      # that is what to go and find. toolchain.test.ts fails on any non-comment
+      # line setting it, so this comment may name it plainly.
       - run: npx turbo run typecheck
-        env:
-          NODE_OPTIONS: --max-old-space-size=6144
       - run: npm run engine:boundary
       # v3/03 §6: retired plan tier must never reappear in UI copy.
       - name: Plan-scrub grep gate (PROMPT-32)
@@ -175,12 +173,72 @@ jobs:
         continue-on-error: true # advisory: action's PR-API call is flaky; findings still surface
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 26
+      # setup-node turns pnpm caching on by itself once package.json declares a
+      # `packageManager` — this step passes no `cache:` input and still gets it.
+      # Its POST step then tries to save the pnpm store and fails the whole job
+      # with "Path Validation Error: Path(s) specified in the action for caching
+      # do(es) not exist". Nothing here ever creates that directory, because this
+      # job installs nothing on purpose. The audit itself had already passed; the
+      # job failed after every step of its own had succeeded.
+      #
+      # Creating the directory is the fix that keeps "installs nothing" true. The
+      # alternative — running an install just to satisfy a cache save — would
+      # spend minutes to make a scan job do the thing it is deliberately not
+      # doing.
+      - name: Ensure the pnpm store directory exists, for setup-node's cache save
+        run: mkdir -p "$(pnpm store path --silent)"
+      # Reads pnpm-lock.yaml only — this job installs nothing, and must not start.
       - name: Dependency audit (high+)
-        run: npm audit --audit-level=high
+        run: pnpm audit --audit-level=high
         continue-on-error: true
+
+  container:
+    name: docker build + TS 7 musl exec
+    # PR-only, matching test/smoke/security: a squash-merge lands the exact tree
+    # the PR validated, and deploy-staging trusts the PR gates. It is also in
+    # deploy-staging's `needs` so that if this job ever DOES run and fail, the
+    # deploy halts rather than shipping an image whose compiler cannot execute.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The builder stage installs devDeps, so the 20 platform-conditional
+      # TypeScript 7 binaries land in that layer. None of them declare a `libc`
+      # field, so npm cannot filter musl from glibc: alpine gets the linux
+      # binary whether or not it can execute there.
+      - name: Build the builder stage
+        run: docker build --target builder -t seazn-builder:ci .
+
+      # The whole point. `docker build` runs the app build with SKIP_TYPECHECK=1
+      # and never invokes tsc, so a musl-incompatible Go binary builds perfectly
+      # clean and only fails at first use. Execute it here instead.
+      - name: Execute the TypeScript 7 binary inside the image
+        run: |
+          set -euo pipefail
+          VERSION=$(docker run --rm seazn-builder:ci \
+            node /app/node_modules/typescript-native/bin/tsc --version)
+          echo "reported: $VERSION"
+          echo "$VERSION" | grep -qE '^Version 7\.' || {
+            echo "::error::TS 7 binary did not execute on musl"; exit 1; }
+
+      # A full typecheck inside the image: proves the binary not only starts but
+      # reads the real project. This is the check that would have caught a
+      # partially-working binary.
+      - name: Typecheck inside the image
+        run: docker run --rm seazn-builder:ci npx turbo run typecheck
+
+      - name: Report image size
+        run: docker images seazn-builder:ci --format '{{.Size}}'
+
+      - name: Build the full image, including the runner stage
+        run: docker build -t seazn:ci .
 
   # -------------------------------------------------------------------------
   # Integration gate: real Postgres container -> real HTTP -> real DB.
@@ -257,11 +315,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
 
       # Flyway CLI is downloaded by scripts/flyway.sh on first use; cache it
       # per pinned version so CI doesn't re-download every run.
@@ -391,9 +452,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: apps/web/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('apps/web/src/**/*.js', 'apps/web/src/**/*.jsx', 'apps/web/src/**/*.ts', 'apps/web/src/**/*.tsx') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/web/src/**/*.js', 'apps/web/src/**/*.jsx', 'apps/web/src/**/*.ts', 'apps/web/src/**/*.tsx') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
+            ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml') }}-
 
       # On a cache hit turbo restores apps/web/.next/** (minus .next/cache,
       # which the actions/cache step above owns) — including the standalone
@@ -478,7 +539,7 @@ jobs:
   deploy-staging:
     name: Deploy (staging)
     runs-on: ubuntu-latest
-    needs: [test, smoke, security]
+    needs: [test, smoke, security, container]
     # The gates are PR-only now, so on a main push they report 'skipped' —
     # always() + no-failure lets the deploy proceed past skipped needs while
     # still halting if a gate somehow ran and failed.
@@ -496,11 +557,18 @@ jobs:
       STAGING_STRIPE_SECRET_KEY: ${{ secrets.STAGING_STRIPE_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
       - uses: actions/setup-node@v5 # scripts/flyway.sh parses DATABASE_URL with node
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci --omit=dev # stripe-sync.ts imports postgres + stripe (prod deps — devDeps unused here)
+          node-version: 26
+          cache: pnpm
+      # stripe-sync.ts and sync-sports.ts import postgres, stripe and
+      # @seazn/engine/sports from the repo ROOT, so those three are root
+      # PRODUCTION dependencies — --prod honours the section, unlike npm ci
+      # --omit=dev which used to find them hoisted out of apps/web.
+      - run: pnpm install --frozen-lockfile --prod
 
       - name: Cache Flyway CLI
         uses: actions/cache@v4
