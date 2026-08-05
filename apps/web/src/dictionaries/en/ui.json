@@ -3192,5 +3192,6 @@
   "board.ai.joint.undoChangedTitle": "This can no longer be undone in one go",
   "board.ai.joint.undoChanged": "The competition has been scheduled again since this apply, so the undo no longer matches it. Restore each division from its own schedule page.",
   "board.ai.joint.undoGoneTitle": "Nothing left to undo",
-  "board.ai.joint.undoGone": "There is no joint apply left to undo on this competition. Each division keeps its own restore points on its schedule page."
+  "board.ai.joint.undoGone": "There is no joint apply left to undo on this competition. Each division keeps its own restore points on its schedule page.",
+  "division.create.competitionEnded": "This competition is finished, so no new divisions can be added to it."
 }

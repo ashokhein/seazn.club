@@ -3192,5 +3192,6 @@
   "board.ai.joint.undoChangedTitle": "Ya no se puede deshacer de una vez",
   "board.ai.joint.undoChanged": "La competición se ha vuelto a programar desde esta aplicación, así que deshacer ya no coincide con ella. Restaura cada división desde su propia página de horario.",
   "board.ai.joint.undoGoneTitle": "No queda nada que deshacer",
-  "board.ai.joint.undoGone": "En esta competición ya no queda ninguna aplicación conjunta que deshacer. Cada división conserva sus propios puntos de restauración en su página de horario."
+  "board.ai.joint.undoGone": "En esta competición ya no queda ninguna aplicación conjunta que deshacer. Cada división conserva sus propios puntos de restauración en su página de horario.",
+  "division.create.competitionEnded": "Esta competición ha finalizado, por lo que no se pueden añadir nuevas divisiones."
 }

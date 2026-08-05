@@ -272,6 +272,11 @@ export function DivisionBuilder({
     } catch (err) {
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywallFeature(String(err.extra.feature_key ?? ""));
+      } else if (err instanceof ApiV1Error && err.code === "COMPETITION_ENDED") {
+        // A finished competition does not grow (#376 part D). The server's
+        // message is English-only, so the refusal is localised here rather
+        // than shown raw — this is the only surface that creates a division.
+        setError(msg("division.create.competitionEnded"));
       } else {
         setError(err instanceof Error ? err.message : msg("wizard.failed"));
       }

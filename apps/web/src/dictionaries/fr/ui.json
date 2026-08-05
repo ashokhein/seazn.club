@@ -3192,5 +3192,6 @@
   "board.ai.joint.undoChangedTitle": "Impossible d’annuler en une seule fois",
   "board.ai.joint.undoChanged": "La compétition a été replanifiée depuis cette application, l’annulation ne correspond donc plus. Restaurez chaque division depuis sa propre page de planning.",
   "board.ai.joint.undoGoneTitle": "Plus rien à annuler",
-  "board.ai.joint.undoGone": "Il n’y a plus d’application groupée à annuler sur cette compétition. Chaque division conserve ses propres points de restauration sur sa page de planning."
+  "board.ai.joint.undoGone": "Il n’y a plus d’application groupée à annuler sur cette compétition. Chaque division conserve ses propres points de restauration sur sa page de planning.",
+  "division.create.competitionEnded": "Cette compétition est terminée : aucune nouvelle division ne peut y être ajoutée."
 }

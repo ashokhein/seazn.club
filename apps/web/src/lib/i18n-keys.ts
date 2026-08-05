@@ -1382,6 +1382,7 @@ export type DictionaryKey =
   | "div.registrations.publicLink.desc"
   | "div.registrations.publicLink.title"
   | "div.registrations.title"
+  | "division.create.competitionEnded"
   | "divset.advanced"
   | "divset.cardLogo"
   | "divset.cardLogoDesc"
