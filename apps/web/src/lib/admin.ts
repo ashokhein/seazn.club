@@ -54,6 +54,43 @@ export const CUSTOMER_SELF_SERVICE_AUDIT_ACTIONS = [
   "billing_group.detach_comp_granted",
 ] as const;
 
+/**
+ * Org moderation verbs (v3/08 §1). The verb IS the `staff_audit_log.action` —
+ * `setOrgSuspension` logs it verbatim — so this one list is simultaneously the
+ * request enum, the use case's parameter type and the audit action set that
+ * `/admin/orgs/[id]`'s adjustments panel allowlists. Keeping them one constant
+ * is what stops the three drifting: an allowlist written from memory says
+ * `unsuspend`, which type-checks, reads plausibly, and leaves the REAL
+ * `reactivate` row just as invisible as it was before.
+ */
+export const SUSPENSION_ACTIONS = ["suspend", "reactivate"] as const;
+export type SuspensionAction = (typeof SUSPENSION_ACTIONS)[number];
+
+/**
+ * Discovery curation verbs (doc 15 §3). The request enum derives from this.
+ */
+export const DISCOVERY_CURATION_VERBS = ["feature", "unfeature", "block", "unblock"] as const;
+export type DiscoveryCurationVerb = (typeof DISCOVERY_CURATION_VERBS)[number];
+
+/** `["feature", …] → ["discovery_feature", …]`, preserving tuple length. */
+type DiscoveryActions<T extends readonly string[]> = {
+  [K in keyof T]: `discovery_${T[K] & string}`;
+};
+
+/**
+ * The `staff_audit_log.action` values the discovery route writes. DERIVED from
+ * the verbs rather than retyped, because the route builds the action with a
+ * template string (`discovery_${action}`) — a fifth verb would otherwise mint a
+ * fifth audit action that no allowlist, category map or label knows about, and
+ * nothing would fail. Derived, it extends this tuple automatically, which makes
+ * the `Record<AdjustmentAction, …>` maps in admin-adjustments-log.ts incomplete
+ * and fails the BUILD.
+ */
+export const DISCOVERY_AUDIT_ACTIONS = DISCOVERY_CURATION_VERBS.map(
+  (verb) => `discovery_${verb}`,
+) as unknown as DiscoveryActions<typeof DISCOVERY_CURATION_VERBS>;
+export type DiscoveryAuditAction = (typeof DISCOVERY_AUDIT_ACTIONS)[number];
+
 /** Record a staff action in the audit log. */
 export async function logStaffAction(
   actorId: string,

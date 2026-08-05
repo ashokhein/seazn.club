@@ -4,9 +4,14 @@ import "server-only";
 // deliberately kept away from the money — see setOrgSuspension.
 import { sql } from "@/lib/db";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
-import { logStaffAction } from "@/lib/admin";
+import { logStaffAction, type SuspensionAction } from "@/lib/admin";
 
-export type SuspensionAction = "suspend" | "reactivate";
+// The verb is logged VERBATIM as the staff_audit_log action (see the log call
+// below), so the union that types this parameter, the route's request enum and
+// the adjustments-log allowlist must all be the same list or the panel silently
+// loses an arm. That list lives with the audit sink, in lib/admin.ts; re-exported
+// here because this module is where callers already reach for it.
+export type { SuspensionAction };
 
 /**
  * Suspend or reactivate an organization.
