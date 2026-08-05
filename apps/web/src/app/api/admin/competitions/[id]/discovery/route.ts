@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { sql } from "@/lib/db";
-import { requireSuperadmin, logStaffAction } from "@/lib/admin";
+import { requireSuperadmin, logStaffAction, DISCOVERY_CURATION_VERBS } from "@/lib/admin";
 import { handler, HttpError } from "@/lib/http";
 import { hasFeature } from "@/lib/entitlements";
 import {
@@ -10,7 +10,12 @@ import {
 
 const schema = z
   .object({
-    action: z.enum(["feature", "unfeature", "block", "unblock"]),
+    // Derived, not retyped. The audited action below is `discovery_${action}`,
+    // so this enum and DISCOVERY_AUDIT_ACTIONS (which the org adjustments-log
+    // allowlist reads) are two views of one list — a fifth verb added here
+    // fails the build in admin-adjustments-log.ts rather than quietly writing
+    // an audit row nothing renders.
+    action: z.enum(DISCOVERY_CURATION_VERBS),
     reason: z.string().min(1).max(500),
   })
   .strict();

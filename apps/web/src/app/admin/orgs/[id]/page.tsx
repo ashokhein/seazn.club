@@ -13,21 +13,7 @@ import { walletIdFor, balance as walletBalance } from "@/lib/credits";
 import { adjustmentsForOrg } from "@/server/usecases/admin-adjustments-log";
 import { slotConsumingDivisions } from "@/server/usecases/admin-divisions";
 import { SlotWaiverButton } from "./slot-waiver-button";
-
-/** Raw staff_audit_log action → friendly label for the adjustments log. */
-const ADJUSTMENT_LABELS: Record<string, string> = {
-  credit_adjust: "Credit adjustment",
-  addon_grant: "Add-on granted",
-  addon_revoke: "Add-on revoked",
-  comp_to_pro: "Comped to Pro",
-  admin_downgrade: "Downgraded",
-  extend_trial: "Trial extended",
-  restore_trial: "Trial restored",
-  entitlement_override: "Entitlement override",
-  entitlement_override_removed: "Override removed",
-  remove_payment_method: "Card removed",
-  division_slot_waived: "Division slot waived",
-};
+import { ADJUSTMENT_LABELS } from "./adjustment-labels";
 
 export default async function AdminOrgPage({
   params,
@@ -320,7 +306,7 @@ export default async function AdminOrgPage({
                     </td>
                     <td className="px-3 py-2 text-slate-300">{a.actorName ?? "—"}</td>
                     <td className="px-3 py-2 text-slate-200">
-                      {ADJUSTMENT_LABELS[a.action] ?? a.action}
+                      {ADJUSTMENT_LABELS[a.action]}
                     </td>
                     <td className="px-3 py-2 text-xs text-slate-300">{a.category}</td>
                     <td className="px-3 py-2 text-xs text-slate-300">{a.reason ?? "—"}</td>

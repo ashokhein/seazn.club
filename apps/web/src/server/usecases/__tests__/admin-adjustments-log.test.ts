@@ -5,9 +5,15 @@
 import { describe, expect, it, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
-import { DISCOVERY_AUDIT_ACTIONS } from "@/lib/admin";
+import { DISCOVERY_AUDIT_ACTIONS, SUSPENSION_ACTIONS } from "@/lib/admin";
+import { ADJUSTMENT_LABELS } from "@/app/admin/orgs/[id]/adjustment-labels";
 import { setOrgSuspension } from "@/server/usecases/admin-orgs";
-import { adjustmentsForOrg, ADJUSTMENT_ACTIONS } from "../admin-adjustments-log";
+import {
+  adjustmentsForOrg,
+  ADJUSTMENT_ACTIONS,
+  ADJUSTMENT_CATEGORY,
+  ADJUSTMENT_REVERSIBLE,
+} from "../admin-adjustments-log";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -235,5 +241,53 @@ describe.skipIf(!HAS_DB)("adjustmentsForOrg (SPEC-3 §3)", () => {
     expect(ADJUSTMENT_ACTIONS).toContain("credit_adjust");
     expect(ADJUSTMENT_ACTIONS).not.toContain("impersonate_start");
     expect(ADJUSTMENT_ACTIONS).not.toContain("size_pack_upsert");
+  });
+});
+
+// No DB: this is the guard over the four maps an allowlisted action has to
+// appear in. Three of them are `Record<AdjustmentAction, …>` so tsc already
+// refuses an omission — this test is what stands behind the fourth (the label
+// map lives in the /admin tree, where a page module cannot export it) and what
+// fails loudly if any of those types is ever widened back to `string`.
+describe("every allowlisted adjustment action is fully described", () => {
+  it("has a category, a reversibility and a label", () => {
+    for (const action of ADJUSTMENT_ACTIONS) {
+      expect(ADJUSTMENT_CATEGORY[action], `no category for ${action}`).toBeTruthy();
+      expect(typeof ADJUSTMENT_REVERSIBLE[action], `no reversibility for ${action}`).toBe("boolean");
+      expect(ADJUSTMENT_LABELS[action], `no label for ${action}`).toBeTruthy();
+    }
+  });
+
+  // The label is what an operator reads; a slug leaking through means the map
+  // was keyed on `string` again and the compile-time guard is gone.
+  it("labels no action with its own raw slug", () => {
+    for (const action of ADJUSTMENT_ACTIONS) {
+      expect(ADJUSTMENT_LABELS[action]).not.toBe(action);
+    }
+  });
+
+  // The whole point of deriving: the verbs the discovery route accepts and the
+  // actions it audits are one list. If someone re-types the enum, this fails.
+  it("covers exactly the discovery verbs the route accepts", () => {
+    expect([...DISCOVERY_AUDIT_ACTIONS]).toEqual([
+      "discovery_feature",
+      "discovery_unfeature",
+      "discovery_block",
+      "discovery_unblock",
+    ]);
+    for (const action of DISCOVERY_AUDIT_ACTIONS) {
+      expect(ADJUSTMENT_ACTIONS).toContain(action);
+    }
+  });
+
+  // The trap this whole change exists to close: the second suspension arm is
+  // `reactivate`. An allowlist carrying `unsuspend` type-checks, reads like a
+  // fix, and leaves the real action exactly as invisible as before.
+  it("allowlists the suspension arms the writer actually logs", () => {
+    expect([...SUSPENSION_ACTIONS]).toEqual(["suspend", "reactivate"]);
+    expect(ADJUSTMENT_ACTIONS).not.toContain("unsuspend");
+    for (const action of SUSPENSION_ACTIONS) {
+      expect(ADJUSTMENT_ACTIONS).toContain(action);
+    }
   });
 });
