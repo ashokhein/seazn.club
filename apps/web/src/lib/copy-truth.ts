@@ -1309,6 +1309,121 @@ export function unmeteredAiRunProseFaults(label: string, markdown: string): stri
 }
 
 /**
+ * The precondition for BOTH joint-undo pattern families below: the sentence has
+ * to be about undoing something. Without it the patterns read as claims about
+ * anything plural, and two TRUE sentences in `ai-scheduling.md` fired — the
+ * batch discount ("scheduling divisions together is never a worse deal than
+ * scheduling them one at a time") and the apply's own atomicity ("Applying
+ * writes every division together"). Exported because the module-wide
+ * anti-vacuity walk in `dictionary-copy-truth.test.ts` only sees exports.
+ */
+export const JOINT_UNDO_SUBJECT =
+  /\b(?:undo|undoes|undone|restor\w+|rewinds?|rewound|reverts?|reverses?|rolls?\s+back|rolled\s+back|puts?\s+[^.;]{0,30}back|putting\s+[^.;]{0,30}back)\b/i;
+
+/**
+ * A joint apply is ATOMIC; the joint undo is not (#386, #392).
+ *
+ * `ai-scheduling.md` once said a joint apply gives *"each division its own
+ * before-AI save point, so one undo puts the whole thing back."* That was false
+ * and was corrected. Nothing stopped it coming back, and after #386 the shape of
+ * the mechanism moved TOWARDS the false sentence without reaching it: the undo
+ * is now one competition-scoped call
+ * (`POST /competitions/{id}/schedule/restore`, driven by
+ * `components/v2/board/ai-joint-apply.ts:undoJointApply`) that rewinds every
+ * division the apply wrote, in sorted order, under one lock — so it can no
+ * longer be abandoned half-way by a closed tab. It still reports per-division
+ * failures rather than rolling the successes back. One request is not one
+ * outcome, and an editor reading the changelog is exactly who would write that
+ * it is.
+ *
+ * This is the one help claim on this surface about whether the organiser's work
+ * survives a failure, which is the claim they will act on: told the undo is
+ * all-or-nothing, an organiser who sees it fail assumes the board is untouched
+ * and does nothing, when in fact some divisions went back and some did not.
+ *
+ * SCOPE: joint-scheduling copy only. A single-division undo genuinely does put
+ * everything back in one step, `scheduling/undo.md` says so, and that sentence
+ * must stay writable — a guard that bans a true sentence gets worked around
+ * rather than obeyed. Every pattern therefore requires a PLURAL/collective
+ * object ("every division", "the whole apply", "both"), never a bare "undo puts
+ * everything back".
+ */
+export const FALSE_JOINT_UNDO_PATTERNS = [
+  /\b(one|a\s+single|1)\s+(undo|click|step|restore)\b[^.;]{0,60}\b(all|every|whole|entire|both)\b/i,
+  /\b(all|every|whole|entire|both)\s+(the\s+)?divisions?\b[^.;]{0,40}\b(at\s+once|in\s+one\s+(go|step|click))\b/i,
+  /\b(all|every|whole|entire|both)\s+(the\s+)?divisions?\b[^.;]{0,40}\b(is|are)\s+(put|rolled|rewound|restored)\s+back\b[^.;]{0,20}\b(at\s+once|in\s+one\s+(go|step|click))\b/i,
+  /\bundo\b[^.;]{0,40}\b(the\s+)?(whole|entire)\s+(thing|apply|run|schedule)\b/i,
+  /\b(rolls?|reverses?|undoes)\s+(back\s+)?(the\s+)?(whole|entire)\s+(joint\s+)?(apply|run|schedule|thing)\b/i,
+];
+
+/**
+ * The mirror falsehood, and the one that is live rather than historical (#386).
+ *
+ * Before #386 the joint undo WAS a browser loop over per-division restores, and
+ * `ai-scheduling.md` described it as one — "undo restores them one at a time
+ * rather than in a single step". That is now wrong: `undoJointApply` makes one
+ * call, and the server rewinds every division under one competition lock.
+ *
+ * It fails in the same direction as the all-or-nothing claim: an organiser told
+ * the undo runs division by division reads a half-restored board as the expected
+ * outcome of a normal undo, rather than as the thing the console is naming for
+ * them to retry.
+ *
+ * Every pattern requires the word "division" in the sentence, which is what
+ * keeps `scheduling/undo.md`'s TRUE per-change prose ("Restore rewinds the
+ * schedule … by undoing each change since, one by one") out of scope: that
+ * sentence is about changes, not divisions.
+ */
+export const RETIRED_JOINT_UNDO_LOOP_PATTERNS = [
+  /\bdivisions?\b[^.;]{0,80}\bone\s+(at\s+a\s+time|by\s+one)\b/i,
+  /\bone\s+(at\s+a\s+time|by\s+one)\b[^.;]{0,80}\bdivisions?\b/i,
+  /\b(one|a\s+separate|its\s+own|their\s+own)\s+(restore|undo|call|request)\s+(per|for\s+each)\s+divisions?\b/i,
+  /\b(separate|individual)\s+(restores?|undos?|calls?|requests?)\b[^.;]{0,40}\b(per|for\s+each|one\s+per)\s+divisions?\b/i,
+  /\b(restores?|undoes|rewinds?)\b[^.;]{0,40}\b(each|every)\s+divisions?\b[^.;]{0,40}\bin\s+turn\b/i,
+];
+
+/**
+ * Joint-undo scan, sentence-scoped like {@link retiredRunCapProseFaults}.
+ *
+ * Reads `claimSurfaces` rather than `claimTexts`, i.e. HEADINGS TOO — the one
+ * place this rule departs from its siblings. `claimSurfaces`' own header records
+ * why: a reviewer put a wave's flagship falsehoods into a heading and into
+ * `description:` and every sentence-scoped rule stayed green, because
+ * `claimTexts` filters headings out. The usual objection (a heading is a
+ * fragment, so sentence shapes mis-read it) does not bite here: these patterns
+ * need a verb phrase and a collective object, which no heading in the tree has
+ * by accident. "One undo puts the whole thing back" is a heading someone would
+ * plausibly write.
+ */
+export function jointUndoFaults(label: string, markdown: string): string[] {
+  const faults: string[] = [];
+  for (const surface of claimSurfaces(markdown)) {
+    for (const sentence of sentences(surface.text)) {
+      // Every claim in this rule is about the UNDO. Without this gate the
+      // patterns read as claims about anything plural, and two TRUE sentences in
+      // this very article fire: "scheduling divisions together is never a worse
+      // deal than scheduling them one at a time" (the batch discount) and
+      // "Applying writes every division together". Both were caught by the
+      // corpus test, which is what it is for.
+      if (!JOINT_UNDO_SUBJECT.test(sentence)) continue;
+      for (const p of FALSE_JOINT_UNDO_PATTERNS) {
+        if (!p.test(sentence)) continue;
+        faults.push(
+          `${label}: "${sentence.slice(0, 72)}…" claims a joint undo is all-or-nothing — it is one call (#386) but NOT one outcome: it reports per-division failures and does not roll the successes back: ${p.source}`,
+        );
+      }
+      for (const p of RETIRED_JOINT_UNDO_LOOP_PATTERNS) {
+        if (!p.test(sentence)) continue;
+        faults.push(
+          `${label}: "${sentence.slice(0, 72)}…" describes the retired per-division undo loop — since #386 undo is ONE competition-scoped call (undoJointApply → POST /competitions/{id}/schedule/restore): ${p.source}`,
+        );
+      }
+    }
+  }
+  return faults;
+}
+
+/**
  * v17 gap #365: `content/help/scheduling/ai-officials.md` said "Automatic
  * officials assignment is a Pro Plus feature." That sentence describes a REAL
  * gate — just not this one. `officials.ts`'s `officials.auto` feature key

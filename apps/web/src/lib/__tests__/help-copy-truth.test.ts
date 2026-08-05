@@ -33,6 +33,7 @@ import {
   feeLockStatedFaults,
   goldenParagraphFaults,
   inventoryFaults,
+  jointUndoFaults,
   claimTexts,
   LOCALE_CLAIMS,
   localeHalfClaimFaults,
@@ -404,6 +405,121 @@ The quota is a **lifetime total per division** — it doesn't reset weekly or mo
 - A joint run needs **at least two divisions**. To schedule one on its own, open its own schedule page.
 - The whole run is capped at **500 fixtures to place**, the same ceiling a single division has. Over that, run the divisions in smaller groups.`;
     expect(jointHourlyClaims(beforeChange)).toEqual([]);
+  });
+});
+
+// ── #392: the joint UNDO is not all-or-nothing ────────────────────────────────
+//
+// The apply is atomic; the undo is not. After #386 it is ONE competition-scoped
+// call that rewinds every division under one lock — but it reports per-division
+// failures rather than rolling the successes back, so "one undo puts the whole
+// thing back" stays a lie in the direction that costs the organiser work. The
+// article carried that sentence once, it was corrected, and nothing stopped it
+// coming back.
+describe("joint undo copy guard (#392)", () => {
+  const aiScheduling = helpArticleBySlug("scheduling/ai-scheduling");
+
+  it("fires on the sentence that was actually wrong", () => {
+    expect(
+      jointUndoFaults(
+        "x",
+        "Each division gets its own before-AI save point, so one undo puts the whole thing back.",
+      ),
+    ).not.toEqual([]);
+  });
+
+  it("fires on the synonyms an editor would reach for", () => {
+    for (const s of [
+      "A single undo restores every division at once.",
+      "One click puts all the divisions back.",
+      "Undo rolls back the whole joint apply in one step.",
+      "One restore puts both divisions back.",
+      "Undo reverses the entire run.",
+      "Every division is put back at once.",
+    ]) {
+      expect(jointUndoFaults("x", s), s).not.toEqual([]);
+    }
+  });
+
+  // Fix round 3's lesson, applied ahead of time: this rule reads HEADINGS and
+  // frontmatter as well as prose, because that is where a falsehood was hidden
+  // last time and because `description:` is rendered as the lead paragraph.
+  it("fires on the same claim made in a heading or in frontmatter", () => {
+    expect(jointUndoFaults("x", "## One undo puts the whole thing back\n")).not.toEqual([]);
+    expect(
+      jointUndoFaults("x", "---\ndescription: A single undo restores every division at once.\n---\n\nBody.\n"),
+    ).not.toEqual([]);
+  });
+
+  // The OTHER falsehood in the same family, and the live one: until #386 the
+  // undo really was a browser loop over per-division restores, and the article
+  // said so. It is now one competition-scoped call. A sentence describing the
+  // retired loop is as false as the all-or-nothing one and fails in the same
+  // direction — it tells the organiser a half-finished undo is expected.
+  it("fires on copy describing the retired per-division undo loop", () => {
+    for (const s of [
+      "Each division gets its own before-AI save point, and undo restores them one at a time rather than in a single step.",
+      "Undo puts the divisions back one by one.",
+      "The console sends one request per division when you undo.",
+      "Undo makes a separate restore for each division.",
+    ]) {
+      expect(jointUndoFaults("x", s), s).not.toEqual([]);
+    }
+  });
+
+  it("does not fire on the true sentence", () => {
+    expect(
+      jointUndoFaults(
+        "x",
+        "Each division gets its own before-AI save point, and a restore that fails doesn't stop the rest going back.",
+      ),
+    ).toEqual([]);
+  });
+
+  // The SCOPE half. A single-division undo really does put everything back in
+  // one step, and `scheduling/undo.md` says so; a guard that bans the true
+  // sentence gets worked around rather than obeyed.
+  it("does not fire on true single-division undo copy", () => {
+    for (const s of [
+      "It first creates a before-AI save point, so undo puts everything back exactly as it was.",
+      "Undo steps back one change, redo steps forward.",
+      "Restore rewinds the schedule to the bookmark by undoing each change since, one by one.",
+      // The two the first draft of the patterns caught, both TRUE and both from
+      // this same article. They are why the rule is gated on an undo/restore
+      // subject rather than on plurality alone.
+      "Applying writes every division together — all of them or none.",
+      "Those three divisions get the budget 6 credits buys while being charged 5 — the batch discount lowers the price, never the capability, so scheduling divisions together is never a worse deal than scheduling them one at a time.",
+    ]) {
+      expect(jointUndoFaults("x", s), s).toEqual([]);
+    }
+    expect(jointUndoFaults("undo.md", helpArticleBySlug("scheduling/undo"))).toEqual([]);
+  });
+
+  it("returns nothing, and does not throw, on an empty or claim-free corpus", () => {
+    expect(jointUndoFaults("x", "")).toEqual([]);
+    expect(jointUndoFaults("x", "# Courts\n\nA court is the label you typed in.\n")).toEqual([]);
+  });
+
+  it("the real article is clean", () => {
+    // ANTI-VACUITY, the thing this whole describe exists for: a scan over an
+    // empty corpus finds nothing and reads exactly like a scan over a clean
+    // one. So pin that the article loaded, that it splits into sentences, and
+    // that some of those sentences are about undo — i.e. there was something
+    // here to be wrong.
+    expect(aiScheduling.length).toBeGreaterThan(1000);
+    const undoSentences = claimTexts(aiScheduling)
+      .flatMap(sentences)
+      .filter((s) => /\bundo\b/i.test(s));
+    expect(undoSentences.length).toBeGreaterThan(2);
+    expect(jointUndoFaults("ai-scheduling.md", aiScheduling)).toEqual([]);
+  });
+
+  // MUTATION PROOF against the article itself: the paragraph as it read before
+  // this guard existed must be caught by it.
+  it("reds on the joint-undo paragraph the article used to carry", () => {
+    const oldParagraph =
+      "Undo works the other way round. Each division gets its own **before-AI** save point, so one undo puts the whole thing back.";
+    expect(jointUndoFaults("ai-scheduling.md", oldParagraph)).not.toEqual([]);
   });
 });
 

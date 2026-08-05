@@ -618,6 +618,19 @@ const KNOWN_POSITIVES: string[] = [
   "Officials AI runs are free.",
   "It costs nothing to restaff.",
   "AI schedule runs are uncapped.",
+  // ── Joint undo claimed all-or-nothing, or described as the retired
+  //    per-division loop (#392). One fixture per pattern in each family; the
+  //    reverse check below (an unused fixture is a fault) keeps them honest.
+  "Each division gets its own before-AI save point, so one undo puts the whole thing back.",
+  "A single undo restores every division at once.",
+  "Every division is put back at once.",
+  "Undo reverses the entire run.",
+  "Undo rolls back the whole joint apply in one step.",
+  "Each division gets its own before-AI save point, and undo restores them one at a time.",
+  "The undo goes one by one through the divisions.",
+  "The console sends one request per division when you undo.",
+  "Undo makes a separate restore for each division.",
+  "Undo rewinds each division in turn.",
   // ── Task 3's APPROVED FORMS (the help-tree allowlist) ──
   // These are positives in the opposite sense to everything else here: they are
   // the shapes the help copy is ALLOWED to use, so each one is a real sentence
