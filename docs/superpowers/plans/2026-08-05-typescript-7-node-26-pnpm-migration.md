@@ -1027,6 +1027,21 @@ Add as a top-level job alongside `test`, `security`, `smoke`:
         run: docker build -t seazn:ci .
 ```
 
+**Standing cost, decide before merging stage 2.** As written this job runs a full
+`docker build` on *every* PR, forever. During stage 2 that is exactly what we
+want — it is the gate for the highest-risk unknown in the programme. Afterwards
+it is a multi-minute job on PRs that touch nothing it can detect.
+
+The repo already has the mechanism: `dorny/paths-filter` gates the engine
+coverage jobs. Once stage 2 is merged and the musl question is settled, gate this
+job the same way on `Dockerfile`, `package.json`, `package-lock.json` /
+`pnpm-lock.yaml`, and `.github/workflows/ci.yml` — the only inputs that can
+change the answer. Note the filter job needs `permissions: pull-requests: read`
+on PRs, or it fails with "Resource not accessible by integration".
+
+Do **not** apply that gating inside stage 2 itself. Its whole purpose is to run
+on the PR that introduces the platform binaries.
+
 - [ ] **Step 2: Push and confirm the job runs and passes**
 
 ```bash
