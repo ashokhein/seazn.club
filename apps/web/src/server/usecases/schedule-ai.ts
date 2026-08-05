@@ -60,7 +60,11 @@ import {
   type SlotConfig,
   type VerifyConfig,
 } from "@seazn/engine/scheduling";
-import { AI_VERIFY_POLICY, buildEngineConstraints } from "@/server/usecases/engine-constraints";
+import {
+  AI_VERIFY_POLICY,
+  buildEngineConstraints,
+  resolvePersonScopes,
+} from "@/server/usecases/engine-constraints";
 import {
   parseInstruction,
   resolveParsed,
@@ -96,6 +100,7 @@ import {
   toAssignment,
   toSlotConfig,
   type FixtureLite,
+  type ScheduleSettingsOut,
 } from "./schedule";
 import {
   loadOfficialBlackouts,
@@ -653,6 +658,33 @@ export async function buildSchedulePack(
       [...people].map(([entrantId, ids]) => [entrantId, [...new Set(ids.map(identity.keyOf))]]),
     );
 
+    // #450: the stored RULES go through the same resolver instance, for exactly
+    // the same reason the rosters above do. `scopeCoversFixture` compares
+    // `scope.personKey` raw against a fixture's `people`, which are guarded keys
+    // from this point on — so a rule authored against a real person UUID (the
+    // only person identifier the console offers) stopped binding the moment the
+    // guard collapsed that person, silently and while still displaying as
+    // enforced.
+    //
+    // ONE place, deliberately: `guardedSettings` feeds the DRAFT placer via
+    // `toSlotConfig` below, and `guardedHard` feeds the pack's own
+    // `settings.constraints.hard`, which is what `verifyConfig` hands the
+    // referee. Mapping at only one of the two would fork the placer from the
+    // verifier — the recurring bug in this area — so both read the same array.
+    //
+    // `pack.parsed.hard` is deliberately NOT mapped: `schedule-ai-parse.ts`
+    // narrows the model's scope vocabulary to competition/division, so a
+    // compiled rule cannot carry a person scope at all. A map there would be a
+    // second producer guarding nothing.
+    const guardedHard = resolvePersonScopes(config.constraints?.hard ?? [], identity.keyOf);
+    const guardedSettings: ScheduleSettingsOut =
+      config.constraints === undefined
+        ? settings
+        : {
+            ...settings,
+            config: { ...config, constraints: { ...config.constraints, hard: guardedHard } },
+          };
+
     // Pool id → key ('A', 'B', …) across this division's stages.
     const poolRows = await tx<{ id: string; key: string }[]>`
       select p.id, p.key from pools p
@@ -949,8 +981,13 @@ export async function buildSchedulePack(
         // forwards (#447). The asymmetry is deliberate rather than the one that
         // caused #447 — but it is the same shape, so if a compiled rule ever
         // becomes available at draft time this must move to `toVerifyConfig`.
+        // `guardedSettings`, not `settings` (#450): every fixture handed to the
+        // placer below carries GUARDED person keys, so a person-scoped durable
+        // rule still holding a raw uuid would bind nothing here while the
+        // verifier — reading the same rules off the pack — binds it. That fork
+        // is the whole failure mode this area keeps producing.
         config: toSlotConfig(
-          settings,
+          guardedSettings,
           zonedTimeToUtc(dayKeyInTz(draftAnchorMs, orgTz), DEFAULT_SESSION_HOURS.start, orgTz),
         ),
         // extraExisting is the #350 joint pack's already-drafted divisions;
@@ -1174,7 +1211,10 @@ export async function buildSchedulePack(
             // OMITTED when empty, never `[]`. Absence already means "no durable
             // rules", and emitting an empty array on every pack would change the
             // shape of every instruction-free run for no information.
-            ...(config.constraints.hard?.length ? { hard: config.constraints.hard } : {}),
+            // #450: the person-scope-resolved copy, so the referee compares a
+            // rule against rows in the same namespace. Same array the draft
+            // placer above was given.
+            ...(guardedHard.length ? { hard: guardedHard } : {}),
           }
         : null,
     };

@@ -25,6 +25,47 @@ import "server-only";
 // one derivation, one place to guard, no fourth copy.
 import type { HardConstraint, SchedulingConstraints, StartWindow } from "@seazn/engine/scheduling";
 
+/**
+ * Put a stored rule's `scope.personKey` into the SAME namespace as the rows it
+ * will be compared against (#450).
+ *
+ * The AI builders run every entrant roster through the scheduling-only same-name
+ * guard (`personKeyResolver`), so a fixture's `people` are `name:<normalised>`
+ * keys wherever two `persons` rows share a display name. `scopeCoversFixture`
+ * compares `scope.personKey` RAW against that list, so a rule an organiser
+ * stored against a real person UUID — the only person identifier the console
+ * has — stopped binding the instant the guard collapsed that person. It did not
+ * warn and it did not throw: it matched nothing, while still rendering as an
+ * enforced rule.
+ *
+ * The fix cannot live in the engine: reconstructing `name:<normalised>` from a
+ * uuid needs the person-name map, which the engine has never been given and
+ * should not be. It belongs here, beside the `identity.keyOf` call sites, and it
+ * must be the SAME resolver INSTANCE that collapsed the rosters — a second
+ * resolver built from a different person map is a second notion of "same
+ * person", which is the bug one namespace down.
+ *
+ * Idempotent by construction, which the joint path relies on: `keyOf` is a
+ * lookup on raw person ids, so a `name:<normalised>` key it has already produced
+ * is not in the map and passes through unchanged. The joint builder can
+ * therefore re-resolve a sub-pack's already-collapsed rules through its own
+ * (wider, run-scoped) resolver without double-mangling them.
+ *
+ * Every non-person scope is returned by IDENTITY, not rebuilt: `entrantId`,
+ * `divisionId` and `pool` are uuids that no guard touches, and re-spreading them
+ * would only create a place for a namespace to drift.
+ */
+export function resolvePersonScopes(
+  hard: readonly HardConstraint[],
+  keyOf: (personId: string) => string,
+): HardConstraint[] {
+  return hard.map((h) =>
+    h.scope.kind === "person"
+      ? { ...h, scope: { kind: "person" as const, personKey: keyOf(h.scope.personKey) } }
+      : h,
+  );
+}
+
 /** The ISO-string form of a start window, as both the stored `ScheduleConfig`
  *  and the wire `SchedulePack` hold it. `target.kind` is typed as widely as the
  *  loosest producer types it — the pack's bare `string` — so this one parameter

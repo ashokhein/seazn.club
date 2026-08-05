@@ -50,6 +50,7 @@ import { MOVABLE_STATUS, OCCUPYING, peopleByEntrant } from "./schedule";
 import {
   AI_VERIFY_POLICY,
   buildEngineConstraints,
+  resolvePersonScopes,
   toEngineStartWindows,
 } from "./engine-constraints";
 import { ScheduleConfig } from "@/server/api-v1/schemas";
@@ -168,6 +169,22 @@ const FIXED_OCCUPYING = OCCUPYING.filter((s) => s !== MOVABLE_STATUS);
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const ms = (iso: string): number => Date.parse(iso);
 
+/** A sub-pack's settings with every person scope moved into the RUN's identity
+ *  namespace (#450). Returned by reference when there is nothing to resolve, so
+ *  a settings block with no durable rules is byte-identical to what the
+ *  sub-pack produced — the joint pack's determinism test compares
+ *  `JSON.stringify`, and a rebuilt object is a chance to reorder keys. */
+function withResolvedPersonScopes(
+  s: PackSettings,
+  keyOf: (personId: string) => string,
+): PackSettings {
+  if (s.constraints === null || s.constraints.hard === undefined) return s;
+  return {
+    ...s,
+    constraints: { ...s.constraints, hard: resolvePersonScopes(s.constraints.hard, keyOf) },
+  };
+}
+
 /**
  * The shape `personKeyResolver` (schedule-ai.ts) renders a same-name grouping in.
  *
@@ -197,7 +214,12 @@ export interface CompetitionPackDivision {
   sport: string;
   tz: string;
   /** That division's own settings, verbatim — never merged with a sibling's.
-   *  matchMinutes/gapMinutes/sessionWindows/blackouts legitimately differ. */
+   *  matchMinutes/gapMinutes/sessionWindows/blackouts legitimately differ.
+   *
+   *  ONE exception, and it is not a merge: `constraints.hard[].scope.personKey`
+   *  is re-resolved through the run-wide identity (#450), because that scope is
+   *  the only field on here whose namespace is decided by the RUN rather than by
+   *  the division. See `withResolvedPersonScopes`. */
   settings: PackSettings;
   /** This division's movable fixture ids, in the pack's movable order. */
   movableIds: string[];
@@ -757,7 +779,19 @@ export async function buildCompetitionPack(
     name: b.pack.division.name,
     sport: b.pack.division.sport,
     tz: b.pack.division.tz,
-    settings: b.pack.settings,
+    // #450: re-resolved through the RUN-WIDE identity, not left as the sub-pack
+    // produced it. `buildSchedulePack` already collapsed each division's rules
+    // with that division's own resolver, but the case this module exists for is
+    // the one a per-division resolver structurally cannot see: one human under
+    // two `persons` rows in two DIFFERENT divisions. The joint verifier compares
+    // these rules against `participants`, which ARE run-guarded (built from
+    // `guardedPeople` above), so a rule left holding a raw uuid binds nothing on
+    // exactly the boards this path was built for.
+    //
+    // Safe to apply twice: `keyOf` is a lookup on raw person ids, so a
+    // `name:<normalised>` key the sub-pack already produced is not in the map
+    // and passes through untouched.
+    settings: withResolvedPersonScopes(b.pack.settings, identity.keyOf),
     movableIds: b.pack.fixtures.movable.map((f) => f.id),
     // PLACED, not present: since #397 a draft row can carry `scheduled_at:
     // null` (an epoch sentinel the pack refused to pass off as a time), and
