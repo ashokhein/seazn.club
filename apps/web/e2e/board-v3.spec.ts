@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import {
   TAG,
@@ -149,17 +151,35 @@ test.describe.serial("board v3 (PROMPT-33)", () => {
     // the document (the dev-mode HTML around them carries HMR/dev overhead
     // that never ships). Parse the response body: hydration may have drained
     // the runtime __next_f array by the time we could evaluate.
-    // Budget raised 250K→420K in the v5 i18n merge (c7a0527): every /o console
-    // page now serialises the full ui dictionary (~110KB) into its flight via
-    // DictProvider — a fixed overhead on top of the 5×66 fixture blocks. The
-    // guard still catches genuine per-fixture bloat regressions.
     const html = (await resp!.body()).toString("utf8");
     const flightBytes = [...html.matchAll(/__next_f\.push\((\[[\s\S]*?\])\)<\/script>/g)].reduce(
       (n, m) => n + m[1]!.length,
       0,
     );
     expect(flightBytes).toBeGreaterThan(0);
-    expect(flightBytes).toBeLessThan(420_000);
+
+    // The dictionary is subtracted, not budgeted. Every /o console page
+    // serialises the WHOLE ui dictionary into its flight via DictProvider
+    // (o/[orgSlug]/layout.tsx) — one copy per document, ~190KB escaped, and it
+    // grows with every locale key added anywhere in the app. Budgeting the raw
+    // total made this guard an i18n tripwire: it was raised 250K→420K in the
+    // v5 i18n merge (c7a0527), then reds again the moment six `board.ai.joint.
+    // undo*` keys landed in #479 (+639B, at 420098 against a 420000 ceiling) —
+    // a board test failing for a commit that touched no board payload.
+    //
+    // What gap 15 actually budgets is the per-fixture cost of a 5×66 board, so
+    // that is what is asserted: the flight MINUS the dictionary it carries.
+    // A genuine per-fixture regression is tens of KB and still trips this;
+    // adding locale strings no longer does.
+    const uiDict = readFileSync(
+      fileURLToPath(new URL("../src/dictionaries/en/ui.json", import.meta.url)),
+      "utf8",
+    );
+    // As the flight carries it: minified, then JSON-string-escaped (the outer
+    // quotes are not part of the payload).
+    const dictBytes = JSON.stringify(JSON.stringify(JSON.parse(uiDict))).length - 2;
+    expect(flightBytes).toBeGreaterThan(dictBytes); // the dict IS in there
+    expect(flightBytes - dictBytes).toBeLessThan(250_000);
   });
 
   test("legend filters to two divisions in two taps; the URL is shareable", async ({ page }) => {

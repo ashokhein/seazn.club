@@ -1359,7 +1359,13 @@ test.describe("mobile viewport", () => {
     await expect(page.locator("[data-ghost-id]")).toHaveCount(0);
     await shot(page, "08-mobile-schedule");
 
+    // #383: arriving at the officials step no longer drafts anything, so the
+    // grid is absent until the organiser presses the run button — and the
+    // confirm card that stands in its place must fit the phone too.
     await page.getByRole("button", { name: "Assign officials" }).click();
+    await expect(page.getByLabel("Officials by fixture")).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "What this run costs" })).toBeVisible();
+    await page.getByRole("button", { name: /Draft the duty spread.*1 credit\b/ }).click();
     await expect(page.getByLabel("Officials by fixture")).toBeVisible({ timeout: 20_000 });
 
     await page.getByRole("button", { name: "Review & apply" }).click();
