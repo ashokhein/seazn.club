@@ -97,20 +97,54 @@ implement.
 
 Spec ✅ · Plan ✅
 
+**BOTH MERGES ARE DONE.** Everything below now lives on `fix/pass-lock-376`
+in lane A (`/Users/ashokhein/github/wt-pass-376`). Lanes C and D are merged
+and idle — do not start new work in them; their branches are history now.
+Merged-branch gate at `69335f9c`: **pass 5731, fail 0, total 5781,
+pending 50, failedSuites 0**, typecheck exit 0, both drift gates clean.
+
 | Task | Lane | State |
 | --- | --- | --- |
 | 1 — `closed` upgrade state | A | ✅ `951f60ca` + `3dbee0c5`, approved |
 | 2 — lock judged from the competition | A | ✅ `62ecb93a`, approved |
 | 3 — the chip | A | ✅ `4fd65383`, approved |
-| 4 — `/upgrade` ClosedPanel (+ `upgrade-gate`) | A | ✅ `dddc9e5c`, review in flight |
-| 5 — e2e + demo seed | A | in flight |
+| 4 — `/upgrade` ClosedPanel (+ `upgrade-gate`) | A | ✅ `dddc9e5c`, approved |
+| 5 — e2e + demo seed | A | ✅ approved, clean |
 | 6 — V354 + shared results predicate | C | ✅ `29e26998`, approved w/ 1 finding |
 | 7 — staff waiver | C | ✅ `198d5315`, approved w/ 2 findings |
 | V355 — abandoned-with-outcome (from the T6 review) | C | ✅ `bd10d036` |
-| T7 follow-ups — audit visibility + no-op 409 | C | in flight |
-| 8 — danger-zone copy, 402 explanation, e2e, seed | C | queued |
-| 9 — terminal competition guard (part D) | D | in flight |
-| 10 (part B), 11 (gates) | — | after all three branches merge |
+| T7 follow-ups — audit visibility + no-op 409 | C | ✅ `0ece5974`, `fe573380` |
+| Audit allowlist — 7 org actions were invisible | C | ✅ `ca3dc4ad` + `1f133878`, reviewed |
+| Audit follow-ups — typed writer, scope test, exclusions | A | ✅ `039d0ba4` |
+| 8 — slot disclosure surfaces | D | ✅ `3175f583`, reviewed |
+| 8b — review fixes (restore path, marginality, dialog copy) | D | ✅ `6da01a7c`, approved |
+| 8c — restore-path boundary tests | D | ✅ `aefecf75` |
+| 9 — terminal competition guard (part D) | D | ✅ `44ec3c44` |
+| Help — part C | C | ✅ `10cac24c` |
+| Help — part A | A | ✅ `9d24a1b8` |
+| Merge C → A | A | ✅ `da4016ff`, no conflicts |
+| Merge D → A | A | ✅ `a2e17382`, one conflict in `seed-demo.ts`, both sides kept |
+| Merge-semantics fix | A | ✅ `69335f9c` — see below |
+| Help — part D + slot disclosure | A | in flight |
+| 10 (part B) | A | NEXT, runs ALONE |
+| 11 (gates + PR) | A | after part B |
+
+**The merge caught a defect neither branch could.** Lane C gave
+`waiveDivisionSlot` a no-op guard (409 `DIVISION_SLOT_NOT_CONSUMED`) that
+requires the division to be ARCHIVED. Lane D, forked before that guard,
+wrote a disclosure test waiving a division that was played but still LIVE.
+It passed on D and only on D. Fixed in `69335f9c` by using the sequence
+production allows: play → close registration → archive → waive → restore.
+Expect more of this shape if any future work is split across lanes: a test
+written against a branch's own snapshot of a shared use case.
+
+**e2e triggering (checked, matters for the PR).** `.github/workflows/ci.yml`
+runs on `pull_request` — that is the smoke gate and it is automatic.
+`.github/workflows/e2e.yml` runs on `push: main` and **manual dispatch
+only**, taking a PR number as input. So e2e does NOT run on a PR by itself;
+dispatch it against the PR number BEFORE merging, or the merge to `main` is
+its first test. Dispatching is documented usage and is NOT the same as
+flipping the workflow's enabled state, which stays banned.
 
 **Lane D is a THIRD worktree**: `/Users/ashokhein/github/wt-div-part-d`, branch
 `fix/division-part-d`, forked from `fix/division-slot-cd@198d5315` so it
@@ -260,6 +294,32 @@ returns ~200 files and is **useless as a work list**: it matches every
 cannot break.
 
 Measured on `fix/pass-lock-376`:
+
+**CORRECTION (measured on the merged branch — the count below was only half
+the work).** The figures in this section counted API POSTs only. They miss
+the **use-case** call sites, which break at TYPECHECK rather than at
+runtime: `createCompetition(auth, input: CreateCompetition)`
+(`apps/web/src/server/usecases/competitions.ts:118-120`) takes the
+zod-INFERRED type, so the moment `ends_on` stops being `.nullish()` every
+object literal that omits it is a type error. Measured:
+
+- **176 `createCompetition(` occurrences across 87 files** (mostly
+  `src/**/__tests__`), plus the 132 collection POSTs below, plus 37 e2e
+  files that create competitions.
+- **Zero call sites pass `ends_on` today** — verified by grepping 4 lines
+  after each `createCompetition(` in `src/server/usecases/__tests__`: 0 hits.
+  So the requirement breaks essentially all of them at once.
+- The "direct-SQL seeds do NOT break" note below is still TRUE and still
+  useful — `_seed.ts` and the per-file `seedCompetition` helpers insert into
+  `competitions` directly and the COLUMN stays nullable. But it does not
+  make the job smaller, because the type-level breakage is the larger half.
+- Suggested shape: one pass for the real change (schema, both forms,
+  cross-field `ends_on >= starts_on`, the 2 copy keys × 4 locales, tests),
+  then a mechanical fixture sweep that can be split into disjoint
+  per-directory batches. The spec explicitly REJECTED a test factory that
+  supplies a default ("it would hide the new requirement from every test
+  that ought to be asserting it") — that is an owner decision, do not
+  re-open it.
 
 - **152 real creation sites across 49 files** — POSTs to the *collection*.
   Find them with the exact-collection pattern, not the prefix:
