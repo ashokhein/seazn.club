@@ -6,7 +6,7 @@ order: 1
 
 ## Community — free forever
 
-Run real competitions, free: 10 active competitions, 4 divisions in each, 5 team members, 64 entrants per division, 1 public dashboard, full scoring and scheduling, and unlimited match officials per fixture. Your **organisation logo** sits on your public pages, you can **charge entry fees** (by card or offline) at an 8% platform fee, exports come out as plain PDF/XLSX, and your organisation gets **10 AI credits a month** to spend on AI scheduling and officials. When something is finished, complete or archive it to free the slot.
+Run real competitions, free: 10 active competitions, 4 divisions in each, 5 team members, 64 entrants per division, 1 public dashboard, full scoring and scheduling, and unlimited match officials per fixture. Your **organisation logo** sits on your public pages, you can **charge entry fees** (by card or offline) at an 8% platform fee, exports come out as plain PDF/XLSX, and your organisation gets **10 AI credits a month** to spend on AI scheduling and officials. When a competition is finished, complete or archive it to free its slot. Divisions work differently: archiving one gives its slot back only if it never recorded a result ([archive and delete](/help/divisions/archive)).
 
 ## Event Pass — from $29 one-time
 

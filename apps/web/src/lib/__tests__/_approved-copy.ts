@@ -200,7 +200,24 @@ export const APPROVED_PLANS_INVENTORY: string[] = [
   "bc2337dbe88e419f",
   "5b2cc6eea4cf751a",
   "5ef78cfff635a513",
-  "5a5a9da7d2c5e80b",
+  // Community's paragraph, re-approved for V354/V355. It used to end "When
+  // something is finished, complete or archive it to free the slot", which read
+  // as covering both quotas in a sentence that names competitions AND divisions
+  // — and is now false for half of them. It now says the competition rule, then
+  // names the division rule as different.
+  //
+  // Read against the code before recording, per this file's own rule. The
+  // competition half is `usecases/competitions.ts`'s `assertActiveQuota`:
+  // `competitions.max_active` counts draft/published/live, so completed and
+  // archived genuinely free the slot. The division half is
+  // `usecases/divisions.ts`'s createDivision count — `d.archived_at is null or
+  // (division_has_results(d.id) and d.slot_waived_at is null)` — so an archived
+  // division still consumes its slot once it has results, and only an UNPLAYED
+  // one hands it back. `division_has_results` is defined in
+  // db/migration/deltas/V355__division_results_abandoned_outcome.sql: decided,
+  // finalized or forfeited, or abandoned with a non-`no_result` outcome. The
+  // linked article (divisions/archive.md) is the long form of the same rule.
+  "c7fa6c9c9e79fc08",
   "4cc311ddc69a48c1",
   "4d5875384bf155e4",
   "43e1d69d597e5579",
