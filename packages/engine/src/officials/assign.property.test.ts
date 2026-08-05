@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { assignOfficials } from "./assign.ts";
+import { dayKeyInTz } from "../scheduling/tz.ts";
 import {
   AssignPolicy,
   type FixtureOfficial,
@@ -16,6 +17,13 @@ const T0 = Date.UTC(2026, 6, 4, 9, 0, 0);
 const ENTRANTS = ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"];
 const POOLS = ["pA", "pB"];
 
+/** Zones chosen so the generated board straddles a UTC midnight from BOTH
+ *  sides (#448): west of Greenwich a local evening is already the next UTC day,
+ *  east of it a local morning is still the previous one. "UTC" stays in the
+ *  set so the degenerate case keeps its coverage. */
+const TIMEZONES = ["UTC", "America/Los_Angeles", "Pacific/Auckland", "Asia/Kolkata"];
+const arbitraryTz = fc.constantFrom(...TIMEZONES);
+
 const arbitraryFixtures = fc
   .integer({ min: 1, max: 64 })
   .chain((n) =>
@@ -23,7 +31,9 @@ const arbitraryFixtures = fc
       ...Array.from({ length: n }, (_, i) =>
         fc
           .record({
-            slot: fc.integer({ min: 0, max: 15 }),
+            // 48 half-hour slots from 09:00Z = a full 24h span, so fixtures
+            // land on both sides of a UTC midnight AND of a local one.
+            slot: fc.integer({ min: 0, max: 47 }),
             court: fc.constantFrom("C1", "C2", "C3"),
             pool: fc.option(fc.constantFrom(...POOLS), { nil: undefined }),
             pair: fc.integer({ min: 0, max: ENTRANTS.length - 2 }),
@@ -72,19 +82,21 @@ const arbitraryPolicy = fc
   .map((p) => AssignPolicy.parse({ roles: ["referee"], ...p }));
 
 describe("assignOfficials properties (PROMPT-22)", () => {
-  it("no official is double-booked; team-ref never officiates own or parallel-play fixtures; poolLock holds", () => {
+  it("no official is double-booked; team-ref never officiates own or parallel-play fixtures; poolLock holds; maxPerDay holds per ORG day", () => {
     fc.assert(
       fc.property(
         arbitraryFixtures,
         arbitraryOfficials,
         arbitraryPolicy,
-        (fixtures, officials, policy) => {
+        arbitraryTz,
+        (fixtures, officials, policy, tz) => {
           const { assignments } = assignOfficials({
             fixtures,
             officials,
             locked: [],
             policy,
             rngSeed: "prop",
+            tz,
           });
           const fixtureById = new Map(fixtures.map((f) => [f.id, f]));
           const officialById = new Map(officials.map((o) => [o.id, o]));
@@ -119,6 +131,20 @@ describe("assignOfficials properties (PROMPT-22)", () => {
               expect(o.homePoolId).toBe(f.poolId);
             }
           }
+
+          // maxPerDay is a HARD cap, counted on the calendar day in the org
+          // zone (#448) — never the UTC day, which used to let an official
+          // west of Greenwich work two "days" in one local evening.
+          const perOfficialDay = new Map<string, number>();
+          for (const a of assignments) {
+            const f = fixtureById.get(a.fixtureId)!;
+            const key = `${a.officialId}|${dayKeyInTz(f.startAt, tz)}`;
+            perOfficialDay.set(key, (perOfficialDay.get(key) ?? 0) + 1);
+          }
+          for (const [key, n] of perOfficialDay) {
+            const cap = officialById.get(key.slice(0, key.indexOf("|")))!.maxPerDay;
+            if (cap !== undefined) expect(n).toBeLessThanOrEqual(cap);
+          }
         },
       ),
       { numRuns: 150 },
@@ -131,13 +157,15 @@ describe("assignOfficials properties (PROMPT-22)", () => {
         arbitraryFixtures,
         arbitraryOfficials,
         arbitraryPolicy,
-        (fixtures, officials, policy) => {
+        arbitraryTz,
+        (fixtures, officials, policy, tz) => {
           const first = assignOfficials({
             fixtures,
             officials,
             locked: [],
             policy,
             rngSeed: "prop",
+            tz,
           });
           const locked: FixtureOfficial[] = first.assignments.map((a) => ({
             ...a,
@@ -149,6 +177,7 @@ describe("assignOfficials properties (PROMPT-22)", () => {
             locked,
             policy,
             rngSeed: "prop",
+            tz,
           });
           const fresh = second.assignments.filter((a) => !a.locked);
           expect(fresh).toEqual([]);
@@ -166,10 +195,10 @@ describe("assignOfficials properties (PROMPT-22)", () => {
 
   it("determinism: same inputs ⇒ identical result", () => {
     fc.assert(
-      fc.property(arbitraryFixtures, arbitraryOfficials, (fixtures, officials) => {
+      fc.property(arbitraryFixtures, arbitraryOfficials, arbitraryTz, (fixtures, officials, tz) => {
         const policy = AssignPolicy.parse({ roles: ["referee"], blockStay: true });
-        const a = assignOfficials({ fixtures, officials, locked: [], policy, rngSeed: "x" });
-        const b = assignOfficials({ fixtures, officials, locked: [], policy, rngSeed: "x" });
+        const a = assignOfficials({ fixtures, officials, locked: [], policy, rngSeed: "x", tz });
+        const b = assignOfficials({ fixtures, officials, locked: [], policy, rngSeed: "x", tz });
         expect(b).toEqual(a);
       }),
       { numRuns: 80 },

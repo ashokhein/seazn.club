@@ -44,6 +44,7 @@ describe("assignOfficials golden (Jul3/02 §3)", () => {
       locked: [],
       policy: AssignPolicy.parse({ roles: ["referee"], blockStay: true }),
       rngSeed: "golden-24",
+      tz: "UTC",
     });
     expect(assignments).toHaveLength(24);
     expect(conflicts).toEqual([]); // full coverage, spread ≤ 1 → no warns
@@ -119,6 +120,7 @@ describe("assignOfficials rules", () => {
       locked: [],
       policy: POLICY,
       rngSeed: "s",
+      tz: "UTC",
     });
     expect(assignments).toEqual([]);
     expect(conflicts).toEqual([
@@ -136,6 +138,7 @@ describe("assignOfficials rules", () => {
       locked: [],
       policy: POLICY,
       rngSeed: "s",
+      tz: "UTC",
     });
     expect(assignments).toEqual([]); // parallel slot → busy playing
   });
@@ -154,6 +157,7 @@ describe("assignOfficials rules", () => {
       locked: [],
       policy: AssignPolicy.parse({ roles: ["referee"], poolLock: true }),
       rngSeed: "s",
+      tz: "UTC",
     });
     expect(conflicts).toEqual([]);
     const byFixture = new Map(assignments.map((a) => [a.fixtureId, a.officialId]));
@@ -169,6 +173,7 @@ describe("assignOfficials rules", () => {
       locked: [{ fixtureId: "f1", officialId: "only", roleKey: "referee", locked: true }],
       policy: POLICY,
       rngSeed: "s",
+      tz: "UTC",
     });
     expect(assignments).toEqual([
       { fixtureId: "f1", officialId: "only", roleKey: "referee", locked: true },
@@ -186,6 +191,7 @@ describe("assignOfficials rules", () => {
       locked: [],
       policy: POLICY,
       rngSeed: "s",
+      tz: "UTC",
     });
     expect(assignments).toHaveLength(2);
     expect(conflicts).toContainEqual(
@@ -203,6 +209,7 @@ describe("assignOfficials rules", () => {
       locked: [],
       policy: AssignPolicy.parse({ roles: ["referee", "judge"] }),
       rngSeed: "s",
+      tz: "UTC",
     });
     expect(assignments).toEqual(
       expect.arrayContaining([
@@ -210,6 +217,89 @@ describe("assignOfficials rules", () => {
         expect.objectContaining({ officialId: "judge", roleKey: "judge" }),
       ]),
     );
+  });
+
+  it("maxPerDay counts the ORG calendar day, not the UTC day (#448)", () => {
+    // One local Saturday in America/Los_Angeles (PDT, UTC-7). The evening pair
+    // is already Sunday in UTC, which is exactly what used to double the cap.
+    const at = (hhmm: string): number => Date.parse(`2026-07-04T${hhmm}:00-07:00`);
+    const fixtures: OfficialFixture[] = ["10:00", "12:00", "18:00", "20:00"].map((t, i) => ({
+      id: `sat-${t}`,
+      startAt: at(t),
+      endAt: at(t) + 30 * MIN,
+      court: "C1",
+      entrants: [`e${i}a`, `e${i}b`],
+    }));
+    // Guard the guard: the last two really are a different UTC day, so a UTC
+    // bucket sees 2 + 2 and this test cannot pass by accident.
+    expect(fixtures.map((f) => new Date(f.startAt).toISOString().slice(0, 10))).toEqual([
+      "2026-07-04",
+      "2026-07-04",
+      "2026-07-05",
+      "2026-07-05",
+    ]);
+
+    const { assignments, conflicts } = assignOfficials({
+      fixtures,
+      officials: [official("capped", { maxPerDay: 2 })],
+      locked: [],
+      policy: POLICY,
+      rngSeed: "s",
+      tz: "America/Los_Angeles",
+    });
+
+    expect(assignments).toHaveLength(2);
+    expect(assignments.map((a) => a.fixtureId)).toEqual(["sat-10:00", "sat-12:00"]);
+    for (const id of ["sat-18:00", "sat-20:00"]) {
+      expect(conflicts).toContainEqual(
+        expect.objectContaining({ kind: "role_unfilled", severity: "block", fixtureId: id }),
+      );
+    }
+  });
+
+  it("per_day fairness buckets on the ORG calendar day (#448)", () => {
+    // Four fixtures on ONE local Saturday straddling UTC midnight. o2 plays in
+    // both evening fixtures, so o1 must take them: the load ends 3/1 and the
+    // spread warning names the basis it was measured in. Bucketing on UTC
+    // splits that into two bases and reports the spread against 07-05.
+    const at = (hhmm: string): number => Date.parse(`2026-07-04T${hhmm}:00-07:00`);
+    const mk = (t: string, entrants: string[]): OfficialFixture => ({
+      id: `sat-${t}`,
+      startAt: at(t),
+      endAt: at(t) + 30 * MIN,
+      court: "C1",
+      entrants,
+    });
+    const fixtures = [
+      mk("10:00", ["eX", "eY"]),
+      mk("12:00", ["eX", "eY"]),
+      mk("18:00", ["ePlay", "eY"]),
+      mk("20:00", ["ePlay", "eY"]),
+    ];
+    const { assignments, conflicts } = assignOfficials({
+      fixtures,
+      officials: [official("o1"), official("o2", { entrantIds: ["ePlay"] })],
+      locked: [],
+      policy: AssignPolicy.parse({ roles: ["referee"], fairness: "per_day" }),
+      rngSeed: "s",
+      tz: "America/Los_Angeles",
+    });
+    expect(assignments).toHaveLength(4);
+    const perOfficial = new Map<string, number>();
+    for (const a of assignments) {
+      perOfficial.set(a.officialId, (perOfficial.get(a.officialId) ?? 0) + 1);
+    }
+    expect(perOfficial.get("o1")).toBe(3);
+    expect(perOfficial.get("o2")).toBe(1);
+    // ONE basis for the whole local day, and it is the LOCAL date — under a UTC
+    // bucket this is two bases and the warning would name 2026-07-05.
+    expect(conflicts.filter((c) => c.kind === "fairness")).toEqual([
+      expect.objectContaining({
+        kind: "fairness",
+        severity: "warn",
+        detail: "assignment spread 2 within basis 2026-07-04",
+      }),
+    ]);
   });
 
   it("teamRefKeepDivision: same-division team-ref preferred; leaving warns", () => {
@@ -223,6 +313,7 @@ describe("assignOfficials rules", () => {
       locked: [],
       policy: AssignPolicy.parse({ roles: ["referee"], teamRefKeepDivision: true }),
       rngSeed: "s",
+      tz: "UTC",
     });
     expect(assignments).toHaveLength(2);
     expect(conflicts).toEqual([

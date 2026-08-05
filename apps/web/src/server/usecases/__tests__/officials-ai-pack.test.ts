@@ -260,6 +260,9 @@ describe.skipIf(!HAS_DB)("buildOfficialsPack (v4/03 §2)", () => {
     expect(ref.max_per_day).toBe(3);
     // Every fixture carries a time with the division tz offset (BST = +01:00).
     expect(a.fixtures.length).toBe(RR);
+    // `tz` is the DIVISION override; `org_tz` is the governing clock (#448).
+    expect(a.division.tz).toBe(TZ);
+    expect(typeof a.division.org_tz).toBe("string");
     expect(a.fixtures.every((f) => /[+-]\d{2}:\d{2}$/.test(f.start_at))).toBe(true);
     expect(a.fixtures.some((f) => f.start_at.endsWith("+01:00"))).toBe(true);
     // The solver draft is present and only ever assigns a referee.
@@ -268,6 +271,23 @@ describe.skipIf(!HAS_DB)("buildOfficialsPack (v4/03 §2)", () => {
     expect(a.match_minutes).toBe(30);
     expect(a.policy.roles).toEqual(["referee"]);
     expect(a.prior).toBeNull();
+  });
+
+  it("org_tz is the ORG zone and the division override never leaks into it (#448)", async () => {
+    // This division pins schedule_settings.tz = Europe/London. Point the ORG
+    // somewhere else: the pack must keep rendering in the division zone while
+    // reporting the org zone as the governing clock for day math.
+    const board = await seedOfficialsBoard();
+    await sql`
+      update organizations set timezone = 'America/Los_Angeles' where id = ${board.auth.orgId}`;
+    const p = await buildOfficialsPack(board.auth, board.divisionId, {
+      instruction: "x",
+      policy: POLICY,
+    });
+    expect(p.division.tz).toBe(TZ); // display, unchanged by the org zone
+    expect(p.division.org_tz).toBe("America/Los_Angeles");
+    // timestamps still carry the DISPLAY offset (BST), not the org's
+    expect(p.fixtures.some((f) => f.start_at.endsWith("+01:00"))).toBe(true);
   });
 
   it("a dry-run schedule overrides the persisted slot for a fixture", async () => {

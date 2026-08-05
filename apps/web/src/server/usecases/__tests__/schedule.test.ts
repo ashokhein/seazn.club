@@ -7,7 +7,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { EngineError } from "@seazn/engine/core";
-import { sql } from "@/lib/db";
+import { sql, withTenant } from "@/lib/db";
 import { PaymentRequiredError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition } from "../competitions";
@@ -17,6 +17,7 @@ import { createStages, generateStageFixtures } from "../stages";
 import {
   putScheduleSettings,
   getScheduleSettings,
+  loadSettings,
   autoSchedule,
   applySchedule,
   moveFixture,
@@ -576,27 +577,36 @@ describe.skipIf(!HAS_DB)("loadSettings resolves the organisation zone separately
     return { auth, divisionId: division.id };
   }
 
-  it("returns the org zone in orgTz even when the division overrides tz", async () => {
+  // Driven through `loadSettings` directly, not the HTTP boundary: `orgTz` is
+  // an INTERNAL field. `getScheduleSettings`/`putScheduleSettings` map to the
+  // wire shape and deliberately drop it — that boundary is pinned separately in
+  // schedule-settings-wire.test.ts.
+  const load = (auth: AuthCtx, divisionId: string) =>
+    withTenant(auth.orgId, (tx) => loadSettings(tx, divisionId));
+
+  it("returns the org zone in orgTz even when the division overrides displayTz", async () => {
     const { auth, divisionId } = await seedDivisionWithOrgTz("Europe/London");
     await sql`
       insert into schedule_settings (division_id, config, tz, updated_at)
       values (${divisionId}, ${sql.json({})}, 'Europe/Madrid', now())
       on conflict (division_id) do update set tz = excluded.tz`;
 
-    const settings = await getScheduleSettings(auth, divisionId);
-    expect(settings.tz).toBe("Europe/Madrid"); // display lane, unchanged
+    const settings = await load(auth, divisionId);
+    expect(settings.displayTz).toBe("Europe/Madrid"); // display lane, unchanged
     expect(settings.orgTz).toBe("Europe/London"); // governing lane, new
+    // And the same division over the wire still renders in the display zone.
+    expect((await getScheduleSettings(auth, divisionId)).tz).toBe("Europe/Madrid");
   });
 
   it("falls back to UTC when the organisation has no timezone", async () => {
     const { auth, divisionId } = await seedDivisionWithOrgTz(null);
-    const settings = await getScheduleSettings(auth, divisionId);
+    const settings = await load(auth, divisionId);
     expect(settings.orgTz).toBe("UTC");
   });
 
   it("falls back to UTC when the organisation timezone is not a valid IANA id", async () => {
     const { auth, divisionId } = await seedDivisionWithOrgTz("Pacific/Atlantis");
-    const settings = await getScheduleSettings(auth, divisionId);
+    const settings = await load(auth, divisionId);
     expect(settings.orgTz).toBe("UTC");
   });
 });

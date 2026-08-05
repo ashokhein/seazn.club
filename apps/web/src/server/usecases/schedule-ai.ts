@@ -557,11 +557,11 @@ export async function buildSchedulePack(
     if (!division) throw new HttpError(404, "division not found");
     const settings = await loadSettings(tx, divisionId);
     const config = settings.config;
-    // ONE clock (#397, design §2.1). `settings.tz` stays available as the
+    // ONE clock (#397, design §2.1). `settings.displayTz` stays available as the
     // division's DISPLAY zone — it is what `pack.division.tz` carries — but
     // every instant below is rendered in, and every calendar question answered
     // in, the ORGANISATION zone.
-    const tz = settings.tz;
+    const tz = settings.displayTz;
     const orgTz = settings.orgTz;
     const clock = makeClock(opts.now, orgTz);
     const courts = [...config.courts];
@@ -2042,7 +2042,16 @@ function coveragePreview(
     ...(o.entrant_ids.length > 0 ? { entrantIds: o.entrant_ids } : {}),
     homeDivisionId: pack.division.id,
   }));
-  const { conflicts } = assignOfficials({ fixtures, officials, locked: [], policy, rngSeed: "coverage" });
+  // `pack.tz` is the ORG zone (see SchedulePack.tz) — the day bucket the
+  // maxPerDay cap and per_day fairness are counted on (#448).
+  const { conflicts } = assignOfficials({
+    fixtures,
+    officials,
+    locked: [],
+    policy,
+    rngSeed: "coverage",
+    tz: pack.tz,
+  });
   const unfilled = conflicts
     .filter((c) => c.kind === "role_unfilled")
     .map((c) => ({ fixture_id: c.fixtureId ?? "", role_key: c.roleKey ?? "" }));

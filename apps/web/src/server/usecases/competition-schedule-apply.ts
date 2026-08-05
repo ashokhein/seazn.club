@@ -271,7 +271,7 @@ const packDivisionOf = (d: LoadedDivision): CompetitionPackDivision => ({
   id: d.id,
   name: d.name,
   sport: d.sport,
-  tz: d.settings.tz,
+  tz: d.settings.displayTz,
   settings: packSettingsOf(d.settings.config),
   movableIds: d.input.assignments.map((a) => a.fixture_id),
   draftPlaced: d.input.assignments.length,

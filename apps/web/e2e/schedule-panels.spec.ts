@@ -57,6 +57,107 @@ test("officials (PROMPT-22): propose → apply an auto-assignment", async ({ pag
   await expect(page.getByText(/failed/i)).toHaveCount(0);
 });
 
+// #448 — the auto-assign cap must count the ORGANISATION's calendar day. Drive
+// it through the panel a user actually clicks: an org in America/Los_Angeles,
+// one referee capped at 2/day, and four fixtures on ONE local Saturday whose
+// evening half is already Sunday in UTC. Bucketing on UTC sees 2 + 2 and offers
+// to apply all six; the org's own day allows 2 there, so it offers four and
+// reports the two it could not fill.
+test("officials (#448): maxPerDay caps on the org day across a UTC midnight", async ({
+  page,
+  request,
+}) => {
+  const org = await apiJson<{ id: string }>(request, "/api/orgs", "POST", {
+    name: `TZ448 ${TAG}-${Math.random().toString(36).slice(2, 6)}`,
+  });
+  await setOrgPlanBySql({ orgId: org.data!.id }, "pro_plus");
+  const activated = await apiJson(request, "/api/orgs/active", "POST", { org_id: org.data!.id });
+  expect(activated.status).toBeLessThan(300);
+
+  // The governing clock. Everything below is chosen against this zone.
+  const tzSet = await apiJson(request, `/api/orgs/${org.data!.id}`, "PATCH", {
+    timezone: "America/Los_Angeles",
+  });
+  expect(tzSet.status).toBeLessThan(300);
+
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    name: `TZ448 ${TAG}-${Math.random().toString(36).slice(2, 6)}`,
+    visibility: "private",
+  });
+  const div = await apiJson<{ id: string }>(
+    request,
+    `/api/v1/competitions/${comp.data!.id}/divisions`,
+    "POST",
+    {
+      name: "Open",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    },
+  );
+  const divisionId = div.data!.id;
+  await apiJson(
+    request,
+    `/api/v1/divisions/${divisionId}/entrants`,
+    "POST",
+    ["A", "B", "C", "D"].map((n, i) => ({ kind: "individual", display_name: n, seed: i + 1 })),
+  );
+  const stage = await apiJson<{ id: string }>(request, `/api/v1/divisions/${divisionId}/stages`, "POST", {
+    seq: 1,
+    kind: "league",
+    name: "League",
+  });
+  const gen = await apiJson<{ fixtures: { id: string }[] }>(
+    request,
+    `/api/v1/stages/${stage.data!.id}/generate`,
+    "POST",
+  );
+  const fixtures = gen.data!.fixtures;
+  expect(fixtures.length).toBe(6); // 4 entrants, round robin
+
+  // 2026-07-11 in Los Angeles (PDT, UTC-7). 10:00 and 12:00 local are still
+  // Saturday in UTC; 18:00 and 20:00 local are Sunday 01:00Z and 03:00Z.
+  const localSaturday = [
+    "2026-07-11T17:00:00.000Z",
+    "2026-07-11T19:00:00.000Z",
+    "2026-07-12T01:00:00.000Z",
+    "2026-07-12T03:00:00.000Z",
+  ];
+  for (const [i, at] of localSaturday.entries()) {
+    await apiJson(request, `/api/v1/fixtures/${fixtures[i]!.id}`, "PATCH", {
+      scheduled_at: at,
+      court_label: "1",
+    });
+  }
+  // The remaining two sit on their own days well clear of the Saturday, so they
+  // consume none of its cap and are expected to fill.
+  for (const [i, f] of fixtures.slice(4).entries()) {
+    await apiJson(request, `/api/v1/fixtures/${f.id}`, "PATCH", {
+      scheduled_at: `2026-09-2${i}T18:00:00.000Z`,
+      court_label: "1",
+    });
+  }
+  await apiJson(request, `/api/v1/divisions/${divisionId}/start`, "POST");
+
+  // Exactly ONE referee, capped at 2 a day — no one else can absorb the
+  // overflow, so the cap is what decides the outcome.
+  await apiJson(request, "/api/v1/officials", "POST", {
+    display_name: `Capped Ref ${TAG}`,
+    role_keys: ["referee"],
+    max_per_day: 2,
+  });
+
+  await page.goto(`/divisions/${divisionId}/schedule?tab=officials`);
+  await page.getByRole("button", { name: /^Propose$/ }).click();
+
+  // 2 on the local Saturday + 1 on each September day = 4, not 6.
+  await expect(page.getByRole("button", { name: "Apply 4 assignments" })).toBeVisible({
+    timeout: 20_000,
+  });
+  // and the two slots the cap refused are reported, not silently dropped
+  await expect(page.getByText(/role_unfilled/)).toHaveCount(2);
+});
+
 test("history (PROMPT-23): undo then redo round-trips without error", async ({ page, request }) => {
   const { divisionId } = await seedScoredDivision(request);
   await page.goto(`/divisions/${divisionId}/schedule?tab=history`);

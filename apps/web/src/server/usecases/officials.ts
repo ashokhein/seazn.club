@@ -23,6 +23,7 @@ import { AiApplyMeta } from "@/server/api-v1/schemas";
 import { sendOfficialAssignedEmail } from "@/lib/email";
 import { createClaimInvite, type ClaimRow } from "./person-claims";
 import { parseUpload } from "./import-parse";
+import { loadSettings } from "./schedule";
 
 type Tx = postgres.TransactionSql;
 
@@ -301,10 +302,21 @@ export async function loadOfficialsWithEntrants(tx: Tx): Promise<OfficialWithEnt
 async function engineInput(
   tx: Tx,
   divisionId: string,
-): Promise<{ fixtures: OfficialFixture[]; officials: OfficialSpec[]; locked: FixtureOfficial[] }> {
+): Promise<{
+  fixtures: OfficialFixture[];
+  officials: OfficialSpec[];
+  locked: FixtureOfficial[];
+  tz: string;
+}> {
   const [settings] = await tx<{ config: { matchMinutes?: number } }[]>`
     select config from schedule_settings where division_id = ${divisionId}`;
   const matchMinutes = settings?.config?.matchMinutes ?? DEFAULT_MATCH_MINUTES;
+
+  // The ORG zone governs which calendar day a fixture falls on, so it is what
+  // the engine's maxPerDay cap and per_day fairness bucket on (#397, #448).
+  // Deliberately NOT the division's display tz: a division override must not
+  // move a fixture to a different day than its sibling divisions see.
+  const tz = (await loadSettings(tx, divisionId)).orgTz;
 
   const fixtureRows = await tx<{
     id: string; scheduled_at: string; court_label: string | null; pool_id: string | null;
@@ -354,7 +366,7 @@ async function engineInput(
     roleKey: r.role_key,
     locked: true,
   }));
-  return { fixtures, officials, locked };
+  return { fixtures, officials, locked, tz };
 }
 
 export const AutoAssignInput = z.object({
@@ -373,13 +385,14 @@ export async function autoAssignOfficials(
   return withTenant(auth.orgId, async (tx) => {
     const [division] = await tx`select 1 from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
-    const { fixtures, officials, locked } = await engineInput(tx, divisionId);
+    const { fixtures, officials, locked, tz } = await engineInput(tx, divisionId);
     return assignOfficials({
       fixtures,
       officials,
       locked,
       policy: input.policy,
       rngSeed: input.rng_seed,
+      tz,
     });
   });
 }

@@ -33,6 +33,7 @@ import {
   type OfficialFixture,
   type OfficialSpec,
 } from "@seazn/engine/officials";
+import { dayKeyInTz } from "@seazn/engine/scheduling";
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
@@ -80,7 +81,10 @@ const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 export interface OfficialsPackFixture {
   id: string;
-  /** ISO-8601 with the division tz offset (dry-run schedule time when given). */
+  /** ISO-8601 with the DIVISION tz offset — display rendering for the model
+   *  (dry-run schedule time when given). Its date is NOT the authority on which
+   *  calendar day this fixture falls on: that is `dayKeyInTz(start, org_tz)`
+   *  (#448). Slicing the offset out of this string reads the DIVISION's day. */
   start_at: string;
   court: string | null;
   /** Pool id — the engine's poolLock target. */
@@ -104,7 +108,18 @@ export interface OfficialsPackOfficial {
 }
 
 export interface OfficialsPack {
-  division: { id: string; name: string; sport: string; tz: string };
+  /**
+   * `tz` is the DIVISION zone — display metadata, the offset every timestamp in
+   * this pack is rendered with, and nothing else.
+   *
+   * `org_tz` is the ORGANISATION zone (#397, design §2.1): the governing clock
+   * for every calendar-day decision — the engine's `maxPerDay` cap, `per_day`
+   * fairness, the referee's max_per_day recount and the blackout-date check.
+   * The two are equal unless the division overrides `schedule_settings.tz`;
+   * where they differ, day math must use `org_tz` or two divisions of one
+   * competition disagree about which Saturday a fixture is on (#448).
+   */
+  division: { id: string; name: string; sport: string; tz: string; org_tz: string };
   /** Fixed match length — the referee derives each fixture's end from this. */
   match_minutes: number;
   policy: AssignPolicy;
@@ -147,7 +162,8 @@ export async function buildOfficialsPack(
     if (!division) throw new HttpError(404, "division not found");
 
     const settings = await loadSettings(tx, divisionId);
-    const tz = settings.tz;
+    const tz = settings.displayTz; // display/rendering only
+    const orgTz = settings.orgTz; // governing clock for every day bucket (#448)
     const matchMinutes = settings.config.matchMinutes;
 
     // Officials roster (soft context). An empty roster cannot be planned.
@@ -323,6 +339,7 @@ export async function buildOfficialsPack(
       })),
       policy: opts.policy,
       rngSeed: "officials-draft",
+      tz: orgTz,
     });
     const draft = sortAssignments(
       solved.assignments.map((a) => ({
@@ -381,7 +398,13 @@ export async function buildOfficialsPack(
       );
 
     return {
-      division: { id: division.id, name: division.name, sport: division.sport_key, tz },
+      division: {
+        id: division.id,
+        name: division.name,
+        sport: division.sport_key,
+        tz,
+        org_tz: orgTz,
+      },
       match_minutes: matchMinutes,
       policy: opts.policy,
       fixtures: packFixtures,
@@ -439,9 +462,14 @@ const rowKey = (a: { fixtureId: string; roleKey: string; officialId: string }): 
  *    elsewhere — signals the engine cannot see). A declared-unfilled slot the
  *    pass also cannot fill surfaces as the engine's `role_unfilled` (confirmed).
  * 3. Supplement (`ineligible`, block): wrong role, maxPerDay exceeded (recounted
- *    per official per UTC day over locked+plan), assignment on a blackout date,
- *    assignment overlapping a busy-elsewhere time, and any locked row missing /
- *    altered in the proposal.
+ *    per official per ORG calendar day over locked+plan), assignment on a
+ *    blackout date, assignment overlapping a busy-elsewhere time, and any
+ *    locked row missing / altered in the proposal.
+ *
+ * Every calendar day here — the recount and the blackout check — comes from
+ * `dayOf()` below, which reads `pack.division.org_tz` (#448). This function used
+ * to hold two different answers to "what day is this fixture on": a UTC slice
+ * for the recount and a division-offset string slice for blackouts.
  */
 export function refereeOfficialsPlan(
   pack: OfficialsPack,
@@ -450,6 +478,11 @@ export function refereeOfficialsPlan(
   const matchMs = pack.match_minutes * MS_PER_MIN;
   const fixtureById = new Map(pack.fixtures.map((f) => [f.id, f]));
   const officialById = new Map(pack.officials.map((o) => [o.id, o]));
+
+  // THE day key for this whole function (#448) — the org zone, matching what
+  // the engine buckets maxPerDay and per_day fairness on.
+  const dayOf = (f: OfficialsPackFixture): string =>
+    dayKeyInTz(new Date(f.start_at).getTime(), pack.division.org_tz);
 
   const engineFixtures: OfficialFixture[] = pack.fixtures.map((f) => {
     const startAt = new Date(f.start_at).getTime();
@@ -489,6 +522,7 @@ export function refereeOfficialsPlan(
     locked: engineLocked,
     policy: pack.policy,
     rngSeed: "referee",
+    tz: pack.division.org_tz,
   });
 
   // Greedy fills = the solver's assignments on slots the plan left uncovered.
@@ -499,8 +533,11 @@ export function refereeOfficialsPlan(
   }
 
   const onBlackout = (o: OfficialsPackOfficial, f: OfficialsPackFixture): boolean =>
-    // start_at carries the division offset, so its date is the local calendar day.
-    o.blackout_dates.includes(f.start_at.slice(0, 10));
+    // The ORG calendar day, same key the maxPerDay recount uses (#448). Slicing
+    // `start_at` would read the DIVISION's day, which differs whenever a
+    // division overrides schedule_settings.tz — and would put this check and
+    // the recount back on two different calendars.
+    o.blackout_dates.includes(dayOf(f));
   const busyOverlap = (o: OfficialsPackOfficial, f: OfficialsPackFixture): boolean => {
     const fStart = new Date(f.start_at).getTime();
     const fEnd = fStart + matchMs;
@@ -561,13 +598,14 @@ export function refereeOfficialsPlan(
     }
   }
 
-  // maxPerDay recount per official per UTC day (the engine never checks locked).
+  // maxPerDay recount per official per ORG calendar day (the engine never
+  // checks locked). Same key as the engine's own cap and as onBlackout (#448).
   const byOfficialDay = new Map<string, FixtureOfficial[]>();
   for (const a of engineLocked) {
     const o = officialById.get(a.officialId);
     const f = fixtureById.get(a.fixtureId);
     if (!o || !f || o.max_per_day === null) continue;
-    const day = new Date(f.start_at).toISOString().slice(0, 10); // UTC day
+    const day = dayOf(f);
     const k = `${a.officialId}${SEP}${day}`;
     (byOfficialDay.get(k) ?? byOfficialDay.set(k, []).get(k)!).push(a);
   }

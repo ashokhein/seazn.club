@@ -1552,7 +1552,9 @@ async function smokePlanMatrix(): Promise<void> {
       name: "League",
     }),
   );
-  await v1(plus, `/api/v1/stages/${plusStage.id}/generate`, "POST");
+  const plusFixtures = v1data<{ fixtures: { id: string }[] }>(
+    await v1(plus, `/api/v1/stages/${plusStage.id}/generate`, "POST"),
+  ).fixtures;
   await v1(plus, `/api/v1/divisions/${plusDiv.id}/start`, "POST");
   await v1(plus, "/api/v1/officials", "POST", {
     display_name: `Matrix Ref ${tag}`,
@@ -1565,6 +1567,76 @@ async function smokePlanMatrix(): Promise<void> {
     "matrix/pro_plus: officials.auto is allowed (200, assignments proposed)",
     plusAuto.status === 200 &&
       Array.isArray(v1data<{ assignments: unknown[] }>(plusAuto).assignments),
+  );
+
+  // #448 — maxPerDay is capped on the ORG's calendar day, not the UTC day. Put
+  // the org west of Greenwich and lay four fixtures across one LOCAL Saturday
+  // whose evening half is already Sunday in UTC: a UTC bucket sees 2 + 2 and
+  // fills all four, the org's own day allows only 2.
+  // `call` returns json.data and THROWS on ok:false — it has no .status, so
+  // assert the value actually landed. The two checks below are meaningless if
+  // this org is still on UTC, so this must fail loudly rather than silently.
+  const tzOrg = (await call(plus, `/api/orgs/${plusOrg}`, "PATCH", {
+    timezone: "America/Los_Angeles",
+  })) as { timezone: string };
+  check(
+    "matrix/pro_plus #448: org timezone set to America/Los_Angeles",
+    tzOrg.timezone === "America/Los_Angeles",
+  );
+
+  // 2026-07-11 in Los Angeles (PDT, UTC-7): 10:00 & 12:00 local are still
+  // Saturday UTC; 18:00 & 20:00 local are already Sunday UTC.
+  const localSaturday = [
+    "2026-07-11T17:00:00.000Z",
+    "2026-07-11T19:00:00.000Z",
+    "2026-07-12T01:00:00.000Z",
+    "2026-07-12T03:00:00.000Z",
+  ];
+  const capIds = plusFixtures.slice(0, 4).map((f) => f.id);
+  for (const [i, id] of capIds.entries()) {
+    await v1(plus, `/api/v1/fixtures/${id}`, "PATCH", {
+      scheduled_at: localSaturday[i],
+      court_label: "Court 1",
+    });
+  }
+  // Park every other fixture far away so it cannot compete for the capped ref.
+  for (const [i, f] of plusFixtures.slice(4).entries()) {
+    await v1(plus, `/api/v1/fixtures/${f.id}`, "PATCH", {
+      scheduled_at: `2026-09-${String(i + 1).padStart(2, "0")}T18:00:00.000Z`,
+      court_label: "Court 1",
+    });
+  }
+
+  // The cap only binds if NO other official can absorb the overflow, so give
+  // this one a role nobody else on the roster holds ("Matrix Ref" is referee).
+  const cappedRef = v1data<{ id: string }>(
+    await v1(plus, "/api/v1/officials", "POST", {
+      display_name: `Capped Judge ${tag}`,
+      role_keys: ["judge"],
+      max_per_day: 2,
+    }),
+  );
+  const capAuto = await v1(plus, `/api/v1/divisions/${plusDiv.id}/officials/auto`, "POST", {
+    policy: { roles: ["judge"] },
+    rng_seed: "tz448",
+  });
+  const capBody = v1data<{
+    assignments: { fixtureId: string; officialId: string; roleKey: string }[];
+    conflicts: { kind: string; fixtureId?: string }[];
+  }>(capAuto);
+  const capSet = new Set(capIds);
+  const cappedOnSaturday = capBody.assignments.filter(
+    (a) => capSet.has(a.fixtureId) && a.officialId === cappedRef.id,
+  );
+  check(
+    "matrix/pro_plus #448: maxPerDay caps on the ORG day across a UTC midnight",
+    capAuto.status === 200 && cappedOnSaturday.length === 2,
+  );
+  check(
+    "matrix/pro_plus #448: the two over-cap local-Saturday slots report role_unfilled",
+    capBody.conflicts.filter(
+      (c) => c.kind === "role_unfilled" && capSet.has(c.fixtureId ?? ""),
+    ).length === 2,
   );
 
   // === PERSONA 4 — event_pass (community org + a single-comp pass) ======

@@ -269,6 +269,61 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
     }
   });
 
+  it("maxPerDay caps on the ORG's calendar day, not the UTC day (#448)", async () => {
+    const { auth } = await seedOrg("pro_plus");
+    // An org west of Greenwich: a Saturday evening there is already Sunday UTC.
+    await sql`
+      update organizations set timezone = 'America/Los_Angeles' where id = ${auth.orgId}`;
+    const { division, fixtures } = await seedScheduledDivision(auth);
+
+    // Four fixtures on ONE local Saturday (2026-07-11 PDT, UTC-7):
+    // 10:00 and 12:00 are still Saturday UTC; 18:00 and 20:00 are Sunday UTC.
+    const local = ["17:00", "19:00", "01:00", "03:00"]; // the same times in UTC
+    const utcDay = ["11", "11", "12", "12"];
+    const picked = fixtures.slice(0, 4) as { id: string }[];
+    expect(picked).toHaveLength(4);
+    for (const [i, f] of picked.entries()) {
+      await sql`
+        update fixtures
+        set scheduled_at = ${`2026-07-${utcDay[i]}T${local[i]}:00.000Z`}, court_label = 'Court 1'
+        where id = ${f.id}`;
+    }
+    // Park the rest well clear so they cannot compete for the capped official.
+    for (const [i, f] of (fixtures.slice(4) as { id: string }[]).entries()) {
+      await sql`
+        update fixtures set scheduled_at = ${`2026-09-${String(i + 1).padStart(2, "0")}T18:00:00.000Z`}
+        where id = ${f.id}`;
+    }
+
+    await createOfficial(auth, {
+      display_name: "Capped Ref",
+      role_keys: ["referee"],
+      max_per_day: 2,
+    });
+
+    const proposal = await autoAssignOfficials(auth, division.id, {
+      policy: {
+        roles: ["referee"],
+        poolLock: false,
+        blockStay: false,
+        fairness: "tournament",
+        teamRefKeepDivision: false,
+        restMinMinutes: 0,
+        blockGapMinutes: 30,
+      },
+      rng_seed: "t",
+    });
+
+    const pickedIds = new Set(picked.map((f) => f.id));
+    const onLocalSaturday = proposal.assignments.filter((a) => pickedIds.has(a.fixtureId));
+    // Bucketing on UTC sees 2 + 2 and fills all four; the org's calendar day
+    // allows only 2, leaving the other two slots unfilled.
+    expect(onLocalSaturday).toHaveLength(2);
+    expect(
+      proposal.conflicts.filter((c) => c.kind === "role_unfilled" && pickedIds.has(c.fixtureId!)),
+    ).toHaveLength(2);
+  });
+
   it("locked assignments survive apply; re-apply keeps them", async () => {
     const { auth } = await seedOrg("pro_plus");
     const { division, fixtures } = await seedScheduledDivision(auth);
