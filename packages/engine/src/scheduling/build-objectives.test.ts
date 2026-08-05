@@ -42,6 +42,18 @@ describe("boardMetrics", () => {
     expect(m.worstIdleGapMinutes).toBe(170);
   });
 
+  it("never merges an entrant with a person that shares its id string", () => {
+    // `entrants` is EntrantId[] and `people` is string[], but both are plain
+    // strings at runtime, so the `e:` / `p:` key prefixes inside boardMetrics
+    // are load-bearing. Drop them and these two cards collapse into ONE
+    // participant chain that reports a fabricated 470-minute wait.
+    const m = boardMetrics(
+      [card("a", "C1", 0, 30, ["X1"]), card("b", "C2", 500, 30, [], ["X1"])],
+      ["C1", "C2"], 2,
+    );
+    expect(m.worstIdleGapMinutes).toBe(0);
+  });
+
   it("is zero when nobody plays twice", () => {
     const m = boardMetrics([card("a", "C1", 0, 30, ["E1"]), card("b", "C2", 500, 30, ["E2"])], ["C1", "C2"], 2);
     expect(m.worstIdleGapMinutes).toBe(0);
@@ -53,8 +65,13 @@ describe("boardMetrics", () => {
   });
 
   it("counts a court the board uses but the config omits", () => {
-    const m = boardMetrics([card("a", "CX", 0, 30)], [], 1);
-    expect(m.courtImbalanceMinutes).toBe(0);
+    // Two courts must reach `mins` for this to constrain anything: the
+    // configured-but-unused C1 at 0, and the unconfigured-but-used CX at 30.
+    // A version that only ever measured the configured courts would see
+    // [0] and report 0; one that only measured used courts would see [30]
+    // and also report 0. Only counting BOTH gives 30.
+    const m = boardMetrics([card("a", "CX", 0, 30)], ["C1"], 1);
+    expect(m.courtImbalanceMinutes).toBe(30);
   });
 });
 
