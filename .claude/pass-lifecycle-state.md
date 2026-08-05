@@ -158,6 +158,65 @@ Set by Tasks 6 and 7 and applied since; a task is not done without it.
 - **`EXPLAIN` any predicate a partial index is supposed to serve.** V355's
   widened index was confirmed by `BitmapOr` over it with no `Seq Scan`.
 
+## OPEN INCIDENT — uncommitted work discarded in wt-div-slot
+
+While the help-pages agent was running in `/Users/ashokhein/github/wt-div-slot`,
+**all 8 uncommitted files in that worktree were reverted to HEAD** — its own
+6 help-doc edits and 2 of mine. `HEAD` stayed `0ece5974`; nothing in history
+was lost; the main checkout is clean and was never touched.
+
+It was NOT a stash. The stack holds 4 entries, the newest based on `79f0ff62`,
+a real historical commit **on `main`** — i.e. a pre-existing foreign stash,
+not one created here. `git stash list` before/after would have shown a new
+entry based on `0ece5974`; there is none. So the cause was a hard
+`git restore .` / `git checkout -- .`.
+
+**Do not pop or drop any stash entry.** `stash@{0}` carries a `headroom-ai`
+dependency added to `package.json`/`package-lock.json` and belongs to
+somebody else. Popping it is the documented way to leave `package.json`
+unmerged and block every commit in the tree.
+
+### My two lost edits — REDO THESE, they were green and mutation-proved
+
+They answer the last review finding on `0ece5974`: the waiver audit row
+renders but names no division, because the panel shows only `reason` and the
+waiver's detail carries `division_id`/`division_name`/`competition_id`.
+
+1. `apps/web/src/server/usecases/admin-adjustments-log.ts`, in `toEntry`,
+   replace the `reason` derivation with:
+
+```ts
+  const text = (key: string) =>
+    typeof detail[key] === "string" && detail[key] ? (detail[key] as string) : null;
+  const reason =
+    text("reason") ??
+    text("reason_code") ??
+    // A slot waiver carries no reason of its own — the fact IS which division
+    // it freed. The panel renders only `reason` as its subject column, so
+    // without this an auditor sees "Division slot waived / cap" over an em
+    // dash: something moved this org's division cap, but not WHICH division,
+    // which is precisely the question the audit exists to answer. The name is
+    // stamped at waive time rather than joined here, so a later rename or
+    // delete cannot rewrite what the auditor is told.
+    (row.action === "division_slot_waived" ? (text("division_name") ?? text("division_id")) : null);
+```
+
+2. `apps/web/src/server/usecases/__tests__/admin-division-slot-waiver.test.ts`,
+   in `"surfaces the waiver in the org's adjustments log"`, after the
+   `detail.division_id` assertion, add `expect(entry!.reason).toBe("B");`
+   with a comment explaining the panel renders `reason` and nothing else.
+
+Verified before the loss: **6/6 green**, `typecheck` EXIT=0, and mutation —
+dropping the `division_slot_waived` arm reds exactly that one test (5/1/6).
+
+### Rule this adds
+
+An agent working in a worktree that already has uncommitted files from
+another writer must never run a bare `git restore`/`git checkout --`/
+`git stash`. Give every implementer brief the explicit list of paths it owns,
+and **commit your own small edits immediately** rather than leaving them in
+the tree beside a running agent.
+
 ## Part B (Task 10) — measured blast radius, do not re-measure
 
 The plan's Step 5 grep (`api/v1/competitions\|insert into competitions\|createCompetition`)
