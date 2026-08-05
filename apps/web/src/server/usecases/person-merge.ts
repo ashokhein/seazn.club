@@ -312,7 +312,13 @@ async function reverifyBoards(auth: AuthCtx, survivorId: string): Promise<Reveal
         .filter((f) => f.scheduled_at !== null && f.court_label !== null)
         .map((f) => toAssignment(f, settings.config.matchMinutes, people));
       if (assignments.length === 0) continue;
-      const siblings = await siblingAssignments(
+      // Both halves, and both are load-bearing (#462). The assignments put the
+      // sibling divisions' cards on the board so a court clash is seen; the
+      // ruleFixtures give those cards their rule identity, without which a
+      // competition-scoped day cap tallies only the rows it can name and a board
+      // that breaches the cap reports CLEAN. That is why the two come back
+      // together rather than from two calls a caller can half-make.
+      const { assignments: siblings, ruleFixtures } = await siblingAssignments(
         tx,
         board.id,
         board.competition_id,
@@ -320,7 +326,7 @@ async function reverifyBoards(auth: AuthCtx, survivorId: string): Promise<Reveal
       );
       const conflicts = validateAssignments(
         assignments,
-        toVerifyConfig(settings, all, 0),
+        toVerifyConfig(settings, all, 0, ruleFixtures),
         siblings,
         feedDependencies(all),
       );
