@@ -16,8 +16,9 @@
 // restore from the first division's result repeated.
 //
 // Real Postgres required; skipped without DATABASE_URL.
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import type { SessionLockHandle } from "@/lib/db";
 import { sql, withSessionLocks, withTenant } from "@/lib/db";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import {
@@ -33,6 +34,42 @@ import { applyCompetitionSchedule } from "../competition-schedule-apply";
 import { JOINT_APPLY_EVENT } from "../competition-schedule-ai";
 import { restoreCompetitionSchedule } from "../competition-schedule-restore";
 import { seedOrg } from "./_seed";
+
+/**
+ * A seam on the lock handle `withSessionLocks` hands the usecase, and NOTHING
+ * else: the real helper still runs, still takes the real key on its own
+ * out-of-pool connection, still beats and still unlocks. `interpose` is
+ * undefined for every test but the two lock-loss ones below, so the rest of this
+ * suite exercises the unmocked path.
+ *
+ * Why a seam is needed at all: a lost lock is only OBSERVABLE at a beat, seconds
+ * apart, while a rewind of a seeded division is milliseconds — so "the loss
+ * lands between division 1 and division 2" cannot be produced by timing. The
+ * test that terminates a real backend (further down) proves `held()` really goes
+ * false; these two prove what the rewind loop does when it has.
+ */
+const hooks = vi.hoisted(() => ({
+  interpose: undefined as
+    | undefined
+    | ((lock: SessionLockHandle, keys: readonly string[]) => Promise<SessionLockHandle>),
+}));
+
+vi.mock("@/lib/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/db")>();
+  return {
+    ...actual,
+    withSessionLocks: ((keys, fn, opts) =>
+      actual.withSessionLocks(
+        keys,
+        async (lock) => fn(hooks.interpose ? await hooks.interpose(lock, keys) : lock),
+        opts,
+      )) as typeof actual.withSessionLocks,
+  };
+});
+
+afterEach(() => {
+  hooks.interpose = undefined;
+});
 
 /** The served body must match the contract the spec publishes — a field the
  *  usecase returns but the schema does not declare is stripped from `data`,
@@ -310,6 +347,23 @@ async function advisoryLockWaiting(key: string): Promise<boolean> {
 }
 
 /**
+ * The backend PID currently holding the advisory lock on `key`, if any.
+ *
+ * `pg_locks.pid` is the backend, so this is the process a `pg_terminate_backend`
+ * has to name to take the lock away from its holder the way a pooler restart or
+ * an admin does. Halves compared separately, for the reason given above.
+ */
+async function advisoryLockHolderPid(key: string): Promise<number | undefined> {
+  const [row] = await sql<{ pid: number }[]>`
+    select pid from pg_locks
+     where locktype = 'advisory' and granted
+       and classid::bigint = ((hashtext(${key})::bigint >> 32) & 4294967295)
+       and objid::bigint = (hashtext(${key})::bigint & 4294967295)
+     limit 1`;
+  return row?.pid;
+}
+
+/**
  * Write a `schedule.applied_multi` row directly — i.e. what a joint apply that
  * has just COMMITTED looks like to the restore's event read.
  *
@@ -330,13 +384,21 @@ async function insertJointApplyEvent(
             ${auth.userId})`;
 }
 
-/** Poll `pred` until true. Returns false on timeout — the CALLER asserts, so a
- *  lock that is never taken fails an assertion instead of hanging the suite. */
+/**
+ * Poll `pred` until true. Returns false on timeout — the CALLER asserts, so a
+ * lock that is never taken fails an assertion instead of hanging the suite.
+ *
+ * The gap is SMALL because some of what this watches for is short-lived: a
+ * seeded two-division rewind holds its lock for as little as 30ms on a warm
+ * local Postgres (measured), so a 25ms gap plus a round trip could step right
+ * over the window and report "the lock was never taken" about a lock that was.
+ * The cost of sampling harder is a handful of extra `pg_locks` reads.
+ */
 async function waitUntil(pred: () => Promise<boolean>, ms = 20_000): Promise<boolean> {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     if (await pred()) return true;
-    await new Promise((r) => setTimeout(r, 25));
+    await new Promise((r) => setTimeout(r, 5));
   }
   return false;
 }
@@ -593,6 +655,109 @@ describe.skipIf(!HAS_DB)("restoreCompetitionSchedule (#386)", () => {
     expect(await advisoryLockHeld(key)).toBe(false);
   }, 60_000);
 
+  it("tells the body its lock is GONE when the backend holding it is terminated", async () => {
+    // The keepalive is not proof of a lock. postgres.js reconnects transparently
+    // (connection.js: `reconnect()` on close, `connect(query)` requeues), and
+    // this connection is idle >99% of the time, so a drop — pooler restart,
+    // network reset, admin termination — almost always lands BETWEEN beats. A
+    // plain `select 1` then opens a NEW backend and SUCCEEDS: the advisory lock
+    // died with the old backend, the body carries on believing it excludes a
+    // concurrent apply, and the finally unlocks a backend that never held
+    // anything. Only the backend PID tells the two apart.
+    //
+    // A synthetic key: this is about the connection, not any competition.
+    const key = `joint:killed-${randomUUID()}`;
+    let heldAtStart: boolean | undefined;
+    let heldAfterKill: boolean | undefined;
+    let pingStillWorks: boolean | undefined;
+    await withSessionLocks([key], async (lock) => {
+      heldAtStart = lock.held();
+      const pid = await advisoryLockHolderPid(key);
+      expect(pid).toBeGreaterThan(0);
+      await sql`select pg_terminate_backend(${pid!})`;
+      // The key really is gone — observed from the pool, the only vantage point
+      // from which "nobody holds this" means anything.
+      expect(await waitUntil(async () => !(await advisoryLockHeld(key)), 20_000)).toBe(true);
+      // …and the helper says so, within a beat or two.
+      await waitUntil(async () => !lock.held(), 20_000);
+      heldAfterKill = lock.held();
+      // The trap, pinned: the connection is perfectly usable again. A keepalive
+      // that only asked "did the ping fail" would have seen nothing wrong.
+      const [row] = await sql<{ n: number }[]>`select 1::int as n`;
+      pingStillWorks = row?.n === 1;
+    });
+    expect(heldAtStart).toBe(true);
+    expect(heldAfterKill).toBe(false);
+    expect(pingStillWorks).toBe(true);
+  }, 90_000);
+
+  it("stops the rewind and reports EVERY division when the lock is lost before the first", async () => {
+    const { auth, competitionId, divisions, checkpoints } = await seedAppliedJoint(2);
+    const body = {
+      checkpoints: checkpoints.map((c) => ({
+        division_id: c.divisionId,
+        checkpoint_id: c.checkpointId,
+      })),
+      confirm: true,
+    } as const;
+
+    // A REAL loss: the restore's own lock backend is terminated, and the body
+    // does not start until the helper's own beat has noticed. Nothing about the
+    // lock is faked here — only the moment of the loss is made deterministic.
+    hooks.interpose = async (lock, keys) => {
+      const pid = await advisoryLockHolderPid(keys[0]!);
+      expect(pid).toBeGreaterThan(0);
+      await sql`select pg_terminate_backend(${pid!})`;
+      expect(await waitUntil(async () => !lock.held(), 30_000)).toBe(true);
+      return lock;
+    };
+
+    const out = await restoreCompetitionSchedule(auth, competitionId, body);
+    // Not a throw: rewinds already performed would have been written, and the
+    // caller needs a truthful record of them. Here none were.
+    expect(out.ok).toBe(false);
+    expect(out.restored).toEqual([]);
+    expect(out.failed.map((f) => f.division_id).sort()).toEqual(divisions.map((d) => d.id).sort());
+    expect(out.failed.every((f) => /lock/i.test(f.reason))).toBe(true);
+    // …and it really did stop: both boards still carry the AI schedule, so the
+    // report names exactly the divisions that still need undoing.
+    for (const d of divisions) expect(unplaced(await slots(d.id))).toBe(false);
+    wireRoundTrip(out);
+  }, 180_000);
+
+  it("stops MID-rewind: what was rewound is reported restored, the rest come back failed", async () => {
+    const { auth, competitionId, divisions, checkpoints } = await seedAppliedJoint(2);
+    // The loop rewinds in division-id order, so these are its first and second.
+    const [firstId, secondId] = divisions.map((d) => d.id).sort();
+
+    // The lock survives the first division and is gone for the second. The
+    // termination above proves `held()` really flips; this pins what the loop
+    // does with it, which no amount of timing could produce reliably.
+    hooks.interpose = async (lock) => {
+      let checks = 0;
+      return { held: () => (checks++ === 0 ? lock.held() : false) };
+    };
+
+    const out = await restoreCompetitionSchedule(auth, competitionId, {
+      checkpoints: checkpoints.map((c) => ({
+        division_id: c.divisionId,
+        checkpoint_id: c.checkpointId,
+      })),
+      confirm: true,
+    });
+    expect(out.ok).toBe(false);
+    // The two halves name DIFFERENT divisions, and the split is the lock's, not
+    // the request's: both anchors are valid.
+    expect(out.restored.map((r) => r.division_id)).toEqual([firstId]);
+    expect(out.failed.map((f) => f.division_id)).toEqual([secondId]);
+    expect(out.failed[0]!.reason).toMatch(/lock/i);
+    // The partial report is TRUE of the board: the first division really was
+    // rewound and must not be re-listed as outstanding; the second was never
+    // attempted and still carries the AI board.
+    expect(unplaced(await slots(firstId!))).toBe(true);
+    expect(unplaced(await slots(secondId!))).toBe(false);
+  }, 180_000);
+
   it("leaves the per-division locks free — the joint key must not be the division key", async () => {
     const { auth, competitionId, divisions, checkpoints } = await seedAppliedJoint(2);
     const order: string[] = [];
@@ -705,8 +870,15 @@ describe.skipIf(!HAS_DB)("restoreCompetitionSchedule (#386)", () => {
     // Parked ON the lock, proven from pg_locks rather than slept for: every
     // step the restore performs before acquiring has now happened, so the read
     // either already ran (the bug) or is still to come (the fix).
+    //
+    // The budget is deliberately SMALL. The restore's 5s `lock_timeout` starts
+    // ticking when it issues `pg_advisory_lock`, i.e. before this poll, and the
+    // remainder still has to cover `insertJointApplyEvent` and the holder's
+    // release round-trip. Spend 4s of the 5 here and a loaded machine gets a 409
+    // instead, failing on the 422 assertion below with a misleading message;
+    // spend 1.5s and a lock that is never waited on fails HERE, saying so.
     expect(
-      await waitUntil(() => advisoryLockWaiting(`joint:${competitionId}`), 4_000),
+      await waitUntil(() => advisoryLockWaiting(`joint:${competitionId}`), 1_500),
     ).toBe(true);
 
     // …and NOW a joint apply commits, over a different division set. The

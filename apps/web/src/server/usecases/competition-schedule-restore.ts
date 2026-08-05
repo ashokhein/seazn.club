@@ -9,6 +9,14 @@ import { restoreCheckpoint } from "./history";
  *  to and should not get two different answers about how long it waited. */
 const RESTORE_LOCK_TIMEOUT_MS = 5_000;
 
+/** Reported for every division the rewind did NOT attempt because the
+ *  competition lock had gone (`SessionLockHandle.held()`, lib/db.ts). Phrased as
+ *  what the organiser needs to know: nothing changed here, and the undo is worth
+ *  repeating. */
+const LOCK_LOST_REASON =
+  "the restore lost its competition lock before this division was rewound — " +
+  "nothing was changed here; run the undo again";
+
 export interface CompetitionRestoreOut {
   restored: { division_id: string; watermark: number; steps: number }[];
   failed: { division_id: string; reason: string }[];
@@ -47,6 +55,12 @@ export async function restoreCompetitionSchedule(
   // database and no exclusion, and taking a lock to do it would make a
   // double-clicked typo queue behind a rewind. Everything that reads state
   // belongs below.
+  //
+  // The PRECEDENCE is deliberate, not incidental. These two 422s outrank the
+  // "no joint apply" 404 below, so a malformed body against a competition that
+  // was never applied to is a 422 and not a 404: the body is wrong whatever the
+  // database says, and the answer must not depend on a read the request never
+  // earned. Moving either check under the lock would flip that back.
   if (!input.confirm) throw new HttpError(422, "restore requires confirm: true");
   const asked = input.checkpoints.map((c) => c.division_id);
   if (new Set(asked).size !== asked.length) throw new HttpError(422, "a division was named twice");
@@ -85,7 +99,7 @@ export async function restoreCompetitionSchedule(
   try {
     return await withSessionLocks(
       [`joint:${competitionId}`],
-      async () => {
+      async (lock) => {
         // Read UNDER the lock. Read before it, this validated against a world a
         // joint apply could already have replaced: the endpoint would approve a
         // division set that was superseded in the gap, and self-heal only by
@@ -123,9 +137,28 @@ export async function restoreCompetitionSchedule(
 
         const restored: CompetitionRestoreOut["restored"] = [];
         const failed: CompetitionRestoreOut["failed"] = [];
+        // The lock can die UNDER this loop — the backend holding it can be taken
+        // away by a pooler restart or a network reset at any moment, and
+        // postgres.js reconnects so quietly that only `held()` can tell (see
+        // withSessionLocks). Once it is gone every remaining rewind would run
+        // with nothing excluding a concurrent joint apply, so stop.
+        //
+        // Stop and REPORT, rather than throw: the rewinds above are already
+        // written, and this endpoint's whole contract is that the caller learns
+        // which divisions still carry the AI board. Throwing would discard a
+        // truthful record of work that really happened and leave the organiser
+        // guessing. So the divisions this loop never reaches come back in
+        // `failed[]` — `ok` is false, and the list names exactly what is left.
+        let lockLost = false;
         for (const c of [...input.checkpoints].sort((a, b) =>
           a.division_id.localeCompare(b.division_id),
         )) {
+          // Checked per division, not once: `held()` is a live read.
+          if (lockLost || !lock.held()) {
+            lockLost = true;
+            failed.push({ division_id: c.division_id, reason: LOCK_LOST_REASON });
+            continue;
+          }
           try {
             const out = await restoreCheckpoint(auth, c.division_id, c.checkpoint_id, true);
             restored.push({

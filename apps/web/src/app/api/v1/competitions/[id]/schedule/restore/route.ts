@@ -15,11 +15,15 @@ type Ctx = { params: Promise<{ id: string }> };
  *  of the division set against the apply event, the locking and the per-division
  *  reporting all live in `restoreCompetitionSchedule`.
  *
- *  NO 409 escapes this route, unlike the per-division restore: every
- *  `restoreCheckpoint` failure — SEQ_CONFLICT included — is caught by the
+ *  No PER-DIVISION 409 escapes this route, unlike the per-division restore:
+ *  every `restoreCheckpoint` failure — SEQ_CONFLICT included — is caught by the
  *  usecase's per-division try/catch and reported in `failed[]` with `ok: false`.
- *  The status codes it really returns are 404 (no joint apply on the
- *  competition) and 422 (the named division set is not the applied one).
+ *  The COMPETITION-scoped 409 is a different animal and does escape: losing the
+ *  race for the `joint:` lock means no rewind was attempted at all, so there is
+ *  no per-division report to give and the caller is told to retry
+ *  (SCHEDULE_APPLY_RESTORE_IN_PROGRESS). The status codes are therefore 404 (no
+ *  joint apply on the competition), 422 (the named division set is not the
+ *  applied one, or the body is malformed) and that 409 — matching openapi.ts.
  *
  *  Body parsing precedes auth, matching the apply route exactly. */
 export async function POST(req: Request, { params }: Ctx) {

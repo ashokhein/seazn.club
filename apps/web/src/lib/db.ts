@@ -111,9 +111,49 @@ export async function withTenant<T>(
 
 /** Seconds an ORPHANED lock connection lingers before closing itself. */
 const LOCK_IDLE_TIMEOUT_S = 10;
-/** Comfortably inside `LOCK_IDLE_TIMEOUT_S`, so a slow ping cannot let the
- *  connection idle out between two beats. */
+/** Comfortably inside `LOCK_IDLE_TIMEOUT_S`, so a slow beat cannot let the
+ *  connection idle out between two of them. */
 const LOCK_KEEPALIVE_MS = 4_000;
+/** How long the `finally` will wait for its explicit unlock before giving up on
+ *  it and closing the connection instead. See the release block below. */
+const LOCK_UNLOCK_TIMEOUT_MS = 3_000;
+
+/**
+ * Resolve with `p`'s value, or with `undefined` once `ms` has elapsed —
+ * whichever happens first.
+ *
+ * Exported because it is the only part of the bounded release below that can be
+ * tested without socket-level fault injection: pass a promise that never
+ * settles and the caller still has to come back.
+ */
+export function settleWithin<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
+  return Promise.race([
+    p,
+    new Promise<undefined>((resolve) => {
+      const timer = setTimeout(() => resolve(undefined), ms);
+      // Never a reason for the process to stay alive: if the race is already
+      // decided this timer is pure garbage waiting to be collected.
+      timer.unref?.();
+    }),
+  ]);
+}
+
+/**
+ * What `withSessionLocks` hands its body so the body can ask whether the locks
+ * are still real.
+ */
+export interface SessionLockHandle {
+  /**
+   * Are this call's keys still held, RIGHT NOW? A LIVE check, not a snapshot —
+   * read it again before each unit of work the lock is supposed to protect,
+   * because it can go from true to false part-way through a loop.
+   *
+   * False means: the backend that took the keys is gone, so nothing is being
+   * excluded any more. It never goes back to true — a reconnected backend does
+   * not re-acquire what the old one held.
+   */
+  held(): boolean;
+}
 
 /**
  * The wait for a session advisory lock ran out (Postgres 55P03), which can only
@@ -157,13 +197,28 @@ export class SessionLockTimeoutError extends Error {
  * so `idle_timeout` closes it mid-body and the backend takes the lock with it,
  * silently. Measured against Postgres: a holder lost its key 10.4s after the
  * last statement, i.e. any body longer than `idle_timeout` ran unprotected past
- * that point while still believing it held the lock. A ping keeps the backend
+ * that point while still believing it held the lock. A beat keeps the backend
  * alive while `fn` runs, and stops the instant it ends so the orphan self-heal
  * above still applies.
+ *
+ * WHY THE BEAT COMPARES A PID, and why a ping alone would be worse than nothing.
+ * postgres.js reconnects transparently (`reconnect()` on close, `connect(query)`
+ * requeues), and this connection is idle for almost all of `fn`, so a drop — a
+ * pooler restart, a network reset, a server-side termination — lands BETWEEN
+ * beats. A `select 1` then opens a NEW backend and SUCCEEDS. The advisory locks
+ * died with the old backend, `fn` carries on believing it excludes everyone, and
+ * the release below runs against a backend that never held anything: a ping-only
+ * keepalive makes that failure INVISIBLE rather than fixing it. Comparing
+ * `pg_backend_pid()` to the pid the keys were taken on is what tells a live lock
+ * from a live connection, and `fn` is told through `SessionLockHandle.held()`
+ * so it can stop while it still has a truthful report to give. This helper
+ * deliberately does NOT throw on a lost lock: whatever `fn` already committed is
+ * committed, and discarding its answer would leave the caller with no record of
+ * work that really happened.
  */
 export async function withSessionLocks<T>(
   keys: readonly string[],
-  fn: () => Promise<T>,
+  fn: (lock: SessionLockHandle) => Promise<T>,
   opts: { lockTimeoutMs?: number } = {},
 ): Promise<T> {
   const url = process.env.DATABASE_URL;
@@ -213,22 +268,49 @@ export async function withSessionLocks<T>(
         throw err;
       }
     }
-    const held = client;
-    // unref'd so a ping can never be the reason a process stays alive; cleared
-    // in the finally regardless of how `fn` ends. Errors are swallowed: a failed
-    // ping means the connection is already gone, which the body will discover
-    // through its own work rather than through a keepalive.
+    const beating = client;
+    // Captured AFTER the last key is acquired, so it is the backend the locks
+    // actually live on rather than some earlier connection attempt.
+    const [pidRow] = await client<{ pid: number }[]>`select pg_backend_pid() as pid`;
+    const lockedPid = pidRow?.pid;
+    let lost = false;
+    // unref'd so a beat can never be the reason a process stays alive; cleared
+    // in the finally regardless of how `fn` ends. A beat that comes back with a
+    // DIFFERENT pid means postgres.js silently reconnected and the keys are gone
+    // (see the comment above); a beat that REJECTS means this connection is not
+    // usable, so it is not holding anything either. Both are one-way.
     beat = setInterval(() => {
-      void held`select 1`.catch(() => undefined);
+      void beating<{ pid: number }[]>`select pg_backend_pid() as pid`.then(
+        (rows) => {
+          if (rows[0]?.pid !== lockedPid) lost = true;
+        },
+        () => {
+          lost = true;
+        },
+      );
     }, LOCK_KEEPALIVE_MS);
     beat.unref?.();
-    return await fn();
+    return await fn({ held: () => !lost });
   } finally {
     if (beat) clearInterval(beat);
     if (client) {
       // Both, always, and neither may mask what `fn` threw: a leaked lock
       // connection is worse than never having taken the lock at all.
-      await client`select pg_advisory_unlock_all()`.catch(() => undefined);
+      //
+      // The unlock is BOUNDED, and losing that race is safe: `end()` below
+      // closes the backend, and a backend's session locks die with it, so this
+      // statement is belt-and-braces rather than the release itself. It needs a
+      // bound because a wedged socket (open, no RST) no longer self-heals: it
+      // used to go idle, `idle_timeout` closed it locally, and the unlock
+      // reconnected under `connect_timeout` — but with a beat always outstanding
+      // postgres.js's idle timer never arms, so an unbounded unlock queues
+      // behind the wedged beats forever and the CALLER never returns. An HTTP
+      // request that hangs until a gateway kills it is a worse outcome than a
+      // release that gave up and closed the connection instead.
+      await settleWithin(
+        client`select pg_advisory_unlock_all()`.catch(() => undefined),
+        LOCK_UNLOCK_TIMEOUT_MS,
+      );
       await client.end({ timeout: 5 }).catch(() => undefined);
     }
   }
