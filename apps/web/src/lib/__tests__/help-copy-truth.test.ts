@@ -364,6 +364,47 @@ The quota is a **lifetime total per division** — it doesn't reset weekly or mo
     expect(retiredRunCapProseFaults("x", oldTable)).not.toEqual([]);
     expect(unmeteredAiRunProseFaults("x", oldTable)).not.toEqual([]);
   });
+
+  // ── #391: the JOINT run's own burst brake ───────────────────────────────────
+  //
+  // `rateLimit('ai-plan-competition:' + competitionId, { max: 3, windowSeconds:
+  // 3600 })` (server/usecases/competition-schedule-ai.ts) is a second, tighter
+  // brake keyed to a DIFFERENT subject than the documented per-division 5/hour.
+  // The article named both single-division brakes and was silent about this one,
+  // which reads as "same as above" to an organiser who has just been refused.
+  //
+  // Scoped to ONE SENTENCE, not to the article. The obvious form —
+  // `expect(aiScheduling).toMatch(/competition/i)` — is vacuous here: the article
+  // already says "competition" a dozen times about the board, the window and the
+  // fee. A limit is a claim only if one sentence carries the number AND its
+  // subject; split across paragraphs it is two half-claims a reader can't join.
+  const jointHourlyClaims = (md: string): string[] =>
+    claimTexts(md)
+      .flatMap(sentences)
+      .filter((s) => /\bjoint\b/i.test(s) && /\b(?:an?|per|every)\s+hour\b/i.test(s));
+
+  it("states the joint run's own hourly limit, and that it is competition-keyed (#391)", () => {
+    const claims = jointHourlyClaims(aiScheduling);
+    // The number follows the code: if `max` is retuned, this article is wrong
+    // and the fix is the article, never the assertion.
+    const claim = claims.find((s) => /\b3\b/.test(s) && /\bcompetition\b/i.test(s));
+    expect(
+      claim,
+      `no sentence states the joint 3-an-hour, per-competition brake. Sentences naming a joint hourly limit: ${JSON.stringify(claims)}`,
+    ).toBeDefined();
+  });
+
+  // ANTI-VACUITY for the above: the block as it stood before #391 — two bullets
+  // that documented the other two joint limits — yields no claim at all. Without
+  // this, a mis-globbed article or a helper that matches nothing reads as "the
+  // limit is documented".
+  it("finds no joint hourly claim in the two-bullet block #391 replaced", () => {
+    const beforeChange = `Two more limits worth knowing:
+
+- A joint run needs **at least two divisions**. To schedule one on its own, open its own schedule page.
+- The whole run is capped at **500 fixtures to place**, the same ceiling a single division has. Over that, run the divisions in smaller groups.`;
+    expect(jointHourlyClaims(beforeChange)).toEqual([]);
+  });
 });
 
 describe("scheduling/ai-officials.md is gated too (#365)", () => {

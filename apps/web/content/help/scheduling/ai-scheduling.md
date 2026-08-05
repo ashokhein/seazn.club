@@ -184,10 +184,11 @@ Undo works the other way round. Each division gets its own **before-AI** save po
 
 **Somebody playing in two divisions gets the longer rest of the two.** If one division allows 20 minutes between matches and the other insists on 120, a player entered in both is given 120 either way round. A person's recovery does not depend on which draw the match happens to belong to.
 
-Two more limits worth knowing:
+Three more limits worth knowing:
 
 - A joint run needs **at least two divisions**. To schedule one on its own, open its own schedule page.
 - The whole run is capped at **500 fixtures to place**, the same ceiling a single division has. Over that, run the divisions in smaller groups.
+- A joint run has its own burst brake of **3 runs an hour, counted per competition** — not per division, and tighter than the 5 an hour a single division gets. Two divisions scheduled together spend one joint run between them, out of the competition's three, rather than one each out of their own five.
 
 A division with nothing left to place is skipped rather than charged for, and a frozen division can't be picked at all.
 
