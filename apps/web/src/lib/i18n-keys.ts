@@ -2459,6 +2459,7 @@ export type DictionaryKey =
   | "pad.won"
   | "pass.entry.active"
   | "pass.entry.buy"
+  | "pass.entry.closed.updateEndDate"
   | "pass.entry.ended"
   | "pass.entry.ended.nextBody"
   | "pass.entry.ended.nextEdition"

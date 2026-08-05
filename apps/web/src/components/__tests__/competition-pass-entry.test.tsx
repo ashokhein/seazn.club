@@ -54,6 +54,16 @@ const NEXT_EDITION_HREF = "/o/riverside/c/new";
 const NEXT_EDITION = t(uiEn, "pass.entry.ended.nextEdition");
 const GO_PRO_HREF = "/o/riverside/settings/billing";
 const GO_PRO = t(uiEn, "upgrade.proCard.cta");
+// #376 — the `closed` state's one link, per lock reason. Built the way both
+// pages build it (routes.competitionNew / routes.competitionSettings, and the
+// two dictionary keys), so the two arms lead to genuinely different places and
+// a card that hardcoded either one fails the other.
+const SETTINGS_HREF = "/o/riverside/c/summer-league/settings";
+const UPDATE_END_DATE = t(uiEn, "pass.entry.closed.updateEndDate");
+const CLOSED_LINKS: Record<PassLockReason, { href: string; label: string }> = {
+  terminal: { href: NEXT_EDITION_HREF, label: NEXT_EDITION },
+  past_ends_on: { href: SETTINGS_HREF, label: UPDATE_END_DATE },
+};
 
 /**
  * The rendered markup, with react-dom's text-node escaping undone.
@@ -78,11 +88,13 @@ function render({
   paidPlan = false,
   lockReason = null,
   canBuy = true,
+  closedLinks = CLOSED_LINKS,
 }: {
   passKey?: PassKey | null;
   paidPlan?: boolean;
   lockReason?: PassLockReason | null;
   canBuy?: boolean;
+  closedLinks?: Record<PassLockReason, { href: string; label: string }>;
 } = {}) {
   return decode(
     renderToStaticMarkup(
@@ -98,6 +110,7 @@ function render({
           goProHref={GO_PRO_HREF}
           goProLabel={GO_PRO}
           canBuy={canBuy}
+          closedLinks={closedLinks}
         />
       </CompetitionPassProvider>,
     ),
@@ -200,6 +213,7 @@ describe("CompetitionPassEntry", () => {
         goProHref={GO_PRO_HREF}
         goProLabel={GO_PRO}
         canBuy
+        closedLinks={CLOSED_LINKS}
       />,
       ),
     );
@@ -300,30 +314,116 @@ describe("CompetitionPassEntry — ended", () => {
     expect(render({ passKey: "event_pass", paidPlan: true, lockReason: "terminal" })).toBe("");
   });
 
-  it("still OFFERS the pass when a lock reason arrives with no pass row", () => {
+  it("invents no ENDED card when a lock reason arrives with no pass row", () => {
     // Precedence lives in usePassGateState (passKey before lockReason) and this
-    // is the surface half of it: an archived competition that never held a pass
-    // must read "none", not invent an ended one.
+    // is the surface half of it. The half that is still true, and the reason
+    // this case is kept: a competition that never held a pass must NOT render
+    // the ended card — that card reports a purchase that stopped applying, and
+    // there was no purchase.
     //
-    // STILL DELIBERATE AFTER v17 gap #353, which is why this test is kept rather
-    // than flipped. #353 made the checkout route the authority: it now 410s an
-    // ended competition, and `passCheckoutErrorKey(410)` gives the buyer
-    // `upgrade.buyError.ended` — the true sentence, not "reload and try again".
-    // The two LIST surfaces (the dashboard card menu, the billing page's offer)
-    // suppress the offer so the refusal is rarely reached; the two surfaces this
-    // component serves — the competition header and competition settings — do
-    // not, and that is the decision.
-    //
-    // The reason they differ: those two are reached by a DIRECT LINK to a
-    // specific competition, often a bookmark or an old email, and the reader is
-    // already standing on the event. Hiding the control there answers nothing —
-    // it leaves an organiser who expected an Event Pass with a page that never
-    // mentions one. Clicking through to a stated "this competition has already
-    // ended, so an Event Pass wouldn't apply to it" tells them why, and no money
-    // moves either way. A list, by contrast, has no reader question to answer:
-    // it is an inventory of things to buy, and an unbuyable line on it is noise.
+    // The other half — "so it reads 'none' and keeps offering the buy link" —
+    // was the #376 defect, asserted here as intent. It was written before v17
+    // gap #353 made the checkout route the authority, and the reasoning it
+    // carried (a direct link deserves a control that explains itself rather
+    // than a page that never mentions the pass) survives #376 intact; what
+    // changed is WHICH control does the explaining. The chip led to a checkout
+    // that answers 410 Gone, so the reader had to spend a click to learn the
+    // sale was off. The `closed` state below says it on the page and offers the
+    // one next step that can still help.
     const html = render({ lockReason: "terminal" });
-    expect(html).toContain(BUY);
     expect(html).not.toContain("data-pass-ended");
+    expect(html).not.toContain(ENDED);
+    expect(html).not.toContain(BUY);
+    expect(html).not.toContain("data-pass-entry");
+  });
+});
+
+// ===========================================================================
+// #376 — the competition is past the pass line and NEVER held a pass.
+//
+// `none` swallowed this whole, so the buy chip linked to a checkout that
+// answers 410 Gone: a purchase offered, clicked, and refused. `ended` is the
+// wrong card in the other direction — it reports a purchase that stopped
+// applying, and there was never a purchase here. The `closed` state is one
+// editor-gated link, chosen by lock reason, and the two arms lead to genuinely
+// different places.
+// ===========================================================================
+describe("CompetitionPassEntry — closed (#376)", () => {
+  it("renders no buy chip for a locked competition that never held a pass", () => {
+    const html = render({ lockReason: "terminal" });
+    expect(html).not.toContain("data-pass-entry");
+    expect(html).not.toContain(`href="${HREF}"`);
+    expect(html).not.toContain(BUY);
+    expect(html).not.toContain("$29");
+  });
+
+  it("points a finished competition at next season", () => {
+    const html = render({ lockReason: "terminal" });
+    expect(html).toContain("data-pass-closed-link");
+    expect(html).toContain(`href="${NEXT_EDITION_HREF}"`);
+    expect(html).toContain(NEXT_EDITION);
+    // The Record lookup is real, not a hardcoded arm: the OTHER destination
+    // must be absent, or a card that always links to settings passes above.
+    expect(html).not.toContain(`href="${SETTINGS_HREF}"`);
+    expect(html).not.toContain(UPDATE_END_DATE);
+  });
+
+  // The recoverable arm. A stale end date is usually a typo on a competition
+  // still being played — fix it and the pass is buyable again, so pointing
+  // this organiser at NEXT season would be the wrong next step entirely.
+  it("points a past-end-date competition at its settings, not at next season", () => {
+    const html = render({ lockReason: "past_ends_on" });
+    expect(html).toContain(`href="${SETTINGS_HREF}"`);
+    expect(html).toContain(UPDATE_END_DATE);
+    expect(html).not.toContain(`href="${NEXT_EDITION_HREF}"`);
+    expect(html).not.toContain(NEXT_EDITION);
+  });
+
+  // EXHAUSTIVE over the reason set rather than over the two arms someone
+  // remembered — `closedLinks` is a `Record<PassLockReason, …>`, so a third
+  // reason appears here the day it is written, and this is the assertion that
+  // catches it rendering nothing.
+  it.each(Object.keys(CLOSED_LINKS) as PassLockReason[])(
+    "renders one link, its own, for lock reason %s",
+    (reason) => {
+      const html = render({ lockReason: reason });
+      expect(html).toContain(`data-pass-closed-reason="${reason}"`);
+      expect(html).toContain(`href="${CLOSED_LINKS[reason].href}"`);
+      expect(html).toContain(CLOSED_LINKS[reason].label);
+    },
+  );
+
+  it("shows nothing to a viewer who cannot act on it", () => {
+    // Editor-gated, unlike the ended card. That card shows to everyone because
+    // it is a FACT about the competition; this state's entire content is an
+    // action link, and a lone link shown to someone who can neither create a
+    // competition nor edit its dates is noise, not information.
+    expect(render({ lockReason: "terminal", canBuy: false })).toBe("");
+    expect(render({ lockReason: "past_ends_on", canBuy: false })).toBe("");
+  });
+
+  it("says nothing about a pass, because none was ever bought", () => {
+    const html = render({ lockReason: "terminal" });
+    expect(html).not.toContain("data-pass-ended");
+    expect(html).not.toContain(ENDED);
+    expect(html).not.toContain(ENDED_REASONS.terminal);
+    expect(html).not.toContain("data-pass-held");
+    expect(html).not.toContain(ACTIVE);
+  });
+
+  it("keeps the paid plan winning — a paid org is sold nothing here", () => {
+    // Precedence: paid_plan beats the lock, exactly as it beats held/ended.
+    expect(render({ paidPlan: true, lockReason: "terminal" })).toBe("");
+  });
+
+  it("gives the link a 44px touch target", () => {
+    // Mobile is not optional: the tappable box is min-h-11 (44px) with a
+    // compensating negative margin so the chip keeps its optical position.
+    const html = render({ lockReason: "terminal" });
+    // Anchored on whitespace/quote rather than `\b`: there is no word boundary
+    // between `"` and the leading `-` of `-my-1`, so `/\b-my-1\b/` cannot match
+    // a class list that begins with it — a shape that reads correct and fails.
+    expect(html).toMatch(/class="(?:[^"]*\s)?min-h-11[\s"]/);
+    expect(html).toMatch(/class="(?:[^"]*\s)?-my-1[\s"]/);
   });
 });

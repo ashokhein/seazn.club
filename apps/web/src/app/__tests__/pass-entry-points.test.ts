@@ -274,7 +274,11 @@ describe("the competition layout resolves what its islands cannot", () => {
     // "Event Pass active" — M's product.
     const src = code(...LAYOUT);
     expect(src).toMatch(/select\s+cp\.pass_key\b/);
-    expect(src).toMatch(/from\s+competition_passes\b/);
+    // `from|join`, not `from`: #376 turned the query round to LEFT JOIN the
+    // pass onto the COMPETITION, so the lock is judged even when no pass row
+    // exists. Which table the FROM names is an implementation detail; that the
+    // one query reads `competition_passes` at all is the claim.
+    expect(src).toMatch(/(?:from|join)\s+competition_passes\b/);
     // The literal that made it wrong, pinned negatively: `select 1` is the
     // shape a future edit falls back to, and the assertions above would still
     // pass beside it if the query grew a second statement.
@@ -292,8 +296,10 @@ describe("the competition layout resolves what its islands cannot", () => {
   it("resolves the pass's lock reason on the server and hands it down as a prop", () => {
     const src = code(...LAYOUT);
     // Joined, not a second query: the two columns the rule needs come back
-    // with the pass row itself.
-    expect(src).toMatch(/join\s+competitions\b/);
+    // with the pass row itself. `from|join` since #376 turned the join round —
+    // `competitions` is now the driving table so a competition with no pass
+    // still gets a verdict — which is a stronger form of the same claim.
+    expect(src).toMatch(/(?:from|join)\s+competitions\b/);
     expect(src).toMatch(/c\.status/);
     expect(src).toMatch(/c\.ends_on/);
     expect(src).toContain("passLockReason(");

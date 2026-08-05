@@ -96,6 +96,16 @@ export default async function CompetitionSettingsPage({
             endedReasons={passEndedReasons(dict)}
             nextEditionHref={routes.competitionNew(orgSlug)}
             nextEditionLabel={t(dict, "pass.entry.ended.nextEdition")}
+            closedLinks={{
+              terminal: {
+                href: routes.competitionNew(orgSlug),
+                label: t(dict, "pass.entry.ended.nextEdition"),
+              },
+              past_ends_on: {
+                href: routes.competitionSettings(orgSlug, compSlug),
+                label: t(dict, "pass.entry.closed.updateEndDate"),
+              },
+            }}
             goProHref={routes.billing(orgSlug)}
             goProLabel={t(dict, trialAvailable ? "upgrade.proCard.cta" : "upgrade.proCard.ctaNoTrial")}
             canBuy={canEdit}

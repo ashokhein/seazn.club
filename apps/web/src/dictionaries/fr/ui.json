@@ -945,6 +945,7 @@
   "pass.entry.ended.reasonTerminal": "Rien n'est supprimé — cette compétition est terminée ou archivée, donc son Event Pass a cessé de relever ses limites.",
   "pass.entry.ended.reasonPastEnds": "Rien n'est supprimé — cette compétition a dépassé sa date de fin, donc son Event Pass a cessé de relever ses limites. Modifiez la date de fin si elle est toujours en cours.",
   "pass.entry.ended.nextEdition": "Créer l'édition de l'année prochaine",
+  "pass.entry.closed.updateEndDate": "Mettre à jour la date de fin",
   "pass.entry.ended.nextBody": "Le pass et son reçu restent attachés à cette compétition. Pro améliore toutes les compétitions de {org}, pas seulement celle-ci, et continue de les améliorer la saison prochaine.",
   "pass.menu.buy": "Event Pass — à partir de {price}",
   "me.console": "Console",
