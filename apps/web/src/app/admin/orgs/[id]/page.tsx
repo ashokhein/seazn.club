@@ -26,6 +26,7 @@ const ADJUSTMENT_LABELS: Record<string, string> = {
   entitlement_override: "Entitlement override",
   entitlement_override_removed: "Override removed",
   remove_payment_method: "Card removed",
+  division_slot_waived: "Division slot waived",
 };
 
 export default async function AdminOrgPage({

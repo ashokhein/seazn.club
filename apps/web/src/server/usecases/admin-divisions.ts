@@ -14,6 +14,29 @@ interface SlotWaiverTarget {
 }
 
 /**
+ * "This division is still holding a `divisions.per_competition.max` slot" —
+ * the ONE definition, as a SQL fragment both readers below interpolate.
+ *
+ * It is deliberately not restated in prose anywhere: `division_has_results`
+ * (V354, widened by V355) is the shared results predicate for exactly this
+ * reason, and a forked copy of one rule is this repo's recurring defect. The
+ * three clauses are the same three `createDivision` counts by
+ * (`divisions.ts`): archived, uncharged-so-far, and played.
+ *
+ * Columns are qualified with the table name rather than an alias so the same
+ * fragment drops into an `update divisions … where` (where the target table is
+ * the only legal qualifier) and into the join below.
+ *
+ * A function, not a module-level constant: a postgres.js fragment is a Query
+ * object and is consumed when it is rendered, so it must be built per use.
+ */
+function consumesSlot() {
+  return sql`divisions.archived_at is not null
+             and divisions.slot_waived_at is null
+             and division_has_results(divisions.id)`;
+}
+
+/**
  * Staff-only: clear a division's quota-slot consumption (V354).
  *
  * A division's `divisions.per_competition.max` slot is spent by RECORDED
@@ -36,6 +59,17 @@ interface SlotWaiverTarget {
  * 401 — but the caller here is authenticated and being refused, which is a 403.
  * The route therefore does NOT re-check: this is the single gate, and it runs
  * before anything is written.
+ *
+ * 409 (`DIVISION_SLOT_NOT_CONSUMED`) when the division is not actually holding
+ * a slot — live, archived-but-never-played, or ALREADY waived. All three fall
+ * out of the one `consumesSlot()` predicate, and all three would otherwise
+ * "succeed": both columns written and an audit row logged that records nothing
+ * real. The already-waived case is deliberately NOT idempotent success — the
+ * slot is already back, so the caller is acting on a stale page and should be
+ * told, not silently restamped over the first waiver's actor.
+ *
+ * The predicate rides on the UPDATE rather than a preceding SELECT, so two
+ * staffers on the same stale page cannot both pass a check and both write.
  */
 export async function waiveDivisionSlot(actorId: string, divisionId: string): Promise<void> {
   const [actor] = await sql<{ is_staff: boolean }[]>`
@@ -46,10 +80,19 @@ export async function waiveDivisionSlot(actorId: string, divisionId: string): Pr
     select org_id, competition_id, name from divisions where id = ${divisionId}`;
   if (!division) throw new HttpError(404, "division not found");
 
-  await sql`
+  const [waived] = await sql<{ id: string }[]>`
     update divisions
        set slot_waived_at = now(), slot_waived_by = ${actorId}
-     where id = ${divisionId}`;
+     where divisions.id = ${divisionId}
+       and ${consumesSlot()}
+    returning divisions.id`;
+  if (!waived) {
+    throw new HttpError(
+      409,
+      "That division is not using a quota slot — it may already have been waived. Refresh and check.",
+      "DIVISION_SLOT_NOT_CONSUMED",
+    );
+  }
 
   await logStaffAction(actorId, "division_slot_waived", "org", division.org_id, {
     division_id: divisionId,
@@ -77,14 +120,12 @@ export interface SlotConsumingDivision {
  */
 export async function slotConsumingDivisions(orgId: string): Promise<SlotConsumingDivision[]> {
   return sql<SlotConsumingDivision[]>`
-    select d.id, d.name, d.competition_id as "competitionId",
-           c.name as "competitionName", d.archived_at as "archivedAt"
-    from divisions d
-    join competitions c on c.id = d.competition_id
-    where d.org_id = ${orgId}
-      and d.archived_at is not null
-      and d.slot_waived_at is null
-      and division_has_results(d.id)
-    order by d.archived_at desc
+    select divisions.id, divisions.name, divisions.competition_id as "competitionId",
+           c.name as "competitionName", divisions.archived_at as "archivedAt"
+    from divisions
+    join competitions c on c.id = divisions.competition_id
+    where divisions.org_id = ${orgId}
+      and ${consumesSlot()}
+    order by divisions.archived_at desc
     limit 50`;
 }

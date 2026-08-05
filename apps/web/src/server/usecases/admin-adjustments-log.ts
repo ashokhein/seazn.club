@@ -22,6 +22,11 @@ export const ADJUSTMENT_ACTIONS = [
   "entitlement_override",
   "entitlement_override_removed",
   "remove_payment_method",
+  // V354's staff slot waiver. It moves a paying org's division cap the same
+  // way an override does, and it is deliberately un-timed and un-undoable, so
+  // it belongs in the panel a human actually reads rather than only in the raw
+  // staff-history list.
+  "division_slot_waived",
 ] as const;
 
 export type AdjustmentAction = (typeof ADJUSTMENT_ACTIONS)[number];
@@ -39,6 +44,9 @@ const CATEGORY: Record<AdjustmentAction, AdjustmentCategory> = {
   extend_trial: "plan",
   restore_trial: "plan",
   remove_payment_method: "plan",
+  // A cap move, like the overrides above: it changes how many divisions the
+  // org may hold under the same plan.
+  division_slot_waived: "cap",
 };
 
 /** action → has a compensating action a staffer can apply to undo it. The
@@ -54,6 +62,9 @@ const REVERSIBLE: Record<AdjustmentAction, boolean> = {
   admin_downgrade: false,
   restore_trial: false,
   remove_payment_method: false,
+  // There is no un-waive control: `slot_waived_at` is one-way and the division
+  // is archived. Terminal, like the other compensating actions here.
+  division_slot_waived: false,
 };
 
 export interface AdjustmentEntry {

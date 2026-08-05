@@ -21,6 +21,7 @@ import type { CreateDivision } from "@/server/api-v1/schemas";
 import { createCompetition } from "@/server/usecases/competitions";
 import { archiveDivision, createDivision } from "@/server/usecases/divisions";
 import { waiveDivisionSlot } from "@/server/usecases/admin-divisions";
+import { adjustmentsForOrg } from "@/server/usecases/admin-adjustments-log";
 import { GENERIC_CONFIG, seedOrg } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -106,6 +107,21 @@ async function waiverAuditRows(divisionId: string): Promise<
     where action = 'division_slot_waived' and detail->>'division_id' = ${divisionId}`;
 }
 
+/** A division that is genuinely holding a slot: one recorded result, then
+ *  archived. Exactly the population `slotConsumingDivisions` offers the button
+ *  on, and the only state the waiver is allowed to act on. */
+async function consumingDivision(
+  auth: AuthCtx,
+  competitionId: string,
+  name: string,
+): Promise<{ id: string }> {
+  const d = await createDivision(auth, competitionId, divisionInput(name));
+  await recordDecidedFixture(d.id);
+  await closeRegistration(d.id);
+  await archiveDivision(auth, d.id);
+  return d;
+}
+
 afterAll(async () => {
   if (!HAS_DB) return;
   const globalForDb = globalThis as { _sql?: { end(): Promise<void> } };
@@ -168,5 +184,79 @@ describe.skipIf(!HAS_DB)("staff slot waiver (V354)", () => {
     const ghost = randomUUID();
     await expect(waiveDivisionSlot(staff.id, ghost)).rejects.toMatchObject({ status: 404 });
     expect(await waiverAuditRows(ghost)).toHaveLength(0);
+  });
+
+  // Auditing an entitlement move is only worth doing if a human can FIND the
+  // row afterwards. `/admin/orgs/[id]`'s adjustments panel is an ALLOWLIST
+  // (`ADJUSTMENT_ACTIONS`), so a row written with an unlisted action is
+  // invisible there. Driven through the real writer rather than a seeded
+  // staff_audit_log row: that also pins the target_type/target_id shape the
+  // log's own scope filter depends on.
+  it("surfaces the waiver in the org's adjustments log", async () => {
+    const { auth, competitionId } = await seedCommunityCompetition();
+    const staff = await makeStaffUser();
+    const b = await consumingDivision(auth, competitionId, "B");
+
+    await waiveDivisionSlot(staff.id, b.id);
+
+    const entries = await adjustmentsForOrg(auth.orgId);
+    const entry = entries.find((e) => e.action === "division_slot_waived");
+    expect(entry).toBeDefined();
+    expect(entry).toMatchObject({ actorId: staff.id, category: "cap", reversible: false });
+    expect(entry!.detail.division_id).toBe(b.id);
+  });
+
+  // No timer, no undo, and the button is offered only where a slot is really
+  // held — so a waiver on anything else is a staff member acting on stale
+  // information. Succeeding writes both columns and an audit row that records
+  // nothing real, which is worse than a refusal.
+  it("409s when the division is not consuming a slot, and writes nothing", async () => {
+    const { auth, competitionId } = await seedCommunityCompetition();
+    const staff = await makeStaffUser();
+
+    // Live, with a recorded result: the results half of the predicate holds,
+    // the archived half does not.
+    const live = await createDivision(auth, competitionId, divisionInput("Live"));
+    await recordDecidedFixture(live.id);
+
+    // Archived, never played: the mirror image — archived but uncharged.
+    const unplayed = await createDivision(auth, competitionId, divisionInput("Unplayed"));
+    await closeRegistration(unplayed.id);
+    await archiveDivision(auth, unplayed.id);
+
+    for (const id of [live.id, unplayed.id]) {
+      await expect(waiveDivisionSlot(staff.id, id)).rejects.toMatchObject({
+        status: 409,
+        code: "DIVISION_SLOT_NOT_CONSUMED",
+      });
+      const row = await waiverColumns(id);
+      expect(row.slot_waived_at).toBeNull();
+      expect(row.slot_waived_by).toBeNull();
+      expect(await waiverAuditRows(id)).toHaveLength(0);
+    }
+  });
+
+  // A second waiver is NOT idempotent success: the slot is already back, so
+  // the caller is looking at a stale page and should be told. Falls out of the
+  // same predicate (`slot_waived_at is null`), and must not restamp the first
+  // waiver's actor or write a second audit row.
+  it("409s a second waiver instead of restamping it", async () => {
+    const { auth, competitionId } = await seedCommunityCompetition();
+    const first = await makeStaffUser();
+    const second = await makeStaffUser();
+    const b = await consumingDivision(auth, competitionId, "B");
+
+    await waiveDivisionSlot(first.id, b.id);
+    const after = await waiverColumns(b.id);
+
+    await expect(waiveDivisionSlot(second.id, b.id)).rejects.toMatchObject({
+      status: 409,
+      code: "DIVISION_SLOT_NOT_CONSUMED",
+    });
+
+    const still = await waiverColumns(b.id);
+    expect(still.slot_waived_by).toBe(first.id);
+    expect(still.slot_waived_at).toEqual(after.slot_waived_at);
+    expect(await waiverAuditRows(b.id)).toHaveLength(1);
   });
 });
