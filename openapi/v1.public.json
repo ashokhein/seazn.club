@@ -12069,6 +12069,11 @@
                                 "minimum": -9007199254740991,
                                 "maximum": 9007199254740991
                               },
+                              "fixture_no": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
                               "home_entrant_id": {
                                 "anyOf": [
                                   {
@@ -12170,6 +12175,7 @@
                               "pool_id",
                               "round_no",
                               "seq_in_round",
+                              "fixture_no",
                               "home_entrant_id",
                               "away_entrant_id",
                               "scheduled_at",
@@ -12212,6 +12218,7 @@
                         "pool_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                         "round_no": -9007199254740991,
                         "seq_in_round": -9007199254740991,
+                        "fixture_no": -9007199254740991,
                         "home_entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                         "away_entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                         "scheduled_at": "example",
@@ -18987,6 +18994,11 @@
                           "minimum": -9007199254740991,
                           "maximum": 9007199254740991
                         },
+                        "fixture_no": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
                         "home_entrant_id": {
                           "anyOf": [
                             {
@@ -19088,6 +19100,7 @@
                         "pool_id",
                         "round_no",
                         "seq_in_round",
+                        "fixture_no",
                         "home_entrant_id",
                         "away_entrant_id",
                         "scheduled_at",
@@ -19117,6 +19130,7 @@
                     "pool_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "round_no": -9007199254740991,
                     "seq_in_round": -9007199254740991,
+                    "fixture_no": -9007199254740991,
                     "home_entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "away_entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "scheduled_at": "example",
@@ -19279,7 +19293,7 @@
         ]
       },
       "patch": {
-        "summary": "Schedule move, venue, officials, pin/lock — blocking conflicts → 409",
+        "summary": "Schedule move, venue, officials, pin/lock — blocking conflicts → 409, warn-level ones come back in `conflicts`",
         "tags": [
           "fixtures"
         ],
@@ -19424,6 +19438,11 @@
                           "minimum": -9007199254740991,
                           "maximum": 9007199254740991
                         },
+                        "fixture_no": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
                         "home_entrant_id": {
                           "anyOf": [
                             {
@@ -19516,6 +19535,64 @@
                         },
                         "created_at": {
                           "type": "string"
+                        },
+                        "conflicts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "fixture_id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "code": {
+                                "type": "string",
+                                "enum": [
+                                  "conflict.court",
+                                  "conflict.start_window",
+                                  "warn.rest",
+                                  "warn.person_overlap",
+                                  "warn.order",
+                                  "warn.blackout",
+                                  "warn.window",
+                                  "warn.instruction",
+                                  "warn.no_slot",
+                                  "warn.official_declined",
+                                  "warn.official_unavailable"
+                                ]
+                              },
+                              "blocking": {
+                                "type": "boolean"
+                              },
+                              "detail": {
+                                "type": "string"
+                              },
+                              "rule": {
+                                "type": "string",
+                                "enum": [
+                                  "H2",
+                                  "H3",
+                                  "H4",
+                                  "H5",
+                                  "H6",
+                                  "H8",
+                                  "CAP"
+                                ]
+                              },
+                              "shortfall_minutes": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "fixture_id",
+                              "code",
+                              "blocking"
+                            ],
+                            "additionalProperties": false
+                          }
                         }
                       },
                       "required": [
@@ -19525,6 +19602,7 @@
                         "pool_id",
                         "round_no",
                         "seq_in_round",
+                        "fixture_no",
                         "home_entrant_id",
                         "away_entrant_id",
                         "scheduled_at",
@@ -19535,7 +19613,8 @@
                         "outcome",
                         "schedule_source",
                         "schedule_locked",
-                        "created_at"
+                        "created_at",
+                        "conflicts"
                       ],
                       "additionalProperties": false
                     },
@@ -19554,6 +19633,7 @@
                     "pool_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "round_no": -9007199254740991,
                     "seq_in_round": -9007199254740991,
+                    "fixture_no": -9007199254740991,
                     "home_entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "away_entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "scheduled_at": "example",
@@ -19566,7 +19646,15 @@
                     "outcome": null,
                     "schedule_source": "none",
                     "schedule_locked": true,
-                    "created_at": "example"
+                    "created_at": "example",
+                    "conflicts": [
+                      {
+                        "fixture_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "code": "conflict.court",
+                        "blocking": true,
+                        "detail": "example"
+                      }
+                    ]
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }

@@ -5,7 +5,7 @@ import type postgres from "postgres";
 import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
-import type { PatchFixture, PutLineup } from "@/server/api-v1/schemas";
+import type { PatchFixture, PutLineup, ScheduleConflict } from "@/server/api-v1/schemas";
 import { FIXTURE_COLS, type FixtureRow } from "./stages";
 import { moveFixture } from "./schedule";
 import { scoresViaAssignment } from "./scorers";
@@ -40,13 +40,29 @@ export async function listDivisionFixtures(auth: AuthCtx, divisionId: string): P
   });
 }
 
-export async function patchFixture(auth: AuthCtx, id: string, patch: PatchFixture): Promise<FixtureRow> {
+/** The PATCH response (#461): the fixture, plus the conflicts the move was
+ *  judged against. Declared as its own type because this endpoint's result IS
+ *  the wire — the route returns it unmapped — so widening `FixtureRow` here
+ *  would have widened GET too, where there is no move and nothing to report.
+ *  Mirrored by `PatchedFixture` in `api-v1/schemas.ts`, which is what the
+ *  published spec is generated from. */
+export type PatchedFixtureOut = FixtureRow & { conflicts: ScheduleConflict[] };
+
+export async function patchFixture(
+  auth: AuthCtx,
+  id: string,
+  patch: PatchFixture,
+): Promise<PatchedFixtureOut> {
   // Schedule-touching fields go through the scheduling console's move path
   // (doc 12 §4): conflict validation (court clashes / direct-feed order
   // violations block), schedule_edited ledger event, board realtime refresh.
   const { officials, ...move } = patch;
+  // ALWAYS an array, never undefined (#461): an officials-only patch evaluates
+  // no slot, and "nothing wrong" is the honest answer for it — a client should
+  // not have to tell "no conflicts" from "not evaluated" by key absence.
+  let conflicts: ScheduleConflict[] = [];
   if (Object.keys(move).length > 0) {
-    await moveFixture(auth, id, move);
+    conflicts = await moveFixture(auth, id, move);
   }
   return withTenant(auth.orgId, async (tx) => {
     if (officials) {
@@ -56,7 +72,7 @@ export async function patchFixture(auth: AuthCtx, id: string, patch: PatchFixtur
     const [row] = await tx<FixtureRow[]>`
       select ${tx(FIXTURE_COLS)} from fixtures where id = ${id}`;
     if (!row) throw new HttpError(404, "fixture not found");
-    return row;
+    return { ...row, conflicts };
   });
 }
 

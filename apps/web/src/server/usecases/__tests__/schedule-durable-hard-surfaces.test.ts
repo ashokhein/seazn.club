@@ -10,14 +10,14 @@
 // bypasses the one function that dropped it, which is exactly why the suite was
 // blind to this for a whole wave.
 //
-// WHY THE SPY. Three of the four surfaces RETURN their conflicts, so the rule
-// binding is directly observable. `moveFixture` does not: it returns void and
-// uses its conflict list only for `assertNoNewBlocking`, and an instruction
-// conflict is warn-only, so nothing it does is observable from outside. Wrapping
-// the two engine entry points and recording the config each surface hands them
-// is therefore the only proof available that the durable rule reaches the
-// verifier on the drag path — and it is a real proof: a config with no `hard`,
-// no `tz` or no `ruleFixtures` is precisely the defect.
+// WHY THE SPY. All four surfaces now RETURN their conflicts — `moveFixture` did
+// not until #461, and its list was the thing this spy existed to reach. The spy
+// stays because it proves something the return value cannot: WHICH config each
+// surface handed the engine. A config missing `hard`, `tz` or `ruleFixtures`
+// binds nothing, and "no conflicts" is what a correctly-clean board looks like
+// too, so the absence of a conflict can never distinguish the two. The drag
+// path below now asserts BOTH — the config that went in and the report that
+// came back.
 //
 // Real Postgres required; skipped without DATABASE_URL (CI runs them).
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -281,13 +281,19 @@ describe.skipIf(!HAS_DB)("a durable constraints.hard rule on the board paths (#4
     // physical is in the way and the ONLY thing wrong with the destination is
     // the stored rule. Warn-only, so the move is accepted — and the config it
     // was judged against is the only thing that can show the rule was in force.
-    await moveFixture(auth, card!.id, { scheduled_at: at(120), court_label: "Court 2" });
+    const moved = await moveFixture(auth, card!.id, { scheduled_at: at(120), court_label: "Court 2" });
     expectRuleReachedTheVerifier("moveFixture");
 
-    // The drag path's own conflict list is computed and then discarded
-    // (`moveFixture` returns void), so the badge an organiser sees after a drop
-    // comes from the report above. That is why surface 3 carries the assertion
-    // on the moved card rather than surface 4.
+    // #461: the drag path hands its own report back rather than dropping it, so
+    // the rule is now observable from the OUTSIDE of this surface too — not only
+    // through the config the spy captured. Warn-only, hence the move stood.
+    const movedInstruction = moved.filter((c) => c.code === "warn.instruction");
+    expect(movedInstruction.length).toBeGreaterThan(0);
+    expect(movedInstruction.every((c) => !c.blocking)).toBe(true);
+    expect(movedInstruction.every((c) => c.fixture_id === card!.id)).toBe(true);
+
+    // And the whole-board report agrees with it — the board refreshes from this
+    // after every drop, so the two must not be able to disagree about the card.
     const afterMove = await validateSchedule(auth, division.id);
     expect(
       afterMove.conflicts.filter((c) => c.code === "warn.instruction" && c.fixture_id === card!.id),

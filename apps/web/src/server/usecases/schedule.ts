@@ -932,12 +932,25 @@ export async function assertFreshSeq(
  * Schedule-aware single-fixture move: blocks on conflict.court / direct
  * warn.order (409 with the conflicts), otherwise persists and appends
  * `schedule_edited {fixture, from, to}` (doc 12 §2).
+ *
+ * RETURNS the conflict report it judged the destination by (#461). It always
+ * computed one — the blocking gate needs it — and used to drop it, so the
+ * WARN-level half was invisible to every caller: a drag that put a card into a
+ * rest shortfall, past a stored typed rule or outside the competition's days
+ * wrote silently and said nothing. The blocking half still throws, so anything
+ * returned here is by construction non-blocking (or pre-existing, which the
+ * delta gate deliberately allows). `[]` when the patch touched no timetable
+ * field, so absence and emptiness are the same answer rather than two.
+ *
+ * These are THIS MOVE's conflicts, not the board's: `validateAssignments` is run
+ * over the single proposed card. The whole-board report is `validateSchedule`,
+ * and the console board refreshes from it after every drop.
  */
 export async function moveFixture(
   auth: AuthCtx,
   fixtureId: string,
   patch: MoveInput,
-): Promise<void> {
+): Promise<ScheduleConflict[]> {
   if (patch.schedule_locked !== undefined) {
     await requireFeature(auth.orgId, "scheduling.board");
   }
@@ -1084,6 +1097,7 @@ export async function moveFixture(
     return {
       divisionId: fixture.division_id,
       competitionId: fixture.competition_id,
+      conflicts,
       changeNotices,
       change: {
         prevAt: fixture.scheduled_at !== null ? iso(ms(fixture.scheduled_at)) : null,
@@ -1107,6 +1121,7 @@ export async function moveFixture(
     }).catch(() => {});
   }
   afterScheduleWrite(out.divisionId, out.competitionId, "schedule");
+  return out.conflicts;
 }
 
 // ---------------------------------------------------------------------------
