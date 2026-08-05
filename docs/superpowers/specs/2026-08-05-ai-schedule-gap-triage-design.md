@@ -80,23 +80,23 @@ when their file sets are provably disjoint — an ownership list is not evidence
 
 ### C — board wiring (first, smallest)
 
-**#394.** `schedule-board.tsx:596` passes `single ? divBoardFixtures : actions.board`
-to `consoleFixtures`. On a competition board `single` is null, so
-`divBoardFixtures` is `[]` (`:565-568`) and the joint console receives no
-fixtures — blanking the review step's blocked-row labels. Dropping the ternary
-leaves `src/components/v2` green at 404/0.
+**#394 — SUPERSEDED BY §8. This section's premise is wrong; it is kept only so
+the correction has something to point at.**
 
-The regression test belongs in
-`src/components/v2/__tests__/schedule-board-ai-wiring.test.tsx`, which already
-mounts `ScheduleBoard` through the hook harness and asserts props reaching
-`AiCompetitionConsole`.
+It claimed: `schedule-board.tsx:596` passes `single ? divBoardFixtures :
+actions.board` to `consoleFixtures`, and on a competition board `single` is null
+so the joint console receives no fixtures.
 
-Standing lesson worth writing into the test's comment: this is the third
-instance on this branch of *extracting a pure function moves the mutation
-surface to its arguments*. `consoleFixtures` is well covered; the line choosing
-what to hand it was not.
+The ternary takes the **false** branch when `single` is null. The competition
+board gets `actions.board` — the whole board — and always has. There is no
+production defect. See §8 for the mutation proof and for what the issue's
+"dropping the ternary keeps tests green" evidence actually shows.
 
-Files: `components/v2/schedule-board.tsx`, its wiring test.
+What shipped: the regression test only, in
+`src/components/v2/__tests__/schedule-board-ai-wiring.test.tsx` (commit
+`37ed6f45`). No change to `schedule-board.tsx`.
+
+Files: its wiring test. Nothing else.
 
 ### B — joint apply/undo symmetry
 
