@@ -99,14 +99,72 @@ Spec ✅ · Plan ✅
 
 | Task | Lane | State |
 | --- | --- | --- |
-| 1 — `closed` upgrade state | A | ✅ `951f60ca` + `3dbee0c5`, reviewed, approved |
-| 2 — lock judged from the competition | A | ✅ `62ecb93a`, reviewed, approved |
-| 3 — the chip | A | in flight |
-| 4, 5 | A | queued |
-| 6 — V354 + shared results predicate | C/D | ✅ `29e26998`, review in flight |
-| 7 — staff waiver | C/D | in flight |
-| 8, 9 | C/D | queued |
-| 10 (part B), 11 (gates) | — | after both branches merge |
+| 1 — `closed` upgrade state | A | ✅ `951f60ca` + `3dbee0c5`, approved |
+| 2 — lock judged from the competition | A | ✅ `62ecb93a`, approved |
+| 3 — the chip | A | ✅ `4fd65383`, approved |
+| 4 — `/upgrade` ClosedPanel (+ `upgrade-gate`) | A | ✅ `dddc9e5c`, review in flight |
+| 5 — e2e + demo seed | A | in flight |
+| 6 — V354 + shared results predicate | C | ✅ `29e26998`, approved w/ 1 finding |
+| 7 — staff waiver | C | ✅ `198d5315`, approved w/ 2 findings |
+| V355 — abandoned-with-outcome (from the T6 review) | C | ✅ `bd10d036` |
+| T7 follow-ups — audit visibility + no-op 409 | C | in flight |
+| 8 — danger-zone copy, 402 explanation, e2e, seed | C | queued |
+| 9 — terminal competition guard (part D) | D | in flight |
+| 10 (part B), 11 (gates) | — | after all three branches merge |
+
+**Lane D is a THIRD worktree**: `/Users/ashokhein/github/wt-div-part-d`, branch
+`fix/division-part-d`, forked from `fix/division-slot-cd@198d5315` so it
+inherits V354 and the waiver. Its own Postgres on **`:54333`**. Merges back
+into the C branch; its only overlap with Task 8 is `ui.json`, and the two add
+different key prefixes.
+
+## What review caught that the plan did not
+
+Five so far, every one in the "looks green, is wrong" class. Keep reviewing.
+
+1. **An existing test asserted the defect as intent** — in Tasks 1, 2, 3 and 4,
+   one per task. A test written against #301/#327 encodes the old behaviour as
+   a promise. Rewrite the assertion, keep the still-true half, never delete.
+2. **The plan's quota premise was stale** (see the correction above).
+3. **`restoreDivision` double-counted itself.** The plan said copy the quota
+   predicate verbatim; the row being un-archived is itself an
+   archived-with-results row, so it needs `and d.id <> ${id}` or a legitimate
+   restore is refused.
+4. **`division_has_results` missed abandoned-with-a-verdict.**
+   `fixtureStatusFromFold` (`append-event.ts:114-118`) returns `"abandoned"`
+   BEFORE it checks `outcome !== null`, so a DLS-awarded or leader-awarded
+   match carries a real result under status `abandoned` and refunded its slot.
+   Fixed in V355. `outcome is not null` is NOT the test — cricket abandon folds
+   to a `no_result` OUTCOME, so the predicate keys on
+   `outcome->>'kind' <> 'no_result'`.
+5. **An audited action nobody can read.** `logStaffAction` wrote
+   `division_slot_waived`, but `ADJUSTMENT_ACTIONS`
+   (`admin-adjustments-log.ts:14-24`) does not list it and `adjustmentsForOrg`
+   filters on that list, so `/admin/orgs/[id]` never rendered it.
+
+## Standing verification bar for this branch
+
+Set by Tasks 6 and 7 and applied since; a task is not done without it.
+
+- **Per-test mutation sweep.** Back up with `cp`, break exactly one thing,
+  confirm exactly the expected test reds, restore, and `cmp` to prove the
+  restore. Never `git checkout` to restore.
+- **Wide sweep before commit**, not just the scoped suites. This is the only
+  reason the `upgrade-gate` breakage from Task 2 was caught rather than
+  shipped. Whole-`apps/web` baseline after Task 4: `pass 5660 total 5710
+  pending 50 suitesFailed 0`.
+- **Probe that tsc actually sees a new file** by injecting a type error — a
+  file outside the program typechecks clean by doing nothing.
+- **`EXPLAIN` any predicate a partial index is supposed to serve.** V355's
+  widened index was confirmed by `BitmapOr` over it with no `Seq Scan`.
+
+## Flyway note (local DBs only)
+
+`db:apply` can fail `Migration checksum mismatch for migration version 354`
+because V354's header comments were amended after it had been applied. Verify
+the live object matches the committed migration byte-for-byte, then
+`bash scripts/flyway.sh repair` — history-table only, no schema change. Never
+edit an applied migration. A fresh database is unaffected.
 
 ## EXECUTION IS SPLIT ACROSS TWO WORKTREES (owner asked for it)
 
