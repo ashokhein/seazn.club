@@ -568,6 +568,12 @@ jobs:
       # @seazn/engine/sports from the repo ROOT, so those three are root
       # PRODUCTION dependencies — --prod honours the section, unlike npm ci
       # --omit=dev which used to find them hoisted out of apps/web.
+      #
+      # That reasoning is TRANSITIVE: @seazn/engine's own runtime imports must
+      # be in ITS `dependencies` too. pnpm gives no walk-up to a hoisted copy,
+      # so a devDependency-only entry resolves in every other job and dies with
+      # ERR_MODULE_NOT_FOUND here alone. packages/engine/test/runtime-deps.test.ts
+      # is the gate; it is why zod sits in dependencies, not devDependencies.
       - run: pnpm install --frozen-lockfile --prod
 
       - name: Cache Flyway CLI
