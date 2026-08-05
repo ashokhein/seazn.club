@@ -76,3 +76,16 @@ describe("toolchain: compile target", () => {
     expect(web.compilerOptions.target).toBe(engine.compilerOptions.target);
   });
 });
+
+describe("toolchain: suppression policy", () => {
+  it("both lint configs ban @ts-ignore", () => {
+    for (const cfg of [
+      "apps/web/eslint.config.mjs",
+      "packages/engine/eslint.config.mjs",
+    ]) {
+      const text = readFileSync(join(REPO_ROOT, cfg), "utf8");
+      expect(text, cfg).toContain("@typescript-eslint/ban-ts-comment");
+      expect(text, cfg).toMatch(/["']ts-ignore["']\s*:\s*true/);
+    }
+  });
+});

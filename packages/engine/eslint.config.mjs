@@ -93,6 +93,15 @@ export default defineConfig([
       // `eslint-disable-next-line no-console` comments that predate this
       // config; scripts/ is exempted below.
       "no-console": "error",
+      // A suppression must announce itself. `@ts-ignore` silently absorbs
+      // whatever error appears under it; `@ts-expect-error` errors when it
+      // stops being needed, which is what makes a compiler upgrade report a
+      // behaviour delta instead of swallowing it. Zero of either existed when
+      // this rule went in — it is a ratchet, not a cleanup.
+      "@typescript-eslint/ban-ts-comment": [
+        "error",
+        { "ts-ignore": true, "ts-expect-error": "allow-with-description" },
+      ],
     },
   },
 
