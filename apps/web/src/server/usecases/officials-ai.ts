@@ -727,24 +727,76 @@ function officialsStructuralCheck(plan: AiOfficialsPlan, pack: OfficialsPack): s
   return null;
 }
 
-/** The deterministic solver draft, expressed as an AiOfficialsPlan — the proposal
- *  returned for an empty instruction (no LLM call). Slots the draft could not fill
- *  are declared unfilled so coverage still surfaces. */
+/**
+ * The empty-instruction proposal: the ADOPTED grid where there is one, the
+ * deterministic solver draft everywhere else. No LLM call. Slots neither can
+ * fill are declared unfilled so coverage still surfaces.
+ *
+ * #384: `pack.prior.assignments` is a SOLVE INPUT here, not only a diff
+ * baseline. Before this, an adopt with an empty instruction re-derived
+ * everything from the solver and threw the organiser's click away — while
+ * `officialsDiff` DID read `pack.prior.assignments` as its baseline, which made
+ * the grid report the organiser's own adoption as something the AI changed. The
+ * diff is untouched; after this the solve and the diff simply agree.
+ *
+ * MERGED, not replaced. A prior is usually the whole grid with one cell patched
+ * (ai-console.tsx round-trips the full assignment set), but it need not be:
+ * treating a partial one as the whole answer would blank every slot it does not
+ * mention, which is a worse version of the bug being fixed. An EMPTY
+ * `assignments` array therefore behaves exactly like no prior at all.
+ *
+ * `pack.prior.instruction` is deliberately NOT read. On this path there is no
+ * instruction to execute — that is the premise of the branch (zero LLM calls,
+ * deterministic solver, flat 1 credit) — so the previous run's sentence is not
+ * re-run.
+ *
+ * Rows are filtered to slots this pack actually has. A prior naming a fixture
+ * deleted mid-session, or a role the policy no longer requires, is stale client
+ * state; forwarding it would hand the referee an assignment for a board that
+ * does not exist.
+ */
 function draftAsPlan(pack: OfficialsPack): AiOfficialsPlan {
-  const covered = new Set(pack.draft.map((a) => slotKey(a.fixtureId, a.roleKey)));
+  const fixtureIds = new Set(pack.fixtures.map((f) => f.id));
+  const roles = new Set(pack.policy.roles);
+  const inScope = (a: FixtureOfficial): boolean =>
+    fixtureIds.has(a.fixtureId) && roles.has(a.roleKey);
+
+  // Slot -> row. The prior claims its slots first; the draft fills the rest.
+  const bySlot = new Map<string, FixtureOfficial>();
+  for (const a of pack.prior?.assignments ?? []) {
+    if (inScope(a)) bySlot.set(slotKey(a.fixtureId, a.roleKey), a);
+  }
+  const adopted = bySlot.size;
+  for (const a of pack.draft) {
+    if (inScope(a) && !bySlot.has(slotKey(a.fixtureId, a.roleKey))) {
+      bySlot.set(slotKey(a.fixtureId, a.roleKey), a);
+    }
+  }
+
   const unfilled: AiOfficialsPlan["unfilled"] = [];
   for (const f of pack.fixtures) {
     for (const r of pack.policy.roles) {
-      if (!covered.has(slotKey(f.id, r))) {
+      if (!bySlot.has(slotKey(f.id, r))) {
         unfilled.push({ fixture_id: f.id, role_key: r, reason: "no eligible official available" });
       }
     }
   }
   return {
-    assignments: pack.draft.map((a) => ({ fixture_id: a.fixtureId, official_id: a.officialId, role_key: a.roleKey })),
+    assignments: [...bySlot.values()].map((a) => ({
+      fixture_id: a.fixtureId,
+      official_id: a.officialId,
+      role_key: a.roleKey,
+    })),
     unfilled,
     explanations: [],
-    summary: "Default duty spread from the deterministic solver (no instruction given).",
+    // SERVER-GENERATED PROSE, not a dictionary key — and it does not reach the
+    // screen on this path: a zero-token plan renders the localized
+    // `board.ai.officials.draftNote` instead (ai-officials-review.tsx). It is
+    // here for the run ledger and for any API consumer reading the response.
+    summary:
+      adopted > 0
+        ? "Adopted assignments kept; remaining slots from the deterministic solver."
+        : "Default duty spread from the deterministic solver (no instruction given).",
   };
 }
 
