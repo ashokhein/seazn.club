@@ -3186,5 +3186,11 @@
   "persons.dupes.error": "That did not work",
   "persons.dupes.account.note": "Only the record being merged in is linked to a player’s account. The record you keep inherits that link.",
   "persons.dupes.dialog.keepShort": "Keep",
-  "persons.dupes.dialog.absorbShort": "Merge in"
+  "persons.dupes.dialog.absorbShort": "Merge in",
+  "board.ai.joint.undoBusyTitle": "An undo is already running",
+  "board.ai.joint.undoBusy": "This competition is still being restored. Wait a moment, then try again.",
+  "board.ai.joint.undoChangedTitle": "This can no longer be undone in one go",
+  "board.ai.joint.undoChanged": "The competition has been scheduled again since this apply, so the undo no longer matches it. Restore each division from its own schedule page.",
+  "board.ai.joint.undoGoneTitle": "Nothing left to undo",
+  "board.ai.joint.undoGone": "There is no joint apply left to undo on this competition. Each division keeps its own restore points on its schedule page."
 }

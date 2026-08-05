@@ -177,6 +177,7 @@ const PLAN = {
 const PLAN_URL = "/api/v1/competitions/c1/schedule/ai-plan";
 const PREVIEW_URL = "/api/v1/competitions/c1/schedule/ai-preview";
 const APPLY_URL = "/api/v1/competitions/c1/schedule/apply";
+const RESTORE_URL = "/api/v1/competitions/c1/schedule/restore";
 
 /** What stage 1 gives back: the rules the organiser is asked to confirm, and
  *  the token that makes those rules the ones the run enforces. */
@@ -569,30 +570,135 @@ describe("the review step is wired to the console's own state", () => {
     expect(step.plan).toBe(PLAN);
   });
 
-  it("names the divisions a partial undo could not revert", async () => {
-    // The step renders these ids as division NAMES and retries exactly them.
-    // An empty array at the mount turns the amber panel's list into nothing and
-    // the retry into a no-op, with no test to notice.
-    const { island } = await planned();
-    net.handler = async (url) => {
+  /** Applied over d1 and d2, sitting on the confirmation with both anchors and
+   *  a restore handler the caller supplies. */
+  async function applied(restore: (json: unknown) => unknown) {
+    const ctx = await planned();
+    net.handler = async (url, options) => {
       if (url.endsWith("/checkpoints")) return { id: `cp-${url.split("/")[4]}` };
       if (url === APPLY_URL) return { applied: 2, conflicts: [] };
-      // d2's restore refuses; d1's succeeds.
-      if (url === "/api/v1/divisions/d2/restore") throw new ApiV1Error("no", 500, "SERVER_ERROR");
-      return {};
+      if (url === RESTORE_URL) return restore(options?.json);
+      throw new Error(`unexpected ${url}`);
     };
-
-    (propsOf(typed(island.tree(), JointReviewStep)).onApply as () => void)();
+    (propsOf(typed(ctx.island.tree(), JointReviewStep)).onApply as () => void)();
     await flush();
-    expect(propsOf(typed(island.tree(), JointReviewStep)).outcome).toMatchObject({
+    expect(propsOf(typed(ctx.island.tree(), JointReviewStep)).outcome).toMatchObject({
       status: "applied",
     });
+    net.calls.length = 0;
+    const undo = () => (propsOf(typed(ctx.island.tree(), JointReviewStep)).onUndo as () => void)();
+    const step = () => propsOf(typed(ctx.island.tree(), JointReviewStep));
+    return { ...ctx, undo, step };
+  }
 
-    (propsOf(typed(island.tree(), JointReviewStep)).onUndo as () => void)();
+  it("names the divisions a partial undo could not revert", async () => {
+    // The step renders these ids as division NAMES. An empty array at the mount
+    // turns the amber panel's list into nothing, with no test to notice.
+    const { undo, step } = await applied(() => ({
+      restored: [{ division_id: "d1", watermark: 3, steps: 1 }],
+      failed: [{ division_id: "d2", reason: "no such checkpoint" }],
+      ok: false,
+    }));
+
+    undo();
     await flush();
-    const step = propsOf(typed(island.tree(), JointReviewStep));
-    expect(step.undone).toBe("partial");
-    expect(step.undoFailed).toEqual(["d2"]);
+    expect(step().undone).toBe("partial");
+    expect(step().undoFailed).toEqual(["d2"]);
+  });
+
+  it("undoes through ONE competition-scoped call, whatever the organiser clicks", async () => {
+    // Two assertions in one, and both are regressions the console can cause on
+    // its own however correct `undoJointApply` is:
+    //
+    //   THE LOOP. A second restore url here means the client is back to
+    //   restoring per division, which is what let a closed tab leave the board
+    //   half-restored.
+    //   THE DOUBLE CLICK. `undoing` is state, so a second press inside the same
+    //   tick reads it as false and fires again — and the second request races
+    //   the first's rewind. The server's competition lock is the backstop for
+    //   that; this is the defence, and it must be a ref to work.
+    const { undo, step } = await applied(() => ({
+      restored: [
+        { division_id: "d1", watermark: 3, steps: 1 },
+        { division_id: "d2", watermark: 9, steps: 2 },
+      ],
+      failed: [],
+      ok: true,
+    }));
+
+    undo();
+    undo();
+    await flush();
+
+    expect(net.calls.map((c) => c.url)).toEqual([RESTORE_URL]);
+    expect(step().undone).toBe("full");
+  });
+
+  it("retries with the FULL division set, because a subset is a 422", async () => {
+    // The retry used to send back only the divisions that failed, which was
+    // right while restore was per division. The competition-scoped endpoint
+    // validates the named set against the apply event and refuses a subset, so
+    // the old shape is now the one request that CANNOT work — and it would fail
+    // as a 422 on the retry only, long after any test of the first attempt.
+    let attempt = 0;
+    const { undo, step } = await applied(() => {
+      attempt += 1;
+      return attempt === 1
+        ? {
+            restored: [{ division_id: "d1", watermark: 3, steps: 1 }],
+            failed: [{ division_id: "d2", reason: "boom" }],
+            ok: false,
+          }
+        : {
+            restored: [
+              { division_id: "d1", watermark: 3, steps: 0 },
+              { division_id: "d2", watermark: 9, steps: 2 },
+            ],
+            failed: [],
+            ok: true,
+          };
+    });
+
+    undo();
+    await flush();
+    expect(step().undoFailed).toEqual(["d2"]);
+
+    undo();
+    await flush();
+    const body = net.calls[1].json as { checkpoints: { division_id: string }[] };
+    expect(body.checkpoints.map((c) => c.division_id)).toEqual(["d1", "d2"]);
+    expect(step().undone).toBe("full");
+  });
+
+  it("offers a retry when an undo is ALREADY running, and claims nothing was reverted", async () => {
+    // The 409 the competition lock raises. Folded into the generic failure path
+    // this reads as "no division was reverted" — which sends the organiser off
+    // to undo by hand the very divisions the first undo is mid-rewind on.
+    const { undo, step } = await applied(() => {
+      throw new ApiV1Error("busy", 409, "SCHEDULE_APPLY_RESTORE_IN_PROGRESS");
+    });
+
+    undo();
+    await flush();
+    expect(step().undoRefusal).toBe("retry");
+    // Nothing ran, so the applied board is untouched and no division is named.
+    expect(step().undone).toBe("no");
+    expect(step().undoFailed).toEqual([]);
+  });
+
+  it("tells a stale division set and a missing apply apart from a failed undo", async () => {
+    for (const [status, refusal] of [
+      [422, "changed"],
+      [404, "gone"],
+    ] as const) {
+      const { undo, step } = await applied(() => {
+        throw new ApiV1Error("nope", status, "");
+      });
+      undo();
+      await flush();
+      expect(step().undoRefusal).toBe(refusal);
+      expect(step().undone).toBe("no");
+    }
   });
 });
 

@@ -485,6 +485,7 @@ function review(
         error={null}
         currency="usd"
         undoFailed={[]}
+        undoRefusal={null}
         msg={(k, v) => tEn(k as string, v)}
         {...over}
       />
@@ -838,6 +839,34 @@ describe("the applied state", () => {
     expect(review({ outcome: applied, undone: "full" })).not.toContain(
       enText["board.ai.joint.undoRetry"],
     );
+  });
+
+  it("says an undo is already running, and keeps a button that can succeed", () => {
+    // The 409 the competition lock raises when the same organiser submits
+    // twice. It must NOT read as "the undo failed" — the first one is still
+    // rewinding, and the only correct action is to wait and press again.
+    const busy = review({ outcome: applied, undoRefusal: "retry" });
+    expect(busy).toContain(enText["board.ai.joint.undoBusy"]);
+    expect(busy).toContain(enText["board.ai.apply.undo"]);
+    // One Undo control, not two: the restore-point row is replaced, not joined.
+    expect(busy).not.toContain(enText["board.ai.joint.savepoint"]);
+  });
+
+  it("withdraws the Undo button when pressing it again cannot work", () => {
+    // 422 (the competition was applied again, so the anchors no longer name the
+    // set the endpoint will accept) and 404 (there is no joint apply left).
+    // Both are dead ends here, and a button that can only fail is worse than
+    // the sentence telling the organiser where to go instead.
+    for (const [refusal, key] of [
+      ["changed", "board.ai.joint.undoChanged"],
+      ["gone", "board.ai.joint.undoGone"],
+    ] as const) {
+      const html = review({ outcome: applied, undoRefusal: refusal });
+      expect(html).toContain(enText[key]);
+      expect(html).not.toContain(enText["board.ai.apply.undo"]);
+      // The apply itself still happened — that headline stays.
+      expect(html).toContain(tEn("board.ai.joint.applied.other", { count: 2 }));
+    }
   });
 });
 

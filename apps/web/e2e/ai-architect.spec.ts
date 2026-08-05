@@ -941,9 +941,9 @@ test("competition board: pick divisions → price the batch → run → review �
   //
   // The console used to undo a joint apply by looping the per-division restore
   // in the BROWSER, so a closed tab left half the board on the AI schedule. The
-  // endpoint below does the loop on the server. Driven over HTTP rather than
-  // through the dock: the joint Undo control is not wired yet, and the
-  // guarantee being proven here is the endpoint's, not the button's.
+  // loop now runs on the server behind one endpoint, and the DOCK'S OWN BUTTON
+  // is what calls it — an earlier pass drove this over HTTP because the joint
+  // Undo was not wired to the new endpoint yet.
   //
   // Each division's anchor is the 'ai' checkpoint the apply saved ("A restore
   // point was saved for each division", asserted above).
@@ -958,8 +958,11 @@ test("competition board: pick divisions → price the batch → run → review �
     anchors.push({ division_id: divisionId, checkpoint_id: ai[ai.length - 1]!.id });
   }
 
-  // A SUBSET is refused: the apply was all-or-nothing, so the undo is too. It
-  // refuses before writing, which the full restore below then proves — a board
+  // A SUBSET is refused: the apply was all-or-nothing, so the undo is too. This
+  // is also why the dock's retry-after-a-partial-undo sends the FULL anchor set
+  // rather than only the divisions that failed. Driven over the API context, so
+  // it is invisible to the page-level counter installed below; and it refuses
+  // BEFORE writing, which the button-driven restore then proves — a board
   // already half-rewound would make that assertion pass for the wrong reason.
   const partial = await apiJson(
     request,
@@ -969,23 +972,27 @@ test("competition board: pick divisions → price the batch → run → review �
   );
   expect(partial.status).toBe(422);
 
-  const undone = await apiJson<{
-    restored: { division_id: string; watermark: number; steps: number }[];
-    failed: { division_id: string; reason: string }[];
-    ok: boolean;
-  }>(request, `/api/v1/competitions/${competitionId}/schedule/restore`, "POST", {
-    checkpoints: anchors,
-    confirm: true,
+  // THE REGRESSION ASSERTION, and the only one no unit test can make: count the
+  // restore requests the BROWSER issues for one press of Undo. Two means the
+  // client is looping per division again — which is invisible in the final
+  // board state, because the loop produces the same rows when nothing
+  // interrupts it. The whole defect was what happens when something does.
+  const restoreRequests: string[] = [];
+  page.on("request", (req) => {
+    if (req.url().includes("/schedule/restore")) restoreRequests.push(req.url());
   });
-  expect(undone.status).toBe(200);
-  expect(undone.data?.ok).toBe(true);
-  expect(undone.data?.failed).toEqual([]);
-  expect(undone.data?.restored.map((r) => r.division_id).sort()).toEqual(
-    [bigDivision, smallDivision].sort(),
-  );
-  // Every division really rewound — a report with no write behind it is the
-  // failure mode this endpoint exists to prevent, and the counts stay at 66/6
-  // because an undo unplaces fixtures rather than deleting them.
+
+  await dock.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(dock.getByText("Reverted to before the AI changes.")).toBeVisible({
+    timeout: 60_000,
+  });
+  expect(restoreRequests).toHaveLength(1);
+  expect(restoreRequests[0]).toContain(`/competitions/${competitionId}/schedule/restore`);
+
+  // Both divisions really rewound to their pre-AI state — a confirmation with
+  // no write behind it is the failure mode this endpoint exists to prevent, and
+  // the counts stay at 66/6 because an undo unplaces fixtures rather than
+  // deleting them.
   for (const [divisionId, expected] of [
     [bigDivision, 66],
     [smallDivision, 6],

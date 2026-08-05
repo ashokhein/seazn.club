@@ -3186,5 +3186,11 @@
   "persons.dupes.error": "Cela n’a pas fonctionné",
   "persons.dupes.account.note": "Seule la fiche à fusionner est liée au compte d’un joueur. La fiche que vous conservez hérite de ce lien.",
   "persons.dupes.dialog.keepShort": "Conserver",
-  "persons.dupes.dialog.absorbShort": "Fusionner"
+  "persons.dupes.dialog.absorbShort": "Fusionner",
+  "board.ai.joint.undoBusyTitle": "Une annulation est déjà en cours",
+  "board.ai.joint.undoBusy": "Cette compétition est encore en cours de restauration. Patientez un instant, puis réessayez.",
+  "board.ai.joint.undoChangedTitle": "Impossible d’annuler en une seule fois",
+  "board.ai.joint.undoChanged": "La compétition a été replanifiée depuis cette application, l’annulation ne correspond donc plus. Restaurez chaque division depuis sa propre page de planning.",
+  "board.ai.joint.undoGoneTitle": "Plus rien à annuler",
+  "board.ai.joint.undoGone": "Il n’y a plus d’application groupée à annuler sur cette compétition. Chaque division conserve ses propres points de restauration sur sa page de planning."
 }

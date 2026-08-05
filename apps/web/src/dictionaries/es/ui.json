@@ -3186,5 +3186,11 @@
   "persons.dupes.error": "No se pudo completar",
   "persons.dupes.account.note": "Solo la ficha que se va a fusionar está vinculada a la cuenta de un jugador. La ficha que conservas hereda ese vínculo.",
   "persons.dupes.dialog.keepShort": "Conservar",
-  "persons.dupes.dialog.absorbShort": "Fusionar"
+  "persons.dupes.dialog.absorbShort": "Fusionar",
+  "board.ai.joint.undoBusyTitle": "Ya se está deshaciendo",
+  "board.ai.joint.undoBusy": "Esta competición aún se está restaurando. Espera un momento y vuelve a intentarlo.",
+  "board.ai.joint.undoChangedTitle": "Ya no se puede deshacer de una vez",
+  "board.ai.joint.undoChanged": "La competición se ha vuelto a programar desde esta aplicación, así que deshacer ya no coincide con ella. Restaura cada división desde su propia página de horario.",
+  "board.ai.joint.undoGoneTitle": "No queda nada que deshacer",
+  "board.ai.joint.undoGone": "En esta competición ya no queda ninguna aplicación conjunta que deshacer. Cada división conserva sus propios puntos de restauración en su página de horario."
 }

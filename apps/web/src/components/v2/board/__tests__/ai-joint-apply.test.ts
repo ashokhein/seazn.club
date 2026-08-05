@@ -194,43 +194,120 @@ describe("undoJointApply", () => {
     { divisionId: "d2", checkpointId: "cp-2" },
   ];
 
-  it("restores every anchor the apply created", async () => {
-    const { api, calls } = recorder();
-    expect(await undoJointApply(anchors, api)).toEqual({ ok: true, failed: [] });
-    expect(calls.map((c) => c.url)).toEqual([
-      "/api/v1/divisions/d1/restore",
-      "/api/v1/divisions/d2/restore",
-    ]);
-    expect(calls[0].json).toEqual({ checkpoint_id: "cp-1", confirm: true });
-    expect(calls[1].json).toEqual({ checkpoint_id: "cp-2", confirm: true });
+  const RESTORE_URL = "/api/v1/competitions/c1/schedule/restore";
+
+  /** The endpoint's success envelope, per division. */
+  const restored = (ids: string[], failed: { division_id: string; reason: string }[] = []) => ({
+    restored: ids.map((id, i) => ({ division_id: id, watermark: 3 + i, steps: 1 })),
+    failed,
+    ok: failed.length === 0,
   });
 
-  it("keeps restoring the rest when one division refuses, and NAMES the ones that failed", async () => {
-    // Restore is per division and there is no competition-scoped one, so a
-    // failure part-way cannot be rolled back — stopping would leave MORE
-    // divisions on the AI board than carrying on does.
-    //
+  /** Every refusal this client has to tell apart, as `v1()` serialises them.
+   *  Both the 404 and the 422 carry no `code` — the usecase throws a bare
+   *  `HttpError(status, message)` — so the STATUS is the only discriminator
+   *  there, and keying on a code would silently match nothing. */
+  const refuse = (status: number, code: string) => () => {
+    throw new ApiV1Error("nope", status, code);
+  };
+
+  it("undoes a joint apply with ONE competition-scoped call, not N per-division calls (#386)", async () => {
+    // THE regression assertion. The client used to loop the per-division
+    // restore, so the apply was atomic while the undo was N independent writes
+    // and a closed tab left the board half-restored. N calls here means the
+    // loop came back.
+    const { api, calls } = recorder({ [RESTORE_URL]: restored(["d1", "d2"]) });
+    expect(await undoJointApply("c1", anchors, api)).toEqual({ ok: true, failed: [] });
+    expect(calls.map((c) => c.url)).toEqual([RESTORE_URL]);
+  });
+
+  it("sends the anchors snake_cased, with the confirm the endpoint requires", async () => {
+    // Every other test here mocks the api, so a camelCased body would pass all
+    // of them and 422 in production against the real zod schema. The body is
+    // the contract, not the path.
+    const { api, calls } = recorder({ [RESTORE_URL]: restored(["d1", "d2"]) });
+    await undoJointApply("c1", anchors, api);
+    expect(calls[0].method).toBe("POST");
+    expect(calls[0].json).toEqual({
+      checkpoints: [
+        { division_id: "d1", checkpoint_id: "cp-1" },
+        { division_id: "d2", checkpoint_id: "cp-2" },
+      ],
+      confirm: true,
+    });
+  });
+
+  it("surfaces the server's per-division failures", async () => {
     // The ids are the point. Collapsed into a boolean, the console can only say
     // "some divisions", which sends the organiser to open every division page
-    // to find out which. The anchors stay valid either way, so naming them is
-    // also what makes a retry of just those divisions possible.
-    const { api, calls } = recorder({
-      "/api/v1/divisions/d1/restore": () => {
-        throw new ApiV1Error("locked", 422, "SCHEDULE_LOCKED");
-      },
+    // to find out which.
+    const { api } = recorder({
+      [RESTORE_URL]: restored(["d1"], [{ division_id: "d2", reason: "checkpoint not found" }]),
     });
-    expect(await undoJointApply(anchors, api)).toEqual({ ok: false, failed: ["d1"] });
-    expect(calls.map((c) => c.url)).toEqual([
-      "/api/v1/divisions/d1/restore",
-      "/api/v1/divisions/d2/restore",
-    ]);
+    expect(await undoJointApply("c1", anchors, api)).toEqual({ ok: false, failed: ["d2"] });
   });
 
-  it("retries only the anchors it is handed, so a second attempt is not a full re-restore", async () => {
-    // The retry passes just the failures back in; re-restoring a division that
-    // already reverted would be a second write for no reason.
+  it("reports every division as unrestored when the call itself fails", async () => {
+    // A network error, a 500 — nothing was restored and saying "some divisions
+    // failed" would be a guess. No `refusal`: this is not a refusal the server
+    // explained, it is a call that never landed.
+    const { api } = recorder({
+      [RESTORE_URL]: () => {
+        throw new ApiV1Error("boom", 500, "SERVER_ERROR");
+      },
+    });
+    expect(await undoJointApply("c1", anchors, api)).toEqual({ ok: false, failed: ["d1", "d2"] });
+  });
+
+  it("tells a restore ALREADY RUNNING apart from a failed one, and claims no failures", async () => {
+    // The realistic cause is the same organiser submitting twice — a
+    // double-clicked Undo or a second tab. This call did nothing, so naming
+    // every division as unrestored would be a lie in the direction that
+    // matters: the organiser would go and undo them by hand while the first
+    // undo is still rewinding them.
+    const { api } = recorder({ [RESTORE_URL]: refuse(409, "SCHEDULE_APPLY_RESTORE_IN_PROGRESS") });
+    expect(await undoJointApply("c1", anchors, api)).toEqual({
+      ok: false,
+      failed: [],
+      refusal: "retry",
+    });
+  });
+
+  it("treats any other 409 as retryable too, rather than as a dead undo", async () => {
+    // The retryable-lock code is the one the joint apply raises today; a 409
+    // from this endpoint means a concurrent writer either way, and "wait and
+    // try again" is the honest answer for all of them.
+    const { api } = recorder({ [RESTORE_URL]: refuse(409, "SEQ_CONFLICT") });
+    expect((await undoJointApply("c1", anchors, api)).refusal).toBe("retry");
+  });
+
+  it("tells a division set that no longer matches the apply apart from a failure", async () => {
+    // 422 — the set must equal the apply event's `division_ids` EXACTLY, so
+    // this means the competition has been applied again since. Retrying cannot
+    // fix it; the organiser needs each division's own restore.
+    const { api } = recorder({ [RESTORE_URL]: refuse(422, "UNPROCESSABLE") });
+    expect(await undoJointApply("c1", anchors, api)).toEqual({
+      ok: false,
+      failed: [],
+      refusal: "changed",
+    });
+  });
+
+  it("tells 'nothing to undo' apart from a failure", async () => {
+    // 404 — no joint apply on this competition at all.
+    const { api } = recorder({ [RESTORE_URL]: refuse(404, "NOT_FOUND") });
+    expect(await undoJointApply("c1", anchors, api)).toEqual({
+      ok: false,
+      failed: [],
+      refusal: "gone",
+    });
+  });
+
+  it("fires no request at all for an empty undo", async () => {
+    // The endpoint would 422 it (`checkpoints` is `.min(1)`), and a refusal the
+    // client can compute is a refusal it should not pay a round trip for.
     const { api, calls } = recorder();
-    expect(await undoJointApply([anchors[0]], api)).toEqual({ ok: true, failed: [] });
-    expect(calls.map((c) => c.url)).toEqual(["/api/v1/divisions/d1/restore"]);
+    expect(await undoJointApply("c1", [], api)).toEqual({ ok: false, failed: [], refusal: "gone" });
+    expect(calls).toEqual([]);
   });
 });
