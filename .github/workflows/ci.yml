@@ -616,9 +616,70 @@ jobs:
         if: env.STAGING_STRIPE_SECRET_KEY == ''
         run: echo "::warning::STAGING_STRIPE_SECRET_KEY not set — Stripe prices not synced; checkout will 503 until 'npm run stripe:sync' runs against staging."
 
+      # The image is built HERE, on the runner, and pushed to fly's registry —
+      # `flyctl deploy` then only ships a digest it already has.
+      #
+      # `flyctl deploy --remote-only` builds on a fly Depot builder, and that
+      # builder cannot hold this build: it reports nproc=4 and NO cgroup memory
+      # limit, so nothing bounds `next build` until the VM runs out and the
+      # kernel SIGKILLs it. That happened deterministically once #480 moved the
+      # builder stage to node:26-alpine — 80s/88s/117s across three attempts —
+      # and capping the JS heap did not help, because the 3.83 GB peak is mostly
+      # Turbopack's native side, outside anything NODE_OPTIONS bounds. A runner
+      # has 16 GB and already proves this exact stage builds (the PR-only
+      # `docker build --target builder` job).
       - uses: superfly/flyctl-actions/setup-flyctl@master
-      - run: flyctl deploy -c fly.stg.toml --remote-only --build-arg SENTRY_AUTH_TOKEN="$SENTRY_AUTH_TOKEN"
+
+      # fly.stg.toml's [build.args] are read by flyctl's own builder, which is
+      # no longer doing the build — so they are parsed out and handed to
+      # `docker build` instead. Parsed rather than duplicated into this file:
+      # NEXT_PUBLIC_* vars are baked into the client bundle at build time, and a
+      # copy that silently drifted from fly.stg.toml would ship a bundle
+      # pointing at the wrong Supabase/Stripe/base URL with nothing failing.
+      - name: Read app name and build args from fly.stg.toml
+        id: flycfg
+        run: |
+          node -e '
+            const fs = require("fs");
+            const toml = fs.readFileSync("fly.stg.toml", "utf8");
+            const app = toml.match(/^\s*app\s*=\s*"([^"]+)"/m)?.[1];
+            if (!app) { console.error("::error::no app name in fly.stg.toml"); process.exit(1); }
+            const section = toml.split(/^\s*\[build\.args\]\s*$/m)[1] ?? "";
+            const args = [];
+            for (const line of section.split(/\r?\n/)) {
+              if (/^\s*\[/.test(line)) break;
+              const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*"([^"]*)"\s*$/);
+              if (m) args.push(m[1] + "=" + m[2]);
+            }
+            if (!args.length) { console.error("::error::no [build.args] in fly.stg.toml"); process.exit(1); }
+            console.log("app=" + app + ", " + args.length + " build args");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT,
+              "app=" + app + "\nargs<<FLYARGS\n" + args.join("\n") + "\nFLYARGS\n");
+          '
+
+      - name: Authenticate Docker against the fly registry
+        run: flyctl auth docker
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_TOKEN }}
-          # Source-map upload only (next.config.js). Secret — never in fly.stg.toml.
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: registry.fly.io/${{ steps.flycfg.outputs.app }}:${{ github.sha }}
+          # SENTRY_AUTH_TOKEN is a secret and stays out of fly.stg.toml; it is
+          # passed the same way flyctl passed it (--build-arg), so its exposure
+          # in image history is unchanged from before.
+          build-args: |
+            ${{ steps.flycfg.outputs.args }}
+            SENTRY_AUTH_TOKEN=${{ secrets.SENTRY_AUTH_TOKEN }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # --image, so no builder is involved at all: fly pulls the digest above.
+      - name: Deploy the pushed image
+        run: flyctl deploy -c fly.stg.toml --image registry.fly.io/${{ steps.flycfg.outputs.app }}:${{ github.sha }}
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_TOKEN }}

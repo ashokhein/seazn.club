@@ -49,24 +49,19 @@ ENV SENTRY_AUTH_TOKEN=$SENTRY_AUTH_TOKEN
 # tsc gates types in CI; the in-build checker (the 6 GB-heap worker that
 # SIGKILLed on builder VMs) is skipped here.
 #
-# The heap cap is not cargo-cult. After #480 moved this stage to node:26-alpine
-# the fly Depot builder began OOM-killing `next build` deterministically —
-# SIGKILL (the kernel, on the container's memory limit), not V8's own
-# "Ineffective mark-compacts", at 80s/88s/117s across two runs. The identical
-# stage builds on a GitHub runner (16 GB) in ~2m, which is why nothing catches
-# it before deploy: `docker build --target builder` is green in CI.
+# This step needs roughly 4 GB: measured peak RSS is 3.83 GB, and most of it is
+# NOT the JS heap — a 2 GB `--max-old-space-size` cap changed nothing, the
+# build was still SIGKILLed at the same point. Turbopack's native side is the
+# bulk, and it sits outside anything NODE_OPTIONS can bound.
 #
-# Node picks its default old-space from the HOST's memory, not from the
-# container's cgroup limit, so on a big builder V8 will happily grow past what
-# the container is allowed and get killed rather than collecting. Capping it
-# makes V8 collect first. The size is deliberately well under any plausible
-# builder limit — Turbopack's Rust side needs headroom outside the JS heap.
+# That is why the image is built on a CI runner and pushed to registry.fly.io
+# rather than built by `flyctl deploy` (see the deploy job in ci.yml). The fly
+# Depot builder reports nproc=4 and NO cgroup memory limit, so nothing bounds
+# the build until the VM itself runs out and the kernel kills it — which it did
+# deterministically, at 80s/88s/117s across three attempts, once #480 moved
+# this stage to node:26-alpine.
 #
-# The capacity line is a permanent diagnostic: it prints in both the fly build
-# log and CI's docker job, so the next time this moves we read the builder's
-# real limit instead of inferring it.
-RUN echo "builder capacity: nproc=$(nproc) memory.max=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo unknown)" \
- && SKIP_TYPECHECK=1 NODE_OPTIONS=--max-old-space-size=2048 npm run build --workspace apps/web
+RUN SKIP_TYPECHECK=1 npm run build --workspace apps/web
 
 # ── Stage 2: minimal production image ────────────────────────────────────────
 FROM node:26-alpine AS runner
