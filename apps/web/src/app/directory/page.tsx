@@ -13,6 +13,8 @@ import { listTeams } from "@/server/usecases/teams";
 import { listOfficialsForConsole } from "@/server/usecases/officials";
 import { hasFeature } from "@/lib/entitlements";
 import { PersonsPanel } from "@/components/v2/persons-panel";
+import { DuplicatesPanel, type DupPerson } from "@/components/v2/duplicates-panel";
+import { listDuplicateCandidates } from "@/server/usecases/person-duplicates";
 import { ClubsTeamsList } from "@/components/v2/clubs-teams-list";
 import { OfficialsDirectoryPanel } from "@/components/v2/officials-directory-panel";
 import { Tip } from "@/components/ui/tip";
@@ -71,9 +73,35 @@ export default async function DirectoryPage({
   );
 }
 
+// #404 §7 — the duplicate queue is computed live on every read, so it is
+// fetched beside the roster rather than materialised. Both reads are org-scoped
+// and independent, so they go in parallel.
+const toDupPerson = (p: {
+  id: string;
+  full_name: string;
+  dob: string | null;
+  gender: string | null;
+  consent: unknown;
+  external_ref: string | null;
+  photo_path: string | null;
+  user_id: string | null;
+}): DupPerson => ({
+  id: p.id,
+  full_name: p.full_name,
+  dob: p.dob,
+  gender: p.gender,
+  consent: (p.consent ?? {}) as Record<string, unknown>,
+  external_ref: p.external_ref,
+  photo_path: p.photo_path,
+  user_id: p.user_id,
+});
+
 async function PlayersTab({ ui }: { ui: Dict }) {
   const { auth, canEdit } = await requirePageAuth();
-  const { items } = await listPersons(auth, { cursor: null, limit: 200 });
+  const [{ items }, { items: duplicates }] = await Promise.all([
+    listPersons(auth, { cursor: null, limit: 200 }),
+    listDuplicateCandidates(auth, {}),
+  ]);
   const storageBase = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/storage/v1/object/public/assets`;
   return (
     <div className="space-y-4">
@@ -81,6 +109,18 @@ async function PlayersTab({ ui }: { ui: Dict }) {
         {t(ui, "directory.players.desc")} <strong>{t(ui, "directory.players.merge")}</strong>
         <Tip id="persons.merge" className="ml-0.5 align-middle" />
       </p>
+
+      <DuplicatesPanel
+        canEdit={canEdit}
+        candidates={duplicates.map((c) => ({
+          a: toDupPerson(c.a),
+          b: toDupPerson(c.b),
+          score: c.score,
+          evidence: c.evidence,
+        }))}
+      />
+
+      <hr className="border-purple-100" />
       <PersonsPanel
         persons={items.map((p) => ({
           id: p.id,

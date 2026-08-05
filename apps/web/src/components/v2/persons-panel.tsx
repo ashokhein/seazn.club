@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { apiV1 } from "@/lib/client-v1";
 import { useMsg } from "@/components/i18n/dict-provider";
 import { InviteClaim } from "@/components/v2/invite-claim";
+import { MergeConfirmDialog } from "@/components/v2/duplicates-panel";
 import { Tip } from "@/components/ui/tip";
 import {
   ResponsiveTable,
@@ -39,6 +40,12 @@ export function PersonsPanel({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [mergeSource, setMergeSource] = useState<Person | null>(null);
+  // #404: the hand-picked merge goes through the SAME confirmation as the
+  // duplicate queue. It used to POST straight from this button with no
+  // `confirmed` field at all, which the route now answers 422
+  // MERGE_NOT_CONFIRMED — and even before that gate existed it was a merge
+  // nobody had been shown the consequences of.
+  const [mergePair, setMergePair] = useState<{ survivor: Person; absorbed: Person } | null>(null);
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -203,15 +210,8 @@ export function PersonsPanel({
               <button
                 type="button"
                 disabled={busy}
-                onClick={() =>
-                  run(async () => {
-                    await apiV1(`/api/v1/persons/${p.id}/merge`, {
-                      method: "POST",
-                      json: { duplicate_id: mergeSource.id },
-                    });
-                    setMergeSource(null);
-                  })
-                }
+                data-keep-this={p.id}
+                onClick={() => setMergePair({ survivor: p, absorbed: mergeSource })}
                 className="btn btn-primary px-2 py-1 text-xs"
               >
                 {msg("persons.keepThis")}
@@ -220,6 +220,7 @@ export function PersonsPanel({
               <button
                 type="button"
                 disabled={busy || mergeSource?.id === p.id}
+                data-merge-pick={p.id}
                 onClick={() => setMergeSource(p)}
                 title={msg("persons.merge.tip")}
                 className="btn btn-ghost px-2 py-1 text-xs"
@@ -294,6 +295,18 @@ export function PersonsPanel({
         );
       })()}
 
+      {mergePair && (
+        <MergeConfirmDialog
+          a={mergePair.survivor}
+          b={mergePair.absorbed}
+          onCancel={() => setMergePair(null)}
+          onMerged={() => {
+            setMergePair(null);
+            setMergeSource(null);
+            router.refresh();
+          }}
+        />
+      )}
     </div>
   );
 }
