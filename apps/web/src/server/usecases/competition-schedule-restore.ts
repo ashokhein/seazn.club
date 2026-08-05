@@ -45,7 +45,11 @@ export async function restoreCompetitionSchedule(
       select payload from competition_events
        where competition_id = ${competitionId} and org_id = ${auth.orgId}
          and type = ${JOINT_APPLY_EVENT}
-       order by created_at desc
+       -- Ordered exactly as lastCompetitionAiApply orders the same rows
+       -- (competition-schedule-ai.ts): competition_events has no seq column, so
+       -- a created_at tie is broken by the id and by nothing else. The two
+       -- readers must not drift - they answer the same question.
+       order by created_at desc, id desc
        limit 1`;
     if (!row) throw new HttpError(404, "no joint apply to restore");
     return row.payload.division_ids ?? [];
@@ -65,9 +69,19 @@ export async function restoreCompetitionSchedule(
   // Locks first, in sorted order — the same deadlock guard the apply uses, so a
   // joint restore and a concurrent joint apply over an overlapping set cannot
   // grab each other's divisions in opposite orders. `pg_advisory_xact_lock` is
-  // released when its transaction ends, so this is a serialisation point and an
-  // ordering discipline, not a lock held across the rewinds below — holding it
-  // there is the "fully atomic" option the owner declined (see the header).
+  // released when its transaction ends, so this is a barrier — any apply that
+  // already held these divisions has committed by the time it returns — and NOT
+  // a lock held across the rewinds below.
+  //
+  // Holding it across them with a SESSION-level `pg_advisory_lock` on a
+  // connection outside the pool does not work, and would fail in the worst
+  // possible way. Session and transaction advisory locks share one lock space,
+  // and every rewind step below takes a `pg_advisory_xact_lock` on this very
+  // key (`step()` in history.ts) from a POOL connection: that request would
+  // block on the lock held here, forever, since nothing sets a lock_timeout.
+  // Verified against Postgres — with a lock_timeout the waiter dies 55P03.
+  // Excluding a concurrent joint apply for the whole rewind therefore needs a
+  // SECOND lock key that the apply takes too; it cannot reuse `division:`.
   await withTenant(auth.orgId, async (tx) => {
     await lockDivisions(tx, asked);
   });

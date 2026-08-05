@@ -54,4 +54,34 @@ describe("openapi coverage", () => {
     // Serialisable (what the route + gen script emit).
     expect(() => JSON.stringify(doc)).not.toThrow();
   });
+
+  // #386: the joint-restore entry shipped with `request:` and `errors:` but no
+  // `response:`, so the spec advertised an untyped `{}` for `data` while the
+  // route really returns restored/failed/ok. `openapi:gen` cannot catch that —
+  // it regenerates the untyped shape happily — so the gate is here.
+  it("types the joint schedule restore's response body", () => {
+    const doc = buildOpenApiDocument() as {
+      paths: Record<
+        string,
+        Record<
+          string,
+          {
+            responses: Record<
+              string,
+              {
+                content: {
+                  "application/json": {
+                    schema: { properties: { data: { properties?: Record<string, unknown> } } };
+                  };
+                };
+              }
+            >;
+          }
+        >
+      >;
+    };
+    const op = doc.paths["/api/v1/competitions/{id}/schedule/restore"]!.post!;
+    const data = op.responses["200"]!.content["application/json"].schema.properties.data;
+    expect(Object.keys(data.properties ?? {}).sort()).toEqual(["failed", "ok", "restored"]);
+  });
 });

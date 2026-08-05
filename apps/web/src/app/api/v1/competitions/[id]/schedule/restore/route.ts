@@ -15,9 +15,11 @@ type Ctx = { params: Promise<{ id: string }> };
  *  of the division set against the apply event, the locking and the per-division
  *  reporting all live in `restoreCompetitionSchedule`.
  *
- *  The v1() wrapper is load-bearing: it propagates EngineError codes (a
- *  concurrent edit makes an undo 409 SEQ_CONFLICT) and HttpError `code`, both of
- *  which the generic lib/http.ts handler drops.
+ *  NO 409 escapes this route, unlike the per-division restore: every
+ *  `restoreCheckpoint` failure — SEQ_CONFLICT included — is caught by the
+ *  usecase's per-division try/catch and reported in `failed[]` with `ok: false`.
+ *  The status codes it really returns are 404 (no joint apply on the
+ *  competition) and 422 (the named division set is not the applied one).
  *
  *  Body parsing precedes auth, matching the apply route exactly. */
 export async function POST(req: Request, { params }: Ctx) {

@@ -17,16 +17,27 @@
 //
 // Real Postgres required; skipped without DATABASE_URL.
 import { afterAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import type { AuthCtx } from "@/server/api-v1/auth";
+import { RestoreCompetitionScheduleResult } from "@/server/api-v1/schemas";
 import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
 import { createCheckpoint } from "../history";
 import { applyCompetitionSchedule } from "../competition-schedule-apply";
+import { JOINT_APPLY_EVENT } from "../competition-schedule-ai";
 import { restoreCompetitionSchedule } from "../competition-schedule-restore";
 import { seedOrg } from "./_seed";
+
+/** The served body must match the contract the spec publishes — a field the
+ *  usecase returns but the schema does not declare is stripped from `data`,
+ *  and only running the schema over a REAL payload sees that. */
+function wireRoundTrip(out: unknown): void {
+  const onWire = JSON.parse(JSON.stringify(out)) as unknown;
+  expect(RestoreCompetitionScheduleResult.parse(onWire)).toEqual(onWire);
+}
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -59,6 +70,9 @@ function settingsConfig(courts: string[]) {
 interface SeededDivision {
   id: string;
   name: string;
+  /** Its own court — courts are matched across divisions by string, so two
+   *  divisions sharing one make a joint apply 409 on a cross-division clash. */
+  court: string;
   /** Fixture ids in (round_no, seq_in_round) order. */
   fixtureIds: string[];
 }
@@ -103,7 +117,7 @@ async function seedDivision(
   const ordered = [...fixtures].sort(
     (a, b) => a.round_no - b.round_no || a.seq_in_round - b.seq_in_round,
   );
-  return { id: division.id, name, fixtureIds: ordered.map((f) => f.id) };
+  return { id: division.id, name, court: courts[0]!, fixtureIds: ordered.map((f) => f.id) };
 }
 
 async function divisionSeq(divisionId: string): Promise<number> {
@@ -128,6 +142,28 @@ async function slots(
 /** Every fixture unplaced — "the AI board is gone". */
 const unplaced = (rows: Awaited<ReturnType<typeof slots>>): boolean =>
   rows.every((r) => r.at === null && r.court === null);
+
+/** ONE joint apply over exactly `divisions` — i.e. one `schedule.applied_multi`
+ *  event naming exactly those division ids. */
+async function jointApply(
+  auth: AuthCtx,
+  competitionId: string,
+  divisions: SeededDivision[],
+): Promise<void> {
+  const payload = [];
+  for (const d of divisions) {
+    payload.push({
+      division_id: d.id,
+      expected_seq: await divisionSeq(d.id),
+      assignments: d.fixtureIds.map((fixture_id, j) => ({
+        fixture_id,
+        scheduled_at: at(j * 30),
+        court_label: d.court,
+      })),
+    });
+  }
+  await applyCompetitionSchedule(auth, competitionId, { divisions: payload, source: "ai" });
+}
 
 interface AppliedJoint {
   auth: AuthCtx;
@@ -173,19 +209,7 @@ async function seedAppliedJoint(n: number): Promise<AppliedJoint> {
     checkpoints.push({ divisionId: d.id, checkpointId: cp.id });
   }
 
-  const payload = [];
-  for (const [i, d] of divisions.entries()) {
-    payload.push({
-      division_id: d.id,
-      expected_seq: await divisionSeq(d.id),
-      assignments: d.fixtureIds.map((fixture_id, j) => ({
-        fixture_id,
-        scheduled_at: at(j * 30),
-        court_label: `Court ${i + 1}`,
-      })),
-    });
-  }
-  await applyCompetitionSchedule(auth, comp.id, { divisions: payload, source: "ai" });
+  await jointApply(auth, comp.id, divisions);
 
   return {
     auth,
@@ -194,6 +218,65 @@ async function seedAppliedJoint(n: number): Promise<AppliedJoint> {
     checkpoints,
     foreignDivisionId: foreign.id,
   };
+}
+
+interface TwoJointApplies {
+  auth: AuthCtx;
+  competitionId: string;
+  /** Divisions of the FIRST apply, then of the SECOND. Disjoint sets. */
+  first: SeededDivision[];
+  second: SeededDivision[];
+  /** division id -> its pre-apply anchor. */
+  anchors: Map<string, string>;
+}
+
+/**
+ * ONE competition, TWO joint applies over DISJOINT division sets: Alpha+Bravo
+ * first, then Charlie+Delta. Only the latest apply is restorable, so the two
+ * sets are the two candidate answers to "which apply does the undo validate
+ * against" — a reader that picks the wrong event refuses the set that IS
+ * restorable and accepts one that is not.
+ *
+ * Anchors for all four are taken before either apply: a checkpoint records the
+ * current watermark, so one taken after would rewind to the AI board.
+ */
+async function seedTwoJointApplies(): Promise<TwoJointApplies> {
+  const { auth } = await seedOrg("pro");
+  const comp = await createCompetition(auth, {
+    name: `Joint Restore Twice ${Date.now()}`,
+    visibility: "public",
+    branding: {},
+  });
+  // Asymmetric entrant counts (4/3/4/3) and a court each, as above.
+  const all: SeededDivision[] = [];
+  for (const [i, name] of ["Alpha", "Bravo", "Charlie", "Delta"].entries()) {
+    all.push(await seedDivision(auth, comp.id, name, i % 2 === 0 ? 4 : 3, [`Court ${i + 1}`]));
+  }
+  const anchors = new Map<string, string>();
+  for (const d of all) {
+    const cp = await createCheckpoint(auth, d.id, "Before AI schedule", "ai");
+    anchors.set(d.id, cp.id);
+  }
+  const first = all.slice(0, 2);
+  const second = all.slice(2);
+  await jointApply(auth, comp.id, first);
+  await jointApply(auth, comp.id, second);
+  return { auth, competitionId: comp.id, first, second, anchors };
+}
+
+/** The wire body for `divisions`, anchors attached. */
+const checkpointsFor = (
+  divisions: SeededDivision[],
+  anchors: Map<string, string>,
+): { division_id: string; checkpoint_id: string }[] =>
+  divisions.map((d) => ({ division_id: d.id, checkpoint_id: anchors.get(d.id)! }));
+
+/** The `schedule.applied_multi` rows of one competition, oldest first. */
+async function applyEvents(competitionId: string): Promise<{ id: string; created_at: Date }[]> {
+  return sql<{ id: string; created_at: Date }[]>`
+    select id, created_at from competition_events
+     where competition_id = ${competitionId} and type = ${JOINT_APPLY_EVENT}
+     order by created_at, id`;
 }
 
 afterAll(async () => {
@@ -229,6 +312,7 @@ describe.skipIf(!HAS_DB)("restoreCompetitionSchedule (#386)", () => {
     expect(out.restored.every((r) => r.steps > 0)).toBe(true);
     expect(unplaced(await slots(divisions[0]!.id))).toBe(true);
     expect(unplaced(await slots(divisions[1]!.id))).toBe(true);
+    wireRoundTrip(out);
   }, 120_000);
 
   it("refuses a subset — the apply was all-or-nothing, so the undo is too", async () => {
@@ -285,7 +369,74 @@ describe.skipIf(!HAS_DB)("restoreCompetitionSchedule (#386)", () => {
     expect(out.failed[0]!.division_id).toBe(checkpoints[1]!.divisionId);
     // The good one was really rewound, not merely counted.
     expect(unplaced(await slots(checkpoints[0]!.divisionId))).toBe(true);
+    // The FAILED half is on the wire too — `reason` is part of the contract.
+    wireRoundTrip(out);
   }, 120_000);
+
+  it("validates against the MOST RECENT apply when the competition has two", async () => {
+    const { auth, competitionId, first, second, anchors } = await seedTwoJointApplies();
+    // The earlier apply's pair is no longer the restorable set…
+    await expect(
+      restoreCompetitionSchedule(auth, competitionId, {
+        checkpoints: checkpointsFor(first, anchors),
+        confirm: true,
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+    // …the later one is, and it really rewinds.
+    const out = await restoreCompetitionSchedule(auth, competitionId, {
+      checkpoints: checkpointsFor(second, anchors),
+      confirm: true,
+    });
+    expect(out.ok).toBe(true);
+    expect(out.restored.map((r) => r.division_id).sort()).toEqual(
+      second.map((d) => d.id).sort(),
+    );
+    expect(unplaced(await slots(second[0]!.id))).toBe(true);
+    // The untouched pair is still on its AI board — the restore rewound the
+    // divisions the LATEST event named, not "the ones it found first".
+    expect(unplaced(await slots(first[0]!.id))).toBe(false);
+  }, 180_000);
+
+  it("breaks a created_at tie on the id, exactly as lastCompetitionAiApply does", async () => {
+    const { auth, competitionId, first, second, anchors } = await seedTwoJointApplies();
+    const [older, newer] = await applyEvents(competitionId);
+    // Same random prefix, opposite tails: LO < HI bytewise, and the prefix keeps
+    // them unique on a test database that is reused across runs.
+    const prefix = randomUUID().slice(0, 24);
+    const LO = prefix + "000000000000";
+    const HI = prefix + "ffffffffffff";
+    // competition_events has no seq column, so a created_at tie is broken by
+    // the id and by nothing else. Nothing in the app writes two applies inside
+    // one transaction, so the tie has to be made by hand.
+    //
+    // The LOW id deliberately goes to the row an UNORDERED tie resolves to: the
+    // update below rewrites it last, so it is the physically last live tuple,
+    // which is what a plain `order by created_at desc limit 1` returns here.
+    // Without the `, id desc` the restore then validates against the WRONG
+    // event and refuses the pair asserted below.
+    // created_at is copied IN SQL: a JS Date carries milliseconds and would
+    // truncate Postgres's microseconds, which makes the two rows merely close
+    // rather than tied, and the tie-break under test would never be reached.
+    await sql`
+      update competition_events set id = ${HI},
+             created_at = (select created_at from competition_events where id = ${older!.id})
+       where id = ${newer!.id}`;
+    await sql`update competition_events set id = ${LO} where id = ${older!.id}`;
+
+    // Highest id wins the tie -> the SECOND apply's pair is the restorable one.
+    const out = await restoreCompetitionSchedule(auth, competitionId, {
+      checkpoints: checkpointsFor(second, anchors),
+      confirm: true,
+    });
+    expect(out.ok).toBe(true);
+    expect(out.restored.map((r) => r.division_id).sort()).toEqual(second.map((d) => d.id).sort());
+    await expect(
+      restoreCompetitionSchedule(auth, competitionId, {
+        checkpoints: checkpointsFor(first, anchors),
+        confirm: true,
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+  }, 180_000);
 
   it("requires confirm: true", async () => {
     const { auth, competitionId, checkpoints } = await seedAppliedJoint(2);

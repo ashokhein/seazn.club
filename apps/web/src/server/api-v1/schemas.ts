@@ -2373,6 +2373,30 @@ export const RestoreCompetitionScheduleRequest = z.object({
 });
 export type RestoreCompetitionScheduleRequest = z.infer<typeof RestoreCompetitionScheduleRequest>;
 
+/**
+ * The joint restore's result — the usecase's `CompetitionRestoreOut`, verbatim.
+ *
+ * BOTH arrays are contract. The restore is deliberately not one transaction, so
+ * a division that refuses is REPORTED in `failed` while the rest still rewind;
+ * a caller that reads only `ok` cannot tell WHICH divisions still carry the AI
+ * board, which is the reason this endpoint exists at all.
+ */
+export const RestoreCompetitionScheduleResult = z.object({
+  restored: z.array(
+    z.object({
+      division_id: Uuid,
+      /** The division's edit watermark after the rewind. */
+      watermark: z.number().int(),
+      /** Inverse events appended; 0 means it was already at the anchor. */
+      steps: z.number().int(),
+    }),
+  ),
+  /** `reason` is the refusal's message (a missing checkpoint, a stale seq, …). */
+  failed: z.array(z.object({ division_id: Uuid, reason: z.string() })),
+  ok: z.boolean(),
+});
+export type RestoreCompetitionScheduleResult = z.infer<typeof RestoreCompetitionScheduleResult>;
+
 // Custom points & rank control (Jul3/05, PROMPT-25) ---------------------------
 
 export const OverrideStandings = z.object({

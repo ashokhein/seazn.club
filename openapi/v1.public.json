@@ -48710,7 +48710,70 @@
                     "ok": {
                       "const": true
                     },
-                    "data": {},
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "restored": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "division_id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "watermark": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "steps": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "division_id",
+                              "watermark",
+                              "steps"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "failed": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "division_id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "reason": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "division_id",
+                              "reason"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "ok": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "restored",
+                        "failed",
+                        "ok"
+                      ],
+                      "additionalProperties": false
+                    },
                     "requestId": {
                       "type": "string",
                       "format": "uuid"
@@ -48719,7 +48782,22 @@
                 },
                 "example": {
                   "ok": true,
-                  "data": {},
+                  "data": {
+                    "restored": [
+                      {
+                        "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "watermark": -9007199254740991,
+                        "steps": -9007199254740991
+                      }
+                    ],
+                    "failed": [
+                      {
+                        "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "reason": "example"
+                      }
+                    ],
+                    "ok": true
+                  },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }

@@ -824,7 +824,7 @@ test("competition board: pick divisions → price the batch → run → review �
 }) => {
   fixture.reset();
   const org = await activateFreshProPlusOrgWithSlug(page, request);
-  const { compSlug, divisionIds } = await seedJointCompetition(request);
+  const { competitionId, compSlug, divisionIds } = await seedJointCompetition(request);
   const [bigDivision, smallDivision] = divisionIds as [string, string];
 
   await page.goto(`/o/${org.slug}/c/${compSlug}/schedule`);
@@ -935,6 +935,64 @@ test("competition board: pick divisions → price the batch → run → review �
     const sources = await getFixtureScheduleSources(divisionId);
     expect(sources.length).toBe(expected);
     expect(sources.every((s) => s.schedule_source === "ai" && s.scheduled_at !== null)).toBe(true);
+  }
+
+  // ---- UNDO THE WHOLE APPLY IN ONE CALL (#386).
+  //
+  // The console used to undo a joint apply by looping the per-division restore
+  // in the BROWSER, so a closed tab left half the board on the AI schedule. The
+  // endpoint below does the loop on the server. Driven over HTTP rather than
+  // through the dock: the joint Undo control is not wired yet, and the
+  // guarantee being proven here is the endpoint's, not the button's.
+  //
+  // Each division's anchor is the 'ai' checkpoint the apply saved ("A restore
+  // point was saved for each division", asserted above).
+  const anchors: { division_id: string; checkpoint_id: string }[] = [];
+  for (const divisionId of [bigDivision, smallDivision]) {
+    const list = await apiJson<{ id: string; kind: string; created_at: string }[]>(
+      request,
+      `/api/v1/divisions/${divisionId}/checkpoints`,
+    );
+    const ai = (list.data ?? []).filter((c) => c.kind === "ai");
+    expect(ai.length).toBeGreaterThan(0);
+    anchors.push({ division_id: divisionId, checkpoint_id: ai[ai.length - 1]!.id });
+  }
+
+  // A SUBSET is refused: the apply was all-or-nothing, so the undo is too. It
+  // refuses before writing, which the full restore below then proves — a board
+  // already half-rewound would make that assertion pass for the wrong reason.
+  const partial = await apiJson(
+    request,
+    `/api/v1/competitions/${competitionId}/schedule/restore`,
+    "POST",
+    { checkpoints: [anchors[0]!], confirm: true },
+  );
+  expect(partial.status).toBe(422);
+
+  const undone = await apiJson<{
+    restored: { division_id: string; watermark: number; steps: number }[];
+    failed: { division_id: string; reason: string }[];
+    ok: boolean;
+  }>(request, `/api/v1/competitions/${competitionId}/schedule/restore`, "POST", {
+    checkpoints: anchors,
+    confirm: true,
+  });
+  expect(undone.status).toBe(200);
+  expect(undone.data?.ok).toBe(true);
+  expect(undone.data?.failed).toEqual([]);
+  expect(undone.data?.restored.map((r) => r.division_id).sort()).toEqual(
+    [bigDivision, smallDivision].sort(),
+  );
+  // Every division really rewound — a report with no write behind it is the
+  // failure mode this endpoint exists to prevent, and the counts stay at 66/6
+  // because an undo unplaces fixtures rather than deleting them.
+  for (const [divisionId, expected] of [
+    [bigDivision, 66],
+    [smallDivision, 6],
+  ] as const) {
+    const after = await getFixtureScheduleSources(divisionId);
+    expect(after.length).toBe(expected);
+    expect(after.every((s) => s.scheduled_at === null)).toBe(true);
   }
 });
 
