@@ -20,6 +20,9 @@ import {
 } from "@seazn/engine/history";
 import { EngineError } from "@seazn/engine/core";
 import { withTenant } from "@/lib/db";
+// Since #382 a manual save AT THE CAP rolls the window instead of refusing, so
+// PaymentRequiredError survives here for one case only: a quota that resolves
+// below 1, where there is no window to roll (see `createCheckpoint`).
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import { requireFeature, withinLimit } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -297,6 +300,14 @@ export interface CheckpointRow {
    *  through. They stay restorable: the ledger can rewind to any watermark, and
    *  jumping back two AI runs is a real capability worth keeping. */
   superseded?: boolean;
+  /** #382 — set on the row RETURNED BY A CREATE, never by a list: the save
+   *  point this one pushed out of the plan's rolling window. The panel names it
+   *  in a non-blocking notice, so the organiser learns which label they lost
+   *  rather than discovering it missing later.
+   *
+   *  Present only when something was actually dropped. One name, even when a
+   *  downgrade drops several — see `createCheckpoint`. */
+  evicted?: { id: string; label: string };
 }
 
 export async function listCheckpoints(auth: AuthCtx, divisionId: string): Promise<CheckpointRow[]> {
@@ -324,6 +335,28 @@ export async function createCheckpoint(
   kind: CheckpointKind = "manual",
 ): Promise<CheckpointRow> {
   return withTenant(auth.orgId, async (tx) => {
+    // #382 review, finding 3: the roll below is count → delete → insert, and
+    // without this lock those three steps are not serialised. Two saves landing
+    // together (the realistic shape is one owner double-clicking Save, not two
+    // admins) both read the same count, both compute the same `drop`, and both
+    // target the SAME oldest row — one DELETE takes it, the other takes nothing
+    // and so reports no `evicted` — while both INSERTs land. The division ends
+    // at limit + 1 and one organiser is never told a bookmark went. It
+    // self-corrects on the next save, which is exactly why it went unnoticed.
+    //
+    // The key is `division:<id>`, byte-identical to `lockDivisions`
+    // (competition-schedule-apply.ts) and to `step`/`restoreCheckpoint` below:
+    // the checkpoint window is a fact ABOUT a division, so it must serialise
+    // against every other writer of that division's plan, not just against
+    // other checkpoint saves. A private key would leave an apply free to move
+    // the watermark this insert is about to read.
+    //
+    // Safe to take here because `createCheckpoint` is a LEAF — the checkpoints
+    // route is its only caller — so this transaction never holds
+    // `division:<id>` while some nested call waits for the same key on another
+    // connection. `pg_advisory_xact_lock` releases at commit or rollback, so
+    // nothing survives the transaction either.
+    await tx`select pg_advisory_xact_lock(hashtext(${"division:" + divisionId}))`;
     const meta = await divisionMeta(tx, divisionId);
     // Jul3/03 §7 → V290: save points are a per-plan quota (community 1,
     // pro 5, pro_plus unlimited). schedule.versioning still gates scope locks.
@@ -332,12 +365,82 @@ export async function createCheckpoint(
     // flow's own undo anchor is what previously blocked a community org that
     // already held one save point from applying an AI schedule at all — the
     // create 402'd, the apply aborted, and the AI generation was already spent.
+    //
+    // #382: at the cap this used to throw PaymentRequiredError. It now ROLLS.
+    // A checkpoint is a named bookmark, not the history — the ledger keeps
+    // every event and restore is "undo until the watermark reaches this seq",
+    // so dropping a save point costs the LABEL, not the ability to rewind that
+    // far. Refusing the save cost the organiser the thing they were doing, in
+    // the middle of doing it, which is a far worse trade than losing the oldest
+    // bookmark. The quota still means something: it is the width of the window.
+    let evicted: { id: string; label: string } | undefined;
     if (kind === "manual") {
       const [{ n }] = await tx<{ n: number }[]>`
         select count(*)::int as n from division_checkpoints
         where division_id = ${divisionId} and kind = 'manual'`;
-      const quota = await withinLimit(auth.orgId, "schedule.checkpoints.max", n + 1);
-      if (!quota.ok) throw new PaymentRequiredError("schedule.checkpoints.max");
+      const { limit } = await withinLimit(auth.orgId, "schedule.checkpoints.max", n + 1);
+      // #382 review, finding 2: a quota below 1 has NO window to roll, so the
+      // rolling branch cannot express it. `drop = n - limit + 1` at n=0/limit=0
+      // asks to delete one row from an empty table — the delete removes nothing
+      // and the insert lands anyway, leaving an org entitled to zero save points
+      // permanently holding one, with the "post-insert count is exactly the
+      // limit" invariant broken on the one input where it mattered.
+      //
+      // Refusing is a quota refusal, so it is `PaymentRequiredError` with the
+      // feature key, the shape every other quota gate in usecases/ uses
+      // (clubs.ts, divisions.ts, entrants.ts, competitions.ts).
+      //
+      // Zero is reachable two ways and this deliberately does not distinguish
+      // them: a staff override with `int_value = 0`, and a MISSING
+      // `plan_entitlements` row, which `getLimit` also resolves to 0. The
+      // override is a deliberate grant of nothing and must be honoured. The
+      // missing row is a mis-seeded database — and there, refusing is still the
+      // better answer than the old behaviour, which silently held one save point
+      // and lied about the count. All three real plan keys (community 2, pro 5,
+      // pro_plus unlimited) carry a row, so a correctly migrated database cannot
+      // reach this by accident; `event_pass`/`event_pass_l` have no row, but
+      // they are pass keys, never an org's plan key, and this read passes no
+      // competition so no pass overlay applies.
+      if (limit !== null && limit < 1) throw new PaymentRequiredError("schedule.checkpoints.max");
+      // A null limit is unlimited (pro_plus) — never evict.
+      if (limit !== null && n >= limit) {
+        // Delete n - limit + 1, so the POST-INSERT count is exactly the limit.
+        // Do not assume n === limit: a plan downgrade can leave a division above
+        // the cap, and one save must bring it back to the limit, not to n.
+        //
+        // Order: created_at asc, seq asc, id asc. The `id` tie-break is a UUID,
+        // which the determinism rule normally forbids — acceptable here because
+        // this is SELECTION INPUT, not output ordering, the same exemption
+        // advisory-lock ordering gets. Do not "fix" it.
+        const drop = n - limit + 1;
+        const gone = await tx<
+          { id: string; label: string; created_at: Date | string; seq: string | number }[]
+        >`
+          delete from division_checkpoints
+           where id in (
+             select id from division_checkpoints
+              where division_id = ${divisionId} and kind = 'manual'
+              order by created_at asc, seq asc, id asc
+              limit ${drop}
+           )
+           returning id, label, created_at, seq`;
+        // RETURNING does NOT preserve the subquery's ORDER BY — Postgres hands
+        // back deleted rows in whatever order it removed them. Re-apply the
+        // same ordering here rather than trusting the array's shape.
+        //
+        // The notice names ONE save point; when several go (a downgrade), name
+        // the newest of them — it is the one the organiser is likeliest to miss.
+        const newest = gone
+          .slice()
+          .sort(
+            (a, b) =>
+              new Date(a.created_at).getTime() - new Date(b.created_at).getTime() ||
+              Number(a.seq) - Number(b.seq) ||
+              (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+          )
+          .at(-1);
+        if (newest) evicted = { id: newest.id, label: newest.label };
+      }
     }
     const ledger = await loadLedger(tx, divisionId);
     const wm = meta.edit_watermark ?? (ledger[ledger.length - 1]?.seq ?? 0);
@@ -345,7 +448,30 @@ export async function createCheckpoint(
       insert into division_checkpoints (division_id, seq, label, kind, created_by)
       values (${divisionId}, ${wm}, ${label}, ${kind}, ${auth.userId})
       returning id, seq, label, kind, created_at`;
-    return row!;
+    // #382: AI anchors are exempt from the manual quota and nothing ever deleted
+    // them, so they accumulated one per AI apply, for ever — `superseded` is
+    // derived on read, not stored, and the only other DELETE is the organiser's
+    // own. Keep the newest 3.
+    //
+    // Three, not one: `CheckpointRow.superseded` exists because jumping back
+    // two AI runs is a capability worth keeping, and two runs back plus the
+    // newest is exactly 3. No notice for these — the organiser did not name
+    // them and the panel already strikes the superseded ones through.
+    //
+    // AFTER the insert, so the row just created is always among the survivors.
+    // Same ordering exemption as the manual eviction above: selection input.
+    // The V303 index (division_id, kind, created_at desc) already serves it.
+    if (kind === "ai") {
+      await tx`
+        delete from division_checkpoints
+         where id in (
+           select id from division_checkpoints
+            where division_id = ${divisionId} and kind = 'ai'
+            order by created_at desc, seq desc, id desc
+            offset 3
+         )`;
+    }
+    return { ...row!, ...(evicted ? { evicted } : {}) };
   });
 }
 

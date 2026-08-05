@@ -41,6 +41,7 @@ import {
   unapprovedClaimFaults,
   lockedRateConstantFaults,
   markdownSection,
+  multiDivisionBoardPlanGateFaults,
   plainProse,
   passBoundProseFaults,
   passCreditProseFaults,
@@ -411,6 +412,100 @@ Unlike schedule generations, **officials AI runs are not metered** — restaff a
     );
     expect(reverted, "the replacement never matched — the article moved").not.toBe(aiOfficials);
     expect(unmeteredAiRunProseFaults("x", reverted)).not.toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #382 review, finding 4 — scheduling/ai-scheduling.md and what V353 opened.
+//
+// "The multi-division board is a **Pro** feature." was true when it was
+// written. V353 granted `scheduling.multi_division` to `event_pass` and
+// `event_pass_l`, and turned `scheduling.board`/`scheduling.constraints` on for
+// every plan key. So the sentence named the one door that costs $29/month while
+// the $29 ONE-TIME door — the pass, which lifts it for this competition — went
+// unmentioned, and it implied the board itself was paid when it is not.
+//
+// The same lost-sale shape as the upgrade card in `dictionary-copy-truth`: the
+// reader of this paragraph is an organiser who has just been stopped.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("scheduling/ai-scheduling.md states both doors to the joint board (#382)", () => {
+  const aiScheduling = helpArticleBySlug("scheduling/ai-scheduling");
+
+  it("never names Pro as the only way to plan several divisions together", () => {
+    expect(multiDivisionBoardPlanGateFaults("ai-scheduling.md", aiScheduling)).toEqual([]);
+  });
+
+  // MUTATION PROOF: the exact sentence #382's review found, restored. Without
+  // this the guard above could be inert and read as clean.
+  it("reds on the exact Pro-only sentence #382 found", () => {
+    const reverted = aiScheduling.replace(
+      /Planning several divisions together needs[^\n]*/,
+      "The multi-division board is a **Pro** feature.",
+    );
+    expect(reverted, "the replacement never matched — the article moved").not.toBe(aiScheduling);
+    expect(multiDivisionBoardPlanGateFaults("x", reverted).join(" | ")).toContain(
+      "names Pro as the only way to plan several divisions together",
+    );
+  });
+
+  // …and the SECOND falsehood V353 created, which the first rule cannot see:
+  // the board itself sold as paid. Its own patterns, no pass exemption, because
+  // naming the pass would not make it true.
+  it("reds on a sentence gating the board itself on a plan", () => {
+    for (const sentence of [
+      "The schedule board is a **Pro** feature.",
+      "The drag-and-drop board is a paid feature.",
+      "The scheduling board requires **Pro**.",
+      "You need to upgrade to Pro to use the schedule board.",
+    ]) {
+      expect(
+        multiDivisionBoardPlanGateFaults("x", `# T\n\n${sentence}\n`).join(" | "),
+        sentence,
+      ).toContain("gates the schedule board on a plan");
+    }
+  });
+
+  // ANTI-VACUITY, the other direction: naming the pass is what clears the
+  // multi-division rule, so a sentence that gates on Pro ALONE must still red
+  // while the same sentence with the pass must not. A guard that never fires,
+  // and a guard that always fires, both read as green somewhere.
+  it("the pass clause is what clears the guard, not the phrasing", () => {
+    const withoutPass = "# T\n\nPlanning several divisions together needs **Pro**.\n";
+    const withPass =
+      "# T\n\nPlanning several divisions together needs **Pro**, or this competition's **Event Pass**.\n";
+    expect(multiDivisionBoardPlanGateFaults("x", withoutPass)).not.toEqual([]);
+    expect(multiDivisionBoardPlanGateFaults("x", withPass)).toEqual([]);
+  });
+});
+
+/**
+ * The matrix half of #382's finding 4, the same pairing `ai-officials.md` gets
+ * above: the vocabulary scan forbids the false sentence coming back, but only a
+ * row read can notice the article going stale again because the DATA moved. It
+ * became wrong that way once already — V353 changed no TypeScript at all.
+ */
+describe.skipIf(!HAS_DB)("ai-scheduling.md's joint-board claim is the matrix's (#382)", () => {
+  it("the pass lifts scheduling.multi_division, and the board is open to all", async () => {
+    const rows = await sql<{ feature_key: string; plan_key: string; bool_value: boolean | null }[]>`
+      select feature_key, plan_key, bool_value from plan_entitlements
+      where feature_key in ('scheduling.multi_division', 'scheduling.board')
+      order by feature_key, plan_key`;
+    // Canary: a typo'd key would return nothing and every assertion below would
+    // pass vacuously.
+    expect(rows.length, "no scheduling rows — the keys moved").toBeGreaterThan(6);
+    const grant = (feature: string, plan: string) =>
+      rows.find((r) => r.feature_key === feature && r.plan_key === plan)?.bool_value === true;
+
+    // Why the article must name the pass at all.
+    expect(grant("scheduling.multi_division", "event_pass")).toBe(true);
+    expect(grant("scheduling.multi_division", "event_pass_l")).toBe(true);
+    expect(grant("scheduling.multi_division", "pro")).toBe(true);
+    // …and why "needs Pro" is still worth saying: community does NOT have it.
+    expect(grant("scheduling.multi_division", "community")).toBe(false);
+    // Why the board itself may not be described as paid.
+    for (const plan of ["community", "event_pass", "event_pass_l", "pro", "pro_plus"]) {
+      expect(grant("scheduling.board", plan), `scheduling.board on ${plan}`).toBe(true);
+    }
   });
 });
 
@@ -2502,5 +2597,47 @@ describe("the add-ons gate catches what the vocabulary cannot", () => {
     const swapped = addOns.replace(rows![0], `${rows![2]}\n| Extra seat |${rows![1]}\n`);
     expect(swapped, "the swap was a no-op").not.toBe(addOns);
     expect(inventoryFaults("x", swapped, APPROVED_ADD_ONS_INVENTORY)).not.toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The OpenAPI summaries are PUBLISHED SURFACE, and one of them was quoting a
+// retired price. `/divisions/{id}/checkpoints` (POST) advertised the save-point
+// quota as "1 free / 5 Pro / unlimited Pro Plus". Community has been 2 since
+// V319 — so the spec every integrator reads, and every generated client's
+// docstring, carried a false claim about what a plan includes.
+//
+// Found during #382 triage, in no issue. Exactly the class this file exists for:
+// a number in prose that no longer matches the number the resolver enforces.
+//
+// Reading the SEEDED value rather than hardcoding 2 is the point — the next
+// entitlement change fails this test instead of quietly re-staling the copy.
+// ---------------------------------------------------------------------------
+describe.skipIf(!HAS_DB)("the OpenAPI checkpoint summary quotes the seeded quota (#382)", () => {
+  it("the checkpoint quota summary matches the seeded entitlement (#382)", async () => {
+    const { ROUTES } = await import("@/server/api-v1/openapi");
+    const [row] = await sql<{ int_value: number }[]>`
+      select int_value from plan_entitlements
+       where plan_key = 'community' and feature_key = 'schedule.checkpoints.max'`;
+    expect(row, "no seeded community checkpoint quota to compare against").toBeDefined();
+
+    const route = ROUTES.find(
+      (r) => r.path === "/divisions/{id}/checkpoints" && r.method === "post",
+    );
+    expect(route, "the checkpoints POST route").toBeDefined();
+    const summary = route!.summary ?? "";
+
+    expect(summary).toContain(String(row!.int_value));
+    expect(summary, "the retired '1 free' claim").not.toMatch(/\b1\s+free\b/);
+  });
+
+  it("also states what now happens AT the cap, since it no longer refuses", async () => {
+    // #382 turned the refusal into a rolling window. A summary that names the
+    // number but still implies a hard stop is the same class of stale claim.
+    const { ROUTES } = await import("@/server/api-v1/openapi");
+    const summary =
+      ROUTES.find((r) => r.path === "/divisions/{id}/checkpoints" && r.method === "post")
+        ?.summary ?? "";
+    expect(summary.toLowerCase()).toContain("replaced");
   });
 });

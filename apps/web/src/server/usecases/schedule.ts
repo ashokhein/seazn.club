@@ -755,8 +755,11 @@ export async function applySchedule(
   stageId: string,
   input: ApplyScheduleRequest,
 ): Promise<ApplyScheduleOut> {
-  // Manual assignment sets and pin changes are board editing — Pro (doc 12 §5;
-  // Community keeps the basic auto flow).
+  // Manual assignment sets and pin changes are board editing. The gate stays,
+  // but since V353 (#382) `scheduling.board` is granted on EVERY plan — an
+  // organiser who could ask the AI for a schedule could not then drag one
+  // fixture of it, which was backwards. The key is kept rather than deleted:
+  // it is still what an entitlement override or a future tier moves.
   if (input.source === "manual" || input.assignments.some((a) => a.schedule_locked !== undefined)) {
     await requireFeature(auth.orgId, "scheduling.board");
   }

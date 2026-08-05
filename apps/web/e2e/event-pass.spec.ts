@@ -583,10 +583,14 @@ for (const vp of VIEWPORTS) {
       await page.getByPlaceholder("U16 Boys T20").fill("Eleventh");
       await page.getByRole("button", { name: "Scheduling" }).click();
       await page.getByRole("button", { name: "Create division" }).click();
-      // Scoped to the feature that actually bit. The scheduling tab carries its
-      // own COMPACT gate (`scheduling.constraints`, a Pro key the pass never
-      // covered) which also marks itself `data-pass-owned` once a pass is held,
-      // so `.first()` reads the wrong card and asserts nothing about divisions.
+      // Scoped to the feature that actually bit, never `.first()`. The
+      // scheduling tab used to carry its own COMPACT gate
+      // (`scheduling.constraints`) which also marked itself `data-pass-owned`
+      // once a pass was held, so `.first()` read the wrong card and asserted
+      // nothing about divisions. V353 (#382) opened `scheduling.constraints` to
+      // every plan, so that gate no longer renders — the scoping stays anyway:
+      // it is what makes this an assertion about DIVISIONS rather than about
+      // whichever gate happens to come first on the page.
       const owned = page.locator(
         '[data-pass-owned][data-feature="divisions.per_competition.max"]',
       );

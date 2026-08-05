@@ -146,21 +146,26 @@ describe.skipIf(!HAS_DB)("scheduling constraints v2 (Jul3/04)", () => {
     });
   });
 
-  it("constraint fields on schedule-settings are Pro", async () => {
+  // Was "constraint fields on schedule-settings are Pro". V353 (#382) opened
+  // `scheduling.constraints` to every plan, so this asserts the OPPOSITE now.
+  // Inverted rather than deleted: the gate still stands in
+  // `putScheduleSettings`, so a migration that never ran — or an override that
+  // switches the key back off — must red something.
+  it("constraint fields on schedule-settings are open to Community (#382)", async () => {
     const { auth: freeAuth } = await seedOrg("community");
     const { division: freeDiv } = await seedDivision(freeAuth);
-    await expect(
-      putScheduleSettings(
-        freeAuth,
-        freeDiv.id,
-        PutScheduleSettings.parse({
-          config: {
-            courts: ["Court 1"],
-            constraints: { crossPersonClash: "hard" },
-          },
-          tz: "UTC",
-        }),
-      ),
-    ).rejects.toMatchObject({ featureKey: "scheduling.constraints" });
+    const saved = await putScheduleSettings(
+      freeAuth,
+      freeDiv.id,
+      PutScheduleSettings.parse({
+        config: {
+          courts: ["Court 1"],
+          constraints: { crossPersonClash: "hard" },
+        },
+        tz: "UTC",
+      }),
+    );
+    // Not merely "it did not throw" — a call that stored nothing passes that.
+    expect(saved.config.constraints).toMatchObject({ crossPersonClash: "hard" });
   });
 });

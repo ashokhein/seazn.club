@@ -35,7 +35,11 @@ export default async function CompetitionSchedulePage({
   const locale = await resolveLocale();
   const dict = await getDictionary(locale, "ui");
 
-  const multiAllowed = await hasFeature(auth.orgId, "scheduling.multi_division");
+  // Competition-scoped since V353 (#382): `scheduling.multi_division` is now
+  // lifted by an Event Pass, and a pass covers ONE competition. Asking org-wide
+  // would deny the competition-wide board to the very organiser who paid to
+  // unlock this competition — the fault `pass-scoping-guard` exists to catch.
+  const multiAllowed = await hasFeature(auth.orgId, "scheduling.multi_division", id);
   if (!multiAllowed) {
     return (
       <>

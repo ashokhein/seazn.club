@@ -1357,6 +1357,75 @@ export function aiOfficialsPlanGateFaults(label: string, markdown: string): stri
   return faults;
 }
 
+/**
+ * #382 review, finding 4: `content/help/scheduling/ai-scheduling.md` said "The
+ * multi-division board is a **Pro** feature." Two things about that are now
+ * wrong, and V353 (`db/migration/deltas/V353__open_scheduling_entitlements.sql`)
+ * made both wrong at once, as a DATA change no compiler could see:
+ *
+ *   1. `scheduling.multi_division` is granted to `event_pass` and
+ *      `event_pass_l`. A $29 pass lifts it for ONE competition, so naming Pro
+ *      as the only door costs the sale the reader is closest to making —
+ *      exactly the shape of the upgrade card in `localePassUncoveredFaults`.
+ *   2. `scheduling.board` and `scheduling.constraints` are now true on EVERY
+ *      plan key, so the board itself is not a paid feature at all. A sentence
+ *      gating "the schedule board" on a plan is false however it is worded.
+ *
+ * TWO RULE SHAPES, because the two falsehoods differ. Gating the MULTI-DIVISION
+ * board on Pro is INCOMPLETE rather than false — Pro really does lift it — so
+ * it is a fault only when the sentence does not also name the pass; that keeps
+ * the guard silent on the corrected copy, which states both doors. Gating the
+ * BOARD ITSELF on any plan is false outright and needs no positive half.
+ *
+ * SCOPED TO ONE ARTICLE at its call site, like `aiOfficialsPlanGateFaults`
+ * above and for the same reason: `board.md` and the plan pages legitimately
+ * discuss what Pro adds, and a vocabulary broad enough to catch this claim
+ * anywhere would catch true sentences elsewhere.
+ */
+export function multiDivisionBoardPlanGateFaults(label: string, markdown: string): string[] {
+  const subject = String.raw`(?:multi[-\s]division|several\s+divisions|divisions?\s+at\s+once|competition[-\s]wide)`;
+  const gate = String.raw`(?:is|are)\s+a\s+(?:\w+\s+){0,2}?pro\b|(?:requires?|needs?|takes)\s+(?:\w+\s+){0,2}?pro\b|pro[-\s]only|only\s+on\s+pro\b|available\s+on\s+pro\b`;
+  // Pro as the ONLY door to planning several divisions together.
+  const proOnlyDoor = [
+    new RegExp(String.raw`\b${subject}\b[^.;]{0,60}\b(?:${gate})`, "i"),
+    new RegExp(String.raw`\b(?:${gate})[^.;]{0,60}\b${subject}\b`, "i"),
+  ];
+  // …unless the sentence also names the other door. Deliberately requires
+  // "Event Pass" in full: this article calls each AI phase a "pass" ("the
+  // schedule pass", "the officials pass", "a single pass"), so a bare \bpass\b
+  // would exempt almost every sentence in it — the guard would read clean
+  // because it was looking at the wrong noun.
+  const namesThePass = /\bevent\s+pass(es)?\b/i;
+  // The board ITSELF sold as a paid feature — false on its own, no exemption.
+  const boardIsPaid = [
+    /\b(?:schedule|scheduling|drag[-\s]and[-\s]drop)\s+board\b[^.;]{0,40}\b(?:is|are)\s+a\s+(?:\w+\s+){0,2}?(?:pro|paid|premium)\b/i,
+    /\b(?:schedule|scheduling)\s+board\b[^.;]{0,40}\b(?:requires?|needs?)\s+(?:\w+\s+){0,2}?(?:pro|a\s+paid\s+plan|an\s+upgrade)\b/i,
+    /\b(?:upgrade|pro|a\s+paid\s+plan)\b[^.;]{0,40}\bto\s+(?:use|open|reach)\s+the\s+(?:schedule|scheduling)\s+board\b/i,
+  ];
+
+  const faults: string[] = [];
+  for (const block of claimTexts(markdown)) {
+    for (const sentence of sentences(block)) {
+      for (const pattern of boardIsPaid) {
+        if (pattern.test(sentence)) {
+          faults.push(
+            `${label}: "${sentence.slice(0, 72)}…" gates the schedule board on a plan — V353 grants scheduling.board and scheduling.constraints on every plan key`,
+          );
+        }
+      }
+      if (namesThePass.test(sentence)) continue;
+      for (const pattern of proOnlyDoor) {
+        if (pattern.test(sentence)) {
+          faults.push(
+            `${label}: "${sentence.slice(0, 72)}…" names Pro as the only way to plan several divisions together, without the Event Pass — V353 grants scheduling.multi_division to event_pass and event_pass_l, which lifts it for one competition`,
+          );
+        }
+      }
+    }
+  }
+  return faults;
+}
+
 // ── The pass's duration and credit grant, in prose ───────────────────────────
 
 /**
@@ -2257,6 +2326,114 @@ export function localePlusDifferentiatorFaults(
     if (recognised === 0) {
       faults.push(
         `${locale} ${key}: names no recognised differentiator — the ${locale} vocabulary has gone stale and this guard examined nothing`,
+      );
+    }
+  }
+  return faults;
+}
+
+/**
+ * #382 review, finding 1 — the sibling claim, pointed the other way.
+ *
+ * `localePlusDifferentiatorFaults` judges "Pro Plus adds X over the PLANS
+ * below it". This judges "Pro adds X the PASS never covers" — the upgrade
+ * page's Pro card (`upgrade.proCard.body`), shown to a community organiser
+ * with no pass, which is exactly the organiser who has just been stopped by
+ * the `scheduling.multi_division` gate and sent here to buy something.
+ *
+ * V353 made that card argue against the purchase it is sitting next to. It
+ * listed "the schedule board" among the things the pass never covers, while
+ * V353 granted `scheduling.board` to every plan AND `scheduling.multi_division`
+ * to the pass — so the $29 Event Pass shown directly above now covers, for this
+ * competition, the very capability the Pro card says it never covers.
+ * "Officials" was the same shape: `officials.marks` and `officials.roles_multi`
+ * are true on community and on the pass, and `officials.auto` is pro_plus-only,
+ * so no officials capability is a Pro-over-pass advantage at all.
+ *
+ * WHY THE GRANTS AND NOT A BANNED PHRASE, same reasoning as the sibling: if a
+ * later migration took `scheduling.board` off the pass, "the pass never covers
+ * the schedule board" becomes TRUE and this guard must fall silent.
+ *
+ * A feature with NO `event_pass` row is genuinely uncovered, not unknown: the
+ * pass overlay in `resolveFromDb` falls THROUGH to the plan row for any key the
+ * pass matrix omits, so an absent row means the pass adds nothing on that axis.
+ * That is why `stats.player` and `api.access` — neither of which has an
+ * `event_pass` row — stay in the card as real Pro advantages.
+ *
+ * Anti-vacuity, as everywhere here: a value that names no recognised capability
+ * has had this guard examine nothing, and that is itself a fault. Without it,
+ * deleting the list would pass.
+ */
+export function localePassUncoveredFaults(
+  values: LocalisedValue[],
+  grants: FeatureGrants,
+): string[] {
+  // Kept local rather than added to `LOCALE_CLAIMS`, following
+  // `aiOfficialsPlanGateFaults`: this vocabulary is scoped to ONE claim on ONE
+  // key, and the non-English halves go through `claim()` because `\b` and `\w`
+  // are ASCII-only in JavaScript (see the header over `LOCALE_CLAIMS`).
+  const vocab: Array<[feature: string, byLocale: Record<DictionaryLocale, RegExp>]> = [
+    [
+      "scheduling.board",
+      {
+        en: /\b(schedule|scheduling|multi-division)\s+board\b/i,
+        es: claim(String.raw`\btabler\w*\s+de\s+(planificaci\w+|programaci\w+|horarios)\b`),
+        fr: claim(String.raw`\btableau\s+de\s+(planification|programmation)\b`),
+        nl: claim(String.raw`\bplanningsbord\b|\bplanningsboard\b`),
+      },
+    ],
+    [
+      "officials.marks",
+      {
+        en: /\bofficials?\b|\breferees?\b/i,
+        es: claim(String.raw`\boficiales\b|\b\wrbitros\b`),
+        fr: claim(String.raw`\bofficiels\b|\barbitres\b`),
+        nl: claim(String.raw`\bofficials\b|\bscheidsrechters\b`),
+      },
+    ],
+    [
+      "stats.player",
+      {
+        en: /\bplayer\s+stat(istic)?s\b/i,
+        es: claim(String.raw`\bestad\wsticas\s+de\s+jugadores\b`),
+        fr: claim(String.raw`\bstatistiques\s+des\s+joueurs\b`),
+        nl: claim(String.raw`\bspelersstatistieken\b`),
+      },
+    ],
+    [
+      "api.access",
+      {
+        en: /\bAPI\b/i,
+        es: claim(String.raw`\bAPI\b`),
+        fr: claim(String.raw`\bAPI\b`),
+        nl: claim(String.raw`\bAPI\b`),
+      },
+    ],
+  ];
+
+  const faults: string[] = [];
+  for (const { locale, key, value } of values) {
+    let recognised = 0;
+    for (const [feature, byLocale] of vocab) {
+      if (!byLocale[locale].test(value)) continue;
+      recognised += 1;
+      const row = grants[feature];
+      if (!row) {
+        faults.push(`${locale} ${key}: names ${feature}, which has no rows in plan_entitlements`);
+        continue;
+      }
+      if (row.event_pass) {
+        faults.push(
+          `${locale} ${key}: sells ${feature} as something the Event Pass never covers, but event_pass grants it`,
+        );
+      }
+      if (!row.pro) {
+        faults.push(`${locale} ${key}: sells ${feature} as a Pro advantage, but pro does not grant it`);
+      }
+    }
+    if (recognised === 0) {
+      faults.push(
+        `${locale} ${key}: names no recognised capability — the ${locale} vocabulary has gone stale and this guard examined nothing`,
       );
     }
   }

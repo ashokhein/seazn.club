@@ -57,6 +57,7 @@ import {
   localeCreditLeadershipFaults,
   localeHalfClaimFaults,
   localePassBoundFaults,
+  localePassUncoveredFaults,
   localePlusDifferentiatorFaults,
   retiredClaimFaults,
   valueClauses,
@@ -181,6 +182,14 @@ const PASS_CREDIT_VALUES = across("marketing", "pricing.faq.eventPass.a");
  *  red on honest copy. (Measured: it carries no permanence hit in any locale
  *  today, in any of the four vocabularies.) */
 const PLUS_VALUES = across("marketing", "pricing.faq.proPlus.a");
+
+/** #382 review, finding 1 — the Pro card on the per-competition upgrade page
+ *  (`app/o/[orgSlug]/c/[compSlug]/upgrade/page.tsx`). A FOURTH key axis, and
+ *  the reason it now exists: this card sits on the same screen as the Event
+ *  Pass it was describing, and V353 moved what the pass covers without moving
+ *  the card. Its own file, `ui.json`, not the marketing dictionary — this is
+ *  console copy, shown after a gate has already stopped somebody. */
+const PRO_CARD_BODY = across("ui", "upgrade.proCard.body");
 
 /**
  * THE PRO PLUS CARD — a THIRD key axis, and the reason it now exists.
@@ -2235,6 +2244,98 @@ describe.skipIf(!HAS_DB)("the four-locale dictionaries match plan_entitlements",
     expect(
       localeCreditLeadershipFaults(PLUS_CARD_VALUES, { ...credits, pro: 500 }).join(" "),
     ).toContain("but pro_plus grants 200");
+  });
+
+  // ── #382 review, finding 1: the Pro card on the UPGRADE page ──────────────
+  //
+  // `upgrade.proCard.body` is rendered to a community org with NO pass — the
+  // organiser who has just hit the `scheduling.multi_division` gate and landed
+  // on `?feature=scheduling.multi_division`, with the $29 Event Pass on the
+  // same screen. Its "the pass never covers …" list named the schedule board
+  // and officials, both of which V353 put on the pass. The card argued against
+  // the purchase directly above it.
+  //
+  // Judged against the matrix, not against a banned phrase: if a migration ever
+  // took `scheduling.board` off the pass, the old sentence would become true and
+  // this must fall silent.
+  it("the Pro card never sells the pass short, in all four locales (#382)", async () => {
+    const grants = await grantsFor([
+      "scheduling.board",
+      "scheduling.multi_division",
+      "officials.marks",
+      "stats.player",
+      "api.access",
+    ]);
+    // The premise, read from the seed rather than asserted from memory.
+    expect(grants["scheduling.board"]!.event_pass, "V353 put the board on the pass").toBe(true);
+    expect(grants["scheduling.multi_division"]!.event_pass).toBe(true);
+    expect(grants["officials.marks"]!.event_pass).toBe(true);
+    expect(grants["stats.player"]?.event_pass ?? false, "no event_pass row").toBe(false);
+    expect(grants["api.access"]?.event_pass ?? false, "no event_pass row").toBe(false);
+
+    expect(localePassUncoveredFaults(PRO_CARD_BODY, grants)).toEqual([]);
+  });
+
+  it("…and the pre-V353 card reds in every locale, so that is not silence (#382)", async () => {
+    const grants = await grantsFor([
+      "scheduling.board",
+      "officials.marks",
+      "stats.player",
+      "api.access",
+    ]);
+    // The shipped strings, verbatim, before this fix. Given per locale so a
+    // guard that only speaks English cannot pass this.
+    const preFix: LocalisedValue[] = (
+      [
+        [
+          "en",
+          "Pro raises every competition in Riverside, not just this one — and adds the schedule board, player stats, officials and API access the pass never covers.",
+        ],
+        [
+          "es",
+          "Pro mejora todas las competiciones de Riverside, no solo esta — y añade el tablero de planificación, las estadísticas de jugadores, los oficiales y el acceso a la API que el pase nunca cubre.",
+        ],
+        [
+          "fr",
+          "Pro améliore toutes les compétitions de Riverside, pas seulement celle-ci — et ajoute le tableau de planification, les statistiques des joueurs, les officiels et l’accès API que le pass ne couvre jamais.",
+        ],
+        [
+          "nl",
+          "Pro upgradet elke competitie in Riverside, niet alleen deze — en voegt het planningsbord, spelersstatistieken, officials en API-toegang toe die de pass nooit dekt.",
+        ],
+      ] as Array<[DictionaryLocale, string]>
+    ).map(([locale, value]) => ({ locale, key: "pre-fix", value }));
+
+    const faults = localePassUncoveredFaults(preFix, grants).join(" | ");
+    for (const locale of DICTIONARY_LOCALES) {
+      expect(faults, `${locale}: the board claim must red`).toContain(
+        `${locale} pre-fix: sells scheduling.board as something the Event Pass never covers`,
+      );
+      expect(faults, `${locale}: the officials claim must red`).toContain(
+        `${locale} pre-fix: sells officials.marks as something the Event Pass never covers`,
+      );
+    }
+
+    // ANTI-VACUITY: a card that names nothing at all is a fault of its own, so
+    // "fixing" this by deleting the list cannot pass.
+    for (const locale of DICTIONARY_LOCALES) {
+      expect(
+        localePassUncoveredFaults([{ locale, key: "empty", value: "Pro is better." }], grants),
+        locale,
+      ).toEqual([
+        `${locale} empty: names no recognised capability — the ${locale} vocabulary has gone stale and this guard examined nothing`,
+      ]);
+    }
+
+    // …and it must fall silent the day the matrix moves the other way: with the
+    // board off the pass, the pre-fix sentence is TRUE about the board again.
+    const lifted = {
+      ...grants,
+      "scheduling.board": { ...grants["scheduling.board"]!, event_pass: false },
+    };
+    expect(localePassUncoveredFaults(preFix, lifted).join(" | ")).not.toContain(
+      "sells scheduling.board",
+    );
   });
 });
 

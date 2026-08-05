@@ -189,18 +189,40 @@ async function setFixtureOfficials(
   return { status: res.status(), featureKey: body.error?.feature_key };
 }
 
-/** POST a named checkpoint and return {status, feature_key}. */
+/** POST a named checkpoint. Returns the status, the 402 feature key if there
+ *  ever is one again, and — since #382 — the save point this one rolled out of
+ *  the plan's window. */
 async function createCheckpoint(
   request: import("@playwright/test").APIRequestContext,
   divisionId: string,
   label: string,
-): Promise<{ status: number; featureKey?: string }> {
+): Promise<{ status: number; featureKey?: string; evicted?: string }> {
   const res = await request.post(`/api/v1/divisions/${divisionId}/checkpoints`, {
     headers: { "content-type": "application/json" },
     data: JSON.stringify({ label }),
   });
-  const body = (await res.json().catch(() => ({}))) as { error?: { feature_key?: string } };
-  return { status: res.status(), featureKey: body.error?.feature_key };
+  const body = (await res.json().catch(() => ({}))) as {
+    error?: { feature_key?: string };
+    data?: { evicted?: { label?: string } };
+    evicted?: { label?: string };
+  };
+  return {
+    status: res.status(),
+    featureKey: body.error?.feature_key,
+    evicted: (body.data?.evicted ?? body.evicted)?.label,
+  };
+}
+
+/** Manual save points on a division, newest first. */
+async function listManualCheckpoints(
+  request: import("@playwright/test").APIRequestContext,
+  divisionId: string,
+): Promise<string[]> {
+  const res = await request.get(`/api/v1/divisions/${divisionId}/checkpoints`);
+  const body = (await res.json().catch(() => ({}))) as {
+    data?: { label: string; kind?: string }[];
+  };
+  return (body.data ?? []).filter((r) => (r.kind ?? "manual") === "manual").map((r) => r.label);
 }
 
 // ===========================================================================
@@ -278,27 +300,49 @@ test.describe("Pro Plus · officials-per-fixture quota", () => {
 });
 
 test.describe("Pro Plus · schedule save-point quota", () => {
-  test("Community: the 3rd save point 402s (limit 2)", async ({ page }) => {
+  // #382 turned the refusal into a rolling window. The quota is still real —
+  // it is the WIDTH of the window — but the save always succeeds, because a
+  // checkpoint is a named bookmark and the ledger keeps every event regardless.
+  test("Community: the 3rd save point rolls the window rather than 402ing (limit 2)", async ({
+    page,
+  }) => {
     const org = await seedOrg({ plan: "community" });
     await loginAsOwner(page, org.ownerEmail);
     const { divisionId } = await seedDivision(page.request);
 
-    expect((await createCheckpoint(page.request, divisionId, `cp1 ${hex()}`)).status).toBe(201);
-    expect((await createCheckpoint(page.request, divisionId, `cp2 ${hex()}`)).status).toBe(201);
-    const third = await createCheckpoint(page.request, divisionId, `cp3 ${hex()}`);
-    expect(third.status).toBe(402);
-    expect(third.featureKey).toBe("schedule.checkpoints.max");
+    const one = `cp1 ${hex()}`;
+    const two = `cp2 ${hex()}`;
+    const three = `cp3 ${hex()}`;
+    expect((await createCheckpoint(page.request, divisionId, one)).status).toBe(201);
+    expect((await createCheckpoint(page.request, divisionId, two)).status).toBe(201);
+
+    const third = await createCheckpoint(page.request, divisionId, three);
+    expect(third.status).toBe(201);
+    expect(third.featureKey).toBeUndefined();
+    // The response NAMES what it replaced — the organiser is told which label
+    // they lost rather than finding a hole later.
+    expect(third.evicted).toBe(one);
+    // Two-sided: the window is still exactly the plan's width, and it is the
+    // OLDEST that went.
+    expect(await listManualCheckpoints(page.request, divisionId)).toEqual([three, two]);
   });
 
-  test("Pro: 5 save points are allowed, the 6th 402s (limit 5)", async ({ page }) => {
+  test("Pro: 5 save points are silent, the 6th rolls (limit 5)", async ({ page }) => {
     // Shared Pro org (schedule.checkpoints.max = 5).
     const { divisionId } = await seedDivision(page.request);
+    const labels: string[] = [];
     for (let i = 1; i <= 5; i++) {
-      expect((await createCheckpoint(page.request, divisionId, `cp${i} ${hex()}`)).status).toBe(201);
+      const label = `cp${i} ${hex()}`;
+      labels.push(label);
+      const res = await createCheckpoint(page.request, divisionId, label);
+      expect(res.status).toBe(201);
+      expect(res.evicted, `cp${i} evicted something below the cap`).toBeUndefined();
     }
-    const sixth = await createCheckpoint(page.request, divisionId, `cp6 ${hex()}`);
-    expect(sixth.status).toBe(402);
-    expect(sixth.featureKey).toBe("schedule.checkpoints.max");
+    const sixthLabel = `cp6 ${hex()}`;
+    const sixth = await createCheckpoint(page.request, divisionId, sixthLabel);
+    expect(sixth.status).toBe(201);
+    expect(sixth.evicted).toBe(labels[0]);
+    expect(await listManualCheckpoints(page.request, divisionId)).toHaveLength(5);
   });
 
   test("Pro Plus: save points are unlimited (6+ all succeed)", async ({ page }) => {

@@ -8282,24 +8282,33 @@ async function proPlusSuite(): Promise<void> {
     officialsAllowed.status === 200,
   );
 
-  // (a) Community: save points — community's cap is 2 (V319), so the 1st and
-  // 2nd land and the 3rd 402s.
+  // (a) Community: save points — community's window is 2 wide (V319). The 1st
+  // and 2nd land silently; since #382 the 3rd ROLLS rather than 402ing, and the
+  // response names the label it replaced.
+  const cp1Label = `plus 1 ${tag}`;
   const cp1 = await v1(owner, `/api/v1/divisions/${div.id}/checkpoints`, "POST", {
-    label: `plus 1 ${tag}`,
+    label: cp1Label,
   });
   check("pp: community's first save point is free", cp1.status === 201);
   const cp2 = await v1(owner, `/api/v1/divisions/${div.id}/checkpoints`, "POST", {
     label: `plus 2 ${tag}`,
   });
   check("pp: community's second save point is free (cap is 2)", cp2.status === 201);
-  const cp3Denied = await v1(owner, `/api/v1/divisions/${div.id}/checkpoints`, "POST", {
-    label: `plus 3 denied ${tag}`,
+  const cp3Rolled = await v1(owner, `/api/v1/divisions/${div.id}/checkpoints`, "POST", {
+    label: `plus 3 ${tag}`,
   });
   check(
-    "pp: community 402s a 3rd save point (schedule.checkpoints.max)",
-    cp3Denied.status === 402 &&
-      (cp3Denied.json.error as { feature_key?: string } | undefined)?.feature_key ===
-        "schedule.checkpoints.max",
+    "pp: community's 3rd save point rolls the window and names what it replaced (#382)",
+    cp3Rolled.status === 201 &&
+      (cp3Rolled.json.data as { evicted?: { label?: string } } | undefined)?.evicted?.label ===
+        cp1Label,
+  );
+  const cpList = await v1(owner, `/api/v1/divisions/${div.id}/checkpoints`, "GET");
+  check(
+    "pp: community holds exactly 2 manual save points after the roll",
+    ((cpList.json.data as { kind?: string }[] | undefined) ?? []).filter(
+      (r) => (r.kind ?? "manual") === "manual",
+    ).length === 2,
   );
 
   // (b) Pro: read-only keys stay free (api.access), but a score- or

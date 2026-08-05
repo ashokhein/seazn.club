@@ -174,11 +174,11 @@ Separately, every plan has a burst brake of **5 AI runs an hour per division** f
 
 ## Scheduling several divisions together
 
-The competition's own schedule board (**Competition → Schedule**) can plan **several divisions at once**, so divisions sharing a venue are fitted around each other in a single pass instead of being scheduled one at a time and patched up afterwards. The multi-division board is a **Pro** feature.
+The competition's own schedule board (**Competition → Schedule**) can plan **several divisions at once**, so divisions sharing a venue are fitted around each other in a single pass instead of being scheduled one at a time and patched up afterwards. Planning several divisions together needs **Pro**, or this competition's **Event Pass**, which lifts it for that one competition. The board itself, and the scheduling constraints behind it, are open on every plan.
 
 Pick the divisions in the console, write one instruction covering all of them, and review the proposal division by division. Applying writes every division together — **all of them or none**.
 
-Undo works the other way round. Each division gets its own **before-AI** save point, and undo restores them one at a time rather than in a single step, so a restore that fails doesn't stop the rest going back. If any division is left on the AI schedule, the console names it and offers to try just those again — and the save points stay valid, so you can also restore any of them from its own schedule page later.
+Undo works the other way round. Each division gets its own **before-AI** save point, and undo restores them one at a time rather than in a single step, so a restore that fails doesn't stop the rest going back. If any division is left on the AI schedule, the console names it and offers to try just those again — and the save points stay valid, so you can also restore any of them from its own schedule page later. Only the newest three before-AI points are kept, so you can still step back past the most recent one.
 
 **Shared courts are matched by name, and by nothing else.** There is no venue-wide court list behind the scenes: a court is the label you typed into each division's schedule settings. So "Court 1" in one division and "Court A" in another are **two different courts** as far as the run is concerned, and it will happily put a match on each at the same time. If the divisions you picked don't use the same names, the console warns you before the run — the fix is to make the names match in each division's schedule settings.
 

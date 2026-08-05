@@ -55878,7 +55878,7 @@
         ]
       },
       "post": {
-        "summary": "Create a save point at the current watermark (quota `schedule.checkpoints.max`: 1 free / 5 Pro / unlimited Pro Plus)",
+        "summary": "Create a save point at the current watermark (quota `schedule.checkpoints.max`: 2 free / 5 Pro / unlimited Pro Plus; at the cap the oldest save point is replaced)",
         "tags": [
           "history"
         ],
