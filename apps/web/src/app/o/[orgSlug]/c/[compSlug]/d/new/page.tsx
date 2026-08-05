@@ -6,6 +6,7 @@ import { routes } from "@/lib/routes";
 import { getCompetition } from "@/server/usecases/competitions";
 import { withTenant } from "@/lib/db";
 import { hasFeature } from "@/lib/entitlements";
+import { archivedSlotHoldersInCompetition } from "@/server/usecases/division-slots";
 import { DivisionBuilder, type SportOption } from "@/components/v2/division-builder";
 
 export default async function NewDivisionPage({
@@ -18,11 +19,19 @@ export default async function NewDivisionPage({
   const { auth, canEdit } = page;
   const id = page.competition.id;
   if (!canEdit) redirect(routes.competition(orgSlug, compSlug));
-  const [competition, constraintsAllowed] = await Promise.all([
+  const [competition, constraintsAllowed, archivedSlotHolders] = await Promise.all([
     getCompetition(auth, id),
     // A multi-venue schedule seed is Pro (doc 12 §5) — gate the list in the
     // wizard rather than letting the settings PUT 402 after create.
     hasFeature(auth.orgId, "scheduling.constraints"),
+    // Read UNCONDITIONALLY, before anyone has been refused anything: this page
+    // is the only surface that creates a division, so it is the only place the
+    // `divisions.per_competition.max` 402 can land, and the refusal happens in
+    // a client component after a POST that this server render is already over.
+    // Fetching it here costs one count on every wizard load and keeps the rule
+    // on the server; asking for it after the 402 would need a new endpoint
+    // exposing the quota predicate to the browser.
+    archivedSlotHoldersInCompetition(auth, id),
   ]);
 
   // Sport catalog + variant presets (system rows are tenant-readable, org
@@ -59,6 +68,7 @@ export default async function NewDivisionPage({
           compSlug={compSlug}
           sports={sports}
           constraintsAllowed={constraintsAllowed}
+          archivedSlotHolders={archivedSlotHolders}
         />
       </main>
     </>

@@ -3193,5 +3193,7 @@
   "board.ai.joint.undoChanged": "De competitie is sinds deze toepassing opnieuw ingepland, dus het ongedaan maken past er niet meer bij. Herstel elke divisie via haar eigen planningspagina.",
   "board.ai.joint.undoGoneTitle": "Niets meer om ongedaan te maken",
   "board.ai.joint.undoGone": "Er is voor deze competitie geen gezamenlijke toepassing meer om ongedaan te maken. Elke divisie bewaart haar eigen herstelpunten op haar planningspagina.",
-  "division.create.competitionEnded": "Deze competitie is afgelopen, dus er kunnen geen nieuwe divisies aan worden toegevoegd."
+  "division.create.competitionEnded": "Deze competitie is afgelopen, dus er kunnen geen nieuwe divisies aan worden toegevoegd.",
+  "division.archive.slotWarning": "Deze divisie heeft geregistreerde resultaten, dus archiveren maakt geen divisieplek vrij.",
+  "division.limit.archivedCount": "Divisies met geregistreerde resultaten tellen mee voor je limiet, ook nadat ze zijn gearchiveerd."
 }

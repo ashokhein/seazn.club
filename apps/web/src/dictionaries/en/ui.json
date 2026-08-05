@@ -3193,5 +3193,7 @@
   "board.ai.joint.undoChanged": "The competition has been scheduled again since this apply, so the undo no longer matches it. Restore each division from its own schedule page.",
   "board.ai.joint.undoGoneTitle": "Nothing left to undo",
   "board.ai.joint.undoGone": "There is no joint apply left to undo on this competition. Each division keeps its own restore points on its schedule page.",
-  "division.create.competitionEnded": "This competition is finished, so no new divisions can be added to it."
+  "division.create.competitionEnded": "This competition is finished, so no new divisions can be added to it.",
+  "division.archive.slotWarning": "This division has recorded results, so archiving it will not free a division slot.",
+  "division.limit.archivedCount": "Divisions with recorded results count toward your limit even after they are archived."
 }

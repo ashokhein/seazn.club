@@ -117,6 +117,7 @@ export function DivisionBuilder({
   compSlug,
   sports,
   constraintsAllowed = true,
+  archivedSlotHolders = 0,
 }: {
   competitionId: string;
   orgSlug: string;
@@ -124,6 +125,20 @@ export function DivisionBuilder({
   sports: SportOption[];
   /** Pro `scheduling.constraints` — gates a multi-venue list (doc 12 §5). */
   constraintsAllowed?: boolean;
+  /**
+   * How many ARCHIVED divisions of this competition still hold a
+   * `divisions.per_competition.max` slot (V354 — recorded results, minus a
+   * staff waiver). Counted server-side by the page, from the same SQL
+   * predicate the quota charge itself uses.
+   *
+   * It exists only to explain a refusal that is otherwise invisible: an org
+   * can be looking at ONE division and a "limit reached" paywall, with the
+   * rest of its slots held by rows the console deliberately hides. Zero means
+   * say nothing — volunteering "archived divisions count too" to an org that
+   * has archived nothing is noise on a page where the reader is already
+   * blocked, and it would blame the wrong thing.
+   */
+  archivedSlotHolders?: number;
 }) {
   const msg = useMsg();
   const locale = useLocale();
@@ -818,7 +833,28 @@ export function DivisionBuilder({
         </div>
       </section>
 
-      {paywallFeature && <UpgradeGate feature={paywallFeature} />}
+      {paywallFeature && (
+        <div className="space-y-2">
+          <UpgradeGate feature={paywallFeature} />
+          {/* The invisible cause. The gate itself says "you are at your
+              division limit" and the console shows the org fewer divisions
+              than that limit, because an archived-but-played one keeps its
+              slot (V354). Without this line the arithmetic on screen is simply
+              wrong from the reader's side, and the only way to discover why is
+              to ask support.
+
+              Gated on BOTH the feature key and a non-zero count: this sentence
+              is an explanation, and an explanation attached to a refusal it
+              does not explain — a scheduling gate, or a division limit with
+              nothing archived behind it — is a wrong answer, not a redundant
+              one. */}
+          {paywallFeature === "divisions.per_competition.max" && archivedSlotHolders > 0 && (
+            <p data-archived-slot-note className="text-xs text-slate-500">
+              {msg("division.limit.archivedCount")}
+            </p>
+          )}
+        </div>
+      )}
       {error && (
         <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
       )}

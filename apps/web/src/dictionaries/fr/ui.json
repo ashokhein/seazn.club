@@ -3193,5 +3193,7 @@
   "board.ai.joint.undoChanged": "La compétition a été replanifiée depuis cette application, l’annulation ne correspond donc plus. Restaurez chaque division depuis sa propre page de planning.",
   "board.ai.joint.undoGoneTitle": "Plus rien à annuler",
   "board.ai.joint.undoGone": "Il n’y a plus d’application groupée à annuler sur cette compétition. Chaque division conserve ses propres points de restauration sur sa page de planning.",
-  "division.create.competitionEnded": "Cette compétition est terminée : aucune nouvelle division ne peut y être ajoutée."
+  "division.create.competitionEnded": "Cette compétition est terminée : aucune nouvelle division ne peut y être ajoutée.",
+  "division.archive.slotWarning": "Cette division a des résultats enregistrés : l'archiver ne libérera pas d'emplacement de division.",
+  "division.limit.archivedCount": "Les divisions avec des résultats enregistrés comptent dans votre limite même une fois archivées."
 }
