@@ -225,14 +225,16 @@ In `apps/web/package.json` and `packages/engine/package.json` devDependencies:
     "@types/node": "^26",
 ```
 
-- [ ] **Step 4: Run the test and confirm it passes**
+- [ ] **Step 4: Run the test and confirm three of four now pass**
 
 ```bash
 cd <abs worktree> && npm test --workspace apps/web -- run src/__tests__/toolchain.test.ts \
   --reporter=json --outputFile=/tmp/t1.json
 ```
 
-Expected: `numFailedTests: 0`, `numPassedTests: 4`.
+Expected: `numPassedTests: 3`, `numFailedTests: 1`. The **Dockerfile case stays red** — it is Task 1.2's deliverable, and Task 1.2 Step 1 consumes it in that state. Do not merge the two tasks to get a green commit here; that collapses two separately revertible changes into one.
+
+Note the positional filter: `npm test --workspace apps/web -- run <path>` treats positionals as **filename filters**, not exact paths, so this pulls in other suites too. Read the per-file `.testResults[]` entry for `toolchain.test.ts` rather than the top-level totals.
 
 - [ ] **Step 5: Reinstall and confirm the tree still typechecks on TS 5**
 
