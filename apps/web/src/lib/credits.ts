@@ -281,11 +281,42 @@ export async function grantMonthly(
   planKey: string,
   quantityPaid: number,
 ): Promise<number> {
-  const [entitlement] = await sql<{ int_value: number | null }[]>`
-    select int_value from plan_entitlements
-     where plan_key = ${planKey} and feature_key = 'ai.credits.monthly'`;
-  const perSeat = entitlement?.int_value ?? 0;
-  const delta = perSeat * quantityPaid;
+  const perSeat = (await monthlyPerSeatByPlan([planKey])).get(planKey) ?? 0;
+  return grantMonthlyDelta(walletId, perSeat * quantityPaid);
+}
+
+/**
+ * `ai.credits.monthly` per seat, for a set of plan keys, in ONE read (#390).
+ *
+ * The sweep resolves a plan per wallet and would otherwise re-read this row
+ * per wallet too — but there are only ever a handful of DISTINCT plan keys in
+ * the whole matrix, so the per-row read was pure waste. A plan with no row
+ * (Event Pass carries none, deliberately) is absent from the map and reads as
+ * 0 via the callers' `?? 0`, which is the same answer the per-row read gave.
+ *
+ * This is the ONLY place the monthly entitlement is read, so the single-wallet
+ * path and the sweep can never disagree about a rate.
+ */
+async function monthlyPerSeatByPlan(
+  planKeys: readonly string[],
+): Promise<Map<string, number>> {
+  const distinct = [...new Set(planKeys)];
+  if (distinct.length === 0) return new Map();
+  const rows = await sql<{ plan_key: string; int_value: number | null }[]>`
+    select plan_key, int_value from plan_entitlements
+     where feature_key = 'ai.credits.monthly' and plan_key in ${sql(distinct)}`;
+  return new Map(rows.map((r) => [r.plan_key, r.int_value ?? 0]));
+}
+
+/**
+ * The expire-then-grant transaction, given an ALREADY-RESOLVED delta.
+ *
+ * Split out of `grantMonthly` (#390) so the sweep can resolve every wallet's
+ * rate in one batched read and still run the identical, single-copy
+ * transaction body — the advisory lock and the in-transaction idempotency
+ * check are not duplicated anywhere.
+ */
+async function grantMonthlyDelta(walletId: string, delta: number): Promise<number> {
   if (delta <= 0) return 0;
 
   const period = monthlyPeriod();
@@ -472,6 +503,19 @@ export async function grantMonthlyForAllWallets(
      ${ids ? sql`and s.id in ${sql(ids as string[])}` : sql``}`;
   let granted = 0;
   let failed = 0;
+
+  // Pass 1 — resolve each wallet's plan and seat count.
+  //
+  // `orgPlanKey` stays ONE QUERY PER ROW, deliberately (#390). It is a
+  // seven-arm read-time resolver (lapsed comp, past_due grace anchored on the
+  // status transition, trial-end backstop, incomplete, canceled, per-org
+  // moderation suspension), and the app has already paid once for three
+  // divergent copies of it — see `__tests__/entitlements-duplicate-resolvers`.
+  // Inlining a fourth copy into the cron to save a round trip would risk the
+  // sweep granting a DIFFERENT amount than every other entitlement read of the
+  // same org resolves, which is a far worse bug than an N+1. It stays the
+  // single source of truth; only the entitlement read below is batched.
+  const resolved: { walletId: string; planKey: string; qty: number }[] = [];
   for (const row of rows) {
     try {
       const planKey = await orgPlanKey(row.rep_org_id);
@@ -481,10 +525,27 @@ export async function grantMonthlyForAllWallets(
           : row.status === "trialing"
             ? Math.max(row.quantity_paid, row.live_org_count)
             : row.quantity_paid;
-      granted += await grantMonthly(row.id, planKey, qty);
+      resolved.push({ walletId: row.id, planKey, qty });
     } catch (err) {
       failed++;
-      console.error(`[credits] monthly grant failed for wallet ${row.id}`, err);
+      console.error(`[credits] monthly plan resolve failed for wallet ${row.id}`, err);
+    }
+  }
+
+  // Pass 2 — ONE entitlement read for every distinct plan key in the batch,
+  // instead of one per wallet inside `grantMonthly`. This is what makes a
+  // zero-grant wallet (Event Pass, which never writes a key and so re-qualifies
+  // every single day past the anti-join) cost one statement rather than two.
+  const perSeatByPlan = await monthlyPerSeatByPlan(resolved.map((r) => r.planKey));
+
+  // Pass 3 — grant. Still strictly sequential and still per-wallet isolated: one
+  // wallet's failure is logged and skipped rather than aborting the sweep.
+  for (const r of resolved) {
+    try {
+      granted += await grantMonthlyDelta(r.walletId, (perSeatByPlan.get(r.planKey) ?? 0) * r.qty);
+    } catch (err) {
+      failed++;
+      console.error(`[credits] monthly grant failed for wallet ${r.walletId}`, err);
     }
   }
   return { wallets: rows.length, granted, failed };

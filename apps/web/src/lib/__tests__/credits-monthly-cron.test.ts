@@ -17,7 +17,7 @@
 // Real Postgres required; skipped without DATABASE_URL.
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { sql } from "@/lib/db";
+import { sql, statementCount } from "@/lib/db";
 import { balance, grantBalance, grantMonthlyForAllWallets } from "@/lib/credits";
 import { setOrgPlan } from "./_billing-group";
 
@@ -356,5 +356,59 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     expect(second.wallets).toBe(first.wallets); // still considered — no key was ever written
     expect(second.granted).toBe(0);
     expect(await balance(subId)).toBe(0);
+  });
+
+  it("#390: grants three different plans their own rate in ONE sweep", async () => {
+    // The observable guard on resolving the grant amount in the sweep rather
+    // than per row: a single hoisted `ai.credits.monthly` read invites exactly
+    // one failure mode — smearing the first plan's rate across every wallet.
+    // Three plans that disagree is the only shape that can catch it; a sweep
+    // of same-plan wallets is satisfied by the bug.
+    const [proOrg, plusOrg, commOrg] = await Promise.all([seedOrg(), seedOrg(), seedOrg()]);
+    const pro = await setOrgPlan(proOrg, "pro");
+    const plus = await setOrgPlan(plusOrg, "pro_plus");
+    const comm = await setOrgPlan(commOrg, "community");
+
+    const res = await grantMonthlyForAllWallets({ walletIds: [pro, plus, comm] });
+
+    expect(res.wallets).toBe(3);
+    expect(res.failed).toBe(0);
+    expect(await balance(pro)).toBe(60);
+    expect(await balance(plus)).toBe(200);
+    expect(await balance(comm)).toBe(10);
+    expect(res.granted).toBe(60 + 200 + 10);
+  });
+
+  it("#390: a re-qualifying zero-grant wallet costs one statement per wallet, not two", async () => {
+    const orgs = await Promise.all([seedOrg(), seedOrg(), seedOrg(), seedOrg()]);
+    const subs = await Promise.all(orgs.map((o) => setOrgPlan(o, "event_pass")));
+
+    const before = statementCount();
+    const res = await grantMonthlyForAllWallets({ walletIds: subs });
+    const used = statementCount() - before;
+
+    expect(res.wallets).toBe(subs.length);
+    expect(res.granted).toBe(0);
+
+    // Budget, DERIVED not fitted: the sweep itself (1) + one `orgPlanKey`
+    // resolve per wallet (N) + ONE batched `ai.credits.monthly` read covering
+    // every distinct plan key (1) = N + 2.
+    //
+    // Event Pass carries no `ai.credits.monthly` row, so `delta <= 0` returns
+    // before any transaction is opened — this measures the PURE per-row
+    // overhead with no grant work mixed in. It is also the population that
+    // pays it every single day: a zero-grant wallet never writes an
+    // idempotency key, so the #390 anti-join can never filter it out. If the
+    // sweep's per-row cost is going to matter anywhere, it is here.
+    //
+    // Before this change it was 1 + 2N — `grantMonthly` did its own
+    // `plan_entitlements` read per wallet on top of `orgPlanKey`'s.
+    //
+    // `orgPlanKey` stays one query per row on purpose: it is a seven-arm
+    // resolver (comp expiry, past_due grace, trial backstop, incomplete,
+    // canceled, org suspension) and the app has already paid for three
+    // divergent copies of it once. A cron with its own subtly different plan
+    // resolution would grant the WRONG AMOUNT — far worse than an N+1.
+    expect(used).toBeLessThanOrEqual(subs.length + 2);
   });
 });
