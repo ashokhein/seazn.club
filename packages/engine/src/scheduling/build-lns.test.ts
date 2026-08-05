@@ -160,11 +160,14 @@ describe("improveByWindows — the window plan and the acceptance rule", () => {
         pinned: pinned(w),
         existing: ids(w.existing),
         movable: [...w.movable].sort(),
+        // The plan's shape, which is what a caller apportioning a run budget
+        // divides by (`of - index` windows still to come).
+        at: `${w.index}/${w.of}`,
       })),
     ).toEqual([
-      { free: ["a"], pinned: ["b@C2+0"], existing: ["x"], movable: ["a"] },
-      { free: ["b"], pinned: ["a@C1+0"], existing: ["x"], movable: ["b"] },
-      { free: ["a", "b"], pinned: [], existing: ["x"], movable: ["a", "b"] },
+      { free: ["a"], pinned: ["b@C2+0"], existing: ["x"], movable: ["a"], at: "0/3" },
+      { free: ["b"], pinned: ["a@C1+0"], existing: ["x"], movable: ["b"], at: "1/3" },
+      { free: ["a", "b"], pinned: [], existing: ["x"], movable: ["a", "b"], at: "2/3" },
     ]);
   });
 
@@ -234,9 +237,9 @@ describe("improveByWindows — the window plan and the acceptance rule", () => {
       elapsed: () => 0,
       solveWindow: s.solveWindow,
     });
-    expect({ windows: out.windows, calls: s.calls.map(free) }).toEqual({
+    expect({ windows: out.windows, calls: s.calls.map((w) => `${free(w).join(",")} ${w.index}/${w.of}`) }).toEqual({
       windows: 1,
-      calls: [["a", "b"]],
+      calls: ["a,b 0/1"],
     });
   });
 
@@ -266,6 +269,36 @@ describe("improveByWindows — the window plan and the acceptance rule", () => {
       { n: 50, first: "f00", last: "f49", pinned: 10 },
       { n: 50, first: "f10", last: "f59", pinned: 10 },
     ]);
+  });
+
+  it("stops launching windows once the caller's run budget is gone", async () => {
+    // R11: the tiers and the windows spend ONE budget. When it is gone the
+    // pass stops and the incumbent stands — a normal outcome, not an error and
+    // not a status. Checked BEFORE each window, so an exhausted budget can
+    // never buy one more full-size solve.
+    const fixtures = [fx("a"), fx("b")];
+    const board = [card("a", "C1", 0), card("b", "C2", 0)];
+    let left = 1;
+    const s = spy(() => {
+      left--;
+      return [];
+    });
+    const out = await improveByWindows({
+      board,
+      fixtures,
+      courts: ["C1", "C2"],
+      total: 2,
+      deadlineMs: 20_000,
+      elapsed: () => 0,
+      hasBudget: () => left > 0,
+      solveWindow: s.solveWindow,
+    });
+    // The plan holds three windows (C1, C2, then the tail); the budget pays
+    // for exactly one, and the other two are never asked.
+    expect({ windows: out.windows, asked: s.calls.map((w) => `${w.index}/${w.of}`) }).toEqual({
+      windows: 1,
+      asked: ["0/3"],
+    });
   });
 
   it("returns an accepted board in fixture order, whichever window won", async () => {

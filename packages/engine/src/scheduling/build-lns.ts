@@ -96,6 +96,13 @@ export interface LnsWindow {
    *  ones), and named anyway so telemetry and tests do not have to re-derive
    *  the pass's own decision. */
   movable: ReadonlySet<string>;
+  /** This window's place in the plan, zero-based, and how many windows the plan
+   *  holds. Present so a caller apportioning a run budget can divide what is
+   *  left by the windows still to come (`of - index`) — the plan is
+   *  materialised before the first solve precisely so that number exists, and
+   *  it does not change as windows are accepted or refused. */
+  index: number;
+  of: number;
 }
 
 export interface LnsInput {
@@ -119,6 +126,12 @@ export interface LnsInput {
    *  budget — see the header. */
   deadlineMs: number;
   elapsed: () => number;
+  /** Checked before each window. False stops the pass and leaves the incumbent
+   *  standing — the caller's run budget is spent. A NORMAL outcome, not an
+   *  error, and deliberately a predicate rather than a number: the budget's
+   *  unit is the caller's business, and nothing here should be able to spend
+   *  it by accident. Absent means "no budget to answer for". */
+  hasBudget?: () => boolean;
   solveWindow: (window: LnsWindow) => Promise<readonly Assignment[]>;
 }
 
@@ -152,16 +165,33 @@ export async function improveByWindows(input: LnsInput): Promise<LnsOutput> {
   let board = input.board;
   let metrics = boardMetrics(board, input.courts, input.total);
   let windows = 0;
-  const seen = new Set<string>();
 
+  /**
+   * THE PLAN, MATERIALISED BEFORE THE FIRST SOLVE.
+   *
+   * Two reasons, and the second is the load-bearing one. A board that fits on
+   * one court makes the per-court window and the tail window the same
+   * question, and asking z3 the same question twice is a second full-size
+   * solve for a guaranteed non-improvement — so duplicates are dropped here
+   * rather than mid-flight. And a caller apportioning a run budget needs to
+   * know how many windows are still to come; that number cannot exist while
+   * the plan is still being generated.
+   */
+  const seen = new Set<string>();
+  const plan: ReadonlySet<string>[] = [];
   for (const ids of windowsOf(input.fixtures, input.board, frozen)) {
-    if (input.elapsed() >= input.deadlineMs) break;
-    // A board that fits on one court makes the per-court window and the tail
-    // window the same question, and asking z3 the same question twice is a
-    // second full solve for a guaranteed non-improvement.
     const key = [...ids].sort().join("|");
     if (seen.has(key)) continue;
     seen.add(key);
+    if (input.fixtures.some((f) => ids.has(f.id))) plan.push(ids);
+  }
+
+  for (const [index, ids] of plan.entries()) {
+    if (input.elapsed() >= input.deadlineMs) break;
+    // The run budget is spent. Stop launching windows and let the incumbent
+    // stand — not an error, and not a status: the caller asked for the best
+    // board a budget could buy and this is it.
+    if (input.hasBudget !== undefined && !input.hasBudget()) break;
 
     // Pins are read off the CURRENT board, not the one the plan was drawn
     // from: an earlier window may already have moved these rows.
@@ -171,12 +201,13 @@ export async function improveByWindows(input: LnsInput): Promise<LnsOutput> {
       const row = rowOf.get(f.id);
       return row === undefined ? [] : [{ ...f, locked: { court: row.court, startAt: row.startAt } }];
     });
-    if (windowFixtures.every((f) => !ids.has(f.id))) continue;
 
     const placed = await input.solveWindow({
       fixtures: windowFixtures,
       existing: base,
       movable: ids,
+      index,
+      of: plan.length,
     });
     windows++;
 
