@@ -125,10 +125,19 @@ export async function adjustmentsForOrg(
 
 function toEntry(row: Row): AdjustmentEntry {
   const detail = (row.detail ?? {}) as Record<string, unknown>;
+  const text = (key: string) =>
+    typeof detail[key] === "string" && detail[key] ? (detail[key] as string) : null;
   const reason =
-    (typeof detail.reason === "string" && detail.reason) ||
-    (typeof detail.reason_code === "string" && detail.reason_code) ||
-    null;
+    text("reason") ??
+    text("reason_code") ??
+    // A slot waiver carries no reason of its own — the fact IS which division
+    // it freed. The panel renders only `reason` as its subject column, so
+    // without this an auditor sees "Division slot waived / cap" over an em
+    // dash: something moved this org's division cap, but not WHICH division,
+    // which is precisely the question the audit exists to answer. The name is
+    // stamped at waive time rather than joined here, so a later rename or
+    // delete cannot rewrite what the auditor is told.
+    (row.action === "division_slot_waived" ? (text("division_name") ?? text("division_id")) : null);
   return {
     id: row.id,
     actorId: row.actor_id,

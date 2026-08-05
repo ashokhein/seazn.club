@@ -204,6 +204,11 @@ describe.skipIf(!HAS_DB)("staff slot waiver (V354)", () => {
     expect(entry).toBeDefined();
     expect(entry).toMatchObject({ actorId: staff.id, category: "cap", reversible: false });
     expect(entry!.detail.division_id).toBe(b.id);
+    // The panel renders `reason` as its subject column and nothing else from
+    // `detail`, so a waiver whose reason is null shows an em dash — findable
+    // but not identifiable, which answers "did staff move this org's cap"
+    // while leaving "which division" unanswerable from the UI.
+    expect(entry!.reason).toBe("B");
   });
 
   // No timer, no undo, and the button is offered only where a slot is really
