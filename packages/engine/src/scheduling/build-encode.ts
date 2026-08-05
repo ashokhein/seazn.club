@@ -470,6 +470,18 @@ export function encodeBuild(input: EncodeInput): EncodedModel {
       // No `calendarDaysCovering` walk and no completeness clause are needed to
       // say it here: the only starts that exist are slot starts, so grouping the
       // slots themselves by day covers every reachable start by construction.
+      // The verifier tallies on the START day alone (`calendar.ts:1063`), so a
+      // match running past midnight belongs to the day it began — which is what
+      // grouping by `dayKeyInTz(slot.startAt)` says.
+      //
+      // POSITIVE DISPATCH, not a fallthrough. The union is exhaustive today, so
+      // reaching here already means `max_fixtures_per_day` — but a member added
+      // later that also carried a `count`, say `max_fixtures_per_week`, would
+      // typecheck and be silently encoded as a CALENDAR-DAY cap, over-constrain
+      // the model and report a spurious infeasible. Naming the type is what
+      // turns that into an unencoded rule instead, which the parity guard's
+      // whitelist then catches.
+      if (h.type !== "max_fixtures_per_day") continue;
       const scoped = scopedFixtures(h);
       if (scoped.length === 0) continue;
       const byDay = new Map<string, number[]>();
@@ -480,6 +492,14 @@ export function encodeBuild(input: EncodeInput): EncodedModel {
         // of a blackout — `validateInstructionRules` filters `existing` through
         // `ruleFixtures` for exactly that reason, and this repeats the filter
         // rather than approximating it.
+        //
+        // CALLER CONTRACT: this seeds from the `existing` handed to
+        // `encodeBuild`, and the verifier tallies from the `existing` handed to
+        // `validateAssignments`. They must be THE SAME ARRAY. A caller that
+        // encodes against one board and verifies against a wider one gets a
+        // model that believes a day has room the referee says it does not — the
+        // solver calls the board optimal and the gate then flags it, which is
+        // the exact lock-out this whole file exists to prevent.
         const immovable = existing.filter(
           (e) =>
             ruleFixtureById.has(e.fixtureId) &&

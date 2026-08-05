@@ -85,6 +85,39 @@ const oneStartPerDay = (): Cfg =>
     ],
   });
 
+/** TWO sessions on Saturday and one on Sunday, one court — 09:00 and 14:00
+ *  local on Saturday, 09:00 on Sunday. Three slots.
+ *
+ *  THE LATTICE THAT SEPARATES A DAY FROM A SESSION, and the reason
+ *  `oneStartPerDay` is not enough on its own: there a session IS a calendar day,
+ *  so an encoder that bucketed by session emits byte-identical clauses and no
+ *  assertion can see the difference. Bucketing by session is exactly the mistake
+ *  `repair.ts:810` documents — a `count: 1` cap that admitted one fixture per
+ *  SESSION — so it is the one shape a cap suite has to be able to fail on. */
+const twoSessionsOneDay = (): Cfg =>
+  config({
+    courts: ["C1"],
+    sessionWindows: [
+      { from: D1, to: D1 + 30 * MIN },
+      { from: D1 + 300 * MIN, to: D1 + 330 * MIN },
+      { from: D2, to: D2 + 30 * MIN },
+    ],
+  });
+
+/** THREE sessions on Saturday and one on Sunday, one court. Four slots, three of
+ *  them on one calendar day — enough room for a cap to bind at a threshold above
+ *  one. */
+const threeSessionsOneDay = (): Cfg =>
+  config({
+    courts: ["C1"],
+    sessionWindows: [
+      { from: D1, to: D1 + 30 * MIN },
+      { from: D1 + 300 * MIN, to: D1 + 330 * MIN },
+      { from: D1 + 600 * MIN, to: D1 + 630 * MIN },
+      { from: D2, to: D2 + 30 * MIN },
+    ],
+  });
+
 const fx = (
   id: string,
   home: string,
@@ -400,6 +433,47 @@ describe("encodeBuild — max_fixtures_per_day", () => {
     // 4 slots, 2 fixtures: 12 ordered placements, of which the 8 that split
     // across the two days are legal.
     expect(out).toEqual({ checked: 12, sats: 8 });
+  }, 300_000);
+
+  it("counts a CALENDAR DAY, not a session — two sessions on one day share the cap", async () => {
+    // The case every other cap test here is blind to. Saturday holds two
+    // sessions and Sunday one, so a `count: 1` cap must refuse the two fixtures
+    // BOTH taking Saturday slots, even though they sit in different sessions.
+    //
+    // An encoder that grouped by session gives each of the three slots its own
+    // group of size one, every group has room to spare, and it emits no clause
+    // at all — so it calls all six placements sat and this case is the only one
+    // in the file that goes red.
+    const cfg = twoSessionsOneDay();
+    const hard = [rule({ type: "max_fixtures_per_day", count: 1, scope: { kind: "competition" } })];
+    const out = await assertRuleParity({
+      cfg,
+      verify: { ...cfg, hard, ruleFixtures: [rf("f1"), rf("f2")] },
+      fixtures: [fx("f1", "E1", "E2"), fx("f2", "E3", "E4")],
+      slots: 3,
+    });
+    // 3 slots, 2 fixtures: 6 ordered placements, and only the two that put both
+    // fixtures on Saturday breach. The court rule cannot reach either of them —
+    // 09:00 and 14:00 are five hours apart on a 40-minute turnaround.
+    expect(out).toEqual({ checked: 6, sats: 4 });
+  }, 180_000);
+
+  it("binds at a threshold above one", async () => {
+    // Every other cap case here uses `count: 1`, which pins the encoding only at
+    // room ∈ {0, 1} — `Math.min(room, 1)` survives all of them. Saturday holds
+    // three slots under a 2/day cap, so the clause has to be an AtMost at 2 and
+    // not a disguised at-most-one.
+    const cfg = threeSessionsOneDay();
+    const hard = [rule({ type: "max_fixtures_per_day", count: 2, scope: { kind: "competition" } })];
+    const out = await assertRuleParity({
+      cfg,
+      verify: { ...cfg, hard, ruleFixtures: [rf("f1"), rf("f2"), rf("f3")] },
+      fixtures: [fx("f1", "E1", "E2"), fx("f2", "E3", "E4"), fx("f3", "E5", "E6")],
+      slots: 4,
+    });
+    // 4 slots, 3 fixtures: 24 ordered placements. The six that fill all three
+    // Saturday slots breach; the other eighteen put at most two on Saturday.
+    expect(out).toEqual({ checked: 24, sats: 18 });
   }, 300_000);
 
   it("counts only the fixtures the rule's SCOPE covers", async () => {
