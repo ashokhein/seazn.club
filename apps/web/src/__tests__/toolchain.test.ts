@@ -166,6 +166,29 @@ describe("toolchain: no V8 heap ceiling for typecheck", () => {
    * one thing the test outlawed. A test that suppresses its own rationale is
    * too broad.
    */
+  /**
+   * The container job exists to catch one specific failure: the TypeScript 7 Go
+   * binary building cleanly into the alpine image and then being unable to
+   * execute, which `docker build` alone cannot detect because SKIP_TYPECHECK=1
+   * means it never invokes tsc. A job that catches that but is wired into
+   * nothing blocks nothing — it was originally absent from deploy-staging's
+   * `needs`, so a musl failure would have shipped.
+   */
+  it("the container job is wired into the deploy gate", () => {
+    const ci = readFileSync(
+      join(REPO_ROOT, ".github/workflows/ci.yml"),
+      "utf8",
+    );
+    const needs = /^\s*needs:\s*\[([^\]]+)\]/m.exec(ci);
+    expect(needs, "deploy-staging has no needs: list").not.toBeNull();
+    expect(needs![1].split(",").map((s) => s.trim())).toContain("container");
+    // …and it runs on the same trigger as the other gates, or it would be
+    // skipped on PRs and gate nothing there either.
+    const job = ci.slice(ci.indexOf("\n  container:"));
+    const header = job.slice(0, job.indexOf("steps:"));
+    expect(header).toContain("github.event_name == 'pull_request'");
+  });
+
   it("ci.yml sets no V8 heap ceiling on any active step", () => {
     const active = readFileSync(
       join(REPO_ROOT, ".github/workflows/ci.yml"),

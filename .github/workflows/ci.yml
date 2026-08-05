@@ -180,6 +180,11 @@ jobs:
 
   container:
     name: docker build + TS 7 musl exec
+    # PR-only, matching test/smoke/security: a squash-merge lands the exact tree
+    # the PR validated, and deploy-staging trusts the PR gates. It is also in
+    # deploy-staging's `needs` so that if this job ever DOES run and fail, the
+    # deploy halts rather than shipping an image whose compiler cannot execute.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -511,7 +516,7 @@ jobs:
   deploy-staging:
     name: Deploy (staging)
     runs-on: ubuntu-latest
-    needs: [test, smoke, security]
+    needs: [test, smoke, security, container]
     # The gates are PR-only now, so on a main push they report 'skipped' —
     # always() + no-failure lets the deploy proceed past skipped needs while
     # still halting if a gate somehow ran and failed.
