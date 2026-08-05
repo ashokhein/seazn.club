@@ -83,7 +83,8 @@ export default async function CompetitionLayout({
 
 /**
  * Which pass rung does this competition hold, is the org on a paid plan, what
- * currency does it buy in, and — if there is a pass — has it stopped applying?
+ * currency does it buy in, and is this competition past the line where a pass
+ * applies (or may be sold) at all?
  *
  * The slug lookups go through the React-`cache()`d resolvers, which the org
  * layout and the child page already call with the same arguments — so in the
@@ -96,12 +97,14 @@ export default async function CompetitionLayout({
  * 'event_pass'` and a row written by a future rung this build predates must
  * degrade to a real label, not to a missing dictionary key.
  *
- * The join to `competitions` for `status`/`ends_on` (v17 gap #301) rides the
- * pass row's own lookup rather than adding a query: the layout is already
- * inside the competition, and the two columns are what decides whether the pass
- * is still lifting anything. An INNER join is deliberate — `competition_id` is
- * a FK, so a pass row with no competition cannot exist, and if one somehow did
- * there would be no status to judge it by.
+ * `status`/`ends_on` (v17 gap #301) ride the same lookup rather than adding a
+ * query: the layout is already inside the competition, and the two columns are
+ * what decides whether a pass may apply — or be sold — here at all. The read is
+ * FROM `competitions` and LEFT JOINs the pass (#376): the earlier INNER join
+ * through `competition_passes` returned no row whatsoever for a competition
+ * that had never been sold one, so the lock could not be judged in the very
+ * case it now has to be. The lock belongs to the COMPETITION; the pass row only
+ * decides which side of it the org is on.
  *
  * The judgement itself is `passLockReason`'s, never this file's. The same rule
  * is enforced in three places that must agree exactly — the TS resolver, the
@@ -145,16 +148,25 @@ async function passState(
   if (!org || "renamedTo" in org) return none;
   const comp = await compBySlug(org.id, compSlug);
   if (!comp || "renamedTo" in comp) return none;
-  const [[pass], planKey, currency] = await Promise.all([
-    sql<{ pass_key: string; status: string; ends_on: Date | string | null }[]>`
+  const [[row], planKey, currency] = await Promise.all([
+    // LEFT JOIN, and FROM the competition (#376). The old INNER join through
+    // `competition_passes` meant a competition with no pass returned no row at
+    // all — so `status` and `ends_on` were never read, and the lock could not
+    // be judged even in principle. The lock is a fact about the COMPETITION;
+    // the pass row only decides which side of it the org is on. Same single
+    // round trip.
+    sql<{ pass_key: string | null; status: string; ends_on: Date | string | null }[]>`
       select cp.pass_key, c.status, c.ends_on
-      from competition_passes cp
-      join competitions c on c.id = cp.competition_id
-      where cp.competition_id = ${comp.id}
+      from competitions c
+      left join competition_passes cp on cp.competition_id = c.id
+      where c.id = ${comp.id}
       limit 1`,
     orgPlanKey(org.id),
     preferredCurrency(org.id),
   ]);
+  const hasPass = row?.pass_key != null;
+  // Judged for every competition now, pass or no pass.
+  const lockReason = row ? passLockReason(row.status, row.ends_on) : null;
   // `paidPlan` here means "the plan already covers everything a pass could add
   // to this competition", which is what every consumer of the flag actually
   // uses it for: `usePassGateState` returns `paid_plan` and the buy chip
@@ -166,20 +178,19 @@ async function passState(
   // for no extra query. A pass already held short-circuits it too: there is
   // nothing more to sell for that competition either way.
   const paid = isPaidPlan(planKey);
-  // Held pass short-circuits: nothing more is for sale on this competition
-  // either way (one pass per competition, forever — #248 Q4).
-  const sellableRungs = pass
-    ? []
-    : ((await sellablePassRungs(PASS_KEYS, planKey, paid)) as PassKey[]);
+  // Nothing is sellable past the line — the route refuses it (410), so a rung
+  // column here could only ever advertise a refusal. A held pass short-circuits
+  // for the older reason: one pass per competition, forever (#248 Q4).
+  const sellableRungs =
+    hasPass || lockReason !== null
+      ? []
+      : ((await sellablePassRungs(PASS_KEYS, planKey, paid)) as PassKey[]);
   const covered = paid && sellableRungs.length === 0;
   return {
-    passKey: pass ? (isPassKey(pass.pass_key) ? pass.pass_key : "event_pass") : null,
+    passKey: hasPass && isPassKey(row.pass_key) ? (row.pass_key as PassKey) : hasPass ? "event_pass" : null,
     paidPlan: covered,
     sellableRungs,
     currency,
-    // No pass, no lock: the reason is about a PURCHASE that has stopped
-    // applying, not about the competition, so an archived competition with no
-    // pass row carries null and reads "none" exactly as it does today.
-    lockReason: pass ? passLockReason(pass.status, pass.ends_on) : null,
+    lockReason,
   };
 }
