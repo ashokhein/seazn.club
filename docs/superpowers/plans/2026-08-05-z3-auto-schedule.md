@@ -929,9 +929,13 @@ export function encodeBuild(input: EncodeInput): EncodedModel {
   // 1. A fixture takes at most one slot, and `placed[i]` says whether it took
   //    one. Encoded as AtMost + an equivalence rather than exactly-one, because
   //    T0 needs "unplaced" to be a legal state it can then minimise.
+  // NOTE the array argument. `AtMost`/`AtLeast`/`PbLe` take a NON-EMPTY TUPLE,
+  // not varargs — `AtMost(...lits, 1)` is a runtime TypeError, and `repair.ts`
+  // spells it `Z3.AtMost([lits[0]!, ...lits.slice(1)], k)` for that reason.
   fixtures.forEach((_, i) => {
-    solver.add(Z3.AtMost(...place[i]!, 1));
-    solver.add(placed[i]!.eq(Z3.Or(...place[i]!)));
+    const lits = place[i]!;
+    if (lits.length > 0) solver.add(Z3.AtMost([lits[0]!, ...lits.slice(1)], 1));
+    solver.add(placed[i]!.eq(Z3.Or(...lits)));
   });
 
   // 2. A slot holds at most one fixture. This is the court-clash rule, and the
@@ -1082,6 +1086,69 @@ git add packages/engine/src/scheduling/build-encode.ts \
         packages/engine/src/scheduling/index.ts .claude/z3-scheduling-state.md
 git commit -m "feat(engine): boolean slot-assignment encoding, verified against the verifier"
 ```
+
+---
+
+### Task 3b: typed instruction rules in the encoder
+
+**Added mid-flight, on the owner's ruling (2026-08-05), after Task 3 reported the gap.**
+
+**Files:**
+- Modify: `packages/engine/src/scheduling/build-encode.ts`
+- Test: `packages/engine/src/scheduling/build-encode-rules.test.ts` (create)
+
+**Why this is not optional.** `slotFixtures` has placed around typed rules since
+the convergence programme (#463 — see `calendar-day-cap-placement.test.ts` and
+`calendar-day-targets-placement.test.ts`), and `repair.ts:803` (`assertDayCap`)
+encodes `max_fixtures_per_day`. Without this task BUILD is the **only** path that
+ignores rules the greedy it replaces and the repair solver beside it both honour:
+`validateInstructionRules` would report breaches on a board the solver had just
+called lexicographically optimal, and re-running auto could not fix it. That is
+the precise symptom #463 existed to close.
+
+**Why it is cheap here.** In this encoding slot → day and slot → wall-clock are
+known *statically*, which the arithmetic encoding cannot say. So:
+
+- `not_before` / `not_after` / `fixture_on_date` / `fixture_on_weekday` are
+  **per-slot unary filters** — exactly the shape the existing `startWindowFor`
+  filter already uses: if the slot's instant fails the rule for that fixture,
+  assert `Z3.Not(place[i][s])`. A few lines each.
+- `max_fixtures_per_day` is **one `AtMost` per (rule, calendar day)** over the
+  slot literals falling in that day, across the fixtures the rule's scope covers.
+  No auxiliary day literals and no `Iff` — `repair.ts` needs those only because
+  its starts are integers rather than slots.
+
+**Interfaces:** no new exports. `encodeBuild` gains the assertions; its signature
+is unchanged.
+
+**Requirements the tests must pin:**
+
+- Rules come from `effectiveHard(config)`, never from `config.constraints.hard`
+  directly — that merged stream is the verifier's own, and a second reading of it
+  is the fork this file exists to avoid.
+- Scope resolution is `scopeCoversFixture(rule.scope, ruleFixture, assignment)`.
+  Do not reimplement the switch.
+- The day unit is the **calendar day in `config.tz`**, via `dayKeyInTz` /
+  `calendarDaysCovering`. Not a session, not a slice of a day — `repair.ts:810-830`
+  documents at length how counting `dayBuckets` instead admitted one fixture per
+  *session* and let starts fall in an uncounted gap.
+- The cap must **seed from the immovable rows** the rule's scope covers on that
+  day (`existing` rows named by `ruleFixtures`), exactly as `assertDayCap` does —
+  and must count only KNOWN FIXTURES, since an outside booking or a closed court
+  is not a fixture and counting one invents a breach out of a blackout.
+- With `config.tz` absent, every day-shaped rule is **skipped**, matching the
+  verifier. Do not bucket in UTC.
+
+**Acceptance:** a board that breaches each rule type is rejected by the model,
+one that satisfies it is accepted, and — the real gate — `validateInstructionRules`
+returns empty for every board the model accepts. Mutation-prove each: break the
+rule's assertion, confirm its test alone goes red.
+
+- [ ] **Step 1: Write the failing test file**, one describe per rule type, each asserting both directions (breaching board rejected, satisfying board accepted) plus the `validateInstructionRules`-agrees check.
+- [ ] **Step 2: Run it, confirm it fails** for the right reason — the model currently accepts breaching boards, so the "rejected" half fails while the "accepted" half passes.
+- [ ] **Step 3: Implement the per-slot filters**, then the day cap.
+- [ ] **Step 4: Mutation-prove each assertion**, and re-run the Task 3 parity suite — it must still pass, since these rules only ever *remove* legal placements.
+- [ ] **Step 5: Run the engine suite, typecheck, lint, commit.**
 
 ---
 
@@ -1327,10 +1394,23 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
   // 5. T0 — maximise the number placed. This is what turns greedy's `no_slot`
   //    GUESS into a proof: UNSAT at `placed >= n` is the proof that n is out of
   //    reach, and SAT is a board that reaches it.
+  //
+  //    MEASURED in Task 3: `AtLeast(placed, k)` returns sat in 0.4-2.2 s well
+  //    away from the optimum, but goes `unknown` at a 20 s bound as k
+  //    approaches it. So `unknown` is the EXPECTED terminal state of this walk,
+  //    not an error — it means "no proof either way inside the budget", and the
+  //    incumbent stands. Never report `unknown` as `infeasible`: infeasible is a
+  //    proof, and this is the absence of one.
+  //
+  //    Also measured: a `locked` fixture whose pinned slot is illegal makes the
+  //    WHOLE model UNSAT rather than leaving that one card unplaced. Task 4's
+  //    `infeasible` branch must therefore not be read as "the board is
+  //    impossible" without checking the locked set first.
   for (let target = fixtures.length; target > incumbentMetrics.placed; target--) {
     if (elapsed() >= wallMs) { budgetExpired = true; break; }
     solver.push();
-    solver.add(Z3.AtLeast(...model.placed, target));
+    // Array, not varargs — see the note in Task 3's encoder.
+    solver.add(Z3.AtLeast([model.placed[0]!, ...model.placed.slice(1)], target));
     const verdict = await solver.check();
     if (verdict === "sat") {
       const picked = model.slotOf(solver.model());
