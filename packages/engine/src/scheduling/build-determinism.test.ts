@@ -64,4 +64,26 @@ describe("buildSchedule determinism", () => {
     expect(b.budgetExpired).toBe(false);
     await resetZ3();
   }, 240_000);
+
+  // --- the window fallback ---------------------------------------------------
+  //
+  // LNS is the one part of this solver that reads the wall clock at all: it
+  // stops opening windows when the caller's outer backstop has fired. That is
+  // the same cap the tier loop already honours, but it decides something the
+  // tier loop's does not — WHICH windows ran — so it gets its own pair of runs
+  // under caps four times apart. `rlimit: 1` is what puts the run on this path:
+  // T0's first check comes back `unknown`, no tier is proved, and the fallback
+  // takes over with the whole wall budget still in hand.
+  it("returns the same board under two wall caps on the window path", async () => {
+    const a = await buildSchedule({ fixtures, config, rlimit: 1, wallMs: 30_000 });
+    const b = await buildSchedule({ fixtures, config, rlimit: 1, wallMs: 120_000 });
+    expect(a.assignments).toEqual(b.assignments);
+    expect(a.metrics).toEqual(b.metrics);
+    expect(a.engine).toBe(b.engine);
+    // Not vacuous: this has to be the fallback path, not a run that proved its
+    // tiers and never opened a window at all.
+    expect(a.tiersCompleted).toBeLessThan(4);
+    expect(a.budgetExpired).toBe(true);
+    await resetZ3();
+  }, 240_000);
 });
