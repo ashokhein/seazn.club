@@ -976,7 +976,53 @@ async function main() {
   // fixtures) — only on the Pro account, into the Padel & Ladder Club.
   if (account === "pro") await seedAdvancedFormats();
 
+  // #376's `closed` state — community only, see the function.
+  if (account === "community") await seedClosedCompetition();
+
   console.log("done");
+}
+
+/**
+ * A finished competition that never held an Event Pass (#376) — the state where
+ * the header must offer no pass and the upgrade page must sell nothing.
+ *
+ * COMMUNITY ONLY, and that is not a preference. `passState` (the competition
+ * layout) empties `sellableRungs` the moment the competition is locked, so a
+ * PAID org resolves `paid_plan` and the closed chip never renders at all; the
+ * demo would show an empty header and prove nothing. The community account is
+ * the only place the state is reachable.
+ *
+ * `terminal`, not `past_ends_on`: a `completed` status is the arm an organiser
+ * actually arrives at, and it stays put — a `past_ends_on` seed would need a
+ * date the demo has to keep moving past. `starts_on`/`ends_on` are spelled out
+ * anyway because an end date is about to be mandatory, and a seed without one
+ * would break then rather than now.
+ *
+ * Resume-safe like the PLAN loop above: a slug conflict reuses the row, and the
+ * status PATCH is idempotent.
+ */
+async function seedClosedCompetition(): Promise<void> {
+  const name = "Winter 2024 (finished)";
+  let comp: { id: string };
+  try {
+    comp = await call("/api/v1/competitions", "POST", {
+      name,
+      starts_on: "2024-11-01",
+      ends_on: "2024-12-15",
+    });
+  } catch (e) {
+    // Same two escapes the PLAN loop takes: a plan cap is a skip, not an abort.
+    if (/cap|limit|payment/i.test(String(e))) {
+      console.log(`${name}: skipped (plan cap on this account)`);
+      return;
+    }
+    if (!String(e).includes("already in use")) throw e;
+    const list = await call("/api/v1/competitions?limit=100");
+    comp = ((list.items ?? list) as { id: string; name: string }[]).find((x) => x.name === name)!;
+    console.log(`${name}: exists, resuming`);
+  }
+  await call(`/api/v1/competitions/${comp.id}`, "PATCH", { status: "completed" });
+  console.log(`${name}: completed, no pass — #376 closed state`);
 }
 
 /** Seed an americano stage (needs individual entrants backed by persons) and a
