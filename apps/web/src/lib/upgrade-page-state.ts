@@ -103,6 +103,12 @@ export function upgradePageState(input: {
    */
   exceedingRungs?: readonly string[];
 }): UpgradePageState {
+  // The lock, but ONLY where no pass was ever held. Bound once, as a
+  // `PassLockReason | null`, so both branches below narrow off the same value
+  // rather than re-deriving the condition — and so the `closed` return needs
+  // no non-null assertion.
+  const closedToPasses = input.hasPass ? null : input.lockReason;
+
   // A paid plan no longer ends the conversation. It still does wherever the plan
   // really is a superset — but L raises `entrants.per_division.max` above Pro's
   // 256, so a Pro organiser with one oversized division has something real to
@@ -112,17 +118,17 @@ export function upgradePageState(input: {
   // Only when NO pass is held: there is no M→L upgrade path (#294 Q3), so
   // offering a second pass for one competition would advertise a purchase this
   // product cannot complete.
-  // The lock, but ONLY where no pass was ever held. Bound once, as a
-  // `PassLockReason | null`, so both branches below narrow off the same value
-  // rather than re-deriving the condition — and so the `closed` return needs
-  // no non-null assertion.
-  const closedToPasses = input.hasPass ? null : input.lockReason;
-
   if (input.paidPlan) {
     // #327's offer is subject to the line like every other offer. A paid org
     // with an exceeding rung on a FINISHED competition was being sold a pass
     // the route refuses — the same defect as the community chip, one plan tier
     // up, and absent from #376's write-up.
+    //
+    // BOTH conditions are load-bearing even though the second reads like it
+    // implies the first. `closedToPasses` collapses to null whenever `hasPass`
+    // is true — it is deliberately blind to a held pass's lock — so on its own
+    // it would wave a held pass straight through to the beyondPlan offer, which
+    // is the "no M→L upgrade path" refusal (#294 Q3), not this one.
     if (!input.hasPass && closedToPasses === null && (input.exceedingRungs?.length ?? 0) > 0)
       return { kind: "offer", canBuy: input.isOwner, beyondPlan: true };
     return { kind: "paid_plan" };
