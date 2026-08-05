@@ -176,6 +176,43 @@ jobs:
         run: npm audit --audit-level=high
         continue-on-error: true
 
+  container:
+    name: docker build + TS 7 musl exec
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The builder stage installs devDeps, so the 20 platform-conditional
+      # TypeScript 7 binaries land in that layer. None of them declare a `libc`
+      # field, so npm cannot filter musl from glibc: alpine gets the linux
+      # binary whether or not it can execute there.
+      - name: Build the builder stage
+        run: docker build --target builder -t seazn-builder:ci .
+
+      # The whole point. `docker build` runs the app build with SKIP_TYPECHECK=1
+      # and never invokes tsc, so a musl-incompatible Go binary builds perfectly
+      # clean and only fails at first use. Execute it here instead.
+      - name: Execute the TypeScript 7 binary inside the image
+        run: |
+          set -euo pipefail
+          VERSION=$(docker run --rm seazn-builder:ci \
+            node /app/node_modules/typescript-native/bin/tsc --version)
+          echo "reported: $VERSION"
+          echo "$VERSION" | grep -qE '^Version 7\.' || {
+            echo "::error::TS 7 binary did not execute on musl"; exit 1; }
+
+      # A full typecheck inside the image: proves the binary not only starts but
+      # reads the real project. This is the check that would have caught a
+      # partially-working binary.
+      - name: Typecheck inside the image
+        run: docker run --rm seazn-builder:ci npx turbo run typecheck
+
+      - name: Report image size
+        run: docker images seazn-builder:ci --format '{{.Size}}'
+
+      - name: Build the full image, including the runner stage
+        run: docker build -t seazn:ci .
+
   # -------------------------------------------------------------------------
   # Integration gate: real Postgres container -> real HTTP -> real DB.
   # Exercises the /api/v1 service layer + engine-db adapter end to end.
