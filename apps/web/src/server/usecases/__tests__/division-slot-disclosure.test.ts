@@ -126,12 +126,27 @@ describe.skipIf(!HAS_DB)("divisionConsumesSlotOnArchive", () => {
   // The waiver is part of the ANSWER, not a separate concern: the question is
   // "will archiving cost me a slot", and after support has handed the slot
   // back the honest answer is no even though the fixtures are still there.
+  //
+  // The archive/restore either side of the waiver is not scene-setting — it is
+  // the only sequence that reaches this state, and the test asserted an
+  // unreachable one until these two branches merged. `waiveDivisionSlot`
+  // refuses anything not CURRENTLY consuming a slot (409
+  // DIVISION_SLOT_NOT_CONSUMED) because a waiver on anything else is staff
+  // acting on stale information; a live division consumes nothing, so support
+  // can only ever act on an archived one. Restoring afterwards is what makes
+  // the question live again — the division is visible, an operator is looking
+  // at its danger zone, and the warning must now stay silent because
+  // `slot_waived_at` is set.
   it("is false again once staff waive the slot", async () => {
     const { auth, competitionId } = await seedCommunityCompetition();
     const staff = await makeStaffUser();
     const d = await createDivision(auth, competitionId, divisionInput("Waived"));
     await recordDecidedFixture(d.id);
+    await closeRegistration(d.id);
+    await archiveDivision(auth, d.id);
+
     await waiveDivisionSlot(staff.id, d.id);
+    await restoreDivision(auth, d.id);
 
     expect(await divisionConsumesSlotOnArchive(auth, d.id)).toBe(false);
   });
