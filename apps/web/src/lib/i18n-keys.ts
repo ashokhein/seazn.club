@@ -2337,6 +2337,8 @@ export type DictionaryKey =
   | "pad.ck.sideBatting"
   | "pad.ck.striker"
   | "pad.ck.strikerLc"
+  | "pad.ck.targetDls"
+  | "pad.ck.targetManual"
   | "pad.ck.tossRecorded"
   | "pad.ck.tossWonBy"
   | "pad.ck.total"

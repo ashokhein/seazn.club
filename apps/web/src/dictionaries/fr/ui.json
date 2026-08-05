@@ -2320,6 +2320,8 @@
   "pad.ck.tossRecorded": "Tirage au sort enregistré — démarrez le match pour ouvrir la première manche.",
   "pad.ck.overByOver": "Over par over",
   "pad.ck.inningsTotal": "Total de la manche",
+  "pad.ck.targetDls": "Objectif {runs} — révisé par DLS",
+  "pad.ck.targetManual": "Objectif {runs} — défini manuellement",
   "pad.ck.ballByBall": "⋯ Balle par balle",
   "pad.ck.ballByBallTitle": "Score détaillé par lancer (nécessaire pour les statistiques complètes des joueurs)",
   "pad.ck.noOpenInnings": "Aucune manche ouverte — enregistrez un résumé de manche, ou le match est entre deux manches.",

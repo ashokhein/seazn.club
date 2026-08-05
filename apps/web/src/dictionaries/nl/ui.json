@@ -2275,6 +2275,8 @@
   "pad.ck.tossRecorded": "Toss vastgelegd — start de wedstrijd om de eerste innings te openen.",
   "pad.ck.overByOver": "Over voor over",
   "pad.ck.inningsTotal": "Inningstotaal",
+  "pad.ck.targetDls": "Doel {runs} — herzien volgens DLS",
+  "pad.ck.targetManual": "Doel {runs} — handmatig ingesteld",
   "pad.ck.ballByBall": "⋯ Bal voor bal",
   "pad.ck.ballByBallTitle": "Gedetailleerde scoring per bal (nodig voor volledige spelerstatistieken)",
   "pad.ck.noOpenInnings": "Geen open innings — leg een inningssamenvatting vast, of de wedstrijd zit tussen innings in.",

@@ -2320,6 +2320,8 @@
   "pad.ck.tossRecorded": "Toss recorded — start the match to open the first innings.",
   "pad.ck.overByOver": "Over-by-over",
   "pad.ck.inningsTotal": "Innings total",
+  "pad.ck.targetDls": "Target {runs} — revised by DLS",
+  "pad.ck.targetManual": "Target {runs} — set manually",
   "pad.ck.ballByBall": "⋯ Ball-by-ball",
   "pad.ck.ballByBallTitle": "Detailed per-delivery scoring (needed for full player stats)",
   "pad.ck.noOpenInnings": "No open innings — record an innings summary, or the match is between innings.",

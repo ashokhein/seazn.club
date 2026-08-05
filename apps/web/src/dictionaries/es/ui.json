@@ -2275,6 +2275,8 @@
   "pad.ck.tossRecorded": "Sorteo registrado — inicia el partido para abrir la primera entrada.",
   "pad.ck.overByOver": "Over por over",
   "pad.ck.inningsTotal": "Total de la entrada",
+  "pad.ck.targetDls": "Objetivo {runs} — revisado por DLS",
+  "pad.ck.targetManual": "Objetivo {runs} — fijado manualmente",
   "pad.ck.ballByBall": "⋯ Bola por bola",
   "pad.ck.ballByBallTitle": "Puntuación detallada por lanzamiento (necesaria para estadísticas completas de jugadores)",
   "pad.ck.noOpenInnings": "No hay entrada abierta — registra un resumen de entrada, o el partido está entre entradas.",
