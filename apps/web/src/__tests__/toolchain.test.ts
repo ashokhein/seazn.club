@@ -158,11 +158,22 @@ describe("toolchain: no V8 heap ceiling for typecheck", () => {
    * effect on it — so carrying the ceiling forward would be cargo cult, and
    * worse, would mask a regression back to a V8 compiler.
    */
-  it("ci.yml sets no max-old-space-size", () => {
-    const text = readFileSync(
+  /**
+   * Assert the flag is not SET — not that the string never appears anywhere.
+   * The first version matched the whole file, which forbade *documenting* the
+   * flag: the CI comment explaining why never to reintroduce it had to refer to
+   * it obliquely, so the warning most likely to prevent the regression was the
+   * one thing the test outlawed. A test that suppresses its own rationale is
+   * too broad.
+   */
+  it("ci.yml sets no V8 heap ceiling on any active step", () => {
+    const active = readFileSync(
       join(REPO_ROOT, ".github/workflows/ci.yml"),
       "utf8",
-    );
-    expect(text).not.toContain("max-old-space-size");
+    )
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .filter((line) => /max-old-space-size/.test(line));
+    expect(active).toEqual([]);
   });
 });

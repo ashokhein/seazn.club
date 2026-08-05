@@ -65,14 +65,16 @@ jobs:
       # reads via its second `tsc -p ../../tsconfig.scripts.json` half — without
       # that, a scripts/ edit would restore a stale green.
       #
-      # This step used to carry a NODE_OPTIONS V8 heap ceiling of 6144 MB:
-      # apps/web peaked ~2.8 GB against the runner's ~2 GB default heap and died
-      # at 2041/2088 MB. TypeScript 7 is a native Go binary, so there is no V8
-      # heap to raise — peak RSS is ~2.5 GB of ordinary process memory. Do not
-      # reintroduce that flag; if it ever looks necessary again, that means
-      # something has fallen back to a JS compiler. toolchain.test.ts asserts
-      # the flag name appears nowhere in this file, so the wording above stays
-      # deliberately indirect.
+      # This step used to carry `NODE_OPTIONS: --max-old-space-size=6144`:
+      # apps/web peaked ~2.8 GB against the runner's ~2 GB default V8 heap and
+      # died at 2041/2088 MB. TypeScript 7 is a native Go binary, so there is no
+      # V8 heap to raise — measured peak RSS is ~2.5 GB of ordinary process
+      # memory. The appetite barely moved; only the cap disappeared.
+      #
+      # Do NOT reintroduce that flag. If it ever looks necessary again, the flag
+      # is not the problem — something has fallen back to a JS compiler, and
+      # that is what to go and find. toolchain.test.ts fails on any non-comment
+      # line setting it, so this comment may name it plainly.
       - run: npx turbo run typecheck
       - run: npm run engine:boundary
       # v3/03 §6: retired plan tier must never reappear in UI copy.
