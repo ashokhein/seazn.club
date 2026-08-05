@@ -179,6 +179,20 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 26
+      # setup-node turns pnpm caching on by itself once package.json declares a
+      # `packageManager` — this step passes no `cache:` input and still gets it.
+      # Its POST step then tries to save the pnpm store and fails the whole job
+      # with "Path Validation Error: Path(s) specified in the action for caching
+      # do(es) not exist". Nothing here ever creates that directory, because this
+      # job installs nothing on purpose. The audit itself had already passed; the
+      # job failed after every step of its own had succeeded.
+      #
+      # Creating the directory is the fix that keeps "installs nothing" true. The
+      # alternative — running an install just to satisfy a cache save — would
+      # spend minutes to make a scan job do the thing it is deliberately not
+      # doing.
+      - name: Ensure the pnpm store directory exists, for setup-node's cache save
+        run: mkdir -p "$(pnpm store path --silent)"
       # Reads pnpm-lock.yaml only — this job installs nothing, and must not start.
       - name: Dependency audit (high+)
         run: pnpm audit --audit-level=high

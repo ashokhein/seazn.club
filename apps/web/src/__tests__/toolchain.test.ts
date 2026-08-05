@@ -189,6 +189,60 @@ describe("toolchain: no V8 heap ceiling for typecheck", () => {
     expect(header).toContain("github.event_name == 'pull_request'");
   });
 
+  /**
+   * `actions/setup-node` enables pnpm caching BY ITSELF once package.json
+   * declares a `packageManager` — no `cache:` input required, and passing none
+   * does not opt out. Its post step then shells to pnpm to locate the store and
+   * fails the whole job if that directory does not exist:
+   *
+   *     Path Validation Error: Path(s) specified in the action for caching
+   *     do(es) not exist, hence no cache is being saved.
+   *
+   * This is nasty because it fails AFTER every step of the job has succeeded.
+   * The security job's audit passed and the job still went red; db-baseline
+   * would have baselined the database and then reported failure. So any job
+   * that sets up node must either install (which creates the store) or create
+   * the directory itself.
+   */
+  it("every setup-node job either installs or creates the pnpm store", () => {
+    const dir = join(REPO_ROOT, ".github/workflows");
+    const offenders: string[] = [];
+    for (const file of readdirSync(dir).filter((f) => f.endsWith(".yml"))) {
+      const text = readFileSync(join(dir, file), "utf8");
+      const jobsAt = text.indexOf("\njobs:");
+      if (jobsAt < 0) continue;
+      // Job keys sit at exactly two spaces of indent under `jobs:`.
+      const body = text.slice(jobsAt);
+      const lines = body.split("\n");
+      let current = "";
+      let buffer: string[] = [];
+      const flush = () => {
+        if (!current) return;
+        const block = buffer.join("\n");
+        if (!/uses:\s*actions\/setup-node/.test(block)) return;
+        const stripped = block
+          .split("\n")
+          .filter((l) => !/^\s*#/.test(l))
+          .join("\n");
+        if (!/pnpm install/.test(stripped) && !/pnpm store path/.test(stripped)) {
+          offenders.push(`${file} :: ${current}`);
+        }
+      };
+      for (const line of lines) {
+        const m = /^ {2}([A-Za-z][\w-]*):\s*$/.exec(line);
+        if (m) {
+          flush();
+          current = m[1];
+          buffer = [];
+        } else {
+          buffer.push(line);
+        }
+      }
+      flush();
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it("ci.yml sets no V8 heap ceiling on any active step", () => {
     const active = readFileSync(
       join(REPO_ROOT, ".github/workflows/ci.yml"),
