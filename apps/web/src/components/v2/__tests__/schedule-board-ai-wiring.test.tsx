@@ -334,6 +334,24 @@ describe("the joint console is handed the board's own money numbers", () => {
     ]);
   });
 
+  it("hands it the WHOLE board's fixtures, not one division's (#394)", () => {
+    // The label source for the review step's blocked rows and for every ghost
+    // block. A joint proposal spans every selected division, so a list narrowed
+    // to a single division — which on a competition board is EMPTY, because
+    // there is no single division — leaves those rows with no code and no
+    // matchup. `consoleFixtures` is well covered; the line choosing what to
+    // hand it was not, so this asserts the ARGUMENT, not the function.
+    const { props } = jointDivisions();
+    const fixtures = props.fixtures as { id: string; division_id: string; code: string; matchup: string }[];
+    expect(fixtures.map((f) => f.id)).toEqual(["f1", "f2", "f3", "f4", "f5", "f6", "f7"]);
+    // More than one division, or a board-wide list is indistinguishable from
+    // the single-division one the bug produced on a solo board.
+    expect([...new Set(fixtures.map((f) => f.division_id))]).toEqual(["d1", "d2", "d3"]);
+    // Every row carries the two label fields the blocked-row cell renders; an
+    // empty list passes a bare length check on a filtered `find`, so pin both.
+    expect(fixtures.every((f) => f.code.length > 0 && f.matchup.length > 0)).toBe(true);
+  });
+
   it("refreshes the board on BOTH a landed apply and a stale-board refusal", () => {
     // C-1's board half. `onRefetch` is what stops the review step's recovery
     // button — which SPENDS — from re-sending a seq the page rendered with.
