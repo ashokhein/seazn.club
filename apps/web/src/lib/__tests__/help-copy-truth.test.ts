@@ -2504,3 +2504,45 @@ describe("the add-ons gate catches what the vocabulary cannot", () => {
     expect(inventoryFaults("x", swapped, APPROVED_ADD_ONS_INVENTORY)).not.toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The OpenAPI summaries are PUBLISHED SURFACE, and one of them was quoting a
+// retired price. `/divisions/{id}/checkpoints` (POST) advertised the save-point
+// quota as "1 free / 5 Pro / unlimited Pro Plus". Community has been 2 since
+// V319 — so the spec every integrator reads, and every generated client's
+// docstring, carried a false claim about what a plan includes.
+//
+// Found during #382 triage, in no issue. Exactly the class this file exists for:
+// a number in prose that no longer matches the number the resolver enforces.
+//
+// Reading the SEEDED value rather than hardcoding 2 is the point — the next
+// entitlement change fails this test instead of quietly re-staling the copy.
+// ---------------------------------------------------------------------------
+describe.skipIf(!HAS_DB)("the OpenAPI checkpoint summary quotes the seeded quota (#382)", () => {
+  it("the checkpoint quota summary matches the seeded entitlement (#382)", async () => {
+    const { ROUTES } = await import("@/server/api-v1/openapi");
+    const [row] = await sql<{ int_value: number }[]>`
+      select int_value from plan_entitlements
+       where plan_key = 'community' and feature_key = 'schedule.checkpoints.max'`;
+    expect(row, "no seeded community checkpoint quota to compare against").toBeDefined();
+
+    const route = ROUTES.find(
+      (r) => r.path === "/divisions/{id}/checkpoints" && r.method === "post",
+    );
+    expect(route, "the checkpoints POST route").toBeDefined();
+    const summary = route!.summary ?? "";
+
+    expect(summary).toContain(String(row!.int_value));
+    expect(summary, "the retired '1 free' claim").not.toMatch(/\b1\s+free\b/);
+  });
+
+  it("also states what now happens AT the cap, since it no longer refuses", async () => {
+    // #382 turned the refusal into a rolling window. A summary that names the
+    // number but still implies a hard stop is the same class of stale claim.
+    const { ROUTES } = await import("@/server/api-v1/openapi");
+    const summary =
+      ROUTES.find((r) => r.path === "/divisions/{id}/checkpoints" && r.method === "post")
+        ?.summary ?? "";
+    expect(summary.toLowerCase()).toContain("replaced");
+  });
+});
