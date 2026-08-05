@@ -14,6 +14,7 @@ import { createStages, generateStageFixtures } from "../stages";
 import { startDivision } from "../schedule";
 import { scoreEvent } from "../scoring";
 import { patchFixture } from "../fixtures";
+import { lockDivisions } from "../competition-schedule-apply";
 import {
   undoDivision,
   redoDivision,
@@ -479,6 +480,118 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
     await createCheckpoint(auth, division.id, "one");
     await createCheckpoint(auth, division.id, "two");
     await expect(createCheckpoint(auth, division.id, "three")).resolves.toBeDefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // #382 review, finding 2 — a quota of ZERO is a refusal, not a window of one.
+  //
+  // The roll arithmetic is `drop = n - limit + 1`, which at n=0/limit=0 asks to
+  // delete ONE row from an empty table (removing nothing) and then inserts
+  // anyway. So an org entitled to no save points at all permanently held
+  // exactly one, and `createCheckpoint`'s own stated invariant — "the
+  // post-insert count is exactly the limit" — was false on the one input where
+  // rolling cannot express the answer.
+  // -------------------------------------------------------------------------
+
+  it("a zero quota refuses the manual save rather than leaving one behind (#382)", async () => {
+    const { auth } = await seedOrg("community");
+    const { division } = await seedDivision(auth);
+    // A staff override of 0 is the reachable route to limit === 0; a plan row
+    // missing from `plan_entitlements` resolves to 0 by the same door (getLimit
+    // returns 0 for an absent row), and both must behave identically.
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, int_value)
+      values (${auth.orgId}, 'schedule.checkpoints.max', 0)`;
+    await invalidateOrgEntitlements(auth.orgId);
+
+    await expect(createCheckpoint(auth, division.id, "should not land")).rejects.toMatchObject({
+      status: 402,
+      featureKey: "schedule.checkpoints.max",
+    });
+    // The invariant, restated as the observable: nothing landed.
+    const manual = (await listCheckpoints(auth, division.id)).filter((r) => r.kind === "manual");
+    expect(manual).toHaveLength(0);
+  });
+
+  it("a zero manual quota still lets the AI flow write its own anchor (#382)", async () => {
+    // V303's whole point: an AI apply's undo anchor is NOT one of the
+    // organiser's save points. A refusal placed outside the `manual` branch
+    // would re-break the bug that once cost a community org a paid-for AI run.
+    const { auth } = await seedOrg("community");
+    const { division } = await seedDivision(auth);
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, int_value)
+      values (${auth.orgId}, 'schedule.checkpoints.max', 0)`;
+    await invalidateOrgEntitlements(auth.orgId);
+
+    await expect(
+      createCheckpoint(auth, division.id, "Before AI · run 1", "ai"),
+    ).resolves.toBeTruthy();
+    const ai = (await listCheckpoints(auth, division.id)).filter((r) => r.kind === "ai");
+    expect(ai).toHaveLength(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // #382 review, finding 3 — count-then-delete-then-insert was not serialised.
+  //
+  // The realistic race is not two admins: this product's normal shape is a
+  // single org owner, and that owner double-clicking Save is common enough to
+  // matter. Both requests read the same count, both compute the same `drop`,
+  // both target the SAME oldest row — one DELETE removes it, the other removes
+  // nothing — and both INSERTs land. The division ends at limit + 1 and one of
+  // the two organisers is never told a bookmark went.
+  // -------------------------------------------------------------------------
+
+  it("a manual save waits for the division lock rather than reading a stale count", async () => {
+    const { auth } = await seedOrg("community");
+    const { division } = await seedDivision(auth);
+
+    // The blocker takes the lock through `lockDivisions` — the SAME helper the
+    // schedule apply uses. That is the assertion that matters here: if
+    // `createCheckpoint` grew a second key scheme it would sail straight past
+    // this holder, and only a shared key keeps the two ends serialised.
+    let settled = false;
+    const holder = sql.begin(async (tx) => {
+      await lockDivisions(tx, [division.id]);
+      await new Promise((r) => setTimeout(r, 700));
+    });
+    // Let the holder actually acquire before the contender starts.
+    await new Promise((r) => setTimeout(r, 150));
+
+    const contender = createCheckpoint(auth, division.id, "waits its turn").then((v) => {
+      settled = true;
+      return v;
+    });
+    // One load-bearing sleep: long enough that an UNLOCKED createCheckpoint
+    // (a handful of queries) would certainly have finished by now.
+    await new Promise((r) => setTimeout(r, 350));
+    expect(settled, "createCheckpoint ran while another transaction held division:<id>").toBe(
+      false,
+    );
+
+    await holder;
+    await contender;
+    expect(settled).toBe(true);
+  });
+
+  it("two concurrent saves at the cap leave exactly the limit, and one is told (#382)", async () => {
+    const { auth } = await seedOrg("community"); // cap of 2 (V319)
+    const { division } = await seedDivision(auth);
+    await createCheckpoint(auth, division.id, "first"); // one below the cap
+
+    const [a, b] = await Promise.all([
+      createCheckpoint(auth, division.id, "race-a"),
+      createCheckpoint(auth, division.id, "race-b"),
+    ]);
+
+    const manual = (await listCheckpoints(auth, division.id)).filter((r) => r.kind === "manual");
+    expect(manual, "the division must not sit at limit + 1").toHaveLength(2);
+    // Serialised, the second save is the one that arrives AT the cap — so
+    // exactly one caller is told, and it names the row that actually went.
+    const notices = [a.evicted, b.evicted].filter((e) => e !== undefined);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]!.label).toBe("first");
+    expect(manual.map((r) => r.label).sort()).toEqual(["race-a", "race-b"]);
   });
 
   // -------------------------------------------------------------------------

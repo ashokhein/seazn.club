@@ -20,9 +20,10 @@ import {
 } from "@seazn/engine/history";
 import { EngineError } from "@seazn/engine/core";
 import { withTenant } from "@/lib/db";
-// PaymentRequiredError is no longer thrown here: since #382 a manual save at
-// the cap rolls the window instead of refusing (see `createCheckpoint`).
-import { HttpError } from "@/lib/errors";
+// Since #382 a manual save AT THE CAP rolls the window instead of refusing, so
+// PaymentRequiredError survives here for one case only: a quota that resolves
+// below 1, where there is no window to roll (see `createCheckpoint`).
+import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import { requireFeature, withinLimit } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { generateStageFixtures } from "./stages";
@@ -334,6 +335,28 @@ export async function createCheckpoint(
   kind: CheckpointKind = "manual",
 ): Promise<CheckpointRow> {
   return withTenant(auth.orgId, async (tx) => {
+    // #382 review, finding 3: the roll below is count → delete → insert, and
+    // without this lock those three steps are not serialised. Two saves landing
+    // together (the realistic shape is one owner double-clicking Save, not two
+    // admins) both read the same count, both compute the same `drop`, and both
+    // target the SAME oldest row — one DELETE takes it, the other takes nothing
+    // and so reports no `evicted` — while both INSERTs land. The division ends
+    // at limit + 1 and one organiser is never told a bookmark went. It
+    // self-corrects on the next save, which is exactly why it went unnoticed.
+    //
+    // The key is `division:<id>`, byte-identical to `lockDivisions`
+    // (competition-schedule-apply.ts) and to `step`/`restoreCheckpoint` below:
+    // the checkpoint window is a fact ABOUT a division, so it must serialise
+    // against every other writer of that division's plan, not just against
+    // other checkpoint saves. A private key would leave an apply free to move
+    // the watermark this insert is about to read.
+    //
+    // Safe to take here because `createCheckpoint` is a LEAF — the checkpoints
+    // route is its only caller — so this transaction never holds
+    // `division:<id>` while some nested call waits for the same key on another
+    // connection. `pg_advisory_xact_lock` releases at commit or rollback, so
+    // nothing survives the transaction either.
+    await tx`select pg_advisory_xact_lock(hashtext(${"division:" + divisionId}))`;
     const meta = await divisionMeta(tx, divisionId);
     // Jul3/03 §7 → V290: save points are a per-plan quota (community 1,
     // pro 5, pro_plus unlimited). schedule.versioning still gates scope locks.
@@ -356,6 +379,29 @@ export async function createCheckpoint(
         select count(*)::int as n from division_checkpoints
         where division_id = ${divisionId} and kind = 'manual'`;
       const { limit } = await withinLimit(auth.orgId, "schedule.checkpoints.max", n + 1);
+      // #382 review, finding 2: a quota below 1 has NO window to roll, so the
+      // rolling branch cannot express it. `drop = n - limit + 1` at n=0/limit=0
+      // asks to delete one row from an empty table — the delete removes nothing
+      // and the insert lands anyway, leaving an org entitled to zero save points
+      // permanently holding one, with the "post-insert count is exactly the
+      // limit" invariant broken on the one input where it mattered.
+      //
+      // Refusing is a quota refusal, so it is `PaymentRequiredError` with the
+      // feature key, the shape every other quota gate in usecases/ uses
+      // (clubs.ts, divisions.ts, entrants.ts, competitions.ts).
+      //
+      // Zero is reachable two ways and this deliberately does not distinguish
+      // them: a staff override with `int_value = 0`, and a MISSING
+      // `plan_entitlements` row, which `getLimit` also resolves to 0. The
+      // override is a deliberate grant of nothing and must be honoured. The
+      // missing row is a mis-seeded database — and there, refusing is still the
+      // better answer than the old behaviour, which silently held one save point
+      // and lied about the count. All three real plan keys (community 2, pro 5,
+      // pro_plus unlimited) carry a row, so a correctly migrated database cannot
+      // reach this by accident; `event_pass`/`event_pass_l` have no row, but
+      // they are pass keys, never an org's plan key, and this read passes no
+      // competition so no pass overlay applies.
+      if (limit !== null && limit < 1) throw new PaymentRequiredError("schedule.checkpoints.max");
       // A null limit is unlimited (pro_plus) — never evict.
       if (limit !== null && n >= limit) {
         // Delete n - limit + 1, so the POST-INSERT count is exactly the limit.
