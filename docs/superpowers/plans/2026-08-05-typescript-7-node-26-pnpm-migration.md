@@ -27,7 +27,11 @@ Every task's requirements implicitly include this section.
 - **Never `git stash` in a worktree.** The stash stack is shared with the main checkout; a no-op push/pop pops a *foreign* stash and leaves `package.json` unmerged, blocking every commit in the tree.
 - **Never set `UPDATE_GOLDEN=1`.** The 11 `<key>.golden.json` corpora are frozen and are the additive-only proof.
 - **Never enable `.github/workflows/e2e.yml`** — do not change its enabled/disabled state in either direction.
-- **Every stage merges via PR.** Smoke CI runs on PRs only; merging locally and pushing to `main` skips it.
+- **All three stages land on the long-lived `typescript7` base branch, never directly on `main`.** `main` is touched once, at the end, by a single `typescript7 -> main` PR raised after everything is verified locally. `typescript7` was created at `6847b3c6`.
+  - This is safe because `ci.yml`'s `pull_request:` trigger is **unfiltered** — a PR into `typescript7` runs typecheck, unit, smoke, and security in full, exactly as a PR into `main` would.
+  - `push: branches: [main]` drives the staging deploy, so a base branch also keeps staging off a half-migrated toolchain, and `e2e.yml` runs on push to main — it fires once, against the fully migrated tree, at integration.
+  - **Consequence:** smoke CI runs on **PRs only**. A stage merged locally into `typescript7` with no PR gets no CI smoke, so its local smoke run is the only one it will ever have. Never skip a local smoke on the grounds that "CI will catch it" — here, it will not.
+  - Rebase `typescript7` onto `main` at the start of every stage. Another session commits to `main` continuously; drift is the standing cost of this model.
 - **Unrelated failures are not chased.** A red test in files this programme did not touch is skipped, noted in the summary, and left for CI.
 
 ---
@@ -549,7 +553,7 @@ Run this in the main thread. Do **not** dispatch it to a subagent — two have d
 
 ```bash
 cd <abs worktree> && git push -u origin ts-migration-stage-1-node-26
-gh pr create --title "Raise the platform floor: node 26, ES2022, @ts-ignore banned" --body "$(cat <<'EOF'
+gh pr create --base typescript7 --title "Raise the platform floor: node 26, ES2022, @ts-ignore banned" --body "$(cat <<'EOF'
 Stage 1 of 3. Spec: `docs/superpowers/specs/2026-08-05-typescript-7-node-26-pnpm-migration-design.md`
 
 Node 22 has been in maintenance since 2025-10-21, and local dev was already
@@ -582,7 +586,7 @@ If a new push resets checks mid-watch, `gh pr checks --watch` dies with "no chec
 
 # STAGE 2 — TypeScript 7
 
-Branch: `ts-migration-stage-2-typescript-7`, cut from `main` **after stage 1 merges**. One PR.
+Branch: `ts-migration-stage-2-typescript-7`, cut from **`typescript7`** after stage 1 merges into it. One PR, `--base typescript7`. Rebase `typescript7` onto `main` first.
 
 ### Task 2.1: Install the dual-compiler pair
 
@@ -1097,7 +1101,7 @@ Expected, from the 2026-08-05 baseline: ~8s wall against 54s before. Put the num
 
 ```bash
 cd <abs worktree> && git push -u origin ts-migration-stage-2-typescript-7
-gh pr create --title "TypeScript 7 gates types; 6.0.3 stays for lint and the editor" --body "$(cat <<'EOF'
+gh pr create --base typescript7 --title "TypeScript 7 gates types; 6.0.3 stays for lint and the editor" --body "$(cat <<'EOF'
 Stage 2 of 3. Spec: `docs/superpowers/specs/2026-08-05-typescript-7-node-26-pnpm-migration-design.md`
 
 apps/web typecheck: **54.05s -> 8.21s**, and the 6 GB CI heap ceiling is gone —
@@ -1129,7 +1133,7 @@ cd <abs worktree> && gh pr checks --watch
 
 # STAGE 3 — pnpm
 
-Branch: `ts-migration-stage-3-pnpm`, cut from `main` **after stage 2 merges and has been stable**. One PR.
+Branch: `ts-migration-stage-3-pnpm`, cut from **`typescript7`** after stage 2 merges into it. One PR, `--base typescript7`. Rebase `typescript7` onto `main` first.
 
 **Why this stage exists.** Not pipeline speed — #158 measured that and pnpm lost cold (52.2s vs 48.2s npm). The case is **worktree cost**: pnpm's content-addressed store hardlinks into `node_modules`, so the Nth worktree on a warm store is near-free in time and disk. npm has no CAS, so `npm ci --prefer-offline` still copies every file and worktree #5 costs what worktree #1 did.
 
@@ -1524,7 +1528,7 @@ Per the spec, live billing runs once at the end of the programme rather than per
 
 ```bash
 cd <abs worktree> && git push -u origin ts-migration-stage-3-pnpm
-gh pr create --title "Convert to pnpm: near-free worktree installs" --body "$(cat <<'EOF'
+gh pr create --base typescript7 --title "Convert to pnpm: near-free worktree installs" --body "$(cat <<'EOF'
 Stage 3 of 3. Spec: `docs/superpowers/specs/2026-08-05-typescript-7-node-26-pnpm-migration-design.md`
 
 Not a speed change — #158 benchmarked pipeline install and npm won cold
@@ -1556,6 +1560,64 @@ EOF
 )"
 cd <abs worktree> && gh pr checks --watch
 ```
+
+---
+
+# INTEGRATION — `typescript7` -> `main`
+
+Raised only after all three stages are merged into `typescript7` **and** verified
+locally. This is the single PR that touches `main`.
+
+- [ ] **Step 1: Rebase onto current main and re-verify**
+
+```bash
+cd /Users/ashokhein/github/seazn.club && git fetch origin && git log --oneline main -5
+cd <abs worktree> && git rebase main
+```
+
+Another session commits to `main` continuously, so this rebase is not a
+formality. After it, **re-run the entire Task 1.5 gate** — every count, from a
+fresh DB. A rebase can silently reintroduce a conflict that no stage gate saw,
+because no stage gate ever ran against this combination of trees.
+
+- [ ] **Step 2: Confirm the whole programme's claims on the merged tree**
+
+```bash
+cd <abs worktree>/apps/web && /usr/bin/time -l node ../../node_modules/typescript-native/bin/tsc --noEmit -p tsconfig.json 2>&1 | grep -E "real|maximum resident"
+cd <abs worktree> && grep -c "max-old-space-size" .github/workflows/ci.yml   # must be 0
+cd <abs worktree> && find apps/web/.next/standalone -name "z3-built.wasm" | head   # must be non-empty
+```
+
+- [ ] **Step 3: Open the integration PR**
+
+```bash
+cd <abs worktree> && git push -u origin typescript7
+gh pr create --base main --title "Toolchain: TypeScript 7, Node 26, pnpm" --body "$(cat <<'EOF'
+Integration of the three staged PRs already reviewed on `typescript7`.
+Spec: `docs/superpowers/specs/2026-08-05-typescript-7-node-26-pnpm-migration-design.md`
+
+- `apps/web` typecheck **54.05s -> 8.21s**, and the 6 GB CI heap ceiling is gone.
+- Node floor 22 -> 26, closing a local/CI/prod split where dev ran v26.4.0 against CI's 22.
+- pnpm: the Nth worktree install is near-free, which removes the reason people
+  symlink `node_modules` and thereby compile main's engine from a branch.
+
+`typescript` stays 6.0.3 for typescript-eslint, the in-build checker and three
+compiler-API tests; TypeScript 7 is an aliased binary invoked by explicit path.
+
+This is the first push to `main`, so it is also the first run of the staging
+deploy and `e2e.yml` against the migrated toolchain.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+cd <abs worktree> && gh pr checks --watch
+```
+
+- [ ] **Step 4: After merge, watch the two things a PR could not prove**
+
+The staging deploy and `e2e.yml` both trigger on push to `main` and have never
+run against this toolchain. Watch both to completion before calling the
+programme done, and confirm `/api/health` returns 200 on staging.
 
 ---
 
