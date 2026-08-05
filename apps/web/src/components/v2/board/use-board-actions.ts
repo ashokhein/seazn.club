@@ -10,6 +10,7 @@ import { useMsg } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 import { dayKey } from "@/lib/schedule-board";
 import type { FeedLabelPair } from "@/lib/schedule-board";
+import type { ScheduleMetrics, ScheduleSolverInfo } from "@/server/api-v1/schemas";
 import {
   CONFLICT_HELP,
   cardTitle,
@@ -35,6 +36,10 @@ export interface BoardActions {
   checkFailed: boolean;
   /** A conflicts check is in flight; the manual retry is disabled while it is. */
   checking: boolean;
+  /** Board quality + solver telemetry from the LAST auto/re-flow run, for the
+   *  result strip. Cleared when a new run starts, and null whenever the wire
+   *  did not carry them — the strip stays away rather than reporting zeros. */
+  lastRun: { metrics: ScheduleMetrics; solver: ScheduleSolverInfo } | null;
   /** Re-run the check NOW, not on the 400ms debounce. A button whose effect
    *  starts half a second later is indistinguishable from a dead one. */
   revalidate: () => Promise<void>;
@@ -66,6 +71,7 @@ export function useBoardActions(
   const [busy, setBusy] = useState(false);
   const [checkFailed, setCheckFailed] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [lastRun, setLastRun] = useState<BoardActions["lastRun"]>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Monotonic ticket per conflicts check — see `runValidate`. */
   const validateSeq = useRef(0);
@@ -270,15 +276,25 @@ export function useBoardActions(
     async (stageId: string, onlyUnlocked: boolean) => {
       setError(null);
       setNotice(null);
+      setLastRun(null);
       setBusy(true);
       try {
         const out = await apiV1<{
           assignments: { fixture_id: string; scheduled_at: string; court_label: string }[];
           conflicts: BoardConflict[];
+          // OPTIONAL on purpose: the /schedule/auto response schema declares
+          // both, but `autoSchedule` does not populate them yet. Typing them as
+          // required here would make the strip render zeros for a real run.
+          metrics?: ScheduleMetrics;
+          solver?: ScheduleSolverInfo;
         }>(`/api/v1/stages/${stageId}/schedule/auto`, {
           method: "POST",
           json: { only_unlocked: onlyUnlocked },
         });
+        // Before the empty-proposal return, not after: an `infeasible` run can
+        // place nothing at all, and that is exactly the run whose report the
+        // organiser most needs.
+        if (out.metrics && out.solver) setLastRun({ metrics: out.metrics, solver: out.solver });
         if (out.assignments.length === 0) {
           setNotice(msg("board.action.nothingStage"));
           return;
@@ -429,6 +445,7 @@ export function useBoardActions(
     busy,
     checkFailed,
     checking,
+    lastRun,
     revalidate: runValidate,
     setError,
     setNotice,

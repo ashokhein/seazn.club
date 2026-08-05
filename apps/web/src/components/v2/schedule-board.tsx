@@ -31,6 +31,7 @@ import type { AiScope } from "./board/ai-console-state";
 import { computeAiDiff, ghostToneFor, type AiConsoleFixture } from "./board/ai-diff";
 import { ConflictsBadge, ConflictsPanel } from "./board/conflicts-panel";
 import { MovePanel } from "./board/move-panel";
+import { ScheduleResultStrip } from "./board/result-strip";
 import { SettingsPanel } from "./board/settings-panel";
 import {
   cardTitle,
@@ -829,6 +830,12 @@ export function ScheduleBoard({
       )}
       {actions.error && (
         <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{actions.error}</p>
+      )}
+      {/* Directly under the green "Placed N matches" line, because it is the
+          qualification OF that line: the solver is anytime, so what it returned
+          may be neither optimal nor complete, and this is where that is said. */}
+      {actions.lastRun && (
+        <ScheduleResultStrip metrics={actions.lastRun.metrics} solver={actions.lastRun.solver} />
       )}
 
       {/* Action bar */}
