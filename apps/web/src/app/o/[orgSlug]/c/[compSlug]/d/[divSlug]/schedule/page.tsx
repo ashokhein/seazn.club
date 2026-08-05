@@ -1,6 +1,8 @@
 export const dynamic = "force-dynamic";
 // Drag-and-drop schedule board for one division (doc 12 §2, PROMPT-17).
-// Community renders it view-only (doc 12 §5 — scheduling.board).
+// Community used to render it view-only; V353 (#382) opened `scheduling.board`
+// and `scheduling.constraints` to every plan, so the gates below no longer fire
+// on any tier. They stay: an override or a future tier still moves through them.
 import Link from "@/components/ui/console-link";
 import { venueLabel } from "@/lib/venue";
 import { requireDivisionPage } from "@/server/page-auth";

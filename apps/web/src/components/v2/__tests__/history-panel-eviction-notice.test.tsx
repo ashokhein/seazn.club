@@ -11,7 +11,7 @@
 // catalog, the output tree — through the shared hook harness.
 import { describe, expect, it, vi } from "vitest";
 import { renderIsland, propsOf, textOf } from "@/components/__tests__/_hook-harness";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 // `useConfirm` throws outside its provider by design; the harness's useContext
 // hands back the context default, which is that null. Everything else in the
@@ -52,11 +52,15 @@ function stubApi(createReturns: unknown, after: ReturnType<typeof cp>[]) {
   });
 }
 
+interface PanelProps {
+  divisionId: string;
+  scheduleLocked: boolean;
+  canEdit: boolean;
+}
+type Island = ReturnType<typeof renderIsland<PanelProps>>;
+
 /** Type a label and submit the create form, then let the panel's reload settle. */
-async function saveNamed(
-  island: ReturnType<typeof renderIsland<Record<string, unknown>>>,
-  label: string,
-) {
+async function saveNamed(island: Island, label: string) {
   const input = island
     .tree()
     .find((el: ReactElement) => propsOf(el)["aria-label"] === "Save point label");
@@ -69,12 +73,12 @@ async function saveNamed(
   await new Promise((r) => setTimeout(r, 0));
 }
 
-const render = () =>
-  renderIsland(
-    (props: Record<string, unknown>) =>
-      HistoryPanel(props as { divisionId: string; scheduleLocked: boolean; canEdit: boolean }),
-    { divisionId: "d1", scheduleLocked: false, canEdit: true },
-  );
+const render = (): Island =>
+  renderIsland<PanelProps>((props: PanelProps) => HistoryPanel(props), {
+    divisionId: "d1",
+    scheduleLocked: false,
+    canEdit: true,
+  });
 
 describe("HistoryPanel — the save-point eviction notice (#382)", () => {
   it("names the save point that was replaced, and how many the plan keeps", async () => {
@@ -137,7 +141,8 @@ describe("HistoryPanel — the save-point eviction notice (#382)", () => {
     const undo = island
       .tree()
       .find(
-        (el: ReactElement) => el.type === "button" && textOf(propsOf(el).children).includes("Undo"),
+        (el: ReactElement) =>
+          el.type === "button" && textOf(propsOf(el).children as ReactNode).includes("Undo"),
       );
     (propsOf(undo!).onClick as () => void)();
     await new Promise((r) => setTimeout(r, 0));

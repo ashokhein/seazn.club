@@ -34,6 +34,10 @@ export const PASS_FEATURES = new Set([
   "exports.branded",
   "sponsors.tiers",
   "sponsors.monetize",
+  // V353 (#382): the pass now lifts the competition-wide board. Community is
+  // still denied it, so this is a real paywall — and without the key here that
+  // paywall would show the Pro-only card to someone a $29 pass would clear.
+  "scheduling.multi_division",
   // scheduling.ai.runs_per_division.max retired (v17 Phase 2 Task 5, V322) —
   // the AI credit wallet meters runs on every tier now, so it no longer has a
   // plan_entitlements row for the pass to lift.

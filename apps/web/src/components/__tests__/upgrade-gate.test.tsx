@@ -50,9 +50,16 @@ const PASS_PRICE = formatMinor(passPrice("usd", "event_pass"), "usd"); // "$29"
 const FLOOR_USD = formatMinor(lowestPassRung("usd").amountMinor, "usd"); // "$29"
 const FLOOR_GBP = formatMinor(lowestPassRung("gbp").amountMinor, "gbp"); // "£25"
 
-/** A key the pass lifts, and one it can never lift. */
+/** A key the pass lifts, and one it can never lift.
+ *
+ *  `NOT_LIFTABLE` was `scheduling.multi_division` until V353 (#382) put that
+ *  key on the Event Pass column — which turned every "the pass never covered
+ *  this" assertion below into a claim about a key the pass now DOES cover.
+ *  `officials.auto` is an above-Pro (Pro Plus) key with no `event_pass` row at
+ *  all, so no pass can ever lift it. `upgrade-gate-pass-features.test.ts`
+ *  derives the real lifted set from the live matrix and reds if this drifts. */
 const LIFTABLE = "divisions.per_competition.max";
-const NOT_LIFTABLE = "scheduling.multi_division";
+const NOT_LIFTABLE = "officials.auto";
 
 // The CTA carries `?feature=<key>`: the upgrade page keys its ceiling state off
 // that param, the gate is the only place that knows which key was refused, and

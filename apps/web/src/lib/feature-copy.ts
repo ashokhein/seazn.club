@@ -67,9 +67,18 @@ const FEATURE_REASONS: Record<string, string> = {
   "clubs.max": "You've reached your plan's club limit.",
   "teams.max": "You've reached your plan's team limit.",
   "teams.squad_max": "This squad has reached your plan's size limit.",
-  "scheduling.constraints": "The scheduling constraints solver is a Pro feature.",
-  "scheduling.board": "Editing the schedule board is a Pro feature — it stays view-only on Community.",
-  "scheduling.multi_division": "The competition-wide schedule board is a Pro feature.",
+  // V353 (#382) opened `scheduling.board` and `scheduling.constraints` to every
+  // plan, so neither of these two can be reached from the ordinary plan gates
+  // any more. They stay: an entitlement override can still switch either key
+  // off for one org, and a paywall with no reason falls back to the flat "This
+  // feature needs a plan upgrade.", which reads as a bug next to a priced
+  // button. The wording no longer claims a plan.
+  "scheduling.constraints": "The scheduling constraints solver is not available on this plan.",
+  "scheduling.board": "Editing the schedule board is not available on this plan.",
+  // Still a real paywall — and since V353 an Event Pass lifts it for one
+  // competition, which is why the key is in `PASS_FEATURES`.
+  "scheduling.multi_division":
+    "The competition-wide schedule board is a Pro feature — or an Event Pass, for one competition.",
   "officials.auto": "Auto-assigning officials (solver, phased sourcing) is a Pro Plus feature — manual assignment still works.",
   "officials.roles_multi": "Multiple official roles per fixture (judge + referee) are a Pro feature.",
   "officials.per_fixture.max": "Community includes one official per fixture — more need Pro.",

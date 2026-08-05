@@ -8,7 +8,6 @@ import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { EngineError } from "@seazn/engine/core";
 import { sql, withTenant } from "@/lib/db";
-import { PaymentRequiredError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
@@ -331,7 +330,13 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
     }
   });
 
-  it("Community org: constraints/board are 402-gated, quick-start unaffected", async () => {
+  // Was "constraints/board are 402-gated". V353 (#382) opened
+  // `scheduling.constraints` and `scheduling.board` to every plan — a community
+  // organiser could already ask the AI for a schedule and then not drag one
+  // fixture of it. INVERTED rather than deleted: both gates still stand in
+  // `putScheduleSettings`, `applySchedule` and `moveFixture`, so an unapplied
+  // migration or an override switching either key back off reds this test.
+  it("Community org: constraints/board are open, quick-start unaffected (#382)", async () => {
     const { auth } = await seedOrg("community");
     const competition = await createCompetition(auth, { name: "Club Night", visibility: "private", branding: {} });
     const division = await createDivision(auth, competition.id, {
@@ -346,19 +351,20 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
     ]);
     const [stage] = await createStages(auth, division.id, { seq: 1, kind: "league", name: "L", config: {} });
 
-    // Constraint solver fields → 402 scheduling.constraints (doc 12 §5).
-    await expect(
-      putScheduleSettings(auth, division.id, {
-        config: {
-          startAt: T0, matchMinutes: 30, gapMinutes: 0,
-          courts: ["C1", "C2"], // multi-court is the constraint solver
-          perEntrantMinRest: 0, blackouts: [], sessionWindows: [],
-        },
-        tz: "UTC",
-      }),
-    ).rejects.toMatchObject({ featureKey: "scheduling.constraints" });
+    // Constraint solver fields: stored, not refused (#382). Two courts is what
+    // trips `usesConstraints`, and the stored value is read back so a no-op
+    // write cannot pass this.
+    const constrained = await putScheduleSettings(auth, division.id, {
+      config: {
+        startAt: T0, matchMinutes: 30, gapMinutes: 0,
+        courts: ["C1", "C2"], // multi-court is the constraint solver
+        perEntrantMinRest: 0, blackouts: [], sessionWindows: [],
+      },
+      tz: "UTC",
+    });
+    expect(constrained.config.courts).toEqual(["C1", "C2"]);
 
-    // Basic single-court settings + basic auto are Community features.
+    // Back to a single court for the auto-schedule assertions below.
     await putScheduleSettings(auth, division.id, {
       config: {
         startAt: T0, matchMinutes: 30, gapMinutes: 0,
@@ -376,16 +382,19 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
       source: "auto",
     });
 
-    // Board editing (pins, manual assignment sets) is Pro (view-only board).
-    await expect(
-      patchFixture(auth, fixtures[0]!.id, { schedule_locked: true }),
-    ).rejects.toBeInstanceOf(PaymentRequiredError);
-    await expect(
-      applySchedule(auth, stage.id, {
-        assignments: [{ fixture_id: fixtures[0]!.id, scheduled_at: at(600), court_label: "C1" }],
-        source: "manual",
-      }),
-    ).rejects.toMatchObject({ featureKey: "scheduling.board" });
+    // Board editing (pins, manual assignment sets) is open too (#382). Both
+    // `scheduling.board` branches are exercised — the pin on `moveFixture` and
+    // `source: "manual"` on `applySchedule` — and each is read back, so a call
+    // that returned quietly without writing cannot pass.
+    await patchFixture(auth, fixtures[0]!.id, { schedule_locked: true });
+    await applySchedule(auth, stage.id, {
+      assignments: [{ fixture_id: fixtures[0]!.id, scheduled_at: at(600), court_label: "C1" }],
+      source: "manual",
+    });
+    const [pinned] = await sql<{ schedule_locked: boolean; court_label: string | null }[]>`
+      select schedule_locked, court_label from fixtures where id = ${fixtures[0]!.id}`;
+    expect(pinned!.schedule_locked).toBe(true);
+    expect(pinned!.court_label).toBe("C1");
 
     // Quick-start unaffected: start opens scoring immediately.
     const started = await startDivision(auth, division.id);
