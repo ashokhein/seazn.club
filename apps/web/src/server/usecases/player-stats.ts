@@ -23,6 +23,21 @@ interface EventRow {
   voids_event_id: string | null;
 }
 
+/** Follow `persons.merged_into` to a person who is not themselves a tombstone
+ *  (#404). A merge flattens every inbound tombstone onto the new survivor, so
+ *  one hop is the invariant — the walk is the belt to that braces, and its cap
+ *  means a chain that somehow cycled degrades to a wrong-but-terminating
+ *  attribution rather than hanging every stats read in the division. */
+function liveSurvivor(personId: string, survivorOf: ReadonlyMap<string, string>): string {
+  let id = personId;
+  for (let hops = 0; hops < 16; hops += 1) {
+    const next = survivorOf.get(id);
+    if (next === undefined || next === id) break;
+    id = next;
+  }
+  return id;
+}
+
 /** Refold every fixture's ledger into the division snapshot (Jul3/07 §2 —
  *  rebuildable at any time; the CI-style consistency check refolds and
  *  compares). Returns the fresh rows. */
@@ -59,7 +74,25 @@ export async function recomputePlayerStats(
     (byFixture.get(e.fixture_id) ?? byFixture.set(e.fixture_id, []).get(e.fixture_id)!).push(envelope);
   }
   const perFixture = [...byFixture.values()].map((ledger) => aggregatePlayerStats(ledger, model));
-  const rows = sumPlayerStats(perFixture, model);
+  // #404: a merged person's id still appears in every historical score event,
+  // and this fold reads the person id out of the payload — so without a
+  // relabel a refold rebuilds a snapshot row for the tombstone and the
+  // survivor never inherits those stats. One org-scoped lookup per recompute,
+  // not one per fixture; `withTenant` has already set current_org_id().
+  // The relabel happens BEFORE sumPlayerStats so the engine's own summation
+  // combines the two histories and re-derives ratio metrics; relabelling after
+  // the sum would mean re-implementing that arithmetic here.
+  const tombstones = await tx<{ id: string; merged_into: string }[]>`
+    select id, merged_into from persons
+    where merged_into is not null and org_id = current_org_id()`;
+  const survivorOf = new Map(tombstones.map((r) => [r.id, r.merged_into]));
+  const relabelled = perFixture.map((fixture) =>
+    fixture.map((row) => {
+      const survivor = liveSurvivor(row.personId, survivorOf);
+      return survivor === row.personId ? row : { ...row, personId: survivor };
+    }),
+  );
+  const rows = sumPlayerStats(relabelled, model);
 
   await tx`delete from player_stat_snapshots where division_id = ${divisionId}`;
   for (const row of rows) {
