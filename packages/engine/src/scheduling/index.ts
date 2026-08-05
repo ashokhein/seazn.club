@@ -14,6 +14,9 @@ export * from "./tz.ts";
 // The build solver (this plan). Pure metrics first — no z3 anywhere in here.
 export * from "./build-objectives.ts";
 export * from "./build-grid.ts";
+// The boolean model over that lattice. Free to name here for the same reason
+// the repair block below is: its only `z3-solver` reference is `import type`.
+export * from "./build-encode.ts";
 // The repair solver (#401). All three are free to name here: `z3-load.ts`'s
 // only `z3-solver` reference is `import type`, and the WASM stays behind the
 // dynamic import inside `loadZ3`, so importing this barrel costs nothing.
