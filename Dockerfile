@@ -1,5 +1,5 @@
 # ── Stage 1: install all deps (including devDeps for build) ──────────────────
-FROM node:22-alpine AS builder
+FROM node:26-alpine AS builder
 WORKDIR /app
 
 # Workspace manifests first so `npm ci` layer caches across source changes.
@@ -41,7 +41,7 @@ ENV SENTRY_AUTH_TOKEN=$SENTRY_AUTH_TOKEN
 RUN SKIP_TYPECHECK=1 npm run build --workspace apps/web
 
 # ── Stage 2: minimal production image ────────────────────────────────────────
-FROM node:22-alpine AS runner
+FROM node:26-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
