@@ -396,7 +396,64 @@ describe.skipIf(!HAS_DB)("autoSchedule dispatch (Task 9)", () => {
     expect(out.assignments).toHaveLength(created);
     expect(out.metrics.placed).toBe(created);
     expect(out.conflicts.filter((c) => c.blocking)).toHaveLength(0);
+    // A greedy seed IS a move. Counting only the repair solver's own moves made
+    // this run — which just scheduled the entire stage — report `moved: 0`, and
+    // the result strip renders that as "nothing moved": the plainest possible
+    // contradiction of what the organiser watched happen.
+    expect(out.solver.moved).toBe(created);
   }, 120_000);
+
+  /**
+   * BUILD honouring a `locked` anchor, on a board that is SOLVABLE.
+   *
+   * This is the coverage the reflow conversion took away. `schedule.test.ts`
+   * used to prove it through `slotFixtures`, but its pin assertions became
+   * tautological once that call became a REFLOW: `reflowExisting`'s `settle`
+   * copies the pinned cards back verbatim from the DB row, so
+   * `scheduled_at === pinned.scheduled_at` cannot fail there whatever the solver
+   * does. Nothing else covered it — the only other build + `only_unlocked: true`
+   * case in this file asserts `infeasible`, which proves the pins were READ but
+   * not that a board was built around them.
+   */
+  it("build honours a locked anchor and schedules the rest around it", async () => {
+    const auth = await seedOrg();
+    const { stageId, created } = await seedStage(auth, 4);
+    expect(created).toBe(6);
+
+    const rows = await sql<{ id: string }[]>`
+      select id from fixtures where stage_id = ${stageId} order by id`;
+    const pinned = rows[0]!;
+
+    // Ten hours out, on the second court: nowhere a compacting placer would put
+    // a card of a six-fixture board, so "it stayed" cannot be an accident of
+    // greedy happening to agree with the pin.
+    await applySchedule(auth, stageId, {
+      assignments: [{ fixture_id: pinned.id, scheduled_at: at(600), court_label: "C2" }],
+      source: "manual",
+    });
+    await patchFixture(auth, pinned.id, { schedule_locked: true });
+
+    const out = await autoSchedule(auth, stageId, { only_unlocked: true, mode: "build" });
+
+    // Solvable: every card placed, nothing blocking. Without this the pin
+    // assertion below would pass just as well on a board the solver gave up on.
+    expect(out.metrics.placed).toBe(created);
+    expect(out.conflicts.filter((c) => c.blocking)).toHaveLength(0);
+
+    const proposed = out.assignments.find((a) => a.fixture_id === pinned.id);
+    expect(proposed?.scheduled_at).toBe(at(600));
+    expect(proposed?.court_label).toBe("C2");
+    // …and the solver worked AROUND the anchor rather than freezing onto it.
+    // Keyed on fixture id, not on the timestamp: another card may legitimately
+    // sit at 19:00 on the OTHER court, and an assertion that counted timestamps
+    // would call that a failure.
+    const others = out.assignments.filter((a) => a.fixture_id !== pinned.id);
+    expect(others).toHaveLength(created - 1);
+    // Nothing double-booked onto the anchor's own slot.
+    expect(others.some((a) => a.scheduled_at === at(600) && a.court_label === "C2")).toBe(false);
+    // The board is spread over time rather than collapsed onto the pin.
+    expect(new Set(others.map((a) => a.scheduled_at)).size).toBeGreaterThan(1);
+  }, 180_000);
 
   it("polish never moves a locked card", async () => {
     const auth = await seedOrg();
