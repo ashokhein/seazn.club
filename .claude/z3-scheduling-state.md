@@ -49,3 +49,4 @@ z3 `rlimit`, not wall clock.
 ## Task log
 
 - [x] Task 0 — worktree, install, traps checked, baseline recorded
+- [x] Task 1 — build-objectives.ts + 11 unit tests
