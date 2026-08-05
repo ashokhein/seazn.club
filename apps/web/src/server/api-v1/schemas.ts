@@ -852,17 +852,80 @@ export const ScheduleAssignment = z.object({
 });
 export type ScheduleAssignment = z.infer<typeof ScheduleAssignment>;
 
-/** POST /stages/{id}/schedule/auto — propose only, nothing persisted (doc 12 §4). */
-export const AutoScheduleRequest = z.object({
-  /** true (default) = re-flow unlocked fixtures only, locked ones are fixed
-   *  obstacles ("re-flow remaining", doc 12 §2); false = fresh full pass. */
-  only_unlocked: z.boolean().default(true),
-});
+/** POST /stages/{id}/schedule/auto — propose only, nothing persisted (doc 12 §4).
+ *
+ *  `mode` has a default DERIVED from another field, which `.default()` cannot
+ *  express. The obvious `.object({...}).transform(...)` is a trap here:
+ *  openapi.ts converts every registered schema with `z.toJSONSchema(…, { io:
+ *  "output" })`, and a trailing transform is the OUTPUT node, so the whole
+ *  generator dies with "Transforms cannot be represented in JSON Schema" —
+ *  the same hazard AiApplyMeta's comment above warns about.
+ *
+ *  `z.preprocess` pipes the other way: the transform is the INPUT node and the
+ *  plain object is the output, so `io: "output"` converts cleanly and `mode`
+ *  is a required, non-optional string on the inferred type (which the usecase
+ *  branches on without a null check).
+ *
+ *  Consequence to know: `mode` is listed in the spec's `required` even though
+ *  callers need not send it — exactly how the pre-existing defaulted
+ *  `only_unlocked` has always rendered. Every existing caller keeps its
+ *  behaviour: re-flowing is a REFLOW, a fresh pass is a BUILD. */
+export const AutoScheduleRequest = z.preprocess(
+  (value) => {
+    // Let the object schema own the error for non-objects.
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+    const body = value as Record<string, unknown>;
+    if (body.mode !== undefined) return body;
+    // `=== false` and not `!body.only_unlocked`: an absent flag defaults to
+    // true, so it must derive "reflow", not "build".
+    return { ...body, mode: body.only_unlocked === false ? "build" : "reflow" };
+  },
+  z.object({
+    /** true (default) = re-flow unlocked fixtures only, locked ones are fixed
+     *  obstacles ("re-flow remaining", doc 12 §2); false = fresh full pass. */
+    only_unlocked: z.boolean().default(true),
+    /** Which solver this run is asking for. Absent is derived from
+     *  `only_unlocked` by the preprocess above. */
+    mode: z.enum(["build", "reflow", "polish"]),
+  }),
+);
 export type AutoScheduleRequest = z.infer<typeof AutoScheduleRequest>;
+
+/** Board quality of a proposal. snake_case on the wire; the engine's camelCase
+ *  equivalents are mapped across at the usecase seam, once. */
+export const ScheduleMetrics = z.object({
+  makespan_minutes: z.number(),
+  worst_idle_gap_minutes: z.number(),
+  court_imbalance_minutes: z.number(),
+  placed: z.number().int(),
+  total: z.number().int(),
+});
+export type ScheduleMetrics = z.infer<typeof ScheduleMetrics>;
+
+/** How the proposal was produced — telemetry, not policy. `status` tracks the
+ *  engine's BuildStatus union one-for-one. */
+export const ScheduleSolverInfo = z.object({
+  engine: z.enum(["greedy", "z3", "z3+lns"]),
+  status: z.enum([
+    "ok",
+    "already_optimal",
+    "infeasible",
+    "verifier_rejected",
+    "z3_unavailable",
+    "solver_busy",
+  ]),
+  tiers_completed: z.number().int(),
+  budget_expired: z.boolean(),
+  elapsed_ms: z.number(),
+  moved: z.number().int(),
+});
+export type ScheduleSolverInfo = z.infer<typeof ScheduleSolverInfo>;
 
 export const AutoScheduleResult = z.object({
   assignments: z.array(ScheduleAssignment),
   conflicts: z.array(ScheduleConflict),
+  metrics: ScheduleMetrics,
+  solver: ScheduleSolverInfo,
 });
 
 /** POST /stages/{id}/schedule/apply — persist an assignment set. */
