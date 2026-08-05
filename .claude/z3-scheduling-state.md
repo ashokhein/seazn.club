@@ -52,3 +52,23 @@ z3 `rlimit`, not wall clock.
 - [x] Task 1 — build-objectives.ts + 11 unit tests
 - [x] Task 2 — build-grid.ts + 14 unit tests
 - [x] Task 3 — build-encode.ts + parity suite
+
+## Mid-flight state (2026-08-05) — the SDD ledger is the fuller record
+
+**Read `.superpowers/sdd/2026-08-05-z3-auto-schedule/progress.md` FIRST.** It has a
+"RESUME HERE AFTER COMPACTION" block at the top with live lane state, running
+worktrees, and the task order.
+
+Complete: T1 metrics · T2 lattice · T3 encoder · T3b typed rules · T4 solver loop ·
+T8 API · #230 item 4. Merged into this branch @ `4fa9dbab`.
+
+Owner rulings taken mid-flight, all in the ledger with reasoning: delta verifier
+gate (R1), legal-only seed (R2), configured courts only (R3), `infeasible` names
+the pins not the board (R4), POLISH freezes on LOCKS ONLY since there is no
+per-fixture published flag (R5), publish gate blocks with an explicit override
+(R6), `verifier_rejected` shows a neutral note (R7), `solver_busy` says so and
+offers retry (R8).
+
+The single most useful thing learned: **every Critical and Important finding so far
+has been in code or tests the controller authored into the plan, not in implementer
+work.** Treat the plan's test files as drafts and mutation-prove everything.
