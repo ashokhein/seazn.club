@@ -698,13 +698,21 @@ export async function buildSchedulePack(
       (f) => !movableSet.has(f.id) && f.scheduled_at !== null && f.court_label !== null,
     );
     const obstacleAssignments = obstacleFixtures.map((f) => toAssignment(f, matchMinutes, guardedPeople));
-    const siblingsRaw = await siblingAssignments(
-      tx,
-      divisionId,
-      division.competition_id,
-      matchMinutes,
-      opts.excludeDivisionIds ?? [],
-    );
+    // `.assignments` only (#462): this list becomes `pack.fixtures.obstacles`,
+    // which is a COURT BOOKING shape carrying no ids at all — the pack cannot
+    // express a sibling's rule identity, and the AI verify seam builds its
+    // `ruleFixtures` from `pack.fixtures.movable` instead. The board paths in
+    // `schedule.ts` are the ones that both hold siblings AND build the config
+    // from rows, and they are the ones changed.
+    const siblingsRaw = (
+      await siblingAssignments(
+        tx,
+        divisionId,
+        division.competition_id,
+        matchMinutes,
+        opts.excludeDivisionIds ?? [],
+      )
+    ).assignments;
     // BOTH the raw person id and its guarded key, deliberately — the same shape
     // `buildCompetitionPack` uses for `fixedOccupancy`, and for the same reason.
     // `siblingAssignments` reads `peopleByEntrant` directly, so it emits raw
