@@ -47,6 +47,12 @@ import { withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { MOVABLE_STATUS, OCCUPYING, peopleByEntrant } from "./schedule";
+import {
+  AI_VERIFY_POLICY,
+  buildEngineConstraints,
+  resolvePersonScopes,
+  toEngineStartWindows,
+} from "./engine-constraints";
 import { ScheduleConfig } from "@/server/api-v1/schemas";
 import {
   MAX_REPAIR_ROUNDS,
@@ -163,6 +169,22 @@ const FIXED_OCCUPYING = OCCUPYING.filter((s) => s !== MOVABLE_STATUS);
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const ms = (iso: string): number => Date.parse(iso);
 
+/** A sub-pack's settings with every person scope moved into the RUN's identity
+ *  namespace (#450). Returned by reference when there is nothing to resolve, so
+ *  a settings block with no durable rules is byte-identical to what the
+ *  sub-pack produced — the joint pack's determinism test compares
+ *  `JSON.stringify`, and a rebuilt object is a chance to reorder keys. */
+function withResolvedPersonScopes(
+  s: PackSettings,
+  keyOf: (personId: string) => string,
+): PackSettings {
+  if (s.constraints === null || s.constraints.hard === undefined) return s;
+  return {
+    ...s,
+    constraints: { ...s.constraints, hard: resolvePersonScopes(s.constraints.hard, keyOf) },
+  };
+}
+
 /**
  * The shape `personKeyResolver` (schedule-ai.ts) renders a same-name grouping in.
  *
@@ -192,7 +214,12 @@ export interface CompetitionPackDivision {
   sport: string;
   tz: string;
   /** That division's own settings, verbatim — never merged with a sibling's.
-   *  matchMinutes/gapMinutes/sessionWindows/blackouts legitimately differ. */
+   *  matchMinutes/gapMinutes/sessionWindows/blackouts legitimately differ.
+   *
+   *  ONE exception, and it is not a merge: `constraints.hard[].scope.personKey`
+   *  is re-resolved through the run-wide identity (#450), because that scope is
+   *  the only field on here whose namespace is decided by the RUN rather than by
+   *  the division. See `withResolvedPersonScopes`. */
   settings: PackSettings;
   /** This division's movable fixture ids, in the pack's movable order. */
   movableIds: string[];
@@ -269,6 +296,14 @@ export interface CompetitionPack {
    *  and {@link toJointEngineAssignments}, so a draft cannot be legal under a
    *  rule the joint referee applies differently. */
   participants: Record<string, string[]>;
+  /** Movable fixture id → its pool's UUID (#449), unioned from the source packs.
+   *  The joint twin of {@link SchedulePack.poolIds}, server-side only for the
+   *  same reason: `CompetitionPackFixture.pool` stays the display KEY the model
+   *  reads, while the engine, the DB and every stored rule speak the uuid.
+   *
+   *  Keys inserted in `fixtures.movable` order, so the object serialises in a
+   *  domain order rather than a per-seed one. */
+  poolIds: Record<string, string>;
   /** Deterministic preprocessing choices worth telling the organiser about:
    *  stripped bye feeders (from each source pack) and the run-wide same-name
    *  person grouping. Rendered at W5 (#400). */
@@ -309,7 +344,7 @@ export interface CompetitionPack {
  */
 export function toJointModelPayload(
   pack: CompetitionPack,
-): Omit<CompetitionPack, "participants" | "assumptions"> {
+): Omit<CompetitionPack, "participants" | "assumptions" | "poolIds"> {
   return {
     mode: pack.mode,
     competition: pack.competition,
@@ -744,7 +779,19 @@ export async function buildCompetitionPack(
     name: b.pack.division.name,
     sport: b.pack.division.sport,
     tz: b.pack.division.tz,
-    settings: b.pack.settings,
+    // #450: re-resolved through the RUN-WIDE identity, not left as the sub-pack
+    // produced it. `buildSchedulePack` already collapsed each division's rules
+    // with that division's own resolver, but the case this module exists for is
+    // the one a per-division resolver structurally cannot see: one human under
+    // two `persons` rows in two DIFFERENT divisions. The joint verifier compares
+    // these rules against `participants`, which ARE run-guarded (built from
+    // `guardedPeople` above), so a rule left holding a raw uuid binds nothing on
+    // exactly the boards this path was built for.
+    //
+    // Safe to apply twice: `keyOf` is a lookup on raw person ids, so a
+    // `name:<normalised>` key the sub-pack already produced is not in the map
+    // and passes through untouched.
+    settings: withResolvedPersonScopes(b.pack.settings, identity.keyOf),
     movableIds: b.pack.fixtures.movable.map((f) => f.id),
     // PLACED, not present: since #397 a draft row can carry `scheduled_at:
     // null` (an epoch sentinel the pack refused to pass off as a time), and
@@ -797,6 +844,18 @@ export async function buildCompetitionPack(
   // `JSON.stringify`, where key insertion order is load-bearing).
   const participants: Record<string, string[]> = {};
   for (const f of movable) participants[f.id] = participantsByFixture.get(f.id) ?? [];
+
+  // #449: the pool UUID per movable fixture, unioned from the source packs (each
+  // built its own map off `fixtures.pool_id`). Same insertion order as
+  // `participants`, and for the same byte-identical reason.
+  const poolIdBySourceFixture = new Map(
+    built.flatMap((b) => Object.entries(b.pack.poolIds)),
+  );
+  const poolIds: Record<string, string> = {};
+  for (const f of movable) {
+    const id = poolIdBySourceFixture.get(f.id);
+    if (id !== undefined) poolIds[f.id] = id;
+  }
 
   // Bye-strip assumptions come from the source packs, in the emitted division
   // order. Identity is reported once, jointly — see IDENTITY_ASSUMPTION.
@@ -984,6 +1043,7 @@ export async function buildCompetitionPack(
     entrants,
     people,
     participants,
+    poolIds,
     assumptions,
     parsed: { hard: resolved.hard, soft: resolved.soft, unparsed: resolved.unparsed },
     fixtures: { movable, obstacles },
@@ -1143,7 +1203,12 @@ export function toJointEngineAssignments(plan: AiSchedulePlan, pack: Competition
       // this read green on a pack that never computed the map.
       people: pack.participants[a.fixture_id] ?? [],
       divisionId: f.division_id,
-      ...(f.pool != null ? { poolId: f.pool } : {}),
+      // #449: the pool UUID from `pack.poolIds`, NOT `f.pool` — that is the
+      // display key the model reads, and it is not even unique across the
+      // divisions this pack spans.
+      ...(pack.poolIds[a.fixture_id] !== undefined
+        ? { poolId: pack.poolIds[a.fixture_id]! }
+        : {}),
     };
   });
 }
@@ -1272,55 +1337,40 @@ export function verifyConfigFor(
       : {}),
     perEntrantMinRest: s.perEntrantMinRest,
     matchMinutes: s.matchMinutes,
+    // Through the ONE builder (#458) the board path and the single-division AI
+    // path also go through. `AI_VERIFY_POLICY` pins the three solver knobs inert
+    // — `PackConstraints` types them as bare `string` (the pack is a wire shape)
+    // so this path cannot narrow them — and routes the durable rules to the
+    // top-level `hard` field rather than `constraints.hard`, since
+    // `effectiveHard` merges the two and carrying both would double-count.
+    //
+    // The builder DROPS a start window whose `target.kind` falls outside the
+    // engine's enum, which is the behaviour this site had and the other two did
+    // not. Same reason as ever: `kind` is a bare `string` here, so casting an
+    // unrecognised one through would let the engine silently never match it and
+    // hide that a stored settings row has drifted from the enum.
+    //
+    // PLAN-TIME CONSEQUENCE of carrying start windows at all, flagged rather
+    // than left to be discovered: this function feeds `verifyJoint`, whose
+    // non-blocking conflicts become `result.warnings`, which `planIsAcceptable`
+    // divides by the movable count against SCHEDULING_AI_ESCALATE_WARN_RATIO
+    // (schedule-ai.ts). So `start_window` violations count toward ladder
+    // escalation, and a joint plan that used to look acceptable can escalate a
+    // rung.
+    //
+    // Kept in the ratio on purpose. The pack SHOWS the model these windows
+    // (`PackSettings.constraints.startWindows`), so ignoring them is a real
+    // quality miss — and every other soft constraint the model is shown
+    // (blackout, session window, rest, person overlap) already counts, so
+    // excluding one class would make the heuristic inconsistent in a way nobody
+    // would remember. It cannot change what an org is charged: credits are
+    // quoted up front and escalation spends the already-paid budget. It CAN
+    // bring `stopped_on_budget` forward, which is the honest cost. The ratio is
+    // documented as uncalibrated and is an env knob — that is where it should be
+    // tuned, not by hand-picking which reasons count. Pinned by a test in
+    // competition-schedule-verify.test.ts.
     ...(s.constraints !== null
-      ? {
-          constraints: {
-            ...(s.constraints.restMin !== undefined ? { restMin: s.constraints.restMin } : {}),
-            ...(s.constraints.restByGroup !== undefined
-              ? { restByGroup: s.constraints.restByGroup }
-              : {}),
-            noBackToBack: s.constraints.noBackToBack,
-            // PLAN-TIME CONSEQUENCE, flagged rather than left to be discovered:
-            // this function feeds `verifyJoint`, whose non-blocking conflicts
-            // become `result.warnings`, which `planIsAcceptable` divides by the
-            // movable count against SCHEDULING_AI_ESCALATE_WARN_RATIO
-            // (schedule-ai.ts:1333). So `start_window` violations now count
-            // toward ladder escalation, and a joint plan that used to look
-            // acceptable can escalate a rung.
-            //
-            // Kept in the ratio on purpose. The pack SHOWS the model these
-            // windows (`PackSettings.constraints.startWindows`), so ignoring
-            // them is a real quality miss — and every other soft constraint the
-            // model is shown (blackout, session window, rest, person overlap)
-            // already counts, so excluding one class would make the heuristic
-            // inconsistent in a way nobody would remember. It cannot change what
-            // an org is charged: credits are quoted up front and escalation
-            // spends the already-paid budget. It CAN bring `stopped_on_budget`
-            // forward, which is the honest cost. The ratio is documented as
-            // uncalibrated and is an env knob — that is where it should be tuned,
-            // not by hand-picking which reasons count. Pinned by a test in
-            // competition-schedule-verify.test.ts.
-            //
-            // `PackStartWindow.target.kind` is a bare `string` (the pack is a
-            // wire shape), so an unrecognised kind is DROPPED rather than cast
-            // through: the engine would silently never match it, and a cast
-            // would hide that a settings row has drifted from the enum.
-            startWindows: s.constraints.startWindows.flatMap((w) =>
-              w.target.kind === "entrant" || w.target.kind === "pool" || w.target.kind === "division"
-                ? [
-                    {
-                      target: { kind: w.target.kind, id: w.target.id },
-                      ...(w.notBefore !== undefined ? { notBefore: ms(w.notBefore) } : {}),
-                      ...(w.notAfter !== undefined ? { notAfter: ms(w.notAfter) } : {}),
-                    },
-                  ]
-                : [],
-            ),
-            fieldFairness: "off" as const,
-            parallelism: "mixed" as const,
-            crossPersonClash: "warn" as const,
-          },
-        }
+      ? { constraints: buildEngineConstraints(s.constraints, AI_VERIFY_POLICY) }
       : {}),
     gapMinutes: s.gapMinutes,
     blackouts: s.blackouts.map((b) => ({
@@ -1381,7 +1431,10 @@ export function jointSolverConfig(pack: CompetitionPack): VerifyConfig & { court
   // `toRuleFixture`. Each fixture's OWN division, because a joint pack spans
   // several.
   const ruleFixtures: RuleFixture[] = pack.fixtures.movable.map((f) =>
-    toRuleFixture(f, f.division_id),
+    // #449: the pool UUID, overriding the display key `pool` carries. A
+    // RuleFixture's poolId MASKS its assignment's in `scopeCoversFixture`, so a
+    // key here would defeat the uuid stamped by `toJointEngineAssignments`.
+    toRuleFixture({ ...f, pool: pack.poolIds[f.id] ?? null }, f.division_id),
   );
   const settings = divisions.map((d) => d.settings);
   const max = (pick: (s: (typeof settings)[number]) => number): number =>
@@ -1429,19 +1482,13 @@ export function jointSolverConfig(pack: CompetitionPack): VerifyConfig & { court
             // Start windows are TARGETED by entrant, pool or division id, so the
             // union is exact rather than conservative: a division's window binds
             // that division's fixtures and no others.
-            startWindows: withConstraints.flatMap((c) =>
-              c.startWindows.flatMap((w) =>
-                w.target.kind === "entrant" || w.target.kind === "pool" || w.target.kind === "division"
-                  ? [
-                      {
-                        target: { kind: w.target.kind, id: w.target.id },
-                        ...(w.notBefore !== undefined ? { notBefore: ms(w.notBefore) } : {}),
-                        ...(w.notAfter !== undefined ? { notAfter: ms(w.notAfter) } : {}),
-                      },
-                    ]
-                  : [],
-              ),
-            ),
+            //
+            // The per-window transform is the SHARED one (#458) — this config
+            // unions several divisions and so has no single `constraints` source
+            // to hand `buildEngineConstraints`, but a hand-written copy of the
+            // ISO→ms conversion and the unrecognised-kind drop is exactly the
+            // duplication that produced #458.
+            startWindows: withConstraints.flatMap((c) => toEngineStartWindows(c.startWindows)),
             fieldFairness: "off" as const,
             parallelism: "mixed" as const,
             crossPersonClash: "warn" as const,
@@ -1552,7 +1599,10 @@ export function verifyJoint(plan: AiSchedulePlan, pack: CompetitionPack): Confli
   // solver must be handed rule fixtures built by ONE piece of code, or they can
   // disagree about which fixture a feed edge names.
   const ruleFixtures: RuleFixture[] = pack.fixtures.movable.map((f) =>
-    toRuleFixture(f, f.division_id),
+    // #449: the pool UUID, overriding the display key `pool` carries. A
+    // RuleFixture's poolId MASKS its assignment's in `scopeCoversFixture`, so a
+    // key here would defeat the uuid stamped by `toJointEngineAssignments`.
+    toRuleFixture({ ...f, pool: pack.poolIds[f.id] ?? null }, f.division_id),
   );
   const hard: HardConstraint[] = [
     ...pack.parsed.hard,

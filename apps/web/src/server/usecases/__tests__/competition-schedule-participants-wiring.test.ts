@@ -539,10 +539,15 @@ describe.skipIf(!HAS_DB)("CompetitionPack.participants is wired into both joint 
     expect("participants" in payload).toBe(false);
     expect("assumptions" in payload).toBe(false);
     expect(JSON.stringify(payload)).not.toContain("participants");
+    // `poolIds` (#449) is stripped for the same reason: the model schedules by
+    // pool LABEL, which `fixtures.movable[].pool` still carries.
+    expect("poolIds" in payload).toBe(false);
     // Everything else survives the trim byte-for-byte.
     expect(payload).toEqual(
       Object.fromEntries(
-        Object.entries(pack).filter(([k]) => k !== "participants" && k !== "assumptions"),
+        Object.entries(pack).filter(
+          ([k]) => k !== "participants" && k !== "assumptions" && k !== "poolIds",
+        ),
       ),
     );
     // …while the map the placer and the referee read is still complete.

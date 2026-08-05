@@ -115,7 +115,9 @@ describe("ApplyScheduleRequest.ai (v4/03 §10)", () => {
   it("Fixture response schema accepts schedule_source 'ai'", () => {
     const row = {
       id: randomUUID(), stage_id: randomUUID(), division_id: randomUUID(), pool_id: null,
-      round_no: 1, seq_in_round: 1, home_entrant_id: null, away_entrant_id: null,
+      // `fixtures.fixture_no` is NOT NULL and rides `FIXTURE_COLS`, so every
+      // served fixture carries it; the schema declares it since #461.
+      round_no: 1, seq_in_round: 1, fixture_no: 1, home_entrant_id: null, away_entrant_id: null,
       scheduled_at: null, venue: null, court_label: null, officials: [], status: "scheduled",
       outcome: null, schedule_source: "ai", schedule_locked: false, created_at: T0,
     };
@@ -178,7 +180,7 @@ describe.skipIf(!HAS_DB)("AI audit trail in the ledger (v4/03 §10)", () => {
     // Binding #1 (integration): the persisted fixtures read back through the
     // Fixture response schema with schedule_source "ai".
     const rows = await sql`
-      select id, stage_id, division_id, pool_id, round_no, seq_in_round,
+      select id, stage_id, division_id, pool_id, round_no, seq_in_round, fixture_no,
              home_entrant_id, away_entrant_id, scheduled_at, venue, court_label,
              officials, status, outcome, schedule_source, schedule_locked, created_at
       from fixtures where stage_id = ${stage.id} and scheduled_at is not null limit 1`;

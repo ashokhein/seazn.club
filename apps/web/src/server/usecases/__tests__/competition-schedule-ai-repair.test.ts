@@ -82,6 +82,8 @@ function makePack(): CompetitionPack {
     entrants: [],
     people: [],
     participants: { [F1]: [], [F2]: [] },
+    // #449: no pooled fixtures in this pack, so no pool uuids to carry.
+    poolIds: {},
     assumptions: [],
     fixtures: {
       movable: [

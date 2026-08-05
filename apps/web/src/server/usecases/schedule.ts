@@ -41,6 +41,7 @@ import {
   type ScheduleConflict,
 } from "@/server/api-v1/schemas";
 import { sendOfficialAssignmentChangedEmail } from "@/lib/email";
+import { buildEngineConstraints } from "./engine-constraints";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 import { generateStageFixtures } from "./stages";
 import { schedulingAiModel, toRuleFixture } from "./schedule-ai";
@@ -346,6 +347,27 @@ export function feedDependencies(fixtures: readonly FixtureLite[]): OrderDepende
   return deps;
 }
 
+/** A sibling division's board, in the TWO shapes the engine needs it in (#462).
+ *
+ *  `assignments` is the court occupancy — what it has always been. `ruleFixtures`
+ *  is the rule identity of those same rows, and it is not decoration: the day-cap
+ *  tally counts only the `existing` entries it can NAME
+ *  (`existing.filter((e) => fixtureById.has(e.fixtureId))`, where `fixtureById`
+ *  comes from `config.ruleFixtures`), and every `terminal`/`ext_key` selector
+ *  resolves through the same list. An `Assignment` cannot carry `extKey` or
+ *  `winnerTo` — the fields are not on the type — so serving occupancy alone made
+ *  a competition-scoped rule undercount by exactly the number of cross-division
+ *  fixtures involved, in the direction that reports a breached board as clean.
+ *
+ *  Returned as a pair rather than as a second exported query on purpose: the two
+ *  halves describe the same rows, and a caller that fetched one without the
+ *  other is the defect. Both must reach `validateAssignments` — the occupancy as
+ *  `existing`, the identity through `toVerifyConfig`'s `extraRuleFixtures`. */
+export interface SiblingBoard {
+  assignments: Assignment[];
+  ruleFixtures: RuleFixture[];
+}
+
 // Sibling divisions' timetables (doc 06 §4.3): fixed court occupancy for the
 // pass, and the source of cross-division person-overlap warnings. Durations
 // use each sibling's own matchMinutes when it has settings.
@@ -365,7 +387,7 @@ export async function siblingAssignments(
    *  them at the source is what makes "this obstacle is from outside the run" a
    *  fact instead of a slot-key guess. */
   excludeDivisionIds: readonly string[] = [],
-): Promise<Assignment[]> {
+): Promise<SiblingBoard> {
   const excluded = [...new Set([divisionId, ...excludeDivisionIds])];
   const rows = await tx<FixtureLite[]>`
     select ${tx(FIXTURE_LITE_COLS)} from fixtures
@@ -373,7 +395,7 @@ export async function siblingAssignments(
                           where competition_id = ${competitionId} and id not in ${tx(excluded)})
       and scheduled_at is not null and court_label is not null
       and status in ${tx(OCCUPYING)}`;
-  if (rows.length === 0) return [];
+  if (rows.length === 0) return { assignments: [], ruleFixtures: [] };
   const settings = await tx<{ division_id: string; config: unknown }[]>`
     select division_id, config from schedule_settings
     where division_id in ${tx([...new Set(rows.map((r) => r.division_id))])}`;
@@ -384,9 +406,16 @@ export async function siblingAssignments(
     ...new Set(rows.flatMap((r) => [r.home_entrant_id, r.away_entrant_id])),
   ].filter((e): e is string => e !== null);
   const people = await peopleByEntrant(tx, entrantIds);
-  return rows.map((r) =>
-    toAssignment(r, minutes.get(r.division_id) ?? fallbackMatchMinutes, people),
-  );
+  return {
+    assignments: rows.map((r) =>
+      toAssignment(r, minutes.get(r.division_id) ?? fallbackMatchMinutes, people),
+    ),
+    // Through the ONE builder (#447/#443), like every other RuleFixture in the
+    // codebase — `winnerTo` and `extKey` are different namespaces that both type
+    // as `string | null`, so a literal here would type-check and bind nothing.
+    // `FIXTURE_LITE_COLS` already selects all five columns it reads.
+    ruleFixtures: rows.map(rowToRuleFixture),
+  };
 }
 
 export function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotConfig {
@@ -430,43 +459,25 @@ export function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotCo
       to: ms(b.to),
     })),
     sessionWindows: c.sessionWindows.map((w) => ({ from: ms(w.from), to: ms(w.to) })),
-    // constraints v2 (Jul3/04 §3): ISO → epoch ms for the pure pass
+    // constraints v2 (Jul3/04 §3): ISO → epoch ms for the pure pass, through the
+    // ONE builder (#458) the AI verify seams also go through, so this config and
+    // the config a proposal is judged against cannot drift apart again.
+    //
+    // `hard: true` — the DURABLE typed rules (#398) ride `constraints.hard` on
+    // this path, never the top-level `hard` field, because `effectiveHard`
+    // MERGES the two and setting both would count every durable rule twice
+    // (#447). The top-level field is where a run puts the stream it COMPILED
+    // from an instruction, which is why the AI seams route them the other way.
+    // Riding `toSlotConfig` rather than the wrapper below is deliberate too:
+    // every existing caller gets them with no second place to remember.
     ...(c.constraints !== undefined
       ? {
-          constraints: {
-            ...(c.constraints.restMin !== undefined ? { restMin: c.constraints.restMin } : {}),
-            ...(c.constraints.restByGroup !== undefined
-              ? { restByGroup: c.constraints.restByGroup }
-              : {}),
-            noBackToBack: c.constraints.noBackToBack,
-            startWindows: c.constraints.startWindows.map((w) => ({
-              target: w.target,
-              ...(w.notBefore !== undefined ? { notBefore: ms(w.notBefore) } : {}),
-              ...(w.notAfter !== undefined ? { notAfter: ms(w.notAfter) } : {}),
-            })),
+          constraints: buildEngineConstraints(c.constraints, {
             fieldFairness: c.constraints.fieldFairness,
             parallelism: c.constraints.parallelism,
             crossPersonClash: c.constraints.crossPersonClash,
-            // #447: the DURABLE typed rules (#398). This key was the one field
-            // of `constraints` the copy above dropped, and `effectiveHard` reads
-            // exactly it — so a rule an organiser stored through the API bound on
-            // the AI path (which builds its own config) and silently nowhere
-            // else. `effectiveHard`'s own docstring calls that "the worst kind".
-            //
-            // Carried here rather than on the top-level `hard` field because
-            // `effectiveHard` MERGES the two — setting both would count every
-            // durable rule twice — and because `constraints.hard` is the durable
-            // home: the top-level one is where a run puts the stream it COMPILED
-            // from an instruction. It also rides `toSlotConfig` rather than the
-            // wrapper below so every existing caller of this function gets it
-            // without a second place to remember.
-            //
-            // Optional, never defaulted (the schema says so): a `hard: []` on a
-            // config that stored nothing is indistinguishable downstream, but it
-            // would make every `toSlotConfig` output differ from the literals the
-            // rest of the suite compares against.
-            ...(c.constraints.hard !== undefined ? { hard: c.constraints.hard } : {}),
-          },
+            hard: true,
+          }),
         }
       : {}),
   };
@@ -531,11 +542,23 @@ export function toVerifyConfig(
    *  counts every fixture on the day. */
   fixtures: readonly FixtureLite[],
   now: number,
+  /** Rule identity for rows that are NOT this division's (#462) — in practice
+   *  `siblingAssignments(...).ruleFixtures`.
+   *
+   *  Every caller that puts sibling assignments on the board must pass this, and
+   *  the reason is asymmetric: omitting it does not disable a rule, it makes the
+   *  rule QUIETLY UNDERCOUNT. A competition-scoped day cap tallies only the
+   *  `existing` rows named in `ruleFixtures`, so an unnamed sibling card is on
+   *  the board for court purposes and absent for rule purposes — a board that
+   *  breaches the cap reports clean. There is no signal anywhere; that is why
+   *  `siblingAssignments` returns the two halves together rather than leaving
+   *  this to a second call a caller can simply not make. */
+  extraRuleFixtures: readonly RuleFixture[] = [],
 ): SlotConfig & VerifyConfig {
   return {
     ...toSlotConfig(settings, now),
     tz: settings.orgTz,
-    ruleFixtures: fixtures.map(rowToRuleFixture),
+    ruleFixtures: [...fixtures.map(rowToRuleFixture), ...extraRuleFixtures],
   };
 }
 
@@ -682,8 +705,12 @@ export async function autoSchedule(
     // ONE config for both halves of this pass (#447). The placer reads the
     // `SlotConfig` side, the typed-rule referee below reads the `VerifyConfig`
     // side, and neither can drift onto a different idea of the rules.
-    const config = toVerifyConfig(settings, all, roundToMinute(Date.now()));
-    const board = [...obstacles, ...siblings];
+    // #462: the siblings' rule identity rides along with their court time. The
+    // placer's day tally and the referee below both count only the `existing`
+    // rows `ruleFixtures` names, so without this the auto pass proposes a board
+    // that breaches a competition-scoped cap and then reports it clean.
+    const config = toVerifyConfig(settings, all, roundToMinute(Date.now()), siblings.ruleFixtures);
+    const board = [...obstacles, ...siblings.assignments];
     const result = slotFixtures({ fixtures: schedulable, config, existing: board });
     return {
       assignments: result.assignments.map((a) => ({
@@ -798,9 +825,9 @@ export async function applySchedule(
 
     // #447: the VERIFY config, so the durable typed rules an organiser stored
     // are the rules this gate judges by. Warn-only — see `assertNoNewBlocking`.
-    const slotConfig = toVerifyConfig(settings, all, 0);
+    const slotConfig = toVerifyConfig(settings, all, 0, siblings.ruleFixtures);
     const deps = feedDependencies(all);
-    const board = [...untouched, ...siblings];
+    const board = [...untouched, ...siblings.assignments];
     // The SAME fixtures where they sit right now (#399). Anything the verifier
     // already says about this board is history, not this apply's doing — an
     // organiser whose board carries a pre-existing person overlap must still be
@@ -944,12 +971,25 @@ export async function assertFreshSeq(
  * Schedule-aware single-fixture move: blocks on conflict.court / direct
  * warn.order (409 with the conflicts), otherwise persists and appends
  * `schedule_edited {fixture, from, to}` (doc 12 §2).
+ *
+ * RETURNS the conflict report it judged the destination by (#461). It always
+ * computed one — the blocking gate needs it — and used to drop it, so the
+ * WARN-level half was invisible to every caller: a drag that put a card into a
+ * rest shortfall, past a stored typed rule or outside the competition's days
+ * wrote silently and said nothing. The blocking half still throws, so anything
+ * returned here is by construction non-blocking (or pre-existing, which the
+ * delta gate deliberately allows). `[]` when the patch touched no timetable
+ * field, so absence and emptiness are the same answer rather than two.
+ *
+ * These are THIS MOVE's conflicts, not the board's: `validateAssignments` is run
+ * over the single proposed card. The whole-board report is `validateSchedule`,
+ * and the console board refreshes from it after every drop.
  */
 export async function moveFixture(
   auth: AuthCtx,
   fixtureId: string,
   patch: MoveInput,
-): Promise<void> {
+): Promise<ScheduleConflict[]> {
   if (patch.schedule_locked !== undefined) {
     await requireFeature(auth.orgId, "scheduling.board");
   }
@@ -1021,9 +1061,9 @@ export async function moveFixture(
         settings.config.matchMinutes,
       );
       // #447: the dragged card is judged against the durable typed rules too.
-      const slotConfig = toVerifyConfig(settings, all, 0);
+      const slotConfig = toVerifyConfig(settings, all, 0, siblings.ruleFixtures);
       const deps = feedDependencies(all);
-      const board = [...others, ...siblings];
+      const board = [...others, ...siblings.assignments];
       // Where this card sits right now (#399). An unscheduled fixture has no
       // baseline, so every blocking conflict its first placement causes is
       // introduced — which is exactly what it is.
@@ -1096,6 +1136,7 @@ export async function moveFixture(
     return {
       divisionId: fixture.division_id,
       competitionId: fixture.competition_id,
+      conflicts,
       changeNotices,
       change: {
         prevAt: fixture.scheduled_at !== null ? iso(ms(fixture.scheduled_at)) : null,
@@ -1119,6 +1160,7 @@ export async function moveFixture(
     }).catch(() => {});
   }
   afterScheduleWrite(out.divisionId, out.competitionId, "schedule");
+  return out.conflicts;
 }
 
 // ---------------------------------------------------------------------------
@@ -1180,7 +1222,12 @@ export async function validateSchedule(
           // #447: `toVerifyConfig`, so the board's own report shows the durable
           // typed rules the organiser stored — this is the surface the
           // constraints panel promises them on.
-          validateAssignments(assignments, toVerifyConfig(settings, all, 0), siblings, feedDependencies(all)),
+          validateAssignments(
+            assignments,
+            toVerifyConfig(settings, all, 0, siblings.ruleFixtures),
+            siblings.assignments,
+            feedDependencies(all),
+          ),
         ),
         ...officialConflicts.map((c) => ({ fixture_id: c.fixture_id, code: c.code as ScheduleConflict["code"], blocking: false })),
       ],

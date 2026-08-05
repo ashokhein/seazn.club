@@ -28,6 +28,15 @@ interface CricketStateView {
   tossTaken?: boolean;
   innings?: InningsView[];
   entrants?: { home: string; away: string };
+  // #467 — the chase target once it has been revised, and WHERE it came from.
+  // The engine resolves the live target to `revisedTarget` whenever it is
+  // non-null (cricket.ts), so a pad that omits it shows a score against a
+  // target the app never states. `targetSource` is not decoration: a DLS figure
+  // is the app's own arithmetic and a manual one is the organiser's, and #451
+  // was a DLS bug that awarded a match to the wrong side and survived review
+  // precisely because nothing rendered this.
+  revisedTarget?: number | null;
+  targetSource?: "dls" | "manual" | null;
 }
 
 const WICKET_KINDS = [
@@ -109,6 +118,19 @@ export function CricketPad({
           {msg("pad.ck.ballByBall")}
         </button>
       </div>
+
+      {/* A revised target is STATUS, not a control, so it deliberately does not
+          borrow the purple the mode buttons above use for selection. */}
+      {state.revisedTarget != null ? (
+        <p
+          data-testid="ck-revised-target"
+          className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900"
+        >
+          {msg(state.targetSource === "manual" ? "pad.ck.targetManual" : "pad.ck.targetDls", {
+            runs: state.revisedTarget,
+          })}
+        </p>
+      ) : null}
 
       {mode === "over" ? (
         <OverByOverForm open={open ?? null} batting={battingSide} bpo={bpo} send={send} busy={busy} />

@@ -6,8 +6,14 @@
 // occupancy and warns on per-person overlaps. No wall-clock reads — all times
 // are injected (the same unit throughout, e.g. epoch ms); durations are minutes.
 import type { EntrantId } from "../core/types.ts";
-import type { ConstraintScope, FixtureSelector, HardConstraint, SchedulingConstraints } from "./constraints.ts";
-import { dayKeyInTz, hhmmInTz, weekdayOfYmd } from "./tz.ts";
+import type {
+  ConstraintScope,
+  FixtureSelector,
+  HardConstraint,
+  SchedulingConstraints,
+  WeekdayCode,
+} from "./constraints.ts";
+import { dayKeyInTz, hhmmInTz, weekdayOfYmd, ymdAddDays, zonedTimeToUtc } from "./tz.ts";
 
 const MS_PER_MIN = 60_000;
 
@@ -42,6 +48,20 @@ export interface SlotConfig {
   horizonMinutes?: number; // how far past startAt to search before reporting no_slot
   /** Constraints v2 (Jul3/04 §3) — extends, never replaces, the base pass. */
   constraints?: SchedulingConstraints;
+  /** The ORG zone (#397), spelled exactly as `VerifyConfig` spells it so ONE
+   *  config object can drive the placer and the verifier and neither can be
+   *  handed a different clock. A typed rule that needs a calendar day or a
+   *  wall-clock time is SKIPPED when this is absent rather than bucketed in UTC
+   *  — placing around a rule the organiser never expressed is worse than not
+   *  placing around it, and it is the #448 defect in the other direction. */
+  tz?: string;
+  /** Fixture metadata for the typed rules, exactly as `VerifyConfig` takes it:
+   *  a `fixture_on_date`/`fixture_on_weekday` selector resolves through it, and
+   *  a `max_fixtures_per_day` tally seeds from the `existing` cards it names.
+   *  Absent for every pre-#463 caller, and then the placer counts only what it
+   *  places and resolves only `id` selectors — which is exactly what the
+   *  verifier does with no `ruleFixtures` either. */
+  ruleFixtures?: readonly RuleFixture[];
 }
 
 export interface SchedulableFixture {
@@ -381,9 +401,24 @@ export function slotFixtures(input: SlotInput): SlotResult {
   const siblings = input.existing ?? []; // other divisions' fixed board (parallelism=block)
   const placed: Assignment[] = [];
   const conflicts: Conflict[] = [];
-  const lastEnd = new Map<EntrantId, number>(); // this division's per-entrant rest tracking
+  // Rest is owed to a PARTICIPANT, and a participant is an entrant OR a person
+  // (#463). Keyed by `EntrantId` alone, this map made a per-person rest rule
+  // invisible to the placer while `validateAssignments` still reported it
+  // (:1150) — two fixtures sharing a person but no entrant were packed adjacent
+  // and then flagged, which is the placer/verifier fork this module exists to
+  // prevent. `SchedulableFixture.people` (:52) already carried the participants;
+  // the placer simply never read them.
+  const lastEnd = new Map<string, number>(); // this division's per-participant rest tracking
   const courtUse = new Map<EntrantId, Map<string, number>>(); // fieldFairness=balance
   const lastCourt = new Map<EntrantId, string>(); // fieldFairness=rotate
+  // Namespaced, not concatenated: an entrant and a person are different
+  // participants even if their ids collide as strings, and fusing them would
+  // rest a fixture behind one it shares nothing with. `courtUse`/`lastCourt`
+  // stay entrant-keyed — field fairness is an entrant-level concept.
+  const restKeysOf = (f: SchedulableFixture): string[] => [
+    ...entrantsOf(f).map((e) => `entrant:${e}`),
+    ...(f.people ?? []).map((p) => `person:${p}`),
+  ];
   const c = config.constraints;
 
   // Jul3/04 §3 — shared with validateAssignments so the placer and the verifier
@@ -404,6 +439,145 @@ export function slotFixtures(input: SlotInput): SlotResult {
     ...(f.poolId !== undefined ? { poolId: f.poolId } : {}),
     ...(f.divisionId !== undefined ? { divisionId: f.divisionId } : {}),
   });
+  // --- typed rules the PLACER refuses a slot over (#463) --------------------
+  //
+  // `validateAssignments` has always reported these families; `slotFixtures`
+  // packed straight through them. That is the placer/verifier fork in its
+  // costliest form: Auto proposes a board the apply gate warns about, and
+  // re-running Auto proposes the same board again because the placer does not
+  // know the rule exists.
+  //
+  // Every family here needs a calendar day or a wall-clock time, so every one
+  // of them needs the ORG zone. Without one the whole block is INERT — the same
+  // ruling `VerifyConfig.tz` documents, and the reason every pre-#463 caller
+  // (none of which can set `tz`, because `SlotConfig` had no such field) keeps
+  // its exact previous behaviour.
+  const tz = config.tz;
+  const placementHard: readonly HardConstraint[] =
+    tz === undefined ? [] : hard.filter((h) => h.type !== "min_rest_minutes");
+  const ruleFixtureById = ruleFixtureIndex(config);
+  /** Per-RULE day tallies for `max_fixtures_per_day`, index-aligned with
+   *  `placementHard`. Per rule and not per day because two rules can cap the
+   *  same day at different numbers for different scopes. */
+  const dayCounts = placementHard.map(() => new Map<string, number>());
+  /** The instant a calendar day begins in the org zone. Never `+ 86_400_000`:
+   *  a DST day is 23 or 25 hours long. */
+  const dayStart = (ymd: string): number => zonedTimeToUtc(ymd, "00:00", tz as string);
+  /** Which `max_fixtures_per_day` rules bind a row, as indices. One resolution
+   *  for the tally READ at placement time and the tally WRITE at commit time —
+   *  two scope walks is how a placer and a verifier fork in the first place. */
+  const dayCapRulesFor = (row: ScopeRow, rf: RuleFixture | undefined): number[] => {
+    const out: number[] = [];
+    for (let i = 0; i < placementHard.length; i++) {
+      const h = placementHard[i]!;
+      if (h.type !== "max_fixtures_per_day" || !scopeCoversFixture(h.scope, rf, row)) continue;
+      out.push(i);
+    }
+    return out;
+  };
+  /** Which of THIS run's cards each day-target rule names, index-aligned with
+   *  `placementHard`; `null` means the placer cannot resolve the selector and
+   *  the rule is skipped.
+   *
+   *  With `ruleFixtures` it is `resolveSelector`, the verifier's own function,
+   *  so both sides name the same cards. Without them only an `id` selector can
+   *  be resolved — `terminal` and `ext_key` need metadata a
+   *  `SchedulableFixture` does not carry, and inventing it (treating every card
+   *  as terminal, say) would bind a final's rule to the whole draw.
+   *
+   *  The `id` branch is deliberately NOT symmetric with the verifier, and the
+   *  asymmetry is one-directional on purpose. `resolveSelector`'s `case "id"`
+   *  filters `ruleFixtures`, so with none it names nothing; here an `id`
+   *  selector still names its own card. The placer therefore AVOIDS a slot the
+   *  verifier would not have complained about — over-cautious, never
+   *  under-cautious, so it cannot produce a board the gate then warns about,
+   *  which is the only direction that matters. */
+  const selectorNames = placementHard.map((h) => {
+    if (h.type !== "fixture_on_weekday" && h.type !== "fixture_on_date") return null;
+    if (config.ruleFixtures !== undefined) {
+      return new Set(resolveSelector(h.selector, h.scope, config.ruleFixtures).map((x) => x.id));
+    }
+    return h.selector.kind === "id" ? new Set([h.selector.fixtureId]) : null;
+  });
+  /** The next day strictly after `from` falling on `want`. At most one week,
+   *  and one JUMP either way — the repair budget is spent on courts, not on
+   *  stepping through the days in between. */
+  const nextYmdWithWeekday = (from: string, want: WeekdayCode): string => {
+    let y = from;
+    for (let d = 0; d < 7; d++) {
+      y = ymdAddDays(y, 1);
+      if (weekdayOfYmd(y) === want) break;
+    }
+    return y;
+  };
+  const countDay = (row: ScopeRow, rf: RuleFixture | undefined, startAt: number): void => {
+    if (tz === undefined) return;
+    const day = dayKeyInTz(startAt, tz);
+    for (const i of dayCapRulesFor(row, rf)) dayCounts[i]!.set(day, (dayCounts[i]!.get(day) ?? 0) + 1);
+  };
+  // Seed from the rest of the board. A cap is a statement about how busy a day
+  // is, and a day is exactly as busy as everything already on it — the same
+  // count `validateInstructionRules` takes, including its filter: only entries
+  // that are KNOWN FIXTURES count, because an outside booking or a closed court
+  // is not a fixture and counting one would invent a cap breach.
+  for (const a of input.existing ?? []) {
+    const rf = ruleFixtureById.get(a.fixtureId);
+    if (rf !== undefined) countDay(a, rf, a.startAt);
+  }
+
+  /** The earliest start ≥ `start` that every typed rule binding this fixture
+   *  would accept, or `null` when `start` itself is already acceptable.
+   *
+   *  Returns a bound rather than a boolean because the rejections are
+   *  DAY-LEVEL: the repair loop below gets 64 tries, and stepping a half-hour
+   *  at a time would exhaust well inside the very day the rule is telling it to
+   *  leave. */
+  const nextAcceptableStart = (f: SchedulableFixture, start: number): number | null => {
+    if (placementHard.length === 0) return null;
+    const zone = tz as string;
+    const row = scopeRowOf(f);
+    const rf = ruleFixtureById.get(f.id);
+    const day = dayKeyInTz(start, zone);
+    const time = hhmmInTz(start, zone);
+    let bound = start;
+    for (let i = 0; i < placementHard.length; i++) {
+      const h = placementHard[i]!;
+      if (!scopeCoversFixture(h.scope, rf, row)) continue;
+      if (h.type === "max_fixtures_per_day") {
+        if ((dayCounts[i]!.get(day) ?? 0) >= h.count) bound = Math.max(bound, dayStart(ymdAddDays(day, 1)));
+      }
+      // WALL-CLOCK bounds in the org zone, never instants (constraints.ts:56).
+      // Compared with the same `<` / `>` the verifier uses, so a start landing
+      // exactly ON the bound is legal to both — an off-by-one here would place
+      // boards the gate then refuses.
+      if (h.type === "not_before" && time < h.time) {
+        bound = Math.max(bound, zonedTimeToUtc(day, h.time, zone));
+      }
+      // Too late in the day is not repairable within the day: the only earlier
+      // instants are the ones already rejected, so the next day is the earliest
+      // that can hold it.
+      if (h.type === "not_after" && time > h.time) {
+        bound = Math.max(bound, dayStart(ymdAddDays(day, 1)));
+      }
+      // Day targets name a CARD, so the selector decides — a rule about the
+      // final may not move the group stage that shares its division.
+      if (h.type === "fixture_on_date" || h.type === "fixture_on_weekday") {
+        const names = selectorNames[i]!;
+        if (names === null || !names.has(f.id)) continue;
+        if (h.type === "fixture_on_weekday") {
+          if (weekdayOfYmd(day) !== h.weekday) bound = Math.max(bound, dayStart(nextYmdWithWeekday(day, h.weekday)));
+          continue;
+        }
+        // This pass only ever moves a card LATER, so a target date already
+        // behind the candidate is unreachable: say so instead of spending the
+        // repair budget proving it, and let the caller report `no_slot`.
+        if (day > h.date) return Infinity;
+        if (day < h.date) bound = Math.max(bound, dayStart(h.date));
+      }
+    }
+    return bound > start ? bound : null;
+  };
+
   const restForMs = (f: SchedulableFixture): number =>
     (hard.length === 0
       ? effectiveRestMinutes(config, f)
@@ -491,7 +665,11 @@ export function slotFixtures(input: SlotInput): SlotResult {
     };
     bookings.push(assignment);
     placed.push(assignment);
-    for (const e of ent) lastEnd.set(e, Math.max(lastEnd.get(e) ?? -Infinity, assignment.endAt));
+    // Locked fixtures come through here too, and they fill the day just as much
+    // as a placed one — a pinned card the organiser cannot move is precisely
+    // what makes the next one breach the cap.
+    countDay(assignment, ruleFixtureById.get(f.id), start);
+    for (const k of restKeysOf(f)) lastEnd.set(k, Math.max(lastEnd.get(k) ?? -Infinity, assignment.endAt));
     // Per-person overlap against everything already on the board (warn only).
     for (const person of assignment.people) {
       for (const other of bookings) {
@@ -526,7 +704,7 @@ export function slotFixtures(input: SlotInput): SlotResult {
     const restF = Math.max(restMs, restForMs(f));
     const window = windowFor(f);
     let ready = Math.max(config.startAt, window.notBefore);
-    for (const e of ent) ready = Math.max(ready, (lastEnd.get(e) ?? -Infinity) + restF);
+    for (const k of restKeysOf(f)) ready = Math.max(ready, (lastEnd.get(k) ?? -Infinity) + restF);
 
     let best: { court: string; start: number } | null = null;
     let windowBound = false;
@@ -539,9 +717,20 @@ export function slotFixtures(input: SlotInput): SlotResult {
         start = earliestOnCourt(court, lb, durMs, gapMs, horizon, bookings, blackouts);
         if (start === null) break;
         const clash = personBlocked(f, start) ?? blockModeBlocked(start);
-        if (clash === null) break;
-        lb = Math.max(clash.endAt, start + 1);
+        if (clash !== null) {
+          lb = Math.max(clash.endAt, start + 1);
+          start = null;
+          continue;
+        }
+        // Typed-rule rejection (#463), on the same repair budget. The bound is
+        // strictly greater than `start`, so the loop always makes progress.
+        const bound = nextAcceptableStart(f, start);
+        if (bound === null) break;
         start = null;
+        // `Infinity` — no later instant can ever satisfy the rule. Abandon this
+        // court now; the unplaceable path reports it.
+        if (!Number.isFinite(bound)) break;
+        lb = bound;
       }
       if (start === null) continue;
       if (start > window.notAfter) {

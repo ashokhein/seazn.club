@@ -220,6 +220,27 @@ describe.skipIf(!HAS_DB)("buildSchedulePack (v4/01 §2)", () => {
     const b = await buildSchedulePack(auth, divisionId, { now: NOW_W2, mode: "generate", instruction: "Finish by 6pm." });
     expect(JSON.stringify(a.pack)).toBe(JSON.stringify(b.pack));
     expect(redact(a.pack)).toMatchSnapshot();
+    // #463 RE-RECORDED THE DRAFT IN THAT SNAPSHOT, and nothing else in it. The
+    // draft is the placer's own proposal, and the placer now rests participants
+    // who share a PERSON, not only ones who share an entrant. E1 and E2 share a
+    // player here, so the 13 fixtures either of them appears in can no longer
+    // sit 30 minutes apart — let alone run in parallel across the two courts —
+    // and are separated by the full match plus `perEntrantMinRest` instead.
+    // That stretches the board, which is why 22 of the 28 fixtures now fit
+    // inside the session window where 26 did before; `fixtures.movable` still
+    // carries all 28 (asserted below). Pinned as an assertion as well as in the
+    // snapshot: the separation is the REASON the recorded times are what they
+    // are, and a future re-record must not be able to quietly lose it.
+    const shared = new Set(a.pack.people[0]!.entrant_ids);
+    const draftAt = new Map(a.pack.draft.map((d) => [d.fixture_id, Date.parse(String(d.scheduled_at))]));
+    const sharedStarts = a.pack.fixtures.movable
+      .filter((f) => (f.home !== null && shared.has(f.home)) || (f.away !== null && shared.has(f.away)))
+      .map((f) => draftAt.get(f.id))
+      .filter((t): t is number => t !== undefined)
+      .sort((x, y) => x - y);
+    expect(sharedStarts.length).toBeGreaterThan(1);
+    const apart = SETTINGS_CONFIG.matchMinutes + SETTINGS_CONFIG.perEntrantMinRest;
+    expect(sharedStarts.slice(1).filter((t, i) => t - sharedStarts[i]! < apart * MIN)).toEqual([]);
     expect(a.pack.officials.length).toBeGreaterThan(0);
     // Officials availability wired through: blackout date + entrant links.
     const ref = a.pack.officials.find((o) => o.name === "Aa Referee")!;
@@ -1002,9 +1023,14 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
     );
     const final = pack.fixtures.movable.find((f) => f.ext_key === "final")!;
     expect(pack.participants[final.id]).toHaveLength(4);
+    // `poolIds` (#449) is stripped for the same reason: the model schedules by
+    // pool LABEL, which `fixtures.movable[].pool` still carries.
+    expect("poolIds" in payload).toBe(false);
     // Everything else survives the trim byte-for-byte.
     const trimmed = Object.fromEntries(
-      Object.entries(pack).filter(([k]) => k !== "participants" && k !== "assumptions"),
+      Object.entries(pack).filter(
+        ([k]) => k !== "participants" && k !== "assumptions" && k !== "poolIds",
+      ),
     );
     expect(payload).toEqual(trimmed);
   });

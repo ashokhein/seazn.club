@@ -531,6 +531,12 @@ export const Fixture = z.object({
   pool_id: Uuid.nullable(),
   round_no: z.number().int(),
   seq_in_round: z.number().int(),
+  /** Per-division ordinal (PROMPT-30) — the `/f/{no}` public URL segment.
+   *  Declared here because it is already SERVED: `FIXTURE_COLS` selects it and
+   *  every fixture route returns its row unmapped. Nothing applies a response
+   *  schema at runtime, so its absence was a silent gap between the published
+   *  spec and the real payload rather than a missing field. */
+  fixture_no: z.number().int(),
   home_entrant_id: Uuid.nullable(),
   away_entrant_id: Uuid.nullable(),
   scheduled_at: z.string().nullable(),
@@ -801,6 +807,24 @@ export const ScheduleConflict = z.object({
   shortfall_minutes: z.number().int().optional(),
 });
 export type ScheduleConflict = z.infer<typeof ScheduleConflict>;
+
+/** The PATCH /fixtures/{id} response (#461).
+ *
+ *  The fixture as `Fixture` describes it, PLUS the conflicts the move was judged
+ *  against. `moveFixture` has always computed a full report for the destination
+ *  slot; it used it for the blocking gate and then discarded it, because the
+ *  function returned `void`. Blocking conflicts 409 and are visible that way, so
+ *  the ones this field exists for are the WARN-level ones — a rest shortfall, a
+ *  stored typed rule, a slot outside the competition's days — which an API
+ *  client dragging a card previously heard nothing about.
+ *
+ *  Always present, `[]` when the patch touched no timetable field, so a client
+ *  need not distinguish "no conflicts" from "not evaluated" by key absence.
+ *  Additive: no existing consumer of this endpoint reads it. */
+export const PatchedFixture = Fixture.extend({
+  conflicts: z.array(ScheduleConflict),
+});
+export type PatchedFixture = z.infer<typeof PatchedFixture>;
 
 export const ScheduleAssignment = z.object({
   fixture_id: Uuid,

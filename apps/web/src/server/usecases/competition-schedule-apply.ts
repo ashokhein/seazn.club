@@ -472,13 +472,22 @@ export async function applyCompetitionSchedule(
     // Divisions of this competition that are NOT in the run. One call: passing
     // every run division as `excludeDivisionIds` leaves exactly the outsiders,
     // and each of them is measured with its own matchMinutes.
-    const siblings = await siblingAssignments(
-      tx,
-      order[0]!.id,
-      competitionId,
-      order[0]!.settings.config.matchMinutes,
-      order.map((d) => d.id),
-    );
+    // `.assignments` only, deliberately (#462). This pass judges each division
+    // through `verifyConfigFor`, whose `ruleFixtures` come from the joint PACK —
+    // a different producer from `toVerifyConfig`, and widening it to outside
+    // divisions is a separate question about what a joint run may be held to.
+    // The single-division board paths are the ones #462 names, and they are the
+    // ones changed. Left as an explicit projection so a reader sees a decision
+    // rather than an omission.
+    const siblings = (
+      await siblingAssignments(
+        tx,
+        order[0]!.id,
+        competitionId,
+        order[0]!.settings.config.matchMinutes,
+        order.map((d) => d.id),
+      )
+    ).assignments;
     // Feeds are within-division in practice, but the engine resolves a
     // dependency against the whole board, so it is built over the whole board.
     const deps = feedDependencies(order.flatMap((d) => d.fixtures));

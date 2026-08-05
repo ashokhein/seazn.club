@@ -61,6 +61,11 @@ import {
   type VerifyConfig,
 } from "@seazn/engine/scheduling";
 import {
+  AI_VERIFY_POLICY,
+  buildEngineConstraints,
+  resolvePersonScopes,
+} from "@/server/usecases/engine-constraints";
+import {
   parseInstruction,
   resolveParsed,
   type RawParsed,
@@ -95,6 +100,7 @@ import {
   toAssignment,
   toSlotConfig,
   type FixtureLite,
+  type ScheduleSettingsOut,
 } from "./schedule";
 import {
   loadOfficialBlackouts,
@@ -347,6 +353,25 @@ export interface SchedulePack {
    *  greedy placer and the verifier, so a draft cannot be legal under a rule
    *  the referee applies differently. */
   participants: Record<string, string[]>;
+  /** Movable fixture id → its pool's UUID, for the fixtures that sit in a pool
+   *  (#449).
+   *
+   *  SERVER-SIDE ONLY, like `participants`: `toModelPayload` omits it. The
+   *  model schedules by pool LABEL and `PackFixture.pool` stays that label —
+   *  the prompts read it, it is a wire shape, and it is what an organiser sees.
+   *
+   *  It exists because a pool KEY is display metadata ('A', 'B') that is not
+   *  unique across divisions, while `Assignment.poolId` and `RuleFixture.poolId`
+   *  are what `scopeCoversFixture` and `effectiveRestMinutes` match a stored
+   *  rule against — and a stored rule names the UUID, which is what the DB holds
+   *  and what the board path has always stamped. Carrying the key across the
+   *  engine boundary put the AI path in a second namespace, so whichever one the
+   *  organiser authored in, at most ONE path could ever bind the rule.
+   *
+   *  Keyed for the fixtures in `fixtures.movable` that have a pool, in that
+   *  array's order, so a build is byte-identical on a reseed for the same reason
+   *  `participants` is. */
+  poolIds: Record<string, string>;
   /** Deterministic preprocessing choices worth telling the organiser about:
    *  stripped bye feeders, same-name person grouping. Rendered at W5 (#400). */
   assumptions: string[];
@@ -393,13 +418,15 @@ export interface SchedulePack {
  * type makes `tsc` fail here the moment `SchedulePack` gains a field, so what
  * reaches the model is always a decision somebody made, never a default.
  */
-export function toModelPayload(pack: SchedulePack): Omit<SchedulePack, "participants" | "assumptions"> {
+export function toModelPayload(
+  pack: SchedulePack,
+): Omit<SchedulePack, "participants" | "assumptions" | "poolIds"> {
   return {
     mode: pack.mode,
     division: pack.division,
     // #397: the calendar anchor IS prompt material — W2 is the wave that moves
-    // the prompt boundary. The enforcement inputs (participants, assumptions)
-    // stay server-side.
+    // the prompt boundary. The enforcement inputs (participants, assumptions,
+    // poolIds) stay server-side.
     tz: pack.tz,
     clock: pack.clock,
     window: pack.window,
@@ -631,6 +658,33 @@ export async function buildSchedulePack(
       [...people].map(([entrantId, ids]) => [entrantId, [...new Set(ids.map(identity.keyOf))]]),
     );
 
+    // #450: the stored RULES go through the same resolver instance, for exactly
+    // the same reason the rosters above do. `scopeCoversFixture` compares
+    // `scope.personKey` raw against a fixture's `people`, which are guarded keys
+    // from this point on — so a rule authored against a real person UUID (the
+    // only person identifier the console offers) stopped binding the moment the
+    // guard collapsed that person, silently and while still displaying as
+    // enforced.
+    //
+    // ONE place, deliberately: `guardedSettings` feeds the DRAFT placer via
+    // `toSlotConfig` below, and `guardedHard` feeds the pack's own
+    // `settings.constraints.hard`, which is what `verifyConfig` hands the
+    // referee. Mapping at only one of the two would fork the placer from the
+    // verifier — the recurring bug in this area — so both read the same array.
+    //
+    // `pack.parsed.hard` is deliberately NOT mapped: `schedule-ai-parse.ts`
+    // narrows the model's scope vocabulary to competition/division, so a
+    // compiled rule cannot carry a person scope at all. A map there would be a
+    // second producer guarding nothing.
+    const guardedHard = resolvePersonScopes(config.constraints?.hard ?? [], identity.keyOf);
+    const guardedSettings: ScheduleSettingsOut =
+      config.constraints === undefined
+        ? settings
+        : {
+            ...settings,
+            config: { ...config, constraints: { ...config.constraints, hard: guardedHard } },
+          };
+
     // Pool id → key ('A', 'B', …) across this division's stages.
     const poolRows = await tx<{ id: string; key: string }[]>`
       select p.id, p.key from pools p
@@ -644,13 +698,21 @@ export async function buildSchedulePack(
       (f) => !movableSet.has(f.id) && f.scheduled_at !== null && f.court_label !== null,
     );
     const obstacleAssignments = obstacleFixtures.map((f) => toAssignment(f, matchMinutes, guardedPeople));
-    const siblingsRaw = await siblingAssignments(
-      tx,
-      divisionId,
-      division.competition_id,
-      matchMinutes,
-      opts.excludeDivisionIds ?? [],
-    );
+    // `.assignments` only (#462): this list becomes `pack.fixtures.obstacles`,
+    // which is a COURT BOOKING shape carrying no ids at all — the pack cannot
+    // express a sibling's rule identity, and the AI verify seam builds its
+    // `ruleFixtures` from `pack.fixtures.movable` instead. The board paths in
+    // `schedule.ts` are the ones that both hold siblings AND build the config
+    // from rows, and they are the ones changed.
+    const siblingsRaw = (
+      await siblingAssignments(
+        tx,
+        divisionId,
+        division.competition_id,
+        matchMinutes,
+        opts.excludeDivisionIds ?? [],
+      )
+    ).assignments;
     // BOTH the raw person id and its guarded key, deliberately — the same shape
     // `buildCompetitionPack` uses for `fixedOccupancy`, and for the same reason.
     // `siblingAssignments` reads `peopleByEntrant` directly, so it emits raw
@@ -927,8 +989,13 @@ export async function buildSchedulePack(
         // forwards (#447). The asymmetry is deliberate rather than the one that
         // caused #447 — but it is the same shape, so if a compiled rule ever
         // becomes available at draft time this must move to `toVerifyConfig`.
+        // `guardedSettings`, not `settings` (#450): every fixture handed to the
+        // placer below carries GUARDED person keys, so a person-scoped durable
+        // rule still holding a raw uuid would bind nothing here while the
+        // verifier — reading the same rules off the pack — binds it. That fork
+        // is the whole failure mode this area keeps producing.
         config: toSlotConfig(
-          settings,
+          guardedSettings,
           zonedTimeToUtc(dayKeyInTz(draftAnchorMs, orgTz), DEFAULT_SESSION_HOURS.start, orgTz),
         ),
         // extraExisting is the #350 joint pack's already-drafted divisions;
@@ -968,6 +1035,13 @@ export async function buildSchedulePack(
         : d,
     );
     draft.sort(byAssignment);
+
+    // #449: pool UUID per movable fixture, for `pack.poolIds`. `PackFixture.pool`
+    // below stays the display KEY the model reads; this is the namespace the
+    // engine, the DB and every stored rule use.
+    const poolIdByFixture = new Map(
+      movable.flatMap((f) => (f.pool_id !== null ? [[f.id, f.pool_id] as const] : [])),
+    );
 
     const packMovable: PackFixture[] = movable
       .map((f) => ({
@@ -1145,7 +1219,10 @@ export async function buildSchedulePack(
             // OMITTED when empty, never `[]`. Absence already means "no durable
             // rules", and emitting an empty array on every pack would change the
             // shape of every instruction-free run for no information.
-            ...(config.constraints.hard?.length ? { hard: config.constraints.hard } : {}),
+            // #450: the person-scope-resolved copy, so the referee compares a
+            // rule against rows in the same namespace. Same array the draft
+            // placer above was given.
+            ...(guardedHard.length ? { hard: guardedHard } : {}),
           }
         : null,
     };
@@ -1167,6 +1244,17 @@ export async function buildSchedulePack(
       entrants: packEntrants,
       people: packPeople,
       participants,
+      // #449: the pool UUID for engine use, alongside the display key on
+      // `PackFixture.pool`. Built from `packMovable` so the key order follows the
+      // pack's own board order rather than a per-seed row order, exactly as
+      // `participants` does — the byte-identical test compares `JSON.stringify`,
+      // where insertion order is load-bearing.
+      poolIds: Object.fromEntries(
+        packMovable.flatMap((f) => {
+          const id = poolIdByFixture.get(f.id);
+          return id !== undefined ? [[f.id, id] as const] : [];
+        }),
+      ),
       assumptions,
       fixtures: { movable: packMovable, obstacles: packObstacles },
       draft,
@@ -1455,13 +1543,13 @@ function structuralCheck(plan: AiSchedulePlan, movableIds: Set<string>, pack: Sc
  *  fields `packRuleFixtures` below already reads. They are what makes a
  *  pool- or division-targeted `restByGroup` entry actually bind on this path.
  *
- *  NOT `startWindows`, on this path: `verifyConfig` below pins
- *  `startWindows: []` outright, so the single-division AI path is blind to
- *  every start window whatever it targets, and `repair-domain` clips the
- *  repair domain to that same empty config. Stamping the group identity is
- *  necessary for that to ever work and is not sufficient — filed separately.
- *  `schedule-group-targeting.test.ts` asserts the pin, so this comment and
- *  that test cannot drift apart silently.
+ *  `startWindows` too, since #458: `verifyConfig` below used to pin
+ *  `startWindows: []`, so this path was blind to every start window whatever it
+ *  targeted and `repair-domain` clipped the repair domain to that same empty
+ *  config. It now goes through `buildEngineConstraints`, which converts them.
+ *  Stamping the group identity here is what makes a pool-targeted one bind at
+ *  all; `schedule-group-targeting.test.ts` asserts both halves end to end, so
+ *  this comment and that test cannot drift apart silently.
  *
  *  Exported for the same reason its joint twin `toJointEngineAssignments` is:
  *  the verify seam is testable without a model round trip. */
@@ -1482,7 +1570,13 @@ export function toEngineAssignments(plan: AiSchedulePlan, pack: SchedulePack): A
       // whoever can still advance into it, which is what every person rule
       // needs and what `pack.people` (pairs sharing an entrant) never had.
       people: pack.participants[a.fixture_id] ?? [],
-      ...(f?.pool != null ? { poolId: f.pool } : {}),
+      // #449: the pool UUID from `pack.poolIds`, NOT `f.pool` — that is the
+      // display key the model reads, and stamping it here put this path in a
+      // different namespace from the board path, `RuleFixture.poolId` and every
+      // stored rule.
+      ...(pack.poolIds[a.fixture_id] !== undefined
+        ? { poolId: pack.poolIds[a.fixture_id]! }
+        : {}),
       divisionId: pack.division.id,
     };
   });
@@ -1569,7 +1663,13 @@ export function toRuleFixture(f: RuleFixtureSource, divisionId: string): RuleFix
  *  `winnerTo` is the ONLY definition of terminal — never a round number, which
  *  is a display label an elimination bracket numbers sparsely. */
 export function packRuleFixtures(pack: SchedulePack): RuleFixture[] {
-  return pack.fixtures.movable.map((f) => toRuleFixture(f, pack.division.id));
+  // #449: the pool UUID, overriding the display key `PackFixture.pool` carries.
+  // `scopeCoversFixture` reads `f?.poolId ?? a.poolId`, so a RuleFixture MASKS
+  // its assignment's value — a key here would defeat the uuid stamped by
+  // `toEngineAssignments` and put the whole AI path back in a second namespace.
+  return pack.fixtures.movable.map((f) =>
+    toRuleFixture({ ...f, pool: pack.poolIds[f.id] ?? null }, pack.division.id),
+  );
 }
 
 /** Exported for the same reason the joint twin `verifyConfigFor` is: it is a
@@ -1589,26 +1689,19 @@ export function verifyConfig(pack: SchedulePack): VerifyConfig {
     // effectiveRestMinutes takes the strictest, exactly as the solver does.
     perEntrantMinRest: pack.settings.perEntrantMinRest,
     matchMinutes: pack.settings.matchMinutes,
-    // Only the rest-bearing fields: the pack's startWindows carry ISO strings
-    // (the model reads them), while the engine wants epoch ms. Window
-    // validation is a separate piece of work — carrying them across here would
-    // silently compare the wrong units.
+    // #458: the ONE builder the board path and the joint path also go through.
+    // This site used to pin `startWindows: []` — the pack carries them as ISO
+    // strings for the model while the engine wants epoch ms, and rather than
+    // convert, the copy here dropped them. So this referee was blind to EVERY
+    // start window whatever it targeted, and `repair-domain` clipped the repair
+    // domain to the same empty config. The builder converts them.
+    //
+    // `AI_VERIFY_POLICY` (`hard: false`): the durable rules already ride the
+    // TOP-LEVEL `hard` field above, merged with the compiled instruction stream.
+    // `effectiveHard` merges the two, so carrying them here as well would count
+    // every durable rule twice.
     ...(pack.settings.constraints !== null
-      ? {
-          constraints: {
-            ...(pack.settings.constraints.restMin !== undefined
-              ? { restMin: pack.settings.constraints.restMin }
-              : {}),
-            ...(pack.settings.constraints.restByGroup !== undefined
-              ? { restByGroup: pack.settings.constraints.restByGroup }
-              : {}),
-            noBackToBack: pack.settings.constraints.noBackToBack,
-            startWindows: [],
-            fieldFairness: "off" as const,
-            parallelism: "mixed" as const,
-            crossPersonClash: "warn" as const,
-          },
-        }
+      ? { constraints: buildEngineConstraints(pack.settings.constraints, AI_VERIFY_POLICY) }
       : {}),
     gapMinutes: pack.settings.gapMinutes,
     blackouts: pack.settings.blackouts.map((b) => ({
