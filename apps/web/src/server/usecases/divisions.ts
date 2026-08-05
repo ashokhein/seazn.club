@@ -106,12 +106,21 @@ export async function createDivision(
     if (!comp) throw new HttpError(404, "competition not found");
     await assertCompetitionNotFrozen(auth.orgId, competitionId, tx);
 
-    // Doc 10 §1: `divisions.per_competition.max` (Community's real bite: 1).
-    // Count in the same tx as the insert (doc 10 §2 rule 1). Archived
-    // divisions don't count — archiving frees the slot (v3/09 §4).
+    // Doc 10 §1: `divisions.per_competition.max` (Community's real bite: 4 —
+    // V270 set 2, V319 raised it). Counted in the same tx as the insert
+    // (doc 10 §2 rule 1).
+    //
+    // An archived division still counts once it has RECORDED RESULTS. Archiving
+    // used to free the slot unconditionally, which made create → play → archive
+    // → create an unlimited-divisions loop inside one competition: archive was
+    // a delete that skipped delete's own DIVISION_HAS_RESULTS guard and got the
+    // slot back as well. An UNPLAYED division archived still frees its slot, so
+    // fixing a division configured with the wrong sport stays free.
     const [{ n }] = await tx<{ n: number }[]>`
-      select count(*)::int as n from divisions
-      where competition_id = ${competitionId} and archived_at is null`;
+      select count(*)::int as n from divisions d
+      where d.competition_id = ${competitionId}
+        and (d.archived_at is null
+             or (division_has_results(d.id) and d.slot_waived_at is null))`;
     const quota = await withinLimit(auth.orgId, "divisions.per_competition.max", n + 1, competitionId);
     if (!quota.ok) throw new PaymentRequiredError("divisions.per_competition.max");
 
@@ -274,9 +283,14 @@ export async function deleteDivision(auth: AuthCtx, id: string): Promise<void> {
       );
     }
 
-    const [{ decided }] = await tx<{ decided: number }[]>`
-      select count(*)::int as decided from fixtures
-      where division_id = ${id} and status in ('decided', 'finalized', 'forfeited')`;
+    // ONE definition of "has recorded results", shared with the quota count in
+    // createDivision (V354). The two ask different questions of it — delete
+    // refuses, the quota charges — but they must never disagree about the
+    // answer, and this repo's recurring defect is exactly a forked copy of one
+    // rule. The audit payload keeps a real count, which is not the same
+    // question and stays a count.
+    const [{ has_results }] = await tx<{ has_results: boolean }[]>`
+      select division_has_results(${id}) as has_results`;
 
     if (division.archived_at !== null) {
       // Purge path: archived divisions hard-delete after the cool-off.
@@ -290,7 +304,11 @@ export async function deleteDivision(auth: AuthCtx, id: string): Promise<void> {
           "ARCHIVE_COOL_OFF",
         );
       }
-    } else if (division.status !== "setup" || decided > 0) {
+    } else if (division.status !== "setup" || has_results) {
+      // Broader than the SLOT rule (V354) deliberately: this destroys data, so
+      // a division that merely LEFT setup is protected too. The slot rule
+      // charges only for real results, because publishing a misconfigured
+      // division and archiving it is a mistake, not usage.
       throw new HttpError(
         409,
         "This division has started or has recorded results — archive it instead (restorable), or purge it 30 days after archiving",
@@ -303,6 +321,12 @@ export async function deleteDivision(auth: AuthCtx, id: string): Promise<void> {
       select count(*)::int as entrants from entrants where division_id = ${id}`;
     const [{ fixtures }] = await tx<{ fixtures: number }[]>`
       select count(*)::int as fixtures from fixtures where division_id = ${id}`;
+    // Audit fidelity, not a guard: how MANY results died with the row. The
+    // guard's question ("any at all?") is division_has_results above — this is
+    // a different question, so it stays a count.
+    const [{ decided }] = await tx<{ decided: number }[]>`
+      select count(*)::int as decided from fixtures
+      where division_id = ${id} and status in ('decided', 'finalized', 'forfeited')`;
 
     // The division ledger dies with the row (ON DELETE CASCADE); the audit
     // fact lives on the competition ledger, which survives (v3/09 §4).
@@ -357,9 +381,18 @@ export async function restoreDivision(auth: AuthCtx, id: string): Promise<Divisi
     if (!existing) throw new HttpError(404, "division not found");
     if (existing.archived_at === null) return existing;
 
+    // Identical predicate to createDivision's (V354) — restoring must not
+    // smuggle a competition past a limit a create would have refused. The row
+    // being restored is EXCLUDED and re-added as the `+ 1` below: it is
+    // archived, so under the old `archived_at is null` count it was never in
+    // `n`, but a resulted archived division now IS, and counting it twice would
+    // refuse a restore that fits.
     const [{ n }] = await tx<{ n: number }[]>`
-      select count(*)::int as n from divisions
-      where competition_id = ${existing.competition_id} and archived_at is null`;
+      select count(*)::int as n from divisions d
+      where d.competition_id = ${existing.competition_id}
+        and d.id <> ${id}
+        and (d.archived_at is null
+             or (division_has_results(d.id) and d.slot_waived_at is null))`;
     const quota = await withinLimit(
       auth.orgId,
       "divisions.per_competition.max",
