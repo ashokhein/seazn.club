@@ -109,6 +109,27 @@ export async function withTenant<T>(
   }) as unknown as T;
 }
 
+/** Seconds an ORPHANED lock connection lingers before closing itself. */
+const LOCK_IDLE_TIMEOUT_S = 10;
+/** Comfortably inside `LOCK_IDLE_TIMEOUT_S`, so a slow ping cannot let the
+ *  connection idle out between two beats. */
+const LOCK_KEEPALIVE_MS = 4_000;
+
+/**
+ * The wait for a session advisory lock ran out (Postgres 55P03), which can only
+ * happen when the caller asked for a `lockTimeoutMs`.
+ *
+ * Deliberately not an `HttpError`: this module has no business choosing a status
+ * code, and the callers that bound their wait each have their own retryable
+ * answer to give. Callers that do NOT pass a timeout never see this.
+ */
+export class SessionLockTimeoutError extends Error {
+  constructor(readonly key: string) {
+    super(`timed out waiting for the session advisory lock ${key}`);
+    this.name = "SessionLockTimeoutError";
+  }
+}
+
 /**
  * Hold SESSION-level advisory locks across `fn`, on a connection OUTSIDE the
  * pool, and release them however `fn` ends.
@@ -127,12 +148,23 @@ export async function withTenant<T>(
  * one without reaching the finally), `idle_timeout` is short so an orphan closes
  * itself within seconds instead of holding the key indefinitely, and `end()` is
  * bounded so a hanging close cannot strand it either. Callers that WAIT on these
- * keys should bound their wait too — see the `lock_timeout` in
- * `applyCompetitionSchedule`.
+ * keys should bound their wait too — `lockTimeoutMs` below does that for a
+ * caller of this helper; `applyCompetitionSchedule` does the transaction-level
+ * equivalent with `set local lock_timeout`.
+ *
+ * HEARTBEAT, and why the lock is worthless without one. This connection is idle
+ * BY DESIGN for the whole of `fn` — everything `fn` runs goes through the pool —
+ * so `idle_timeout` closes it mid-body and the backend takes the lock with it,
+ * silently. Measured against Postgres: a holder lost its key 10.4s after the
+ * last statement, i.e. any body longer than `idle_timeout` ran unprotected past
+ * that point while still believing it held the lock. A ping keeps the backend
+ * alive while `fn` runs, and stops the instant it ends so the orphan self-heal
+ * above still applies.
  */
 export async function withSessionLocks<T>(
   keys: readonly string[],
   fn: () => Promise<T>,
+  opts: { lockTimeoutMs?: number } = {},
 ): Promise<T> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set — cannot take a session lock.");
@@ -150,20 +182,49 @@ export async function withSessionLocks<T>(
   }
   const { ssl, prepare, schema } = connectionOptions(url);
   let client: Sql | undefined;
+  let beat: ReturnType<typeof setInterval> | undefined;
   try {
     client = postgres(url, {
       ssl,
       prepare,
       max: 1,
-      idle_timeout: 10,
+      idle_timeout: LOCK_IDLE_TIMEOUT_S,
       connect_timeout: 15,
       connection: { search_path: schema },
     });
-    for (const key of keys) {
-      await client`select pg_advisory_lock(hashtext(${key}))`;
+    if (opts.lockTimeoutMs !== undefined) {
+      // `set_config` rather than `set`: SET takes no bind parameters, so `set`
+      // would need string interpolation. Session-scoped (is_local false) because
+      // there is no transaction here — and this connection belongs to this call
+      // alone and is closed below, so it cannot leak onto other work. A bare
+      // integer is milliseconds.
+      const ms = String(Math.max(1, Math.round(opts.lockTimeoutMs)));
+      await client`select set_config('lock_timeout', ${ms}, false)`;
     }
+    for (const key of keys) {
+      try {
+        await client`select pg_advisory_lock(hashtext(${key}))`;
+      } catch (err) {
+        // 55P03 is reachable ONLY with a lockTimeoutMs — without one the wait is
+        // unbounded, so a 55P03 from anywhere else is not ours to translate.
+        if (opts.lockTimeoutMs !== undefined && (err as { code?: string }).code === "55P03") {
+          throw new SessionLockTimeoutError(key);
+        }
+        throw err;
+      }
+    }
+    const held = client;
+    // unref'd so a ping can never be the reason a process stays alive; cleared
+    // in the finally regardless of how `fn` ends. Errors are swallowed: a failed
+    // ping means the connection is already gone, which the body will discover
+    // through its own work rather than through a keepalive.
+    beat = setInterval(() => {
+      void held`select 1`.catch(() => undefined);
+    }, LOCK_KEEPALIVE_MS);
+    beat.unref?.();
     return await fn();
   } finally {
+    if (beat) clearInterval(beat);
     if (client) {
       // Both, always, and neither may mask what `fn` threw: a leaked lock
       // connection is worse than never having taken the lock at all.

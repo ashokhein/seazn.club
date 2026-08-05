@@ -64394,7 +64394,7 @@
     },
     "/api/v1/competitions/{id}/schedule/restore": {
       "post": {
-        "summary": "Undo one joint apply — restores every division that apply wrote (confirm: true). The body carries the per-division checkpoint anchors, since the apply event records only `division_ids`, and the division set must EXACTLY equal that list: a subset is a 422, not a partial restore. NOT one transaction — each division rewinds through its own single-writer appends, exactly as the per-division restore does — so a division that refuses is REPORTED in `failed` while the rest still restore, and `ok` is false. No joint apply on the competition -> 404",
+        "summary": "Undo one joint apply — restores every division that apply wrote (confirm: true). The body carries the per-division checkpoint anchors, since the apply event records only `division_ids`, and the division set must EXACTLY equal that list: a subset is a 422, not a partial restore. NOT one transaction — each division rewinds through its own single-writer appends, exactly as the per-division restore does — so a division that refuses is REPORTED in `failed` while the rest still restore, and `ok` is false. The whole rewind runs under one competition-scoped lock, and the division set is re-read UNDER that lock, so a joint apply that lands first is caught rather than overwritten. A second undo of the same competition — usually the same organiser double-clicking — waits up to 5s and then gets a retryable 409 `SCHEDULE_APPLY_RESTORE_IN_PROGRESS` rather than stalling; nothing is rewound behind that refusal. No joint apply on the competition -> 404",
         "tags": [
           "history"
         ],
@@ -64664,6 +64664,50 @@
           },
           "404": {
             "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {

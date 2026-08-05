@@ -292,6 +292,44 @@ async function advisoryLockHeld(key: string): Promise<boolean> {
   return (row?.n ?? 0) > 0;
 }
 
+/**
+ * Is anyone WAITING on an advisory lock on `key` right now?
+ *
+ * The mirror of `advisoryLockHeld`, and the two must not be merged: `granted`
+ * distinguishes "someone holds it" from "someone is parked on it", and the
+ * second is what proves a caller has reached its lock acquisition and gone no
+ * further. Halves compared separately, for the reason given above.
+ */
+async function advisoryLockWaiting(key: string): Promise<boolean> {
+  const [row] = await sql<{ n: number }[]>`
+    select count(*)::int as n from pg_locks
+     where locktype = 'advisory' and not granted
+       and classid::bigint = ((hashtext(${key})::bigint >> 32) & 4294967295)
+       and objid::bigint = (hashtext(${key})::bigint & 4294967295)`;
+  return (row?.n ?? 0) > 0;
+}
+
+/**
+ * Write a `schedule.applied_multi` row directly — i.e. what a joint apply that
+ * has just COMMITTED looks like to the restore's event read.
+ *
+ * Deliberately not `jointApply`: the real apply takes the same `joint:` key, so
+ * it cannot be made to commit while a test holds that key, which is exactly the
+ * window these tests need to open. What is under test is WHEN the event is
+ * read, not what an apply writes into it.
+ */
+async function insertJointApplyEvent(
+  auth: AuthCtx,
+  competitionId: string,
+  divisionIds: string[],
+): Promise<void> {
+  await sql`
+    insert into competition_events (competition_id, org_id, type, payload, actor_id)
+    values (${competitionId}, ${auth.orgId}, ${JOINT_APPLY_EVENT},
+            ${sql.json({ source: "ai", division_ids: divisionIds, applied: [] } as never)},
+            ${auth.userId})`;
+}
+
 /** Poll `pred` until true. Returns false on timeout — the CALLER asserts, so a
  *  lock that is never taken fails an assertion instead of hanging the suite. */
 async function waitUntil(pred: () => Promise<boolean>, ms = 20_000): Promise<boolean> {
@@ -529,6 +567,32 @@ describe.skipIf(!HAS_DB)("restoreCompetitionSchedule (#386)", () => {
     expect(placedWhenApplyGotIn).toBe(false);
   }, 180_000);
 
+  it("still holds the key after the lock connection's idle timeout — a long rewind is not left unprotected", async () => {
+    // "the WHOLE rewind" above is only tested over a rewind of a few seconds.
+    // The lock connection runs no statements during a rewind — every append
+    // goes through the pool — so it is idle by design, and postgres.js closes
+    // an idle connection after `idle_timeout` (10s), which hands the backend's
+    // session locks back. Measured before the keepalive: the key was gone 10.4s
+    // in, i.e. every rewind longer than that finished unprotected while still
+    // believing it was excluding a concurrent apply. A real joint undo — up to
+    // 20 divisions, up to 500 inverse appends each — is well past 10s.
+    //
+    // A synthetic key: this is about the connection, not about any competition,
+    // and a unique one keeps a reused test database from colliding.
+    const key = `joint:idle-${randomUUID()}`;
+    let heldLate: boolean | undefined;
+    await withSessionLocks([key], async () => {
+      await new Promise((r) => setTimeout(r, 13_000));
+      // Observed from the POOL, i.e. another connection — the only vantage
+      // point from which "someone still holds this" means anything.
+      heldLate = await advisoryLockHeld(key);
+    });
+    expect(heldLate).toBe(true);
+    // …and released the moment the body ended, so the keepalive did not turn a
+    // holder into a leak.
+    expect(await advisoryLockHeld(key)).toBe(false);
+  }, 60_000);
+
   it("leaves the per-division locks free — the joint key must not be the division key", async () => {
     const { auth, competitionId, divisions, checkpoints } = await seedAppliedJoint(2);
     const order: string[] = [];
@@ -575,6 +639,89 @@ describe.skipIf(!HAS_DB)("restoreCompetitionSchedule (#386)", () => {
       // rather than a request that hangs until a gateway kills it.
       expect(Date.now() - started).toBeLessThan(30_000);
     });
+  }, 180_000);
+
+  it("makes a SECOND restore fail fast with a retryable 409 instead of waiting for the first", async () => {
+    const { auth, competitionId, divisions, checkpoints } = await seedAppliedJoint(2);
+    const body = {
+      checkpoints: checkpoints.map((c) => ({
+        division_id: c.divisionId,
+        checkpoint_id: c.checkpointId,
+      })),
+      confirm: true,
+    } as const;
+
+    // The key held exactly as a restore in flight holds it. The apply side has
+    // always failed fast here; before the timeout on this side, a second undo
+    // instead SAT on the lock, pinning a second out-of-pool connection for as
+    // long as the first rewind took — and the likeliest second undo is the same
+    // organiser double-clicking, not another admin.
+    const started = Date.now();
+    await withSessionLocks([`joint:${competitionId}`], async () => {
+      await expect(restoreCompetitionSchedule(auth, competitionId, body)).rejects.toMatchObject({
+        status: 409,
+        code: "SCHEDULE_APPLY_RESTORE_IN_PROGRESS",
+      });
+    });
+    // Fast is half the contract: without the bound this call does not return
+    // until the holder does, so an unbounded wait fails here as a timeout.
+    expect(Date.now() - started).toBeLessThan(60_000);
+    // A refusal, not a partial undo: nothing rewound behind the 409.
+    for (const d of divisions) expect(unplaced(await slots(d.id))).toBe(false);
+
+    // The SAME body succeeds once the key is free, so the 409 was the lock and
+    // not something wrong with the request — a guard that refused either way
+    // would satisfy the assertion above.
+    const out = await restoreCompetitionSchedule(auth, competitionId, body);
+    expect(out.ok).toBe(true);
+    for (const d of divisions) expect(unplaced(await slots(d.id))).toBe(true);
+  }, 180_000);
+
+  it("reads the apply event UNDER the lock — an apply that lands first is not missed", async () => {
+    const { auth, competitionId, divisions, checkpoints } = await seedAppliedJoint(2);
+    const body = {
+      checkpoints: checkpoints.map((c) => ({
+        division_id: c.divisionId,
+        checkpoint_id: c.checkpointId,
+      })),
+      confirm: true,
+    } as const;
+
+    // A stand-in for a joint write already in flight. Holding the key is what
+    // opens the window: the restore below parks on the lock, and anything it
+    // read BEFORE the lock was read from a world that is about to change.
+    let release!: () => void;
+    const holderDone = new Promise<void>((r) => {
+      release = r;
+    });
+    const holding = withSessionLocks([`joint:${competitionId}`], () => holderDone);
+    expect(await waitUntil(() => advisoryLockHeld(`joint:${competitionId}`))).toBe(true);
+
+    const restoring = restoreCompetitionSchedule(auth, competitionId, body).then(
+      (out) => ({ out, err: undefined }),
+      (err: unknown) => ({ out: undefined, err }),
+    );
+
+    // Parked ON the lock, proven from pg_locks rather than slept for: every
+    // step the restore performs before acquiring has now happened, so the read
+    // either already ran (the bug) or is still to come (the fix).
+    expect(
+      await waitUntil(() => advisoryLockWaiting(`joint:${competitionId}`), 4_000),
+    ).toBe(true);
+
+    // …and NOW a joint apply commits, over a different division set. The
+    // restore's anchors no longer name what the latest apply wrote.
+    await insertJointApplyEvent(auth, competitionId, [divisions[0]!.id]);
+    release();
+    await holding;
+
+    // Under the fix the event read happens after the wait, so the superseding
+    // apply is visible and the set check refuses. With the read outside the
+    // lock the restore validated against the OLD event and rewound a board the
+    // organiser had already replaced.
+    const settled = await restoring;
+    expect(settled.err).toMatchObject({ status: 422 });
+    for (const d of divisions) expect(unplaced(await slots(d.id))).toBe(false);
   }, 180_000);
 
   // -------------------------------------------------------------------------
