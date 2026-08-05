@@ -2143,6 +2143,32 @@ git commit -m "feat(api): auto-schedule mode, board metrics and solver telemetry
 - Consumes: `buildSchedule` (Task 4/5/7), `repairSchedule` (existing), `AutoScheduleRequest.mode` (Task 8).
 - Produces: `autoSchedule(auth, stageId, body)` returning `{ assignments, conflicts, metrics, solver }`.
 
+**AMENDED after the Task 5 and Task 11 reviews — these are acceptance criteria,
+not suggestions:**
+
+1. **Task 8 shipped the SCHEMA ONLY.** `metrics`/`solver` are declared in
+   `apps/web/src/server/api-v1/schemas.ts` but `AutoScheduleOut` at
+   `apps/web/src/server/usecases/schedule.ts:648` still returns
+   `{ assignments, conflicts }`. Populating them is THIS task's work. Task 11's
+   result strip and Task 15's e2e are both blind until it lands — the strip
+   currently renders hidden by design when the fields are absent.
+2. **Add `tiers_total: number` to `ScheduleSolverInfo`** and populate it from the
+   engine's tier-ladder length. Rationale: Task 11 had to hardcode
+   `IMPROVEMENT_TARGETS = 4` in the component because the wire carries
+   `tiers_completed` with no denominator. Sending the denominator removes the
+   drift risk at the root instead of bolting a tripwire test onto a constant.
+3. **Add `contradictory_pins?: string[]` to `ScheduleSolverInfo`**, mapped from
+   `BuildResult.contradictoryPins` (Task 5: sorted fixture ids, present only on a
+   probe-proved `infeasible` whose proof is about the pinned set). Task 11's strip
+   currently derives the pin count as `total - placed`, which is a stand-in that
+   misreports whenever the unplaced fixtures are not all pinned.
+4. **Optimality is `tiersCompleted === 4`, NOT `!budgetExpired`** (Task 5 contract
+   correction). A term or metric drift exits a tier without ever setting
+   `budgetExpired`. Do not use the flag to decide whether the board is optimal.
+5. Both fields are additive and optional-on-the-wire, so **re-run `openapi:gen`
+   and `i18n:gen-keys`** and confirm `git status --porcelain` is empty before
+   committing. Both gates are CI-only.
+
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
@@ -2390,6 +2416,34 @@ git commit -am "feat(board): result strip showing what the solver achieved"
 **Interfaces:**
 - Consumes: `POST /stages/{id}/schedule/auto` with `mode: "polish"`.
 - Produces: `data-testid="schedule-polish"`.
+
+**AMENDED after the Task 11 review — fold these into this task, they are the
+two Important findings re-homed here because they could not be fixed inside
+Task 11 (the fields did not exist yet):**
+
+1. **Delete `IMPROVEMENT_TARGETS = 4`** from
+   `apps/web/src/components/v2/board/result-strip.tsx:399` and read the
+   denominator from `solver.tiers_total`, which Task 9 now sends. Ship a test
+   proving the strip renders "N of M" from the wire, not from a constant.
+2. **Use `solver.contradictory_pins.length`** for the `infeasible` pin count
+   (`result-strip.tsx:453,467`), via the `pinnedConflictCount` prop Task 11
+   already reserved. Keep `total - placed` only as the fallback when the field is
+   absent. Regression test: an `infeasible` where the unplaced set is STRICTLY
+   LARGER than the pinned set — the derived number is wrong there and the wired
+   one is right. That case is the whole point of the fix; a test where the two
+   numbers agree proves nothing.
+3. **Minor, from the same review:** `result-strip.tsx:460` sets
+   `flagged = partial || status === "infeasible"`, which paints amber even when
+   `infeasible` arrives with `placed === total` (nothing actually dropped). The
+   existing test at `result-strip.test.tsx:335` asserts only the headline text,
+   so the tone is unverified in both directions. Decide the tone deliberately and
+   assert `data-tone`.
+4. **Minor, deferred here from Task 11:** `apps/web/src/components/v2/stages-panel.tsx:113-121`
+   holds a SECOND call site for `POST /stages/{id}/schedule/auto`
+   ("Auto-schedule remaining"). Once Task 9 populates the telemetry, that entry
+   point receives it and drops it on the floor, so organisers get solver feedback
+   on the Board and none there. Wire the same strip, or state in the report why
+   not.
 
 - [ ] **Step 1: Add `schedule.polish.action` / `.running` / `.alreadyOptimal` / `.improved` to all four dictionaries**
 
