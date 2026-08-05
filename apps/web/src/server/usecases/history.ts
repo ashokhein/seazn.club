@@ -402,6 +402,29 @@ export async function createCheckpoint(
       insert into division_checkpoints (division_id, seq, label, kind, created_by)
       values (${divisionId}, ${wm}, ${label}, ${kind}, ${auth.userId})
       returning id, seq, label, kind, created_at`;
+    // #382: AI anchors are exempt from the manual quota and nothing ever deleted
+    // them, so they accumulated one per AI apply, for ever — `superseded` is
+    // derived on read, not stored, and the only other DELETE is the organiser's
+    // own. Keep the newest 3.
+    //
+    // Three, not one: `CheckpointRow.superseded` exists because jumping back
+    // two AI runs is a capability worth keeping, and two runs back plus the
+    // newest is exactly 3. No notice for these — the organiser did not name
+    // them and the panel already strikes the superseded ones through.
+    //
+    // AFTER the insert, so the row just created is always among the survivors.
+    // Same ordering exemption as the manual eviction above: selection input.
+    // The V303 index (division_id, kind, created_at desc) already serves it.
+    if (kind === "ai") {
+      await tx`
+        delete from division_checkpoints
+         where id in (
+           select id from division_checkpoints
+            where division_id = ${divisionId} and kind = 'ai'
+            order by created_at desc, seq desc, id desc
+            offset 3
+         )`;
+    }
     return { ...row!, ...(evicted ? { evicted } : {}) };
   });
 }

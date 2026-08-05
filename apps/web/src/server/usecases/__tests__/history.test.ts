@@ -481,6 +481,91 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
     await expect(createCheckpoint(auth, division.id, "three")).resolves.toBeDefined();
   });
 
+  // -------------------------------------------------------------------------
+  // #382 — AI anchors are pruned to the newest 3 per division.
+  //
+  // They are exempt from the manual quota (V303) and nothing ever deleted them:
+  // `superseded` is derived on read, not stored, and the only DELETE is the
+  // user-initiated endpoint. So they accumulated one per AI apply, for ever.
+  //
+  // Three rather than one because `CheckpointRow.superseded` calls the deeper
+  // rewind out as deliberate — "jumping back two AI runs is a real capability
+  // worth keeping". Two runs back plus the newest is exactly 3.
+  // -------------------------------------------------------------------------
+
+  it("keeps the newest 3 AI anchors per division (#382)", async () => {
+    const { auth } = await seedOrg("community");
+    const { division } = await seedDivision(auth);
+    for (let i = 0; i < 6; i++) await createCheckpoint(auth, division.id, `ai-${i}`, "ai");
+    const ai = (await listCheckpoints(auth, division.id)).filter((r) => r.kind === "ai");
+    expect(ai).toHaveLength(3);
+    // listCheckpoints is newest-first.
+    expect(ai.map((r) => r.label)).toEqual(["ai-5", "ai-4", "ai-3"]);
+  });
+
+  it("the 3rd and 4th AI anchors are the boundary: 3 survive, the 4th prunes one", async () => {
+    const { auth } = await seedOrg("pro");
+    const { division } = await seedDivision(auth);
+    for (let i = 0; i < 3; i++) await createCheckpoint(auth, division.id, `ai-${i}`, "ai");
+    expect((await listCheckpoints(auth, division.id)).filter((r) => r.kind === "ai")).toHaveLength(
+      3,
+    );
+    await createCheckpoint(auth, division.id, "ai-3", "ai");
+    const ai = (await listCheckpoints(auth, division.id)).filter((r) => r.kind === "ai");
+    expect(ai.map((r) => r.label)).toEqual(["ai-3", "ai-2", "ai-1"]);
+  });
+
+  it("pruning is per division, not per org", async () => {
+    const { auth } = await seedOrg("community");
+    const a = await seedDivision(auth);
+    const b = await seedDivision(auth);
+    for (let i = 0; i < 4; i++) await createCheckpoint(auth, a.division.id, `a-${i}`, "ai");
+    await createCheckpoint(auth, b.division.id, "b-0", "ai");
+    expect(
+      (await listCheckpoints(auth, b.division.id)).filter((r) => r.kind === "ai"),
+    ).toHaveLength(1);
+    // …and A is still at its own cap of 3, not emptied by B's insert.
+    expect(
+      (await listCheckpoints(auth, a.division.id)).filter((r) => r.kind === "ai"),
+    ).toHaveLength(3);
+  });
+
+  it("the prune touches AI anchors only — manual save points survive it", async () => {
+    const { auth } = await seedOrg("community");
+    const { division } = await seedDivision(auth);
+    await createCheckpoint(auth, division.id, "manual-one");
+    for (let i = 0; i < 6; i++) await createCheckpoint(auth, division.id, `ai-${i}`, "ai");
+    const rows = await listCheckpoints(auth, division.id);
+    expect(rows.filter((r) => r.kind === "manual").map((r) => r.label)).toEqual(["manual-one"]);
+    expect(rows.filter((r) => r.kind === "ai")).toHaveLength(3);
+  });
+
+  it("AI anchors still cost no manual quota", async () => {
+    const { auth } = await seedOrg("community");
+    const { division } = await seedDivision(auth);
+    for (let i = 0; i < 4; i++) await createCheckpoint(auth, division.id, `ai-${i}`, "ai");
+    const first = await createCheckpoint(auth, division.id, "manual-one");
+    expect(first.evicted).toBeUndefined();
+  });
+
+  it("a pruned AI anchor costs its label, not the rewind", async () => {
+    // Same contract as a rolled manual save point: the ROW goes, the ledger
+    // does not. An anchor pruned away is no longer restorable BY ID, but undo
+    // still walks back past the watermark it named.
+    const { auth } = await seedOrg("community");
+    const { division, fixtures } = await seedDivision(auth);
+    await patchFixture(auth, fixtures[0]!.id, { scheduled_at: at(9), court_label: "C1" });
+    const oldest = await createCheckpoint(auth, division.id, "ai-0", "ai");
+    for (let i = 1; i < 4; i++) await createCheckpoint(auth, division.id, `ai-${i}`, "ai");
+
+    await expect(restoreCheckpoint(auth, division.id, oldest.id, true)).rejects.toMatchObject({
+      status: 404,
+    });
+    await undoDivision(auth, division.id);
+    const after = await divisionHistory(auth, division.id);
+    expect(Number(after.watermark)).toBeLessThan(Number(oldest.seq));
+  });
+
   it("an evicted save point costs its label, not the rewind (#382)", async () => {
     const { auth } = await seedOrg("community");
     const { division, fixtures } = await seedDivision(auth);
