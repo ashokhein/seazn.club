@@ -2064,6 +2064,13 @@ Expected: five failures — `mode` is `undefined`.
 Replace lines 856-866 of `apps/web/src/server/api-v1/schemas.ts`:
 
 ```ts
+// NOTE: `z.preprocess`, NOT `.transform()`. `openapi.ts:288` converts every
+// registered schema with `z.toJSONSchema(…, { io: "output" })`, and a trailing
+// transform IS the output node — so `openapi:gen` dies with "Transforms cannot
+// be represented in JSON Schema". `schemas.ts` already carries that warning on
+// `AiApplyMeta`. Preprocess puts the function on the INPUT side, where the
+// generator never looks. Measured, not guessed: the transform form was tried
+// and the generator failed.
 export const AutoScheduleRequest = z
   .object({
     /** true (default) = re-flow unlocked fixtures only, locked ones are fixed
