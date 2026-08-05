@@ -56,11 +56,14 @@ export async function restoreCompetitionSchedule(
   // double-clicked typo queue behind a rewind. Everything that reads state
   // belongs below.
   //
-  // The PRECEDENCE is deliberate, not incidental. These two 422s outrank the
-  // "no joint apply" 404 below, so a malformed body against a competition that
-  // was never applied to is a 422 and not a 404: the body is wrong whatever the
-  // database says, and the answer must not depend on a read the request never
-  // earned. Moving either check under the lock would flip that back.
+  // The PRECEDENCE is deliberate, not incidental, and it CHANGED when these
+  // checks moved above the lock: a body naming a division twice against a
+  // competition with NO joint apply used to answer 404 and now answers 422.
+  // That is the intended order. The body is wrong whatever the database holds,
+  // so the status must not depend on a read the request never earned — and a
+  // caller told "no joint apply to restore" would go hunting for a missing
+  // event instead of looking at the duplicate it sent. Moving either check back
+  // under the lock flips this, so it is pinned by a test.
   if (!input.confirm) throw new HttpError(422, "restore requires confirm: true");
   const asked = input.checkpoints.map((c) => c.division_id);
   if (new Set(asked).size !== asked.length) throw new HttpError(422, "a division was named twice");

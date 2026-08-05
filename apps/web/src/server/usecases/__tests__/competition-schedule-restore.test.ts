@@ -42,11 +42,18 @@ import { seedOrg } from "./_seed";
  * undefined for every test but the two lock-loss ones below, so the rest of this
  * suite exercises the unmocked path.
  *
- * Why a seam is needed at all: a lost lock is only OBSERVABLE at a beat, seconds
- * apart, while a rewind of a seeded division is milliseconds — so "the loss
- * lands between division 1 and division 2" cannot be produced by timing. The
- * test that terminates a real backend (further down) proves `held()` really goes
- * false; these two prove what the rewind loop does when it has.
+ * Why a seam is needed at all — two reasons, both of them "timing cannot produce
+ * this state":
+ *
+ *  - A lost lock is only OBSERVABLE at a beat, seconds apart, while a rewind of
+ *    a seeded division is milliseconds, so "the loss lands between division 1
+ *    and division 2" is unreachable. The test that terminates a real backend
+ *    proves `held()` really goes false; the mid-loop test proves what the rewind
+ *    loop does when it has.
+ *  - A seeded two-division rewind holds its lock for as little as 30ms
+ *    (measured), so every "wait for the lock, then race it" test was sampling a
+ *    30ms window and losing on a loaded runner. `parkInsideLock` below holds the
+ *    window OPEN instead of polling for it.
  */
 const hooks = vi.hoisted(() => ({
   interpose: undefined as
@@ -67,9 +74,37 @@ vi.mock("@/lib/db", async (importOriginal) => {
   };
 });
 
+/** Gates opened by `afterEach` whatever the test did — a failed assertion must
+ *  not leave a restore parked forever on a promise nobody will resolve. */
+const openGates: (() => void)[] = [];
+
 afterEach(() => {
   hooks.interpose = undefined;
+  for (const open of openGates.splice(0)) open();
 });
+
+/**
+ * Park the next `withSessionLocks` body AFTER its keys are acquired and BEFORE
+ * it does any work, until the returned `open()` is called.
+ *
+ * This is the deterministic replacement for "start the restore, then poll
+ * `pg_locks` until the key shows up". The lock is real and really held — the
+ * seam only delays the body — so a competitor started while the gate is shut is
+ * provably racing a held lock rather than hoping to catch one. Polling could not
+ * be made sound: the entire rewind of a seeded pair holds the key for ~30ms.
+ */
+function parkInsideLock(): () => void {
+  let open!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  hooks.interpose = async (lock) => {
+    await gate;
+    return lock;
+  };
+  openGates.push(open);
+  return open;
+}
 
 /** The served body must match the contract the spec publishes — a field the
  *  usecase returns but the schema does not declare is stripped from `data`,
@@ -580,6 +615,13 @@ describe.skipIf(!HAS_DB)("restoreCompetitionSchedule (#386)", () => {
     const { auth, competitionId, divisions, checkpoints } = await seedAppliedJoint(2);
     const order: string[] = [];
 
+    // The restore is parked INSIDE its lock, before it rewinds anything. This
+    // used to poll `pg_locks` for the key instead, which was a race the runner
+    // could lose: the whole rewind holds the key for ~30ms, so a competitor
+    // started "once the lock is held" was really started once the lock HAPPENED
+    // to still be held. Now the window is held open until this test opens it.
+    const openTheGate = parkInsideLock();
+
     const restoring = restoreCompetitionSchedule(auth, competitionId, {
       checkpoints: checkpoints.map((c) => ({
         division_id: c.divisionId,
@@ -591,13 +633,12 @@ describe.skipIf(!HAS_DB)("restoreCompetitionSchedule (#386)", () => {
       return out;
     });
 
-    // Wait for the lock to be HELD rather than sleeping: this is what makes the
-    // competitor below start from a known state instead of a hopeful one. It is
-    // also the assertion that fails the moment the lock stops being taken.
+    // Still the assertion that fails the moment the lock stops being taken — the
+    // gate delays the BODY, it does not take the key. If `withSessionLocks`
+    // acquired nothing, nothing is granted here however long we wait.
     expect(await waitUntil(() => advisoryLockHeld(`joint:${competitionId}`))).toBe(true);
-    // …and the restore is still running, so the competitor really does have to
-    // wait for it. Without this, a restore that had already finished would make
-    // the ordering below pass for the wrong reason.
+    // …and the restore has not finished, so the competitor really does have to
+    // wait for it.
     expect(order).toEqual([]);
 
     // The competitor takes the key exactly as applyCompetitionSchedule takes it:
@@ -620,6 +661,15 @@ describe.skipIf(!HAS_DB)("restoreCompetitionSchedule (#386)", () => {
       placedWhenApplyGotIn = rows.some((r) => r.scheduled_at !== null);
     });
 
+    // The competitor is PARKED on the key — proven from pg_locks, not slept for
+    // — before a single rewind step runs. That ordering is what makes the claim
+    // in this test's title true by construction rather than by luck: the apply
+    // is demonstrably waiting when the rewind starts, so if it gets in early it
+    // can only be because the lock let go.
+    expect(await waitUntil(() => advisoryLockWaiting(`joint:${competitionId}`))).toBe(true);
+    expect(order).toEqual([]);
+
+    openTheGate();
     const out = await restoring;
     await applying;
     expect(out.ok).toBe(true);
@@ -746,21 +796,39 @@ describe.skipIf(!HAS_DB)("restoreCompetitionSchedule (#386)", () => {
       confirm: true,
     });
     expect(out.ok).toBe(false);
-    // The two halves name DIFFERENT divisions, and the split is the lock's, not
-    // the request's: both anchors are valid.
+    // THE PARTIAL REPORT SURVIVES, and that is the whole reason a lost lock is
+    // not a throw. The division rewound before the loss is still in `restored[]`
+    // — with its real watermark and a non-zero step count, so it is a record of
+    // work and not a placeholder — while only the untouched one is in `failed[]`.
+    // Rejecting here would have discarded the only record that the first
+    // division no longer carries the AI board.
     expect(out.restored.map((r) => r.division_id)).toEqual([firstId]);
+    expect(out.restored[0]!.steps).toBeGreaterThan(0);
+    expect(out.restored[0]!.watermark).toBeGreaterThan(0);
     expect(out.failed.map((f) => f.division_id)).toEqual([secondId]);
     expect(out.failed[0]!.reason).toMatch(/lock/i);
-    // The partial report is TRUE of the board: the first division really was
+    // …and the report is TRUE of the board: the first division really was
     // rewound and must not be re-listed as outstanding; the second was never
     // attempted and still carries the AI board.
     expect(unplaced(await slots(firstId!))).toBe(true);
     expect(unplaced(await slots(secondId!))).toBe(false);
+    // Both halves reach the caller — a partial report that the schema stripped
+    // would be no better than a throw.
+    wireRoundTrip(out);
   }, 180_000);
 
   it("leaves the per-division locks free — the joint key must not be the division key", async () => {
     const { auth, competitionId, divisions, checkpoints } = await seedAppliedJoint(2);
     const order: string[] = [];
+
+    // Parked inside the lock, for the reason given on the test above: this used
+    // to poll for a key that is only held for ~30ms.
+    //
+    // The gate does NOT weaken the regression this pins. `withSessionLocks`
+    // acquires every one of its keys BEFORE the body — and so before the gate —
+    // so if the session key were ever `division:<id>`, it is already held
+    // exclusively by the time the wait below starts.
+    const openTheGate = parkInsideLock();
 
     const restoring = restoreCompetitionSchedule(auth, competitionId, {
       checkpoints: checkpoints.map((c) => ({
@@ -783,9 +851,13 @@ describe.skipIf(!HAS_DB)("restoreCompetitionSchedule (#386)", () => {
       await tx`select pg_advisory_xact_lock(hashtext(${"division:" + divisions[0]!.id}))`;
       order.push("division");
     });
-    // Granted while the restore is still mid-flight: the namespaces are disjoint.
+    // Granted while the restore holds its joint key: the namespaces are disjoint.
     expect(order).toEqual(["division"]);
 
+    // …and the rewind itself then runs to completion while nothing here holds a
+    // division key, which is the other half of "disjoint": a session lock on
+    // `division:` would hang the steps rather than this wait.
+    openTheGate();
     const out = await restoring;
     expect(out.ok).toBe(true);
     expect(order).toEqual(["division", "restore"]);
@@ -975,6 +1047,37 @@ describe.skipIf(!HAS_DB)("restoreCompetitionSchedule (#386)", () => {
         confirm: true,
       }),
     ).rejects.toMatchObject({ status: 404 });
+  }, 180_000);
+
+  it("answers the BODY's 422 ahead of the missing-apply 404 when both are available", async () => {
+    const { auth } = await seedOrg("pro");
+    const comp = await createCompetition(auth, {
+      name: `Never Applied Dup ${Date.now()}`,
+      visibility: "public",
+      branding: {},
+    });
+    const division = await seedDivision(auth, comp.id, "Alpha", 4, ["Court 1"]);
+    const cp = await createCheckpoint(auth, division.id, "Anchor", "ai");
+
+    // Two refusals are both available here: the body names one division TWICE,
+    // and the competition has no joint apply to restore at all. The body check
+    // wins deliberately — moving the cheap checks above the lock changed this
+    // answer from 404 to 422, and the new order is the one to keep: a caller
+    // told "no joint apply to restore" would go hunting for a missing event
+    // instead of looking at the duplicate it sent.
+    //
+    // The MESSAGE is asserted, not just the status: this endpoint has more than
+    // one 422, and a bare status would be satisfied by the set-mismatch refusal
+    // that lives under the lock — i.e. by exactly the ordering under test.
+    await expect(
+      restoreCompetitionSchedule(auth, comp.id, {
+        checkpoints: [
+          { division_id: division.id, checkpoint_id: cp.id },
+          { division_id: division.id, checkpoint_id: cp.id },
+        ],
+        confirm: true,
+      }),
+    ).rejects.toMatchObject({ status: 422, message: expect.stringMatching(/named twice/) });
   }, 180_000);
 
   it("refuses when the apply event names no divisions — it does not restore nothing and call it a success", async () => {
