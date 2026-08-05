@@ -13,15 +13,20 @@
 // verifier's own, and `build-encode-parity.test.ts` enumerates every placement
 // two small lattices can express to prove the two agree placement by placement.
 //
-// WHAT IS NOT ENCODED, deliberately. The typed instruction rules
-// `validateInstructionRules` evaluates — `max_fixtures_per_day`,
-// `fixture_on_date`, `fixture_on_weekday`, `not_before`, `not_after` — have no
-// clause here. None of them is pairwise: three are per-fixture start bounds and
-// one is a per-day count, and encoding them is a separate piece of work. A
-// board this model calls feasible can therefore still carry `instruction`
-// conflicts, which `build.ts` sees when it verifies the result. The parity
-// suite asserts its configs carry none rather than assuming it, so the envelope
-// is stated in the test rather than remembered.
+// The typed instruction rules `validateInstructionRules` evaluates —
+// `max_fixtures_per_day`, `fixture_on_date`, `fixture_on_weekday`,
+// `not_before`, `not_after` — are stated too, in section 9, and they ask the
+// verifier itself for every verdict rather than restating one.
+//
+// WHAT IS NOT ENCODED, deliberately: the `min_rest_minutes` family. Its
+// per-person half needs no clause of its own — it is folded into the rest bound
+// `pairRestMinutesFor` already answers — and its `feeder_to_dependent` half,
+// which `validateInstructionRules` reports as an `instruction` conflict over the
+// `winnerTo` feed edges, has no clause here. A board this model calls feasible
+// can therefore still carry that one conflict, which `build.ts` sees when it
+// verifies the result. `build-encode-parity.test.ts` asserts its configs carry
+// no UNENCODED rule type rather than assuming it, so the envelope is stated in
+// the test rather than remembered and the next gap cannot hide.
 //
 // --- shape of the encoding -------------------------------------------------
 //
@@ -43,15 +48,21 @@
 import type { Bool, Model, Solver } from "z3-solver";
 import type { BuildGrid } from "./build-grid.ts";
 import {
+  effectiveHard,
   effectiveRestMinutes,
   intervalsOverlap,
   pairRestMinutesFor,
+  resolveSelector,
+  scopeCoversFixture,
   startWindowFor,
+  validateInstructionRules,
   type Assignment,
   type OrderDependency,
   type SchedulableFixture,
   type VerifyConfig,
 } from "./calendar.ts";
+import type { HardConstraint } from "./constraints.ts";
+import { dayKeyInTz } from "./tz.ts";
 import type { Z3Context } from "./z3-load.ts";
 
 const MS_PER_MIN = 60_000;
@@ -367,6 +378,133 @@ export function encodeBuild(input: EncodeInput): EncodedModel {
       const latestEnd = immovableTarget.startAt - restMs;
       for (const t of byStart) {
         if (startOf(t) + durMs > latestEnd) solver.add(Z3.Not(place[j]![t]!));
+      }
+    }
+  }
+
+  // 9. The typed instruction rules (#398) — the family `validateInstructionRules`
+  //    evaluates and `slotFixtures` has placed around since #463.
+  //
+  //    Cheap here in a way the arithmetic encoding cannot be: slot → calendar
+  //    day and slot → wall clock are known STATICALLY, so three of them are
+  //    per-slot unary filters and the fourth is one `AtMost` per (rule, day).
+  //    `repair.ts`'s `assertDayCap` needs auxiliary day literals, an `Iff` per
+  //    (fixture, day) and a completeness clause purely because its starts are
+  //    integers that can land anywhere.
+  //
+  //    NO RULE ARITHMETIC LIVES HERE, and none is even expressible: every unary
+  //    verdict below is `validateInstructionRules`'s own, asked of a one-row
+  //    board carrying that single rule. The encoder therefore cannot hold an
+  //    opinion about what a rule means that differs from the referee's, which is
+  //    the fork this file exists to avoid. The three placement rules read
+  //    nothing off a row except its scope, so ONE probe per (rule, slot)
+  //    answers for the whole scoped set.
+  //
+  //    THE ORG ZONE GATES THE BLOCK. Every rule here needs a day boundary or a
+  //    wall clock, and the verifier skips all of them when `tz` is absent rather
+  //    than bucketing in UTC (#448) — reporting a violation the organiser never
+  //    expressed is worse than reporting none. An encoder that bucketed anyway
+  //    would refuse boards the gate passes.
+  const tz = config.tz;
+  const hardRules = effectiveHard(config);
+  if (tz !== undefined && hardRules.length > 0) {
+    // `effectiveHard`, not `config.constraints.hard`: durable division rules and
+    // the ones a run compiled from the organiser's instruction are ONE stream,
+    // and a solver reading half of it enforces a rule on Monday and silently not
+    // on Tuesday.
+    const ruleFixtures = config.ruleFixtures ?? [];
+    const ruleFixtureById = new Map(ruleFixtures.map((f) => [f.id, f]));
+    const scopeCovers = (h: HardConstraint, i: number): boolean =>
+      scopeCoversFixture(h.scope, ruleFixtureById.get(fixtures[i]!.id), rows[i]!);
+    const scopedFixtures = (h: HardConstraint): number[] =>
+      fixtures.flatMap((_f, i) => (scopeCovers(h, i) ? [i] : []));
+    /** The slots this rule refuses outright for fixture `i` — the verifier's
+     *  verdict on a board holding that one placement and that one rule. */
+    const refusedSlots = (h: HardConstraint, i: number): number[] =>
+      slots.flatMap((_sl, s) =>
+        validateInstructionRules([asAssignment(fixtures[i]!, s)], { tz, hard: [h], ruleFixtures })
+          .length > 0
+          ? [s]
+          : [],
+      );
+
+    for (const h of hardRules) {
+      // `min_rest_minutes` is not a placement rule. Its per-person half is
+      // already stated — `pairRestMinutesFor` folds it into the rest bound in
+      // section 6, which is why it is deliberately absent from
+      // `validateInstructionRules` too — and its feeder half is out of scope
+      // here (see the header).
+      if (h.type === "min_rest_minutes") continue;
+
+      if (h.type === "not_before" || h.type === "not_after") {
+        const scoped = scopedFixtures(h);
+        if (scoped.length === 0) continue;
+        for (const s of refusedSlots(h, scoped[0]!)) {
+          for (const i of scoped) solver.add(Z3.Not(place[i]![s]!));
+        }
+        continue;
+      }
+
+      if (h.type === "fixture_on_date" || h.type === "fixture_on_weekday") {
+        // The SELECTOR names which fixtures a date/weekday rule binds; the scope
+        // only narrows what the selector may resolve to. "The final is on
+        // Sunday" is competition-scoped and binds one fixture, so applying it to
+        // every scoped row would empty the board.
+        for (const f of resolveSelector(h.selector, h.scope, ruleFixtures)) {
+          const i = indexOf.get(f.id);
+          if (i === undefined) continue;
+          if (!scopeCoversFixture(h.scope, f, rows[i]!)) continue;
+          for (const s of refusedSlots(h, i)) solver.add(Z3.Not(place[i]![s]!));
+        }
+        continue;
+      }
+
+      // `max_fixtures_per_day`. THE UNIT IS THE CALENDAR DAY in the org zone,
+      // the one `validateInstructionRules` tallies with `dayKeyInTz` — not a
+      // session, not a slice of a day. `repair.ts:810` documents at length what
+      // counting `dayBuckets` instead cost: once `sessionWindows` is non-empty a
+      // morning and an afternoon session are two buckets sharing one ymd, so a
+      // `count: 1` cap admitted one fixture per SESSION, and the clipped first
+      // and last buckets let a start land in a gap that no bucket counted.
+      //
+      // No `calendarDaysCovering` walk and no completeness clause are needed to
+      // say it here: the only starts that exist are slot starts, so grouping the
+      // slots themselves by day covers every reachable start by construction.
+      const scoped = scopedFixtures(h);
+      if (scoped.length === 0) continue;
+      const byDay = new Map<string, number[]>();
+      slots.forEach((sl, s) => pushTo(byDay, dayKeyInTz(sl.startAt, tz), s));
+      const binding = [...byDay].flatMap(([ymd, daySlots]) => {
+        // Only KNOWN FIXTURES seed the tally. An outside booking or a closed
+        // court is not a fixture, and counting one would invent a cap breach out
+        // of a blackout — `validateInstructionRules` filters `existing` through
+        // `ruleFixtures` for exactly that reason, and this repeats the filter
+        // rather than approximating it.
+        const immovable = existing.filter(
+          (e) =>
+            ruleFixtureById.has(e.fixtureId) &&
+            scopeCoversFixture(h.scope, ruleFixtureById.get(e.fixtureId), e) &&
+            dayKeyInTz(e.startAt, tz) === ymd,
+        ).length;
+        const room = Math.max(0, h.count - immovable);
+        // A day with no more slots than room left can never breach; saying so
+        // costs clauses and buys nothing.
+        return room >= daySlots.length ? [] : [{ daySlots, room }];
+      });
+      if (binding.length === 0) continue;
+      // One occupancy literal per slot over the scoped fixtures, so a day's
+      // clause costs |slots in day| rather than |scoped| x |slots in day|. Exact
+      // for the same reason as every other window in this file, and by the same
+      // premise: the per-slot AtMost in section 2 means an occupancy literal
+      // cannot count to two.
+      const occScoped = occupancyOf(scoped);
+      for (const { daySlots, room } of binding) {
+        if (room === 0) {
+          for (const s of daySlots) solver.add(Z3.Not(occScoped[s]!));
+          continue;
+        }
+        const lits = daySlots.map((s) => occScoped[s]!);
+        solver.add(Z3.AtMost([lits[0]!, ...lits.slice(1)], room));
       }
     }
   }

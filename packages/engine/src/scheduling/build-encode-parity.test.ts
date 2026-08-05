@@ -8,18 +8,22 @@
 // is a spot check: a single wrong inequality anywhere in the encoder shows up as
 // a concrete `{ pick, sat }` mismatch.
 //
-// WHAT THIS SUITE DOES NOT COVER, deliberately: `encodeBuild` does not encode
-// the typed instruction rules `validateInstructionRules` evaluates
-// (`max_fixtures_per_day`, `fixture_on_date`, `fixture_on_weekday`,
-// `not_before`, `not_after`). None of them is pairwise, none is in the brief's
-// scope, and parity therefore holds only for configs that carry none — which
-// `assertParity` asserts rather than assumes, so a later case cannot quietly
-// wander outside the envelope and read as covered.
+// WHAT THIS SUITE DOES NOT COVER, deliberately: the `min_rest_minutes` family's
+// `feeder_to_dependent` half, which `validateInstructionRules` reports and
+// `encodeBuild` does not state. Parity therefore holds only for configs whose
+// typed rules are ones the encoder states — which `assertParity` asserts rather
+// than assumes, as a WHITELIST, so a later case cannot quietly wander outside
+// the envelope and read as covered, and the next unencoded rule type fails here
+// the moment somebody writes a case for it.
+//
+// The other five typed rules ARE encoded (section 9 of `build-encode.ts`) and
+// are exercised placement-by-placement in `build-encode-rules.test.ts`.
 import { describe, expect, it } from "vitest";
 import { buildGrid } from "./build-grid.ts";
 import { encodeBuild } from "./build-encode.ts";
 import { loadZ3, resetZ3, withZ3Lock } from "./z3-load.ts";
 import {
+  effectiveHard,
   validateAssignments,
   type Assignment,
   type OrderDependency,
@@ -27,7 +31,19 @@ import {
   type SlotConfig,
   type VerifyConfig,
 } from "./calendar.ts";
-import type { SchedulingConstraints } from "./constraints.ts";
+import type { HardConstraint, SchedulingConstraints } from "./constraints.ts";
+
+/** The typed rule types `encodeBuild` states. A WHITELIST on purpose: it was
+ *  "no typed rules at all" until Task 3b encoded these five, and keeping it a
+ *  whitelist is what makes the NEXT unencoded type fail here rather than pass
+ *  unnoticed. */
+const ENCODED_RULE_TYPES: ReadonlySet<HardConstraint["type"]> = new Set([
+  "max_fixtures_per_day",
+  "not_before",
+  "not_after",
+  "fixture_on_date",
+  "fixture_on_weekday",
+]);
 
 const MIN = 60_000;
 const T0 = Date.UTC(2026, 7, 8, 9, 0);
@@ -342,8 +358,10 @@ async function assertParity(input: {
   const existing = input.existing ?? [];
   const dependencies = input.dependencies ?? [];
   const verify: VerifyConfig = input.verify ?? { ...cfg };
-  // The envelope this suite can speak for — see the header note.
-  expect([...(verify.hard ?? []), ...(verify.constraints?.hard ?? [])]).toEqual([]);
+  // The envelope this suite can speak for — see the header note. Read through
+  // `effectiveHard` so BOTH homes are checked: a rule this suite could not speak
+  // for, parked in `constraints.hard`, would otherwise slip past.
+  expect(effectiveHard(verify).map((h) => h.type).filter((t) => !ENCODED_RULE_TYPES.has(t))).toEqual([]);
 
   const grid = buildGrid({ config: cfg, existing });
   expect(grid.overCap).toBe(false);
