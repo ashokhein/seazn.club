@@ -16,6 +16,7 @@ import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { CreateDivision } from "@/server/api-v1/schemas";
 import { createCompetition } from "@/server/usecases/competitions";
+import { waiveDivisionSlot } from "@/server/usecases/admin-divisions";
 import { archiveDivision, createDivision, restoreDivision } from "@/server/usecases/divisions";
 import { GENERIC_CONFIG, makeUser, seedOrg } from "./_seed";
 
@@ -90,14 +91,12 @@ async function divisionHasResults(divisionId: string): Promise<boolean> {
   return v;
 }
 
-// TASK 7 replaces this direct write with the staff waiver use case
-// (`waiveDivisionSlot` in admin-divisions.ts, behind the /admin control).
-// Until it exists, the read side under test is exercised by writing the two
-// V354 columns the endpoint will write.
-async function waiveDivisionSlot(divisionId: string, staffUserId: string): Promise<void> {
-  await sql`
-    update divisions set slot_waived_at = now(), slot_waived_by = ${staffUserId}
-    where id = ${divisionId}`;
+/** `makeUser` mints an ordinary user; the real waiver refuses a non-staff
+ *  actor, so the read side below is exercised through a genuine staff caller. */
+async function makeStaffUser(): Promise<{ id: string }> {
+  const user = await makeUser("staff");
+  await sql`update users set is_staff = true, staff_role = 'support' where id = ${user.id}`;
+  return user;
 }
 
 afterAll(async () => {
@@ -176,13 +175,13 @@ describe.skipIf(!HAS_DB)("a division's quota slot (V354)", () => {
 
   it("frees the slot again once staff waive it", async () => {
     const { auth, competitionId } = await seedCommunityCompetition();
-    const staff = await makeUser("staff");
+    const staff = await makeStaffUser();
     await createDivision(auth, competitionId, divisionInput("A"));
     const b = await createDivision(auth, competitionId, divisionInput("B"));
     await recordDecidedFixture(b.id);
     await closeRegistration(b.id);
     await archiveDivision(auth, b.id);
-    await waiveDivisionSlot(b.id, staff.id);
+    await waiveDivisionSlot(staff.id, b.id);
 
     const c = await createDivision(auth, competitionId, divisionInput("C"));
     expect(c.id).toBeTruthy();
