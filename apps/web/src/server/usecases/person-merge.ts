@@ -170,22 +170,28 @@ export async function mergePersons(
     if (survivor.lane === "official" && absorbed.lane === "official") {
       await tx`update officials set person_id = ${survivorId} where person_id = ${absorbedId}`;
     }
-    // Stats are aggregates: picking one row silently halves a season. Drop both
-    // and refold the division from its ledger.
-    await tx`delete from player_stat_snapshots where person_id in ${tx(ids)}`;
-    for (const { division_id } of divisions) await recomputePlayerStats(tx, division_id);
-
     // 4. Flatten inbound tombstones, so merged_into always names a LIVE person
     //    and every read stays one check.
     await tx`update persons set merged_into = ${survivorId} where merged_into = ${absorbedId}`;
     // 5. Tombstone. Never delete.
     await tx`update persons set merged_into = ${survivorId} where id = ${absorbedId}`;
 
+    // 6. Stats are aggregates: picking one row silently halves a season. Drop
+    //    both and refold the division from its ledger. This runs AFTER the
+    //    tombstone is written, not before: the fold reads person ids out of the
+    //    score events and relabels them through `persons.merged_into`
+    //    (player-stats.ts:85). Refolding first builds that map while the
+    //    tombstone is still absent, so the absorbed person's own goals stay
+    //    keyed to a row no roster read can see and the survivor never inherits
+    //    them — invisible unless BOTH sides carry events.
+    await tx`delete from player_stat_snapshots where person_id in ${tx(ids)}`;
+    for (const { division_id } of divisions) await recomputePlayerStats(tx, division_id);
+
     const [updated] = await tx<PersonRow[]>`
       update persons set consent = ${tx.json(consent as never)}
       where id = ${survivorId} returning ${tx(RESULT_COLS)}`;
 
-    // 6. The ledger row — audit trail and undo record in one.
+    // 7. The ledger row — audit trail and undo record in one.
     const [merge] = await tx<{ id: string }[]>`
       insert into person_merges (org_id, survivor_id, absorbed_id, actor_user_id, snapshot)
       values (${auth.orgId}, ${survivorId}, ${absorbedId}, ${opts.confirmedBy},
@@ -194,6 +200,168 @@ export async function mergePersons(
 
     return { merge_id: merge!.id, survivor: updated! };
   });
+}
+
+interface MergeLedgerRow {
+  survivor_id: string;
+  absorbed_id: string;
+  snapshot: Record<string, Record<string, unknown>[]>;
+  reversed_at: Date | null;
+}
+
+/**
+ * Undo a merge (spec §4.4). The undo window is unbounded — Art. 16
+ * rectification has no expiry and a duplicate is often noticed a season later —
+ * so this replays the snapshot backwards rather than recomputing an inverse:
+ * both `persons` rows (including the absorbed person's OWN consent flags, so
+ * the restrictive resolution applied to the survivor is undone too), every
+ * dependent row that moved or was resolved away, and the tombstones that were
+ * flattened onto the survivor.
+ *
+ * Only SNAPSHOTTED rows move. A row created after the merge was never captured,
+ * belongs to the survivor by the organiser's own later action, and stays there.
+ *
+ * All of it in one `withTenant` transaction: a half-reversed merge is worse than
+ * no reversal. The ledger row is kept and stamped, never deleted — it is the
+ * audit trail (#403 R2/R3), and `person_merges_absorbed_live_uq` is partial on
+ * `reversed_at is null`, so stamping it is also what frees the pair to be merged
+ * again.
+ */
+export async function reverseMerge(
+  auth: AuthCtx,
+  mergeId: string,
+  opts: { confirmedBy: string },
+): Promise<void> {
+  await withTenant(auth.orgId, async (tx) => {
+    // `for update` — two concurrent reversals of one merge would otherwise both
+    // pass the guard and replay the snapshot twice.
+    const [merge] = await tx<MergeLedgerRow[]>`
+      select survivor_id, absorbed_id, snapshot, reversed_at
+        from person_merges where id = ${mergeId} for update`;
+    // RLS hides other tenants' rows, so "not visible" covers both "no such
+    // merge" and "belongs to another org".
+    if (!merge) throw new HttpError(404, "merge not found", "MERGE_NOT_FOUND");
+    if (merge.reversed_at !== null) {
+      throw new HttpError(409, "this merge has already been reversed", "MERGE_ALREADY_REVERSED");
+    }
+
+    const ids = [merge.survivor_id, merge.absorbed_id];
+    const snapshot = merge.snapshot ?? {};
+    const rowsOf = (table: string): Record<string, unknown>[] => snapshot[table] ?? [];
+
+    // 1. The persons rows. A merge writes exactly two things to a persons row —
+    //    `consent` on the survivor and `merged_into` on the absorbed row plus
+    //    every tombstone it flattened — so those two are what comes back.
+    //    Restoring the whole row would clobber an edit the organiser made to a
+    //    live person after the merge, which the merge never touched.
+    for (const row of rowsOf("persons")) {
+      await tx`
+        update persons
+           set consent = ${tx.json((row.consent ?? {}) as never)},
+               merged_into = ${(row.merged_into as string | null) ?? null}
+         where id = ${row.id as string}`;
+    }
+
+    // 2. The dependent rows. For each table the snapshot's rows are deleted from
+    //    their current owner and re-inserted verbatim through
+    //    jsonb_populate_recordset, which round-trips jsonb, arrays and
+    //    timestamps by the table's own column types. The delete is scoped to the
+    //    SLOTS the snapshot occupies (the row's key minus person_id), never to
+    //    "everything these two people own" — that is what leaves post-merge rows
+    //    alone.
+    await restoreSlots(tx, "entrant_members", ids, rowsOf("entrant_members"), "entrant_id");
+    await restoreSlots(tx, "player_profiles", ids, rowsOf("player_profiles"), "sport_key");
+    await restoreSlots(tx, "team_members", ids, rowsOf("team_members"), "team_id");
+    await restoreSlots(tx, "fixture_availability", ids, rowsOf("fixture_availability"), "fixture_id");
+    await restoreSlots(tx, "suspensions", ids, rowsOf("suspensions"), "id");
+    // lineups is the one two-column slot: (fixture_id, entrant_id). The keys are
+    // compared as one concatenated text value rather than a row constructor —
+    // these sets are a handful of rows, and it keeps the statement literal.
+    const lineups = rowsOf("lineups");
+    if (lineups.length > 0) {
+      const slots = [...new Set(lineups.map((r) => `${r.fixture_id as string}:${r.entrant_id as string}`))];
+      await tx`
+        delete from lineups
+         where person_id in ${tx(ids)}
+           and (fixture_id::text || ':' || entrant_id::text) in ${tx(slots)}`;
+      await reinsertSnapshot(tx, "lineups", lineups);
+    }
+
+    // person_claims and officials are never deleted by a merge, only updated, so
+    // they are restored in place. That is not tidiness: `person_claims` carries
+    // no DELETE grant to app_user (V276:29), and deleting an `officials` row
+    // would cascade its fixture assignments away (V243:24).
+    const claims = rowsOf("person_claims");
+    if (claims.length > 0) {
+      await tx`
+        update person_claims t
+           set person_id = s.person_id, revoked_at = s.revoked_at
+          from jsonb_populate_recordset(null::person_claims, ${tx.json(claims as never)}::jsonb) s
+         where t.id = s.id`;
+    }
+    const officials = rowsOf("officials");
+    if (officials.length > 0) {
+      await tx`
+        update officials t
+           set person_id = s.person_id
+          from jsonb_populate_recordset(null::officials, ${tx.json(officials as never)}::jsonb) s
+         where t.id = s.id`;
+    }
+
+    // 3. Stats are a disposable cache over the ledger, so they are re-derived
+    //    rather than replayed — replaying would restore whatever staleness the
+    //    cache happened to hold at merge time. This runs after step 1 has
+    //    cleared `merged_into`: the fold relabels event person ids through it
+    //    (player-stats.ts:85), so a clear pointer is exactly what keys the rows
+    //    back to the person who earned them.
+    const divisions = await tx<{ division_id: string }[]>`
+      select division_id from player_stat_snapshots where person_id in ${tx(ids)}
+      union
+      select e.division_id from entrant_members em
+        join entrants e on e.id = em.entrant_id
+       where em.person_id in ${tx(ids)}`;
+    await tx`delete from player_stat_snapshots where person_id in ${tx(ids)}`;
+    for (const { division_id } of divisions) await recomputePlayerStats(tx, division_id);
+
+    // 4. Stamp. Kept, never deleted.
+    await tx`
+      update person_merges set reversed_at = now(), reversed_by = ${opts.confirmedBy}
+       where id = ${mergeId}`;
+  });
+}
+
+/**
+ * Put `rows` back into `table`, replacing whatever now sits in the slots they
+ * occupied. `keyCol` is the row's identity minus `person_id`: the composite-PK
+ * tables key on the other half of their PK, the surrogate-PK tables on `id`.
+ * Scoping the delete to those slots is what makes a reversal exact — a row
+ * created on the survivor after the merge sits in a slot no snapshot row names,
+ * so it is never touched.
+ */
+async function restoreSlots(
+  tx: Tx,
+  table: string,
+  ids: string[],
+  rows: Record<string, unknown>[],
+  keyCol: string,
+): Promise<void> {
+  if (rows.length === 0) return;
+  const keys = [...new Set(rows.map((r) => r[keyCol] as string))];
+  await tx`
+    delete from ${tx(table)}
+     where person_id in ${tx(ids)} and ${tx(keyCol)} in ${tx(keys)}`;
+  await reinsertSnapshot(tx, table, rows);
+}
+
+/** Snapshot rows go back through `jsonb_populate_recordset`, which rebuilds them
+ *  by the table's OWN column types — jsonb columns stay structural, `uuid[]`
+ *  stays an array and a timestamptz parses back out of its ISO text. Hand-listing
+ *  columns here would silently drop any added later. */
+async function reinsertSnapshot(tx: Tx, table: string, rows: Record<string, unknown>[]): Promise<void> {
+  if (rows.length === 0) return;
+  await tx`
+    insert into ${tx(table)}
+    select * from jsonb_populate_recordset(null::${tx(table)}, ${tx.json(rows as never)}::jsonb)`;
 }
 
 /** Same human on the same team — nothing they held may silently vanish, so a
