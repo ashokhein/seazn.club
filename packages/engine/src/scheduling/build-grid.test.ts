@@ -87,6 +87,32 @@ describe("buildGrid", () => {
     expect(g.byCourt.get("C1")!.map((i) => g.slots[i]!.startAt)).toContain(pinnedAt);
   });
 
+  it("keeps a start whose match runs past midnight into the next day", () => {
+    // step = gcd(90, 30) = 30, so a start can sit 30 minutes short of midnight
+    // and legally run past it. A day bucket must gate which starts BELONG to it
+    // — that is what makes the DST anchoring below correct — but it must not
+    // bound the occupancy, or this slot is deleted from the lattice outright:
+    // the next bucket cannot recover it, because that bucket opens AT midnight.
+    //
+    // Needs `stepMinutes < matchMinutes` to show up at all, i.e. any non-zero
+    // gap. Every other test here either stays inside one day or sets
+    // matchMinutes === gapMinutes, where gcd(a, a) = a makes step === duration
+    // and the bug cannot manifest.
+    const from = Date.UTC(2026, 7, 8, 0, 0);
+    const g = buildGrid({
+      config: cfg({ tz: "UTC", window: { from, to: from + 3 * DAY }, matchMinutes: 90, gapMinutes: 30 }),
+    });
+    expect(g.stepMinutes).toBe(30);
+    const starts = g.byCourt.get("C1")!.map((i) => g.slots[i]!.startAt);
+    expect(starts).toContain(from + 1380 * MIN); // 23:00 day 0, ends 00:30 day 1
+    expect(starts).toContain(from + 1410 * MIN); // 23:30 day 0, ends 01:00 day 1
+    expect(starts).toContain(from + DAY + 1380 * MIN); // and again across day 1 -> day 2
+    // The universe end is still the real bound: nothing may run past it, so the
+    // final day's 23:00 start is correctly absent.
+    for (const s of g.slots) expect(s.startAt + 90 * MIN).toBeLessThanOrEqual(from + 3 * DAY);
+    expect(starts).not.toContain(from + 2 * DAY + 1380 * MIN);
+  });
+
   it("anchors each day at local midnight so a DST day does not drift", () => {
     // Europe/London springs forward 29 Mar 2026 at 01:00 local, making that a
     // 23-hour day.

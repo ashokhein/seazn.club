@@ -117,8 +117,20 @@ export function buildGrid(input: BuildGridInput): BuildGrid {
   outer: for (const court of courts) {
     for (const bucket of buckets) {
       const lo = Math.max(bucket.from, universe.from);
-      const hi = Math.min(bucket.to, universe.to);
-      for (let start = lo; start + durMs <= hi; start += stepMs) {
+      // A bucket bounds the START, never the OCCUPANCY.
+      //
+      // Anchoring the step at each bucket's own local midnight is what keeps
+      // the lattice on the wall clock across a DST boundary, so the day must
+      // gate which starts belong to it. But a match that starts before midnight
+      // and runs past it is perfectly legal, and ending the loop at `bucket.to`
+      // deletes it from the lattice outright — the next bucket cannot recover
+      // it, because that bucket opens AT midnight. Occupancy is therefore bound
+      // by the universe, the only real limit on where a match may end.
+      //
+      // `buildDomains` in repair-domain.ts draws the same line: its position
+      // domain is continuous across the whole universe, and day buckets there
+      // restrict day-SCOPED rules only, never raw start admissibility.
+      for (let start = lo; start < bucket.to && start + durMs <= universe.to; start += stepMs) {
         if (!admits(court, start)) continue;
         if (slots.length >= MAX_SLOTS) {
           overCap = true;
