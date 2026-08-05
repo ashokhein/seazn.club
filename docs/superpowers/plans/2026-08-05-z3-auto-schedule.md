@@ -83,25 +83,25 @@
 
 ```bash
 cd /Users/ashokhein/github/seazn.club
-git worktree add ../seazn-z3-build -b feat/z3-auto-schedule main
-cd ../seazn-z3-build && pwd
+git worktree add ../wt-z3-build -b feat/z3-auto-schedule main
+cd ../wt-z3-build && pwd
 ```
 
 - [ ] **Step 2: Check the three worktree traps before trusting any test result**
 
 ```bash
-cd ../seazn-z3-build && \
+cd ../wt-z3-build && \
   readlink -f node_modules/@seazn/engine && \
   ls -la .claude/agent-memory 2>&1 | head -1 && \
   ls -la .env.local 2>&1 | head -1
 ```
 
-Expected: the `readlink` path is **inside `seazn-z3-build`**, not `seazn.club`. If it resolves to main's engine, the build compiles the wrong branch while every gate stays green — run a real install in the worktree. **The installer is pnpm** (`pnpm install --frozen-lockfile`, matching `.github/workflows/ci.yml:63`); scripts are still invoked as `npm run <x> --workspace <ws>`, which is why every command below says `npm`. If `.claude/agent-memory` is missing, symlink it. If `.env.local` is missing, ~1772 DB tests will skip with `total` unchanged and only `pending` moving — copy it from main before believing any count.
+Expected: the `readlink` path is **inside `wt-z3-build`**, not `seazn.club`. If it resolves to main's engine, the build compiles the wrong branch while every gate stays green — run a real install in the worktree. **The installer is pnpm** (`pnpm install --frozen-lockfile`, matching `.github/workflows/ci.yml:63`); scripts are still invoked as `npm run <x> --workspace <ws>`, which is why every command below says `npm`. If `.claude/agent-memory` is missing, symlink it. If `.env.local` is missing, ~1772 DB tests will skip with `total` unchanged and only `pending` moving — copy it from main before believing any count.
 
 - [ ] **Step 3: Record the baseline**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/base-engine.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/base-engine.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -113,7 +113,7 @@ cd ../seazn-z3-build && npm test --workspace packages/engine -- \
 
 Spec: docs/superpowers/specs/2026-08-05-z3-auto-schedule-design.md
 Plan: docs/superpowers/plans/2026-08-05-z3-auto-schedule.md
-Worktree: ../seazn-z3-build   Branch: feat/z3-auto-schedule
+Worktree: ../wt-z3-build   Branch: feat/z3-auto-schedule
 
 ## Baseline (Task 0)
 engine: <passed>/<total>, <failed> failed
@@ -237,7 +237,7 @@ describe("isStrictlyBetter", () => {
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build-objectives.test.ts --reporter=json --outputFile=/tmp/t1.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t1.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -348,7 +348,7 @@ export * from "./build-objectives.ts";
 - [ ] **Step 5: Run the test and the full engine suite**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t1.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t1.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -509,7 +509,7 @@ describe("buildGrid", () => {
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build-grid.test.ts --reporter=json --outputFile=/tmp/t2.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t2.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -689,7 +689,7 @@ export * from "./build-grid.ts";
 - [ ] **Step 5: Run the test and the full engine suite**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t2.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t2.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -818,7 +818,7 @@ async function assertParity(
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build-encode-parity.test.ts --reporter=json --outputFile=/tmp/t3.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t3.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -1039,7 +1039,7 @@ export * from "./build-encode.ts";
 ```
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build-encode-parity.test.ts --reporter=json --outputFile=/tmp/t3.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t3.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -1049,7 +1049,7 @@ Expected: `2 2 0`.
 - [ ] **Step 5: Run the whole engine suite and commit**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t3all.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t3all.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 git add packages/engine/src/scheduling/build-encode.ts \
@@ -1165,7 +1165,7 @@ describe("buildSchedule", () => {
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build.test.ts --reporter=json --outputFile=/tmp/t4.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t4.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -1355,7 +1355,7 @@ export * from "./build.ts";
 ```
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t4.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t4.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -1475,7 +1475,7 @@ describe("buildSchedule determinism", () => {
 - [ ] **Step 2: Run both and confirm they fail**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build.test.ts src/scheduling/build-determinism.test.ts \
   --reporter=json --outputFile=/tmp/t5.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t5.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
@@ -1556,7 +1556,7 @@ term builders' signatures.
 - [ ] **Step 4: Run both suites**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t5.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t5.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -1665,7 +1665,7 @@ describe("improveByWindows", () => {
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build-lns.test.ts --reporter=json --outputFile=/tmp/t6.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t6.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -1799,7 +1799,7 @@ Second, after the tier loop, when `tiersCompleted < 2` and budget remains:
 - [ ] **Step 5: Run the whole engine suite and commit**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t6.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t6.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 git add packages/engine/src/scheduling/build-lns.ts \
@@ -1867,7 +1867,7 @@ describe("buildSchedule — polish", () => {
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build-polish.test.ts --reporter=json --outputFile=/tmp/t7.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t7.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -1893,7 +1893,7 @@ and use `status` in the returned object in place of the inline ternary.
 - [ ] **Step 4: Run the suite and commit**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t7.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t7.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 git add packages/engine/src/scheduling/build.ts \
@@ -1947,7 +1947,7 @@ describe("AutoScheduleRequest.mode", () => {
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace apps/web -- \
+cd ../wt-z3-build && npm test --workspace apps/web -- \
   src/server/usecases/__tests__/schedule.test.ts --reporter=json --outputFile=/tmp/t8.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t8.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -2003,7 +2003,7 @@ export const AutoScheduleResult = z.object({
 - [ ] **Step 4: Regenerate OpenAPI and prove no drift**
 
 ```bash
-cd ../seazn-z3-build && npm run openapi:gen && npm run i18n:gen-keys && git status --porcelain
+cd ../wt-z3-build && npm run openapi:gen && npm run i18n:gen-keys && git status --porcelain
 ```
 
 Expected: the two `openapi/*.json` files show as modified; nothing else unexpected. Commit them in this task — a later commit that regenerates them is the drift the CI gate exists to catch.
@@ -2011,7 +2011,7 @@ Expected: the two `openapi/*.json` files show as modified; nothing else unexpect
 - [ ] **Step 5: Run the web suite and commit**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace apps/web -- \
+cd ../wt-z3-build && npm test --workspace apps/web -- \
   --reporter=json --outputFile=/tmp/t8.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t8.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 git add apps/web/src/server/api-v1/schemas.ts openapi/v1.json openapi/v1.public.json \
@@ -2067,7 +2067,7 @@ describe("autoSchedule dispatch", () => {
 - [ ] **Step 2: Run and confirm they fail**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace apps/web -- \
+cd ../wt-z3-build && npm test --workspace apps/web -- \
   src/server/usecases/__tests__/schedule.test.ts --reporter=json --outputFile=/tmp/t9.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t9.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -2148,7 +2148,7 @@ function frozenIds(all: readonly FixtureRow[], scopes: ScopeRows): string[] { /*
 - [ ] **Step 4: Run the web suite and commit**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace apps/web -- \
+cd ../wt-z3-build && npm test --workspace apps/web -- \
   --reporter=json --outputFile=/tmp/t9.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t9.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 npm run openapi:gen && npm run i18n:gen-keys && git status --porcelain
@@ -2189,7 +2189,7 @@ describe("buildSchedule — queue cap", () => {
 - [ ] **Step 2: Run and confirm it fails**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build.test.ts --reporter=json --outputFile=/tmp/t10.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t10.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -2217,7 +2217,7 @@ export function buildSchedule(input: BuildInput): Promise<BuildResult> {
 - [ ] **Step 4: Run and commit**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t10.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t10.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 git add packages/engine/src/scheduling/build.ts packages/engine/src/scheduling/build.test.ts \
@@ -2251,7 +2251,7 @@ Assert the strip renders each metric, and that `budget_expired: true` renders th
 - [ ] **Step 3: Run it, confirm it fails, build the strip, run it again**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace apps/web -- \
+cd ../wt-z3-build && npm test --workspace apps/web -- \
   src/components/v2 --reporter=json --outputFile=/tmp/t11.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t11.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -2263,7 +2263,7 @@ Both must show no horizontal page scroll. Wide content scrolls inside its own co
 - [ ] **Step 5: Gates and commit**
 
 ```bash
-cd ../seazn-z3-build && npm run i18n:gen-keys && npm run openapi:gen && git status --porcelain
+cd ../wt-z3-build && npm run i18n:gen-keys && npm run openapi:gen && git status --porcelain
 git commit -am "feat(board): result strip showing what the solver achieved"
 ```
 
@@ -2292,7 +2292,7 @@ Touch target ≥ 44 px; the button sits beside the existing auto-schedule action
 - [ ] **Step 4: Grep the new text across e2e before committing**
 
 ```bash
-cd ../seazn-z3-build && git grep -an "Auto-schedule\|Polish" -- apps/web/e2e | head -20
+cd ../wt-z3-build && git grep -an "Auto-schedule\|Polish" -- apps/web/e2e | head -20
 ```
 
 UI text changes break e2e specs in this repo; any spec asserting on the old label is updated in this task, not discovered in Task 15.
@@ -2300,7 +2300,7 @@ UI text changes break e2e specs in this repo; any spec asserting on the old labe
 - [ ] **Step 5: Gates and commit**
 
 ```bash
-cd ../seazn-z3-build && npm run i18n:gen-keys && git status --porcelain
+cd ../wt-z3-build && npm run i18n:gen-keys && git status --porcelain
 git commit -am "feat(board): polish action for an already-legal board"
 ```
 
@@ -2323,7 +2323,7 @@ git commit -am "feat(board): polish action for an already-legal board"
 - [ ] **Step 2: Run it and record the table**
 
 ```bash
-cd ../seazn-z3-build && node --experimental-strip-types scripts/bench-build.ts | tee /tmp/bench-build.txt
+cd ../wt-z3-build && node --experimental-strip-types scripts/bench-build.ts | tee /tmp/bench-build.txt
 ```
 
 - [ ] **Step 3: Set the constant from the measurement, not from taste**
@@ -2333,7 +2333,7 @@ Same rule `DEFAULT_REPAIR_BUDGET_MS` used: twice the worst `rlimit` consumed amo
 - [ ] **Step 4: Re-run the engine suite and commit with the table in the message**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t13.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t13.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -2380,7 +2380,7 @@ Run auto-schedule → the result strip shows finish time, court spread, worst ga
 - [ ] **Step 3: Run all three projects and record the counts**
 
 ```bash
-cd ../seazn-z3-build && npm run test:e2e --workspace apps/web 2>&1 | tail -30; echo "EXIT=$?"
+cd ../wt-z3-build && npm run test:e2e --workspace apps/web 2>&1 | tail -30; echo "EXIT=$?"
 ```
 
 A killed background command reports exit 0 — that 0 is the SIGTERM, which is why `EXIT=$?` is echoed by the command itself.
@@ -2394,7 +2394,7 @@ A killed background command reports exit 0 — that 0 is the SIGTERM, which is w
 - [ ] **Step 1: Rebase on main and re-run everything**
 
 ```bash
-cd ../seazn-z3-build && git fetch origin && git rebase origin/main
+cd ../wt-z3-build && git fetch origin && git rebase origin/main
 rm -rf apps/web/.next   # a prod build in a worktree leaves .next/types that fail tsc for untouched pages
 npm run typecheck 2>&1 | tail -5; echo "EXIT=${PIPESTATUS[0]}"
 npx rtk proxy npm run lint 2>&1 | grep -E "✖|problems" | tail -5
@@ -2408,7 +2408,7 @@ node -e 'for(const f of ["/tmp/final-engine.json","/tmp/final-web.json"]){const 
 - [ ] **Step 2: Both drift gates**
 
 ```bash
-cd ../seazn-z3-build && npm run openapi:gen && npm run i18n:gen-keys && git status --porcelain
+cd ../wt-z3-build && npm run openapi:gen && npm run i18n:gen-keys && git status --porcelain
 ```
 
 Must print nothing.
