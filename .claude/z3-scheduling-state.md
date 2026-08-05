@@ -60,15 +60,30 @@ z3 `rlimit`, not wall clock.
 worktrees, and the task order.
 
 Complete: T1 metrics · T2 lattice · T3 encoder · T3b typed rules · T4 solver loop ·
-T8 API · #230 item 4. Merged into this branch @ `4fa9dbab`.
+**T5 tiers** · T8 API · **T11 result strip** · #230 item 4. Merged into this branch
+@ **`349f01d5`**, verified there: engine 2418/2419/0, both typechecks 0, and
+`openapi:gen` + `i18n:gen-keys` + `i18n:check` all clean with an empty porcelain.
 
-Owner rulings taken mid-flight, all in the ledger with reasoning: delta verifier
-gate (R1), legal-only seed (R2), configured courts only (R3), `infeasible` names
-the pins not the board (R4), POLISH freezes on LOCKS ONLY since there is no
-per-fixture published flag (R5), publish gate blocks with an explicit override
-(R6), `verifier_rejected` shows a neutral note (R7), `solver_busy` says so and
-offers retry (R8).
+In flight at last flush: **T6** (LNS, `wt-z3-solver` @ `b9832a81`, R11 fix round
+running) and **T9** (dispatch + telemetry, `wt-z3-web` @ `349f01d5`, no commits,
+owes an answer to a scope question). Check `git log` in both before dispatching.
 
-The single most useful thing learned: **every Critical and Important finding so far
-has been in code or tests the controller authored into the plan, not in implementer
-work.** Treat the plan's test files as drafts and mutation-prove everything.
+Rulings R1–R12, all in the ledger with reasoning. Beyond the first eight: R9 fixes
+the strip's tier denominator and pin count at the ROOT via two new wire fields
+(`tiers_total`, `contradictory_pins`) rather than patching the component; R10 keeps
+the wall-clock backstop because D5 needs a synchronous ~30 s response, conditional
+on Task 13 proving it never fires; R11 makes `rlimit` a RUN total, since per-solve
+leaves the wall clock as the only run-level bound and inverts D9; R12 leaves the
+over-cap LNS entry unwired because `buildGrid` never reads the fixture list, making
+that pass inert by construction.
+
+Two things worth knowing before trusting anything:
+
+1. **Every Critical and Important finding so far has been in code or tests the
+   CONTROLLER authored into the plan, not in implementer work.** Seven brief
+   premises have now been measured false by implementers — including
+   "LNS runs over `repairSchedule`", which cannot work at all. Treat the plan's
+   test files as drafts and mutation-prove everything.
+2. **`DEFAULT_BUILD_RLIMIT` is an uncalibrated placeholder** and Tasks 6/7/9/10 are
+   all built against it. Task 13's bench owes five measurements now. The sharpest
+   one: there is still no unmocked case where LNS improves a real board.
