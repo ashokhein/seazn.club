@@ -172,9 +172,32 @@ Budget unit is z3 **`rlimit`**, not wall clock (D9) — see Gap 1.
 
 If T1 finds no improvement within its slice, `build.ts` abandons the whole-board model
 and spends the remaining budget in `build-lns.ts`: pick a ≤50-fixture window (a
-court-day, then the tail), freeze the rest, hand it to the existing `repairSchedule`,
-keep the window only if a metric improved. Repeat until the deadline. Different
-windows, one incumbent. Also entered directly when the lattice exceeds `MAX_SLOTS`.
+court-day, then the tail), freeze the rest, re-solve the window, keep it only if a
+metric improved. Repeat until the budget is exhausted. Different windows, one
+incumbent.
+
+> **CORRECTED during Task 6 — two premises above were measured false.**
+>
+> 1. **The window does NOT go to `repairSchedule`.** That solver short-circuits
+>    `clean` / `checks: 0` on any legal board, and every board an LNS pass sees is
+>    legal by construction — measured 90 fixtures in, 90 out, no work done. LNS runs
+>    over the *build* solver instead.
+> 2. **Frozen rows are NOT passed as `existing` obstacles.** An `existing` row is
+>    invisible to `boardMetrics`, so the window optimises only its own slice and
+>    makespan becomes translation-invariant — measured, a board went 90 → 210 that
+>    way. Rows outside the window go in as fixtures **`locked` to where they already
+>    sit**, which makes the sub-solve's metrics the global metrics.
+> 3. **Budget is a RUN total, not per-solve** (ruling R11). Per-solve, a run could
+>    spend `(k+1) × rlimit`, leaving the wall-clock backstop as the only run-level
+>    bound — which inverts D9. Main solve and each window draw from one deterministic
+>    apportionment; an exhausted remainder stops launching windows and returns the
+>    incumbent.
+> 4. **The over-`MAX_SLOTS` entry point is deliberately NOT wired** (ruling R12).
+>    `buildGrid` never reads the fixture list, so every window would rebuild the
+>    identical over-cap lattice — an LNS pass there is inert by construction.
+>    Rescuing it needs horizon slicing, which is out of scope. Task 13 measures
+>    whether the over-cap path is reachable at 200 fixtures at all; if it is, this
+>    reopens.
 
 ### REFLOW — a real behaviour change
 
