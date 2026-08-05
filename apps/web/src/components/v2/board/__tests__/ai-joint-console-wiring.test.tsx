@@ -670,10 +670,12 @@ describe("the review step is wired to the console's own state", () => {
     expect(step().undone).toBe("full");
   });
 
-  it("offers a retry when an undo is ALREADY running, and claims nothing was reverted", async () => {
-    // The 409 the competition lock raises. Folded into the generic failure path
-    // this reads as "no division was reverted" — which sends the organiser off
-    // to undo by hand the very divisions the first undo is mid-rewind on.
+  it("offers a retry when the undo is REFUSED outright, and claims nothing was reverted", async () => {
+    // Any 409: the server did not start, so nothing was reverted. Folded into
+    // the generic failure path this reads as "no division was reverted" —
+    // which sends the organiser off to undo by hand divisions that may still
+    // be exactly as the apply left them. (The competition lock that used to
+    // raise this code is gone; the console's handling of a 409 is not.)
     const { undo, step } = await applied(() => {
       throw new ApiV1Error("busy", 409, "SCHEDULE_APPLY_RESTORE_IN_PROGRESS");
     });

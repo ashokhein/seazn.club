@@ -348,42 +348,19 @@ export async function applyCompetitionSchedule(
       : undefined;
 
   const out = await withTenant(auth.orgId, async (tx) => {
-    // The COMPETITION-scoped key first (#386). A joint restore holds this one
-    // session-level for its whole rewind, so taking it here is what stops an
-    // apply from interleaving with an undo of the same competition.
+    // The divisions, in sorted order, so two joint applies over overlapping
+    // sets serialise instead of deadlocking. Locks FIRST, before anything that
+    // is read is acted on.
     //
-    // The race this really guards is ONE organiser submitting twice — a
-    // double-clicked button, a second browser tab, or a retry after a slow
-    // response — which is the normal shape of this product, where scheduling is
-    // usually run by a single owner. Two organisers working at once produce the
-    // same collision from a rarer cause. Do not read this as dead code because
-    // the org has one admin: the single-admin case is the likelier one.
-    //
-    // The wait is BOUNDED, because the holder is a multi-second rewind rather
-    // than a fellow transaction: an apply queued behind it with no timeout sits
-    // there until the gateway gives up, which an organiser cannot tell from a
-    // hang. Five seconds, then a retryable 409 they can act on. `set local` is
-    // transaction-scoped so it cannot leak onto this pooled connection's next
-    // job, and it is reset immediately so it does not silently bound the
-    // division locks and row locks taken below.
-    await tx`set local lock_timeout = '5s'`;
-    try {
-      await tx`select pg_advisory_xact_lock(hashtext(${"joint:" + competitionId}))`;
-    } catch (err) {
-      if ((err as { code?: string }).code === "55P03") {
-        throw new HttpError(
-          409,
-          "a restore is already in progress for this competition — try again in a moment",
-          "SCHEDULE_APPLY_RESTORE_IN_PROGRESS",
-        );
-      }
-      throw err;
-    }
-    await tx`reset lock_timeout`;
-
-    // Then the divisions, in sorted order, so two joint applies over
-    // overlapping sets serialise instead of deadlocking. Locks FIRST, before
-    // anything that is read is acted on.
+    // There is no COMPETITION-scoped key here any more (#386). This apply used
+    // to take `joint:<competitionId>` under a 5s `lock_timeout` so it could not
+    // interleave with a joint RESTORE rewinding the same competition. The
+    // restore no longer takes that key — it detects a superseding apply by
+    // re-reading the newest apply event before each division instead
+    // (competition-schedule-restore.ts) — so this key could only ever have
+    // collided with another APPLY, which the division locks below already
+    // serialise inside one transaction. A lock that excludes nothing is worse
+    // than no lock: the code above it gets written as though it cannot happen.
     await lockDivisions(tx, requestedIds);
 
     const [competition] = await tx<{ id: string }[]>`

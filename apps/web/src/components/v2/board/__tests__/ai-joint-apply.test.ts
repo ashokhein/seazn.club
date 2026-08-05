@@ -259,12 +259,16 @@ describe("undoJointApply", () => {
     expect(await undoJointApply("c1", anchors, api)).toEqual({ ok: false, failed: ["d1", "d2"] });
   });
 
-  it("tells a restore ALREADY RUNNING apart from a failed one, and claims no failures", async () => {
-    // The realistic cause is the same organiser submitting twice — a
-    // double-clicked Undo or a second tab. This call did nothing, so naming
+  it("tells a REFUSED restore apart from a failed one, and claims no failures", async () => {
+    // A 409 means the server did not start: no division was rewound, so naming
     // every division as unrestored would be a lie in the direction that
-    // matters: the organiser would go and undo them by hand while the first
-    // undo is still rewinding them.
+    // matters — the organiser would go and undo them by hand.
+    //
+    // The code below is one the endpoint no longer sends (the competition lock
+    // it came from is gone; a superseding apply is now reported per division in
+    // `failed`), and this is deliberately still a 409 the CLIENT has to handle:
+    // the mapping is by status, so an unknown 409 must not read as "everything
+    // failed".
     const { api } = recorder({ [RESTORE_URL]: refuse(409, "SCHEDULE_APPLY_RESTORE_IN_PROGRESS") });
     expect(await undoJointApply("c1", anchors, api)).toEqual({
       ok: false,
@@ -274,9 +278,9 @@ describe("undoJointApply", () => {
   });
 
   it("treats any other 409 as retryable too, rather than as a dead undo", async () => {
-    // The retryable-lock code is the one the joint apply raises today; a 409
-    // from this endpoint means a concurrent writer either way, and "wait and
-    // try again" is the honest answer for all of them.
+    // SEQ_CONFLICT is a code the joint APPLY raises; a 409 from this endpoint
+    // would mean a concurrent writer either way, and "wait and try again" is
+    // the honest answer for all of them.
     const { api } = recorder({ [RESTORE_URL]: refuse(409, "SEQ_CONFLICT") });
     expect((await undoJointApply("c1", anchors, api)).refusal).toBe("retry");
   });

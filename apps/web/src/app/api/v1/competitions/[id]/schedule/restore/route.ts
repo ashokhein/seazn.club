@@ -12,18 +12,17 @@ type Ctx = { params: Promise<{ id: string }> };
  *  left half the board carrying the AI schedule.
  *
  *  A THIN ADAPTER, like the apply route: the checkpoint anchors, the validation
- *  of the division set against the apply event, the locking and the per-division
- *  reporting all live in `restoreCompetitionSchedule`.
+ *  of the division set against the apply event, the anchor recheck between
+ *  divisions and the per-division reporting all live in
+ *  `restoreCompetitionSchedule`.
  *
- *  No PER-DIVISION 409 escapes this route, unlike the per-division restore:
- *  every `restoreCheckpoint` failure — SEQ_CONFLICT included — is caught by the
- *  usecase's per-division try/catch and reported in `failed[]` with `ok: false`.
- *  The COMPETITION-scoped 409 is a different animal and does escape: losing the
- *  race for the `joint:` lock means no rewind was attempted at all, so there is
- *  no per-division report to give and the caller is told to retry
- *  (SCHEDULE_APPLY_RESTORE_IN_PROGRESS). The status codes are therefore 404 (no
- *  joint apply on the competition), 422 (the named division set is not the
- *  applied one, or the body is malformed) and that 409 — matching openapi.ts.
+ *  NO 409 escapes this route, unlike the per-division restore. Every
+ *  `restoreCheckpoint` failure — SEQ_CONFLICT included — is caught by the
+ *  usecase's per-division try/catch and reported in `failed[]` with `ok: false`,
+ *  and a joint apply that supersedes the undo mid-rewind is reported the same
+ *  way rather than raised. The status codes are therefore 404 (no joint apply on
+ *  the competition) and 422 (the named division set is not the applied one, or
+ *  the body is malformed) — matching openapi.ts.
  *
  *  Body parsing precedes auth, matching the apply route exactly. */
 export async function POST(req: Request, { params }: Ctx) {
