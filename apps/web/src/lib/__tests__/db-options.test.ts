@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { connectionOptions } from "@/lib/db";
+import { connectionOptions, withSessionLocks } from "@/lib/db";
 
 describe("connectionOptions", () => {
   const remote = "postgresql://u:p@aws-0-eu-west-2.pooler.supabase.com";
@@ -33,5 +33,43 @@ describe("connectionOptions", () => {
   it("defaults schema to seazn_club, honors DB_SCHEMA", () => {
     expect(connectionOptions(`${remote}:5432/postgres`, {}).schema).toBe("seazn_club");
     expect(connectionOptions(`${remote}:5432/postgres`, { DB_SCHEMA: "public" }).schema).toBe("public");
+  });
+});
+
+describe("withSessionLocks", () => {
+  const withUrl = async <T>(url: string | undefined, fn: () => Promise<T>): Promise<T> => {
+    const before = process.env.DATABASE_URL;
+    if (url === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = url;
+    try {
+      return await fn();
+    } finally {
+      if (before === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = before;
+    }
+  };
+
+  // The transaction pooler gives consecutive statements DIFFERENT backends, so a
+  // session lock taken there excludes nobody and says nothing — the one failure
+  // mode of this helper that production would never show us. It has to be loud.
+  it("refuses the transaction pooler (:6543) instead of holding a lock that excludes nobody", async () => {
+    let ran = false;
+    await withUrl("postgresql://u:p@aws-0-eu-west-2.pooler.supabase.com:6543/postgres", async () => {
+      await expect(
+        withSessionLocks(["joint:x"], async () => {
+          ran = true;
+        }),
+      ).rejects.toThrow(/6543|transaction pooler/);
+    });
+    // …and it refused BEFORE running the body, so no work happens unprotected.
+    expect(ran).toBe(false);
+  });
+
+  it("refuses when DATABASE_URL is unset rather than connecting to a default", async () => {
+    await withUrl(undefined, async () => {
+      await expect(withSessionLocks(["joint:x"], async () => undefined)).rejects.toThrow(
+        /DATABASE_URL/,
+      );
+    });
   });
 });

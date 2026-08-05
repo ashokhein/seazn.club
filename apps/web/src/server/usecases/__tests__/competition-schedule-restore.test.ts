@@ -18,9 +18,12 @@
 // Real Postgres required; skipped without DATABASE_URL.
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { sql } from "@/lib/db";
+import { sql, withSessionLocks, withTenant } from "@/lib/db";
 import type { AuthCtx } from "@/server/api-v1/auth";
-import { RestoreCompetitionScheduleResult } from "@/server/api-v1/schemas";
+import {
+  RestoreCompetitionScheduleRequest,
+  RestoreCompetitionScheduleResult,
+} from "@/server/api-v1/schemas";
 import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
@@ -271,6 +274,35 @@ const checkpointsFor = (
 ): { division_id: string; checkpoint_id: string }[] =>
   divisions.map((d) => ({ division_id: d.id, checkpoint_id: anchors.get(d.id)! }));
 
+/**
+ * Is an advisory lock on `key` GRANTED to someone right now?
+ *
+ * pg_locks splits the single-argument bigint key across (classid, objid) — the
+ * high and low 32 bits — so the two halves are reconstructed here rather than
+ * recombined into one bigint, which would overflow int8 for a negative hashtext.
+ * `granted` matters: a WAITER has a row too, and counting it would turn "someone
+ * is blocked on this lock" into "the lock is held", which is the opposite fact.
+ */
+async function advisoryLockHeld(key: string): Promise<boolean> {
+  const [row] = await sql<{ n: number }[]>`
+    select count(*)::int as n from pg_locks
+     where locktype = 'advisory' and granted
+       and classid::bigint = ((hashtext(${key})::bigint >> 32) & 4294967295)
+       and objid::bigint = (hashtext(${key})::bigint & 4294967295)`;
+  return (row?.n ?? 0) > 0;
+}
+
+/** Poll `pred` until true. Returns false on timeout — the CALLER asserts, so a
+ *  lock that is never taken fails an assertion instead of hanging the suite. */
+async function waitUntil(pred: () => Promise<boolean>, ms = 20_000): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (await pred()) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return false;
+}
+
 /** The `schedule.applied_multi` rows of one competition, oldest first. */
 async function applyEvents(competitionId: string): Promise<{ id: string; created_at: Date }[]> {
   return sql<{ id: string; created_at: Date }[]>`
@@ -438,6 +470,259 @@ describe.skipIf(!HAS_DB)("restoreCompetitionSchedule (#386)", () => {
     ).rejects.toMatchObject({ status: 422 });
   }, 180_000);
 
+  // -------------------------------------------------------------------------
+  // The competition-scoped lock. It is held SESSION-level for the whole rewind,
+  // on a connection outside the pool, under a key the rewinds themselves never
+  // take. All three facts are load-bearing and each has a test here.
+  // -------------------------------------------------------------------------
+
+  it("blocks a concurrent joint apply for the WHOLE rewind, not just an instant", async () => {
+    const { auth, competitionId, divisions, checkpoints } = await seedAppliedJoint(2);
+    const order: string[] = [];
+
+    const restoring = restoreCompetitionSchedule(auth, competitionId, {
+      checkpoints: checkpoints.map((c) => ({
+        division_id: c.divisionId,
+        checkpoint_id: c.checkpointId,
+      })),
+      confirm: true,
+    }).then((out) => {
+      order.push("restore");
+      return out;
+    });
+
+    // Wait for the lock to be HELD rather than sleeping: this is what makes the
+    // competitor below start from a known state instead of a hopeful one. It is
+    // also the assertion that fails the moment the lock stops being taken.
+    expect(await waitUntil(() => advisoryLockHeld(`joint:${competitionId}`))).toBe(true);
+    // …and the restore is still running, so the competitor really does have to
+    // wait for it. Without this, a restore that had already finished would make
+    // the ordering below pass for the wrong reason.
+    expect(order).toEqual([]);
+
+    // The competitor takes the key exactly as applyCompetitionSchedule takes it:
+    // transaction-level, same key, on a POOL connection. No lock_timeout here on
+    // purpose — a bounded wait would hide the very thing under test.
+    //
+    // What it asserts is the BOARD as it stood the instant the lock was granted,
+    // not a JS marker: the restore's promise resolves only after its lock
+    // connection has also been closed, so a marker race here would be a race
+    // between two teardown round trips rather than the guarantee under test.
+    // Read after the lock, in the same transaction: READ COMMITTED gives each
+    // statement a fresh snapshot, so this sees every rewind that had committed.
+    let placedWhenApplyGotIn: boolean | undefined;
+    const applying = withTenant(auth.orgId, async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtext(${"joint:" + competitionId}))`;
+      order.push("apply");
+      const rows = await tx<{ scheduled_at: Date | null }[]>`
+        select scheduled_at from fixtures
+         where division_id in ${tx(divisions.map((d) => d.id))}`;
+      placedWhenApplyGotIn = rows.some((r) => r.scheduled_at !== null);
+    });
+
+    const out = await restoring;
+    await applying;
+    expect(out.ok).toBe(true);
+    // The whole point: by the time the apply got in, the ENTIRE rewind had
+    // committed. A lock released between rewind steps — or never taken — lets it
+    // in while fixtures are still placed.
+    expect(placedWhenApplyGotIn).toBe(false);
+  }, 180_000);
+
+  it("leaves the per-division locks free — the joint key must not be the division key", async () => {
+    const { auth, competitionId, divisions, checkpoints } = await seedAppliedJoint(2);
+    const order: string[] = [];
+
+    const restoring = restoreCompetitionSchedule(auth, competitionId, {
+      checkpoints: checkpoints.map((c) => ({
+        division_id: c.divisionId,
+        checkpoint_id: c.checkpointId,
+      })),
+      confirm: true,
+    }).then((out) => {
+      order.push("restore");
+      return out;
+    });
+    expect(await waitUntil(() => advisoryLockHeld(`joint:${competitionId}`))).toBe(true);
+    expect(order).toEqual([]);
+
+    // THE DEADLOCK REGRESSION. `division:<id>` is the key every rewind step
+    // takes for itself (history.ts step(), on a pool connection). If the session
+    // lock above ever reuses it, this wait never ends — and neither does the
+    // restore, which is why the failure would be a hang rather than a red.
+    await withTenant(auth.orgId, async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtext(${"division:" + divisions[0]!.id}))`;
+      order.push("division");
+    });
+    // Granted while the restore is still mid-flight: the namespaces are disjoint.
+    expect(order).toEqual(["division"]);
+
+    const out = await restoring;
+    expect(out.ok).toBe(true);
+    expect(order).toEqual(["division", "restore"]);
+  }, 180_000);
+
+  it("makes a blocked apply fail fast with a retryable 409 instead of stalling", async () => {
+    const { auth, competitionId, divisions } = await seedAppliedJoint(2);
+    // Hold the key the way a restore in flight holds it, and try to apply.
+    await withSessionLocks([`joint:${competitionId}`], async () => {
+      const started = Date.now();
+      await expect(jointApply(auth, competitionId, divisions)).rejects.toMatchObject({
+        status: 409,
+        code: "SCHEDULE_APPLY_RESTORE_IN_PROGRESS",
+      });
+      // Fast is half the contract: the caller gets an answer it can act on
+      // rather than a request that hangs until a gateway kills it.
+      expect(Date.now() - started).toBeLessThan(30_000);
+    });
+  }, 180_000);
+
+  // -------------------------------------------------------------------------
+  // Tenancy. Every read here is org-scoped; these pin that the scoping is real
+  // and that a refusal leaves the other org's board alone. A 404 and a 200 that
+  // did nothing look identical in the response, so each asserts the BOARD too.
+  // -------------------------------------------------------------------------
+
+  it("cannot reach another org's apply event or another org's board", async () => {
+    const mine = await seedAppliedJoint(2);
+    const theirs = await seedAppliedJoint(2);
+
+    // Their competition, my credentials: the event read is scoped by org, so
+    // there is no joint apply to be found at all.
+    await expect(
+      restoreCompetitionSchedule(mine.auth, theirs.competitionId, {
+        checkpoints: theirs.checkpoints.map((c) => ({
+          division_id: c.divisionId,
+          checkpoint_id: c.checkpointId,
+        })),
+        confirm: true,
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+
+    // My competition, their divisions: refused on the set check, before any
+    // rewind — the anchors are theirs, so a leak here would rewind their board.
+    await expect(
+      restoreCompetitionSchedule(mine.auth, mine.competitionId, {
+        checkpoints: theirs.checkpoints.map((c) => ({
+          division_id: c.divisionId,
+          checkpoint_id: c.checkpointId,
+        })),
+        confirm: true,
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+
+    // The status codes above are only half the claim: BOTH boards are untouched.
+    for (const d of [...theirs.divisions, ...mine.divisions]) {
+      expect(unplaced(await slots(d.id))).toBe(false);
+    }
+  }, 240_000);
+
+  it("reports a checkpoint that belongs to a DIFFERENT division rather than rewinding", async () => {
+    const { auth, competitionId, divisions, checkpoints } = await seedAppliedJoint(2);
+    // Both divisions are named, so the set check passes and the request reaches
+    // the rewind — but each anchor is paired with the OTHER division. A
+    // checkpoint is looked up by (id, division_id), so neither resolves.
+    const out = await restoreCompetitionSchedule(auth, competitionId, {
+      checkpoints: [
+        { division_id: checkpoints[0]!.divisionId, checkpoint_id: checkpoints[1]!.checkpointId },
+        { division_id: checkpoints[1]!.divisionId, checkpoint_id: checkpoints[0]!.checkpointId },
+      ],
+      confirm: true,
+    });
+    expect(out.ok).toBe(false);
+    expect(out.restored).toEqual([]);
+    expect(out.failed.map((f) => f.division_id).sort()).toEqual(divisions.map((d) => d.id).sort());
+    expect(out.failed.every((f) => /checkpoint not found/i.test(f.reason))).toBe(true);
+    // Nothing rewound: a mispaired anchor must not fall back to "the latest".
+    for (const d of divisions) expect(unplaced(await slots(d.id))).toBe(false);
+  }, 180_000);
+
+  // -------------------------------------------------------------------------
+  // State edges.
+  // -------------------------------------------------------------------------
+
+  it("404s when the competition has no joint apply at all", async () => {
+    const { auth } = await seedOrg("pro");
+    const comp = await createCompetition(auth, {
+      name: `Never Applied ${Date.now()}`,
+      visibility: "public",
+      branding: {},
+    });
+    const division = await seedDivision(auth, comp.id, "Alpha", 4, ["Court 1"]);
+    const cp = await createCheckpoint(auth, division.id, "Anchor", "ai");
+    await expect(
+      restoreCompetitionSchedule(auth, comp.id, {
+        checkpoints: [{ division_id: division.id, checkpoint_id: cp.id }],
+        confirm: true,
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+  }, 180_000);
+
+  it("refuses when the apply event names no divisions — it does not restore nothing and call it a success", async () => {
+    const { auth, competitionId, divisions, checkpoints } = await seedAppliedJoint(2);
+    // `payload.division_ids ?? []` is the fallback under test. An empty list can
+    // match no request, so EVERY request must be refused — the failure mode
+    // being pinned is a future refactor turning this into ok:true, 0 restored.
+    await sql`
+      update competition_events set payload = ${sql.json({})}
+       where competition_id = ${competitionId} and type = ${JOINT_APPLY_EVENT}`;
+    await expect(
+      restoreCompetitionSchedule(auth, competitionId, {
+        checkpoints: checkpoints.map((c) => ({
+          division_id: c.divisionId,
+          checkpoint_id: c.checkpointId,
+        })),
+        confirm: true,
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+    for (const d of divisions) expect(unplaced(await slots(d.id))).toBe(false);
+  }, 180_000);
+
+  it("reports EVERY division when they all fail, and releases the lock afterwards", async () => {
+    const { auth, competitionId, divisions, checkpoints } = await seedAppliedJoint(2);
+    const out = await restoreCompetitionSchedule(auth, competitionId, {
+      checkpoints: checkpoints.map((c) => ({
+        division_id: c.divisionId,
+        checkpoint_id: "00000000-0000-0000-0000-000000000000",
+      })),
+      confirm: true,
+    });
+    expect(out.ok).toBe(false);
+    expect(out.restored).toEqual([]);
+    expect(out.failed.map((f) => f.division_id).sort()).toEqual(divisions.map((d) => d.id).sort());
+    wireRoundTrip(out);
+
+    // THE `finally` GUARANTEE. A restore that did no work still has to release
+    // its session lock: if it does not, the competition is wedged for every
+    // subsequent joint write until the lock connection idles out.
+    const started = Date.now();
+    await jointApply(auth, competitionId, divisions);
+    expect(Date.now() - started).toBeLessThan(30_000);
+  }, 180_000);
+
+  it("is idempotent — restoring twice rewinds once and reports no second rewind", async () => {
+    const { auth, competitionId, divisions, checkpoints } = await seedAppliedJoint(2);
+    const body = {
+      checkpoints: checkpoints.map((c) => ({
+        division_id: c.divisionId,
+        checkpoint_id: c.checkpointId,
+      })),
+      confirm: true,
+    } as const;
+
+    const first = await restoreCompetitionSchedule(auth, competitionId, body);
+    expect(first.ok).toBe(true);
+    expect(first.restored.every((r) => r.steps > 0)).toBe(true);
+
+    // Already at the anchor: a second call is harmless and says so with 0 steps.
+    // It must not refuse, and it must not rewind PAST the checkpoint.
+    const second = await restoreCompetitionSchedule(auth, competitionId, body);
+    expect(second.ok).toBe(true);
+    expect(second.failed).toEqual([]);
+    expect(second.restored.every((r) => r.steps === 0)).toBe(true);
+    for (const d of divisions) expect(unplaced(await slots(d.id))).toBe(true);
+  }, 240_000);
+
   it("requires confirm: true", async () => {
     const { auth, competitionId, checkpoints } = await seedAppliedJoint(2);
     await expect(
@@ -450,4 +735,45 @@ describe.skipIf(!HAS_DB)("restoreCompetitionSchedule (#386)", () => {
       }),
     ).rejects.toMatchObject({ status: 422 });
   }, 120_000);
+});
+
+// The request bounds live in the zod schema, and the usecase never re-parses its
+// input — the schema runs only in the route — so these are the ONLY place the
+// edges of the body are enforced. No DB: not gated on one.
+describe("RestoreCompetitionScheduleRequest bounds", () => {
+  const anchor = () => ({ division_id: randomUUID(), checkpoint_id: randomUUID() });
+
+  it("rejects an empty checkpoint list — an undo of nothing is a mistake, not a no-op", () => {
+    const r = RestoreCompetitionScheduleRequest.safeParse({ checkpoints: [], confirm: true });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues.some((i) => i.path[0] === "checkpoints")).toBe(true);
+  });
+
+  it("accepts 20 anchors and rejects 21 — the joint apply's own division cap", () => {
+    const many = (n: number) => ({
+      checkpoints: Array.from({ length: n }, anchor),
+      confirm: true,
+    });
+    expect(RestoreCompetitionScheduleRequest.safeParse(many(20)).success).toBe(true);
+    expect(RestoreCompetitionScheduleRequest.safeParse(many(21)).success).toBe(false);
+  });
+
+  it("rejects confirm false and confirm absent — the double-submit guard is a literal", () => {
+    expect(
+      RestoreCompetitionScheduleRequest.safeParse({ checkpoints: [anchor()], confirm: false })
+        .success,
+    ).toBe(false);
+    expect(
+      RestoreCompetitionScheduleRequest.safeParse({ checkpoints: [anchor()] }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a non-uuid id rather than passing it to a query", () => {
+    expect(
+      RestoreCompetitionScheduleRequest.safeParse({
+        checkpoints: [{ division_id: "not-a-uuid", checkpoint_id: randomUUID() }],
+        confirm: true,
+      }).success,
+    ).toBe(false);
+  });
 });

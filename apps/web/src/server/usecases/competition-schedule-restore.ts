@@ -1,7 +1,6 @@
-import { withTenant } from "@/lib/db";
+import { withSessionLocks, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
-import { lockDivisions } from "./competition-schedule-apply";
 import { JOINT_APPLY_EVENT } from "./competition-schedule-ai";
 import { restoreCheckpoint } from "./history";
 
@@ -23,10 +22,10 @@ export interface CompetitionRestoreOut {
  * inverse events, each its own single-writer transaction (`history.ts`), and
  * that is what makes it concurrency-safe; wrapping N divisions x up to 500
  * appends in one transaction would hold N advisory locks for the whole rewind.
- * What this endpoint adds instead: every division's lock is taken up front in
- * sorted order (the apply's own deadlock guard), the loop runs on the server so
- * it cannot be abandoned mid-way by a client, and a failure is REPORTED per
- * division rather than left for the caller to discover.
+ * What this endpoint adds instead: the whole rewind runs under ONE
+ * competition-scoped lock (below), the loop runs on the server so it cannot be
+ * abandoned mid-way by a client, and a failure is REPORTED per division rather
+ * than left for the caller to discover.
  *
  * The division set is validated against the apply event rather than trusted:
  * the caller supplies the checkpoint anchors (only the client holds them — the
@@ -66,43 +65,49 @@ export async function restoreCompetitionSchedule(
     throw new HttpError(422, "a joint restore must name exactly the divisions the apply wrote");
   }
 
-  // Locks first, in sorted order — the same deadlock guard the apply uses, so a
-  // joint restore and a concurrent joint apply over an overlapping set cannot
-  // grab each other's divisions in opposite orders. `pg_advisory_xact_lock` is
-  // released when its transaction ends, so this is a barrier — any apply that
-  // already held these divisions has committed by the time it returns — and NOT
-  // a lock held across the rewinds below.
+  // ONE competition-scoped lock, held SESSION-level on a connection outside the
+  // pool for the WHOLE rewind below (`withSessionLocks`, lib/db.ts).
   //
-  // Holding it across them with a SESSION-level `pg_advisory_lock` on a
-  // connection outside the pool does not work, and would fail in the worst
-  // possible way. Session and transaction advisory locks share one lock space,
-  // and every rewind step below takes a `pg_advisory_xact_lock` on this very
-  // key (`step()` in history.ts) from a POOL connection: that request would
-  // block on the lock held here, forever, since nothing sets a lock_timeout.
-  // Verified against Postgres — with a lock_timeout the waiter dies 55P03.
-  // Excluding a concurrent joint apply for the whole rewind therefore needs a
-  // SECOND lock key that the apply takes too; it cannot reuse `division:`.
-  await withTenant(auth.orgId, async (tx) => {
-    await lockDivisions(tx, asked);
-  });
-
-  const restored: CompetitionRestoreOut["restored"] = [];
-  const failed: CompetitionRestoreOut["failed"] = [];
-  for (const c of [...input.checkpoints].sort((a, b) =>
-    a.division_id.localeCompare(b.division_id),
-  )) {
-    try {
-      const out = await restoreCheckpoint(auth, c.division_id, c.checkpoint_id, true);
-      restored.push({ division_id: c.division_id, watermark: out.watermark, steps: out.steps });
-    } catch (err) {
-      // Kept going on purpose: stopping at the first refusal would leave MORE
-      // divisions carrying the AI board than carrying on does, and the caller
-      // needs to know WHICH divisions still do.
-      failed.push({
-        division_id: c.division_id,
-        reason: err instanceof Error ? err.message : "restore failed",
-      });
+  // What it is for, in order of how often it happens: the SAME organiser
+  // submitting twice. A double-clicked Undo, a second browser tab, or a retry
+  // after a slow response all produce a second joint write over the same
+  // divisions while the first is still rewinding — and this product's normal
+  // shape is one owner running scheduling, so that is the realistic race, not
+  // two admins working at once. Two admins are the same race with a rarer
+  // cause. Without the lock the second submission interleaves with the first's
+  // rewind steps and the board ends up in a state neither one asked for.
+  //
+  // It cannot be the `division:` key. Session and transaction advisory locks
+  // share one lock space, and every rewind step below takes
+  // `pg_advisory_xact_lock(hashtext('division:' + id))` of its own (`step()` in
+  // history.ts) on a POOL connection. Holding `division:` here would block those
+  // steps forever — nothing sets a lock_timeout — so the restore would hang
+  // itself. Verified against Postgres: with a lock_timeout the waiter dies
+  // 55P03. Hence a second namespace that `applyCompetitionSchedule` also takes.
+  //
+  // THE LIMIT, stated plainly because the comment this replaced claimed a
+  // guarantee the code did not have: this excludes a concurrent JOINT apply and
+  // nothing else. A single-division apply or edit takes only `division:` locks,
+  // so it still interleaves between rewind steps exactly as it does today.
+  return withSessionLocks([`joint:${competitionId}`], async () => {
+    const restored: CompetitionRestoreOut["restored"] = [];
+    const failed: CompetitionRestoreOut["failed"] = [];
+    for (const c of [...input.checkpoints].sort((a, b) =>
+      a.division_id.localeCompare(b.division_id),
+    )) {
+      try {
+        const out = await restoreCheckpoint(auth, c.division_id, c.checkpoint_id, true);
+        restored.push({ division_id: c.division_id, watermark: out.watermark, steps: out.steps });
+      } catch (err) {
+        // Kept going on purpose: stopping at the first refusal would leave MORE
+        // divisions carrying the AI board than carrying on does, and the caller
+        // needs to know WHICH divisions still do.
+        failed.push({
+          division_id: c.division_id,
+          reason: err instanceof Error ? err.message : "restore failed",
+        });
+      }
     }
-  }
-  return { restored, failed, ok: failed.length === 0 };
+    return { restored, failed, ok: failed.length === 0 };
+  });
 }

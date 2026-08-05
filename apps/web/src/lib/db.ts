@@ -109,6 +109,70 @@ export async function withTenant<T>(
   }) as unknown as T;
 }
 
+/**
+ * Hold SESSION-level advisory locks across `fn`, on a connection OUTSIDE the
+ * pool, and release them however `fn` ends.
+ *
+ * Why not a pooled connection: a pinned one would still need a SECOND pool slot
+ * for every statement `fn` runs. At `DB_POOL_MAX` 5, five concurrent holders pin
+ * all five and nothing can make progress — this repo has already had exactly
+ * that stall (docs/superpowers/plans/2026-07-21-billing-groups-remaining.md).
+ * Raising the pool is not available either: the connection budget is
+ * machines x DB_POOL_MAX + Flyway + headroom + Supabase baseline, and blowing it
+ * is what caused the FATAL 53300 outage noted in getClient() above.
+ *
+ * LEAK MODEL. Session locks die with their backend, so a crashed process
+ * releases them. The bad case is a connection left ALIVE that the code has
+ * forgotten about, so: the client is created INSIDE the try (no path can open
+ * one without reaching the finally), `idle_timeout` is short so an orphan closes
+ * itself within seconds instead of holding the key indefinitely, and `end()` is
+ * bounded so a hanging close cannot strand it either. Callers that WAIT on these
+ * keys should bound their wait too — see the `lock_timeout` in
+ * `applyCompetitionSchedule`.
+ */
+export async function withSessionLocks<T>(
+  keys: readonly string[],
+  fn: () => Promise<T>,
+): Promise<T> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not set — cannot take a session lock.");
+  // Supabase's TRANSACTION pooler (:6543) hands consecutive statements to
+  // DIFFERENT backends, so the lock would be held by a backend nothing else
+  // ever speaks to: no exclusion at all, and nothing to say so. That is the one
+  // failure mode here that would be invisible in production, so refuse rather
+  // than serve a lock that does nothing. Prod is the SESSION pooler (:5432,
+  // fly.toml), where a backend is pinned per client connection.
+  if (url.includes(":6543")) {
+    throw new Error(
+      "session advisory locks require the session pooler (:5432) or a direct " +
+        "connection — the transaction pooler (:6543) does not pin a backend.",
+    );
+  }
+  const { ssl, prepare, schema } = connectionOptions(url);
+  let client: Sql | undefined;
+  try {
+    client = postgres(url, {
+      ssl,
+      prepare,
+      max: 1,
+      idle_timeout: 10,
+      connect_timeout: 15,
+      connection: { search_path: schema },
+    });
+    for (const key of keys) {
+      await client`select pg_advisory_lock(hashtext(${key}))`;
+    }
+    return await fn();
+  } finally {
+    if (client) {
+      // Both, always, and neither may mask what `fn` threw: a leaked lock
+      // connection is worse than never having taken the lock at all.
+      await client`select pg_advisory_unlock_all()`.catch(() => undefined);
+      await client.end({ timeout: 5 }).catch(() => undefined);
+    }
+  }
+}
+
 // A Proxy that forwards both tagged-template calls and method access
 // (sql.begin, sql.json, ...) to the lazily-created client.
 export const sql = new Proxy((() => {}) as unknown as Sql, {
