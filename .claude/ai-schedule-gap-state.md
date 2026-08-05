@@ -212,3 +212,31 @@ cannot be quietly inert.**
 - 2026-08-05 — **Group E DONE.** Gate after the review fixes: **5523 passed, 0 failed, 0 failedSuites, 624 suites, 0 foreign**. Rebuilt and re-ran e2e because `history.ts` changed under the exact path the spec covers: **18/18 green** (`open-scheduling` 7 + `pro-plus-tier` 9 + 2 setup). Group E = 8 commits.
   **A self-inflicted environment fault worth recording, because BOTH halves are already in the repo's trap list and I hit them anyway.** My rebuild ran `pkill` then `rm -rf apps/web/.next` WITHOUT verifying the kill took. The old server survived, kept port 3100, and the new one died on `EADDRINUSE` (`errno: -48`) — while my `curl` read **200 from the stale process** and I called it success. With its build directory deleted underneath it that process still served `/` but could not render `/magic-link`, so both auth setups timed out at 30s and all 16 tests reported "did not run". Diagnosed from `errno: -48` in the server log, not from the test output, which blamed auth.
   **Rule: a 200 from a port proves SOMETHING is listening, not that it is the thing you just started.** Verify the port is FREE before binding (`lsof -ti :PORT` → kill → probe expecting failure), and never `rm -rf .next` under a live server.
+
+## ALL FIVE PRs RAISED 2026-08-05 — programme complete pending review
+
+| PR | Group | Base | Issues | Commits |
+|---|---|---|---|---|
+| #475 | C | `main` | #394 (closed invalid, test only) | 1 |
+| #476 | A | `main` | #385, #387, #383, #384 | 5 |
+| #477 | D | `main` | #390 | 4 |
+| #478 | E | **`ai-gap-a-quote-integrity`** (stacked) | #382 | 8 |
+| #479 | B | `main` | #386, #391, #392 | 10 |
+
+**Merge order: #476 before #478.** E is stacked on A because both regenerate
+`i18n-keys.ts`; merging A first retargets E to `main` automatically.
+
+Before raising, local `main` carried **40 unpushed commits** (spec, plan, state
+file) and each branch held a different subset, which would have made all five
+PRs conflict on the same file. Verified docs-only (`git diff --name-only` →
+zero files outside `docs/` and `.claude/`), pushed to `main`, then rebased every
+branch. Each PR now contains only its own work.
+
+**Caveat recorded honestly:** the rebases changed shas, and E's rebase pulled in
+A's final commit (`ai-quote-mismatch.ts`) that E had not been gated with. E does
+not touch that file, so risk is low — but the green numbers were measured
+pre-rebase and PR smoke CI is what confirms the rebased trees.
+
+Final gates, all on clean DBs, all measured by me from `--reporter=json`:
+B 5488/0/0 · A (pre-rebase) 5487 w/ 2 proven-environmental · D 1629/1654 0/0 ·
+E 5523/0/0 + **e2e 18/18** against a real standalone prod build.
