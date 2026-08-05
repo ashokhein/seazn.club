@@ -605,10 +605,26 @@ export function slotFixtures(input: SlotInput): SlotResult {
     return { notBefore, notAfter };
   };
 
-  // crossPersonClash=hard (Jul3/04 §2): a person double-booking rejects the
-  // placement like a court clash instead of warning after the fact.
+  // A person double-booking rejects the placement like a court clash, for every
+  // `crossPersonClash` setting.
+  //
+  // NOT gated on `crossPersonClash === "hard"` any more (Jul3/04 §2 as amended
+  // by #399). The write gate refuses an INTRODUCED person overlap whatever the
+  // setting says — `isBlockingConflict` lists `person_overlap` unconditionally,
+  // and `assertNoNewBlocking` takes the delta — so a placer that honoured the
+  // setting here proposed boards the gate then refused, with re-running Auto
+  // proposing the same board again. Avoiding what the gate blocks is not an
+  // opt-in.
+  //
+  // The setting still means something at the REPORT boundary, which is why it
+  // survives: `warn` boards published before #399 keep their overlaps, keep
+  // being reported, and stay applyable on the delta basis. What it no longer
+  // does is tell the placer to walk into one.
+  //
+  // Draft-vs-draft was already covered by the `person:` rest keys (#463); this
+  // is what guards draft-vs-`existing`, which seeds `bookings` but never
+  // `lastEnd`. Both halves are pinned in calendar-person-clash-placement.test.ts.
   const personBlocked = (f: SchedulableFixture, start: number): Assignment | null => {
-    if (c?.crossPersonClash !== "hard") return null;
     const people = f.people ?? [];
     if (people.length === 0) return null;
     const end = start + durMs;
@@ -708,6 +724,13 @@ export function slotFixtures(input: SlotInput): SlotResult {
 
     let best: { court: string; start: number } | null = null;
     let windowBound = false;
+    // The last person this fixture was pushed off, if any. Kept so an
+    // UNPLACEABLE card can still name the human who made it unplaceable: before
+    // person avoidance became unconditional, a `warn` board always placed and
+    // reported `person_overlap`, which names the person in its detail. Without
+    // this the same situation degrades to a bare "no court/time within horizon"
+    // and the organiser loses the one fact that tells them what to change.
+    let personBound: { person: string; other: string } | null = null;
     for (const court of config.courts) {
       // repair loop: person-clash / block-parallelism rejections push the
       // candidate later on the same court instead of silently placing
@@ -716,8 +739,13 @@ export function slotFixtures(input: SlotInput): SlotResult {
       for (let i = 0; i < 64; i++) {
         start = earliestOnCourt(court, lb, durMs, gapMs, horizon, bookings, blackouts);
         if (start === null) break;
-        const clash = personBlocked(f, start) ?? blockModeBlocked(start);
+        const person = personBlocked(f, start);
+        const clash = person ?? blockModeBlocked(start);
         if (clash !== null) {
+          if (person !== null) {
+            const shared = (f.people ?? []).find((p) => person.people.includes(p));
+            if (shared !== undefined) personBound = { person: shared, other: person.fixtureId };
+          }
           lb = Math.max(clash.endAt, start + 1);
           start = null;
           continue;
@@ -756,12 +784,21 @@ export function slotFixtures(input: SlotInput): SlotResult {
 
     if (best === null) {
       // over-constrained: best-effort + a named binding constraint (Jul3/04 §7)
+      //
+      // Still `no_slot` when a person was the binding constraint, deliberately
+      // NOT `person_overlap`. Nothing was placed, so there is no overlap on the
+      // board to report — and `person_overlap` is BLOCKING, so claiming one here
+      // would make a card the placer declined to place refuse the organiser's
+      // apply. The person travels in `detail`, which is part of `conflictKey`
+      // and so already distinguishes this from an ordinary exhausted horizon.
       conflicts.push({
         fixtureId: f.id,
         reason: windowBound ? "start_window" : "no_slot",
         detail: windowBound
           ? "no feasible slot before the start window's notAfter bound"
-          : "no court/time within horizon",
+          : personBound !== null
+            ? `no court/time within horizon free of person ${personBound.person} (also in ${personBound.other})`
+            : "no court/time within horizon",
       });
       continue;
     }

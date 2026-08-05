@@ -110,7 +110,14 @@ export const SchedulingConstraints = z.object({
   startWindows: z.array(StartWindow).default([]),
   fieldFairness: z.enum(["off", "balance", "rotate"]).default("off"), // 14 Apr
   parallelism: z.enum(["block", "mixed"]).default("mixed"), // 29 May
-  crossPersonClash: z.enum(["warn", "hard"]).default("warn"), // Jul3/04 §2
+  /** @deprecated Accepted and stored, read by nothing. Jul3/04 §2 made this the
+   *  switch for whether a person double-booking blocked; #399 then made the
+   *  write gate refuse an INTRODUCED one absolutely (`isBlockingConflict` lists
+   *  `person_overlap` unconditionally), and the placer now avoids one for the
+   *  same reason — so neither side consults it. Kept so stored settings and the
+   *  wire schema keep parsing; the organiser-facing control it backs should be
+   *  retired in its own change, with the UI and dictionaries. */
+  crossPersonClash: z.enum(["warn", "hard"]).default("warn"),
   /** Durable division rules, in the SAME vocabulary a compiled instruction
    *  produces (#398), so hard rules have exactly one home and the referee reads
    *  one list. Defaults to [] so every pre-W3 persisted
