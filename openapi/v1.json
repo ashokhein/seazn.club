@@ -22474,15 +22474,25 @@
                   "only_unlocked": {
                     "default": true,
                     "type": "boolean"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "build",
+                      "reflow",
+                      "polish"
+                    ]
                   }
                 },
                 "required": [
-                  "only_unlocked"
+                  "only_unlocked",
+                  "mode"
                 ],
                 "additionalProperties": false
               },
               "example": {
-                "only_unlocked": true
+                "only_unlocked": true,
+                "mode": "build"
               }
             }
           }
@@ -22592,11 +22602,94 @@
                             ],
                             "additionalProperties": false
                           }
+                        },
+                        "metrics": {
+                          "type": "object",
+                          "properties": {
+                            "makespan_minutes": {
+                              "type": "number"
+                            },
+                            "worst_idle_gap_minutes": {
+                              "type": "number"
+                            },
+                            "court_imbalance_minutes": {
+                              "type": "number"
+                            },
+                            "placed": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "total": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "makespan_minutes",
+                            "worst_idle_gap_minutes",
+                            "court_imbalance_minutes",
+                            "placed",
+                            "total"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "solver": {
+                          "type": "object",
+                          "properties": {
+                            "engine": {
+                              "type": "string",
+                              "enum": [
+                                "greedy",
+                                "z3",
+                                "z3+lns"
+                              ]
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "ok",
+                                "already_optimal",
+                                "infeasible",
+                                "verifier_rejected",
+                                "z3_unavailable",
+                                "solver_busy"
+                              ]
+                            },
+                            "tiers_completed": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "budget_expired": {
+                              "type": "boolean"
+                            },
+                            "elapsed_ms": {
+                              "type": "number"
+                            },
+                            "moved": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "engine",
+                            "status",
+                            "tiers_completed",
+                            "budget_expired",
+                            "elapsed_ms",
+                            "moved"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
                         "assignments",
-                        "conflicts"
+                        "conflicts",
+                        "metrics",
+                        "solver"
                       ],
                       "additionalProperties": false
                     },
@@ -22624,7 +22717,22 @@
                         "blocking": true,
                         "detail": "example"
                       }
-                    ]
+                    ],
+                    "metrics": {
+                      "makespan_minutes": 1,
+                      "worst_idle_gap_minutes": 1,
+                      "court_imbalance_minutes": 1,
+                      "placed": -9007199254740991,
+                      "total": -9007199254740991
+                    },
+                    "solver": {
+                      "engine": "greedy",
+                      "status": "ok",
+                      "tiers_completed": -9007199254740991,
+                      "budget_expired": true,
+                      "elapsed_ms": 1,
+                      "moved": -9007199254740991
+                    }
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }

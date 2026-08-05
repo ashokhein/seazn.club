@@ -27,7 +27,13 @@ import {
 import { patchFixture } from "../fixtures";
 import { scoreEvent } from "../scoring";
 import { publicSchedule } from "../public";
-import { ApplyScheduleRequest } from "@/server/api-v1/schemas";
+import {
+  ApplyScheduleRequest,
+  AutoScheduleRequest,
+  AutoScheduleResult,
+  ScheduleMetrics,
+  ScheduleSolverInfo,
+} from "@/server/api-v1/schemas";
 import { seedOrg as seedOfficialsOrg, seedFutureDivision } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -617,5 +623,108 @@ describe.skipIf(!HAS_DB)("loadSettings resolves the organisation zone separately
     const { auth, divisionId } = await seedDivisionWithOrgTz("Pacific/Atlantis");
     const settings = await load(auth, divisionId);
     expect(settings.orgTz).toBe("UTC");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auto-schedule API contract (z3 solver programme, task 8). Pure schema tests —
+// no DB, so they are deliberately OUTSIDE the skipIf(!HAS_DB) blocks above.
+// ---------------------------------------------------------------------------
+
+describe("AutoScheduleRequest.mode", () => {
+  it("defaults to reflow when only_unlocked is true", () => {
+    expect(AutoScheduleRequest.parse({ only_unlocked: true }).mode).toBe("reflow");
+  });
+
+  it("defaults to build when only_unlocked is false", () => {
+    expect(AutoScheduleRequest.parse({ only_unlocked: false }).mode).toBe("build");
+  });
+
+  it("defaults to reflow for an empty body, matching today's only_unlocked default", () => {
+    expect(AutoScheduleRequest.parse({}).mode).toBe("reflow");
+  });
+
+  it("takes an explicit mode over the derived one", () => {
+    expect(AutoScheduleRequest.parse({ only_unlocked: true, mode: "polish" }).mode).toBe("polish");
+  });
+
+  /** Sharper than the "polish" case: here the explicit value is one the
+   *  derivation could also produce, but for the OTHER only_unlocked. An
+   *  implementation that always derives returns "build" and is caught. */
+  it("keeps an explicit mode that contradicts the derivation", () => {
+    expect(AutoScheduleRequest.parse({ only_unlocked: false, mode: "reflow" }).mode).toBe("reflow");
+  });
+
+  it("rejects an unknown mode", () => {
+    expect(() => AutoScheduleRequest.parse({ mode: "magic" })).toThrow();
+  });
+
+  /** Regression guard: adding `mode` must not disturb the pre-existing field
+   *  the route still reads (`body.only_unlocked`). */
+  it("leaves only_unlocked defaulting to true and still type-checked", () => {
+    expect(AutoScheduleRequest.parse({}).only_unlocked).toBe(true);
+    expect(AutoScheduleRequest.parse({ only_unlocked: false }).only_unlocked).toBe(false);
+    expect(() => AutoScheduleRequest.parse({ only_unlocked: "yes" })).toThrow();
+  });
+});
+
+describe("AutoScheduleResult metrics + solver contract", () => {
+  const metrics = {
+    makespan_minutes: 240,
+    worst_idle_gap_minutes: 45,
+    court_imbalance_minutes: 30,
+    placed: 11,
+    total: 14,
+  };
+  const solver = {
+    engine: "z3" as const,
+    status: "ok" as const,
+    tiers_completed: 2,
+    budget_expired: false,
+    elapsed_ms: 1234,
+    moved: 6,
+  };
+
+  /** A round-trip toEqual, not a field-by-field check: a key declared twice in
+   *  one z.object is silent both ways, and only the round-trip sees it. */
+  it("round-trips the metrics block Task 9 fills and Task 11 renders", () => {
+    expect(ScheduleMetrics.parse(metrics)).toEqual(metrics);
+  });
+
+  it("round-trips the solver telemetry block", () => {
+    expect(ScheduleSolverInfo.parse(solver)).toEqual(solver);
+  });
+
+  it("carries metrics and solver through the full result envelope", () => {
+    const result = { assignments: [], conflicts: [], metrics, solver };
+    expect(AutoScheduleResult.parse(result)).toEqual(result);
+  });
+
+  it("requires metrics and solver — they are not optional add-ons", () => {
+    expect(() => AutoScheduleResult.parse({ assignments: [], conflicts: [] })).toThrow();
+  });
+
+  /** These six must stay one-for-one with the engine's BuildStatus union.
+   *  Pinned as literals rather than imported: packages/engine is under
+   *  concurrent edit in sibling lanes, and this is the API-side contract. */
+  it("accepts exactly the six BuildStatus values", () => {
+    for (const status of [
+      "ok",
+      "already_optimal",
+      "infeasible",
+      "verifier_rejected",
+      "z3_unavailable",
+      "solver_busy",
+    ]) {
+      expect(ScheduleSolverInfo.parse({ ...solver, status }).status).toBe(status);
+    }
+    expect(() => ScheduleSolverInfo.parse({ ...solver, status: "partial" })).toThrow();
+  });
+
+  it("accepts exactly the three solver engines", () => {
+    for (const engine of ["greedy", "z3", "z3+lns"]) {
+      expect(ScheduleSolverInfo.parse({ ...solver, engine }).engine).toBe(engine);
+    }
+    expect(() => ScheduleSolverInfo.parse({ ...solver, engine: "cpsat" })).toThrow();
   });
 });
