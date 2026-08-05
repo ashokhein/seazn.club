@@ -74,9 +74,18 @@ does not hold — an owner gets a live Buy button that dead-ends.
    arm is often a stale date on a competition still being played.
 10. **Competition slots are a concurrency cap and stay that way.** A
     completed/archived competition frees its `competitions.max_active`
-    slot; community is 1 active comp + 2 divisions/comp
-    (`V270__pricing_v3_matrix.sql:7-8`). Asked and answered — do not
+    slot; community is **10 active comps + 4 divisions/comp**
+    (`V319__v17_phase1_reorg.sql:13-14`). Asked and answered — do not
     re-open.
+
+    **The 1-and-2 figure this file carried until Task 6 was wrong.** It
+    came from `V270__pricing_v3_matrix.sql:7-8`, which V319 superseded.
+    `divisions.per_competition.max` is written by V112, V270, V290, V319
+    and V341 in turn: read the LAST migration that writes the row, never
+    the first one a grep finds. Task 6's tests initially passed for the
+    wrong reason because of this. `seedCommunityCompetition` now pins the
+    cap to 2 via `org_entitlement_overrides` so the assertions bite
+    regardless of what the matrix says.
 
 Full spec: `docs/superpowers/specs/2026-08-05-competition-lifecycle-pass-integrity-design.md`
 Full plan: `docs/superpowers/plans/2026-08-05-competition-lifecycle-pass-integrity.md`
@@ -86,8 +95,18 @@ implement.
 
 ## WHERE WE ARE (update this line as tasks land)
 
-Spec ✅ · Plan ✅ · **Task 1 ✅ `951f60ca` + `3dbee0c5`** (reviewed,
-approved) · **Task 2 in flight** · Tasks 3–5 queued.
+Spec ✅ · Plan ✅
+
+| Task | Lane | State |
+| --- | --- | --- |
+| 1 — `closed` upgrade state | A | ✅ `951f60ca` + `3dbee0c5`, reviewed, approved |
+| 2 — lock judged from the competition | A | ✅ `62ecb93a`, reviewed, approved |
+| 3 — the chip | A | in flight |
+| 4, 5 | A | queued |
+| 6 — V354 + shared results predicate | C/D | ✅ `29e26998`, review in flight |
+| 7 — staff waiver | C/D | in flight |
+| 8, 9 | C/D | queued |
+| 10 (part B), 11 (gates) | — | after both branches merge |
 
 ## EXECUTION IS SPLIT ACROSS TWO WORKTREES (owner asked for it)
 

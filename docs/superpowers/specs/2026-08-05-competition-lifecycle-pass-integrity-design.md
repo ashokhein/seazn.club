@@ -412,20 +412,37 @@ A `completed`/`archived` competition **frees** its
 `competitions.max_active` slot: `assertActiveQuota`
 (`competitions.ts:88-95`) counts only
 `ACTIVE_COMPETITION_STATUSES = ["draft","published","live"]`
-(`entitlement-freeze.ts:14`). Community is seeded at **1 active
-competition, 2 divisions per competition**
-(`V270__pricing_v3_matrix.sql:7-8`).
+(`entitlement-freeze.ts:14`). Community is seeded at **10 active
+competitions, 4 divisions per competition**
+(`V319__v17_phase1_reorg.sql:13-14`).
 
-The community promise is therefore *one live competition with two
-divisions, as many seasons as you like, serially* — a concurrency cap,
-not a lifetime one.
+> **Corrected during implementation.** This section first cited
+> `V270__pricing_v3_matrix.sql:7-8` — 1 active competition, 2 divisions.
+> Both numbers were superseded by V319 and neither is live. V270 is not
+> the last word on the matrix: `divisions.per_competition.max` is written
+> by V112, V270, V290, V319 and V341 in turn, so the seed value must be
+> read from the LAST migration that writes the row, never the first one a
+> grep finds. Task 6's tests initially passed for the wrong reason
+> because of this, and its `seedCommunityCompetition` now pins the cap to
+> 2 with an `org_entitlement_overrides` row so the assertions actually
+> bite.
+
+The community promise is therefore *ten live competitions with four
+divisions each, as many seasons as you like, serially* — a concurrency
+cap, not a lifetime one.
 
 This does not undermine part C. The division cap is **per competition**,
-so a new competition legitimately earns its own 2 slots — and the org
+so a new competition legitimately earns its own 4 slots — and the org
 pays for it in product terms: a new URL, a new identity, no standings
 continuity, entrants re-entered. Archiving a division inside a live
 competition costs them none of that. Part C closes the free path and
 leaves the expensive one open, which is where the line belongs.
+
+The larger real numbers do not soften part C either. The loop is
+**unbounded**, not merely generous: archive-and-recreate yields an
+unlimited number of played divisions inside one competition at any
+ceiling. A higher ceiling changes how long the evasion takes to become
+worth doing, not whether it works.
 
 ## Testing
 
