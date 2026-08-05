@@ -8,12 +8,12 @@
 //      can place nothing at all — and that is precisely the run whose report the
 //      organiser most needs — so capturing the telemetry after that return would
 //      hide the strip on the one board that has to explain itself.
-//   2. `metrics`/`solver` are declared on the /schedule/auto response schema but
-//      `autoSchedule` does not populate them yet (verified against
-//      server/usecases/schedule.ts on this branch: AutoScheduleOut is still
-//      `{ assignments, conflicts }`). Typing them as required would make the
-//      strip render a board of zeros for every real run today, so the hook must
-//      leave `lastRun` null when the wire is silent.
+//   2. `metrics`/`solver` are declared on the /schedule/auto response schema and
+//      Task 9 now populates them — but the hook still types them OPTIONAL, and
+//      deliberately. A cached response or a server one deploy behind carries
+//      neither, and typing them as required would render a board of zeros
+//      instead of no strip at all. So the hook must still leave `lastRun` null
+//      when the wire is silent, which is what the last spec here pins.
 //
 // Driven through the shared hook dispatcher harness — vitest runs `environment:
 // "node"` here and there is no jsdom, so a stateful island cannot be clicked.
@@ -67,6 +67,7 @@ const SOLVER = {
   engine: "z3",
   status: "infeasible",
   tiers_completed: 2,
+  tiers_total: 4,
   budget_expired: true,
   elapsed_ms: 3200,
   moved: 6,

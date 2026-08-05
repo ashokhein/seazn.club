@@ -259,7 +259,7 @@ describe.skipIf(!HAS_DB)("sibling fixtures carry their rule identity (#462)", ()
     // A one-DAY window, so the placer has nowhere else to put the second card:
     // its only honest answer is to leave it unplaced.
     const { auth, planned } = await seedBoard(false, AT("22:00"));
-    const out = await autoSchedule(auth, planned.stageId, false);
+    const out = await autoSchedule(auth, planned.stageId, { only_unlocked: false, mode: "build" });
 
     // The sibling already holds one of the day's two slots, so exactly one of
     // this division's fixtures fits. Blind to the sibling, the placer proposed

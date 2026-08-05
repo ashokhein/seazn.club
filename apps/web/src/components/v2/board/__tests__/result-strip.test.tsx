@@ -31,6 +31,7 @@ const solver = (over: Partial<ScheduleSolverInfo> = {}): ScheduleSolverInfo => (
   engine: "z3",
   status: "ok",
   tiers_completed: 4,
+  tiers_total: 4,
   budget_expired: false,
   elapsed_ms: 3200,
   moved: 6,
@@ -78,6 +79,16 @@ describe("ScheduleResultStrip — the anytime contract", () => {
     const html = render(metrics(), solver({ budget_expired: true, tiers_completed: 2 }));
     expect(html).toContain('data-testid="schedule-result-budget"');
     expect(html).toContain("2 of 4 targets improved");
+  });
+
+  /** The denominator is the WIRE's, not a constant in the component. The
+   *  fixture's 4 agrees with today's ladder, so the only way to tell the two
+   *  apart is to send a value that does not: a component still reading its own
+   *  `IMPROVEMENT_TARGETS` renders "2 of 4" here and is caught. */
+  it("takes the target count from tiers_total rather than a hardcoded 4", () => {
+    const html = render(metrics(), solver({ budget_expired: true, tiers_completed: 2, tiers_total: 7 }));
+    expect(html).toContain("2 of 7 targets improved");
+    expect(html).not.toContain("2 of 4 targets improved");
   });
 
   it("budget_expired: false does NOT render the note", () => {
@@ -146,6 +157,34 @@ describe("ScheduleResultStrip — infeasible is a statement about the PINS", () 
     const html = render(metrics({ placed: 22, total: 22 }), solver({ status: "infeasible" }));
     expect(html).toContain("everything still found a slot");
     expect(html).not.toContain("scheduled —");
+  });
+
+  /**
+   * THE case the `total - placed` fallback gets wrong, and the only shape that
+   * can tell the two apart. Every spec above places the whole unplaced set at
+   * the pins' door, so the derivation and the engine's own answer agree and a
+   * test built on one of those boards proves nothing.
+   *
+   * Here four cards are off the board and the engine's proof names TWO of them:
+   * the other two lost their slot to something else entirely. Telling the
+   * organiser that four pins contradict each other sends them to unpin two cards
+   * that were never the problem.
+   */
+  it("takes the pin count from the engine, not from total - placed", () => {
+    const html = render(
+      metrics({ placed: 18, total: 22 }),
+      solver({ status: "infeasible", contradictory_pins: ["f-3", "f-7"] }),
+    );
+    expect(html).toContain("18 of 22 scheduled");
+    expect(html).toContain("2 pinned matches cannot all be kept where they are");
+    expect(html).not.toContain("4 pinned matches");
+  });
+
+  /** …and with no field on the wire it still says something, rather than going
+   *  blank on the one board that most needs explaining. */
+  it("falls back to total - placed when the engine named no pins", () => {
+    const html = render(metrics({ placed: 18, total: 22 }), solver({ status: "infeasible" }));
+    expect(html).toContain("4 pinned matches cannot all be kept where they are");
   });
 
   it("a partial board that is NOT infeasible says so without inventing pins", () => {
