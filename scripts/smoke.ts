@@ -6644,6 +6644,10 @@ async function latestCompetitionEvent(
   parse_failed?: boolean;
   spent_tokens?: number;
   budget?: number;
+  /** #387: the `schedule.ai_quote_mismatch` payload — what the confirm card
+   *  quoted against what the run actually charged. */
+  quoted?: number;
+  charged?: number;
 } | null> {
   const sql = smokeDb();
   try {
@@ -7638,6 +7642,11 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
       const offRes = await v1(plus, `/api/v1/divisions/${divId}/officials/ai-plan`, "POST", {
         instruction: "",
         policy: { roles: ["referee"] },
+        // #387: what a confirm card would have shown. The empty-instruction
+        // path is priced at a flat 1 credit, so 3 is a deliberate divergence —
+        // the server must REPORT it and RECORD it, and must still return the
+        // plan (this is telemetry, not a gate).
+        quoted_credits: 3,
         schedule: plan.proposal.map((a) => ({
           fixture_id: a.fixture_id,
           scheduled_at: a.scheduled_at,
@@ -7651,6 +7660,8 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
           repair_rounds: number;
         };
         assignments: unknown[];
+        credits?: number;
+        quote_mismatch?: { quoted: number; charged: number };
       }>(offRes);
       check(
         "v4 AI/plus: officials ai-plan (empty instruction) returns a zero-token solver draft",
@@ -7667,6 +7678,21 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
       check(
         'v4 AI/plus: schedule.ai_officials_generated ledger row stamps model "solver-draft"',
         !!offEvent && offEvent.model === "solver-draft",
+      );
+
+      // #387 — quote/charge reconciliation.
+      check(
+        "#387: the officials run reports the card's quote against what it charged",
+        off.quote_mismatch?.quoted === 3 && off.quote_mismatch?.charged === off.credits,
+      );
+      check(
+        "#387: a mismatch does not withhold the plan — it is telemetry, not a gate",
+        offRes.status === 200 && off.assignments.length > 0,
+      );
+      const mismatchEvent = await latestCompetitionEvent(compId, "schedule.ai_quote_mismatch");
+      check(
+        "#387: the divergence is recorded on the competition ledger",
+        !!mismatchEvent && mismatchEvent.quoted === 3 && mismatchEvent.charged === 1,
       );
 
       // ---- #396: a to-be-decided bracket slot is checked against everyone who

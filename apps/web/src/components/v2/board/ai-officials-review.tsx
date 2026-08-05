@@ -231,8 +231,14 @@ export function AiOfficialsReview({
     weights: officialsWeights,
     freeDraft,
   }).credits;
+  // #383: before anything has run there is no plan to re-plan — the button is
+  // the DRAFT, and it is the organiser's first chance to decline the spend.
+  // Naming it "Re-plan officials" while the grid is empty would describe work
+  // that has not happened; naming the price is what makes the button a
+  // decision rather than a surprise on the invoice.
+  const drafting = plan === null;
   const replanLabel = msg("board.ai.quote.cta", {
-    action: msg("board.ai.officials.replan"),
+    action: msg(drafting ? "board.ai.officials.run" : "board.ai.officials.replan"),
     credits: plural("board.ai.quote.credits", replanCredits),
   });
   const model = useMemo(
@@ -384,7 +390,11 @@ export function AiOfficialsReview({
         <button
           type="button"
           onClick={onReplan}
-          disabled={busy || plan === null}
+          // #383: NOT gated on a plan existing any more. That gate was written
+          // when the only thing that produced the first draft was the auto-run
+          // this task removed — leaving it would mean the organiser arrives at
+          // an empty step whose one button is permanently disabled.
+          disabled={busy}
           className="ai-run inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy ? (

@@ -2774,6 +2774,7 @@
   "board.ai.officials.instructionPlaceholder": "p. ex. Placer les arbitres expérimentés sur les finales et répartir les tâches équitablement.",
   "board.ai.officials.instructionHint": "Le langage courant fonctionne le mieux — décrivez les fonctions, les horaires et les temps de repos, ou ajoutez un souhait ci-dessous.",
   "board.ai.officials.replan": "Replanifier les officiels",
+  "board.ai.officials.run": "Établir la répartition des tâches",
   "board.ai.officials.toApply": "Vérifier et appliquer",
   "board.ai.officials.conflict.official_overlap": "Double réservation",
   "board.ai.officials.conflict.team_ref_self": "Arbitre son propre match",

@@ -2774,6 +2774,7 @@
   "board.ai.officials.instructionPlaceholder": "bijv. Zet ervaren scheidsrechters op de finales en verdeel de taken gelijkmatig.",
   "board.ai.officials.instructionHint": "Gewone taal werkt het best — beschrijf taken, tijden en rustpauzes, of voeg hieronder een wens toe.",
   "board.ai.officials.replan": "Officials opnieuw plannen",
+  "board.ai.officials.run": "Stel de taakverdeling op",
   "board.ai.officials.toApply": "Controleren en toepassen",
   "board.ai.officials.conflict.official_overlap": "Dubbel geboekt",
   "board.ai.officials.conflict.team_ref_self": "Leidt eigen wedstrijd",

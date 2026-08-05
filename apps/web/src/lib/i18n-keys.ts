@@ -519,6 +519,7 @@ export type DictionaryKey =
   | "board.ai.officials.lockedTitle"
   | "board.ai.officials.noEligible"
   | "board.ai.officials.replan"
+  | "board.ai.officials.run"
   | "board.ai.officials.running"
   | "board.ai.officials.solverSuggests"
   | "board.ai.officials.toApply"

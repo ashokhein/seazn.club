@@ -2774,6 +2774,7 @@
   "board.ai.officials.instructionPlaceholder": "p. ej. Pon árbitros veteranos en las finales y reparte las tareas de forma equitativa.",
   "board.ai.officials.instructionHint": "El lenguaje natural funciona mejor: describe funciones, horarios y descansos, o añade un deseo abajo.",
   "board.ai.officials.replan": "Replanificar árbitros",
+  "board.ai.officials.run": "Redactar el reparto de tareas",
   "board.ai.officials.toApply": "Revisar y aplicar",
   "board.ai.officials.conflict.official_overlap": "Doble asignación",
   "board.ai.officials.conflict.team_ref_self": "Arbitra su propio partido",

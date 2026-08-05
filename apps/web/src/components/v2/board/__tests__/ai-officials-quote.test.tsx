@@ -152,11 +152,19 @@ describe("officials confirm card", () => {
     expect(creditsShown(render())).toBe(officials);
   });
 
-  it("names the credit count on the Re-plan button", () => {
-    const html = render();
-    const btn = html.slice(html.lastIndexOf("ai-run"));
-    expect(btn).toContain("1 credit");
-    expect(btn).toContain(enText["board.ai.officials.replan"]);
+  it("names the credit count on the run button", () => {
+    // #383: with no plan yet this button DRAFTS — the step no longer auto-fires
+    // one, so "re-plan" would name work that has not happened. The subject of
+    // this test is unchanged: the CTA names what the run costs.
+    const btn = (html: string) => html.slice(html.lastIndexOf("ai-run"));
+    const drafting = btn(render());
+    expect(drafting).toContain("1 credit");
+    expect(drafting).toContain(enText["board.ai.officials.run"]);
+
+    // Once a draft exists the same button refines it, and says so.
+    const refining = btn(render({ plan: planWith(0) }));
+    expect(refining).toContain("1 credit");
+    expect(refining).toContain(enText["board.ai.officials.replan"]);
   });
 
   it("quotes the empty-instruction draft at a flat 1 credit, with no rung control", () => {

@@ -532,7 +532,6 @@ export function AiConsole({
   // surfaces are showing. The run bodies send those numbers so the server can
   // say whether what it charged is what the organiser was promised.
   const rungConfig = useRungConfig();
-  const officialsAutoStarted = useRef(false);
   // Cancel any in-flight run on close/unmount (the board conditionally renders
   // the dock, so unmount cleanup covers close too) — its rejection is ignored.
   const abortRef = useRef<AbortController | null>(null);
@@ -647,10 +646,9 @@ export function AiConsole({
         { method: "POST", json: body, signal: ac.signal },
       );
       priorInstruction.current = instruction;
-      // A new schedule invalidates the officials draft (reducer clears the plan);
-      // reset the auto-run latch so the officials step re-solves over the new
-      // times on next entry rather than showing stale assignments.
-      officialsAutoStarted.current = false;
+      // A new schedule invalidates the officials draft — the reducer clears the
+      // plan, so the officials step returns to its pre-run card and the
+      // organiser drafts again over the new times when they choose to (#383).
       dispatch({ type: "RUN_DONE", plan });
     } catch (err) {
       // A cancelled run is not an error — the console is closing or superseded.
@@ -734,22 +732,13 @@ export function AiConsole({
     [busy, divisionId, fixtures, msg, officialsPolicy, rungConfig, state],
   );
 
-  // Auto-run the free solver draft the first time the organiser reaches the
-  // officials step so it is never blank (design/v4/03 §3). Fires once per open;
-  // refines are manual. On error the plan stays null and the ref stays set, so
-  // it never retries in a loop — the inline error offers Re-plan.
-  useEffect(() => {
-    if (
-      state.step === "officials" &&
-      state.officialsPlan === null &&
-      state.schedulePlan !== null &&
-      !officialsAutoStarted.current &&
-      !busy
-    ) {
-      officialsAutoStarted.current = true;
-      void runOfficials({ instruction: "" });
-    }
-  }, [state.step, state.officialsPlan, state.schedulePlan, busy, runOfficials]);
+  // #383: the officials step used to auto-fire the solver draft here. That run
+  // spends 1 credit (`freeDraftQuote` is a price CAP, not zero — "free" means
+  // free of MODEL cost), so the organiser was charged before a confirm card
+  // could render: the one credit-spending path in the product with no pre-spend
+  // surface, and the one they could not decline. The card in the officials step
+  // now carries the flat 1-credit price and a button, exactly as this step's
+  // siblings do.
 
   // ---------------------------------------------------- apply orchestration (T15)
   // Chain the existing apply rails: a before-ai checkpoint, the schedule apply(s)

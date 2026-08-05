@@ -2774,6 +2774,7 @@
   "board.ai.officials.instructionPlaceholder": "e.g. Put senior referees on the finals and spread duties evenly.",
   "board.ai.officials.instructionHint": "Plain language works best — describe duties, times and rest gaps, or add a wish below.",
   "board.ai.officials.replan": "Re-plan officials",
+  "board.ai.officials.run": "Draft the duty spread",
   "board.ai.officials.toApply": "Review & apply",
   "board.ai.officials.conflict.official_overlap": "Double-booked",
   "board.ai.officials.conflict.team_ref_self": "Officiating own match",

@@ -226,8 +226,11 @@ test("pro: brief → run → CLEAN → officials → apply → undo", async ({ p
   expect(scheduleCall).toBeTruthy();
   expect(scheduleCall!.assignments).toBe(6);
 
-  // Officials step: the zero-token solver auto-draft renders its grid (no model call).
+  // Officials step: #383 — arriving no longer spends anything. The organiser
+  // presses the button, and only then does the zero-token solver draft run.
   await page.getByRole("button", { name: "Assign officials" }).click();
+  await expect(page.getByLabel("Officials by fixture")).toHaveCount(0);
+  await page.getByRole("button", { name: /Draft the duty spread.*1 credit\b/ }).click();
   await expect(page.getByLabel("Officials by fixture")).toBeVisible({ timeout: 20_000 });
   await expect(
     page.getByText("Draft duty spread from the solver — no AI tokens used."),
@@ -520,14 +523,22 @@ test("the officials step prices itself: free draft with no picker, priced once a
   await compileAndConfirm(page);
   await expect(page.getByText(/CLEAN · 0 blocking/)).toBeVisible({ timeout: 20_000 });
   await page.getByRole("button", { name: "Assign officials" }).click();
-  await expect(page.getByLabel("Officials by fixture")).toBeVisible({ timeout: 20_000 });
 
+  // #383: the card is on screen BEFORE anything has run, which is the whole
+  // point — this used to be reachable only after the auto-run had already
+  // charged for it.
   const card = page.getByRole("region", { name: "What this run costs" });
   await expect(card).toBeVisible();
   await expect(card.getByRole("radiogroup")).toHaveCount(0);
   await expect(
     card.getByText("The first pass runs on the solver, without the AI model — a flat 1 credit."),
   ).toBeVisible();
+
+  // The draft happens when it is asked for. This test's own subject — a free
+  // draft shows no rung picker — is unchanged either side of the press.
+  await page.getByRole("button", { name: /Draft the duty spread.*1 credit\b/ }).click();
+  await expect(page.getByLabel("Officials by fixture")).toBeVisible({ timeout: 20_000 });
+  await expect(card.getByRole("radiogroup")).toHaveCount(0);
 
   // A typed brief is a model call, so the card becomes a priced one.
   await page.locator("#ai-officials-instruction").fill("keep one referee per team's group games");
@@ -542,6 +553,54 @@ test("the officials step prices itself: free draft with no picker, priced once a
   await expect(chips.nth(1)).toBeFocused();
   await expect(chips.nth(1)).toHaveAttribute("aria-checked", "true");
   await expect(page.getByRole("button", { name: /Re-plan officials.*2 credits/ })).toBeVisible();
+});
+
+/**
+ * #383 — the officials step does not spend before the organiser presses.
+ *
+ * THE assertion that would have caught the bug, and it is a claim about MONEY,
+ * so it is read from the credit ledger by SQL rather than from the screen. The
+ * screen is rendered by the same component tree that was wrong; the wallet is
+ * not. Arriving at the step is free, and the press costs exactly the 1 credit
+ * the card promised — no more (a double-fire) and no less (a button that only
+ * looks like it ran).
+ */
+test("pro: the officials draft spends nothing until the organiser presses", async ({
+  page,
+  request,
+}) => {
+  fixture.reset();
+  const orgId = await activateFreshProPlusOrg(page, request);
+  const { divisionId } = await seedAiDivision(request, { officials: true });
+
+  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await openConsole(page);
+  await page.locator("#ai-instruction").fill("Spread the matches across the day.");
+  await compileAndConfirm(page);
+  await expect(page.getByText(/CLEAN · 0 blocking/)).toBeVisible({ timeout: 20_000 });
+
+  // Phase A has been paid for; measure from HERE, so what follows is attributed
+  // to the officials step alone.
+  await page.getByRole("button", { name: "Assign officials" }).click();
+  const card = page.getByRole("region", { name: "What this run costs" });
+  await expect(card).toBeVisible();
+  const before = await aiCreditBalance(orgId);
+
+  // Arriving is free. The grid is absent because nothing has run — that absence
+  // is the feature, not a loading state.
+  await expect(page.getByLabel("Officials by fixture")).toHaveCount(0);
+  await expect(card).toHaveAttribute("data-ai-credits", "1");
+  expect(await aiCreditBalance(orgId)).toBe(before);
+
+  // The press, and exactly one credit.
+  await page.getByRole("button", { name: /Draft the duty spread.*1 credit\b/ }).click();
+  await expect(page.getByLabel("Officials by fixture")).toBeVisible({ timeout: 20_000 });
+  await expect(
+    page.getByText("Draft duty spread from the solver — no AI tokens used."),
+  ).toBeVisible();
+  expect(await aiCreditBalance(orgId)).toBe(before - 1);
+  // Zero-token by construction: the empty-instruction path calls no model.
+  expect(fixture.calls.some((c) => c.phase === "officials")).toBe(false);
 });
 
 /**
