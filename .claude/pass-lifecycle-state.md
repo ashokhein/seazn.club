@@ -69,6 +69,17 @@ does not hold — an owner gets a live Buy button that dead-ends.
    nullable and PATCH keeps accepting a change, so the date remains
    changeable. Greenfield means no backfill is owed.
 
+9. **Part D added:** `createDivision`/`restoreDivision` refuse on a
+   **terminal** competition (409). `past_ends_on` must NOT block — that
+   arm is often a stale date on a competition still being played.
+10. **Competition slots are a concurrency cap and stay that way.** A
+    completed/archived competition frees its `competitions.max_active`
+    slot; community is 1 active comp + 2 divisions/comp
+    (`V270__pricing_v3_matrix.sql:7-8`). Asked and answered — do not
+    re-open.
+
+Full spec: `docs/superpowers/specs/2026-08-05-competition-lifecycle-pass-integrity-design.md`
+
 ## Standing constraints for this branch
 
 - Every task ships **four** test kinds: unit, e2e (Playwright), smoke,

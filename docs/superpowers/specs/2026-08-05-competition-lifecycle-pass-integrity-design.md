@@ -364,6 +364,69 @@ Two surfaces must tell the truth **before** the org acts, not after:
 | `division.archive.slotWarning` | This division has recorded results, so archiving it will not free a division slot. |
 | `division.limit.archivedCount` | Divisions with recorded results count toward your limit even after they are archived. |
 
+## Part D — a terminal competition accepts no new divisions
+
+### Why
+
+`assertCompetitionNotFrozen` (`entitlement-freeze.ts:91-99`) checks only
+the over-quota freeze; it says nothing about status. So a `completed` or
+`archived` competition **accepts new divisions today**.
+
+This is not a quota leak — `divisions.per_competition.max` still binds at
+2 for community regardless of status — but it makes "completed"
+meaningless, and it contradicts every other rule on this seam: the same
+competition cannot be sold an Event Pass (part A) yet can still grow new
+divisions.
+
+### The design
+
+`createDivision` and `restoreDivision` refuse when the competition holds
+a terminal status, using part A's vocabulary rather than a fresh status
+list:
+
+```ts
+if (passLockReason(comp.status, comp.ends_on) === "terminal")
+  throw new HttpError(409, "…");
+```
+
+**`terminal` only, deliberately.** The `past_ends_on` arm must NOT block
+writes: that arm is frequently just a stale end date on a competition
+still being played (the whole reason part A points that organiser at
+settings), and refusing division creation there would break live
+competitions over a typo. The pass line and the write line share a
+vocabulary, not a threshold.
+
+Scoped to divisions. A terminal competition rejecting *every* structural
+write is the more correct lifecycle, but the blast radius is repo-wide
+and out of this branch's remit.
+
+### New copy (part D)
+
+| key | en |
+| --- | --- |
+| `division.create.competitionEnded` | This competition is finished, so no new divisions can be added to it. |
+
+## Competition slots — answered, unchanged
+
+A `completed`/`archived` competition **frees** its
+`competitions.max_active` slot: `assertActiveQuota`
+(`competitions.ts:88-95`) counts only
+`ACTIVE_COMPETITION_STATUSES = ["draft","published","live"]`
+(`entitlement-freeze.ts:14`). Community is seeded at **1 active
+competition, 2 divisions per competition**
+(`V270__pricing_v3_matrix.sql:7-8`).
+
+The community promise is therefore *one live competition with two
+divisions, as many seasons as you like, serially* — a concurrency cap,
+not a lifetime one.
+
+This does not undermine part C. The division cap is **per competition**,
+so a new competition legitimately earns its own 2 slots — and the org
+pays for it in product terms: a new URL, a new identity, no standings
+continuity, entrants re-entered. Archiving a division inside a live
+competition costs them none of that. Part C closes the free path and
+leaves the expensive one open, which is where the line belongs.
+
 ## Testing
 
 Every part ships **four** kinds, per the standing rule. A part is not
@@ -374,6 +437,7 @@ done until all four exist and pass.
 | A | `upgrade-page-state.test.ts` — `closed` for every `(hasPass, lockReason, paidPlan, exceedingRungs)` combination, **including paid-plan + locked + exceeding rungs**; `competition-pass-provider.test.tsx` — precedence of all five states | a locked never-held competition renders **no** `[data-pass-entry]`, and `/upgrade` renders no checkout control | organiser opens a completed competition → no buy chip → `/upgrade` shows the closed panel, both reasons | demo covers a completed competition with no pass |
 | B | schema tests: create without `ends_on` rejected; PATCH `null` rejected; PATCH to a new date accepted; `ends_on < starts_on` rejected | a competition created through the API without an end date is refused | wizard blocks submit without an end date; settings changes it | demo seeds carry end dates |
 | C | quota counting with archived-played, archived-unplayed, live; `division_has_results` true only for decided/finalized/forfeited | archive a played division → creating another 402s; archive an unplayed one → creating another succeeds | community org archives a played division and is refused a new one, with the explaining copy | demo shows an archived played division still counted |
+| D | create/restore refused on `completed` and on `archived`; **accepted on `past_ends_on`** (the arm that must not block) | adding a division to a completed competition 409s | organiser completes a competition, then cannot add a division | demo covers a completed competition |
 
 Assertions on Next HTML must anchor on `="` — React serialises an omitted
 prop as `"$undefined"`, so a bare `data-*` probe passes in both states.
