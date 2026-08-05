@@ -289,4 +289,72 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
 
     expect(await balance(subId)).toBe(60 * 3);
   });
+
+  // #390 — the sweep runs DAILY but grants MONTHLY, so on 30 of 31 days every
+  // wallet it opened was already granted. The anti-join moves that skip from
+  // "one round trip per wallet discovers a no-op" into the sweep's own WHERE.
+  // `wallets` therefore means "wallets this run CONSIDERED", not "every
+  // subscription in the schema" — the assertions below pin that new meaning.
+  it("does not re-consider a wallet already granted this period (#390)", async () => {
+    const orgId = await seedOrg();
+    const subId = await setOrgPlan(orgId, "pro_plus");
+
+    const first = await grantMonthlyForAllWallets({ walletIds: [subId] });
+    expect(first.wallets).toBe(1);
+    expect(first.granted).toBe(200);
+
+    // Second run the same month: the wallet is filtered out by the sweep
+    // itself, so it is never opened, locked, or re-read.
+    const second = await grantMonthlyForAllWallets({ walletIds: [subId] });
+    expect(second.wallets).toBe(0);
+    expect(second.granted).toBe(0);
+    expect(await balance(subId)).toBe(200);
+  });
+
+  it("still grants a wallet that has no key for this period (#390)", async () => {
+    const orgId = await seedOrg();
+    const subId = await setOrgPlan(orgId, "pro");
+    const res = await grantMonthlyForAllWallets({ walletIds: [subId] });
+    expect(res.wallets).toBe(1);
+    expect(res.granted).toBeGreaterThan(0);
+  });
+
+  it("#390: the anti-join is a pre-filter, not the guard — a concurrent double-run still grants once", async () => {
+    const orgId = await seedOrg();
+    const subId = await setOrgPlan(orgId, "pro_plus");
+    // Both calls pass the anti-join (neither sees a key yet); the advisory
+    // lock and the in-transaction key check must still make exactly one of
+    // them win. If the anti-join were ever mistaken for the guard, this is
+    // the test that catches it.
+    const [a, b] = await Promise.all([
+      grantMonthlyForAllWallets({ walletIds: [subId] }),
+      grantMonthlyForAllWallets({ walletIds: [subId] }),
+    ]);
+    expect(a.failed + b.failed).toBe(0);
+    expect(a.granted + b.granted).toBe(200);
+    expect(await balance(subId)).toBe(200);
+  });
+
+  it("#390: a zero-grant plan keeps re-qualifying, and that is harmless", async () => {
+    // `delta <= 0` returns BEFORE the idempotency key is written, so a wallet
+    // whose plan grants nothing never writes one and comes back every day.
+    // Documented, not fixed by the anti-join alone — and the reason Task 11
+    // resolves the grant amount in the sweep rather than per row.
+    //
+    // The zero-grant plan here is `event_pass`, NOT `community`: community
+    // carries `ai.credits.monthly = 10` (V320), so it grants, writes a key,
+    // and IS filtered out on the second run. Event Pass deliberately carries
+    // no `ai.credits.monthly` row at all — it is the only plan in the matrix
+    // whose monthly grant is genuinely zero (scripts/smoke.ts says so too).
+    const orgId = await seedOrg();
+    const subId = await setOrgPlan(orgId, "event_pass");
+
+    const first = await grantMonthlyForAllWallets({ walletIds: [subId] });
+    expect(first.granted).toBe(0);
+
+    const second = await grantMonthlyForAllWallets({ walletIds: [subId] });
+    expect(second.wallets).toBe(first.wallets); // still considered — no key was ever written
+    expect(second.granted).toBe(0);
+    expect(await balance(subId)).toBe(0);
+  });
 });

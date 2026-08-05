@@ -427,7 +427,29 @@ export async function grantMonthlyForAllWallets(
   // takes the sweep's cost from "every row the whole session accumulated" down
   // to the rows the test made, which is what pushed these cases past their
   // 20s timeout in full runs.
+  //
+  // #390 — the anti-join below is a PRE-FILTER, not a replacement for the
+  // guard. Two overlapping runs can both pass it (neither sees a key yet), so
+  // the `pg_advisory_xact_lock` and the in-transaction `idempotency_key` check
+  // in `grantMonthly` (:296-299) stay exactly as written. This filter may only
+  // ever REDUCE the candidate set — never decide whether a grant is safe.
+  //
+  // It does not reach zero rows on its own: `delta <= 0` returns before the
+  // key is written (:289), so a wallet whose plan grants nothing (Event Pass
+  // carries no `ai.credits.monthly` row) never writes one and re-qualifies
+  // every day. Harmless, and the reason the grant amount is resolved in the
+  // sweep rather than per row (see `monthlyPerSeatByPlan` below).
+  //
+  // `wallets` consequently means "wallets this run CONSIDERED", not "every
+  // subscription in the schema". That is the number worth alerting on: it is
+  // the work the run actually had to do.
+  //
+  // The DAILY cadence stays. It is deliberate — retry after a failed run, no
+  // 28/29/30/31 or timezone edges, and it carries `checkEarnGrantVolumeAlert`,
+  // which needs a genuinely daily poll. This makes the daily run cheap; it
+  // does not make it rarer.
   const ids = opts.walletIds ?? null;
+  const period = monthlyPeriod();
   const rows = await sql<
     { id: string; status: string; quantity_paid: number; rep_org_id: string; live_org_count: number }[]
   >`
@@ -443,7 +465,11 @@ export async function grantMonthlyForAllWallets(
         select count(*)::int as n from organizations o
          where o.subscription_id = s.id and o.deleted_at is null
       ) live
-     ${ids ? sql`where s.id in ${sql(ids as string[])}` : sql``}`;
+     where not exists (
+       select 1 from ai_credit_ledger l
+        where l.idempotency_key = 'monthly:' || s.id::text || ':' || ${period}
+     )
+     ${ids ? sql`and s.id in ${sql(ids as string[])}` : sql``}`;
   let granted = 0;
   let failed = 0;
   for (const row of rows) {
