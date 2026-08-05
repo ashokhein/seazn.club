@@ -483,9 +483,15 @@ export function slotFixtures(input: SlotInput): SlotResult {
    *  so both sides name the same cards. Without them only an `id` selector can
    *  be resolved — `terminal` and `ext_key` need metadata a
    *  `SchedulableFixture` does not carry, and inventing it (treating every card
-   *  as terminal, say) would bind a final's rule to the whole draw. Which is
-   *  also what the verifier does with no `ruleFixtures`: `resolveSelector` over
-   *  an empty list names nothing. */
+   *  as terminal, say) would bind a final's rule to the whole draw.
+   *
+   *  The `id` branch is deliberately NOT symmetric with the verifier, and the
+   *  asymmetry is one-directional on purpose. `resolveSelector`'s `case "id"`
+   *  filters `ruleFixtures`, so with none it names nothing; here an `id`
+   *  selector still names its own card. The placer therefore AVOIDS a slot the
+   *  verifier would not have complained about — over-cautious, never
+   *  under-cautious, so it cannot produce a board the gate then warns about,
+   *  which is the only direction that matters. */
   const selectorNames = placementHard.map((h) => {
     if (h.type !== "fixture_on_weekday" && h.type !== "fixture_on_date") return null;
     if (config.ruleFixtures !== undefined) {
