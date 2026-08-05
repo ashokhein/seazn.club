@@ -57,3 +57,22 @@ describe("toolchain: node floor", () => {
     }
   });
 });
+
+describe("toolchain: compile target", () => {
+  it("apps/web targets ES2022, matching the engine", () => {
+    const stripJsonComments = (s: string) =>
+      s.replace(/^\s*\/\/.*$/gm, "");
+    const web = JSON.parse(
+      stripJsonComments(
+        readFileSync(join(REPO_ROOT, "apps/web/tsconfig.json"), "utf8"),
+      ),
+    ) as { compilerOptions: { target: string } };
+    const engine = JSON.parse(
+      stripJsonComments(
+        readFileSync(join(REPO_ROOT, "packages/engine/tsconfig.json"), "utf8"),
+      ),
+    ) as { compilerOptions: { target: string } };
+    expect(web.compilerOptions.target).toBe("ES2022");
+    expect(web.compilerOptions.target).toBe(engine.compilerOptions.target);
+  });
+});
