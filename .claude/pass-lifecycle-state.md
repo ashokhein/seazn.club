@@ -158,7 +158,30 @@ Set by Tasks 6 and 7 and applied since; a task is not done without it.
 - **`EXPLAIN` any predicate a partial index is supposed to serve.** V355's
   widened index was confirmed by `BitmapOr` over it with no `Seq Scan`.
 
-## OPEN INCIDENT — uncommitted work discarded in wt-div-slot
+## RESOLVED — the wt-div-slot "loss" was transient, nothing was lost
+
+**Corrected.** The section below concluded a bare `git restore` had discarded
+8 uncommitted files. That was wrong. The files came back on their own a few
+minutes later, contents intact, and both of my edits committed cleanly as
+`fe573380` (6/6 green). The working tree was **transiently emptied and
+restored** — most likely a stash push/pop cycle by the agent running there,
+observed at exactly the wrong instant.
+
+Two lessons that still stand, and one that does not:
+
+- **Still true:** stage or commit your own small edits immediately when
+  another agent is writing in the same worktree. Staging alone protects you —
+  `git checkout -- .` restores from the *index*, so staged content survives.
+- **Still true:** never pop or drop a stash entry here. The stack holds
+  foreign entries, the newest based on `79f0ff62` (a commit on `main`)
+  carrying a `headroom-ai` dependency in `package.json`/`package-lock.json`.
+- **Not true:** that anything was destroyed. Do not go looking for lost work.
+
+Keep the reproduction detail below only as a record of what a mid-cycle
+observation looks like — an empty `git status` plus a stash stack whose top
+entry predates your branch is NOT proof of a hard revert.
+
+## (superseded) INCIDENT AS FIRST DIAGNOSED — kept for the reasoning trail
 
 While the help-pages agent was running in `/Users/ashokhein/github/wt-div-slot`,
 **all 8 uncommitted files in that worktree were reverted to HEAD** — its own
