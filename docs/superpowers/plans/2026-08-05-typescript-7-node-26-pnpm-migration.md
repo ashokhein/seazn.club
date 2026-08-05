@@ -189,7 +189,7 @@ describe("toolchain: node floor", () => {
 - [ ] **Step 2: Run it and confirm all four cases fail**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run src/__tests__/toolchain.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/__tests__/toolchain.test.ts \
   --reporter=json --outputFile=/tmp/t1.json
 ```
 
@@ -228,13 +228,15 @@ In `apps/web/package.json` and `packages/engine/package.json` devDependencies:
 - [ ] **Step 4: Run the test and confirm three of four now pass**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run src/__tests__/toolchain.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/__tests__/toolchain.test.ts \
   --reporter=json --outputFile=/tmp/t1.json
 ```
 
 Expected: `numPassedTests: 3`, `numFailedTests: 1`. The **Dockerfile case stays red** — it is Task 1.2's deliverable, and Task 1.2 Step 1 consumes it in that state. Do not merge the two tasks to get a green commit here; that collapses two separately revertible changes into one.
 
-Note the positional filter: `npm test --workspace apps/web -- run <path>` treats positionals as **filename filters**, not exact paths, so this pulls in other suites too. Read the per-file `.testResults[]` entry for `toolchain.test.ts` rather than the top-level totals.
+**Never write `-- run <path>` here.** The package script is already `vitest run`, so a second `run` is not a subcommand — it is parsed as a **filename filter**, and it matches every file whose path contains "run". Measured: `npm test --workspace apps/web -- run --reporter=json` ran 46 suites / 151 tests instead of the full suite, and the same form against `packages/engine` matched nothing at all and exited 1 with `0/0` suites — which reads exactly like a collection failure. The correct form passes the path alone.
+
+Even then, positionals are filters and not exact paths, so this still pulls in sibling suites. Read the per-file `.testResults[]` entry for `toolchain.test.ts` rather than the top-level totals.
 
 - [ ] **Step 5: Reinstall and confirm the tree still typechecks on TS 5**
 
@@ -273,7 +275,7 @@ places that previously had no way to check each other."
 - [ ] **Step 1: Confirm the test case is red**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run src/__tests__/toolchain.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/__tests__/toolchain.test.ts \
   --reporter=json --outputFile=/tmp/t2.json
 ```
 
@@ -296,7 +298,7 @@ Both tags are verified to exist on Docker Hub (`26-alpine`, `26-alpine3.24`, `26
 - [ ] **Step 3: Confirm the test case is green**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run src/__tests__/toolchain.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/__tests__/toolchain.test.ts \
   --reporter=json --outputFile=/tmp/t2.json
 ```
 
@@ -351,7 +353,7 @@ describe("toolchain: compile target", () => {
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run src/__tests__/toolchain.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/__tests__/toolchain.test.ts \
   --reporter=json --outputFile=/tmp/t3.json
 ```
 
@@ -368,7 +370,7 @@ In `apps/web/tsconfig.json`:
 - [ ] **Step 4: Run the test and a full typecheck**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run src/__tests__/toolchain.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/__tests__/toolchain.test.ts \
   --reporter=json --outputFile=/tmp/t3.json && npx turbo run typecheck 2>&1 | tail -20
 ```
 
@@ -425,7 +427,7 @@ describe("toolchain: suppression policy", () => {
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run src/__tests__/toolchain.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/__tests__/toolchain.test.ts \
   --reporter=json --outputFile=/tmp/t4.json
 ```
 
@@ -464,7 +466,7 @@ In `apps/web/eslint.config.mjs`, in the first `rules` block (the one turning off
 ```bash
 cd <abs worktree> && rtk proxy npm run lint 2>&1 | tail -15
 cd <abs worktree> && rtk proxy npm run lint --workspace packages/engine 2>&1 | tail -15
-cd <abs worktree> && npm test --workspace apps/web -- run src/__tests__/toolchain.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/__tests__/toolchain.test.ts \
   --reporter=json --outputFile=/tmp/t4.json
 ```
 
@@ -512,8 +514,8 @@ cd <abs worktree> && npm run db:apply && npm run sync:sports
 - [ ] **Step 3: Run the full unit gate**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run --reporter=json --outputFile=/tmp/g1-web.json 2>&1 | tail -5
-cd <abs worktree> && npm test --workspace packages/engine -- run --reporter=json --outputFile=/tmp/g1-eng.json 2>&1 | tail -5
+cd <abs worktree> && npm test --workspace apps/web -- --reporter=json --outputFile=/tmp/g1-web.json 2>&1 | tail -5
+cd <abs worktree> && npm test --workspace packages/engine -- --reporter=json --outputFile=/tmp/g1-eng.json 2>&1 | tail -5
 ```
 
 Judge only from the JSON: `numPassedTests`, `numTotalTests`, `numPendingTests`. A worktree with no `.env.local` silently skips ~1772 DB tests with `numTotalTests` **unchanged** — only `numPendingTests` moves. Confirm `pending` did not jump. Confirm `.testResults[].name` paths resolve inside the worktree.
@@ -691,7 +693,7 @@ describe("toolchain: which compiler gates types", () => {
 - [ ] **Step 2: Run it and confirm the third case fails**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run src/__tests__/toolchain.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/__tests__/toolchain.test.ts \
   --reporter=json --outputFile=/tmp/t21.json
 ```
 
@@ -732,7 +734,7 @@ If either workspace got its own copy, switch all three scripts to a resolver shi
 - [ ] **Step 4: Run the test and a real typecheck**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run src/__tests__/toolchain.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/__tests__/toolchain.test.ts \
   --reporter=json --outputFile=/tmp/t21.json
 cd <abs worktree> && npm run typecheck --workspace packages/engine 2>&1 | tail; echo "ENGINE_EXIT=$?"
 ```
@@ -825,7 +827,7 @@ describe("rungsExceedingPlan: TS 7 overload resolution", () => {
 - [ ] **Step 2: Run it and confirm the first case fails**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run src/lib/__tests__/pass-vs-plan-sql.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/lib/__tests__/pass-vs-plan-sql.test.ts \
   --reporter=json --outputFile=/tmp/t23.json
 ```
 
@@ -862,7 +864,7 @@ export async function rungsExceedingPlan(
 - [ ] **Step 4: Confirm the whole repo now typechecks clean on TS 7**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run src/lib/__tests__/pass-vs-plan-sql.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/lib/__tests__/pass-vs-plan-sql.test.ts \
   --reporter=json --outputFile=/tmp/t23.json
 cd <abs worktree> && npx turbo run typecheck 2>&1 | tail -20; echo "EXIT=$?"
 ```
@@ -872,10 +874,10 @@ Expected: test green, **zero** typecheck errors across all three configs. If any
 - [ ] **Step 5: Confirm the query itself still behaves**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run pass-vs-plan --reporter=json --outputFile=/tmp/t23b.json
+cd <abs worktree> && npm test --workspace apps/web -- pass-vs-plan --reporter=json --outputFile=/tmp/t23b.json
 ```
 
-The existing pass-vs-plan suites exercise the real query against the database. Note the filename filter: `npm test --workspace apps/web -- run <path>` treats positionals as **filename filters**, so a typo silently runs a subset and reports green. Confirm `numTotalTests` is non-zero and matches what those suites contained before.
+The existing pass-vs-plan suites exercise the real query against the database. Positionals are **filename filters**, not exact paths, so a typo silently runs a subset and reports green — and a stray `run` (the package script already supplies it) filters on the literal string "run". Confirm `numTotalTests` is non-zero and matches what those suites contained before.
 
 - [ ] **Step 6: Commit**
 
@@ -928,7 +930,7 @@ describe("toolchain: no V8 heap ceiling for typecheck", () => {
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run src/__tests__/toolchain.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/__tests__/toolchain.test.ts \
   --reporter=json --outputFile=/tmp/t24.json
 ```
 
@@ -955,7 +957,7 @@ Remove the `env:` block containing `NODE_OPTIONS: --max-old-space-size=6144` at 
 - [ ] **Step 4: Confirm green**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run src/__tests__/toolchain.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/__tests__/toolchain.test.ts \
   --reporter=json --outputFile=/tmp/t24.json
 ```
 
@@ -1182,7 +1184,7 @@ describe("toolchain: pnpm workspace", () => {
 - [ ] **Step 2: Run it and confirm both cases fail**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run src/__tests__/toolchain.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/__tests__/toolchain.test.ts \
   --reporter=json --outputFile=/tmp/t31.json
 ```
 
@@ -1305,7 +1307,7 @@ describe("toolchain: z3 wasm tracing survives the linker change", () => {
 - [ ] **Step 2: Run it and confirm the first case fails**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run src/__tests__/toolchain.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/__tests__/toolchain.test.ts \
   --reporter=json --outputFile=/tmp/t32.json
 ```
 
@@ -1346,7 +1348,7 @@ Leave `serverExternalPackages` exactly as it is.
 - [ ] **Step 4: Confirm the trace actually contains the wasm**
 
 ```bash
-cd <abs worktree> && npm test --workspace apps/web -- run src/__tests__/toolchain.test.ts \
+cd <abs worktree> && npm test --workspace apps/web -- src/__tests__/toolchain.test.ts \
   --reporter=json --outputFile=/tmp/t32.json
 cd <abs worktree> && rm -rf apps/web/.next && npm run build 2>&1 | tail -10
 cd <abs worktree> && find apps/web/.next/standalone -name "z3-built.wasm" | head
