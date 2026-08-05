@@ -38,7 +38,7 @@ or re-ask.
 | #387 | A | 7 | pending |
 | #383 | A | 8 | pending |
 | #384 | A | 9 | pending |
-| #390 | D | 10, 11 | **IN FLIGHT** — implementer dispatched in `wt-ai-gap-d`. Told to stand up its OWN scratch PG on **54343** (54341 is Group B's and has wallet volume that trips the 30s credits-cron timeout). |
+| #390 | D | 10, 11 | **BUILT** — `3d107d77` (anti-join) + `d6aebe1d` (N+1). Premises verified real. Agent counts: RED 15/16 → GREEN 16/16, RED 17/18 → GREEN 18/18; `src/lib/__tests__` 1623/1648 0 failed 0 failedSuites. Reviewer dispatched; main-thread gate pending on PG 54345. **Task 11 deviated deliberately:** `orgPlanKey` is a 7-arm read-time resolver (lapsed comp, past_due grace, trial backstop, incomplete, canceled, org suspension) whose docstring records 3 divergent copies already, so it was LEFT as one query per row; the batched N+1 is the `plan_entitlements` read, moved out of `grantMonthly` into `monthlyPerSeatByPlan()`, with a shared `grantMonthlyDelta()` holding the lock + key check once. `1+2N` → `N+2`. **No e2e, no smoke extension** — cron internal, no UI; `scripts/smoke.ts` never calls the sweep. |
 | #382 | E | 12, 13, 14, 15 | pending |
 
 ## Execution order
