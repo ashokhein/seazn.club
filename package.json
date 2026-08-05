@@ -7,7 +7,7 @@
     "apps/*",
     "packages/*"
   ],
-  "packageManager": "npm@11.17.0",
+  "packageManager": "pnpm@10.34.5",
   "engines": {
     "node": ">=26"
   },
@@ -43,6 +43,17 @@
     "backfill:pass-credit-redemptions": "node --env-file-if-exists=apps/web/.env.local --experimental-strip-types scripts/backfill-pass-credit-redemptions.ts"
   },
   "devDependencies": {
-    "turbo": "^2.10.8"
+    "@anthropic-ai/sdk": "^0.110.0",
+    "@seazn/engine": "workspace:*",
+    "@types/node": "^26",
+    "bcryptjs": "^3.0.3",
+    "exceljs": "^4.4.0",
+    "playwright": "^1.61.1",
+    "postgres": "^3.4.9",
+    "stripe": "22.3.0",
+    "turbo": "^2.10.8",
+    "typescript": "6.0.3",
+    "typescript-native": "npm:typescript@7.0.2",
+    "zod": "^4.4.3"
   }
 }

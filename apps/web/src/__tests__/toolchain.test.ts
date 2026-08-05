@@ -200,3 +200,79 @@ describe("toolchain: no V8 heap ceiling for typecheck", () => {
     expect(active).toEqual([]);
   });
 });
+
+describe("toolchain: pnpm workspace", () => {
+  it("declares the workspace and uses the workspace protocol", () => {
+    const ws = readFileSync(join(REPO_ROOT, "pnpm-workspace.yaml"), "utf8");
+    expect(ws).toContain("apps/*");
+    expect(ws).toContain("packages/*");
+    const web = JSON.parse(
+      readFileSync(join(REPO_ROOT, "apps/web/package.json"), "utf8"),
+    ) as { dependencies: Record<string, string> };
+    // `"*"` makes pnpm hit the registry for a private package and fail with
+    // "No authorization header" — it must be the workspace protocol.
+    expect(web.dependencies["@seazn/engine"]).toBe("workspace:*");
+  });
+
+  it("root declares every dependency its scripts import", () => {
+    /**
+     * Root scripts run from the repo root under --experimental-strip-types and
+     * import from packages the root manifest never declared — under npm they
+     * resolved by hoisting out of apps/web and packages/engine. pnpm's strict
+     * linker gives root only what root declares, so every one of those scripts
+     * breaks unless they are named here.
+     *
+     * This list is DERIVED, not guessed: grep every `from` / `import(` /
+     * `require(` specifier under scripts/, strip the keyword and the quotes,
+     * drop anything starting `node:` or `.`, then sort -u. Use `grep -a` — files
+     * here report as "Binary file … matches" and a bare grep hides the lines,
+     * which is exactly how a specifier gets missed. Re-derive rather than trust
+     * this list whenever scripts/ grows.
+     *
+     * Two of these are invisible to a casual read of the manifests, and both
+     * were hoisting artefacts: `playwright` is a TRANSITIVE dep (apps/web
+     * declares `@playwright/test`) that scripts/help-shots.ts requires by name,
+     * and `@seazn/engine` is a workspace package that scripts/sync-sports.ts
+     * imports as `@seazn/engine/sports` while only apps/web depended on it.
+     */
+    const root = JSON.parse(
+      readFileSync(join(REPO_ROOT, "package.json"), "utf8"),
+    ) as { devDependencies?: Record<string, string> };
+    const declared = new Set(Object.keys(root.devDependencies ?? {}));
+    for (const dep of [
+      "@anthropic-ai/sdk",
+      "@seazn/engine",
+      "bcryptjs",
+      "exceljs",
+      "playwright",
+      "postgres",
+      "stripe",
+      "zod",
+    ]) {
+      expect(declared.has(dep), `root must declare ${dep}`).toBe(true);
+    }
+  });
+
+  it("root declares what its own typecheck paths reach for", () => {
+    /**
+     * `typecheck:scripts` runs `node node_modules/typescript-native/bin/tsc`
+     * from the repo root, and tsconfig.scripts.json sets `"types": ["node"]`,
+     * resolved relative to the tsconfig — i.e. ROOT node_modules. Under npm
+     * both arrived by hoisting from the two workspaces. Under pnpm the root
+     * gets only what the root declares, so an undeclared compiler or @types
+     * turns every typecheck script into ENOENT / TS2688.
+     *
+     * `typescript` (bare, 6.x) belongs here for a different reason: an editor
+     * opened at the repo root resolves tsserver from `./node_modules/typescript`
+     * and nothing else does. Hoisting used to supply it; under pnpm the root
+     * would silently have no language service at all.
+     */
+    const root = JSON.parse(
+      readFileSync(join(REPO_ROOT, "package.json"), "utf8"),
+    ) as { devDependencies?: Record<string, string> };
+    const declared = new Set(Object.keys(root.devDependencies ?? {}));
+    for (const dep of ["@types/node", "typescript", "typescript-native"]) {
+      expect(declared.has(dep), `root must declare ${dep}`).toBe(true);
+    }
+  });
+});
