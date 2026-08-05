@@ -171,3 +171,37 @@ agent tearing down the environment destroys the thing it is meant to enable.
   Also added, unasked but owed: the notice is now asserted at **375px** with a document-level horizontal-scroll check plus a screenshot artifact, rather than eyeballed once — a future copy edit that overflows fails in CI. Screenshot verified by me: wraps to two lines, cards stack, no page scroll.
 - 2026-08-05 — **#386 round FIVE — `1effc7a1`.** The two older lock tests were flaking ~1 run in 3: the whole restore resolves in **31ms** while `waitUntil` polled every **25ms** — a pre-existing sampling race, not caused by round four. The agent stopped and ASKED rather than rewriting two passing tests unbidden, which was right. My ruling: a 31ms window sampled every 5ms is ~6 samples — a narrower race, not a fixed one, and it will fail on a loaded CI runner where it never fails here. **A test green two runs in three is worse than no test, because it teaches everyone to re-run until it passes.** Fixed deterministically via the `parkInsideLock()` interpose seam already built for the mid-rewind case. **Five consecutive full runs, 37/37, `success=true` every time.** Every existing assertion kept; the agent flagged the one nuance himself rather than burying it (test 12 now observes the division key while the joint key is held with the body parked, instead of while rewind steps run — still valid, because `withSessionLocks` acquires all keys before the body). Also confirmed AND asserted, not assumed: on a mid-loop loss the response keeps the rewound division in `restored[]` with real `steps`/`watermark`, only the untouched one in `failed[]`, `ok: false`, surviving the wire round-trip — the partial-truthfulness that was the whole reason I ruled against rejecting after the body settles. Fifth reviewer dispatched; four wrong rounds earns one more look. **Main-thread full gate on the CLEAN PG 54359: 5499 passed, 0 failed, 0 failedSuites, 618 suites, 0 foreign — no caveats.** Group B is 7 commits (`3b7eee20`, `554523e3`, `26ff23d9`, `393e8738`, `363ba0d5`, `e67eb0fc`, `1effc7a1`) plus `71c91226` and `0f4072d3` for #391/#392.
 - 2026-08-05 — **The credits reds are environmental, and now PROVEN rather than waved off** (they recurred on worktree B's gate: 5497 passed, 2 failed, 4 failedSuites). Isolation run on the SAME reused DB 54341: 14/14 green — but at **29,638ms and 29,810ms against a 30s timeout**, i.e. passing by 0.4s, which is the documented "duration is a clock, not a bug" signature rather than a clean result. Fresh PG 54359 (`show data_directory` verified mine, `db:apply` + `sync:sports`), same commit, same suites: **14/14 in 91ms and 159ms**. A ~300x difference on identical code — accumulated wallet volume on a DB reused all programme, exactly as `reference_vitest_count_masking` and the local-env skill describe. Full gate re-running on 54359 so the number I record is honest rather than caveated. **Lesson worth keeping: an isolation run that goes green is NOT proof on its own — check the DURATION. Green at 29.6s of a 30s budget is the same defect as red at 30.1s, one lucky scheduling decision apart.**
+
+## RULING 2026-08-05 — the joint-restore lock is being REMOVED, not fixed again
+
+Round six found three more defects (pid captured a statement AFTER acquisition
+so a drop in the gap records the WRONG backend; `end()` sends a graceful FIN a
+black-holed socket never delivers, so the backend keeps the key for ~2h; and
+`set_config('lock_timeout')` is not replayed on reconnect). All three verified
+against the code and postgres.js source.
+
+**The owner's question settled it: "are you suggesting to block double click?"**
+I checked — and `ai-competition-console.tsx:1096` ALREADY guards it with an
+`undoInFlight` ref plus `setUndoing(true)`. The lock's own comment justifies
+itself with "the SAME organiser submitting twice. A double-clicked Undo…", and
+that case was NEVER reachable. **I had repeated that justification several times
+without verifying it.** What actually remained was a second tab or a
+reload-retry — real, but rare.
+
+Decision: replace the lock with an apply-event ANCHOR RECHECK before each
+division. Rationale:
+- The lock failed OPEN and INVISIBLY in four of six rounds, each time claiming
+  exclusion it was not providing. An id comparison cannot fail that way.
+- The reviewer established the lock's protection was ALREADY per-division (a
+  loss inside one `restoreCheckpoint` is unseen until the next iteration), so
+  the recheck has the SAME granularity. Same protection, no liveness assumption.
+- What is lost is PREVENTION: a concurrent apply no longer gets a clean 409, and
+  the restore aborts partway instead. Accepted — the partial report is the
+  endpoint's existing contract, and the client's retry path already handles it.
+
+Deleting: `withSessionLocks` + `SessionLockTimeoutError` + keepalive + pid
+tracking + bounded unlock from `db.ts` (restore was the ONLY production
+consumer), the apply's `joint:` xact lock and its 409, and both openapi
+summaries' lock prose. **Generalise: a defensive mechanism whose failure mode is
+silent and fail-open is worth less than its comments claim. Prefer a check that
+cannot be quietly inert.**
