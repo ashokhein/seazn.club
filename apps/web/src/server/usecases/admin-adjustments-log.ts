@@ -20,7 +20,27 @@ import { PASS_CREDIT_RESOLVE_ACTION } from "@/server/usecases/pass-credit";
  *  than typed out are the ones whose action string is built by the writer
  *  (a template, a union arm) and therefore the ones that can grow without
  *  anybody remembering this file: deriving them here means a new verb reaches
- *  the maps below as a missing key, i.e. a compile error, not a silent gap. */
+ *  the maps below as a missing key, i.e. a compile error, not a silent gap.
+ *
+ *  DELIBERATE EXCLUSIONS, beyond view/impersonate and the catalog actions. Three
+ *  org-targeted actions read as omissions and are not; each was re-checked at
+ *  its writer and each would be a regression to add:
+ *
+ *  - `billing_group.detach_wallet_not_carried` (credits.ts,
+ *    auditWalletForfeitedOnDetach) and `billing_group.detach_comp_granted`
+ *    (billing-groups.ts, auditCompGrantedOnDetach). Both are CUSTOMER
+ *    self-service: the customer detaching their own org is the `actor_id`, and
+ *    `CUSTOMER_SELF_SERVICE_AUDIT_ACTIONS` in lib/admin.ts records why they are
+ *    kept out of a panel that reads as "what staff did" (v17 gap #308 — a busy
+ *    day of ordinary detaches otherwise renders as staff activity, drowning the
+ *    unusual staff behaviour the panel exists to surface). Listing them here
+ *    re-introduces precisely the noise that gap removed.
+ *  - `platform_dispute` (billing-events.ts, notifyStaffDispute). Written by a
+ *    STRIPE WEBHOOK, not by a person. `staff_audit_log.actor_id` is NOT NULL, so
+ *    the row is attributed to whichever superadmin `order by created_at limit 1`
+ *    returns — an accountability placeholder, not an actor. Its target IS the
+ *    org, so allowlisting it would put it in the panel under the name of an
+ *    operator who did nothing. */
 export const ADJUSTMENT_ACTIONS = [
   "credit_adjust",
   "addon_grant",
@@ -169,7 +189,18 @@ export async function adjustmentsForOrg(
     -- entitlement_override(_removed) log with target_type='entitlement' (the
     -- feature they touch), target_id still the org id — include that type so
     -- cap overrides surface in the org's log. The action-set filter below is
-    -- what scopes the rows; these two are the only 'entitlement'-typed actions.
+    -- what scopes the rows.
+    --
+    -- They are NOT the only 'entitlement'-typed rows in the table:
+    -- api/admin/entitlements writes the action entitlement.plan_edit with the
+    -- same target_type. It cannot leak into an org's log, for two independent
+    -- reasons — its target_id is a plan_key:feature_key pair, so it never
+    -- equals an org id, and its action is not in ADJUSTMENT_ACTIONS. Admitting
+    -- this target_type is therefore safe only while BOTH still hold: a future
+    -- 'entitlement'-typed action that targets an org id would surface here the
+    -- moment somebody allowlists it, which is the intended behaviour for a
+    -- per-org override and the wrong one for a plan-wide edit.
+    -- (No backticks in here: this is inside a tagged template literal.)
     where s.target_type in ('org', 'entitlement')
       and s.target_id = ${orgId}
       and s.action = any(${ADJUSTMENT_ACTIONS as unknown as string[]})

@@ -26,6 +26,12 @@ import { sendEarnGrantVolumeAlertEmail } from "@/lib/email";
 // broken cycle here would surface as `orgPlanKey is not a function` at
 // call time, not a compile error.
 import { orgPlanKey } from "@/lib/entitlements";
+// TYPE-ONLY, deliberately. `adminAdjust` writes its own org-targeted
+// staff_audit_log row, so its action has to be one the /admin adjustments panel
+// allowlists. A VALUE import would be a real runtime cycle — that module pulls
+// in pass-credit.ts, which reaches back here — whereas `import type` is erased
+// at compile and cannot cycle. Keep it type-only.
+import type { AdjustmentAction } from "@/server/usecases/admin-adjustments-log";
 
 type Tx = postgres.TransactionSql;
 /** Anything the ledger's tagged-template queries can run against: the shared
@@ -1456,8 +1462,14 @@ export async function adminAdjust(
     bucket?: Bucket;
     /** Staff-audit target for this adjustment. Omit only for a caller that
      *  audits itself some other way; every current caller (the admin credits
-     *  route) passes this. `target_type` is always `"org"` here. */
-    audit?: { orgId: string; action: string; details?: Record<string, unknown> };
+     *  route) passes this. `target_type` is always `"org"` here.
+     *
+     *  `action` is narrowed to `AdjustmentAction`, not `string`: this row is
+     *  org-targeted, so an action outside the /admin allowlist produces an
+     *  adjustment that is audited and unreadable. Widening it back re-opens the
+     *  last freehand org-audit action in the codebase (guarded by a
+     *  `@ts-expect-error` in credits-admin-adjust.test.ts). */
+    audit?: { orgId: string; action: AdjustmentAction; details?: Record<string, unknown> };
   },
 ): Promise<{ applied: boolean; balanceAfter: number }> {
   if (!Number.isInteger(delta) || delta === 0) {

@@ -204,6 +204,16 @@ describe.skipIf(!HAS_DB)("adjustmentsForOrg (SPEC-3 §3)", () => {
   // org (target_type 'org', target_id comp.org_id), so the rows are org-scoped
   // and should read back here. The strings are pinned against the constant the
   // route's own zod enum is derived from, so the two cannot drift apart.
+  //
+  // SCOPE IS NOT PINNED HERE. These rows are SEEDED with a hardcoded "org" /
+  // orgId, unlike the suspension test above which drives its real writer — so
+  // this proves only that an org-scoped `discovery_*` row reads back. Swap
+  // `comp.org_id` for `id` in the route and every real row leaves every org's
+  // panel with this test still green. The route's own target is pinned in
+  // app/api/admin/competitions/[id]/discovery/__tests__/route.test.ts, which
+  // drives the real POST; that separation exists because this file must keep
+  // the REAL @/lib/auth and @/lib/entitlements the suspension test needs, and
+  // vi.mock is module-wide.
   it("surfaces every discovery-curation action", async () => {
     const staff = await makeUser("Curator");
     const orgId = await makeOrg();
