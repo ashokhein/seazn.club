@@ -221,6 +221,44 @@ describe("toolchain: pnpm workspace", () => {
     expect(web.dependencies["@seazn/engine"]).toBe("workspace:*");
   });
 
+  /**
+   * The hoist patterns must live here rather than in `.npmrc`, and the reason
+   * is not tidiness. npm parses `.npmrc` too and does not know these keys, so
+   * with them there every `npm run` in the repo — around 30 deliberate
+   * task-runner calls across ci.yml, e2e.yml, help-shots.yml, sim-nightly.yml
+   * and the root scripts — printed `Unknown project config
+   * "public-hoist-pattern". This will stop working in the next major version of
+   * npm`. A warning today, a hard failure at npm 12, on steps that do not
+   * install anything. pnpm reads this file and npm never looks at it.
+   */
+  it("carries the hoist patterns, and .npmrc does not", () => {
+    const ws = readFileSync(join(REPO_ROOT, "pnpm-workspace.yaml"), "utf8");
+    const active = ws
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .join("\n");
+    expect(active).toMatch(/^publicHoistPattern:/m);
+    for (const p of ["pdfkit", "exceljs", "z3-solver"]) {
+      expect(active, `hoist pattern for ${p}`).toMatch(
+        new RegExp(`^\\s*-\\s*${p}\\s*$`, "m"),
+      );
+    }
+
+    // Not a ban on `.npmrc` itself — a registry or auth line there is fine.
+    // Only the pnpm-specific keys are, because those are the ones npm rejects.
+    let npmrc = "";
+    try {
+      npmrc = readFileSync(join(REPO_ROOT, ".npmrc"), "utf8");
+    } catch {
+      return; // absent is the expected state
+    }
+    const offenders = npmrc
+      .split("\n")
+      .filter((line) => !/^\s*[#;]/.test(line))
+      .filter((line) => /^\s*(public-hoist-pattern|hoist-pattern|shamefully-hoist|node-linker)\b/.test(line));
+    expect(offenders).toEqual([]);
+  });
+
   it("root declares every dependency its scripts import", () => {
     /**
      * Root scripts run from the repo root under --experimental-strip-types and
@@ -419,18 +457,18 @@ describe("toolchain: every install site is pnpm", () => {
 
   it("the Dockerfile installs with pnpm and copies what pnpm reads", () => {
     /**
-     * `.npmrc` is the one that fails silently, and it is the reason this
-     * assertion names files rather than just the install command. It carries
-     * the public-hoist patterns for the three serverExternalPackages; leave it
-     * out of the image and `pnpm install` succeeds, `next build` succeeds, and
-     * the standalone server cannot resolve pdfkit or z3-solver at runtime —
-     * exactly the failure the local build was fixed for, reintroduced only in
-     * production.
+     * `pnpm-workspace.yaml` is the one that fails silently, and it is the
+     * reason this assertion names files rather than just the install command.
+     * Besides the workspace globs it carries the public-hoist patterns for the
+     * three serverExternalPackages; leave it out of the image and
+     * `pnpm install` succeeds, `next build` succeeds, and the standalone server
+     * cannot resolve pdfkit or z3-solver at runtime — exactly the failure the
+     * local build was fixed for, reintroduced only in production.
      */
     const dockerfile = readFileSync(join(REPO_ROOT, "Dockerfile"), "utf8");
     expect(dockerfile).toContain("pnpm install --frozen-lockfile");
     expect(dockerfile).not.toMatch(/^\s*RUN[^\n#]*\bnpm ci\b/m);
-    for (const f of ["pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc"]) {
+    for (const f of ["pnpm-lock.yaml", "pnpm-workspace.yaml"]) {
       expect(dockerfile, `Dockerfile must COPY ${f}`).toMatch(
         new RegExp(`^COPY[^\\n]*${f.replace(".", "\\.")}`, "m"),
       );
