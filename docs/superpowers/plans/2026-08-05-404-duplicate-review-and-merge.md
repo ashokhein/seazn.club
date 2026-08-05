@@ -661,6 +661,50 @@ git commit -am "directory: duplicate review queue and merge flow (#404)"
 
 ---
 
+### Task 8b: Carry the account link, and make history durable
+
+Both found by Task 8's screenshots. Fixed here, not filed.
+
+**Files:**
+- Modify: `apps/web/src/server/usecases/person-merge.ts`
+- Create: `apps/web/src/app/api/v1/persons/merges/route.ts`
+- Modify: `apps/web/src/server/api-v1/{key-scopes.ts,openapi.ts,schemas.ts}`
+- Modify: `apps/web/src/components/v2/duplicates-panel.tsx`
+- Test: `apps/web/src/server/usecases/__tests__/person-merge.test.ts` (extend),
+  `apps/web/src/app/api/v1/persons/__tests__/merge-route.test.ts` (extend)
+
+**Finding 1 — `persons.user_id` never moves.** `mergePersons` writes only
+`consent` to the surviving row. Task 3 refuses when **both** rows carry different
+non-null `user_id`s, but when only the **absorbed** row is claimed the survivor
+keeps `user_id = null`: `person_claims` repoints while the account link itself
+strands on the tombstone, so the player logs in and finds no record.
+
+**Ruling: carry it across when the survivor has none.** It is the same human, and
+the both-claimed case is already refused. Reversal must clear it again — the
+snapshot already holds both rows, so this is a restore, not a new field.
+
+**Finding 2 — merge history is session-scoped.** `person_merges` has no list
+endpoint, so the Undo control survives only until a refresh. That makes the
+owner's "unbounded undo" decision hollow in practice.
+
+- [ ] **Step 1: Failing tests**
+  1. Survivor has `user_id = null`, absorbed has one → after the merge the
+     survivor carries it and the tombstone does not.
+  2. Both have the SAME `user_id` → still fine, no change in behaviour.
+  3. Both have DIFFERENT non-null `user_id`s → still 422 (unchanged).
+  4. Reverse the merge from case 1 → the `user_id` goes back to the absorbed row
+     and the survivor is null again.
+  5. `GET /api/v1/persons/merges` lists this org's merges, newest first, with
+     `reversed_at`; a second org's rows never appear.
+  6. The route is in `NEVER_KEY_ROUTES` — an API-key principal is refused.
+- [ ] **Step 2: Run — red.**
+- [ ] **Step 3: Implement**, then wire the panel's history list to the endpoint so
+  Undo survives a reload.
+- [ ] **Step 4: Green**, plus the #404 suites and the v2 component directory.
+- [ ] **Step 5: `openapi:gen` + `i18n:gen-keys`, commit.**
+
+---
+
 ### Task 9: e2e, smoke, help
 
 **Files:**
