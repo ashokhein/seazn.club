@@ -18,7 +18,7 @@ import type { AuthCtx } from "@/server/api-v1/auth";
 import type { CreateDivision } from "@/server/api-v1/schemas";
 import { createCompetition } from "@/server/usecases/competitions";
 import { waiveDivisionSlot } from "@/server/usecases/admin-divisions";
-import { archiveDivision, createDivision } from "@/server/usecases/divisions";
+import { archiveDivision, createDivision, restoreDivision } from "@/server/usecases/divisions";
 import {
   archivedSlotHoldersInCompetition,
   archivedSlotsExplainRefusal,
@@ -286,5 +286,84 @@ describe.skipIf(!HAS_DB)("archivedSlotsExplainRefusal", () => {
     expect(await archivedSlotsExplainRefusal(auth, competitionId)).toBe(false);
     const next = await createDivision(auth, competitionId, divisionInput("Next"));
     expect(next.id).toBeTruthy();
+  });
+
+  // Every case above pairs the predicate with `createDivision`. The predicate
+  // is applied to the RESTORE path too, and restore does not count the same
+  // way: its quota query carries `and d.id <> ${id}` so the row being
+  // un-archived is not charged as both an existing holder and the `+ 1`. That
+  // clause is not decoration — it was missing once on this branch and refused
+  // restores that fitted. The two cases below drive the real `restoreDivision`,
+  // so the sentence the paywall prints is checked against the refusal that
+  // surface actually produces rather than against its sibling's.
+  it("is true on the restore path when the OTHER archived slots are the cause", async () => {
+    const { auth, competitionId } = await seedCommunityCompetition();
+    await setDivisionQuota(auth, 3);
+    await createDivision(auth, competitionId, divisionInput("Live"));
+    const first = await createDivision(auth, competitionId, divisionInput("Gone 1"));
+    await recordDecidedFixture(first.id);
+    await closeRegistration(first.id);
+    await archiveDivision(auth, first.id);
+    const second = await createDivision(auth, competitionId, divisionInput("Gone 2"));
+    await recordDecidedFixture(second.id);
+    await closeRegistration(second.id);
+    await archiveDivision(auth, second.id);
+    await setDivisionQuota(auth, DIVISION_QUOTA);
+
+    // One visible division and two archived holders against a cap of two.
+    // Restoring `first` is refused only because `second` is still holding a
+    // slot, so the archived divisions ARE the marginal cause and the paywall
+    // may say so.
+    expect(await archivedSlotHoldersInCompetition(auth, competitionId)).toBe(2);
+    expect(await archivedSlotsExplainRefusal(auth, competitionId)).toBe(true);
+    await expect(restoreDivision(auth, first.id)).rejects.toMatchObject({
+      status: 402,
+      featureKey: "divisions.per_competition.max",
+    });
+  });
+
+  // The restore-path twin of "the visible divisions alone fill the limit", and
+  // the arm where a self-counting restore would be at its most convincing: the
+  // one archived holder in the competition is the very row being restored, so
+  // it is the obvious thing to blame — and it is not the cause. Two visible
+  // divisions already fill a cap of two; handing that archived slot back would
+  // change nothing about this refusal.
+  it("is false on the restore path when the visible divisions alone fill the limit", async () => {
+    const { auth, competitionId } = await seedCommunityCompetition();
+    await setDivisionQuota(auth, 3);
+    const gone = await createDivision(auth, competitionId, divisionInput("Gone"));
+    await recordDecidedFixture(gone.id);
+    await closeRegistration(gone.id);
+    await archiveDivision(auth, gone.id);
+    await createDivision(auth, competitionId, divisionInput("Live 1"));
+    await createDivision(auth, competitionId, divisionInput("Live 2"));
+    await setDivisionQuota(auth, DIVISION_QUOTA);
+
+    expect(await archivedSlotHoldersInCompetition(auth, competitionId)).toBe(1);
+    expect(await archivedSlotsExplainRefusal(auth, competitionId)).toBe(false);
+    await expect(restoreDivision(auth, gone.id)).rejects.toMatchObject({
+      status: 402,
+      featureKey: "divisions.per_competition.max",
+    });
+  });
+
+  // The self-counting guard itself, and the only shape that can be one: both
+  // cases above assert a REFUSAL, and counting the restored row twice can only
+  // make the count larger, so neither of them can fail when `and d.id <> ${id}`
+  // is dropped — the mutation was measured, and both stayed green. A restore
+  // that must SUCCEED is the arm that moves: one visible division and one
+  // archived holder against a cap of two, where the holder is the row being
+  // restored. It fits exactly, and charging it as both an existing holder and
+  // the `+ 1` turns it into a 402 the org can do nothing about.
+  it("allows a restore that fits, without charging the restored row twice", async () => {
+    const { auth, competitionId } = await seedCommunityCompetition();
+    await createDivision(auth, competitionId, divisionInput("Live"));
+    const gone = await createDivision(auth, competitionId, divisionInput("Gone"));
+    await recordDecidedFixture(gone.id);
+    await closeRegistration(gone.id);
+    await archiveDivision(auth, gone.id);
+
+    const back = await restoreDivision(auth, gone.id);
+    expect(back.archived_at).toBeNull();
   });
 });
