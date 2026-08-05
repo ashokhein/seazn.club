@@ -15,16 +15,23 @@ import { REASON_CODE } from "@/lib/schedule-board";
 import { resolveVenueTz } from "@/lib/tz";
 import { EngineError } from "@seazn/engine/core";
 import {
+  boardMetrics,
+  buildSchedule,
   conflictKey,
   dayKeyInTz,
   deltaConflicts,
   isBlockingConflict,
+  repairSchedule,
+  resetZ3,
+  RULE_BY_REASON,
   slotFixtures,
   validateAssignments,
   validateInstructionRules,
   ymdAddDays,
   zonedTimeToUtc,
   type Assignment,
+  type BuildResult,
+  type BuildStatus,
   type Conflict,
   type OrderDependency,
   type RuleFixture,
@@ -37,8 +44,11 @@ import type { AuthCtx } from "@/server/api-v1/auth";
 import {
   ScheduleConfig,
   type ApplyScheduleRequest,
+  type AutoScheduleRequest,
   type PutScheduleSettings,
   type ScheduleConflict,
+  type ScheduleMetrics,
+  type ScheduleSolverInfo,
 } from "@/server/api-v1/schemas";
 import { sendOfficialAssignmentChangedEmail } from "@/lib/email";
 import { buildEngineConstraints } from "./engine-constraints";
@@ -645,15 +655,33 @@ function assertNoNewBlocking(before: readonly Conflict[], after: readonly Confli
 // Auto pass (propose only — doc 12 §4: nothing persisted)
 // ---------------------------------------------------------------------------
 
+/**
+ * The lexicographic improvement targets `buildSchedule` walks (T0's placement
+ * count, then makespan, idle gap, court balance).
+ *
+ * MIRRORS `TIER_COUNT` in `packages/engine/src/scheduling/build.ts`, which is
+ * module-private there. It is not free-floating: `buildSchedule` returns
+ * `status: "already_optimal"` only when `tiersCompleted` reached the ladder's
+ * length, so a run that comes back `already_optimal` states the engine's number
+ * out loud. `__tests__/schedule-solver-telemetry.test.ts` drives exactly that
+ * run and compares, so a ladder that grows or shrinks in the engine reds here
+ * rather than shipping a wrong denominator to the board.
+ */
+export const TIERS_TOTAL = 4;
+
 export interface AutoScheduleOut {
   assignments: { fixture_id: string; scheduled_at: string; ends_at: string; court_label: string }[];
   conflicts: ScheduleConflict[];
+  /** Board quality of the proposal (Task 8's wire shape, filled here). */
+  metrics: ScheduleMetrics;
+  /** How the proposal was produced — telemetry, not policy. */
+  solver: ScheduleSolverInfo;
 }
 
 export async function autoSchedule(
   auth: AuthCtx,
   stageId: string,
-  onlyUnlocked: boolean,
+  body: AutoScheduleRequest,
 ): Promise<AutoScheduleOut> {
   return withTenant(auth.orgId, async (tx) => {
     const [stage] = await tx<{ division_id: string; competition_id: string }[]>`
@@ -684,6 +712,23 @@ export async function autoSchedule(
       settings.config.matchMinutes,
     );
 
+    // Re-flow remaining (doc 12 §2): pinned cards are fixed obstacles;
+    // scope-locked fixtures (Jul3/03 §4 two-site safety) pin the same way.
+    // Hoisted out of the `schedulable` builder below because THREE things read
+    // it now — the `locked` anchor, REFLOW's incumbent board, and the set the
+    // repair solver may not move — and a second copy of this predicate is how
+    // the pin the solver honours and the pin the caller sees drift apart.
+    const pinnedIds = new Set(
+      movable
+        .filter(
+          (f) =>
+            body.only_unlocked &&
+            (f.schedule_locked || scopeLocked(f, scopes)) &&
+            f.scheduled_at !== null &&
+            f.court_label !== null,
+        )
+        .map((f) => f.id),
+    );
     const schedulable: SchedulableFixture[] = movable.map((f) => ({
       id: f.id,
       roundNo: f.round_no,
@@ -692,13 +737,8 @@ export async function autoSchedule(
       ...(f.home_entrant_id !== null ? { home: f.home_entrant_id } : {}),
       ...(f.away_entrant_id !== null ? { away: f.away_entrant_id } : {}),
       people: peopleOf(f, people),
-      // Re-flow remaining (doc 12 §2): pinned cards are fixed obstacles;
-      // scope-locked fixtures (Jul3/03 §4 two-site safety) pin the same way.
-      ...(onlyUnlocked &&
-      (f.schedule_locked || scopeLocked(f, scopes)) &&
-      f.scheduled_at !== null &&
-      f.court_label !== null
-        ? { locked: { court: f.court_label, startAt: ms(f.scheduled_at) } }
+      ...(pinnedIds.has(f.id)
+        ? { locked: { court: f.court_label as string, startAt: ms(f.scheduled_at as string | Date) } }
         : {}),
     }));
 
@@ -709,11 +749,51 @@ export async function autoSchedule(
     // placer's day tally and the referee below both count only the `existing`
     // rows `ruleFixtures` names, so without this the auto pass proposes a board
     // that breaches a competition-scoped cap and then reports it clean.
-    const config = toVerifyConfig(settings, all, roundToMinute(Date.now()), siblings.ruleFixtures);
     const board = [...obstacles, ...siblings.assignments];
-    const result = slotFixtures({ fixtures: schedulable, config, existing: board });
+
+    // Where the movable cards sit RIGHT NOW. REFLOW proposes from this rather
+    // than from nothing, so it is split by whether this run may move the card.
+    const placedNow = movable
+      .filter((f) => !pinnedIds.has(f.id) && f.scheduled_at !== null && f.court_label !== null)
+      .map((f) => toAssignment(f, settings.config.matchMinutes, people));
+    const pinnedNow = movable
+      .filter((f) => pinnedIds.has(f.id))
+      .map((f) => toAssignment(f, settings.config.matchMinutes, people));
+
+    const config = boundSolverWindow(
+      toVerifyConfig(settings, all, roundToMinute(Date.now()), siblings.ruleFixtures),
+      schedulable,
+      board,
+      // REFLOW alone proposes cards that are already placed, so REFLOW alone
+      // needs the window widened to contain them. Passing them on a BUILD would
+      // stretch the lattice around a board that pass is about to replace.
+      body.mode === "reflow" ? [...placedNow, ...pinnedNow] : [],
+    );
+
+    // Three modes, ONE config (design D2). BUILD and POLISH go to the tier
+    // solver; REFLOW goes to the repair solver, because "the fewest cards
+    // moved" is a property an ascending-k walk proves and a re-place cannot —
+    // `slotFixtures` re-places every unlocked card even when nothing is wrong,
+    // which is the defect this mode replaces.
+    const total = schedulable.length;
+    const out = await withZ3Teardown(() =>
+      body.mode === "reflow"
+        ? // Pinned cards are handed separately from the rest: the solver may not
+          // move them, but they are still part of the proposal it hands back.
+          reflowExisting({ schedulable, config, board, placed: placedNow, pinned: pinnedNow })
+        : buildSchedule({
+            fixtures: schedulable,
+            config,
+            existing: board,
+            wallMs: AUTO_SOLVER_WALL_MS,
+            ...(body.mode === "polish"
+              ? { mode: "polish" as const, frozen: frozenIds(movable, scopes) }
+              : {}),
+          }),
+    );
+
     return {
-      assignments: result.assignments.map((a) => ({
+      assignments: out.assignments.map((a) => ({
         fixture_id: a.fixtureId,
         scheduled_at: iso(a.startAt),
         ends_at: iso(a.endAt),
@@ -722,21 +802,308 @@ export async function autoSchedule(
       // No baseline: the auto pass PROPOSES a board rather than editing one, so
       // every conflict in it is this proposal's own doing (#399).
       //
-      // `slotFixtures` PLACES; it does not referee typed rules — it reports only
-      // what it could not fit (`no_slot`, `start_window`, a pinned collision).
-      // So a durable rule the placer has no term for would come back clean from
+      // The solver reports what it could not PLACE and what the verifier says
+      // about the board it produced; it does not referee typed instruction
+      // rules, so a durable rule with no solver term would come back clean from
       // the one surface an organiser uses to build a board. The AI path answers
-      // this the same way: place, then run the referee over the proposal
-      // (`verifyConfig`). Only `validateInstructionRules` is run here, not the
-      // whole verifier, so this proposal reports exactly the typed rules it was
-      // missing and does not start emitting rest/overlap rows the auto pass has
-      // never emitted.
+      // this the same way: place, then run the referee over the proposal.
+      // `validateInstructionRules` derives its own rule stream and shares no row
+      // with `validateAssignments` (which reads only the `min_rest_minutes`
+      // subset, and only to raise a pair's bound), so the two lists concatenate
+      // without double-reporting.
       conflicts: mapConflicts([
-        ...result.conflicts,
-        ...validateInstructionRules(result.assignments, config, board),
+        ...out.conflicts,
+        ...validateInstructionRules(out.assignments, config, board),
       ]),
+      metrics: {
+        makespan_minutes: out.metrics.makespanMinutes,
+        worst_idle_gap_minutes: out.metrics.worstIdleGapMinutes,
+        court_imbalance_minutes: out.metrics.courtImbalanceMinutes,
+        placed: out.metrics.placed,
+        total,
+      },
+      solver: {
+        engine: out.engine,
+        status: out.status,
+        tiers_completed: out.tiersCompleted,
+        tiers_total: TIERS_TOTAL,
+        budget_expired: out.budgetExpired,
+        elapsed_ms: out.elapsedMs,
+        moved: out.moved,
+        // Forwarded, never synthesised: absence on an `infeasible` result is
+        // the engine SAYING the proof is about the board rather than the pins.
+        ...(out.contradictoryPins !== undefined
+          ? { contradictory_pins: [...out.contradictoryPins] }
+          : {}),
+      },
     };
   });
+}
+
+/** How much room past the work the solver is given to rearrange inside, when the
+ *  competition itself sets no end date. A day, not a year — and the size is
+ *  MEASURED, not a taste: see `boundSolverWindow`. */
+const SOLVER_SLACK_MS = 24 * 60 * MS_PER_MIN;
+
+/**
+ * The wall the auto pass gives a solver, overriding the engine's 30-second
+ * default.
+ *
+ * `autoSchedule` is a SYNCHRONOUS request an organiser is watching, so the
+ * engine's own cap is the wrong one here: measured on a 15-fixture, 2-court
+ * board it is spent in full, every time, and hands back a 30-second HTTP
+ * response for a board that stopped improving long before.
+ *
+ * 8 seconds is where the measurements level off. On that same board 2s and 5s
+ * differ (court imbalance 90 -> 30 minutes) and 5s and 10s do not; small boards
+ * finish and prove themselves optimal in well under a second regardless.
+ *
+ * Expiring is ORDINARY, not a failure: `budget_expired` rides the wire and the
+ * result strip says how many improvement targets the run got through. What is
+ * NOT ordinary is reading the flag as "not optimal" — optimality is
+ * `tiers_completed === tiers_total`; a term or metric drift exits a tier without
+ * ever setting it.
+ *
+ * Task 13's bench sets the DETERMINISTIC budget (`rlimit`); this is only the
+ * outer safety cap, and should be revisited once that lands.
+ */
+export const AUTO_SOLVER_WALL_MS = 8_000;
+
+/**
+ * A FINITE search window for the solvers, without changing what the verifier
+ * enforces.
+ *
+ * `applyWindow` answers an open-ended competition with `±Infinity`, and for the
+ * verifier that is exactly right — a bound nothing can breach enforces nothing.
+ * The SOLVERS cannot take it: `buildGrid` derives its day buckets from this
+ * window through `calendarDaysCovering`, and `dayKeyInTz(Infinity)` throws
+ * `RangeError: Invalid time value`. A division with a start date and no end date
+ * is the ordinary case, so unclamped the whole auto pass 500s on it.
+ *
+ * Two bounds that are NOT interchangeable:
+ *
+ *   * the open end is clamped to the WORK — the greedy board proves how much
+ *     time these fixtures actually need, and the solver gets that plus a week to
+ *     rearrange inside. Wider is not free and not neutral: the lattice is capped
+ *     at `MAX_SLOTS`, and `buildGrid` answers an overflow by returning NOTHING,
+ *     which drops `buildSchedule` straight back onto the greedy board it was
+ *     asked to improve. A 365-day horizon over two courts is ~35k slots — the
+ *     solver would be silently inert on exactly the configs it exists for.
+ *   * the open START is clamped to `config.startAt`, or to a pinned card if one
+ *     sits earlier. A pin is admitted to the lattice unconditionally, so a
+ *     window that excluded it would hand back a `window` conflict on a card
+ *     nobody asked to move.
+ *
+ * A window with two finite bounds is returned untouched: the competition's own
+ * dates are the answer whenever it has them.
+ */
+export function boundSolverWindow<T extends SlotConfig & VerifyConfig>(
+  config: T,
+  fixtures: readonly SchedulableFixture[],
+  existing: readonly Assignment[],
+  /**
+   * Cards that will be IN the proposal already placed — REFLOW's incumbent
+   * board. They must be inside the window even though nothing asked to move
+   * them: `validateAssignments` bounds `assignments` and not `existing`, so a
+   * card the organiser parked three days out would otherwise come back with a
+   * BLOCKING `window` conflict the moment the clamp closed in front of it.
+   * Empty for BUILD and POLISH, which propose from scratch.
+   */
+  mustContain: readonly Assignment[] = [],
+): T {
+  const w = config.window;
+  if (w !== undefined && Number.isFinite(w.from) && Number.isFinite(w.to)) return config;
+
+  const pins = fixtures.flatMap((f) => (f.locked !== undefined ? [f.locked.startAt] : []));
+  const from =
+    w !== undefined && Number.isFinite(w.from)
+      ? w.from
+      : Math.min(config.startAt, ...pins, ...mustContain.map((a) => a.startAt));
+  // MEASURED, not invented: the greedy pass is the same one `buildSchedule`
+  // runs first, so this is the span the fixtures demonstrably occupy.
+  const seed = slotFixtures({ fixtures, config, existing });
+  const to =
+    w !== undefined && Number.isFinite(w.to)
+      ? w.to
+      : Math.max(
+          from,
+          ...seed.assignments.map((a) => a.endAt),
+          ...pins.map((t) => t + config.matchMinutes * MS_PER_MIN),
+          ...mustContain.map((a) => a.endAt),
+        ) + SOLVER_SLACK_MS;
+  return { ...config, window: { from, to } };
+}
+
+/**
+ * Runs a solve and then hands the WASM heap back.
+ *
+ * NOT hygiene — the process dies without it. One z3 context is shared by every
+ * solve in the process and its heap only grows: nothing frees a finished
+ * `Solver`, so a server that has run a few auto-schedules aborts with
+ * `Cannot enlarge memory arrays to size 2210201600 bytes (OOM)` and takes the
+ * whole node process with it. Reproduced here on the FIRST run of this task's
+ * own suite, which is six solves in one process; `repairDecomposed` already
+ * resets between components for exactly this reason and records "3 of 3 runs
+ * without it, 0 of 3 with it".
+ *
+ * `resetZ3` takes `withZ3Lock` itself, and both solvers have released it by the
+ * time they resolve, so this cannot deadlock. It is a no-op when the WASM never
+ * booted — which is every REFLOW over a board that was already legal.
+ *
+ * In a `finally`, because a solve that threw has allocated just as much as one
+ * that returned. The cost is a 200-300 ms reboot on the next solve, paid by a
+ * user-initiated action that already takes seconds.
+ */
+async function withZ3Teardown(solve: () => Promise<BuildResult>): Promise<BuildResult> {
+  try {
+    return await solve();
+  } finally {
+    await resetZ3();
+  }
+}
+
+/**
+ * POLISH's frozen set: every card this run may not move.
+ *
+ * LOCKS ONLY, per ruling R5 — there is no per-fixture published flag to freeze
+ * on, so "the cards an entrant has already been told about" is approximated by
+ * the cards the organiser pinned.
+ *
+ * Locked and scope-locked cards already carry a `locked` anchor on their
+ * `SchedulableFixture` when `only_unlocked` is set — which is how the polish
+ * button calls it — so naming them here is belt-and-braces on that branch and
+ * the only binding on the other one.
+ *
+ * KNOWN GAP, and it is the engine's, not this call's: `BuildInput` carries no
+ * published-board field, so `buildSchedule` anchors a `frozen` id WITHOUT a
+ * `locked` placement to greedy's own re-placement rather than to where the card
+ * actually sits. Under `only_unlocked: false` that means POLISH freezes a slot
+ * the organiser never saw. Flagged in `build.ts` for Task 6/7; until it lands,
+ * POLISH is only a true freeze on the `only_unlocked: true` call.
+ */
+function frozenIds(
+  movable: readonly FixtureLite[],
+  scopes: readonly LockedScope[],
+): string[] {
+  return movable
+    .filter(
+      (f) =>
+        (f.schedule_locked || scopeLocked(f, scopes)) &&
+        f.scheduled_at !== null &&
+        f.court_label !== null,
+    )
+    .map((f) => f.id);
+}
+
+/**
+ * REFLOW: the board as it stands IS the proposal, and `repairSchedule` finds the
+ * fewest moves that make it legal. A board with nothing wrong comes back k = 0
+ * and moves nothing, which is exactly what `slotFixtures` could not express.
+ *
+ * The result is mapped onto a `BuildResult` so the caller has one shape for all
+ * three modes. Two rules govern that mapping and both are load-bearing:
+ *
+ *   * a `timeout` or an `infeasible` returns the ORIGINAL board, never a
+ *     partially-repaired one. A half-repaired board is worse than the board the
+ *     organiser already has, because it has been moved without being fixed.
+ *   * `tiersCompleted` is 0 and stays 0: the repair solver has no tier ladder,
+ *     and reporting a number from a ladder it never walked would make an
+ *     optimality claim (`tiers_completed === tiers_total`) that nothing proved.
+ */
+async function reflowExisting(args: {
+  schedulable: readonly SchedulableFixture[];
+  /** Where the cards this run may move sit right now. */
+  placed: readonly Assignment[];
+  /** Cards this run may NOT move — obstacles to the solver, still part of the
+   *  proposal it hands back, exactly as `slotFixtures` returned them. */
+  pinned: readonly Assignment[];
+  config: SlotConfig & VerifyConfig & { courts: string[] };
+  board: readonly Assignment[];
+}): Promise<BuildResult> {
+  const startedAt = Date.now();
+  const total = args.schedulable.length;
+  const immovable = [...args.board, ...args.pinned];
+  const onBoard = new Set(args.placed.map((a) => a.fixtureId));
+
+  // A repair solver MOVES cards; it cannot conjure one onto a board it is not
+  // on. "Re-flow remaining" is fired from the UNSCHEDULED section of the stages
+  // panel, so the ordinary case is a stage where nothing is placed at all —
+  // under a bare `repairSchedule` that is a `clean` verdict over an empty
+  // proposal, and the organiser's click does nothing whatsoever. Greedy seeds
+  // exactly the cards with no placement yet; every card already on the board
+  // keeps the slot it has, which is the property this mode exists for.
+  const unseeded = args.schedulable.filter((f) => !onBoard.has(f.id) && f.locked === undefined);
+  const seed =
+    unseeded.length > 0
+      ? slotFixtures({
+          fixtures: unseeded,
+          config: args.config,
+          existing: [...immovable, ...args.placed],
+        })
+      : { assignments: [] as Assignment[], conflicts: [] as Conflict[] };
+  const proposal = [...args.placed, ...seed.assignments];
+
+  const settle = (
+    assignments: readonly Assignment[],
+    status: BuildStatus,
+    engine: BuildResult["engine"],
+    moved: number,
+    budgetExpired: boolean,
+  ): BuildResult => {
+    // The pinned cards rejoin the proposal here and NOT in `existing` above:
+    // they are this stage's cards, the caller applies the whole set, and
+    // `slotFixtures` has always returned them.
+    const full = [...assignments, ...args.pinned];
+    const placedIds = new Set(full.map((a) => a.fixtureId));
+    const conflicts: Conflict[] = validateAssignments(full, args.config, args.board);
+    // `validateAssignments` answers for the rows it is handed and cannot report
+    // an ABSENCE, so a card nothing could place would come back clean.
+    for (const f of args.schedulable) {
+      if (placedIds.has(f.id)) continue;
+      const greedySaid = seed.conflicts.filter((c) => c.fixtureId === f.id);
+      if (greedySaid.length > 0) {
+        conflicts.push(...greedySaid);
+        continue;
+      }
+      conflicts.push({
+        fixtureId: f.id,
+        reason: "no_slot",
+        detail: "no legal slot in the lattice",
+        rule: RULE_BY_REASON.no_slot,
+      });
+    }
+    return {
+      assignments: full,
+      conflicts,
+      metrics: boardMetrics(full, args.config.courts, total),
+      engine,
+      status,
+      tiersCompleted: 0,
+      budgetExpired,
+      elapsedMs: Date.now() - startedAt,
+      moved,
+    };
+  };
+
+  const repaired = await repairSchedule({
+    proposal,
+    existing: immovable,
+    config: args.config,
+    // The same wall the tier solver is held to. `repairSchedule`'s own default
+    // is 20s, and a clean board is answered without loading the WASM at all, so
+    // this only binds the run that is actually searching.
+    budgetMs: AUTO_SOLVER_WALL_MS,
+  });
+  switch (repaired.status) {
+    case "clean":
+      return settle(proposal, "ok", "greedy", 0, false);
+    case "repaired":
+      return settle(repaired.assignments, "ok", "z3", repaired.moved.length, false);
+    case "timeout":
+      return settle(proposal, "ok", "greedy", 0, true);
+    case "infeasible":
+      return settle(proposal, "infeasible", "greedy", 0, false);
+  }
 }
 
 const roundToMinute = (t: number): number => Math.ceil(t / MS_PER_MIN) * MS_PER_MIN;

@@ -52,6 +52,35 @@ z3 `rlimit`, not wall clock.
 - [x] Task 1 — build-objectives.ts + 11 unit tests
 - [x] Task 2 — build-grid.ts + 14 unit tests
 - [x] Task 3 — build-encode.ts + parity suite
+- [x] Task 9 — `autoSchedule` three-way dispatch, metrics + solver on the wire
+      (`feat/z3-web`). Full report:
+      `.superpowers/sdd/2026-08-05-z3-auto-schedule/task-9-report.md`.
+
+      THREE defects found at the WEB SEAM, all fixed there, none of them visible
+      to the engine lane's own tests:
+
+        1. `applyWindow` returns `to: Infinity` for a competition with no end
+           date — the ordinary organiser config — and `buildGrid` ->
+           `calendarDaysCovering` -> `dayKeyInTz(Infinity)` THROWS. Every BUILD
+           run 500'd. Fixed by `boundSolverWindow` (web side), which closes the
+           open end at the MEASURED greedy span + 1 day. Deliberately NOT a wide
+           bound: a `MAX_SLOTS` overflow makes `buildGrid` return nothing and the
+           solver goes silently inert on exactly the configs it exists for.
+        2. The engine's 30 s wall is spent IN FULL on a 15-fixture board. Web now
+           passes `AUTO_SOLVER_WALL_MS = 8_000` (measured: 2s and 5s differ, 5s
+           and 10s do not). Revisit when Task 13's rlimit bench lands.
+        3. The z3 WASM heap only grows; six solves in one process abort node with
+           `Cannot enlarge memory arrays ... (OOM)`. `buildSchedule` has no
+           teardown, so web now calls `resetZ3()` in a `finally`. This would have
+           killed a long-running production server, not just the test runner.
+
+      Left open for later tasks: `TIER_COUNT` is module-private in build.ts, so
+      the wire's `tiers_total` is a web constant proved against the engine via
+      the `already_optimal` contract — exporting it is a one-line engine change
+      worth making. POLISH's `frozen` is redundant under `only_unlocked: true`
+      (locks already pin) and anchors to GREEDY's placement under
+      `only_unlocked: false` (`publishedSlotOf`), so it has no isolating test
+      until Task 7 lands.
 
 ## Mid-flight state (2026-08-05) — the SDD ledger is the fuller record
 

@@ -22662,6 +22662,11 @@
                               "minimum": -9007199254740991,
                               "maximum": 9007199254740991
                             },
+                            "tiers_total": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
                             "budget_expired": {
                               "type": "boolean"
                             },
@@ -22672,12 +22677,19 @@
                               "type": "integer",
                               "minimum": -9007199254740991,
                               "maximum": 9007199254740991
+                            },
+                            "contradictory_pins": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
                             }
                           },
                           "required": [
                             "engine",
                             "status",
                             "tiers_completed",
+                            "tiers_total",
                             "budget_expired",
                             "elapsed_ms",
                             "moved"
@@ -22729,6 +22741,7 @@
                       "engine": "greedy",
                       "status": "ok",
                       "tiers_completed": -9007199254740991,
+                      "tiers_total": -9007199254740991,
                       "budget_expired": true,
                       "elapsed_ms": 1,
                       "moved": -9007199254740991

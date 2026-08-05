@@ -30,12 +30,6 @@
 import { useMsg, usePlural } from "@/components/i18n/dict-provider";
 import type { ScheduleMetrics, ScheduleSolverInfo } from "@/server/api-v1/schemas";
 
-/** Lexicographic improvement targets the solver walks in order (makespan, idle
- *  gap, court balance, churn). `tiers_completed` counts how many it finished,
- *  so the budget note reads "N of 4". The wire carries no denominator — if the
- *  tier ladder ever changes length this constant has to move with it. */
-const IMPROVEMENT_TARGETS = 4;
-
 const ENGINE_KEY = {
   greedy: "board.result.engine.greedy",
   z3: "board.result.engine.z3",
@@ -69,10 +63,10 @@ export function ScheduleResultStrip({
 }: {
   metrics: ScheduleMetrics;
   solver: ScheduleSolverInfo;
-  /** How many PINNED cards the infeasibility proof is actually about, when the
-   *  engine can name them. Additive and optional by design — until that field
-   *  lands on the wire the count is derived from `total - placed`, which is the
-   *  same number in the measured case. Never block on it. */
+  /** An explicit override for the pin count. Rarely needed now: Task 9 put
+   *  `solver.contradictory_pins` on the wire and it is preferred over this. Kept
+   *  because a caller that knows better than the payload should be able to say
+   *  so, and removing a prop is not this component's problem to solve. */
   pinnedConflictCount?: number;
 }) {
   const msg = useMsg();
@@ -90,6 +84,22 @@ export function ScheduleResultStrip({
 
   const dropped = Math.max(0, metrics.total - metrics.placed);
   const partial = dropped > 0;
+  /**
+   * How many PINNED cards the infeasibility proof is about.
+   *
+   * THREE sources, in descending order of how much they actually know:
+   *
+   *   1. `solver.contradictory_pins` — the engine naming the pinned set its
+   *      proof is about. The only one of the three that is a fact.
+   *   2. an explicit prop, for a caller that knows better than the payload.
+   *   3. `total - placed`, the fallback from before the field existed. It is
+   *      right only when every unplaced card is a pinned one, and silently
+   *      overstates the moment that stops holding — a board that also lost two
+   *      cards to a full court reports four contradictory pins where there are
+   *      two. Kept because a server one deploy behind sends no pins at all, and
+   *      a wrong count reads better than a blank sentence.
+   */
+  const pinCount = solver.contradictory_pins?.length ?? pinnedConflictCount ?? dropped;
   // Amber is reserved for "there is something here you need to know about your
   // board". `verifier_rejected` deliberately does NOT qualify: it is an internal
   // fault the organiser cannot act on, their board is valid either way, and the
@@ -102,7 +112,7 @@ export function ScheduleResultStrip({
   // speak for itself.
   const headline = partial
     ? solver.status === "infeasible"
-      ? plural("board.result.partialPinned", pinnedConflictCount ?? dropped, {
+      ? plural("board.result.partialPinned", pinCount, {
           placed: metrics.placed,
           total: metrics.total,
         })
@@ -164,10 +174,15 @@ export function ScheduleResultStrip({
       </dl>
 
       {solver.budget_expired && (
+        // The denominator comes off the WIRE (`tiers_total`), not from a
+        // constant here. The tier ladder lives in the engine, this component
+        // lives two packages away, and a copy of its length in each is a
+        // divergence with nothing to notice it — which is exactly what a
+        // hardcoded `IMPROVEMENT_TARGETS = 4` was.
         <p data-testid="schedule-result-budget" className="mt-2 text-xs text-slate-600">
           {msg("board.result.budgetExpired", {
             n: solver.tiers_completed,
-            total: IMPROVEMENT_TARGETS,
+            total: solver.tiers_total,
           })}
         </p>
       )}

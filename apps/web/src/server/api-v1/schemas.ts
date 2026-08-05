@@ -915,9 +915,35 @@ export const ScheduleSolverInfo = z.object({
     "solver_busy",
   ]),
   tiers_completed: z.number().int(),
+  /** How many improvement targets the ladder HAS — the denominator
+   *  `tiers_completed` is a numerator of.
+   *
+   *  Sent rather than left to the client because a bare `tiers_completed` has
+   *  no meaning without it: the result strip had to carry its own
+   *  `IMPROVEMENT_TARGETS = 4`, which is a constant in a different package from
+   *  the ladder it describes and drifts the day a tier is added or removed with
+   *  nothing to notice. A denominator on the wire moves that fact to the one
+   *  place that knows it.
+   *
+   *  Optimality is `tiers_completed === tiers_total`, NOT `!budget_expired`: a
+   *  term or metric drift exits a tier without ever setting the flag. */
+  tiers_total: z.number().int(),
   budget_expired: z.boolean(),
   elapsed_ms: z.number(),
   moved: z.number().int(),
+  /** The PINNED fixtures an `infeasible` verdict is about, sorted.
+   *
+   *  `infeasible` has two sources and they say opposite things to an organiser.
+   *  The board source means not one card can be placed legally. The PIN source
+   *  means the rest of the board is fine and two locked placements cannot both
+   *  be kept. Present only for the second, and its ABSENCE on an `infeasible`
+   *  result is itself the signal that the proof is about the board.
+   *
+   *  Optional and additive: a reader that has not been taught about it degrades
+   *  to `total - placed`, which is the same number in the measured case and
+   *  wrong whenever an unplaced card is not a pinned one. Never synthesised
+   *  here — it is forwarded only when the engine supplied it. */
+  contradictory_pins: z.array(z.string()).optional(),
 });
 export type ScheduleSolverInfo = z.infer<typeof ScheduleSolverInfo>;
 

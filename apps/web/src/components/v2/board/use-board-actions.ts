@@ -282,9 +282,10 @@ export function useBoardActions(
         const out = await apiV1<{
           assignments: { fixture_id: string; scheduled_at: string; court_label: string }[];
           conflicts: BoardConflict[];
-          // OPTIONAL on purpose: the /schedule/auto response schema declares
-          // both, but `autoSchedule` does not populate them yet. Typing them as
-          // required here would make the strip render zeros for a real run.
+          // OPTIONAL on purpose, even though Task 9 now populates both: a cached
+          // response, or a server one deploy behind, carries neither. Typing
+          // them as required here would render a strip full of zeros instead of
+          // no strip at all, which is the worse of the two failures.
           metrics?: ScheduleMetrics;
           solver?: ScheduleSolverInfo;
         }>(`/api/v1/stages/${stageId}/schedule/auto`, {
