@@ -158,6 +158,35 @@ Set by Tasks 6 and 7 and applied since; a task is not done without it.
 - **`EXPLAIN` any predicate a partial index is supposed to serve.** V355's
   widened index was confirmed by `BitmapOr` over it with no `Seq Scan`.
 
+## Part B (Task 10) — measured blast radius, do not re-measure
+
+The plan's Step 5 grep (`api/v1/competitions\|insert into competitions\|createCompetition`)
+returns ~200 files and is **useless as a work list**: it matches every
+`api/v1/competitions/${id}/...` sub-resource path, which a schema change
+cannot break.
+
+Measured on `fix/pass-lock-376`:
+
+- **152 real creation sites across 49 files** — POSTs to the *collection*.
+  Find them with the exact-collection pattern, not the prefix:
+  `git grep -n "\"/api/v1/competitions\"\|'/api/v1/competitions'\|\`/api/v1/competitions\`" -- apps/web/src apps/web/e2e scripts`
+- **43 of the 49 are `apps/web/e2e/*.spec.ts`.** The rest: `helpers.ts`,
+  `competition-wizard.tsx`, `key-scopes.test.ts`, `seed-demo.ts`,
+  `seed-fifa2026.ts`, `smoke-sports.ts`, `smoke.ts`.
+- **`scripts/smoke.ts` is the single densest file.**
+- **There is no shared API-path creation helper.** `e2e/helpers.ts` exports
+  `createCompetitionViaUi`, which drives the wizard, not the API. Each spec
+  POSTs for itself.
+- **Direct-SQL seeds do NOT break.** `_seed.ts` and the per-file
+  `seedCompetition` helpers insert into `competitions` directly, and decision
+  8 keeps the **column** nullable — only the zod schema tightens. Do not
+  "fix" them; a required `ends_on` in a raw insert proves nothing.
+
+**The risk this creates:** e2e is verified locally only and never on CI, so a
+missed e2e site fails at e2e time rather than in the unit gate. Sweep e2e by
+grep count before and after, and require the count to reach zero — do not
+rely on a green unit suite to prove Part B is complete.
+
 ## Flyway note (local DBs only)
 
 `db:apply` can fail `Migration checksum mismatch for migration version 354`
