@@ -240,3 +240,36 @@ pre-rebase and PR smoke CI is what confirms the rebased trees.
 Final gates, all on clean DBs, all measured by me from `--reporter=json`:
 B 5488/0/0 · A (pre-rebase) 5487 w/ 2 proven-environmental · D 1629/1654 0/0 ·
 E 5523/0/0 + **e2e 18/18** against a real standalone prod build.
+
+## PROGRAMME COMPLETE 2026-08-05 — all 5 PRs merged, label empty
+
+`main` = `bfc56b17`. All 12 `ai-schedule-gap` issues closed; **0 open on the label.**
+
+| PR | Merged as | Issues |
+|---|---|---|
+| #475 | `71adceb4` | #394 (invalid, test only) |
+| #477 | `314be18b` | #390 |
+| #476 | `5d6f0b2c` | #385, #387, #383, #384 |
+| #478 | `655d7c6d` | #382 |
+| #479 | `bfc56b17` | #386, #391, #392 |
+
+**GitHub gotcha worth keeping:** a comma-separated list after ONE `Closes`
+auto-closes only the FIRST issue. `Closes #385, #387, #383, #384` closed #385
+and nothing else; five issues had to be closed by hand after the merges. Write
+`Closes #385, closes #387, closes #383` — repeat the keyword every time.
+
+**Merge-order hazard, hit and handled:** the repo SQUASH-merges, so once #476
+landed, `main` held one commit containing A's work while E's branch still
+carried A's five originals. Retargeting #478 alone would have replayed A twice.
+Rebased E `--onto origin/main <A's old tip>` first. Same for B, which then hit a
+REAL conflict with E on `ai-scheduling.md` — both had rewritten the same undo
+paragraph. Resolved keeping both (B's corrected description + E's prune
+sentence), and then VERIFIED that B's own later lock-removal commit replayed on
+top and corrected the "second press is refused" line my resolution reinstated.
+Shipping that unchecked would have documented a lock that no longer exists.
+
+**Third environmental red with a new signature:** after rebasing B onto a `main`
+that now carried E's **V353**, 11 tests across 12 suites failed — E's own
+entitlement suites plus the copy-truth guards, all reading a pre-V353 schema.
+`db:apply` on the long-lived test DB fixed it. Generalise: **after a rebase onto
+a main that gained a migration, re-run `db:apply` before believing any red.**
