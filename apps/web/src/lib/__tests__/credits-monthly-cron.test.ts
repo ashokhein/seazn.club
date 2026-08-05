@@ -18,7 +18,7 @@
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql, statementCount } from "@/lib/db";
-import { balance, grantBalance, grantMonthlyForAllWallets } from "@/lib/credits";
+import { balance, grantBalance, grantMonthlyForAllWallets, utcMonthStart } from "@/lib/credits";
 import { setOrgPlan } from "./_billing-group";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -410,5 +410,156 @@ describe.skipIf(!HAS_DB)("grantMonthlyForAllWallets (billing-grant cron)", () =>
     // divergent copies of it once. A cron with its own subtly different plan
     // resolution would grant the WRONG AMOUNT — far worse than an N+1.
     expect(used).toBeLessThanOrEqual(subs.length + 2);
+  });
+
+  // #390 edges. The six above pin the anti-join's happy path; these pin the
+  // ways it could quietly stop being a PRE-FILTER and start being a bug —
+  // wrong period scope, wrong empty-scope branch, wrong population.
+  //
+  // (A plan carrying no `ai.credits.monthly` row at all is NOT re-pinned here:
+  // "#390: a zero-grant plan keeps re-qualifying, and that is harmless" above
+  // already seeds `event_pass` — the matrix's only genuinely zero-grant plan —
+  // and asserts a 0 grant and a 0 balance with nothing thrown.)
+
+  it("#390: a wallet granted in the PREVIOUS month still qualifies this month — the anti-join is period-scoped, not 'ever granted'", async () => {
+    // The single highest-consequence way to get the anti-join wrong: match on
+    // any `monthly:<wallet>:%` key rather than THIS period's. Nothing else in
+    // this file would notice — every other test grants inside one period — and
+    // the production symptom is that monthly grants stop, permanently and
+    // silently, for every wallet that has ever been granted once.
+    const orgId = await seedOrg();
+    const subId = await setOrgPlan(orgId, "pro");
+
+    const now = new Date();
+    const priorPeriod = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
+      .toISOString()
+      .slice(0, 7);
+    await sql`
+      insert into ai_credit_ledger (wallet_id, delta, source, bucket, balance_after, idempotency_key)
+      values (${subId}, 60, 'monthly_grant', 'grant', 60, ${`monthly:${subId}:${priorPeriod}`})`;
+
+    const res = await grantMonthlyForAllWallets({ walletIds: [subId] });
+
+    expect(res.wallets).toBe(1); // considered, despite last month's key
+    expect(res.granted).toBe(60);
+    expect(res.failed).toBe(0);
+    // Last month's 60 was expired (D1 use-or-lose) and this month's granted —
+    // exactly one month's allowance in the bucket, not a banked 120.
+    expect(await grantBalance(subId)).toBe(60);
+    expect(await balance(subId)).toBe(60);
+  });
+
+  it("#390: a MIXED sweep considers only the wallets still missing this period's key", async () => {
+    // Every #390 test above sweeps one wallet at a time, so a `wallets` count
+    // of 1 vs 0 is all they can distinguish. This is the shape the daily cron
+    // actually meets: most of the batch already granted, a few not.
+    const orgs = await Promise.all([seedOrg(), seedOrg(), seedOrg(), seedOrg()]);
+    const [a, b, c, d] = await Promise.all(orgs.map((o) => setOrgPlan(o, "pro")));
+
+    await grantMonthlyForAllWallets({ walletIds: [a!, b!] });
+
+    const res = await grantMonthlyForAllWallets({ walletIds: [a!, b!, c!, d!] });
+
+    expect(res.wallets).toBe(2); // c and d only — a and b never opened
+    expect(res.granted).toBe(60 * 2);
+    expect(res.failed).toBe(0);
+    for (const sub of [a!, b!, c!, d!]) expect(await balance(sub)).toBe(60);
+    // ...and the already-granted pair got exactly one grant row each, not two.
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from ai_credit_ledger
+       where wallet_id in ${sql([a!, b!])} and source = 'monthly_grant'`;
+    expect(n).toBe(2);
+  });
+
+  it("#390: the UNSCOPED sweep — the shape the cron itself runs — honours the anti-join too", async () => {
+    // `walletIds` is a test affordance; the anti-join has to hold on the call
+    // shape production uses, where the scope clause is absent entirely.
+    const [orgA, orgB] = await Promise.all([seedOrg(), seedOrg()]);
+    const [subA, subB] = await Promise.all([
+      setOrgPlan(orgA!, "pro"),
+      setOrgPlan(orgB!, "pro"),
+    ]);
+    await grantMonthlyForAllWallets({ walletIds: [subA, subB] });
+
+    // Wallets already carrying this period's key, counted BEFORE the sweep —
+    // subA and subB at minimum, which is what keeps the bound below
+    // non-vacuous.
+    const period = utcMonthStart().toISOString().slice(0, 7);
+    const [{ keyed }] = await sql<{ keyed: number }[]>`
+      select count(*)::int as keyed from subscriptions s
+       where exists (select 1 from organizations o
+                      where o.subscription_id = s.id and o.deleted_at is null)
+         and exists (select 1 from ai_credit_ledger l
+                      where l.idempotency_key = 'monthly:' || s.id::text || ':' || ${period})`;
+    expect(keyed).toBeGreaterThanOrEqual(2);
+
+    const swept = await grantMonthlyForAllWallets();
+
+    expect(await balance(subA)).toBe(60); // one grant each, not two
+    expect(await balance(subB)).toBe(60);
+
+    // ...and neither was even CONSIDERED. `total` is the population the sweep
+    // would have opened WITHOUT the anti-join (every subscription with a live
+    // org), read AFTER the run: pairing an after-total with a before-keyed
+    // means a sibling suite's concurrent insert can only LOOSEN this bound,
+    // never tighten it into a flake (#351). Drop the anti-join and
+    // `swept.wallets` becomes the whole population, overshooting by `keyed`.
+    const [{ total }] = await sql<{ total: number }[]>`
+      select count(*)::int as total from subscriptions s
+       where exists (select 1 from organizations o
+                      where o.subscription_id = s.id and o.deleted_at is null)`;
+    expect(swept.wallets).toBeLessThanOrEqual(total - keyed);
+  });
+
+  it("#390: an explicitly EMPTY scope grants nothing — it must not fall through to the every-wallet branch", async () => {
+    // `opts.walletIds ?? null` only nulls out undefined, and `[]` is truthy in
+    // JS — so an empty array is a real, if unusual, caller intent ("sweep these
+    // zero wallets"), not an absent scope. It must mean nothing, not everything.
+    const orgId = await seedOrg();
+    const subId = await setOrgPlan(orgId, "pro");
+
+    const res = await grantMonthlyForAllWallets({ walletIds: [] });
+
+    expect(res.wallets).toBe(0);
+    expect(res.granted).toBe(0);
+    expect(res.failed).toBe(0);
+    expect(await balance(subId)).toBe(0); // untouched — an unscoped fall-through would have granted it
+  });
+
+  it("skips a wallet whose only org is soft-deleted — the live-org lateral is a CROSS join", async () => {
+    // Both laterals filter `deleted_at is null`, and they are CROSS joins: a
+    // group whose every org is soft-deleted produces no `rep` row, so the
+    // subscription drops out of the sweep entirely. Turning either into a LEFT
+    // join would surface a null `rep_org_id` and hand it to `orgPlanKey`.
+    const orgId = await seedOrg();
+    const subId = await setOrgPlan(orgId, "pro");
+    await sql`update organizations set deleted_at = now() where id = ${orgId}`;
+
+    const res = await grantMonthlyForAllWallets({ walletIds: [subId] });
+
+    expect(res.wallets).toBe(0);
+    expect(res.granted).toBe(0);
+    expect(res.failed).toBe(0); // not considered at all — never a resolve failure
+    expect(await balance(subId)).toBe(0);
+  });
+
+  it("a paid wallet with quantity_paid = 0 grants nothing and writes NO ledger row (never a negative one)", async () => {
+    // The seat count, not the plan, is what zeroes this one: `perSeat * qty`
+    // hits `delta <= 0` and returns before the transaction opens (credits.ts).
+    // The row worth guarding against is a NEGATIVE grant — `balance_after >= 0`
+    // would reject it, so the sweep would report `failed`, not a bad balance.
+    const orgId = await seedOrg();
+    const subId = await setOrgPlan(orgId, "pro");
+    await sql`update subscriptions set quantity_paid = 0 where id = ${subId}`;
+
+    const res = await grantMonthlyForAllWallets({ walletIds: [subId] });
+
+    expect(res.wallets).toBe(1); // considered — no key was ever written for it
+    expect(res.granted).toBe(0);
+    expect(res.failed).toBe(0);
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from ai_credit_ledger where wallet_id = ${subId}`;
+    expect(n).toBe(0); // no grant row, no expiry row, no key
+    expect(await balance(subId)).toBe(0);
   });
 });
