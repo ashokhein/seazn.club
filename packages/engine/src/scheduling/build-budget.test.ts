@@ -103,6 +103,15 @@ describe("buildSchedule run budget", () => {
     // mutant that arms `rlimit` once per check at the nominal value: tiers 4,
     // `budgetExpired` false, spent 201_900.
     expect(capped.budgetExpired).toBe(true);
+    // EXACT, not `< generous`. The run is bounded by two independent
+    // mechanisms — `arm()`'s per-check `set("rlimit", room)` and the
+    // `settle()`/`phaseLimit` accounting gate — and the gate ALONE stops the
+    // run. So a mutant that removes only the per-check re-arm still stops
+    // early, just later: measured at this budget, clean stops at tier 1 having
+    // spent 103_661 and the arming-only mutant at tier 2 having spent 108_594.
+    // Both are `< 4` and both sit inside the spend window below, so an
+    // inequality here tests only the gate and lets the arming half rot.
+    expect(capped.tiersCompleted).toBe(1);
     expect(capped.tiersCompleted).toBeLessThan(generous.tiersCompleted);
     // The run stopped because it had SPENT the allowance, not because a clock
     // ran out — so the spend sits just above the budget...

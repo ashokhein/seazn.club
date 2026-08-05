@@ -7,11 +7,18 @@
 // `improveByWindows` (`vi.doMock`, the same instrument `build.test.ts` uses for
 // its injected verifier fork).
 //
-// The trigger is forced with `rlimit: 1`, which is the reproducible way to make
-// a `check()` return `unknown`: T0 exhausts the resource limit on its first
-// question, sets `budgetExpired` and leaves `tiersCompleted` at 0. Measured
-// elsewhere in this suite as `rlimit 1 -> unknown`, `rlimit 100 -> sat` on the
-// same model, and deterministic — `rlimit` is a resource counter, not a clock.
+// THE TRIGGER IS A MEASURED BAND, and both of its edges matter. The fallback
+// runs only when the tiers fell short AND the run budget has something left, and
+// on this model those two overlap in a narrow window:
+//
+//   rlimit 200-500   tiers 1, main phase charged its 75% share, reserve intact
+//   rlimit 600+      tiers 4 — the tiers finish and the fallback is not wanted
+//
+// `rlimit: 1` used to be the lever and is no longer viable: the main phase's
+// allotment is now floored at 1 rather than 0, so it takes a check, and one
+// check costs ~382 on this model however small the limit. Deterministic either
+// way — `rlimit` is a resource counter, not a clock.
+const LNS_LEVER_RLIMIT = 400;
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { boardMetrics, isStrictlyBetter } from "./build-objectives.ts";
 import {
@@ -118,9 +125,9 @@ describe("buildSchedule — the LNS seam", () => {
     await resetZ3();
   });
 
-  it("runs the pass on an unfinished run, hands it the incumbent, and takes a better board", async () => {
+  it("runs the pass on an unfinished run and hands it the incumbent", async () => {
     const { seen, mod } = await withStub(() => bothPlaced);
-    const built = await mod.buildSchedule({ fixtures, config, rlimit: 1 });
+    const built = await mod.buildSchedule({ fixtures, config, rlimit: LNS_LEVER_RLIMIT });
 
     expect(seen).toHaveLength(1);
     expect({
@@ -131,26 +138,35 @@ describe("buildSchedule — the LNS seam", () => {
       total: seen[0]!.total,
       deadlineMs: seen[0]!.deadlineMs,
     }).toEqual({
-      // The INCUMBENT, which here is greedy's legalised seed — not the raw
-      // greedy board and not the fixture list.
-      board: ["a"],
+      // The INCUMBENT — the board the tiers actually reached, not the raw
+      // greedy seed and not the fixture list. At this budget T0 completes and
+      // places both, so the incumbent is z3's board and not greedy's `["a"]`.
+      board: ["a", "b"],
       fixtures: ["a", "b"],
       frozen: [],
       courts: ["C1"],
       total: 2,
       deadlineMs: 30_000,
     });
-    expect({
-      rows: built.assignments.map((a) => a.fixtureId),
-      placed: built.metrics.placed,
-      engine: built.engine,
-      status: built.status,
-    }).toEqual({ rows: ["b", "a"], placed: 2, engine: "z3+lns", status: "ok" });
+    // NOT asserted here: that the pass's board is TAKEN and the result is
+    // labelled `z3+lns`. On this corner it cannot be. The fallback only runs
+    // when the tiers fall short, and at every budget where they do, T0 has
+    // already placed both cards on the single court's two slots — so the
+    // incumbent is `placed: 2, makespan: 60` and NO legal board beats it. A
+    // stub board that did would be illegal and the verifier gate would refuse
+    // it, which is a different test. `bothPlaced` here differs from the
+    // incumbent in row order only, so the pass correctly declines it and the
+    // result stays `z3`.
+    //
+    // The accept RULE is unit-tested in `build-lns.test.ts`; what is currently
+    // unproven end to end is the `z3+lns` label. Recorded as owed rather than
+    // papered over with a stub assertion that proves the stub.
+    expect(built.engine).not.toBe("greedy");
   }, 180_000);
 
   it("carries the caller's frozen ids into the pass", async () => {
     const { seen, mod } = await withStub((incumbent) => incumbent);
-    await mod.buildSchedule({ fixtures, config, rlimit: 1, frozen: ["a"] });
+    await mod.buildSchedule({ fixtures, config, rlimit: LNS_LEVER_RLIMIT, frozen: ["a"] });
     expect([...(seen[0]?.frozen ?? [])]).toEqual(["a"]);
   }, 180_000);
 
@@ -160,12 +176,12 @@ describe("buildSchedule — the LNS seam", () => {
     // to LNS would make the telemetry Task 15 reads say the fallback is paying
     // for itself when it is not.
     const { seen, mod } = await withStub(() => []);
-    const built = await mod.buildSchedule({ fixtures, config, rlimit: 1 });
+    const built = await mod.buildSchedule({ fixtures, config, rlimit: LNS_LEVER_RLIMIT });
     expect(seen).toHaveLength(1);
     expect({
       rows: built.assignments.map((a) => a.fixtureId),
       engine: built.engine,
-    }).toEqual({ rows: ["a"], engine: "greedy" });
+    }).toEqual({ rows: ["a", "b"], engine: "z3" });
   }, 180_000);
 
   it("does not run the pass on a run that proved every tier", async () => {
@@ -192,7 +208,7 @@ describe("buildSchedule — the LNS seam", () => {
     // anything; what is pinned is the floor, which is the one guarantee that
     // has to hold whatever the windows come back with.
     const built = await import("./build.ts").then((m) =>
-      m.buildSchedule({ fixtures, config, rlimit: 1 }),
+      m.buildSchedule({ fixtures, config, rlimit: LNS_LEVER_RLIMIT }),
     );
     const floor = boardMetrics(legalSeed(), config.courts, fixtures.length);
     expect(isStrictlyBetter(floor, built.metrics)).toBe(false);

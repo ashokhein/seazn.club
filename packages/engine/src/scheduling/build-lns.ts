@@ -78,6 +78,16 @@ import type { Assignment, SchedulableFixture } from "./calendar.ts";
 
 /** The measured `COMPONENT_MOVABLE_LIMIT`, reused deliberately. */
 export const LNS_WINDOW_LIMIT = 50;
+/**
+ * How much of a window the fixtures the board never placed may take.
+ *
+ * HALF, so the row half of a window can never be squeezed to nothing. That is
+ * not a tuning choice, it is what keeps the plan a PLAN: the rows are the only
+ * thing distinguishing one window from the next, so a head allowed to fill the
+ * cap makes every window identical and the pass collapses to a single
+ * re-solve — inert at exactly the scale it was written for.
+ */
+export const LNS_UNPLACED_SHARE = LNS_WINDOW_LIMIT / 2;
 
 /** One neighbourhood, as the injected solve sees it. */
 export interface LnsWindow {
@@ -115,8 +125,10 @@ export interface LnsInput {
   /** The immovable board the caller was given. Never windowed. */
   existing?: readonly Assignment[];
   /** Fixture ids that may not move (POLISH). Excluded from every window AND
-   *  handed to the window solve as `existing`, so they are immovable on both
-   *  sides of the seam rather than merely un-chosen. */
+   *  pinned as `locked` fixtures in every window, so they are immovable on both
+   *  sides of the seam rather than merely un-chosen. NOT passed as `existing` —
+   *  that is the distinction this file's header exists to make, and a pinned
+   *  fixture is the half of it that stays visible to the objective. */
   frozen?: ReadonlySet<string>;
   /** The configured courts, for `boardMetrics`. The window solve applies R3
    *  itself; nothing here reintroduces a court. */
@@ -229,12 +241,13 @@ export async function improveByWindows(input: LnsInput): Promise<LnsOutput> {
  * Each court's own cards first — that is where imbalance and same-court slack
  * live — then the tail of the board, which is where makespan lives.
  *
- * EVERY window also carries the fixtures the board did not place. `placed` is
- * the top of D3's ordering, so a window that cannot raise it cannot improve the
- * board's rank at all except in the tiers below it; and an unplaced fixture has
- * no court and no start, so it belongs to no court window and would otherwise
- * be unreachable to this pass for the rest of the run. They go FIRST inside the
- * cap for the same reason.
+ * Every window also carries fixtures the board did not place. `placed` is the
+ * top of D3's ordering, so a window that cannot raise it cannot improve the
+ * board's rank except in the tiers below; and an unplaced fixture has no court
+ * and no start, so it belongs to no court window and would otherwise be
+ * unreachable to this pass for the rest of the run. They take at most
+ * `LNS_UNPLACED_SHARE` of a window and are ROTATED across the plan rather than
+ * repeated into all of it — see the body for why repeating them is inert.
  *
  * Ties break on `fixtureId` everywhere, so the plan is a function of the input
  * and not of `Array.prototype.sort`'s stability.
@@ -259,15 +272,42 @@ function* windowsOf(
 
   const byStart = (x: Assignment, y: Assignment): number =>
     x.startAt - y.startAt || (x.fixtureId < y.fixtureId ? -1 : x.fixtureId > y.fixtureId ? 1 : 0);
-  const take = (rows: readonly Assignment[]): ReadonlySet<string> =>
-    new Set([...unplaced, ...rows.map((a) => a.fixtureId)].slice(0, LNS_WINDOW_LIMIT));
 
-  for (const court of [...byCourt.keys()].sort()) {
-    yield take([...byCourt.get(court)!].sort(byStart));
+  /** The ROW half of each window: one group per court, then the board's tail.
+   *  May be empty — a run whose budget died before placing anything has no rows
+   *  to window around, and that is the case with the most to gain. */
+  const rowGroups: Assignment[][] = [...byCourt.keys()]
+    .sort()
+    .map((court) => [...byCourt.get(court)!].sort(byStart));
+  if (movable.length > 0) rowGroups.push([...movable].sort((a, b) => byStart(b, a)));
+
+  // THE UNPLACED SET IS ROTATED ACROSS THE WINDOWS, NOT REPEATED INTO ALL OF
+  // THEM. Prepending every unplaced id and slicing to the cap looks harmless
+  // and is INERT at exactly the scale this pass exists for: past
+  // `LNS_WINDOW_LIMIT` unplaced the head alone fills every window, each court
+  // group and the tail resolve to the SAME set, the dedupe collapses the plan
+  // to one window, and the neighbourhood search becomes a single oversized
+  // re-solve. Which is precisely the 200-fixture budget-death board.
+  //
+  // Rotating by `step` gives each window a different slice, and degenerates the
+  // right way: at 25 or fewer unplaced the rotation is the whole set every
+  // time, which is what we want — a handful of homeless cards deserve a chance
+  // against EVERY court's context, and the windows still differ by their rows.
+  const step = Math.min(LNS_UNPLACED_SHARE, unplaced.length);
+  // Enough windows to visit every unplaced fixture at least once, even when
+  // there are no rows to hang them on.
+  const windowCount = Math.max(
+    rowGroups.length,
+    step === 0 ? 0 : Math.ceil(unplaced.length / step),
+  );
+
+  for (let i = 0; i < windowCount; i++) {
+    // `step <= unplaced.length`, so the modulo cannot repeat an id INSIDE one
+    // window; it only wraps between them.
+    const head = Array.from({ length: step }, (_, k) => unplaced[(i * step + k) % unplaced.length]!);
+    const rows = (rowGroups[i] ?? []).map((a) => a.fixtureId);
+    // The rows take what the head left, so a window is never all-head: the
+    // board half is what makes one window differ from the next.
+    yield new Set([...head, ...rows.slice(0, LNS_WINDOW_LIMIT - head.length)]);
   }
-  if (movable.length > 0) yield take([...movable].sort((a, b) => byStart(b, a)));
-  // Nothing on the board to window around, but fixtures still waiting for a
-  // slot. Without this the one case where LNS has the most to offer — a run
-  // whose budget died before it placed anything — gets no window at all.
-  else if (unplaced.length > 0) yield take([]);
 }

@@ -25,7 +25,12 @@
 //     makespan 210 against the 90 it started at. `existing` constrains the
 //     model and is invisible to the objective.
 import { afterAll, describe, expect, it } from "vitest";
-import { improveByWindows, LNS_WINDOW_LIMIT, type LnsWindow } from "./build-lns.ts";
+import {
+  improveByWindows,
+  LNS_UNPLACED_SHARE,
+  LNS_WINDOW_LIMIT,
+  type LnsWindow,
+} from "./build-lns.ts";
 import { buildSchedule } from "./build.ts";
 import { boardMetrics } from "./build-objectives.ts";
 import { resetZ3 } from "./z3-load.ts";
@@ -269,6 +274,44 @@ describe("improveByWindows — the window plan and the acceptance rule", () => {
       { n: 50, first: "f00", last: "f49", pinned: 10 },
       { n: 50, first: "f10", last: "f59", pinned: 10 },
     ]);
+  });
+
+  it("gives each window a DIFFERENT slice of a large unplaced set", async () => {
+    // THE SCALE THIS PASS EXISTS FOR. Prepending every unplaced id and then
+    // slicing to the cap is inert past `LNS_WINDOW_LIMIT` unplaced: the head
+    // alone fills every window, each court group and the tail resolve to the
+    // SAME set, the dedupe collapses the plan to ONE window, and there is no
+    // neighbourhood search left — just one oversized re-solve. That is the
+    // 200-fixture budget-death board, so this is the case that decides whether
+    // the fallback does anything at all at scale.
+    const onBoard = [fx("p0"), fx("p1")];
+    const waiting = Array.from({ length: 60 }, (_, i) => fx(`u${String(i).padStart(2, "0")}`));
+    const fixtures = [...onBoard, ...waiting];
+    const board = [card("p0", "C1", 0), card("p1", "C1", 30)];
+    const s = spy();
+    await improveByWindows({
+      board,
+      fixtures,
+      courts: ["C1", "C2"],
+      total: fixtures.length,
+      deadlineMs: 20_000,
+      elapsed: () => 0,
+      solveWindow: s.solveWindow,
+    });
+
+    const asked = s.calls.map((w) => free(w));
+    expect(asked.length).toBeGreaterThan(1);
+    // DISTINCT, which is what the dedupe would otherwise have eaten.
+    expect(new Set(asked.map((f) => f.join(","))).size).toBe(asked.length);
+    // Every window stays inside the cap, and the head never squeezes the rows
+    // out entirely — the rows are the only thing telling two windows apart.
+    expect(asked.every((f) => f.length <= LNS_WINDOW_LIMIT)).toBe(true);
+    expect(
+      asked.every((f) => f.filter((id) => id.startsWith("u")).length <= LNS_UNPLACED_SHARE),
+    ).toBe(true);
+    // And no fixture is stranded: rotating the set across the plan has to VISIT
+    // all 60, or a card the board never placed is unreachable for the whole run.
+    expect(new Set(asked.flat().filter((id) => id.startsWith("u"))).size).toBe(60);
   });
 
   it("stops launching windows once the caller's run budget is gone", async () => {

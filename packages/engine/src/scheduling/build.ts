@@ -134,8 +134,13 @@ export const BUILD_MAIN_RLIMIT_SHARE = 0.75;
 /** The outer safety cap. Not the stopping rule; see the header. */
 export const DEFAULT_BUILD_WALL_MS = 30_000;
 /** T0 plus the three lexicographic tiers. `tiersCompleted` reaching this is
- *  what "the board is lexicographically optimal" means. */
-const TIER_COUNT = 4;
+ *  what "the board is lexicographically optimal" means.
+ *
+ *  EXPORTED for the web layer (ruling R17), which was carrying its own
+ *  `TIERS_TOTAL = 4`. Two copies of a number that means "the solver proved
+ *  every tier" drift the moment a tier is added, and the copy that drifts is
+ *  the one deciding what an organiser is told. */
+export const TIER_COUNT = 4;
 
 /**
  * One run's z3 resource budget, shared by every solve the run performs
@@ -178,6 +183,20 @@ interface RunBudget {
   readonly base: number;
   /** Consumed so far by every solve in this run. MEASURED, never assumed. */
   spent: number;
+  /**
+   * What the run has DRAWN, as opposed to what it spent: each phase is charged
+   * the smaller of what it used and what it was allotted.
+   *
+   * The two differ because a check OVERSHOOTS (see `rlimitSpent`), and the
+   * overshoot is z3's, not the next phase's to pay for. Charging it whole makes
+   * the reserve imaginary: MEASURED, the main phase's last check overran its
+   * 75% share by more than the remaining 25% in EVERY configuration tried —
+   * 500_000 spent 1_045_248, 100_000 spent 103_661, 260_000 spent 288_533 — so
+   * `spent < total` was false the moment the tiers fell short, and the fallback
+   * never ran on a single board it exists for. Allotments are drawn against
+   * this; `spent` stays the honest total and is what `rlimitSpent` reports.
+   */
+  drawn: number;
 }
 
 /**
@@ -359,6 +378,69 @@ export function rejectedBlockingConflicts(
   );
 }
 
+/**
+ * A board's conflicts, in full — the rows' own, PLUS a row per fixture that is
+ * not on the board at all.
+ *
+ * `validateAssignments` answers for the rows it is handed; the fixtures that are
+ * NOT on the board are the other half of the truth and it cannot see them.
+ * Without this a solver that placed nothing hands back an empty conflict list
+ * and reads as a clean board.
+ *
+ * Three sources, in order of how well established they are, because a fabricated
+ * reason is fed straight to the repair prompt:
+ *
+ *   1. greedy's own diagnosis, which names the binding constraint;
+ *   2. the blocking conflict that disqualified the row from the seed;
+ *   3. only then a `no_slot` — and `proved` decides whether its detail claims a
+ *      ceiling (T0 came back unsat) or admits the budget ran out.
+ *
+ * EXPORTED for the web layer (ruling R17). It was module-private, so the API
+ * layer grew a second copy of the same three-source rule; two copies of "what
+ * actually happened to this card" will drift, and the drift is invisible until
+ * an organiser is told the wrong reason. Behaviour is unchanged from the closure
+ * it replaces — the captured values are now parameters and nothing else moved.
+ */
+export function conflictsFor(input: {
+  board: readonly Assignment[];
+  fixtures: readonly SchedulableFixture[];
+  config: BuildConfig;
+  existing: readonly Assignment[];
+  dependencies: readonly OrderDependency[];
+  /** `slotFixtures`' OWN conflicts for the raw greedy seed. */
+  greedyConflicts: readonly Conflict[];
+  /** Seed rows dropped by the legalisation pass, and what disqualified them. */
+  disqualified: ReadonlyMap<string, readonly Conflict[]>;
+  /** Whether a proof backs an absence, or the budget merely ran out. */
+  proved: boolean;
+}): Conflict[] {
+  const { board, fixtures, config, existing, dependencies, proved } = input;
+  const onBoard = new Set(board.map((a) => a.fixtureId));
+  const out: Conflict[] = validateAssignments(board, config, existing, dependencies);
+  for (const f of fixtures) {
+    if (onBoard.has(f.id)) continue;
+    const greedySaid = input.greedyConflicts.filter((c) => c.fixtureId === f.id);
+    if (greedySaid.length > 0) {
+      out.push(...greedySaid);
+      continue;
+    }
+    const dropped = input.disqualified.get(f.id);
+    if (dropped !== undefined) {
+      out.push(...dropped);
+      continue;
+    }
+    out.push({
+      fixtureId: f.id,
+      reason: "no_slot",
+      detail: proved
+        ? "no legal slot in the lattice"
+        : "left unplaced when the solver's budget expired",
+      rule: RULE_BY_REASON.no_slot,
+    });
+  }
+  return out;
+}
+
 export function buildSchedule(input: BuildInput): Promise<BuildResult> {
   // `withZ3Lock` is NOT reentrant. It is taken exactly here, and nothing below
   // may take it again — `loadZ3` deliberately does not, neither does anything
@@ -428,53 +510,29 @@ async function solveBuild(
   const seedAssignments = rawSeed.assignments.filter((a) => !disqualified.has(a.fixtureId));
   const seedMetrics = boardMetrics(seedAssignments, config.courts, fixtures.length);
 
-  /**
-   * A board's conflicts, in full.
-   *
-   * `validateAssignments` answers for the rows it is handed; the fixtures that
-   * are NOT on the board are the other half of the truth and it cannot see
-   * them. Three sources, in order of how well established they are, because a
-   * fabricated reason is fed straight to the repair prompt:
-   *
-   *   1. greedy's own diagnosis, which names the binding constraint;
-   *   2. the blocking conflict that disqualified the row from the seed;
-   *   3. only then a `no_slot` — and `proved` decides whether its detail claims
-   *      a ceiling (T0 came back unsat) or admits the budget ran out.
-   */
-  const conflictsFor = (board: readonly Assignment[], proved: boolean): Conflict[] => {
-    const onBoard = new Set(board.map((a) => a.fixtureId));
-    const out: Conflict[] = validateAssignments(board, verifyConfig, existing, dependencies);
-    for (const f of fixtures) {
-      if (onBoard.has(f.id)) continue;
-      const greedySaid = rawSeed.conflicts.filter((c) => c.fixtureId === f.id);
-      if (greedySaid.length > 0) {
-        out.push(...greedySaid);
-        continue;
-      }
-      const dropped = disqualified.get(f.id);
-      if (dropped !== undefined) {
-        out.push(...dropped);
-        continue;
-      }
-      out.push({
-        fixtureId: f.id,
-        reason: "no_slot",
-        detail: proved
-          ? "no legal slot in the lattice"
-          : "left unplaced when the solver's budget expired",
-        rule: RULE_BY_REASON.no_slot,
-      });
-    }
-    return out;
-  };
+  /** This run's bindings for the exported `conflictsFor`, which carries the
+   *  three-source rule and the reasoning behind it. */
+  const conflictsForBoard = (board: readonly Assignment[], proved: boolean): Conflict[] =>
+    conflictsFor({
+      board,
+      fixtures,
+      config: verifyConfig,
+      existing,
+      dependencies,
+      greedyConflicts: rawSeed.conflicts,
+      disqualified,
+      proved,
+    });
 
-  /** Assigned once the solver exists. Before that nothing has been spent, and
-   *  a `greedy(...)` return on one of the early exits says so honestly. */
-  let runBudget: RunBudget | undefined;
+  /** Filled once the solver exists — `greedy(...)` is defined before that and
+   *  can return from an early exit, where nothing has been spent and the result
+   *  should say so honestly. A ref rather than a `let` so the binding itself
+   *  stays `const`. */
+  const runBudget: { current: RunBudget | undefined } = { current: undefined };
 
   const greedy = (status: BuildStatus, budgetExpired = false): BuildResult => ({
     assignments: seedAssignments,
-    conflicts: conflictsFor(seedAssignments, false),
+    conflicts: conflictsForBoard(seedAssignments, false),
     metrics: seedMetrics,
     engine: "greedy",
     status,
@@ -482,7 +540,7 @@ async function solveBuild(
     budgetExpired,
     elapsedMs: elapsed(),
     moved: 0,
-    rlimitSpent: runBudget?.spent ?? 0,
+    rlimitSpent: runBudget.current?.spent ?? 0,
   });
 
   // 2. The lattice.
@@ -569,14 +627,21 @@ async function solveBuild(
   // allowance — and is capped at the slice its caller allotted it; a top-level
   // run opens a fresh one and keeps `1 - BUILD_MAIN_RLIMIT_SHARE` of it back
   // for the fallback.
-  runBudget = inherited ?? {
+  runBudget.current = inherited ?? {
     total: rlimit,
     base: rlimitCount(solver),
     spent: 0,
+    drawn: 0,
   };
-  const budget = runBudget;
+  const budget = runBudget.current;
   const phaseCap =
-    inherited === undefined ? Math.floor(rlimit * BUILD_MAIN_RLIMIT_SHARE) : rlimit;
+    inherited === undefined
+      // `Math.max(1, ...)` because the floor is 0 for `rlimit <= 1`, and a main
+      // phase allotted nothing declines every check while the FALLBACK still
+      // gets one — the reserve inverted, and on the exact configuration a
+      // budget that small is used to produce.
+      ? Math.max(1, Math.floor(rlimit * BUILD_MAIN_RLIMIT_SHARE))
+      : rlimit;
   /** This solve's ceiling, expressed in the RUN's units so both caps are one
    *  comparison: it may not push `runBudget.spent` past here, nor past the run
    *  total however generous its own slice was. */
@@ -609,7 +674,12 @@ async function solveBuild(
    *  not assumed from the limit: a check that finishes early spends less, and
    *  charging it the whole slice would starve the fallback for nothing. */
   const settle = (): void => {
-    budget.spent = rlimitCount(solver) - budget.base;
+    // Clamped: a negative delta would make `room` enormous and silently
+    // disable the cap altogether. Unreachable today — `withZ3Lock` keeps a
+    // context reset out of the middle of a run, and the counter is monotonic
+    // — but a budget that fails OPEN is not a failure mode worth leaving to
+    // an invariant held somewhere else.
+    budget.spent = Math.max(0, rlimitCount(solver) - budget.base);
   };
   armTimeout();
 
@@ -861,14 +931,16 @@ async function solveBuild(
   //     improved, so this can never make the answer worse — the same guarantee
   //     the greedy seed gives, and the reason it needs no escape hatch either.
   let usedLns = false;
-  if (
-    allowLns &&
-    tiersCompleted < TIER_COUNT &&
-    elapsed() < wallMs &&
-    budget.spent < budget.total
-  ) {
+  // Close this phase's account. It is charged its SHARE, never its overshoot —
+  // see `RunBudget.drawn`. Without this the fallback is unreachable by
+  // construction: the tiers only fall short when their last check overran, and
+  // that overrun is reliably bigger than the whole reserve.
+  budget.drawn = Math.min(budget.spent, phaseCap);
+  if (allowLns && tiersCompleted < TIER_COUNT && elapsed() < wallMs && budget.drawn < budget.total) {
     const solveWindow = async (w: LnsWindow): Promise<readonly Assignment[]> => {
-      const left = budget.total - budget.spent;
+      const left = budget.total - budget.drawn;
+      const drawnBefore = budget.spent;
+      const allot = Math.max(1, Math.floor(left / (w.of - w.index)));
       const sub = await solveBuild(
         {
           fixtures: w.fixtures,
@@ -882,12 +954,16 @@ async function solveBuild(
           // to come, this one included, so the division re-levels after every
           // over- or under-spend rather than committing the whole plan up front
           // to a split the first window has already invalidated.
-          rlimit: Math.max(1, Math.floor(left / (w.of - w.index))),
+          rlimit: allot,
           wallMs: Math.max(1, wallMs - elapsed()),
         },
         false,
         budget,
       );
+      // Same rule as the main phase: a window is charged what it was allotted,
+      // not what its last check overran to, so one window cannot swallow the
+      // windows after it.
+      budget.drawn += Math.min(budget.spent - drawnBefore, allot);
       return sub.assignments;
     };
     const out = await improveByWindows({
@@ -902,12 +978,17 @@ async function solveBuild(
       total: fixtures.length,
       deadlineMs: wallMs,
       elapsed,
-      hasBudget: () => budget.spent < budget.total,
+      hasBudget: () => budget.drawn < budget.total,
       solveWindow,
     });
     if (isStrictlyBetter(out.metrics, incumbentMetrics)) {
       incumbent = out.board;
       incumbentMetrics = out.metrics;
+      // DEFENSIVE, and inert as the guard above is written: `already_optimal`
+      // needs `tiersCompleted === TIER_COUNT`, which this arm excludes. Kept
+      // because the day somebody lets the fallback run on a fully-proved board,
+      // an LNS improvement reported as `already_optimal` is a lie about a proof
+      // — and the failure would be silent.
       improved = true;
       usedLns = true;
     }
@@ -920,7 +1001,7 @@ async function solveBuild(
   //
   //    `repair.ts` throws `RepairVerificationError` in the analogous place and
   //    this deliberately does not, so the loudness has to come from somewhere.
-  const conflicts = conflictsFor(incumbent, proved);
+  const conflicts = conflictsForBoard(incumbent, proved);
   const ours = new Set(incumbent.map((a) => a.fixtureId));
   const rejected = rejectedBlockingConflicts(rawSeedConflicts, conflicts, ours);
   if (rejected.length > 0) {
