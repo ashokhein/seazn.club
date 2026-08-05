@@ -52,13 +52,15 @@ jobs:
           filters: |
             engine:
               - 'packages/engine/**'
-              - 'package-lock.json'
               - 'pnpm-lock.yaml'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
       - uses: actions/setup-node@v5
         with:
           node-version: 26
-          cache: npm
-      - run: npm ci
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       # Both workspaces in one graph-ordered pass, restored from the Remote
       # Cache when neither TS tree changed. turbo.json's globalDependencies
       # pull in scripts/** + tsconfig.scripts.json, which apps/web's typecheck
@@ -171,11 +173,15 @@ jobs:
         continue-on-error: true # advisory: action's PR-API call is flaky; findings still surface
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
       - uses: actions/setup-node@v5
         with:
           node-version: 26
+      # Reads pnpm-lock.yaml only — this job installs nothing, and must not start.
       - name: Dependency audit (high+)
-        run: npm audit --audit-level=high
+        run: pnpm audit --audit-level=high
         continue-on-error: true
 
   container:
@@ -295,11 +301,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
       - uses: actions/setup-node@v5
         with:
           node-version: 26
-          cache: npm
-      - run: npm ci
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
 
       # Flyway CLI is downloaded by scripts/flyway.sh on first use; cache it
       # per pinned version so CI doesn't re-download every run.
@@ -429,9 +438,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: apps/web/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('apps/web/src/**/*.js', 'apps/web/src/**/*.jsx', 'apps/web/src/**/*.ts', 'apps/web/src/**/*.tsx') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/web/src/**/*.js', 'apps/web/src/**/*.jsx', 'apps/web/src/**/*.ts', 'apps/web/src/**/*.tsx') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
+            ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml') }}-
 
       # On a cache hit turbo restores apps/web/.next/** (minus .next/cache,
       # which the actions/cache step above owns) — including the standalone
@@ -534,11 +543,18 @@ jobs:
       STAGING_STRIPE_SECRET_KEY: ${{ secrets.STAGING_STRIPE_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
       - uses: actions/setup-node@v5 # scripts/flyway.sh parses DATABASE_URL with node
         with:
           node-version: 26
-          cache: npm
-      - run: npm ci --omit=dev # stripe-sync.ts imports postgres + stripe (prod deps — devDeps unused here)
+          cache: pnpm
+      # stripe-sync.ts and sync-sports.ts import postgres, stripe and
+      # @seazn/engine/sports from the repo ROOT, so those three are root
+      # PRODUCTION dependencies — --prod honours the section, unlike npm ci
+      # --omit=dev which used to find them hoisted out of apps/web.
+      - run: pnpm install --frozen-lockfile --prod
 
       - name: Cache Flyway CLI
         uses: actions/cache@v4

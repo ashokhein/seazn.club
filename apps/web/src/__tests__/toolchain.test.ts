@@ -201,6 +201,13 @@ describe("toolchain: no V8 heap ceiling for typecheck", () => {
   });
 });
 
+function rootManifest(): {
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+} {
+  return JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8"));
+}
+
 describe("toolchain: pnpm workspace", () => {
   it("declares the workspace and uses the workspace protocol", () => {
     const ws = readFileSync(join(REPO_ROOT, "pnpm-workspace.yaml"), "utf8");
@@ -235,10 +242,11 @@ describe("toolchain: pnpm workspace", () => {
      * and `@seazn/engine` is a workspace package that scripts/sync-sports.ts
      * imports as `@seazn/engine/sports` while only apps/web depended on it.
      */
-    const root = JSON.parse(
-      readFileSync(join(REPO_ROOT, "package.json"), "utf8"),
-    ) as { devDependencies?: Record<string, string> };
-    const declared = new Set(Object.keys(root.devDependencies ?? {}));
+    const root = rootManifest();
+    const declared = new Set([
+      ...Object.keys(root.dependencies ?? {}),
+      ...Object.keys(root.devDependencies ?? {}),
+    ]);
     for (const dep of [
       "@anthropic-ai/sdk",
       "@seazn/engine",
@@ -250,6 +258,24 @@ describe("toolchain: pnpm workspace", () => {
       "zod",
     ]) {
       expect(declared.has(dep), `root must declare ${dep}`).toBe(true);
+    }
+  });
+
+  it("what the deploy job's --prod install needs is a real dependency", () => {
+    /**
+     * ci.yml's deploy-staging job installs with `--prod`, then runs
+     * `sync:sports` (postgres + @seazn/engine/sports) and `stripe:sync`
+     * (postgres + stripe) from the repo ROOT. Under `npm ci --omit=dev` those
+     * three arrived anyway, hoisted out of apps/web's PRODUCTION dependencies.
+     * pnpm --prod honours the section they are declared in, so parking them in
+     * devDependencies — where every other root script dep correctly lives —
+     * would drop them from the deploy install and ERR_MODULE_NOT_FOUND every
+     * staging release.
+     */
+    const root = rootManifest();
+    const prod = new Set(Object.keys(root.dependencies ?? {}));
+    for (const dep of ["@seazn/engine", "postgres", "stripe"]) {
+      expect(prod.has(dep), `root dependencies must include ${dep}`).toBe(true);
     }
   });
 
@@ -267,10 +293,7 @@ describe("toolchain: pnpm workspace", () => {
      * and nothing else does. Hoisting used to supply it; under pnpm the root
      * would silently have no language service at all.
      */
-    const root = JSON.parse(
-      readFileSync(join(REPO_ROOT, "package.json"), "utf8"),
-    ) as { devDependencies?: Record<string, string> };
-    const declared = new Set(Object.keys(root.devDependencies ?? {}));
+    const declared = new Set(Object.keys(rootManifest().devDependencies ?? {}));
     for (const dep of ["@types/node", "typescript", "typescript-native"]) {
       expect(declared.has(dep), `root must declare ${dep}`).toBe(true);
     }
@@ -330,5 +353,87 @@ describe("toolchain: z3 wasm tracing survives the linker change", () => {
     ) as { dependencies: Record<string, string> };
     expect(engine.dependencies["z3-solver"]).toBeDefined();
     expect(web.dependencies["z3-solver"]).toBe(engine.dependencies["z3-solver"]);
+  });
+});
+
+describe("toolchain: every install site is pnpm", () => {
+  const WORKFLOW_DIR = join(REPO_ROOT, ".github/workflows");
+  const workflows = () =>
+    readdirSync(WORKFLOW_DIR)
+      .filter((f) => f.endsWith(".yml"))
+      .map((f) => [f, readFileSync(join(WORKFLOW_DIR, f), "utf8")] as const);
+
+  it("no workflow still installs, audits or caches with npm", () => {
+    /**
+     * The cutover is one-shot — npm errors EUNSUPPORTEDPROTOCOL on
+     * `workspace:*`, and package-lock.json is gone — so a leftover `npm ci`
+     * does not degrade, it fails the job outright. `cache: npm` is the quiet
+     * one: setup-node looks for a package-lock.json to hash, finds none, and
+     * the step still succeeds while caching nothing at all.
+     */
+    const offenders: string[] = [];
+    for (const [file, text] of workflows()) {
+      for (const [i, line] of text.split("\n").entries()) {
+        if (/^\s*#/.test(line)) continue;
+        if (/\bnpm (ci|install|audit)\b/.test(line) || /cache:\s*['"]?npm['"]?\s*$/.test(line)) {
+          offenders.push(`${file}:${i + 1} ->${line}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("every workflow that installs also sets pnpm up first", () => {
+    /**
+     * Node 26 dropped corepack, so there is no bundled shim to activate:
+     * without pnpm/action-setup the runner has no pnpm at all. It must also
+     * come BEFORE setup-node, because `cache: pnpm` asks pnpm for its store
+     * path and fails if pnpm is not yet on PATH.
+     */
+    const offenders: string[] = [];
+    for (const [file, text] of workflows()) {
+      if (!/\bpnpm (install|audit)\b/.test(text)) continue;
+      const setup = text.indexOf("pnpm/action-setup");
+      if (setup === -1) {
+        offenders.push(`${file}: installs with pnpm but never sets it up`);
+        continue;
+      }
+      const node = text.indexOf("actions/setup-node");
+      if (node !== -1 && node < setup) {
+        offenders.push(`${file}: setup-node precedes pnpm/action-setup`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("no workflow keys a cache on the deleted npm lockfile", () => {
+    const offenders: string[] = [];
+    for (const [file, text] of workflows()) {
+      for (const [i, line] of text.split("\n").entries()) {
+        if (/^\s*#/.test(line)) continue;
+        if (line.includes("package-lock.json")) offenders.push(`${file}:${i + 1}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("the Dockerfile installs with pnpm and copies what pnpm reads", () => {
+    /**
+     * `.npmrc` is the one that fails silently, and it is the reason this
+     * assertion names files rather than just the install command. It carries
+     * the public-hoist patterns for the three serverExternalPackages; leave it
+     * out of the image and `pnpm install` succeeds, `next build` succeeds, and
+     * the standalone server cannot resolve pdfkit or z3-solver at runtime —
+     * exactly the failure the local build was fixed for, reintroduced only in
+     * production.
+     */
+    const dockerfile = readFileSync(join(REPO_ROOT, "Dockerfile"), "utf8");
+    expect(dockerfile).toContain("pnpm install --frozen-lockfile");
+    expect(dockerfile).not.toMatch(/^\s*RUN[^\n#]*\bnpm ci\b/m);
+    for (const f of ["pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc"]) {
+      expect(dockerfile, `Dockerfile must COPY ${f}`).toMatch(
+        new RegExp(`^COPY[^\\n]*${f.replace(".", "\\.")}`, "m"),
+      );
+    }
   });
 });
