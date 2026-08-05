@@ -10,10 +10,20 @@ import "server-only";
 // itself the audit trail. Everything happens inside one withTenant transaction:
 // a partial merge is worse than none.
 import type postgres from "postgres";
+import { validateAssignments, type Conflict } from "@seazn/engine/scheduling";
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { recomputePlayerStats } from "./player-stats";
+import {
+  divisionFixtures,
+  feedDependencies,
+  loadSettings,
+  peopleByEntrant,
+  siblingAssignments,
+  toAssignment,
+  toVerifyConfig,
+} from "./schedule";
 import type { PersonRow } from "./persons";
 
 type Tx = postgres.TransactionSql;
@@ -55,9 +65,20 @@ interface PersonFull {
   merged_into: string | null;
 }
 
+/** One published board the merge changed the meaning of, and what the verifier
+ *  now says about it. */
+export interface RevealedConflicts {
+  division_id: string;
+  conflicts: Conflict[];
+}
+
 export interface MergeResult {
   merge_id: string;
   survivor: PersonRow;
+  /** Boards that were legal when they were published and are not any more
+   *  (spec §5) — empty when the merge surfaced nothing. A REPORT, never a
+   *  refusal: see `reverifyBoards`. */
+  revealed: RevealedConflicts[];
 }
 
 /**
@@ -92,7 +113,7 @@ export async function mergePersons(
   if (survivorId === absorbedId) {
     throw new HttpError(422, "cannot merge a person into itself", "MERGE_SELF");
   }
-  return withTenant(auth.orgId, async (tx) => {
+  const merged = await withTenant(auth.orgId, async (tx) => {
     const [survivor] = await tx<PersonFull[]>`select * from persons where id = ${survivorId}`;
     if (!survivor) throw new HttpError(404, "person not found", "PERSON_NOT_FOUND");
     const [absorbed] = await tx<PersonFull[]>`select * from persons where id = ${absorbedId}`;
@@ -199,6 +220,70 @@ export async function mergePersons(
       returning id`;
 
     return { merge_id: merge!.id, survivor: updated! };
+  });
+
+  // 8. Re-verify, AFTER the write has committed. Two people on two courts at
+  //    once was a legal board a moment ago; one person on two courts is not, and
+  //    the organiser is the only one who can move a card. `.catch` mirrors the
+  //    post-commit side effects in schedule.ts (`afterScheduleWrite`, the
+  //    official-notice emails): a report that fails may not unmake a merge that
+  //    succeeded, and the merge has no transaction left to roll back anyway.
+  return { ...merged, revealed: await reverifyBoards(auth, survivorId).catch(() => []) };
+}
+
+/**
+ * Every PUBLISHED board the survivor now appears in, re-verified (spec §5).
+ *
+ * Reported, never enforced. Per the W4 delta rule (#399) the write gate refuses
+ * only what a change INTRODUCED, and this change introduces conflicts on purpose
+ * — refusing the merge would leave the duplicate in place and the board just as
+ * wrong, with nothing the organiser could do about either. So the merge is done
+ * by the time this runs, and it runs in its own transaction.
+ *
+ * `status <> 'setup'` is what "published" means here: `publishSchedule` is the
+ * only thing that moves a division off `setup`, so a board still being drafted
+ * has no audience to disappoint and is left out.
+ *
+ * The whole assembly — settings, fixtures, people, siblings — is the one
+ * `validateSchedule` uses, deliberately: a merge must not invent a second
+ * opinion about what makes a board wrong.
+ */
+async function reverifyBoards(auth: AuthCtx, survivorId: string): Promise<RevealedConflicts[]> {
+  return withTenant(auth.orgId, async (tx) => {
+    const boards = await tx<{ id: string; competition_id: string }[]>`
+      select distinct d.id, d.competition_id
+        from divisions d
+        join entrants e on e.division_id = d.id
+        join entrant_members em on em.entrant_id = e.id
+       where em.person_id = ${survivorId} and d.status <> 'setup'
+       order by d.id`;
+    const out: RevealedConflicts[] = [];
+    for (const board of boards) {
+      const settings = await loadSettings(tx, board.id);
+      const all = await divisionFixtures(tx, board.id);
+      const entrantIds = [
+        ...new Set(all.flatMap((f) => [f.home_entrant_id, f.away_entrant_id])),
+      ].filter((e): e is string => e !== null);
+      const people = await peopleByEntrant(tx, entrantIds);
+      const assignments = all
+        .filter((f) => f.scheduled_at !== null && f.court_label !== null)
+        .map((f) => toAssignment(f, settings.config.matchMinutes, people));
+      if (assignments.length === 0) continue;
+      const siblings = await siblingAssignments(
+        tx,
+        board.id,
+        board.competition_id,
+        settings.config.matchMinutes,
+      );
+      const conflicts = validateAssignments(
+        assignments,
+        toVerifyConfig(settings, all, 0),
+        siblings,
+        feedDependencies(all),
+      );
+      if (conflicts.length > 0) out.push({ division_id: board.id, conflicts });
+    }
+    return out;
   });
 }
 
