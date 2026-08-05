@@ -248,19 +248,41 @@ describe("pool-targeted rules through the single-division AI adapter (#446)", ()
     expect(conflicts.map((c) => c.reason)).toContain("rest");
   });
 
-  // NO startWindow case on THIS path, deliberately, and it is not an oversight
-  // in the fix. `verifyConfig` pins `startWindows: []` outright (schedule-ai.ts,
-  // "the pack's startWindows carry ISO strings … the engine wants epoch ms"), so
-  // the single-division AI referee is blind to EVERY start window, pool-targeted
-  // or not — a second, independent defect that stamping `poolId` cannot reach.
-  // A test here would fail after this fix and mislabel that gap as this bug.
-  // The board path, where `toSlotConfig` does convert the windows, carries the
-  // pool-targeted startWindow assertion instead (above).
-  it("carries the pool id the pinned-empty startWindows cannot yet use", () => {
+  // #458: this path used to pin `startWindows: []`, so the single-division AI
+  // referee was blind to EVERY start window whatever it targeted — pool rules
+  // bound for the board and evaporated for the AI proposal, and `repair-domain`
+  // clipped the repair domain to the same empty config. All three engine-config
+  // builders now go through `buildEngineConstraints`, so the window arrives here
+  // in epoch ms exactly as it does on the board path above.
+  it("a pool-targeted startWindow binds on the AI verify path too", () => {
     const p = pack({
       startWindows: [{ target: { kind: "pool", id: POOL_A }, notAfter: iso(T0 + 40 * MIN) }],
     });
-    expect(verifyConfig(p).constraints?.startWindows).toEqual([]);
-    expect(toEngineAssignments(plan, p)[1]!.poolId).toBe(POOL_A);
+    // Carried, with its pool target intact and its bound converted ISO → ms.
+    expect(verifyConfig(p).constraints?.startWindows).toEqual([
+      { target: { kind: "pool", id: POOL_A }, notAfter: T0 + 40 * MIN },
+    ]);
+    // And it BINDS: f-2 sits in pool A at T0+80min, past the window's notAfter.
+    const assignments = toEngineAssignments(plan, p);
+    expect(assignments[1]!.poolId).toBe(POOL_A);
+    expect(validateAssignments(assignments, verifyConfig(p)).map((c) => c.reason)).toContain(
+      "start_window",
+    );
+  });
+
+  // The guard the assertion above needs: a window keyed on ANOTHER pool must
+  // stay silent, or "carries the window" is satisfied by a builder that matches
+  // every row.
+  it("a startWindow keyed on another pool does not bind on the AI path", () => {
+    const p = pack({
+      startWindows: [
+        {
+          target: { kind: "pool", id: "33333333-3333-4333-8333-333333333333" },
+          notAfter: iso(T0 + 40 * MIN),
+        },
+      ],
+    });
+    const conflicts = validateAssignments(toEngineAssignments(plan, p), verifyConfig(p));
+    expect(conflicts.map((c) => c.reason)).not.toContain("start_window");
   });
 });

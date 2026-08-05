@@ -47,6 +47,11 @@ import { withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { MOVABLE_STATUS, OCCUPYING, peopleByEntrant } from "./schedule";
+import {
+  AI_VERIFY_POLICY,
+  buildEngineConstraints,
+  toEngineStartWindows,
+} from "./engine-constraints";
 import { ScheduleConfig } from "@/server/api-v1/schemas";
 import {
   MAX_REPAIR_ROUNDS,
@@ -1272,55 +1277,40 @@ export function verifyConfigFor(
       : {}),
     perEntrantMinRest: s.perEntrantMinRest,
     matchMinutes: s.matchMinutes,
+    // Through the ONE builder (#458) the board path and the single-division AI
+    // path also go through. `AI_VERIFY_POLICY` pins the three solver knobs inert
+    // — `PackConstraints` types them as bare `string` (the pack is a wire shape)
+    // so this path cannot narrow them — and routes the durable rules to the
+    // top-level `hard` field rather than `constraints.hard`, since
+    // `effectiveHard` merges the two and carrying both would double-count.
+    //
+    // The builder DROPS a start window whose `target.kind` falls outside the
+    // engine's enum, which is the behaviour this site had and the other two did
+    // not. Same reason as ever: `kind` is a bare `string` here, so casting an
+    // unrecognised one through would let the engine silently never match it and
+    // hide that a stored settings row has drifted from the enum.
+    //
+    // PLAN-TIME CONSEQUENCE of carrying start windows at all, flagged rather
+    // than left to be discovered: this function feeds `verifyJoint`, whose
+    // non-blocking conflicts become `result.warnings`, which `planIsAcceptable`
+    // divides by the movable count against SCHEDULING_AI_ESCALATE_WARN_RATIO
+    // (schedule-ai.ts). So `start_window` violations count toward ladder
+    // escalation, and a joint plan that used to look acceptable can escalate a
+    // rung.
+    //
+    // Kept in the ratio on purpose. The pack SHOWS the model these windows
+    // (`PackSettings.constraints.startWindows`), so ignoring them is a real
+    // quality miss — and every other soft constraint the model is shown
+    // (blackout, session window, rest, person overlap) already counts, so
+    // excluding one class would make the heuristic inconsistent in a way nobody
+    // would remember. It cannot change what an org is charged: credits are
+    // quoted up front and escalation spends the already-paid budget. It CAN
+    // bring `stopped_on_budget` forward, which is the honest cost. The ratio is
+    // documented as uncalibrated and is an env knob — that is where it should be
+    // tuned, not by hand-picking which reasons count. Pinned by a test in
+    // competition-schedule-verify.test.ts.
     ...(s.constraints !== null
-      ? {
-          constraints: {
-            ...(s.constraints.restMin !== undefined ? { restMin: s.constraints.restMin } : {}),
-            ...(s.constraints.restByGroup !== undefined
-              ? { restByGroup: s.constraints.restByGroup }
-              : {}),
-            noBackToBack: s.constraints.noBackToBack,
-            // PLAN-TIME CONSEQUENCE, flagged rather than left to be discovered:
-            // this function feeds `verifyJoint`, whose non-blocking conflicts
-            // become `result.warnings`, which `planIsAcceptable` divides by the
-            // movable count against SCHEDULING_AI_ESCALATE_WARN_RATIO
-            // (schedule-ai.ts:1333). So `start_window` violations now count
-            // toward ladder escalation, and a joint plan that used to look
-            // acceptable can escalate a rung.
-            //
-            // Kept in the ratio on purpose. The pack SHOWS the model these
-            // windows (`PackSettings.constraints.startWindows`), so ignoring
-            // them is a real quality miss — and every other soft constraint the
-            // model is shown (blackout, session window, rest, person overlap)
-            // already counts, so excluding one class would make the heuristic
-            // inconsistent in a way nobody would remember. It cannot change what
-            // an org is charged: credits are quoted up front and escalation
-            // spends the already-paid budget. It CAN bring `stopped_on_budget`
-            // forward, which is the honest cost. The ratio is documented as
-            // uncalibrated and is an env knob — that is where it should be tuned,
-            // not by hand-picking which reasons count. Pinned by a test in
-            // competition-schedule-verify.test.ts.
-            //
-            // `PackStartWindow.target.kind` is a bare `string` (the pack is a
-            // wire shape), so an unrecognised kind is DROPPED rather than cast
-            // through: the engine would silently never match it, and a cast
-            // would hide that a settings row has drifted from the enum.
-            startWindows: s.constraints.startWindows.flatMap((w) =>
-              w.target.kind === "entrant" || w.target.kind === "pool" || w.target.kind === "division"
-                ? [
-                    {
-                      target: { kind: w.target.kind, id: w.target.id },
-                      ...(w.notBefore !== undefined ? { notBefore: ms(w.notBefore) } : {}),
-                      ...(w.notAfter !== undefined ? { notAfter: ms(w.notAfter) } : {}),
-                    },
-                  ]
-                : [],
-            ),
-            fieldFairness: "off" as const,
-            parallelism: "mixed" as const,
-            crossPersonClash: "warn" as const,
-          },
-        }
+      ? { constraints: buildEngineConstraints(s.constraints, AI_VERIFY_POLICY) }
       : {}),
     gapMinutes: s.gapMinutes,
     blackouts: s.blackouts.map((b) => ({
@@ -1429,19 +1419,13 @@ export function jointSolverConfig(pack: CompetitionPack): VerifyConfig & { court
             // Start windows are TARGETED by entrant, pool or division id, so the
             // union is exact rather than conservative: a division's window binds
             // that division's fixtures and no others.
-            startWindows: withConstraints.flatMap((c) =>
-              c.startWindows.flatMap((w) =>
-                w.target.kind === "entrant" || w.target.kind === "pool" || w.target.kind === "division"
-                  ? [
-                      {
-                        target: { kind: w.target.kind, id: w.target.id },
-                        ...(w.notBefore !== undefined ? { notBefore: ms(w.notBefore) } : {}),
-                        ...(w.notAfter !== undefined ? { notAfter: ms(w.notAfter) } : {}),
-                      },
-                    ]
-                  : [],
-              ),
-            ),
+            //
+            // The per-window transform is the SHARED one (#458) — this config
+            // unions several divisions and so has no single `constraints` source
+            // to hand `buildEngineConstraints`, but a hand-written copy of the
+            // ISO→ms conversion and the unrecognised-kind drop is exactly the
+            // duplication that produced #458.
+            startWindows: withConstraints.flatMap((c) => toEngineStartWindows(c.startWindows)),
             fieldFairness: "off" as const,
             parallelism: "mixed" as const,
             crossPersonClash: "warn" as const,

@@ -41,6 +41,7 @@ import {
   type ScheduleConflict,
 } from "@/server/api-v1/schemas";
 import { sendOfficialAssignmentChangedEmail } from "@/lib/email";
+import { buildEngineConstraints } from "./engine-constraints";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 import { generateStageFixtures } from "./stages";
 import { schedulingAiModel, toRuleFixture } from "./schedule-ai";
@@ -391,43 +392,25 @@ export function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotCo
       to: ms(b.to),
     })),
     sessionWindows: c.sessionWindows.map((w) => ({ from: ms(w.from), to: ms(w.to) })),
-    // constraints v2 (Jul3/04 §3): ISO → epoch ms for the pure pass
+    // constraints v2 (Jul3/04 §3): ISO → epoch ms for the pure pass, through the
+    // ONE builder (#458) the AI verify seams also go through, so this config and
+    // the config a proposal is judged against cannot drift apart again.
+    //
+    // `hard: true` — the DURABLE typed rules (#398) ride `constraints.hard` on
+    // this path, never the top-level `hard` field, because `effectiveHard`
+    // MERGES the two and setting both would count every durable rule twice
+    // (#447). The top-level field is where a run puts the stream it COMPILED
+    // from an instruction, which is why the AI seams route them the other way.
+    // Riding `toSlotConfig` rather than the wrapper below is deliberate too:
+    // every existing caller gets them with no second place to remember.
     ...(c.constraints !== undefined
       ? {
-          constraints: {
-            ...(c.constraints.restMin !== undefined ? { restMin: c.constraints.restMin } : {}),
-            ...(c.constraints.restByGroup !== undefined
-              ? { restByGroup: c.constraints.restByGroup }
-              : {}),
-            noBackToBack: c.constraints.noBackToBack,
-            startWindows: c.constraints.startWindows.map((w) => ({
-              target: w.target,
-              ...(w.notBefore !== undefined ? { notBefore: ms(w.notBefore) } : {}),
-              ...(w.notAfter !== undefined ? { notAfter: ms(w.notAfter) } : {}),
-            })),
+          constraints: buildEngineConstraints(c.constraints, {
             fieldFairness: c.constraints.fieldFairness,
             parallelism: c.constraints.parallelism,
             crossPersonClash: c.constraints.crossPersonClash,
-            // #447: the DURABLE typed rules (#398). This key was the one field
-            // of `constraints` the copy above dropped, and `effectiveHard` reads
-            // exactly it — so a rule an organiser stored through the API bound on
-            // the AI path (which builds its own config) and silently nowhere
-            // else. `effectiveHard`'s own docstring calls that "the worst kind".
-            //
-            // Carried here rather than on the top-level `hard` field because
-            // `effectiveHard` MERGES the two — setting both would count every
-            // durable rule twice — and because `constraints.hard` is the durable
-            // home: the top-level one is where a run puts the stream it COMPILED
-            // from an instruction. It also rides `toSlotConfig` rather than the
-            // wrapper below so every existing caller of this function gets it
-            // without a second place to remember.
-            //
-            // Optional, never defaulted (the schema says so): a `hard: []` on a
-            // config that stored nothing is indistinguishable downstream, but it
-            // would make every `toSlotConfig` output differ from the literals the
-            // rest of the suite compares against.
-            ...(c.constraints.hard !== undefined ? { hard: c.constraints.hard } : {}),
-          },
+            hard: true,
+          }),
         }
       : {}),
   };

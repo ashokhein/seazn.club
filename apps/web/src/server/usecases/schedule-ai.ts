@@ -60,6 +60,7 @@ import {
   type SlotConfig,
   type VerifyConfig,
 } from "@seazn/engine/scheduling";
+import { AI_VERIFY_POLICY, buildEngineConstraints } from "@/server/usecases/engine-constraints";
 import {
   parseInstruction,
   resolveParsed,
@@ -1455,13 +1456,13 @@ function structuralCheck(plan: AiSchedulePlan, movableIds: Set<string>, pack: Sc
  *  fields `packRuleFixtures` below already reads. They are what makes a
  *  pool- or division-targeted `restByGroup` entry actually bind on this path.
  *
- *  NOT `startWindows`, on this path: `verifyConfig` below pins
- *  `startWindows: []` outright, so the single-division AI path is blind to
- *  every start window whatever it targets, and `repair-domain` clips the
- *  repair domain to that same empty config. Stamping the group identity is
- *  necessary for that to ever work and is not sufficient — filed separately.
- *  `schedule-group-targeting.test.ts` asserts the pin, so this comment and
- *  that test cannot drift apart silently.
+ *  `startWindows` too, since #458: `verifyConfig` below used to pin
+ *  `startWindows: []`, so this path was blind to every start window whatever it
+ *  targeted and `repair-domain` clipped the repair domain to that same empty
+ *  config. It now goes through `buildEngineConstraints`, which converts them.
+ *  Stamping the group identity here is what makes a pool-targeted one bind at
+ *  all; `schedule-group-targeting.test.ts` asserts both halves end to end, so
+ *  this comment and that test cannot drift apart silently.
  *
  *  Exported for the same reason its joint twin `toJointEngineAssignments` is:
  *  the verify seam is testable without a model round trip. */
@@ -1589,26 +1590,19 @@ export function verifyConfig(pack: SchedulePack): VerifyConfig {
     // effectiveRestMinutes takes the strictest, exactly as the solver does.
     perEntrantMinRest: pack.settings.perEntrantMinRest,
     matchMinutes: pack.settings.matchMinutes,
-    // Only the rest-bearing fields: the pack's startWindows carry ISO strings
-    // (the model reads them), while the engine wants epoch ms. Window
-    // validation is a separate piece of work — carrying them across here would
-    // silently compare the wrong units.
+    // #458: the ONE builder the board path and the joint path also go through.
+    // This site used to pin `startWindows: []` — the pack carries them as ISO
+    // strings for the model while the engine wants epoch ms, and rather than
+    // convert, the copy here dropped them. So this referee was blind to EVERY
+    // start window whatever it targeted, and `repair-domain` clipped the repair
+    // domain to the same empty config. The builder converts them.
+    //
+    // `AI_VERIFY_POLICY` (`hard: false`): the durable rules already ride the
+    // TOP-LEVEL `hard` field above, merged with the compiled instruction stream.
+    // `effectiveHard` merges the two, so carrying them here as well would count
+    // every durable rule twice.
     ...(pack.settings.constraints !== null
-      ? {
-          constraints: {
-            ...(pack.settings.constraints.restMin !== undefined
-              ? { restMin: pack.settings.constraints.restMin }
-              : {}),
-            ...(pack.settings.constraints.restByGroup !== undefined
-              ? { restByGroup: pack.settings.constraints.restByGroup }
-              : {}),
-            noBackToBack: pack.settings.constraints.noBackToBack,
-            startWindows: [],
-            fieldFairness: "off" as const,
-            parallelism: "mixed" as const,
-            crossPersonClash: "warn" as const,
-          },
-        }
+      ? { constraints: buildEngineConstraints(pack.settings.constraints, AI_VERIFY_POLICY) }
       : {}),
     gapMinutes: pack.settings.gapMinutes,
     blackouts: pack.settings.blackouts.map((b) => ({
