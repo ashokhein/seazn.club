@@ -158,6 +158,9 @@ importers:
       unified:
         specifier: ^11.0.5
         version: 11.0.5
+      z3-solver:
+        specifier: 5.0.0
+        version: 5.0.0
       zod:
         specifier: ^4.4.3
         version: 4.4.3

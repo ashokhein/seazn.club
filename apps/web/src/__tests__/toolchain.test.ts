@@ -276,3 +276,59 @@ describe("toolchain: pnpm workspace", () => {
     }
   });
 });
+
+describe("toolchain: z3 wasm tracing survives the linker change", () => {
+  /**
+   * next.config.js used to name the wasm directory as the literal hoisted path
+   * `../../node_modules/z3-solver/build`. pnpm puts the real file under
+   * `node_modules/.pnpm/z3-solver@<v>/node_modules/z3-solver/build`, so that
+   * glob matches NOTHING — and the failure is silent: the standalone server
+   * ENOENTs on every solve and the scheduler falls back to LLM repair, which is
+   * a designed path. Minimal-movement repair becomes a production no-op that
+   * still spends a model round.
+   */
+  it("resolves the wasm path rather than hardcoding a hoisted layout", () => {
+    const cfg = readFileSync(join(REPO_ROOT, "apps/web/next.config.js"), "utf8");
+    // The literal, as it appeared inside outputFileTracingIncludes. The prose
+    // above it still quotes the RUNTIME path (`/ROOT/node_modules/z3-solver/…`)
+    // and must stay readable, so this matches the relative form only.
+    expect(cfg).not.toContain("../../node_modules/z3-solver");
+    expect(cfg).toMatch(/require\.resolve\(\s*"z3-solver\/package\.json"\s*\)/);
+    // Tracing the .wasm is necessary but NOT sufficient — this was measured.
+    expect(cfg).toContain("serverExternalPackages");
+    expect(cfg).toContain('"z3-solver"');
+  });
+
+  it("the wasm file is actually where the config will look", async () => {
+    const { createRequire } = await import("node:module");
+    const require = createRequire(join(REPO_ROOT, "apps/web/next.config.js"));
+    const pkg = require.resolve("z3-solver/package.json");
+    const wasm = join(pkg, "../build/z3-built.wasm");
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(wasm), `expected z3 wasm at ${wasm}`).toBe(true);
+  });
+
+  it("apps/web declares z3-solver at the engine's exact version", () => {
+    /**
+     * Two separate reasons, and both are silent when wrong.
+     *
+     * DECLARED AT ALL: z3-solver is packages/engine's dependency, and under npm
+     * hoisting it landed in the ROOT node_modules where both next.config.js and
+     * the standalone server's `require("z3-solver")` found it. pnpm's strict
+     * linker puts it only under packages/engine — which is not on the resolution
+     * path of anything emitted into apps/web/.next/server.
+     *
+     * EXACT SAME VERSION: two pins that drift give two store entries, and the
+     * traced build/ directory then belongs to a different copy than the one the
+     * server loads at runtime. That is the original ENOENT with extra steps.
+     */
+    const web = JSON.parse(
+      readFileSync(join(REPO_ROOT, "apps/web/package.json"), "utf8"),
+    ) as { dependencies: Record<string, string> };
+    const engine = JSON.parse(
+      readFileSync(join(REPO_ROOT, "packages/engine/package.json"), "utf8"),
+    ) as { dependencies: Record<string, string> };
+    expect(engine.dependencies["z3-solver"]).toBeDefined();
+    expect(web.dependencies["z3-solver"]).toBe(engine.dependencies["z3-solver"]);
+  });
+});
