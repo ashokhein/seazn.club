@@ -342,6 +342,41 @@ describe.skipIf(!HAS_DB)("#404 mergePersons", () => {
     expect(err.extra?.user_ids).toEqual([one.id, two.id]);
   });
 
+  // The queue never proposes a cross-lane pair (`listDuplicateCandidates`
+  // requires `b.lane = a.lane`), but the queue is not the only door: `listPersons`
+  // has no lane filter, so the People table lists both lanes and the hand-picked
+  // merge in `persons-panel.tsx` can pair any two rows the organiser clicks.
+  // Officials mint unconditionally and cannot dedupe (#402), so folding one into
+  // a player left the `officials` row pointing at a tombstone that `officials.ts`
+  // still left-joins — with nothing recorded for the reversal to put back.
+  it("refuses to merge across lanes, and writes nothing", async () => {
+    const { auth } = await seedOrg("pro");
+    const player = await person(auth.orgId, { lane: "player" });
+    const official = await person(auth.orgId, { lane: "official" });
+    const err = await expectHttp(
+      mergePersons(auth, player, official, { confirmedBy: auth.userId! }),
+      422,
+      "MERGE_CROSS_LANE",
+    );
+    expect(err.extra?.lanes).toEqual(["player", "official"]);
+    // …in both directions, so the refusal is about the PAIR, not about which
+    // side the organiser happened to pick as the survivor.
+    await expectHttp(
+      mergePersons(auth, official, player, { confirmedBy: auth.userId! }),
+      422,
+      "MERGE_CROSS_LANE",
+    );
+    const rows = await sql<{ merged_into: string | null }[]>`
+      select merged_into from persons where id in ${sql([player, official])}`;
+    expect(rows.every((r) => r.merged_into === null)).toBe(true);
+    // Scoped to THIS pair: `sql` here is the unscoped client, so an unqualified
+    // count would tally every other test's merges and pass for the wrong reason.
+    const [ledger] = await sql<{ n: string }[]>`
+      select count(*)::text as n from person_merges
+       where survivor_id in ${sql([player, official])} or absorbed_id in ${sql([player, official])}`;
+    expect(ledger!.n, "a refused cross-lane merge wrote a ledger row").toBe("0");
+  });
+
   it("allows one account held twice", async () => {
     const { auth } = await seedOrg("pro");
     const { id: userId } = await makeUser("merge-same");

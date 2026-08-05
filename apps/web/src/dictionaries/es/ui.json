@@ -3179,7 +3179,7 @@
   "persons.dupes.reverse.confirm": "Deshacer la fusión",
   "persons.dupes.reverse.working": "Deshaciendo…",
   "persons.dupes.error": "No se pudo completar",
-  "persons.dupes.account.warn": "Solo la ficha que se va a fusionar está vinculada a la cuenta de un jugador. Conserva esa en su lugar o el vínculo se perderá.",
+  "persons.dupes.account.note": "Solo la ficha que se va a fusionar está vinculada a la cuenta de un jugador. La ficha que conservas hereda ese vínculo.",
   "persons.dupes.dialog.keepShort": "Conservar",
   "persons.dupes.dialog.absorbShort": "Fusionar"
 }

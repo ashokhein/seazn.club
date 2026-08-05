@@ -441,11 +441,14 @@ export function MergeConfirmDialog({
     [survivor.consent, absorbed.consent],
   );
   const ready = affirmed && (!dobDiffer || affirmedDob) && !busy;
-  // `mergePersons` writes only `consent` back to the surviving row — it never
-  // moves `persons.user_id`. Keeping the unlinked record of the pair therefore
-  // strands the player's account link on the tombstone, and swapping is the
-  // only way to avoid it, so this is said before the confirmation, not after.
-  const strandsAccount = !survivor.user_id && !!absorbed.user_id;
+  // The account link belongs to the human, not to whichever row the organiser
+  // kept: `mergePersons` carries `user_id` onto an unlinked survivor and
+  // releases it from the tombstone in the same statement. Nothing is stranded —
+  // but the organiser is about to fold away the record their player signs in
+  // to, and the surviving record's own name and details are what that player
+  // will see afterwards, so the dialog says which record holds the link and
+  // offers the swap rather than staying silent about it.
+  const carriesAccount = !survivor.user_id && !!absorbed.user_id;
 
   const fields: { label: MessageKey; of: (p: DupPerson) => string }[] = [
     { label: "persons.dupes.field.name", of: (p) => p.full_name },
@@ -520,17 +523,17 @@ export function MergeConfirmDialog({
           </p>
         )}
 
-        {strandsAccount && (
+        {carriesAccount && (
           <p
-            data-account-warn="1"
-            className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800"
+            data-account-note="1"
+            className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-700"
           >
-            {msg("persons.dupes.account.warn")}
+            {msg("persons.dupes.account.note")}
             <button
               type="button"
               data-swap-account="1"
               onClick={() => setKeepFirst((v) => !v)}
-              className="font-semibold underline underline-offset-2 hover:text-amber-900"
+              className="font-semibold underline underline-offset-2 hover:text-slate-900"
             >
               {msg("persons.dupes.dialog.swap")}
             </button>

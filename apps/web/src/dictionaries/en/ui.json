@@ -3179,7 +3179,7 @@
   "persons.dupes.reverse.confirm": "Undo the merge",
   "persons.dupes.reverse.working": "Undoing…",
   "persons.dupes.error": "That did not work",
-  "persons.dupes.account.warn": "Only the record being merged in is linked to a player’s account. Keep that one instead, or the link is left behind.",
+  "persons.dupes.account.note": "Only the record being merged in is linked to a player’s account. The record you keep inherits that link.",
   "persons.dupes.dialog.keepShort": "Keep",
   "persons.dupes.dialog.absorbShort": "Merge in"
 }

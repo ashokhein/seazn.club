@@ -30,8 +30,10 @@ function confirmationOr422(err: unknown): never {
 export async function POST(req: Request, { params }: Ctx) {
   return v1(async () => {
     const { id } = await params;
-    await parseBody(req, ReverseMerge).catch(confirmationOr422);
+    // Authenticate BEFORE reading the body: an unauthenticated caller gets 401,
+    // never a verdict on whether their payload was well formed.
     const auth = await requireAuth(req, "write");
+    await parseBody(req, ReverseMerge).catch(confirmationOr422);
     if (!auth.userId) {
       throw new HttpError(
         403,

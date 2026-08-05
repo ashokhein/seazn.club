@@ -114,9 +114,18 @@ export async function mergePersons(
     throw new HttpError(422, "cannot merge a person into itself", "MERGE_SELF");
   }
   const merged = await withTenant(auth.orgId, async (tx) => {
-    const [survivor] = await tx<PersonFull[]>`select * from persons where id = ${survivorId}`;
+    // `for update`, and in a DETERMINISTIC id order. Without the lock two
+    // overlapping merges over one pair (A→B and B→C) can each read
+    // `merged_into is null` before the other writes, and the loser leaves
+    // `A.merged_into = B` where B is itself a tombstone — breaking the invariant
+    // that makes every read a single `merged_into is null` check, and breaking
+    // the chain restore in `reverseMerge`. Ordering the two locks by id is what
+    // stops the mirror-image pair (B→A) deadlocking against it.
+    const locked = await tx<PersonFull[]>`
+      select * from persons where id in ${tx([survivorId, absorbedId])} order by id for update`;
+    const survivor = locked.find((p) => p.id === survivorId);
     if (!survivor) throw new HttpError(404, "person not found", "PERSON_NOT_FOUND");
-    const [absorbed] = await tx<PersonFull[]>`select * from persons where id = ${absorbedId}`;
+    const absorbed = locked.find((p) => p.id === absorbedId);
     // RLS hides other tenants' rows, so "not visible" covers both "no such
     // person" and "belongs to another org". Both are 422 on the duplicate_id
     // field, and the refusal never confirms that a foreign uuid exists.
@@ -137,6 +146,18 @@ export async function mergePersons(
     }
     if (survivor.merged_into !== null || absorbed.merged_into !== null) {
       throw new HttpError(409, "an already-merged person cannot be merged again", "MERGE_TOMBSTONE");
+    }
+    // Officials mint unconditionally and cannot dedupe (#402), so a player and
+    // an official are never the same record even when they are the same human —
+    // folding one into the other would strand the `officials` row on a tombstone
+    // that `officials.ts` still left-joins, with nothing recorded to undo.
+    // `listDuplicateCandidates` already requires `b.lane = a.lane`, but the
+    // queue is not the only door: `listPersons` has no lane filter, so the
+    // People table lists both lanes and the hand-picked merge can pair them.
+    if (survivor.lane !== absorbed.lane) {
+      throw new HttpError(422, "a player and an official are never the same record", "MERGE_CROSS_LANE", {
+        lanes: [survivor.lane, absorbed.lane],
+      });
     }
     // A typo must stay fixable, but the tool must never nudge toward merging
     // two minors: a differing dob is merge-able only by hand-picked action.
@@ -198,11 +219,9 @@ export async function mergePersons(
     await repointFixtureAvailability(tx, survivorId, absorbedId);
     await repointPersonClaims(tx, survivorId, absorbedId);
     await repointSuspensions(tx, survivorId, absorbedId);
-    // Officials mint unconditionally and cannot dedupe (#402), so a cross-lane
-    // pair is never a duplicate and its officiating rows must not move.
-    if (survivor.lane === "official" && absorbed.lane === "official") {
-      await tx`update officials set person_id = ${survivorId} where person_id = ${absorbedId}`;
-    }
+    // The lanes are proven equal by the refusal above, so this is unconditional:
+    // a player-lane pair simply has no `officials` rows to move.
+    await tx`update officials set person_id = ${survivorId} where person_id = ${absorbedId}`;
     // 4. Flatten inbound tombstones, so merged_into always names a LIVE person
     //    and every read stays one check.
     await tx`update persons set merged_into = ${survivorId} where merged_into = ${absorbedId}`;
@@ -245,7 +264,14 @@ export async function mergePersons(
   //    post-commit side effects in schedule.ts (`afterScheduleWrite`, the
   //    official-notice emails): a report that fails may not unmake a merge that
   //    succeeded, and the merge has no transaction left to roll back anyway.
-  return { ...merged, revealed: await reverifyBoards(auth, survivorId).catch(() => []) };
+  //    Logged, though: swallowed silently, a systematic verifier regression
+  //    presents as "a merge never reveals anything", which is indistinguishable
+  //    from a clean board and would go unnoticed indefinitely.
+  const revealed = await reverifyBoards(auth, survivorId).catch((err: unknown) => {
+    console.error(`[persons] post-merge re-verify failed for survivor ${survivorId}`, err);
+    return [];
+  });
+  return { ...merged, revealed };
 }
 
 /**
@@ -345,6 +371,39 @@ export async function reverseMerge(
     if (!merge) throw new HttpError(404, "merge not found", "MERGE_NOT_FOUND");
     if (merge.reversed_at !== null) {
       throw new HttpError(409, "this merge has already been reversed", "MERGE_ALREADY_REVERSED");
+    }
+
+    // A merge can only be undone while it is still the CURRENT state of its
+    // pair. Merges are undone last-in-first-out or not at all.
+    //
+    // Without this, A→B followed by B→C and then "undo the first one" — three
+    // clicks in the history list, which offers Undo on every unreversed row —
+    // silently corrupts the graph in two ways at once. The snapshot's persons
+    // rows carry `merged_into: null`, so B is resurrected as a live person while
+    // merge2's ledger row still calls it absorbed; and `restoreSlots` scopes its
+    // delete to `person_id in (B, A)` while those dependent rows now belong to
+    // C, so nothing is deleted and the snapshot rows are re-inserted ALONGSIDE
+    // them — three roster rows for one human, no error, no warning.
+    //
+    // The lock above is on the ledger row, not on the people, so the pair is
+    // re-read here `for update`: a merge committing between the two statements
+    // would otherwise pass a guard that read the pre-merge state.
+    const pair = await tx<{ id: string; merged_into: string | null }[]>`
+      select id, merged_into from persons
+       where id in ${tx([merge.survivor_id, merge.absorbed_id])} order by id for update`;
+    const survivorNow = pair.find((p) => p.id === merge.survivor_id);
+    const absorbedNow = pair.find((p) => p.id === merge.absorbed_id);
+    if (
+      !survivorNow ||
+      !absorbedNow ||
+      survivorNow.merged_into !== null ||
+      absorbedNow.merged_into !== merge.survivor_id
+    ) {
+      throw new HttpError(
+        409,
+        "this merge has been superseded by a later merge — undo that one first",
+        "MERGE_SUPERSEDED",
+      );
     }
 
     const ids = [merge.survivor_id, merge.absorbed_id];

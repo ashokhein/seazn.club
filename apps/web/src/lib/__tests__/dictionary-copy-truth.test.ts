@@ -3001,6 +3001,32 @@ describe("the duplicate-merge tip (#404)", () => {
     }
   });
 
+  // The SECOND string in this dialog that described the old behaviour: the
+  // account-link note. Task 8b made the merge carry `user_id` onto an unlinked
+  // survivor, but all four locales still told the organiser the link would be
+  // "left behind" / "perdu" / "se perderá" / "blijft achter" unless they swapped
+  // — a warning about a data loss that no longer happens, shown beside a swap
+  // control the organiser then has no reason to trust.
+  it("does not claim the account link is lost, in any locale", () => {
+    const values = across("ui", "persons.dupes.account.note");
+    for (const { locale, value } of values) {
+      expect(value.length, `${locale} persons.dupes.account.note is empty`).toBeGreaterThan(40);
+    }
+    expect(
+      retiredClaimFaults(values, [
+        // en
+        "the link is left behind",
+        "keep that one instead",
+        // es
+        "el vínculo se perderá",
+        // fr
+        "le lien sera perdu",
+        // nl
+        "blijft de koppeling achter",
+      ]),
+    ).toEqual([]);
+  });
+
   // The registry in `@/config/tips` is the source the dictionaries are written
   // from; leaving it stale is how the lie comes back on the next translation
   // pass.

@@ -44,10 +44,12 @@ The record you merge in is **not deleted**. It is marked as absorbed and hidden 
 
 That is what makes **undo** real. Under the panel, **Recent merges** lists what has been merged, most recent first, and **Undo** on any entry puts both records back: the absorbed record returns as its own record, and the kept record goes back to the visibility settings it had before. There is no time limit — an undo works as well next month as it does thirty seconds later.
 
-Two limits worth knowing before you rely on it:
+Four limits worth knowing before you rely on it:
 
 - **Undo restores what the merge moved, and nothing else.** Anything that happened *after* the merge — a new team the kept player was added to, an edit you made to their name — belongs to the kept record by your own later action and stays there.
+- **But an edit to something the merge *did* move is replaced.** If the merge carried a squad number across and you then changed it, undoing puts the number back the way it was before the merge. Undo restores the snapshot for those rows rather than merging your later edit into it.
 - **A merge can only be undone once.** Undoing a second time is refused; the entry stays in the log as a record of what happened, marked **Undone**, and the pair goes back to being a live duplicate suggestion you can merge again.
+- **Merges are undone newest first.** If you merged A into B and later merged B into C, the second merge has to be undone before the first — the first one's Undo is refused until then, and tells you so. Undoing them out of order would put back a record that a later merge has since folded away again.
 
 ## What happens to public visibility
 

@@ -2535,7 +2535,7 @@ export type DictionaryKey =
   | "persons.consent.name"
   | "persons.consent.photo"
   | "persons.consent.shownTip"
-  | "persons.dupes.account.warn"
+  | "persons.dupes.account.note"
   | "persons.dupes.affirm"
   | "persons.dupes.affirmDob"
   | "persons.dupes.cancel"

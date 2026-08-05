@@ -324,6 +324,75 @@ describe.skipIf(!HAS_DB)("#404 reverseMerge", () => {
     expect(byId.get(c)).toBe(null);
   });
 
+  // The chain test above reverses the LAST merge, which is the safe direction.
+  // Reversing the FIRST one is the direction that used to corrupt the graph,
+  // and it is three clicks away in the shipped UI: the history list offers Undo
+  // on every row whose `reversed_at` is null, in either order.
+  //
+  // Two failures at once, both silent. The snapshot's persons rows carry
+  // `merged_into: null`, so B came back as a LIVE person while merge2's ledger
+  // row still called it absorbed; and `restoreSlots` scopes its delete to
+  // `person_id in (B, A)` while those dependent rows now belong to C, so
+  // nothing was deleted and the snapshot rows were re-inserted ALONGSIDE them —
+  // one human, three roster rows, no error.
+  it("refuses to reverse a merge a later merge has superseded", async () => {
+    const { auth } = await seedOrg("pro");
+    const { entrants } = await seedDivision(auth, 2);
+    const entrant = entrants[0]!.id;
+    const a = await person(auth.orgId);
+    const b = await person(auth.orgId);
+    const c = await person(auth.orgId);
+    // A roster slot on each of the two that get folded away, so a bad reversal
+    // has something to duplicate.
+    for (const id of [a, b, c]) {
+      await sql`insert into entrant_members (entrant_id, person_id) values (${entrant}, ${id})`;
+    }
+    const first = await mergePersons(auth, b, a, { confirmedBy: auth.userId! });
+    await mergePersons(auth, c, b, { confirmedBy: auth.userId! });
+
+    await expect(reverseMerge(auth, first.merge_id, { confirmedBy: auth.userId! })).rejects.toThrow(
+      HttpError,
+    );
+    await expect(
+      reverseMerge(auth, first.merge_id, { confirmedBy: auth.userId! }),
+    ).rejects.toMatchObject({ status: 409, code: "MERGE_SUPERSEDED" });
+
+    // …and it refused without writing anything: the graph still says both are
+    // folded into C, the ledger row is still live, and the entrant still holds
+    // exactly one row for this human.
+    const rows = await sql<{ id: string; merged_into: string | null }[]>`
+      select id, merged_into from persons where id in ${sql([a, b, c])}`;
+    const byId = new Map(rows.map((r) => [r.id, r.merged_into]));
+    expect(byId.get(a)).toBe(c);
+    expect(byId.get(b)).toBe(c);
+    expect(byId.get(c)).toBe(null);
+    const [ledger] = await sql<{ reversed_at: string | null }[]>`
+      select reversed_at from person_merges where id = ${first.merge_id}`;
+    expect(ledger!.reversed_at, "a refused reversal stamped the ledger").toBe(null);
+    const members = await sql<{ person_id: string }[]>`
+      select person_id from entrant_members where entrant_id = ${entrant}`;
+    expect(members.map((m) => m.person_id)).toEqual([c]);
+  });
+
+  // Undoing them last-in-first-out is the supported path, and it still works.
+  it("reverses a chain in LIFO order, back to the state before either merge", async () => {
+    const { auth } = await seedOrg("pro");
+    const a = await person(auth.orgId);
+    const b = await person(auth.orgId);
+    const c = await person(auth.orgId);
+    const first = await mergePersons(auth, b, a, { confirmedBy: auth.userId! });
+    const second = await mergePersons(auth, c, b, { confirmedBy: auth.userId! });
+
+    await reverseMerge(auth, second.merge_id, { confirmedBy: auth.userId! });
+    await reverseMerge(auth, first.merge_id, { confirmedBy: auth.userId! });
+
+    const rows = await sql<{ id: string; merged_into: string | null }[]>`
+      select id, merged_into from persons where id in ${sql([a, b, c])}`;
+    expect(rows.every((r) => r.merged_into === null), "a tombstone survived a full unwind").toBe(
+      true,
+    );
+  });
+
   it("stamps reversed_at/reversed_by and keeps the person_merges row", async () => {
     const { auth } = await seedOrg("pro");
     const survivor = await person(auth.orgId);

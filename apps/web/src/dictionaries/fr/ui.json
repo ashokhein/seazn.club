@@ -3179,7 +3179,7 @@
   "persons.dupes.reverse.confirm": "Annuler la fusion",
   "persons.dupes.reverse.working": "Annulation…",
   "persons.dupes.error": "Cela n’a pas fonctionné",
-  "persons.dupes.account.warn": "Seule la fiche à fusionner est liée au compte d’un joueur. Conservez plutôt celle-ci, sinon le lien sera perdu.",
+  "persons.dupes.account.note": "Seule la fiche à fusionner est liée au compte d’un joueur. La fiche que vous conservez hérite de ce lien.",
   "persons.dupes.dialog.keepShort": "Conserver",
   "persons.dupes.dialog.absorbShort": "Fusionner"
 }

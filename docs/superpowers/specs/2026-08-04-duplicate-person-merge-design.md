@@ -134,6 +134,20 @@ absorbed person, clear `merged_into`, stamp `reversed_at`/`reversed_by`. Rows
 created **after** the merge stay with the survivor; only snapshotted rows move.
 Reversing an already-reversed merge is 409. The row is kept, never deleted.
 
+**Merges are undone last-in-first-out.** A reversal is legal only while the merge
+is still the *current* state of its pair — `survivor.merged_into is null` **and**
+`absorbed.merged_into = survivor`, both re-read `for update` inside the reversal's
+own transaction. Otherwise 409 `MERGE_SUPERSEDED`.
+
+This rule was missing from the first draft of this section, which assumed the
+pair was still in the state the merge left it. It is not a detail: for A→B then
+B→C, undoing the *first* merge replays a snapshot whose `merged_into` is `null`,
+resurrecting B as a live person while the second merge's ledger row still calls
+it absorbed — and the reversal's slot-scoped delete (`person_id in (A, B)`) misses
+the dependent rows, which now belong to C, so the snapshot rows are re-inserted
+*alongside* them. One human, three roster rows, no error. Undo is only lossless
+against the state its own merge produced.
+
 ## 5. Re-verify after a merge
 
 A merge can **create** person-overlap in a board that was valid when it was

@@ -91,19 +91,21 @@ describe("DuplicatesPanel — the merge confirmation", () => {
     expect(html).toMatch(/data-consent-key="public_photo"[^>]*data-resolved="on"/);
   });
 
-  // `mergePersons` writes only `consent` back to the survivor's row — it never
-  // moves `persons.user_id`. So keeping the UNLINKED record of the pair strands
-  // the player's account link on the tombstone, and the roster stops showing
-  // them as claimed. The organiser can only avoid that by swapping, so the
-  // dialog has to say so before they confirm.
-  it("warns when only the record being merged in carries the account link", () => {
+  // `mergePersons` CARRIES `user_id` onto an unlinked survivor and releases it
+  // from the tombstone in the same statement, so nothing is stranded — the note
+  // says which record holds the link, not that it is about to be lost. It is
+  // still said before the confirmation rather than after: the organiser is
+  // folding away the record their player signs in to, and the surviving
+  // record's own name and details are what that player sees afterwards.
+  it("names the side that carries the account link, and the swap clears the note", () => {
     const linked = person({ ...ABSORBED, user_id: "u9" });
     const island = renderIsland(MergeConfirmDialog, dialogProps(SURVIVOR, linked));
-    const warned = () => island.tree().some((el) => propsOf(el)["data-account-warn"] !== undefined);
-    expect(warned()).toBe(true);
-    // Swapping puts the linked record on the surviving side; nothing is stranded.
+    const noted = () => island.tree().some((el) => propsOf(el)["data-account-note"] !== undefined);
+    expect(noted()).toBe(true);
+    // Swapping puts the linked record on the surviving side, so it holds its own
+    // link and there is nothing left to point out.
     (propsFor(island, "data-swap").onClick as () => void)();
-    expect(warned()).toBe(false);
+    expect(noted()).toBe(false);
   });
 
   // Below `sm` the three-column diff stacks and the column headers go with it,
