@@ -21,6 +21,7 @@ or re-ask.
 - **Subagents WRITE e2e cases but never RUN them.** Playwright outlives the
   600s subagent watchdog; two agents died to it on the #404 programme. The main
   thread runs e2e in a background bash at the group boundary.
+- **Owner asked for FULL edge coverage (2026-08-05).** Every task ships tenancy/cross-org negatives, input boundaries (empty array, over-max, explicit-false), period/state boundaries, and double-submit. Assert the *effect* (board unchanged, balance unchanged), not only the status code — a 200-no-op and a 404 look identical from the response alone. Edge lists sent to all three in-flight agents; see the Log.
 - Every brief carries a **15-line output cap**: counts, paths, deviations,
   blockers. No file contents, no diffs.
 
@@ -130,4 +131,5 @@ Creation script for A and E is in the plan's Appendix.
 ## Log
 
 - 2026-08-05 — triage complete, 12 issues verified against `1ee962f0`. #388 and #389 closed. Spec + plan committed. Worktrees C/B/D created; C has `npm ci`.
+- 2026-08-05 — edge-coverage sweep ordered by owner. #386: 14 edges (cross-org checkpoint/competition, mismatched checkpoint↔division, empty + >20 arrays, explicit `confirm:false`, all-fail, missing `division_ids`, double restore, deadlock regression, lock released after a FAILED restore, `:6543` guard, blocked-apply 409). Group A: 16 edges (credits >6 fallback, all THREE mismatch call sites, `quoted_credits` 0/negative vs omitted, double-press → one POST, partial/empty/stale `prior.assignments`). Group D: 7 edges in a dedicated pass on PG 54347 — **period boundary is the highest-value one** (a bug there silently stops all monthly grants forever and no existing test would catch it).
 - 2026-08-05 — #394 closed as invalid (group C done, no production change). Task 2 landed `3b7eee20`; main-thread gate 272/272. Worktree A created off main tip `6ef3989b` (main advanced by a docs commit from outside this session) — `npm ci` done, engine resolves inside. Group D dispatched. Gotcha: `.git/worktrees/<name>/info/` does not exist on a fresh worktree, so appending to its `exclude` needs `mkdir -p` first (the shared `.git/info/exclude` already carries `.claude/agent-memory`, so this is belt-and-braces).
