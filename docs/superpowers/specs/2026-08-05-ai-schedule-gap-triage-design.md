@@ -22,7 +22,7 @@ trusting the issue text. All 12 are open on GitHub; one is already shipped.
 | 390 | billing-grant cron re-sweeps every wallet daily | pending | `credits.ts:445` — no anti-join, `orgPlanKey` still one query per row |
 | 391 | joint 3/hour limit undocumented | pending | `ai-scheduling.md:173` documents 5/hr twice; joint limit absent from the "two more limits" block at `:187` |
 | 392 | copy-truth guard for the joint-undo sentence | pending | sentence is correct at `:181`; no guard pattern in `copy-truth.ts` |
-| 394 | board hands the joint console an empty fixture list | pending | `schedule-board.tsx:596` ternary unchanged |
+| 394 | board hands the joint console an empty fixture list | **PHANTOM — see §8** | the ternary is correct; `single` null takes the `actions.board` branch |
 
 Two corrections to the issue text, both of which would waste an implementer's time:
 
@@ -361,3 +361,49 @@ sequentially in one.
 | #382 opens features to Community that were priced | Deliberate and owner-decided. `scheduling.multi_division` remains the paywall |
 | #386's endpoint is new server surface with no caller until the UI lands | Ship the route and the usecase with tests in the same PR as the client switch, so it is never dead code |
 | E's checkpoint eviction deletes a save point an organiser wanted | It costs the label, not the rewind — the ledger still reaches that watermark. The notice must name what went |
+
+## 8. Correction: #394 is a phantom (2026-08-05)
+
+`schedule-board.tsx:596` reads:
+
+```tsx
+consoleFixtures(single ? divBoardFixtures : actions.board, entrantNames, feedLabels)
+```
+
+`single` is null on a competition board, so the ternary takes the **false**
+branch — `actions.board`, the whole board. The joint console has always
+received every division's fixtures. Code and comment were written in the same
+commit (`0f374d7a7`) and have never disagreed.
+
+§1 of this document repeated the issue's misreading. Both were wrong about the
+polarity, which is the entire content of the bug.
+
+**Proven by mutation, not by inspection.** A regression test was written first
+and came back green at HEAD (8/8). Mutating line 596 to
+`consoleFixtures(divBoardFixtures, …)` — the shape #394 describes — turns it red
+with `expected [] to deeply equal ['f1','f2',…]`, the reported symptom. So the
+symptom is real *only* under a change nobody made.
+
+The issue's supporting evidence was that dropping the ternary keeps
+`src/components/v2` green. That observation is correct and its conclusion is
+inverted: dropping the ternary changes the **division** board (widening it from
+one division to the whole board) and no test notices. The finding is a coverage
+gap on the division side, not a defect on the competition side.
+
+Two further reasons the reported symptom cannot be this line:
+
+- `ai-competition-console.tsx:697` renders `{f?.matchup ?? c.fixtureId.slice(0, 8)}`.
+  A blocked row falls back to a truncated id, so it cannot render an empty
+  label even when handed an empty fixture list.
+- The full `src/components/v2` suite is 564/564 at HEAD with the ternary intact.
+
+**Shipped:** the regression test only, as `37ed6f45` (`test:`, deliberately not
+`fix:` — that message would record a fix that did not happen). No production
+change.
+
+**Lesson for the rest of this programme.** #394 is the fourth issue on this
+label whose premise did not survive contact with the code, after #385
+(`ai-joint-run.ts`), #386 ("one transaction"), and #382 (`V344`). Every one was
+written during a review, citing the shape the reviewer expected rather than the
+shape that exists. Write the failing test **first** and require it to go red
+before touching production code — that is what caught this one.

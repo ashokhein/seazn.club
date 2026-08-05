@@ -30,7 +30,7 @@ or re-ask.
 |---|---|---|---|
 | #388 | — | — | **CLOSED** 2026-08-05, evidence comment. Shipped in `94513cd5` (W5). Secondary "N warnings" ask also settled: `reviewRowCount` is `rows.length` of the same array (`ai-review.ts:87`). |
 | #389 | — | — | **CLOSED** 2026-08-05, mitigated. `walletIds` scoping already in `credits.ts:415`; #390 removes the rest. Deliberately did NOT truncate — the shared schema holds `sync:sports` reference data. |
-| #394 | C | 1 | pending |
+| #394 | C | 1 | **PHANTOM — no production bug.** `single ? divBoardFixtures : actions.board` takes the FALSE branch when `single` is null, so the competition board already receives the whole board. Code and comment agree and always have (both written in `0f374d7a7`). Proven by mutation: at HEAD the new test is green; mutated to `consoleFixtures(divBoardFixtures, …)` it fails with the exact reported symptom. Regression test committed as `37ed6f45` (`test:`, not `fix:`). **Awaiting owner call on closing the issue.** |
 | #386 | B | 2, 3 | pending |
 | #391 | B | 4 | pending |
 | #392 | B | 5 | pending |
