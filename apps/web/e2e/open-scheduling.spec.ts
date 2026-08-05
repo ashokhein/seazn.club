@@ -207,10 +207,25 @@ test.describe("Community reaches the board and the constraints (#382)", () => {
     await loginAsOwner(page, org.ownerEmail);
     const rig = await seedRig(page.request);
 
-    await page.goto(`/o/${org.orgSlug}/c/${rig.compSlug}/d/${rig.divSlug}/schedule`);
-    await expect(page.getByRole("heading", { name: "History" })).toBeVisible({ timeout: 30_000 });
+    const schedule = `/o/${org.orgSlug}/c/${rig.compSlug}/d/${rig.divSlug}/schedule`;
+    await page.goto(schedule);
+    // Anchor on the tab strip, not on a panel heading: the panels are separate
+    // ?tab= views, so "History" is a LINK here and its heading only exists once
+    // that tab is open. Anchoring on the heading made this wait 30s and fail on
+    // a page that had rendered the whole board correctly.
+    await expect(page.getByRole("link", { name: "history" })).toBeVisible({ timeout: 30_000 });
     // The UpgradeGate carries data-feature; neither scheduling key may appear.
     await expect(page.locator('[data-feature="scheduling.board"]')).toHaveCount(0);
+    await expect(page.locator('[data-feature="scheduling.constraints"]')).toHaveCount(0);
+
+    // The constraints editor is the other half of what V353 opened, and it is a
+    // tab of its own — a board-only check would pass even if it were still
+    // walled. Assert the panel actually rendered, so an empty tab cannot pass
+    // as an ungated one.
+    await page.goto(`${schedule}?tab=constraints`);
+    await expect(
+      page.getByRole("heading", { name: "Constraints & planning", exact: true }),
+    ).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('[data-feature="scheduling.constraints"]')).toHaveCount(0);
   });
 
@@ -234,10 +249,16 @@ test.describe("At the save-point cap the window rolls, and the panel says so (#3
     await loginAsOwner(page, org.ownerEmail);
     const rig = await seedRig(page.request);
 
-    await page.goto(`/o/${org.orgSlug}/c/${rig.compSlug}/d/${rig.divSlug}/schedule`);
+    // ?tab=history — the save-point control lives in the HistoryPanel, which the
+    // page only mounts for that tab. Landing on the default board tab left this
+    // waiting 30s for an input that was never going to be there.
+    await page.goto(`/o/${org.orgSlug}/c/${rig.compSlug}/d/${rig.divSlug}/schedule?tab=history`);
     const input = page.getByLabel("Save point label");
     await expect(input).toBeVisible({ timeout: 30_000 });
-    const save = page.getByRole("button", { name: "Save point" });
+    // exact: true — the panel also carries two info buttons labelled "About:
+    // Undo and save points" and "About: Save points", and getByRole matches a
+    // name by substring, so the loose form resolves to three elements.
+    const save = page.getByRole("button", { name: "Save point", exact: true });
 
     const first = `before rain ${hex()}`;
     for (const label of [first, `after rain ${hex()}`]) {
@@ -254,7 +275,14 @@ test.describe("At the save-point cap the window rolls, and the panel says so (#3
     await save.click();
 
     // The save SUCCEEDED (no paywall), and the notice names the label that went.
-    await expect(page.getByText(first, { exact: false })).toHaveCount(0, { timeout: 20_000 });
+    //
+    // Scoped to the LIST, not the page. The eviction notice itself quotes the
+    // evicted label — that is the point of it — so a page-wide `getByText(first)`
+    // is self-contradictory with the `toContainText(first)` assertion three lines
+    // below: it matches the very notice it then requires to name `first`.
+    await expect(page.getByRole("listitem").filter({ hasText: first })).toHaveCount(0, {
+      timeout: 20_000,
+    });
     const notice = page.getByText("was replaced", { exact: false });
     await expect(notice).toBeVisible({ timeout: 20_000 });
     await expect(notice).toContainText(first);
@@ -262,5 +290,16 @@ test.describe("At the save-point cap the window rolls, and the panel says so (#3
     // A notice, not a paywall: nothing was refused.
     await expect(page.locator('[data-feature="schedule.checkpoints.max"]')).toHaveCount(0);
     await expect(page.getByText("Undo still rewinds past it", { exact: false })).toBeVisible();
+
+    // 375px — the notice is new copy on a panel that was already dense, and it
+    // is the longest single sentence in it. Asserted rather than screenshotted
+    // so a future edit that makes it overflow fails here instead of shipping.
+    await page.setViewportSize({ width: 375, height: 667 });
+    await expect(notice).toBeVisible();
+    const overflows = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    );
+    expect(overflows, "the history panel scrolls horizontally at 375px").toBe(false);
+    await page.screenshot({ path: "test-results/eviction-notice-375.png", fullPage: true });
   });
 });
