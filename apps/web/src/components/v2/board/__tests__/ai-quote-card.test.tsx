@@ -16,6 +16,13 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Dict } from "@/lib/i18n-constants";
 import { DictProvider } from "@/components/i18n/dict-provider";
+// #385: every surface that prices a run now reads its rung weights and token
+// budgets from the provider the board's RSC seeds — a client module cannot
+// resolve AI_RUNG_* for itself. Server-resolved DEFAULTS here: these suites are
+// about copy and wiring, and rung-config-provider.test.tsx owns the assertion
+// that an override actually reaches the card.
+import { RungConfigProvider } from "../rung-config-provider";
+import { resolveRungConfig } from "@/lib/ai-rung";
 import { quoteRun, schedulingRungWeights, type RungInput } from "@/lib/ai-rung";
 import en from "@/dictionaries/en/ui.json";
 import type { AiConsoleFixture } from "../ai-diff";
@@ -76,9 +83,11 @@ function line(key: string, input: RungInput, chosen: number | null = null, label
 
 function render(lines: QuoteCardLine[], busy = false): string {
   return renderToStaticMarkup(
+    <RungConfigProvider value={resolveRungConfig()}>
     <DictProvider dict={dict} locale="en">
       <AiQuoteCard lines={lines} onChange={() => {}} msg={(k, v) => tEn(k as string, v)} busy={busy} />
-    </DictProvider>,
+    </DictProvider>
+    </RungConfigProvider>,
   );
 }
 
@@ -433,9 +442,11 @@ const consoleProps: Parameters<typeof AiConsole>[0] = {
 
 const renderConsole = (props: Partial<Parameters<typeof AiConsole>[0]> = {}): string =>
   renderToStaticMarkup(
+    <RungConfigProvider value={resolveRungConfig()}>
     <DictProvider dict={dict} locale="en">
       <AiConsole {...consoleProps} {...props} />
-    </DictProvider>,
+    </DictProvider>
+    </RungConfigProvider>,
   );
 
 const runButton = (html: string): string =>

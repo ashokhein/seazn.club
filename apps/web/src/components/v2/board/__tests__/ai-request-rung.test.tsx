@@ -10,6 +10,13 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Dict } from "@/lib/i18n-constants";
 import { DictProvider } from "@/components/i18n/dict-provider";
+// #385: every surface that prices a run now reads its rung weights and token
+// budgets from the provider the board's RSC seeds — a client module cannot
+// resolve AI_RUNG_* for itself. Server-resolved DEFAULTS here: these suites are
+// about copy and wiring, and rung-config-provider.test.tsx owns the assertion
+// that an override actually reaches the card.
+import { RungConfigProvider } from "../rung-config-provider";
+import { resolveRungConfig } from "@/lib/ai-rung";
 import en from "@/dictionaries/en/ui.json";
 import type { AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
 import {
@@ -234,7 +241,8 @@ describe("the two phases keep their rungs apart", () => {
     // different control than one reading `state.officialsRung`. Phase A is 3,
     // Phase B is 1 — the card must show 1 checked.
     const html = renderToStaticMarkup(
-      <DictProvider dict={dict} locale="en">
+      <RungConfigProvider value={resolveRungConfig()}>
+    <DictProvider dict={dict} locale="en">
         {OfficialsStep(
           officialsStepProps({
             // Non-empty, or the card renders its free-draft state and offers no
@@ -244,7 +252,8 @@ describe("the two phases keep their rungs apart", () => {
             officialsRung: 1,
           }),
         )}
-      </DictProvider>,
+      </DictProvider>
+    </RungConfigProvider>,
     );
     const checked = [...html.matchAll(/<button[^>]*role="radio"[^>]*>/g)]
       .filter((m) => /aria-checked="true"/.test(m[0]))

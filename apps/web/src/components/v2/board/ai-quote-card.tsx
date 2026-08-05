@@ -37,6 +37,7 @@ import {
   type RungInput,
   type RungWeights,
 } from "@/lib/ai-rung";
+import { useRungConfig } from "./rung-config-provider";
 
 export const RUNGS: Rung[] = [1, 2, 3];
 
@@ -150,8 +151,20 @@ export function AiQuoteCard({
   busy: boolean;
 } & QuoteCardOptions) {
   const plural = usePlural();
-  const quote = quoteFor(lines, { weights, freeDraft });
+  // #385: the weights and budgets the SERVER resolved. `quoteFor` keeps its
+  // optional `weights` because the server calls it directly, but the COMPONENT
+  // never falls back to `schedulingRungWeights()` — a client module reads
+  // `process.env` through a computed key and always gets the defaults, so that
+  // fallback is precisely how the card came to quote a different number than
+  // the invoice charged.
+  const cfg = useRungConfig();
+  const quote = quoteFor(lines, { weights: weights ?? cfg.scheduling, freeDraft });
   const joint = quote.lines.length > 1;
+  // Same reasoning for the token budget. The tail fallback covers credit totals
+  // past the resolved table (a joint run of many rung-3 divisions); the ladder
+  // does not currently produce one, and a budget of `undefined` on screen would
+  // be worse than a defaults-derived number.
+  const budgetFor = (n: number): number => cfg.budgets[n - 1] ?? tokenBudgetForCredits(n);
 
   // "Very large" means the work outgrows what the TOP rung can buy — #348 §8's
   // "predicted > rung-3 capacity → still allow it, warn". It is measured
@@ -167,7 +180,7 @@ export function AiQuoteCard({
   // (run fewer divisions together), so it gets its own line.
   const oversized = freeDraft
     ? []
-    : quote.lines.filter((l) => l.estTokens > tokenBudgetForCredits(l.predictedRung));
+    : quote.lines.filter((l) => l.estTokens > budgetFor(l.predictedRung));
   // EVERY oversized line gets a name. Dropping the unnamed ones instead
   // (`.filter(Boolean)`) means a joint run whose oversized lines are all
   // unlabelled yields an empty list and falls through to the singular
@@ -176,9 +189,11 @@ export function AiQuoteCard({
   const oversizedNames = oversized.map(
     (l) => lines.find((x) => x.key === l.key)?.label ?? msg("board.ai.quote.thisDivision"),
   );
-  const predictedBudget = tokenBudgetForCredits(
-    quote.lines.reduce((n, l) => n + l.predictedRung, 0),
-  );
+  const predictedBudget = budgetFor(quote.lines.reduce((n, l) => n + l.predictedRung, 0));
+  // `quoteRun` sized this from its OWN `tokenBudgetForCredits`, which on the
+  // client is the defaults table. The number the organiser reads is the
+  // server's.
+  const budget = budgetFor(quote.rungTotal);
   const jointTooBig = !freeDraft && oversized.length === 0 && quote.estTokens > predictedBudget;
 
   return (
@@ -283,8 +298,8 @@ export function AiQuoteCard({
             for the free draft — it makes no model call, so promising it a
             thinking budget would describe a run that does not happen. */}
         {!freeDraft && (
-          <p className="text-[11px] text-slate-500" data-ai-budget={quote.budget}>
-            {msg("board.ai.quote.budget", { tokens: formatTokens(quote.budget) })}
+          <p className="text-[11px] text-slate-500" data-ai-budget={budget}>
+            {msg("board.ai.quote.budget", { tokens: formatTokens(budget) })}
           </p>
         )}
         {quote.underfunded && <Caution>{msg("board.ai.quote.underfunded")}</Caution>}

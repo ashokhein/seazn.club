@@ -15,8 +15,9 @@
 import { useMemo, useState } from "react";
 import { timeLabel } from "@/lib/day-label";
 import { useMsg, usePlural } from "@/components/i18n/dict-provider";
-import { officialsRungWeights, type RungInput } from "@/lib/ai-rung";
+import { type RungInput } from "@/lib/ai-rung";
 import { AiQuoteCard, quoteFor, type QuoteCardLine } from "./ai-quote-card";
+import { useRungConfig } from "./rung-config-provider";
 import type { MessageKey } from "@/lib/messages";
 import type { AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
 import { OfficialAvatar } from "@/components/v2/officials-shared";
@@ -211,7 +212,11 @@ export function AiOfficialsReview({
   // adopt brief and an empty box, Re-plan alone would in fact be free, so the
   // card OVER-quotes it. Over-quoting is the safe error; under-quoting bills
   // someone more than the surface they confirmed.
-  const officialsWeights = useMemo(() => officialsRungWeights(), []);
+  // #385: resolved on the SERVER. `officialsRungWeights()` called here read
+  // `process.env` through a computed key, which a `"use client"` bundle never
+  // gets substituted — so every AI_RUNG_OFFICIALS_* override the server priced
+  // with was invisible to this card.
+  const officialsWeights = useRungConfig().officials;
   const freeDraft = instruction.trim() === "" && adoptInstruction.trim() === "";
   // DISPLAY ONLY — never a price input (see above). A plan that reports no
   // tokens is *usually* the solver pass, which is good enough to pick the

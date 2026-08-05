@@ -42,6 +42,7 @@ import {
   type PickerDivision,
 } from "./ai-division-picker";
 import { AiQuoteCard, quoteFor, type QuoteCardLine } from "./ai-quote-card";
+import { useRungConfig } from "./rung-config-provider";
 import {
   aiErrorKey,
   applyErrorKey,
@@ -877,7 +878,11 @@ export function AiCompetitionConsole({
   const lines = jointQuoteLines(divisions, selected, rungs);
   // ONE quote. The CTA and the receipt read the same object, because pricing the
   // same run twice is exactly how a button and the card above it disagree.
-  const quote = quoteFor(lines);
+  // #385: on the SERVER-resolved weights — a client module never sees an
+  // AI_RUNG_* override, so the built-in fallback would price this run on the
+  // defaults while the invoice used the overrides.
+  const cfg = useRungConfig();
+  const quote = quoteFor(lines, { weights: cfg.scheduling });
   const divergent = divergentCourts(divisions, selected);
   const zones = timezoneSpread(divisions, selected);
   // The gate, and the click that feeds it. Both derived during render, so a

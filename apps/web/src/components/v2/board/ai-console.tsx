@@ -41,6 +41,7 @@ import {
 import { AiWishChips } from "./ai-wish-chips";
 import { AiPreflight, AiLastRun, type PreflightInput } from "./ai-preflight";
 import { AiQuoteCard, quoteFor, type QuoteCardLine } from "./ai-quote-card";
+import { useRungConfig } from "./rung-config-provider";
 import { compileWishes, deriveFreeText, joinNonEmpty, type Wish } from "./wish-compile";
 import { compileOfficialsWishes, type OfficialsWish } from "./officials-wish-compile";
 import { AiTrace, type TraceEvent } from "./ai-trace";
@@ -1087,6 +1088,11 @@ export function BriefStep({
   lastRun: AiLastResult | null;
 }) {
   const plural = usePlural();
+  // #385: the CTA and the confirm card price through the SAME server-resolved
+  // weights the card renders with. Letting `quoteFor` fall back to
+  // `schedulingRungWeights()` here would put a defaults-priced number on the
+  // button above a card priced on the overrides.
+  const cfg = useRungConfig();
   const tooShort = state.instruction.trim().length < 3;
   const presetNums = [1, 2, 3] as const;
   // ONE line — the division being planned. The joint competition console
@@ -1129,7 +1135,7 @@ export function BriefStep({
     ? runAction
     : msg("board.ai.quote.cta", {
         action: runAction,
-        credits: plural("board.ai.quote.credits", quoteFor(quoteLines).credits),
+        credits: plural("board.ai.quote.credits", quoteFor(quoteLines, { weights: cfg.scheduling }).credits),
       });
   return (
     <div className="space-y-3">
@@ -1291,7 +1297,7 @@ export function BriefStep({
       {cardVisible && state.preview.data && (
         <AiInstructionPreview
           preview={state.preview.data}
-          credits={quoteFor(quoteLines).credits}
+          credits={quoteFor(quoteLines, { weights: cfg.scheduling }).credits}
           onConfirm={run}
           onDismiss={() => dispatch({ type: "PREVIEW_DISMISS" })}
           onAsPreference={() => dispatch({ type: "PREVIEW_AS_PREFERENCE" })}
