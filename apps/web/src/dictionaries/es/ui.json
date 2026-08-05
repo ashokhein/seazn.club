@@ -2809,6 +2809,8 @@
   "board.ai.quote.total": "Total",
   "board.ai.quote.budget": "Los créditos compran un presupuesto de razonamiento — hasta {tokens} tokens en esta ejecución.",
   "board.ai.quote.underfunded": "Por debajo de los créditos recomendados. Esta ejecución puede detenerse antes de completar el calendario.",
+  "board.ai.quote.mismatchOver": "Presupuesto {quoted}, cobro {charged}. Se te cobró más que la estimación: cuéntanoslo.",
+  "board.ai.quote.mismatchUnder": "Presupuesto {quoted}, cobro {charged}. Se te cobró menos que la estimación.",
   "board.ai.quote.veryLarge": "Esta ejecución es muy grande. Divide la división y prográmala por partes para obtener un mejor resultado.",
   "board.ai.quote.sizePlain": "{fixtures} partidos · {courts} pistas",
   "board.ai.quote.veryLargeDivisions.one": "{divisions} es muy grande. Prográmala por partes o ejecuta menos divisiones juntas.",

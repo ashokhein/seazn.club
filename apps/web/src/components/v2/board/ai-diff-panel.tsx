@@ -18,6 +18,7 @@ import {
   type AiConsoleFixture,
   type AiDiffSlot,
 } from "./ai-diff";
+import { AiQuoteMismatchNote } from "./ai-quote-card";
 import { Marker } from "./ai-marker";
 import { CONFLICT_LABEL } from "./types";
 
@@ -95,6 +96,11 @@ export function AiDiffPanel({
           ))}
         </div>
       </div>
+
+      {/* #387 — the receipt correction. Directly under the usage row because
+          that is where the run reports what it cost, and this is the line that
+          says that number is not the one the confirm card promised. */}
+      <AiQuoteMismatchNote mismatch={plan.quote_mismatch} msg={msg} />
 
       {/* Officials coverage preview — only when a policy was sent (§2). */}
       {cov && <CoverageStrip fillable={cov.fillable} total={cov.total} unfilled={cov.unfilled.length} />}

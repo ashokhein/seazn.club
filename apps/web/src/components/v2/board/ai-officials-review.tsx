@@ -16,7 +16,7 @@ import { useMemo, useState } from "react";
 import { timeLabel } from "@/lib/day-label";
 import { useMsg, usePlural } from "@/components/i18n/dict-provider";
 import { type RungInput } from "@/lib/ai-rung";
-import { AiQuoteCard, quoteFor, type QuoteCardLine } from "./ai-quote-card";
+import { AiQuoteCard, AiQuoteMismatchNote, quoteFor, type QuoteCardLine } from "./ai-quote-card";
 import { useRungConfig } from "./rung-config-provider";
 import type { MessageKey } from "@/lib/messages";
 import type { AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
@@ -294,6 +294,9 @@ export function AiOfficialsReview({
               ))}
             </div>
           </div>
+
+          {/* #387 — the receipt correction, beside the run's own usage row. */}
+          <AiQuoteMismatchNote mismatch={plan.quote_mismatch} msg={msg} />
 
           <CoverageLine filled={model.filled} total={model.total} />
         </div>

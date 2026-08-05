@@ -626,6 +626,8 @@ export type DictionaryKey =
   | "board.ai.quote.discount"
   | "board.ai.quote.discountAmount"
   | "board.ai.quote.freeDraft"
+  | "board.ai.quote.mismatchOver"
+  | "board.ai.quote.mismatchUnder"
   | "board.ai.quote.predicted"
   | "board.ai.quote.rungAria"
   | "board.ai.quote.rungAriaDivision"

@@ -41,7 +41,7 @@ import {
   selectableDivisions,
   type PickerDivision,
 } from "./ai-division-picker";
-import { AiQuoteCard, quoteFor, type QuoteCardLine } from "./ai-quote-card";
+import { AiQuoteCard, AiQuoteMismatchNote, quoteFor, type QuoteCardLine } from "./ai-quote-card";
 import { useRungConfig } from "./rung-config-provider";
 import {
   aiErrorKey,
@@ -624,6 +624,11 @@ export function JointReviewStep({
         {plan.summary}
       </p>
 
+      {/* #387 — the receipt correction, directly above the division ledger:
+          the ledger is what the run priced, and this is the line that says the
+          price it charged is not the one the confirm card promised. */}
+      <AiQuoteMismatchNote mismatch={plan.quote_mismatch} msg={msg} />
+
       {/* The ledger: one row per division, in the order it was picked and
           priced. This is what "the run covered all of them" looks like. */}
       <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
@@ -968,7 +973,17 @@ export function AiCompetitionConsole({
       // redeemed. Null when the organiser took the preference fallback — the
       // one path where nothing was confirmed.
       const result = await runJointPlan(
-        { competitionId, selected, instruction, rungs, prior, previewId: preview.slice.id },
+        {
+          competitionId,
+          selected,
+          instruction,
+          rungs,
+          prior,
+          previewId: preview.slice.id,
+          // #387: the number the receipt above this button is showing — the
+          // SAME `quote` object the card and the CTA read, not a recomputation.
+          quotedCredits: quote.credits,
+        },
         {
           inFlight,
           // Fires only after the guard passes, so a refused second click cannot
@@ -996,7 +1011,7 @@ export function AiCompetitionConsole({
       const key = aiErrorKey(result.httpStatus, result.code);
       setError({ message: msg(key), key });
     },
-    [competitionId, instruction, msg, onProposalChange, preview, running, rungs, selected],
+    [competitionId, instruction, msg, onProposalChange, preview, quote.credits, running, rungs, selected],
   );
 
   const doApply = useCallback(async () => {

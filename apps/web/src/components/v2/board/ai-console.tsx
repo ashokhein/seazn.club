@@ -164,6 +164,11 @@ export function schedulePlanBody(
     mode: AiMode;
     officialsPolicy?: AiPlanRequest["officials_policy"] | null;
     prior?: AiPlanRequest["prior"] | null;
+    /** #387: the credits the confirm card SHOWED. The server compares it to
+     *  what it charges and records the divergence. Absent when no card was on
+     *  screen (the seq-conflict re-run), because silence must never be read as
+     *  "quoted zero". */
+    quotedCredits?: number;
   },
 ): AiPlanRequest {
   return {
@@ -187,6 +192,7 @@ export function schedulePlanBody(
     ...(state.preview.id ? { preview_id: state.preview.id } : {}),
     ...(args.officialsPolicy ? { officials_policy: args.officialsPolicy } : {}),
     ...(args.prior ? { prior: args.prior } : {}),
+    ...(args.quotedCredits !== undefined ? { quoted_credits: args.quotedCredits } : {}),
   };
 }
 
@@ -201,6 +207,8 @@ export function officialsPlanBody(
     /** Round-tripped assignments; the brief they were produced under comes from
      *  state, so the two halves of `prior` cannot describe different runs. */
     priorAssignments?: AiOfficialsPlanResponse["assignments"] | null;
+    /** #387 — see `schedulePlanBody`. */
+    quotedCredits?: number;
   },
 ): AiOfficialsPlanRequest {
   return {
@@ -216,6 +224,7 @@ export function officialsPlanBody(
           },
         }
       : {}),
+    ...(args.quotedCredits !== undefined ? { quoted_credits: args.quotedCredits } : {}),
   };
 }
 
@@ -519,6 +528,10 @@ export function AiConsole({
   // the write already forces a render on every path that sets it, so this is
   // a same-render swap, not a new one.
   const [officialsHadPrior, setOfficialsHadPrior] = useState(false);
+  // #385/#387: the SERVER's rung config, and the quotes the two confirm
+  // surfaces are showing. The run bodies send those numbers so the server can
+  // say whether what it charged is what the organiser was promised.
+  const rungConfig = useRungConfig();
   const officialsAutoStarted = useRef(false);
   // Cancel any in-flight run on close/unmount (the board conditionally renders
   // the dock, so unmount cleanup covers close too) — its rejection is ignored.
@@ -606,6 +619,13 @@ export function AiConsole({
     const body = schedulePlanBody(state, {
       instruction,
       mode,
+      // #387: the price the brief step is showing. Built from the SAME pure
+      // `scheduleQuoteLines` + `quoteFor` pair the card renders — the whole
+      // point of this field is that it is the card's number, so recomputing it
+      // a second way here would make it measure nothing.
+      quotedCredits: quoteFor(scheduleQuoteLines(divisionId, brief, mode, state.scope, state.rung), {
+        weights: rungConfig.scheduling,
+      }).credits,
       // A dry officials-coverage preview rides along only when the division has a
       // saved policy (none is persisted today, so this is omitted — see the prop).
       officialsPolicy,
@@ -645,7 +665,7 @@ export function AiConsole({
     // `state` whole, not a field list: the body builder reads the state object
     // itself (so a call site cannot hand it the wrong phase's rung), which means
     // a field list would go stale the moment the builder reads a new one.
-  }, [busy, divisionId, msg, officialsPolicy, state]);
+  }, [brief, busy, divisionId, msg, officialsPolicy, rungConfig, state]);
 
   // Phase B run. Empty instruction + no prior = the zero-token solver draft (the
   // auto-run on first entry); a non-empty instruction plans with the LLM; a
@@ -670,8 +690,25 @@ export function AiConsole({
       }));
       // Phase B's rung is read by the builder from `officialsRung` — never
       // passed in, so this call site cannot hand it Phase A's.
+      // #387: the officials card's own price. `freeDraft` is the SERVER's own
+      // predicate — `officials-ai.ts` takes `freeDraftQuote` iff the sent
+      // instruction is empty — and both spend paths (re-plan, adopt) supply
+      // that string themselves, so asking it of `opts.instruction` asks the
+      // question the server will ask of this very request.
+      const quotedCredits = quoteFor(
+        [
+          {
+            key: "officials",
+            label: null,
+            input: officialsQuoteInput(fixtures, schedule),
+            chosen: state.officialsRung,
+          },
+        ],
+        { weights: rungConfig.officials, freeDraft: opts.instruction.trim() === "" },
+      ).credits;
       const officialsBody = officialsPlanBody(state, {
         instruction: opts.instruction,
+        quotedCredits,
         schedule,
         policy: officialsPolicy ?? DEFAULT_OFFICIALS_POLICY,
         priorAssignments: opts.priorAssignments,
@@ -694,7 +731,7 @@ export function AiConsole({
       }
     },
     // See the note on `run`'s deps — the body builder reads `state` itself.
-    [busy, divisionId, msg, officialsPolicy, state],
+    [busy, divisionId, fixtures, msg, officialsPolicy, rungConfig, state],
   );
 
   // Auto-run the free solver draft the first time the organiser reaches the

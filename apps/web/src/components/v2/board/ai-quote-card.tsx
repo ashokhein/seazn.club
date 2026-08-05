@@ -318,6 +318,64 @@ export function AiQuoteCard({
   );
 }
 
+/**
+ * The receipt correction line (#387) — what the card quoted against what the
+ * run actually charged.
+ *
+ * Server-detected: the client sends the number its card showed and the server
+ * compares it against the charge, so this renders what the response reports and
+ * computes nothing itself. A client that recomputed the comparison could agree
+ * with itself while disagreeing with the invoice, which is the failure being
+ * measured.
+ *
+ * TWO TONES, because the two directions are not the same news. Charged MORE
+ * than quoted is the complaint-shaped one and takes the card's existing amber
+ * caution treatment — the same vocabulary the oversize and underfunded warnings
+ * already use, so it reads as part of the receipt rather than as a new kind of
+ * alert. Charged LESS is a correction in the organiser's favour and stays
+ * muted: alarming someone about money they did not spend trains them to ignore
+ * the amber one.
+ *
+ * The figures live in the sentence and nowhere else. An earlier pass paired
+ * them as a struck-through before/after; it printed both numbers twice, which
+ * is decoration, so it went.
+ */
+export function AiQuoteMismatchNote({
+  mismatch,
+  msg,
+}: {
+  mismatch: { quoted: number; charged: number } | undefined;
+  msg: ReturnType<typeof useMsg>;
+}) {
+  if (!mismatch) return null;
+  const over = mismatch.charged > mismatch.quoted;
+  const text = msg(over ? "board.ai.quote.mismatchOver" : "board.ai.quote.mismatchUnder", {
+    quoted: mismatch.quoted,
+    charged: mismatch.charged,
+  });
+  // `tabular-nums` on the whole line: the digits sit inside the sentence here,
+  // and the card's other amounts are lined up, so these should not be the one
+  // place the figures wobble.
+  return over ? (
+    <p
+      role="status"
+      data-ai-quote-mismatch="over"
+      className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-snug tabular-nums text-amber-900"
+    >
+      <span aria-hidden>⚠</span>
+      <span>{text}</span>
+    </p>
+  ) : (
+    <p
+      role="status"
+      data-ai-quote-mismatch="under"
+      className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] leading-snug tabular-nums text-slate-600"
+    >
+      {text}
+    </p>
+  );
+}
+
 function Caution({ children }: { children: ReactNode }) {
   return (
     <p

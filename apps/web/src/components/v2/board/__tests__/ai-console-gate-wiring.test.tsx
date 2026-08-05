@@ -49,6 +49,19 @@ vi.mock("@/lib/client-v1", async (importOriginal) => {
 // `usePlural` THROWS outside a DictProvider and the harness has no provider
 // tree. The real runtime over the real English catalog is the same fallback
 // `useMsg` already takes there, so the copy stays the shipped copy.
+// #385: the console prices on the rung config the board's RSC resolved, read
+// through `useRungConfig`. The hookless harness has no provider tree — its
+// `useContext` returns the context DEFAULT, and this context has none on
+// purpose — so the hook is replaced with the server-resolved defaults. The
+// production guarantee (a missing provider throws) is pinned by
+// rung-config-provider.test.tsx, not weakened here.
+vi.mock("../rung-config-provider", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../rung-config-provider")>();
+  const { resolveRungConfig } = await import("@/lib/ai-rung");
+  const config = resolveRungConfig();
+  return { ...actual, useRungConfig: () => config };
+});
+
 vi.mock("@/components/i18n/dict-provider", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/i18n/dict-provider")>();
   const { plural } = await import("@/lib/i18n-runtime");

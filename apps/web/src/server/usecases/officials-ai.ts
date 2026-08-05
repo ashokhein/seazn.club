@@ -38,6 +38,7 @@ import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
 import { spendCredit, walletIdFor } from "@/lib/credits";
+import { recordQuoteMismatch } from "./ai-quote-mismatch";
 import { rateLimit } from "@/lib/rate-limit";
 import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -1289,6 +1290,18 @@ export async function officialsAiPlanForDivision(
     );
   }
 
+  // #387: what the confirm card said, against what was actually charged.
+  // Skipped only when the division vanished mid-run — `recordOfficialsRun`
+  // recorded nothing either, so there is no competition to file it against.
+  const quote_mismatch = competitionId
+    ? await recordQuoteMismatch(
+        auth,
+        { competitionId, divisionIds: [divisionId] },
+        input.quoted_credits,
+        quote.credits,
+      )
+    : undefined;
+
   await captureServer({
     event: "ai_plan_run",
     distinctId,
@@ -1326,6 +1339,8 @@ export async function officialsAiPlanForDivision(
     // the predictor said, whether the confirm card's warning applies, and
     // whether the budget cut the run short.
     ...meterStamp(quote, meter),
+    // #387 — present only when the card and the charge disagreed.
+    ...(quote_mismatch ? { quote_mismatch } : {}),
   };
 }
 

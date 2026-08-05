@@ -2809,6 +2809,8 @@
   "board.ai.quote.total": "Total",
   "board.ai.quote.budget": "Credits buy a thinking budget — up to {tokens} tokens for this run.",
   "board.ai.quote.underfunded": "Below the recommended credits. This run may stop before a full schedule.",
+  "board.ai.quote.mismatchOver": "Quoted {quoted}, charged {charged}. You were charged more than the estimate — please tell us.",
+  "board.ai.quote.mismatchUnder": "Quoted {quoted}, charged {charged}. You were charged less than the estimate.",
   "board.ai.quote.veryLarge": "This run is very large. Split the division and schedule it in parts for a better result.",
   "board.ai.quote.sizePlain": "{fixtures} fixtures · {courts} courts",
   "board.ai.quote.veryLargeDivisions.one": "{divisions} is very large. Schedule it in parts, or run fewer divisions together.",

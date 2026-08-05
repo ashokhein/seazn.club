@@ -2809,6 +2809,8 @@
   "board.ai.quote.total": "Total",
   "board.ai.quote.budget": "Les crédits achètent un budget de réflexion — jusqu’à {tokens} tokens pour cette exécution.",
   "board.ai.quote.underfunded": "En dessous des crédits recommandés. Cette exécution peut s’arrêter avant d’avoir terminé le calendrier.",
+  "board.ai.quote.mismatchOver": "Devis {quoted}, facturé {charged}. Vous avez été facturé plus que l’estimation — dites-le-nous.",
+  "board.ai.quote.mismatchUnder": "Devis {quoted}, facturé {charged}. Vous avez été facturé moins que l’estimation.",
   "board.ai.quote.veryLarge": "Cette exécution est très volumineuse. Divisez la division et planifiez-la en plusieurs fois pour un meilleur résultat.",
   "board.ai.quote.sizePlain": "{fixtures} matchs · {courts} terrains",
   "board.ai.quote.veryLargeDivisions.one": "{divisions} est très volumineuse. Planifiez-la en plusieurs fois, ou lancez moins de divisions ensemble.",

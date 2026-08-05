@@ -287,7 +287,8 @@ describe("what the CTA sends is what the receipt priced", () => {
     pickRung("d2", 3);
     // The pick reached the PRICE first — otherwise the body below could match
     // a receipt that never moved, and the two would agree about nothing.
-    expect(creditsOnCta()).not.toBe(quoted);
+    const repriced = creditsOnCta();
+    expect(repriced).not.toBe(quoted);
 
     await confirm();
 
@@ -303,6 +304,10 @@ describe("what the CTA sends is what the receipt priced", () => {
         instruction: BRIEF,
         rungs: { d2: 3 },
         previewId: PREVIEW_ID,
+        // #387: the number the CTA is showing, read off the CTA itself rather
+        // than restated — the whole point of the field is that the server can
+        // compare the charge against what this organiser was actually shown.
+        quotedCredits: repriced as number,
       }),
     );
     // Spelled out, so a change to jointRunBody cannot make both sides agree on
@@ -313,6 +318,7 @@ describe("what the CTA sends is what the receipt priced", () => {
       mode: "generate",
       rung_overrides: { d2: 3 },
       preview_id: PREVIEW_ID,
+      quoted_credits: repriced,
     });
   });
 

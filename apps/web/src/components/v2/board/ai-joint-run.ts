@@ -41,6 +41,13 @@ export interface JointRunInput {
    *  fallback after a failed compile, which is the one path where nothing was
    *  confirmed and the server compiles inline exactly as it did before. */
   previewId?: string | null;
+  /** #387: the credits the confirm card SHOWED. The server compares it against
+   *  what it charges and records a divergence — so this must be the number the
+   *  receipt rendered, read from the same `quoteFor` call, never a second
+   *  computation that could quietly agree with itself while disagreeing with
+   *  the card. Optional: a re-run started with no card on screen quotes
+   *  nothing, and silence must not read as "quoted zero". */
+  quotedCredits?: number;
 }
 
 /** What a joint compile is asked about. Deliberately the run's own inputs minus
@@ -100,6 +107,7 @@ export function jointRunBody(input: JointRunInput): AiCompetitionPlanRequest {
     instruction: text,
     mode: input.prior ? "refine" : "generate",
     ...rungOverrides(input.rungs, input.selected),
+    ...(input.quotedCredits !== undefined ? { quoted_credits: input.quotedCredits } : {}),
     ...(input.previewId ? { preview_id: input.previewId } : {}),
     ...(input.prior
       ? {

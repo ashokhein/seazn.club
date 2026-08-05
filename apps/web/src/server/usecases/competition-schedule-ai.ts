@@ -123,6 +123,7 @@ import {
 } from "@/lib/ai-rung";
 import { balance, spendCredit, walletIdFor } from "@/lib/credits";
 import { deferred } from "@/lib/deferred";
+import { recordQuoteMismatch, type QuoteMismatch } from "./ai-quote-mismatch";
 import { requireFeature } from "@/lib/entitlements";
 import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import { rateLimit } from "@/lib/rate-limit";
@@ -2134,6 +2135,9 @@ export interface AiCompetitionPlanRequest {
    *  a run without one compiles inline exactly as before, which is what smoke,
    *  e2e and every external consumer do. */
   preview_id?: string;
+  /** #387: the credits the joint confirm card SHOWED. Optional, and an absent
+   *  value is silence rather than zero — server-side callers send none. */
+  quoted_credits?: number;
 }
 
 /**
@@ -2181,6 +2185,14 @@ export interface AiCompetitionPlanResponse
   skipped_divisions: { id: string; name: string; reason: "no_movable_fixtures" }[];
   /** Public shape only — `cost_usd` stays on the ledger event. */
   usage: { input_tokens: number; output_tokens: number; repair_rounds: number };
+  /**
+   * #387: present ONLY when the confirm card's quote and the charge disagreed.
+   *
+   * Declared here rather than on `RunMeterStamp`, which every ledger event
+   * spreads: `meterStamp` never produces this field, and putting it on that
+   * shape would advertise a key those rows can never carry.
+   */
+  quote_mismatch?: QuoteMismatch;
 }
 
 /** The competition-level ledger event a successful joint RUN writes. Named once
@@ -2748,6 +2760,17 @@ async function planForCompetition(
     }),
   );
 
+  // #387: the card's quote against the charge. The joint path is where a
+  // divergence is most likely — the batch discount is arithmetic the client
+  // reimplements nowhere but still has to arrive at — and the event names every
+  // division in the run.
+  const quote_mismatch = await recordQuoteMismatch(
+    auth,
+    { competitionId, divisionIds: pack.divisions.map((d) => d.id) },
+    input.quoted_credits,
+    quote.credits,
+  );
+
   await captureServer({
     event: "ai_plan_run",
     distinctId,
@@ -2798,6 +2821,8 @@ async function planForCompetition(
       repair_rounds: result.usage.repair_rounds,
     },
     ...meterStamp(quote, meter, parseStamp),
+    // #387 — present only when the card and the charge disagreed.
+    ...(quote_mismatch ? { quote_mismatch } : {}),
     // AFTER the stamp, deliberately: the stamp carries its own narrow
     // `divisions` breakdown and this merged one replaces it (see the field's
     // doc comment). Every solved division has a quote line — they are built
