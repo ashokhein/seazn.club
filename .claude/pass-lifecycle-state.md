@@ -164,8 +164,20 @@ Set by Tasks 6 and 7 and applied since; a task is not done without it.
 8 uncommitted files. That was wrong. The files came back on their own a few
 minutes later, contents intact, and both of my edits committed cleanly as
 `fe573380` (6/6 green). The working tree was **transiently emptied and
-restored** — most likely a stash push/pop cycle by the agent running there,
-observed at exactly the wrong instant.
+restored** — observed at exactly the wrong instant.
+
+**Mechanism now confirmed, and it was not a stash.** The help-pages agent
+running in that worktree reported it unprompted: to measure a "before"
+baseline it reverted the tree to HEAD, ran the suite, then restored the
+files — verifying the restore with `cmp` as byte-identical. My two files sat
+inside that ~4-minute window. So the cause is a **sibling agent's
+baseline-by-revert**, not a stash cycle, and the honest risk it creates is
+real: had I written during that window, the write WOULD have been lost.
+
+The fix is a brief-level ban, now standard in every dispatch here: an agent
+must never run `git checkout -- .`, `git restore .`, `git stash`, or any
+tree-wide revert to measure a baseline. Baselines are measured either before
+making any edit, or per-file via `git show HEAD:<path>`.
 
 Two lessons that still stand, and one that does not:
 
