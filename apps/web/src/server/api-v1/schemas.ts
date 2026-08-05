@@ -2358,6 +2358,21 @@ export const ApplyCompetitionScheduleResult = z.object({
 });
 export type ApplyCompetitionScheduleResult = z.infer<typeof ApplyCompetitionScheduleResult>;
 
+/**
+ * POST /competitions/{id}/schedule/restore — undo one joint apply (#386).
+ *
+ * The anchors come from the CLIENT because only the client holds them: the
+ * `schedule.applied_multi` event carries `division_ids` and nothing else. The
+ * usecase checks the division set against that event, so a body naming fewer
+ * (or other) divisions is a 422 rather than a partial restore.
+ */
+export const RestoreCompetitionScheduleRequest = z.object({
+  checkpoints: z.array(z.object({ division_id: Uuid, checkpoint_id: Uuid })).min(1).max(20),
+  /** Double-submit guard, same literal as the per-division restore. */
+  confirm: z.literal(true),
+});
+export type RestoreCompetitionScheduleRequest = z.infer<typeof RestoreCompetitionScheduleRequest>;
+
 // Custom points & rank control (Jul3/05, PROMPT-25) ---------------------------
 
 export const OverrideStandings = z.object({
