@@ -174,7 +174,7 @@ Separately, every plan has a burst brake of **5 AI runs an hour per division** f
 
 ## Scheduling several divisions together
 
-The competition's own schedule board (**Competition → Schedule**) can plan **several divisions at once**, so divisions sharing a venue are fitted around each other in a single pass instead of being scheduled one at a time and patched up afterwards. The multi-division board is a **Pro** feature.
+The competition's own schedule board (**Competition → Schedule**) can plan **several divisions at once**, so divisions sharing a venue are fitted around each other in a single pass instead of being scheduled one at a time and patched up afterwards. Planning several divisions together needs **Pro**, or this competition's **Event Pass**, which lifts it for that one competition. The board itself, and the scheduling constraints behind it, are open on every plan.
 
 Pick the divisions in the console, write one instruction covering all of them, and review the proposal division by division. Applying writes every division together — **all of them or none**.
 

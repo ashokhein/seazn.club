@@ -882,7 +882,7 @@
   "upgrade.ownerOnly": "Alleen de eigenaar van de organisatie kan upgrades kopen.",
   "upgrade.proCard.title": "Het hele jaar door evenementen organiseren?",
   "upgrade.perMonth": "/maand",
-  "upgrade.proCard.body": "Pro upgradet elke competitie in {org}, niet alleen deze — en voegt het planningsbord, spelersstatistieken, officials en API-toegang toe die de pass nooit dekt.",
+  "upgrade.proCard.body": "Pro upgradet elke competitie in {org}, niet alleen deze — en voegt spelersstatistieken en API-toegang toe die de pass nooit dekt.",
   "upgrade.proCard.cta": "Neem Pro — 14 dagen gratis proberen",
   "upgrade.proCard.ctaNoTrial": "Word Pro",
   "upgrade.titleOwned": "Event Pass — “{name}”",

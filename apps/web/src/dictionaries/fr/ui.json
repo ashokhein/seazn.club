@@ -882,7 +882,7 @@
   "upgrade.ownerOnly": "Seul le propriétaire de l’organisation peut acheter des améliorations.",
   "upgrade.proCard.title": "Vous organisez des événements toute l’année ?",
   "upgrade.perMonth": "/mois",
-  "upgrade.proCard.body": "Pro améliore toutes les compétitions de {org}, pas seulement celle-ci — et ajoute le tableau de planification, les statistiques des joueurs, les officiels et l’accès API que le pass ne couvre jamais.",
+  "upgrade.proCard.body": "Pro améliore toutes les compétitions de {org}, pas seulement celle-ci — et ajoute les statistiques des joueurs et l’accès API que le pass ne couvre jamais.",
   "upgrade.proCard.cta": "Passer à Pro — essai gratuit de 14 jours",
   "upgrade.proCard.ctaNoTrial": "Passer à Pro",
   "upgrade.titleOwned": "Event Pass — « {name} »",
