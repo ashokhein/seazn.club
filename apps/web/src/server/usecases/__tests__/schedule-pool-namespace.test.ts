@@ -115,7 +115,7 @@ function settings(constraints: Record<string, unknown>): ScheduleSettingsOut {
       perEntrantMinRest: 30,
       constraints,
     }),
-    tz: "UTC",
+    displayTz: "UTC",
     orgTz: "UTC",
     updated_at: iso(T0),
   };

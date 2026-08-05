@@ -77,7 +77,13 @@ describe("slotFixtures — greedy placement (spec 05 §2.6)", () => {
     expect((assignments[0] as Assignment).startAt).toBe(35 * MIN);
   });
 
-  it("warns (does not block) on a per-person overlap across divisions", () => {
+  it("moves a per-person overlap across divisions off the clash, rather than warning", () => {
+    // Was "warns (does not block)" until #399 made the write gate absolute for
+    // an INTRODUCED person overlap whatever `crossPersonClash` says. A placer
+    // that took the free court here proposed a board the gate then refused, and
+    // re-running Auto proposed it again. It now steps past the sibling card.
+    // The warning still exists for an overlap the placer did not introduce —
+    // see the locked case in calendar-person-clash-placement.test.ts.
     const existing: Assignment[] = [
       { fixtureId: "sib", court: "C9", startAt: 0, endAt: 30 * MIN, entrants: ["X"], people: ["kid1"] },
     ];
@@ -89,9 +95,11 @@ describe("slotFixtures — greedy placement (spec 05 §2.6)", () => {
       config: baseConfig({ courts: ["C1"] }),
       existing,
     });
-    // Placed at 0 on a free court, but kid1 also plays sib at 0 → warn.
+    // C1 is free the whole time — only kid1 can move this card, so the start
+    // time is the assertion that a court-only dodge would fail.
     expect(assignments).toHaveLength(1);
-    expect(conflicts.some((c) => c.reason === "person_overlap")).toBe(true);
+    expect((assignments[0] as Assignment).startAt).toBeGreaterThanOrEqual(30 * MIN);
+    expect(conflicts.some((c) => c.reason === "person_overlap")).toBe(false);
   });
 
   it("honours a locked slot and reports a court clash rather than moving it", () => {

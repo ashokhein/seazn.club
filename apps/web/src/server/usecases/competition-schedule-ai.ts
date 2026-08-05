@@ -474,11 +474,13 @@ export async function buildCompetitionPack(
     // Two consumers, one map, loaded once here because both need it before the
     // per-division build loop starts:
     //
-    //  * `fixedOccupancy` below. Under `crossPersonClash: "hard"` slotFixtures
-    //    rejects any placement overlapping someone already committed in
-    //    `existing` (calendar.ts:275-283), so an empty people list silently
-    //    disables that block and lets a draft double-book a person against a
-    //    fixture nobody can move.
+    //  * `fixedOccupancy` below. `slotFixtures` rejects any placement
+    //    overlapping someone already committed in `existing` — unconditionally
+    //    now, not only under `crossPersonClash: "hard"`, because the write gate
+    //    refuses an introduced person overlap whatever that setting says. So an
+    //    empty people list silently disables that block and lets a draft
+    //    double-book a person against a fixture nobody can move, which the
+    //    organiser then cannot apply.
     //  * the #396 identity guard and participant recursion. Deliberately the
     //    FULL entrant→persons map and not the pack's `people` display list: that
     //    one keeps only persons rostered into 2+ entrants, which is exactly the
@@ -588,8 +590,9 @@ export async function buildCompetitionPack(
         entrants: [r.home_entrant_id, r.away_entrant_id].filter((e): e is string => e !== null),
         // Unlike the drafts below, these rows come from this module's own SQL,
         // so the person data IS available — and it is load-bearing: it is what
-        // makes `crossPersonClash: "hard"` reject a draft that would commit
-        // someone already playing in another division's fixed fixture.
+        // makes `slotFixtures` reject a draft that would commit someone already
+        // playing in another division's fixed fixture. No longer conditional on
+        // `crossPersonClash`: the placer avoids what the write gate blocks.
         //
         // BOTH the raw id and its guarded key, deliberately. This list is handed
         // to a per-division greedy pass whose own fixtures carry that division's
@@ -1291,18 +1294,16 @@ export function jointFeedDependencies(pack: CompetitionPack): OrderDependency[] 
  *                        avoids the divisions drafted BEFORE it and never those
  *                        after), so honouring it in the verifier would turn a
  *                        build-order artefact into a verdict.
- *    crossPersonClash: warn   matches the single-division AI PLAN path
- *                        (`verifyConfig`, schedule-ai.ts:914) — this function's
- *                        actual twin. It does NOT match the single-division
- *                        APPLY path, and that asymmetry is deliberate on both
- *                        sides: `applySchedule` hands the division's real
- *                        setting to `mapConflicts` (schedule.ts:553) and refuses
- *                        a hand-placed person double-booking, while the plan
- *                        path warns and never asks the model to repair it.
- *                        An earlier version of this comment claimed the two
- *                        matched "exactly". They never did. The joint APPLY
- *                        re-applies the setting itself rather than changing this
- *                        line — see `applyCompetitionSchedule`. */
+ *    crossPersonClash: warn   INERT, and left here only so this literal keeps
+ *                        parsing. Nothing reads the field any more: #399 made
+ *                        the write gate refuse an INTRODUCED person overlap
+ *                        absolutely (`isBlockingConflict` lists
+ *                        `person_overlap` unconditionally), and the placer now
+ *                        avoids one for that same reason rather than consulting
+ *                        the setting. The asymmetry earlier revisions of this
+ *                        comment documented — plan warns, apply refuses — is
+ *                        therefore gone: both sides refuse. Do not restore a
+ *                        branch on this value without first changing the gate. */
 export function verifyConfigFor(
   division: CompetitionPackDivision,
   /** The RUN's resolved calendar window, epoch ms (#397). Optional, but the
