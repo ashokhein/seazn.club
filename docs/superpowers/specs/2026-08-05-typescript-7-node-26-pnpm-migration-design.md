@@ -240,7 +240,8 @@ executes on `main` returns a false green.
 | DB | `db:apply` **and** `sync:sports` | `db:apply` alone leaves `funnel.test.ts` failing `expected 'generic' to be 'badminton'` |
 | Build + smoke | `rm -rf apps/web/.next`, prod build, `test:smoke` | a stale `.next/types` fails tsc for untouched pages |
 | e2e | prod build + `E2E_PROD_TARGET` on **`localhost`** | `127.0.0.1` 401s every API call — the session cookie is `Secure` under `NODE_ENV=production` — while the browser still looks signed in |
-| Sim matrix | `sim:matrix` | golden corpus is frozen; `UPDATE_GOLDEN=1` is never set |
+| Sim matrix | `npm run sim:matrix --workspace packages/engine` | there is **no root `sim:matrix`** — the root has only `sim` and `sim:replay`, so the bare form dies with `Missing script` |
+| Smoke env | provision from the **`smoke` job's `env:` block in `ci.yml`**, never from memory | two silent skips: without `SCHEDULING_AI_BASE_URL` + `AI_FIXTURE_PORT` + `ANTHROPIC_API_KEY` the entire v4 AI section skips; without `STRIPE_WEBHOOK_SECRET` (`whsec_ci_smoke`, same value in server *and* smoke process) addon churn skips. Both print zero failures and a plausible total |
 | Container | CI job on `ubuntu-latest`: `docker build` **then** `docker run` execing the TS 7 binary; plus `fly deploy --build-only --remote-only` | `SKIP_TYPECHECK=1` means the build never invokes `tsc`, so a musl-incompatible binary builds clean |
 | Live-Stripe | once, after stage 3 | — |
 

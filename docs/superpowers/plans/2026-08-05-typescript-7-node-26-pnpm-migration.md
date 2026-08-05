@@ -540,7 +540,7 @@ cd <abs worktree> && npm run openapi:gen && npm run i18n:gen-keys && npm run i18
 ```bash
 cd <abs worktree> && rm -rf apps/web/.next && npm run build 2>&1 | tail -10
 cd <abs worktree> && npm run test:smoke 2>&1 | tail -20
-cd <abs worktree> && npm run sim:matrix 2>&1 | tail -20
+cd <abs worktree> && npm run sim:matrix --workspace packages/engine 2>&1 | tail -20
 ```
 
 - [ ] **Step 6: e2e against a real production server**
