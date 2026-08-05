@@ -31,14 +31,14 @@ or re-ask.
 | #388 | — | — | **CLOSED** 2026-08-05, evidence comment. Shipped in `94513cd5` (W5). Secondary "N warnings" ask also settled: `reviewRowCount` is `rows.length` of the same array (`ai-review.ts:87`). |
 | #389 | — | — | **CLOSED** 2026-08-05, mitigated. `walletIds` scoping already in `credits.ts:415`; #390 removes the rest. Deliberately did NOT truncate — the shared schema holds `sync:sports` reference data. |
 | #394 | C | 1 | **PHANTOM — no production bug.** `single ? divBoardFixtures : actions.board` takes the FALSE branch when `single` is null, so the competition board already receives the whole board. Code and comment agree and always have (both written in `0f374d7a7`). Proven by mutation: at HEAD the new test is green; mutated to `consoleFixtures(divBoardFixtures, …)` it fails with the exact reported symptom. Regression test committed as `37ed6f45` (`test:`, not `fix:`). Owner call 2026-08-05: **close as invalid with the proof; do NOT chase the original symptom** (no repro, and `ai-competition-console.tsx:697` falls back to `c.fixtureId.slice(0,8)`, so an unlabelled row is unreachable via this path). **CLOSED** as not-planned 2026-08-05 with the full proof. Group C is done — no production change shipped. |
-| #386 | B | 2, 3 | pending |
+| #386 | B | 2, 3 | **Task 2 DONE** — `3b7eee20` in `wt-ai-gap-b`. Both premises re-verified true (no restore route existed; `undoJointApply` still loops). New: `competition-schedule-restore.ts` + route + `RestoreCompetitionScheduleRequest` + 5 tests. Main-thread gate: 272/272, failedSuites 0, foreign 0, engine resolves inside worktree. Reviewer dispatched. **Task 3 (client switch) pending.** |
 | #391 | B | 4 | pending |
 | #392 | B | 5 | pending |
 | #385 | A | 6 | pending |
 | #387 | A | 7 | pending |
 | #383 | A | 8 | pending |
 | #384 | A | 9 | pending |
-| #390 | D | 10, 11 | pending |
+| #390 | D | 10, 11 | **IN FLIGHT** — implementer dispatched in `wt-ai-gap-d`. Told to stand up its OWN scratch PG on **54343** (54341 is Group B's and has wallet volume that trips the 30s credits-cron timeout). |
 | #382 | E | 12, 13, 14, 15 | pending |
 
 ## Execution order
@@ -58,7 +58,7 @@ C (task 1)  →  B (tasks 2-5)  →  A (tasks 6-9)  ∥  D (tasks 10-11)  →  E
 | C | `/Users/ashokhein/github/wt-ai-gap-c` | `ai-gap-c-board-wiring` | ✅ | ✅ verified |
 | B | `/Users/ashokhein/github/wt-ai-gap-b` | `ai-gap-b-joint-undo` | ✅ | ✅ verified |
 | D | `/Users/ashokhein/github/wt-ai-gap-d` | `ai-gap-d-cron-antijoin` | ✅ | ✅ verified |
-| A | not created | `ai-gap-a-quote-integrity` | — | — |
+| A | `/Users/ashokhein/github/wt-ai-gap-a` | `ai-gap-a-quote-integrity` | ✅ | ✅ verified |
 | E | not created — create AFTER A merges | `ai-gap-e-open-scheduling` | — | — |
 
 All have `.env.local`, `apps/web/.env.local`, `.claude/agent-memory` symlinked to the main checkout.
@@ -95,6 +95,9 @@ Creation script for A and E is in the plan's Appendix.
 - **Help tree is `apps/web/content/help/`**, not `content/help/`. English-only, no i18n owed.
 - **Dictionaries** are flat dotted-key JSON at `apps/web/src/dictionaries/{en,es,fr,nl}/ui.json` (8 files per locale; `ui.json` is the one these tasks touch).
 - **Telemetry has no helper.** Events are raw `insert into competition_events` at each call site.
+- **Any new `app/api/v1/**/route.ts` MUST get a `key-scopes.ts` entry.** `key-scopes.test.ts` enumerates routes off disk and fails any route that is neither allowlisted nor never-listed. The plan omitted this; Task 2 hit it. Mirror the sibling route's scope + pin.
+- **`Uuid` is the house zod primitive** (`schemas.ts:16`), not `z.string().uuid()`.
+- **The symlinked `.env.local` points tests at the owner's dev DB (`localhost:5432/seazn`), which is BEHIND on migrations.** A full `src/server/usecases/__tests__` run there gives ~464 failures, all `column/relation does not exist` (`merged_into`, `registrations.user_id`, `config_snapshot`, `persons.lane`, `ai_parse_previews`). NOT a regression. Do NOT migrate the owner's DB — stand up a scratch PG per the `seazn-local-env` skill. **A scratch server is live for this programme: `postgresql://postgres@127.0.0.1:54341/seazn_test`, `DATABASE_SSL=disable`, at V352 + `sync:sports` done. Reuse it.**
 - **E2E home is `apps/web/e2e/ai-architect.spec.ts`** for every AI-console case. Mobile is a Playwright project (`--project=mobile-se`), not a manual screenshot. Smoke is `npm run test:smoke` → `scripts/smoke.ts`.
 
 ## Existing tests these tasks will break — update deliberately
@@ -116,3 +119,4 @@ Creation script for A and E is in the plan's Appendix.
 ## Log
 
 - 2026-08-05 — triage complete, 12 issues verified against `1ee962f0`. #388 and #389 closed. Spec + plan committed. Worktrees C/B/D created; C has `npm ci`.
+- 2026-08-05 — #394 closed as invalid (group C done, no production change). Task 2 landed `3b7eee20`; main-thread gate 272/272. Worktree A created off main tip `6ef3989b` (main advanced by a docs commit from outside this session) — `npm ci` done, engine resolves inside. Group D dispatched. Gotcha: `.git/worktrees/<name>/info/` does not exist on a fresh worktree, so appending to its `exclude` needs `mkdir -p` first (the shared `.git/info/exclude` already carries `.claude/agent-memory`, so this is belt-and-braces).
