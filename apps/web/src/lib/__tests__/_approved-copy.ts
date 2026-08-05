@@ -138,6 +138,54 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   // moves, which is the part of the sentence a reader is relying on.
   "3b3bc011debe7da5",
   "9a68888ef2d9aa1a",
+  // Approved 2026-08-05 (#376). ONE new section — a heading and six paragraphs,
+  // inserted here: "When a competition closes to new passes". The claim is that
+  // the line which stops a pass APPLYING is also the line which stops one being
+  // SOLD, that it is a property of the competition rather than of a purchase,
+  // and that the offer is now withdrawn rather than left on screen in front of a
+  // checkout that refuses.
+  //
+  // Read against the code before recording, per this file's own rule:
+  //   - the two reasons and the 7-day grace are `lib/entitlements.ts`
+  //     `passLockReason` / `PASS_END_GRACE_DAYS`, unchanged by #376 — the same
+  //     predicate the SQL `pass_applies` (V343) uses, which is why the section
+  //     says "that same line" rather than writing a second rule down.
+  //   - "not offered anywhere", four places: the chip on
+  //     `c/[compSlug]/page.tsx` and `c/[compSlug]/settings/page.tsx` (both
+  //     render `competition-pass-entry.tsx`, which returns the closed link
+  //     instead of the buy pill once `usePassGateState()` is "closed"), the ⋯
+  //     menu on `o/[orgSlug]/page.tsx:235` (`!isPassLocked(...)`), and the
+  //     billing page's offer list (`pass_applies`, V343).
+  //   - "This competition is closed to Event Passes" is the literal
+  //     `upgrade.closed.title` string, rendered by `ClosedPanel` in
+  //     `c/[compSlug]/upgrade/page.tsx`; the two next steps, and which reason
+  //     gets which, are its `Record<PassLockReason, …>` — `terminal` →
+  //     `routes.competitionNew`, `past_ends_on` → `routes.competitionSettings`.
+  //     Both links are gated on the viewer being able to act, which is why the
+  //     copy says only an editor sees one.
+  //   - "the checkout behind it refused the sale" is the 410 in
+  //     `api/billing/pass-checkout/route.ts:185` — still the server's answer,
+  //     and the defect #376 was filed about was that the offer did not agree
+  //     with it.
+  //   - "correcting either one puts the offer back" is compute-at-read: no
+  //     column stores the verdict (`passLockReason`'s own doc comment), which
+  //     is the same property `lib/competition-wrapup.ts`'s header gives as the
+  //     reason the product PROMPTS for a wrap-up rather than sweeping a status.
+  //   - the paid-plan paragraph is `upgrade-page-state.ts`'s paid arm, where
+  //     #376 added `closedToPasses === null` to the #327 exceeding-rung offer —
+  //     so the L offer a Pro org sometimes gets is withdrawn past the line too.
+  //   - the "already bought" paragraph deliberately does NOT say a held pass is
+  //     unaffected by the line. `usePassGateState` resolves "ended", not
+  //     "held", once `lockReason` is set, and the resolver has already stopped
+  //     honouring the row (SPEC-4 §7); the OFFER side is all #376 changed, and
+  //     the two sections above this one already state the applying side.
+  "4901d7ce5eea800a",
+  "e83c931a71f7d62e",
+  "f7d474e47cbd8920",
+  "d4512720ca211814",
+  "8c072be7bd782c73",
+  "51f349d614c306b2",
+  "38a84f5715684c23",
   "c42978cab6965d56",
   "331525dbff809017",
   "32654b5a563aabb6",
@@ -163,7 +211,14 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   "1bb443d58b849161",
   "9c62d251033d27b5",
   "c503ebdc56e74a10",
-  "157334bc6c0df3e8",
+  // Re-approved 2026-08-05 (#376), "Where do I buy one?". The four buy links it
+  // lists were unconditional; three of the four are now suppressed for a locked
+  // competition and the fourth always was. One sentence added, saying they go
+  // together and why. Read against `competition-pass-entry.tsx` (the overview
+  // and settings chip, "closed" arm), `o/[orgSlug]/page.tsx:235`'s
+  // `!isPassLocked(c.status, c.ends_on)` on the ⋯ menu item, and the billing
+  // page's `pass_applies` (V343) offer list.
+  "f84bab0a6dac4e46",
   // Re-approved 2026-07-29 (W8 final review, M-1). Both surfaces carried a
   // SUPERSET claim — "your plan already grants more" and "buying one would give
   // you less than you hold" — which is #337: V341 gives event_pass_l unlimited
@@ -178,7 +233,15 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   // digests with the stale clause still inside them, which is how a positional
   // gate freezes a falsehood faithfully.
   "e5d3c0403b1876cc",
-  "7d8c341aa0ad14fe",
+  // Re-approved 2026-08-05 (#376), "What does the competition's upgrade page
+  // show me?". That answer enumerates the page's states and was missing the one
+  // #376 added, so it described a checkout on a page that no longer offers one.
+  // One clause added for the `closed` state. Read against
+  // `lib/upgrade-page-state.ts` — `{ kind: "closed"; reason; canBuy }`, which
+  // precedes both offer arms — and against `ClosedPanel` in
+  // `c/[compSlug]/upgrade/page.tsx`, which renders a heading, the one reason
+  // sentence and at most one link: no rung, no price, no receipt stub.
+  "e0f0b80a2a5089c6",
 ];
 
 /**

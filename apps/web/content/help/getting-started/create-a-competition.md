@@ -22,4 +22,6 @@ Every competition starts **Private** (only your team sees it). Switch to **Link 
 
 **Does a finished competition retire itself?** No — nothing changes a competition's status on your behalf. Once its end date is more than a week behind, its overview asks an organiser which happened: the event finished, or the date moved. Both answers take one click — **Mark it completed**, or change the end date in the competition's settings. We ask rather than decide, because a status you never chose is one you would have to undo, while correcting an optimistic end date simply puts things back.
 
+**Can I still buy an Event Pass for it?** Only while it is running, or during the week of grace after the date it was due to end. A competition that is completed or archived, or more than a week past that date, is **closed to a new [Event Pass](/help/billing/event-pass)** — the buy link disappears instead of leading to a checkout that would refuse the sale. Correcting the date puts the offer back on the next page load.
+
 Next: [Add a division](/help/getting-started/add-a-division).
