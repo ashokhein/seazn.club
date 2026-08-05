@@ -21,6 +21,7 @@ import { waiveDivisionSlot } from "@/server/usecases/admin-divisions";
 import { archiveDivision, createDivision } from "@/server/usecases/divisions";
 import {
   archivedSlotHoldersInCompetition,
+  archivedSlotsExplainRefusal,
   divisionConsumesSlotOnArchive,
 } from "@/server/usecases/division-slots";
 import { GENERIC_CONFIG, makeUser, seedOrg } from "./_seed";
@@ -78,6 +79,18 @@ async function closeRegistration(divisionId: string): Promise<void> {
   await sql`
     insert into registration_settings (division_id, enabled) values (${divisionId}, false)
     on conflict (division_id) do update set enabled = false, closes_at = null`;
+}
+
+/** Move the pinned cap after seeding — the only way to reach a competition
+ *  that holds MORE slots than its cap allows, and a state real orgs land in by
+ *  downgrading a plan (or by a paid pass expiring). Every division below is
+ *  still created through `createDivision`, so nothing here fabricates a state
+ *  the product cannot produce. */
+async function setDivisionQuota(auth: AuthCtx, cap: number): Promise<void> {
+  await sql`
+    update org_entitlement_overrides set int_value = ${cap}
+    where org_id = ${auth.orgId} and feature_key = 'divisions.per_competition.max'`;
+  await invalidateOrgEntitlements(auth.orgId);
 }
 
 async function makeStaffUser(): Promise<{ id: string }> {
@@ -195,6 +208,83 @@ describe.skipIf(!HAS_DB)("archivedSlotHoldersInCompetition", () => {
       unplayed.competitionId,
       divisionInput("Next"),
     );
+    expect(next.id).toBeTruthy();
+  });
+});
+
+// The count alone is not the explanation (#376 part C review). "There are
+// archived divisions holding slots" and "the archived divisions are why you
+// were refused" are different claims, and the console showed the first while
+// asserting the second. Every case below pairs the predicate with what
+// `createDivision` actually does in the same state, so the sentence can never
+// blame a cause the charge does not have.
+describe.skipIf(!HAS_DB)("archivedSlotsExplainRefusal", () => {
+  it("is true when releasing the archived slot would let the create through", async () => {
+    const { auth, competitionId } = await seedCommunityCompetition();
+    await createDivision(auth, competitionId, divisionInput("Live"));
+    const gone = await createDivision(auth, competitionId, divisionInput("Gone"));
+    await recordDecidedFixture(gone.id);
+    await closeRegistration(gone.id);
+    await archiveDivision(auth, gone.id);
+
+    // One visible division against a cap of two: without the archived holder
+    // this create fits, so the archived holder IS the marginal cause.
+    expect(await archivedSlotsExplainRefusal(auth, competitionId)).toBe(true);
+    await expect(
+      createDivision(auth, competitionId, divisionInput("Next")),
+    ).rejects.toMatchObject({ status: 402, featureKey: "divisions.per_competition.max" });
+  });
+
+  // The arm the console had no answer for. The refusal is real, and archiving
+  // has nothing to do with it: the visible divisions alone fill the cap, so
+  // handing every archived slot back would change nothing.
+  it("is false when the visible divisions alone fill the limit", async () => {
+    const { auth, competitionId } = await seedCommunityCompetition();
+    await setDivisionQuota(auth, 3);
+    const gone = await createDivision(auth, competitionId, divisionInput("Gone"));
+    await recordDecidedFixture(gone.id);
+    await closeRegistration(gone.id);
+    await archiveDivision(auth, gone.id);
+    await createDivision(auth, competitionId, divisionInput("Live 1"));
+    await createDivision(auth, competitionId, divisionInput("Live 2"));
+    await setDivisionQuota(auth, DIVISION_QUOTA);
+
+    // Two visible divisions against a cap of two, plus one archived holder.
+    expect(await archivedSlotHoldersInCompetition(auth, competitionId)).toBe(1);
+    expect(await archivedSlotsExplainRefusal(auth, competitionId)).toBe(false);
+    await expect(
+      createDivision(auth, competitionId, divisionInput("Next")),
+    ).rejects.toMatchObject({ status: 402, featureKey: "divisions.per_competition.max" });
+  });
+
+  // Refused, with nothing archived at all — the ordinary "you are at your
+  // limit". The reader must not be sent looking for divisions that do not
+  // exist.
+  it("is false when the competition has archived nothing", async () => {
+    const { auth, competitionId } = await seedCommunityCompetition();
+    await createDivision(auth, competitionId, divisionInput("Live 1"));
+    await createDivision(auth, competitionId, divisionInput("Live 2"));
+
+    expect(await archivedSlotsExplainRefusal(auth, competitionId)).toBe(false);
+    await expect(
+      createDivision(auth, competitionId, divisionInput("Next")),
+    ).rejects.toMatchObject({ status: 402, featureKey: "divisions.per_competition.max" });
+  });
+
+  // After a waiver there is no refusal to explain at all — the create goes
+  // through — so the predicate must not still be pointing at the archive.
+  it("is false once staff waive the archived slot, and the create succeeds", async () => {
+    const { auth, competitionId } = await seedCommunityCompetition();
+    const staff = await makeStaffUser();
+    await createDivision(auth, competitionId, divisionInput("Live"));
+    const gone = await createDivision(auth, competitionId, divisionInput("Forgiven"));
+    await recordDecidedFixture(gone.id);
+    await closeRegistration(gone.id);
+    await archiveDivision(auth, gone.id);
+    await waiveDivisionSlot(staff.id, gone.id);
+
+    expect(await archivedSlotsExplainRefusal(auth, competitionId)).toBe(false);
+    const next = await createDivision(auth, competitionId, divisionInput("Next"));
     expect(next.id).toBeTruthy();
   });
 });

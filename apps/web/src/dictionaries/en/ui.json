@@ -3195,5 +3195,6 @@
   "board.ai.joint.undoGone": "There is no joint apply left to undo on this competition. Each division keeps its own restore points on its schedule page.",
   "division.create.competitionEnded": "This competition is finished, so no new divisions can be added to it.",
   "division.archive.slotWarning": "This division has recorded results, so archiving it will not free a division slot.",
-  "division.limit.archivedCount": "Divisions with recorded results count toward your limit even after they are archived."
+  "division.limit.archivedCount": "Divisions with recorded results count toward your limit even after they are archived.",
+  "danger.archiveBodySlotHeld": "The division disappears from your console and the public site. It has recorded results, so its division slot does not come back — nothing is destroyed, and you can restore it any time from competition settings → Archived divisions. Archived one by mistake? Support can waive the slot."
 }

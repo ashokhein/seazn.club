@@ -162,7 +162,16 @@ export function DivisionDangerZone({
         {suggestArchive && (
           <p className="rounded-md bg-amber-50 px-3 py-2 text-amber-700">{msg("danger.suggestArchive")}</p>
         )}
-        <p>{msg("danger.archiveBody")}</p>
+        {/* The same fork as the warning above the button, off the same prop —
+            the two sit one glance apart and until now they disagreed.
+            `danger.archiveBody` promises the division "stops counting against
+            your plan": true for the unplayed division archived by mistake,
+            false for a played one. So the held case gets its own sentence
+            rather than a hedge bolted onto copy that is already correct for
+            the case people actually hit. `slotHeldOnArchive` is false for a
+            staff-waived division, which is exactly right — support has handed
+            the slot back, so that archive really is free. */}
+        <p>{msg(slotHeldOnArchive ? "danger.archiveBodySlotHeld" : "danger.archiveBody")}</p>
       </ConfirmDialog>
     </section>
   );

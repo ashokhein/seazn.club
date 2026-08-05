@@ -8,10 +8,17 @@
 //
 // This drives the wizard's real submit path with a mocked transport, makes the
 // server refuse with the 402 the server actually sends, and asserts the
-// explaining sentence appears — and that it appears ONLY when there is
-// something archived to explain, and ONLY for this feature key. An
+// explaining sentence appears — and that it appears ONLY when the archived
+// slots are what tipped the limit over, and ONLY for this feature key. An
 // explanation attached to a refusal it does not explain is a wrong answer,
 // not a redundant one.
+//
+// "Are they the cause?" is a server question rather than a count (#376 part C
+// review): at a cap of four with four VISIBLE divisions and one archived
+// holder the count is non-zero and the archive is still irrelevant — releasing
+// it would change nothing. So the component takes the ANSWER,
+// `archivedSlotsExplainRefusal`, and the arithmetic behind it is proved
+// against a real 402 in usecases/__tests__/division-slot-disclosure.test.ts.
 import { describe, expect, it, vi } from "vitest";
 import { propsOf, renderIsland, textOf } from "@/components/__tests__/_hook-harness";
 import { ApiV1Error } from "@/lib/client-v1";
@@ -52,14 +59,14 @@ function paymentRequired(featureKey: string) {
   });
 }
 
-function mount(archivedSlotHolders: number) {
+function mount(archivedSlotsExplainRefusal: boolean) {
   return renderIsland(DivisionBuilder, {
     competitionId: "c1",
     orgSlug: "org",
     compSlug: "comp",
     sports: SPORTS,
     constraintsAllowed: true,
-    archivedSlotHolders,
+    archivedSlotsExplainRefusal,
   });
 }
 
@@ -100,7 +107,7 @@ describe("the divisions paywall explains the archived slots holding the limit", 
     apiV1Mock.mockReset();
     apiV1Mock.mockRejectedValue(paymentRequired("divisions.per_competition.max"));
 
-    const h = mount(1);
+    const h = mount(true);
     await submitFromWizard(h);
 
     expect(notes(h)).toHaveLength(1);
@@ -108,13 +115,17 @@ describe("the divisions paywall explains the archived slots holding the limit", 
     expect(h.text()).toContain(NOTE);
   });
 
-  // The org that has archived nothing is refused for an ordinary reason. It
-  // must not be told to go looking for divisions that do not exist.
-  it("stays quiet when nothing archived is holding a slot", async () => {
+  // Two different server states answer false here, and the sentence is wrong
+  // in both: the org that has archived nothing is refused for an ordinary
+  // reason and must not be sent looking for divisions that do not exist; the
+  // org whose VISIBLE divisions already fill the cap would be refused with or
+  // without its archived holder, so blaming the archive is a wrong answer, not
+  // a redundant one.
+  it("stays quiet unless the archived slots are what tipped the limit over", async () => {
     apiV1Mock.mockReset();
     apiV1Mock.mockRejectedValue(paymentRequired("divisions.per_competition.max"));
 
-    const h = mount(0);
+    const h = mount(false);
     await submitFromWizard(h);
 
     expect(notes(h)).toHaveLength(0);
@@ -127,7 +138,7 @@ describe("the divisions paywall explains the archived slots holding the limit", 
     apiV1Mock.mockReset();
     apiV1Mock.mockRejectedValue(paymentRequired("scheduling.constraints"));
 
-    const h = mount(3);
+    const h = mount(true);
     await submitFromWizard(h);
 
     expect(notes(h)).toHaveLength(0);
@@ -139,7 +150,7 @@ describe("the divisions paywall explains the archived slots holding the limit", 
   it("stays quiet until the create is actually refused", () => {
     apiV1Mock.mockReset();
 
-    const h = mount(2);
+    const h = mount(true);
 
     expect(notes(h)).toHaveLength(0);
     expect(h.text()).not.toContain(NOTE);
@@ -151,7 +162,7 @@ describe("the divisions paywall explains the archived slots holding the limit", 
     apiV1Mock.mockReset();
     apiV1Mock.mockRejectedValue(paymentRequired("divisions.per_competition.max"));
 
-    const h = mount(1);
+    const h = mount(true);
     await submitFromWizard(h);
 
     const gates = h

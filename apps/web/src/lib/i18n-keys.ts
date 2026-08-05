@@ -1193,6 +1193,7 @@ export type DictionaryKey =
   | "court.deuce"
   | "danger.archive"
   | "danger.archiveBody"
+  | "danger.archiveBodySlotHeld"
   | "danger.archiveConfirm"
   | "danger.archiveFailed"
   | "danger.archiveTitle"

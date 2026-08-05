@@ -3195,5 +3195,6 @@
   "board.ai.joint.undoGone": "Er is voor deze competitie geen gezamenlijke toepassing meer om ongedaan te maken. Elke divisie bewaart haar eigen herstelpunten op haar planningspagina.",
   "division.create.competitionEnded": "Deze competitie is afgelopen, dus er kunnen geen nieuwe divisies aan worden toegevoegd.",
   "division.archive.slotWarning": "Deze divisie heeft geregistreerde resultaten, dus archiveren maakt geen divisieplek vrij.",
-  "division.limit.archivedCount": "Divisies met geregistreerde resultaten tellen mee voor je limiet, ook nadat ze zijn gearchiveerd."
+  "division.limit.archivedCount": "Divisies met geregistreerde resultaten tellen mee voor je limiet, ook nadat ze zijn gearchiveerd.",
+  "danger.archiveBodySlotHeld": "De divisie verdwijnt van je console en de openbare site. Hij heeft geregistreerde resultaten, dus zijn divisieplek komt niet terug — er wordt niets vernietigd en je kunt hem op elk moment herstellen via competitie-instellingen → Gearchiveerde divisies. Per ongeluk gearchiveerd? Support kan de plek vrijgeven."
 }

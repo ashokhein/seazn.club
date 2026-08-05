@@ -117,7 +117,7 @@ export function DivisionBuilder({
   compSlug,
   sports,
   constraintsAllowed = true,
-  archivedSlotHolders = 0,
+  archivedSlotsExplainRefusal = false,
 }: {
   competitionId: string;
   orgSlug: string;
@@ -126,19 +126,23 @@ export function DivisionBuilder({
   /** Pro `scheduling.constraints` — gates a multi-venue list (doc 12 §5). */
   constraintsAllowed?: boolean;
   /**
-   * How many ARCHIVED divisions of this competition still hold a
-   * `divisions.per_competition.max` slot (V354 — recorded results, minus a
-   * staff waiver). Counted server-side by the page, from the same SQL
-   * predicate the quota charge itself uses.
+   * Would releasing this competition's ARCHIVED slot-holders (V354 — recorded
+   * results, minus a staff waiver) let a refused create through? Answered
+   * server-side by the page, from the same SQL predicate and the same
+   * `withinLimit` call the quota charge itself uses.
    *
    * It exists only to explain a refusal that is otherwise invisible: an org
    * can be looking at ONE division and a "limit reached" paywall, with the
-   * rest of its slots held by rows the console deliberately hides. Zero means
-   * say nothing — volunteering "archived divisions count too" to an org that
-   * has archived nothing is noise on a page where the reader is already
-   * blocked, and it would blame the wrong thing.
+   * rest of its slots held by rows the console deliberately hides.
+   *
+   * A boolean rather than the COUNT it started as (#376 part C review). "There
+   * are archived holders" is not "the archived holders are why you were
+   * refused": at a cap of four with four visible divisions and one archived
+   * holder, releasing it changes nothing, and the sentence would send the
+   * reader to fix something that is not the cause. Half of that answer is a
+   * quota limit, which is not a question a client component can ask.
    */
-  archivedSlotHolders?: number;
+  archivedSlotsExplainRefusal?: boolean;
 }) {
   const msg = useMsg();
   const locale = useLocale();
@@ -843,12 +847,13 @@ export function DivisionBuilder({
               wrong from the reader's side, and the only way to discover why is
               to ask support.
 
-              Gated on BOTH the feature key and a non-zero count: this sentence
-              is an explanation, and an explanation attached to a refusal it
-              does not explain — a scheduling gate, or a division limit with
-              nothing archived behind it — is a wrong answer, not a redundant
-              one. */}
-          {paywallFeature === "divisions.per_competition.max" && archivedSlotHolders > 0 && (
+              Gated on BOTH the feature key and the server's marginality
+              answer: this sentence is an explanation, and an explanation
+              attached to a refusal it does not explain — a scheduling gate, a
+              division limit with nothing archived behind it, or one whose
+              VISIBLE divisions already fill the cap on their own — is a wrong
+              answer, not a redundant one. */}
+          {paywallFeature === "divisions.per_competition.max" && archivedSlotsExplainRefusal && (
             <p data-archived-slot-note className="text-xs text-slate-500">
               {msg("division.limit.archivedCount")}
             </p>

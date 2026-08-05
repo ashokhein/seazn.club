@@ -18,7 +18,10 @@ import "server-only";
 // shape for this feature (a warning that says the slot is free while the quota
 // keeps charging for it).
 import { withTenant } from "@/lib/db";
+import { withinLimit } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
+
+const DIVISION_QUOTA_KEY = "divisions.per_competition.max";
 
 /**
  * Does this division hold results — i.e. would archiving it keep its quota
@@ -66,4 +69,40 @@ export async function archivedSlotHoldersInCompetition(
         and d.slot_waived_at is null`;
     return row?.n ?? 0;
   });
+}
+
+/**
+ * Are the invisible archived slots what tipped this competition over its
+ * division limit — i.e. would releasing them let the refused create or restore
+ * through?
+ *
+ * A non-zero holder count is NOT the same question, and shipping it as if it
+ * were is how an explanation becomes a wrong answer: at a cap of 4 with 4
+ * VISIBLE divisions and 1 archived holder, the refusal stands whatever happens
+ * to the archived one, and telling the reader to go looking at archived
+ * divisions sends them to fix something that is not the cause. So the count is
+ * only half of it — the other half is whether the create would have fitted
+ * WITHOUT them, which is `withinLimit(visible + 1)`: the same helper, the same
+ * feature key and the same "+1 for the row being added" that `createDivision`
+ * and `restoreDivision` charge on, so this cannot drift away from the refusal
+ * it is explaining. (A restore adds one visible division too, which is why one
+ * predicate serves both surfaces.)
+ *
+ * Short-circuits on the count, so the ordinary competition — nothing archived,
+ * nothing to explain — still costs exactly one query.
+ */
+export async function archivedSlotsExplainRefusal(
+  auth: AuthCtx,
+  competitionId: string,
+): Promise<boolean> {
+  const holders = await archivedSlotHoldersInCompetition(auth, competitionId);
+  if (holders === 0) return false;
+  const visible = await withTenant(auth.orgId, async (tx) => {
+    const [row] = await tx<{ n: number }[]>`
+      select count(*)::int as n from divisions d
+      where d.competition_id = ${competitionId} and d.archived_at is null`;
+    return row?.n ?? 0;
+  });
+  const quota = await withinLimit(auth.orgId, DIVISION_QUOTA_KEY, visible + 1, competitionId);
+  return quota.ok;
 }
