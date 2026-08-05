@@ -175,15 +175,105 @@ describe("upgradePageState", () => {
       ).toEqual({ kind: "ceiling", feature: "entrants.per_division.max", liftable: true });
     });
 
-    it("a lock reason with NO pass row is still the ordinary offer", () => {
-      // Row existence is checked first on purpose: a reason without a row must
-      // not invent an ended pass for a competition that never had one, and
-      // that org can genuinely still buy.
+    it("a lock reason with NO pass row is `closed`, never `ended`", () => {
+      // Row existence still separates the two: a reason without a row must not
+      // invent an ended pass for a competition that never had one. What changed
+      // in #376 is the OTHER half of this sentence — that org cannot genuinely
+      // still buy, because the checkout answers 410 Gone. See the `closed`
+      // block at the foot of this file.
       expect(state({ hasPass: false, lockReason: "terminal" })).toEqual({
-        kind: "offer",
+        kind: "closed",
+        reason: "terminal",
         canBuy: true,
-        beyondPlan: false,
       });
     });
+  });
+});
+
+describe("a competition past the pass line that never held a pass", () => {
+  // #376. The offer and the API disagreed: the page rendered a checkout and
+  // POST /api/billing/pass-checkout answered 410 Gone. Neither existing card
+  // fits — `ended` would claim a purchase nobody made, `offer` sells a refusal.
+  it("is `closed`, not `offer`, on the terminal arm", () => {
+    expect(
+      upgradePageState({
+        paidPlan: false,
+        hasPass: false,
+        lockReason: "terminal",
+        isOwner: true,
+      }),
+    ).toEqual({ kind: "closed", reason: "terminal", canBuy: true });
+  });
+
+  it("is `closed` on the past_ends_on arm, carrying the reason", () => {
+    expect(
+      upgradePageState({
+        paidPlan: false,
+        hasPass: false,
+        lockReason: "past_ends_on",
+        isOwner: true,
+      }),
+    ).toEqual({ kind: "closed", reason: "past_ends_on", canBuy: true });
+  });
+
+  it("is still `closed` for a non-owner, who simply cannot act on it", () => {
+    expect(
+      upgradePageState({
+        paidPlan: false,
+        hasPass: false,
+        lockReason: "terminal",
+        isOwner: false,
+      }),
+    ).toEqual({ kind: "closed", reason: "terminal", canBuy: false });
+  });
+
+  // The case #376 does not mention at all. A PAID org with no pass and a rung
+  // that beats its plan (#327) was handed `offer{beyondPlan:true}` even for a
+  // locked competition — a Buy button that 410s exactly like the community one.
+  // Suppressing only the community path would have left this live.
+  it("never becomes the #327 beyondPlan offer while locked", () => {
+    expect(
+      upgradePageState({
+        paidPlan: true,
+        hasPass: false,
+        lockReason: "terminal",
+        isOwner: true,
+        exceedingRungs: ["event_pass_l"],
+      }),
+    ).toEqual({ kind: "paid_plan" });
+  });
+
+  it("still offers beyondPlan when the competition is NOT locked", () => {
+    expect(
+      upgradePageState({
+        paidPlan: true,
+        hasPass: false,
+        lockReason: null,
+        isOwner: true,
+        exceedingRungs: ["event_pass_l"],
+      }),
+    ).toEqual({ kind: "offer", canBuy: true, beyondPlan: true });
+  });
+
+  it("leaves the HELD arms alone — a lock with a pass is still `ended`", () => {
+    expect(
+      upgradePageState({
+        paidPlan: false,
+        hasPass: true,
+        lockReason: "terminal",
+        isOwner: true,
+      }),
+    ).toEqual({ kind: "ended", reason: "terminal" });
+  });
+
+  it("is the ordinary offer when nothing is locked and no pass is held", () => {
+    expect(
+      upgradePageState({
+        paidPlan: false,
+        hasPass: false,
+        lockReason: null,
+        isOwner: true,
+      }),
+    ).toEqual({ kind: "offer", canBuy: true, beyondPlan: false });
   });
 });
