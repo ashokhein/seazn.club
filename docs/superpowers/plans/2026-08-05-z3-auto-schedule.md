@@ -476,11 +476,27 @@ describe("buildGrid", () => {
     expect(g.byCourt.get("C1")!.map((i) => g.slots[i]!.startAt)).toContain(pinnedAt);
   });
 
+  it("keeps a start whose match runs past midnight", () => {
+    // REGRESSION. Bounding the occupancy by `bucket.to` drops this start from
+    // BOTH days: excluded by day 0's bound, and unreachable from day 1 whose
+    // stepping begins at midnight. Needs step < duration to appear at all,
+    // which is any `gapMinutes > 0` — the ordinary case, no DST involved.
+    const from = Date.UTC(2026, 7, 8, 0, 0);
+    const g = buildGrid({
+      config: cfg({ tz: "UTC", window: { from, to: from + 3 * DAY }, matchMinutes: 90, gapMinutes: 30 }),
+    });
+    expect(g.byCourt.get("C1")!.map((i) => g.slots[i]!.startAt)).toContain(from + 1380 * MIN); // 23:00 -> 00:30
+  });
+
   it("anchors each day at local midnight so a DST day does not drift", () => {
-    // Europe/London springs forward 29 Mar 2026 at 01:00 local.
+    // Europe/London springs forward 29 Mar 2026 at 01:00 local. The step must
+    // NOT divide the local-midnight offsets, or the anchored and UTC-stepped
+    // lattices are the same instants and the assertion proves nothing: those
+    // offsets are 0/1440/2820/4260 minutes, all divisible by 60 and only the
+    // first two by 45. A 60-minute step here is VACUOUS — measured, not feared.
     const from = Date.UTC(2026, 2, 28, 0, 0);
     const g = buildGrid({
-      config: cfg({ tz: "Europe/London", window: { from, to: from + 3 * DAY }, matchMinutes: 60, gapMinutes: 60 }),
+      config: cfg({ tz: "Europe/London", window: { from, to: from + 3 * DAY }, matchMinutes: 45, gapMinutes: 45 }),
     });
     const local = (ms: number) =>
       new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms));
@@ -624,8 +640,17 @@ export function buildGrid(input: BuildGridInput): BuildGrid {
   outer: for (const court of courts) {
     for (const bucket of buckets) {
       const lo = Math.max(bucket.from, universe.from);
-      const hi = Math.min(bucket.to, universe.to);
-      for (let start = lo; start + durMs <= hi; start += stepMs) {
+      // Step ANCHORED to the bucket — that is what keeps a start on a whole
+      // local hour across a DST transition. But bound the OCCUPANCY by the
+      // universe, never by the bucket: a match that starts at 23:00 and ends
+      // at 00:30 is legal, and bounding it by `bucket.to` drops it from BOTH
+      // days at once — this day excludes it, and the next day's own `lo`
+      // begins at midnight so it is never reachable there either. Fires on any
+      // `gapMinutes > 0` with a multi-day window. `repair-domain.ts` gets this
+      // right: its position domain is continuous over the whole universe, and
+      // day buckets restrict day-SCOPED RULES, never raw start admissibility.
+      const stopStepping = Math.min(bucket.to, universe.to);
+      for (let start = lo; start < stopStepping && start + durMs <= universe.to; start += stepMs) {
         if (!admits(start)) continue;
         if (slots.length >= MAX_SLOTS) { overCap = true; break outer; }
         slots.push({ court, startAt: start });
