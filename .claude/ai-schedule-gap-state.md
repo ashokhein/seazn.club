@@ -34,11 +34,11 @@ or re-ask.
 | #386 | B | 2, 3 | **Task 2 DONE** — `3b7eee20` in `wt-ai-gap-b`. Both premises re-verified true (no restore route existed; `undoJointApply` still loops). New: `competition-schedule-restore.ts` + route + `RestoreCompetitionScheduleRequest` + 5 tests. Main-thread gate: 272/272, failedSuites 0, foreign 0, engine resolves inside worktree. Reviewer dispatched. **Task 3 (client switch) pending.** |
 | #391 | B | 4 | pending |
 | #392 | B | 5 | pending |
-| #385 | A | 6 | pending |
-| #387 | A | 7 | pending |
-| #383 | A | 8 | pending |
-| #384 | A | 9 | pending |
-| #390 | D | 10, 11 | **BUILT** — `3d107d77` (anti-join) + `d6aebe1d` (N+1). Premises verified real. Agent counts: RED 15/16 → GREEN 16/16, RED 17/18 → GREEN 18/18; `src/lib/__tests__` 1623/1648 0 failed 0 failedSuites. Reviewer dispatched; main-thread gate pending on PG 54345. **Task 11 deviated deliberately:** `orgPlanKey` is a 7-arm read-time resolver (lapsed comp, past_due grace, trial backstop, incomplete, canceled, org suspension) whose docstring records 3 divergent copies already, so it was LEFT as one query per row; the batched N+1 is the `plan_entitlements` read, moved out of `grantMonthly` into `monthlyPerSeatByPlan()`, with a shared `grantMonthlyDelta()` holding the lock + key check once. `1+2N` → `N+2`. **No e2e, no smoke extension** — cron internal, no UI; `scripts/smoke.ts` never calls the sweep. |
+| #385 | A | 6 | **IN FLIGHT** — one implementer pass for all of A, 4 commits in order 6→7→8→9, worktree `wt-ai-gap-a`, DB 54345. |
+| #387 | A | 7 | IN FLIGHT (same pass) |
+| #383 | A | 8 | IN FLIGHT (same pass) |
+| #384 | A | 9 | IN FLIGHT (same pass) |
+| #390 | D | 10, 11 | **BUILT** — `3d107d77` (anti-join) + `d6aebe1d` (N+1). Premises verified real. Agent counts: RED 15/16 → GREEN 16/16, RED 17/18 → GREEN 18/18; `src/lib/__tests__` 1623/1648 0 failed 0 failedSuites. Reviewer dispatched; main-thread gate pending on PG 54345. **Task 11 deviated deliberately:** `orgPlanKey` is a 7-arm read-time resolver (lapsed comp, past_due grace, trial backstop, incomplete, canceled, org suspension) whose docstring records 3 divergent copies already, so it was LEFT as one query per row; the batched N+1 is the `plan_entitlements` read, moved out of `grantMonthly` into `monthlyPerSeatByPlan()`, with a shared `grantMonthlyDelta()` holding the lock + key check once. `1+2N` → `N+2`. **No e2e, no smoke extension** — cron internal, no UI; `scripts/smoke.ts` never calls the sweep. **Reviewed CLEAN** bar one stale comment citation, fixed inline as `c341d80e`. Main-thread gate on my own PG 54345: **1623/1648, 0 failed, 0 failedSuites, 0 foreign**; eslint 0, tsc 0, drift gates clean. **Group D is DONE — 3 commits, no PR yet.** |
 | #382 | E | 12, 13, 14, 15 | pending |
 
 ## Execution order
@@ -115,6 +115,8 @@ Creation script for A and E is in the plan's Appendix.
 ## Verification traps that produce a false green here
 
 - Judge vitest ONLY from `--reporter=json --outputFile`. A suite that fails to **collect** reports `numFailedTests: 0` — read `numFailedTestSuites`.
+- **NEW 2026-08-05: `npx vitest run` with 12+ positional file filters matches ZERO files** and reports `0/0, files 0` with an empty log. Two positionals are fine. Use directory filters for anything wider. (Found by the Group D agent.)
+- **`eslint`/`tsc` must be run from `apps/web`, not the repo root.** From the root, eslint exits **2** with "couldn't find an eslint.config file" and tsc prints its usage banner — both look exactly like a regression. Hit this myself on the Group D comment fix.
 - `rtk` prints `PASS(0) FAIL(0)` for a collection failure and hides lint output.
 - Shell cwd resets to the main checkout between calls. Prefix `cd <abs worktree> &&` in the SAME call as anything you judge.
 - A worktree without `.env.local` skips ~1772 DB tests while `total` stays unchanged — only `pending` moves.
