@@ -5,7 +5,7 @@ import "server-only";
 import type postgres from "postgres";
 import { sql, withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
-import { withinLimit, requireFeature } from "@/lib/entitlements";
+import { withinLimit, requireFeature, passLockReason } from "@/lib/entitlements";
 import { EngineError } from "@seazn/engine/core";
 import { effectiveEntrantModel, type EntrantKind } from "@seazn/engine/sport";
 import { resolveModule } from "@/server/engine-db";
@@ -96,6 +96,36 @@ export async function listDivisions(
   });
 }
 
+/**
+ * A finished competition does not grow (#376 branch, part D).
+ *
+ * `assertCompetitionNotFrozen` checks the over-quota freeze and says nothing
+ * about status, so a completed or archived competition accepted new divisions.
+ * Not a quota leak — the per-competition cap still binds — but it made
+ * "completed" mean nothing, and it contradicted the same competition being
+ * refused an Event Pass.
+ *
+ * TERMINAL ONLY. `past_ends_on` must keep accepting writes: that arm is
+ * routinely a stale end date on a competition still being played, which is why
+ * the pass chip points that organiser at the settings form. The pass line and
+ * the write line share a vocabulary, not a threshold.
+ *
+ * Takes the CALLER'S tx: the status it refuses on must be the one the insert
+ * would have run against, and a read outside the transaction could see a
+ * different snapshot.
+ */
+async function assertCompetitionNotEnded(tx: postgres.TransactionSql, competitionId: string) {
+  const [comp] = await tx<{ status: string; ends_on: Date | string | null }[]>`
+    select status, ends_on from competitions where id = ${competitionId}`;
+  if (comp && passLockReason(comp.status, comp.ends_on) === "terminal") {
+    throw new HttpError(
+      409,
+      "This competition is finished, so no new divisions can be added to it",
+      "COMPETITION_ENDED",
+    );
+  }
+}
+
 export async function createDivision(
   auth: AuthCtx,
   competitionId: string,
@@ -105,6 +135,7 @@ export async function createDivision(
     const [comp] = await tx`select 1 from competitions where id = ${competitionId}`;
     if (!comp) throw new HttpError(404, "competition not found");
     await assertCompetitionNotFrozen(auth.orgId, competitionId, tx);
+    await assertCompetitionNotEnded(tx, competitionId);
 
     // Doc 10 §1: `divisions.per_competition.max` (Community's real bite: 4 —
     // V270 set 2, V319 raised it). Counted in the same tx as the insert
@@ -380,6 +411,9 @@ export async function restoreDivision(auth: AuthCtx, id: string): Promise<Divisi
       select ${tx(COLS)} from divisions where id = ${id}`;
     if (!existing) throw new HttpError(404, "division not found");
     if (existing.archived_at === null) return existing;
+    // Un-archiving is a create in every way that matters to the lifecycle: a
+    // finished competition must not grow back either.
+    await assertCompetitionNotEnded(tx, existing.competition_id);
 
     // Identical predicate to createDivision's (V354) — restoring must not
     // smuggle a competition past a limit a create would have refused. The row

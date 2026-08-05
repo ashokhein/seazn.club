@@ -979,6 +979,11 @@ async function main() {
   // #376's `closed` state — community only, see the function.
   if (account === "community") await seedClosedCompetition();
 
+  // #376 part D: the invisible half of the divisions quota. Both accounts, so
+  // the demo carries the state on the plan where it BITES (community) as well
+  // as the one where it merely shows the warning (pro).
+  await seedArchivedSlotHolder(PLAN[0].name);
+
   console.log("done");
 }
 
@@ -1023,6 +1028,77 @@ async function seedClosedCompetition(): Promise<void> {
   }
   await call(`/api/v1/competitions/${comp.id}`, "PATCH", { status: "completed" });
   console.log(`${name}: completed, no pass — #376 closed state`);
+}
+
+/**
+ * One competition holding an archived-and-PLAYED division (V354).
+ *
+ * The state this seeds is the whole point of #376 part D and is otherwise
+ * impossible to demo: an archived division with recorded results keeps its
+ * `divisions.per_competition.max` slot forever, so the org sees fewer
+ * divisions than its plan allows AND a paywall — the two surfaces that now
+ * explain themselves (the danger-zone warning before the archive, the
+ * archived-slots line under the 402).
+ *
+ * Deliberately joins an EXISTING plan competition rather than creating one:
+ * `competitions.max_active` is 2 on community, and burning a competition slot
+ * to demonstrate a division slot would trade one gap in the demo for another.
+ * A played division is the requirement — an unplayed archived one frees its
+ * slot and would show nothing.
+ *
+ * Resume-safe by name, like every other step in this seeder: archived
+ * divisions do not come back from the divisions list, so the check is the
+ * competition's archived list.
+ */
+async function seedArchivedSlotHolder(competitionName: string): Promise<void> {
+  const comps = await call("/api/v1/competitions?limit=100");
+  const comp = ((comps.items ?? comps) as { id: string; name: string }[]).find(
+    (c) => c.name === competitionName,
+  );
+  if (!comp) return;
+  const NAME = "Retired Grade";
+
+  const archived = await call(`/api/v1/competitions/${comp.id}/divisions?archived=1`);
+  const archivedNames = new Set(
+    ((archived.items ?? archived) as { name: string }[]).map((d) => d.name),
+  );
+  if (archivedNames.has(NAME)) {
+    console.log(`${competitionName} / ${NAME}: exists, skipped`);
+    return;
+  }
+
+  let div: { id: string };
+  try {
+    div = await call(`/api/v1/competitions/${comp.id}/divisions`, "POST", {
+      name: NAME,
+      sport_key: "generic",
+      variant_key: "score",
+      config: GENERIC_CFG,
+    });
+  } catch (e) {
+    // Already at the ceiling (a re-seed against an account that holds other
+    // archived slots) — the state is already demonstrated, so skip rather than
+    // abort the run.
+    if (/cap|limit|payment/i.test(String(e))) {
+      console.log(`${competitionName} / ${NAME}: skipped (division cap on this account)`);
+      return;
+    }
+    throw e;
+  }
+
+  await call(`/api/v1/divisions/${div.id}/entrants`, "POST", entrantsFor("individual", 4));
+  const created = await call(`/api/v1/divisions/${div.id}/stages`, "POST", [
+    { ...TEMPLATES.league(4)[0], seq: 1 },
+  ]);
+  const stage = (Array.isArray(created) ? created[0] : created) as { id: string };
+  const { played, total } = await playStageAfterStart(div.id, stage.id, "generic", "score", 1);
+
+  // Registration must be closed before archive (v3/09 §4).
+  await call(`/api/v1/divisions/${div.id}/registration-settings`, "PUT", { enabled: false });
+  await call(`/api/v1/divisions/${div.id}/archive`, "POST");
+  console.log(
+    `${competitionName} / ${NAME}: ${played}/${total} played, archived — holds a quota slot`,
+  );
 }
 
 /** Seed an americano stage (needs individual entrants backed by persons) and a
