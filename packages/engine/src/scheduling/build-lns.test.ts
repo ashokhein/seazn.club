@@ -271,7 +271,13 @@ describe("improveByWindows — the window plan and the acceptance rule", () => {
   it("returns an accepted board in fixture order, whichever window won", async () => {
     const fixtures = [fx("c"), fx("b"), fx("a")];
     const board = [card("a", "C1", 0), card("b", "C2", 0), card("c", "C2", 60)];
-    const better = [card("c", "C2", 30), card("b", "C2", 0), card("a", "C1", 0)];
+    // Handed back in a DIFFERENT order from the fixture list, deliberately: a
+    // sub-solve emits rows in slot order, so a candidate that merely
+    // concatenated would come back court-grouped and the row order of the
+    // board would depend on which window happened to win. The first draft of
+    // this case returned `better` already sorted and the missing-sort mutant
+    // survived it.
+    const better = [card("a", "C1", 0), card("b", "C2", 0), card("c", "C2", 30)];
     const s = spy((w) => (free(w).join(",") === "c,b" ? better : []));
     const out = await improveByWindows({
       board,
