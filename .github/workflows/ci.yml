@@ -64,22 +64,16 @@ jobs:
       # pull in scripts/** + tsconfig.scripts.json, which apps/web's typecheck
       # reads via its second `tsc -p ../../tsconfig.scripts.json` half — without
       # that, a scripts/ edit would restore a stale green.
-      # apps/web's `tsc --noEmit` needs more than the runner's default ~2 GB V8
-      # heap — the same ceiling a247b46e hit in e2e's production build. That one
-      # could dodge it (SKIP_TYPECHECK, because THIS step gates types); this one
-      # cannot, so the ceiling has to come up. Measured on W4 (#415): the run
-      # died with the heap at 2041/2088 MB, and apps/web alone peaks ~2.8 GB RSS
-      # locally. It has been sitting just under the default for a while — W4's
-      # engine schemas only tipped it over, so this is not one wave's problem.
-      # The cost itself is #438: the engine ships as raw TS source, so every
-      # apps/web typecheck re-infers zod across all 11 sport modules. Fixing
-      # that is what removes this bump; until then it is a ceiling, not a cure.
       #
-      # A ceiling, not a reservation: turbo may still run both workspaces at
-      # once, and neither comes near 6 GB.
+      # This step used to carry a NODE_OPTIONS V8 heap ceiling of 6144 MB:
+      # apps/web peaked ~2.8 GB against the runner's ~2 GB default heap and died
+      # at 2041/2088 MB. TypeScript 7 is a native Go binary, so there is no V8
+      # heap to raise — peak RSS is ~2.5 GB of ordinary process memory. Do not
+      # reintroduce that flag; if it ever looks necessary again, that means
+      # something has fallen back to a JS compiler. toolchain.test.ts asserts
+      # the flag name appears nowhere in this file, so the wording above stays
+      # deliberately indirect.
       - run: npx turbo run typecheck
-        env:
-          NODE_OPTIONS: --max-old-space-size=6144
       - run: npm run engine:boundary
       # v3/03 §6: retired plan tier must never reappear in UI copy.
       - name: Plan-scrub grep gate (PROMPT-32)

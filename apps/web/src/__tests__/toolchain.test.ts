@@ -150,3 +150,19 @@ describe("toolchain: which compiler gates types", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("toolchain: no V8 heap ceiling for typecheck", () => {
+  /**
+   * The 6 GB ceiling existed only because apps/web's tsc peaked ~2.8 GB against
+   * the runner's ~2 GB default V8 heap. TS 7 is a Go binary — the flag has no
+   * effect on it — so carrying the ceiling forward would be cargo cult, and
+   * worse, would mask a regression back to a V8 compiler.
+   */
+  it("ci.yml sets no max-old-space-size", () => {
+    const text = readFileSync(
+      join(REPO_ROOT, ".github/workflows/ci.yml"),
+      "utf8",
+    );
+    expect(text).not.toContain("max-old-space-size");
+  });
+});
