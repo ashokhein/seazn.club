@@ -58,6 +58,7 @@ import {
   undoJointApply,
   type JointApplyDivision,
   type JointApplyOutcome,
+  type JointUndoRefusal,
 } from "./ai-joint-apply";
 import { blockingConflictKey, type AiConsoleFixture } from "./ai-diff";
 import { AiReviewPanel } from "./ai-review-panel";
@@ -411,6 +412,57 @@ function RunError({
   );
 }
 
+/** The three ways an undo can refuse before it writes anything, and the one
+ *  line of copy each of them owes the organiser.
+ *
+ *  Amber, not red, and the same panel for all three: nothing broke — the board
+ *  is exactly where the apply left it — so what actually differs between them
+ *  is the REMEDY, and the remedy belongs in the words. The only structural
+ *  difference is the button: `retry` is transient (another undo of this
+ *  competition is mid-rewind, almost always this same organiser's second
+ *  click), and the other two cannot be helped by pressing anything here. */
+function JointUndoRefused({
+  kind,
+  undoing,
+  onUndo,
+  msg,
+}: {
+  kind: JointUndoRefusal;
+  undoing: boolean;
+  onUndo: () => void;
+  msg: ReturnType<typeof useMsg>;
+}) {
+  const copy = ({
+    retry: { title: "board.ai.joint.undoBusyTitle", body: "board.ai.joint.undoBusy" },
+    changed: { title: "board.ai.joint.undoChangedTitle", body: "board.ai.joint.undoChanged" },
+    gone: { title: "board.ai.joint.undoGoneTitle", body: "board.ai.joint.undoGone" },
+    // `satisfies` and not a cast: this keeps tsc spell-checking all six keys
+    // against the catalog, which a widened `string` would silently stop doing.
+  } satisfies Record<JointUndoRefusal, { title: MessageKey; body: MessageKey }>)[kind];
+  return (
+    <div
+      role="alert"
+      className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5"
+    >
+      <p className="flex items-center gap-1.5 text-sm font-semibold text-amber-900">
+        <span aria-hidden>⚠</span>
+        {msg(copy.title)}
+      </p>
+      <p className="text-[11px] text-amber-900">{msg(copy.body)}</p>
+      {kind === "retry" && (
+        <button
+          type="button"
+          disabled={undoing}
+          onClick={onUndo}
+          className="btn btn-ghost px-3 py-1.5 text-xs font-semibold text-violet-700 disabled:opacity-50"
+        >
+          {undoing ? msg("board.ai.apply.undoing") : msg("board.ai.apply.undo")}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function JointReviewStep({
   plan,
   divisions,
@@ -422,6 +474,7 @@ export function JointReviewStep({
   undoing,
   undone,
   undoFailed,
+  undoRefusal,
   running,
   error,
   currency,
@@ -448,6 +501,11 @@ export function JointReviewStep({
    *  AI board, and their anchors are still valid, so they are both what the
    *  copy must name and what the retry sends. */
   undoFailed: string[];
+  /** An undo that never RAN, as opposed to one that ran and left divisions
+   *  behind. Nothing was written either way, so the applied confirmation still
+   *  stands — but only `retry` is worth pressing the button for, and the other
+   *  two must not leave a control up that cannot work. */
+  undoRefusal: JointUndoRefusal | null;
   /** A plan run started from HERE (the stale-board re-run) is in flight. The
    *  button's `disabled` is the affordance; `runJointPlan`'s in-flight ref is
    *  the actual protection against spending twice. */
@@ -534,18 +592,26 @@ export function JointReviewStep({
             {plural("board.ai.joint.applied", outcome.checkpoints.length)}
           </p>
         </div>
-        <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2">
-          <span aria-hidden className="text-slate-400">⟲</span>
-          <p className="min-w-0 flex-1 text-[11px] text-slate-600">{msg("board.ai.joint.savepoint")}</p>
-          <button
-            type="button"
-            disabled={undoing}
-            onClick={onUndo}
-            className="btn btn-ghost shrink-0 px-3 py-1.5 text-xs font-semibold text-violet-700 disabled:opacity-50"
-          >
-            {undoing ? msg("board.ai.apply.undoing") : msg("board.ai.apply.undo")}
-          </button>
-        </div>
+        {/* An undo that never ran replaces the restore-point row rather than
+            sitting above it: two Undo buttons on one card is a worse answer
+            than one, and for `changed`/`gone` the row's button cannot work at
+            all — the panel below carries the retry only where retrying helps. */}
+        {undoRefusal ? (
+          <JointUndoRefused kind={undoRefusal} undoing={undoing} onUndo={onUndo} msg={msg} />
+        ) : (
+          <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2">
+            <span aria-hidden className="text-slate-400">⟲</span>
+            <p className="min-w-0 flex-1 text-[11px] text-slate-600">{msg("board.ai.joint.savepoint")}</p>
+            <button
+              type="button"
+              disabled={undoing}
+              onClick={onUndo}
+              className="btn btn-ghost shrink-0 px-3 py-1.5 text-xs font-semibold text-violet-700 disabled:opacity-50"
+            >
+              {undoing ? msg("board.ai.apply.undoing") : msg("board.ai.apply.undo")}
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -865,6 +931,13 @@ export function AiCompetitionConsole({
   const [undoing, setUndoing] = useState(false);
   const [undone, setUndone] = useState<"no" | "full" | "partial">("no");
   const [undoFailed, setUndoFailed] = useState<string[]>([]);
+  const [undoRefusal, setUndoRefusal] = useState<JointUndoRefusal | null>(null);
+  // The undo's own double-submit guard, and a REF for the same reason as the
+  // one below: `undoing` is state, read through a closure a second click within
+  // the same tick still sees as `false`. A double-clicked Undo is exactly the
+  // race the server's competition lock exists to catch, and the lock is meant
+  // to be the backstop — this is the defence.
+  const undoInFlight = useRef(false);
   // THE double-spend guard. A ref, not state: state is read through a closure a
   // second click can beat, and this has to hold for exactly that click. See
   // runJointPlan.
@@ -1041,22 +1114,29 @@ export function AiCompetitionConsole({
   }, [applying, competitionId, divisions, excluded, instruction, onApplied, onRefetch, plan]);
 
   const undo = useCallback(async () => {
-    if (!outcome || undoing) return;
+    if (!outcome || undoInFlight.current) return;
+    undoInFlight.current = true;
     setUndoing(true);
-    // A retry sends ONLY the anchors that failed — the divisions that already
-    // reverted would otherwise be restored a second time for no reason. The
-    // anchors stay valid after a refusal, which is what makes the retry
-    // possible at all.
-    const pending =
-      undoFailed.length > 0
-        ? outcome.checkpoints.filter((c) => undoFailed.includes(c.divisionId))
-        : outcome.checkpoints;
-    const { ok, failed } = await undoJointApply(pending);
+    setUndoRefusal(null);
+    // ALWAYS the full anchor set, retry included. This used to send back only
+    // the divisions that failed, which was right while restore was per
+    // division; the competition-scoped endpoint validates the named set against
+    // the apply event and refuses a subset with a 422, so a partial retry is
+    // now the one request guaranteed not to work. Re-restoring a division that
+    // already reverted costs nothing — it rewinds zero steps.
+    const { ok, failed, refusal } = await undoJointApply(competitionId, outcome.checkpoints);
+    undoInFlight.current = false;
+    setUndoing(false);
+    if (refusal) {
+      // Nothing ran, so neither `undone` nor `undoFailed` may move and the
+      // board needs no refetch: it is exactly where the apply left it.
+      setUndoRefusal(refusal);
+      return;
+    }
     setUndone(ok ? "full" : "partial");
     setUndoFailed(failed);
-    setUndoing(false);
     onApplied?.();
-  }, [onApplied, outcome, undoFailed, undoing]);
+  }, [competitionId, onApplied, outcome]);
 
   const close = useCallback(() => {
     onProposalChange?.(null);
@@ -1194,6 +1274,7 @@ export function AiCompetitionConsole({
       undoing={undoing}
       undone={undone}
       undoFailed={undoFailed}
+      undoRefusal={undoRefusal}
       running={running}
       error={error}
       currency={currency}

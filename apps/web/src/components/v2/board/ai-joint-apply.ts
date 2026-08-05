@@ -6,11 +6,13 @@
 // that chain creates before it writes never gets created either. A joint apply
 // therefore overwrote several divisions' boards with no restore point at all.
 //
-// There is no competition-scoped checkpoint or restore endpoint, so the anchor
-// is per division: one `kind: "ai"` checkpoint for every division the apply will
-// touch, taken BEFORE the write, and Undo restores each of them. `kind: "ai"`
-// anchors are exempt from the save-point quota (V303), so this costs a Community
-// org nothing.
+// There is no competition-scoped CHECKPOINT endpoint, so the anchor is still
+// per division: one `kind: "ai"` checkpoint for every division the apply will
+// touch, taken BEFORE the write. `kind: "ai"` anchors are exempt from the
+// save-point quota (V303), so this costs a Community org nothing. The UNDO is
+// competition-scoped (#386) — it hands every anchor to one endpoint rather than
+// looping the per-division restore from the browser, which is what used to let
+// a closed tab leave the board half-restored.
 //
 // Pure and React-free with an injected api seam, exactly as ai-apply.ts is, so
 // the call order and the payloads are assertable without a server.
@@ -170,31 +172,85 @@ export async function applyJointPlan(
 }
 
 /**
- * Restore every anchor it is handed, and NAME the divisions that refused.
+ * Why an undo could not run AT ALL — as opposed to running and having some
+ * divisions refuse, which is what `failed` reports.
  *
- * It keeps going after a failure on purpose: restore is per division and there
- * is no competition-scoped one, so stopping at the first refusal would leave
- * MORE divisions holding the AI board than carrying on does.
+ * The distinction is the whole point of this type: on a refusal nothing was
+ * attempted, so naming every division as unrestored (the honest answer to a
+ * dropped connection) would be a lie in the direction that matters — it sends
+ * the organiser off to undo by hand divisions that are mid-rewind or already
+ * fine.
  *
- * The failing ids are returned rather than collapsed into a boolean, because
- * both of the things the console then needs depend on them: telling the
- * organiser WHICH divisions are still carrying the AI board, and retrying just
- * those — the anchors stay valid, and a restore failure is often transient.
+ *  - `retry`   — 409. A restore is already running for this competition. The
+ *                realistic cause is the SAME organiser submitting twice, so the
+ *                remedy really is "wait a moment and press it again".
+ *  - `changed` — 422. The anchors no longer name exactly the divisions the last
+ *                joint apply wrote, i.e. the competition has been applied again
+ *                since. Pressing again cannot fix that.
+ *  - `gone`    — 404, or nothing to send. There is no joint apply to undo.
+ */
+export type JointUndoRefusal = "retry" | "changed" | "gone";
+
+export interface JointUndoOutcome {
+  ok: boolean;
+  /** Divisions still carrying the AI board. Empty on a `refusal` — nothing ran. */
+  failed: string[];
+  refusal?: JointUndoRefusal;
+}
+
+/**
+ * Undo one joint apply (#386) — ONE competition-scoped call.
+ *
+ * This used to loop the per-division restore from the browser, so the apply was
+ * atomic while the undo was N independent restores, and a tab closed part-way
+ * left the board half-restored with no record that it had been. The server now
+ * takes one competition lock, rewinds every division in sorted order and reports
+ * per division, so the loop cannot be abandoned.
+ *
+ * `{ ok, failed }` is unchanged so the console's partial-undo copy still reads
+ * the same field; `refusal` is additive, and only set when NOTHING was tried.
  */
 export async function undoJointApply(
+  competitionId: string,
   checkpoints: JointCheckpoint[],
   api: JointApplyApi = apiV1,
-): Promise<{ ok: boolean; failed: string[] }> {
-  const failed: string[] = [];
-  for (const cp of checkpoints) {
-    try {
-      await api(`/api/v1/divisions/${cp.divisionId}/restore`, {
-        method: "POST",
-        json: { checkpoint_id: cp.checkpointId, confirm: true },
-      });
-    } catch {
-      failed.push(cp.divisionId);
-    }
+): Promise<JointUndoOutcome> {
+  // `checkpoints` is `.min(1)` on the wire, so an empty undo is a 422 the
+  // client can answer without a round trip — and "nothing to undo" is exactly
+  // what an empty anchor list means.
+  if (checkpoints.length === 0) return { ok: false, failed: [], refusal: "gone" };
+
+  try {
+    const out = await api<{
+      restored: { division_id: string; watermark: number; steps: number }[];
+      failed: { division_id: string; reason: string }[];
+      ok: boolean;
+    }>(`/api/v1/competitions/${competitionId}/schedule/restore`, {
+      method: "POST",
+      json: {
+        checkpoints: checkpoints.map((c) => ({
+          division_id: c.divisionId,
+          checkpoint_id: c.checkpointId,
+        })),
+        confirm: true,
+      },
+    });
+    return { ok: out.ok, failed: out.failed.map((f) => f.division_id) };
+  } catch (err) {
+    // Keyed on the STATUS, not the code: the usecase throws a bare
+    // `HttpError(404 | 422, message)` with no code at all, so a code match
+    // there would silently never fire.
+    const refusal = refusalOf(statusOf(err));
+    if (refusal) return { ok: false, failed: [], refusal };
+    // The call itself failed — nothing was restored, and saying "some divisions
+    // failed" would be a guess. Report every division as unrestored.
+    return { ok: false, failed: checkpoints.map((c) => c.divisionId) };
   }
-  return { ok: failed.length === 0, failed };
+}
+
+function refusalOf(status: number): JointUndoRefusal | undefined {
+  if (status === 409) return "retry";
+  if (status === 422) return "changed";
+  if (status === 404) return "gone";
+  return undefined;
 }

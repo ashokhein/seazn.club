@@ -178,16 +178,19 @@ The competition's own schedule board (**Competition → Schedule**) can plan **s
 
 Pick the divisions in the console, write one instruction covering all of them, and review the proposal division by division. Applying writes every division together — **all of them or none**.
 
-Undo works the other way round. Each division gets its own **before-AI** save point, and undo restores them one at a time rather than in a single step, so a restore that fails doesn't stop the rest going back. If any division is left on the AI schedule, the console names it and offers to try just those again — and the save points stay valid, so you can also restore any of them from its own schedule page later. Only the newest three before-AI points are kept, so you can still step back past the most recent one.
+Undo works the other way round. It is **one action for the whole competition**, not one per division: press it once and each division the AI wrote to is rewound in the same request, so closing the tab part-way through can't leave the board half-restored. It is still **not all-or-nothing**: each division keeps its own **before-AI** save point, and a restore that fails doesn't stop the rest going back. If any division is left on the AI schedule, the console names it and offers to try just those again — and the save points stay valid, so you can also restore any of them from its own schedule page later. Only the newest three before-AI points are kept, so you can still step back past the most recent one.
+
+The undo button is disabled while an undo is running, so a second press cannot start one on top of the first. If the competition has been applied again since, undo has nothing to put back and says so instead of rewinding the newer schedule — and if a new apply lands while the undo is running, it stops there and names the divisions it did not get to.
 
 **Shared courts are matched by name, and by nothing else.** There is no venue-wide court list behind the scenes: a court is the label you typed into each division's schedule settings. So "Court 1" in one division and "Court A" in another are **two different courts** as far as the run is concerned, and it will happily put a match on each at the same time. If the divisions you picked don't use the same names, the console warns you before the run — the fix is to make the names match in each division's schedule settings.
 
 **Somebody playing in two divisions gets the longer rest of the two.** If one division allows 20 minutes between matches and the other insists on 120, a player entered in both is given 120 either way round. A person's recovery does not depend on which draw the match happens to belong to.
 
-Two more limits worth knowing:
+Three more limits worth knowing:
 
 - A joint run needs **at least two divisions**. To schedule one on its own, open its own schedule page.
 - The whole run is capped at **500 fixtures to place**, the same ceiling a single division has. Over that, run the divisions in smaller groups.
+- A joint run has its own burst brake of **3 runs an hour, counted per competition** — not per division, and tighter than the 5 an hour a single division gets. Two divisions scheduled together spend one joint run between them, out of the competition's three, rather than one each out of their own five.
 
 A division with nothing left to place is skipped rather than charged for, and a frozen division can't be picked at all.
 

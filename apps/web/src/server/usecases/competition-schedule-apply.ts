@@ -348,9 +348,19 @@ export async function applyCompetitionSchedule(
       : undefined;
 
   const out = await withTenant(auth.orgId, async (tx) => {
-    // Locks FIRST, before anything that is read is acted on — and in sorted
-    // order, so two joint applies over overlapping sets serialise instead of
-    // deadlocking.
+    // The divisions, in sorted order, so two joint applies over overlapping
+    // sets serialise instead of deadlocking. Locks FIRST, before anything that
+    // is read is acted on.
+    //
+    // There is no COMPETITION-scoped key here any more (#386). This apply used
+    // to take `joint:<competitionId>` under a 5s `lock_timeout` so it could not
+    // interleave with a joint RESTORE rewinding the same competition. The
+    // restore no longer takes that key — it detects a superseding apply by
+    // re-reading the newest apply event before each division instead
+    // (competition-schedule-restore.ts) — so this key could only ever have
+    // collided with another APPLY, which the division locks below already
+    // serialise inside one transaction. A lock that excludes nothing is worse
+    // than no lock: the code above it gets written as though it cannot happen.
     await lockDivisions(tx, requestedIds);
 
     const [competition] = await tx<{ id: string }[]>`

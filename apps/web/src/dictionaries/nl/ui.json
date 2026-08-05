@@ -3186,5 +3186,11 @@
   "persons.dupes.error": "Dat is niet gelukt",
   "persons.dupes.account.note": "Alleen het record dat wordt opgenomen is gekoppeld aan het account van een speler. Het record dat je behoudt neemt die koppeling over.",
   "persons.dupes.dialog.keepShort": "Behouden",
-  "persons.dupes.dialog.absorbShort": "Opnemen"
+  "persons.dupes.dialog.absorbShort": "Opnemen",
+  "board.ai.joint.undoBusyTitle": "Er wordt al iets ongedaan gemaakt",
+  "board.ai.joint.undoBusy": "Deze competitie wordt nog hersteld. Wacht even en probeer het opnieuw.",
+  "board.ai.joint.undoChangedTitle": "Dit kan niet meer in één keer ongedaan worden gemaakt",
+  "board.ai.joint.undoChanged": "De competitie is sinds deze toepassing opnieuw ingepland, dus het ongedaan maken past er niet meer bij. Herstel elke divisie via haar eigen planningspagina.",
+  "board.ai.joint.undoGoneTitle": "Niets meer om ongedaan te maken",
+  "board.ai.joint.undoGone": "Er is voor deze competitie geen gezamenlijke toepassing meer om ongedaan te maken. Elke divisie bewaart haar eigen herstelpunten op haar planningspagina."
 }

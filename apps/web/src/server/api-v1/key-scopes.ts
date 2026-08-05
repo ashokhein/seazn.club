@@ -93,6 +93,10 @@ const RULES: RouteRule[] = [
   // …and the atomic apply of what it planned: a WRITE across every selected
   // division, so `manage`, pinned to the competition that owns them.
   { method: "POST", path: "/competitions/:id/schedule/apply", scope: "manage", pin: "competition" },
+  // …and its undo. Same scope as the apply for the same reason — it rewrites
+  // every one of those divisions' boards — matching the per-division
+  // /divisions/:id/restore, which is `manage` too.
+  { method: "POST", path: "/competitions/:id/schedule/restore", scope: "manage", pin: "competition" },
 
   // divisions
   { method: "GET", path: "/divisions/:id", scope: "read", pin: "division" },

@@ -824,7 +824,7 @@ test("competition board: pick divisions → price the batch → run → review �
 }) => {
   fixture.reset();
   const org = await activateFreshProPlusOrgWithSlug(page, request);
-  const { compSlug, divisionIds } = await seedJointCompetition(request);
+  const { competitionId, compSlug, divisionIds } = await seedJointCompetition(request);
   const [bigDivision, smallDivision] = divisionIds as [string, string];
 
   await page.goto(`/o/${org.slug}/c/${compSlug}/schedule`);
@@ -935,6 +935,71 @@ test("competition board: pick divisions → price the batch → run → review �
     const sources = await getFixtureScheduleSources(divisionId);
     expect(sources.length).toBe(expected);
     expect(sources.every((s) => s.schedule_source === "ai" && s.scheduled_at !== null)).toBe(true);
+  }
+
+  // ---- UNDO THE WHOLE APPLY IN ONE CALL (#386).
+  //
+  // The console used to undo a joint apply by looping the per-division restore
+  // in the BROWSER, so a closed tab left half the board on the AI schedule. The
+  // loop now runs on the server behind one endpoint, and the DOCK'S OWN BUTTON
+  // is what calls it — an earlier pass drove this over HTTP because the joint
+  // Undo was not wired to the new endpoint yet.
+  //
+  // Each division's anchor is the 'ai' checkpoint the apply saved ("A restore
+  // point was saved for each division", asserted above).
+  const anchors: { division_id: string; checkpoint_id: string }[] = [];
+  for (const divisionId of [bigDivision, smallDivision]) {
+    const list = await apiJson<{ id: string; kind: string; created_at: string }[]>(
+      request,
+      `/api/v1/divisions/${divisionId}/checkpoints`,
+    );
+    const ai = (list.data ?? []).filter((c) => c.kind === "ai");
+    expect(ai.length).toBeGreaterThan(0);
+    anchors.push({ division_id: divisionId, checkpoint_id: ai[ai.length - 1]!.id });
+  }
+
+  // A SUBSET is refused: the apply was all-or-nothing, so the undo is too. This
+  // is also why the dock's retry-after-a-partial-undo sends the FULL anchor set
+  // rather than only the divisions that failed. Driven over the API context, so
+  // it is invisible to the page-level counter installed below; and it refuses
+  // BEFORE writing, which the button-driven restore then proves — a board
+  // already half-rewound would make that assertion pass for the wrong reason.
+  const partial = await apiJson(
+    request,
+    `/api/v1/competitions/${competitionId}/schedule/restore`,
+    "POST",
+    { checkpoints: [anchors[0]!], confirm: true },
+  );
+  expect(partial.status).toBe(422);
+
+  // THE REGRESSION ASSERTION, and the only one no unit test can make: count the
+  // restore requests the BROWSER issues for one press of Undo. Two means the
+  // client is looping per division again — which is invisible in the final
+  // board state, because the loop produces the same rows when nothing
+  // interrupts it. The whole defect was what happens when something does.
+  const restoreRequests: string[] = [];
+  page.on("request", (req) => {
+    if (req.url().includes("/schedule/restore")) restoreRequests.push(req.url());
+  });
+
+  await dock.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(dock.getByText("Reverted to before the AI changes.")).toBeVisible({
+    timeout: 60_000,
+  });
+  expect(restoreRequests).toHaveLength(1);
+  expect(restoreRequests[0]).toContain(`/competitions/${competitionId}/schedule/restore`);
+
+  // Both divisions really rewound to their pre-AI state — a confirmation with
+  // no write behind it is the failure mode this endpoint exists to prevent, and
+  // the counts stay at 66/6 because an undo unplaces fixtures rather than
+  // deleting them.
+  for (const [divisionId, expected] of [
+    [bigDivision, 66],
+    [smallDivision, 6],
+  ] as const) {
+    const after = await getFixtureScheduleSources(divisionId);
+    expect(after.length).toBe(expected);
+    expect(after.every((s) => s.scheduled_at === null)).toBe(true);
   }
 });
 
