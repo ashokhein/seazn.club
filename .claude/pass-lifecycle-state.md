@@ -86,9 +86,65 @@ implement.
 
 ## WHERE WE ARE (update this line as tasks land)
 
-Spec ✅ committed · Plan ✅ committed · **Task 1 not started.** No
-production code has been written on this branch yet — every commit so far
-is documentation.
+Spec ✅ · Plan ✅ · **Task 1 ✅ `951f60ca` + `3dbee0c5`** (reviewed,
+approved) · **Task 2 in flight** · Tasks 3–5 queued.
+
+## EXECUTION IS SPLIT ACROSS TWO WORKTREES (owner asked for it)
+
+Owner instruction: run disjoint tasks in parallel worktrees.
+
+| Lane | Worktree | Branch | Tasks | Own Postgres |
+| --- | --- | --- | --- | --- |
+| **A** | `/Users/ashokhein/github/wt-pass-376` | `fix/pass-lock-376` | 1–5 (part A) | `:54331` |
+| **C/D** | `/Users/ashokhein/github/wt-div-slot` | `fix/division-slot-cd` | 6–9 (parts C, D) | `:54329` |
+
+Both forked from `origin/main@ea0ffaf2`. Both have `.env.local` and
+`.claude/agent-memory` symlinked and `node_modules/@seazn/engine`
+resolving inside the worktree.
+
+**Why these two are safe to run at once.** Lane A owns
+`upgrade-page-state.ts`, `competition-pass-provider.tsx`, the competition
+`layout.tsx`, `competition-pass-entry.tsx`, `upgrade/page.tsx`,
+`pass-ladder.ts`, `pass-checkout/route.ts`. Lane C/D owns `divisions.ts`,
+`V354`, `admin-divisions.ts`, the admin route, `division-danger-zone.tsx`.
+Zero overlap. The only shared files are the four `ui.json` (different key
+prefixes — `pass.*`/`upgrade.*` versus `division.*` — so different
+alphabetical regions) and `scripts/seed-demo.ts` (one appended block each).
+
+**Part B (Task 10) must NOT join them.** It rewrites every fixture that
+creates a competition, including `seed-demo.ts` and the e2e specs both
+lanes touch. It runs last, alone, after both branches merge.
+
+**The DB rule that protects the owner's data.** `apps/web/.env.local`
+points `DATABASE_URL` at the **live local dev DB on `localhost:5432`**, and
+`apps/web/vitest.config.ts` lets a pre-set `process.env` var win over the
+file. So every test command in either lane MUST carry its own prefix:
+
+```
+DATABASE_URL="postgresql://postgres@127.0.0.1:<54331|54329>/seazn_test" DATABASE_SSL=disable
+```
+
+Without it, division create/archive suites run against real dev data. Both
+instances were started fresh (v353 + `sync:sports`) and each was proved to
+be mine via `show data_directory` — `pg_ctl` can fail with "Address already
+in use" while the next `createdb` SUCCEEDS against a foreign server.
+
+If these servers are gone after a restart, rebuild per `seazn-local-env`
+§1; `db:apply` alone is not a fresh schema (`sync:sports` too, or
+`funnel.test.ts` fails `expected 'generic' to be 'badminton'`).
+
+## Discovered during execution (not in the plan)
+
+- An existing test, `"a lock reason with NO pass row is still the ordinary
+  offer"` (`upgrade-page-state.test.ts`), **asserted the defect**. No plan
+  step mentions it. Rewritten, not deleted — the true half of its claim
+  survives. Expect more of these: a test written against #301/#327 may
+  encode the bug as intent.
+- `upgrade/page.tsx` branches on `state.kind` with `===` chains at ~13
+  sites and **no exhaustive switch**, so adding the `closed` union member
+  produced **zero** typecheck errors there. Task 4 gets no compiler help;
+  `closed` currently falls through as "none of the above". That file's
+  header comment also still says "Six states".
 
 ## Ordering rationale (do not resequence)
 
