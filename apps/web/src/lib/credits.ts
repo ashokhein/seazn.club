@@ -462,11 +462,11 @@ export async function grantMonthlyForAllWallets(
   // #390 — the anti-join below is a PRE-FILTER, not a replacement for the
   // guard. Two overlapping runs can both pass it (neither sees a key yet), so
   // the `pg_advisory_xact_lock` and the in-transaction `idempotency_key` check
-  // in `grantMonthly` (:296-299) stay exactly as written. This filter may only
-  // ever REDUCE the candidate set — never decide whether a grant is safe.
+  // in `grantMonthlyDelta` (:326-330) stay exactly as written. This filter may
+  // only ever REDUCE the candidate set — never decide whether a grant is safe.
   //
   // It does not reach zero rows on its own: `delta <= 0` returns before the
-  // key is written (:289), so a wallet whose plan grants nothing (Event Pass
+  // key is written (:320), so a wallet whose plan grants nothing (Event Pass
   // carries no `ai.credits.monthly` row) never writes one and re-qualifies
   // every day. Harmless, and the reason the grant amount is resolved in the
   // sweep rather than per row (see `monthlyPerSeatByPlan` below).
