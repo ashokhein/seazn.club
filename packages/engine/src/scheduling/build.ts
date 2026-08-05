@@ -15,6 +15,26 @@
 // permanently flaky test. The wall clock survives only as an outer cap that
 // should never fire.
 //
+// --- the seed is LEGALISED before it is measured ---------------------------
+//
+// `slotFixtures` does not read `config.window`: its only bound is
+// `horizonMinutes`, a 365-day default (`calendar.ts:390`). `repairUniverse`,
+// which bounds the lattice this solver searches, DOES read it. So on any
+// competition that overruns its own window greedy places every card — outside
+// the window, reporting nothing — while z3 can only place the ones that fit
+// inside it. D3 ranks `placed` first, so that illegal board outranks every
+// legal one and would stay the incumbent forever, making the whole feature
+// inert on exactly the boards it exists to fix.
+//
+// The fix is to make `placed` mean LEGALLY placed: every seed row carrying a
+// BLOCKING conflict is dropped before the seed is measured. Those cards were
+// already conflicts — counting them as placed was the bug — and the drop is
+// provably sound, because every blocking reason is either per-row (`window`)
+// or names both sides of a pair (`court`, `person_overlap`) or names the
+// dependent (`order`), so removing every named row cannot leave one behind and
+// cannot create a new one. The floor therefore becomes a LEGAL board, and
+// "never worse than greedy" becomes a stronger claim rather than a weaker one.
+//
 // --- three verdicts, and why the third is the point -------------------------
 //
 // A `check()` here has THREE outcomes and they are not two:
@@ -29,19 +49,14 @@
 // impossibility nobody established, which is precisely the defect this tier
 // exists to remove: greedy's `no_slot` is a GUESS, and replacing one guess with
 // a differently-dressed guess buys nothing. When the answer is `unknown` the
-// incumbent simply stands and `budgetExpired` says why.
-//
-// The same care applies to `unsat`. With no locked card the empty board
-// satisfies every clause `encodeBuild` writes — every constraint there is an
-// at-most, a negation or an equivalence, and `placed[i]` is free to be false —
-// so the model can only be GLOBALLY unsat because a locked pin contradicts the
-// board around it. That is a fact about the pins, not about the schedule, and
-// `infeasible` is claimed only after a bare feasibility probe has established
-// it.
+// incumbent simply stands and `budgetExpired` says why. Both sites that can
+// see an `unknown` — the feasibility probe and the T0 walk — are pinned by
+// their own test.
 import { boardMetrics, isStrictlyBetter, type BoardMetrics } from "./build-objectives.ts";
-import { buildGrid } from "./build-grid.ts";
+import { buildGrid, type BuildSlot } from "./build-grid.ts";
 import { encodeBuild, type BuildConfig } from "./build-encode.ts";
 import {
+  deltaConflicts,
   isBlockingConflict,
   slotFixtures,
   validateAssignments,
@@ -51,6 +66,7 @@ import {
   type OrderDependency,
   type SchedulableFixture,
   type SlotConfig,
+  type VerifyConfig,
 } from "./calendar.ts";
 import { repairUniverse } from "./repair-domain.ts";
 import { loadZ3, withZ3Lock } from "./z3-load.ts";
@@ -68,11 +84,19 @@ export type BuildStatus =
    *  exactly the distinction between "we stopped looking" and "there is
    *  nothing to find". */
   | "already_optimal"
-  /** z3 proved the model has no solution at all. Only reachable through a
-   *  locked pin (see the header). The greedy board is still returned. */
+  /** z3 PROVED no better board exists, and the proof is one of two:
+   *
+   *    * the bare feasibility probe came back unsat, which can only happen
+   *      through a pin (see `solveBuild` §5);
+   *    * the T0 walk proved `AtLeast(placed, 1)` unsat, i.e. not one card can
+   *      be placed legally.
+   *
+   *  Never inferred from an `unknown`, and never from an unsat at a bound
+   *  above 1 — that is `already_optimal`. The greedy board is still returned. */
   | "infeasible"
-  /** The encoder and `validateAssignments` disagreed. The greedy seed is
-   *  returned and the disagreement is logged. */
+  /** The encoder and `validateAssignments` disagreed and the solver's board
+   *  INTRODUCED a blocking conflict. The greedy seed is returned and the
+   *  disagreement is logged. */
   | "verifier_rejected"
   /** The WASM would not boot. A fallback, never an exception. */
   | "z3_unavailable"
@@ -83,23 +107,39 @@ export type BuildStatus =
 
 export interface BuildInput {
   fixtures: readonly SchedulableFixture[];
-  config: SlotConfig & { courts: string[] };
+  /**
+   * `hard` and `restByDivision` are picked in explicitly because `SlotConfig`
+   * has neither and `VerifyConfig` has both. Without them a caller writing
+   * `{ ...packConfig, hard: compiled }` gets TS2353, deletes the field to make
+   * it compile, and every compiled instruction rule silently stops binding —
+   * `restByDivision` has no other channel at all, and a cross-division pair
+   * then rests at whichever division's number happened to be asked.
+   */
+  config: SlotConfig & { courts: string[] } & Pick<VerifyConfig, "hard" | "restByDivision">;
   existing?: readonly Assignment[];
   dependencies?: readonly OrderDependency[];
-  /** POLISH only: fixture ids that may not move. */
+  /** POLISH only: fixture ids that may not move. Anchored to `locked` when the
+   *  caller supplied one, and to greedy's placement otherwise — see
+   *  `publishedSlotOf`. */
   frozen?: readonly string[];
   rlimit?: number;
   wallMs?: number;
+  /** Not read here. BUILD and POLISH differ only in whether `frozen` is
+   *  populated, and REFLOW is `repairSchedule`'s job by design; Task 5/6 owns
+   *  any behaviour this needs to gate. */
   mode?: "build" | "polish";
 }
 
 export interface BuildResult {
   assignments: readonly Assignment[];
-  /** Everything wrong with `assignments`, INCLUDING one `no_slot` row per
-   *  fixture that is not on the board. `validateAssignments` cannot report an
-   *  absence — it iterates the rows it is given — so without this a solver that
-   *  placed nothing would hand back an empty conflict list and read as a clean
-   *  board. */
+  /** Everything wrong with `assignments`, INCLUDING a row per fixture that is
+   *  not on the board. `validateAssignments` cannot report an absence — it
+   *  iterates the rows it is given — so without this a solver that placed
+   *  nothing would hand back an empty conflict list and read as a clean board.
+   *  Each absent fixture carries what ACTUALLY happened to it, never a
+   *  fabricated one: greedy's own diagnosis if greedy could not place it, the
+   *  blocking conflict that disqualified it if the seed was legalised, and only
+   *  otherwise a `no_slot` whose detail says whether a proof backs it. */
   conflicts: readonly Conflict[];
   metrics: BoardMetrics;
   /** Where the returned board came from, not which solver was consulted: `z3`
@@ -110,6 +150,41 @@ export interface BuildResult {
   budgetExpired: boolean;
   elapsedMs: number;
   moved: number;
+}
+
+/**
+ * The verifier gate's decision, as a pure function.
+ *
+ * A DELTA, not an absolute test, and that is a behavioural ruling rather than a
+ * convenience. Blocking conflicts predate this solver: `person_overlap` and
+ * `window` became blocking in #399 over boards that were published while they
+ * were warnings, and an absolute gate would refuse the solver's answer on every
+ * one of those boards forever — the feature would be dead on exactly the dirty
+ * boards `deltaConflicts` exists to keep editable. "Never worse than greedy" is
+ * enforced by `isStrictlyBetter` on the metrics, not here.
+ *
+ * `before` is the RAW greedy board — what the organiser gets today — so a
+ * breach that is already theirs is not laid at the solver's door.
+ *
+ * Blocking-filtered BEFORE the delta, deliberately: `conflictKey` is
+ * `fixtureId|reason|detail` and does not include `direct`, so a warn-only
+ * `order` row and a blocking one can share a key and would cancel.
+ *
+ * Scoped to `ours` because `validateAssignments` attributes an `order` conflict
+ * between two `existing` rows to a fixture this solver never placed. Refusing
+ * our own answer over one would be a lock-out with no fix, since nothing the
+ * solver can do changes it. Under the delta rule this is belt-and-braces — an
+ * unchanged sibling conflict is already matched away — which is why it is
+ * exercised here rather than through `buildSchedule`.
+ */
+export function rejectedBlockingConflicts(
+  before: readonly Conflict[],
+  after: readonly Conflict[],
+  ours: ReadonlySet<string>,
+): Conflict[] {
+  return deltaConflicts(before.filter(isBlockingConflict), after.filter(isBlockingConflict)).filter(
+    (c) => ours.has(c.fixtureId),
+  );
 }
 
 export function buildSchedule(input: BuildInput): Promise<BuildResult> {
@@ -126,41 +201,81 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
   const t0 = performance.now();
   const elapsed = (): number => performance.now() - t0;
   const { fixtures, config } = input;
+  /**
+   * ONE immovable board, read by three consumers that must not disagree.
+   *
+   * `encodeBuild` seeds its typed-rule day tallies from this array and
+   * `validateAssignments` tallies from the array IT is handed; a filtered or
+   * omitted copy on either side puts the encoder and the verifier on different
+   * counts and reopens the placer/verifier fork. Every call below passes THIS
+   * binding — never a filtered view, never `input.existing` re-defaulted — and
+   * the two call sites are deliberately far apart, so this is the note that
+   * connects them.
+   */
   const existing = input.existing ?? [];
   const dependencies = input.dependencies ?? [];
   const wallMs = input.wallMs ?? DEFAULT_BUILD_WALL_MS;
   const rlimit = input.rlimit ?? DEFAULT_BUILD_RLIMIT;
   const verifyConfig: BuildConfig = { ...config };
 
-  // 1. The seed. Also the floor: nothing below can return a board this one
-  //    beats, because every later board is taken only through
-  //    `isStrictlyBetter` against this one.
-  const seed = slotFixtures({ fixtures, config, existing });
-  const seedMetrics = boardMetrics(seed.assignments, config.courts, fixtures.length);
+  // 1. The seed, and the legalisation pass that turns it into a floor worth
+  //    having. See the header: `placed` has to mean LEGALLY placed or the
+  //    solver can never beat greedy on a window-overrunning board.
+  const rawSeed = slotFixtures({ fixtures, config, existing });
+  const rawSeedConflicts = validateAssignments(
+    rawSeed.assignments,
+    verifyConfig,
+    existing,
+    dependencies,
+  );
+  /** Seed rows disqualified by a blocking conflict, mapped to the conflicts
+   *  that disqualified them — so the result can report what ACTUALLY happened
+   *  to the card instead of inventing a reason for it. */
+  const disqualified = new Map<string, Conflict[]>();
+  const seedIds = new Set(rawSeed.assignments.map((a) => a.fixtureId));
+  for (const c of rawSeedConflicts) {
+    if (!isBlockingConflict(c) || !seedIds.has(c.fixtureId)) continue;
+    const rows = disqualified.get(c.fixtureId);
+    if (rows === undefined) disqualified.set(c.fixtureId, [c]);
+    else rows.push(c);
+  }
+  const seedAssignments = rawSeed.assignments.filter((a) => !disqualified.has(a.fixtureId));
+  const seedMetrics = boardMetrics(seedAssignments, config.courts, fixtures.length);
 
   /**
    * A board's conflicts, in full.
    *
    * `validateAssignments` answers for the rows it is handed; the fixtures that
    * are NOT on the board are the other half of the truth and it cannot see
-   * them. Greedy's own diagnosis is preferred for those, because it names the
-   * binding constraint (`start_window`, or the person it collided with) where a
-   * synthesised row can only say "nothing fitted".
+   * them. Three sources, in order of how well established they are, because a
+   * fabricated reason is fed straight to the repair prompt:
+   *
+   *   1. greedy's own diagnosis, which names the binding constraint;
+   *   2. the blocking conflict that disqualified the row from the seed;
+   *   3. only then a `no_slot` — and `proved` decides whether its detail claims
+   *      a ceiling (T0 came back unsat) or admits the budget ran out.
    */
-  const conflictsFor = (board: readonly Assignment[]): Conflict[] => {
+  const conflictsFor = (board: readonly Assignment[], proved: boolean): Conflict[] => {
     const onBoard = new Set(board.map((a) => a.fixtureId));
     const out: Conflict[] = validateAssignments(board, verifyConfig, existing, dependencies);
     for (const f of fixtures) {
       if (onBoard.has(f.id)) continue;
-      const greedySaid = seed.conflicts.filter((c) => c.fixtureId === f.id);
+      const greedySaid = rawSeed.conflicts.filter((c) => c.fixtureId === f.id);
       if (greedySaid.length > 0) {
         out.push(...greedySaid);
+        continue;
+      }
+      const dropped = disqualified.get(f.id);
+      if (dropped !== undefined) {
+        out.push(...dropped);
         continue;
       }
       out.push({
         fixtureId: f.id,
         reason: "no_slot",
-        detail: "no legal slot in the lattice",
+        detail: proved
+          ? "no legal slot in the lattice"
+          : "left unplaced when the solver's budget expired",
         rule: RULE_BY_REASON.no_slot,
       });
     }
@@ -168,8 +283,8 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
   };
 
   const greedy = (status: BuildStatus, budgetExpired = false): BuildResult => ({
-    assignments: seed.assignments,
-    conflicts: conflictsFor(seed.assignments),
+    assignments: seedAssignments,
+    conflicts: conflictsFor(seedAssignments, false),
     metrics: seedMetrics,
     engine: "greedy",
     status,
@@ -191,7 +306,43 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
   const universe = repairUniverse({ proposal: [], existing, config });
   if (config.startAt >= universe.to) return greedy("ok");
 
-  const pinned = fixtures.flatMap((f) => (f.locked !== undefined ? [f.locked] : []));
+  /**
+   * Where a card the caller says may not move actually IS.
+   *
+   * `locked` first, because that is the only placement in `BuildInput` the
+   * CALLER supplied; greedy's own re-placement is a fallback and not the same
+   * thing — freezing a card to a slot greedy just invented would pin POLISH to
+   * a time the organiser never saw. `BuildInput` carries no published-board
+   * field, so a POLISH caller that wants a true freeze must set `locked`
+   * (flagged for Task 6).
+   *
+   * The RAW seed, not the legalised one: a card the legalisation pass dropped
+   * still has a placement the organiser is looking at.
+   */
+  const publishedSlotOf = (id: string): BuildSlot | undefined => {
+    const f = fixtures.find((x) => x.id === id);
+    if (f?.locked !== undefined) return f.locked;
+    const at = rawSeed.assignments.find((a) => a.fixtureId === id);
+    return at === undefined ? undefined : { court: at.court, startAt: at.startAt };
+  };
+
+  const frozenIds = input.frozen ?? [];
+  // Every anchor is PINNED into the lattice, exactly as a `locked` placement
+  // is. This is the deliberate answer to an off-grid freeze — a card the
+  // organiser dragged to 09:07, or one greedy parked against the edge of an
+  // existing booking. Dropping it (what a bare `findIndex === -1` did) lets the
+  // card move under POLISH while the result still says `ok`, which is the one
+  // outcome that silently breaks the caller's contract; refusing the whole run
+  // would contradict "auto-schedule always hands back a board". Pinning honours
+  // the freeze, and any illegality the pin causes surfaces through the ordinary
+  // conflict and gate path where somebody can see it.
+  const pinned: BuildSlot[] = [
+    ...fixtures.flatMap((f) => (f.locked !== undefined ? [f.locked] : [])),
+    ...frozenIds.flatMap((id) => {
+      const at = publishedSlotOf(id);
+      return at === undefined ? [] : [at];
+    }),
+  ];
   const grid = buildGrid({ config, existing, pinned });
   if (grid.overCap || grid.slots.length === 0) return greedy("ok");
 
@@ -219,6 +370,7 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
     fixtures,
     grid,
     config: verifyConfig,
+    // The same binding `validateAssignments` is handed below. See its comment.
     existing,
     dependencies,
   });
@@ -232,10 +384,15 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
     solver.add(Z3.AtLeast([head, ...rest], k));
   };
 
-  // 4. POLISH freezes the cards an entrant has already been told about.
-  for (const id of input.frozen ?? []) {
+  // 4. POLISH freezes the cards an entrant has already been told about. Every
+  //    anchor is in `pinned` above, so the lattice is guaranteed to contain it
+  //    and `findIndex` cannot come back -1 for a card that has an anchor at all.
+  for (const id of frozenIds) {
     const i = fixtures.findIndex((f) => f.id === id);
-    const at = seed.assignments.find((a) => a.fixtureId === id);
+    const at = publishedSlotOf(id);
+    // No anchor at all: greedy could not place it and the caller pinned
+    // nothing, so there is no placement to hold it to. Left free rather than
+    // pretended-frozen.
     if (i < 0 || at === undefined) continue;
     const s = grid.slots.findIndex((sl) => sl.court === at.court && sl.startAt === at.startAt);
     if (s >= 0) solver.add(model.place[i]![s]!);
@@ -243,24 +400,34 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
 
   let budgetExpired = false;
 
-  // 5. The infeasibility probe — asked ONLY when a card is pinned.
+  // 5. The infeasibility probe — asked ONLY when something is pinned, and only
+  //    while there is budget left to ask in.
   //
-  //    Without a pin the model is satisfiable by inspection (the empty board),
-  //    so the probe could only ever answer "sat" and would cost a full check
-  //    for it; at 200 fixtures a bare `check()` is ~10 s of a 30 s budget, which
-  //    is not a price to pay for a foregone conclusion. With a pin it is the
-  //    only way to tell "these two cards were pinned onto one slot" from "n
-  //    cards will not fit", and those want opposite answers.
+  //    Without a pin the model is satisfiable by inspection (the empty board):
+  //    every clause `encodeBuild` writes is an at-most, a negation or an
+  //    equivalence, and `placed[i]` is free to be false. So the probe could only
+  //    ever answer "sat" and would cost a full check for it; at 200 fixtures a
+  //    bare `check()` is ~10 s of a 30 s budget. With a pin it is the only way
+  //    to tell "two cards pinned onto one slot" from "n cards will not fit",
+  //    and those want opposite answers.
   if (pinned.length > 0) {
-    armTimeout();
-    const probe = await solver.check();
-    if (probe === "unsat") return greedy("infeasible");
-    // `unknown` here is exhaustion, not a verdict: fall through and let the
-    // walk below report `budgetExpired` on the greedy incumbent.
-    if (probe === "unknown") budgetExpired = true;
+    if (elapsed() >= wallMs) {
+      // Never asked, so nothing is established. Reporting `infeasible` from a
+      // question we did not get to ask is the same error as reading it off an
+      // `unknown`.
+      budgetExpired = true;
+    } else {
+      armTimeout();
+      const probe = await solver.check();
+      if (probe === "unsat") return greedy("infeasible");
+      // `unknown` is exhaustion, not a verdict — the ABSENCE of a proof. Fall
+      // through and let the walk below report `budgetExpired` on the greedy
+      // incumbent.
+      if (probe === "unknown") budgetExpired = true;
+    }
   }
 
-  let incumbent: readonly Assignment[] = seed.assignments;
+  let incumbent: readonly Assignment[] = seedAssignments;
   let incumbentMetrics = seedMetrics;
   let tiersCompleted = 0;
   let checks = 0;
@@ -302,7 +469,8 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
   }
   // The tier completed iff it ran to a verdict rather than to the budget: a SAT
   // at some bound, or UNSAT all the way down to the incumbent's own count.
-  if (checks > 0 && !budgetExpired) tiersCompleted = 1;
+  const proved = checks > 0 && !budgetExpired;
+  if (proved) tiersCompleted = 1;
 
   // Tiers 1-3 land in Task 5; the incumbent contract above is what they extend.
   // Each of them is another descending-bound walk over `incumbent` /
@@ -311,31 +479,28 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
 
   // 7. The gate. Encoder and verifier disagreeing is the exact bug class this
   //    design exists to prevent, so it is never silent — but it is also never
-  //    an exception, because the organiser still needs a board.
+  //    an exception, because the organiser still needs a board, and it is a
+  //    DELTA rather than an absolute test (see `rejectedBlockingConflicts`).
   //
-  //    ABSOLUTE, not a delta: `repair.ts` throws `RepairVerificationError` in
-  //    the analogous place and this deliberately does not, so the loudness has
-  //    to come from somewhere. It is scoped to the cards this run actually
-  //    placed — a blocking conflict `validateAssignments` attributes to a
-  //    sibling division's immovable row is not a board this solver produced,
-  //    and refusing our own answer over it would be a lock-out with no fix.
-  const conflicts = conflictsFor(incumbent);
+  //    `repair.ts` throws `RepairVerificationError` in the analogous place and
+  //    this deliberately does not, so the loudness has to come from somewhere.
+  const conflicts = conflictsFor(incumbent, proved);
   const ours = new Set(incumbent.map((a) => a.fixtureId));
-  const blocking = conflicts.filter((c) => isBlockingConflict(c) && ours.has(c.fixtureId));
-  if (blocking.length > 0) {
+  const rejected = rejectedBlockingConflicts(rawSeedConflicts, conflicts, ours);
+  if (rejected.length > 0) {
     // The one place this library prints. The caller is handed a VALID board and
     // a status field they may never read, so an encoder/verifier fork would
     // otherwise reach nobody until an organiser filed a ticket about it.
     // eslint-disable-next-line no-console
     console.error(
-      `buildSchedule: verifier rejected the solver's board (${blocking
+      `buildSchedule: verifier rejected the solver's board (${rejected
         .map((c) => `${c.fixtureId}:${c.reason}`)
         .join(", ")}) — falling back to the greedy seed`,
     );
     return { ...greedy("verifier_rejected", budgetExpired), tiersCompleted };
   }
 
-  const seedById = new Map(seed.assignments.map((a) => [a.fixtureId, a]));
+  const seedById = new Map(seedAssignments.map((a) => [a.fixtureId, a]));
   const moved = incumbent.filter((a) => {
     const was = seedById.get(a.fixtureId);
     return was === undefined || was.court !== a.court || was.startAt !== a.startAt;
@@ -346,7 +511,7 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
   // board nobody looked at; without the second it would fire on a board that
   // was just improved.
   let status: BuildStatus = "ok";
-  if (checks > 0 && !improved && !budgetExpired) {
+  if (proved && !improved) {
     status =
       incumbentMetrics.placed === 0 && fixtures.length > 0 ? "infeasible" : "already_optimal";
   }
@@ -355,7 +520,7 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
     assignments: incumbent,
     conflicts,
     metrics: incumbentMetrics,
-    engine: incumbent === seed.assignments ? "greedy" : "z3",
+    engine: incumbent === seedAssignments ? "greedy" : "z3",
     status,
     tiersCompleted,
     budgetExpired,
