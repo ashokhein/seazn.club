@@ -24,7 +24,7 @@
     "test:coverage": "vitest run --coverage",
     "sim": "vitest run src/testkit/simulation.test.ts src/testkit/chaos.test.ts src/testkit/undo-sweep.test.ts",
     "sim:replay": "node --experimental-strip-types scripts/sim-replay.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node ../../node_modules/typescript-native/bin/tsc --noEmit",
     "lint": "eslint",
     "sim:matrix": "node --experimental-strip-types scripts/sim-replay.ts --matrix"
   },

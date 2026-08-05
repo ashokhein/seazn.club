@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit && tsc -p ../../tsconfig.scripts.json",
+    "typecheck": "node ../../node_modules/typescript-native/bin/tsc --noEmit && node ../../node_modules/typescript-native/bin/tsc -p ../../tsconfig.scripts.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

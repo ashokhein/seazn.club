@@ -110,3 +110,43 @@ describe("toolchain: suppression policy", () => {
     });
   }
 });
+
+import { execFileSync } from "node:child_process";
+
+describe("toolchain: which compiler gates types", () => {
+  /**
+   * Both packages declare `bin.tsc`, so `node_modules/.bin/tsc` resolves to
+   * whichever installed last. Verified real: in a scratch install v7 won
+   * `.bin/tsc` while v6 won `.bin/tsserver`. Every typecheck script therefore
+   * names an explicit path, and this test is what stops a silent swap back.
+   */
+  const NATIVE = join(REPO_ROOT, "node_modules/typescript-native/bin/tsc");
+
+  it("the aliased binary is TypeScript 7", () => {
+    const out = execFileSync(process.execPath, [NATIVE, "--version"], {
+      encoding: "utf8",
+    });
+    expect(out).toMatch(/Version 7\./);
+  });
+
+  it("the bare specifier is still TypeScript 6, for lint and the editor", () => {
+    const pkg = JSON.parse(
+      readFileSync(join(REPO_ROOT, "node_modules/typescript/package.json"), "utf8"),
+    ) as { version: string };
+    expect(pkg.version.startsWith("6.")).toBe(true);
+  });
+
+  it("no typecheck script invokes bare tsc", () => {
+    const offenders: string[] = [];
+    for (const p of ["package.json", "apps/web/package.json", "packages/engine/package.json"]) {
+      const pkg = JSON.parse(readFileSync(join(REPO_ROOT, p), "utf8")) as {
+        scripts?: Record<string, string>;
+      };
+      for (const [name, body] of Object.entries(pkg.scripts ?? {})) {
+        if (!name.startsWith("typecheck")) continue;
+        if (/(^|[^-\w/])tsc(\s|$)/.test(body)) offenders.push(`${p} :: ${name} -> ${body}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
