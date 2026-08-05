@@ -431,6 +431,51 @@ describe.skipIf(!HAS_DB)("autoSchedule dispatch (Task 9)", () => {
   }, 120_000);
 
   /**
+   * `contradictory_pins` POPULATED, end to end — every other spec here only ever
+   * sees it absent, and "absent" is also what a field that is declared and never
+   * written looks like.
+   *
+   * Two cards that share an entrant, pinned 30 minutes apart under a 30-minute
+   * rest rule: keeping both is impossible, and z3's feasibility probe proves it
+   * about the PINS rather than about the board. Rest is warn-only at the write
+   * gate, which is what lets the board reach this state at all.
+   */
+  it("forwards the pinned set an infeasible proof is about, when the engine names one", async () => {
+    const auth = await seedOrg();
+    const { stageId } = await seedStage(auth, 4, { courts: ["C1", "C2"] });
+
+    const rows = await sql<{ id: string; home_entrant_id: string; away_entrant_id: string }[]>`
+      select id, home_entrant_id, away_entrant_id from fixtures where stage_id = ${stageId} order by id`;
+    const first = rows[0]!;
+    const sharing = rows.find(
+      (r) =>
+        r.id !== first.id &&
+        [r.home_entrant_id, r.away_entrant_id].some((e) =>
+          [first.home_entrant_id, first.away_entrant_id].includes(e),
+        ),
+    )!;
+
+    // 30 minutes apart, on different courts, with 30 minutes' rest owed: legal
+    // to WRITE (rest is a warning) and impossible to KEEP.
+    await applySchedule(auth, stageId, {
+      assignments: [
+        { fixture_id: first.id, scheduled_at: at(0), court_label: "C1" },
+        { fixture_id: sharing.id, scheduled_at: at(30), court_label: "C2" },
+      ],
+      source: "manual",
+    });
+    for (const f of [first, sharing]) await patchFixture(auth, f.id, { schedule_locked: true });
+
+    const out = await autoSchedule(auth, stageId, { only_unlocked: true, mode: "build" });
+    expect(out.solver.status).toBe("infeasible");
+    // The identity, not just a count: this is the whole reason the field exists.
+    expect(out.solver.contradictory_pins).toEqual([first.id, sharing.id].sort());
+    // …and the rest of the sentence still rides along, so the strip can say
+    // "N of M scheduled" beside it.
+    expect(out.metrics.total).toBe(rows.length);
+  }, 120_000);
+
+  /**
    * The WASM heap is shared by every solve in the process and only grows —
    * nothing frees a finished `Solver`. Without a teardown, six solves in one
    * process abort node with `Cannot enlarge memory arrays … (OOM)`; that is not
