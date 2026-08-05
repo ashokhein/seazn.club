@@ -99,7 +99,7 @@ jobs:
           ref: ${{ inputs.pr && format('refs/pull/{0}/head', inputs.pr) || github.ref }}
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
       - run: npm ci
 
@@ -235,7 +235,7 @@ jobs:
           ref: ${{ inputs.pr && format('refs/pull/{0}/head', inputs.pr) || github.ref }}
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
       - run: npm ci
 

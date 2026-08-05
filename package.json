@@ -8,6 +8,9 @@
     "packages/*"
   ],
   "packageManager": "npm@11.17.0",
+  "engines": {
+    "node": ">=26"
+  },
   "scripts": {
     "dev": "npm run dev --workspace apps/web",
     "build": "npm run build --workspace apps/web",
