@@ -1024,7 +1024,7 @@
   "tips.entrants.kinds.title": "Equipos, individuales y parejas",
   "tips.entrants.kinds.body": "Una división registra un tipo de participante: equipos completos, jugadores individuales o parejas fijas (dobles). Elige el tipo que coincida con quién juega un encuentro.",
   "tips.persons.merge.title": "Fusionar jugadores duplicados",
-  "tips.persons.merge.body": "¿La misma persona aparece dos veces? Fusionar traslada sus membresías de equipo, alineaciones y perfiles al jugador que conservas, y luego elimina el duplicado. Los resultados no se tocan — pero una fusión no se puede deshacer.",
+  "tips.persons.merge.body": "¿La misma persona aparece dos veces? Posibles duplicados encuentra el par y muestra por qué coincide. Fusionar traslada membresías de equipo, alineaciones, perfiles, sanciones y disponibilidad a la ficha que conservas. No se borra nada, los resultados no se tocan y Deshacer restaura ambas fichas.",
   "tips.persons.public-cards.title": "Qué hace pública una ficha",
   "tips.persons.public-cards.body": "Dos candados independientes, y una ficha pública de jugador necesita ambos. El consentimiento del propio jugador — ningún plan lo anula, y si lo desactiva la ficha vuelve a desaparecer — y tu plan: las fichas públicas requieren Pro, Pro Plus o un Event Pass en esa competición. El nombre y la foto se consienten por separado.",
   "tips.persons.actions.title": "Acciones del jugador",

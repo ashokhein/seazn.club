@@ -1024,7 +1024,7 @@
   "tips.entrants.kinds.title": "Teams, individuals and pairs",
   "tips.entrants.kinds.body": "A division registers one kind of entrant: whole teams, individual players, or fixed pairs (doubles). Pick the kind that matches who plays a fixture.",
   "tips.persons.merge.title": "Merging duplicate players",
-  "tips.persons.merge.body": "Same person listed twice? Merge moves their team memberships, lineups and profiles onto the player you keep, then removes the duplicate. Results are untouched — but a merge can't be undone.",
+  "tips.persons.merge.body": "Same person listed twice? Possible duplicates finds the pair and shows why it matched. Merging moves team memberships, lineups, profiles, bans and availability onto the record you keep. Nothing is deleted, results are untouched, and Undo puts both records back.",
   "tips.persons.public-cards.title": "What makes a profile public",
   "tips.persons.public-cards.body": "Two separate locks, and a public player card needs both. The player's own consent — no plan overrides it, and switching it off takes the card down again — and your plan: public cards need Pro, Pro Plus, or an Event Pass on that competition. Name and photo are consented separately.",
   "tips.persons.actions.title": "Player actions",

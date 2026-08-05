@@ -1024,7 +1024,7 @@
   "tips.entrants.kinds.title": "Équipes, individus et paires",
   "tips.entrants.kinds.body": "Une division inscrit un seul type de participant : des équipes entières, des joueurs individuels ou des paires fixes (double). Choisissez le type qui correspond à qui dispute une rencontre.",
   "tips.persons.merge.title": "Fusionner les joueurs en double",
-  "tips.persons.merge.body": "Une même personne apparaît deux fois ? La fusion transfère ses appartenances d'équipe, ses compositions et ses profils vers le joueur que vous conservez, puis supprime le doublon. Les résultats ne sont pas touchés — mais une fusion ne peut pas être annulée.",
+  "tips.persons.merge.body": "Une même personne apparaît deux fois ? Doublons possibles trouve la paire et montre pourquoi elle correspond. La fusion transfère les appartenances d’équipe, les compositions, les profils, les suspensions et les disponibilités vers la fiche que vous conservez. Rien n’est supprimé, les résultats ne sont pas touchés, et Annuler rétablit les deux fiches.",
   "tips.persons.public-cards.title": "Ce qui rend un profil public",
   "tips.persons.public-cards.body": "Deux verrous distincts, et une fiche joueur publique a besoin des deux. Le consentement du joueur lui-même — aucune offre ne passe outre, et s'il le désactive la fiche disparaît de nouveau — et votre offre : les fiches publiques nécessitent Pro, Pro Plus ou un Event Pass sur cette compétition. Le nom et la photo font l'objet de consentements séparés.",
   "tips.persons.actions.title": "Actions sur les joueurs",

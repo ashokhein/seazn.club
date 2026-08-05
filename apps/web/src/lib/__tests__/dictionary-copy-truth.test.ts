@@ -2919,3 +2919,96 @@ describe("every pattern in @/lib/copy-truth does something", () => {
     expect(unused, "corpus lines matched by nothing").toEqual([]);
   });
 });
+
+// ── #404: the merge tip promised the opposite of what the tool now does ──────
+//
+// Before this wave a merge DELETED the absorbed record and could not be undone,
+// and `tips.persons.merge.body` said exactly that — in four languages, sitting
+// beside a button that now tombstones the record and is reversible from the
+// merge log forever. Same failure shape as `pricing.pass.note` at the top of
+// this file: one English fix would have certified `en` and left three locales
+// telling organisers their merge is final.
+//
+// Guarded in both directions on purpose. The retired-literal registry alone is
+// satisfied by an EMPTY string; the positive claim alone is satisfied by copy
+// that mentions undo and still says the duplicate is deleted.
+describe("the duplicate-merge tip (#404)", () => {
+  const MERGE_TIP_VALUES = across("ui", "tips.persons.merge.body");
+
+  /** The claim the tool retired, per locale — the deletion AND the finality,
+   *  since a merge that "removes the duplicate" is the same lie told about the
+   *  row rather than about the undo. */
+  const RETIRED_MERGE_CLAIMS = [
+    // en
+    "can't be undone",
+    "cannot be undone",
+    "removes the duplicate",
+    // es
+    "no se puede deshacer",
+    "elimina el duplicado",
+    // fr
+    "ne peut pas être annulée",
+    "supprime le doublon",
+    // nl
+    "kan niet ongedaan worden gemaakt",
+    "verwijdert dan het duplicaat",
+  ];
+
+  /** The word each locale's own Undo control uses (`persons.dupes.undo`), so
+   *  the tip names the affordance the organiser will actually look for. */
+  const UNDO_WORD: Record<DictionaryLocale, string> = {
+    en: "undo",
+    es: "deshacer",
+    fr: "annuler",
+    nl: "ongedaan",
+  };
+
+  it("is present and substantial in every locale", () => {
+    for (const { locale, value } of MERGE_TIP_VALUES) {
+      expect(value.length, `${locale} tips.persons.merge.body is empty or a stub`).toBeGreaterThan(
+        60,
+      );
+    }
+  });
+
+  it("no longer claims the merge deletes the duplicate or cannot be undone", () => {
+    expect(retiredClaimFaults(MERGE_TIP_VALUES, RETIRED_MERGE_CLAIMS)).toEqual([]);
+  });
+
+  it("tells the organiser the merge can be undone, in their own language", () => {
+    for (const { locale, value } of MERGE_TIP_VALUES) {
+      expect(
+        value.toLowerCase(),
+        `${locale} tips.persons.merge.body never names the undo ("${UNDO_WORD[locale]}")`,
+      ).toContain(UNDO_WORD[locale]);
+    }
+  });
+
+  // …and the registry really holds each locale's OLD sentence. Without this the
+  // test above passes against a registry that never covered these four strings —
+  // absence proving "not false" rather than "scanned".
+  it("holds the retired wording for all four locales", () => {
+    for (const [locale, retired] of [
+      ["en", "Results are untouched — but a merge can't be undone."],
+      ["es", "Los resultados no se tocan — pero una fusión no se puede deshacer."],
+      ["fr", "Les résultats ne sont pas touchés — mais une fusion ne peut pas être annulée."],
+      ["nl", "Resultaten blijven ongewijzigd — maar een samenvoeging kan niet ongedaan worden gemaakt."],
+    ] as Array<[DictionaryLocale, string]>) {
+      expect(
+        retiredClaimFaults([{ locale, key: "tips.persons.merge.body", value: retired }], RETIRED_MERGE_CLAIMS),
+        `${locale}: ${retired}`,
+      ).not.toEqual([]);
+    }
+  });
+
+  // The registry in `@/config/tips` is the source the dictionaries are written
+  // from; leaving it stale is how the lie comes back on the next translation
+  // pass.
+  it("is fixed at the source registry too, and points at the article that documents undo", () => {
+    expect(retiredClaimFaults(
+      [{ locale: "en", key: "TIPS.persons.merge.body", value: TIPS["persons.merge"].body }],
+      RETIRED_MERGE_CLAIMS,
+    )).toEqual([]);
+    expect(TIPS["persons.merge"].helpSlug).toBe("players/duplicates");
+  });
+});

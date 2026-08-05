@@ -1024,7 +1024,7 @@
   "tips.entrants.kinds.title": "Teams, individuen en paren",
   "tips.entrants.kinds.body": "Een divisie registreert één soort deelnemer: hele teams, individuele spelers of vaste paren (dubbel). Kies de soort die past bij wie een wedstrijd speelt.",
   "tips.persons.merge.title": "Dubbele spelers samenvoegen",
-  "tips.persons.merge.body": "Dezelfde persoon twee keer vermeld? Samenvoegen verplaatst hun teamlidmaatschappen, opstellingen en profielen naar de speler die je behoudt, en verwijdert dan het duplicaat. Resultaten blijven ongewijzigd — maar een samenvoeging kan niet ongedaan worden gemaakt.",
+  "tips.persons.merge.body": "Dezelfde persoon twee keer vermeld? Mogelijke duplicaten vindt het paar en laat zien waarom het matcht. Samenvoegen verplaatst teamlidmaatschappen, opstellingen, profielen, schorsingen en beschikbaarheid naar het record dat je behoudt. Er wordt niets verwijderd, resultaten blijven ongewijzigd en Ongedaan maken zet beide records terug.",
   "tips.persons.public-cards.title": "Wat een profiel openbaar maakt",
   "tips.persons.public-cards.body": "Twee losse sloten, en een openbare spelerskaart heeft ze allebei nodig. De toestemming van de speler zelf — geen enkel abonnement gaat daaroverheen, en zet hij die uit dan verdwijnt de kaart weer — en jouw abonnement: openbare kaarten vereisen Pro, Pro Plus of een Event Pass op die competitie. Naam en foto vragen elk hun eigen toestemming.",
   "tips.persons.actions.title": "Spelersacties",
