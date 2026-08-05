@@ -28,8 +28,12 @@ describe("toolchain: node floor", () => {
       const text = readFileSync(join(dir, file), "utf8");
       for (const [i, line] of text.split("\n").entries()) {
         const m = /^\s*node-version:\s*(\S+)\s*$/.exec(line);
-        if (m && m[1] !== String(NODE_MAJOR)) {
-          offenders.push(`${file}:${i + 1} -> ${m[1]}`);
+        // YAML permits `node-version: 26` and `node-version: "26"` alike. Compare
+        // the value, not the quoting — otherwise this drifts into policing a
+        // formatting convention and fails on a correct edit.
+        const pinned = m?.[1].replace(/^["']|["']$/g, "");
+        if (pinned !== undefined && pinned !== String(NODE_MAJOR)) {
+          offenders.push(`${file}:${i + 1} -> ${pinned}`);
         }
       }
     }
@@ -78,14 +82,31 @@ describe("toolchain: compile target", () => {
 });
 
 describe("toolchain: suppression policy", () => {
-  it("both lint configs ban @ts-ignore", () => {
-    for (const cfg of [
-      "apps/web/eslint.config.mjs",
-      "packages/engine/eslint.config.mjs",
-    ]) {
+  /**
+   * Both halves of the rule are load-bearing and they fail differently.
+   *
+   * `"ts-ignore": true` is the ban itself. `"ts-expect-error":
+   * "allow-with-description"` is what keeps the escape hatch usable — set it to
+   * `true` as well and every suppression is illegal, which does not make the
+   * codebase safer, it makes people delete the rule. Asserting only the first
+   * half lets the second be weakened or dropped in silence.
+   */
+  for (const cfg of [
+    "apps/web/eslint.config.mjs",
+    "packages/engine/eslint.config.mjs",
+  ]) {
+    it(`${cfg} bans @ts-ignore and keeps @ts-expect-error described`, () => {
       const text = readFileSync(join(REPO_ROOT, cfg), "utf8");
-      expect(text, cfg).toContain("@typescript-eslint/ban-ts-comment");
-      expect(text, cfg).toMatch(/["']ts-ignore["']\s*:\s*true/);
-    }
-  });
+      const rule =
+        /["']@typescript-eslint\/ban-ts-comment["']\s*:\s*\[\s*["']error["']\s*,\s*(\{[\s\S]*?\})/.exec(
+          text,
+        );
+      expect(rule, `${cfg}: no ban-ts-comment rule found`).not.toBeNull();
+      const options = rule![1];
+      expect(options, cfg).toMatch(/["']ts-ignore["']\s*:\s*true/);
+      expect(options, cfg).toMatch(
+        /["']ts-expect-error["']\s*:\s*["']allow-with-description["']/,
+      );
+    });
+  }
 });
