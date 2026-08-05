@@ -3,12 +3,13 @@ FROM node:26-alpine AS builder
 WORKDIR /app
 
 # Workspace manifests first so the install layer caches across source changes.
-# .npmrc is not optional here, and its absence is SILENT: it carries the
-# public-hoist patterns for the three serverExternalPackages (pdfkit, exceljs,
-# z3-solver). Leave it out and the install succeeds, `next build` succeeds, and
-# the standalone server cannot resolve any of them at runtime — z3 then falls
-# back to LLM repair, which is a designed path, so nothing surfaces an error.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+# pnpm-workspace.yaml is not optional here, and its absence is SILENT: besides
+# the workspace globs it carries the public-hoist patterns for the three
+# serverExternalPackages (pdfkit, exceljs, z3-solver). Leave it out and the
+# install succeeds, `next build` succeeds, and the standalone server cannot
+# resolve any of them at runtime — z3 then falls back to LLM repair, which is a
+# designed path, so nothing surfaces an error.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json apps/web/
 COPY packages/engine/package.json packages/engine/
 # node 26 dropped corepack, so pnpm is installed explicitly rather than activated.

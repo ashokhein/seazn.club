@@ -1,3 +1,41 @@
 packages:
   - "apps/*"
   - "packages/*"
+
+# Hoist exactly the three packages named in apps/web/next.config.js's
+# `serverExternalPackages`, and nothing else.
+#
+# Not a preference — measured. Those three are deliberately NOT bundled, so the
+# standalone server keeps a bare `require("<name>")` for each. Under npm they
+# hoisted to the repo-root `node_modules`, which `next build` copies to the
+# standalone ROOT, so the require resolved. Under pnpm's default linker they sit
+# only in `apps/web/node_modules` as symlinks, and Next does not carry those
+# into the standalone tree: it copies the `.pnpm` store directories plus the
+# root-level links. Probed on a copy of `.next/standalone` taken OUT of the repo
+# (inside the repo the probe is worthless — resolution escapes upward into the
+# source tree and every lookup succeeds):
+#
+#   UNRESOLVABLE from apps/web/server.js | MODULE_NOT_FOUND   (z3-solver)
+#   FAIL pdfkit MODULE_NOT_FOUND
+#   ok exceljs  .../node_modules/.pnpm/exceljs@4.4.0/...      (root-level, worked)
+#
+# exceljs resolving and the other two not is the tell: root-level presence is the
+# whole difference. Both failures are silent in production — z3 falls back to LLM
+# repair, a designed path, and pdfkit takes the export error path.
+#
+# This is deliberately three named packages rather than `node-linker=hoisted` or
+# `shamefully-hoist`: a blanket hoist restores every one of npm's accidental
+# resolutions and with them the class of bug that the strict linker exists to
+# surface. Anything added here needs the same kind of evidence.
+#
+# These live here rather than in `.npmrc` because the repo still drives tasks
+# with `npm run` (~30 sites in CI and the root scripts). npm parses `.npmrc` too
+# and does not know these keys, so every one of those invocations printed
+# `Unknown project config "public-hoist-pattern". This will stop working in the
+# next major version of npm.` — a warning today, a hard failure at npm 12.
+# pnpm reads its settings from this file, npm never looks at it, so the warning
+# is gone and the behaviour is identical.
+publicHoistPattern:
+  - pdfkit
+  - exceljs
+  - z3-solver
