@@ -96,7 +96,7 @@ cd ../seazn-z3-build && \
   ls -la .env.local 2>&1 | head -1
 ```
 
-Expected: the `readlink` path is **inside `seazn-z3-build`**, not `seazn.club`. If it resolves to main's engine, the build compiles the wrong branch while every gate stays green — run a real `npm ci` in the worktree. If `.claude/agent-memory` is missing, symlink it. If `.env.local` is missing, ~1772 DB tests will skip with `total` unchanged and only `pending` moving — copy it from main before believing any count.
+Expected: the `readlink` path is **inside `seazn-z3-build`**, not `seazn.club`. If it resolves to main's engine, the build compiles the wrong branch while every gate stays green — run a real install in the worktree. **The installer is pnpm** (`pnpm install --frozen-lockfile`, matching `.github/workflows/ci.yml:63`); scripts are still invoked as `npm run <x> --workspace <ws>`, which is why every command below says `npm`. If `.claude/agent-memory` is missing, symlink it. If `.env.local` is missing, ~1772 DB tests will skip with `total` unchanged and only `pending` moving — copy it from main before believing any count.
 
 - [ ] **Step 3: Record the baseline**
 
@@ -943,7 +943,11 @@ export function encodeBuild(input: EncodeInput): EncodedModel {
   const pairRest = pairRestMinutesFor(config);
   for (let i = 0; i < fixtures.length; i++) {
     for (let j = i + 1; j < fixtures.length; j++) {
-      if (!sharesParticipantFixture(fixtures[i]!, fixtures[j]!) === false) { /* fallthrough */ }
+      // Two fixtures with no participant in common can only ever clash on a
+      // court, which is a same-court test and not a rest one. Knowing that up
+      // front is what makes the pruning in the note below possible.
+      const shared = sharesParticipantFixture(fixtures[i]!, fixtures[j]!);
+      void shared; // consumed by the pruned form; see the implementer note
       for (let s = 0; s < grid.slots.length; s++) {
         const a = asAssignment(fixtures[i]!, s);
         for (let t = 0; t < grid.slots.length; t++) {
@@ -1535,12 +1539,17 @@ function makespanTerm(Z3: Z3Context["Z3"], model: EncodedModel, grid: BuildGrid,
     row.forEach((lit, s) => {
       // `lo <= start` and `hi >= end` for every PLACED fixture; minimising
       // `hi - lo` then squeezes both onto the real extremes.
-      Z3.Implies(lit, Z3.And(lo.le(startOf(s)), hi.ge(endOf(s))));
+      // NOTE the `solver.add` — an implication that is built and dropped
+      // constrains nothing, and the tier would then "optimise" a free variable.
+      solver.add(Z3.Implies(lit, Z3.And(lo.le(startOf(s)), hi.ge(endOf(s)))));
     }),
   );
   return hi.sub(lo);
 }
 ```
+
+`makespanTerm` therefore needs the `solver` too — thread it through all three
+term builders' signatures.
 
 > **Implementer note.** The three term builders are the part of this task with genuine design latitude, and the sketch above is a shape, not a finished encoding — `Z3.Implies(...)` there is built and dropped rather than asserted, which is a bug you must fix by adding it to the solver. Requirements the tests enforce, and which you must satisfy however you encode them: (a) minimising the term must minimise the metric `boardMetrics` reports, exactly, or the tier freezes a bound the incumbent does not meet; (b) all three terms must be built once, before the tier loop, if building them adds assertions; (c) the idle-gap term only needs to range over participants who appear in **two or more** fixtures — everyone else contributes 0 and adding them is pure encoding cost. If an exact encoding of the idle-gap term proves too large at 200 fixtures, the correct fallback is to leave T2 to the LNS pass in Task 6 and report `tiersCompleted: 2` — **ask the owner before taking it**, do not silently drop a tier.
 
