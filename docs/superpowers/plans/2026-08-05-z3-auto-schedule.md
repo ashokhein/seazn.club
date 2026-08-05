@@ -63,7 +63,7 @@
 | `apps/web/src/server/api-v1/schemas.ts:856` | `AutoScheduleRequest.mode`; `AutoScheduleResult.metrics` / `.solver`. |
 | `apps/web/src/server/usecases/schedule.ts:~660-740` | `autoSchedule` becomes a three-way dispatch. |
 | `apps/web/src/components/v2/schedule-board.tsx` | Result strip + Polish button. |
-| `apps/web/messages/{en,es,fr,de}.json` (or the repo's 4 dictionaries) | New keys. |
+| `apps/web/src/dictionaries/{en,es,fr,nl}/ui.json` | New keys. |
 | `scripts/smoke.ts` | Solver smoke step. |
 | `apps/web/src/server/usecases/__tests__/schedule.test.ts` | Dispatch + reflow behaviour change. |
 | `openapi/v1.json`, `openapi/v1.public.json` | Regenerated. |
