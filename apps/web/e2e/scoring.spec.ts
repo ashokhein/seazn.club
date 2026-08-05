@@ -3,6 +3,7 @@ import {
   addEntrantsViaApi,
   apiJson,
   createStageAndGenerate,
+  expectNoHorizontalScroll,
   seedScoredDivision,
   TAG,
 } from "./helpers";
@@ -376,4 +377,19 @@ test("cricket DLS scales a five-ball-over format onto the published table", asyn
   // And the shortened match is still scoreable — the pad opens on the chase.
   await page.goto(`/fixtures/${fixtureId}`);
   await expect(page.getByText(/— total/)).toContainText("0/0", { timeout: 20_000 });
+
+  // #467 — the 84 asserted off the state API above must also be ON SCREEN.
+  // Until this, the revised target was verifiable only through /state, which is
+  // how #451 (a DLS bug that awarded the match to the wrong side) survived: an
+  // unrendered derivation is an unverified one. The pad must also say the
+  // figure is DLS-derived rather than one the organiser typed.
+  const target = page.getByTestId("ck-revised-target");
+  await expect(target).toBeVisible({ timeout: 20_000 });
+  await expect(target).toContainText("84");
+  await expect(target).toContainText(/DLS/i);
+
+  // Every surface works at 375px with no horizontal page scroll (v3/02 §4).
+  await page.setViewportSize({ width: 375, height: 800 });
+  await expect(target).toBeVisible();
+  await expectNoHorizontalScroll(page);
 });
