@@ -22,12 +22,15 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { buildSchedule, rejectedBlockingConflicts, type BuildInput } from "./build.ts";
 import { boardMetrics, isStrictlyBetter } from "./build-objectives.ts";
+import { buildGrid } from "./build-grid.ts";
 import {
   isBlockingConflict,
   slotFixtures,
   validateAssignments,
+  validateInstructionRules,
   type Assignment,
   type Conflict,
+  type RuleFixture,
   type SchedulableFixture,
   type SlotConfig,
 } from "./calendar.ts";
@@ -185,7 +188,7 @@ describe("buildSchedule", () => {
     expect(built.metrics.placed).toBe(2);
     expect(built.engine).toBe("z3");
     expect(built.status).toBe("ok");
-    expect(built.tiersCompleted).toBe(1);
+    expect(built.tiersCompleted).toBe(4);
     expect(built.budgetExpired).toBe(false);
     // Non-vacuous only because `buildSchedule` synthesises a row for every
     // fixture it did not place: `validateAssignments` alone never emits a
@@ -199,7 +202,12 @@ describe("buildSchedule", () => {
     const fixtures = [fx("a", "E1", "E2"), fx("b", "E1", "E3"), fx("c", "E2", "E3")];
     const built = await buildSchedule({ fixtures, config });
     expect(validateAssignments(built.assignments, config)).toEqual([]);
-    expect(built.status).toBe("ok");
+    // `already_optimal`, not `ok`: greedy's 45-minute rest pushes two of these
+    // three cards OFF the 30-minute lattice (09:00 / 10:15 / 11:30), so no
+    // three-card board exists on the grid at all and every tier bound comes
+    // back unsat. That is a proof about the lattice, and reporting it as "we
+    // stopped looking" would understate what actually happened.
+    expect(built.status).toBe("already_optimal");
     expect(built.metrics.placed).toBe(3);
   }, 180_000);
 
@@ -214,7 +222,7 @@ describe("buildSchedule", () => {
     // and came back unsat, which is a proof. That difference is the whole
     // reason the tier exists, and `already_optimal` is where it surfaces.
     expect(built.status).toBe("already_optimal");
-    expect(built.tiersCompleted).toBe(1);
+    expect(built.tiersCompleted).toBe(4);
     const unplaced = built.conflicts.filter((c) => c.reason === "no_slot");
     expect(unplaced.map((c) => c.fixtureId)).toEqual(["c"]);
     expect(unplaced[0]?.rule).toBe("CAP");
@@ -340,6 +348,33 @@ describe("buildSchedule", () => {
         .map((c) => c.fixtureId)
         .sort(),
     ).toEqual(["a", "b"]);
+    // R4. The proof is about the PINS, and on a bigger board — 38 of 40 placed
+    // and two locked cards fighting over one slot — "infeasible" on its own
+    // reads to an organiser as "no schedule is possible", which is false. The
+    // result names the cards the proof is about so the caller can say which.
+    expect(built.contradictoryPins).toEqual(["a", "b"]);
+  }, 180_000);
+
+  it("names no pins when the proof is about the BOARD, not the pins", async () => {
+    // The other `infeasible` source, and the reason the field is optional
+    // rather than always present: nothing is pinned here at all. One slot, one
+    // fixture, and a start window that excludes it, so T0 walks `placed >= 1`
+    // and comes back unsat — a proof about the lattice. Reporting a pin here
+    // would name cards that had nothing to do with it.
+    const config = cfg({
+      courts: ["C1"],
+      sessionWindows: [{ from: T0, to: T0 + 30 * MIN }],
+      constraints: cons({
+        startWindows: [{ target: { kind: "entrant", id: "E1" }, notAfter: T0 - MIN }],
+      }),
+    });
+    const built = await buildSchedule({ fixtures: [fx("a", "E1", "E2")], config });
+    expect(built.status).toBe("infeasible");
+    expect(built.metrics.placed).toBe(0);
+    expect(built.contradictoryPins).toBeUndefined();
+    // Every tier ran to a verdict on the empty board — each is already at its
+    // own floor — which is what makes the status a proof rather than a stop.
+    expect(built.tiersCompleted).toBe(4);
   }, 180_000);
 
   it("does not cry infeasible over a pin that is merely legal", async () => {
@@ -550,6 +585,18 @@ describe("rejectedBlockingConflicts", () => {
     expect(rejectedBlockingConflicts([], after, new Set(["a"]))).toEqual([]);
   });
 
+  it("filters BLOCKING before it takes the delta, so a warn-only twin cannot cancel it", () => {
+    // The rationale the function's doc gives, exercised rather than asserted.
+    // `conflictKey` is `fixtureId|reason|detail` and does NOT include `direct`,
+    // so a warn-only `order` row and a blocking one are the same key. Take the
+    // delta first and they cancel: the board goes from "the dependent is a bit
+    // tight" to "the dependent starts before its feeder finishes" and the gate
+    // sees nothing at all.
+    const before = [c({ fixtureId: "a", reason: "order", direct: false })];
+    const after = [c({ fixtureId: "a", reason: "order", direct: true })];
+    expect(rejectedBlockingConflicts(before, after, new Set(["a"]))).toEqual(after);
+  });
+
   it("ignores a NON-blocking conflict however new it is", () => {
     // Below-minimum rest is uncomfortable, not impossible, and organisers
     // override it. Rejecting the board over one would make the solver refuse
@@ -557,4 +604,233 @@ describe("rejectedBlockingConflicts", () => {
     const after = [c({ fixtureId: "a", reason: "rest" }), c({ fixtureId: "a", reason: "blackout" })];
     expect(rejectedBlockingConflicts([], after, new Set(["a"]))).toEqual([]);
   });
+});
+
+/**
+ * Tiers 1-3.
+ *
+ * Every board below is MEASURED, not assumed: the premise assertion at the top
+ * of each case pins what greedy actually does, because a tier test whose seed is
+ * already optimal passes against a solver that ran no tiers at all. The brief's
+ * own sketch for this suite had exactly that shape — four disjoint fixtures on
+ * two courts, asserting `courtImbalanceMinutes === 0`, on a board greedy
+ * already balances 2-2.
+ */
+describe("buildSchedule — lexicographic tiers", () => {
+  afterAll(async () => {
+    await resetZ3();
+  });
+
+  /** Four slots a side, two fixtures sharing E1. Greedy stacks both on C1 —
+   *  it looks for the earliest legal TIME and takes the first court free at it,
+   *  so the second card lands on C1 at 09:30 rather than beside the first. The
+   *  makespan (60) and the worst idle gap (0) are the same on every board that
+   *  places both, so T3 is the tier that decides, and an even split beats a
+   *  stack. */
+  const balanceConfig = cfg({ courts: ["C1", "C2"], window: { from: T0, to: T0 + 120 * MIN } });
+  const balanceFixtures = [fx("a", "E1", "E2"), fx("b", "E1", "E3")];
+
+  it("completes all four tiers, and balances the courts with the last of them", async () => {
+    const seed = rawSeedOf({ fixtures: balanceFixtures, config: balanceConfig });
+    expect(boardMetrics(seed.assignments, balanceConfig.courts, 2).courtImbalanceMinutes).toBe(60);
+
+    const built = await buildSchedule({ fixtures: balanceFixtures, config: balanceConfig });
+    expect(built.tiersCompleted).toBe(4);
+    expect(built.budgetExpired).toBe(false);
+    expect(built.metrics.placed).toBe(2);
+    // T1 and T2 had nothing to give — both are already at their optimum on the
+    // greedy board — so the only thing that moved is the court split.
+    expect(built.metrics.makespanMinutes).toBe(60);
+    expect(built.metrics.worstIdleGapMinutes).toBe(0);
+    expect(built.metrics.courtImbalanceMinutes).toBe(0);
+    expect(new Set(built.assignments.map((a) => a.court))).toEqual(new Set(["C1", "C2"]));
+    expect(built.engine).toBe("z3");
+  }, 180_000);
+
+  it("shortens a makespan greedy left long", async () => {
+    // `notBefore` is the one place greedy reliably loses a makespan: it starts
+    // the constrained card at EXACTLY 09:45, which is not a lattice multiple,
+    // and then packs the other two around it — 09:00, 09:45, 10:15, a 105-minute
+    // board. The lattice only offers 09:00 / 09:30 / 10:00 / 10:30, so `a` must
+    // take 10:00 or later, and the shortest board is the other two beneath it.
+    const config = cfg({
+      window: { from: T0, to: T0 + 120 * MIN },
+      constraints: cons({
+        startWindows: [{ target: { kind: "entrant", id: "E1" }, notBefore: T0 + 45 * MIN }],
+      }),
+    });
+    const fixtures = [fx("a", "E1", "E2"), fx("b", "E3", "E4"), fx("c", "E5", "E6")];
+    const seed = rawSeedOf({ fixtures, config });
+    expect(boardMetrics(seed.assignments, config.courts, 3).makespanMinutes).toBe(105);
+
+    const built = await buildSchedule({ fixtures, config });
+    expect(built.metrics.placed).toBe(3);
+    expect(built.metrics.makespanMinutes).toBe(90);
+    // Forced, not incidental: 90 minutes over one court is three back-to-back
+    // slots, and `a` may not start before 09:45, so `a` is the last of them.
+    expect(built.assignments.find((x) => x.fixtureId === "a")?.startAt).toBe(T0 + 60 * MIN);
+    expect(built.tiersCompleted).toBe(4);
+  }, 180_000);
+
+  it("closes an idle gap greedy left open, without lengthening the board", async () => {
+    // Three slots, three cards, so the makespan is 90 on every board that
+    // places them all and T1 can do nothing. E1 plays `a` and `b`; greedy walks
+    // fixtures in (roundNo, id) order, so `c` gets served before `b` and E1 is
+    // left with a 30-minute wait in the middle. T2 swaps them.
+    const config = cfg({ window: { from: T0, to: T0 + 90 * MIN } });
+    const fixtures = [fx("a", "E1", "E2"), fx("b", "E1", "E3", { roundNo: 2 }), fx("c", "E4", "E5")];
+    const seed = rawSeedOf({ fixtures, config });
+    const seedMetrics = boardMetrics(seed.assignments, config.courts, 3);
+    expect(seedMetrics.worstIdleGapMinutes).toBe(30);
+    expect(seedMetrics.makespanMinutes).toBe(90);
+
+    const built = await buildSchedule({ fixtures, config });
+    expect(built.metrics.placed).toBe(3);
+    expect(built.metrics.worstIdleGapMinutes).toBe(0);
+    expect(built.metrics.makespanMinutes).toBe(90);
+    expect(built.tiersCompleted).toBe(4);
+  }, 180_000);
+
+  it("will not buy court balance with makespan", async () => {
+    // THE ORDERING TEST, and the only one of these where a tier has something
+    // strictly better in reach and may not take it.
+    //
+    // C1 is open 09:00-10:00 and C2 only from 10:30, so the lattice is
+    // C1+09:00, C1+09:30, C2+10:30 and the two cards are disjoint. The shortest
+    // board is both on C1 — 60 minutes, and a 60-minute court imbalance. Moving
+    // either card to C2 balances the courts perfectly at 0, which T3 would take
+    // in a heartbeat, and costs 30 or 60 minutes of makespan, which T1 has
+    // already frozen. So the board that wins is the LOPSIDED one.
+    //
+    // T2's freeze cannot stand in for T1's here: the two fixtures share no
+    // participant, so the idle gap is 0 on every board and its clause family is
+    // empty. Only the makespan freeze forbids the balanced board.
+    const config = cfg({
+      courts: ["C1", "C2"],
+      window: { from: T0, to: T0 + 120 * MIN },
+      blackouts: [
+        { court: "C2", from: T0, to: T0 + 90 * MIN },
+        { court: "C1", from: T0 + 60 * MIN, to: T0 + 120 * MIN },
+      ],
+    });
+    const fixtures = [fx("a", "E1", "E2"), fx("b", "E3", "E4")];
+    expect(buildGrid({ config }).slots.filter((s) => s.court === "C2")).toHaveLength(1);
+
+    const built = await buildSchedule({ fixtures, config });
+    expect(built.metrics.placed).toBe(2);
+    expect(built.metrics.makespanMinutes).toBe(60);
+    expect(built.metrics.courtImbalanceMinutes).toBe(60);
+    // All four, and that is the assertion the freeze actually holds up: without
+    // it T3 finds the balanced board, `isStrictlyBetter` refuses it because the
+    // makespan regressed, and the tier ends without a verdict.
+    expect(built.tiersCompleted).toBe(4);
+    expect(built.status).toBe("already_optimal");
+  }, 180_000);
+
+  it("keeps the encoder and the verifier on ONE immovable board", async () => {
+    // The caller contract `encodeBuild` documents and `build.ts` honours, tested
+    // end to end for the first time now that both halves exist. The encoder
+    // seeds its per-day tally from the `existing` array IT is handed; the
+    // verifier tallies from the array IT is handed; hand either side a filtered
+    // copy and the model believes a day has room the referee says it does not.
+    //
+    // Two days, one court, a 3/day cap and one immovable card already on day 1.
+    // Day 1 therefore has room for two more and offers three slots, while day 2
+    // offers only two — so no board can avoid splitting, and packing all three
+    // onto day 1 would collapse the makespan from a day and a half to 90
+    // minutes. That is exactly what T1 does the moment the cap stops binding,
+    // and the cap only binds if the encoder counted the immovable card.
+    const D1 = Date.UTC(2026, 7, 8, 8, 0); // 09:00 Europe/London
+    const D2 = D1 + 24 * 60 * MIN;
+    const ruleFixtures: RuleFixture[] = ["x", "a", "b", "c"].map((id) => ({
+      id,
+      extKey: null,
+      winnerTo: null,
+    }));
+    const existing: Assignment[] = [
+      { fixtureId: "x", court: "C1", startAt: D1, endAt: D1 + 30 * MIN, entrants: ["E9"], people: [] },
+    ];
+    const config = cfg({
+      startAt: D1,
+      window: { from: D1, to: D2 + 120 * MIN },
+      sessionWindows: [
+        { from: D1, to: D1 + 120 * MIN },
+        { from: D2, to: D2 + 60 * MIN },
+      ],
+      constraints: cons({
+        hard: [{ type: "max_fixtures_per_day", count: 3, scope: { kind: "competition" } }],
+      }),
+      ruleFixtures,
+    });
+    const fixtures = [fx("a", "E1", "E2"), fx("b", "E3", "E4"), fx("c", "E5", "E6")];
+
+    // The premise, measured: day 1 offers three free slots, so the cap — not
+    // the lattice — is the only thing stopping all three cards landing there.
+    const grid = buildGrid({ config, existing });
+    expect(grid.slots.filter((s) => s.startAt < D2)).toHaveLength(3);
+    expect(grid.slots.filter((s) => s.startAt >= D2)).toHaveLength(2);
+    const seed = rawSeedOf({ fixtures, config, existing });
+    expect(seed.assignments).toHaveLength(3);
+    expect(validateInstructionRules(seed.assignments, config, existing)).toEqual([]);
+
+    const built = await buildSchedule({ fixtures, config, existing });
+    expect(built.metrics.placed).toBe(3);
+    // The load-bearing assertion. An encoder counting a day it thinks is empty
+    // puts all three on day 1 and the referee reports the cap breach here.
+    expect(validateInstructionRules(built.assignments, config, existing)).toEqual([]);
+    expect(built.assignments.filter((a) => a.startAt < D2).length).toBeLessThanOrEqual(2);
+    // Non-vacuous: the solver really did move the board, so this is not a test
+    // of greedy wearing the solver's name — and 1410 is the shortest board the
+    // cap allows, where 90 is the shortest board it would allow if the encoder
+    // had not counted `x`.
+    expect(built.engine).toBe("z3");
+    expect(built.metrics.makespanMinutes).toBe(1410);
+  }, 180_000);
+});
+
+describe("buildSchedule — the lattice is the configured courts", () => {
+  afterAll(async () => {
+    await resetZ3();
+  });
+
+  /** An immovable row parked on a court the organiser never configured. It is
+   *  what drags "C2" into `repairCourts`, and therefore into the lattice. */
+  const onC2: Assignment[] = [
+    { fixtureId: "x", court: "C2", startAt: T0 + 60 * MIN, endAt: T0 + 90 * MIN, entrants: ["E9"], people: [] },
+  ];
+
+  it("places nothing on a court the organiser did not configure", async () => {
+    // R3. One session-window slot on the configured court and two fixtures, so
+    // the solver has an obvious use for the borrowed court and must decline it.
+    const config = cfg({ courts: ["C1"], sessionWindows: [{ from: T0, to: T0 + 30 * MIN }] });
+    const fixtures = [fx("a", "E1", "E2"), fx("b", "E3", "E4")];
+    // The premise, and the whole reason this is not vacuous: the UNRESTRICTED
+    // lattice does offer C2, and a solver allowed to use it places both cards.
+    expect(buildGrid({ config, existing: onC2 }).slots.map((s) => s.court)).toEqual(["C1", "C2"]);
+
+    const built = await buildSchedule({ fixtures, config, existing: onC2 });
+    expect(built.assignments.map((a) => a.court)).toEqual(["C1"]);
+    expect(built.metrics.placed).toBe(1);
+  }, 180_000);
+
+  it("still honours a locked card parked on an unconfigured court", async () => {
+    // The exemption, and it is load-bearing rather than defensive: `encodeBuild`
+    // THROWS when a locked placement is missing from the lattice, so a filter
+    // without it turns an odd-looking board into a crash.
+    const config = cfg({ courts: ["C1"], sessionWindows: [{ from: T0, to: T0 + 60 * MIN }] });
+    const fixtures = [
+      fx("a", "E1", "E2", { locked: { court: "C2", startAt: T0 } }),
+      fx("b", "E3", "E4"),
+    ];
+    const built = await buildSchedule({ fixtures, config, existing: onC2 });
+    expect(built.status).not.toBe("infeasible");
+    expect(built.metrics.placed).toBe(2);
+    expect(built.assignments.find((x) => x.fixtureId === "a")).toMatchObject({
+      court: "C2",
+      startAt: T0,
+    });
+    // The pin is an exemption for ONE slot, not an amnesty for the court: `b`
+    // may not join it there even though C2 has free time.
+    expect(built.assignments.filter((x) => x.court === "C2").map((x) => x.fixtureId)).toEqual(["a"]);
+  }, 180_000);
 });
