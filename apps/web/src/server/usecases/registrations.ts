@@ -441,6 +441,14 @@ function windowOpen(s: RegistrationSettingsRow, now: Date): boolean {
  * deliberate no-op — `do nothing` returns no row, and the existing person's own
  * data must win, so a later entry never overwrites full_name/dob/gender. A
  * divergence is a signal for #404's review queue, never an in-place edit.
+ *
+ * #404: the WHERE below must repeat `persons_org_user_lane_uq`'s predicate
+ * VERBATIM, `and merged_into is null` included. Postgres infers a partial index
+ * only when the index's predicate is implied by the statement's, so a stale
+ * predicate here fails at RUNTIME with 42P10 ("no unique or exclusion
+ * constraint matching the ON CONFLICT specification") — never at compile time.
+ * The tombstone clause is also what lets a merged duplicate release the
+ * identity slot so the survivor can hold it.
  */
 async function resolvePlayerPerson(
   tx: Tx,
@@ -453,7 +461,8 @@ async function resolvePlayerPerson(
   const [person] = await tx<{ id: string }[]>`
     insert into persons (org_id, full_name, dob, gender, user_id, lane)
     values (${orgId}, ${fullName}, ${dob}, ${gender}, ${userId}, 'player')
-    on conflict (org_id, user_id, lane) where user_id is not null and lane = 'player'
+    on conflict (org_id, user_id, lane)
+      where user_id is not null and lane = 'player' and merged_into is null
     do update set full_name = persons.full_name
     returning id`;
   return person.id;

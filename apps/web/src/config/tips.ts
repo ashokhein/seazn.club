@@ -33,8 +33,8 @@ export const TIPS = {
   },
   "persons.merge": {
     title: "Merging duplicate players",
-    body: "Same person listed twice? Merge moves their team memberships, lineups and profiles onto the player you keep, then removes the duplicate. Results are untouched — but a merge can't be undone.",
-    helpSlug: "entrants/duplicate-players",
+    body: "Same person listed twice? Possible duplicates finds the pair and shows why it matched. Merging moves team memberships, lineups, profiles, bans and availability onto the record you keep. Nothing is deleted, results are untouched, and Undo puts both records back.",
+    helpSlug: "players/duplicates",
   },
   "persons.public-cards": {
     title: "What makes a profile public",

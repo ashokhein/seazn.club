@@ -23,6 +23,7 @@ export const HELP_ARTICLE_SLUGS = [
   "players/player-stats-and-photo",
   "directory/clubs-and-teams",
   "players/match-reports",
+  "players/duplicates",
   "registration/open-registration",
   "registration/card-payments",
   "registration/reference-numbers",

@@ -506,7 +506,8 @@ export async function createManualSuspension(
       select 1 from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
     const [person] = await tx`
-      select 1 from persons where id = ${input.personId} and org_id = ${auth.orgId}`;
+      select 1 from persons
+       where id = ${input.personId} and org_id = ${auth.orgId} and merged_into is null`;
     if (!person) throw new HttpError(404, "person not found");
     const [{ id }] = await tx<{ id: string }[]>`
       insert into suspensions

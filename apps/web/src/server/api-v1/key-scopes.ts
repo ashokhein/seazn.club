@@ -174,7 +174,9 @@ const RULES: RouteRule[] = [
   { method: "POST", path: "/persons", scope: "manage" },
   { method: "GET", path: "/persons/:id", scope: "read" },
   { method: "PATCH", path: "/persons/:id", scope: "manage" },
-  { method: "POST", path: "/persons/:id/merge", scope: "manage" },
+  // POST /persons/:id/merge, GET /persons/duplicates, GET /persons/merges and
+  // POST /persons/merges/:id/reverse are structurally excluded from keys
+  // (#404) — see NEVER_KEY_ROUTES.
   { method: "POST", path: "/persons/:id/photo", scope: "manage" },
   { method: "POST", path: "/entrants/:id/badge", scope: "manage" },
   { method: "DELETE", path: "/entrants/:id/badge", scope: "manage" },
@@ -309,6 +311,18 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   "GET /posts/:id",
   "PATCH /posts/:id",
   "DELETE /posts/:id",
+  // Duplicate review + merge (#404): a merge rewrites every dependent row of
+  // two people and the ledger stores WHO confirmed it — `confirmed_by` is a
+  // user id, and a key has no user behind it. The queue that proposes the
+  // merges is barred with them: it is a list of people this org may be about
+  // to fuse, and it exists only to be answered by a human.
+  // The log is barred on the same reasoning, one step further on: it is a
+  // durable record of which two people this org decided were one, by name —
+  // and every row in it is a live undo handle for a write no key may make.
+  "POST /persons/:id/merge",
+  "GET /persons/duplicates",
+  "GET /persons/merges",
+  "POST /persons/merges/:id/reverse",
 ];
 
 // /api/v1/public/** and openapi.json take no auth at all — out of key scope.
@@ -327,6 +341,17 @@ function compile(path: string): RegExp {
 }
 
 const COMPILED: Compiled[] = RULES.map((r) => ({ ...r, re: compile(r.path) }));
+
+// The ban list is matched too, and it is matched FIRST. Absence from RULES is
+// not enough on its own: a static segment can be SHADOWED by a broader rule in
+// the same slot — `GET /persons/duplicates` (#404) is matched by
+// `GET /persons/:id`, so a read key would have walked into the duplicate queue
+// through the person-read rule. Making the exclusion explicit means a route
+// named in NEVER_KEY_ROUTES is closed to keys whatever else the table says.
+const NEVER_COMPILED = NEVER_KEY_ROUTES.map((entry) => {
+  const [method, path] = entry.split(" ") as [string, string];
+  return { method, re: compile(path) };
+});
 
 export interface RouteMatch {
   scope: KeyScope;
@@ -348,8 +373,10 @@ export function v1Path(urlOrPath: string): string {
  */
 export function matchKeyRoute(method: string, urlOrPath: string): RouteMatch | null {
   const path = v1Path(urlOrPath);
+  const verb = method.toUpperCase();
+  if (NEVER_COMPILED.some((r) => r.method === verb && r.re.test(path))) return null;
   for (const rule of COMPILED) {
-    if (rule.method === method.toUpperCase() && rule.re.test(path)) {
+    if (rule.method === verb && rule.re.test(path)) {
       // The resource id is always the segment right after the collection name.
       const resourceId = rule.pin ? (path.split("/")[2] ?? null) : null;
       return { scope: rule.scope, pin: rule.pin, resourceId };

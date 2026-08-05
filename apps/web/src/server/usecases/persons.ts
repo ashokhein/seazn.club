@@ -27,6 +27,14 @@ export interface PersonRow {
 
 const COLS = ["id", "full_name", "dob", "gender", "consent", "external_ref", "photo_path", "user_id", "created_at"] as const;
 
+// #404: `merged_into is null` on every read below is load-bearing, not defensive.
+// An absorbed person is TOMBSTONED rather than deleted (six dependent tables are
+// `on delete cascade`), so the row is still there and still passes RLS. Nothing
+// in the type system catches a read that forgets the filter — a tombstone that
+// leaks back into a list, a lookup or a guard is offered to the organiser as a
+// live person and can be rostered, suspended, claimed or edited all over again.
+// The merge history (person-merge.ts) is the one read that must see them.
+
 // Player photos ride the same public 'assets' bucket as club badges; the
 // public_photo consent flag gates display, not upload.
 const PHOTO_BUCKET = "assets";
@@ -47,14 +55,16 @@ export async function listPersons(auth: AuthCtx, query: ListQuery): Promise<Page
                         where pc.person_id = persons.id and pc.claimed_at is null
                           and pc.revoked_at is null and pc.expires_at > now()) as claim_pending
           from persons
-          where (created_at, id) > (${query.cursor.createdAt}, ${query.cursor.id})
+          where merged_into is null
+            and (created_at, id) > (${query.cursor.createdAt}, ${query.cursor.id})
           order by created_at, id limit ${query.limit + 1}`
       : await tx<PersonRow[]>`
           select ${tx(COLS)},
                  exists(select 1 from person_claims pc
                         where pc.person_id = persons.id and pc.claimed_at is null
                           and pc.revoked_at is null and pc.expires_at > now()) as claim_pending
-          from persons order by created_at, id limit ${query.limit + 1}`;
+          from persons where merged_into is null
+          order by created_at, id limit ${query.limit + 1}`;
     return page(rows, query.limit);
   });
 }
@@ -95,7 +105,8 @@ export async function uploadPersonPhotoBytes(orgId: string, file: PhotoFile): Pr
 export async function setPersonPhoto(auth: AuthCtx, id: string, file: PhotoFile): Promise<PersonRow> {
   const path = await uploadPersonPhotoBytes(auth.orgId, file);
   return withTenant(auth.orgId, async (tx) => {
-    const [person] = await tx<PersonRow[]>`select id from persons where id = ${id}`;
+    const [person] = await tx<PersonRow[]>`
+      select id from persons where id = ${id} and merged_into is null`;
     if (!person) throw new HttpError(404, "person not found");
     const [row] = await tx<PersonRow[]>`
       update persons set photo_path = ${path} where id = ${id} returning ${tx(COLS)}`;
@@ -105,7 +116,8 @@ export async function setPersonPhoto(auth: AuthCtx, id: string, file: PhotoFile)
 
 export async function getPerson(auth: AuthCtx, id: string): Promise<PersonRow> {
   return withTenant(auth.orgId, async (tx) => {
-    const [row] = await tx<PersonRow[]>`select ${tx(COLS)} from persons where id = ${id}`;
+    const [row] = await tx<PersonRow[]>`
+      select ${tx(COLS)} from persons where id = ${id} and merged_into is null`;
     if (!row) throw new HttpError(404, "person not found");
     return row;
   });
@@ -117,50 +129,16 @@ export async function patchPerson(auth: AuthCtx, id: string, patch: PatchPerson)
     const values = { ...patch, ...(patch.consent ? { consent: tx.json(patch.consent as never) } : {}) };
     const [row] = await tx<PersonRow[]>`
       update persons set ${tx(values as never, ...(cols as never[]))}
-      where id = ${id} returning ${tx(COLS)}`;
+      where id = ${id} and merged_into is null returning ${tx(COLS)}`;
     if (!row) throw new HttpError(404, "person not found");
     return row;
   });
 }
 
-/**
- * Merge `duplicateId` into `id` (dedupe, doc 08 §3): repoint memberships,
- * lineups and profiles, then delete the duplicate. Score events reference
- * users, not persons — untouched.
- */
-export async function mergePersons(
-  auth: AuthCtx,
-  id: string,
-  duplicateId: string,
-): Promise<PersonRow> {
-  if (id === duplicateId) throw new HttpError(422, "cannot merge a person into itself");
-  return withTenant(auth.orgId, async (tx) => {
-    const [target] = await tx<PersonRow[]>`select ${tx(COLS)} from persons where id = ${id}`;
-    if (!target) throw new HttpError(404, "person not found");
-    const [dup] = await tx`select 1 from persons where id = ${duplicateId}`;
-    if (!dup) throw new HttpError(404, "duplicate person not found");
-
-    // Repoint where the target isn't already present; drop the remainder.
-    await tx`
-      update entrant_members set person_id = ${id}
-      where person_id = ${duplicateId}
-        and entrant_id not in (select entrant_id from entrant_members where person_id = ${id})`;
-    await tx`delete from entrant_members where person_id = ${duplicateId}`;
-    await tx`
-      update lineups set person_id = ${id}
-      where person_id = ${duplicateId}
-        and (fixture_id, entrant_id) not in
-            (select fixture_id, entrant_id from lineups where person_id = ${id})`;
-    await tx`delete from lineups where person_id = ${duplicateId}`;
-    await tx`
-      update player_profiles set person_id = ${id}
-      where person_id = ${duplicateId}
-        and sport_key not in (select sport_key from player_profiles where person_id = ${id})`;
-    await tx`delete from player_profiles where person_id = ${duplicateId}`;
-    await tx`delete from persons where id = ${duplicateId}`;
-    return target;
-  });
-}
+// The merge lives in person-merge.ts (#404). It used to end here with
+// `delete from persons where id = duplicateId`, which cascade-destroyed the
+// absorbed person's discipline history, stats, club membership, account claim
+// and RSVPs; it now tombstones instead, and is reversible.
 
 export async function getProfile(auth: AuthCtx, personId: string, sportKey: string): Promise<unknown> {
   return withTenant(auth.orgId, async (tx) => {
@@ -179,7 +157,8 @@ export async function putProfile(
   input: PutProfile,
 ): Promise<unknown> {
   return withTenant(auth.orgId, async (tx) => {
-    const [person] = await tx`select 1 from persons where id = ${personId}`;
+    const [person] = await tx`
+      select 1 from persons where id = ${personId} and merged_into is null`;
     if (!person) throw new HttpError(404, "person not found");
     const [sport] = await tx`select 1 from sports where key = ${sportKey}`;
     if (!sport) throw new HttpError(422, `unknown sport '${sportKey}'`);

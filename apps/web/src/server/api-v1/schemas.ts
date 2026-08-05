@@ -294,8 +294,26 @@ export const PatchPerson = z
   .refine((p) => Object.keys(p).length > 0, "empty patch");
 export type PatchPerson = z.infer<typeof PatchPerson>;
 
-export const MergePersons = z.object({ duplicate_id: Uuid });
+/**
+ * #404 §8. `confirmed` is `literal(true)`, not `boolean`: a merge rewrites
+ * every dependent row of two people and the ledger records who said yes, so an
+ * absent field and an explicit `false` must both refuse. A plain boolean would
+ * accept `false` silently — the one shape that reads like a decision and is not.
+ *
+ * `allow_dob_mismatch` is the organiser's hand-override of the strongest signal
+ * in the data that these are two humans (§6); the queue never proposes such a
+ * pair, so it can only ever arrive from someone who typed it.
+ */
+export const MergePersons = z.object({
+  duplicate_id: Uuid,
+  confirmed: z.literal(true),
+  allow_dob_mismatch: z.boolean().optional(),
+});
 export type MergePersons = z.infer<typeof MergePersons>;
+
+/** Reversal is as consequential as the merge — same explicit affirmation. */
+export const ReverseMerge = z.object({ confirmed: z.literal(true) });
+export type ReverseMerge = z.infer<typeof ReverseMerge>;
 
 export const PutProfile = z.object({
   attributes: z.record(z.string(), z.unknown()),
@@ -2481,3 +2499,57 @@ export const OrgPost = z.object({
   created_at: z.string(),
   updated_at: z.string(),
 });
+
+// ---------------------------------------------------------------------------
+// Duplicate review + merge (#404) — response contracts
+// ---------------------------------------------------------------------------
+
+/** What a merge did, from the caller's point of view. `merge_id` is the handle
+ *  the undo control posts back to; `revealed` is a REPORT, not a refusal — the
+ *  merge already happened (spec §5). */
+export const MergeResult = z.object({
+  merge_id: Uuid,
+  survivor: Person,
+  revealed: z.array(
+    z.object({ division_id: Uuid, conflicts: z.array(AiPlanConflict) }),
+  ),
+});
+export type MergeResult = z.infer<typeof MergeResult>;
+
+/** Why a pair was suggested. `detail` is org DATA — a name, a date, an entrant
+ *  name — never a sentence, so the panel phrases it in the viewer's locale. */
+export const DuplicateEvidence = z.object({
+  kind: z.enum(["name", "dob", "shared_entrant"]),
+  detail: z.string(),
+});
+
+/** The ranked queue. `a` is the older row — the default survivor. */
+export const DuplicateCandidates = z.object({
+  items: z.array(
+    z.object({
+      a: Person,
+      b: Person,
+      score: z.number(),
+      evidence: z.array(DuplicateEvidence),
+    }),
+  ),
+});
+export type DuplicateCandidates = z.infer<typeof DuplicateCandidates>;
+
+/** The org's merge log, newest first. `reversed_at` is what decides whether a
+ *  row still offers Undo — a reversed merge is kept, never deleted (#403 R2/R3),
+ *  so the list is an audit trail as well as a set of undo handles. */
+export const MergeLog = z.object({
+  items: z.array(
+    z.object({
+      merge_id: Uuid,
+      survivor_id: Uuid,
+      absorbed_id: Uuid,
+      survivor_name: z.string(),
+      absorbed_name: z.string(),
+      created_at: z.string(),
+      reversed_at: z.string().nullable(),
+    }),
+  ),
+});
+export type MergeLog = z.infer<typeof MergeLog>;

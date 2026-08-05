@@ -218,7 +218,9 @@ export async function setTeamSquad(
     if (!cap.ok) throw new PaymentRequiredError("teams.squad_max");
     const ids = [...new Set(members.map((m) => m.person_id))];
     if (ids.length > 0) {
-      const visible = await tx<{ id: string }[]>`select id from persons where id in ${tx(ids)}`;
+      // #404: a merge tombstone is not a squad candidate.
+      const visible = await tx<{ id: string }[]>`
+        select id from persons where id in ${tx(ids)} and merged_into is null`;
       if (visible.length !== ids.length) {
         const seen = new Set(visible.map((r) => r.id));
         throw new HttpError(422, `unknown person(s): ${ids.filter((id) => !seen.has(id)).join(", ")}`);

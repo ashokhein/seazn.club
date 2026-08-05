@@ -1,6 +1,7 @@
 // Shared DB-backed seed helpers for officials-unify tests (Tasks 1/2/3/7).
 // Copied verbatim from me-officiating.test.ts (do not modify that file).
 import { randomUUID } from "node:crypto";
+import { football } from "@seazn/engine/sports/football";
 import { sql } from "@/lib/db";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -54,6 +55,30 @@ export async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth
       keyId: null,
     },
   };
+}
+
+/**
+ * The football sport and its `default` variant, for suites that need a sport
+ * with a `playerStats` model (generic declares none, so `recomputePlayerStats`
+ * returns before it touches the table).
+ *
+ * Seeded here rather than assumed present. `sync:sports` fills these rows in a
+ * provisioned environment, but a suite that RELIES on that is order-dependent
+ * against a fresh database: the same test passes locally on a DB some other
+ * suite already seeded and fails in CI with
+ * `HttpError 422 unknown variant 'default' for football` from `createDivision`.
+ * That is exactly how #404 shipped green locally and red on the first CI run.
+ * `player-stats.test.ts` has always seeded its own; this is that block, shared.
+ */
+export async function seedFootballCatalog(): Promise<void> {
+  await sql`
+    insert into sports (key, name, module_version, position_catalog)
+    values ('football', 'Football', ${football.version}, ${sql.json(football.positions as never)})
+    on conflict (key) do nothing`;
+  await sql`
+    insert into sport_variants (sport_key, key, name, config, is_system)
+    values ('football', 'default', 'Default', ${sql.json({})}, true)
+    on conflict do nothing`;
 }
 
 /** Division with FUTURE fixtures — the /me lane and re-accept both filter on

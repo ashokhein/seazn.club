@@ -154,9 +154,12 @@ const COLS = [
 
 async function insertMembers(tx: Tx, entrantId: string, members: MemberInput[]): Promise<void> {
   if (members.length === 0) return;
-  // Every referenced person must be visible under this tenant's RLS.
+  // Every referenced person must be visible under this tenant's RLS, and #404
+  // adds: not a merge tombstone. The ids come from the client, so a stale picker
+  // would otherwise roster a person who has already been absorbed.
   const ids = [...new Set(members.map((m) => m.person_id))];
-  const visible = await tx<{ id: string }[]>`select id from persons where id in ${tx(ids)}`;
+  const visible = await tx<{ id: string }[]>`
+    select id from persons where id in ${tx(ids)} and merged_into is null`;
   if (visible.length !== ids.length) {
     const seen = new Set(visible.map((r) => r.id));
     const missing = ids.filter((id) => !seen.has(id));

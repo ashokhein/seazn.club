@@ -74,7 +74,7 @@ export async function getMyOfficiating(userId: string): Promise<MyOfficiating> {
   const [linked] = await sql<{ has: boolean }[]>`
     select exists(
       select 1 from officials o join persons p on p.id = o.person_id
-      where p.user_id = ${userId}) as has`;
+      where p.user_id = ${userId} and p.merged_into is null) as has`;
   if (!linked?.has) return { is_official: false, assignments: [], completed: [], blackouts: [] };
 
   const assignments = await sql<MyOfficiatingAssignment[]>`
@@ -100,7 +100,7 @@ export async function getMyOfficiating(userId: string): Promise<MyOfficiating> {
     left join organizations vorg on vorg.id = d.org_id
     left join entrants h on h.id = f.home_entrant_id
     left join entrants a on a.id = f.away_entrant_id
-    where p.user_id = ${userId}
+    where p.user_id = ${userId} and p.merged_into is null
       -- Outstanding duties only. The status gate already drops finished
       -- matches (decided/finalized/abandoned/forfeited/cancelled), so NO date
       -- floor: a match still 'scheduled' or 'in_play' is a pending duty even if
@@ -134,7 +134,7 @@ export async function getMyOfficiating(userId: string): Promise<MyOfficiating> {
     left join organizations vorg on vorg.id = d.org_id
     left join entrants h on h.id = f.home_entrant_id
     left join entrants a on a.id = f.away_entrant_id
-    where p.user_id = ${userId}
+    where p.user_id = ${userId} and p.merged_into is null
       and f.status = any(${[...FINISHED_STATUSES]})
     order by f.scheduled_at desc nulls last, f.id, fo.role_key
     limit 50`;
@@ -144,7 +144,7 @@ export async function getMyOfficiating(userId: string): Promise<MyOfficiating> {
     from official_availability oa
     join officials o on o.id = oa.official_id
     join persons p on p.id = o.person_id
-    where p.user_id = ${userId} and oa.date >= current_date
+    where p.user_id = ${userId} and p.merged_into is null and oa.date >= current_date
     group by oa.date
     order by oa.date`;
 
@@ -211,7 +211,7 @@ async function myOfficials(userId: string): Promise<{ id: string; org_id: string
   return sql<{ id: string; org_id: string }[]>`
     select o.id, o.org_id from officials o
     join persons p on p.id = o.person_id
-    where p.user_id = ${userId}`;
+    where p.user_id = ${userId} and p.merged_into is null`;
 }
 
 export interface ResponseInput {
@@ -241,7 +241,7 @@ export async function setMyOfficiatingResponse(
     join officials o on o.id = fo.official_id
     join persons p on p.id = o.person_id
     join fixtures f on f.id = fo.fixture_id
-    where fo.fixture_id = ${fixtureId} and p.user_id = ${userId}`;
+    where fo.fixture_id = ${fixtureId} and p.user_id = ${userId} and p.merged_into is null`;
   if (rows.length === 0) {
     throw new HttpError(403, "This match isn't assigned to you", "NOT_YOUR_ASSIGNMENT");
   }
@@ -274,7 +274,7 @@ export async function setMyOfficiatingResponse(
     set response = ${next}, responded_at = now(), decline_reason = ${reason}
     from officials o, persons p
     where fo.fixture_id = ${fixtureId}
-      and o.id = fo.official_id and p.id = o.person_id and p.user_id = ${userId}
+      and o.id = fo.official_id and p.id = o.person_id and p.user_id = ${userId} and p.merged_into is null
       and fo.response <> ${next}`;
   await refreshOfficialsCache(superuser, [fixtureId]);
   return { fixture_id: fixtureId, response: next, decline_reason: reason };
