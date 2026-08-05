@@ -32,8 +32,41 @@
 // provably sound, because every blocking reason is either per-row (`window`)
 // or names both sides of a pair (`court`, `person_overlap`) or names the
 // dependent (`order`), so removing every named row cannot leave one behind and
-// cannot create a new one. The floor therefore becomes a LEGAL board, and
-// "never worse than greedy" becomes a stronger claim rather than a weaker one.
+// cannot create a new one. The floor therefore becomes a board free of the
+// blocking conflicts it can be held RESPONSIBLE for, and "never worse than
+// greedy" becomes a stronger claim rather than a weaker one.
+//
+// Two honest limits on that claim, both harmless and both worth stating rather
+// than leaving for the next reader to rediscover:
+//
+//   * it is not "provably legal". `validateAssignments` builds its index over
+//     `[...existing, ...assignments]` (`calendar.ts:1268`), so a direct `order`
+//     dependency between two IMMOVABLE rows emits a blocking conflict whose
+//     `fixtureId` is not in the seed at all — the `seedIds` guard below skips
+//     it, and it survives into the answer. Nothing the solver can do would
+//     change it, which is exactly why the gate is a delta and is scoped to
+//     `ours`; both neutralise it independently.
+//   * the drop is CONSERVATIVE. `court` and `person_overlap` name both sides of
+//     a pair, so a clashing pair loses both rows where keeping either one alone
+//     would have been legal. Sound, never optimistic, and the solver is free to
+//     re-place both — it just starts from a lower floor than it strictly had
+//     to.
+//
+// --- the lattice is the CONFIGURED courts (R3) ------------------------------
+//
+// `repairCourts` folds in every court an `existing` row uses, which is right
+// for a REPAIR — a card already sitting on court 5 may stay there — and wrong
+// for a BUILD, which would then place brand-new fixtures on a court the
+// organiser never listed. The verifier does not test court membership, so this
+// was never a parity defect; it was a product question, and the ruling is that
+// a BUILD places only on `config.courts`.
+//
+// Immovable rows on other courts remain OBSTACLES in full: their court time is
+// still removed from the lattice by `buildGrid` and their participants still
+// constrain through `encodeBuild` §7. Only new PLACEMENT is restricted. The one
+// exemption is a PINNED slot: a card the caller locked onto an unlisted court
+// must still be representable, or a board that merely looks odd becomes an
+// infeasible one.
 //
 // --- three verdicts, and why the third is the point -------------------------
 //
@@ -52,9 +85,10 @@
 // incumbent simply stands and `budgetExpired` says why. Both sites that can
 // see an `unknown` — the feasibility probe and the T0 walk — are pinned by
 // their own test.
+import type { Arith, Bool, Solver } from "z3-solver";
 import { boardMetrics, isStrictlyBetter, type BoardMetrics } from "./build-objectives.ts";
-import { buildGrid, type BuildSlot } from "./build-grid.ts";
-import { encodeBuild, type BuildConfig } from "./build-encode.ts";
+import { buildGrid, type BuildGrid, type BuildSlot } from "./build-grid.ts";
+import { encodeBuild, type BuildConfig, type EncodedModel } from "./build-encode.ts";
 import {
   deltaConflicts,
   isBlockingConflict,
@@ -69,12 +103,17 @@ import {
   type VerifyConfig,
 } from "./calendar.ts";
 import { repairUniverse } from "./repair-domain.ts";
-import { loadZ3, withZ3Lock } from "./z3-load.ts";
+import { loadZ3, withZ3Lock, type Z3Context } from "./z3-load.ts";
+
+const MS_PER_MIN = 60_000;
 
 /** Set by `scripts/bench-build.ts` (Task 15) — a placeholder until it runs. */
 export const DEFAULT_BUILD_RLIMIT = 40_000_000;
 /** The outer safety cap. Not the stopping rule; see the header. */
 export const DEFAULT_BUILD_WALL_MS = 30_000;
+/** T0 plus the three lexicographic tiers. `tiersCompleted` reaching this is
+ *  what "the board is lexicographically optimal" means. */
+const TIER_COUNT = 4;
 
 export type BuildStatus =
   /** A board was produced and the gate accepted it. */
@@ -150,6 +189,33 @@ export interface BuildResult {
   budgetExpired: boolean;
   elapsedMs: number;
   moved: number;
+  /**
+   * The pinned fixtures an `infeasible` verdict is ABOUT (R4).
+   *
+   * `status: "infeasible"` has two sources and they mean opposite things to an
+   * organiser. The T0 source is a statement about the board — not one card can
+   * be placed legally. The PROBE source is a statement about the PINS: 38 of 40
+   * cards can be scheduled perfectly well, and the only thing z3 proved is that
+   * two `locked`/`frozen` placements cannot both be kept. Rendering the second
+   * as "no schedule is possible" is false and unactionable, so the result
+   * carries the identity of the cards the proof is about and the caller can say
+   * which ones. `metrics.placed` / `metrics.total` still carry the rest of the
+   * sentence.
+   *
+   * PRESENT ONLY on the probe path, and its absence on an `infeasible` result
+   * is itself meaningful: it says the proof was about the board.
+   *
+   * It is the pinned SET, sorted, not a minimal unsat core. The claim it
+   * supports is "these cannot ALL be kept", never "this one is at fault":
+   * `encodeBuild` asserts a `locked` placement as a unit clause of its own, so
+   * z3 is never asked the question a core would answer. Naming a subset would
+   * need those pins passed as check-time assumptions, which is a change to
+   * `build-encode.ts`.
+   *
+   * Optional and additive on purpose — every existing reader ignores it, and a
+   * UI that has not been taught about it degrades to the count.
+   */
+  contradictoryPins?: readonly string[];
 }
 
 /**
@@ -336,14 +402,21 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
   // would contradict "auto-schedule always hands back a board". Pinning honours
   // the freeze, and any illegality the pin causes surfaces through the ordinary
   // conflict and gate path where somebody can see it.
-  const pinned: BuildSlot[] = [
-    ...fixtures.flatMap((f) => (f.locked !== undefined ? [f.locked] : [])),
+  //
+  // Carried WITH the fixture id, not as a bare slot list, because an
+  // `infeasible` proved off these pins has to be able to name them (R4).
+  const pins: { id: string; at: BuildSlot }[] = [
+    ...fixtures.flatMap((f) => (f.locked !== undefined ? [{ id: f.id, at: f.locked }] : [])),
     ...frozenIds.flatMap((id) => {
       const at = publishedSlotOf(id);
-      return at === undefined ? [] : [at];
+      return at === undefined ? [] : [{ id, at }];
     }),
   ];
-  const grid = buildGrid({ config, existing, pinned });
+  const pinned = pins.map((p) => p.at);
+  /** Sorted and de-duplicated: a `locked` card named in `frozen` too is one
+   *  pin, and the order is part of what makes two runs comparable. */
+  const pinnedIds = [...new Set(pins.map((p) => p.id))].sort();
+  const grid = restrictToConfiguredCourts(buildGrid({ config, existing, pinned }), config.courts, pinned);
   if (grid.overCap || grid.slots.length === 0) return greedy("ok");
 
   // 3. z3. A boot failure is a fallback, never an exception: auto-schedule must
@@ -419,7 +492,9 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
     } else {
       armTimeout();
       const probe = await solver.check();
-      if (probe === "unsat") return greedy("infeasible");
+      // The pins are the ONLY thing that can make this model unsat (see above),
+      // so the proof is about them and the result says so by name.
+      if (probe === "unsat") return { ...greedy("infeasible"), contradictoryPins: pinnedIds };
       // `unknown` is exhaustion, not a verdict — the ABSENCE of a proof. Fall
       // through and let the walk below report `budgetExpired` on the greedy
       // incumbent.
@@ -456,9 +531,6 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
         incumbentMetrics = metrics;
         improved = true;
       }
-      // Freeze the achieved count as a hard bound for every later tier: a tier
-      // that shortens the makespan must not buy it by dropping a card.
-      atLeastPlaced(incumbentMetrics.placed);
       break;
     }
     solver.pop();
@@ -467,15 +539,115 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
       break;
     }
   }
-  // The tier completed iff it ran to a verdict rather than to the budget: a SAT
-  // at some bound, or UNSAT all the way down to the incumbent's own count.
-  const proved = checks > 0 && !budgetExpired;
+  // Freeze the achieved count as a hard bound for every later tier: a tier that
+  // shortens the makespan must not buy it by dropping a card.
+  //
+  // OUTSIDE the loop, not in the `sat` arm. The walk has a second exit — UNSAT
+  // at every bound down to the incumbent's own count — and on that path the arm
+  // never runs, so a freeze written there leaves `placed` unbounded for exactly
+  // the boards greedy already got right.
+  atLeastPlaced(incumbentMetrics.placed);
+
+  // T0 completed iff it ran to a verdict rather than to the budget: a SAT at
+  // some bound, or UNSAT all the way down to the incumbent's own count.
+  //
+  // ...or if there was nothing to ask. `target` starts at `fixtures.length`, so
+  // a greedy board that already placed every card enters no iteration at all:
+  // the maximum is ACHIEVED and proving it costs zero checks. Reading that as
+  // "the tier did not finish" is what made a fully-placed board indistinguish-
+  // able from one whose budget died before the first check, and it is why
+  // `already_optimal` could never fire on the boards it most obviously
+  // describes.
+  const proved = !budgetExpired && (checks > 0 || incumbentMetrics.placed >= fixtures.length);
   if (proved) tiersCompleted = 1;
 
-  // Tiers 1-3 land in Task 5; the incumbent contract above is what they extend.
-  // Each of them is another descending-bound walk over `incumbent` /
-  // `incumbentMetrics` / `improved` / `budgetExpired`, and each increments
-  // `tiersCompleted` on the same "ran to a verdict" condition.
+  // 6b. Tiers 1-3 — makespan, then worst idle gap, then court imbalance, in
+  //     D3's fixed order.
+  //
+  //     Each is the same descending-bound walk T0 is, in the opposite
+  //     direction: T0 descends from `fixtures.length` and so proves its UNSAT
+  //     bounds FIRST, one per step, before the single SAT that ends it; these
+  //     assert "strictly better than the incumbent", take the board z3 hands
+  //     back, and repeat — so the SATs come first and the walk ends on ONE
+  //     UNSAT, the expensive proof. The cheap direction is deliberate: every
+  //     intermediate board is a real improvement in hand, so a budget that
+  //     expires mid-walk still returns something better, which is not true of
+  //     an ascending walk.
+  //
+  //     A tier that completes FREEZES its achieved value as a hard bound, and
+  //     that freeze is the whole of what makes the ordering lexicographic
+  //     rather than a negotiation: with it, a later tier can only choose among
+  //     boards an earlier tier already called optimal.
+  //
+  //     NO PER-TIER BUDGET SLICE, deliberately. Splitting the WALL clock (half
+  //     the remainder each, say) would make which tier ran a property of the
+  //     machine, which is the exact defect D9 exists to prevent — the same run
+  //     on a faster box would return a differently-optimised board. Splitting
+  //     the `rlimit` is unavailable until Task 13 establishes whether it is a
+  //     per-`check()` cap or a run total (it is set once, before the first
+  //     check, and nothing here re-reads it). Neither is needed for termination:
+  //     each walk is strictly decreasing over a finite set of achievable metric
+  //     values, and every individual `check()` is capped by the rlimit, so a
+  //     tier cannot spin. The wall clock stays what the header says it is — an
+  //     outer cap that should never fire.
+  if (proved) {
+    for (const tier of buildTiers({ Z3, solver, model, grid, fixtures, config })) {
+      if (budgetExpired || elapsed() >= wallMs) {
+        budgetExpired = true;
+        break;
+      }
+      let best = tier.of(incumbentMetrics);
+      let settled = false;
+      for (;;) {
+        // THE METRIC'S FLOOR. All three are non-negative quantities that
+        // `boardMetrics` reports as 0 on an empty board, so a bound of -1 ms is
+        // not "one better" — it is a question with no answer, and asking it is
+        // not free: the makespan and imbalance terms say NOTHING when nothing
+        // is placed, so z3 answers SAT off a pair of unconstrained variables,
+        // hands back the same board, and the walk would loop on it. At zero the
+        // tier is already optimal and there is nothing to prove.
+        if (best <= 0) {
+          settled = true;
+          break;
+        }
+        if (elapsed() >= wallMs) {
+          budgetExpired = true;
+          break;
+        }
+        solver.push();
+        tier.atMost(best - 1);
+        armTimeout();
+        checks++;
+        const verdict = await solver.check();
+        if (verdict !== "sat") {
+          solver.pop();
+          // UNSAT is the proof that `best` IS the optimum — the walk asked for
+          // strictly better and no board exists. `unknown` is the absence of
+          // that proof and must never be read as one (see the header).
+          if (verdict === "unknown") budgetExpired = true;
+          else settled = true;
+          break;
+        }
+        const board = model.assignmentsFrom(model.slotOf(solver.model()));
+        const metrics = boardMetrics(board, config.courts, fixtures.length);
+        solver.pop();
+        const next = tier.of(metrics);
+        // Belt and braces. Every earlier tier is frozen and this bound is
+        // strict, so a SAT board is lexicographically better by construction;
+        // if it ever is not, the term and the metric have drifted apart and the
+        // right move is to keep the incumbent and stop counting tiers, not to
+        // accept a board D3 ranks below the one in hand.
+        if (next >= best || !isStrictlyBetter(metrics, incumbentMetrics)) break;
+        incumbent = board;
+        incumbentMetrics = metrics;
+        improved = true;
+        best = next;
+      }
+      if (!settled) break;
+      tier.atMost(tier.of(incumbentMetrics));
+      tiersCompleted++;
+    }
+  }
 
   // 7. The gate. Encoder and verifier disagreeing is the exact bug class this
   //    design exists to prevent, so it is never silent — but it is also never
@@ -506,12 +678,14 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
     return was === undefined || was.court !== a.court || was.startAt !== a.startAt;
   }).length;
 
-  // `already_optimal` needs BOTH halves: a check that came back with a verdict,
-  // and nothing to show for it. Without the first it would claim a proof on a
-  // board nobody looked at; without the second it would fire on a board that
-  // was just improved.
+  // `already_optimal` needs BOTH halves: every tier ran to a verdict, and
+  // nothing to show for it. Without the first it would claim a proof on a board
+  // nobody looked at; without the second it would fire on a board that was just
+  // improved. It is ALL FOUR tiers, not just T0 — "greedy already placed every
+  // card" is not a statement about the makespan, and a board that could still
+  // be made shorter is not optimal in any sense an organiser would accept.
   let status: BuildStatus = "ok";
-  if (proved && !improved) {
+  if (tiersCompleted === TIER_COUNT && !improved) {
     status =
       incumbentMetrics.placed === 0 && fixtures.length > 0 ? "infeasible" : "already_optimal";
   }
@@ -527,4 +701,292 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
     elapsedMs: elapsed(),
     moved,
   };
+}
+
+/**
+ * The lattice, minus every slot on a court the organiser did not configure (R3).
+ *
+ * `buildGrid` takes its court list from `repairCourts`, which folds in every
+ * court an `existing` row uses. That is right for a REPAIR — a card already
+ * sitting on court 5 may stay on court 5 — and wrong for a BUILD, which would
+ * otherwise place brand-new fixtures onto a court that exists only because some
+ * other division borrowed it. The verifier never tests court membership, so
+ * nothing here was ever reported; it is a product ruling, not a parity fix.
+ *
+ * Applied as a post-filter rather than by narrowing what `buildGrid` generates,
+ * because `repairCourts` has no knob and `build-grid.ts` is shared with the
+ * repair solver. Slot ORDER is preserved, which matters: `buildGrid` sorts by
+ * (court, startAt) and the encoder names its variables by slot INDEX, so a
+ * filter that reordered would silently rename every variable.
+ *
+ * PINNED SLOTS ARE EXEMPT. A card the caller locked onto an unlisted court must
+ * still be representable — `encodeBuild` §4 throws outright when a locked
+ * placement is missing from the lattice, and short of that the run would report
+ * a contradiction the organiser never expressed.
+ *
+ * `overCap` is carried through unchanged, and deliberately not recomputed: it
+ * was decided against the UNFILTERED lattice, so a board whose extra courts
+ * pushed it over `MAX_SLOTS` still goes to greedy even though the filtered
+ * lattice would have fitted. Conservative in the safe direction, and the cap is
+ * two orders of magnitude away from any real board.
+ */
+function restrictToConfiguredCourts(
+  grid: BuildGrid,
+  courts: readonly string[],
+  pinned: readonly BuildSlot[],
+): BuildGrid {
+  const allowed = new Set(courts);
+  const key = (s: BuildSlot): string => `${s.court}|${s.startAt}`;
+  const exempt = new Set(pinned.map(key));
+  const slots = grid.slots.filter((s) => allowed.has(s.court) || exempt.has(key(s)));
+  if (slots.length === grid.slots.length) return grid;
+  const byCourt = new Map<string, number[]>();
+  slots.forEach((s, i) => {
+    const rows = byCourt.get(s.court);
+    if (rows === undefined) byCourt.set(s.court, [i]);
+    else rows.push(i);
+  });
+  return { slots, byCourt, stepMinutes: grid.stepMinutes, overCap: grid.overCap };
+}
+
+// --- the three lexicographic tiers ------------------------------------------
+
+interface Tier {
+  name: string;
+  /**
+   * The metric this tier minimises, in WHOLE MILLISECONDS.
+   *
+   * `boardMetrics` reports MINUTES, as floats: `(hi - lo) / 60_000` for the
+   * makespan and a sum of such quotients for each court's load. Every bound
+   * asserted below is a z3 integer, so the two are compared in the unit the
+   * underlying quantities actually are — milliseconds — and the float is
+   * converted back with `Math.round`, which is exact for any value that came
+   * from dividing an integer number of milliseconds by 60_000. Flooring would
+   * round a 30-second idle gap down to zero and freeze a bound the incumbent
+   * does not meet, which is the one failure mode that would make a later tier
+   * unsatisfiable against the board in hand.
+   */
+  of: (m: BoardMetrics) => number;
+  /**
+   * Assert "this metric is at most `boundMs`" into the solver's CURRENT scope.
+   *
+   * Called under `push`/`pop` while the tier walks, and once at the top level to
+   * freeze what it achieved. A function rather than an `Arith` term because only
+   * two of the three ARE terms: the idle gap is a clause family whose shape
+   * depends on the bound, and pretending otherwise would mean an integer
+   * variable per participant pair and the arithmetic encoding this whole design
+   * exists to avoid.
+   */
+  atMost: (boundMs: number) => void;
+}
+
+interface TierInput {
+  Z3: Z3Context["Z3"];
+  solver: Solver<"repair">;
+  model: EncodedModel;
+  grid: BuildGrid;
+  fixtures: readonly SchedulableFixture[];
+  config: SlotConfig & { courts: string[] };
+}
+
+/**
+ * Builds all three tiers, and every assertion they SHARE, exactly once.
+ *
+ * Called before the tier loop rather than lazily per tier, because two of the
+ * three define themselves through assertions (`lo <= start` and friends) and an
+ * assertion added inside a `push` would vanish at the matching `pop` — the tier
+ * would then "optimise" a variable nothing constrains and report a bound no
+ * board meets. Every definition here is an IMPLICATION off a placement literal,
+ * so none of it changes which boards are legal.
+ */
+function buildTiers(input: TierInput): Tier[] {
+  const { Z3, solver, model, grid, fixtures, config } = input;
+  const slots = grid.slots;
+  const durMs = config.matchMinutes * MS_PER_MIN;
+
+  /** "Some fixture sits in slot s". The same abstraction `build-encode.ts`
+   *  uses and exact for the same reason: its §2 says a slot holds at most one
+   *  fixture, so an occupancy literal cannot count to two. */
+  const occAny = slots.map((_sl, s) => {
+    const o = Z3.Bool.const(`m_occ_${s}`);
+    solver.add(o.eq(Z3.Or(...fixtures.map((_f, i) => model.place[i]![s]!))));
+    return o;
+  });
+
+  // --- T1: makespan ---------------------------------------------------------
+  //
+  // `boardMetrics` reports `maxEnd - minStart` over the PLACED rows, and every
+  // row a build produces is exactly `matchMinutes` long, so both ends are known
+  // statically per slot. Two free integers squeezed onto the real extremes: the
+  // implications force `lo <= every occupied start` and `hi >= every occupied
+  // end`, hence `hi - lo >= maxEnd - minStart`, and setting them to the extremes
+  // themselves is always available — so `hi - lo <= B` holds for exactly the
+  // boards whose true makespan is at most B. Nothing pins them on an empty
+  // board, which is why the walk never asks below zero.
+  const mkLo = Z3.Int.const("mk_lo");
+  const mkHi = Z3.Int.const("mk_hi");
+  slots.forEach((sl, s) => {
+    solver.add(
+      Z3.Implies(occAny[s]!, Z3.And(mkLo.le(sl.startAt), mkHi.ge(sl.startAt + durMs))),
+    );
+  });
+  const makespan = mkHi.sub(mkLo);
+
+  // --- T3: court imbalance --------------------------------------------------
+  //
+  // `boardMetrics` measures the busiest configured-or-used court minus the
+  // quietest, so the court SET it divides by is `config.courts` plus whatever
+  // courts the board actually used — a configured court nobody plays on counts
+  // as a zero (that is the point of the metric), while an UNconfigured court
+  // nobody plays on is not in the set at all. That asymmetry is why the bounds
+  // below are not symmetric: `hi` ranges over every court in the lattice (an
+  // unused one contributes 0 and cannot raise a maximum), but `lo` is held
+  // under an unconfigured court's load only WHEN THAT COURT IS USED.
+  //
+  // A court can be in the lattice without being configured only through a pin —
+  // R3 removed the rest — so this is the locked-onto-court-5 case, and getting
+  // it wrong would report an imbalance of zero on a board with one lonely
+  // pinned card.
+  const cbLo = Z3.Int.const("cb_lo");
+  const cbHi = Z3.Int.const("cb_hi");
+  const configured = new Set(config.courts);
+  const loadOf = (rowsOnCourt: readonly number[]): Arith<"repair"> =>
+    Z3.Sum(
+      Z3.Int.val(0),
+      ...rowsOnCourt.map((s) => Z3.If(occAny[s]!, Z3.Int.val(durMs), Z3.Int.val(0))),
+    );
+  for (const [court, rowsOnCourt] of grid.byCourt) {
+    const load = loadOf(rowsOnCourt);
+    solver.add(cbHi.ge(load));
+    if (configured.has(court)) solver.add(cbLo.le(load));
+    else solver.add(Z3.Implies(load.ge(1), cbLo.le(load)));
+  }
+  // A configured court with no slots at all — blacked out, or outside every
+  // session window. `boardMetrics` still seeds it at zero, so it still pulls the
+  // minimum down, and leaving it out would understate the imbalance.
+  for (const court of config.courts) {
+    if (grid.byCourt.has(court)) continue;
+    solver.add(cbHi.ge(0));
+    solver.add(cbLo.le(0));
+  }
+  const imbalance = cbHi.sub(cbLo);
+
+  // --- T2: worst idle gap ---------------------------------------------------
+  //
+  // The one metric with no honest term. `boardMetrics` takes, per participant
+  // with two or more rows, the largest wait between CONSECUTIVE matches — and
+  // "consecutive" is not a static property of a slot pair, it depends on which
+  // other slots that participant occupies. Written as arithmetic it needs an
+  // integer per participant pair and an ordering between them, which is the
+  // O(n^2) encoding `build-encode.ts` exists to avoid.
+  //
+  // Stated as a BOUND it collapses. Every row is `matchMinutes` long, so a gap
+  // of at most B is the same statement as consecutive STARTS at most
+  // `W = B + matchMinutes` apart, and that is a clause family:
+  //
+  //     for each participant p and each start index k, with j the first start
+  //     beyond starts[k] + W:      ~occ[k] \/ ~tail[j] \/ (p occupies something
+  //                                in (starts[k], starts[k] + W])
+  //
+  // where `occ[k]` is "p occupies start k" and `tail[j]` is "p occupies some
+  // start >= starts[j]". Both directions hold, which is the only thing that
+  // makes the bound the metric rather than an approximation of it:
+  //
+  //   * SOUND. A violated clause means p occupies starts[k], occupies something
+  //     beyond starts[k] + W, and occupies nothing in between — so the SUCCESSOR
+  //     of starts[k] is more than W away and the real gap really does exceed B.
+  //     Nothing legal is refused.
+  //   * COMPLETE. If two consecutive occupied starts a < b are more than W
+  //     apart, the clause at k = index(a) is violated: `occ[k]` holds, `tail[j]`
+  //     holds because b lies beyond starts[k] + W, and the window between them
+  //     is empty precisely because a and b are consecutive.
+  //
+  // (An earlier draft anchored the first literal on "p occupies some start <=
+  // starts[k]" instead. It is equivalent — completeness is already argued at
+  // k = index(a), where the two agree — so the extra prefix chain bought
+  // nothing and is gone.)
+  //
+  // Cost is one clause per (participant, start) of length |window|, and only
+  // participants with two or more fixtures are built at all — everyone else
+  // contributes 0 to the metric by definition and would be pure encoding.
+  // `tail` is a chain, so it is O(|starts|) and, unlike the clauses,
+  // bound-independent, which is what lets the walk re-state only the clauses.
+  const starts = [...new Set(slots.map((s) => s.startAt))].sort((a, b) => a - b);
+  const slotsAtStart = starts.map((t) =>
+    slots.flatMap((sl, s) => (sl.startAt === t ? [s] : [])),
+  );
+  /** Fixture indexes per participant, namespaced exactly as `boardMetrics` and
+   *  `build-encode.ts` namespace them so an entrant id can never collide with a
+   *  person id. */
+  const byParticipant = new Map<string, number[]>();
+  fixtures.forEach((f, i) => {
+    for (const p of new Set([
+      ...[f.home, f.away].filter((e): e is string => e !== undefined).map((e) => `e:${e}`),
+      ...(f.people ?? []).map((p) => `p:${p}`),
+    ])) {
+      const rows = byParticipant.get(p);
+      if (rows === undefined) byParticipant.set(p, [i]);
+      else rows.push(i);
+    }
+  });
+
+  let gapGroups = 0;
+  const gapParticipants = [...byParticipant.values()]
+    .filter((group) => group.length >= 2)
+    .map((group) => {
+      const g = gapGroups++;
+      const occ = starts.map((_t, k) => {
+        const o = Z3.Bool.const(`gp_${g}_${k}`);
+        solver.add(
+          o.eq(Z3.Or(...group.flatMap((i) => slotsAtStart[k]!.map((s) => model.place[i]![s]!)))),
+        );
+        return o;
+      });
+      const tail: Bool<"repair">[] = new Array<Bool<"repair">>(occ.length);
+      for (let k = occ.length - 1; k >= 0; k--) {
+        if (k === occ.length - 1) {
+          tail[k] = occ[k]!;
+          continue;
+        }
+        const v = Z3.Bool.const(`gt_${g}_${k}`);
+        solver.add(v.eq(Z3.Or(occ[k]!, tail[k + 1]!)));
+        tail[k] = v;
+      }
+      return { occ, tail };
+    });
+
+  const assertGapAtMost = (boundMs: number): void => {
+    const width = boundMs + durMs;
+    for (const p of gapParticipants) {
+      for (let k = 0; k < starts.length; k++) {
+        let j = k + 1;
+        while (j < starts.length && starts[j]! <= starts[k]! + width) j++;
+        // Nothing lies beyond the window, so no start can be stranded past it —
+        // and `starts[k]` only grows, so neither can any later k.
+        if (j >= starts.length) break;
+        const between: Bool<"repair">[] = [];
+        for (let i = k + 1; i < j; i++) between.push(p.occ[i]!);
+        solver.add(Z3.Or(Z3.Not(p.occ[k]!), Z3.Not(p.tail[j]!), ...between));
+      }
+    }
+  };
+
+  const ms = (minutes: number): number => Math.round(minutes * MS_PER_MIN);
+  return [
+    {
+      name: "makespan",
+      of: (m) => ms(m.makespanMinutes),
+      atMost: (boundMs) => solver.add(makespan.le(boundMs)),
+    },
+    {
+      name: "idleGap",
+      of: (m) => ms(m.worstIdleGapMinutes),
+      atMost: assertGapAtMost,
+    },
+    {
+      name: "imbalance",
+      of: (m) => ms(m.courtImbalanceMinutes),
+      atMost: (boundMs) => solver.add(imbalance.le(boundMs)),
+    },
+  ];
 }
