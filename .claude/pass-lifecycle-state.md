@@ -79,6 +79,41 @@ does not hold — an owner gets a live Buy button that dead-ends.
     re-open.
 
 Full spec: `docs/superpowers/specs/2026-08-05-competition-lifecycle-pass-integrity-design.md`
+Full plan: `docs/superpowers/plans/2026-08-05-competition-lifecycle-pass-integrity.md`
+**11 tasks, ordered A → C → D → B → gates.** The plan carries every code
+block, verify command and commit message. Read it, not this file, to
+implement.
+
+## WHERE WE ARE (update this line as tasks land)
+
+Spec ✅ committed · Plan ✅ committed · **Task 1 not started.** No
+production code has been written on this branch yet — every commit so far
+is documentation.
+
+## Ordering rationale (do not resequence)
+
+- **A before B.** Making `ends_on` mandatory puts every competition on a
+  path to the pass line; shipping B first would widen A's defect.
+- **B last also because** it breaks every fixture that creates a
+  competition, and doing that mid-branch makes later failures ambiguous.
+- **Tasks 3 and 4 both edit all four `ui.json` files** — never run them
+  in parallel.
+
+## Traps that apply to this branch specifically
+
+- `Ticket` on the upgrade page takes
+  `state: Exclude<UpgradePageState, {kind:"paid_plan"}>` and its
+  else-branch renders `<PassUpgradeButton canBuy={state.canBuy}>`. The
+  `closed` kind ALSO carries `canBuy`, so a `closed` state reaching that
+  component **typechecks and renders a Buy button** — the exact defect
+  this branch removes. That is why `closed` gets its own panel and the
+  `Exclude` grows a second member.
+- The upgrade page's `columns` array still lists both pass rungs for a
+  closed competition unless changed — the comparison table is the page's
+  SECOND offer surface.
+- Delete's predicate (`status <> 'setup' OR has results`) is
+  deliberately BROADER than the slot rule (results only). Do not
+  "unify" them into one predicate; they share one function, not one rule.
 
 ## Standing constraints for this branch
 
@@ -89,6 +124,28 @@ Full spec: `docs/superpowers/specs/2026-08-05-competition-lifecycle-pass-integri
 - Both drift gates before commit: `openapi:gen` AND `i18n:gen-keys`, then
   `git status --porcelain` must be empty.
 - UI verified at desktop and 375px, no horizontal page scroll.
-- Agent topology: scout (sonnet) reads, implementer (opus, high) writes,
-  reviewer (sonnet) reviews; loop until clean. Same-file tasks batch into
-  one implementer pass.
+- Agent topology: **scout (sonnet)** — all read-only exploration;
+  **implementer (opus, high effort)** — writes code, full skill access;
+  **reviewer (sonnet)** — reviews the diff and reports gaps. Loop
+  implementer → reviewer → gap list → implementer until the review is
+  clean AND tests are green.
+- **Batching rule:** tasks touching the same file set run inline in ONE
+  implementer pass (avoids conflicts and redundant context). Disjoint
+  file sets go through separate implementer → reviewer loops.
+- **Every task ships all four test kinds** — unit, e2e (Playwright),
+  smoke, regression — named explicitly in its acceptance criteria. A
+  task is not done until all four exist and pass.
+- **Unrelated failures:** do not chase failures in files you did not
+  touch. Skip, note in the summary, let CI surface them.
+- **Pre-commit:** verify the OpenAPI spec has not drifted; regenerate if
+  it has. Same for i18n keys.
+- Toolchain: **TypeScript 7, Node 26, pnpm** (`pnpm@10.34.5`).
+- Skills to actually use (not just cite): all `superpowers`,
+  `frontend-design`, `stripe`, `playwright`, `supabase`,
+  `typescript-lsp`, `code-review`, `seazn-local-env`.
+- **Mindset:** look for gaps, edge cases and weak spots; propose
+  improvements rather than only implementing what was asked.
+- **No new issues.** Questions get asked and fixed inline, unless fixing
+  would widen the blast radius.
+- Subagent briefs must be **self-contained** — carry the facts, do not
+  make the agent re-read to rediscover them.
