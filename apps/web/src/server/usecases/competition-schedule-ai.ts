@@ -2349,7 +2349,10 @@ async function planForCompetition(
     throw new HttpError(403, "AI scheduling is currently turned off", "FEATURE_DISABLED");
   }
   await requireFeature(auth.orgId, "scheduling.ai");
-  await requireFeature(auth.orgId, "scheduling.multi_division");
+  // Competition-scoped since V353 (#382): an Event Pass now lifts
+  // `scheduling.multi_division`, and a pass covers ONE competition — the
+  // competition being planned is the only honest scope to ask about.
+  await requireFeature(auth.orgId, "scheduling.multi_division", competitionId);
 
   const requested = [...new Set(input.division_ids)];
   if (requested.length < 2) throw singleDivision();

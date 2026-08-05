@@ -301,7 +301,10 @@ export async function applyCompetitionSchedule(
   // The capability gate, ahead of every read, every lock and every write — see
   // the module header on why this endpoint needs one of its own and why it is
   // this key rather than `scheduling.ai`.
-  await requireFeature(auth.orgId, "scheduling.multi_division");
+  //
+  // Competition-scoped since V353 (#382): an Event Pass now lifts this key, and
+  // a pass covers ONE competition — the one being written.
+  await requireFeature(auth.orgId, "scheduling.multi_division", competitionId);
 
   if (input.divisions.length === 0) {
     throw new HttpError(400, "no divisions to apply", "SCHEDULE_APPLY_NO_DIVISIONS");

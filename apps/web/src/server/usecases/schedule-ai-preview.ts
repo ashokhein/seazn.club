@@ -407,7 +407,11 @@ export async function previewScheduleAi(
     throw new HttpError(403, "AI scheduling is currently turned off", "FEATURE_DISABLED");
   }
   await requireFeature(auth.orgId, "scheduling.ai");
-  if (scope.kind === "competition") await requireFeature(auth.orgId, "scheduling.multi_division");
+  // Competition-scoped since V353 (#382): an Event Pass lifts this key, and a
+  // pass covers ONE competition — `scope.id` IS that competition here.
+  if (scope.kind === "competition") {
+    await requireFeature(auth.orgId, "scheduling.multi_division", scope.id);
+  }
 
   const resolved =
     scope.kind === "division"
