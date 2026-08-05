@@ -138,7 +138,7 @@ const uuid = (tag: string, n: number) =>
 // unplaceable fixture is left for the model, exactly as in production). No DB,
 // no obstacles/siblings (synthetic packs have none), so `existing: []`.
 /** A pack before its derived fields exist — see `withGreedyDraft`. */
-type PackDraft = Omit<SchedulePack, "participants" | "assumptions">;
+type PackDraft = Omit<SchedulePack, "participants" | "assumptions" | "poolIds">;
 
 function withGreedyDraft(pack: PackDraft): SchedulePack {
   const tz = pack.division.tz;
@@ -201,7 +201,9 @@ function withGreedyDraft(pack: PackDraft): SchedulePack {
       court_label: a.court,
     }))
     .sort((x, y) => (x.scheduled_at < y.scheduled_at ? -1 : x.scheduled_at > y.scheduled_at ? 1 : 0));
-  return { ...pack, participants, assumptions: stripped.assumptions, draft };
+  // #449: this bench authors pools as bare labels and drives no pool-scoped
+  // rule, so there is no uuid to carry.
+  return { ...pack, participants, poolIds: {}, assumptions: stripped.assumptions, draft };
 }
 
 // --- Pack A: 15 teams, 3 pools of 5, round robin within pool = 30 fixtures --

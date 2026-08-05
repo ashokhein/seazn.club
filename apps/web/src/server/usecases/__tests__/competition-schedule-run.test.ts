@@ -95,6 +95,8 @@ function makePack(): CompetitionPack {
     // is empty — but the key must exist for each of them, exactly as
     // buildCompetitionPack emits it (#396).
     participants: { [F1]: [], [F2]: [] },
+    // #449: no pooled fixtures in this pack, so no pool uuids to carry.
+    poolIds: {},
     assumptions: [],
     fixtures: {
       movable: [

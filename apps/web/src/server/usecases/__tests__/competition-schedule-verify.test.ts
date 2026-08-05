@@ -148,6 +148,24 @@ function pack(
       ),
     ];
   }
+  // #449: `PackFixture.pool` is the DISPLAY KEY the model reads ('A', 'B'); the
+  // pool UUID the engine matches a stored rule against rides `poolIds`. These
+  // cases author the uuid on `pool` for readability, so split the two here — the
+  // way the real builder does. Authoring one value and reading it back through
+  // the same field would let the two namespaces look like one, which is the very
+  // bug (#449) these `poolId` assertions exist to catch.
+  const poolIds: Record<string, string> = {};
+  const poolKeyById = new Map<string, string>();
+  for (const f of movable) {
+    if (f.pool === null) continue;
+    poolIds[f.id] = f.pool;
+    if (!poolKeyById.has(f.pool)) {
+      poolKeyById.set(f.pool, String.fromCharCode(65 + poolKeyById.size));
+    }
+  }
+  const labelled = movable.map((f) =>
+    f.pool === null ? f : { ...f, pool: poolKeyById.get(f.pool)! },
+  );
   return {
     mode: "generate",
     competition: { id: "c1", name: "Summer Open" },
@@ -174,8 +192,9 @@ function pack(
     entrants: [],
     people,
     participants,
+    poolIds,
     assumptions: [],
-    fixtures: { movable, obstacles: [] },
+    fixtures: { movable: labelled, obstacles: [] },
     draft: [],
     instruction: "Finish by 6pm.",
     prior: null,

@@ -348,6 +348,25 @@ export interface SchedulePack {
    *  greedy placer and the verifier, so a draft cannot be legal under a rule
    *  the referee applies differently. */
   participants: Record<string, string[]>;
+  /** Movable fixture id → its pool's UUID, for the fixtures that sit in a pool
+   *  (#449).
+   *
+   *  SERVER-SIDE ONLY, like `participants`: `toModelPayload` omits it. The
+   *  model schedules by pool LABEL and `PackFixture.pool` stays that label —
+   *  the prompts read it, it is a wire shape, and it is what an organiser sees.
+   *
+   *  It exists because a pool KEY is display metadata ('A', 'B') that is not
+   *  unique across divisions, while `Assignment.poolId` and `RuleFixture.poolId`
+   *  are what `scopeCoversFixture` and `effectiveRestMinutes` match a stored
+   *  rule against — and a stored rule names the UUID, which is what the DB holds
+   *  and what the board path has always stamped. Carrying the key across the
+   *  engine boundary put the AI path in a second namespace, so whichever one the
+   *  organiser authored in, at most ONE path could ever bind the rule.
+   *
+   *  Keyed for the fixtures in `fixtures.movable` that have a pool, in that
+   *  array's order, so a build is byte-identical on a reseed for the same reason
+   *  `participants` is. */
+  poolIds: Record<string, string>;
   /** Deterministic preprocessing choices worth telling the organiser about:
    *  stripped bye feeders, same-name person grouping. Rendered at W5 (#400). */
   assumptions: string[];
@@ -394,13 +413,15 @@ export interface SchedulePack {
  * type makes `tsc` fail here the moment `SchedulePack` gains a field, so what
  * reaches the model is always a decision somebody made, never a default.
  */
-export function toModelPayload(pack: SchedulePack): Omit<SchedulePack, "participants" | "assumptions"> {
+export function toModelPayload(
+  pack: SchedulePack,
+): Omit<SchedulePack, "participants" | "assumptions" | "poolIds"> {
   return {
     mode: pack.mode,
     division: pack.division,
     // #397: the calendar anchor IS prompt material — W2 is the wave that moves
-    // the prompt boundary. The enforcement inputs (participants, assumptions)
-    // stay server-side.
+    // the prompt boundary. The enforcement inputs (participants, assumptions,
+    // poolIds) stay server-side.
     tz: pack.tz,
     clock: pack.clock,
     window: pack.window,
@@ -970,6 +991,13 @@ export async function buildSchedulePack(
     );
     draft.sort(byAssignment);
 
+    // #449: pool UUID per movable fixture, for `pack.poolIds`. `PackFixture.pool`
+    // below stays the display KEY the model reads; this is the namespace the
+    // engine, the DB and every stored rule use.
+    const poolIdByFixture = new Map(
+      movable.flatMap((f) => (f.pool_id !== null ? [[f.id, f.pool_id] as const] : [])),
+    );
+
     const packMovable: PackFixture[] = movable
       .map((f) => ({
         id: f.id,
@@ -1168,6 +1196,17 @@ export async function buildSchedulePack(
       entrants: packEntrants,
       people: packPeople,
       participants,
+      // #449: the pool UUID for engine use, alongside the display key on
+      // `PackFixture.pool`. Built from `packMovable` so the key order follows the
+      // pack's own board order rather than a per-seed row order, exactly as
+      // `participants` does — the byte-identical test compares `JSON.stringify`,
+      // where insertion order is load-bearing.
+      poolIds: Object.fromEntries(
+        packMovable.flatMap((f) => {
+          const id = poolIdByFixture.get(f.id);
+          return id !== undefined ? [[f.id, id] as const] : [];
+        }),
+      ),
       assumptions,
       fixtures: { movable: packMovable, obstacles: packObstacles },
       draft,
@@ -1483,7 +1522,13 @@ export function toEngineAssignments(plan: AiSchedulePlan, pack: SchedulePack): A
       // whoever can still advance into it, which is what every person rule
       // needs and what `pack.people` (pairs sharing an entrant) never had.
       people: pack.participants[a.fixture_id] ?? [],
-      ...(f?.pool != null ? { poolId: f.pool } : {}),
+      // #449: the pool UUID from `pack.poolIds`, NOT `f.pool` — that is the
+      // display key the model reads, and stamping it here put this path in a
+      // different namespace from the board path, `RuleFixture.poolId` and every
+      // stored rule.
+      ...(pack.poolIds[a.fixture_id] !== undefined
+        ? { poolId: pack.poolIds[a.fixture_id]! }
+        : {}),
       divisionId: pack.division.id,
     };
   });
@@ -1570,7 +1615,13 @@ export function toRuleFixture(f: RuleFixtureSource, divisionId: string): RuleFix
  *  `winnerTo` is the ONLY definition of terminal — never a round number, which
  *  is a display label an elimination bracket numbers sparsely. */
 export function packRuleFixtures(pack: SchedulePack): RuleFixture[] {
-  return pack.fixtures.movable.map((f) => toRuleFixture(f, pack.division.id));
+  // #449: the pool UUID, overriding the display key `PackFixture.pool` carries.
+  // `scopeCoversFixture` reads `f?.poolId ?? a.poolId`, so a RuleFixture MASKS
+  // its assignment's value — a key here would defeat the uuid stamped by
+  // `toEngineAssignments` and put the whole AI path back in a second namespace.
+  return pack.fixtures.movable.map((f) =>
+    toRuleFixture({ ...f, pool: pack.poolIds[f.id] ?? null }, pack.division.id),
+  );
 }
 
 /** Exported for the same reason the joint twin `verifyConfigFor` is: it is a

@@ -274,6 +274,14 @@ export interface CompetitionPack {
    *  and {@link toJointEngineAssignments}, so a draft cannot be legal under a
    *  rule the joint referee applies differently. */
   participants: Record<string, string[]>;
+  /** Movable fixture id → its pool's UUID (#449), unioned from the source packs.
+   *  The joint twin of {@link SchedulePack.poolIds}, server-side only for the
+   *  same reason: `CompetitionPackFixture.pool` stays the display KEY the model
+   *  reads, while the engine, the DB and every stored rule speak the uuid.
+   *
+   *  Keys inserted in `fixtures.movable` order, so the object serialises in a
+   *  domain order rather than a per-seed one. */
+  poolIds: Record<string, string>;
   /** Deterministic preprocessing choices worth telling the organiser about:
    *  stripped bye feeders (from each source pack) and the run-wide same-name
    *  person grouping. Rendered at W5 (#400). */
@@ -314,7 +322,7 @@ export interface CompetitionPack {
  */
 export function toJointModelPayload(
   pack: CompetitionPack,
-): Omit<CompetitionPack, "participants" | "assumptions"> {
+): Omit<CompetitionPack, "participants" | "assumptions" | "poolIds"> {
   return {
     mode: pack.mode,
     competition: pack.competition,
@@ -803,6 +811,18 @@ export async function buildCompetitionPack(
   const participants: Record<string, string[]> = {};
   for (const f of movable) participants[f.id] = participantsByFixture.get(f.id) ?? [];
 
+  // #449: the pool UUID per movable fixture, unioned from the source packs (each
+  // built its own map off `fixtures.pool_id`). Same insertion order as
+  // `participants`, and for the same byte-identical reason.
+  const poolIdBySourceFixture = new Map(
+    built.flatMap((b) => Object.entries(b.pack.poolIds)),
+  );
+  const poolIds: Record<string, string> = {};
+  for (const f of movable) {
+    const id = poolIdBySourceFixture.get(f.id);
+    if (id !== undefined) poolIds[f.id] = id;
+  }
+
   // Bye-strip assumptions come from the source packs, in the emitted division
   // order. Identity is reported once, jointly — see IDENTITY_ASSUMPTION.
   const assumptions = [
@@ -989,6 +1009,7 @@ export async function buildCompetitionPack(
     entrants,
     people,
     participants,
+    poolIds,
     assumptions,
     parsed: { hard: resolved.hard, soft: resolved.soft, unparsed: resolved.unparsed },
     fixtures: { movable, obstacles },
@@ -1148,7 +1169,12 @@ export function toJointEngineAssignments(plan: AiSchedulePlan, pack: Competition
       // this read green on a pack that never computed the map.
       people: pack.participants[a.fixture_id] ?? [],
       divisionId: f.division_id,
-      ...(f.pool != null ? { poolId: f.pool } : {}),
+      // #449: the pool UUID from `pack.poolIds`, NOT `f.pool` — that is the
+      // display key the model reads, and it is not even unique across the
+      // divisions this pack spans.
+      ...(pack.poolIds[a.fixture_id] !== undefined
+        ? { poolId: pack.poolIds[a.fixture_id]! }
+        : {}),
     };
   });
 }
@@ -1371,7 +1397,10 @@ export function jointSolverConfig(pack: CompetitionPack): VerifyConfig & { court
   // `toRuleFixture`. Each fixture's OWN division, because a joint pack spans
   // several.
   const ruleFixtures: RuleFixture[] = pack.fixtures.movable.map((f) =>
-    toRuleFixture(f, f.division_id),
+    // #449: the pool UUID, overriding the display key `pool` carries. A
+    // RuleFixture's poolId MASKS its assignment's in `scopeCoversFixture`, so a
+    // key here would defeat the uuid stamped by `toJointEngineAssignments`.
+    toRuleFixture({ ...f, pool: pack.poolIds[f.id] ?? null }, f.division_id),
   );
   const settings = divisions.map((d) => d.settings);
   const max = (pick: (s: (typeof settings)[number]) => number): number =>
@@ -1536,7 +1565,10 @@ export function verifyJoint(plan: AiSchedulePlan, pack: CompetitionPack): Confli
   // solver must be handed rule fixtures built by ONE piece of code, or they can
   // disagree about which fixture a feed edge names.
   const ruleFixtures: RuleFixture[] = pack.fixtures.movable.map((f) =>
-    toRuleFixture(f, f.division_id),
+    // #449: the pool UUID, overriding the display key `pool` carries. A
+    // RuleFixture's poolId MASKS its assignment's in `scopeCoversFixture`, so a
+    // key here would defeat the uuid stamped by `toJointEngineAssignments`.
+    toRuleFixture({ ...f, pool: pack.poolIds[f.id] ?? null }, f.division_id),
   );
   const hard: HardConstraint[] = [
     ...pack.parsed.hard,

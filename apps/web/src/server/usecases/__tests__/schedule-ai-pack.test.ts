@@ -1023,9 +1023,14 @@ describe.skipIf(!HAS_DB)("buildSchedulePack on an elimination bracket (#396)", (
     );
     const final = pack.fixtures.movable.find((f) => f.ext_key === "final")!;
     expect(pack.participants[final.id]).toHaveLength(4);
+    // `poolIds` (#449) is stripped for the same reason: the model schedules by
+    // pool LABEL, which `fixtures.movable[].pool` still carries.
+    expect("poolIds" in payload).toBe(false);
     // Everything else survives the trim byte-for-byte.
     const trimmed = Object.fromEntries(
-      Object.entries(pack).filter(([k]) => k !== "participants" && k !== "assumptions"),
+      Object.entries(pack).filter(
+        ([k]) => k !== "participants" && k !== "assumptions" && k !== "poolIds",
+      ),
     );
     expect(payload).toEqual(trimmed);
   });

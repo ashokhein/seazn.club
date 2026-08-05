@@ -31,6 +31,8 @@ const iso = (t: number) => new Date(t).toISOString();
 
 const DIV_A = "11111111-1111-4111-8111-111111111111";
 const POOL_A = "22222222-2222-4222-8222-222222222222";
+/** What `pools.key` holds — the display label `PackFixture.pool` carries (#449). */
+const POOL_A_KEY = "A";
 
 // A fixtures row exactly as `FIXTURE_LITE_COLS` selects it.
 function row(over: Partial<FixtureLite> = {}): FixtureLite {
@@ -186,6 +188,11 @@ describe("pool-targeted rules through the single-division AI adapter (#446)", ()
       entrants: [],
       people: [],
       participants: { "f-1": [], "f-2": [] },
+      // #449: the pool UUID, which is what the engine matches a stored rule
+      // against. `PackFixture.pool` below is the display KEY the model reads —
+      // this test used to author the uuid there, a shape the real builder never
+      // produces, so the two namespaces looked like one.
+      poolIds: { "f-1": POOL_A, "f-2": POOL_A },
       assumptions: [],
       parsed: { hard: [], soft: [], unparsed: [] },
       fixtures: {
@@ -195,7 +202,7 @@ describe("pool-targeted rules through the single-division AI adapter (#446)", ()
             ext_key: null,
             round: 0,
             seq: 0,
-            pool: POOL_A,
+            pool: POOL_A_KEY,
             home: "e1",
             away: "e2",
             feeds: { winner_to: null, after: [] },
@@ -207,7 +214,7 @@ describe("pool-targeted rules through the single-division AI adapter (#446)", ()
             ext_key: null,
             round: 1,
             seq: 0,
-            pool: POOL_A,
+            pool: POOL_A_KEY,
             home: "e1",
             away: "e3",
             feeds: { winner_to: null, after: [] },

@@ -56,6 +56,8 @@ function makePack(overrides: Partial<import("../schedule-ai").SchedulePack> = {}
     people: [],
     // #396: keyed for every movable fixture; no persons in this pack, so empty.
     participants: Object.fromEntries([F1, F2, F3, F4].map((id) => [id, [] as string[]])),
+    // #449: no pooled fixtures in this pack, so no pool uuids to carry.
+    poolIds: {},
     assumptions: [],
     fixtures: {
       movable: [F1, F2, F3, F4].map((id, i) => ({

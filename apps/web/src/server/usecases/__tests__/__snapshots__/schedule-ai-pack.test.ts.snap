@@ -797,6 +797,7 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       "person_id": "<id:10>",
     },
   ],
+  "poolIds": {},
   "prior": null,
   "sessionHours": {
     "end": "22:00",
