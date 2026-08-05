@@ -1767,6 +1767,8 @@ export type DictionaryKey =
   | "hero.subhead"
   | "history.checkpoint.delete"
   | "history.checkpoint.empty"
+  | "history.checkpoint.evicted"
+  | "history.checkpoint.evictedHint"
   | "history.checkpoint.groupAi"
   | "history.checkpoint.groupYours"
   | "history.checkpoint.latestAi"

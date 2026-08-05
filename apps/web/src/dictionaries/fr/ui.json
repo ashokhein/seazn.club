@@ -99,6 +99,8 @@
   "history.checkpoint.notCounted": "non comptés",
   "history.checkpoint.groupAi": "Points de restauration IA",
   "history.checkpoint.groupYours": "Les vôtres",
+  "history.checkpoint.evicted": "« {name} » a été remplacé — votre offre conserve {count} points de sauvegarde.",
+  "history.checkpoint.evictedHint": "Annuler revient toujours au-delà.",
   "board.ai.errorLabel": "Impossible de terminer.",
   "board.ai.errorGeneric": "Une erreur s'est produite. Réessayez.",
   "board.ai.error.upgrade": "La planification IA nécessite un forfait Pro.",

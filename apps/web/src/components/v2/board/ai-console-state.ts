@@ -467,6 +467,11 @@ export function applyErrorKey(
   // not the AI grade — AI is already granted on this tier, so route it to the
   // save-point line ("delete a save point or upgrade") instead of the generic
   // "upgrade to use AI" the plain 402 → error.upgrade mapping would give.
+  //
+  // #382 made this branch UNREACHABLE from the manual save path: at the cap the
+  // save now rolls the window rather than 402ing. It stays deliberately — it
+  // still guards any future caller that reintroduces a hard cap, and deleting a
+  // defensive branch to chase coverage is how the next regression gets in.
   if (outcome.errorStatus === 402 && outcome.errorCode === "schedule.checkpoints.max") {
     return "board.ai.apply.checkpointQuota";
   }

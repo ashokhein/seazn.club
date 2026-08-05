@@ -99,6 +99,8 @@
   "history.checkpoint.notCounted": "tellen niet mee",
   "history.checkpoint.groupAi": "AI-herstelpunten",
   "history.checkpoint.groupYours": "Van jou",
+  "history.checkpoint.evicted": "“{name}” is vervangen — je abonnement bewaart {count} bewaarpunten.",
+  "history.checkpoint.evictedHint": "Ongedaan maken gaat er nog steeds voorbij.",
   "board.ai.errorLabel": "Kon niet voltooien.",
   "board.ai.errorGeneric": "Er ging iets mis. Probeer opnieuw.",
   "board.ai.error.upgrade": "AI-planning vereist een Pro-abonnement.",

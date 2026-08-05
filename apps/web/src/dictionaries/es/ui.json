@@ -99,6 +99,8 @@
   "history.checkpoint.notCounted": "no se cuentan",
   "history.checkpoint.groupAi": "Puntos de restauración de IA",
   "history.checkpoint.groupYours": "Tuyos",
+  "history.checkpoint.evicted": "«{name}» se reemplazó: tu plan conserva {count} puntos de guardado.",
+  "history.checkpoint.evictedHint": "Deshacer sigue retrocediendo más allá de él.",
   "board.ai.errorLabel": "No se pudo completar.",
   "board.ai.errorGeneric": "Algo salió mal. Inténtalo de nuevo.",
   "board.ai.error.upgrade": "La programación con IA necesita un plan Pro.",

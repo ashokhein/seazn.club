@@ -99,6 +99,8 @@
   "history.checkpoint.notCounted": "not counted",
   "history.checkpoint.groupAi": "AI restore points",
   "history.checkpoint.groupYours": "Yours",
+  "history.checkpoint.evicted": "“{name}” was replaced — your plan keeps {count} save points.",
+  "history.checkpoint.evictedHint": "Undo still rewinds past it.",
   "board.ai.errorLabel": "Couldn't finish.",
   "board.ai.errorGeneric": "Something went wrong. Try again.",
   "board.ai.error.upgrade": "AI scheduling needs a Pro plan.",

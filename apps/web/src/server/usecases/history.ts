@@ -20,7 +20,9 @@ import {
 } from "@seazn/engine/history";
 import { EngineError } from "@seazn/engine/core";
 import { withTenant } from "@/lib/db";
-import { HttpError, PaymentRequiredError } from "@/lib/errors";
+// PaymentRequiredError is no longer thrown here: since #382 a manual save at
+// the cap rolls the window instead of refusing (see `createCheckpoint`).
+import { HttpError } from "@/lib/errors";
 import { requireFeature, withinLimit } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { generateStageFixtures } from "./stages";
@@ -297,6 +299,14 @@ export interface CheckpointRow {
    *  through. They stay restorable: the ledger can rewind to any watermark, and
    *  jumping back two AI runs is a real capability worth keeping. */
   superseded?: boolean;
+  /** #382 — set on the row RETURNED BY A CREATE, never by a list: the save
+   *  point this one pushed out of the plan's rolling window. The panel names it
+   *  in a non-blocking notice, so the organiser learns which label they lost
+   *  rather than discovering it missing later.
+   *
+   *  Present only when something was actually dropped. One name, even when a
+   *  downgrade drops several — see `createCheckpoint`. */
+  evicted?: { id: string; label: string };
 }
 
 export async function listCheckpoints(auth: AuthCtx, divisionId: string): Promise<CheckpointRow[]> {
@@ -332,12 +342,59 @@ export async function createCheckpoint(
     // flow's own undo anchor is what previously blocked a community org that
     // already held one save point from applying an AI schedule at all — the
     // create 402'd, the apply aborted, and the AI generation was already spent.
+    //
+    // #382: at the cap this used to throw PaymentRequiredError. It now ROLLS.
+    // A checkpoint is a named bookmark, not the history — the ledger keeps
+    // every event and restore is "undo until the watermark reaches this seq",
+    // so dropping a save point costs the LABEL, not the ability to rewind that
+    // far. Refusing the save cost the organiser the thing they were doing, in
+    // the middle of doing it, which is a far worse trade than losing the oldest
+    // bookmark. The quota still means something: it is the width of the window.
+    let evicted: { id: string; label: string } | undefined;
     if (kind === "manual") {
       const [{ n }] = await tx<{ n: number }[]>`
         select count(*)::int as n from division_checkpoints
         where division_id = ${divisionId} and kind = 'manual'`;
-      const quota = await withinLimit(auth.orgId, "schedule.checkpoints.max", n + 1);
-      if (!quota.ok) throw new PaymentRequiredError("schedule.checkpoints.max");
+      const { limit } = await withinLimit(auth.orgId, "schedule.checkpoints.max", n + 1);
+      // A null limit is unlimited (pro_plus) — never evict.
+      if (limit !== null && n >= limit) {
+        // Delete n - limit + 1, so the POST-INSERT count is exactly the limit.
+        // Do not assume n === limit: a plan downgrade can leave a division above
+        // the cap, and one save must bring it back to the limit, not to n.
+        //
+        // Order: created_at asc, seq asc, id asc. The `id` tie-break is a UUID,
+        // which the determinism rule normally forbids — acceptable here because
+        // this is SELECTION INPUT, not output ordering, the same exemption
+        // advisory-lock ordering gets. Do not "fix" it.
+        const drop = n - limit + 1;
+        const gone = await tx<
+          { id: string; label: string; created_at: Date | string; seq: string | number }[]
+        >`
+          delete from division_checkpoints
+           where id in (
+             select id from division_checkpoints
+              where division_id = ${divisionId} and kind = 'manual'
+              order by created_at asc, seq asc, id asc
+              limit ${drop}
+           )
+           returning id, label, created_at, seq`;
+        // RETURNING does NOT preserve the subquery's ORDER BY — Postgres hands
+        // back deleted rows in whatever order it removed them. Re-apply the
+        // same ordering here rather than trusting the array's shape.
+        //
+        // The notice names ONE save point; when several go (a downgrade), name
+        // the newest of them — it is the one the organiser is likeliest to miss.
+        const newest = gone
+          .slice()
+          .sort(
+            (a, b) =>
+              new Date(a.created_at).getTime() - new Date(b.created_at).getTime() ||
+              Number(a.seq) - Number(b.seq) ||
+              (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+          )
+          .at(-1);
+        if (newest) evicted = { id: newest.id, label: newest.label };
+      }
     }
     const ledger = await loadLedger(tx, divisionId);
     const wm = meta.edit_watermark ?? (ledger[ledger.length - 1]?.seq ?? 0);
@@ -345,7 +402,7 @@ export async function createCheckpoint(
       insert into division_checkpoints (division_id, seq, label, kind, created_by)
       values (${divisionId}, ${wm}, ${label}, ${kind}, ${auth.userId})
       returning id, seq, label, kind, created_at`;
-    return row!;
+    return { ...row!, ...(evicted ? { evicted } : {}) };
   });
 }
 

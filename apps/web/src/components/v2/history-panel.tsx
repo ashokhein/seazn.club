@@ -34,6 +34,9 @@ interface Checkpoint {
   /** Every AI anchor except the newest. Struck through, still restorable. */
   superseded?: boolean;
   created_at: string;
+  /** #382 — only ever on the row a CREATE returns: the save point this one
+   *  pushed out of the plan's rolling window. */
+  evicted?: { id: string; label: string };
 }
 
 /** Render order is deliberate: the organiser's own save points first, since
@@ -75,6 +78,11 @@ export function HistoryPanel({
   const [label, setLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
+  /** #382 — the label the last save rolled out of the window. A NOTICE, not a
+   *  paywall: the save SUCCEEDED, and undo still rewinds past the dropped
+   *  bookmark. Naming it is the whole point — an organiser who is not told
+   *  which label went looks for it later and finds a hole. */
+  const [evicted, setEvicted] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -99,6 +107,9 @@ export function HistoryPanel({
   async function run(fn: () => Promise<unknown>) {
     setError(null);
     setPaywallFeature(null);
+    // Cleared per action, not per save: the notice belongs to the action the
+    // organiser just took, and a stale one beside an undo would be a lie.
+    setEvicted(null);
     setBusy(true);
     try {
       await fn();
@@ -203,11 +214,14 @@ export function HistoryPanel({
                 e.preventDefault();
                 if (!label.trim()) return;
                 void run(async () => {
-                  await apiV1(`/api/v1/divisions/${divisionId}/checkpoints`, {
-                    method: "POST",
-                    json: { label: label.trim() },
-                  });
+                  const created = await apiV1<Checkpoint>(
+                    `/api/v1/divisions/${divisionId}/checkpoints`,
+                    { method: "POST", json: { label: label.trim() } },
+                  );
                   setLabel("");
+                  // #382 — the save succeeded either way; `evicted` only says
+                  // whether it cost the oldest bookmark its label.
+                  if (created?.evicted) setEvicted(created.evicted.label);
                 });
               }}
             >
@@ -232,6 +246,19 @@ export function HistoryPanel({
                 Save point
               </button>
             </form>
+          )}
+          {/* #382 — non-blocking, and deliberately NOT an UpgradeGate: nothing
+              was refused. The count is the manual group's own length, which
+              after an eviction IS the plan's window width — no second read,
+              and it cannot disagree with the list right below it. */}
+          {evicted && (
+            <p className="rounded-md bg-amber-50 px-2.5 py-1.5 text-[11px] leading-snug text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">
+              {msg("history.checkpoint.evicted", {
+                name: evicted,
+                count: String(checkpoints.filter((c) => (c.kind ?? "manual") === "manual").length),
+              })}{" "}
+              <span className="opacity-80">{msg("history.checkpoint.evictedHint")}</span>
+            </p>
           )}
           {/* Grouped by kind, because the two obey different rules: a manual
               save point spends the organiser's quota, an AI anchor does not.
