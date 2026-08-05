@@ -92,12 +92,21 @@ vi.mock("@/lib/db", () => {
   const sql = (strings: TemplateStringsArray | unknown[], ...vals: unknown[]) => {
     if (!Array.isArray(strings) || !("raw" in strings)) return { __fragment: strings };
     const text = (strings as TemplateStringsArray).join(" ");
-    // ONE row, always — the page LEFT JOINs the pass onto the competition
-    // (#376), so the competition's own `status`/`ends_on` come back whether or
-    // not a pass exists and the pass columns are null when it does not. The
-    // pre-#376 double returned `[]` for a competition with no pass, which is
-    // exactly the shape that made the lock unjudgeable there.
-    if (text.includes("competition_passes"))
+    // MODEL the join; do not assume it. The page LEFT JOINs the pass onto the
+    // competition (#376), so the competition's own `status`/`ends_on` come back
+    // whether or not a pass exists, with the pass columns null when it does not.
+    //
+    // The `left join` test is the load-bearing part. A double that hands back
+    // one row whatever the query says cannot tell a LEFT JOIN from the INNER
+    // JOIN this page used before #376 — and the INNER one is the whole defect,
+    // because real Postgres returns NO row for a competition with no pass, so
+    // `status`/`ends_on` were never read and the lock could not be judged even
+    // in principle. Reproduce that faithfully: an inner join plus no pass row
+    // is an empty result, and every closed-state assertion here goes red if the
+    // query ever regresses to it.
+    if (text.includes("competition_passes")) {
+      const leftJoined = /left\s+(?:outer\s+)?join/i.test(text);
+      if (!leftJoined && h.passRow == null) return Promise.resolve([]);
       return Promise.resolve([
         {
           purchased_at: null,
@@ -107,6 +116,7 @@ vi.mock("@/lib/db", () => {
           ...(h.passRow ?? {}),
         },
       ]);
+    }
     if (text.includes("plan_entitlements")) return Promise.resolve(h.matrix);
     // groupAlreadyRedeemed's own query (pass-credit.ts) — checked before the
     // org→group join below since both mention "organizations"-adjacent tables.
