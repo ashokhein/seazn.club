@@ -45,7 +45,7 @@
   "dependencies": {
     "@seazn/engine": "workspace:*",
     "postgres": "^3.4.9",
-    "stripe": "22.3.0"
+    "stripe": "^22.3.0"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
