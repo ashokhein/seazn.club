@@ -129,10 +129,15 @@ export async function rungsExceedingPlan(
   passKeys: readonly string[],
   planKey: string,
 ): Promise<string[]> {
+  // Hoisted deliberately. Inlining this spread inside the template hole makes
+  // TS 7 resolve postgres.js's overload set to the tagged-template signature
+  // and fail with TS2769 ("Property 'raw' is missing in type 'string[]'").
+  // Runtime behaviour is identical — see pass-vs-plan-sql.test.ts.
+  const ladderKeys = [...passKeys, planKey];
   const rows = await sql<(EntitlementRow & { plan_key: string })[]>`
     select plan_key, feature_key, bool_value, int_value
       from plan_entitlements
-     where plan_key in ${sql([...passKeys, planKey])}`;
+     where plan_key in ${sql(ladderKeys)}`;
   const planRows = rows.filter((r) => r.plan_key === planKey);
   return passKeys.filter((k) =>
     passBeatsPlan(
