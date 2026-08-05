@@ -67,8 +67,14 @@ describe.skipIf(!HAS_DB)("createOrgForUser — AI credit wallet bootstrap grant"
     await grantMonthlyForAllWallets();
 
     // Same idempotency key (`monthly:${walletId}:${period}`) as the bootstrap
-    // call — the cron sees it already granted this period and skips, so the
-    // balance stays 10, not 20.
+    // call, so the balance stays 10, not 20.
+    //
+    // Since #390 it stays 10 for a BETTER reason than it used to. The cron no
+    // longer opens this wallet at all: the sweep's `not exists` anti-join sees
+    // the bootstrap grant's key for this period and never selects the row, so
+    // there is no per-wallet resolve, no advisory lock and no transaction to
+    // discover the no-op inside. The outcome asserted here is unchanged —
+    // that is the point — but the work behind it is gone.
     expect(await balance(walletId)).toBe(10);
   });
 });
