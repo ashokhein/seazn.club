@@ -172,14 +172,36 @@ test.describe.serial("event pass gate (community org)", () => {
     await expect(page.locator("[data-pass-active]")).toBeVisible({ timeout: 20_000 });
 
     // …and from here on, no gate under this competition offers the pass a
-    // second time (spec D1). The competition-wide schedule board is Pro-only
-    // and the pass never lifted it, so the paywall still renders — but as the
-    // pass-owned card: one Pro path, no $29 button.
-    // Strip the query as well as the segment — `/upgrade$` alone stopped
-    // matching once the gate started appending `?feature=`, and a no-op replace
-    // would have quietly re-loaded the upgrade page and asserted against it.
-    await page.goto(passHref!.replace(/\/upgrade(\?.*)?$/, "/schedule"));
-    const owned = page.locator("[data-pass-owned]").first();
+    // second time (spec D1). Assert that where the pass's OWN ceiling bites —
+    // the division cap, M's 10 — because that is the surface still gated for a
+    // holder. This block used to read the competition-wide schedule board on
+    // the premise that it was Pro-only and the pass never lifted it; V353
+    // (#382/#478) granted `scheduling.multi_division` to event_pass, so that
+    // page renders the real board and emits no gate at all. #478 migrated the
+    // sibling assertions in event-pass.spec.ts and pro-plus-tier.spec.ts onto
+    // the still-unlifted key and left this one behind — the "element(s) not
+    // found" was the stale premise, not a regression.
+    for (const name of ["Six", "Seven", "Eight", "Nine", "Ten"]) {
+      const d = await apiJson(request, `/api/v1/competitions/${compId}/divisions`, "POST", {
+        name,
+        ...GENERIC,
+      });
+      expect(d.status).toBe(201);
+    }
+    const eleventh = await apiJson(request, `/api/v1/competitions/${compId}/divisions`, "POST", {
+      name: "Eleven",
+      ...GENERIC,
+    });
+    expect(eleventh.status).toBe(402);
+
+    await page.goto(passHref!.replace(/\/upgrade(\?.*)?$/, "/d/new"));
+    await page.getByPlaceholder("U16 Boys T20").fill("Owned Card");
+    await page.getByRole("button", { name: "Scheduling" }).click();
+    await page.getByRole("button", { name: "Create division" }).click();
+    // Scoped to the feature that actually bit, never `.first()` — the same
+    // reason event-pass.spec.ts scopes it: `.first()` reads whichever gate
+    // happens to come first on the page and asserts nothing about divisions.
+    const owned = page.locator('[data-pass-owned][data-feature="divisions.per_competition.max"]');
     await expect(owned).toBeVisible({ timeout: 20_000 });
     // `grantCompetitionPassSql` grants M, and since v17 #294 this card names
     // the rung rather than the product family.
