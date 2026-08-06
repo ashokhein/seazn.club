@@ -194,13 +194,25 @@ export function renderIsland<P>(
   }[] = [];
   // Memo cells, keyed by call order like every other hook — see `useMemo` on
   // HookDispatcher for why this is not a straight-through call.
-  const memos: { deps: Deps; value: Cell }[] = [];
+  const memos: ({ deps: Deps; value: Cell } | undefined)[] = [];
   let memoCursor = 0;
   // Callback cells get their own list rather than sharing the memo one: every
   // hook type here is keyed by its OWN call order, and mixing two would make
   // each list's indices depend on the other's call sites.
-  const callbacks: { deps: Deps; value: Cell }[] = [];
+  const callbacks: ({ deps: Deps; value: Cell } | undefined)[] = [];
   let callbackCursor = 0;
+  // How to put the memo/callback lists back if THIS pass is discarded.
+  //
+  // The state hooks are the other way round and deliberately so: React QUEUES a
+  // render-phase update and applies it on the re-run — that is the entire
+  // mechanism, so `cells` and reducer state must survive a discarded pass.
+  // `useMemo`/`useCallback` carry no queue. On the re-run React clones the hook
+  // from the CURRENT (last committed) fiber, so it compares `deps` against the
+  // last COMMIT, not against the pass it threw away. Keeping a discarded pass's
+  // entry makes the surviving pass read "unchanged" and hand back a value
+  // computed before the adjustment — closing over pre-adjustment state, for
+  // ever, with nothing rendered differently to notice.
+  let cacheUndo: (() => void)[] = [];
   // Ref boxes are created once and never replaced — that identity IS the hook.
   const refs: { current: Cell }[] = [];
   let refCursor = 0;
@@ -238,13 +250,19 @@ export function renderIsland<P>(
     useMemo(create, deps) {
       const index = memoCursor++;
       const before = memos[index];
-      if (depsChanged(before, deps)) memos[index] = { deps, value: create() };
+      if (depsChanged(before, deps)) {
+        cacheUndo.push(() => void (memos[index] = before));
+        memos[index] = { deps, value: create() };
+      }
       return memos[index]!.value;
     },
     useCallback(fn, deps) {
       const index = callbackCursor++;
       const before = callbacks[index];
-      if (depsChanged(before, deps)) callbacks[index] = { deps, value: fn };
+      if (depsChanged(before, deps)) {
+        cacheUndo.push(() => void (callbacks[index] = before));
+        callbacks[index] = { deps, value: fn };
+      }
       return callbacks[index]!.value;
     },
     useRef(initial) {
@@ -298,6 +316,7 @@ export function renderIsland<P>(
       refCursor = 0;
       reducerCursor = 0;
       pending = [];
+      cacheUndo = [];
       const previous = slot.H;
       slot.H = dispatcher;
       rendering = true;
@@ -306,6 +325,12 @@ export function renderIsland<P>(
       } finally {
         rendering = false;
         slot.H = previous;
+      }
+      if (renderPhaseUpdate) {
+        // Discarded: unwind this pass's memo/callback writes, newest first, so
+        // the next pass compares against the last COMMITTED deps.
+        for (let i = cacheUndo.length - 1; i >= 0; i -= 1) cacheUndo[i]!();
+        cacheUndo = [];
       }
       if (++passes > 25) {
         throw new Error(

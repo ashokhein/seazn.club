@@ -405,6 +405,83 @@ describe("_hook-harness render-phase updates (the 'derive from props' pattern)",
     expect(ran).toEqual(["a", "b"]);
   });
 
+  /**
+   * The CACHE half of the same bookkeeping, and the one that survived the first
+   * fix. `useState`/`useReducer` writes made during a discarded pass MUST stand
+   * — React queues render-phase updates and applies them, which is the whole
+   * mechanism (the test above pins it: `colour` really does become "blue").
+   * `useMemo`/`useCallback` are the opposite: on the re-run React compares
+   * against the LAST COMMITTED render's deps, not against the pass it threw
+   * away. So a memo whose deps moved since the commit but not between the two
+   * passes recomputes in React and did NOT here — the harness handed back a
+   * value computed before the adjustment, closing over pre-adjustment state.
+   *
+   * Deps naming the prop but not the adjusted state is exactly the shape that
+   * makes this observable, and exactly what production writes when a value is
+   * "derived once per prop change".
+   */
+  it("re-derives a memo whose deps moved since the COMMIT, not since the last pass", () => {
+    const computed: string[] = [];
+
+    function Island({ tag }: { tag: string }) {
+      const [seenTag, setSeenTag] = useState(tag);
+      const [colour, setColour] = useState("red");
+      if (seenTag !== tag) {
+        setSeenTag(tag);
+        setColour("blue");
+      }
+      // The omitted `colour` IS the mechanism: with it in the deps the array
+      // moves between the two passes and the memo recomputes for that reason
+      // instead, so "fixing" this lint warning deletes the test.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const badge = useMemo(() => `${tag}-${colour}`, [tag]);
+      computed.push(badge);
+      return <button type="button">{badge}</button>;
+    }
+
+    const island = renderIsland(Island, { tag: "a" });
+    expect(island.text()).toContain("a-red");
+
+    island.rerender({ tag: "b" });
+
+    // The discarded pass computed "b-red" — `colour` was still the pre-
+    // adjustment value when that pass ran. Keeping it made the surviving pass
+    // read a cache entry from a render that never happened.
+    expect(island.text()).toContain("b-blue");
+    expect(computed[computed.length - 1]).toBe("b-blue");
+  });
+
+  it("re-derives a callback the same way, so it cannot close over pre-adjustment state", () => {
+    // Same rule, other cell list. A stale callback is worse than a stale memo:
+    // nothing renders it, so it is invisible until it fires.
+    const fired: string[] = [];
+
+    function Island({ tag }: { tag: string }) {
+      const [seenTag, setSeenTag] = useState(tag);
+      const [colour, setColour] = useState("red");
+      if (seenTag !== tag) {
+        setSeenTag(tag);
+        setColour("blue");
+      }
+      // Omitted deliberately — see the memo case above.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const onPick = useCallback(() => fired.push(`${tag}-${colour}`), [tag]);
+      return (
+        <button type="button" onClick={onPick}>
+          {colour}
+        </button>
+      );
+    }
+
+    const island = renderIsland(Island, { tag: "a" });
+    clickButton(island.tree());
+    expect(fired).toEqual(["a-red"]);
+
+    island.rerender({ tag: "b" });
+    clickButton(island.tree());
+    expect(fired).toEqual(["a-red", "b-blue"]);
+  });
+
   it("fails loudly rather than hanging when an adjustment never converges", () => {
     function Island() {
       const [n, setN] = useState(0);
