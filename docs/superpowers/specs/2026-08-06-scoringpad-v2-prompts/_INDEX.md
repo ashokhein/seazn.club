@@ -57,6 +57,10 @@ Facts the 2026-08-03 prompt file gets wrong. Trust these, not that file.
 | minor version bump per touched module | **no bumps** — owner ruling, no prod data, extend at `1.0.0` |
 | `padSpec` exists somewhere | absent from `packages/` — W5 is untouched greenfield |
 | 11 `DOMAIN.md` files | 8 + 3 `DOMAIN.<sport>.md` inside `setbased/` |
+| corpus is "2.2 MB" (#429 body, S1 brief) | **4,507,821 bytes** across 11 files at `6846af19` — roughly double, grown by `EXTEND_GOLDEN` passes since W4. Cricket alone is 1,865,370 (41%) |
+| only `UPDATE_GOLDEN=1` and `EXTEND_GOLDEN=1` exist | **false** — `REBASELINE_GOLDEN=1` already existed before S1 (same events, recomputed fold) and already cited #429. S1 enforces it; it did not invent it |
+| a re-baseline "is reviewed as a state diff" | not possible by inspection — corpora are **single-line minified JSON**, so `git diff` renders any re-baseline as one replaced line. The harness-emitted summary is the only reviewable artifact |
+| the never-re-baseline rule held | **false** — `1f56bd5e` (#468, DLS) shipped `cricket.golden.json` mixed into 7 functional files including `apps/web/e2e` and `scripts/smoke.ts` |
 
 Every line number in any prompt file predates 54 W4 commits. **Scout re-pins
 before the implementer touches anything.**
@@ -81,6 +85,23 @@ Append one line per ruling: date, session, decision, reason. Never delete.
 - 2026-08-03 — W4 — frozen golden corpus lands before any schema work (`55b77714`).
 - 2026-08-06 — planning — session order fixed as above; #429 first because five
   correctness rows are deadlocked on the never-re-baseline rule.
+- 2026-08-06 — S1 — **"never re-baseline" is replaced by "never re-baseline
+  silently."** A re-baseline is legitimate only when deliberate, isolated in its
+  own commit, and reviewed as a state diff. Reason: the freeze rule protected
+  divisions pinned to a module version, and there is no production data — the
+  same ground on which W4 skipped version bumps. Enforced, not documented:
+  `UPDATE_GOLDEN=1` and `REBASELINE_GOLDEN=1` both refuse to run unless every
+  dirty path is a corpus file the run is about to rewrite, and a re-baseline
+  prints a per-stream state-diff summary. Policy home:
+  `packages/engine/src/testkit/GOLDEN-POLICY.md` (`6846af19`).
+- 2026-08-06 — S1 — the config-subset tolerance in `stateMismatch` is
+  **permanent and may not be narrowed**: a zod `.default()` on an additive knob
+  shifts the resolved config in every frozen state while changing no fold.
+  Recorded so a later session does not "tighten" it as a gap.
+- 2026-08-06 — S1 — the brief's premise that a **nested** key named `cfg` was a
+  live defect is **false**; the status quo was already green there. It ships as a
+  regression guard, mutation-proved. The live defect was the sibling write path
+  `keepRecordedConfig`, which was untested and carried both weaknesses.
 - _(append below)_
 
 ## Open questions for the owner
