@@ -253,6 +253,14 @@ export function canSolveWithin(
   existing: readonly Assignment[] = [],
 ): boolean {
   if (fixtures.length === 0) return false;
+  // THE BARE LATTICE, WITHOUT THE SEED'S PINS — this runs before any seed
+  // exists, and running greedy here to find out would cost more than the solve
+  // it is gating. The pins add at most one slot per fixture (`seedPinsOf`), and
+  // zero on the common case where the seed is on-grid, so this under-prices a
+  // rest-chained board by up to `n` slots. Left un-padded deliberately: padding
+  // every board by `n` would refuse boards that add nothing, and the gate is
+  // calibrated by MEASUREMENT (Task 13's sweep, run at both an on-grid and an
+  // off-grid rest) rather than by arithmetic.
   const grid = restrictToConfiguredCourts(buildGrid({ config, existing }), config.courts, []);
   if (grid.overCap || grid.slots.length === 0) return false;
   // Scaled by the wall the caller will really use. The 20_000 figure was
@@ -420,11 +428,11 @@ export type BuildStatus =
    * OR EVERY QUESTION WAS VACUOUS — the ladder ran and established nothing:
    *
    *   * the greedy seed sits BETWEEN slots AND the lattice cannot carry a board
-   *     as good as it. `gridStepMinutes` folds every interval that can displace
-   *     a start, but it is floored at `REPAIR_GRID_MINUTES` and no gcd over
-   *     durations can reach an ABSOLUTE anchor — a `startWindows.notBefore` at
-   *     09:07, a blackout edge, an existing booking's `endAt + gap`. Where that
-   *     leaves the incumbent's own metrics out of reach, the first tier bound is
+   *     as good as it. Every seed placement is PINNED into the lattice
+   *     (`seedPinsOf`), so this is now the residue rather than the common case:
+   *     a pin is refused when the slot is inadmissible (a blackout, a session
+   *     edge) or on a court the organiser did not configure. Where that leaves
+   *     the incumbent's own metrics out of reach, the first tier bound is
    *     unachievable, the model goes unsat, and every later walk is unsat on its
    *     first ask: all four tiers "complete" having looked at nothing.
    *
@@ -1216,7 +1224,11 @@ async function solveBuild(
   /** Sorted and de-duplicated: a `locked` card named in `frozen` too is one
    *  pin, and the order is part of what makes two runs comparable. */
   const pinnedIds = [...new Set(pins.map((p) => p.id))].sort();
-  const grid = restrictToConfiguredCourts(buildGrid({ config, existing, pinned }), config.courts, pinned);
+  const grid = restrictToConfiguredCourts(
+    buildGrid({ config, existing, pinned, seedPins: seedPinsOf(seedAssignments, config.courts) }),
+    config.courts,
+    pinned,
+  );
   // NO LNS PASS HERE, AND THAT IS DELIBERATE — do not "fix" this by wiring one
   // up. `buildGrid` never reads the fixture list at all: `overCap` is a
   // function of the config, the immovable board and the pins alone. So every
@@ -1237,16 +1249,23 @@ async function solveBuild(
    * Is the board we already have in hand REPRESENTABLE on the lattice we are
    * about to search?
    *
-   * `gridStepMinutes` folds every interval that can displace a start, so a
-   * modern config lands on the grid by construction. Two residues survive it and
-   * neither is fixable by choosing a better step:
+   * Every seed placement was just pinned into it (`seedPinsOf`), so the answer
+   * is normally yes and this flag is normally false. Two residues survive that,
+   * and neither is fixable by choosing a better step:
    *
-   *   * the `REPAIR_GRID_MINUTES` floor, which clamps an honest gcd of 1 or 2
-   *     minutes up to 5;
-   *   * an ABSOLUTE anchor — `startWindows.notBefore` at 09:07, a blackout `to`,
-   *     an existing booking's `endAt + gap` — which no gcd over DURATIONS can
-   *     divide, because the lattice is anchored at the day and the anchor is
-   *     not.
+   *   * a pin `buildGrid` REFUSED — an inadmissible slot (inside a blackout,
+   *     outside every session window, on top of an existing booking) that the
+   *     legalisation pass kept because whatever it breaches is not blocking;
+   *   * a seed row on a court `config.courts` does not list, which is dropped
+   *     rather than buying a ghost court a lattice slot.
+   *
+   * NEITHER IS CONSTRUCTIBLE THROUGH THIS FUNCTION TODAY, and the flag stays
+   * anyway. `slotFixtures` iterates `config.courts` alone (`calendar.ts:734`),
+   * so the second cannot arise; and it refuses a start on exactly the grounds
+   * `admits` does — measured, a card ready at +25 against an existing booking
+   * at +60..+90 is placed at +100 by BOTH — so the first cannot either. That is
+   * two independent components agreeing, not one rule; this is what notices if
+   * they stop, and on the path where they agree it costs nothing at all.
    *
    * When the seed is off the lattice the tier ladder CAN degenerate: the first
    * bound it is handed is the incumbent's own metric, the lattice cannot achieve
@@ -1255,10 +1274,9 @@ async function solveBuild(
    * indistinguishable — from the outside — from a genuine optimality proof.
    *
    * CAN, not DOES, and that distinction is the whole of why this flag is only
-   * HALF the test. An off-grid ROW is not a vacuous LADDER. One `existing`
-   * booking ending at :37 against a ten-minute gap parks a single card at :47,
-   * off any 5/10/15/20-minute lattice anchored at local midnight, on a board
-   * whose other twenty cards are all on-grid — and the lattice carries a board
+   * HALF the test. An UNREPRESENTABLE ROW is not a vacuous LADDER. One card the
+   * organiser dragged into a blackout keeps its pin refused on a board whose
+   * other twenty cards are pinned or on-grid — and the lattice carries a board
    * every bit as good, so z3 searches properly and proves nothing better.
    * Reporting `not_searched` off `seedOffLattice` alone flags that run, telling
    * an organiser their schedule was never looked at when it was: the same class
@@ -1846,6 +1864,60 @@ async function solveBuild(
     rlimitSpent: budget.spent,
     lnsWindowRlimits,
   };
+}
+
+/**
+ * THE INVARIANT: THE SOLVER MUST NEVER BE UNABLE TO EXPRESS ITS OWN INCUMBENT.
+ *
+ * Every tier bound the ladder asserts is read off the incumbent's own metrics,
+ * so a lattice that cannot hold the incumbent makes the FIRST bound unsat and
+ * every walk after it unsat on its first ask — four tiers "completed" having
+ * refuted nothing, which is indistinguishable from a proof unless somebody asks
+ * (`latticeHoldsIncumbent`). The cure is to put the incumbent's own
+ * `(court, startAt)` pairs into the lattice.
+ *
+ * WHY NOT A FINER STEP. `gridStepMinutes` was briefly made to fold every rest
+ * amount so that greedy's `lastEnd + rest` chaining landed on the grid by
+ * construction. It works, and it costs ~8x the lattice on EVERY board whose
+ * rest is incommensurate with its pitch — measured at the 8 s wall: slots at
+ * n=10/80/140 24/168/288 -> 136/1260/2192, last improving size 80 -> 20,
+ * `canSolveWithin` admitting n<=80 -> n<=20, and three of eighteen runs killed
+ * outright by an emscripten heap OOM inside the WASM, which in production is
+ * the request's whole process. Pinning is O(n) extra slots, and only on the
+ * boards that are actually off-grid.
+ *
+ * TWO THINGS IT IS NOT.
+ *
+ *   * NOT a promise that the seed is representable. A pin on a court the
+ *     organiser did not configure is dropped here (`restrictToConfiguredCourts`
+ *     would drop it anyway, and buying a ghost court a slot is the bug R20
+ *     fixed), and `buildGrid` refuses one whose slot is inadmissible. So
+ *     `seedOffLattice` stays reachable and `not_searched` stays honest — rare
+ *     rather than impossible.
+ *   * NOT free of consequence for the search. Those slots are then available to
+ *     EVERY fixture, not only the one that seeded them, so `already_optimal`
+ *     means "over the lattice plus the seed's own slots". That is a wider
+ *     search space than the bare lattice and a narrower one than a refined
+ *     step; the verifier gate still passes on whatever comes back, because a
+ *     seed pin is admitted only where an ordinary slot would have been.
+ *
+ * De-duplicated so the slot count is a function of the board and not of how
+ * many rows happen to share a start.
+ */
+export function seedPinsOf(
+  seed: readonly Assignment[],
+  courts: readonly string[],
+): readonly BuildSlot[] {
+  const allowed = new Set(courts);
+  const seen = new Set<string>();
+  const out: BuildSlot[] = [];
+  for (const a of seed) {
+    const key = `${a.court}|${a.startAt}`;
+    if (!allowed.has(a.court) || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ court: a.court, startAt: a.startAt });
+  }
+  return out;
 }
 
 /**

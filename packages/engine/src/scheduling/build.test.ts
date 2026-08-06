@@ -218,9 +218,11 @@ describe("buildSchedule", () => {
     // A proof about the lattice is not a proof about the BOARD, and this is
     // exactly the shape the organiser was being told was optimal: greedy stacks
     // all three cards on C1 (imbalance 90) and z3 could not express a single
-    // legal alternative. `gridStepMinutes` now folds the rest — `gcd(30, 0, 45)`
-    // is 15, which holds 10:15 and 11:30 — so the board is searchable and T3
-    // moves the middle card to C2.
+    // legal alternative. The step still does not divide the rest — 10:15 and
+    // 11:30 are on no 30-minute lattice — but both are now PINNED into it as
+    // the incumbent's own slots (`seedPinsOf`), so the board is searchable and
+    // T3 moves the middle card to C2. `build-rest-lattice.test.ts` is where
+    // that mechanism is pinned, and why it is not a finer step.
     //
     // 180 and 120 are both FORCED and asserted as such: every pair of these
     // three fixtures shares an entrant, so the starts are 75 minutes apart
