@@ -380,6 +380,148 @@ describe("icehockey cascade — IIHF §220 hand-computed 3-team tie", () => {
   });
 });
 
+// NHL Rule 84.4 / IIHF Rule 84 — overtime is played 3-on-3, and the penalised
+// team is NEVER reduced below that complement: the NON-offending side gains a
+// skater instead. So strength in overtime is SIDE-RELATIVE, not a base swap:
+//
+//     strength(X) = overtime.skaters + max(0, short(opponent) − short(X))
+//
+// The `max(0, …)` is the whole point and the reason a flat "gain one per
+// opponent penalty" is wrong — see the two mixed rows below, where the flat
+// reading gives 5v4 / 4v4 against the correct 4v3 / 3v3.
+//
+// A SPORT rule, not a kernel one (`PeriodPreset.overtimeSkaterAdvantage`,
+// omitted meaning off): an FIH card REDUCES the offender and nobody gains, so
+// applying this in the shared kernel would invent a rule field hockey does not
+// have. No golden corpus can witness any of this — `strength.{base,min}` has
+// exactly one production reader, `strengthChip` inside `summary()`, and every
+// recorded period stream ends `phase: "done"`, so this suite is the only
+// evidence the behaviour exists in either direction.
+describe("period kernel — overtime strength (NHL 84.4)", () => {
+  // 0–0 through regulation, so the FT advance opens sudden-death OT.
+  const toOvertime: ModuleEvent[] = [start, iceAdvance("P2"), iceAdvance("P3"), iceAdvance("FT")];
+  const chipOf = (state: PeriodState): string | null =>
+    (icehockey.summary(state).detail as { strength: string | null }).strength;
+  const inOvertime = (cards: ModuleEvent[]): PeriodState => {
+    const state = foldIce([...toOvertime, ...cards]);
+    // The fixture IS the test here: every expectation below is about the OT
+    // phase, so a stream that quietly decided in regulation would assert the
+    // regulation rule under an overtime name.
+    expect(state.phase, "fixture: the stream must reach overtime").toBe("OT");
+    return state;
+  };
+  const foldIceCfg = (raw: unknown, events: ModuleEvent[]): PeriodState =>
+    foldMatch(
+      icehockey,
+      icehockey.configSchema.parse(raw),
+      iceLineups,
+      envelopes(events),
+      STRICT_ALL,
+    );
+
+  // The four rows of the rule. `home` is the CLEAN(er) side throughout, so the
+  // chip reads `<home>v<away>`; the regulation value each case had before is
+  // named so the red is legible and no row is silently non-discriminating.
+  it("one penalty: the clean side gains a skater — 4v3, not 5v4", () => {
+    expect(chipOf(inOvertime([minor(IA)]))).toBe("4v3");
+  });
+
+  it("two penalties on one side: 5v3, not 5v3-by-flooring", () => {
+    // The string matches regulation's by coincidence; the ARITHMETIC does not
+    // (regulation floors away at min 3, overtime never reduces it at all), and
+    // the two disagree the moment either side is also carded — the next case.
+    expect(chipOf(inOvertime([minor(IA), minor(IA)]))).toBe("5v3");
+  });
+
+  it("two against one: only the NET advantage counts — 4v3", () => {
+    // Regulation reads 4v3 here too, so this row does not red on its own. It is
+    // here because it is the row that kills the flat "gain one per opponent
+    // penalty" reading, which gives 5v4.
+    expect(chipOf(inOvertime([minor(IA), minor(IA), minor(IH)]))).toBe("4v3");
+  });
+
+  it("coincidental penalties cancel: 3v3, where regulation reads 4v4", () => {
+    expect(chipOf(inOvertime([minor(IA), minor(IH)]))).toBe("3v3");
+  });
+
+  it("three penalties do NOT stack a further advantage: 5v3, capped at full strength", () => {
+    // Rule 84.4 never puts more than five skaters against three — a third
+    // penalty against the same side is served consecutively rather than adding
+    // another man to the ice. Uncapped, the formula renders 6v3, a strength no
+    // rulebook allows. The cap is `cfg.strength.base`, not a literal 5, so it
+    // reads as "never exceed full strength" for whatever sport opts in.
+    expect(chipOf(inOvertime([minor(IA), minor(IA), minor(IA)]))).toBe("5v3");
+  });
+
+  it("no penalty running in overtime shows no chip at all", () => {
+    expect(chipOf(inOvertime([]))).toBeNull();
+  });
+
+  // ------------------------------------------------------------- negatives
+
+  it("REGULATION is byte-identical: the same four card sets read as they always did", () => {
+    expect(chipOf(foldIce([start, minor(IA)]))).toBe("5v4");
+    expect(chipOf(foldIce([start, minor(IA), minor(IA)]))).toBe("5v3");
+    expect(chipOf(foldIce([start, minor(IA), minor(IA), minor(IH)]))).toBe("4v3");
+    expect(chipOf(foldIce([start, minor(IA), minor(IH)]))).toBe("4v4");
+  });
+
+  it("a cfg that declares no overtime skaters keeps the base/min rule", () => {
+    // The preset flag cannot invent a complement. Without `overtime.skaters`
+    // there is no number to be side-relative about, so overtime reads exactly
+    // as regulation does — and this is what proves the cfg value is READ
+    // rather than the constant 3 being hard-coded beside the flag.
+    const state = foldIceCfg({ overtime: { kind: "sudden_death", minutes: 5 } }, [
+      ...toOvertime,
+      minor(IA),
+    ]);
+    expect(state.phase).toBe("OT");
+    expect(chipOf(state)).toBe("5v4");
+  });
+
+  it("the complement comes from the cfg, not from the number 3", () => {
+    // DO NOT "correct" this to the realistic 3: every other value re-vacuums
+    // the test. `skaters: 3` is indistinguishable from a hard-coded 3; `4`
+    // renders "5v4", identical to the base/min rule this replaces; and `6`
+    // exceeds `strength.base: 5`, so the full-strength cap clips it to "5v5" —
+    // an incoherent config (an overtime complement larger than full strength)
+    // rather than a legitimate advantage. 2 separates all three readings and
+    // sits below the cap, so this test stays about the COMPLEMENT SOURCE and
+    // the cap keeps its own test above.
+    const state = foldIceCfg({ overtime: { kind: "sudden_death", minutes: 5, skaters: 2 } }, [
+      ...toOvertime,
+      minor(IA),
+    ]);
+    expect(state.phase).toBe("OT");
+    expect(chipOf(state)).toBe("3v2"); // 2 + 1 v 2 + 0; base/min says 5v4, a hard 3 says 4v3
+  });
+
+  it("FIH is untouched in an overtime that declares skaters — the flag is ice-only", () => {
+    // The `fih-detail` golden coverage config declares exactly this shape
+    // (`skaters: 7` against `strength.min: 7`). A kernel-wide rule would make a
+    // green card GAIN the opponent a player, which is not the FIH rule at all.
+    const cfg = hockey.configSchema.parse({
+      overtime: { kind: "sudden_death", minutes: 10, skaters: 7 },
+    });
+    const state = foldMatch(
+      hockey,
+      cfg,
+      fihLineups,
+      envelopes([
+        start,
+        fihAdvance("Q2"),
+        fihAdvance("Q3"),
+        fihAdvance("Q4"),
+        fihAdvance("FT"),
+        { type: "hockey.suspension.start", payload: { by: FA, class: "green" } },
+      ]),
+      STRICT_ALL,
+    );
+    expect(state.phase).toBe("OT");
+    expect((hockey.summary(state).detail as { strength: string | null }).strength).toBe("11v10");
+  });
+});
+
 // #429 scope item 5 — IIHF Rule 87 / NHL Rule 84.4: the shoot-out winner is
 // credited ONE additional goal in the official score, so 2–2 won on the
 // shoot-out is recorded 3–2. It is derived at the score layer and never folded:

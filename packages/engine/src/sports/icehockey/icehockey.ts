@@ -155,6 +155,13 @@ export const icehockey = makePeriodModule({
   // score layer; the shoot-out itself scores no player goals. FIH does not do
   // this, so `hockey` leaves the flag off.
   shootoutWinnerGoal: true,
+  // NHL Rule 84.4 / IIHF Rule 84 — overtime is 3-on-3 and a penalised team is
+  // never reduced below that: the NON-offending team gains a skater, so a
+  // penalty in OT reads 4v3 rather than 5v4 and two coincidental ones stay 3v3.
+  // Reads `defaults.overtime.skaters` above. FIH cards reduce the offender and
+  // nobody gains, so `hockey` leaves the flag off even though its `fih-detail`
+  // config declares `skaters`.
+  overtimeSkaterAdvantage: true,
   timelineEntitlement: "scoring.match_timeline",
   playerStats,
   // SPEC-1 — IIHF penalty classes the discipline rules editor may ban on

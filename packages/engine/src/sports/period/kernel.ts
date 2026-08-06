@@ -39,6 +39,7 @@ import type { PlayerStatsModel } from "../../stats/stats.ts";
 import type { EntrantModel } from "../../sport/entrant-model.ts";
 import {
   escalationHints,
+  overtimeStrengthChip,
   pimOf,
   strengthChip,
   type ActiveSuspension,
@@ -1236,6 +1237,19 @@ export interface PeriodPreset {
   // put a shoot-out win into FIH goal difference, where the same competition
   // has already paid for it in points.
   shootoutWinnerGoal?: boolean;
+  // NHL Rule 84.4 / IIHF Rule 84 — while overtime is running, strength is
+  // SIDE-RELATIVE: the penalised team is never reduced below `cfg.overtime
+  // .skaters` and the NON-offending team gains a skater instead
+  // (`overtimeStrengthChip`). Outside overtime nothing changes, and a cfg that
+  // declares no `skaters` keeps the base/min rule — the flag cannot invent a
+  // complement.
+  //
+  // A SPORT flag, and omitted means off, for the same reason as above: an FIH
+  // card REDUCES the offending side and nobody gains, so applying this in the
+  // shared kernel would hand field hockey a rule it does not have. `hockey`'s
+  // own `fih-detail` config declares `overtime.skaters: 7`, so the field being
+  // present is not evidence the rule applies.
+  overtimeSkaterAdvantage?: boolean;
   timelineEntitlement: string; // FeatureKey for tier-2/3 attributed scoring
   playerStats?: PlayerStatsModel;
   entrantModel?: EntrantModel;
@@ -1342,6 +1356,45 @@ export function makePeriodModule(
     return sideOf(state, outcome.winner) === "home"
       ? { home: home + 1, away }
       : { home, away: away + 1 };
+  };
+
+  /**
+   * The strength chip, which follows a different rule while overtime runs.
+   *
+   * NHL Rule 84.4 / IIHF Rule 84: in 3-on-3 overtime the penalised team is
+   * never reduced below `cfg.overtime.skaters` — the NON-offending team gains a
+   * skater. Side-relative, so coincidental penalties cancel to 3-on-3 rather
+   * than 4-on-4. `overtimeStrengthChip` holds the arithmetic and the reason a
+   * base swap is not merely incomplete but destructive.
+   *
+   * Three gates, all of which must hold, and each closes a different hole:
+   *
+   * 1. `preset.overtimeSkaterAdvantage` — the SPORT opts in. FIH cards reduce
+   *    the offender and nobody gains.
+   * 2. `inOvertime(state)` — regulation, the shoot-out and `done` are untouched,
+   *    so every recorded stream (all of which end `done`) is unmoved.
+   * 3. `cfg.overtime.skaters` is DECLARED. Only the sudden-death branch carries
+   *    it, and it has no default: without a number there is nothing to be
+   *    side-relative about, so the base/min rule stands. The flag cannot invent
+   *    a complement, and cfg is read live at fold time — deriving one would let
+   *    a later config edit change what an already-scored fixture displays.
+   *
+   * Read-side only: nothing here reaches the fold, so no state moves and no
+   * corpus can witness it in either direction (`strength` has exactly this one
+   * production reader).
+   */
+  const strengthChipOf = (state: PeriodState): string | null => {
+    const ot = state.cfg.overtime;
+    if (
+      preset.overtimeSkaterAdvantage === true &&
+      inOvertime(state) &&
+      ot !== null &&
+      ot.kind === "sudden_death" &&
+      ot.skaters !== undefined
+    ) {
+      return overtimeStrengthChip(state.suspensions, ot.skaters, state.cfg.strength.base);
+    }
+    return strengthChip(state.suspensions, state.cfg.strength.base, state.cfg.strength.min);
   };
 
   const sideMetrics = (state: PeriodState, side: Side, zero: boolean): Record<string, number> => {
@@ -1526,7 +1579,7 @@ export function makePeriodModule(
           ? " (OT)"
           : "";
       const phaseSuffix = isPlayPhase(state) ? ` · ${state.phase}` : "";
-      const chip = strengthChip(state.suspensions, state.cfg.strength.base, state.cfg.strength.min);
+      const chip = strengthChipOf(state);
       return {
         headline: `${home} — ${away}${soSuffix}${otSuffix}${phaseSuffix}`,
         perSide: [

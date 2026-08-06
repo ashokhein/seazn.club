@@ -156,8 +156,7 @@ export function strengthOf(
   base: number,
   min: number,
 ): number {
-  const short = active.filter((s) => s.side === side && s.teamShort).length;
-  return Math.max(min, base - short);
+  return Math.max(min, base - shortCount(active, side));
 }
 
 /** "5v4" / "5v3" / "10v11" — null at equal strength (no chip shown). */
@@ -169,6 +168,78 @@ export function strengthChip(
   const home = strengthOf(active, "home", base, min);
   const away = strengthOf(active, "away", base, min);
   return home === base && away === base ? null : `${home}v${away}`;
+}
+
+/** Running team-short suspensions on one side. */
+function shortCount(active: readonly ActiveSuspension[], side: SuspSide): number {
+  return active.filter((s) => s.side === side && s.teamShort).length;
+}
+
+/**
+ * Overtime strength, NHL Rule 84.4 / IIHF Rule 84 — a DIFFERENT algorithm, not
+ * a different base.
+ *
+ * In 3-on-3 overtime the penalised team is never reduced below the overtime
+ * complement; the NON-offending team gains a skater instead. So strength is
+ * SIDE-RELATIVE:
+ *
+ *     strength(X) = skaters + max(0, short(opponent) − short(X))
+ *
+ * The `max(0, …)` is what makes coincidental penalties cancel — one each is
+ * played 3-on-3, not 4-on-4, which is where a flat "gain one per opponent
+ * penalty" reading goes wrong. Two against one is likewise 4-on-3, not 5-on-4.
+ *
+ * Why NOT a base swap, since that is the obvious move and it is destructive:
+ * ice hockey declares `strength {base: 5, min: 3}` against `overtime.skaters:
+ * 3`, and `strengthOf` floors at `min`, so swapping the base makes base === min,
+ * both sides sit at base for any number of penalties, `strengthChip` returns
+ * null and the power-play chip DISAPPEARS in overtime — strictly less than the
+ * `5v4` it printed before. Field hockey's `fih-detail` config collides
+ * identically (`skaters: 7` against `min: 7`).
+ *
+ * CAPPED AT FULL STRENGTH. Rule 84.4 never puts more than five skaters against
+ * three: a third penalty against the same side is served consecutively rather
+ * than stacking a further on-ice advantage, so the beneficiary stops gaining at
+ * `base`. Without the cap the engine renders `6v3`, a strength no rulebook
+ * allows.
+ *
+ * The cap is `base` and the floor on the offending side is `skaters`, and the
+ * two come from OPPOSITE ENDS of the same cfg pair — `strength.base` is full
+ * strength, `overtime.skaters` is the overtime complement. Neither is
+ * simplifiable into the other: the offender is pinned at `skaters` by
+ * construction (its `max(0, …)` term is zero), the beneficiary is bounded by
+ * `base`, and `strength.min` plays no part here at all because nobody is ever
+ * reduced. Do not collapse them.
+ */
+export function overtimeStrengthOf(
+  active: readonly ActiveSuspension[],
+  side: SuspSide,
+  skaters: number,
+  base: number,
+): number {
+  const opponent: SuspSide = side === "home" ? "away" : "home";
+  const gain = Math.max(0, shortCount(active, opponent) - shortCount(active, side));
+  return Math.min(base, skaters + gain);
+}
+
+/**
+ * The overtime counterpart of `strengthChip`.
+ *
+ * Null when NO team-short suspension is running, which is the same claim
+ * `strengthChip` makes with "both sides are at base" — but it cannot be said
+ * that way here, because two coincidental penalties leave both sides at
+ * `skaters` while the scoresheet is very much not at even strength. Hiding that
+ * would drop information regulation shows (coincidental minors print `4v4`).
+ */
+export function overtimeStrengthChip(
+  active: readonly ActiveSuspension[],
+  skaters: number,
+  base: number,
+): string | null {
+  if (!active.some((s) => s.teamShort)) return null;
+  const home = overtimeStrengthOf(active, "home", skaters, base);
+  const away = overtimeStrengthOf(active, "away", skaters, base);
+  return `${home}v${away}`;
 }
 
 /** FIH progressive escalation (v6/01 §3): persons already carrying a green
