@@ -87,3 +87,43 @@ Two things worth knowing before trusting anything:
 2. **`DEFAULT_BUILD_RLIMIT` is an uncalibrated placeholder** and Tasks 6/7/9/10 are
    all built against it. Task 13's bench owes five measurements now. The sharpest
    one: there is still no unmocked case where LNS improves a real board.
+
+## Task 7 (engine lane) — R17, and three brief premises measured false
+
+Engine suite **2449/2448/0**, 1 pending, `success: true`. Baseline was 2442/2440/**1**
+— the pre-existing red is FIXED, see the third point below.
+
+1. **The brief's own Task 7 was already done.** `already_optimal` shipped with Task 5
+   and keys on `tiersCompleted === TIER_COUNT && !improved`. Both of the brief's
+   "failing" cases passed against an untouched `build.ts`. Its Step 3 replacement
+   predicate (`mode === "polish" && moved === 0`) was applied as a mutant and **reds
+   8 tests**: it calls a starved run optimal (`rlimit: 1` gives `tiersCompleted: 0`,
+   `moved: 0`) and takes `already_optimal` away from every BUILD run. NOT implemented.
+   `build-polish.test.ts` now pins both directions so it cannot be loosened back.
+   **`BuildInput.mode` is still read nowhere in the engine** and is decorative.
+2. **M10 is a WEB-lane survivor, not an engine one.** Deleting `input.frozen` reds two
+   existing `build.test.ts` cases — measured, so `frozen` is NOT dead surface and was
+   not deleted. It is live in exactly ONE shape: a fixture with no `locked` anchor,
+   held to the slot greedy itself gave it. Every `locked` fixture masks it, because
+   `publishedSlotOf` prefers `locked` and `encodeBuild` pins that on its own account.
+   That is why `schedule.ts:852`'s mutant survived: its cases run `only_unlocked: true`,
+   where `frozenIds ⊆ pinnedIds` **by construction** (same predicate, minus the flag).
+   **The killing case is `only_unlocked: false`** — there `pinnedIds` is EMPTY and
+   `frozen` is not. → web lane. And on that path POLISH freezes cards to greedy's own
+   RE-PLACEMENT rather than to the published slot, which `publishedSlotOf`'s comment
+   already flags as wrong; worth a product ruling, not just a test.
+3. **R17 also fixed a latent determinism defect.** The teardown gives every solve a
+   fresh context, so a board no longer depends on what the process solved earlier.
+   Evidence: `build-lns-wiring.test.ts` was 6/6 green ALONE and RED in the full suite
+   at baseline; it is green in both now. Cost: `build.test.ts`'s makespan case was
+   asserting an absolute instant that only held with a WARM context — two boards tie on
+   all four tiers there (09:00/09:30/10:00 vs 09:30/10:00/10:30) and the cold answer is
+   the second. Relaxed to the shape the test's own comment argues.
+4. **`boundSolverWindow`'s second greedy pass: MEASURED, leave it.** 20.5 ms at 200
+   fixtures (8.9 at 90, 1.7 at 15) against an 8 s wall — 0.26%. The literal ask (expose
+   the engine's seed on `BuildResult`) cannot remove it: the caller needs the horizon
+   BEFORE it may call `buildSchedule` at all, since an open-ended window makes
+   `dayKeyInTz(Infinity)` throw inside `buildGrid`. The only shape that works is an
+   inbound `BuildInput.seed`, which would be dead engine surface until the web adopts
+   it and would put the "never worse than greedy" floor and the delta gate's baseline
+   at the mercy of the caller's config. Not worth 0.26%. No engine change.
