@@ -48,6 +48,17 @@ const render = (m: ScheduleMetrics, s: ScheduleSolverInfo) =>
     </DictProvider>,
   ).replace(/&#x27;/g, "'");
 
+/** The rendered text of the provenance line, comment markers stripped (React
+ *  separates adjacent text expressions with `<!-- -->` in SSR output). Reading
+ *  the WHOLE line is what lets an engine-label assertion be exact: "Solver" is a
+ *  prefix of "Solver, then refined", so a substring check can be satisfied by
+ *  the wrong label. */
+const provenance = (html: string): string => {
+  const m = /data-testid="schedule-result-provenance"[^>]*>(.*?)<\/p>/s.exec(html);
+  if (!m) throw new Error("no provenance line rendered");
+  return m[1]!.replace(/<!--[\s\S]*?-->/g, "");
+};
+
 describe("ScheduleResultStrip — the numbers", () => {
   it("renders every metric against its OWN label, and the e2e testid", () => {
     const html = render(metrics(), solver());
@@ -65,6 +76,28 @@ describe("ScheduleResultStrip — the numbers", () => {
     expect(html).not.toContain("z3+lns");
     expect(html).toContain("3.2s");
     expect(html).toContain("6 matches moved");
+  });
+
+  /**
+   * ALL THREE engine values, one case each, asserted on the provenance line
+   * ITSELF.
+   *
+   * This label is the only thing anywhere on screen that names which solver
+   * produced the board — a greedy fallback and an optimised run are otherwise
+   * indistinguishable to an organiser, because a greedy board is also a valid
+   * board. This file used to pin `z3+lns` and nothing else, and the e2e regex
+   * accepts all three, so the `greedy` and `z3` entries of `ENGINE_KEY` were
+   * unpinned: SWAPPING THEM survived every test in the branch. A quick-pass
+   * board would have told the organiser it was optimised, and an optimised one
+   * that it was not.
+   */
+  it.each([
+    ["greedy", "Quick pass"],
+    ["z3", "Solver"],
+    ["z3+lns", "Solver, then refined"],
+  ] as const)("names the '%s' engine exactly '%s'", (engine, label) => {
+    const html = render(metrics(), solver({ engine, elapsed_ms: 3200, moved: 6 }));
+    expect(provenance(html)).toBe(`${label} · 3.2s · 6 matches moved`);
   });
 
   it("says 'nothing moved' rather than '0 matches moved'", () => {
