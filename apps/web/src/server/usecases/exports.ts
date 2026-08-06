@@ -144,8 +144,37 @@ async function orgBranding(
   };
 }
 
-async function brandingFor(auth: AuthCtx, meta: DivisionMeta): Promise<DocBranding | undefined> {
-  const base = await orgBranding(auth.orgId, meta.org_name, meta.competition_id);
+/**
+ * The org name + competition id a branding lookup needs, read AHEAD of any
+ * transaction.
+ *
+ * `orgBranding` awaits `hasFeature`, which queries the pooled `sql` proxy, and
+ * every caller below used to reach it from INSIDE `withTenant` — a second pool
+ * checkout while the first connection was still pinned, which is the
+ * self-deadlock `lib/db.ts`'s nesting guard exists to catch. The scope must come
+ * from somewhere the transaction has not opened yet, so it is read here.
+ * Authorisation does not rest on it: the division is still read under RLS inside
+ * the transaction, which 404s for a foreign org.
+ */
+async function brandingScope(
+  divisionId: string,
+): Promise<{ competition_id: string; org_name: string } | undefined> {
+  const [row] = await sql<{ competition_id: string; org_name: string }[]>`
+    select d.competition_id, org.name as org_name
+    from divisions d join organizations org on org.id = d.org_id
+    where d.id = ${divisionId}`;
+  return row;
+}
+
+/**
+ * The division-level layer on top of `orgBranding` — PURE, so it runs inside the
+ * transaction on a `meta` the transaction read, while the entitlement half that
+ * produced `base` stays outside it.
+ */
+function layerDivisionBranding(
+  base: DocBranding | undefined,
+  meta: DivisionMeta,
+): DocBranding | undefined {
   if (base === undefined) return undefined;
   const branding = meta.branding ?? {};
   const colors: Record<string, string> = {};
@@ -229,12 +258,18 @@ export async function buildDivisionDocModel(
   opts: ExportOpts,
 ): Promise<DocModel> {
   // Exports unlock via plan or an Event Pass on this competition (v3/07 §3).
-  const [expComp] = await sql<{ competition_id: string }[]>`
-    select competition_id from divisions where id = ${divisionId}`;
+  const expComp = await brandingScope(divisionId);
   await requireFeature(auth.orgId, "exports", expComp?.competition_id);
+  const baseBranding = expComp
+    ? await orgBranding(auth.orgId, expComp.org_name, expComp.competition_id)
+    : undefined;
+  // `participantRows` opens its OWN `withTenant`, and a nested transaction is
+  // the same pool checkout by another name — so the one kind that needs it reads
+  // it before this one opens. Every other kind pays nothing for that.
+  const participants = kind === "participants" ? await participantRows(auth, { divisionId }) : null;
   return withTenant(auth.orgId, async (tx) => {
     const meta = await divisionMeta(tx, divisionId);
-    const branding = await brandingFor(auth, meta);
+    const branding = layerDivisionBranding(baseBranding, meta);
     const title = `${meta.competition_name} — ${meta.name}`;
     const common = {
       printedAt: opts.printedAt,
@@ -322,7 +357,7 @@ export async function buildDivisionDocModel(
         );
       }
       case "participants": {
-        const rows = await participantRows(auth, { divisionId });
+        const rows = participants ?? [];
         return buildParticipants(
           title,
           rows.map((r) => ({
@@ -456,13 +491,21 @@ export async function buildCompetitionTimetable(
   opts: ExportOpts,
 ): Promise<DocModel> {
   await requireFeature(auth.orgId, "exports", competitionId);
+  // Outside the transaction — `orgBranding` awaits `hasFeature`, a pooled read.
+  // Same reasoning as `brandingScope` above.
+  const [compRef] = await sql<{ org_id: string; org_name: string }[]>`
+    select c.org_id, org.name as org_name
+    from competitions c join organizations org on org.id = c.org_id
+    where c.id = ${competitionId}`;
+  const branding = compRef
+    ? await orgBranding(compRef.org_id, compRef.org_name, competitionId)
+    : undefined;
   return withTenant(auth.orgId, async (tx) => {
     const [comp] = await tx<{ name: string; org_id: string; org_name: string }[]>`
       select c.name, c.org_id, org.name as org_name
       from competitions c join organizations org on org.id = c.org_id
       where c.id = ${competitionId}`;
     if (!comp) throw new HttpError(404, "competition not found");
-    const branding = await orgBranding(comp.org_id, comp.org_name, competitionId);
     const divisions = await tx<{ id: string; name: string }[]>`
       select id, name from divisions where competition_id = ${competitionId} order by name`;
     const all: ExportFixture[] = [];
@@ -526,12 +569,14 @@ export async function buildOfficialsRotaDoc(
 ): Promise<DocModel> {
   // Exports unlock via plan or an Event Pass on this competition (v3/07 §3),
   // same gate as buildDivisionDocModel — deferred at Task 13, added here.
-  const [expComp] = await sql<{ competition_id: string }[]>`
-    select competition_id from divisions where id = ${divisionId}`;
+  const expComp = await brandingScope(divisionId);
   await requireFeature(auth.orgId, "exports", expComp?.competition_id);
+  const baseBranding = expComp
+    ? await orgBranding(auth.orgId, expComp.org_name, expComp.competition_id)
+    : undefined;
   return withTenant(auth.orgId, async (tx) => {
     const meta = await divisionMeta(tx, divisionId);
-    const branding = await brandingFor(auth, meta);
+    const branding = layerDivisionBranding(baseBranding, meta);
     const rows = await officialDutyRows(tx, divisionId);
     const byOfficial = new Map<string, ExportOfficialSchedule>();
     for (const r of rows) {
@@ -606,9 +651,16 @@ export async function buildAdmitTicketsDoc(
   opts: ExportOpts,
 ): Promise<DocModel> {
   await requireFeature(auth.orgId, "exports", competitionId);
+  // Outside the transaction — see `brandingScope` above.
+  const [compRef] = await sql<{ org_id: string; org_name: string }[]>`
+    select c.org_id, org.name as org_name
+    from competitions c join organizations org on org.id = c.org_id
+    where c.id = ${competitionId}`;
+  const branding = compRef
+    ? await orgBranding(compRef.org_id, compRef.org_name, competitionId)
+    : undefined;
   return withTenant(auth.orgId, async (tx) => {
     const meta = await competitionTicketMeta(tx, competitionId);
-    const branding = await orgBranding(meta.org_id, meta.org_name, competitionId);
     const rows = await ticketRegistrationRows(tx, competitionId);
     const dates = `${meta.starts_on ?? "—"} – ${meta.ends_on ?? meta.starts_on ?? "—"}`;
     const tickets: ExportTicket[] = rows.map((r, i) => ({
@@ -673,9 +725,13 @@ export async function auditLedgerDoc(
   const recorders = await eventRecorderNames(auth, fixtureId);
   const [meta] = await sql<{ division_id: string }[]>`
     select division_id from fixtures where id = ${fixtureId}`;
+  const scope = meta ? await brandingScope(meta.division_id) : undefined;
+  const baseBranding = scope
+    ? await orgBranding(auth.orgId, scope.org_name, scope.competition_id)
+    : undefined;
   return withTenant(auth.orgId, async (tx) => {
     const divMeta = await divisionMeta(tx, meta!.division_id);
-    const branding = await brandingFor(auth, divMeta);
+    const branding = layerDivisionBranding(baseBranding, divMeta);
     const vs =
       ledger.fixture.home !== null || ledger.fixture.away !== null
         ? ` — ${ledger.fixture.home ?? "TBD"} vs ${ledger.fixture.away ?? "TBD"}`

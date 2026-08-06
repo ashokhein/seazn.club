@@ -8,7 +8,7 @@ import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import { rateLimit } from "@/lib/rate-limit";
-import { requireFeature } from "@/lib/entitlements";
+import { hasFeature, requireFeature } from "@/lib/entitlements";
 import { deferred } from "@/lib/deferred";
 import { EngineError } from "@seazn/engine/core";
 import { appendEvent, resolveModule } from "@/server/engine-db";
@@ -21,7 +21,7 @@ import {
 } from "@/server/public-site/revalidate";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { AppendEventRequest } from "@/server/api-v1/schemas";
-import { assertCompetitionNotFrozen } from "./entitlement-freeze";
+import { assertNotFrozen, frozenCompetitionIds } from "./entitlement-freeze";
 import { requiredFeatureForEvent } from "./fidelity";
 import { scoresViaAssignment } from "./scorers";
 import { fillSlot } from "./stages";
@@ -187,6 +187,11 @@ async function assertEntitledToScore(
   fixtureId: string,
   input: AppendEventRequest,
 ): Promise<void> {
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
   const ctx = await withTenant(auth.orgId, async (tx) => {
     const [row] = await tx<
       {
@@ -205,7 +210,7 @@ async function assertEntitledToScore(
       from fixtures f join divisions d on d.id = f.division_id
       where f.id = ${fixtureId}`;
     if (!row) return null;
-    await assertCompetitionNotFrozen(auth.orgId, row.competition_id, tx);
+    assertNotFrozen(frozen, row.competition_id);
     return row;
   });
   if (!ctx) return;
@@ -292,12 +297,17 @@ async function refreshDiscipline(auth: AuthCtx, fixtureId: string): Promise<void
 // (same isolation principle as the discipline/email fire-and-forget sends).
 async function refreshNews(auth: AuthCtx, fixtureId: string): Promise<void> {
   try {
+    // The entitlement answer BEFORE the transaction: `hasFeature` is a pooled
+    // read, and asking for it inside `withTenant` is the pool self-deadlock
+    // (lib/db.ts). It is resolved unconditionally — one cached lookup on a path
+    // that is about to open a transaction anyway.
+    const newsAuto = await hasFeature(auth.orgId, "news.auto");
     await withTenant(auth.orgId, async (tx) => {
       const [row] = await tx<{ auto_posts: boolean }[]>`
         select d.auto_posts from fixtures f join divisions d on d.id = f.division_id
         where f.id = ${fixtureId}`;
       if (!row?.auto_posts) return;
-      await draftPostsForDecidedFixture(tx, fixtureId);
+      await draftPostsForDecidedFixture(tx, fixtureId, newsAuto);
     });
   } catch (err) {
     console.error("news auto-draft failed (score write unaffected)", err);

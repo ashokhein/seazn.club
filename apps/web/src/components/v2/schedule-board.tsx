@@ -682,8 +682,37 @@ export function ScheduleBoard({
     if (set.size === 0) set.add(dayKey(new Date()));
     return [...set].sort();
   }, [scheduled, ghosts, cfg.startAt]);
+  /**
+   * The selected day tab, and the day LIST it was selected against.
+   *
+   * `useState(days[0])` alone pinned the tab at whatever the board showed on
+   * FIRST render, and `if (!day)` could never unpin it because the pinned value
+   * is a non-empty string. On an empty board `days` is `[startAt]` (or today),
+   * so an Auto-schedule that places the matches on any other day left `day`
+   * pointing at a date the board no longer has: `dayFixtures` filters to
+   * nothing and the organiser reads an EMPTY grid over a board that is in fact
+   * fully scheduled. It never self-corrected, because nothing downstream of the
+   * RSC refresh looks at the tab again.
+   *
+   * So the tab is a DEFAULT rather than a pin: it is re-derived when the day
+   * list itself changes and the current tab has fallen out of it. The list is
+   * compared BY VALUE — `days` is a fresh array on every render (`scheduled` is
+   * a `filter` over `board`), so an identity check would re-derive constantly
+   * and fight the ± day arrows below, which deliberately step onto empty days
+   * that are NOT in `days`. Those stay untouched: paging to an empty day does
+   * not change the list, so nothing snaps back. Render-time state adjustment,
+   * the same "derive from props" pattern `useBoardActions` uses for overrides —
+   * no effect cascade, and the corrected tab renders in this same pass.
+   */
+  const daysKey = days.join(",");
+  const [seenDaysKey, setSeenDaysKey] = useState(daysKey);
   const [day, setDay] = useState<string>(days[0] as string);
-  if (!day) setDay(days[0] as string);
+  if (seenDaysKey !== daysKey) {
+    setSeenDaysKey(daysKey);
+    if (!days.includes(day)) setDay(days[0] as string);
+  } else if (!day) {
+    setDay(days[0] as string);
+  }
 
   // Week view spans the division's own schedule dates first, then the
   // competition dates, then the scheduled fixtures' range — min four days.

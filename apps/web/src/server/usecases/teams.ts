@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import type postgres from "postgres";
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
-import { requireFeature, withinLimit, PaymentRequiredError } from "@/lib/entitlements";
+import { assertWithinLimit, getLimit, requireFeature } from "@/lib/entitlements";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { publicStorageUrl } from "@/lib/supabase-storage";
 import { resolveEntrantBadge } from "@/lib/entrant-badge";
@@ -76,14 +76,18 @@ export async function createTeam(
   input: { name: string; short_name?: string | null; club_id?: string | null },
 ): Promise<TeamRow> {
   await requireFeature(auth.orgId, "clubs.hierarchy");
+  // The plan LOOKUP is resolved out here; the COUNT stays inside the
+  // transaction with the insert (doc 10 §2 rule 1). `getLimit` queries the
+  // pooled `sql` proxy, and `withTenant` pins a pooled connection for its whole
+  // callback — see `assertWithinLimit` in lib/entitlements.ts.
+  const teamCap = await getLimit(auth.orgId, "teams.max");
   return withTenant(auth.orgId, async (tx) => {
     if (input.club_id) {
       const [club] = await tx`select 1 from clubs where id = ${input.club_id}`;
       if (!club) throw new HttpError(404, "club not found");
     }
     const [{ n }] = await tx<{ n: number }[]>`select count(*)::int as n from teams`;
-    const cap = await withinLimit(auth.orgId, "teams.max", n + 1);
-    if (!cap.ok) throw new PaymentRequiredError("teams.max");
+    assertWithinLimit(teamCap, "teams.max", n + 1);
     const [team] = await tx<TeamRow[]>`
       insert into teams (org_id, name, short_name, club_id)
       values (${auth.orgId}, ${input.name}, ${input.short_name ?? null}, ${input.club_id ?? null})
@@ -211,11 +215,15 @@ export async function setTeamSquad(
   members: MemberInput[],
 ): Promise<TeamRow & { members: SquadMember[] }> {
   await requireFeature(auth.orgId, "clubs.hierarchy");
+  // The plan LOOKUP is resolved out here; the COUNT stays inside the
+  // transaction with the insert (doc 10 §2 rule 1). `getLimit` queries the
+  // pooled `sql` proxy, and `withTenant` pins a pooled connection for its whole
+  // callback — see `assertWithinLimit` in lib/entitlements.ts.
+  const squadCap = await getLimit(auth.orgId, "teams.squad_max");
   await withTenant(auth.orgId, async (tx) => {
     const [team] = await tx`select 1 from teams where id = ${teamId}`;
     if (!team) throw new HttpError(404, "team not found");
-    const cap = await withinLimit(auth.orgId, "teams.squad_max", members.length);
-    if (!cap.ok) throw new PaymentRequiredError("teams.squad_max");
+    assertWithinLimit(squadCap, "teams.squad_max", members.length);
     const ids = [...new Set(members.map((m) => m.person_id))];
     if (ids.length > 0) {
       // #404: a merge tombstone is not a squad candidate.

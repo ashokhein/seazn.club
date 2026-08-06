@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { builtinModules } from "@seazn/engine/sports";
 
 import { sql, withTenant } from "@/lib/db";
-import { invalidateOrgEntitlements } from "@/lib/entitlements";
+import { hasFeature, invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import {
   createPost,
@@ -131,8 +131,19 @@ async function seedDecidedFixture(
   return id;
 }
 
+/**
+ * `news.auto` is now resolved by the CALLER, outside the transaction — it is a
+ * `hasFeature` read on the pooled `sql` proxy, and issuing that from inside
+ * `withTenant` is the pool self-deadlock (lib/db.ts). `refreshNews` does it
+ * exactly this way in usecases/scoring.ts.
+ *
+ * RESOLVED, not hardcoded true. Passing a literal would turn the community-org
+ * case below into a test of its own argument: the point of that case is that a
+ * community org RESOLVES to false, so the resolution has to be real.
+ */
 async function draft(ctx: Ctx, fixtureId: string): Promise<void> {
-  await withTenant(ctx.orgId, (tx) => draftPostsForDecidedFixture(tx, fixtureId));
+  const newsAuto = await hasFeature(ctx.orgId, "news.auto");
+  await withTenant(ctx.orgId, (tx) => draftPostsForDecidedFixture(tx, fixtureId, newsAuto));
 }
 
 describe.skipIf(!HAS_DB)("org-posts CRUD", () => {

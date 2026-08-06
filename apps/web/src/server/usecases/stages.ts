@@ -7,10 +7,10 @@ import type postgres from "postgres";
 import { sql, withTenant } from "@/lib/db";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
-import { requireFeature, withinLimit } from "@/lib/entitlements";
+import { assertWithinLimit, getLimit, requireFeature } from "@/lib/entitlements";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
-import { assertCompetitionNotFrozen } from "./entitlement-freeze";
+import { assertNotFrozen, frozenCompetitionIds } from "./entitlement-freeze";
 import { EngineError } from "@seazn/engine/core";
 import {
   generateRoundRobin,
@@ -159,6 +159,16 @@ export async function createStages(
       await requireFeature(auth.orgId, "standings.carry_over");
     }
   }
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
+  // The plan LOOKUP is resolved out here; the COUNT stays inside the
+  // transaction with the insert (doc 10 §2 rule 1). `getLimit` queries the
+  // pooled `sql` proxy, and `withTenant` pins a pooled connection for its whole
+  // callback — see `assertWithinLimit` in lib/entitlements.ts.
+  const stageCap = await getLimit(auth.orgId, "stages.per_division.max");
   return withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<{ competition_id: string; sport_key: string; module_version: string }[]>`
       select competition_id, sport_key, module_version from divisions where id = ${divisionId}`;
@@ -172,14 +182,13 @@ export async function createStages(
         validatePointsRule(PointsRule.parse(cfg.points), sportModule.metrics);
       }
     }
-    await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
+    assertNotFrozen(frozen, division.competition_id);
 
     // Doc 10 §1: `stages.per_division.max` (2/4/∞) — the batch must fit,
     // counted in the same tx as the inserts (doc 10 §2 rule 1).
     const [{ n }] = await tx<{ n: number }[]>`
       select count(*)::int as n from stages where division_id = ${divisionId}`;
-    const quota = await withinLimit(auth.orgId, "stages.per_division.max", n + inputs.length);
-    if (!quota.ok) throw new PaymentRequiredError("stages.per_division.max");
+    assertWithinLimit(stageCap, "stages.per_division.max", n + inputs.length);
 
     const rows: StageRow[] = [];
     for (const s of inputs) {
@@ -213,11 +222,16 @@ export async function replaceStages(
   divisionId: string,
   input: CreateStages,
 ): Promise<StageRow[]> {
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
   await withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
-    await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
+    assertNotFrozen(frozen, division.competition_id);
     await tx`select pg_advisory_xact_lock(hashtext(${"division:" + divisionId}))`;
     const [locked] = await tx`
       select 1 from fixtures f join stages s on s.id = f.stage_id
@@ -239,6 +253,11 @@ export async function replaceStages(
  * ON DELETE CASCADE.
  */
 export async function deleteStage(auth: AuthCtx, stageId: string): Promise<{ deleted: true }> {
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
   const divisionId = await withTenant(auth.orgId, async (tx) => {
     const [stage] = await tx<
       { id: string; division_id: string; seq: number; kind: string; name: string; competition_id: string }[]
@@ -247,7 +266,7 @@ export async function deleteStage(auth: AuthCtx, stageId: string): Promise<{ del
       from stages s join divisions d on d.id = s.division_id
       where s.id = ${stageId}`;
     if (!stage) throw new HttpError(404, "stage not found");
-    await assertCompetitionNotFrozen(auth.orgId, stage.competition_id, tx);
+    assertNotFrozen(frozen, stage.competition_id);
     await tx`select pg_advisory_xact_lock(hashtext(${"division:" + stage.division_id}))`;
 
     const [later] = await tx`

@@ -44,7 +44,7 @@ import type {
 } from "@/server/api-v1/schemas";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { resolveLogoUrl } from "@/server/public-site/data";
-import { assertCompetitionNotFrozen } from "./entitlement-freeze";
+import { assertNotFrozen, frozenCompetitionIds } from "./entitlement-freeze";
 import { recoverDisputedTransfer as recoverDisputedTransferCore } from "./dispute-recovery";
 import {
   FIRST_PAID_EARN,
@@ -1968,6 +1968,11 @@ async function orgReg(tx: Tx, regId: string): Promise<RegistrationRow> {
 /** Organiser approve (free regs and waitlist overrides). Paid-division regs
  *  must be paid first — confirming an unpaid one would gift the spot. */
 export async function confirmRegistration(auth: AuthCtx, regId: string): Promise<RegistrationRow> {
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
   const row = await withTenant(auth.orgId, async (tx) => {
     const reg = await orgReg(tx, regId);
     if (reg.status === "confirmed") return reg;
@@ -1981,7 +1986,7 @@ export async function confirmRegistration(auth: AuthCtx, regId: string): Promise
     }
     const [div] = await tx<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${reg.division_id}`;
-    await assertCompetitionNotFrozen(auth.orgId, div.competition_id, tx);
+    assertNotFrozen(frozen, div.competition_id);
     await materialise(tx, reg, settings?.entrant_kind ?? "individual");
     await audit(tx, div.competition_id, auth.orgId, "registration.confirmed", {
       registration_id: regId,
@@ -2000,6 +2005,11 @@ export async function markRegistrationPaidOffline(
   auth: AuthCtx,
   regId: string,
 ): Promise<RegistrationRow> {
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
   const row = await withTenant(auth.orgId, async (tx) => {
     const reg = await orgReg(tx, regId);
     if (reg.status !== "pending") {
@@ -2014,7 +2024,7 @@ export async function markRegistrationPaidOffline(
     }
     const [div] = await tx<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${reg.division_id}`;
-    await assertCompetitionNotFrozen(auth.orgId, div.competition_id, tx);
+    assertNotFrozen(frozen, div.competition_id);
     await tx`
       update registrations
       set status = 'paid', offline_marked_paid_at = now(),
@@ -2036,6 +2046,11 @@ export async function confirmRegistrationWaived(
   auth: AuthCtx,
   regId: string,
 ): Promise<RegistrationRow> {
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
   const row = await withTenant(auth.orgId, async (tx) => {
     const reg = await orgReg(tx, regId);
     if (reg.status === "confirmed") return orgRegAfter(tx, regId);
@@ -2045,7 +2060,7 @@ export async function confirmRegistrationWaived(
     const settings = await loadSettings(tx, reg.division_id);
     const [div] = await tx<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${reg.division_id}`;
-    await assertCompetitionNotFrozen(auth.orgId, div.competition_id, tx);
+    assertNotFrozen(frozen, div.competition_id);
     await materialise(tx, reg, settings?.entrant_kind ?? "individual");
     await audit(tx, div.competition_id, auth.orgId, "registration.fee_waived", {
       registration_id: regId,

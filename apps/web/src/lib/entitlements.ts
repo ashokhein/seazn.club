@@ -632,6 +632,36 @@ export async function withinLimit(
   return { ok: wouldBe <= limit, limit };
 }
 
+/**
+ * The COMPARISON half of `withinLimit`, split out so a quota gate can resolve
+ * its limit BEFORE opening a transaction and still do the count inside one.
+ *
+ * WHY THE SPLIT EXISTS. Every quota gate in `usecases/` has the shape "count
+ * the rows, then ask the plan", and the count has to happen in the same
+ * transaction as the insert or two concurrent creates both read the pre-insert
+ * count and both land (doc 10 §2 rule 1). But `withinLimit` reaches `getLimit`
+ * -> `resolve` -> a query on the POOLED `sql` proxy, and issuing that from
+ * inside a `withTenant` callback asks the pool for a SECOND connection while
+ * the first is still pinned — the self-deadlock the guard in `lib/db.ts` exists
+ * to catch, which hung production twice on 2026-08-05.
+ *
+ * Only the plan LOOKUP moves out. The count and the insert stay inside one
+ * transaction, so the race doc 10 §2 rule 1 is about is untouched: the limit is
+ * a property of the org's PLAN, already served through a 300-second cache, and
+ * was never something the transaction protected.
+ *
+ * `null` is unlimited. A missing `plan_entitlements` row resolves to 0 through
+ * `getLimit` and therefore refuses — the same answer `withinLimit` gives, so
+ * the two halves cannot disagree about where the boundary is.
+ */
+export function assertWithinLimit(
+  limit: number | null,
+  featureKey: string,
+  wouldBe: number,
+): void {
+  if (limit !== null && wouldBe > limit) throw new PaymentRequiredError(featureKey);
+}
+
 /** Throws PaymentRequiredError (HTTP 402) if the feature is not enabled for the org. */
 export async function requireFeature(
   orgId: string,

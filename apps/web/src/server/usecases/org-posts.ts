@@ -370,7 +370,19 @@ function sideLine(summary: unknown, entrantId: string | null): string {
   return perSide?.find((s) => s.entrantId === entrantId)?.line ?? "";
 }
 
-export async function draftPostsForDecidedFixture(tx: Tx, fixtureId: string): Promise<void> {
+/**
+ * `newsAuto` is passed IN rather than resolved here, and that is the whole of
+ * the change: this runs inside the caller's `withTenant`, and `hasFeature`
+ * queries the pooled `sql` proxy — a second pool checkout while the first
+ * connection is pinned, which is the self-deadlock `lib/db.ts`'s nesting guard
+ * exists to catch. The caller has an org id before it opens its transaction and
+ * every caller resolves the same org, so nothing about the answer changes.
+ */
+export async function draftPostsForDecidedFixture(
+  tx: Tx,
+  fixtureId: string,
+  newsAuto: boolean,
+): Promise<void> {
   const [fx] = await tx<FixtureCtx[]>`
     select f.id as fixture_id, f.org_id, f.division_id, d.competition_id, f.stage_id,
            st.kind as stage_kind, f.round_no, f.status,
@@ -392,7 +404,7 @@ export async function draftPostsForDecidedFixture(tx: Tx, fixtureId: string): Pr
   // Cheap probe: opt-in division only, and Pro news.auto live (a community org
   // whose toggle somehow reads true still gets no draft).
   if (!fx || !fx.auto_posts) return;
-  if (!(await hasFeature(fx.org_id, "news.auto"))) return;
+  if (!newsAuto) return;
 
   const locale: Locale = toLocale(fx.default_locale);
   const decided = DECIDED.has(fx.status);

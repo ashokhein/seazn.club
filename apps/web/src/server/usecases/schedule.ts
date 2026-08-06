@@ -53,7 +53,7 @@ import {
 } from "@/server/api-v1/schemas";
 import { sendOfficialAssignmentChangedEmail } from "@/lib/email";
 import { buildEngineConstraints } from "./engine-constraints";
-import { assertCompetitionNotFrozen } from "./entitlement-freeze";
+import { assertNotFrozen, frozenCompetitionIds } from "./entitlement-freeze";
 import { generateStageFixtures } from "./stages";
 import { schedulingAiModel, toRuleFixture } from "./schedule-ai";
 
@@ -159,11 +159,16 @@ export async function putScheduleSettings(
   if (usesConstraints(input.config)) {
     await requireFeature(auth.orgId, "scheduling.constraints");
   }
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
   return withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
-    await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
+    assertNotFrozen(frozen, division.competition_id);
     // tz is tri-state (V305). An ABSENT key must not clobber the stored value:
     // the division settings form no longer offers a timezone at all, so every
     // console save omits it, and a save may never move a division's venue zone.
@@ -1388,6 +1393,11 @@ export async function applySchedule(
   if (input.source === "manual" || input.assignments.some((a) => a.schedule_locked !== undefined)) {
     await requireFeature(auth.orgId, "scheduling.board");
   }
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
   const out = await withTenant(auth.orgId, async (tx) => {
     const [stage] = await tx<{ division_id: string; competition_id: string }[]>`
       select s.division_id, d.competition_id
@@ -1396,7 +1406,7 @@ export async function applySchedule(
     if (!stage) throw new HttpError(404, "stage not found");
     await tx`select pg_advisory_xact_lock(hashtext(${"division:" + stage.division_id}))`;
     await assertFreshSeq(tx, stage.division_id, input.expected_seq);
-    await assertCompetitionNotFrozen(auth.orgId, stage.competition_id, tx);
+    assertNotFrozen(frozen, stage.competition_id);
 
     const settings = await loadSettings(tx, stage.division_id);
     const all = await divisionFixtures(tx, stage.division_id);
@@ -1621,6 +1631,11 @@ export async function moveFixture(
   if (patch.schedule_locked !== undefined) {
     await requireFeature(auth.orgId, "scheduling.board");
   }
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
   const out = await withTenant(auth.orgId, async (tx) => {
     const [fixture] = await tx<
       (FixtureLite & { competition_id: string })[]
@@ -1634,7 +1649,7 @@ export async function moveFixture(
     if (!fixture) throw new HttpError(404, "fixture not found");
     await tx`select pg_advisory_xact_lock(hashtext(${"division:" + fixture.division_id}))`;
     await assertFreshSeq(tx, fixture.division_id, patch.expected_seq);
-    await assertCompetitionNotFrozen(auth.orgId, fixture.competition_id, tx);
+    assertNotFrozen(frozen, fixture.competition_id);
 
     // Single-fixture moves are board edits too — the whole-division freeze
     // must hold here exactly as it does for applySchedule (this is the route
@@ -2016,12 +2031,17 @@ export async function publishSchedule(
   divisionId: string,
   input: PublishScheduleRequest = {},
 ): Promise<PublishScheduleOut> {
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
   const out = await withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<{ status: string; competition_id: string }[]>`
       select status, competition_id from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
     await tx`select pg_advisory_xact_lock(hashtext(${"division:" + divisionId}))`;
-    await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
+    assertNotFrozen(frozen, division.competition_id);
     if (division.status === "completed") {
       throw new HttpError(422, "a completed division cannot publish a schedule");
     }
@@ -2080,11 +2100,16 @@ export async function startDivision(
   divisionId: string,
   input: StartDivisionRequest = {},
 ): Promise<StartDivisionOut> {
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
   const pre = await withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<{ status: string; competition_id: string }[]>`
       select status, competition_id from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
-    await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
+    assertNotFrozen(frozen, division.competition_id);
     if (division.status === "completed") throw new HttpError(422, "division is completed");
     const [firstStage] = await tx<{ id: string; n: number }[]>`
       select s.id, (select count(*)::int from fixtures f where f.stage_id = s.id) as n

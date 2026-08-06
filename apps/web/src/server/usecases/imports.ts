@@ -15,7 +15,7 @@ import {
 } from "@seazn/engine/import";
 import { withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
-import { requireFeature, withinLimit } from "@/lib/entitlements";
+import { assertWithinLimit, getLimit, hasFeature, withinLimit } from "@/lib/entitlements";
 import { cacheGet, cacheSet } from "@/lib/cache";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { parseUpload, toImportRows, type ImportField } from "./import-parse";
@@ -168,6 +168,15 @@ export async function commitImport(
     if (cached) return cached;
   }
 
+  // All three entitlement answers, ahead of the transaction. They are resolved
+  // UNCONDITIONALLY even though the plan below may need none of them: each one
+  // queries the pooled `sql` proxy, and asking mid-transaction is the pool
+  // self-deadlock (lib/db.ts). Cheap in production — entitlements are cached —
+  // and the answers cannot change inside one commit anyway.
+  const clubsHierarchy = await hasFeature(auth.orgId, "clubs.hierarchy");
+  const clubCap = await getLimit(auth.orgId, "clubs.max");
+  const teamCap = await getLimit(auth.orgId, "teams.max");
+
   const result = await withTenant(auth.orgId, async (tx) => {
     // One import commit at a time per org — serialises the club/team upsert
     // keys without relying on constraint races.
@@ -198,7 +207,7 @@ export async function commitImport(
     }
     // Jul3/01 §7: the Club hierarchy itself is Pro.
     if (plan.ops.some((op) => op.kind.startsWith("club."))) {
-      await requireFeature(auth.orgId, "clubs.hierarchy");
+      if (!clubsHierarchy) throw new PaymentRequiredError("clubs.hierarchy");
     }
     // Clubs/teams redesign §4.4: the plan's structural creates count against
     // the org's clubs.max / teams.max caps. Counted inside the tenant tx (RLS
@@ -208,13 +217,11 @@ export async function commitImport(
     const plannedTeams = plan.ops.filter((op) => op.kind === "team.create").length;
     if (plannedClubs > 0) {
       const [{ n }] = await tx<{ n: number }[]>`select count(*)::int as n from clubs`;
-      const cap = await withinLimit(auth.orgId, "clubs.max", n + plannedClubs);
-      if (!cap.ok) throw new PaymentRequiredError("clubs.max");
+      assertWithinLimit(clubCap, "clubs.max", n + plannedClubs);
     }
     if (plannedTeams > 0) {
       const [{ n }] = await tx<{ n: number }[]>`select count(*)::int as n from teams`;
-      const cap = await withinLimit(auth.orgId, "teams.max", n + plannedTeams);
-      if (!cap.ok) throw new PaymentRequiredError("teams.max");
+      assertWithinLimit(teamCap, "teams.max", n + plannedTeams);
     }
 
     const divisionIds = await executePlan(tx, auth, plan.ops);

@@ -24,7 +24,7 @@ import { withTenant } from "@/lib/db";
 // PaymentRequiredError survives here for one case only: a quota that resolves
 // below 1, where there is no window to roll (see `createCheckpoint`).
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
-import { requireFeature, withinLimit } from "@/lib/entitlements";
+import { getLimit, requireFeature } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { generateStageFixtures } from "./stages";
 
@@ -334,6 +334,11 @@ export async function createCheckpoint(
   label: string,
   kind: CheckpointKind = "manual",
 ): Promise<CheckpointRow> {
+  // The plan LOOKUP is resolved out here; the COUNT stays inside the
+  // transaction with the insert (doc 10 §2 rule 1). `getLimit` queries the
+  // pooled `sql` proxy, and `withTenant` pins a pooled connection for its whole
+  // callback — see `assertWithinLimit` in lib/entitlements.ts.
+  const checkpointLimit = await getLimit(auth.orgId, "schedule.checkpoints.max");
   return withTenant(auth.orgId, async (tx) => {
     // #382 review, finding 3: the roll below is count → delete → insert, and
     // without this lock those three steps are not serialised. Two saves landing
@@ -378,7 +383,7 @@ export async function createCheckpoint(
       const [{ n }] = await tx<{ n: number }[]>`
         select count(*)::int as n from division_checkpoints
         where division_id = ${divisionId} and kind = 'manual'`;
-      const { limit } = await withinLimit(auth.orgId, "schedule.checkpoints.max", n + 1);
+      const limit = checkpointLimit;
       // #382 review, finding 2: a quota below 1 has NO window to roll, so the
       // rolling branch cannot express it. `drop = n - limit + 1` at n=0/limit=0
       // asks to delete one row from an empty table — the delete removes nothing
