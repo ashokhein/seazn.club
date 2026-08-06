@@ -66,16 +66,25 @@ function board(opts: {
 }
 
 describe("R23 — the wall bounds the encode path, not just the search loops", () => {
-  // A deliberately LARGE board — 200 fixtures on a 432-slot lattice, 86_400
-  // fixture-slots. The size is chosen for SEPARATION, not realism: the guarded
-  // path costs boot + greedy + lattice and does not move with the slot count,
-  // while the unguarded path pays an `encodeBuild` that scales with
-  // `fixtures x slots`. Widening the lattice therefore buys margin on the one
-  // assertion that discriminates, at no cost to the committed run, which only
-  // ever walks the fast arm. A 216-slot version of this board measured
-  // 853 ms / 3_208 ms — a 7 % margin against the threshold below, thin enough
-  // that a quiet machine could have slipped the mutant under it.
-  const big = board({ n: 200, days: 6, slotsPerCourtDay: 18 });
+  // A LARGE board — 200 fixtures on a 216-slot lattice, 43_200 fixture-slots.
+  // The size is chosen for SEPARATION, not realism: the guarded path costs
+  // boot + greedy + lattice and does not move with the slot count, while the
+  // unguarded path pays an `encodeBuild` that scales with `fixtures x slots`.
+  //
+  // 216, NOT 432. The 432-slot version discriminated beautifully in isolation
+  // and POISONED THE WHOLE SUITE: the engine's vitest config runs
+  // `isolate: false` on a thread pool, so every file in a worker shares one z3
+  // instance and its WASM heap only ever GROWS. A single encode of 200 x 432 =
+  // 86_400 fixture-slots left the heap so large that 17 tests in UNRELATED
+  // files — officials/assign.property, testkit/golden, testkit/simulation —
+  // died with bare `STACK_TRACE_ERROR`s. `resetZ3()` cannot hand the memory
+  // back, so the only fix is not to take it.
+  //
+  // Halving costs nothing here because the assertion below is a RATIO rather
+  // than an absolute: at 216 slots the two arms measured 853 ms guarded
+  // against 3_208 ms unguarded, either side of `encodeMs / 2` by ~4x. It was
+  // the earlier absolute-threshold version that needed the bigger board.
+  const big = board({ n: 200, days: 3, slotsPerCourtDay: 18 });
 
   beforeAll(async () => {
     // `isolate: false` on a thread pool means this file shares one z3 instance
@@ -97,7 +106,7 @@ describe("R23 — the wall bounds the encode path, not just the search loops", (
     // Pin the shape the timing argument rests on. If a future change shrinks
     // this lattice, the encode stops being expensive and the assertion below
     // stops discriminating — silently. 200 x 216 = 43_200 fixture-slots.
-    expect({ slots: grid.slots.length, overCap: grid.overCap }).toEqual({ slots: 432, overCap: false });
+    expect({ slots: grid.slots.length, overCap: grid.overCap }).toEqual({ slots: 216, overCap: false });
 
     const out = await buildSchedule({ fixtures: big.fixtures, config: big.config, wallMs: 1 });
 
