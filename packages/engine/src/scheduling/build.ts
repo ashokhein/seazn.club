@@ -104,7 +104,7 @@ import {
   type VerifyConfig,
 } from "./calendar.ts";
 import { repairUniverse } from "./repair-domain.ts";
-import { loadZ3, withZ3Lock, type Z3Context } from "./z3-load.ts";
+import { loadZ3, withZ3LockAndReset, type Z3Context } from "./z3-load.ts";
 
 const MS_PER_MIN = 60_000;
 
@@ -267,6 +267,36 @@ export interface BuildInput {
    *  caller supplied one, and to greedy's placement otherwise — see
    *  `publishedSlotOf`. */
   frozen?: readonly string[];
+  /**
+   * Where the caller's MOVABLE cards sit right now, before this run.
+   *
+   * Read for exactly two things, and it is NOT part of the immovable board —
+   * that is `existing`, and conflating the two would put the organiser's own
+   * cards in their own way:
+   *
+   *   * it is the baseline `moved` is measured against, so the strip's
+   *     "moved N" counts from where the organiser was rather than from a greedy
+   *     seed they never saw;
+   *   * POLISH anchors a freeze to it (R20), so a frozen card without a
+   *     `locked` slot is held where it was PUBLISHED instead of wherever greedy
+   *     happened to re-place it this run.
+   *
+   * It still does not constrain the solve: an unfrozen card is free to move off
+   * its `current` slot, which is the whole point of asking.
+   *
+   * AN EMPTY ARRAY MEANS "no board", not "an empty board" — a first-ever build
+   * would otherwise report every card it placed as moved.
+   *
+   * Rows for fixtures this run does not place are still consulted: one that
+   * vanishes from the answer is reported through `lost`. So pass the board for
+   * the cards this run may touch, not the whole competition, and do not filter
+   * it down to the cards you expect back — that is precisely the signal.
+   *
+   * Optional and additive. Omitting it leaves `moved` measured against the
+   * greedy seed and `lost` at 0, which is what every caller got before this
+   * field existed.
+   */
+  current?: readonly Assignment[];
   rlimit?: number;
   wallMs?: number;
   /** Not read here. BUILD and POLISH differ only in whether `frozen` is
@@ -294,7 +324,30 @@ export interface BuildResult {
   tiersCompleted: number;
   budgetExpired: boolean;
   elapsedMs: number;
+  /**
+   * Rows on this board that changed slot relative to the baseline — the
+   * caller's `current` when there is one, and the greedy seed otherwise.
+   *
+   * RELOCATIONS ONLY. It never exceeds `assignments.length`, which is what makes
+   * "moved N" printable beside a board of that size. A card the run could not
+   * place is `lost`, not this (R21): folding the two made a single substitution
+   * read as 2 and let the number outgrow the board it described.
+   */
   moved: number;
+  /**
+   * Baseline rows that are NOT on this board — matches the caller had scheduled
+   * and this run could not place.
+   *
+   * ALWAYS 0 without `current`, and that is a definition rather than a gap
+   * (R21). The greedy seed is this run's own first guess and not a board anybody
+   * was shown, so the solver dropping a seed row to fit two better ones is
+   * ordinary progress; only the caller's real board can lose a match.
+   *
+   * Separate from `moved` because the two are different events and only one is
+   * alarming — cards moving is what the organiser asked for, a card falling off
+   * the board is not, and a single conflated number cannot say which happened.
+   */
+  lost: number;
   /**
    * What the RUN cost, in z3 resource units, measured off z3's own counter
    * (R11). The whole run — every tier check and every window the fallback
@@ -461,7 +514,17 @@ export function buildSchedule(input: BuildInput): Promise<BuildResult> {
   // through `repairSchedule`, which DOES take the lock itself, and therefore
   // proposed moving this call inward; nothing here takes it twice, so the lock
   // stays on the outside where it can serialise the whole run.)
-  return withZ3Lock(() => solveBuild(input));
+  //
+  // AND THE TEARDOWN IS OURS, not the caller's (R17). z3's WASM heap only ever
+  // grows and nothing frees a finished `Solver`, so a process that runs a
+  // handful of solves aborts with an OOM and takes node with it — measured at
+  // six consecutive solves. That fix first landed as a `finally` at the web
+  // seam, where the NEXT entry point re-introduces the crash simply by not
+  // knowing about it; `repairDecomposed` already owns its own resets, and this
+  // now matches. `withZ3LockAndReset` rather than a `finally` around this call
+  // because the reset has to happen while the lock is still HELD — see its
+  // comment for what the obvious spelling does instead.
+  return withZ3LockAndReset(() => solveBuild(input));
 }
 
 /**
@@ -522,6 +585,25 @@ async function solveBuild(
   const seedAssignments = rawSeed.assignments.filter((a) => !disqualified.has(a.fixtureId));
   const seedMetrics = boardMetrics(seedAssignments, config.courts, fixtures.length);
 
+  /**
+   * The caller's own board, or `undefined` when they gave us none.
+   *
+   * AN EMPTY ARRAY IS "NONE", not "a board on which nothing was scheduled".
+   * `[]` is the natural shape of a first-ever build on a division nobody has
+   * touched, and reading it as a baseline makes every card the run places differ
+   * from it — so the strip announces "12 matches moved" about a board that never
+   * existed. The distinction is drawn HERE rather than at the call seam, because
+   * it has to hold for every caller and not only for the one that remembered.
+   *
+   * ONE binding, read by both consumers. `publishedSlotOf` anchors a freeze to
+   * it (R20) and `movedFrom` measures against it, and those two must never
+   * disagree about whether there is a caller board at all: a freeze anchored to
+   * the organiser's slot while `moved` counted from greedy's would report a card
+   * as moved precisely when it had been held still.
+   */
+  const currentBoard =
+    input.current !== undefined && input.current.length > 0 ? input.current : undefined;
+
   /** This run's bindings for the exported `conflictsFor`, which carries the
    *  three-source rule and the reasoning behind it. */
   const conflictsForBoard = (board: readonly Assignment[], proved: boolean): Conflict[] =>
@@ -545,6 +627,69 @@ async function solveBuild(
   /** Filled by the LNS pass below; empty on every path that never reaches it. */
   const lnsWindowRlimits: number[] = [];
 
+  /**
+   * How many of `board`'s rows sit somewhere other than where the CALLER had
+   * them — the number the UI renders verbatim as "moved N" / "nothing moved".
+   *
+   * MEASURED AGAINST `input.current` WHEN THERE IS ONE, and only otherwise
+   * against the greedy seed. The seed is the wrong baseline whenever the two
+   * differ, and they differ in exactly the shape POLISH exists for: a fixture
+   * the caller froze but did not `lock` has no anchor of its own, so greedy
+   * RE-PLACES it and the seed records greedy's slot rather than the organiser's.
+   * The run then holds the card at greedy's slot, the diff against the seed is
+   * zero, and the strip says "nothing moved" about a board whose published times
+   * changed. Falling back to the seed keeps every caller that supplies nothing
+   * exactly where it was — a self-comparison, so zero.
+   *
+   * ONE rule for both exits. The early-return greedy paths hand back the seed
+   * itself, and hard-coding `moved: 0` there tells the same lie whenever
+   * `current` disagrees with it, so they route through here too.
+   *
+   * A row missing from the baseline counts as moved, which is right in both
+   * directions: under `current` it is a card the organiser had not scheduled at
+   * all, and under the seed it is one greedy could not place.
+   *
+   * ROWS ONLY — a card this run could not place is `lostFrom`'s business, not
+   * this one's (R21). Folding the two together made a single substitution read
+   * as 2 (the card swapped in counted as moved, the card dropped counted again)
+   * and let `moved` exceed the size of the board it describes. A strip printing
+   * "moved N" cannot honestly print an N larger than the board.
+   */
+  const movedFrom = (board: readonly Assignment[]): number => {
+    const was = new Map((currentBoard ?? seedAssignments).map((a) => [a.fixtureId, a]));
+    return board.filter((a) => {
+      const before = was.get(a.fixtureId);
+      return before === undefined || before.court !== a.court || before.startAt !== a.startAt;
+    }).length;
+  };
+
+  /**
+   * Baseline rows this run could not place — matches that were on the caller's
+   * board and are not on the answer.
+   *
+   * SCOPED TO `currentBoard`, and zero without one (R21). Against the greedy
+   * seed the question is not meaningful: the seed is this run's own first guess,
+   * not a board anybody was shown, and the solver dropping a greedy card to fit
+   * two better ones is ordinary progress rather than a loss. Measured on the
+   * shape that proves it — one slot per court, `a=(E1,E2) b=(E1,E3) c=(E2,E4)`:
+   * greedy places only `a`, z3 places `b` and `c`, and counting the seed's `a`
+   * as lost took `moved` to 3 on a two-row board.
+   *
+   * That case is also why the previous justification here was wrong. It claimed
+   * a seed baseline could never lose a row because T0 maximises `placed` — but
+   * `isStrictlyBetter` only requires `placed >=`, so the solver may drop one
+   * card while adding two, and the set can change even when the count does not.
+   *
+   * Its own field rather than folded into `moved`, because the two are different
+   * events and only one of them is alarming: cards moving is what the organiser
+   * asked for, a card falling off the board is not.
+   */
+  const lostFrom = (board: readonly Assignment[]): number => {
+    if (currentBoard === undefined) return 0;
+    const onBoard = new Set(board.map((a) => a.fixtureId));
+    return currentBoard.filter((a) => !onBoard.has(a.fixtureId)).length;
+  };
+
   const greedy = (status: BuildStatus, budgetExpired = false): BuildResult => ({
     assignments: seedAssignments,
     conflicts: conflictsForBoard(seedAssignments, false),
@@ -554,7 +699,12 @@ async function solveBuild(
     tiersCompleted: 0,
     budgetExpired,
     elapsedMs: elapsed(),
-    moved: 0,
+    // NOT a hard 0. This board IS the seed, so it is zero whenever the caller
+    // supplied no `current` — but when they did, a card greedy re-placed has
+    // genuinely moved from where the organiser had it, and saying otherwise is
+    // the same false "nothing moved" the solver paths were fixed for.
+    moved: movedFrom(seedAssignments),
+    lost: lostFrom(seedAssignments),
     rlimitSpent: runBudget.current?.spent ?? 0,
     lnsWindowRlimits,
   });
@@ -574,12 +724,25 @@ async function solveBuild(
   /**
    * Where a card the caller says may not move actually IS.
    *
-   * `locked` first, because that is the only placement in `BuildInput` the
-   * CALLER supplied; greedy's own re-placement is a fallback and not the same
-   * thing — freezing a card to a slot greedy just invented would pin POLISH to
-   * a time the organiser never saw. `BuildInput` carries no published-board
-   * field, so a POLISH caller that wants a true freeze must set `locked`
-   * (flagged for Task 6).
+   * THREE SOURCES, in descending order of how much the ORGANISER would
+   * recognise the answer (R20):
+   *
+   *   1. `locked` — the caller naming a slot outright;
+   *   2. `current` — where the card sits on the caller's own board, which for
+   *      POLISH is the time an entrant has already been told;
+   *   3. greedy's re-placement, and only as a last resort.
+   *
+   * The third is a slot greedy INVENTED during this very run, so anchoring to it
+   * freezes the card to a time nobody has ever seen — POLISH silently moving a
+   * published card, which is the exact opposite of the mode's purpose. It stayed
+   * that way only because `BuildInput` had no published-board field; `current`
+   * is that field, so `locked` is no longer the only way to express a true
+   * freeze. The fallback survives for the caller that supplies neither, where a
+   * pin at greedy's slot is still better than no freeze at all.
+   *
+   * `currentBoard`, not `input.current`, so an empty array is "no board" here
+   * exactly as it is for `moved` — the two must agree or a freeze anchored to
+   * one baseline gets counted against the other.
    *
    * The RAW seed, not the legalised one: a card the legalisation pass dropped
    * still has a placement the organiser is looking at.
@@ -587,6 +750,8 @@ async function solveBuild(
   const publishedSlotOf = (id: string): BuildSlot | undefined => {
     const f = fixtures.find((x) => x.id === id);
     if (f?.locked !== undefined) return f.locked;
+    const now = currentBoard?.find((a) => a.fixtureId === id);
+    if (now !== undefined) return { court: now.court, startAt: now.startAt };
     const at = rawSeed.assignments.find((a) => a.fixtureId === id);
     return at === undefined ? undefined : { court: at.court, startAt: at.startAt };
   };
@@ -1050,11 +1215,8 @@ async function solveBuild(
     return { ...greedy("verifier_rejected", budgetExpired), tiersCompleted };
   }
 
-  const seedById = new Map(seedAssignments.map((a) => [a.fixtureId, a]));
-  const moved = incumbent.filter((a) => {
-    const was = seedById.get(a.fixtureId);
-    return was === undefined || was.court !== a.court || was.startAt !== a.startAt;
-  }).length;
+  const moved = movedFrom(incumbent);
+  const lost = lostFrom(incumbent);
 
   // `already_optimal` needs BOTH halves: every tier ran to a verdict, and
   // nothing to show for it. Without the first it would claim a proof on a board
@@ -1082,6 +1244,7 @@ async function solveBuild(
     budgetExpired,
     elapsedMs: elapsed(),
     moved,
+    lost,
     rlimitSpent: budget.spent,
     lnsWindowRlimits,
   };
