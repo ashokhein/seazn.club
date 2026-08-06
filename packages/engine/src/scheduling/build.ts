@@ -104,7 +104,7 @@ import {
   type VerifyConfig,
 } from "./calendar.ts";
 import { repairUniverse } from "./repair-domain.ts";
-import { loadZ3, withZ3Lock, type Z3Context } from "./z3-load.ts";
+import { loadZ3, withZ3LockAndReset, type Z3Context } from "./z3-load.ts";
 
 const MS_PER_MIN = 60_000;
 
@@ -461,7 +461,17 @@ export function buildSchedule(input: BuildInput): Promise<BuildResult> {
   // through `repairSchedule`, which DOES take the lock itself, and therefore
   // proposed moving this call inward; nothing here takes it twice, so the lock
   // stays on the outside where it can serialise the whole run.)
-  return withZ3Lock(() => solveBuild(input));
+  //
+  // AND THE TEARDOWN IS OURS, not the caller's (R17). z3's WASM heap only ever
+  // grows and nothing frees a finished `Solver`, so a process that runs a
+  // handful of solves aborts with an OOM and takes node with it — measured at
+  // six consecutive solves. That fix first landed as a `finally` at the web
+  // seam, where the NEXT entry point re-introduces the crash simply by not
+  // knowing about it; `repairDecomposed` already owns its own resets, and this
+  // now matches. `withZ3LockAndReset` rather than a `finally` around this call
+  // because the reset has to happen while the lock is still HELD — see its
+  // comment for what the obvious spelling does instead.
+  return withZ3LockAndReset(() => solveBuild(input));
 }
 
 /**

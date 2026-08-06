@@ -667,8 +667,24 @@ describe("buildSchedule — lexicographic tiers", () => {
     expect(built.metrics.placed).toBe(3);
     expect(built.metrics.makespanMinutes).toBe(90);
     // Forced, not incidental: 90 minutes over one court is three back-to-back
-    // slots, and `a` may not start before 09:45, so `a` is the last of them.
-    expect(built.assignments.find((x) => x.fixtureId === "a")?.startAt).toBe(T0 + 60 * MIN);
+    // slots, and `a` may not start before 09:45, so `a` is the LAST of them.
+    //
+    // THE ABSOLUTE INSTANT IS NOT FORCED AND MUST NOT BE ASSERTED. Two boards
+    // meet all four of D3's tiers here — 09:00/09:30/10:00 and
+    // 09:30/10:00/10:30 — with the same `placed`, the same makespan, no idle
+    // gap on either (six distinct entrants, one match each) and the same
+    // imbalance (one court). Which one comes back is a tie z3 breaks in its own
+    // internals, not a property of this design.
+    //
+    // This asserted 10:00 until R17, and passed only because the solves EARLIER
+    // IN THIS FILE left the shared z3 context warm — the cold answer was always
+    // 10:30 (measured directly). Now that `buildSchedule` tears the context down
+    // itself, every solve is cold and the tie falls the other way. Asserting the
+    // instant was pinning the solver's search state; asserting the shape pins
+    // what the comment above actually argues.
+    const starts = [...built.assignments].map((x) => x.startAt).sort((p, q) => p - q);
+    expect(starts).toEqual([starts[0]!, starts[0]! + 30 * MIN, starts[0]! + 60 * MIN]);
+    expect(built.assignments.find((x) => x.fixtureId === "a")?.startAt).toBe(starts[2]);
     expect(built.tiersCompleted).toBe(4);
   }, 180_000);
 
