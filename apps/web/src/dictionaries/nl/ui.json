@@ -3222,5 +3222,10 @@
   "board.result.dur.hm": "{h} u {m} min",
   "board.result.dur.m": "{m} min",
   "board.result.dur.s": "{s} s",
-  "board.result.dur.ms": "{ms} ms"
+  "board.result.dur.ms": "{ms} ms",
+  "board.polish": "Tijden verbeteren",
+  "board.polishTitle": "Verscherpt het bestaande schema — vastgezette en vergrendelde wedstrijden houden hun tijden",
+  "board.result.repairBudget": "De tijd was op voordat de herindeling klaar was met zoeken — er is niets verplaatst dat al ingepland stond.",
+  "board.result.lost.one": "Eén wedstrijd is zijn tijdslot kwijtgeraakt.",
+  "board.result.lost.other": "{count} wedstrijden zijn hun tijdsloten kwijtgeraakt."
 }

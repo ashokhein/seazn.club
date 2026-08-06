@@ -124,6 +124,50 @@ describe("ScheduleResultStrip — the anytime contract", () => {
     expect(html).not.toContain("2 of 4 targets improved");
   });
 
+  /**
+   * THE reflow-timeout defect (Task 12).
+   *
+   * The repair solver has no tier ladder — `reflowExisting` sets
+   * `tiersCompleted: 0` and stays there deliberately, because reporting a
+   * number from a ladder it never walked would make an optimality claim nothing
+   * proved. `tiers_total` is still the build ladder's 4 (pinned by
+   * schedule-solver-telemetry.test.ts for all three modes), so a strip that
+   * reads only those two numbers renders "0 of 4 targets improved" — true, and
+   * useless: it names a scale the run was never on.
+   *
+   * The two numbers here are IDENTICAL to the build case below except for
+   * `mode`, which is the whole point: nothing else in the payload can tell a
+   * repair timeout from a build that expired before finishing its first tier.
+   */
+  it("a reflow timeout gets its own sentence, not '0 of 4 targets improved'", () => {
+    const html = render(
+      metrics(),
+      solver({ mode: "reflow", budget_expired: true, tiers_completed: 0, tiers_total: 4 }),
+    );
+    expect(html).toContain('data-testid="schedule-result-budget"');
+    expect(html).toContain("nothing already on the board was moved");
+    expect(html).not.toContain("targets improved");
+    expect(html).not.toContain("0 of 4");
+  });
+
+  /** …and the build path keeps the tier sentence on the SAME two numbers, so
+   *  the discriminator is provably `mode` and not `tiers_completed === 0`. */
+  it("a build that expired before its first tier still counts targets", () => {
+    const html = render(
+      metrics(),
+      solver({ mode: "build", budget_expired: true, tiers_completed: 0, tiers_total: 4 }),
+    );
+    expect(html).toContain("0 of 4 targets improved");
+    expect(html).not.toContain("nothing already on the board was moved");
+  });
+
+  /** A server one deploy behind sends no `mode`. The tier sentence is what it
+   *  rendered before the field existed, so absence must not change it. */
+  it("keeps the tier sentence when the wire carries no mode", () => {
+    const html = render(metrics(), solver({ budget_expired: true, tiers_completed: 2 }));
+    expect(html).toContain("2 of 4 targets improved");
+  });
+
   it("budget_expired: false does NOT render the note", () => {
     const html = render(metrics(), solver({ budget_expired: false, tiers_completed: 2 }));
     expect(html).not.toContain('data-testid="schedule-result-budget"');
@@ -190,6 +234,21 @@ describe("ScheduleResultStrip — infeasible is a statement about the PINS", () 
     const html = render(metrics({ placed: 22, total: 22 }), solver({ status: "infeasible" }));
     expect(html).toContain("everything still found a slot");
     expect(html).not.toContain("scheduled —");
+    /**
+     * AMBER, deliberately, and the tone is asserted in BOTH directions here
+     * because until Task 12 this spec pinned only the headline and the band was
+     * whatever `flagged` happened to compute.
+     *
+     * The decision: this run could not honour every pin. Nothing was dropped,
+     * so the numbers are fine — but a match the organiser had pinned has been
+     * moved off the time they pinned it to, and they may already have told
+     * somebody about it. That is the definition of "something here you need to
+     * know about your board", which is what amber is reserved for. A neutral
+     * slate band would file it beside `verifier_rejected`, where the organiser
+     * genuinely has nothing to do.
+     */
+    expect(html).toContain('data-tone="flag"');
+    expect(html).not.toContain('data-tone="plain"');
   });
 
   /**
@@ -234,5 +293,56 @@ describe("ScheduleResultStrip — infeasible is a statement about the PINS", () 
     const html = render(metrics(), solver());
     expect(html).not.toContain("of 22 scheduled");
     expect(html).not.toContain("could not be placed");
+  });
+});
+
+/**
+ * `lost` — cards the run took OFF a board the organiser already had (R21).
+ *
+ * It is not "could not be placed". A stage of 22 with 18 placed has 4 cards
+ * with no slot, but only the ones that HELD a slot before this run are a slot
+ * the organiser has to un-tell somebody about; the rest were never scheduled.
+ * Folding the two is exactly what R21 split apart in the engine, and a strip
+ * that re-folded them here would undo it.
+ */
+describe("ScheduleResultStrip — lost slots are not the same as unplaced cards", () => {
+  /**
+   * THE discriminating fixture. Four cards are off the board (22 - 18) and only
+   * TWO of them had a slot to lose. A component deriving the count from
+   * `total - placed` renders 4 here and is caught; on any board where the two
+   * agree it would pass while measuring the wrong thing.
+   */
+  it("takes the lost count from the wire, not from total - placed", () => {
+    const html = render(
+      metrics({ placed: 18, total: 22 }),
+      solver({ status: "ok", moved: 6, lost: 2 }),
+    );
+    expect(html).toContain('data-testid="schedule-result-lost"');
+    expect(html).toContain("2 matches lost the slots they had");
+    expect(html).not.toContain("4 matches lost");
+    // …and the unplaced sentence keeps saying 4, so the two facts stay two facts.
+    expect(html).toContain("4 matches could not be placed");
+  });
+
+  it("uses the singular sentence for exactly one lost slot", () => {
+    const html = render(metrics({ placed: 21, total: 22 }), solver({ lost: 1 }));
+    expect(html).toContain("One match lost the slot it had");
+    expect(html).not.toContain("lost the slots they had");
+  });
+
+  /** A run that dropped nothing must not render an empty accusation. `moved`
+   *  is deliberately non-zero: a component keying the line off the wrong field
+   *  renders it here. */
+  it("says nothing at all when the run lost no slots", () => {
+    const html = render(metrics(), solver({ moved: 6, lost: 0 }));
+    expect(html).not.toContain('data-testid="schedule-result-lost"');
+    expect(html).not.toContain("lost the slot");
+  });
+
+  /** BUILD without a `current` board reports 0 by definition, and a server one
+   *  deploy behind sends no field at all. Neither is "nothing was lost proven". */
+  it("says nothing when the wire carries no lost count", () => {
+    const html = render(metrics({ placed: 18, total: 22 }), solver());
+    expect(html).not.toContain('data-testid="schedule-result-lost"');
   });
 });

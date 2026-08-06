@@ -124,11 +124,35 @@ export function ScheduleResultStrip({
       : solver.seeded === solver.moved
         ? plural("board.result.placed", solver.moved)
         : plural("board.result.moved", solver.moved);
+  /**
+   * Cards that HELD a slot on the organiser's board and no longer have one.
+   *
+   * A different fact from `dropped`, and deliberately not derived from it: a
+   * card that was never on the timetable cannot lose a slot, so on a stage of 22
+   * with 18 placed the four unplaced cards may include two that nobody was ever
+   * told a time for. Only the ones counted here are a time somebody may have to
+   * be un-told about, which is the whole reason R21 split `lost` out of `moved`
+   * in the engine — re-deriving it here would fold them straight back together.
+   *
+   * Absent means "the run had no baseline to lose from" (a BUILD supplies no
+   * `current`) or "the server predates the field". Neither is a proof that
+   * nothing was lost, so both stay silent rather than claiming zero.
+   */
+  const lost = solver.lost ?? 0;
   // Amber is reserved for "there is something here you need to know about your
   // board". `verifier_rejected` deliberately does NOT qualify: it is an internal
   // fault the organiser cannot act on, their board is valid either way, and the
   // loud part of that failure belongs in our logs, not on their screen.
   // `solver_busy` and `z3_unavailable` are likewise ordinary, not alarming.
+  //
+  // `infeasible` DOES qualify even when nothing was dropped: the numbers are
+  // fine, but a card the organiser pinned has been moved off the time they
+  // pinned it to, and they may already have told somebody about it.
+  //
+  // `lost` is NOT a third term here, and its absence is deliberate rather than
+  // an oversight: a lost card is by construction a card with no slot, so
+  // `placed < total` and `partial` is already true. A term that cannot change
+  // the answer would read as a guard and be tested as one.
   const flagged = partial || solver.status === "infeasible";
 
   // The headline is the single most honest thing we can say. An incomplete board
@@ -174,6 +198,15 @@ export function ScheduleResultStrip({
         {headline}
       </p>
       {secondary && <p className="mt-0.5 text-xs text-slate-600">{secondary}</p>}
+      {/* Above the metrics rather than below them: this is the only line that
+          names a consequence outside the board — somebody was told a time that
+          is no longer true — and it belongs beside the headline, not filed under
+          the numbers. */}
+      {lost > 0 && (
+        <p data-testid="schedule-result-lost" className="mt-0.5 text-xs font-medium text-amber-800">
+          {plural("board.result.lost", lost)}
+        </p>
+      )}
 
       {/* Capped rather than stretched: on a wide board a full-bleed rail leaves
           each number stranded at the left of a 250px cell, which reads as an
@@ -203,11 +236,22 @@ export function ScheduleResultStrip({
         // lives two packages away, and a copy of its length in each is a
         // divergence with nothing to notice it — which is exactly what a
         // hardcoded `IMPROVEMENT_TARGETS = 4` was.
+        //
+        // …but the ladder is the BUILD path's, and REFLOW runs the repair solver,
+        // which has no tiers at all. It reports `tiersCompleted: 0` deliberately
+        // — a number from a ladder it never walked would make an optimality
+        // claim nothing proved — while `tiers_total` stays 4, so the tier
+        // sentence renders "0 of 4 targets improved" about a run that was never
+        // on that scale. True, and useless. `mode` is the only thing in the
+        // payload that can tell the two apart: an expired build and an expired
+        // reflow are otherwise byte-identical here.
         <p data-testid="schedule-result-budget" className="mt-2 text-xs text-slate-600">
-          {msg("board.result.budgetExpired", {
-            n: solver.tiers_completed,
-            total: solver.tiers_total,
-          })}
+          {solver.mode === "reflow"
+            ? msg("board.result.repairBudget")
+            : msg("board.result.budgetExpired", {
+                n: solver.tiers_completed,
+                total: solver.tiers_total,
+              })}
         </p>
       )}
 

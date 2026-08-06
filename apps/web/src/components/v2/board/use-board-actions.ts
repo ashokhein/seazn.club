@@ -10,7 +10,16 @@ import { useMsg } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 import { dayKey } from "@/lib/schedule-board";
 import type { FeedLabelPair } from "@/lib/schedule-board";
-import type { ScheduleMetrics, ScheduleSolverInfo } from "@/server/api-v1/schemas";
+import type {
+  AutoScheduleRequest,
+  ScheduleMetrics,
+  ScheduleSolverInfo,
+} from "@/server/api-v1/schemas";
+
+/** Which solver a run is asking for. Off the request schema rather than
+ *  re-declared, so a fourth mode cannot appear on the wire without every caller
+ *  here being typechecked against it. */
+export type AutoScheduleMode = AutoScheduleRequest["mode"];
 import {
   CONFLICT_HELP,
   cardTitle,
@@ -47,7 +56,21 @@ export interface BoardActions {
   setNotice: (n: string | null) => void;
   moveCard: (fixtureId: string, atIso: string | null, court: string | null) => Promise<boolean>;
   togglePin: (f: BoardFixture) => Promise<void>;
-  autoRun: (stageId: string, onlyUnlocked: boolean) => Promise<void>;
+  /**
+   * Propose + apply for one stage.
+   *
+   * `mode` is OMITTED by the two original callers and that is the contract, not
+   * an oversight: `AutoScheduleRequest` derives it from `only_unlocked` server
+   * side (absent or true -> reflow, false -> build), and the derivation is pinned
+   * there. Sending it from here as well would move the decision to the client
+   * with nothing to notice when the two definitions drift.
+   *
+   * POLISH is the exception, because it is the one mode `only_unlocked` cannot
+   * express: it re-flows the unlocked cards exactly as REFLOW does, and asks the
+   * tier solver to improve the board rather than the repair solver to make it
+   * legal.
+   */
+  autoRun: (stageId: string, onlyUnlocked: boolean, mode?: AutoScheduleMode) => Promise<void>;
   act: (path: string, done: string) => Promise<void>;
   shiftDay: (day: string, minutes: number) => Promise<void>;
   swapCourts: (day: string, a: string, b: string) => Promise<void>;
@@ -273,7 +296,7 @@ export function useBoardActions(
   );
 
   const autoRun = useCallback(
-    async (stageId: string, onlyUnlocked: boolean) => {
+    async (stageId: string, onlyUnlocked: boolean, mode?: AutoScheduleMode) => {
       setError(null);
       setNotice(null);
       setLastRun(null);
@@ -290,7 +313,11 @@ export function useBoardActions(
           solver?: ScheduleSolverInfo;
         }>(`/api/v1/stages/${stageId}/schedule/auto`, {
           method: "POST",
-          json: { only_unlocked: onlyUnlocked },
+          // Spread, not `mode: mode` — an explicit `undefined` serialises as a
+          // present key on some paths and the request schema's preprocess keys
+          // on `body.mode !== undefined`, so it would defeat the derivation the
+          // two original callers depend on.
+          json: { only_unlocked: onlyUnlocked, ...(mode !== undefined ? { mode } : {}) },
         });
         // Before the empty-proposal return, not after: an `infeasible` run can
         // place nothing at all, and that is exactly the run whose report the
