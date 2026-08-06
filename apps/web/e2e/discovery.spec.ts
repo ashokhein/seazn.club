@@ -6,7 +6,7 @@ import { TAG, apiJson, addEntrantsViaApi, createStageAndGenerate } from "./helpe
 // worth testing is that discoverable requires public visibility.
 test("a discoverable public competition appears on /discover", async ({ page, request }) => {
   const name = `Discoverfest ${TAG}`;
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name,
     visibility: "public",
     starts_on: new Date(Date.now() + 14 * 24 * 60 * 60_000).toISOString().slice(0, 10),
@@ -46,7 +46,7 @@ test("a discoverable public competition appears on /discover", async ({ page, re
 });
 
 test("discoverable requires public visibility", async ({ request }) => {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Hidden Fest ${TAG}`,
     visibility: "private",
   });

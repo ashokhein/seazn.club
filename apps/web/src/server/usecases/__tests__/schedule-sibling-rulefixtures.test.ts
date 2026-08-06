@@ -172,6 +172,7 @@ async function seedBoard(placed: boolean, endAt?: string): Promise<{
   const { auth } = await seedOrg("pro");
   const tag = randomUUID().slice(0, 6);
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Sibling Rule Identity ${tag}`,
     visibility: "public",
     branding: {},

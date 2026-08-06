@@ -67,6 +67,7 @@ describe.skipIf(!HAS_DB || !HAS_REDIS)("entitlement cache invalidation (real Red
   it("patchCompetition busts the cache the instant a pass-bearing competition locks", async () => {
     const auth = await seedCommunityOrg();
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: `Cache Lock ${randomUUID().slice(0, 6)}`,
       visibility: "private",
       branding: {},

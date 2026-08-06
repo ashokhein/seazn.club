@@ -125,7 +125,7 @@ describe.skipIf(!HAS_DB)("publish-with-division earn gate — wiring (v17 gap #2
     const userId = await seedUser();
     const org = await createOrgForUser(userId, `Publisher ${uniq()}`);
     const auth = await authFor(org.id, userId);
-    const comp = await createCompetition(auth, { name: "Cup", visibility: "private", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "Cup", visibility: "private", branding: {} });
     await createDivision(auth, comp.id, {
       name: "Open",
       slug: `open-${uniq()}`,
@@ -144,7 +144,7 @@ describe.skipIf(!HAS_DB)("publish-with-division earn gate — wiring (v17 gap #2
     // Re-publishing (idempotent per-org key) and publishing a SECOND
     // competition with a division both no-op — once per org, not per comp.
     await patchCompetition(auth, comp.id, { status: "published" });
-    const comp2 = await createCompetition(auth, { name: "Cup 2", visibility: "private", branding: {} });
+    const comp2 = await createCompetition(auth, { ends_on: "2030-12-31", name: "Cup 2", visibility: "private", branding: {} });
     await createDivision(auth, comp2.id, {
       name: "Open",
       slug: `open2-${uniq()}`,
@@ -162,7 +162,7 @@ describe.skipIf(!HAS_DB)("publish-with-division earn gate — wiring (v17 gap #2
     const userId = await seedUser();
     const org = await createOrgForUser(userId, `No Division ${uniq()}`);
     const auth = await authFor(org.id, userId);
-    const comp = await createCompetition(auth, { name: "Empty Cup", visibility: "private", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "Empty Cup", visibility: "private", branding: {} });
 
     await patchCompetition(auth, comp.id, { status: "published" });
     const walletId = await walletIdFor(org.id);
@@ -176,7 +176,7 @@ describe.skipIf(!HAS_DB)("publish-with-division earn gate — wiring (v17 gap #2
     const userId = await seedUser();
     const org = await createOrgForUser(userId, `Referred2 ${uniq()}`, { referredByOrgId: referrer.id });
     const auth = await authFor(org.id, userId);
-    const comp = await createCompetition(auth, { name: "Cup", visibility: "private", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "Cup", visibility: "private", branding: {} });
     await createDivision(auth, comp.id, {
       name: "Open",
       slug: `open-${uniq()}`,
@@ -210,7 +210,7 @@ describe.skipIf(!HAS_DB)("publish-with-division earn gate — wiring (v17 gap #2
       referredByOrgId: referrer.id,
     });
     const auth = await authFor(org.id, userId);
-    const comp = await createCompetition(auth, { name: "Cup", visibility: "private", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "Cup", visibility: "private", branding: {} });
     await createDivision(auth, comp.id, {
       name: "Open",
       slug: `open-${uniq()}`,
@@ -250,7 +250,7 @@ describe.skipIf(!HAS_DB)("publish-with-division earn gate — wiring (v17 gap #2
     const userId = await seedUser();
     const org = await createOrgForUser(userId, `Archived Div ${uniq()}`);
     const auth = await authFor(org.id, userId);
-    const comp = await createCompetition(auth, { name: "Cup", visibility: "private", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "Cup", visibility: "private", branding: {} });
     const division = await createDivision(auth, comp.id, {
       name: "Open",
       slug: `open-${uniq()}`,

@@ -72,6 +72,7 @@ async function seedOrg(tag: string): Promise<{ orgId: string; ownerId: string; o
 /** Division of 4 individual entrants, each backed by a person; fixtures generated + started. */
 async function rig(owner: AuthCtx, opts: { dob?: string | null } = {}) {
   const competition = await createCompetition(owner, {
+    ends_on: "2030-12-31",
     name: "Me Cup " + randomUUID().slice(0, 6),
     visibility: "public",
     branding: {},

@@ -51,7 +51,7 @@ test.describe("player accounts (PROMPT-53)", () => {
     const org = await activeOrg(page);
     orgSlug = org.slug;
 
-    const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", {
+    const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Players ${TAG}`,
       visibility: "public",
     });

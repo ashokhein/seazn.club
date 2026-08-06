@@ -117,6 +117,7 @@ export function DivisionBuilder({
   compSlug,
   sports,
   constraintsAllowed = true,
+  archivedSlotsExplainRefusal = false,
 }: {
   competitionId: string;
   orgSlug: string;
@@ -124,6 +125,24 @@ export function DivisionBuilder({
   sports: SportOption[];
   /** Pro `scheduling.constraints` — gates a multi-venue list (doc 12 §5). */
   constraintsAllowed?: boolean;
+  /**
+   * Would releasing this competition's ARCHIVED slot-holders (V354 — recorded
+   * results, minus a staff waiver) let a refused create through? Answered
+   * server-side by the page, from the same SQL predicate and the same
+   * `withinLimit` call the quota charge itself uses.
+   *
+   * It exists only to explain a refusal that is otherwise invisible: an org
+   * can be looking at ONE division and a "limit reached" paywall, with the
+   * rest of its slots held by rows the console deliberately hides.
+   *
+   * A boolean rather than the COUNT it started as (#376 part C review). "There
+   * are archived holders" is not "the archived holders are why you were
+   * refused": at a cap of four with four visible divisions and one archived
+   * holder, releasing it changes nothing, and the sentence would send the
+   * reader to fix something that is not the cause. Half of that answer is a
+   * quota limit, which is not a question a client component can ask.
+   */
+  archivedSlotsExplainRefusal?: boolean;
 }) {
   const msg = useMsg();
   const locale = useLocale();
@@ -272,6 +291,11 @@ export function DivisionBuilder({
     } catch (err) {
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywallFeature(String(err.extra.feature_key ?? ""));
+      } else if (err instanceof ApiV1Error && err.code === "COMPETITION_ENDED") {
+        // A finished competition does not grow (#376 part D). The server's
+        // message is English-only, so the refusal is localised here rather
+        // than shown raw — this is the only surface that creates a division.
+        setError(msg("division.create.competitionEnded"));
       } else {
         setError(err instanceof Error ? err.message : msg("wizard.failed"));
       }
@@ -813,7 +837,29 @@ export function DivisionBuilder({
         </div>
       </section>
 
-      {paywallFeature && <UpgradeGate feature={paywallFeature} />}
+      {paywallFeature && (
+        <div className="space-y-2">
+          <UpgradeGate feature={paywallFeature} />
+          {/* The invisible cause. The gate itself says "you are at your
+              division limit" and the console shows the org fewer divisions
+              than that limit, because an archived-but-played one keeps its
+              slot (V354). Without this line the arithmetic on screen is simply
+              wrong from the reader's side, and the only way to discover why is
+              to ask support.
+
+              Gated on BOTH the feature key and the server's marginality
+              answer: this sentence is an explanation, and an explanation
+              attached to a refusal it does not explain — a scheduling gate, a
+              division limit with nothing archived behind it, or one whose
+              VISIBLE divisions already fill the cap on their own — is a wrong
+              answer, not a redundant one. */}
+          {paywallFeature === "divisions.per_competition.max" && archivedSlotsExplainRefusal && (
+            <p data-archived-slot-note className="text-xs text-slate-500">
+              {msg("division.limit.archivedCount")}
+            </p>
+          )}
+        </div>
+      )}
       {error && (
         <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
       )}

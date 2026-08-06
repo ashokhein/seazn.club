@@ -119,7 +119,14 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   "f39d96b7fbbbfc13",
   "665584fd0671d579",
   "3f3be96ac6e6be4e",
-  "a28f1eacfd464458",
+  // Re-approved 2026-08-06 (cadence-neutral pass link). Label change only:
+  // "Create next year's edition" → "Create the next edition", quoted here
+  // because this paragraph names the two links the ended marker offers. Read
+  // against `dictionaries/*/ui.json` `pass.entry.ended.nextEdition`, which is
+  // where the rendered label comes from, and against `routes.competitionNew` —
+  // the link still points at a BLANK competition, so the surrounding claim
+  // ("never offered for sale again on that competition") is untouched.
+  "d3494f085c5710ec",
   // Approved 2026-07-29 (v17 gap #353). ONE new paragraph, inserted here: "The
   // same line decides when a pass can be BOUGHT. You can buy a pass while its
   // competition is still running, or during the 7-day grace after its end date;
@@ -138,6 +145,61 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   // moves, which is the part of the sentence a reader is relying on.
   "3b3bc011debe7da5",
   "9a68888ef2d9aa1a",
+  // Approved 2026-08-05 (#376). ONE new section — a heading and six paragraphs,
+  // inserted here: "When a competition closes to new passes". The claim is that
+  // the line which stops a pass APPLYING is also the line which stops one being
+  // SOLD, that it is a property of the competition rather than of a purchase,
+  // and that the offer is now withdrawn rather than left on screen in front of a
+  // checkout that refuses.
+  //
+  // Read against the code before recording, per this file's own rule:
+  //   - the two reasons and the 7-day grace are `lib/entitlements.ts`
+  //     `passLockReason` / `PASS_END_GRACE_DAYS`, unchanged by #376 — the same
+  //     predicate the SQL `pass_applies` (V343) uses, which is why the section
+  //     says "that same line" rather than writing a second rule down.
+  //   - "not offered anywhere", four places: the chip on
+  //     `c/[compSlug]/page.tsx` and `c/[compSlug]/settings/page.tsx` (both
+  //     render `competition-pass-entry.tsx`, which returns the closed link
+  //     instead of the buy pill once `usePassGateState()` is "closed"), the ⋯
+  //     menu on `o/[orgSlug]/page.tsx:235` (`!isPassLocked(...)`), and the
+  //     billing page's offer list (`pass_applies`, V343).
+  //   - "This competition is closed to Event Passes" is the literal
+  //     `upgrade.closed.title` string, rendered by `ClosedPanel` in
+  //     `c/[compSlug]/upgrade/page.tsx`; the two next steps, and which reason
+  //     gets which, are its `Record<PassLockReason, …>` — `terminal` →
+  //     `routes.competitionNew`, `past_ends_on` → `routes.competitionSettings`.
+  //     Both links are gated on the viewer being able to act, which is why the
+  //     copy says only an editor sees one.
+  //   - "the checkout behind it refused the sale" is the 410 in
+  //     `api/billing/pass-checkout/route.ts:185` — still the server's answer,
+  //     and the defect #376 was filed about was that the offer did not agree
+  //     with it.
+  //   - "correcting either one puts the offer back" is compute-at-read: no
+  //     column stores the verdict (`passLockReason`'s own doc comment), which
+  //     is the same property `lib/competition-wrapup.ts`'s header gives as the
+  //     reason the product PROMPTS for a wrap-up rather than sweeping a status.
+  //   - the paid-plan paragraph is `upgrade-page-state.ts`'s paid arm, where
+  //     #376 added `closedToPasses === null` to the #327 exceeding-rung offer —
+  //     so the L offer a Pro org sometimes gets is withdrawn past the line too.
+  //   - the "already bought" paragraph deliberately does NOT say a held pass is
+  //     unaffected by the line. `usePassGateState` resolves "ended", not
+  //     "held", once `lockReason` is set, and the resolver has already stopped
+  //     honouring the row (SPEC-4 §7); the OFFER side is all #376 changed, and
+  //     the two sections above this one already state the applying side.
+  "4901d7ce5eea800a",
+  "e83c931a71f7d62e",
+  "f7d474e47cbd8920",
+  // Re-approved 2026-08-06 (cadence-neutral pass link). Same label change, plus
+  // ONE sentence saying why the label names no interval — nothing in the schema
+  // makes a competition annual (`starts_on`/`ends_on` are two dates, there is no
+  // recurrence column), and the ladder and league formats run weekly. Read
+  // against `lib/entitlements.ts` `passLockReason`: the terminal arm and the
+  // past-ends-on arm are still the two this paragraph splits, and each still
+  // gets the step described here.
+  "69fbd1e0e9c144ec",
+  "8c072be7bd782c73",
+  "51f349d614c306b2",
+  "38a84f5715684c23",
   "c42978cab6965d56",
   "331525dbff809017",
   "32654b5a563aabb6",
@@ -163,7 +225,14 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   "1bb443d58b849161",
   "9c62d251033d27b5",
   "c503ebdc56e74a10",
-  "157334bc6c0df3e8",
+  // Re-approved 2026-08-05 (#376), "Where do I buy one?". The four buy links it
+  // lists were unconditional; three of the four are now suppressed for a locked
+  // competition and the fourth always was. One sentence added, saying they go
+  // together and why. Read against `competition-pass-entry.tsx` (the overview
+  // and settings chip, "closed" arm), `o/[orgSlug]/page.tsx:235`'s
+  // `!isPassLocked(c.status, c.ends_on)` on the ⋯ menu item, and the billing
+  // page's `pass_applies` (V343) offer list.
+  "f84bab0a6dac4e46",
   // Re-approved 2026-07-29 (W8 final review, M-1). Both surfaces carried a
   // SUPERSET claim — "your plan already grants more" and "buying one would give
   // you less than you hold" — which is #337: V341 gives event_pass_l unlimited
@@ -177,8 +246,25 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   // shipped. The help article never got it; W8 then re-approved these two
   // digests with the stale clause still inside them, which is how a positional
   // gate freezes a falsehood faithfully.
-  "e5d3c0403b1876cc",
-  "7d8c341aa0ad14fe",
+  // Re-approved 2026-08-06 (cadence-neutral pass link). "points you at next
+  // year's edition" → "points you at the next edition". Prose, not the label,
+  // but it asserted the same annual cadence the label used to. The stale
+  // clause the note above describes is NOT what changed here and is still
+  // present — do not read this re-approval as fixing it.
+  "c2f89b4cb48e1710",
+  // Re-approved 2026-08-05 (#376), "What does the competition's upgrade page
+  // show me?". That answer enumerates the page's states and was missing the one
+  // #376 added, so it described a checkout on a page that no longer offers one.
+  // One clause added for the `closed` state. Read against
+  // `lib/upgrade-page-state.ts` — `{ kind: "closed"; reason; canBuy }`, which
+  // precedes both offer arms — and against `ClosedPanel` in
+  // `c/[compSlug]/upgrade/page.tsx`, which renders a heading, the one reason
+  // sentence and at most one link: no rung, no price, no receipt stub.
+  // Re-approved 2026-08-06 (cadence-neutral pass link) on top of the #376
+  // approval above: "with next year's edition offered alongside Pro" → "with
+  // the next edition offered alongside Pro". The #376 clause about the `closed`
+  // state is unchanged and its reading still stands.
+  "4fd38a76c19ca08a",
 ];
 
 /**
@@ -200,13 +286,43 @@ export const APPROVED_PLANS_INVENTORY: string[] = [
   "bc2337dbe88e419f",
   "5b2cc6eea4cf751a",
   "5ef78cfff635a513",
-  "5a5a9da7d2c5e80b",
+  // Community's paragraph, re-approved for V354/V355. It used to end "When
+  // something is finished, complete or archive it to free the slot", which read
+  // as covering both quotas in a sentence that names competitions AND divisions
+  // — and is now false for half of them. It now says the competition rule, then
+  // names the division rule as different.
+  //
+  // Read against the code before recording, per this file's own rule. The
+  // competition half is `usecases/competitions.ts`'s `assertActiveQuota`:
+  // `competitions.max_active` counts draft/published/live, so completed and
+  // archived genuinely free the slot. The division half is
+  // `usecases/divisions.ts`'s createDivision count — `d.archived_at is null or
+  // (division_has_results(d.id) and d.slot_waived_at is null)` — so an archived
+  // division still consumes its slot once it has results, and only an UNPLAYED
+  // one hands it back. `division_has_results` is defined in
+  // db/migration/deltas/V355__division_results_abandoned_outcome.sql: decided,
+  // finalized or forfeited, or abandoned with a non-`no_result` outcome. The
+  // linked article (divisions/archive.md) is the long form of the same rule.
+  "c7fa6c9c9e79fc08",
   "4cc311ddc69a48c1",
   "4d5875384bf155e4",
   "43e1d69d597e5579",
   "b3b732cc02d27ad8",
   "9fea5a1e65adc92a",
-  "23ead2d9846fff5d",
+  // Re-approved 2026-08-06 (cadence-neutral pass link). Two clauses in the
+  // Event Pass pitch: "Right for the annual tournament that doesn't justify a
+  // year of Pro" → "the tournament that comes round rarely enough that a
+  // running subscription doesn't pay for itself", and "doesn't carry to next
+  // year's edition" → "to the next edition".
+  //
+  // The interval had to come out for the same reason as the label, but the
+  // COMPARISON had to be rewritten rather than rescaled: Pro is $19/month
+  // against a $29 pass (plans.md's own headings, `plan_entitlements`), so the
+  // obvious edit — "doesn't justify a month of Pro" — states something false.
+  // What is actually true is that the pass wins when the event does not recur
+  // often enough to keep a subscription running, which is what it now says and
+  // is the same rule `passExceedsPlan` encodes.
+  "6e856342deb34abe",
   "1d48d4377c637fbb",
   "87619eb00e3415c4",
   "88f54c8d84fe39f9",

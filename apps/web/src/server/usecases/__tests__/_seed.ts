@@ -85,6 +85,7 @@ export async function seedFootballCatalog(): Promise<void> {
  *  matchday, so dates must be ahead of now. */
 export async function seedFutureDivision(auth: AuthCtx) {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "V11 Cup",
     visibility: "public",
     branding: {},

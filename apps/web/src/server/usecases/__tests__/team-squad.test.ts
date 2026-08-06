@@ -173,6 +173,7 @@ describe.skipIf(!HAS_DB)("team squad", () => {
     ]);
 
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Seed Cup",
       visibility: "private",
       branding: {},

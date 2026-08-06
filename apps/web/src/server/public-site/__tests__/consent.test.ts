@@ -78,6 +78,7 @@ async function seedPublicScene(
   });
   const bob = await seedPerson(orgId, "Bob Builder", {});
   const competition = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Open Day",
     visibility: "public",
     branding: { logo: "logos/x.png", banner: "banners/x.png" },
@@ -163,9 +164,9 @@ describe.skipIf(!HAS_DB)("public read model — visibility (doc 09 §1)", () => 
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, int_value, reason)
       values (${orgId}, 'competitions.max_active', null, 'test')`;
-    await createCompetition(auth, { name: "Open", visibility: "public", branding: {} });
-    await createCompetition(auth, { name: "Hidden Link", visibility: "unlisted", branding: {} });
-    await createCompetition(auth, { name: "Secret", visibility: "private", branding: {} });
+    await createCompetition(auth, { ends_on: "2030-12-31", name: "Open", visibility: "public", branding: {} });
+    await createCompetition(auth, { ends_on: "2030-12-31", name: "Hidden Link", visibility: "unlisted", branding: {} });
+    await createCompetition(auth, { ends_on: "2030-12-31", name: "Secret", visibility: "private", branding: {} });
 
     const rows = await sql<{ name: string; visibility: string }[]>`
       select name, visibility from public_competitions_v where org_id = ${orgId}`;
@@ -226,13 +227,14 @@ describe.skipIf(!HAS_DB)("entitlement split (doc 09 §4, doc 10)", () => {
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, int_value, reason)
       values (${auth.orgId}, 'competitions.max_active', 10, 'test probe')`;
-    await createCompetition(auth, { name: "First", visibility: "public", branding: {} });
+    await createCompetition(auth, { ends_on: "2030-12-31", name: "First", visibility: "public", branding: {} });
     await expect(
-      createCompetition(auth, { name: "Second", visibility: "public", branding: {} }),
+      createCompetition(auth, { ends_on: "2030-12-31", name: "Second", visibility: "public", branding: {} }),
     ).rejects.toThrow(PaymentRequiredError);
 
     // Unlisted/private don't count; flipping one to public re-checks the quota.
     const unlisted = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Third",
       visibility: "unlisted",
       branding: {},

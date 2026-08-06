@@ -10,7 +10,7 @@ async function makeDivision(
   request: APIRequestContext,
   opts: { comp: string; sport: string; variant: string; entrants: string[]; kind?: "individual" | "team"; visibility?: string },
 ): Promise<{ divisionId: string; fixtureId: string; stageId: string; entrantIds: string[]; compId: string }> {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: opts.comp,
     visibility: opts.visibility ?? "private",
   });
@@ -231,7 +231,7 @@ test("hockey (FIH): quarters, team-short chip, escalation hint, draw stands in s
 }) => {
   // Team entrants with real persons so the pad's person picker can select
   // the carded player (escalation hint keys off the person).
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `FIH ${TAG}`,
     visibility: "private",
   });

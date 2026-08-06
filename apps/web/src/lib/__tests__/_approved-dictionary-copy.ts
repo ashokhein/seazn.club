@@ -844,12 +844,12 @@ export const APPROVED_DICTIONARY_COPY: ApprovedValue[] = [
   {
     file: "ui",
     key: "pass.entry.ended.nextEdition",
-    why: "the one thing the product can still say YES to. A pass cannot be re-bought for THIS competition (decision #248 Q4, enforced by api/billing/pass-checkout/route.ts and the competition_passes PK on competition_id), but next season's edition is a NEW competition and can hold its own pass — so this link must point at competition creation, never at a re-purchase.",
+    why: "the one thing the product can still say YES to. A pass cannot be re-bought for THIS competition (decision #248 Q4, enforced by api/billing/pass-checkout/route.ts and the competition_passes PK on competition_id), but the next edition is a NEW competition and can hold its own pass — so this link must point at competition creation, never at a re-purchase. CADENCE-NEUTRAL on purpose: it said \"next year's edition\" until a weekly ladder and a monthly league both hit it, and nothing in the product makes a competition annual. \"Edition\" carries the continuity the sentence needs without naming an interval the data does not have.",
     text: {
-      en: "Create next year's edition",
-      es: "Crear la edición del próximo año",
-      fr: "Créer l'édition de l'année prochaine",
-      nl: "Editie van volgend jaar aanmaken",
+      en: "Create the next edition",
+      es: "Crear la próxima edición",
+      fr: "Créer la prochaine édition",
+      nl: "Volgende editie aanmaken",
     },
   },
 ];

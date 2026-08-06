@@ -50,6 +50,7 @@ vi.mock("@/lib/stripe", () => ({
 
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
+import { adjustmentsForOrg } from "@/server/usecases/admin-adjustments-log";
 import {
   PASS_CREDIT_RESOLVE_ACTION,
   creditPassTowardSubscription,
@@ -208,6 +209,36 @@ describe.skipIf(!HAS_DB)("resolveUndeterminedPassCreditReversal", () => {
     expect(audit[0]!.detail.resolution).toBe("clawed_back");
     expect(audit[0]!.detail.reversed_minor).toBe(2500);
     expect(audit[0]!.detail.reason).toBe("settled by hand in Stripe, txn cbtxn_x");
+  });
+
+  // The audit row above is the ONLY durable record of who decided — and an
+  // audit nobody can read is not an audit. `/admin/orgs/[id]`'s "Adjustments
+  // log" is an ALLOWLIST (ADJUSTMENT_ACTIONS), so a decision written with an
+  // unlisted action lands in the table and shows up nowhere a human looks.
+  // Driven through the real writer so the logged string is the one under test.
+  it("surfaces the resolution in the org's adjustments log", async () => {
+    const actorId = await seedActor();
+    const { redemptionId, orgId } = await seedUndeterminedRedemption();
+
+    await resolveUndeterminedPassCreditReversal(actorId, redemptionId, {
+      resolution: "kept",
+      reason: "customer keeps it — finance signed off",
+    });
+
+    const entries = await adjustmentsForOrg(orgId);
+    const entry = entries.find((e) => e.action === PASS_CREDIT_RESOLVE_ACTION);
+    expect(entry).toBeDefined();
+    expect(entry).toMatchObject({
+      actorId,
+      // The `"pass"` member of AdjustmentCategory was declared for exactly this
+      // action and then left with nothing mapped to it.
+      category: "pass",
+      // It records a decision already carried out by hand in Stripe. There is
+      // no compensating staff control, so it is terminal.
+      reversible: false,
+      reason: "customer keeps it — finance signed off",
+    });
+    expect(entry!.detail.redemption_id).toBe(redemptionId);
   });
 
   it("'clawed_back' moves NO money — staff already settled it in Stripe by hand", async () => {

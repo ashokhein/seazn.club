@@ -153,6 +153,7 @@ async function seedBoard(): Promise<{ auth: AuthCtx; planned: Div; mover: string
   const { auth } = await seedOrg("pro");
   const tag = randomUUID().slice(0, 6);
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Move Conflicts ${tag}`,
     visibility: "public",
     branding: {},

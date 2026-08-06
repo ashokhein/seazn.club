@@ -11,7 +11,7 @@ test("rounds group with dates, times honour the competition tz, reschedule undoe
   page,
   request,
 }) => {
-  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `DivSched ${TAG}`,
     visibility: "private",
   });

@@ -28,6 +28,12 @@
 //               #301 P1 defect — nor "none", which would put the buy link on a
 //               purchase the API will refuse. It is its own card, and it points
 //               at the two things that CAN still help: next season, and a plan.
+//   closed    → the competition is past the line and NEVER held a pass (#376).
+//               Not `ended` (that card reports a purchase stopping, and there
+//               was no purchase) and not `none` (that one offers a sale the
+//               route answers with 410 Gone). One link, chosen by reason: a
+//               finished competition points at next season, a stale end date
+//               points at the settings form that makes the pass buyable again.
 //   held      → the "on" signal, never a buy link. Presence is ROW EXISTENCE:
 //               a staff-granted pass has a null `stripe_payment_intent` and is
 //               fully active, so it must read as active here too (spec D1). The
@@ -58,6 +64,7 @@ export function CompetitionPassEntry({
   activeLabels,
   endedLabel,
   endedReasons,
+  closedLinks,
   nextEditionHref,
   nextEditionLabel,
   goProHref,
@@ -98,6 +105,18 @@ export function CompetitionPassEntry({
    * cannot disagree with the resolver that enforces the lock.
    */
   endedReasons: Record<PassLockReason, string>;
+  /**
+   * The one link the `closed` state offers, per lock reason (#376).
+   *
+   * A `Record<PassLockReason, …>` for the same reason `endedReasons` is one:
+   * the page holds the dictionary and the routes, this island holds the
+   * verdict, and a third lock reason must be a compile error at the page
+   * rather than a card that silently links somewhere wrong. The two arms lead
+   * to genuinely different places — a finished competition's next move is next
+   * season, a stale end date's next move is the settings form — so this is a
+   * Record of `{href,label}`, not a Record of labels over one href.
+   */
+  closedLinks: Record<PassLockReason, { href: string; label: string }>;
   /** routes.competitionNew(orgSlug) — the blank new-competition form. Never a
    *  copy of this one: no copy-competition feature exists, so a link promising a
    *  duplicate would be a promise the product cannot keep. */
@@ -120,6 +139,32 @@ export function CompetitionPassEntry({
   const lockReason = usePassLockReason();
 
   if (gate === "paid_plan") return null;
+
+  if (gate === "closed") {
+    // Editor-gated, unlike the ended card. The ended card shows to everyone
+    // because it is a FACT about the competition; this state's entire content
+    // is an action link, and a lone link shown to someone who cannot create a
+    // competition or edit its dates is noise, not information.
+    //
+    // `lockReason` cannot be null here (usePassGateState returns "closed" only
+    // when it is set); the guard is what keeps the Record lookup total rather
+    // than an assertion.
+    if (!canBuy || lockReason === null) return null;
+    const link = closedLinks[lockReason];
+    return (
+      <p data-pass-closed data-pass-closed-reason={lockReason} className="mb-1">
+        <Link
+          href={link.href}
+          data-pass-closed-link
+          // min-h-11 is the 44px touch target; the negative margin keeps the
+          // chip's optical position while the tappable box grows on mobile.
+          className="-my-1 inline-flex min-h-11 items-center text-xs font-semibold text-purple-700 underline decoration-purple-300 underline-offset-2 hover:text-purple-800 hover:decoration-purple-500"
+        >
+          {link.label} →
+        </Link>
+      </p>
+    );
+  }
 
   if (gate === "ended") {
     // The same ticket, torn. Deliberately built from the buy pill's parts with

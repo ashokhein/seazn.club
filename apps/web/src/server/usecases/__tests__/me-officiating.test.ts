@@ -84,6 +84,7 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthC
  *  matchday, so dates must be ahead of now. */
 async function seedFutureDivision(auth: AuthCtx) {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "V11 Cup",
     visibility: "public",
     branding: {},

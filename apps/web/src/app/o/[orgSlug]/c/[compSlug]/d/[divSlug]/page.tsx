@@ -9,6 +9,7 @@ import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t } from "@/lib/i18n";
 import { requireDivisionPage } from "@/server/page-auth";
 import { getDivision, listVariantOptions } from "@/server/usecases/divisions";
+import { divisionConsumesSlotOnArchive } from "@/server/usecases/division-slots";
 import { getCompetition } from "@/server/usecases/competitions";
 import { listStages, getStandings } from "@/server/usecases/stages";
 import { listDivisionFixtures, listFixtureHeadlines } from "@/server/usecases/fixtures";
@@ -509,6 +510,13 @@ export default async function DivisionPage({
                 divisionName={division.name}
                 orgSlug={orgSlug}
                 compSlug={compSlug}
+                // Whether archiving keeps this division's quota slot spent
+                // (V354). Awaited inline like `canAutoPost` and `embed` above
+                // — this whole subtree only renders on the settings tab of an
+                // editor's page, so the query is not on the read path anyone
+                // else pays for. Answered by the SQL predicate the quota
+                // charge uses; the client is told, never asked to derive it.
+                slotHeldOnArchive={await divisionConsumesSlotOnArchive(auth, id)}
               />
             }
           />

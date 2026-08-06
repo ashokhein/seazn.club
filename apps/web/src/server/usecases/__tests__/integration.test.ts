@@ -68,6 +68,7 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
   it("drives the full league lifecycle: create → generate → score → standings → public", async () => {
     const { auth } = await seedOrg();
     const competition = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Summer Cup",
       visibility: "public",
       branding: {},
@@ -152,7 +153,7 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
 
   it("scoring: undo via core.void, idempotent replays, stale seq → SEQ_CONFLICT", async () => {
     const { auth } = await seedOrg();
-    const competition = await createCompetition(auth, { name: "Winter", visibility: "private", branding: {} });
+    const competition = await createCompetition(auth, { ends_on: "2030-12-31", name: "Winter", visibility: "private", branding: {} });
     const division = await createDivision(auth, competition.id, {
       name: "Open", sport_key: "generic", variant_key: "score", config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
     });
@@ -209,7 +210,7 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
 
   it("knockout: byes auto-advance and winners fill their bracket slots", async () => {
     const { auth } = await seedOrg();
-    const competition = await createCompetition(auth, { name: "KO Cup", visibility: "private", branding: {} });
+    const competition = await createCompetition(auth, { ends_on: "2030-12-31", name: "KO Cup", visibility: "private", branding: {} });
     const division = await createDivision(auth, competition.id, {
       name: "Open", sport_key: "generic", variant_key: "score", config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
     });
@@ -245,7 +246,7 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
 
   it("group pools → knockout: snake pools, per-pool standings, qualification seeds the KO", async () => {
     const { auth } = await seedOrg();
-    const competition = await createCompetition(auth, { name: "Worlds", visibility: "private", branding: {} });
+    const competition = await createCompetition(auth, { ends_on: "2030-12-31", name: "Worlds", visibility: "private", branding: {} });
     const division = await createDivision(auth, competition.id, {
       name: "Open", sport_key: "generic", variant_key: "score", config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
     });
@@ -363,7 +364,7 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
 
   it("refuses to delete a competition with recorded play", async () => {
     const { auth } = await seedOrg();
-    const competition = await createCompetition(auth, { name: "Keep", visibility: "private", branding: {} });
+    const competition = await createCompetition(auth, { ends_on: "2030-12-31", name: "Keep", visibility: "private", branding: {} });
     const division = await createDivision(auth, competition.id, {
       name: "Open", sport_key: "generic", variant_key: "score", config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
     });
@@ -380,7 +381,7 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
 
   it("deleteStage: last stage only, refused once fixtures are played", async () => {
     const { auth } = await seedOrg();
-    const competition = await createCompetition(auth, { name: "Prune", visibility: "private", branding: {} });
+    const competition = await createCompetition(auth, { ends_on: "2030-12-31", name: "Prune", visibility: "private", branding: {} });
     const division = await createDivision(auth, competition.id, {
       name: "Open", sport_key: "generic", variant_key: "score", config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
     });

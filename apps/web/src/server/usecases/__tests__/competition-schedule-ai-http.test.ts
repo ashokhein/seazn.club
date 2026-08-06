@@ -182,6 +182,7 @@ async function seedBoard(): Promise<{
   await invalidateOrgEntitlements(auth.orgId);
   await recordPackPurchase(await walletIdFor(auth.orgId), 100, `seed-${randomUUID()}`);
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Joint ${randomUUID().slice(0, 6)}`,
     visibility: "public",
     branding: {},

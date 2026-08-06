@@ -42,6 +42,7 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
 
 async function seedBoardgameDivision(auth: AuthCtx) {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Chess Cup " + randomUUID().slice(0, 6),
     visibility: "private",
     branding: {},

@@ -42,7 +42,7 @@ async function seedOrg(): Promise<AuthCtx> {
 }
 
 async function seedPlannableStage(auth: AuthCtx) {
-  const competition = await createCompetition(auth, { name: "Carnival", visibility: "public", branding: {} });
+  const competition = await createCompetition(auth, { ends_on: "2030-12-31", name: "Carnival", visibility: "public", branding: {} });
   const division = await createDivision(auth, competition.id, {
     name: "Open",
     sport_key: "generic",

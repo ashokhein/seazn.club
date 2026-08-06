@@ -58,6 +58,7 @@ async function seedOrg(plan: "community" | "pro" | "pro_plus" = "pro"): Promise<
 // court in 30-minute slots.
 async function seedScheduledDivision(auth: AuthCtx) {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Officials Cup",
     visibility: "public",
     branding: {},

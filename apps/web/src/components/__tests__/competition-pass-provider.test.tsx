@@ -203,15 +203,90 @@ describe("usePassGateState", () => {
     expect(html).toContain("state:paid_plan");
   });
 
-  it("stays 'none' for a locked reason with no pass row — a lock needs something to lock", () => {
-    // Nonsense input, pinned: the provider must not manufacture an "ended"
-    // pass for a competition that never had one.
+  it("is 'closed' for a lock reason with no pass row — never 'ended' (#376)", () => {
+    // This case used to be pinned as `none`, on the reading that a lock needs a
+    // purchase to lock. It does not: the lock is a fact about the COMPETITION,
+    // and `none` put the buy chip on a sale the checkout answers with 410 Gone.
+    // Still not `ended` either — nothing was bought, so there is no purchase to
+    // report as stopped, which is exactly the gap `closed` fills. Uses the
+    // `past_ends_on` arm so both reasons are covered across the two describes.
     const html = state(
-      <CompetitionPassProvider passKey={null} lockReason="terminal">
+      <CompetitionPassProvider passKey={null} lockReason="past_ends_on">
+        <StateProbe />
+      </CompetitionPassProvider>,
+    );
+    expect(html).toContain("state:closed");
+  });
+});
+
+// #376. The layout INNER-joined through `competition_passes`, so a competition
+// with no pass row returned no row at all and `lockReason` was structurally
+// unreachable — which made "no pass + locked" look like nonsense input rather
+// than the ordinary state of every finished competition nobody bought a pass
+// for. With the LEFT JOIN it is reachable, and it needs a name of its own.
+describe("usePassGateState — the closed state (#376)", () => {
+  const state = (node: ReactNode) => renderToStaticMarkup(node);
+
+  it("is `closed` when the competition is locked and no pass was held", () => {
+    const html = state(
+      <CompetitionPassProvider
+        passKey={null}
+        paidPlan={false}
+        lockReason="terminal"
+        sellableRungs={[]}
+      >
+        <StateProbe />
+      </CompetitionPassProvider>,
+    );
+    expect(html).toContain("state:closed");
+  });
+
+  it("is still `none` when nothing is locked and no pass is held", () => {
+    // The control arm: `closed` must key on the LOCK, not merely on the absence
+    // of a pass, or every community competition on the product goes quiet.
+    const html = state(
+      <CompetitionPassProvider
+        passKey={null}
+        paidPlan={false}
+        lockReason={null}
+        sellableRungs={["event_pass"]}
+      >
         <StateProbe />
       </CompetitionPassProvider>,
     );
     expect(html).toContain("state:none");
+  });
+
+  // A paid plan already suppresses the chip and `paid_plan` is not a lie about
+  // a closed competition, so it keeps winning.
+  it("yields to paid_plan", () => {
+    const html = state(
+      <CompetitionPassProvider
+        passKey={null}
+        paidPlan
+        lockReason="terminal"
+        sellableRungs={[]}
+      >
+        <StateProbe />
+      </CompetitionPassProvider>,
+    );
+    expect(html).toContain("state:paid_plan");
+  });
+
+  it("leaves a HELD locked pass as `ended`", () => {
+    // `closed` takes only the no-pass arm. An org that DID buy has a purchase
+    // to be told about, and `ended` is the sentence that tells it.
+    const html = state(
+      <CompetitionPassProvider
+        passKey="event_pass"
+        paidPlan={false}
+        lockReason="past_ends_on"
+        sellableRungs={[]}
+      >
+        <StateProbe />
+      </CompetitionPassProvider>,
+    );
+    expect(html).toContain("state:ended");
   });
 });
 

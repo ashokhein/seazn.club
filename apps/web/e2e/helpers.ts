@@ -794,6 +794,11 @@ export async function createCompetitionViaUi(
 ): Promise<string> {
   await page.goto("/competitions/new");
   await page.getByPlaceholder("Summer Championship 2026").fill(name);
+  // #376: the end date is mandatory and the wizard refuses to submit without
+  // one, so this journey has to fill it like an organiser would. A date well
+  // ahead of now — everything created here has to stay a RUNNING competition,
+  // or the Event Pass surfaces under test would render their locked state.
+  await page.getByLabel(/^Ends on/i).fill("2030-12-31");
   // Visibility is a radio-card group; the wizard defaults to PRIVATE, so
   // always select explicitly. The input hides behind the styled card, so
   // click the wrapping label and verify the radio took.
@@ -848,7 +853,7 @@ export async function seedScoredDivision(
   opts: { decide?: boolean } = {},
 ): Promise<{ competitionId: string; divisionId: string; stageId: string }> {
   const { decide = true } = opts;
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `E2E ${TAG}-${Math.random().toString(36).slice(2, 6)}`,
     visibility: "public",
   });

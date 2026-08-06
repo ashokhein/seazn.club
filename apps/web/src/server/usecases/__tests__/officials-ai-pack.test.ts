@@ -83,7 +83,7 @@ async function seedOfficialsBoard(opts?: {
   duplicate?: { refereeId: string; umpireId: string };
 }): Promise<{ auth: AuthCtx; divisionId: string }> {
   const { auth } = await seedOrg("pro");
-  const comp = await createCompetition(auth, { name: "AI Off", visibility: "public", branding: {} });
+  const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "AI Off", visibility: "public", branding: {} });
   const division = await createDivision(auth, comp.id, {
     name: "Open", slug: "open", sport_key: "generic", variant_key: "score",
     config: GENERIC_CONFIG, eligibility: [],
@@ -209,7 +209,7 @@ describe.skipIf(!HAS_DB)("buildOfficialsPack (v4/03 §2)", () => {
     // Court 2 the LOWER, so a raw-UUID tiebreak would sort Court 2 first; the
     // domain rank (court order) must keep Court 1 first regardless.
     const { auth: tieAuth } = await seedOrg("pro");
-    const comp = await createCompetition(tieAuth, { name: "Tie", visibility: "public", branding: {} });
+    const comp = await createCompetition(tieAuth, { ends_on: "2030-12-31", name: "Tie", visibility: "public", branding: {} });
     const div = await createDivision(tieAuth, comp.id, {
       name: "Tie", slug: `tie-${randomUUID().slice(0, 6)}`, sport_key: "generic",
       variant_key: "score", config: GENERIC_CONFIG, eligibility: [],
@@ -305,7 +305,7 @@ describe.skipIf(!HAS_DB)("buildOfficialsPack (v4/03 §2)", () => {
 
   it("422 NO_OFFICIALS when the roster is empty", async () => {
     const { auth: emptyAuth } = await seedOrg("pro");
-    const comp = await createCompetition(emptyAuth, { name: "Bare", visibility: "public", branding: {} });
+    const comp = await createCompetition(emptyAuth, { ends_on: "2030-12-31", name: "Bare", visibility: "public", branding: {} });
     const div = await createDivision(emptyAuth, comp.id, {
       name: "Bare", slug: "bare", sport_key: "generic", variant_key: "score",
       config: GENERIC_CONFIG, eligibility: [],
@@ -334,7 +334,7 @@ describe.skipIf(!HAS_DB)("buildOfficialsPack cross-org busy", () => {
     await claimPerson(invitedB.secret, ref.id, ref.email);
 
     // Org A gets its own division so the pack has fixtures + roster.
-    const compA = await createCompetition(orgA, { name: "A Cup", visibility: "public", branding: {} });
+    const compA = await createCompetition(orgA, { ends_on: "2030-12-31", name: "A Cup", visibility: "public", branding: {} });
     const divA = await createDivision(orgA, compA.id, {
       name: "Open", slug: "open", sport_key: "generic", variant_key: "score",
       config: GENERIC_CONFIG, eligibility: [],
@@ -348,7 +348,7 @@ describe.skipIf(!HAS_DB)("buildOfficialsPack cross-org busy", () => {
               court_label = 'Court 1' where id = ${fA[0]!.id}`;
 
     // Org B books its (same-person) official in a future fixture.
-    const compB = await createCompetition(orgB, { name: "B Cup", visibility: "public", branding: {} });
+    const compB = await createCompetition(orgB, { ends_on: "2030-12-31", name: "B Cup", visibility: "public", branding: {} });
     const divB = await createDivision(orgB, compB.id, {
       name: "Open", slug: "open", sport_key: "generic", variant_key: "score",
       config: GENERIC_CONFIG, eligibility: [],

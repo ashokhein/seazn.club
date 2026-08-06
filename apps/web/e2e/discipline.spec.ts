@@ -23,7 +23,7 @@ test.describe.serial("discipline suspensions", () => {
       page.request,
       "/api/v1/competitions",
       "POST",
-      { name: `Disc E2E ${TAG}`, visibility: "public" },
+      { ends_on: "2030-12-31", name: `Disc E2E ${TAG}`, visibility: "public" },
     );
     compSlug = comp.data!.slug;
     const div = await apiJson<{ id: string; slug: string }>(

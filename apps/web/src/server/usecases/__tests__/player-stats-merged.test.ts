@@ -48,6 +48,7 @@ async function seedFootball(auth: AuthCtx, reds: string[]) {
   // fresh database and 422s with `unknown variant 'default' for football`.
   await seedFootballCatalog();
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Merge Stats Cup " + rnd(),
     visibility: "public",
     branding: {},

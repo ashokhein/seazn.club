@@ -262,7 +262,7 @@ describe("quoted_credits on the wire (#387)", () => {
 describe.skipIf(!HAS_DB)("quote/charge mismatch — schedule-ai (#387)", () => {
   it("records a competition_event when the charge differs from the quote", async () => {
     const auth = await seedPlusOrg();
-    const comp = await createCompetition(auth, { name: "QM", visibility: "public", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "QM", visibility: "public", branding: {} });
     const division = await seedDivision(auth, comp.id);
     chat.mockResolvedValueOnce(chatResponse(legalPlan([division])));
 
@@ -292,7 +292,7 @@ describe.skipIf(!HAS_DB)("quote/charge mismatch — schedule-ai (#387)", () => {
 
   it("reports an UNDER-quote too — the billing-complaint direction", async () => {
     const auth = await seedPlusOrg();
-    const comp = await createCompetition(auth, { name: "QM under", visibility: "public", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "QM under", visibility: "public", branding: {} });
     // Forcing rung 3 makes the server charge 3 against a card that said 1.
     const division = await seedDivision(auth, comp.id);
     chat.mockResolvedValueOnce(chatResponse(legalPlan([division])));
@@ -313,7 +313,7 @@ describe.skipIf(!HAS_DB)("quote/charge mismatch — schedule-ai (#387)", () => {
 
   it("records nothing and reports nothing when they agree", async () => {
     const auth = await seedPlusOrg();
-    const comp = await createCompetition(auth, { name: "QM agree", visibility: "public", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "QM agree", visibility: "public", branding: {} });
     const division = await seedDivision(auth, comp.id);
     chat.mockResolvedValueOnce(chatResponse(legalPlan([division])));
 
@@ -330,7 +330,7 @@ describe.skipIf(!HAS_DB)("quote/charge mismatch — schedule-ai (#387)", () => {
 
   it("an omitted quoted_credits is not a mismatch", async () => {
     const auth = await seedPlusOrg();
-    const comp = await createCompetition(auth, { name: "QM silent", visibility: "public", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "QM silent", visibility: "public", branding: {} });
     const division = await seedDivision(auth, comp.id);
     chat.mockResolvedValueOnce(chatResponse(legalPlan([division])));
 
@@ -344,7 +344,7 @@ describe.skipIf(!HAS_DB)("quote/charge mismatch — schedule-ai (#387)", () => {
 describe.skipIf(!HAS_DB)("quote/charge mismatch — the joint solve (#387)", () => {
   it("records it on the competition path too", async () => {
     const auth = await seedPlusOrg();
-    const comp = await createCompetition(auth, { name: "QM joint", visibility: "public", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "QM joint", visibility: "public", branding: {} });
     const a = await seedDivision(auth, comp.id, { courts: ["Court 1", "Court 2"] });
     const b = await seedDivision(auth, comp.id, { courts: ["Court 3", "Court 4"] });
     chat.mockResolvedValueOnce(chatResponse(legalPlan([a, b])));
@@ -369,7 +369,7 @@ describe.skipIf(!HAS_DB)("quote/charge mismatch — the joint solve (#387)", () 
 
   it("records nothing when the joint quote agrees", async () => {
     const auth = await seedPlusOrg();
-    const comp = await createCompetition(auth, { name: "QM joint ok", visibility: "public", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "QM joint ok", visibility: "public", branding: {} });
     const a = await seedDivision(auth, comp.id, { courts: ["Court 1", "Court 2"] });
     const b = await seedDivision(auth, comp.id, { courts: ["Court 3", "Court 4"] });
     chat.mockResolvedValueOnce(chatResponse(legalPlan([a, b])));
@@ -389,7 +389,7 @@ describe.skipIf(!HAS_DB)("quote/charge mismatch — the joint solve (#387)", () 
 describe.skipIf(!HAS_DB)("quote/charge mismatch — officials (#387)", () => {
   it("records it on the officials path too", async () => {
     const auth = await seedPlusOrg();
-    const comp = await createCompetition(auth, { name: "QM officials", visibility: "public", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "QM officials", visibility: "public", branding: {} });
     const division = await seedDivision(auth, comp.id, { officials: 2 });
 
     // The empty-instruction path is the deterministic solver draft: no model
@@ -410,7 +410,7 @@ describe.skipIf(!HAS_DB)("quote/charge mismatch — officials (#387)", () => {
 
   it("records nothing when the officials quote agrees", async () => {
     const auth = await seedPlusOrg();
-    const comp = await createCompetition(auth, { name: "QM officials ok", visibility: "public", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "QM officials ok", visibility: "public", branding: {} });
     const division = await seedDivision(auth, comp.id, { officials: 2 });
 
     const plan = await officialsAiPlanForDivision(auth, division.id, {

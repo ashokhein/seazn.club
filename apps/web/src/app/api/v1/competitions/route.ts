@@ -12,8 +12,8 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   return v1(async () => {
-    const body = await parseBody(req, CreateCompetition);
     const auth = await requireAuth(req, "write");
+    const body = await parseBody(req, CreateCompetition);
     return reply(201, await createCompetition(auth, body));
   });
 }

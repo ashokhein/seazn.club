@@ -306,9 +306,14 @@ describe.skipIf(!HAS_DB)("competition layout provides Event Pass state", () => {
   });
 
   it("stays 'held' for a live competition with no end date at all", async () => {
-    // `ends_on` is nullable and most competitions carry no date. If the join
-    // or the null handling were wrong this is the case that would flip the
-    // whole product to "ended" at once.
+    // `ends_on` is nullable in the database and stays that way, but since #376
+    // made it mandatory at create — and non-nullable on PATCH — the API can no
+    // longer produce a null. The case is still real, and still worth pinning,
+    // because the column outlives the schema that writes it: every competition
+    // created before #376 kept whatever it had, and nothing backfills them. So
+    // the read must keep handling null even though no new row can carry one.
+    // If the join or the null handling were wrong, this is the case that would
+    // flip those rows to "ended" at once.
     const rig = await seed();
     await sql`insert into competition_passes (competition_id, org_id)
               values (${rig.compId}, ${rig.orgId})`;
@@ -327,15 +332,77 @@ describe.skipIf(!HAS_DB)("competition layout provides Event Pass state", () => {
     expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:paid_plan");
   });
 
-  it("carries no reason for a competition with no pass, whatever its status", async () => {
-    // The reason is about a PASS, not about a competition. An archived
-    // competition with no pass row has nothing to be locked.
+  // #376. The whole defect in one case: the read INNER-joined `competitions`
+  // through `competition_passes`, so a competition that had never been sold a
+  // pass produced NO ROW — `status` and `ends_on` were never fetched and
+  // `passLockReason` could not be called even in principle. The reason came
+  // back null for every unsold competition on the product, whatever its status,
+  // and the gate then offered a $29 checkout the route answers with 410 Gone.
+  it("reports a lock for a competition that never held a pass (#376 regression)", async () => {
     const rig = await seed();
     await sql`update competitions set status = 'archived' where id = ${rig.compId}`;
     const html = await renderLayout(rig.orgSlug, rig.compSlug);
+    // The assertion that was impossible before the LEFT JOIN: a lock reason
+    // standing beside a null pass key.
+    expect(html).toContain("reason:terminal");
     expect(html).toContain("pass:false");
-    expect(html).toContain("state:none");
+    expect(html).toContain("rung:null");
+    expect(html).toContain("state:closed");
+    // Nothing is for sale past the line, so the rung column may not advertise
+    // one. Before the change this read `event_pass+event_pass_l`.
+    expect(html).toContain("sellable:none");
+  });
+
+  it("reports the same lock for a COMPLETED competition with no pass", async () => {
+    // The terminal arm an organiser actually reaches — finishing a competition
+    // writes 'completed', and nobody has to archive anything for the offer to
+    // become a refusal.
+    const rig = await seed();
+    await sql`update competitions set status = 'completed' where id = ${rig.compId}`;
+    const html = await renderLayout(rig.orgSlug, rig.compSlug);
+    expect(html).toContain("reason:terminal");
+    expect(html).toContain("state:closed");
+    expect(html).toContain("sellable:none");
+  });
+
+  it("reports past_ends_on for an unsold competition beyond the grace window", async () => {
+    // The date arm, and the reason is load-bearing: this organiser's only
+    // problem may be a stale end date, so the two arms get different wording
+    // and different CTAs downstream. A boolean here would lose that.
+    const rig = await seed();
+    const eightDaysAgo = new Date(Date.now() - 8 * 86_400_000).toISOString().slice(0, 10);
+    await sql`update competitions set status = 'live', ends_on = ${eightDaysAgo}
+              where id = ${rig.compId}`;
+    const html = await renderLayout(rig.orgSlug, rig.compSlug);
+    expect(html).toContain("pass:false");
+    expect(html).toContain("reason:past_ends_on");
+    expect(html).toContain("state:closed");
+    expect(html).toContain("sellable:none");
+  });
+
+  it("still reports no lock for a live competition with no pass", async () => {
+    // The control arm for all three above. Without it they would still pass if
+    // the layout simply declared every unsold competition closed, which would
+    // silence the $29 offer across the entire product.
+    const rig = await seed();
+    await sql`update competitions set status = 'live', ends_on = null
+              where id = ${rig.compId}`;
+    const html = await renderLayout(rig.orgSlug, rig.compSlug);
     expect(html).toContain("reason:null");
+    expect(html).toContain("state:none");
+    expect(html).toContain("sellable:event_pass+event_pass_l");
+  });
+
+  it("prefers 'paid_plan' over a closed competition with no pass", async () => {
+    // The plan still wins over everything: a Pro Plus org's gate was closed by
+    // its PLAN's ceiling, and `closed` would name the wrong limit.
+    const rig = await seed();
+    await sql`update competitions set status = 'completed' where id = ${rig.compId}`;
+    await sql`update subscriptions set plan_key = 'pro_plus', status = 'active'
+              where id = (select subscription_id from organizations where id = ${rig.orgId})`;
+    const html = await renderLayout(rig.orgSlug, rig.compSlug);
+    expect(html).toContain("pass:false");
+    expect(html).toContain("state:paid_plan");
   });
 
   it("is false — and still renders children — for an unresolvable slug", async () => {

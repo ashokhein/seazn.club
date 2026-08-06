@@ -180,7 +180,7 @@ async function seedDivision(
 }
 
 async function seedPlannable(auth: AuthCtx): Promise<{ divisionId: string; competitionId: string }> {
-  const comp = await createCompetition(auth, { name: "W5 Preview", visibility: "public", branding: {} });
+  const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "W5 Preview", visibility: "public", branding: {} });
   return { divisionId: await seedDivision(auth, comp.id), competitionId: comp.id };
 }
 
@@ -191,7 +191,7 @@ async function seedJoint(
   count: number,
   opts: { emptyLast?: boolean } = {},
 ): Promise<{ competitionId: string; divisionIds: string[] }> {
-  const comp = await createCompetition(auth, { name: "W5 Joint", visibility: "public", branding: {} });
+  const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "W5 Joint", visibility: "public", branding: {} });
   const divisionIds: string[] = [];
   for (let i = 0; i < count; i += 1) {
     divisionIds.push(

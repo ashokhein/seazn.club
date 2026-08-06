@@ -11,20 +11,9 @@ import { feePercentFor } from "@/server/usecases/registrations";
 import { requireStaff } from "@/lib/admin";
 import { walletIdFor, balance as walletBalance } from "@/lib/credits";
 import { adjustmentsForOrg } from "@/server/usecases/admin-adjustments-log";
-
-/** Raw staff_audit_log action → friendly label for the adjustments log. */
-const ADJUSTMENT_LABELS: Record<string, string> = {
-  credit_adjust: "Credit adjustment",
-  addon_grant: "Add-on granted",
-  addon_revoke: "Add-on revoked",
-  comp_to_pro: "Comped to Pro",
-  admin_downgrade: "Downgraded",
-  extend_trial: "Trial extended",
-  restore_trial: "Trial restored",
-  entitlement_override: "Entitlement override",
-  entitlement_override_removed: "Override removed",
-  remove_payment_method: "Card removed",
-};
+import { slotConsumingDivisions } from "@/server/usecases/admin-divisions";
+import { SlotWaiverButton } from "./slot-waiver-button";
+import { ADJUSTMENT_LABELS } from "./adjustment-labels";
 
 export default async function AdminOrgPage({
   params,
@@ -87,6 +76,11 @@ export default async function AdminOrgPage({
     select count(*)::int as n from organizations
     where coalesce(subscription_id, id)::text = ${walletId}`;
   const adjustments = await adjustmentsForOrg(id, { limit: 50 });
+
+  // V354: archived divisions still holding a `divisions.per_competition.max`
+  // slot, because they have recorded results. The only rows the waiver means
+  // anything on.
+  const heldSlots = await slotConsumingDivisions(id);
 
   return (
     <div className="space-y-6">
@@ -231,6 +225,53 @@ export default async function AdminOrgPage({
         </section>
       )}
 
+      {/* Division slots held by archived divisions (V354). The slot rule has no
+          timer by design — any window long enough to close the
+          archive-and-recreate loop is short enough to punish an honest mistake
+          — so a stray recorded result gets THIS support path instead. Audited.
+          Rendered only when there is something to waive. */}
+      {heldSlots.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold text-slate-300">Division slots held</h2>
+          <p className="mb-2 text-xs text-slate-400">
+            These divisions are archived but still count against{" "}
+            <code className="text-slate-300">divisions.per_competition.max</code>, because they
+            have recorded results. Waive a slot only to undo a genuine mistake — it is audited.
+          </p>
+          <div className="rounded-lg border border-slate-800 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-800 text-xs text-slate-400">
+                <tr>
+                  <th className="px-3 py-2 text-left">Division</th>
+                  <th className="px-3 py-2 text-left">Archived</th>
+                  <th className="px-3 py-2 text-left">Slot</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {heldSlots.map((d) => (
+                  <tr key={d.id} className="hover:bg-slate-800/50">
+                    {/* Competition rides UNDER the division name rather than in
+                        a column of its own: at 375px a fourth column pushes the
+                        button off the visible strip of the scroll container,
+                        which is the one cell staff came here to reach. */}
+                    <td className="px-3 py-2">
+                      <span className="text-slate-200">{d.name}</span>
+                      <span className="block text-xs text-slate-500">{d.competitionName}</span>
+                    </td>
+                    <td className="px-3 py-2 text-xs text-slate-500 whitespace-nowrap">
+                      {new Date(d.archivedAt).toLocaleDateString()}
+                    </td>
+                    <td className="px-3 py-2">
+                      <SlotWaiverButton divisionId={d.id} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
       {/* Adjustments log (SPEC-6 C4): the SPEC-3 §3 unified per-org log —
           actor · action · category · reason · when · reversible, newest first.
           Scroll container is keyboard-reachable (tabIndex/role/aria) so axe
@@ -265,7 +306,7 @@ export default async function AdminOrgPage({
                     </td>
                     <td className="px-3 py-2 text-slate-300">{a.actorName ?? "—"}</td>
                     <td className="px-3 py-2 text-slate-200">
-                      {ADJUSTMENT_LABELS[a.action] ?? a.action}
+                      {ADJUSTMENT_LABELS[a.action]}
                     </td>
                     <td className="px-3 py-2 text-xs text-slate-300">{a.category}</td>
                     <td className="px-3 py-2 text-xs text-slate-300">{a.reason ?? "—"}</td>

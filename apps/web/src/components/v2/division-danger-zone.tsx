@@ -16,9 +16,36 @@ interface Props {
   divisionName: string;
   orgSlug: string;
   compSlug: string;
+  /**
+   * Would archiving this division keep its `divisions.per_competition.max`
+   * slot spent? (V354 — recorded results, minus a staff waiver.)
+   *
+   * Passed DOWN from the division page rather than fetched here. The answer is
+   * a SQL predicate (`division_has_results`), it is the same predicate the
+   * quota charge uses, and there is no v1 endpoint that exposes it — inventing
+   * one so a client component could ask would put a second copy of the rule on
+   * the wire for the sake of one boolean the server already had in hand.
+   *
+   * Named for the CONSEQUENCE, not for "has results": those two answers differ
+   * exactly when staff have waived the slot, and in that state the fixtures
+   * are still there but the charge is not. Warning a supported org that their
+   * slot will not come back — after support handed it back — is the same
+   * species of lie this warning exists to remove.
+   *
+   * Optional, defaulting to false: `false` renders what this component always
+   * rendered, so a caller that has not been taught the question yet shows no
+   * warning rather than an unconditional one.
+   */
+  slotHeldOnArchive?: boolean;
 }
 
-export function DivisionDangerZone({ divisionId, divisionName, orgSlug, compSlug }: Props) {
+export function DivisionDangerZone({
+  divisionId,
+  divisionName,
+  orgSlug,
+  compSlug,
+  slotHeldOnArchive = false,
+}: Props) {
   const msg = useMsg();
   const router = useRouter();
   const [dialog, setDialog] = useState<"none" | "delete" | "archive">("none");
@@ -68,6 +95,21 @@ export function DivisionDangerZone({ divisionId, divisionName, orgSlug, compSlug
       <p className="text-xs text-slate-500">{msg("danger.desc")}</p>
       {error && (
         <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
+      )}
+      {/* BEFORE the button, not inside the confirm dialog and not after the
+          redirect. `danger.archiveBody` still promises the division "stops
+          counting against your plan", which is true for the unplayed division
+          people archive by mistake and false for a played one — and the org
+          only found out when a later create hit a paywall it could not see the
+          cause of. Amber rather than red: nothing here is destructive or
+          refused, it is a price the reader has not been told. */}
+      {slotHeldOnArchive && (
+        <p
+          data-slot-warning
+          className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700"
+        >
+          {msg("division.archive.slotWarning")}
+        </p>
       )}
       <div className="mt-3 flex flex-wrap gap-2">
         <button
@@ -120,7 +162,16 @@ export function DivisionDangerZone({ divisionId, divisionName, orgSlug, compSlug
         {suggestArchive && (
           <p className="rounded-md bg-amber-50 px-3 py-2 text-amber-700">{msg("danger.suggestArchive")}</p>
         )}
-        <p>{msg("danger.archiveBody")}</p>
+        {/* The same fork as the warning above the button, off the same prop —
+            the two sit one glance apart and until now they disagreed.
+            `danger.archiveBody` promises the division "stops counting against
+            your plan": true for the unplayed division archived by mistake,
+            false for a played one. So the held case gets its own sentence
+            rather than a hedge bolted onto copy that is already correct for
+            the case people actually hit. `slotHeldOnArchive` is false for a
+            staff-waived division, which is exactly right — support has handed
+            the slot back, so that archive really is free. */}
+        <p>{msg(slotHeldOnArchive ? "danger.archiveBodySlotHeld" : "danger.archiveBody")}</p>
       </ConfirmDialog>
     </section>
   );

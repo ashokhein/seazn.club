@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 // "You're on Pro" and nothing else, on a page whose whole job is to explain what
 // their competition can do.
 //
-// Six states now, decided once in `upgradePageState()` and rendered here:
+// Seven states now, decided once in `upgradePageState()` and rendered here:
 //
 //   offer (owner)     the ticket, priced, with the buy button
 //   offer (non-owner) the same ticket, no button — the price stays visible so
@@ -26,7 +26,15 @@ export const dynamic = "force-dynamic";
 //                     keeps the rung, the date and the receipt (nothing bought
 //                     is deleted) but loses the floodlight, and the page stops
 //                     claiming the pass is active. It is never re-offered, so
-//                     the two doors out are the plan and next year's edition.
+//                     the two doors out are the plan and the next edition.
+//   closed            past the same line as `ended`, but NOTHING WAS EVER
+//                     BOUGHT (#376). Its own panel rather than the ticket: the
+//                     ticket carries a rung name, a purchase date and a receipt
+//                     stub, and all three would be invented for a competition
+//                     that never held a pass. No price, no buy button and no
+//                     pass column in the table either — the checkout answers
+//                     this sale with 410 Gone whatever the plan, so every one
+//                     of them would advertise a refusal.
 //   paid_plan         NO TICKET AND NO PRICE ANYWHERE. Every boolean the pass
 //                     lifts is already true on a paid plan, and Pro raises the
 //                     caps the pass raises (128 entrants per division against
@@ -60,15 +68,22 @@ import {
 } from "@/lib/currency";
 import { passExceedsPlan, rungsExceedingPlan } from "@/lib/pass-vs-plan";
 import {
+  PASS_CLOSED_REASON_KEY,
   PASS_LOCK_REASON_KEY,
   PASS_RUNG_NAME_KEY,
   passLadderOptions,
   type PassRungOption,
 } from "@/lib/pass-ladder";
+import type { DictionaryKey } from "@/lib/i18n-keys";
 import { preferredCurrency } from "@/lib/currency-server";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, type Dict, type Locale } from "@/lib/i18n";
-import { isPaidPlan, orgPlanKey, passLockReason } from "@/lib/entitlements";
+import {
+  isPaidPlan,
+  orgPlanKey,
+  passLockReason,
+  type PassLockReason,
+} from "@/lib/entitlements";
 import { planLabel } from "@/lib/plan-label";
 import { getPassPurchases, type PassPurchaseRow } from "@/server/usecases/billing-manage";
 import { upgradePageState, type UpgradePageState } from "@/lib/upgrade-page-state";
@@ -112,13 +127,13 @@ export default async function CompetitionUpgradePage({
 
   // Reconcile straight from Stripe on return from checkout (best-effort,
   // idempotent) — the pass must lift gates before any webhook lands, and this
-  // read decides which of the five states the buyer lands in.
+  // read decides which state the buyer lands in.
   const sp = await searchParams;
   if (sp.checkout === "success" && sp.session_id) {
     await reconcilePassCheckout(orgId, sp.session_id);
   }
 
-  const [[pass], planKey, currency, locale, [subRow], passUnderReview] = await Promise.all([
+  const [[compRow], planKey, currency, locale, [subRow], passUnderReview] = await Promise.all([
     // Presence is ROW EXISTENCE. `stripe_payment_intent` is nullable (V271) and
     // a staff-granted pass is fully active; it is selected only to tell a
     // PURCHASE from a GRANT further down, where the difference decides whether
@@ -130,19 +145,31 @@ export default async function CompetitionUpgradePage({
     // and the verdict about it cannot be read a moment apart; the arms
     // themselves stay in `passLockReason`, which is the same predicate V338
     // enforces in SQL.
+    //
+    // FROM the competition, LEFT JOINing the pass (#376) — the same correction
+    // the layout needed, and the same single round trip. The old INNER join
+    // through `competition_passes` returned no row whatsoever for a competition
+    // that had never been sold one, so `status` and `ends_on` were never read
+    // and the lock could not be judged in the very case it now has to be. The
+    // lock belongs to the COMPETITION; the pass row only decides which side of
+    // it this org is on. `page.competition` cannot supply the two columns
+    // instead: it is a cached `{id, name, slug}` slug resolution shared with
+    // every other console page, and widening it would put a lifecycle read
+    // behind a 60-second cache.
     sql<
       {
-        purchased_at: Date | string;
+        purchased_at: Date | string | null;
         stripe_payment_intent: string | null;
-        pass_key: string;
+        pass_key: string | null;
         status: string;
         ends_on: Date | string | null;
       }[]
     >`
       select cp.purchased_at, cp.stripe_payment_intent, cp.pass_key, c.status, c.ends_on
-      from competition_passes cp
-      join competitions c on c.id = cp.competition_id
-      where cp.competition_id = ${compId}`,
+      from competitions c
+      left join competition_passes cp on cp.competition_id = c.id
+      where c.id = ${compId}
+      limit 1`,
     // The resolver's derivation, NOT `subscriptions.plan_key` raw — see
     // lib/upgrade-page-state.ts. pass-checkout/route.ts now judges eligibility
     // through this same `isPaidPlan(orgPlanKey(...))`, so the page and the route
@@ -216,8 +243,28 @@ export default async function CompetitionUpgradePage({
   ]);
   const dict = await getDictionary(locale, "ui");
 
+  // The pass row, or null — narrowed off the joined row's own nullable columns
+  // rather than off row existence, which since the LEFT JOIN above is a fact
+  // about the COMPETITION. `pass_key` is `not null` on the table, so it is null
+  // here only when the join found nothing; `purchased_at` is carried into the
+  // narrowing as well so the non-null date every consumer below relies on is
+  // established once, here, instead of asserted at each use.
+  const pass =
+    compRow && compRow.pass_key !== null && compRow.purchased_at !== null
+      ? {
+          purchased_at: compRow.purchased_at,
+          stripe_payment_intent: compRow.stripe_payment_intent,
+          pass_key: compRow.pass_key,
+        }
+      : null;
+
   const paidPlan = isPaidPlan(planKey);
-  const lockReason = pass ? passLockReason(pass.status, pass.ends_on) : null;
+  // Judged from the COMPETITION, with or without a pass row (#376). The old
+  // `pass ? … : null` asked the question only where the answer could not
+  // matter: a competition past the line that never held a pass read `null` and
+  // fell through to the ordinary offer, whose Buy button the checkout route
+  // answers with 410 Gone.
+  const lockReason = compRow ? passLockReason(compRow.status, compRow.ends_on) : null;
   // v17 #327 — which rungs, if any, still raise something this PAID plan caps.
   // Asked only for a paid org with no pass: every rung beats community (so the
   // ordinary offer needs no query at all), and a paid org that already holds one
@@ -268,11 +315,20 @@ export default async function CompetitionUpgradePage({
   // customer is "this raises something your plan caps" — and the comparison is
   // where they check that for themselves. Only the exceeding rungs, never both
   // as a matter of course: an M column beside Pro would be the downgrade sale.
+  //
+  // A CLOSED competition (#376) drops both rungs for a third reason, and it is
+  // the one that made the table a defect rather than a stale detail: the org can
+  // buy neither, at any price, because the checkout refuses the sale outright.
+  // The comparison is the page's SECOND offer surface, and a pass column here
+  // advertises in figures exactly what the panel above has just refused.
+  const closedToPasses = state.kind === "closed";
   const columns: string[] = paidPlan
     ? ["community", planKey, ...exceedingRungs]
     : pass
       ? ["community", heldRung, "pro"]
-      : ["community", "event_pass", "event_pass_l", "pro"];
+      : closedToPasses
+        ? ["community", "pro"]
+        : ["community", "event_pass", "event_pass_l", "pro"];
   const [matrix, purchases] = await Promise.all([
     readMatrix(columns),
     // Only fetched where a receipt is rendered: one Stripe call per pass the ORG
@@ -390,6 +446,13 @@ export default async function CompetitionUpgradePage({
           holdsPass={!!pass}
           passAdds={heldExceeds}
         />
+      ) : state.kind === "closed" ? (
+        <ClosedPanel
+          dict={dict}
+          state={state}
+          nextEditionHref={routes.competitionNew(orgSlug)}
+          settingsHref={routes.competitionSettings(orgSlug, compSlug)}
+        />
       ) : (
         <Ticket
           dict={dict}
@@ -490,7 +553,15 @@ function Ticket({
 }: {
   dict: Dict;
   locale: Locale;
-  state: Exclude<UpgradePageState, { kind: "paid_plan" }>;
+  /**
+   * `paid_plan` and `closed` are both handled by their own panels above. The
+   * exclusion is load-bearing, not tidiness: this component's stub renders
+   * `<PassUpgradeButton canBuy={state.canBuy}>` in its else-branch, and
+   * `closed` also carries a `canBuy`, so a `closed` state reaching here would
+   * typecheck perfectly and render a Buy button on the exact page this change
+   * exists to stop selling from.
+   */
+  state: Exclude<UpgradePageState, { kind: "paid_plan" } | { kind: "closed" }>;
   currency: Currency;
   competitionId: string;
   competitionName: string;
@@ -649,6 +720,55 @@ function Ticket({
           />
         )}
       </div>
+    </section>
+  );
+}
+
+/**
+ * Past the line, nothing ever bought (#376). Deliberately NOT the ticket: the
+ * ticket renders a rung name, a purchase date and a receipt stub, and all
+ * three would be invented here. A plain card says the true thing and offers
+ * the one next step that exists.
+ */
+function ClosedPanel({
+  dict,
+  state,
+  nextEditionHref,
+  settingsHref,
+}: {
+  dict: Dict;
+  state: Extract<UpgradePageState, { kind: "closed" }>;
+  nextEditionHref: string;
+  settingsHref: string;
+}) {
+  // Through the Record, never `state.reason === "terminal" ? … : …` — a third
+  // lock reason must break the build rather than quietly get filed under "ran
+  // past its end date", which is the wrong sentence AND the wrong next step.
+  const links: Record<PassLockReason, { href: string; label: DictionaryKey }> = {
+    terminal: { href: nextEditionHref, label: "pass.entry.ended.nextEdition" },
+    past_ends_on: { href: settingsHref, label: "pass.entry.closed.updateEndDate" },
+  };
+  const link = links[state.reason];
+  return (
+    <section className="card mt-6 p-6" data-pass-closed-panel data-pass-closed-reason={state.reason}>
+      <h2 className="app-display text-lg font-bold text-slate-900">
+        {t(dict, "upgrade.closed.title")}
+      </h2>
+      <p className="mt-2 text-sm text-slate-600">{t(dict, PASS_CLOSED_REASON_KEY[state.reason])}</p>
+      {/* Only for someone who can act on it. `canBuy` is the page's one word
+          for "this viewer is the owner", and both next steps here — creating
+          next season's competition, moving this one's end date — are owner
+          work; a link an admin can only be refused by is a second dead end
+          under a card that exists to remove one. */}
+      {state.canBuy && (
+        <Link
+          href={link.href}
+          data-pass-closed-link
+          className="-my-1 mt-3 inline-flex min-h-11 items-center text-sm font-semibold text-purple-700 underline decoration-purple-300 underline-offset-2 hover:text-purple-800 hover:decoration-purple-500"
+        >
+          {t(dict, link.label)} →
+        </Link>
+      )}
     </section>
   );
 }

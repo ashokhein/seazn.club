@@ -912,7 +912,7 @@ async function main() {
     // any division that already exists.
     let c: { id: string };
     try {
-      c = await call("/api/v1/competitions", "POST", { name: comp.name });
+      c = await call("/api/v1/competitions", "POST", { ends_on: "2030-12-31", name: comp.name });
     } catch (e) {
       // Accounts seeded before a PLAN change may sit at their plan caps —
       // skip the competition rather than aborting the resume run.
@@ -976,7 +976,129 @@ async function main() {
   // fixtures) — only on the Pro account, into the Padel & Ladder Club.
   if (account === "pro") await seedAdvancedFormats();
 
+  // #376's `closed` state — community only, see the function.
+  if (account === "community") await seedClosedCompetition();
+
+  // #376 part D: the invisible half of the divisions quota. Both accounts, so
+  // the demo carries the state on the plan where it BITES (community) as well
+  // as the one where it merely shows the warning (pro).
+  await seedArchivedSlotHolder(PLAN[0].name);
+
   console.log("done");
+}
+
+/**
+ * A finished competition that never held an Event Pass (#376) — the state where
+ * the header must offer no pass and the upgrade page must sell nothing.
+ *
+ * COMMUNITY ONLY, and that is not a preference. `passState` (the competition
+ * layout) empties `sellableRungs` the moment the competition is locked, so a
+ * PAID org resolves `paid_plan` and the closed chip never renders at all; the
+ * demo would show an empty header and prove nothing. The community account is
+ * the only place the state is reachable.
+ *
+ * `terminal`, not `past_ends_on`: a `completed` status is the arm an organiser
+ * actually arrives at, and it stays put — a `past_ends_on` seed would need a
+ * date the demo has to keep moving past. `starts_on`/`ends_on` are spelled out
+ * anyway because an end date is about to be mandatory, and a seed without one
+ * would break then rather than now.
+ *
+ * Resume-safe like the PLAN loop above: a slug conflict reuses the row, and the
+ * status PATCH is idempotent.
+ */
+async function seedClosedCompetition(): Promise<void> {
+  const name = "Winter 2024 (finished)";
+  let comp: { id: string };
+  try {
+    comp = await call("/api/v1/competitions", "POST", {
+      name,
+      starts_on: "2024-11-01",
+      ends_on: "2024-12-15",
+    });
+  } catch (e) {
+    // Same two escapes the PLAN loop takes: a plan cap is a skip, not an abort.
+    if (/cap|limit|payment/i.test(String(e))) {
+      console.log(`${name}: skipped (plan cap on this account)`);
+      return;
+    }
+    if (!String(e).includes("already in use")) throw e;
+    const list = await call("/api/v1/competitions?limit=100");
+    comp = ((list.items ?? list) as { id: string; name: string }[]).find((x) => x.name === name)!;
+    console.log(`${name}: exists, resuming`);
+  }
+  await call(`/api/v1/competitions/${comp.id}`, "PATCH", { status: "completed" });
+  console.log(`${name}: completed, no pass — #376 closed state`);
+}
+
+/**
+ * One competition holding an archived-and-PLAYED division (V354).
+ *
+ * The state this seeds is the whole point of #376 part D and is otherwise
+ * impossible to demo: an archived division with recorded results keeps its
+ * `divisions.per_competition.max` slot forever, so the org sees fewer
+ * divisions than its plan allows AND a paywall — the two surfaces that now
+ * explain themselves (the danger-zone warning before the archive, the
+ * archived-slots line under the 402).
+ *
+ * Deliberately joins an EXISTING plan competition rather than creating one:
+ * `competitions.max_active` is 2 on community, and burning a competition slot
+ * to demonstrate a division slot would trade one gap in the demo for another.
+ * A played division is the requirement — an unplayed archived one frees its
+ * slot and would show nothing.
+ *
+ * Resume-safe by name, like every other step in this seeder: archived
+ * divisions do not come back from the divisions list, so the check is the
+ * competition's archived list.
+ */
+async function seedArchivedSlotHolder(competitionName: string): Promise<void> {
+  const comps = await call("/api/v1/competitions?limit=100");
+  const comp = ((comps.items ?? comps) as { id: string; name: string }[]).find(
+    (c) => c.name === competitionName,
+  );
+  if (!comp) return;
+  const NAME = "Retired Grade";
+
+  const archived = await call(`/api/v1/competitions/${comp.id}/divisions?archived=1`);
+  const archivedNames = new Set(
+    ((archived.items ?? archived) as { name: string }[]).map((d) => d.name),
+  );
+  if (archivedNames.has(NAME)) {
+    console.log(`${competitionName} / ${NAME}: exists, skipped`);
+    return;
+  }
+
+  let div: { id: string };
+  try {
+    div = await call(`/api/v1/competitions/${comp.id}/divisions`, "POST", {
+      name: NAME,
+      sport_key: "generic",
+      variant_key: "score",
+      config: GENERIC_CFG,
+    });
+  } catch (e) {
+    // Already at the ceiling (a re-seed against an account that holds other
+    // archived slots) — the state is already demonstrated, so skip rather than
+    // abort the run.
+    if (/cap|limit|payment/i.test(String(e))) {
+      console.log(`${competitionName} / ${NAME}: skipped (division cap on this account)`);
+      return;
+    }
+    throw e;
+  }
+
+  await call(`/api/v1/divisions/${div.id}/entrants`, "POST", entrantsFor("individual", 4));
+  const created = await call(`/api/v1/divisions/${div.id}/stages`, "POST", [
+    { ...TEMPLATES.league(4)[0], seq: 1 },
+  ]);
+  const stage = (Array.isArray(created) ? created[0] : created) as { id: string };
+  const { played, total } = await playStageAfterStart(div.id, stage.id, "generic", "score", 1);
+
+  // Registration must be closed before archive (v3/09 §4).
+  await call(`/api/v1/divisions/${div.id}/registration-settings`, "PUT", { enabled: false });
+  await call(`/api/v1/divisions/${div.id}/archive`, "POST");
+  console.log(
+    `${competitionName} / ${NAME}: ${played}/${total} played, archived — holds a quota slot`,
+  );
 }
 
 /** Seed an americano stage (needs individual entrants backed by persons) and a

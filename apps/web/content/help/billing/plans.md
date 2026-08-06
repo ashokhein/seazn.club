@@ -6,7 +6,7 @@ order: 1
 
 ## Community — free forever
 
-Run real competitions, free: 10 active competitions, 4 divisions in each, 5 team members, 64 entrants per division, 1 public dashboard, full scoring and scheduling, and unlimited match officials per fixture. Your **organisation logo** sits on your public pages, you can **charge entry fees** (by card or offline) at an 8% platform fee, exports come out as plain PDF/XLSX, and your organisation gets **10 AI credits a month** to spend on AI scheduling and officials. When something is finished, complete or archive it to free the slot.
+Run real competitions, free: 10 active competitions, 4 divisions in each, 5 team members, 64 entrants per division, 1 public dashboard, full scoring and scheduling, and unlimited match officials per fixture. Your **organisation logo** sits on your public pages, you can **charge entry fees** (by card or offline) at an 8% platform fee, exports come out as plain PDF/XLSX, and your organisation gets **10 AI credits a month** to spend on AI scheduling and officials. When a competition is finished, complete or archive it to free its slot. Divisions work differently: archiving one gives its slot back only if it never recorded a result ([archive and delete](/help/divisions/archive)).
 
 ## Event Pass — from $29 one-time
 
@@ -17,7 +17,7 @@ One-time upgrade for a single competition, while that competition is still runni
 
 Both sizes carry everything else identically: branded exports, public player cards, sponsor tiers and paid packages, the realtime scoreboard and slideshow, advanced formats including double elimination, a one-time top-up of **25 AI credits**, and a **5% platform fee** on entry fees instead of 8%. Pick the size at checkout — a competition holds one pass and keeps it.
 
-Your brand **colour** is not part of either size — that stays Pro. A passed competition doesn't count against your active-competition limit. Right for the annual tournament that doesn't justify a year of Pro. It doesn't carry to next year's edition. [What the pass buys, in full](/help/billing/event-pass).
+Your brand **colour** is not part of either size — that stays Pro. A passed competition doesn't count against your active-competition limit. Right for the tournament that comes round rarely enough that a running subscription doesn't pay for itself. It doesn't carry to the next edition. [What the pass buys, in full](/help/billing/event-pass).
 
 ## Pro — $19/month, up to 5 organisations
 

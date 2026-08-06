@@ -1,12 +1,23 @@
 import { test, expect, type Page, type APIRequestContext } from "@playwright/test";
 import Stripe from "stripe";
 import { randomBytes } from "node:crypto";
-import { TAG, apiJson, mintLoginPathBySql, orgGroupIdSql } from "./helpers";
+import {
+  TAG,
+  apiJson,
+  expectNoHorizontalScroll,
+  mintLoginPathBySql,
+  orgGroupIdSql,
+} from "./helpers";
 // Type-only (erased at build, so no `@/` alias resolution happens at runtime).
 // The wire test at the foot of this file names the rungs and the currency it
 // prices them in; retyping either union here is how a third rung would end up
 // unwitnessed.
 import type { PassKey } from "../src/lib/currency";
+// Also type-only. Keyed off the real union so a THIRD lock reason is a compile
+// error in the arm table below rather than an arm this file silently never
+// visits — the same discipline the components' own `Record<PassLockReason, …>`
+// props enforce.
+import type { PassLockReason } from "../src/lib/entitlements";
 
 // Event Pass, end to end, through a REAL Stripe test-mode purchase (task 22).
 //
@@ -108,6 +119,19 @@ interface Rig {
   compSlug: string;
 }
 
+/** The end date every OPEN scene below carries.
+ *
+ *  These scenes mean one thing — "this competition is not past the pass line" —
+ *  and they used to say it by leaving `ends_on` at its column default of null.
+ *  Null still says it, but since #376 made `ends_on` mandatory at create there
+ *  is no longer any journey through the product that produces such a row, and a
+ *  browser test should describe a competition a real organiser could actually
+ *  have. A date far beyond `PASS_END_GRACE_DAYS` in the other direction says
+ *  "open" just as unambiguously. (The column stays nullable and older rows may
+ *  still hold null; proving the read handles that is a unit test's job, not a
+ *  journey's — see `competition-pass-layout.test.tsx`.) */
+const OPEN_ENDS_ON = "2099-12-31";
+
 /** A community org with its own owner and one unlisted competition.
  *
  *  Unlisted, not public: public registration accepts both, and community holds
@@ -142,8 +166,9 @@ async function seedRig(label: string): Promise<Rig> {
       values ('generic', 'score', 'Score', ${sql.json({ resultMode: "score", allowDraws: true, points: { w: 3, d: 1, l: 0 }, progressScore: false })}, true)
       on conflict do nothing`;
     const [{ id: compId }] = await sql<{ id: string }[]>`
-      insert into competitions (org_id, name, slug, visibility, branding)
-      values (${orgId}, ${"EP Cup " + tag}, ${compSlug}, 'unlisted', ${sql.json({})})
+      insert into competitions (org_id, name, slug, visibility, branding, ends_on)
+      values (${orgId}, ${"EP Cup " + tag}, ${compSlug}, 'unlisted', ${sql.json({})},
+              ${OPEN_ENDS_ON})
       returning id`;
     return { orgId, orgSlug, ownerEmail, compId, compSlug };
   });
@@ -156,8 +181,67 @@ async function seedSiblingCompetition(orgId: string, label: string): Promise<{ i
   const slug = `ep-${label}-plain-${tag}`;
   return withDb(async (sql) => {
     const [row] = await sql<{ id: string }[]>`
-      insert into competitions (org_id, name, slug, visibility, branding)
-      values (${orgId}, ${"EP Plain " + tag}, ${slug}, 'unlisted', ${sql.json({})})
+      insert into competitions (org_id, name, slug, visibility, branding, ends_on)
+      values (${orgId}, ${"EP Plain " + tag}, ${slug}, 'unlisted', ${sql.json({})},
+              ${OPEN_ENDS_ON})
+      returning id`;
+    return { id: row!.id, slug };
+  });
+}
+
+/**
+ * The two ways a competition can sit past the pass line (#376), chosen so the
+ * arms actually DISCRIMINATE.
+ *
+ * `terminal` carries a FUTURE end date on purpose. `passLockReason` tests the
+ * status first, so giving both arms a past `ends_on` would produce the same
+ * "terminal" verdict either way and the assertion would hold against a build
+ * that had lost the status arm entirely. With the date in the future, only the
+ * status can be what closed it.
+ *
+ * `past_ends_on` keeps the column default status (`draft`) and an end date well
+ * beyond `PASS_END_GRACE_DAYS` (7), so only the date can be what closed it.
+ *
+ * The two arms lead to genuinely different routes — next season's competition
+ * vs this one's settings form — which is why both are exercised: a spec that
+ * only covered `terminal` would let the recoverable arm regress in silence.
+ */
+const CLOSED_ARMS: Record<
+  PassLockReason,
+  { status: string; endsOn: string; href: (orgSlug: string, compSlug: string) => string }
+> = {
+  terminal: {
+    status: "completed",
+    endsOn: "2099-06-30",
+    // routes.competitionNew — a finished competition's next move is next season.
+    href: (orgSlug) => `/o/${orgSlug}/c/new`,
+  },
+  past_ends_on: {
+    status: "draft",
+    endsOn: "2024-12-15",
+    // routes.competitionSettings — a stale end date's next move is the form
+    // that owns it, and moving the date genuinely reopens the sale.
+    href: (orgSlug, compSlug) => `/o/${orgSlug}/c/${compSlug}/settings`,
+  },
+};
+
+/** A competition in `orgId` that is past the pass line and never held a pass.
+ *  Inserted directly for the same reason `seedRig` is: the shape wanted here is
+ *  a `status`/`ends_on` pair, not a journey through the create form. Scoped by
+ *  org_id on the way in (see the header's slug note). */
+async function seedClosedCompetition(
+  orgId: string,
+  label: string,
+  reason: PassLockReason,
+): Promise<{ id: string; slug: string }> {
+  const arm = CLOSED_ARMS[reason];
+  const tag = `${TAG}-${randomBytes(4).toString("hex")}`;
+  const slug = `ep-${label}-closed-${tag}`;
+  return withDb(async (sql) => {
+    const [row] = await sql<{ id: string }[]>`
+      insert into competitions (org_id, name, slug, visibility, branding, status, ends_on)
+      values (${orgId}, ${"EP Closed " + tag}, ${slug}, 'unlisted', ${sql.json({})},
+              ${arm.status}, ${arm.endsOn})
       returning id`;
     return { id: row!.id, slug };
   });
@@ -1130,5 +1214,110 @@ test.describe("the rung the buyer picks is the rung Stripe is asked for", () => 
     // second press the FIRST session, and the two amounts would then agree by
     // accident rather than because each rung resolved its own price.
     expect(l.id).not.toBe(m.id);
+  });
+});
+
+/**
+ * PAST THE LINE, AND NOTHING WAS EVER BOUGHT (#376).
+ *
+ * Every other test in this file is about a pass that exists. This one is about
+ * the state where none ever did and none ever can: a competition that is
+ * finished (or whose end date has run out past its grace) has no pass to sell,
+ * because `/api/billing/pass-checkout` refuses it outright. Before #376 both
+ * offer surfaces still advertised one — the header chip and the upgrade page's
+ * checkout — so an organiser could press Buy on a competition the server had
+ * already decided was closed.
+ *
+ * The unit suites pin each surface's markup in isolation. What only a browser
+ * can pin is that they agree: the SAME competition, read through the layout's
+ * own join and the upgrade page's own query, resolves closed on both. Those two
+ * reads are separate SQL statements in separate files, and a divergence between
+ * a placer and a verifier of the same rule is this repo's most-repeated bug.
+ *
+ * Both arms run. They are decided by different columns and they lead to
+ * different routes, so covering only `terminal` would leave the recoverable one
+ * — the organiser whose end date is merely stale — free to regress.
+ *
+ * No Stripe money moves here; the file-level `beforeAll` still requires a test
+ * key, which is the file's standing contract and not something this block
+ * relaxes.
+ */
+test.describe("a competition past the pass line sells nothing", () => {
+  for (const reason of Object.keys(CLOSED_ARMS) as PassLockReason[]) {
+    test(`neither the header nor the upgrade page offers a pass (${reason})`, async ({ page }) => {
+      test.setTimeout(120_000);
+      const rig = await seedRig(`cl${reason === "terminal" ? "t" : "p"}`);
+      const closed = await seedClosedCompetition(rig.orgId, `cl${reason}`, reason);
+      await signIn(page, rig.ownerEmail);
+
+      const expectedHref = CLOSED_ARMS[reason].href(rig.orgSlug, closed.slug);
+
+      // ── The header chip ──────────────────────────────────────────────────
+      await page.goto(`/o/${rig.orgSlug}/c/${closed.slug}`);
+      // The buy chip is GONE. `[data-pass-entry]` is the discovery link's own
+      // selector (deliberately not `[data-pass-cta]`), so this counts the thing
+      // that used to sell a refusal and nothing else.
+      await expect(page.locator("[data-pass-entry]")).toHaveCount(0);
+      // …and what replaced it says WHY and points somewhere that works. The
+      // reason is asserted through the attribute VALUE, never bare presence:
+      // a chip that rendered the wrong arm would still satisfy a presence
+      // check while sending the organiser to the wrong page.
+      const chipLink = page.locator(`[data-pass-closed-reason="${reason}"] [data-pass-closed-link]`);
+      await expect(chipLink).toBeVisible({ timeout: 30_000 });
+      await expect(chipLink).toHaveAttribute("href", expectedHref);
+
+      // The control arm, in the same session and the same org: the competition
+      // seedRig created is open, so the chip must still be there. Without it a
+      // build that had simply stopped rendering the header's pass slot at all
+      // would pass every assertion above.
+      await page.goto(`/o/${rig.orgSlug}/c/${rig.compSlug}`);
+      await expect(page.locator("[data-pass-entry]")).toBeVisible({ timeout: 30_000 });
+      await expect(page.locator("[data-pass-closed-link]")).toHaveCount(0);
+
+      // ── The upgrade page ─────────────────────────────────────────────────
+      await page.goto(`/o/${rig.orgSlug}/c/${closed.slug}/upgrade`);
+      const panel = page.locator(`[data-pass-closed-panel][data-pass-closed-reason="${reason}"]`);
+      await expect(panel).toBeVisible({ timeout: 30_000 });
+      await expect(panel.locator("[data-pass-closed-link]")).toHaveAttribute("href", expectedHref);
+
+      // Nothing on this page can start a purchase. All three selectors, because
+      // they are three different controls: the ticket is the priced card, the
+      // buy button is the checkout trigger, and `[data-pass-cta]` is what every
+      // paywall on the page answers to.
+      await expect(page.locator("[data-pass-ticket]")).toHaveCount(0);
+      await expect(page.locator("[data-pass-buy]")).toHaveCount(0);
+      await expect(page.locator("[data-pass-cta]")).toHaveCount(0);
+      // Page-wide, exactly as U1 and U6 do it: the worst thing this surface can
+      // do is quote a price for something the server will refuse.
+      expect(await page.locator("main").innerText()).not.toContain("$29");
+    });
+  }
+
+  test("the closed upgrade page is usable at 375px", async ({ page }) => {
+    test.setTimeout(120_000);
+    // The mobile Playwright projects only match `mobile.spec.ts`, so a surface
+    // that must hold at a phone width either goes there or sets the viewport
+    // itself. This one belongs with the rest of #376's proof.
+    await page.setViewportSize({ width: 375, height: 812 });
+    const rig = await seedRig("cl375");
+    const closed = await seedClosedCompetition(rig.orgId, "cl375", "terminal");
+    await signIn(page, rig.ownerEmail);
+
+    await page.goto(`/o/${rig.orgSlug}/c/${closed.slug}/upgrade`);
+    const panel = page.locator('[data-pass-closed-panel][data-pass-closed-reason="terminal"]');
+    await expect(panel).toBeVisible({ timeout: 30_000 });
+
+    // `expectNoHorizontalScroll` rather than a raw scrollWidth read: it drops
+    // the page's own `overflow-x` first, so a container that legitimately
+    // scrolls its own contents is exempt while a genuinely un-contained element
+    // is named in the failure.
+    await expectNoHorizontalScroll(page);
+
+    // 44px touch target. The link carries `min-h-11` with a negative margin —
+    // the margin keeps the optical position while the tappable box grows, and
+    // measuring the BOX is the only way to tell those two apart.
+    const box = await panel.locator("[data-pass-closed-link]").boundingBox();
+    expect(box, "the closed panel's link must be laid out at 375px").not.toBeNull();
+    expect(box!.height).toBeGreaterThanOrEqual(44);
   });
 });

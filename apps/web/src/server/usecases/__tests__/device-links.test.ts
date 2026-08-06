@@ -76,6 +76,7 @@ const asOwner = (orgId: string, userId: string): AuthCtx => ({
 
 async function rig(owner: AuthCtx) {
   const competition = await createCompetition(owner, {
+    ends_on: "2030-12-31",
     name: "DL Cup " + randomUUID().slice(0, 6),
     visibility: "private",
     branding: {},

@@ -944,7 +944,11 @@
   "pass.entry.ended": "Event Pass ended",
   "pass.entry.ended.reasonTerminal": "Nothing is deleted — this competition is finished or archived, so its Event Pass has stopped lifting its limits.",
   "pass.entry.ended.reasonPastEnds": "Nothing is deleted — this competition is past its end date, so its Event Pass has stopped lifting its limits. Update the end date if it is still running.",
-  "pass.entry.ended.nextEdition": "Create next year's edition",
+  "pass.entry.ended.nextEdition": "Create the next edition",
+  "pass.entry.closed.updateEndDate": "Update the end date",
+  "upgrade.closed.title": "This competition is closed to Event Passes",
+  "upgrade.closed.reasonTerminal": "This competition is finished or archived, so an Event Pass can no longer be bought for it.",
+  "upgrade.closed.reasonPastEnds": "This competition is past its end date, so an Event Pass can no longer be bought for it. Update the end date if it is still running.",
   "pass.entry.ended.nextBody": "The pass and its receipt stay on this competition. Pro raises every competition in {org}, not just this one — and keeps raising them next season.",
   "pass.menu.buy": "Event Pass — from {price}",
   "me.console": "Console",
@@ -3227,5 +3231,11 @@
   "board.polishTitle": "Tighten the existing board — pinned and locked matches keep the times they already have",
   "board.result.repairBudget": "Time ran out before the re-flow finished searching — nothing already on the board was moved.",
   "board.result.lost.one": "One match lost the slot it had.",
-  "board.result.lost.other": "{count} matches lost the slots they had."
+  "board.result.lost.other": "{count} matches lost the slots they had.",
+  "division.create.competitionEnded": "This competition is finished, so no new divisions can be added to it.",
+  "division.archive.slotWarning": "This division has recorded results, so archiving it will not free a division slot.",
+  "division.limit.archivedCount": "Divisions with recorded results count toward your limit even after they are archived.",
+  "danger.archiveBodySlotHeld": "The division disappears from your console and the public site. It has recorded results, so its division slot does not come back — nothing is destroyed, and you can restore it any time from competition settings → Archived divisions. Archived one by mistake? Support can waive the slot.",
+  "comp.wizard.endsOn.required": "An end date is required.",
+  "comp.validation.endsBeforeStarts": "The end date cannot be before the start date."
 }

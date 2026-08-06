@@ -51,6 +51,7 @@ interface Fx {
 
 async function rig(auth: AuthCtx, entrantNames: string[]) {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `W ${randomUUID().slice(0, 6)}`,
     visibility: "private",
     branding: {},
@@ -168,6 +169,7 @@ describe.skipIf(!HAS_DB)("withdrawal cascade (spec 05 §5)", () => {
   it("before the start there is no surgery — plain status flip", async () => {
     const auth = await seedOrg();
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Pre",
       visibility: "private",
       branding: {},

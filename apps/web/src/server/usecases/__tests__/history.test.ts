@@ -62,6 +62,7 @@ async function seedOrg(plan: "community" | "pro" | "pro_plus" = "pro"): Promise<
 
 async function seedDivision(auth: AuthCtx, stageCfg: Record<string, unknown> = {}) {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Undo Cup",
     visibility: "private",
     branding: {},

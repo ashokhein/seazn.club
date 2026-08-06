@@ -28,7 +28,7 @@ test("signed-in self-registration: two divisions resolve to one person", async (
     request,
     "/api/v1/competitions",
     "POST",
-    { name: `Self Link ${TAG}`, visibility: "public" },
+    { ends_on: "2030-12-31", name: `Self Link ${TAG}`, visibility: "public" },
   );
   const compId = comp.data!.id;
   const compSlug = comp.data!.slug;

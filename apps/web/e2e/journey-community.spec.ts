@@ -133,7 +133,7 @@ test.describe.serial("community lifecycle", () => {
         visibility: "private",
       });
     }
-    const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Limits ${TAG}`,
       visibility: "private",
     });
@@ -221,7 +221,7 @@ test.describe.serial("community lifecycle", () => {
     const fillIds: string[] = [];
     let ceiling: Awaited<ReturnType<typeof apiJson>> | null = null;
     for (let i = 0; i <= maxActive; i++) {
-      const r = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+      const r = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
         name: `Ceiling ${i} ${TAG}`,
         visibility: "private",
       });
@@ -238,6 +238,12 @@ test.describe.serial("community lifecycle", () => {
     // the ceiling now).
     await page.goto("/competitions/new");
     await page.getByPlaceholder("Summer Championship 2026").fill(`Ceiling UI ${TAG}`);
+    // #376: the end date is mandatory now, and without it the wizard refuses to
+    // submit at all — which would leave this assertion waiting for a paywall
+    // that never renders, and would report a QUOTA regression when the real
+    // cause is an unfilled field. The point of the test is what the wizard does
+    // once it genuinely submits at the ceiling, so the form has to be valid.
+    await page.getByLabel(/^Ends on/i).fill("2030-12-31");
     await page.getByRole("button", { name: /create/i }).click();
     await expect(page.locator('[data-feature="competitions.max_active"]')).toBeVisible({
       timeout: 20_000,
