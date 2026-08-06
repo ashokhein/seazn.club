@@ -687,6 +687,28 @@ interface AutoSchedulePlan {
   schedulable: SchedulableFixture[];
   config: SlotConfig & VerifyConfig & { courts: string[] };
   board: Assignment[];
+  /**
+   * The direct winner/loser feed edges of the whole division (#452).
+   *
+   * NOT OPTIONAL DECORATION, and the reason it is on the plan rather than
+   * rebuilt at each use is that all three consumers must read the SAME list.
+   * `slotFixtures` — the pass this wave replaced — walked fixtures in ascending
+   * round order, so a dependent could not physically land before its feeder and
+   * nothing had to be told about the edges. `buildSchedule` and `repairSchedule`
+   * place by search and have no such structural guarantee: both take
+   * `dependencies`, both encode it as a hard term, and `validateAssignments`
+   * reports `order` only for the edges it is handed.
+   *
+   * With the list absent all three went blind at once, and the two holes lined
+   * up into a wrong board rather than a missing warning: given a
+   * `feeder_to_dependent` rest rule the repair solver "satisfied" it by moving
+   * the final BEFORE its own semi-finals (measured: feeder end 09:30, final
+   * start 08:30), `validateInstructionRules` skips a dependent placed before its
+   * feeder on purpose, `order` had no edges to check — and the pass reported
+   * `conflicts: []` on a board `applySchedule`, which has always passed
+   * `feedDependencies(all)`, then answered with a blocking 409.
+   */
+  dependencies: OrderDependency[];
   placedNow: Assignment[];
   pinnedNow: Assignment[];
   frozen: string[];
@@ -818,6 +840,12 @@ export async function autoSchedule(
       schedulable,
       config,
       board,
+      // Over `all`, not over `movable`: `feedDependencies` keeps only edges whose
+      // BOTH ends are in the list it is given, and a semi already decided (so not
+      // movable) still constrains the final it feeds. The same argument every
+      // other surface passes — `applySchedule`, the move gate and the board
+      // report all call `feedDependencies(all)`.
+      dependencies: feedDependencies(all),
       placedNow,
       pinnedNow,
       frozen: frozenIds(movable, scopes),
@@ -832,7 +860,7 @@ export async function autoSchedule(
   // property an ascending-k walk proves and a re-place cannot — `slotFixtures`
   // re-places every unlocked card even when nothing is wrong, which is the
   // defect this mode replaces.
-  const { schedulable, config, board, total } = plan;
+  const { schedulable, config, board, dependencies, total } = plan;
   /**
    * The organiser's board as it stands — every movable card that currently has a
    * time, whether or not this run may move it.
@@ -865,6 +893,7 @@ export async function autoSchedule(
           schedulable,
           config,
           board,
+          dependencies,
           placed: plan.placedNow,
           pinned: plan.pinnedNow,
         })
@@ -872,6 +901,7 @@ export async function autoSchedule(
           fixtures: schedulable,
           config,
           existing: board,
+          dependencies,
           wallMs: AUTO_SOLVER_WALL_MS,
           ...(body.mode === "polish"
             ? {
@@ -1152,6 +1182,11 @@ async function reflowExisting(args: {
   pinned: readonly Assignment[];
   config: SlotConfig & VerifyConfig & { courts: string[] };
   board: readonly Assignment[];
+  /** The division's direct feed edges. Threaded to BOTH the repair solver and
+   *  the verifier in `settle` — see `AutoSchedulePlan.dependencies`. Wiring only
+   *  the solver would stop this mode PRODUCING an inverted board while leaving
+   *  it unable to REPORT one it was handed and cannot move. */
+  dependencies: readonly OrderDependency[];
 }): Promise<ReflowResult> {
   const startedAt = Date.now();
   const total = args.schedulable.length;
@@ -1202,7 +1237,12 @@ async function reflowExisting(args: {
     // `slotFixtures` has always returned them.
     const full = [...assignments, ...args.pinned];
     const placedIds = new Set(full.map((a) => a.fixtureId));
-    const conflicts: Conflict[] = validateAssignments(full, args.config, args.board);
+    const conflicts: Conflict[] = validateAssignments(
+      full,
+      args.config,
+      args.board,
+      args.dependencies,
+    );
     // `validateAssignments` answers for the rows it is handed and cannot report
     // an ABSENCE, so a card nothing could place would come back clean.
     for (const f of args.schedulable) {
@@ -1270,6 +1310,7 @@ async function reflowExisting(args: {
     proposal,
     existing: immovable,
     config: args.config,
+    dependencies: args.dependencies,
     // The same wall the tier solver is held to. `repairSchedule`'s own default
     // is 20s, and a clean board is answered without loading the WASM at all, so
     // this only binds the run that is actually searching.
