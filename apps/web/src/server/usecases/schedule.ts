@@ -875,7 +875,6 @@ export async function autoSchedule(
           wallMs: AUTO_SOLVER_WALL_MS,
           ...(body.mode === "polish"
             ? {
-                mode: "polish" as const,
                 frozen: plan.frozen,
                 ...(currentBoard.length > 0 ? { current: currentBoard } : {}),
               }

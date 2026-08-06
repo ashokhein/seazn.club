@@ -26,6 +26,13 @@
 //
 // Both directions are pinned below, so the predicate cannot be quietly loosened
 // into the brief's version later.
+//
+// R19 POSTSCRIPT: `BuildInput.mode` has since been DELETED. It was never read —
+// the calls below passed it and this file's own assertions were the proof that
+// nothing keyed on it — so what makes a run POLISH is `frozen`/`current`, and
+// nothing else. The predicate above is therefore not merely unused but
+// unspellable, which is the strongest form of the guard this file was written
+// to provide.
 import { describe, expect, it } from "vitest";
 import { buildSchedule, TIER_COUNT } from "./build.ts";
 import { resetZ3 } from "./z3-load.ts";
@@ -96,7 +103,7 @@ const currentWithAAt = (startAt: number): Assignment[] => [row("a", "C1", startA
 
 describe("buildSchedule — polish", () => {
   it("returns already_optimal and moves nothing on an optimal board", async () => {
-    const out = await buildSchedule({ fixtures: optimal, config, mode: "polish", frozen: ["a", "b"] });
+    const out = await buildSchedule({ fixtures: optimal, config, frozen: ["a", "b"] });
     expect(out.status).toBe("already_optimal");
     expect(out.moved).toBe(0);
     // The half the brief's predicate omits, and the half that carries the
@@ -112,7 +119,7 @@ describe("buildSchedule — polish", () => {
       { id: "pub", roundNo: 1, home: "E1", away: "E2", locked: { court: "C1", startAt: T0 } },
       { id: "draft", roundNo: 1, home: "E3", away: "E4" },
     ];
-    const out = await buildSchedule({ fixtures, config, mode: "polish", frozen: ["pub"] });
+    const out = await buildSchedule({ fixtures, config, frozen: ["pub"] });
     const pub = out.assignments.find((a) => a.fixtureId === "pub")!;
     expect({ court: pub.court, startAt: pub.startAt }).toEqual({ court: "C1", startAt: T0 });
     // The draft joins it rather than trailing behind it.
@@ -158,7 +165,6 @@ describe("buildSchedule — polish", () => {
     const out = await buildSchedule({
       fixtures: cornerFixtures,
       config: cornerConfig,
-      mode: "polish",
       frozen: ["a"],
       current: currentWithAAt(T0 + 30 * MIN),
     });
@@ -312,7 +318,6 @@ describe("buildSchedule — polish", () => {
     const out = await buildSchedule({
       fixtures: optimal,
       config,
-      mode: "polish",
       frozen: ["a", "b"],
       rlimit: 1,
     });
@@ -330,8 +335,8 @@ describe("buildSchedule — polish", () => {
 
   it("proves optimality off the tiers, not off the mode", async () => {
     // The other direction. `already_optimal` is a statement about the SEARCH,
-    // so the identical board reaches it with no `mode` and no `frozen` — the
-    // BUILD path an organiser hits from the ordinary auto-schedule button.
+    // so the identical board reaches it with no `frozen` at all — the BUILD
+    // path an organiser hits from the ordinary auto-schedule button.
     // Gating the status on POLISH would take it away from every BUILD run,
     // which is the regression the brief's predicate ships.
     //
@@ -340,7 +345,6 @@ describe("buildSchedule — polish", () => {
     const polished = await buildSchedule({
       fixtures: optimal,
       config,
-      mode: "polish",
       frozen: ["a", "b"],
     });
     const built = await buildSchedule({ fixtures: optimal, config });

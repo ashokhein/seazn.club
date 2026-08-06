@@ -426,10 +426,6 @@ export interface BuildInput {
   current?: readonly Assignment[];
   rlimit?: number;
   wallMs?: number;
-  /** Not read here. BUILD and POLISH differ only in whether `frozen` is
-   *  populated, and REFLOW is `repairSchedule`'s job by design; Task 5/6 owns
-   *  any behaviour this needs to gate. */
-  mode?: "build" | "polish";
 }
 
 export interface BuildResult {
