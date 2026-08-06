@@ -1224,6 +1224,18 @@ export interface PeriodPreset {
   defaultTiebreakers: TiebreakerKey[];
   officialLabel: { scorer: string };
   shootoutLabel: string; // 'GWS' (ice) | 'SO' (FIH)
+  // IIHF Rule 87 / NHL Rule 84.4 — the shoot-out winner is credited ONE extra
+  // goal in the OFFICIAL SCORE: 2-2 won on the shoot-out is recorded 3-2, so
+  // the winner's GF and the loser's GA carry it and it reaches goal difference.
+  //
+  // A SPORT flag, and omitted means off, because this is not a shared rule.
+  // FIH records the identical match as a DRAW plus a bonus point — which is
+  // exactly what `hockey`'s `fih-shootout` variant encodes (`shootoutWin: 2`
+  // = draw 1 + 1) — and FIFA records 4-4 with the shoot-out beside it, which
+  // is what football's corpus already holds. Awarding it in the kernel would
+  // put a shoot-out win into FIH goal difference, where the same competition
+  // has already paid for it in points.
+  shootoutWinnerGoal?: boolean;
   timelineEntitlement: string; // FeatureKey for tier-2/3 attributed scoring
   playerStats?: PlayerStatsModel;
   entrantModel?: EntrantModel;
@@ -1299,10 +1311,44 @@ export function makePeriodModule(
           },
         };
 
+  /**
+   * The OFFICIAL score, which is not always `state.goals`.
+   *
+   * Where the sport credits the shoot-out winner a goal
+   * (`preset.shootoutWinnerGoal`, IIHF Rule 87 / NHL Rule 84.4), the recorded
+   * result of a 2-2 match won on the shoot-out is 3-2. It is DERIVED here and
+   * never folded, for the reason the same rules give: a shoot-out attempt
+   * produces no player goal and no goal against, only the deciding kick. So
+   * `state.goals`, `kindCounts`, `goalLog` and every per-person stat stay the
+   * goals actually scored in play, and no phantom scorer is minted — S8's
+   * player stats and S9's career rollup read those, and a goal with no scorer
+   * would corrupt both.
+   *
+   * Gated on the DECIDED outcome, so a shoot-out still running credits nothing.
+   * `award` is excluded: a forfeit score is `cfg.awardScore`, not a match score.
+   */
+  const officialScore = (state: PeriodState): { home: number; away: number } => {
+    const { home, away } = state.goals;
+    const outcome = state.outcome;
+    if (
+      preset.shootoutWinnerGoal !== true ||
+      outcome === null ||
+      outcome === undefined ||
+      outcome.kind !== "win" ||
+      outcome.method !== "shootout"
+    ) {
+      return { home, away };
+    }
+    return sideOf(state, outcome.winner) === "home"
+      ? { home: home + 1, away }
+      : { home, away: away + 1 };
+  };
+
   const sideMetrics = (state: PeriodState, side: Side, zero: boolean): Record<string, number> => {
     const opp = opponent(side);
-    const gf = zero ? 0 : state.goals[side];
-    const ga = zero ? 0 : state.goals[opp];
+    const score = officialScore(state);
+    const gf = zero ? 0 : score[side];
+    const ga = zero ? 0 : score[opp];
     const out: Record<string, number> = { gf, ga, gd: gf - ga };
     if (state.cfg.suspensions !== null) {
       const classes = state.cfg.suspensions.classes;
@@ -1469,7 +1515,9 @@ export function makePeriodModule(
     // §9.5 — defined at every prefix. Headline grammar per v6/00 §5:
     // `2 — 1 · P3`, `3 — 2 (OT)`, `2 — 1 (GWS 2–1)`, `1 — 1 · Q4`.
     summary(state): ScoreSummary {
-      const { home, away } = state.goals;
+      // The headline is the official score, so it and the standings ledger
+      // cannot fork — one derivation, read by both (`officialScore`).
+      const { home, away } = officialScore(state);
       const tally = state.shootout === null ? null : shootoutTally(state.shootout.kicks);
       const soSuffix =
         tally === null ? "" : ` (${preset.shootoutLabel} ${tally.home}–${tally.away})`;

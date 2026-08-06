@@ -150,6 +150,11 @@ export const icehockey = makePeriodModule({
   defaultTiebreakers: ["points", "h2h_points", "h2h_diff", "h2h_for", "diff", "for", "seed"],
   officialLabel: { scorer: "Scorekeeper" },
   shootoutLabel: "GWS",
+  // IIHF Rule 87 / NHL Rule 84.4 — the game-winning shot is credited as a goal
+  // in the official score (2-2 on the GWS is recorded 3-2). Derived at the
+  // score layer; the shoot-out itself scores no player goals. FIH does not do
+  // this, so `hockey` leaves the flag off.
+  shootoutWinnerGoal: true,
   timelineEntitlement: "scoring.match_timeline",
   playerStats,
   // SPEC-1 — IIHF penalty classes the discipline rules editor may ban on
