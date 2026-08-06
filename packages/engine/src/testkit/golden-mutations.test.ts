@@ -78,6 +78,14 @@ describe("the mutation list is aimed at something", () => {
   it("the two forms are genuinely different corpora", () => {
     expect(JSON.stringify(slim).length).toBeLessThan(JSON.stringify(full).length);
   });
+
+  // And the derived slim form is the corpus that is actually COMMITTED — so the
+  // mutations below run against the real artefact, not against a reconstruction
+  // of it that could have drifted. Without this the file would still pass while
+  // proving things about a corpus nobody ships.
+  it("the derived slim form reproduces the COMMITTED corpus exactly", () => {
+    expect(slim).toEqual(committed);
+  });
 });
 
 // ------------------------------------------------------------- the entries

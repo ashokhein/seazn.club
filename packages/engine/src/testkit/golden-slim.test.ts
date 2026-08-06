@@ -463,6 +463,10 @@ describe("slimming preserves every shape gate that reads the recorded states", (
       const slim = slimCorpus(module, full);
       expect(recordedStatePaths(module, slim)).toEqual(recordedStatePaths(module, full));
       expect(stateShapeOf(module, slim)).toEqual(stateShapeOf(module, full));
+      // And the committed file IS that canonical slim form. This is what catches
+      // a hand-edited digest, a hand-edited anchor, or a corpus slimmed under a
+      // different anchor rule than the one this suite proves things about.
+      expect(slim).toEqual(committed);
     }, 30_000);
   }
 });
