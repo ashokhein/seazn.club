@@ -818,6 +818,9 @@
       "setPieces[].pc.awarded": [
         "number"
       ],
+      "setPieces[].pc.resolved": [
+        "number"
+      ],
       "setPieces[].pc.scored": [
         "number"
       ],
@@ -825,6 +828,9 @@
         "object"
       ],
       "setPieces[].stroke.awarded": [
+        "number"
+      ],
+      "setPieces[].stroke.resolved": [
         "number"
       ],
       "setPieces[].stroke.scored": [

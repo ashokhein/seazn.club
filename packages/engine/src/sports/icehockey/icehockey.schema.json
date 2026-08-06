@@ -851,6 +851,9 @@
       "setPieces[].ps.awarded": [
         "number"
       ],
+      "setPieces[].ps.resolved": [
+        "number"
+      ],
       "setPieces[].ps.scored": [
         "number"
       ],
