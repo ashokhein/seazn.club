@@ -341,6 +341,15 @@ test.describe.serial("schedule board", () => {
     // preceding tests in this serial chain, so a rest shortfall is fair game.
     // Acknowledging covers warnings only; a blocking conflict still 422s and
     // this assertion would still catch it.
+    //
+    // WHAT THE OVERRIDE COSTS, AND WHERE THAT DEBT IS PAID. Acknowledging means
+    // this case no longer proves the auto pass yields a WARNING-FREE board — a
+    // regression that made every auto board breach the rest floor would still
+    // flip the status here. That proof lives in
+    // `src/server/usecases/__tests__/schedule-auto-publishes-clean.test.ts`,
+    // which auto-schedules a fresh division under a live rest floor and
+    // publishes it with NO acknowledgement. Do not delete it on the grounds
+    // that publish is already covered here.
     const published = await apiJson<{ published: boolean; status: string }>(
       request,
       `/api/v1/divisions/${divisionId}/publish-schedule`,
