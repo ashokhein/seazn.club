@@ -64,6 +64,7 @@ on the ice.
 | When each shoot-out attempt was taken | fih-shootout | — | `Ev.PeriodShootoutAttempt.at` → `State.asOf` | extended | W4a. Cards are already stampable in `SHOOTOUT` and the attempt is the only other event that phase is made of, so leaving it unstampable froze `State.asOf` at the last stamped card for the whole decider. Distinct from `meta.clockSeconds`, which is the 8-second limit on ONE attempt rather than a position in the match. |
 | A foul during the shoot-out — retake, or a penalty stroke awarded | fih-shootout | person | — | deferred | App 12's foul outcomes are a small rulebook of their own (defender foul → retake or stroke; attacker foul → attempt ends). The recorded fact — goal or no goal — survives; a retake today would be a second attempt event and would overstate the attempt count. Needs a product decision. |
 | Shoot-out bonus point | fih-shootout | entrant | `Cfg.points{shootoutWin:2,shootoutLoss:1}` | modelled | Rides on `outcome.method === "shootout"`. |
+| The shoot-out winner is NOT credited an extra goal | fih-shootout | entrant | `PeriodPreset.shootoutWinnerGoal` (left unset) → `officialScore` | modelled | **A deliberate divergence from the ice-hockey preset, not an oversight — read this before "fixing" the inconsistency.** Ice hockey credits the shoot-out winner one extra goal in the official score under IIHF Rule 87 / NHL Rule 84.4, so 2–2 is recorded 3–2 there. FIH does not: the competition has ALREADY paid for a shoot-out win in points, `shootoutWin: 2` being a drawn match's 1 plus a bonus of 1, so also moving GF/GA/GD would charge the same result twice — and it would land in goal difference, which is the FIH cascade's second key (points → GD → GF → head-to-head). Football's corpus records the same convention independently: `4 — 4 (5–3 pens)` at `gd 0`. The switch is a per-SPORT preset flag rather than kernel behaviour precisely so the two hockeys can disagree while sharing one kernel; leaving it unset is this sport's answer, and `hockey`'s summary reads `2 — 2 (SO 0–3)` with `gf 2 / ga 2 / gd 0` on both sides. All 21 hockey golden streams are byte-identical across that change, four of them decided on a shoot-out, which is the pin that proves the flag does not leak. |
 | Unlimited rolling substitutions | all | persons | — | deferred | Not a scoring fact; the module deliberately has no substitution event, and FIH itself does not record them on the match sheet. |
 | Goalkeeper, field player with goalkeeping privileges, or no keeper at all | all | person | `positions.groups.GK{min:1,max:1}` | deferred | A team composition fact (layer 2), and the catalog REQUIRES exactly one GK, so a side playing without a keeper cannot be expressed in a lineup at all. The scoring consequence is covered by `Ev.PeriodGoal.emptyNet`. See "downstream owed". |
 | Shorter quarters for youth | youth | entrant | `Cfg.periods{count:4,minutes:10}` | modelled | The only thing the variant changes. |
@@ -74,7 +75,7 @@ on the ice.
 
 | Where in the match an event happened (the position axis) | all | — | `SportModule.position(state)` -> `period` + `clock` segments, e.g. `Q3 . 12:41` | extended | W4a T6b. A **read-side projection**, never a payload: a `MatchPosition` on every stamped event was considered this wave and rejected, because position is derivable from state the fold already computes and recording it would create a recorded value and a derived value of the same type that can silently disagree — the `DisciplineCard.entrantSide` shape. A wrong recorded value is in the hash-chained ledger forever; a wrong projection is one deploy away from fixed. Ordered segments rather than a display string, so W8 can drop a segment for a 375px scorebug, localise each `key` and order two positions in one match; `formatPosition` is the plain-text path. Nothing is materialised into state, so every frozen golden is byte-identical. Hockey and ice hockey hold ONE function reference (`position.conformance.test.ts` asserts identity, the way `phases.test.ts` asserts `playPhases`), and football delegates to the same `periodClockPosition`. The phase is a MAX over every phase the state evidences, so it survives `phase` going terminal at the final whistle and names the last quarter actually played rather than `done`, which `playPhases` excludes and W6 could not order. The clock rides along ONLY when `asOf.period` names the phase that resolved: a quarter advances on an unstamped whistle and `asOf` then still names the one before it, and both are plain strings. |
 
-**Row counts:** 18 modelled, 17 extended, 8 deferred (43 rows).
+**Row counts:** 19 modelled, 17 extended, 8 deferred (44 rows).
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Downstream owed
@@ -96,8 +97,13 @@ Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 5. **PC conversion rate is now derivable** per fixture (`setPieces.pc.scored
    / .awarded`) but is NOT a standings metric: adding one would have to appear
    in `standingsDelta.metrics` for every fixture or none, and adding it
-   unconditionally changes the frozen golden deltas. Needs a decision on
-   absent-key semantics in the standings fold.
+   unconditionally changes the frozen golden deltas. The absent-key blocker is
+   now GONE: `competition/tiebreakers.ts` `metricOf` is partial, and
+   `compareMetric` ranks a row that never recorded the metric BELOW every row
+   that did instead of scoring it a genuine zero. What is still owed is a
+   consumer — the FIH cascade is points → GD → GF → head-to-head and does not
+   rank on conversion, so emitting it today would move eleven corpora and every
+   standings delta for a display column.
 6. **`DisciplineCard` cannot see `reason` or `minutes`.** It carries
    `{personId, entrantSide, color, eventId}` only, so a league rule like "three
    greens for the same offence" or "any 10-minute yellow counts double" cannot
