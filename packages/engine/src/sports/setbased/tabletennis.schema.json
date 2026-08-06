@@ -1,0 +1,365 @@
+{
+  "configSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "bestOf": {
+        "default": 5,
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer"
+      },
+      "cap": {
+        "anyOf": [
+          {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "finalSetTo": {
+        "default": 11,
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer"
+      },
+      "pointsMap": {
+        "additionalProperties": {
+          "prefixItems": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          ],
+          "type": "array"
+        },
+        "default": {
+          "*": [
+            2,
+            0
+          ]
+        },
+        "propertyNames": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": "object"
+      },
+      "setTo": {
+        "default": 11,
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer"
+      },
+      "winBy": {
+        "default": 2,
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "eventSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "anyOf": [
+      {
+        "additionalProperties": false,
+        "properties": {
+          "returns": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "scorer": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "server": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "serving": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "wonBy": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "wonBy"
+        ],
+        "type": "object"
+      },
+      {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "away": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "home": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "partial": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "away",
+              "home"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "by": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "forBy": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "forOpp": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "partial": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "by",
+              "forBy",
+              "forOpp"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "technical": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "by"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "disqualification",
+              "expulsion",
+              "penalty",
+              "warning"
+            ],
+            "type": "string"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "by",
+          "level"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "off": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "on": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "by"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    ]
+  },
+  "generatedBy": "testkit/schema-snapshot.ts",
+  "key": "tabletennis",
+  "snapshotVersion": 1,
+  "state": {
+    "paths": {
+      "entrants": [
+        "object"
+      ],
+      "entrants[]": [
+        "string"
+      ],
+      "expedite": [
+        "boolean"
+      ],
+      "expediteUnchecked": [
+        "number"
+      ],
+      "outcome": [
+        "null",
+        "object"
+      ],
+      "outcome.kind": [
+        "string"
+      ],
+      "outcome.loser": [
+        "string"
+      ],
+      "outcome.method": [
+        "string"
+      ],
+      "outcome.winner": [
+        "string"
+      ],
+      "persons": [
+        "object"
+      ],
+      "persons.A-p2": [
+        "object"
+      ],
+      "persons.A-p2.points": [
+        "number"
+      ],
+      "persons.A-p2.serves": [
+        "number"
+      ],
+      "persons.A-p3": [
+        "object"
+      ],
+      "persons.A-p3.points": [
+        "number"
+      ],
+      "persons.A-p3.serves": [
+        "number"
+      ],
+      "persons.H-p2": [
+        "object"
+      ],
+      "persons.H-p2.points": [
+        "number"
+      ],
+      "persons.H-p2.serves": [
+        "number"
+      ],
+      "persons.H-p3": [
+        "object"
+      ],
+      "persons.H-p3.points": [
+        "number"
+      ],
+      "persons.H-p3.serves": [
+        "number"
+      ],
+      "persons[]": [
+        "object"
+      ],
+      "persons[].points": [
+        "number"
+      ],
+      "persons[].serves": [
+        "number"
+      ],
+      "phase": [
+        "string"
+      ],
+      "replayFlagged": [
+        "boolean"
+      ],
+      "sanctions": [
+        "array"
+      ],
+      "sanctions[]": [
+        "object"
+      ],
+      "sanctions[].by": [
+        "string"
+      ],
+      "sanctions[].level": [
+        "string"
+      ],
+      "sanctions[].person": [
+        "string"
+      ],
+      "sets": [
+        "array"
+      ],
+      "setsWon": [
+        "object"
+      ],
+      "setsWon[]": [
+        "number"
+      ],
+      "sets[]": [
+        "object"
+      ],
+      "sets[].closed": [
+        "boolean"
+      ],
+      "sets[][]": [
+        "number"
+      ],
+      "timeouts": [
+        "object"
+      ],
+      "timeouts[]": [
+        "number"
+      ]
+    }
+  },
+  "version": "1.0.0"
+}

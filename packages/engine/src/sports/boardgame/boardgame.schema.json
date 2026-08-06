@@ -1,0 +1,214 @@
+{
+  "configSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "byeScore": {
+        "default": 2,
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "clock": {
+        "properties": {
+          "base": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "delay": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "increment": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base"
+        ],
+        "type": "object"
+      },
+      "colors": {
+        "default": true,
+        "type": "boolean"
+      },
+      "scoring": {
+        "default": {
+          "draw": 1,
+          "loss": 0,
+          "win": 2
+        },
+        "properties": {
+          "draw": {
+            "default": 1,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "loss": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "win": {
+            "default": 2,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "variant": {
+        "default": "classical",
+        "enum": [
+          "blitz",
+          "classical",
+          "rapid"
+        ],
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "eventSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "anyOf": [
+      {
+        "additionalProperties": false,
+        "properties": {
+          "method": {
+            "enum": [
+              "adjudication",
+              "agreement",
+              "checkmate",
+              "dead_position",
+              "double_forfeit",
+              "fifty_move",
+              "forfeit",
+              "illegal_move",
+              "insufficient",
+              "repetition",
+              "resign",
+              "stalemate",
+              "time"
+            ],
+            "type": "string"
+          },
+          "moves": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "winner": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "winnerPerson": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "winner"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "awayPerson": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "board": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "homePerson": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "white": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    ]
+  },
+  "generatedBy": "testkit/schema-snapshot.ts",
+  "key": "boardgame",
+  "snapshotVersion": 1,
+  "state": {
+    "paths": {
+      "board": [
+        "number"
+      ],
+      "colorOfHome": [
+        "string"
+      ],
+      "entrants": [
+        "object"
+      ],
+      "entrants[]": [
+        "string"
+      ],
+      "forfeited": [
+        "boolean"
+      ],
+      "method": [
+        "null",
+        "string"
+      ],
+      "moves": [
+        "number"
+      ],
+      "outcome": [
+        "null",
+        "object"
+      ],
+      "outcome.kind": [
+        "string"
+      ],
+      "outcome.loser": [
+        "string"
+      ],
+      "outcome.method": [
+        "string"
+      ],
+      "outcome.winner": [
+        "string"
+      ],
+      "phase": [
+        "string"
+      ],
+      "players": [
+        "object"
+      ],
+      "players[]": [
+        "string"
+      ],
+      "replayFlagged": [
+        "boolean"
+      ],
+      "winnerPerson": [
+        "string"
+      ]
+    }
+  },
+  "version": "1.0.0"
+}

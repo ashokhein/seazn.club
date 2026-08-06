@@ -1,0 +1,551 @@
+{
+  "configSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "bestOf": {
+        "default": 3,
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer"
+      },
+      "finalSet": {
+        "anyOf": [
+          {
+            "const": "same",
+            "type": "string"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "matchTiebreakTo": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "matchTiebreakTo"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "tiebreakTo": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "tiebreakTo"
+            ],
+            "type": "object"
+          }
+        ],
+        "default": "same"
+      },
+      "game": {
+        "default": {
+          "noAd": false
+        },
+        "properties": {
+          "noAd": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "noAd"
+        ],
+        "type": "object"
+      },
+      "interruptions": {
+        "additionalProperties": false,
+        "properties": {
+          "heat": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "seconds": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "medical": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "seconds": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "other": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "seconds": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "toilet": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "seconds": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "points": {
+        "default": {
+          "loss": 0,
+          "win": 2
+        },
+        "properties": {
+          "loss": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "win": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "loss",
+          "win"
+        ],
+        "type": "object"
+      },
+      "set": {
+        "default": {
+          "gamesTo": 6,
+          "tiebreakAt": 6,
+          "tiebreakTo": 7,
+          "winBy": 2
+        },
+        "properties": {
+          "gamesTo": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "tiebreakAt": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tiebreakTo": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "winBy": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "gamesTo",
+          "tiebreakAt",
+          "tiebreakTo",
+          "winBy"
+        ],
+        "type": "object"
+      },
+      "tiebreak": {
+        "default": {
+          "winBy": 2
+        },
+        "properties": {
+          "winBy": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "winBy"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "object"
+  },
+  "eventSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "anyOf": [
+      {
+        "additionalProperties": false,
+        "properties": {
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "meta": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "ace",
+                  "double_fault",
+                  "ue",
+                  "winner"
+                ],
+                "type": "string"
+              },
+              "receiverSide": {
+                "enum": [
+                  "ad",
+                  "deuce"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "scorer": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "server": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "by"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "away": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "home": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tb": {
+            "additionalProperties": false,
+            "properties": {
+              "away": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "home": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "away",
+              "home"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "away",
+          "home"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "default",
+              "game_penalty",
+              "point_penalty",
+              "warning"
+            ],
+            "type": "string"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "by",
+          "level"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "additionalProperties": false,
+            "properties": {
+              "elapsed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "period": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "elapsed",
+              "period"
+            ],
+            "type": "object"
+          },
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "duration": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "heat",
+              "medical",
+              "other",
+              "toilet"
+            ],
+            "type": "string"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "generatedBy": "testkit/schema-snapshot.ts",
+  "key": "tennis",
+  "snapshotVersion": 1,
+  "state": {
+    "paths": {
+      "entrants": [
+        "object"
+      ],
+      "entrants[]": [
+        "string"
+      ],
+      "games": [
+        "object"
+      ],
+      "games[]": [
+        "number"
+      ],
+      "interruptions": [
+        "array"
+      ],
+      "interruptions[]": [
+        "object"
+      ],
+      "interruptions[].at": [
+        "object"
+      ],
+      "interruptions[].at.elapsed": [
+        "number"
+      ],
+      "interruptions[].at.period": [
+        "string"
+      ],
+      "interruptions[].by": [
+        "string"
+      ],
+      "interruptions[].duration": [
+        "number"
+      ],
+      "interruptions[].kind": [
+        "string"
+      ],
+      "interruptions[].overCount": [
+        "boolean"
+      ],
+      "interruptions[].overran": [
+        "boolean"
+      ],
+      "interruptions[].person": [
+        "string"
+      ],
+      "interruptions[].set": [
+        "number"
+      ],
+      "outcome": [
+        "null",
+        "object"
+      ],
+      "outcome.kind": [
+        "string"
+      ],
+      "outcome.loser": [
+        "string"
+      ],
+      "outcome.method": [
+        "string"
+      ],
+      "outcome.winner": [
+        "string"
+      ],
+      "persons": [
+        "object"
+      ],
+      "persons[]": [
+        "object"
+      ],
+      "persons[].aces": [
+        "number"
+      ],
+      "persons[].doubleFaults": [
+        "number"
+      ],
+      "persons[].points": [
+        "number"
+      ],
+      "persons[].serves": [
+        "number"
+      ],
+      "phase": [
+        "string"
+      ],
+      "points": [
+        "object"
+      ],
+      "points.advantage": [
+        "null",
+        "string"
+      ],
+      "points.kind": [
+        "string"
+      ],
+      "pointsWon": [
+        "object"
+      ],
+      "pointsWon[]": [
+        "number"
+      ],
+      "points[]": [
+        "number"
+      ],
+      "replayFlagged": [
+        "boolean"
+      ],
+      "sanctions": [
+        "array"
+      ],
+      "sanctions[]": [
+        "object"
+      ],
+      "sanctions[].by": [
+        "string"
+      ],
+      "sanctions[].level": [
+        "string"
+      ],
+      "sanctions[].person": [
+        "string"
+      ],
+      "serving": [
+        "string"
+      ],
+      "sets": [
+        "array"
+      ],
+      "setsWon": [
+        "object"
+      ],
+      "setsWon[]": [
+        "number"
+      ],
+      "sets[]": [
+        "object"
+      ],
+      "sets[].mtb": [
+        "boolean"
+      ],
+      "sets[].tb": [
+        "object"
+      ],
+      "sets[].tb[]": [
+        "number"
+      ],
+      "sets[][]": [
+        "number"
+      ],
+      "tbFirstServer": [
+        "null",
+        "string"
+      ],
+      "tbPointsPlayed": [
+        "number"
+      ]
+    }
+  },
+  "version": "1.0.0"
+}

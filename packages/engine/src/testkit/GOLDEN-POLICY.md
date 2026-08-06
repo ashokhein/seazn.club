@@ -100,3 +100,98 @@ invisible to a byte-exact comparison. Every "the tripwire missed X" finding
 reduces to "no corpus exercises X", never to "the comparison is too weak" —
 fix it with a `COVERAGE_CONFIGS` entry plus `EXTEND_GOLDEN=1`, not with a new
 comparison.
+
+# Schema snapshots (#429 scope item 2)
+
+The corpora close that coverage gap one stream at a time. The committed
+`sports/**/<key>.schema.json` files close the other half of it in one move, by
+recording the **declaration** instead of a replay.
+
+    npm run schema:snapshot --workspace packages/engine
+
+One file per module, next to its corpus, on the same naming convention.
+`src/testkit/schema-snapshot.test.ts` fails when a committed file no longer
+matches the live schemas, and `.github/workflows/ci.yml` runs the same
+regenerate and requires `git status --porcelain` to come back empty — so a
+narrowing cannot land unregenerated and unread.
+
+Regenerating a snapshot is **routine and safe**, unlike re-baselining a corpus:
+a snapshot holds no recorded behaviour, so it cannot launder a fold change. The
+review artefact is the diff. Added lines are a widening; **removed lines are a
+narrowing**, and that is the case this exists to make visible. The staleness
+failure counts the removals for exactly that reason.
+
+## What each of the three sections covers
+
+**`configSchema` and `eventSchema` — complete, and independent of coverage.**
+`z.toJSONSchema(schema, { io: "input" })`. Every knob, every enum member, every
+bound and every union branch appears whether or not a stream ever exercised it,
+which is precisely what the corpora cannot say. Drop a member from a config
+enum and the snapshot loses a line even though all eleven corpora stay green.
+
+Two pins worth knowing before changing them:
+
+- `io: "input"`, not the zod default of `"output"`. The contract this guards is
+  what the engine will **accept** — an event payload recorded last season must
+  still parse — and that is the input schema. The output schema differs in the
+  other direction (a `.default()` knob is required on the way out, optional on
+  the way in), so it would report an additive default as a change to a
+  `required` set.
+- `unrepresentable` is left at "throw". A schema construct JSON Schema cannot
+  express should fail the regenerate loudly rather than degrade to `{}` and
+  quietly stop guarding that subtree.
+
+**`state.paths` — structural, and the weakest of the three. Read this before
+trusting it.** `SportModule<Cfg, Ev, State>` declares `configSchema` and
+`eventSchema` only; there is no `stateSchema`, and every State is a plain TS
+interface never validated at runtime. So the state section is derived by
+walking values, not a declaration, and its claims are correspondingly narrow.
+
+It **does** cover:
+
+- every dotted path reachable from `init` under every config the corpus
+  records, plus every path any recorded per-event state writes;
+- the JSON **kind** at each path (`string`/`number`/`boolean`/`null`/`object`/
+  `array`), unioned across every state that wrote it — so `winner` recorded as
+  both `null` and `string` says so.
+
+It does **not** cover:
+
+- **any path no corpus state and no `init` ever writes.** This is the same
+  coverage limit the corpora have, inherited wholesale. A conditional state
+  field that no stream reaches is absent from the snapshot, and stays absent
+  when it is removed. Only the two zod halves are coverage-independent.
+- **values, bounds, enums or optionality.** A path is present or absent; there
+  is no "this number is 0..99" and no "this key is optional". A field that
+  becomes conditional does not move the snapshot.
+- **which object is a record and which is a struct.** Person- and entrant-keyed
+  maps collapse to a `[]` segment, as they do in the golden state walk and for
+  the same reason: keying a record by its ids turns lineup data into schema
+  paths that name no field. So `batterRuns[]` covers every player at once.
+- **the two side keys.** `home`/`away` maps are symmetric by construction, so
+  they collapse to `[]` too — otherwise a seed that sin-binned an away player
+  and not a home one reads as a shape difference.
+- **the module's own config**, which is dropped at the root of the state walk
+  (located by identity via `configStateKey`, never by the spelling `cfg`). The
+  `configSchema` section already owns every knob in it.
+
+The state section is therefore best read as a *shape inventory*, not a schema.
+Its one real guarantee is that a **rename or removal** of a covered path shows
+up as a removed line.
+
+## Determinism, because the CI gate is byte equality
+
+Two rules, applied everywhere:
+
+1. object keys sorted by UTF-16 code unit — never `localeCompare`, which is
+   locale-dependent and would make the gate machine-dependent;
+2. the two JSON Schema keywords whose arrays are **sets**, `required` and
+   `enum`, sorted too, so reordering a zod object's properties is not a diff.
+   Every other array keeps its order: `anyOf` and `prefixItems` are positional
+   and reordering them is a real change.
+
+Pretty-printed at 2 spaces and newline-terminated, unlike the corpora — these
+files are meant to be read in review, and they are ~123 KB across all eleven.
+`schema-snapshot.test.ts` asserts a rebuild of every real module is
+byte-identical to the first build, because a gate that can differ from itself
+reds at random.
