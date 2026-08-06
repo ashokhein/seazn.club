@@ -330,3 +330,88 @@ describe("_hook-harness walk (the tree every assertion reads)", () => {
     expect(tree.map((el) => el.type)).toEqual(["div", "span", "p", "em"]);
   });
 });
+
+describe("_hook-harness render-phase updates (the 'derive from props' pattern)", () => {
+  // React sanctions `setX(...)` from inside the component body as the way to
+  // adjust state when a prop changes, and this repo relies on it — the board's
+  // day tab re-derives that way, `useBoardActions` clears its optimistic
+  // overrides that way. React does not RE-ENTER for it: it throws the
+  // half-finished pass away and runs the body again from the top.
+  //
+  // The harness used to call `run()` re-entrantly, which reset the hook cursors
+  // underneath the render still executing. Every hook read AFTER the set landed
+  // on the wrong cell, and the component rendered garbage with no error at all —
+  // `useState<Density>("board")` came back as none of its three legal values.
+  it("re-runs from the top instead of re-entering, so later hooks keep their cells", () => {
+    const seen: { colour: string; label: string }[] = [];
+
+    function Island({ tag }: { tag: string }) {
+      const [seenTag, setSeenTag] = useState(tag);
+      const [colour, setColour] = useState("red");
+      // Two hooks AFTER the adjustment: a re-entrant re-render shifts both onto
+      // the wrong cells, so their values are what discriminates.
+      const [label] = useState("hello");
+      const box = useRef("box");
+      if (seenTag !== tag) {
+        setSeenTag(tag);
+        setColour("blue");
+      }
+      seen.push({ colour, label });
+      return (
+        <button type="button" data-box={box.current}>
+          {`${colour}/${label}`}
+        </button>
+      );
+    }
+
+    const island = renderIsland(Island, { tag: "a" });
+    expect(island.text()).toContain("red/hello");
+    expect(seen).toHaveLength(1);
+
+    island.rerender({ tag: "b" });
+
+    // The adjusted value renders in the SAME commit — no intermediate output is
+    // observable, exactly as in React.
+    expect(island.text()).toContain("blue/hello");
+    // …and the hooks below the adjustment still hold their own values, which is
+    // the thing re-entrancy destroyed.
+    const button = island.tree().find((el) => el.type === "button")!;
+    expect(propsOf(button)["data-box"]).toBe("box");
+    // Two passes for the second render (the discarded one, then the survivor)
+    // and neither of them corrupted: `label` is "hello" every time.
+    expect(seen.map((s) => s.label)).toEqual(["hello", "hello", "hello"]);
+    expect(seen.map((s) => s.colour)).toEqual(["red", "red", "blue"]);
+  });
+
+  it("runs an effect whose deps changed on the pass that was thrown away", () => {
+    // The bookkeeping half. A discarded pass must not record its dependency
+    // array: if it does, the surviving pass compares against ITSELF, reads
+    // "unchanged", and the effect never runs at all.
+    const ran: string[] = [];
+
+    function Island({ tag }: { tag: string }) {
+      const [seenTag, setSeenTag] = useState(tag);
+      if (seenTag !== tag) setSeenTag(tag);
+      useEffect(() => {
+        ran.push(tag);
+      }, [tag]);
+      return <button type="button">{tag}</button>;
+    }
+
+    const island = renderIsland(Island, { tag: "a" });
+    expect(ran).toEqual(["a"]);
+
+    island.rerender({ tag: "b" });
+    expect(ran).toEqual(["a", "b"]);
+  });
+
+  it("fails loudly rather than hanging when an adjustment never converges", () => {
+    function Island() {
+      const [n, setN] = useState(0);
+      setN(n + 1);
+      return <button type="button">{String(n)}</button>;
+    }
+
+    expect(() => renderIsland(Island, {})).toThrow(/Too many re-renders/);
+  });
+});
