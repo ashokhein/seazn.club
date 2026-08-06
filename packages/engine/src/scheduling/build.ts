@@ -267,6 +267,25 @@ export interface BuildInput {
    *  caller supplied one, and to greedy's placement otherwise — see
    *  `publishedSlotOf`. */
   frozen?: readonly string[];
+  /**
+   * Where the caller's MOVABLE cards sit right now, before this run.
+   *
+   * Read for one thing only: it is the baseline `moved` is measured against.
+   * It does NOT constrain the solve, does not anchor a freeze, and is not part
+   * of the immovable board — that is `existing`, and conflating the two would
+   * put the organiser's own cards in their own way.
+   *
+   * Supply it whenever the result's `moved` is shown to a human, because
+   * without it the engine can only diff against its own greedy seed. Those agree
+   * for a card the caller `locked`, and disagree for one that is merely
+   * `frozen`: greedy re-places it, so the run reports 0 while the published time
+   * changed. Optional and additive — a caller that omits it gets exactly the
+   * old behaviour.
+   *
+   * Rows for fixtures this run does not place are simply never consulted, so a
+   * caller may pass its whole board rather than filtering it.
+   */
+  current?: readonly Assignment[];
   rlimit?: number;
   wallMs?: number;
   /** Not read here. BUILD and POLISH differ only in whether `frozen` is
@@ -555,6 +574,36 @@ async function solveBuild(
   /** Filled by the LNS pass below; empty on every path that never reaches it. */
   const lnsWindowRlimits: number[] = [];
 
+  /**
+   * How many of `board`'s rows sit somewhere other than where the CALLER had
+   * them — the number the UI renders verbatim as "moved N" / "nothing moved".
+   *
+   * MEASURED AGAINST `input.current` WHEN THERE IS ONE, and only otherwise
+   * against the greedy seed. The seed is the wrong baseline whenever the two
+   * differ, and they differ in exactly the shape POLISH exists for: a fixture
+   * the caller froze but did not `lock` has no anchor of its own, so greedy
+   * RE-PLACES it and the seed records greedy's slot rather than the organiser's.
+   * The run then holds the card at greedy's slot, the diff against the seed is
+   * zero, and the strip says "nothing moved" about a board whose published times
+   * changed. Falling back to the seed keeps every caller that supplies nothing
+   * exactly where it was — a self-comparison, so zero.
+   *
+   * ONE rule for both exits. The early-return greedy paths hand back the seed
+   * itself, and hard-coding `moved: 0` there tells the same lie whenever
+   * `current` disagrees with it, so they route through here too.
+   *
+   * A row missing from the baseline counts as moved, which is right in both
+   * directions: under `current` it is a card the organiser had not scheduled at
+   * all, and under the seed it is one greedy could not place.
+   */
+  const movedFrom = (board: readonly Assignment[]): number => {
+    const was = new Map((input.current ?? seedAssignments).map((a) => [a.fixtureId, a]));
+    return board.filter((a) => {
+      const before = was.get(a.fixtureId);
+      return before === undefined || before.court !== a.court || before.startAt !== a.startAt;
+    }).length;
+  };
+
   const greedy = (status: BuildStatus, budgetExpired = false): BuildResult => ({
     assignments: seedAssignments,
     conflicts: conflictsForBoard(seedAssignments, false),
@@ -564,7 +613,11 @@ async function solveBuild(
     tiersCompleted: 0,
     budgetExpired,
     elapsedMs: elapsed(),
-    moved: 0,
+    // NOT a hard 0. This board IS the seed, so it is zero whenever the caller
+    // supplied no `current` — but when they did, a card greedy re-placed has
+    // genuinely moved from where the organiser had it, and saying otherwise is
+    // the same false "nothing moved" the solver paths were fixed for.
+    moved: movedFrom(seedAssignments),
     rlimitSpent: runBudget.current?.spent ?? 0,
     lnsWindowRlimits,
   });
@@ -1060,11 +1113,7 @@ async function solveBuild(
     return { ...greedy("verifier_rejected", budgetExpired), tiersCompleted };
   }
 
-  const seedById = new Map(seedAssignments.map((a) => [a.fixtureId, a]));
-  const moved = incumbent.filter((a) => {
-    const was = seedById.get(a.fixtureId);
-    return was === undefined || was.court !== a.court || was.startAt !== a.startAt;
-  }).length;
+  const moved = movedFrom(incumbent);
 
   // `already_optimal` needs BOTH halves: every tier ran to a verdict, and
   // nothing to show for it. Without the first it would claim a proof on a board

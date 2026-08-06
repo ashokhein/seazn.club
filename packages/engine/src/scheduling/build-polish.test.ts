@@ -29,7 +29,7 @@
 import { describe, expect, it } from "vitest";
 import { buildSchedule, TIER_COUNT } from "./build.ts";
 import { resetZ3 } from "./z3-load.ts";
-import type { SchedulableFixture, SlotConfig } from "./calendar.ts";
+import type { Assignment, SchedulableFixture, SlotConfig } from "./calendar.ts";
 
 const MIN = 60_000;
 const T0 = Date.UTC(2026, 7, 8, 9, 0);
@@ -95,6 +95,75 @@ describe("buildSchedule — polish", () => {
   // even when moving it would place one more" and "holds a frozen card whose
   // published slot is OFF the lattice"). Deleting `input.frozen` reds both.
   // Nothing is added here rather than duplicating them one file over.
+
+  it("counts a frozen card greedy re-placed as MOVED, against the caller's board", async () => {
+    // THE SHAPE NEITHER CASE ABOVE CAN SEE, because both of them `lock`
+    // everything: a fixture that is frozen but carries NO `locked` anchor.
+    //
+    // `publishedSlotOf` falls back to greedy for such a card, so greedy
+    // re-places it and the freeze then holds it at GREEDY's slot — not the one
+    // the organiser published. Diffed against the seed that reads as zero, and
+    // the board strip renders `moved` verbatim as "nothing moved" about a board
+    // whose published times changed. A wrong number on a screen, not merely an
+    // internal accounting quirk.
+    //
+    // The measured corner from `build.test.ts`: one court, two slots, and a
+    // start window that makes greedy take the early one for the wrong card.
+    // Greedy places `[a@C1+0]`; the organiser's board had `a` at 09:30.
+    const cornerConfig: SlotConfig & { courts: string[] } = {
+      ...config,
+      courts: ["C1"],
+      sessionWindows: [{ from: T0, to: T0 + 60 * MIN }],
+      constraints: {
+        noBackToBack: false,
+        fieldFairness: "off",
+        parallelism: "mixed",
+        crossPersonClash: "warn",
+        startWindows: [{ target: { kind: "entrant", id: "E3" }, notAfter: T0 }],
+      },
+    };
+    const fixtures: SchedulableFixture[] = [
+      { id: "a", roundNo: 1, home: "E1", away: "E2" },
+      { id: "b", roundNo: 1, home: "E3", away: "E4" },
+    ];
+    const current: Assignment[] = [
+      {
+        fixtureId: "a",
+        court: "C1",
+        startAt: T0 + 30 * MIN,
+        endAt: T0 + 60 * MIN,
+        entrants: ["E1", "E2"],
+        people: [],
+      },
+    ];
+
+    const out = await buildSchedule({
+      fixtures,
+      config: cornerConfig,
+      mode: "polish",
+      frozen: ["a"],
+      current,
+    });
+    // The freeze held — `a` is where greedy put it, NOT where it was published.
+    // Asserted so the case cannot pass by the card happening not to move at all.
+    const a = out.assignments.find((x) => x.fixtureId === "a")!;
+    expect(a.startAt).toBe(T0);
+    expect(a.startAt).not.toBe(current[0]!.startAt);
+    // ...so against the organiser's board it moved, and the number now says so.
+    expect(out.moved).toBe(1);
+
+    // The control, and the half that makes this a measurement rather than an
+    // assertion about one run: the SAME run with no `current` diffs against the
+    // greedy seed and reports the old, wrong answer.
+    const seedBaseline = await buildSchedule({
+      fixtures,
+      config: cornerConfig,
+      mode: "polish",
+      frozen: ["a"],
+    });
+    expect(seedBaseline.moved).toBe(0);
+    await resetZ3();
+  }, 120_000);
 
   it("does not call a starved run optimal, however little it moved", async () => {
     // THE TRIPWIRE against the brief's predicate. Every condition it keys on is
