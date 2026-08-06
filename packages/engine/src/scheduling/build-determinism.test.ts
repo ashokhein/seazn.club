@@ -78,9 +78,20 @@ describe("buildSchedule determinism", () => {
   // under caps four times apart. The budget below is what puts the run on that
   // path: the tiers fall short of a verdict while the fallback's reserve is
   // still intact (see `build-lns-wiring.test.ts` for the measured band).
+  //
+  // BOTH CAPS ARE HELD OPEN, and the pair below must never be re-cut downwards.
+  // The seam gates on `elapsed() < wallMs` as well as on the budget, so a wall
+  // that expires first SKIPS the seam and `lnsWindowRlimits` comes back empty —
+  // `build-lns-wiring.test.ts` measured a 30 s wall doing exactly that twice in
+  // one full engine run (`expected [] to have a length of 1`) on a TWO-fixture
+  // model, and moved to 600 s for this reason. This case is four fixtures on two
+  // courts, so it has LESS headroom, not more. At `rlimit: 400` the run ends
+  // three orders of magnitude before either cap, so the wall stops participating
+  // in the outcome altogether and the property under test — two caps four times
+  // apart agreeing — holds for any such pair.
   it("returns the same board under two wall caps on the window path", async () => {
-    const a = await buildSchedule({ fixtures, config, rlimit: LNS_LEVER_RLIMIT, wallMs: 30_000 });
-    const b = await buildSchedule({ fixtures, config, rlimit: LNS_LEVER_RLIMIT, wallMs: 120_000 });
+    const a = await buildSchedule({ fixtures, config, rlimit: LNS_LEVER_RLIMIT, wallMs: 300_000 });
+    const b = await buildSchedule({ fixtures, config, rlimit: LNS_LEVER_RLIMIT, wallMs: 600_000 });
     expect(a.assignments).toEqual(b.assignments);
     expect(a.metrics).toEqual(b.metrics);
     expect(a.engine).toBe(b.engine);
