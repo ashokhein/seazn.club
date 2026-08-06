@@ -709,7 +709,16 @@ export function ScheduleBoard({
   const [day, setDay] = useState<string>(days[0] as string);
   if (seenDaysKey !== daysKey) {
     setSeenDaysKey(daysKey);
-    if (!days.includes(day)) setDay(days[0] as string);
+    // Re-derive only a tab that FELL OUT of the list — it was showing a day the
+    // board no longer has. A tab that was not in the PREVIOUS list either is
+    // where the organiser deliberately navigated with the ± arrows, and an
+    // unrelated change to the list (an AI proposal's ghosts arriving or
+    // clearing, another organiser's card landing on a new date) is no reason to
+    // yank them off it. Testing `!days.includes(day)` alone could not tell the
+    // two apart: it is true of a scrubbed empty day before the list moved as
+    // well as after.
+    const wasListed = seenDaysKey.split(",").includes(day);
+    if (wasListed && !days.includes(day)) setDay(days[0] as string);
   } else if (!day) {
     setDay(days[0] as string);
   }

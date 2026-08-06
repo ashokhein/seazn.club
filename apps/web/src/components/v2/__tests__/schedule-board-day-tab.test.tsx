@@ -233,4 +233,49 @@ describe("the day tab re-derives when the board's days change", () => {
     island.rerender(baseProps(SCHEDULED));
     expect(propsOf(gridOf(island.tree())).day).toBe(dayAfter);
   });
+
+  /**
+   * The same scrubbed day, but now the day LIST moves underneath it.
+   *
+   * The test above only re-renders an IDENTICAL list, so `daysKey` never
+   * changes and the re-derivation never runs — it cannot see this. In
+   * production the list moves for reasons that have nothing to do with the
+   * organiser: an AI proposal's ghosts arrive or clear (`days` folds them in),
+   * or another organiser drags a card onto a new date and the RSC refresh
+   * brings it down. `!days.includes(day)` was true of a deliberately-scrubbed
+   * empty day BEFORE the list changed as well as after, so any such change
+   * yanked the view back to `days[0]`.
+   *
+   * The distinction the fix has to make: a tab that FELL OUT of the list was
+   * showing something that no longer exists and must be re-derived; a tab that
+   * was never in the list is where the organiser deliberately navigated, and
+   * nothing about somebody else's edit makes it stale.
+   */
+  it("keeps a scrubbed empty day when the day list changes around it", () => {
+    const island = renderIsland(ScheduleBoard, baseProps(SCHEDULED));
+
+    const next = island.tree().find((node) => propsOf(node)["aria-label"] === "Next day");
+    if (!next) throw new Error("the board rendered no next-day control");
+    (propsOf(next).onClick as () => void)();
+    const scrubbed = propsOf(gridOf(island.tree())).day as string;
+    expect(scrubbed).not.toBe(PLACED_DAY);
+
+    // Another organiser moves one card onto a THIRD date — neither the day the
+    // board was showing nor the empty one this organiser scrubbed to, so the
+    // list genuinely changed and the scrubbed day is still not in it.
+    const ELSEWHERE = "2026-09-25T12:00:00.000Z";
+    const moved = [
+      ...SCHEDULED.slice(1),
+      fixture(SCHEDULED[0]!.id, ELSEWHERE, "Court 1"),
+    ];
+    const movedDay = dayKey(ELSEWHERE);
+    expect([PLACED_DAY, scrubbed]).not.toContain(movedDay);
+
+    island.rerender(baseProps(moved));
+
+    // THE BUG: the list changed, `day` was not in it, and the board snapped to
+    // days[0] — pulling the organiser off the date they had navigated to.
+    expect(propsOf(gridOf(island.tree())).day).toBe(scrubbed);
+    expect(propsOf(gridOf(island.tree())).fixtures).toHaveLength(0);
+  });
 });
