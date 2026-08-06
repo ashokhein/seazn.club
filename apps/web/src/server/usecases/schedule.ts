@@ -1251,9 +1251,32 @@ async function reflowExisting(args: {
     );
     // `validateAssignments` answers for the rows it is handed and cannot report
     // an ABSENCE, so a card nothing could place would come back clean.
+    //
+    // Two sources, in descending order of how well established they are:
+    // greedy's own diagnosis, which names the binding constraint, then a bare
+    // `no_slot`. The order is right; the FILTER on the first source is the part
+    // that has to be stated, and it is the engine's `conflictsFor` correction
+    // (a5b2c4d7) applied to this copy of the same rule.
+    //
+    // `seed.conflicts` is NOT "what greedy could not do". `slotFixtures` also
+    // files rows about cards it DID place — the `commit` person-overlap loop,
+    // and the clash it reports rather than fixes when a `locked` slot collides
+    // — and source 1 short-circuits the one below it. So a card greedy placed
+    // and something later removed (a repair path that stops being total over
+    // its proposal) was handed a row describing the placement greedy had just
+    // MADE, instead of the fact that the card is now on nobody's timetable.
+    // `person_overlap` is blocking, so that also shows the organiser a reason
+    // their board cannot be applied, about a card that is not on their board.
+    //
+    // `seeded` is the raw seed's placements — the same set `touched()` and the
+    // `seeded` count read. Deliberately not a second copy: two derivations of
+    // "what greedy placed" in one function is how this rule forked from the
+    // engine's in the first place.
     for (const f of args.schedulable) {
       if (placedIds.has(f.id)) continue;
-      const greedySaid = seed.conflicts.filter((c) => c.fixtureId === f.id);
+      const greedySaid = seeded.has(f.id)
+        ? []
+        : seed.conflicts.filter((c) => c.fixtureId === f.id);
       if (greedySaid.length > 0) {
         conflicts.push(...greedySaid);
         continue;
