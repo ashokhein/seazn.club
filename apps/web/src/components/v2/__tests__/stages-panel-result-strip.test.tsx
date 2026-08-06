@@ -182,4 +182,36 @@ describe("StagesPanel — Auto-schedule remaining reports its run", () => {
 
     expect(island.tree().find((n) => n.type === ScheduleResultStrip)).toBeUndefined();
   });
+
+  /**
+   * …and it goes away again the moment the board it describes does.
+   *
+   * `lastRun` was set and cleared only inside `autoScheduleStage`, so pressing
+   * Undo — which puts a DIFFERENT board back — left the strip on screen still
+   * reporting the run that has just been reversed. Same defect as the board's,
+   * and the same rule fixes it: every write clears the report.
+   *
+   * By testid, never copy: the label is translated.
+   */
+  it("clears the report when Undo puts a different board back", async () => {
+    net.auto = {
+      assignments: [{ fixture_id: "f1", scheduled_at: "2026-08-01T09:00:00.000Z", court_label: "C1" }],
+      metrics: METRICS,
+      solver: SOLVER,
+    };
+    const island = renderIsland(StagesPanel, baseProps);
+    await fireAutoSchedule(island.tree());
+    await flush();
+    expect(island.tree().find((n) => n.type === ScheduleResultStrip)).toBeDefined();
+
+    const undo = island.tree().find((n) => propsOf(n)["data-testid"] === "schedule-undo");
+    if (!undo) throw new Error("a successful apply rendered no undo affordance");
+    await Promise.resolve((propsOf(undo).onClick as () => Promise<void> | void)());
+    await flush();
+
+    // The undo really was sent — otherwise a strip that vanished for any other
+    // reason would satisfy the assertion below.
+    expect(net.calls.some((c) => c.url.endsWith("/undo"))).toBe(true);
+    expect(island.tree().find((n) => n.type === ScheduleResultStrip)).toBeUndefined();
+  });
 });

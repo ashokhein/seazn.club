@@ -112,6 +112,11 @@ export function StagesPanel({ divisionId, competitionId, orgSlug, compSlug, divS
 
   async function undoLast() {
     setError(null);
+    // The strip describes a board. Undo puts a DIFFERENT board back, so every
+    // number on it — length, spread, "18 of 22 scheduled" — stops being true of
+    // what the organiser is looking at. Same rule the board's own hook follows:
+    // every write clears the report.
+    setLastRun(null);
     try {
       await apiV1(`/api/v1/divisions/${divisionId}/undo`, { method: "POST", json: {} });
       setNotice(msg("schedule.notice.undone"));
@@ -171,6 +176,10 @@ export function StagesPanel({ divisionId, competitionId, orgSlug, compSlug, divS
     setPaywallFeature(null);
     setNotice(null);
     setWarning(null);
+    // Generate/complete/delete all change which cards exist, so the last run's
+    // "18 of 22 scheduled" is about a different stage. Cleared for the same
+    // reason as `undoLast` above.
+    setLastRun(null);
     setBusy(stageId);
     try {
       if (action === "delete") {
@@ -238,6 +247,7 @@ export function StagesPanel({ divisionId, competitionId, orgSlug, compSlug, divS
           {undoable && (
             <button
               type="button"
+              data-testid="schedule-undo"
               onClick={() => void undoLast()}
               className="font-semibold underline hover:no-underline"
             >

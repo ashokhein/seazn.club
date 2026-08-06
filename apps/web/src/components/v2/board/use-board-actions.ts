@@ -60,9 +60,24 @@ export interface BoardActions {
   checkFailed: boolean;
   /** A conflicts check is in flight; the manual retry is disabled while it is. */
   checking: boolean;
-  /** Board quality + solver telemetry from the LAST auto/re-flow run, for the
-   *  result strip. Cleared when a new run starts, and null whenever the wire
-   *  did not carry them — the strip stays away rather than reporting zeros. */
+  /**
+   * Board quality + solver telemetry from the LAST auto/re-flow run, for the
+   * result strip. Null whenever the wire did not carry them — the strip stays
+   * away rather than reporting zeros.
+   *
+   * CLEARED BY EVERY BOARD WRITE, not only by the next run. The strip describes
+   * a board; the instant that board is edited, every number on it is about a
+   * timetable that no longer exists — drag one card after an auto pass and
+   * "Scheduled 6/6 · Total length 1h 30m" is a statement about the board before
+   * the drag. It used to be set and cleared inside `autoRun` alone, so it
+   * outlived `moveCard`, `togglePin`, `shiftDay`, `swapCourts` and `act`.
+   *
+   * `togglePin` clears it too, even though a pin moves no card and invalidates
+   * no number the strip prints. "Which writes invalidate which cell" is a
+   * judgement the next person would have to re-make, correctly, for every cell
+   * added later; "every write clears it" cannot rot. Pinned by
+   * `__tests__/result-strip-wiring.test.tsx`.
+   */
   lastRun: { metrics: ScheduleMetrics; solver: ScheduleSolverInfo } | null;
   /** Re-run the check NOW, not on the 400ms debounce. A button whose effect
    *  starts half a second later is indistinguishable from a dead one. */
@@ -269,6 +284,8 @@ export function useBoardActions(
       setError(null);
       const prev = board.find((f) => f.id === fixtureId);
       if (!prev || prev.status !== "scheduled") return false;
+      // After the two guards, so a refused drag does not throw the report away.
+      setLastRun(null);
       setOverrides((o) => ({
         ...o,
         [fixtureId]: {
@@ -307,6 +324,7 @@ export function useBoardActions(
     async (f: BoardFixture) => {
       if (!canEdit) return;
       setError(null);
+      setLastRun(null);
       try {
         await apiV1(`/api/v1/fixtures/${f.id}`, {
           method: "PATCH",
@@ -387,6 +405,7 @@ export function useBoardActions(
     async (path: string, done: string, acknowledgeWarnings = false): Promise<GateRefusal | null> => {
       setError(null);
       setNotice(null);
+      setLastRun(null);
       setBusy(true);
       try {
         // No body unless the organiser is acknowledging: publish and start both
@@ -430,6 +449,7 @@ export function useBoardActions(
     async (day: string, minutes: number) => {
       setBusy(true);
       setError(null);
+      setLastRun(null);
       try {
         for (const f of board) {
           if (f.scheduled_at === null || f.status !== "scheduled") continue;
@@ -460,6 +480,7 @@ export function useBoardActions(
     async (day: string, a: string, b: string) => {
       setBusy(true);
       setError(null);
+      setLastRun(null);
       try {
         for (const f of board) {
           if (f.scheduled_at === null || f.status !== "scheduled") continue;
