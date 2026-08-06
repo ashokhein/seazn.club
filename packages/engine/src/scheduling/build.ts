@@ -372,6 +372,30 @@ export type BuildStatus =
   | "verifier_rejected"
   /** The WASM would not boot. A fallback, never an exception. */
   | "z3_unavailable"
+  /**
+   * THE SOLVER NEVER SEARCHED THIS BOARD, so nothing is claimed about it.
+   *
+   * The greedy board is returned and it is a perfectly good board; what is
+   * missing is any statement about whether a better one exists. Two causes, and
+   * both are "the lattice cannot hold the board already in hand":
+   *
+   *   * the lattice would exceed `MAX_SLOTS` and comes back EMPTY, so there is
+   *     nothing to search over at all;
+   *   * the greedy seed sits BETWEEN slots. `gridStepMinutes` folds every
+   *     interval that can displace a start, but it is floored at
+   *     `REPAIR_GRID_MINUTES` and no gcd over durations can reach an ABSOLUTE
+   *     anchor — a `startWindows.notBefore` at 09:07, a blackout edge, an
+   *     existing booking's `endAt + gap`. On such a board the first tier bound
+   *     is the incumbent's own metric, which the lattice cannot achieve, so the
+   *     model goes unsat and every later walk is unsat on its first ask: all
+   *     four tiers "complete" having looked at nothing.
+   *
+   * IT EXISTS TO STOP THAT READING AS `already_optimal`, which is the damaging
+   * outcome — an organiser told their schedule is optimal when it was never
+   * searched has no reason to look again and no way to find out. `ok` is barely
+   * better: it reads as a board the solver produced and accepted.
+   */
+  | "not_searched"
   /** This build declined to QUEUE behind `withZ3Lock` rather than wait it out:
    *  `MAX_SOLVER_QUEUE` builds were already in flight, so the greedy board came
    *  back at once and the solver was never consulted. Ordinary rather than an
@@ -1109,7 +1133,45 @@ async function solveBuild(
   // window, which is a design change and out of scope (controller ruling,
   // Task 6). Task 13's bench establishes whether this path is even reachable
   // at the 200-fixture target; if it is, it reopens as a real gap.
-  if (grid.overCap || grid.slots.length === 0) return greedy("ok");
+  //
+  // `not_searched`, NOT `ok`. There is no lattice, so nothing was looked at,
+  // and a strip reading "the quick pass produced this board" is the most it can
+  // honestly say — never that the board was produced and accepted by a solver.
+  if (grid.overCap || grid.slots.length === 0) return greedy("not_searched");
+
+  /**
+   * Is the board we already have in hand REPRESENTABLE on the lattice we are
+   * about to search?
+   *
+   * `gridStepMinutes` folds every interval that can displace a start, so a
+   * modern config lands on the grid by construction. Two residues survive it and
+   * neither is fixable by choosing a better step:
+   *
+   *   * the `REPAIR_GRID_MINUTES` floor, which clamps an honest gcd of 1 or 2
+   *     minutes up to 5;
+   *   * an ABSOLUTE anchor — `startWindows.notBefore` at 09:07, a blackout `to`,
+   *     an existing booking's `endAt + gap` — which no gcd over DURATIONS can
+   *     divide, because the lattice is anchored at the day and the anchor is
+   *     not.
+   *
+   * When the seed is off the lattice the tier ladder degenerates: the first
+   * bound it is handed is the incumbent's own metric, the lattice cannot achieve
+   * it, the model goes unsat, and every subsequent walk is unsat on its first
+   * ask. All four tiers then "complete" having searched nothing, which is
+   * indistinguishable — from the outside — from a genuine optimality proof. This
+   * is the one bit that tells them apart.
+   *
+   * Measured on the whole seed and not just its first row: a board can be half
+   * on the grid, and half a proof is not a proof.
+   *
+   * The run continues either way. z3 may still find a board that is strictly
+   * better than the seed, and that board IS real (the verifier gate proves it) —
+   * what it may not do is claim the SEED could not be beaten.
+   */
+  const latticeKeys = new Set(grid.slots.map((s) => `${s.court}|${s.startAt}`));
+  const seedOffLattice = seedAssignments.some(
+    (a) => !latticeKeys.has(`${a.court}|${a.startAt}`),
+  );
 
   // 3. z3. A boot failure is a fallback, never an exception: auto-schedule must
   //    always hand back a board.
@@ -1594,10 +1656,24 @@ async function solveBuild(
   // improved. It is ALL FOUR tiers, not just T0 — "greedy already placed every
   // card" is not a statement about the makespan, and a board that could still
   // be made shorter is not optimal in any sense an organiser would accept.
+  //
+  // AND IT NEEDS A THIRD THING: a lattice the incumbent is actually ON. A
+  // completed ladder over a lattice that cannot express the board being called
+  // optimal is not a weaker proof, it is no proof at all — every walk was unsat
+  // on its first ask because the tier freeze itself is unachievable there. That
+  // case reports `not_searched`, which says the true thing.
+  //
+  // `infeasible` is unaffected and deliberately tested first: it needs
+  // `placed === 0`, and a seed that placed nothing has no row to be off the
+  // lattice, so the two can never compete for the same run.
   let status: BuildStatus = "ok";
   if (tiersCompleted === TIER_COUNT && !improved) {
     status =
-      incumbentMetrics.placed === 0 && fixtures.length > 0 ? "infeasible" : "already_optimal";
+      incumbentMetrics.placed === 0 && fixtures.length > 0
+        ? "infeasible"
+        : seedOffLattice
+          ? "not_searched"
+          : "already_optimal";
   }
 
   return {

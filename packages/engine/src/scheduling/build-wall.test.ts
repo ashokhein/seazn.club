@@ -33,10 +33,15 @@ const COURTS = ["C1", "C2", "C3", "C4"];
 const MATCH_MIN = 40;
 
 /**
- * `gapMinutes: 0` makes the lattice step the match length (`gridStepMinutes` is
- * `gcd(match, gap)` floored at 5, and `gcd(m, 0) === m`), so `slotsPerCourtDay`
- * means exactly what it says and the fixture-slot product below is arithmetic
- * rather than a guess.
+ * `gridStepMinutes` is the gcd over every interval that can DISPLACE a start,
+ * floored at 5 — here `gcd(40, 0, 20) = 20`, because the 20-minute rest counts:
+ * greedy chains an entrant's next start on `lastEnd + rest`, and a 40-minute
+ * lattice cannot hold `+60`.
+ *
+ * So a court's day holds `2 x slotsPerCourtDay - 1` STARTS rather than
+ * `slotsPerCourtDay` of them: the step is half a match, and the last start is
+ * the latest one whose match still ends inside the session. Every fixture-slot
+ * product below is that arithmetic rather than a guess, and each is asserted.
  */
 function board(opts: { n: number; days: number; slotsPerCourtDay: number }): {
   fixtures: SchedulableFixture[];
@@ -155,10 +160,11 @@ describe("R23 — the wall bounds the encode path, not just the search loops", (
 
   it("returns the greedy seed without encoding when the wall is already gone", async () => {
     const grid = buildGrid({ config: small.config });
-    // 20 x 48 = 960 fixture-slots. Pinned so a lattice change cannot quietly
-    // turn this into a board with nothing to encode.
+    // 4 courts x 23 starts = 92 slots, so 20 x 92 = 1_840 fixture-slots. Pinned
+    // so a lattice change cannot quietly turn this into a board with nothing to
+    // encode.
     expect({ slots: grid.slots.length, overCap: grid.overCap }).toEqual({
-      slots: 48,
+      slots: 92,
       overCap: false,
     });
 
@@ -210,9 +216,17 @@ describe("R23 — the wall bounds the encode path, not just the search loops", (
 });
 
 describe("R22 — canSolveWithin is the one place the size gate lives", () => {
-  // 90 x 144 = 12_960 fixture-slots, inside the measured knee.
-  const inside = board({ n: 90, days: 2, slotsPerCourtDay: 18 });
-  // 200 x 216 = 43_200, well outside it.
+  // 90 x 140 = 12_600 fixture-slots, inside the measured knee.
+  //
+  // ONE DAY, not the two it used to be. Folding the rest into the lattice step
+  // (`gcd(40, 0, 20) = 20`) doubled every board's slot count, and 90 x 280 sits
+  // OUTSIDE the gate — which is not a test artefact but the real consequence:
+  // the same competition now costs twice the encoding, so `canSolveWithin`
+  // genuinely admits fewer boards at a given wall. `MAX_SOLVE_ENCODING` is
+  // stated in fixture-slots for exactly that reason, and Task 13's bench is
+  // what re-measures where the knee now sits.
+  const inside = board({ n: 90, days: 1, slotsPerCourtDay: 18 });
+  // 200 x 420 = 84_000, well outside it.
   const outside = board({ n: 200, days: 3, slotsPerCourtDay: 18 });
 
   it("admits a board inside the knee and refuses one outside it", () => {
@@ -225,8 +239,8 @@ describe("R22 — canSolveWithin is the one place the size gate lives", () => {
       outside.fixtures.length *
       buildGrid({ config: outside.config }).slots.length;
     expect({ inProduct, outProduct, gate: MAX_SOLVE_ENCODING }).toEqual({
-      inProduct: 12_960,
-      outProduct: 43_200,
+      inProduct: 12_600,
+      outProduct: 84_000,
       gate: 20_000,
     });
 
@@ -237,12 +251,12 @@ describe("R22 — canSolveWithin is the one place the size gate lives", () => {
   it("scales the gate with the wall the caller will actually pass", () => {
     // The 20_000 figure was measured against an 8_000 ms wall, so it is a
     // cost-to-budget RATIO and not a fixed board size. The same board that is
-    // refused at 8 s is admitted at 32 s, because 43_200 <= 20_000 x 4.
+    // refused at 8 s is admitted at 40 s, because 84_000 <= 20_000 x 5.
     //
     // This is the assertion that kills a gate which ignores `wallMs` and
     // compares against the bare constant: that mutant answers `false` here.
     expect(canSolveWithin(outside.fixtures, outside.config, 8_000)).toBe(false);
-    expect(canSolveWithin(outside.fixtures, outside.config, 32_000)).toBe(true);
+    expect(canSolveWithin(outside.fixtures, outside.config, 40_000)).toBe(true);
   });
 
   it("refuses a board with nothing to place, and one whose lattice is over cap", () => {

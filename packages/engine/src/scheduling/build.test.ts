@@ -207,13 +207,29 @@ describe("buildSchedule", () => {
     const fixtures = [fx("a", "E1", "E2"), fx("b", "E1", "E3"), fx("c", "E2", "E3")];
     const built = await buildSchedule({ fixtures, config });
     expect(validateAssignments(built.assignments, config)).toEqual([]);
-    // `already_optimal`, not `ok`: greedy's 45-minute rest pushes two of these
-    // three cards OFF the 30-minute lattice (09:00 / 10:15 / 11:30), so no
-    // three-card board exists on the grid at all and every tier bound comes
-    // back unsat. That is a proof about the lattice, and reporting it as "we
-    // stopped looking" would understate what actually happened.
-    expect(built.status).toBe("already_optimal");
+    // THIS CASE USED TO ASSERT `already_optimal`, and the comment explaining
+    // why is worth keeping as a record of the defect it was describing:
+    //
+    //   "greedy's 45-minute rest pushes two of these three cards OFF the
+    //    30-minute lattice (09:00 / 10:15 / 11:30), so no three-card board
+    //    exists on the grid at all and every tier bound comes back unsat. That
+    //    is a proof about the lattice."
+    //
+    // A proof about the lattice is not a proof about the BOARD, and this is
+    // exactly the shape the organiser was being told was optimal: greedy stacks
+    // all three cards on C1 (imbalance 90) and z3 could not express a single
+    // legal alternative. `gridStepMinutes` now folds the rest — `gcd(30, 0, 45)`
+    // is 15, which holds 10:15 and 11:30 — so the board is searchable and T3
+    // moves the middle card to C2.
+    //
+    // 180 and 120 are both FORCED and asserted as such: every pair of these
+    // three fixtures shares an entrant, so the starts are 75 minutes apart
+    // whatever the order, and the outer pair always waits 120.
+    expect(built.status).toBe("ok");
     expect(built.metrics.placed).toBe(3);
+    expect(built.metrics.makespanMinutes).toBe(180);
+    expect(built.metrics.worstIdleGapMinutes).toBe(120);
+    expect(built.metrics.courtImbalanceMinutes).toBe(30);
   }, 180_000);
 
   it("reports every unplaced card, and PROVES the count is the ceiling", async () => {
