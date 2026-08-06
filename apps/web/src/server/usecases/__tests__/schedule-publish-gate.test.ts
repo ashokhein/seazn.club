@@ -182,10 +182,16 @@ describe.skipIf(!HAS_DB)("publish validates the board it is about to publish (#2
   it("refuses a board with a BLOCKING conflict, and writes nothing", async () => {
     const board = await seedBoard(COURT_CLASH, {});
 
-    await expect(publishSchedule(board.auth, board.divisionId)).rejects.toMatchObject({
-      status: 422,
-      code: "SCHEDULE_BLOCKING_CONFLICTS",
+    let thrown: unknown;
+    await publishSchedule(board.auth, board.divisionId).catch((err: unknown) => {
+      thrown = err;
     });
+    expect(thrown).toMatchObject({ status: 422, code: "SCHEDULE_BLOCKING_CONFLICTS" });
+    // Which conflict, not merely "a 422". A bare status assertion is satisfied by
+    // every other refusal on this path — completed division, frozen competition.
+    const refused = thrownConflicts(thrown);
+    expect(refused.some((c) => c.code === "conflict.court" && c.blocking)).toBe(true);
+    expect(new Set(refused.map((c) => c.fixture_id))).toEqual(new Set(board.fixtureIds));
 
     // The status is the visible half; the EVENT is the half a naive
     // implementation gets wrong, by appending before it throws.
@@ -290,10 +296,14 @@ describe.skipIf(!HAS_DB)("publish validates the board it is about to publish (#2
           updated_at = now()
       where division_id = ${board.divisionId}`;
 
-    await expect(publishSchedule(board.auth, board.divisionId)).rejects.toMatchObject({
-      status: 422,
-      code: "SCHEDULE_BLOCKING_CONFLICTS",
+    let thrown: unknown;
+    await publishSchedule(board.auth, board.divisionId).catch((err: unknown) => {
+      thrown = err;
     });
+    expect(thrown).toMatchObject({ status: 422, code: "SCHEDULE_BLOCKING_CONFLICTS" });
+    // Named, so this cannot pass on some unrelated refusal the settings write
+    // happened to provoke: the board is out of its window and nothing else moved.
+    expect(thrownConflicts(thrown).every((c) => c.code === "warn.window" && c.blocking)).toBe(true);
     // Still exactly the one event from the first, legitimate publish.
     expect(await publishedEvents(board.divisionId)).toHaveLength(1);
   }, 120_000);

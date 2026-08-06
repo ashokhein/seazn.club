@@ -45,6 +45,7 @@ import {
   ScheduleConfig,
   type ApplyScheduleRequest,
   type AutoScheduleRequest,
+  type PublishScheduleRequest,
   type PutScheduleSettings,
   type ScheduleConflict,
   type ScheduleMetrics,
@@ -1766,6 +1767,83 @@ export async function moveFixture(
 // Validate (full board report — doc 12 §4)
 // ---------------------------------------------------------------------------
 
+/**
+ * The full-board report, inside a transaction the CALLER owns (#230 item 2).
+ *
+ * Extracted from `validateSchedule` so the publish gate can run the identical
+ * pass inside its own transaction, after its advisory lock, rather than growing
+ * a second validation implementation. The placer/verifier fork is the recurring
+ * defect in this subsystem — it has been re-derived three times — and "publish
+ * sees exactly what the panel sees" is only a fact while there is ONE body here.
+ *
+ * `competitionId` is a parameter rather than a re-read: both callers have
+ * already selected the division row, and re-selecting it inside would make the
+ * gate's view of the world one statement newer than the lock's.
+ */
+async function validateScheduleIn(
+  tx: Tx,
+  divisionId: string,
+  competitionId: string,
+): Promise<{ conflicts: ScheduleConflict[] }> {
+  const settings = await loadSettings(tx, divisionId);
+  const all = await divisionFixtures(tx, divisionId);
+  const entrantIds = [
+    ...new Set(all.flatMap((f) => [f.home_entrant_id, f.away_entrant_id])),
+  ].filter((e): e is string => e !== null);
+  const people = await peopleByEntrant(tx, entrantIds);
+  const assignments = all
+    .filter((f) => f.scheduled_at !== null && f.court_label !== null)
+    .map((f) => toAssignment(f, settings.config.matchMinutes, people));
+  const siblings = await siblingAssignments(
+    tx,
+    divisionId,
+    competitionId,
+    settings.config.matchMinutes,
+  );
+  const officialConflicts = await tx<{ fixture_id: string; code: string }[]>`
+    -- declined: any assigned official said no
+    select fo.fixture_id, 'warn.official_declined' as code
+    from fixture_officials fo
+    join fixtures f on f.id = fo.fixture_id
+    where f.division_id = ${divisionId} and fo.response = 'declined'
+    union
+    -- unavailable: an accepted/pending official is blacked out on the
+    -- fixture's date (venue zone), i.e. a schedule clash
+    select fo.fixture_id, 'warn.official_unavailable' as code
+    from fixture_officials fo
+    join fixtures f on f.id = fo.fixture_id
+    join officials o on o.id = fo.official_id
+    join official_availability oa on oa.official_id = o.id
+    where f.division_id = ${divisionId}
+      and fo.response in ('accepted','pending')
+      and f.scheduled_at is not null
+      -- venue lane (V305): settings already carries the RESOLVED zone
+      -- (division override → org timezone → UTC), and this whole query is
+      -- scoped to one division, so bind it rather than re-joining.
+      and oa.date = (f.scheduled_at at time zone ${settings.displayTz})::date`;
+
+  // A REPORT of the board as it stands. `blocking` here says "impossible", not
+  // "refused" (#399) — the board paints those cards red, and it must keep
+  // doing so for a court double-booking that is already on the timetable.
+  // Nothing is written on this path, so no delta applies.
+  return {
+    conflicts: [
+      ...mapConflicts(
+        // #447: `toVerifyConfig`, so the board's own report shows the durable
+        // typed rules the organiser stored — this is the surface the
+        // constraints panel promises them on.
+        validateAssignments(
+          assignments,
+          toVerifyConfig(settings, all, 0, siblings.ruleFixtures),
+          siblings.assignments,
+          feedDependencies(all),
+        ),
+      ),
+      ...officialConflicts.map((c) => ({ fixture_id: c.fixture_id, code: c.code as ScheduleConflict["code"], blocking: false })),
+    ],
+  };
+}
+
 export async function validateSchedule(
   auth: AuthCtx,
   divisionId: string,
@@ -1774,63 +1852,7 @@ export async function validateSchedule(
     const [division] = await tx<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
-    const settings = await loadSettings(tx, divisionId);
-    const all = await divisionFixtures(tx, divisionId);
-    const entrantIds = [
-      ...new Set(all.flatMap((f) => [f.home_entrant_id, f.away_entrant_id])),
-    ].filter((e): e is string => e !== null);
-    const people = await peopleByEntrant(tx, entrantIds);
-    const assignments = all
-      .filter((f) => f.scheduled_at !== null && f.court_label !== null)
-      .map((f) => toAssignment(f, settings.config.matchMinutes, people));
-    const siblings = await siblingAssignments(
-      tx,
-      divisionId,
-      division.competition_id,
-      settings.config.matchMinutes,
-    );
-    const officialConflicts = await tx<{ fixture_id: string; code: string }[]>`
-      -- declined: any assigned official said no
-      select fo.fixture_id, 'warn.official_declined' as code
-      from fixture_officials fo
-      join fixtures f on f.id = fo.fixture_id
-      where f.division_id = ${divisionId} and fo.response = 'declined'
-      union
-      -- unavailable: an accepted/pending official is blacked out on the
-      -- fixture's date (venue zone), i.e. a schedule clash
-      select fo.fixture_id, 'warn.official_unavailable' as code
-      from fixture_officials fo
-      join fixtures f on f.id = fo.fixture_id
-      join officials o on o.id = fo.official_id
-      join official_availability oa on oa.official_id = o.id
-      where f.division_id = ${divisionId}
-        and fo.response in ('accepted','pending')
-        and f.scheduled_at is not null
-        -- venue lane (V305): settings already carries the RESOLVED zone
-        -- (division override → org timezone → UTC), and this whole query is
-        -- scoped to one division, so bind it rather than re-joining.
-        and oa.date = (f.scheduled_at at time zone ${settings.displayTz})::date`;
-
-    // A REPORT of the board as it stands. `blocking` here says "impossible", not
-    // "refused" (#399) — the board paints those cards red, and it must keep
-    // doing so for a court double-booking that is already on the timetable.
-    // Nothing is written on this path, so no delta applies.
-    return {
-      conflicts: [
-        ...mapConflicts(
-          // #447: `toVerifyConfig`, so the board's own report shows the durable
-          // typed rules the organiser stored — this is the surface the
-          // constraints panel promises them on.
-          validateAssignments(
-            assignments,
-            toVerifyConfig(settings, all, 0, siblings.ruleFixtures),
-            siblings.assignments,
-            feedDependencies(all),
-          ),
-        ),
-        ...officialConflicts.map((c) => ({ fixture_id: c.fixture_id, code: c.code as ScheduleConflict["code"], blocking: false })),
-      ],
-    };
+    return validateScheduleIn(tx, divisionId, division.competition_id);
   });
 }
 
@@ -1844,7 +1866,43 @@ export interface PublishScheduleOut {
   published: boolean;
 }
 
-export async function publishSchedule(auth: AuthCtx, divisionId: string): Promise<PublishScheduleOut> {
+/** Blocking conflicts on the board at the moment of publish. There is NO
+ *  override for these — `acknowledge_warnings` is checked strictly after, and
+ *  only ever against the warnings. */
+export const PUBLISH_BLOCKED = "SCHEDULE_BLOCKING_CONFLICTS";
+/** Warning-level conflicts the organiser has not yet said "publish anyway" to.
+ *  A distinguishable code, so the console can offer the confirm step instead of
+ *  rendering a dead end. */
+export const PUBLISH_UNACKNOWLEDGED = "SCHEDULE_UNACKNOWLEDGED_WARNINGS";
+
+/**
+ * Publish the timetable (doc 12 §1.B step 4) — now behind a final validation
+ * gate (#230 item 2).
+ *
+ * The board's conflicts panel is client-side and advisory, so before this gate
+ * existed the only thing standing between a broken board and the public schedule
+ * was whether the organiser happened to look at the panel recently. A settings
+ * change, a new blackout, an entrant withdrawal or a cross-division edit moving
+ * a shared court could all invalidate a board between the last look and the
+ * publish, and publish counted fixtures with a `scheduled_at` and wrote.
+ *
+ * Three properties make this a gate rather than a second opinion:
+ *
+ *  - it runs `validateScheduleIn`, the SAME body the panel's `validateSchedule`
+ *    runs. Not a publish-specific check: two validators is how the placer and
+ *    the verifier drifted apart, three times.
+ *  - it runs INSIDE this transaction and AFTER the advisory lock above, so no
+ *    concurrent edit can land between the check and the event.
+ *  - it is ABSOLUTE, not delta-based. `applySchedule`'s gate refuses only what a
+ *    change introduced, so a dirty board stays editable; publish is the moment
+ *    the board goes public, and "it was already broken" is not a reason to
+ *    publish it broken.
+ */
+export async function publishSchedule(
+  auth: AuthCtx,
+  divisionId: string,
+  input: PublishScheduleRequest = {},
+): Promise<PublishScheduleOut> {
   const out = await withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<{ status: string; competition_id: string }[]>`
       select status, competition_id from divisions where id = ${divisionId}`;
@@ -1854,6 +1912,32 @@ export async function publishSchedule(auth: AuthCtx, divisionId: string): Promis
     if (division.status === "completed") {
       throw new HttpError(422, "a completed division cannot publish a schedule");
     }
+
+    // THE GATE. After the lock, before anything is written.
+    const { conflicts } = await validateScheduleIn(tx, divisionId, division.competition_id);
+    const blocking = conflicts.filter((c) => c.blocking);
+    const warnings = conflicts.filter((c) => !c.blocking);
+    // Blocking is tested FIRST and independently of the flag. Folding the two
+    // tests together — or testing the flag first — turns `acknowledge_warnings`
+    // into an override for a physically impossible board.
+    if (blocking.length > 0) {
+      throw new HttpError(
+        422,
+        "this schedule cannot be published: the board has conflicts that must be fixed first",
+        PUBLISH_BLOCKED,
+        { conflicts },
+      );
+    }
+    const acknowledged = input.acknowledge_warnings === true;
+    if (warnings.length > 0 && !acknowledged) {
+      throw new HttpError(
+        422,
+        "this schedule has warnings — confirm to publish it anyway",
+        PUBLISH_UNACKNOWLEDGED,
+        { conflicts },
+      );
+    }
+
     const status = division.status === "setup" ? "scheduled" : division.status;
     if (status !== division.status) {
       await tx`update divisions set status = ${status} where id = ${divisionId}`;
@@ -1861,8 +1945,15 @@ export async function publishSchedule(auth: AuthCtx, divisionId: string): Promis
     const [{ n }] = await tx<{ n: number }[]>`
       select count(*)::int as n from fixtures
       where division_id = ${divisionId} and scheduled_at is not null`;
+    // The report rides the event, so the ledger answers "what did this board
+    // look like when it was published" — the question a dispute asks, and the
+    // one a count of fixtures could never answer. Greenfield: older events carry
+    // `fixturesScheduled` alone and no backfill is owed.
     const seq = await appendDivisionEvent(tx, divisionId, "schedule_published", {
       fixturesScheduled: n,
+      conflicts,
+      acknowledged,
+      ...(input.reason !== undefined ? { reason: input.reason } : {}),
     });
     await tx`update divisions set seq = ${seq} where id = ${divisionId}`;
     return { competitionId: division.competition_id, status };

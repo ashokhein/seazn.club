@@ -335,10 +335,17 @@ test.describe.serial("schedule board", () => {
       source: "auto",
     });
 
+    // #230 item 2: publish is gated on a server-side revalidation of the board.
+    // This spec asserts the STATUS FLIP, not that the board is spotless — the
+    // fixtures it publishes have been moved, pinned and re-flowed by the
+    // preceding tests in this serial chain, so a rest shortfall is fair game.
+    // Acknowledging covers warnings only; a blocking conflict still 422s and
+    // this assertion would still catch it.
     const published = await apiJson<{ published: boolean; status: string }>(
       request,
       `/api/v1/divisions/${divisionId}/publish-schedule`,
       "POST",
+      { acknowledge_warnings: true },
     );
     expect(published.status).toBe(200);
     expect(published.data!.published).toBe(true);

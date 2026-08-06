@@ -23699,7 +23699,7 @@
     },
     "/api/v1/divisions/{id}/publish-schedule": {
       "post": {
-        "summary": "Publish the timetable (division → scheduled)",
+        "summary": "Publish the timetable (division → scheduled), validated server-side: blocking conflicts 422 SCHEDULE_BLOCKING_CONFLICTS; warnings 422 SCHEDULE_UNACKNOWLEDGED_WARNINGS until acknowledge_warnings",
         "tags": [
           "scheduling"
         ],
@@ -23715,6 +23715,30 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "acknowledge_warnings": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                },
+                "additionalProperties": false
+              },
+              "example": {
+                "acknowledge_warnings": true,
+                "reason": "example"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Success",

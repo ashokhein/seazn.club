@@ -1091,6 +1091,23 @@ export const ValidateScheduleResult = z.object({
   conflicts: z.array(ScheduleConflict),
 });
 
+/** POST /divisions/{id}/publish-schedule (#230 item 2).
+ *
+ *  Publish runs the board through the same validator the conflicts panel runs.
+ *  Blocking conflicts refuse outright — there is deliberately NO field here that
+ *  overrides those. `acknowledge_warnings` covers only the warning level: the
+ *  organiser has seen the rest shortfall or the day-cap breach and is publishing
+ *  anyway, and `reason` records why, on the `schedule_published` event.
+ *
+ *  Every field is optional and the route parses an ABSENT body as `{}` — the
+ *  console and existing API clients POST this endpoint with no body at all, and
+ *  adding a gate is not a licence to 400 them. */
+export const PublishScheduleRequest = z.object({
+  acknowledge_warnings: z.boolean().optional(),
+  reason: z.string().max(500).optional(),
+});
+export type PublishScheduleRequest = z.infer<typeof PublishScheduleRequest>;
+
 export const PublishScheduleResult = z.object({
   division_id: Uuid,
   status: DivisionStatus,

@@ -106,7 +106,7 @@ export const ROUTES: RouteSpec[] = [
   { path: "/stages/{id}/schedule/auto", method: "post", summary: "Run the pure calendar pass — propose only, nothing persisted", tag: "scheduling", request: S.AutoScheduleRequest, response: S.AutoScheduleResult },
   { path: "/stages/{id}/schedule/apply", method: "post", summary: "Persist an assignment set; blocking conflicts → 409", tag: "scheduling", request: S.ApplyScheduleRequest, response: S.ApplyScheduleResult, errors: [402, 409, 422] },
   { path: "/divisions/{id}/schedule/validate", method: "post", summary: "Full board conflict report (doc 12 §2 taxonomy)", tag: "scheduling", response: S.ValidateScheduleResult },
-  { path: "/divisions/{id}/publish-schedule", method: "post", summary: "Publish the timetable (division → scheduled)", tag: "scheduling", response: S.PublishScheduleResult, errors: [422] },
+  { path: "/divisions/{id}/publish-schedule", method: "post", summary: "Publish the timetable (division → scheduled), validated server-side: blocking conflicts 422 SCHEDULE_BLOCKING_CONFLICTS; warnings 422 SCHEDULE_UNACKNOWLEDGED_WARNINGS until acknowledge_warnings", tag: "scheduling", request: S.PublishScheduleRequest, response: S.PublishScheduleResult, errors: [422] },
   { path: "/divisions/{id}/start", method: "post", summary: "Start the tournament (quick-start generates fixtures)", tag: "scheduling", response: S.StartDivisionResult, errors: [422] },
   // Fixtures & scoring
   { path: "/fixtures/{id}", method: "get", summary: "Get a fixture", tag: "fixtures", response: S.Fixture },
