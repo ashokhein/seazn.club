@@ -38,13 +38,35 @@ const slotAt = (n: number) =>
 /**
  * The two statuses a working build/reflow can return.
  *
- * `z3_unavailable` and `verifier_rejected` are deliberately NOT accepted. Both
- * are graceful degradations the product is right to render, and both mean the
- * solver did not do the thing this spec exists to prove — a run that quietly
- * fell back to the greedy pass would otherwise pass every assertion here.
- * `solver_busy` is never returned by `buildSchedule`, which waits on the lock.
+ * `z3_unavailable`, `verifier_rejected` and `solver_busy` are deliberately NOT
+ * accepted. All three are graceful degradations the product is right to render,
+ * and all three mean the solver did not do the thing this spec exists to prove —
+ * a run that quietly fell back to the greedy pass would otherwise pass every
+ * assertion here. This list is the whole of the file's teeth; it does not grow.
  */
 const SOLVED = ["ok", "already_optimal"];
+
+/**
+ * `solver_busy` is a LIVE status, and this file stays honest about it by
+ * RETRYING rather than by accepting it.
+ *
+ * The comment here used to say `buildSchedule` waits on the z3 lock. That has
+ * not been true since the queue cap landed: it now answers `solver_busy`
+ * immediately — with a greedy board, without taking the lock — once two builds
+ * are already in flight. That is reachable in this suite exactly as it stands.
+ * The project is `fullyParallel` at four workers, the Auto-schedule and
+ * Improve-times tests are both on the build path, and under `test:e2e:all` the
+ * two mobile projects each fire one more.
+ *
+ * Adding `solver_busy` to `SOLVED` would be the cheap fix and the wrong one: the
+ * file would then pass against a solver that never ran, which is the single
+ * thing it exists to catch. The refusal is transient by construction — the cap
+ * clears the moment the runs ahead of it finish, and the strip's own copy for
+ * this status is "Try again for a better board" — so a bounded re-click is the
+ * honest response. What is asserted at the end is unchanged: a real solve.
+ */
+const BUSY_RETRIES = 3;
+const BUSY_BACKOFF_MS = 4_000;
 
 interface FixtureRow {
   id: string;
@@ -124,17 +146,33 @@ async function seedBoard(
  * `busy` in its `finally`, i.e. after apply and after `router.refresh()`, so the
  * button becoming enabled again is the only signal that the round trip is
  * complete. Neither wait asserts on copy.
+ *
+ * A `solver_busy` answer is RE-CLICKED rather than accepted — see `BUSY_RETRIES`
+ * for why that is the version of this that keeps the file's teeth. The status is
+ * read only after the button is enabled again, so a locator that momentarily
+ * matched the previous attempt's strip cannot be the one that answers: `autoRun`
+ * clears `lastRun` before it posts, and a locator resolves at read time.
  */
 async function runSolver(page: Page, divisionId: string, testid: string): Promise<Locator> {
   await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
   const button = page.getByTestId(testid);
   await expect(button).toBeVisible({ timeout: 30_000 });
-  await button.click();
-
   const strip = page.getByTestId("schedule-result-strip");
-  await expect(strip).toBeVisible({ timeout: 45_000 });
-  await expect(button).toBeEnabled({ timeout: 45_000 });
-  return strip;
+
+  for (let attempt = 1; attempt <= BUSY_RETRIES; attempt++) {
+    await button.click();
+    await expect(strip).toBeVisible({ timeout: 45_000 });
+    await expect(button).toBeEnabled({ timeout: 45_000 });
+    if ((await strip.getAttribute("data-status")) !== "solver_busy") return strip;
+    // Somebody else's build holds the queue. Give it room to drain rather than
+    // hammering the cap this test is itself contributing to.
+    if (attempt < BUSY_RETRIES) await page.waitForTimeout(BUSY_BACKOFF_MS);
+  }
+  throw new Error(
+    `${testid} answered solver_busy on all ${BUSY_RETRIES} attempts — the solver queue never ` +
+      `drained. That is contention rather than a wiring fault, and the greedy board it handed ` +
+      `back is a valid board, but this spec exists to prove a REAL solve and will not accept one.`,
+  );
 }
 
 /**
