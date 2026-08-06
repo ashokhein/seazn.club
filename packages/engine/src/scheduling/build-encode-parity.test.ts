@@ -315,6 +315,55 @@ describe("encodeBuild — the contract Task 4 reads", () => {
     await resetZ3();
   }, 120_000);
 
+  it("makes the locked slot the ONLY one the encoding admits", async () => {
+    // The anchor as a PROOF rather than as a board that happens to match.
+    //
+    // The case below asserts the returned board, and a board-level assertion
+    // cannot tell "the encoding forbids every other slot" from "z3 picked this
+    // one anyway" — a free variable still gets some value, and it may well be
+    // the right one. That is how the hole stayed open: the web lane dropped
+    // `solver.add(place[i][s])` from `build-encode.ts` §4 and its own
+    // `only_unlocked: true` spec stayed GREEN, having only ever looked at the
+    // board.
+    //
+    // Asked the only way that settles it: assert the NEGATION and require
+    // `unsat`. Without the anchor clause the fixture is free to sit elsewhere,
+    // the negation is satisfiable, and this reds — whatever model z3 would have
+    // returned. `AtLeast(placed, 2)` forces both cards on so the answer cannot
+    // come back `sat` via the empty board, which every clause in the encoder
+    // admits (see the header of `build.ts`).
+    const cfg = config({ courts: ["C1", "C2"], window: { from: T0, to: T0 + 150 * MIN } });
+    const locked = { court: "C2", startAt: T0 + 45 * MIN };
+    const fixtures = [fx("f1", "E1", "E2", [], { locked }), fx("f2", "E3", "E4")];
+    const grid = buildGrid({ config: cfg, pinned: [locked] });
+    const s = grid.slots.findIndex(
+      (sl) => sl.court === locked.court && sl.startAt === locked.startAt,
+    );
+    // The lattice really does offer somewhere else to go, or "no other slot is
+    // satisfiable" would be true for reasons that have nothing to do with §4.
+    expect(s).toBeGreaterThanOrEqual(0);
+    expect(grid.slots.length).toBeGreaterThan(1);
+
+    const { Z3 } = await loadZ3();
+    await withZ3Lock(async () => {
+      const solver = new Z3.Solver();
+      const model = encodeBuild({
+        Z3,
+        solver,
+        fixtures,
+        grid,
+        config: { ...cfg, matchMinutes: cfg.matchMinutes, courts: cfg.courts },
+      });
+      // Both cards on the board, so nothing below is answered by placing none.
+      solver.add(Z3.AtLeast(model.placed as [(typeof model.placed)[0], ...typeof model.placed], 2));
+      expect(await solver.check()).toBe("sat");
+      // THE ANCHOR: f1 anywhere but its locked slot is unsatisfiable.
+      solver.add(Z3.Not(model.place[0]![s]!));
+      expect(await solver.check()).toBe("unsat");
+    });
+    await resetZ3();
+  }, 120_000);
+
   it("pins a locked fixture to its own slot, even off-grid", async () => {
     const cfg = config({ courts: ["C1", "C2"], window: { from: T0, to: T0 + 150 * MIN } });
     // 45 minutes past the hour is not on a 10-minute lattice; `buildGrid`
