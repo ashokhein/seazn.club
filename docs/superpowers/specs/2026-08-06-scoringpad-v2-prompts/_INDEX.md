@@ -13,7 +13,7 @@ interleaved or in parallel, but `L2` waits on `L1` (shared `schemas.ts`).
 
 | Session | Issue | Prompt file | Depends on | Status |
 |---|---|---|---|---|
-| S1 | #429 | `S01-429-golden-corpus-policy.md` | — | TODO |
+| S1 | #429 | `S01-429-golden-corpus-policy.md` | — | **DONE** |
 | S2 | #430 | `S02-430-fidelity-tier-4-decision.md` | — | TODO (decision only, no code) |
 | S3 | #426 | `S03-426-w4b-mutable-squads.md` | S1 | TODO |
 | S4 | #428 | `S04-428-offence-taxonomies.md` | S3 (person-role decision) | TODO |
@@ -165,6 +165,42 @@ Append one line per ruling: date, session, decision, reason. Never delete.
   two modes that REWRITE recorded states; extension only appends, and
   `golden.test.ts` asserts every pre-existing stream survives byte for byte.
   Recorded so a later session does not "close the hole" and break coverage work.
+- 2026-08-06 — S1 — **`Cfg.overtime.skaters` is DROPPED, not implemented — the
+  FOURTH false premise in #429.** The row reads "dead config, wire it up". The
+  config is indeed dead, but `strength.{base,min}` has exactly one production
+  reader — `strengthChip` at `kernel.ts:1481`, inside `summary()` — so it is a
+  display projection, not the fold, and would have redded no corpus in either
+  direction. Worse, the obvious fix is actively destructive: icehockey is
+  `strength: {base: 5, min: 3}` against `overtime.skaters: 3`, and `strengthOf`
+  floors at `min`, so swapping the OT base makes base === min, both sides sit at
+  base, and `strengthChip` returns **null** — the powerplay chip disappears.
+  Measured on both sports (icehockey 5v4/5v3 → null/null; hockey `fih-detail`
+  11v10/11v9 → null/null). `icehockey/DOMAIN.md:64` already said all of this and
+  was correct; the brief told an agent to update it as stale.
+  The correct shape is side-relative per NHL 84.4 — the NON-offending team gains
+  a skater — as `strength(X) = overtime.skaters + max(0, short(opponent) −
+  short(X))`, which is the only form that also gets coincidental penalties right
+  (one each cancels to 3-on-3; a flat "gain per opponent penalty" gives 4-on-4).
+  It must be gated per sport: FIH cards REDUCE the offender and nobody gains, so
+  the shared period kernel cannot apply it unconditionally. NOT implemented —
+  the owner has not ruled on it, and no corpus can witness it either way (all 36
+  period streams end `phase: "done"` and the corpus stores only the final
+  state's summary), so it would ship on unit tests alone.
+- 2026-08-06 — S1 — **the "35 OT-with-penalty states" figure recorded above is
+  WRONG.** Measured over the restored full corpus it is **3**, on streams 3, 4
+  and 13. Related readings, so the next reader stops re-deriving them: states
+  with an OT phase at all = 6 (streams 3, 4, 12, 13); `asOf` in OT = 3. The
+  earlier "two states" in `DOMAIN.md:64` was also wrong. The stream list was
+  always right; only the counts were invented. Both wrong numbers are now named
+  in the DOMAIN row itself.
+- 2026-08-06 — S1 — **the GWS +1 is ice-hockey-only, by design.** Awarding it in
+  the shared period kernel would double-count against FIH, which already pays
+  for a shoot-out win in points (`hockey.ts:103`, `fih-shootout`
+  `shootoutWin: 2` = draw 1 + 1) — the credit would then land in goal
+  difference, the FIH cascade's second key. Football records the same convention
+  (`4 — 4 (5–3 pens)` at `gd 0`). Gated on `PeriodPreset.shootoutWinnerGoal`,
+  omitted meaning off. `hockey/DOMAIN.md:67` records the divergence as
+  deliberate so a later session does not "fix" it.
 - _(append below)_
 
 ## Open questions for the owner
