@@ -52,7 +52,10 @@ Prose in a comment enforced none of this, so the harness now does.
 
 2. **Reviewed as a state diff.** A re-baseline prints `corpusStateDiff` — per
    module and per stream, which step indices moved, which top-level state keys
-   moved, and whether `outcome` / `summary` / `deltas` moved. It is a returned
+   moved, and whether `outcome` / `summary` / `deltas` moved. Since scope item 3
+   it also reports which of those steps are stored **only as a digest**, where no
+   key can be named; see "Per-step digests" below for the residual and for how to
+   recover the detail. It is a returned
    data structure first and a printout second, so it is asserted on in
    `golden-policy.test.ts` without running a re-baseline. The distinct set of
    moved state keys is the last line because that is the minimality claim a
@@ -100,6 +103,120 @@ invisible to a byte-exact comparison. Every "the tripwire missed X" finding
 reduces to "no corpus exercises X", never to "the comparison is too weak" —
 fix it with a `COVERAGE_CONFIGS` entry plus `EXTEND_GOLDEN=1`, not with a new
 comparison.
+
+# Per-step digests (#429 scope item 3)
+
+The corpora recorded a full `JSON.stringify(state)` after every event. That came
+to **4,507,821 bytes** across the eleven single-line files — cricket alone
+1,865,370 of it — and roughly 90% of that weight was the states. (The issue body
+says 2.2 MB; that is stale by about 2×, grown by sanctioned `EXTEND_GOLDEN`
+passes since W4. Measure before quoting it.)
+
+A step is now stored **either** as its full recorded state **or** as a digest of
+it: `#` followed by 16 hex characters of SHA-256. `#` is not valid JSON, which is
+load-bearing — every reader that walks the recorded states for a shape already
+parses inside a `try/catch { continue }`, so each one skips a digest-only step
+without being taught about digests at all.
+
+## What this costs, first
+
+Scope item 1 made **"reviewed as a state diff"** the core of the re-baseline
+policy, and scope item 3 deletes the states that summary is made of. A digest
+says **that** a step moved and never **what** moved: only the digest was stored,
+so the previous value is a hash in git too. `corpusStateDiff` cannot name a key
+for such a step and does not pretend to — it reports the step as moved, lists it
+under `digestOnlySteps`, and the printout says where the detail can be had.
+
+The bound on that cost is one fact: **the corpus still stores the `config`, the
+`lineups` and every `event`, so the full state at any step is recomputable
+locally.**
+
+    recomputeStream(module, corpus.configs[stream.config], stream.events, stream.lineups).states[N]
+
+A digest mismatch prints that line, with the step index filled in and the nearest
+stored full state named.
+
+## Which states are kept, and why those
+
+Not a stride someone liked. Three clauses, each with a job:
+
+1. **The first and last step of every stream, always.** The first carries the
+   config the corpus was frozen against — `recordedCfgOf` reads it, and the
+   config-subset pin lives there. The last is the state `outcome`, `summary` and
+   `deltas` are derived from.
+2. **Every `ANCHOR_STRIDE`-th step**, currently every 10th. This is the
+   localisation budget: a reviewer looking at a moved digest is never more than
+   ten steps from a stored full state in either direction, and the harness names
+   the nearest one.
+3. **Every step at which the stream's state SHAPE grows** — that is, introduces
+   a `path`/`kind` pair no earlier step of that stream did. This is the clause
+   that makes the anchor set deliberate. Both gates that walk the recorded states
+   union a path set over them: `recordedStatePaths`, which feeds the state half
+   of the additive tripwire, and `stateShapeOf`, whose output is committed as
+   `<key>.schema.json` under a **byte-equality CI gate**. Keeping exactly the
+   steps that ADD to that set preserves both outputs *by construction*, so
+   slimming cannot quietly narrow a different tripwire or drop eleven schema
+   snapshots on the floor. `golden-slim.test.ts` proves it for all eleven
+   modules rather than assuming it; deleting the clause reds football, icehockey
+   and hockey.
+
+`outcome`, `summary` and `deltas` are **never** digested. They are a few hundred
+bytes per stream against the states' several thousand, and they are what
+standings are computed from.
+
+## What this does not cost
+
+The digest is taken over `comparableStateText` — **the exact text the byte-exact
+half of `stateMismatch` compares**, with the module's config replaced by its
+placeholder. Two consequences, both deliberate:
+
+- **It is order-sensitive.** It hashes the recorded source text member by member
+  in the recorded order. The comparison it replaces was byte-exact including key
+  order, and the folds are deterministic, so replay reproduces that order
+  exactly; an order-insensitive digest would be strictly *weaker* than what it
+  replaces for no benefit at all. In particular it still reds on a reordering of
+  integer-like keys, which is the defect scope item 4b fixed.
+- **It keeps the config-subset tolerance**, which is permanent. Hashing the raw
+  state instead would red all eleven corpora the next time a knob gains a
+  `.default()`.
+
+The one place the config pin is genuinely weaker: a **digest-only step is
+config-blind**, because the config is placeholdered out before hashing. That
+costs nothing, and the reason is structural — no fold rewrites the config, so
+every state in a stream carries the same one, and step 0 is always an anchor. A
+changed value on a recorded config key still reds, at step 0, in both forms.
+
+## The mutation list is the acceptance gate
+
+`golden-mutations.ts` is a committed, documented list of every class of
+back-compat break the corpus is supposed to catch: the classes W4 threw at it (a
+changed fold value, a dropped / added / reordered state key, a changed outcome,
+a changed delta, a truncated stream, a changed event payload) and the two
+defects proven while closing #429 (the config located by the module rather than
+by the spelling `cfg`; the `JSON.parse` round trip that normalised integer-like
+key order).
+
+Each entry is applied as a **perturbation of the replayed result** rather than as
+a source edit, so the whole list runs in the normal suite, and it is run through
+`verifyStream` — the same function the replay test calls, not a re-implementation
+of it that could drift green. `golden-mutations.test.ts` runs every entry against
+the committed corpus in **both** storage forms and requires a red in both. The
+state-level entries are aimed at a step the full corpus stores whole and the slim
+corpus stores as a digest; that is the only step where the two forms could
+disagree, so aiming anywhere else would make the file vacuous.
+
+`CORPUS_TOLERANCES` is the control: an unmutated replay and an additive config
+knob must stay green in both forms. Without it a gate that reds on everything
+would kill every entry in the list and guard nothing.
+
+One entry is recorded as **`killedBy: "schema-snapshot"`** rather than by the
+corpus: narrowing football's `abandonPolicy` enum. Every football stream records
+`"replay"`, so the frozen states pin that one member and dropping any other moves
+no recorded state — all eleven corpora stay green. The schema snapshot records
+the declaration instead of a replay, so the narrowing is a removed line there.
+The test asserts that blindness (one recorded value against several declared
+members) instead of describing it, because "this gate cannot see X" is exactly
+the kind of claim that rots into folklore.
 
 # Schema snapshots (#429 scope item 2)
 

@@ -19,7 +19,6 @@ import {
   REBASELINE_GOLDEN,
   UPDATE_GOLDEN,
   buildCorpus,
-  configStateKey,
   corpusStateDiff,
   corpusWriteGuard,
   declaredOptionalConfigFields,
@@ -27,23 +26,24 @@ import {
   eventTypesIn,
   extendCorpus,
   formatCorpusStateDiff,
+  isStateDigest,
   payloadParseFailures,
   readCorpus,
   reachableStatePaths,
   rebaselineCorpus,
-  recomputeStream,
   recordedStatePaths,
+  slimCorpus,
   sportPayloads,
   staleUnreachableConfigFields,
   staleUnreachableFields,
   staleUnreachableStatePaths,
-  stateMismatch,
   tierEventTypes,
   uncoveredConfigFields,
   uncoveredStatePaths,
   uncoveredTierFields,
   uncoveredTierTypes,
   unreachableStatePathsGoneStale,
+  verifyStream,
   writeCorpus,
 } from "./golden.ts";
 
@@ -111,7 +111,7 @@ if (corpusWriteRefusal !== null) {
         // per stream, which step indices and which top-level state keys, plus
         // whether outcome/summary/deltas moved. That printout is the state diff
         // a reviewer is supposed to be reviewing.
-        const diff = corpusStateDiff(before, after);
+        const diff = corpusStateDiff(before, after, module);
         expect(diff.eventsMoved, `${module.key}: a re-baseline must keep the ledger`).toBe(false);
         // eslint-disable-next-line no-console
         console.log(formatCorpusStateDiff(diff));
@@ -342,28 +342,39 @@ if (corpusWriteRefusal !== null) {
         }
       });
 
+      // #429 scope item 3 — the slim storage form's own invariants. A step is
+      // stored either as its full recorded state or as a digest of it, and the
+      // FIRST and LAST steps are never digested: the first carries the config
+      // the corpus was frozen against (`recordedCfgOf` reads it, and the subset
+      // pin lives there), and the last is what outcome/summary/deltas derive
+      // from. Asserted against the committed file AND against its slim form, so
+      // it is not vacuous while the committed corpora still hold full states.
+      it("stores every step as a full state or a well-formed digest", () => {
+        for (const shape of [corpus, slimCorpus(module, corpus)]) {
+          for (const stream of shape.streams) {
+            const last = stream.states.length - 1;
+            expect(isStateDigest(stream.states[0] as string), "first step").toBe(false);
+            expect(isStateDigest(stream.states[last] as string), "last step").toBe(false);
+            for (const entry of stream.states) {
+              if (!isStateDigest(entry)) continue;
+              expect(entry, "digest shape").toMatch(/^#[0-9a-f]{16}$/);
+            }
+          }
+        }
+      });
+
+      // Exact everywhere except the module's config, which is compared as a
+      // subset: a new OPTIONAL config knob is additive and must not red a corpus
+      // it cannot affect (W4 item 5). WHERE that config lives comes from the
+      // module (#429 item 4), never from the literal key name "cfg".
+      //
+      // A step the corpus stores only as a DIGEST (#429 item 3) is compared by
+      // digest — over the very text this exact comparison compares, so it reds
+      // on exactly what the exact comparison redded on. `golden-mutations.ts`
+      // is the equivalence proof, entry by entry, against BOTH forms.
       it("replays every committed stream to identical state, outcome and summary", () => {
         for (const stream of corpus.streams) {
-          const raw = corpus.configs[stream.config];
-          const label = `${module.key} config=${stream.config} seed=${stream.seed}`;
-          const actual = recomputeStream(module, raw, stream.events, stream.lineups);
-          // WHERE the config lives comes from the module (#429 item 4), never
-          // from the literal key name "cfg" — see configStateKey.
-          const configKey = configStateKey(module, raw, stream.lineups);
-          for (let i = 0; i < stream.states.length; i++) {
-            // Exact everywhere except `cfg`, which is compared as a subset: a
-            // new OPTIONAL config knob is additive and must not red a corpus it
-            // cannot affect (W4 item 5). A changed value on a recorded cfg key,
-            // and every fold change, still reds — golden-compare.test.ts pins
-            // that both ways.
-            expect(
-              stateMismatch(actual.states[i] as string, stream.states[i] as string, configKey),
-              `${label} state after event ${i} (${stream.events[i]?.type})`,
-            ).toBeNull();
-          }
-          expect(actual.outcome, `${label} outcome`).toBe(stream.outcome);
-          expect(actual.summary, `${label} summary`).toBe(stream.summary);
-          expect(actual.deltas, `${label} standingsDelta`).toBe(stream.deltas);
+          expect(verifyStream(module, corpus, stream).join("\n")).toBe("");
         }
       });
     });

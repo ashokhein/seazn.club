@@ -18,6 +18,7 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { football } from "../sports/football/index.ts";
 import {
   MAX_EVENTS,
   MIN_EVENTS,
@@ -27,6 +28,7 @@ import {
   formatCorpusStateDiff,
   gitPorcelain,
   gitRepoRoot,
+  stateDigest,
   type GoldenCorpus,
   type GoldenStream,
 } from "./golden.ts";
@@ -246,6 +248,90 @@ describe("corpusStateDiff — what a re-baseline moved, as reviewable data", () 
   it("FLAGS a changed stream count as an events move", () => {
     const diff = corpusStateDiff(corpus([stream({})]), corpus([stream({}), stream({ seed: 2 })]));
     expect(diff.eventsMoved).toBe(true);
+  });
+
+  // ------------------------------------------------------ #429 scope item 3
+  //
+  // Slimming the corpora to per-step digests takes away exactly what this
+  // summary is made of: for a digest-only step there is no stored state on
+  // either side, so no key can be named — the old value is a hash in git too.
+  // The degradation is bounded and stated rather than hidden. A digest-only
+  // move is still REPORTED, it is called out as digest-only, and the printout
+  // says where the detail can be recovered from.
+
+  it("reports a digest-only step as MOVED, with no key attribution", () => {
+    const before = corpus([stream({ states: ["#aaaaaaaaaaaaaaaa"] })]);
+    const after = corpus([stream({ states: ["#bbbbbbbbbbbbbbbb"] })]);
+    const diff = corpusStateDiff(before, after);
+    expect(diff.changedStates).toBe(1);
+    expect(diff.streams[0]?.changedSteps).toEqual([0]);
+    expect(diff.streams[0]?.digestOnlySteps).toEqual([0]);
+    // No key, and above all NOT the "(state is not a JSON object)" sentinel —
+    // that would put noise into the one line a reviewer reads as the
+    // minimality claim.
+    expect(diff.streams[0]?.changedStateKeys).toEqual([]);
+    expect(diff.changedStateKeys).toEqual([]);
+  });
+
+  it("says nothing moved when two identical digests are compared", () => {
+    const same = corpus([stream({ states: ["#aaaaaaaaaaaaaaaa"] })]);
+    expect(corpusStateDiff(same, corpus([stream({ states: ["#aaaaaaaaaaaaaaaa"] })])).streams)
+      .toEqual([]);
+  });
+
+  it("still names keys at the steps that DID keep a full state", () => {
+    const before = corpus([
+      stream({ states: [`{"cfg":{"a":1},"phase":"live"}`, "#aaaaaaaaaaaaaaaa"] }),
+    ]);
+    const after = corpus([
+      stream({ states: [`{"cfg":{"a":1},"phase":"done"}`, "#bbbbbbbbbbbbbbbb"] }),
+    ]);
+    const diff = corpusStateDiff(before, after);
+    expect(diff.streams[0]?.changedSteps).toEqual([0, 1]);
+    expect(diff.streams[0]?.digestOnlySteps).toEqual([1]);
+    expect(diff.streams[0]?.changedStateKeys).toEqual(["phase"]);
+  });
+
+  // The run that slims the corpora rewrites every non-anchor step from a full
+  // state to a digest. Without this, that one re-baseline reports ~2,450 states
+  // "moved" and the printout — the whole point of which is minimality — becomes
+  // unreadable at the exact moment it matters most.
+  it("does NOT report a full state REPLACED BY ITS OWN DIGEST as a move", () => {
+    const state = `{"cfg":{"a":1},"phase":"live"}`;
+    const before = corpus([stream({ states: [state, state] })]);
+    const after = corpus([stream({ states: [state, stateDigest(state, "cfg")] })]);
+    const diff = corpusStateDiff(before, after, football);
+    expect(diff.streams).toEqual([]);
+    expect(diff.reformattedStates).toBe(1);
+    expect(formatCorpusStateDiff(diff)).toContain("1 state(s) re-formatted");
+  });
+
+  it("DOES report a state that moved AND was digested in the same run", () => {
+    const state = `{"cfg":{"a":1},"phase":"live"}`;
+    const before = corpus([stream({ states: [state, state] })]);
+    const after = corpus([
+      stream({ states: [state, stateDigest(`{"cfg":{"a":1},"phase":"done"}`, "cfg")] }),
+    ]);
+    const diff = corpusStateDiff(before, after, football);
+    expect(diff.streams[0]?.changedSteps).toEqual([1]);
+    expect(diff.streams[0]?.digestOnlySteps).toEqual([1]);
+  });
+
+  // Without the module there is no way to know where the config lives, so the
+  // digest of the full side cannot be computed. Fail LOUD: report the step.
+  it("reports a form change as a move when no module is supplied to resolve it", () => {
+    const state = `{"cfg":{"a":1},"phase":"live"}`;
+    const after = corpus([stream({ states: [state, stateDigest(state, "cfg")] })]);
+    const diff = corpusStateDiff(corpus([stream({ states: [state, state] })]), after);
+    expect(diff.streams[0]?.changedSteps).toEqual([1]);
+  });
+
+  it("prints the digest-only steps and how to recover their detail", () => {
+    const before = corpus([stream({ states: ["#aaaaaaaaaaaaaaaa"] })]);
+    const after = corpus([stream({ states: ["#bbbbbbbbbbbbbbbb"] })]);
+    const text = formatCorpusStateDiff(corpusStateDiff(before, after));
+    expect(text).toContain("digests=[0]");
+    expect(text).toContain("recomputeStream");
   });
 
   it("prints the module, the step indices and the moved keys", () => {
