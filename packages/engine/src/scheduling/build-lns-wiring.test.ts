@@ -41,7 +41,15 @@ const LNS_LEVER_RLIMIT = 400;
  * measures the machine, not the code.
  */
 const LNS_LEVER_WALL_MS = 600_000;
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { boardMetrics, isStrictlyBetter } from "./build-objectives.ts";
 import {
   isBlockingConflict,
@@ -125,6 +133,23 @@ const withStub = async (
   board: (incumbent: readonly Assignment[]) => readonly Assignment[],
 ): Promise<{ seen: LnsInput[]; mod: typeof import("./build.ts") }> => {
   const seen: LnsInput[] = [];
+  // BEFORE the mock, and it is what makes every assertion in this file real.
+  //
+  // The engine runs `isolate: false`, so the MODULE CACHE IS SHARED ACROSS
+  // FILES in a worker. Several earlier files import `./build.ts`
+  // (`build.test.ts`, `build-budget.test.ts`, `build-polish.test.ts`, ...), and
+  // if one of them ran first in this worker then `build.ts` is already cached
+  // holding a direct reference to the REAL `improveByWindows`. The
+  // `await import("./build.ts")` below hands that copy back, the stub is never
+  // installed, the real LNS pass runs, and `seen` stays empty.
+  //
+  // That is the whole of the "flake" that failed the full engine run four times
+  // while passing 6/6 alone: not the machine, not the wall, not the rlimit
+  // band — FILE ORDER. `pool: "forks"` does not fix it (measured) because the
+  // sharing is per-worker module cache, not per-process z3 state. Note the two
+  // tests here that assert the pass did NOT run would pass VACUOUSLY under the
+  // same conditions.
+  vi.resetModules();
   vi.doMock("./build-lns.ts", async () => {
     const actual =
       await vi.importActual<typeof import("./build-lns.ts")>("./build-lns.ts");
@@ -145,6 +170,25 @@ const withStub = async (
 };
 
 describe("buildSchedule — the LNS seam", () => {
+  /**
+   * A COLD z3 CONTEXT PER TEST, and this is the other half of the lever.
+   *
+   * `rlimit` is deterministic within one context, which is what lets the band
+   * above be quoted as a measurement — but the engine's vitest config is
+   * `isolate: false` on a thread pool, so every file in a worker shares ONE z3
+   * context and inherits however warm its neighbours left it. What a check
+   * costs on this model then depends on which files ran first, the 200-500 band
+   * moves under it, and the tiers either stop short or run to four depending on
+   * scheduling. That is how a resource counter starts behaving like a clock.
+   *
+   * Resetting per test buys back the determinism the band assumes. Safe inside
+   * a worker even though `resetZ3()` kills pthreads process-wide: vitest runs
+   * the files within one worker sequentially, and concurrency is across
+   * workers, each with its own process-level state.
+   */
+  beforeEach(async () => {
+    await resetZ3();
+  });
   afterEach(() => {
     vi.doUnmock("./build-lns.ts");
     vi.resetModules();
@@ -162,7 +206,16 @@ describe("buildSchedule — the LNS seam", () => {
       wallMs: LNS_LEVER_WALL_MS,
     });
 
-    expect(seen).toHaveLength(1);
+    // The PRECONDITION and the claim in one assertion. `seen.length` alone
+    // cannot tell "the seam is broken" from "the lever missed the band and the
+    // tiers finished, so the seam correctly declined" — and the second is what
+    // a drifting rlimit cost produces. Naming `tiers` here makes a band miss
+    // report itself instead of arriving as a bare `expected [] to have a
+    // length of 1`, which is how this failure presented three times.
+    expect({ calls: seen.length, tiers: built.tiersCompleted }).toEqual({
+      calls: 1,
+      tiers: 1,
+    });
     expect({
       board: seen[0]!.board.map((a) => a.fixtureId),
       fixtures: seen[0]!.fixtures.map((f) => f.id),
@@ -238,6 +291,9 @@ describe("buildSchedule — the LNS seam", () => {
     // and washes out into "the solver found nothing", which is also what a
     // correctly-budgeted run looks like — so the allotments are the assertion.
     const seen: LnsInput[] = [];
+    // Same reason as `withStub` — this test builds its own mock inline and is
+    // equally inert without it. See the comment there.
+    vi.resetModules();
     vi.doMock("./build-lns.ts", async () => {
       const actual =
         await vi.importActual<typeof import("./build-lns.ts")>(
