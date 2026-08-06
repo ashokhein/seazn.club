@@ -23,7 +23,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import type { AuthCtx } from "@/server/api-v1/auth";
-import { getCompetition } from "@/server/usecases/competitions";
+import { getCompetition, listCompetitions } from "@/server/usecases/competitions";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -123,5 +123,43 @@ describe.skipIf(!HAS_DB)("connection-pool nesting tripwire", () => {
     await expect(
       withOneSlotPool("getCompetition(404)", () => getCompetition(auth, randomUUID())),
     ).rejects.toMatchObject({ status: 404 });
+  });
+
+  // The LIST endpoint, which is hotter than the detail one — an org home renders
+  // it on every visit — and which carried the identical nesting.
+  it("listCompetitions completes against a one-slot pool", async () => {
+    const { auth, compId } = await seedCompetition();
+
+    const result = await withOneSlotPool("listCompetitions", () =>
+      listCompetitions(auth, { cursor: null, limit: 50 }),
+    );
+
+    expect(result.items.map((c) => c.id)).toEqual([compId]);
+    // Same reason as the detail case: assert the field the entitlement read
+    // produces, so a "fix" that simply dropped the read fails here too.
+    expect(result.items[0]?.frozen).toBe(false);
+  });
+
+  // Pagination is the half a "close the transaction" refactor is most likely to
+  // break: the cursor is minted from the OVER-FETCHED row set, so a fix that
+  // trimmed the rows before handing them to `page()` would silently lose
+  // `nextCursor` while every deadlock assertion above stayed green.
+  it("listCompetitions still paginates, outside the transaction", async () => {
+    const { auth } = await seedCompetition();
+    // A second and third competition in the same org, so limit 2 over-fetches.
+    const suffix = randomUUID().slice(0, 8);
+    for (const n of [2, 3]) {
+      await sql`
+        insert into competitions (org_id, name, slug, status)
+        values (${auth.orgId}, ${`Pool Cup ${suffix} ${n}`}, ${`pool-cup-${suffix}-${n}`}, 'draft')`;
+    }
+
+    const first = await withOneSlotPool("listCompetitions(page)", () =>
+      listCompetitions(auth, { cursor: null, limit: 2 }),
+    );
+
+    expect(first.items).toHaveLength(2);
+    expect(first.nextCursor).not.toBeNull();
+    expect(first.items.every((c) => c.frozen === false)).toBe(true);
   });
 });
