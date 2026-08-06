@@ -23,7 +23,15 @@ broke it by construction.
 | --- | --- | --- |
 | `UPDATE_GOLDEN=1` | re-records **everything** from the generator | a corpus being built from nothing. Almost never. |
 | `REBASELINE_GOLDEN=1` | the same recorded **events**, with states / outcome / summary / deltas recomputed | an **intended** fold change. The commit diff is then the behaviour change itself. |
-| `EXTEND_GOLDEN=1` | **appends** streams covering uncovered fidelity-tier types and optional fields | a coverage gap. Never touches an existing stream. |
+| `EXTEND_GOLDEN=1` | **appends** streams covering uncovered fidelity-tier types and optional fields, each written in the canonical **slim** form (see "Per-step digests") | a coverage gap. Never touches an existing stream. |
+
+Only the appended stream is slimmed, never the corpus as a whole: the existing
+streams have to survive byte for byte, and re-slimming an already-slim stream is
+not an identity — `anchorSteps` derives shape growth by walking the states, a
+digest contributes none, so a second pass can compute a different anchor set
+from the one the full states produced. An append written whole would red the
+slim gate the next time anyone ran it, with a message about a hand-edited digest
+or a hand-edited anchor: the wrong cause entirely.
 
 If a golden is red and the fold change was **not** intended, the corpus is
 right and the code is wrong. Fix the code.
@@ -200,10 +208,28 @@ Each entry is applied as a **perturbation of the replayed result** rather than a
 a source edit, so the whole list runs in the normal suite, and it is run through
 `verifyStream` — the same function the replay test calls, not a re-implementation
 of it that could drift green. `golden-mutations.test.ts` runs every entry against
-the committed corpus in **both** storage forms and requires a red in both. The
-state-level entries are aimed at a step the full corpus stores whole and the slim
-corpus stores as a digest; that is the only step where the two forms could
-disagree, so aiming anywhere else would make the file vacuous.
+**every module's** committed corpus in **both** storage forms and requires a red
+in both. The state-level entries are aimed at a step the full corpus stores whole
+and the slim corpus stores as a digest; that is the only step where the two forms
+could disagree, so aiming anywhere else would make the file vacuous.
+
+It ran against football alone until a review pass widened it. The
+shape-preservation half already covered all eleven, and one module is the wrong
+number for the defect the integer-key entry stands for: cricket owns 708 of the
+~2,450 digests and has the most exotic state in the corpus, so a numbered map key
+would appear there first. Each module contributes its own witness — the stream
+with the most digested steps that still keeps an anchor after step 0 and stores a
+number outside the config at that step, so the choice is deterministic rather
+than "the first one that looked long enough".
+
+A module that cannot supply such a witness is **skipped by name, with the reason
+the harness itself computes** — the test asserts the recorded reason equals the
+diagnosis `witnessFor` returns, and that the skip list is exactly the set of
+modules without a witness. A loop that quietly skips would be worse than one that
+only ever ran on football, because it would read as eleven-module coverage.
+`boardgame` is the only entry: it records one result event per stream, so its
+longest stream is three steps, only 2 of its 152 states are digested at all, and
+that one digested state carries no number for a changed fold value to move.
 
 `CORPUS_TOLERANCES` is the control: an unmutated replay and an additive config
 knob must stay green in both forms. Without it a gate that reds on everything

@@ -490,16 +490,29 @@ export function declaredOptionalConfigFields(module: AnySportModule): string[] {
   return fields;
 }
 
-/** The parsed `cfg` a stream's frozen state carries, or undefined. Taken from
- *  the FIRST recorded state: no fold rewrites `cfg`, so every state in a stream
- *  carries the same one, and `keepRecordedCfg` preserves it across a
- *  re-baseline precisely so this stays the cfg the corpus was frozen against. */
-function recordedCfgOf(stream: GoldenStream): unknown {
+/** The parsed config a stream's frozen state carries, or undefined. Taken from
+ *  the FIRST recorded state: no fold rewrites the config, so every state in a
+ *  stream carries the same one, and `keepRecordedConfig` preserves it across a
+ *  re-baseline precisely so this stays the config the corpus was frozen against.
+ *  Step 0 is also always an anchor, so it is never a digest.
+ *
+ *  #429 scope item 4a: located by `configStateKey`, NEVER by the spelling
+ *  `cfg`. Every other config lookup moved to the module-derived key so the rule
+ *  would be about the config rather than about a name; this one name-matched,
+ *  which is latent only because all eleven builtins happen to file their config
+ *  under `cfg`. For a module that does not, the FROZEN half of
+ *  `pinnedConfigFields` silently contributed nothing and `uncoveredConfigFields`
+ *  would demand an EXTEND_GOLDEN pass for a knob the recorded states already
+ *  pin — while a nested fold key that happened to be spelled `cfg` was read as
+ *  the config. */
+function recordedCfgOf(module: AnySportModule, corpus: GoldenCorpus, stream: GoldenStream): unknown {
   const first = stream.states[0];
-  if (first === undefined) return undefined;
+  if (first === undefined || isStateDigest(first)) return undefined;
+  const configKey = configStateKey(module, corpus.configs[stream.config], stream.lineups);
+  if (configKey === null) return undefined;
   try {
     const parsed: unknown = JSON.parse(first);
-    return isPlainObject(parsed) ? parsed.cfg : undefined;
+    return isPlainObject(parsed) ? parsed[configKey] : undefined;
   } catch {
     return undefined;
   }
@@ -532,7 +545,7 @@ export function pinnedConfigFields(module: AnySportModule, corpus: GoldenCorpus)
   const declared = declaredOptionalConfigFields(module);
   const recorded: unknown[] = [
     ...Object.values(corpus.configs),
-    ...corpus.streams.map(recordedCfgOf),
+    ...corpus.streams.map((stream) => recordedCfgOf(module, corpus, stream)),
   ];
   return new Set(declared.filter((p) => recorded.some((cfg) => fieldPresent(cfg, p))));
 }
@@ -1009,13 +1022,28 @@ export function extendCorpus(module: AnySportModule, existing: GoldenCorpus): Co
       (e) => ({ type: e.type, payload: e.payload }),
     );
     corpus.configs[best.name] = best.raw;
-    corpus.streams.push({
-      config: best.name,
-      seed: best.seed,
-      ...(lineups === undefined ? {} : { lineups }),
-      events,
-      ...recomputeStream(module, best.raw, events, lineups),
-    });
+    // Written in the canonical SLIM form (#429 scope item 3), because that is
+    // the form the committed corpora are in and `golden-slim.test.ts` asserts
+    // `slimCorpus(unslimCorpus(committed))` reproduces the committed bytes. A
+    // stream appended whole breaks that gate the moment it lands, and breaks it
+    // with a message about a hand-edited digest or a hand-edited anchor —
+    // pointing at the wrong cause entirely. `slimStream` applies exactly the
+    // rule `rebaselineCorpus` applies (streamLens → anchorSteps → slimStates).
+    //
+    // ONLY the appended stream, never `slimCorpus` over the whole thing:
+    // `golden.test.ts` requires the existing prefix byte for byte, and
+    // re-slimming an already-slim stream is not an identity — `anchorSteps`
+    // derives shape growth by walking states and a digest contributes no shape,
+    // so a second pass can compute a different anchor set.
+    corpus.streams.push(
+      slimStream(module, corpus, {
+        config: best.name,
+        seed: best.seed,
+        ...(lineups === undefined ? {} : { lineups }),
+        events,
+        ...recomputeStream(module, best.raw, events, lineups),
+      }),
+    );
     used.add(`${best.name}:${best.seed}`);
     appended.push(`${best.name}:${best.seed}`);
     for (const type of best.hits) {

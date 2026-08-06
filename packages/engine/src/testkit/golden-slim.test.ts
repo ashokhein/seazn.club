@@ -32,6 +32,7 @@ import {
   anchorSteps,
   comparableStateText,
   configStateKey,
+  extendCorpus,
   isSlimStream,
   isStateDigest,
   readCorpus,
@@ -467,6 +468,61 @@ describe("slimming preserves every shape gate that reads the recorded states", (
       // a hand-edited digest, a hand-edited anchor, or a corpus slimmed under a
       // different anchor rule than the one this suite proves things about.
       expect(slim).toEqual(committed);
+    }, 30_000);
+  }
+});
+
+// ------------------------------------------------ EXTEND_GOLDEN writes slim
+//
+// The gate two blocks up asserts the committed corpus IS `slimCorpus` of itself.
+// `EXTEND_GOLDEN=1` is the one sanctioned way a new stream reaches a committed
+// corpus, so a stream it appends in FULL form breaks that gate the moment it
+// lands — and breaks it with a message about "a hand-edited digest, a
+// hand-edited anchor", which points at the wrong cause entirely. The scenario is
+// not hypothetical: a new fidelity-tier event type reds `golden.test.ts`, whose
+// failure tells the reader to run exactly this mode.
+//
+// Only the APPENDED stream is slimmed, never the whole corpus. `golden.test.ts`
+// asserts `streams.slice(0, before.length)` equals the committed prefix byte for
+// byte, and re-slimming an already-slim stream is not an identity: `anchorSteps`
+// derives shape growth by walking states, a digest contributes no shape, so a
+// second pass can compute a DIFFERENT anchor set from the one the full states
+// produced.
+
+describe("extendCorpus appends in the canonical slim form", () => {
+  // Dropping the last stream leaves a coverage token uncovered, so the greedy
+  // has something to append; each of these then appends a stream long enough
+  // that slimming digests some of its steps. Cheap: ~250 ms for all three.
+  for (const key of ["volleyball", "badminton", "tabletennis"]) {
+    it(`${key}: the appended stream is already slim, and the prefix is untouched`, () => {
+      const module = builtinModules.find((m) => m.key === key) as (typeof builtinModules)[number];
+      const committed = readCorpus(key);
+      const trimmed = { ...committed, streams: committed.streams.slice(0, -1) };
+      const { corpus, appended } = extendCorpus(module, trimmed);
+
+      expect(
+        appended.length,
+        `${key}: dropping the last stream left nothing uncovered, so nothing was appended and ` +
+          `this test proves nothing. Pick a module whose last stream carries a unique token.`,
+      ).toBeGreaterThan(0);
+      // The constraint the fix must not break: existing streams byte for byte.
+      expect(corpus.streams.slice(0, trimmed.streams.length)).toEqual(trimmed.streams);
+
+      const fresh = corpus.streams.slice(trimmed.streams.length);
+      const canonical = slimCorpus(module, corpus).streams.slice(trimmed.streams.length);
+      // Aiming, and it must hold whichever way `extendCorpus` writes: the
+      // canonical slim form of what was appended DOES digest steps. A stream
+      // short enough that every step is an anchor would make the gate below
+      // trivially true.
+      expect(
+        canonical.some((stream) => stream.states.some(isStateDigest)),
+        `${key}: the appended stream is too short to digest a step, so "already slim" is ` +
+          `trivially true and the gate below cannot fail`,
+      ).toBe(true);
+      // The gate itself, stated the way golden-slim's own gate states it: the
+      // corpus `EXTEND_GOLDEN=1` would write IS its own canonical slim form.
+      expect(fresh).toEqual(canonical);
+      expect(slimCorpus(module, corpus)).toEqual(corpus);
     }, 30_000);
   }
 });
