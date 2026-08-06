@@ -22,7 +22,6 @@ import {
   deltaConflicts,
   isBlockingConflict,
   repairSchedule,
-  resetZ3,
   RULE_BY_REASON,
   slotFixtures,
   validateAssignments,
@@ -728,11 +727,11 @@ interface AutoSchedulePlan {
  *
  * Phase 2 must not run inside phase 1's transaction, and this is a hard rule
  * rather than a preference. `withTenant` pins a pooled connection for the whole
- * callback, and the solve is now up to `AUTO_SOLVER_WALL_MS` of z3 plus a
- * `resetZ3()` that first has to queue behind any concurrent solve's
- * `withZ3Lock` — so a solve inside the transaction is tens of seconds of
- * idle-in-transaction per organiser click, and a handful of concurrent clicks
- * exhausts the pool and stalls DB traffic for the entire application.
+ * callback, and the solve is now up to `AUTO_SOLVER_WALL_MS` of z3, spent
+ * behind a strictly FIFO lock that a concurrent click may already be holding —
+ * so a solve inside the transaction is tens of seconds of idle-in-transaction
+ * per organiser click, and a handful of concurrent clicks exhausts the pool and
+ * stalls DB traffic for the entire application.
  *
  * That hazard did not exist before this wave: the in-transaction work used to be
  * a synchronous `slotFixtures` pass. It arrived WITH the solver, which is
@@ -887,32 +886,55 @@ export async function autoSchedule(
    * and that is too sharp an edge to leave to one package's internals.
    */
   const currentBoard = [...plan.placedNow, ...plan.pinnedNow];
-  const out = await withZ3Teardown<BuildResult | ReflowResult>(() =>
-    body.mode === "reflow"
-      ? // Pinned cards are handed separately from the rest: the solver may not
-        // move them, but they are still part of the proposal it hands back.
-        reflowExisting({
-          schedulable,
-          config,
-          board,
-          dependencies,
-          placed: plan.placedNow,
-          pinned: plan.pinnedNow,
-        })
-      : buildSchedule({
-          fixtures: schedulable,
-          config,
-          existing: board,
-          dependencies,
-          wallMs: AUTO_SOLVER_WALL_MS,
-          ...(body.mode === "polish"
-            ? {
-                frozen: plan.frozen,
-                ...(currentBoard.length > 0 ? { current: currentBoard } : {}),
-              }
-            : {}),
-        }),
-  );
+  /**
+   * The solvers are called DIRECTLY. Nothing wraps them here, and the absence is
+   * deliberate (R17).
+   *
+   * There used to be a `withZ3Teardown` helper around this call whose
+   * `finally { await resetZ3() }` handed the WASM heap back. It was redundant by
+   * the time it was reviewed — `buildSchedule` and `repairSchedule` each run
+   * under the engine's own `withZ3LockAndReset`, so the heap is already freed
+   * INSIDE the lock, which is where it has to happen for the bound to be per
+   * solve rather than per burst — and it was actively harmful:
+   *
+   *   * `withZ3Lock` is a strict FIFO promise chain and `resetZ3` takes it, so
+   *     the no-op reset queued BEHIND every solve already waiting. Three
+   *     concurrent clicks: the first solve finished at ~8s and its HTTP response
+   *     landed at ~24s.
+   *   * it defeated the queue cap outright. `buildSchedule` answers
+   *     `solver_busy` with a greedy board WITHOUT taking the lock, precisely so
+   *     the third caller need not wait — and this `finally` made that immediate
+   *     answer wait out two full budgets anyway.
+   *
+   * `z3-load.ts` names this exact spelling as the anti-pattern, in the comment
+   * over `withZ3LockAndReset`. Teardown belongs to the engine because the next
+   * entry point to call a solver re-introduces the OOM simply by not knowing
+   * about it. Pinned by `schedule-auto-solver-busy-latency.test.ts`.
+   */
+  const out: BuildResult | ReflowResult = await (body.mode === "reflow"
+    ? // Pinned cards are handed separately from the rest: the solver may not
+      // move them, but they are still part of the proposal it hands back.
+      reflowExisting({
+        schedulable,
+        config,
+        board,
+        dependencies,
+        placed: plan.placedNow,
+        pinned: plan.pinnedNow,
+      })
+    : buildSchedule({
+        fixtures: schedulable,
+        config,
+        existing: board,
+        dependencies,
+        wallMs: AUTO_SOLVER_WALL_MS,
+        ...(body.mode === "polish"
+          ? {
+              frozen: plan.frozen,
+              ...(currentBoard.length > 0 ? { current: currentBoard } : {}),
+            }
+          : {}),
+      }));
 
   /** REFLOW's first-time-placement count, absent on the two modes that cannot
    *  distinguish one. Read out here rather than through an `in` narrowing at the
@@ -1092,34 +1114,6 @@ export function boundSolverWindow<T extends SlotConfig & VerifyConfig>(
           ...mustContain.map((a) => a.endAt),
         ) + SOLVER_SLACK_MS;
   return { ...config, window: { from, to } };
-}
-
-/**
- * Runs a solve and then hands the WASM heap back.
- *
- * NOT hygiene — the process dies without it. One z3 context is shared by every
- * solve in the process and its heap only grows: nothing frees a finished
- * `Solver`, so a server that has run a few auto-schedules aborts with
- * `Cannot enlarge memory arrays to size 2210201600 bytes (OOM)` and takes the
- * whole node process with it. Reproduced here on the FIRST run of this task's
- * own suite, which is six solves in one process; `repairDecomposed` already
- * resets between components for exactly this reason and records "3 of 3 runs
- * without it, 0 of 3 with it".
- *
- * `resetZ3` takes `withZ3Lock` itself, and both solvers have released it by the
- * time they resolve, so this cannot deadlock. It is a no-op when the WASM never
- * booted — which is every REFLOW over a board that was already legal.
- *
- * In a `finally`, because a solve that threw has allocated just as much as one
- * that returned. The cost is a 200-300 ms reboot on the next solve, paid by a
- * user-initiated action that already takes seconds.
- */
-async function withZ3Teardown<T extends BuildResult>(solve: () => Promise<T>): Promise<T> {
-  try {
-    return await solve();
-  } finally {
-    await resetZ3();
-  }
 }
 
 /**
