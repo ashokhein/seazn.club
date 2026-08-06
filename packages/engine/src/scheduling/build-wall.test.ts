@@ -12,11 +12,18 @@
 // can decline the call rather than pay it — and so the threshold lives in one
 // place, because a second copy of it is a placer/verifier fork wearing a
 // different hat, which is the defect shape this subsystem has hit three times.
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MAX_SOLVE_ENCODING, buildSchedule, canSolveWithin } from "./build.ts";
-import { encodeBuild } from "./build-encode.ts";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import { MAX_SOLVE_ENCODING, canSolveWithin } from "./build.ts";
 import { buildGrid } from "./build-grid.ts";
-import { loadZ3, resetZ3 } from "./z3-load.ts";
+import { resetZ3 } from "./z3-load.ts";
 import type { SchedulableFixture, SlotConfig } from "./calendar.ts";
 
 const MIN = 60_000;
@@ -31,11 +38,10 @@ const MATCH_MIN = 40;
  * means exactly what it says and the fixture-slot product below is arithmetic
  * rather than a guess.
  */
-function board(opts: {
-  n: number;
-  days: number;
-  slotsPerCourtDay: number;
-}): { fixtures: SchedulableFixture[]; config: SlotConfig & { courts: string[] } } {
+function board(opts: { n: number; days: number; slotsPerCourtDay: number }): {
+  fixtures: SchedulableFixture[];
+  config: SlotConfig & { courts: string[] };
+} {
   const sessionMs = opts.slotsPerCourtDay * MATCH_MIN * MIN;
   const config: SlotConfig & { courts: string[] } = {
     startAt: T0,
@@ -51,64 +57,124 @@ function board(opts: {
     tz: "UTC",
   };
   const pool = 2 * opts.n;
-  const fixtures: SchedulableFixture[] = Array.from({ length: opts.n }, (_, f) => {
-    const home = `e${(2 * f) % pool}`;
-    const away = `e${(2 * f + 1) % pool}`;
-    return {
-      id: `f${String(f).padStart(4, "0")}`,
-      roundNo: 1,
-      home,
-      away,
-      people: [`p-${home}`, `p-${away}`],
-    };
-  });
+  const fixtures: SchedulableFixture[] = Array.from(
+    { length: opts.n },
+    (_, f) => {
+      const home = `e${(2 * f) % pool}`;
+      const away = `e${(2 * f + 1) % pool}`;
+      return {
+        id: `f${String(f).padStart(4, "0")}`,
+        roundNo: 1,
+        home,
+        away,
+        people: [`p-${home}`, `p-${away}`],
+      };
+    },
+  );
   return { fixtures, config };
 }
 
 describe("R23 — the wall bounds the encode path, not just the search loops", () => {
-  // A LARGE board — 200 fixtures on a 216-slot lattice, 43_200 fixture-slots.
-  // The size is chosen for SEPARATION, not realism: the guarded path costs
-  // boot + greedy + lattice and does not move with the slot count, while the
-  // unguarded path pays an `encodeBuild` that scales with `fixtures x slots`.
+  // A SMALL board, and the size is the point.
   //
-  // 216, NOT 432. The 432-slot version discriminated beautifully in isolation
-  // and POISONED THE WHOLE SUITE: the engine's vitest config runs
-  // `isolate: false` on a thread pool, so every file in a worker shares one z3
-  // instance and its WASM heap only ever GROWS. A single encode of 200 x 432 =
-  // 86_400 fixture-slots left the heap so large that 17 tests in UNRELATED
-  // files — officials/assign.property, testkit/golden, testkit/simulation —
-  // died with bare `STACK_TRACE_ERROR`s. `resetZ3()` cannot hand the memory
-  // back, so the only fix is not to take it.
+  // The first two drafts of this test proved the guard with a STOPWATCH: run
+  // the board through `buildSchedule` with the wall already gone, then price
+  // one `encodeBuild` of the same board directly, and assert the whole run cost
+  // less than the encode. That needs a board big enough for the encode to
+  // dominate, and it cost this suite two separate outages:
   //
-  // Halving costs nothing here because the assertion below is a RATIO rather
-  // than an absolute: at 216 slots the two arms measured 853 ms guarded
-  // against 3_208 ms unguarded, either side of `encodeMs / 2` by ~4x. It was
-  // the earlier absolute-threshold version that needed the bigger board.
-  const big = board({ n: 200, days: 3, slotsPerCourtDay: 18 });
+  //   * at 200 x 432 fixture-slots the encode poisoned the whole run. The
+  //     engine's vitest config is `isolate: false` on a thread pool and z3's
+  //     WASM heap only ever GROWS, so one encode that large killed 17 tests in
+  //     UNRELATED files — officials/assign.property, testkit/golden,
+  //     testkit/simulation — with bare `STACK_TRACE_ERROR`s. `resetZ3()` cannot
+  //     hand the memory back.
+  //   * at 200 x 216 the ratio itself broke, in BOTH directions. The guarded
+  //     arm is `boot + greedy + lattice`, and z3's boot is a fixed ~700 ms that
+  //     does not shrink with the board; the encode does. Under a loaded machine
+  //     the guarded arm drifted up; under an idle one the encode dropped to
+  //     1_287 ms and the assertion failed as `expected 796 to be less than 643`.
+  //     There is no board size that fixes both ends, because the two arms scale
+  //     differently.
+  //
+  // So the timing is gone. The claim was never "the run is fast" — it is "the
+  // run did not encode", and that is directly observable: mock `encodeBuild`
+  // and count the calls. Deterministic, machine-independent, strictly stronger
+  // than any threshold, and it frees the board to be small enough that this
+  // file stops being the heaviest z3 test in the suite.
+  const small = board({ n: 20, days: 1, slotsPerCourtDay: 12 });
 
   beforeAll(async () => {
     // `isolate: false` on a thread pool means this file shares one z3 instance
     // with its neighbours, and the WASM heap only ever grows. Reset both ends.
     await resetZ3();
   });
+  afterEach(() => {
+    vi.doUnmock("./build-encode.ts");
+    vi.resetModules();
+  });
   afterAll(async () => {
     await resetZ3();
   });
 
-  // An explicit timeout, because this test deliberately does the expensive
-  // thing TWICE — once through `buildSchedule` (which must skip it) and once
-  // directly (to price it). At 200 x 432 that is ~5 s on an idle machine and
-  // more on a loaded one, against vitest's 5 s default; the overrun surfaces as
-  // `Error: STACK_TRACE_ERROR`, which reads like the engine suite's load flakes
-  // and is really just this test being slower than its budget.
-  it("returns the greedy seed without encoding when the wall is already gone", { timeout: 120_000 }, async () => {
-    const grid = buildGrid({ config: big.config });
-    // Pin the shape the timing argument rests on. If a future change shrinks
-    // this lattice, the encode stops being expensive and the assertion below
-    // stops discriminating — silently. 200 x 216 = 43_200 fixture-slots.
-    expect({ slots: grid.slots.length, overCap: grid.overCap }).toEqual({ slots: 216, overCap: false });
+  /** Loads `build.ts` with `encodeBuild` counted. The real implementation still
+   *  runs — this records that the step happened, it does not replace it. */
+  const withEncodeSpy = async (): Promise<{
+    calls: { n: number };
+    mod: typeof import("./build.ts");
+  }> => {
+    const calls = { n: 0 };
+    // BEFORE the mock, and this line is load-bearing. This file imports
+    // `./build.ts` STATICALLY at the top for `MAX_SOLVE_ENCODING`, so by the
+    // time any test runs, `build.ts` is already in the module cache holding a
+    // direct reference to the REAL `encodeBuild`. Without this reset the
+    // `await import("./build.ts")` below hands back that cached copy, the spy
+    // is wired to nothing, and `calls.n` is 0 whatever the solver does —
+    // which is precisely the assertion the first test makes. MEASURED: with
+    // the R23 guard deleted from `build.ts`, the file still passed 5/5.
+    //
+    // The second test escaped it only by accident, because `afterEach` had
+    // already reset the modules by the time it ran — which is why it read as
+    // a working spy and hid the fact that the first one was inert.
+    vi.resetModules();
+    vi.doMock("./build-encode.ts", async () => {
+      const actual =
+        await vi.importActual<typeof import("./build-encode.ts")>(
+          "./build-encode.ts",
+        );
+      return {
+        ...actual,
+        encodeBuild: (input: Parameters<typeof actual.encodeBuild>[0]) => {
+          calls.n += 1;
+          return actual.encodeBuild(input);
+        },
+      };
+    });
+    return { calls, mod: await import("./build.ts") };
+  };
 
-    const out = await buildSchedule({ fixtures: big.fixtures, config: big.config, wallMs: 1 });
+  it("returns the greedy seed without encoding when the wall is already gone", async () => {
+    const grid = buildGrid({ config: small.config });
+    // 20 x 48 = 960 fixture-slots. Pinned so a lattice change cannot quietly
+    // turn this into a board with nothing to encode.
+    expect({ slots: grid.slots.length, overCap: grid.overCap }).toEqual({
+      slots: 48,
+      overCap: false,
+    });
+
+    const { calls, mod } = await withEncodeSpy();
+    const out = await mod.buildSchedule({
+      fixtures: small.fixtures,
+      config: small.config,
+      wallMs: 1,
+    });
+
+    // THE ASSERTION. The guard at `build.ts:1043` sits between the WASM boot
+    // and `encodeBuild`; if it is removed, the run still returns a greedy board
+    // from the guard at `:1059` — same `engine`, same `placed`, same
+    // `budgetExpired` — just slower. The call count is the ONLY observable that
+    // separates the two.
+    expect(calls.n).toBe(0);
 
     // It bails rather than throwing, and it bails to the SEED — D6 ("never
     // worse than greedy") has to survive an encode-time bail, and the greedy
@@ -118,55 +184,29 @@ describe("R23 — the wall bounds the encode path, not just the search loops", (
       budgetExpired: out.budgetExpired,
       tiers: out.tiersCompleted,
       placed: out.metrics.placed,
-    }).toEqual({ engine: "greedy", budgetExpired: true, tiers: 0, placed: 200 });
+    }).toEqual({ engine: "greedy", budgetExpired: true, tiers: 0, placed: 20 });
 
-    // z3's own counter never moved, so no `check()` ran. This is the part that
-    // is NOT a timing: a run that encoded and then searched would show a spend.
+    // z3's own counter never moved, so no `check()` ran either.
     expect(out.rlimitSpent).toBe(0);
+  }, 120_000);
 
-    // THE DISCRIMINATING ASSERTION: the whole run must cost less than ONE
-    // `encodeBuild` of the same board — which is only possible if it never
-    // encoded.
-    //
-    // Measured on this machine, both arms back to back: 728 ms with the guard,
-    // 4_493 ms without, against an encode of ~3_765 ms. An absolute threshold
-    // between those two numbers is what I wrote first, and it FLAKED in a
-    // full-suite run the same hour — the engine's suite shares one thread pool,
-    // and under load the guarded arm alone drifted past 2_500 ms. A stopwatch
-    // assertion measures the machine, not the code.
-    //
-    // Re-measuring the encode HERE, on the same box in the same second, makes
-    // the comparison a ratio instead: both sides move together when the machine
-    // is slow, so the inequality holds at any speed while still separating the
-    // two behaviours by ~5x.
-    const { Z3 } = await loadZ3();
-    const solver = new Z3.Solver();
-    const t = performance.now();
-    encodeBuild({
-      Z3,
-      solver,
-      fixtures: big.fixtures,
-      grid,
-      config: { ...big.config, matchMinutes: MATCH_MIN, courts: [...COURTS] },
+  it("still encodes when the wall is intact — the guard is a skip, not a removal", async () => {
+    // THE POSITIVE WITNESS, and without it the test above is satisfied by a
+    // solver that never encodes anything at all. `rlimit: 1` starves every
+    // check the moment the model exists, so this pays for the encode and
+    // nothing after it — the encode is what is being witnessed, not the search.
+    const { calls, mod } = await withEncodeSpy();
+    const out = await mod.buildSchedule({
+      fixtures: small.fixtures,
+      config: small.config,
+      wallMs: 30_000,
+      rlimit: 1,
     });
-    const encodeMs = performance.now() - t;
-    await resetZ3();
 
-    // A positive witness that the reference is real: an encode this board can
-    // do in under a tenth of a second would mean the lattice collapsed and the
-    // comparison below proves nothing.
-    expect(encodeMs).toBeGreaterThan(100);
-
-    // HALF the encode, not all of it, and the halving is what makes the test
-    // protective rather than merely correct. An unguarded run costs
-    // `boot + greedy + encode`, so against the FULL encode it overshoots by only
-    // the boot-and-greedy sliver — measured 5_804 ms against 5_376 ms, an 8 %
-    // margin that a slightly faster boot would erase, letting the mutant pass.
-    // Against half the encode the same two arms sit at 0.13x and 1.08x of the
-    // bound: the guarded run has ~4x headroom and the unguarded one misses by
-    // more than 2x. Both margins are ratios, so neither moves with the machine.
-    expect(out.elapsedMs).toBeLessThan(encodeMs / 2);
-  });
+    expect(calls.n).toBe(1);
+    // And the run is still held to the greedy floor on the way out.
+    expect(out.metrics.placed).toBe(20);
+  }, 120_000);
 });
 
 describe("R22 — canSolveWithin is the one place the size gate lives", () => {
@@ -178,8 +218,12 @@ describe("R22 — canSolveWithin is the one place the size gate lives", () => {
   it("admits a board inside the knee and refuses one outside it", () => {
     // Both products asserted, not assumed: the verdicts below mean nothing if
     // the two boards do not actually straddle MAX_SOLVE_ENCODING.
-    const inProduct = inside.fixtures.length * buildGrid({ config: inside.config }).slots.length;
-    const outProduct = outside.fixtures.length * buildGrid({ config: outside.config }).slots.length;
+    const inProduct =
+      inside.fixtures.length *
+      buildGrid({ config: inside.config }).slots.length;
+    const outProduct =
+      outside.fixtures.length *
+      buildGrid({ config: outside.config }).slots.length;
     expect({ inProduct, outProduct, gate: MAX_SOLVE_ENCODING }).toEqual({
       inProduct: 12_960,
       outProduct: 43_200,

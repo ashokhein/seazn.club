@@ -19,6 +19,28 @@
 // check costs ~382 on this model however small the limit. Deterministic either
 // way — `rlimit` is a resource counter, not a clock.
 const LNS_LEVER_RLIMIT = 400;
+
+/**
+ * AND THE WALL IS HELD OPEN, which is what makes the sentence above true.
+ *
+ * The seam at `build.ts:1353` gates on `elapsed() < wallMs` as well as on the
+ * budget, so under the default 30 s wall the trigger is a resource counter AND
+ * a clock — and on a loaded machine the clock wins. Measured: this file passes
+ * 6/6 alone and fails `expected [] to have a length of 1` in a full engine run,
+ * twice in a row, because ten heavy z3 files start together on twelve cores and
+ * boot plus the tiers spend 30 s of wall on a model of two fixtures and one
+ * court. Every claim in this file is about WHEN the seam fires; a wall that
+ * expires first skips the seam and every one of them reads as a failure — or,
+ * worse, as a pass for the wrong reason in the two tests that assert the pass
+ * did NOT run.
+ *
+ * Ten minutes is unreachable at `rlimit: 400`: the budget stops the run three
+ * orders of magnitude earlier, so the wall stops participating in the outcome
+ * and the run is bounded by the resource counter alone — which is what D9 asks
+ * for and what the paragraph above already claimed. A test that reads a clock
+ * measures the machine, not the code.
+ */
+const LNS_LEVER_WALL_MS = 600_000;
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { boardMetrics, isStrictlyBetter } from "./build-objectives.ts";
 import {
@@ -69,7 +91,9 @@ const config: SlotConfig & { courts: string[] } = {
   tz: "Europe/London",
   window: { from: T0, to: T0 + 180 * MIN },
   sessionWindows: [{ from: T0, to: T0 + 60 * MIN }],
-  constraints: cons({ startWindows: [{ target: { kind: "entrant", id: "E3" }, notAfter: T0 }] }),
+  constraints: cons({
+    startWindows: [{ target: { kind: "entrant", id: "E3" }, notAfter: T0 }],
+  }),
 };
 const fixtures = [fx("a", "E1", "E2"), fx("b", "E3", "E4")];
 
@@ -102,7 +126,8 @@ const withStub = async (
 ): Promise<{ seen: LnsInput[]; mod: typeof import("./build.ts") }> => {
   const seen: LnsInput[] = [];
   vi.doMock("./build-lns.ts", async () => {
-    const actual = await vi.importActual<typeof import("./build-lns.ts")>("./build-lns.ts");
+    const actual =
+      await vi.importActual<typeof import("./build-lns.ts")>("./build-lns.ts");
     return {
       ...actual,
       improveByWindows: (input: LnsInput): Promise<LnsOutput> => {
@@ -130,7 +155,12 @@ describe("buildSchedule — the LNS seam", () => {
 
   it("runs the pass on an unfinished run and hands it the incumbent", async () => {
     const { seen, mod } = await withStub(() => bothPlaced);
-    const built = await mod.buildSchedule({ fixtures, config, rlimit: LNS_LEVER_RLIMIT });
+    const built = await mod.buildSchedule({
+      fixtures,
+      config,
+      rlimit: LNS_LEVER_RLIMIT,
+      wallMs: LNS_LEVER_WALL_MS,
+    });
 
     expect(seen).toHaveLength(1);
     expect({
@@ -149,7 +179,7 @@ describe("buildSchedule — the LNS seam", () => {
       frozen: [],
       courts: ["C1"],
       total: 2,
-      deadlineMs: 30_000,
+      deadlineMs: LNS_LEVER_WALL_MS,
     });
     // NOT asserted here: that the pass's board is TAKEN and the result is
     // labelled `z3+lns`. On this corner it cannot be. The fallback only runs
@@ -169,7 +199,13 @@ describe("buildSchedule — the LNS seam", () => {
 
   it("carries the caller's frozen ids into the pass", async () => {
     const { seen, mod } = await withStub((incumbent) => incumbent);
-    await mod.buildSchedule({ fixtures, config, rlimit: LNS_LEVER_RLIMIT, frozen: ["a"] });
+    await mod.buildSchedule({
+      fixtures,
+      config,
+      rlimit: LNS_LEVER_RLIMIT,
+      wallMs: LNS_LEVER_WALL_MS,
+      frozen: ["a"],
+    });
     expect([...(seen[0]?.frozen ?? [])]).toEqual(["a"]);
   }, 180_000);
 
@@ -179,7 +215,12 @@ describe("buildSchedule — the LNS seam", () => {
     // to LNS would make the telemetry Task 15 reads say the fallback is paying
     // for itself when it is not.
     const { seen, mod } = await withStub(() => []);
-    const built = await mod.buildSchedule({ fixtures, config, rlimit: LNS_LEVER_RLIMIT });
+    const built = await mod.buildSchedule({
+      fixtures,
+      config,
+      rlimit: LNS_LEVER_RLIMIT,
+      wallMs: LNS_LEVER_WALL_MS,
+    });
     expect(seen).toHaveLength(1);
     expect({
       rows: built.assignments.map((a) => a.fixtureId),
@@ -198,7 +239,10 @@ describe("buildSchedule — the LNS seam", () => {
     // correctly-budgeted run looks like — so the allotments are the assertion.
     const seen: LnsInput[] = [];
     vi.doMock("./build-lns.ts", async () => {
-      const actual = await vi.importActual<typeof import("./build-lns.ts")>("./build-lns.ts");
+      const actual =
+        await vi.importActual<typeof import("./build-lns.ts")>(
+          "./build-lns.ts",
+        );
       return {
         ...actual,
         improveByWindows: async (input: LnsInput): Promise<LnsOutput> => {
@@ -224,7 +268,12 @@ describe("buildSchedule — the LNS seam", () => {
       };
     });
     const mod = await import("./build.ts");
-    const built = await mod.buildSchedule({ fixtures, config, rlimit: LNS_LEVER_RLIMIT });
+    const built = await mod.buildSchedule({
+      fixtures,
+      config,
+      rlimit: LNS_LEVER_RLIMIT,
+      wallMs: LNS_LEVER_WALL_MS,
+    });
 
     expect(seen).toHaveLength(1);
     // MEASURED, and every number is the same arithmetic: the run keeps 100 of
@@ -243,8 +292,16 @@ describe("buildSchedule — the LNS seam", () => {
     // for a window to find, and paying for one would be a full second solve for
     // a guaranteed non-improvement.
     const { seen, mod } = await withStub(() => bothPlaced);
-    const built = await mod.buildSchedule({ fixtures, config });
-    expect({ tiers: built.tiersCompleted, calls: seen.length, engine: built.engine }).toEqual({
+    const built = await mod.buildSchedule({
+      fixtures,
+      config,
+      wallMs: LNS_LEVER_WALL_MS,
+    });
+    expect({
+      tiers: built.tiersCompleted,
+      calls: seen.length,
+      engine: built.engine,
+    }).toEqual({
       tiers: 4,
       calls: 0,
       engine: "z3",
@@ -261,7 +318,12 @@ describe("buildSchedule — the LNS seam", () => {
     // anything; what is pinned is the floor, which is the one guarantee that
     // has to hold whatever the windows come back with.
     const built = await import("./build.ts").then((m) =>
-      m.buildSchedule({ fixtures, config, rlimit: LNS_LEVER_RLIMIT }),
+      m.buildSchedule({
+        fixtures,
+        config,
+        rlimit: LNS_LEVER_RLIMIT,
+        wallMs: LNS_LEVER_WALL_MS,
+      }),
     );
     const floor = boardMetrics(legalSeed(), config.courts, fixtures.length);
     expect(isStrictlyBetter(floor, built.metrics)).toBe(false);
