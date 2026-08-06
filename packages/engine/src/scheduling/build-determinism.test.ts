@@ -84,6 +84,22 @@ describe("buildSchedule determinism", () => {
     expect(a.assignments).toEqual(b.assignments);
     expect(a.metrics).toEqual(b.metrics);
     expect(a.engine).toBe(b.engine);
+    // THE ASSERTION THAT MAKES THIS A WINDOW TEST AT ALL.
+    //
+    // `tiersCompleted < 4` and `budgetExpired === true` are both produced by the
+    // TIER phase on its own, so the two below witness nothing about the
+    // fallback: at `rlimit: 400` the run ends in milliseconds and the 30 s and
+    // 120 s arms open an identical plan whether or not any window exists.
+    // MEASURED: deleting the whole LNS block from `build.ts` left this case
+    // green.
+    //
+    // `lnsWindowRlimits` is the pass's own record — one entry per window, in the
+    // order they were opened, carrying the share each was allotted. Non-empty
+    // says a window ACTUALLY RAN; equal across two caps four times apart says
+    // the plan and its budget split are derived from the run budget rather than
+    // from elapsed time, which is the property this file exists to hold.
+    expect(a.lnsWindowRlimits.length).toBeGreaterThan(0);
+    expect(a.lnsWindowRlimits).toEqual(b.lnsWindowRlimits);
     // Not vacuous: this has to be the fallback path, not a run that proved its
     // tiers and never opened a window at all.
     expect(a.tiersCompleted).toBeLessThan(4);

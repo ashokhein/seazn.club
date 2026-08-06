@@ -384,5 +384,24 @@ describe("buildSchedule — the LNS seam", () => {
     const floor = boardMetrics(legalSeed(), config.courts, fixtures.length);
     expect(isStrictlyBetter(floor, built.metrics)).toBe(false);
     expect(built.budgetExpired).toBe(true);
+    // AND THAT THE PASS RAN, which the two assertions above cannot say.
+    //
+    // This is the ONLY case in the suite that drives the real re-entrant
+    // `solveBuild` window path — the stubbed cases replace `improveByWindows`
+    // and so cannot see the lock re-entry at all — and a greedy floor plus
+    // `budgetExpired` are both produced by the tier phase alone. MEASURED:
+    // deleting the whole LNS block from `build.ts` left this case green, which
+    // means the one test covering the deadlock covered nothing.
+    //
+    // ONE window at 100, and NOT the `[33, 33, 67]` the stubbed sibling above
+    // measures at this same lever — that plan is the STUB's (`windows: 3`), not
+    // the real one. `improveByWindows` opens a single window on a two-fixture,
+    // one-court board, and it gets the whole of what the main phase left: 400
+    // total, `BUILD_MAIN_RLIMIT_SHARE` of it spent above, 100 held back.
+    //
+    // Which is the assertion worth having here, because it is the arithmetic the
+    // real path performs and the stub cannot: `left / (w.of - w.index)` with
+    // `of === 1`.
+    expect(built.lnsWindowRlimits).toEqual([100]);
   }, 180_000);
 });
