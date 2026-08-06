@@ -168,9 +168,14 @@ describe("buildSchedule — z3 teardown (R17)", () => {
     // at the end was mutation-tested with that witness neutered and it stayed
     // GREEN: a warm context from a repair does not happen to shift the tie-break
     // on THIS board. It is kept as a cheap canary, not claimed as the proof.
-    // The proof that cross-solve coupling is real at all is
-    // `build-lns-wiring.test.ts`, which was green alone and RED in a full run
-    // before `buildSchedule` started tearing down.
+    //
+    // The evidence that cross-solve coupling is real is `build.test.ts`'s
+    // makespan case, measured directly by probe: cold it answers 10:30, and warm
+    // behind that file's earlier solves it answered 10:00 — same input, two
+    // boards. (`build-lns-wiring.test.ts` was cited for this in an earlier round
+    // and that was an OVERSTATEMENT: it is a full-run flake both before and
+    // after R17, measured red/red/green over three runs. It is band-sensitive on
+    // `rlimit` and proves nothing either way.)
     //
     // Compared as a SET of (fixture, court, offset) rather than by row order:
     // the claim is that the BOARD is the same, and row order is a separate

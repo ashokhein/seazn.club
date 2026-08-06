@@ -114,11 +114,39 @@ Engine suite **2449/2448/0**, 1 pending, `success: true`. Baseline was 2442/2440
    already flags as wrong; worth a product ruling, not just a test.
 3. **R17 also fixed a latent determinism defect.** The teardown gives every solve a
    fresh context, so a board no longer depends on what the process solved earlier.
-   Evidence: `build-lns-wiring.test.ts` was 6/6 green ALONE and RED in the full suite
-   at baseline; it is green in both now. Cost: `build.test.ts`'s makespan case was
-   asserting an absolute instant that only held with a WARM context — two boards tie on
-   all four tiers there (09:00/09:30/10:00 vs 09:30/10:00/10:30) and the cold answer is
-   the second. Relaxed to the shape the test's own comment argues.
+   Evidence is `build.test.ts`'s makespan case, probed directly: COLD it answers 10:30,
+   warm behind that file's earlier solves it answered 10:00 — same input, two boards.
+   Two boards tie on all four tiers there (09:00/09:30/10:00 vs 09:30/10:00/10:30), so
+   the assertion on the absolute instant was pinning z3's search state; relaxed to the
+   shape the test's own comment argues. **RETRACTION:** an earlier round cited
+   `build-lns-wiring.test.ts` as the evidence. That was an overstatement — measured
+   red/red/green over three full runs, it is a band-sensitive FULL-RUN FLAKE both before
+   and after R17 and proves nothing either way.
+
+## Task 7 fix round 1 — four Importants + one Minor, all addressed
+
+Engine **2453 total**, best full run **2451 passed / 1 failed** (`repair-scale:102`, the
+long-documented machine-speed flake — 4/4 green alone, twice). Three full runs; every
+distinct failure across them verified green in isolation. tsc 0, lint 0.
+
+- **R17 completed at `repair.ts:237`.** It was the one z3 entry point the ruling missed,
+  inherited by `repairAndVerify`, so a BUILD after a repair started warm. Of the new
+  test's two halves only `z3LoadCount() === 0` discriminates (reds `expected 1 to be
+  +0`); the board-equality half was mutation-tested with that witness neutered and
+  stayed green, so it is labelled a canary rather than a proof. `repairDecomposed`'s own
+  reset degrades to a no-op and was left in place. All repair suites 113/113.
+- **The teardown no longer eats the solve's error** (`z3-load.ts`). A throw inside the
+  `finally` replaced the real exception, so an encoder-drift throw surfaced as a WASM
+  shutdown failure. Caught and logged; safe because `tearDownZ3` clears the singleton in
+  a `finally` of its own.
+- **`moved` now measures against `BuildInput.current`** (new, optional) rather than the
+  greedy seed, so the strip's "moved N" is true in the one shape where they differ: a
+  frozen card with no `locked` anchor, which greedy re-places. The early-return greedy
+  paths route through the same helper instead of hard-coding 0.
+- **The encoder's locked-anchor assertion is now a PROOF.** Premise partly false: the
+  mutant is already killed by four engine tests — but all four are board-level, which
+  cannot separate "the encoding forbids every other slot" from "z3 picked the right one
+  anyway". Asserting `Not(place[i][s])` is `unsat` settles it.
 4. **`boundSolverWindow`'s second greedy pass: MEASURED, leave it.** 20.5 ms at 200
    fixtures (8.9 at 90, 1.7 at 15) against an 8 s wall — 0.26%. The literal ask (expose
    the engine's seed on `BuildResult`) cannot remove it: the caller needs the horizon
