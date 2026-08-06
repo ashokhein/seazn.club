@@ -47,14 +47,18 @@ import {
   TIERS_TOTAL,
 } from "../schedule";
 import { patchFixture } from "../fixtures";
-import { AutoScheduleResult, ScheduleSolverInfo } from "@/server/api-v1/schemas";
+import {
+  AutoScheduleResult,
+  ScheduleSolverInfo,
+} from "@/server/api-v1/schemas";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const T0 = "2026-08-01T09:00:00.000Z";
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
-const at = (minutes: number) => new Date(Date.parse(T0) + minutes * MIN).toISOString();
+const at = (minutes: number) =>
+  new Date(Date.parse(T0) + minutes * MIN).toISOString();
 
 const DIVISION_CONFIG = {
   resultMode: "score",
@@ -76,7 +80,11 @@ async function seedOrg(): Promise<AuthCtx> {
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(DIVISION_CONFIG)}, true)
     on conflict do nothing`;
-  for (const feature of ["scheduling.constraints", "scheduling.board", "scheduling.multi_division"]) {
+  for (const feature of [
+    "scheduling.constraints",
+    "scheduling.board",
+    "scheduling.multi_division",
+  ]) {
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, bool_value)
       values (${orgId}, ${feature}, true)
@@ -93,6 +101,9 @@ async function seedStage(
   config: Partial<Parameters<typeof putScheduleSettings>[2]["config"]> = {},
 ): Promise<{ divisionId: string; stageId: string; created: number }> {
   const competition = await createCompetition(auth, {
+    // #376: an end date is mandatory — a competition with no end can never
+    // cross the pass line, so the schema requires one.
+    ends_on: "2030-12-31",
     name: "Solver " + randomUUID().slice(0, 6),
     visibility: "private",
     branding: {},
@@ -134,13 +145,21 @@ async function seedStage(
     tz: "UTC",
   });
   const generated = await generateStageFixtures(auth, stage.id);
-  return { divisionId: division.id, stageId: stage.id, created: generated.created };
+  return {
+    divisionId: division.id,
+    stageId: stage.id,
+    created: generated.created,
+  };
 }
 
 const applyAll = (
   auth: AuthCtx,
   stageId: string,
-  assignments: { fixture_id: string; scheduled_at: string; court_label: string }[],
+  assignments: {
+    fixture_id: string;
+    scheduled_at: string;
+    court_label: string;
+  }[],
 ) =>
   applySchedule(auth, stageId, {
     assignments: assignments.map((a) => ({
@@ -245,9 +264,18 @@ describe("boundSolverWindow", () => {
   });
 
   it("closes an open START at the earliest thing the run must contain", () => {
-    const open = { ...base, window: { from: -Infinity, to: Date.parse(T0) + 4 * 60 * MIN } };
+    const open = {
+      ...base,
+      window: { from: -Infinity, to: Date.parse(T0) + 4 * 60 * MIN },
+    };
     const pinnedEarly: SchedulableFixture[] = [
-      { id: "a", home: "E1", away: "E2", people: [], locked: { court: "C1", startAt: Date.parse(T0) - 90 * MIN } },
+      {
+        id: "a",
+        home: "E1",
+        away: "E2",
+        people: [],
+        locked: { court: "C1", startAt: Date.parse(T0) - 90 * MIN },
+      },
     ];
     const bounded = boundSolverWindow(open, pinnedEarly, []);
     // The pin is admitted to the lattice unconditionally, so a window that
@@ -275,7 +303,10 @@ describe.skipIf(!HAS_DB)("autoSchedule dispatch (Task 9)", () => {
     const { stageId, created } = await seedStage(auth, 6);
     expect(created).toBe(15);
 
-    const out = await autoSchedule(auth, stageId, { only_unlocked: false, mode: "build" });
+    const out = await autoSchedule(auth, stageId, {
+      only_unlocked: false,
+      mode: "build",
+    });
 
     // The whole envelope, round-tripped: a field left off, misspelled, or typed
     // wrong fails here, and `toEqual` catches an EXTRA key the schema strips —
@@ -293,7 +324,9 @@ describe.skipIf(!HAS_DB)("autoSchedule dispatch (Task 9)", () => {
     expect(out.metrics.makespan_minutes).toBeGreaterThanOrEqual(8 * 30);
 
     expect(out.solver.tiers_total).toBe(TIERS_TOTAL);
-    expect(out.solver.tiers_completed).toBeLessThanOrEqual(out.solver.tiers_total);
+    expect(out.solver.tiers_completed).toBeLessThanOrEqual(
+      out.solver.tiers_total,
+    );
     expect(out.solver.elapsed_ms).toBeGreaterThan(0);
     // The wall is the web's, not the engine's 30-second default: this response
     // is one an organiser is sitting and watching.
@@ -313,7 +346,10 @@ describe.skipIf(!HAS_DB)("autoSchedule dispatch (Task 9)", () => {
       // Two hours on one court is four 30-minute slots for fifteen fixtures.
       sessionWindows: [{ from: T0, to: at(120) }],
     });
-    const out = await autoSchedule(auth, stageId, { only_unlocked: false, mode: "build" });
+    const out = await autoSchedule(auth, stageId, {
+      only_unlocked: false,
+      mode: "build",
+    });
 
     expect(out.metrics.total).toBe(created);
     expect(out.metrics.placed).toBeLessThan(out.metrics.total);
@@ -339,40 +375,61 @@ describe.skipIf(!HAS_DB)("autoSchedule dispatch (Task 9)", () => {
     const auth = await seedOrg();
     const { stageId } = await seedStage(auth, 6);
 
-    const first = await autoSchedule(auth, stageId, { only_unlocked: false, mode: "build" });
+    const first = await autoSchedule(auth, stageId, {
+      only_unlocked: false,
+      mode: "build",
+    });
     await applyAll(auth, stageId, first.assignments);
 
     // Park the last card ten hours out. Still legal — nothing else is near it.
-    const rows = await sql<{ id: string; scheduled_at: Date; court_label: string }[]>`
+    const rows = await sql<
+      { id: string; scheduled_at: Date; court_label: string }[]
+    >`
       select id, scheduled_at, court_label from fixtures
       where stage_id = ${stageId} order by scheduled_at, court_label, id`;
     const parked = rows[rows.length - 1]!;
     await applySchedule(auth, stageId, {
-      assignments: [{ fixture_id: parked.id, scheduled_at: at(600), court_label: "C1" }],
+      assignments: [
+        { fixture_id: parked.id, scheduled_at: at(600), court_label: "C1" },
+      ],
       source: "manual",
     });
 
-    const reflow = await autoSchedule(auth, stageId, { only_unlocked: true, mode: "reflow" });
+    const reflow = await autoSchedule(auth, stageId, {
+      only_unlocked: true,
+      mode: "reflow",
+    });
     expect(reflow.solver.moved).toBe(0);
-    expect(reflow.assignments.find((a) => a.fixture_id === parked.id)?.scheduled_at).toBe(at(600));
+    expect(
+      reflow.assignments.find((a) => a.fixture_id === parked.id)?.scheduled_at,
+    ).toBe(at(600));
 
     // …and the rest of the board is where the organiser left it too, not merely
     // the parked card.
-    const onBoard = await sql<{ id: string; scheduled_at: Date; court_label: string }[]>`
+    const onBoard = await sql<
+      { id: string; scheduled_at: Date; court_label: string }[]
+    >`
       select id, scheduled_at, court_label from fixtures
       where stage_id = ${stageId} order by id`;
     const proposed = new Map(reflow.assignments.map((a) => [a.fixture_id, a]));
     expect(proposed.size).toBe(onBoard.length);
     for (const row of onBoard) {
-      expect(proposed.get(row.id)?.scheduled_at).toBe(row.scheduled_at.toISOString());
+      expect(proposed.get(row.id)?.scheduled_at).toBe(
+        row.scheduled_at.toISOString(),
+      );
       expect(proposed.get(row.id)?.court_label).toBe(row.court_label);
     }
 
     // The corner, proved rather than assumed: a re-place does NOT leave it
     // there. This is the behaviour REFLOW replaces, and if it ever stopped
     // being true the assertions above would be vacuous.
-    const rebuilt = await autoSchedule(auth, stageId, { only_unlocked: true, mode: "build" });
-    expect(rebuilt.assignments.find((a) => a.fixture_id === parked.id)?.scheduled_at).not.toBe(at(600));
+    const rebuilt = await autoSchedule(auth, stageId, {
+      only_unlocked: true,
+      mode: "build",
+    });
+    expect(
+      rebuilt.assignments.find((a) => a.fixture_id === parked.id)?.scheduled_at,
+    ).not.toBe(at(600));
 
     // …and `only_unlocked: false` means a FULL pass: a pin is not a pin on this
     // branch, which is the whole difference between the two flags. Locking the
@@ -380,8 +437,13 @@ describe.skipIf(!HAS_DB)("autoSchedule dispatch (Task 9)", () => {
     // predicate that ignored `only_unlocked` would leave it at 19:00 and every
     // other spec in this file would still pass.
     await patchFixture(auth, parked.id, { schedule_locked: true });
-    const full = await autoSchedule(auth, stageId, { only_unlocked: false, mode: "build" });
-    expect(full.assignments.find((a) => a.fixture_id === parked.id)?.scheduled_at).not.toBe(at(600));
+    const full = await autoSchedule(auth, stageId, {
+      only_unlocked: false,
+      mode: "build",
+    });
+    expect(
+      full.assignments.find((a) => a.fixture_id === parked.id)?.scheduled_at,
+    ).not.toBe(at(600));
   }, 180_000);
 
   /** REFLOW is also the DEFAULT mode (an absent `only_unlocked` derives it), and
@@ -392,7 +454,10 @@ describe.skipIf(!HAS_DB)("autoSchedule dispatch (Task 9)", () => {
     const auth = await seedOrg();
     const { stageId, created } = await seedStage(auth, 4);
 
-    const out = await autoSchedule(auth, stageId, { only_unlocked: true, mode: "reflow" });
+    const out = await autoSchedule(auth, stageId, {
+      only_unlocked: true,
+      mode: "reflow",
+    });
     expect(out.assignments).toHaveLength(created);
     expect(out.metrics.placed).toBe(created);
     expect(out.conflicts.filter((c) => c.blocking)).toHaveLength(0);
@@ -428,12 +493,17 @@ describe.skipIf(!HAS_DB)("autoSchedule dispatch (Task 9)", () => {
     // a card of a six-fixture board, so "it stayed" cannot be an accident of
     // greedy happening to agree with the pin.
     await applySchedule(auth, stageId, {
-      assignments: [{ fixture_id: pinned.id, scheduled_at: at(600), court_label: "C2" }],
+      assignments: [
+        { fixture_id: pinned.id, scheduled_at: at(600), court_label: "C2" },
+      ],
       source: "manual",
     });
     await patchFixture(auth, pinned.id, { schedule_locked: true });
 
-    const out = await autoSchedule(auth, stageId, { only_unlocked: true, mode: "build" });
+    const out = await autoSchedule(auth, stageId, {
+      only_unlocked: true,
+      mode: "build",
+    });
 
     // Solvable: every card placed, nothing blocking. Without this the pin
     // assertion below would pass just as well on a board the solver gave up on.
@@ -450,7 +520,9 @@ describe.skipIf(!HAS_DB)("autoSchedule dispatch (Task 9)", () => {
     const others = out.assignments.filter((a) => a.fixture_id !== pinned.id);
     expect(others).toHaveLength(created - 1);
     // Nothing double-booked onto the anchor's own slot.
-    expect(others.some((a) => a.scheduled_at === at(600) && a.court_label === "C2")).toBe(false);
+    expect(
+      others.some((a) => a.scheduled_at === at(600) && a.court_label === "C2"),
+    ).toBe(false);
     // The board is spread over time rather than collapsed onto the pin.
     expect(new Set(others.map((a) => a.scheduled_at)).size).toBeGreaterThan(1);
   }, 180_000);
@@ -459,16 +531,25 @@ describe.skipIf(!HAS_DB)("autoSchedule dispatch (Task 9)", () => {
     const auth = await seedOrg();
     const { stageId } = await seedStage(auth, 6);
 
-    const first = await autoSchedule(auth, stageId, { only_unlocked: false, mode: "build" });
+    const first = await autoSchedule(auth, stageId, {
+      only_unlocked: false,
+      mode: "build",
+    });
     await applyAll(auth, stageId, first.assignments);
 
-    const rows = await sql<{ id: string; scheduled_at: Date; court_label: string }[]>`
+    const rows = await sql<
+      { id: string; scheduled_at: Date; court_label: string }[]
+    >`
       select id, scheduled_at, court_label from fixtures
       where stage_id = ${stageId} order by scheduled_at, court_label, id`;
     const locked = [rows[0]!, rows[3]!];
-    for (const f of locked) await patchFixture(auth, f.id, { schedule_locked: true });
+    for (const f of locked)
+      await patchFixture(auth, f.id, { schedule_locked: true });
 
-    const out = await autoSchedule(auth, stageId, { only_unlocked: true, mode: "polish" });
+    const out = await autoSchedule(auth, stageId, {
+      only_unlocked: true,
+      mode: "polish",
+    });
 
     // Polish hands back the WHOLE stage, pinned cards included — the caller
     // applies the set it is given, and a mode that dropped its frozen cards
@@ -501,7 +582,9 @@ describe.skipIf(!HAS_DB)("autoSchedule dispatch (Task 9)", () => {
     const auth = await seedOrg();
     const { stageId } = await seedStage(auth, 4, { courts: ["C1", "C2"] });
 
-    const rows = await sql<{ id: string; home_entrant_id: string; away_entrant_id: string }[]>`
+    const rows = await sql<
+      { id: string; home_entrant_id: string; away_entrant_id: string }[]
+    >`
       select id, home_entrant_id, away_entrant_id from fixtures where stage_id = ${stageId} order by id`;
     const first = rows[0]!;
     const sharing = rows.find(
@@ -521,12 +604,18 @@ describe.skipIf(!HAS_DB)("autoSchedule dispatch (Task 9)", () => {
       ],
       source: "manual",
     });
-    for (const f of [first, sharing]) await patchFixture(auth, f.id, { schedule_locked: true });
+    for (const f of [first, sharing])
+      await patchFixture(auth, f.id, { schedule_locked: true });
 
-    const out = await autoSchedule(auth, stageId, { only_unlocked: true, mode: "build" });
+    const out = await autoSchedule(auth, stageId, {
+      only_unlocked: true,
+      mode: "build",
+    });
     expect(out.solver.status).toBe("infeasible");
     // The identity, not just a count: this is the whole reason the field exists.
-    expect(out.solver.contradictory_pins).toEqual([first.id, sharing.id].sort());
+    expect(out.solver.contradictory_pins).toEqual(
+      [first.id, sharing.id].sort(),
+    );
     // …and the rest of the sentence still rides along, so the strip can say
     // "N of M scheduled" beside it.
     expect(out.metrics.total).toBe(rows.length);
@@ -587,7 +676,10 @@ describe.skipIf(!HAS_DB)("autoSchedule dispatch (Task 9)", () => {
     const auth = await seedOrg();
     const { stageId } = await seedStage(auth, 4);
     for (const mode of ["build", "reflow", "polish"] as const) {
-      const out = await autoSchedule(auth, stageId, { only_unlocked: true, mode });
+      const out = await autoSchedule(auth, stageId, {
+        only_unlocked: true,
+        mode,
+      });
       expect(ScheduleSolverInfo.parse(out.solver)).toEqual(out.solver);
       expect(out.solver.tiers_total).toBe(TIERS_TOTAL);
       expect(out.metrics.total).toBeGreaterThan(0);

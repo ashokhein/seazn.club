@@ -54,7 +54,11 @@ async function seedOrg(): Promise<AuthCtx> {
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(DIVISION_CONFIG)}, true)
     on conflict do nothing`;
-  for (const feature of ["scheduling.constraints", "scheduling.board", "scheduling.multi_division"]) {
+  for (const feature of [
+    "scheduling.constraints",
+    "scheduling.board",
+    "scheduling.multi_division",
+  ]) {
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, bool_value)
       values (${orgId}, ${feature}, true)
@@ -65,8 +69,14 @@ async function seedOrg(): Promise<AuthCtx> {
 
 /** A league division with `entrants` players and NO end date — the ordinary
  *  organiser config, and the one whose `applyWindow` is half-infinite. */
-async function seedStage(auth: AuthCtx, entrants: number): Promise<{ stageId: string; created: number }> {
+async function seedStage(
+  auth: AuthCtx,
+  entrants: number,
+): Promise<{ stageId: string; created: number }> {
   const competition = await createCompetition(auth, {
+    // #376: an end date is mandatory — a competition with no end can never
+    // cross the pass line, so the schema requires one.
+    ends_on: "2030-12-31",
     name: "Polish " + randomUUID().slice(0, 6),
     visibility: "private",
     branding: {},
@@ -88,7 +98,12 @@ async function seedStage(auth: AuthCtx, entrants: number): Promise<{ stageId: st
       members: [],
     })),
   );
-  const [stage] = await createStages(auth, division.id, { seq: 1, kind: "league", name: "L", config: {} });
+  const [stage] = await createStages(auth, division.id, {
+    seq: 1,
+    kind: "league",
+    name: "L",
+    config: {},
+  });
   await putScheduleSettings(auth, division.id, {
     config: {
       startAt: T0,
@@ -123,8 +138,15 @@ const slot = (isoOrDate: string | Date, court: string | null) =>
  * that arrived carrying blocking conflicts would change what the run does for
  * reasons that have nothing to do with `current`.
  */
-async function publishedBoardShifted(auth: AuthCtx, stageId: string, minutes: number): Promise<Row[]> {
-  const built = await autoSchedule(auth, stageId, { only_unlocked: false, mode: "build" });
+async function publishedBoardShifted(
+  auth: AuthCtx,
+  stageId: string,
+  minutes: number,
+): Promise<Row[]> {
+  const built = await autoSchedule(auth, stageId, {
+    only_unlocked: false,
+    mode: "build",
+  });
   await applySchedule(auth, stageId, {
     assignments: built.assignments.map((a) => ({
       fixture_id: a.fixture_id,
@@ -135,103 +157,124 @@ async function publishedBoardShifted(auth: AuthCtx, stageId: string, minutes: nu
   });
   for (const a of built.assignments) {
     await patchFixture(auth, a.fixture_id, {
-      scheduled_at: new Date(Date.parse(a.scheduled_at) + minutes * MIN).toISOString(),
+      scheduled_at: new Date(
+        Date.parse(a.scheduled_at) + minutes * MIN,
+      ).toISOString(),
     });
   }
   return boardOf(stageId);
 }
 
-describe.skipIf(!HAS_DB)("POLISH measures itself against the organiser's board (R20)", () => {
-  /**
-   * MEASURED, both numbers, on this exact fixture: with `current` supplied the
-   * run reports `moved: 6` — every card left the +3h slot the organiser had it
-   * in. Without it the baseline is greedy's own re-placement, which is the board
-   * the tier solver hands back, so it reports `moved: 0`: "nothing moved" about
-   * a run that moved all six. The shift is what separates the two; on the
-   * unshifted board both baselines answer 0 and this spec would pass blind.
-   */
-  it("counts moves from where the organiser had the cards, not from greedy's seed", async () => {
-    const auth = await seedOrg();
-    const { stageId, created } = await seedStage(auth, 4);
-    const before = await publishedBoardShifted(auth, stageId, 180);
-    expect(before).toHaveLength(created);
+describe.skipIf(!HAS_DB)(
+  "POLISH measures itself against the organiser's board (R20)",
+  () => {
+    /**
+     * MEASURED, both numbers, on this exact fixture: with `current` supplied the
+     * run reports `moved: 6` — every card left the +3h slot the organiser had it
+     * in. Without it the baseline is greedy's own re-placement, which is the board
+     * the tier solver hands back, so it reports `moved: 0`: "nothing moved" about
+     * a run that moved all six. The shift is what separates the two; on the
+     * unshifted board both baselines answer 0 and this spec would pass blind.
+     */
+    it("counts moves from where the organiser had the cards, not from greedy's seed", async () => {
+      const auth = await seedOrg();
+      const { stageId, created } = await seedStage(auth, 4);
+      const before = await publishedBoardShifted(auth, stageId, 180);
+      expect(before).toHaveLength(created);
 
-    const out = await autoSchedule(auth, stageId, { only_unlocked: true, mode: "polish" });
+      const out = await autoSchedule(auth, stageId, {
+        only_unlocked: true,
+        mode: "polish",
+      });
 
-    // What the run actually did to the organiser's board, computed here rather
-    // than taken from the payload — this is the number `moved` is a claim about.
-    const was = new Map(before.map((r) => [r.id, slot(r.scheduled_at, r.court_label)]));
-    const relocated = out.assignments.filter(
-      (a) => was.get(a.fixture_id) !== slot(a.scheduled_at, a.court_label),
-    ).length;
-    // The premise of the fixture: the answer is nowhere near the +3h board.
-    expect(relocated).toBe(created);
-    expect(out.solver.moved).toBe(relocated);
-  }, 180_000);
+      // What the run actually did to the organiser's board, computed here rather
+      // than taken from the payload — this is the number `moved` is a claim about.
+      const was = new Map(
+        before.map((r) => [r.id, slot(r.scheduled_at, r.court_label)]),
+      );
+      const relocated = out.assignments.filter(
+        (a) => was.get(a.fixture_id) !== slot(a.scheduled_at, a.court_label),
+      ).length;
+      // The premise of the fixture: the answer is nowhere near the +3h board.
+      expect(relocated).toBe(created);
+      expect(out.solver.moved).toBe(relocated);
+    }, 180_000);
 
-  /** `lost` is baseline rows this run could not place (R21). Nothing is dropped
-   *  here — the assertion that bites is that the field is PRESENT and a number:
-   *  a mapping that never wrote it is indistinguishable from `lost: 0` on the
-   *  value alone, and `undefined` is what the whole ruling looks like when the
-   *  usecase forgets to forward it. */
-  it("puts a lost count on the wire, distinct from the unplaced count", async () => {
-    const auth = await seedOrg();
-    const { stageId, created } = await seedStage(auth, 4);
-    await publishedBoardShifted(auth, stageId, 180);
+    /** `lost` is baseline rows this run could not place (R21). Nothing is dropped
+     *  here — the assertion that bites is that the field is PRESENT and a number:
+     *  a mapping that never wrote it is indistinguishable from `lost: 0` on the
+     *  value alone, and `undefined` is what the whole ruling looks like when the
+     *  usecase forgets to forward it. */
+    it("puts a lost count on the wire, distinct from the unplaced count", async () => {
+      const auth = await seedOrg();
+      const { stageId, created } = await seedStage(auth, 4);
+      await publishedBoardShifted(auth, stageId, 180);
 
-    const out = await autoSchedule(auth, stageId, { only_unlocked: true, mode: "polish" });
+      const out = await autoSchedule(auth, stageId, {
+        only_unlocked: true,
+        mode: "polish",
+      });
 
-    expect(out.solver.lost).toBe(0);
-    expect(out.metrics.placed).toBe(created);
-    expect(ScheduleSolverInfo.parse(out.solver)).toEqual(out.solver);
-  }, 180_000);
+      expect(out.solver.lost).toBe(0);
+      expect(out.metrics.placed).toBe(created);
+      expect(ScheduleSolverInfo.parse(out.solver)).toEqual(out.solver);
+    }, 180_000);
 
-  /**
-   * The strip cannot tell a reflow timeout from a build that expired before its
-   * first tier without this: both arrive `engine: "greedy"`, `budget_expired:
-   * true`, `tiers_completed: 0`, `tiers_total: 4`. Asserted for all three modes
-   * because a mapping that hard-coded one value would pass a single-mode spec.
-   */
-  it("echoes the mode the run was asked for", async () => {
-    const auth = await seedOrg();
-    const { stageId } = await seedStage(auth, 4);
+    /**
+     * The strip cannot tell a reflow timeout from a build that expired before its
+     * first tier without this: both arrive `engine: "greedy"`, `budget_expired:
+     * true`, `tiers_completed: 0`, `tiers_total: 4`. Asserted for all three modes
+     * because a mapping that hard-coded one value would pass a single-mode spec.
+     */
+    it("echoes the mode the run was asked for", async () => {
+      const auth = await seedOrg();
+      const { stageId } = await seedStage(auth, 4);
 
-    for (const mode of ["build", "reflow", "polish"] as const) {
-      const out = await autoSchedule(auth, stageId, { only_unlocked: true, mode });
-      expect(out.solver.mode).toBe(mode);
-    }
-  }, 180_000);
+      for (const mode of ["build", "reflow", "polish"] as const) {
+        const out = await autoSchedule(auth, stageId, {
+          only_unlocked: true,
+          mode,
+        });
+        expect(out.solver.mode).toBe(mode);
+      }
+    }, 180_000);
 
-  /**
-   * BUILD must NOT receive `current`, and this is the spec that says so.
-   *
-   * A fresh full pass is not a rearrangement of anything. Anchored to the board
-   * it was asked to replace it would report every card as moved by definition —
-   * "12 matches moved" on the first run of the day, which says nothing and is
-   * exactly the shape the R20 note warns about for an empty `current`.
-   *
-   * MEASURED, both numbers, on this fixture: the run relocates all 6 cards away
-   * from the +3h board (asserted below, so the fixture cannot go quiet), and
-   * reports `moved: 0` because its baseline is greedy's own seed, which is the
-   * board it returns. Hand BUILD the same `current` POLISH gets and it reports
-   * 6 instead — that is the mutant this kills.
-   */
-  it("does not anchor a BUILD to the board it was asked to replace", async () => {
-    const auth = await seedOrg();
-    const { stageId, created } = await seedStage(auth, 4);
-    const before = await publishedBoardShifted(auth, stageId, 180);
+    /**
+     * BUILD must NOT receive `current`, and this is the spec that says so.
+     *
+     * A fresh full pass is not a rearrangement of anything. Anchored to the board
+     * it was asked to replace it would report every card as moved by definition —
+     * "12 matches moved" on the first run of the day, which says nothing and is
+     * exactly the shape the R20 note warns about for an empty `current`.
+     *
+     * MEASURED, both numbers, on this fixture: the run relocates all 6 cards away
+     * from the +3h board (asserted below, so the fixture cannot go quiet), and
+     * reports `moved: 0` because its baseline is greedy's own seed, which is the
+     * board it returns. Hand BUILD the same `current` POLISH gets and it reports
+     * 6 instead — that is the mutant this kills.
+     */
+    it("does not anchor a BUILD to the board it was asked to replace", async () => {
+      const auth = await seedOrg();
+      const { stageId, created } = await seedStage(auth, 4);
+      const before = await publishedBoardShifted(auth, stageId, 180);
 
-    const out = await autoSchedule(auth, stageId, { only_unlocked: false, mode: "build" });
+      const out = await autoSchedule(auth, stageId, {
+        only_unlocked: false,
+        mode: "build",
+      });
 
-    const was = new Map(before.map((r) => [r.id, slot(r.scheduled_at, r.court_label)]));
-    const relocated = out.assignments.filter(
-      (a) => was.get(a.fixture_id) !== slot(a.scheduled_at, a.court_label),
-    ).length;
-    // The fixture's premise, restated here so this spec cannot pass on a board
-    // where the two baselines happen to agree.
-    expect(relocated).toBe(created);
-    expect(out.solver.moved).toBe(0);
-    // Nothing to lose from, so nothing lost — 0 by definition, not by luck.
-    expect(out.solver.lost).toBe(0);
-  }, 180_000);
-});
+      const was = new Map(
+        before.map((r) => [r.id, slot(r.scheduled_at, r.court_label)]),
+      );
+      const relocated = out.assignments.filter(
+        (a) => was.get(a.fixture_id) !== slot(a.scheduled_at, a.court_label),
+      ).length;
+      // The fixture's premise, restated here so this spec cannot pass on a board
+      // where the two baselines happen to agree.
+      expect(relocated).toBe(created);
+      expect(out.solver.moved).toBe(0);
+      // Nothing to lose from, so nothing lost — 0 by definition, not by luck.
+      expect(out.solver.lost).toBe(0);
+    }, 180_000);
+  },
+);

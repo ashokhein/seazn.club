@@ -26,13 +26,20 @@ import { randomUUID } from "node:crypto";
 
 /** Open `withTenant` frames, how many were opened, and the depth each solver
  *  entry point saw. */
-const tx = vi.hoisted(() => ({ depth: 0, opens: 0, solveDepths: [] as number[] }));
+const tx = vi.hoisted(() => ({
+  depth: 0,
+  opens: 0,
+  solveDepths: [] as number[],
+}));
 
 vi.mock("@/lib/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/db")>();
   return {
     ...actual,
-    withTenant: async <T,>(orgId: string, fn: (sql: never) => Promise<T>): Promise<T> => {
+    withTenant: async <T>(
+      orgId: string,
+      fn: (sql: never) => Promise<T>,
+    ): Promise<T> => {
       tx.depth++;
       tx.opens++;
       try {
@@ -45,7 +52,8 @@ vi.mock("@/lib/db", async (importOriginal) => {
 });
 
 vi.mock("@seazn/engine/scheduling", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@seazn/engine/scheduling")>();
+  const actual =
+    await importOriginal<typeof import("@seazn/engine/scheduling")>();
   return {
     ...actual,
     // Recorded at CALL time, before awaiting: the question is what was open when
@@ -66,7 +74,8 @@ const { createCompetition } = await import("../competitions");
 const { createDivision } = await import("../divisions");
 const { createEntrants } = await import("../entrants");
 const { createStages, generateStageFixtures } = await import("../stages");
-const { autoSchedule, putScheduleSettings, applySchedule } = await import("../schedule");
+const { autoSchedule, putScheduleSettings, applySchedule } =
+  await import("../schedule");
 type AuthCtx = import("@/server/api-v1/auth").AuthCtx;
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -97,8 +106,17 @@ async function seedStage(): Promise<{ auth: AuthCtx; stageId: string }> {
       values (${orgId}, ${feature}, true)
       on conflict (org_id, feature_key) do update set bool_value = true`;
   }
-  const auth: AuthCtx = { orgId, via: "session", userId: null, role: "owner", keyId: null };
+  const auth: AuthCtx = {
+    orgId,
+    via: "session",
+    userId: null,
+    role: "owner",
+    keyId: null,
+  };
   const competition = await createCompetition(auth, {
+    // #376: an end date is mandatory — a competition with no end can never
+    // cross the pass line, so the schema requires one.
+    ends_on: "2030-12-31",
     name: "TX " + suffix,
     visibility: "private",
     branding: {},
@@ -142,80 +160,95 @@ async function seedStage(): Promise<{ auth: AuthCtx; stageId: string }> {
   return { auth, stageId: stage.id };
 }
 
-describe.skipIf(!HAS_DB)("autoSchedule holds no transaction across the solve", () => {
-  beforeEach(() => {
-    tx.depth = 0;
-    tx.opens = 0;
-    tx.solveDepths = [];
-  });
-
-  it("enters the tier solver at transaction depth 0 (build)", async () => {
-    const { auth, stageId } = await seedStage();
-    // BOTH counters reset after seeding, not just `solveDepths`. `seedStage`
-    // opens a dozen transactions of its own, and a count carried over from it
-    // would satisfy the assertion below while saying nothing whatsoever about
-    // `autoSchedule`.
-    tx.solveDepths = [];
-    tx.opens = 0;
-
-    await autoSchedule(auth, stageId, { only_unlocked: false, mode: "build" });
-
-    // The solver ran at all — otherwise `toEqual([0])` would be satisfied by an
-    // empty array and this whole spec would assert nothing.
-    expect(tx.solveDepths).toHaveLength(1);
-    expect(tx.solveDepths).toEqual([0]);
-    // …and a transaction really was opened during the call, so depth 0 at the
-    // solve is a transaction that CLOSED, not one that never existed.
-    //
-    // COUNTED, not measured as peak concurrency. Peak depth was the obvious
-    // choice and is the wrong one: `seedStage`'s writes fire cache-invalidation
-    // and revalidate work WITHOUT awaiting it, so a background frame is often
-    // still open when this call begins and the peak reads 2. Nothing is nested
-    // inside `autoSchedule` — stack capture confirms the deeper frame is
-    // `autoSchedule`'s OWN phase-1 read — so a peak assertion would pin the
-    // harness's timing rather than the property under test.
-    expect(tx.opens).toBeGreaterThan(0);
-    // Nothing left open.
-    expect(tx.depth).toBe(0);
-  }, 120_000);
-
-  it("enters the repair solver at transaction depth 0 (reflow)", async () => {
-    const { auth, stageId } = await seedStage();
-    // Put a board down so REFLOW has an incumbent and actually reaches the
-    // repair solver rather than short-circuiting.
-    const first = await autoSchedule(auth, stageId, { only_unlocked: false, mode: "build" });
-    await applySchedule(auth, stageId, {
-      assignments: first.assignments.map((a) => ({
-        fixture_id: a.fixture_id,
-        scheduled_at: a.scheduled_at,
-        court_label: a.court_label,
-      })),
-      source: "auto",
+describe.skipIf(!HAS_DB)(
+  "autoSchedule holds no transaction across the solve",
+  () => {
+    beforeEach(() => {
+      tx.depth = 0;
+      tx.opens = 0;
+      tx.solveDepths = [];
     });
-    tx.solveDepths = [];
-    tx.opens = 0;
 
-    await autoSchedule(auth, stageId, { only_unlocked: true, mode: "reflow" });
+    it("enters the tier solver at transaction depth 0 (build)", async () => {
+      const { auth, stageId } = await seedStage();
+      // BOTH counters reset after seeding, not just `solveDepths`. `seedStage`
+      // opens a dozen transactions of its own, and a count carried over from it
+      // would satisfy the assertion below while saying nothing whatsoever about
+      // `autoSchedule`.
+      tx.solveDepths = [];
+      tx.opens = 0;
 
-    expect(tx.solveDepths).toHaveLength(1);
-    expect(tx.solveDepths).toEqual([0]);
-    expect(tx.opens).toBeGreaterThan(0);
-    expect(tx.depth).toBe(0);
-  }, 120_000);
+      await autoSchedule(auth, stageId, {
+        only_unlocked: false,
+        mode: "build",
+      });
 
-  it("enters the tier solver at transaction depth 0 (polish)", async () => {
-    const { auth, stageId } = await seedStage();
-    tx.solveDepths = [];
-    tx.opens = 0;
+      // The solver ran at all — otherwise `toEqual([0])` would be satisfied by an
+      // empty array and this whole spec would assert nothing.
+      expect(tx.solveDepths).toHaveLength(1);
+      expect(tx.solveDepths).toEqual([0]);
+      // …and a transaction really was opened during the call, so depth 0 at the
+      // solve is a transaction that CLOSED, not one that never existed.
+      //
+      // COUNTED, not measured as peak concurrency. Peak depth was the obvious
+      // choice and is the wrong one: `seedStage`'s writes fire cache-invalidation
+      // and revalidate work WITHOUT awaiting it, so a background frame is often
+      // still open when this call begins and the peak reads 2. Nothing is nested
+      // inside `autoSchedule` — stack capture confirms the deeper frame is
+      // `autoSchedule`'s OWN phase-1 read — so a peak assertion would pin the
+      // harness's timing rather than the property under test.
+      expect(tx.opens).toBeGreaterThan(0);
+      // Nothing left open.
+      expect(tx.depth).toBe(0);
+    }, 120_000);
 
-    await autoSchedule(auth, stageId, { only_unlocked: true, mode: "polish" });
+    it("enters the repair solver at transaction depth 0 (reflow)", async () => {
+      const { auth, stageId } = await seedStage();
+      // Put a board down so REFLOW has an incumbent and actually reaches the
+      // repair solver rather than short-circuiting.
+      const first = await autoSchedule(auth, stageId, {
+        only_unlocked: false,
+        mode: "build",
+      });
+      await applySchedule(auth, stageId, {
+        assignments: first.assignments.map((a) => ({
+          fixture_id: a.fixture_id,
+          scheduled_at: a.scheduled_at,
+          court_label: a.court_label,
+        })),
+        source: "auto",
+      });
+      tx.solveDepths = [];
+      tx.opens = 0;
 
-    // Same four assertions as the other two modes. Consistency is the point:
-    // a spec that checks less than its siblings is the one that goes stale
-    // without anybody noticing.
-    expect(tx.solveDepths).toHaveLength(1);
-    expect(tx.solveDepths).toEqual([0]);
-    expect(tx.opens).toBeGreaterThan(0);
-    expect(tx.depth).toBe(0);
-  }, 120_000);
-});
+      await autoSchedule(auth, stageId, {
+        only_unlocked: true,
+        mode: "reflow",
+      });
+
+      expect(tx.solveDepths).toHaveLength(1);
+      expect(tx.solveDepths).toEqual([0]);
+      expect(tx.opens).toBeGreaterThan(0);
+      expect(tx.depth).toBe(0);
+    }, 120_000);
+
+    it("enters the tier solver at transaction depth 0 (polish)", async () => {
+      const { auth, stageId } = await seedStage();
+      tx.solveDepths = [];
+      tx.opens = 0;
+
+      await autoSchedule(auth, stageId, {
+        only_unlocked: true,
+        mode: "polish",
+      });
+
+      // Same four assertions as the other two modes. Consistency is the point:
+      // a spec that checks less than its siblings is the one that goes stale
+      // without anybody noticing.
+      expect(tx.solveDepths).toHaveLength(1);
+      expect(tx.solveDepths).toEqual([0]);
+      expect(tx.opens).toBeGreaterThan(0);
+      expect(tx.depth).toBe(0);
+    }, 120_000);
+  },
+);
