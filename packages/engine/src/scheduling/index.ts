@@ -17,6 +17,10 @@ export * from "./build-grid.ts";
 // The boolean model over that lattice. Free to name here for the same reason
 // the repair block below is: its only `z3-solver` reference is `import type`.
 export * from "./build-encode.ts";
+// The large-neighbourhood fallback over that same model. Pure too: it owns the
+// window plan and the acceptance rule and takes the solve itself as a
+// parameter, so it names no z3 at all.
+export * from "./build-lns.ts";
 // The control loop over that model. Same story: it imports `loadZ3`, and the
 // WASM stays behind the dynamic import inside it.
 export * from "./build.ts";

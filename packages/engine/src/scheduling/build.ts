@@ -87,6 +87,7 @@
 // their own test.
 import type { Arith, Bool, Solver } from "z3-solver";
 import { boardMetrics, isStrictlyBetter, type BoardMetrics } from "./build-objectives.ts";
+import { improveByWindows, type LnsWindow } from "./build-lns.ts";
 import { buildGrid, type BuildGrid, type BuildSlot } from "./build-grid.ts";
 import { encodeBuild, type BuildConfig, type EncodedModel } from "./build-encode.ts";
 import {
@@ -107,13 +108,118 @@ import { loadZ3, withZ3Lock, type Z3Context } from "./z3-load.ts";
 
 const MS_PER_MIN = 60_000;
 
-/** Set by `scripts/bench-build.ts` (Task 15) — a placeholder until it runs. */
+/** Set by `scripts/bench-build.ts` (Task 13) — a placeholder until it runs.
+ *  A RUN total, not a per-check allowance; see `RunBudget`. */
 export const DEFAULT_BUILD_RLIMIT = 40_000_000;
+/**
+ * How much of a run's budget the monolithic solve may draw before the window
+ * fallback gets a look (ruling R11).
+ *
+ * Without a reserve the two are not really sharing a budget: the tiers exhaust
+ * it exactly when they fail to converge, which is precisely the state LNS
+ * exists to rescue, so the fallback would be dead on arrival on every board it
+ * is for. The FRACTION is a placeholder for Task 13's bench, like
+ * `DEFAULT_BUILD_RLIMIT`; that some reserve must exist is not.
+ *
+ * THE RESERVE IS ONLY MEANINGFUL WHEN THE BUDGET IS LARGE relative to a single
+ * check's overshoot (see `RunBudget` — ~28_500 units on the four-fixture model
+ * in `build-budget.test.ts`). Below that a single check can blow through both
+ * the share and the run total at once and no window ever opens, which is the
+ * honest answer: a budget that cannot pay for one check cannot pay for two
+ * solvers' worth of them either. At `DEFAULT_BUILD_RLIMIT` the reserve is
+ * ~10_000_000 against an overshoot of tens of thousands, so it binds as
+ * intended.
+ */
+export const BUILD_MAIN_RLIMIT_SHARE = 0.75;
 /** The outer safety cap. Not the stopping rule; see the header. */
 export const DEFAULT_BUILD_WALL_MS = 30_000;
 /** T0 plus the three lexicographic tiers. `tiersCompleted` reaching this is
- *  what "the board is lexicographically optimal" means. */
-const TIER_COUNT = 4;
+ *  what "the board is lexicographically optimal" means.
+ *
+ *  EXPORTED for the web layer (ruling R17), which was carrying its own
+ *  `TIERS_TOTAL = 4`. Two copies of a number that means "the solver proved
+ *  every tier" drift the moment a tier is added, and the copy that drifts is
+ *  the one deciding what an organiser is told. */
+export const TIER_COUNT = 4;
+
+/**
+ * One run's z3 resource budget, shared by every solve the run performs
+ * (ruling R11).
+ *
+ * --- WHY THIS IS NOT `solver.set("rlimit", n)` ONCE ------------------------
+ *
+ * MEASURED, against z3-solver 5.0.0:
+ *
+ *   * `rlimit` is RE-ARMED ON EVERY `check()`. Three checks at `rlimit: 50_000`
+ *     on ONE solver each returned `sat`, spending ~40_000 apiece — 120_000
+ *     against a limit that reads like 50_000.
+ *   * it is a PER-CHECK DELTA, not an absolute threshold. With the context's
+ *     counter already at 86_090, a check at `rlimit: 50_000` still returned
+ *     `sat` and spent 40_672. An absolute reading would have aborted at once.
+ *
+ * So a limit set once before the first check bounds a CHECK, never a run: the
+ * old code could spend `checks x rlimit`, and with LNS re-entering the solver
+ * per window it became `(windows + 1) x checks x rlimit`. That inverts D9 —
+ * the deterministic budget stops binding and the wall-clock backstop becomes
+ * the real stopping rule, on a machine-dependent boundary that R10 says must
+ * never fire at all.
+ *
+ * --- HOW IT IS ACCOUNTED ---------------------------------------------------
+ *
+ * z3's own counter, read from `solver.statistics()` under the key
+ * `rlimit count`. It is CONTEXT-GLOBAL and monotonic — a fresh `Solver` keeps
+ * counting from where the last one stopped, which is exactly what makes it
+ * usable as a run total across the sub-solves LNS opens. Every reading here is
+ * a DELTA against `base`, so what other runs did before this one is irrelevant,
+ * and `withZ3Lock` guarantees no other solve is interleaving with ours.
+ *
+ * Deterministic by construction: `rlimit` is a resource counter, not a clock,
+ * which is the whole reason D9 chose it. Nothing here reads elapsed time.
+ */
+interface RunBudget {
+  /** The whole run's allowance, in z3 resource units. */
+  readonly total: number;
+  /** `rlimit count` when the run started. Readings are deltas against it. */
+  readonly base: number;
+  /** Consumed so far by every solve in this run. MEASURED, never assumed. */
+  spent: number;
+  /**
+   * What the run has DRAWN, as opposed to what it spent: each phase is charged
+   * the smaller of what it used and what it was allotted.
+   *
+   * The two differ because a check OVERSHOOTS (see `rlimitSpent`), and the
+   * overshoot is z3's, not the next phase's to pay for. Charging it whole makes
+   * the reserve imaginary: MEASURED, the main phase's last check overran its
+   * 75% share by more than the remaining 25% in EVERY configuration tried —
+   * 500_000 spent 1_045_248, 100_000 spent 103_661, 260_000 spent 288_533 — so
+   * `spent < total` was false the moment the tiers fell short, and the fallback
+   * never ran on a single board it exists for. Allotments are drawn against
+   * this; `spent` stays the honest total and is what `rlimitSpent` reports.
+   */
+  drawn: number;
+}
+
+/**
+ * z3's own resource counter. Present before the first `check()` (measured: 1 on
+ * a brand-new context), but guarded anyway — a missing key must read as
+ * "nothing spent yet", not as a `NaN` that would silently disable the cap.
+ *
+ * `release()` IS NOT OPTIONAL HERE, whatever the API docs' "can help release
+ * memory sooner" suggests. `statistics()` allocates a `Z3_stats` in the WASM
+ * heap and JS finalisers are not prompt enough to keep up with one reading per
+ * `check()`: leaving them to the collector aborted a 14-run probe with
+ * `RuntimeError: memory access out of bounds` inside
+ * `smt::relevancy_propagator_imp::pop` — a corrupted heap, surfacing at the
+ * next `solver.pop()` rather than anywhere near the leak.
+ */
+function rlimitCount(solver: Solver<"repair">): number {
+  const stats = solver.statistics();
+  try {
+    return stats.keys().includes("rlimit count") ? stats.get("rlimit count") : 0;
+  } finally {
+    stats.release();
+  }
+}
 
 export type BuildStatus =
   /** A board was produced and the gate accepted it. */
@@ -190,6 +296,37 @@ export interface BuildResult {
   elapsedMs: number;
   moved: number;
   /**
+   * What the RUN cost, in z3 resource units, measured off z3's own counter
+   * (R11). The whole run — every tier check and every window the fallback
+   * opened — because they share one allowance.
+   *
+   * Deterministic, which is the point: `rlimit` is a resource counter and not a
+   * clock (D9), so this number is a property of the search and reproduces on
+   * any machine. It exists so the budget is AUDITABLE rather than asserted —
+   * "the run stayed inside its allowance" is otherwise unobservable from
+   * outside, and it was silently false before R11.
+   *
+   * MAY EXCEED `rlimit`, and by much more than a rounding error: z3 tests the
+   * resource limit at intervals rather than stopping on it, so a check carries
+   * a floor cost it pays whatever the limit says. Measured on the four-fixture
+   * model in `build-budget.test.ts`: `rlimit: 10` and `rlimit: 100` both spend
+   * ~28_600, and `rlimit: 200_000` spends 228_533. Treat this as "the run drew
+   * its allowance and one check's overshoot", never as a hard ceiling.
+   */
+  rlimitSpent: number;
+  /**
+   * What each LNS window was ALLOTTED, in order, in z3 resource units. Empty
+   * when the fallback did not run.
+   *
+   * Telemetry, and the only place the apportionment is visible from outside:
+   * every other symptom of a mis-apportioned budget is downstream of a solve
+   * and washes out into "the solver found nothing", which is also what a
+   * correctly-budgeted run looks like. Task 13's bench needs it to answer
+   * whether one run budget is enough at 200 fixtures and how it should be
+   * split.
+   */
+  lnsWindowRlimits: readonly number[];
+  /**
    * The pinned fixtures an `infeasible` verdict is ABOUT (R4).
    *
    * `status: "infeasible"` has two sources and they mean opposite things to an
@@ -253,14 +390,91 @@ export function rejectedBlockingConflicts(
   );
 }
 
+/**
+ * A board's conflicts, in full — the rows' own, PLUS a row per fixture that is
+ * not on the board at all.
+ *
+ * `validateAssignments` answers for the rows it is handed; the fixtures that are
+ * NOT on the board are the other half of the truth and it cannot see them.
+ * Without this a solver that placed nothing hands back an empty conflict list
+ * and reads as a clean board.
+ *
+ * Three sources, in order of how well established they are, because a fabricated
+ * reason is fed straight to the repair prompt:
+ *
+ *   1. greedy's own diagnosis, which names the binding constraint;
+ *   2. the blocking conflict that disqualified the row from the seed;
+ *   3. only then a `no_slot` — and `proved` decides whether its detail claims a
+ *      ceiling (T0 came back unsat) or admits the budget ran out.
+ *
+ * EXPORTED for the web layer (ruling R17). It was module-private, so the API
+ * layer grew a second copy of the same three-source rule; two copies of "what
+ * actually happened to this card" will drift, and the drift is invisible until
+ * an organiser is told the wrong reason. Behaviour is unchanged from the closure
+ * it replaces — the captured values are now parameters and nothing else moved.
+ */
+export function conflictsFor(input: {
+  board: readonly Assignment[];
+  fixtures: readonly SchedulableFixture[];
+  config: BuildConfig;
+  existing: readonly Assignment[];
+  dependencies: readonly OrderDependency[];
+  /** `slotFixtures`' OWN conflicts for the raw greedy seed. */
+  greedyConflicts: readonly Conflict[];
+  /** Seed rows dropped by the legalisation pass, and what disqualified them. */
+  disqualified: ReadonlyMap<string, readonly Conflict[]>;
+  /** Whether a proof backs an absence, or the budget merely ran out. */
+  proved: boolean;
+}): Conflict[] {
+  const { board, fixtures, config, existing, dependencies, proved } = input;
+  const onBoard = new Set(board.map((a) => a.fixtureId));
+  const out: Conflict[] = validateAssignments(board, config, existing, dependencies);
+  for (const f of fixtures) {
+    if (onBoard.has(f.id)) continue;
+    const greedySaid = input.greedyConflicts.filter((c) => c.fixtureId === f.id);
+    if (greedySaid.length > 0) {
+      out.push(...greedySaid);
+      continue;
+    }
+    const dropped = input.disqualified.get(f.id);
+    if (dropped !== undefined) {
+      out.push(...dropped);
+      continue;
+    }
+    out.push({
+      fixtureId: f.id,
+      reason: "no_slot",
+      detail: proved
+        ? "no legal slot in the lattice"
+        : "left unplaced when the solver's budget expired",
+      rule: RULE_BY_REASON.no_slot,
+    });
+  }
+  return out;
+}
+
 export function buildSchedule(input: BuildInput): Promise<BuildResult> {
   // `withZ3Lock` is NOT reentrant. It is taken exactly here, and nothing below
-  // may take it again — `loadZ3` deliberately does not, and neither does
-  // anything in `build-encode.ts`.
+  // may take it again — `loadZ3` deliberately does not, neither does anything
+  // in `build-encode.ts`, and the LNS pass re-enters `solveBuild` rather than
+  // `buildSchedule` for exactly this reason. (The plan proposed driving LNS
+  // through `repairSchedule`, which DOES take the lock itself, and therefore
+  // proposed moving this call inward; nothing here takes it twice, so the lock
+  // stays on the outside where it can serialise the whole run.)
   return withZ3Lock(() => solveBuild(input));
 }
 
-async function solveBuild(input: BuildInput): Promise<BuildResult> {
+/**
+ * @param allowLns false on the LNS pass's own sub-solves. Each window is solved
+ * by re-entering this function with the rest of the board pinned, so without a
+ * guard a sub-solve that also fell short of `TIER_COUNT` would open windows of
+ * its own, without bound.
+ */
+async function solveBuild(
+  input: BuildInput,
+  allowLns = true,
+  inherited?: RunBudget,
+): Promise<BuildResult> {
   // `performance.now()`, never `Date.now()` — `scripts/engine-boundary.ts` bans
   // ambient wall-clock reads in engine source, and a monotonic clock is the
   // right one for a duration anyway.
@@ -308,49 +522,32 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
   const seedAssignments = rawSeed.assignments.filter((a) => !disqualified.has(a.fixtureId));
   const seedMetrics = boardMetrics(seedAssignments, config.courts, fixtures.length);
 
-  /**
-   * A board's conflicts, in full.
-   *
-   * `validateAssignments` answers for the rows it is handed; the fixtures that
-   * are NOT on the board are the other half of the truth and it cannot see
-   * them. Three sources, in order of how well established they are, because a
-   * fabricated reason is fed straight to the repair prompt:
-   *
-   *   1. greedy's own diagnosis, which names the binding constraint;
-   *   2. the blocking conflict that disqualified the row from the seed;
-   *   3. only then a `no_slot` — and `proved` decides whether its detail claims
-   *      a ceiling (T0 came back unsat) or admits the budget ran out.
-   */
-  const conflictsFor = (board: readonly Assignment[], proved: boolean): Conflict[] => {
-    const onBoard = new Set(board.map((a) => a.fixtureId));
-    const out: Conflict[] = validateAssignments(board, verifyConfig, existing, dependencies);
-    for (const f of fixtures) {
-      if (onBoard.has(f.id)) continue;
-      const greedySaid = rawSeed.conflicts.filter((c) => c.fixtureId === f.id);
-      if (greedySaid.length > 0) {
-        out.push(...greedySaid);
-        continue;
-      }
-      const dropped = disqualified.get(f.id);
-      if (dropped !== undefined) {
-        out.push(...dropped);
-        continue;
-      }
-      out.push({
-        fixtureId: f.id,
-        reason: "no_slot",
-        detail: proved
-          ? "no legal slot in the lattice"
-          : "left unplaced when the solver's budget expired",
-        rule: RULE_BY_REASON.no_slot,
-      });
-    }
-    return out;
-  };
+  /** This run's bindings for the exported `conflictsFor`, which carries the
+   *  three-source rule and the reasoning behind it. */
+  const conflictsForBoard = (board: readonly Assignment[], proved: boolean): Conflict[] =>
+    conflictsFor({
+      board,
+      fixtures,
+      config: verifyConfig,
+      existing,
+      dependencies,
+      greedyConflicts: rawSeed.conflicts,
+      disqualified,
+      proved,
+    });
+
+  /** Filled once the solver exists — `greedy(...)` is defined before that and
+   *  can return from an early exit, where nothing has been spent and the result
+   *  should say so honestly. A ref rather than a `let` so the binding itself
+   *  stays `const`. */
+  const runBudget: { current: RunBudget | undefined } = { current: undefined };
+
+  /** Filled by the LNS pass below; empty on every path that never reaches it. */
+  const lnsWindowRlimits: number[] = [];
 
   const greedy = (status: BuildStatus, budgetExpired = false): BuildResult => ({
     assignments: seedAssignments,
-    conflicts: conflictsFor(seedAssignments, false),
+    conflicts: conflictsForBoard(seedAssignments, false),
     metrics: seedMetrics,
     engine: "greedy",
     status,
@@ -358,6 +555,8 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
     budgetExpired,
     elapsedMs: elapsed(),
     moved: 0,
+    rlimitSpent: runBudget.current?.spent ?? 0,
+    lnsWindowRlimits,
   });
 
   // 2. The lattice.
@@ -417,6 +616,16 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
    *  pin, and the order is part of what makes two runs comparable. */
   const pinnedIds = [...new Set(pins.map((p) => p.id))].sort();
   const grid = restrictToConfiguredCourts(buildGrid({ config, existing, pinned }), config.courts, pinned);
+  // NO LNS PASS HERE, AND THAT IS DELIBERATE — do not "fix" this by wiring one
+  // up. `buildGrid` never reads the fixture list at all: `overCap` is a
+  // function of the config, the immovable board and the pins alone. So every
+  // window the fallback opened would rebuild the IDENTICAL over-cap lattice,
+  // get the same empty `slots` back, and return its own greedy board — the
+  // pass is inert here by construction, not merely unhelpful. Rescuing an
+  // over-cap board means shrinking the LATTICE, i.e. slicing the horizon per
+  // window, which is a design change and out of scope (controller ruling,
+  // Task 6). Task 13's bench establishes whether this path is even reachable
+  // at the 200-fixture target; if it is, it reopens as a real gap.
   if (grid.overCap || grid.slots.length === 0) return greedy("ok");
 
   // 3. z3. A boot failure is a fallback, never an exception: auto-schedule must
@@ -429,11 +638,64 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
   }
 
   const solver = new Z3.Solver();
-  solver.set("rlimit", rlimit);
+
+  // The run budget (R11). A sub-solve INHERITS its caller's — one run, one
+  // allowance — and is capped at the slice its caller allotted it; a top-level
+  // run opens a fresh one and keeps `1 - BUILD_MAIN_RLIMIT_SHARE` of it back
+  // for the fallback.
+  runBudget.current = inherited ?? {
+    total: rlimit,
+    base: rlimitCount(solver),
+    spent: 0,
+    drawn: 0,
+  };
+  const budget = runBudget.current;
+  const phaseCap =
+    inherited === undefined
+      // `Math.max(1, ...)` because the floor is 0 for `rlimit <= 1`, and a main
+      // phase allotted nothing declines every check while the FALLBACK still
+      // gets one — the reserve inverted, and on the exact configuration a
+      // budget that small is used to produce.
+      ? Math.max(1, Math.floor(rlimit * BUILD_MAIN_RLIMIT_SHARE))
+      : rlimit;
+  /** This solve's ceiling, expressed in the RUN's units so both caps are one
+   *  comparison: it may not push `runBudget.spent` past here, nor past the run
+   *  total however generous its own slice was. */
+  const phaseLimit = Math.min(budget.spent + phaseCap, budget.total);
+
   /** The outer cap, refreshed before every check the way `repair.ts` does it —
    *  one `timeout` set once would give the last check the whole budget again. */
   const armTimeout = (): void => {
     solver.set("timeout", Math.max(1, Math.ceil(wallMs - elapsed())));
+  };
+  /**
+   * Arm BOTH caps for exactly one `check()`, and say whether there is a check
+   * left to arm. False means the run budget is gone — a normal outcome that
+   * leaves the incumbent standing, never an error.
+   *
+   * The `rlimit` is re-set every time BECAUSE z3 re-arms it every time (see
+   * `RunBudget`); handing it the REMAINDER is what turns a per-check allowance
+   * into a run total. Never 0 — `rlimit: 0` means UNLIMITED in z3, so an
+   * exhausted budget must decline the check rather than describe itself as
+   * zero.
+   */
+  const arm = (): boolean => {
+    const room = phaseLimit - budget.spent;
+    if (room <= 0) return false;
+    solver.set("rlimit", room);
+    armTimeout();
+    return true;
+  };
+  /** Charge the run for what the check just cost. MEASURED off z3's counter,
+   *  not assumed from the limit: a check that finishes early spends less, and
+   *  charging it the whole slice would starve the fallback for nothing. */
+  const settle = (): void => {
+    // Clamped: a negative delta would make `room` enormous and silently
+    // disable the cap altogether. Unreachable today — `withZ3Lock` keeps a
+    // context reset out of the middle of a run, and the counter is monotonic
+    // — but a budget that fails OPEN is not a failure mode worth leaving to
+    // an invariant held somewhere else.
+    budget.spent = Math.max(0, rlimitCount(solver) - budget.base);
   };
   armTimeout();
 
@@ -484,14 +746,15 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
   //    to tell "two cards pinned onto one slot" from "n cards will not fit",
   //    and those want opposite answers.
   if (pinned.length > 0) {
-    if (elapsed() >= wallMs) {
+    if (elapsed() >= wallMs || !arm()) {
       // Never asked, so nothing is established. Reporting `infeasible` from a
       // question we did not get to ask is the same error as reading it off an
-      // `unknown`.
+      // `unknown` — and that holds whether it was the wall backstop or the run
+      // budget that stopped us asking.
       budgetExpired = true;
     } else {
-      armTimeout();
       const probe = await solver.check();
+      settle();
       // The pins are the ONLY thing that can make this model unsat (see above),
       // so the proof is about them and the result says so by name.
       if (probe === "unsat") return { ...greedy("infeasible"), contradictoryPins: pinnedIds };
@@ -519,9 +782,14 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
     }
     solver.push();
     atLeastPlaced(target);
-    armTimeout();
+    if (!arm()) {
+      solver.pop();
+      budgetExpired = true;
+      break;
+    }
     checks++;
     const verdict = await solver.check();
+    settle();
     if (verdict === "sat") {
       const board = model.assignmentsFrom(model.slotOf(solver.model()));
       const metrics = boardMetrics(board, config.courts, fixtures.length);
@@ -616,9 +884,14 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
         }
         solver.push();
         tier.atMost(best - 1);
-        armTimeout();
+        if (!arm()) {
+          solver.pop();
+          budgetExpired = true;
+          break;
+        }
         checks++;
         const verdict = await solver.check();
+        settle();
         if (verdict !== "sat") {
           solver.pop();
           // UNSAT is the proof that `best` IS the optimum — the walk asked for
@@ -649,6 +922,111 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
     }
   }
 
+  // 6c. LNS — the fallback for a run that did not finish (design D7's "C"
+  //     half). See `build-lns.ts` for what a window is and why it is neither
+  //     `repairSchedule` nor an `existing`-shaped sub-board.
+  //
+  //     THE TRIGGER IS `tiersCompleted < TIER_COUNT`, not `budgetExpired`.
+  //     Those are different questions: a tier can exit without ever setting
+  //     `budgetExpired` (a term and its metric drifting apart breaks the walk
+  //     on the spot), and `tiersCompleted === TIER_COUNT` is the ONLY thing
+  //     that means "every tier ran to a verdict" — the same predicate
+  //     `already_optimal` keys on below. A board that is not lexicographically
+  //     proven is a board windows may still improve.
+  //
+  //     THE WINDOWS SPEND THE SAME RUN BUDGET THE TIERS DID (R11). Each one is
+  //     allotted an equal share of WHAT IS LEFT, divided by the windows still
+  //     to come — so a window that finishes cheaply leaves the surplus to its
+  //     successors, and the last one may have the whole remainder. Derived from
+  //     the budget and the window plan only, never from elapsed time, so two
+  //     runs on identical input still open identical windows at identical
+  //     allowances on any machine.
+  //
+  //     Running out is a NORMAL outcome: the pass stops launching windows and
+  //     the incumbent stands. The result is taken only if the WHOLE board
+  //     improved, so this can never make the answer worse — the same guarantee
+  //     the greedy seed gives, and the reason it needs no escape hatch either.
+  let usedLns = false;
+  // Close the MAIN phase's account. It is charged its SHARE, never its
+  // overshoot — see `RunBudget.drawn`. Without that the fallback is unreachable
+  // by construction: the tiers only fall short when their last check overran,
+  // and that overrun is reliably bigger than the whole reserve.
+  //
+  // ONLY AT THE TOP LEVEL. `drawn` is a RUN-WIDE running total and `phaseCap`
+  // in an inherited solve is that one window's allotment, so an unguarded
+  // assignment lets every window reset the run's account down to its own small
+  // slice: `left` and `allot` inflate from window 1 onward and `hasBudget()`
+  // can never fire, which is exactly the equal-share re-levelling the window
+  // loop below claims to do. Measured at rlimit 200_000: window 1 allotted
+  // 83_334 against a correct share of 16_667.
+  if (inherited === undefined) budget.drawn = Math.min(budget.spent, phaseCap);
+  if (allowLns && tiersCompleted < TIER_COUNT && elapsed() < wallMs && budget.drawn < budget.total) {
+    const solveWindow = async (w: LnsWindow): Promise<readonly Assignment[]> => {
+      const left = budget.total - budget.drawn;
+      const drawnBefore = budget.spent;
+      const allot = Math.max(1, Math.floor(left / (w.of - w.index)));
+      lnsWindowRlimits.push(allot);
+      const sub = await solveBuild(
+        {
+          fixtures: w.fixtures,
+          config,
+          // The caller's immovables only. Everything else is a pinned FIXTURE
+          // in `w.fixtures`, which is what keeps the sub-solve's metrics the
+          // whole board's metrics.
+          existing: w.existing,
+          dependencies,
+          // This window's slice. `w.of - w.index` is how many windows are still
+          // to come, this one included, so the division re-levels after every
+          // over- or under-spend rather than committing the whole plan up front
+          // to a split the first window has already invalidated.
+          rlimit: allot,
+          wallMs: Math.max(1, wallMs - elapsed()),
+        },
+        false,
+        budget,
+      );
+      // Same rule as the main phase: a window is charged what it was allotted,
+      // not what its last check overran to, so one window cannot swallow the
+      // windows after it.
+      budget.drawn += Math.min(budget.spent - drawnBefore, allot);
+      return sub.assignments;
+    };
+    const out = await improveByWindows({
+      board: incumbent,
+      fixtures,
+      existing,
+      // `frozen` only. A caller-`locked` fixture needs no help from the window
+      // plan: it carries its pin into every sub-solve on its own fixture record
+      // and `encodeBuild` §4 asserts it as a unit clause.
+      frozen: new Set(frozenIds),
+      courts: config.courts,
+      total: fixtures.length,
+      deadlineMs: wallMs,
+      elapsed,
+      hasBudget: () => budget.drawn < budget.total,
+      solveWindow,
+    });
+    if (isStrictlyBetter(out.metrics, incumbentMetrics)) {
+      incumbent = out.board;
+      incumbentMetrics = out.metrics;
+      // DEFENSIVE, and inert as the guard above is written: `already_optimal`
+      // needs `tiersCompleted === TIER_COUNT`, which this arm excludes. Kept
+      // because the day somebody lets the fallback run on a fully-proved board,
+      // an LNS improvement reported as `already_optimal` is a lie about a proof
+      // — and the failure would be silent.
+      improved = true;
+      // NOT ASSERTED ANYWHERE, and deliberately so rather than by oversight.
+      // `engine: "z3+lns"` needs a run where the fallback both RUNS and wins,
+      // and those two do not currently overlap: the pass only runs when the
+      // tiers fall short, and at every budget where they do, T0 has already
+      // reached a board no LEGAL board beats — so a stub that "improved" on it
+      // would be refused by the verifier gate, and asserting on one would be
+      // asserting on the stub. If Task 13's bench finds a real improving board,
+      // the assertion belongs there.
+      usedLns = true;
+    }
+  }
+
   // 7. The gate. Encoder and verifier disagreeing is the exact bug class this
   //    design exists to prevent, so it is never silent — but it is also never
   //    an exception, because the organiser still needs a board, and it is a
@@ -656,7 +1034,7 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
   //
   //    `repair.ts` throws `RepairVerificationError` in the analogous place and
   //    this deliberately does not, so the loudness has to come from somewhere.
-  const conflicts = conflictsFor(incumbent, proved);
+  const conflicts = conflictsForBoard(incumbent, proved);
   const ours = new Set(incumbent.map((a) => a.fixtureId));
   const rejected = rejectedBlockingConflicts(rawSeedConflicts, conflicts, ours);
   if (rejected.length > 0) {
@@ -694,12 +1072,18 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
     assignments: incumbent,
     conflicts,
     metrics: incumbentMetrics,
-    engine: incumbent === seedAssignments ? "greedy" : "z3",
+    // Where the board CAME FROM. `z3+lns` is claimed only when a window pass
+    // actually produced the board being returned — an LNS pass that ran and
+    // improved nothing leaves the tiers' own answer in place, and saying
+    // otherwise would attribute the board to the wrong solver.
+    engine: usedLns ? "z3+lns" : incumbent === seedAssignments ? "greedy" : "z3",
     status,
     tiersCompleted,
     budgetExpired,
     elapsedMs: elapsed(),
     moved,
+    rlimitSpent: budget.spent,
+    lnsWindowRlimits,
   };
 }
 
@@ -838,28 +1222,34 @@ function buildTiers(input: TierInput): Tier[] {
   // quietest, so the court SET it divides by is `config.courts` plus whatever
   // courts the board actually used — a configured court nobody plays on counts
   // as a zero (that is the point of the metric), while an UNconfigured court
-  // nobody plays on is not in the set at all. That asymmetry is why the bounds
-  // below are not symmetric: `hi` ranges over every court in the lattice (an
-  // unused one contributes 0 and cannot raise a maximum), but `lo` is held
-  // under an unconfigured court's load only WHEN THAT COURT IS USED.
+  // nobody plays on is not in the set at all.
   //
-  // A court can be in the lattice without being configured only through a pin —
-  // R3 removed the rest — so this is the locked-onto-court-5 case, and getting
-  // it wrong would report an imbalance of zero on a board with one lonely
-  // pinned card.
+  // THE SECOND HALF OF THAT SENTENCE IS UNREACHABLE HERE, and the bound is
+  // unconditional because of it. Under R3 the only slots left on an
+  // unconfigured court are exact matches for a PIN (`restrictToConfiguredCourts`
+  // deletes the rest), and every pin is force-asserted true — `encodeBuild` §4
+  // for a `locked` fixture, the frozen-anchor loop above for the other source.
+  // So an unconfigured court in `grid.byCourt` provably carries load, it is
+  // provably in `boardMetrics`' court set, and `lo <= load` is exactly right
+  // for it. An earlier draft guarded this with `Implies(load >= 1, ...)`; that
+  // guard was not merely untested but DEAD, since its antecedent holds for
+  // every reachable input, and a dead guard reads as a case somebody once saw.
+  //
+  // (If an unforced pin source is ever added — a pin the solver may decline —
+  // this is the line that has to come back, because a court in the lattice with
+  // nothing on it would then pull the minimum to zero and report an imbalance
+  // the board does not have.)
   const cbLo = Z3.Int.const("cb_lo");
   const cbHi = Z3.Int.const("cb_hi");
-  const configured = new Set(config.courts);
   const loadOf = (rowsOnCourt: readonly number[]): Arith<"repair"> =>
     Z3.Sum(
       Z3.Int.val(0),
       ...rowsOnCourt.map((s) => Z3.If(occAny[s]!, Z3.Int.val(durMs), Z3.Int.val(0))),
     );
-  for (const [court, rowsOnCourt] of grid.byCourt) {
+  for (const rowsOnCourt of grid.byCourt.values()) {
     const load = loadOf(rowsOnCourt);
     solver.add(cbHi.ge(load));
-    if (configured.has(court)) solver.add(cbLo.le(load));
-    else solver.add(Z3.Implies(load.ge(1), cbLo.le(load)));
+    solver.add(cbLo.le(load));
   }
   // A configured court with no slots at all — blacked out, or outside every
   // session window. `boardMetrics` still seeds it at zero, so it still pulls the
