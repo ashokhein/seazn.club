@@ -552,8 +552,17 @@ describe.skipIf(!HAS_DB)("autoSchedule dispatch (Task 9)", () => {
     expect(z3LoadCount()).toBe(0);
 
     // Prove the run above really did boot the WASM, so the 0 is a teardown and
-    // not an absence: the same solve without the teardown leaves the count at 1.
-    await buildSchedule({
+    // not an absence.
+    //
+    // This used to call `buildSchedule` and assert the count stayed at 1,
+    // because only THIS layer tore z3 down. Ruling R17 moved that ownership
+    // into the engine — `buildSchedule` and `repairSchedule` each reset in a
+    // `finally` now — so a direct call resets too and the count reads 0 either
+    // way. `z3LoadCount()` can no longer witness a solve from outside.
+    //
+    // `rlimitSpent` can: it is a delta of z3's own `rlimit count`, so it cannot
+    // exceed 0 unless a `check()` actually ran on a booted context.
+    const witness = await buildSchedule({
       fixtures: [{ id: "a", home: "E1", away: "E2", people: [] }],
       config: {
         startAt: Date.parse(T0),
@@ -566,7 +575,8 @@ describe.skipIf(!HAS_DB)("autoSchedule dispatch (Task 9)", () => {
       },
       wallMs: AUTO_SOLVER_WALL_MS,
     });
-    expect(z3LoadCount()).toBeGreaterThan(0);
+    expect(witness.rlimitSpent).toBeGreaterThan(0);
+    expect(z3LoadCount()).toBe(0);
     await resetZ3();
   }, 120_000);
 
