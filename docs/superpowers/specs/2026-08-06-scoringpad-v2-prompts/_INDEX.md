@@ -155,6 +155,16 @@ Append one line per ruling: date, session, decision, reason. Never delete.
   (−61.3%)**, `changedStates=0` and `eventsIdentical=true` on all eleven, and
   `schema:snapshot` reports 0 written / 11 already current — the shape-growth
   anchor clause held, so no committed snapshot moved.
+- 2026-08-06 — S1 — **`EXTEND_GOLDEN=1` stays OUTSIDE the clean-tree guard, and
+  that is deliberate.** Review flagged it as the one corpus-write path the guard
+  does not cover. Not changing it: an extension is run precisely BECAUSE a new
+  event type or optional field was just added, so the working tree legitimately
+  holds that code change. Requiring a clean tree would make the sanctioned
+  additive path unusable, and the pressure would go straight back to
+  `UPDATE_GOLDEN=1`, which is the thing being prevented. The guard covers the
+  two modes that REWRITE recorded states; extension only appends, and
+  `golden.test.ts` asserts every pre-existing stream survives byte for byte.
+  Recorded so a later session does not "close the hole" and break coverage work.
 - _(append below)_
 
 ## Open questions for the owner
